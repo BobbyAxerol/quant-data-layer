@@ -71802,3 +71802,33 @@ No broad cleanup or disk reclamation claimed; retain active/rollback artifacts
 while Claude works. Only this plan and advisory changed; no push/merge/rollout.
 Remaining decision: Claude assesses each recommendation and selects or disproves
 options against existing gates; this review does not certify release readiness.
+
+### D3 stage 100f (fixed harness, rc5): 28/32; R5 attribution measured; rc5 ordering tests; Astra R1/R3/R6 - 2026-10-10 (Claude)
+
+Run 06:30-07:03Z under supervisor v2 (process-group scoped; guard and watcher target the driver PID). Driver 713aa90
++ 7f974c3, profile with core/kafka monitored, Query rc5. Guard: 1 non-READY sample. MARK watcher: 28 minutes with 0
+errors, 5 with 1, 0 UNKNOWN.
+- PASS: streams 179 / 0 errors; latency classes; TS v2_error / auth / disconnect-rate gates.
+- ts:ready_60_every_sample FAIL, now scored on all 154 samples (0 unreadable, expected 154): 3 not ready. The TS
+  writer logged DATA_NOT_READY 12 and SOURCE_UNAVAILABLE 10 in the run.
+- requests:no_failures FAIL: 3 DATA_NOT_READY. The detail hash matches `HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND:
+  HOT_READER_BUSY` (Astra R2, Rust hot reader contention).
+- startup:bounded FAIL: s20 RATE_LIMITED after 208 retries in 74.7 s.
+- g5:COLD_2500:BINANCE FAIL 7315.9 ms. Attribution (R5) from 7f974c3:
+  - both 2500-row reads went to query_v2_1;
+  - OKX was sent 0.15 s earlier: transport 3469 ms, client 242 ms;
+  - Binance: transport 7031 ms, client 285 ms;
+  - the 5000-row reads both went to query_v2_2 (6004 / 7729 ms transport).
+  The cause is same-replica queueing on the one-active large-warmup lane at about 3.5 s per 2500-row read under load.
+  Client validation is not the cause. The worst case (same replica) must pass, without relying on random placement.
+- Also merged:
+  - 4e19966: rc5 real-ordering tests (Codex point 4);
+  - 57881a2 (from 6b0abdb), Astra R1/R3/R6, tested locally, not deployed:
+    - R1: hard hot refusals in the IDR-084 branch map to FENCED/INTEGRITY, never to an older cache OK.
+    - R3: memo lock wait and lookup share one budget (HOT_READ_DEADLINE is transient and not memoised).
+    - R6: payload-free, rate-bounded `qdl_refusal` log lines carrying the same detail_sha256 as the receipts;
+      receipts gain reason_tokens.
+    - Tests: 183 OK (33 Redis skips); after the merge, 9 modules OK.
+- Next (rc6): QDL_QUERY_COLD_SLICE_MS 4 -> 8 (the one tuned variable; Astra R5 option 2) to cut per-read service time
+  below ~3.1 s for the same-replica worst case, scored together with the hot tails. Plus the R2 Rust hot-reader fix
+  (Stream image) and R1/R3/R6 (Query image). Then stage 100g.
