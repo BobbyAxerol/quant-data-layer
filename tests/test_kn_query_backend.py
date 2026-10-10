@@ -924,7 +924,7 @@ class KnQueryBackendRedisTests(unittest.TestCase):
                 primary = self.reader.latest(self.lpk(binding))
                 candidate = replace(candidate, boundary=replace(candidate.boundary, partition=primary.boundary.partition))
                 replies = [candidate]
-                def hot(*args):
+                def hot(*args, **_kwargs):
                     if isinstance(replies[0], Exception): raise replies[0]
                     return replies[0]
                 backend = KnMarketCacheQueryBackend(self.reader, self.catalog, schema_digest=DIGEST,
@@ -976,7 +976,7 @@ class KnQueryBackendRedisTests(unittest.TestCase):
                     return CanonicalHotView(self.lpk(binding), (CacheRow(payload_bytes, offset),),
                                             SourceBoundary(TOPIC_ID, primary.boundary.partition, mark))
                 replies = [hot_view(newer, 30, 40)]
-                def hot(*args):
+                def hot(*args, **_kwargs):
                     if isinstance(replies[0], Exception): raise replies[0]
                     return replies[0]
                 backend = KnMarketCacheQueryBackend(self.reader, self.catalog, schema_digest=DIGEST,
@@ -1008,7 +1008,7 @@ class KnQueryBackendRedisTests(unittest.TestCase):
     def test_non_mark_feeds_never_consult_the_hot_view_for_a_valid_cache_view(self):
         from types import SimpleNamespace
 
-        def hot(*args):
+        def hot(*args, **_kwargs):
             raise AssertionError("hot view consulted for a non-MARK feed")
         backend = KnMarketCacheQueryBackend(self.reader, self.catalog, schema_digest=DIGEST,
             topic_id=TOPIC_ID, hot_client=SimpleNamespace(latest=hot))

@@ -81,13 +81,23 @@ class CanonicalHotClient:
         for channel in getattr(self, "_channels", ()):
             channel.close()
 
-    def latest(self, binding, lpk) -> CanonicalHotView:
+    @property
+    def timeout_seconds(self) -> float:
+        """The configured per-lookup deadline (callers may only shorten it)."""
+        return self._timeout
+
+    def latest(self, binding, lpk, *, timeout_seconds: float | None = None) -> CanonicalHotView:
+        """``timeout_seconds`` (optional) is what is left of the caller's own budget; it can only shorten the
+        configured deadline, never extend it."""
+        timeout = self._timeout if timeout_seconds is None else min(self._timeout, timeout_seconds)
         if binding.feed.value not in HOT_FEEDS or binding.interval is not None:
             raise HotViewUnavailable("HOT_FEED_UNSUPPORTED")
+        if timeout <= 0:
+            raise HotViewUnavailable("HOT_READ_DEADLINE")
         if not self._slots.acquire(blocking=False):
             raise HotViewUnavailable("HOT_READ_CAPACITY")
         try:
-            deadline = time.monotonic() + self._timeout
+            deadline = time.monotonic() + timeout
             error = "HOT_READER_UNAVAILABLE"
             for index, call in enumerate(self._calls):
                 remaining = deadline - time.monotonic()

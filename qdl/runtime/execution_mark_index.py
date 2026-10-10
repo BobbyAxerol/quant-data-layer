@@ -30,6 +30,7 @@ from qdl.query.contracts import FeedType, StalePolicy
 from qdl.runtime.internal_auth import stable_hmac_signature
 from qdl.runtime.lease import GatewayFenced
 from qdl.runtime.mark_index_lineage import paired_mark_index_lineage
+from qdl.runtime.refusal_log import REFUSALS
 from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 from qdl.runtime.session_liveness import (
@@ -655,10 +656,13 @@ def install_execution_mark_index_read(
         except GatewayFenced as error:
             raise HTTPException(status_code=409, detail="execution MARK/INDEX gateway fenced") from error
         if result.record is None:
-            raise HTTPException(
-                status_code=409,
-                detail=f"execution MARK/INDEX live view unavailable:{result.reason}",
-            )
+            detail = f"execution MARK/INDEX live view unavailable:{result.reason}"
+            # Astra R6: the view's own reason (e.g. MARKET_CACHE_BACKUP_UNAVAILABLE) is
+            # normalised away by the reference reader; keep it at this layer.
+            REFUSALS.record(origin="execution_mark_index", code="LIVE_VIEW_UNAVAILABLE", detail=detail,
+                            status=409, retryable=True, instrument_uid=instrument_uid,
+                            route="/internal/v2/execution/mark-index/latest")
+            raise HTTPException(status_code=409, detail=detail)
         record = result.record
         # A header keeps the private JSON response additive-compatible with a
         # rolling reader deployment while carrying the stream-authoritative

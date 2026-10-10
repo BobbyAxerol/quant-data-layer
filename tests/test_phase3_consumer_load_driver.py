@@ -593,6 +593,18 @@ class RefusalEvidenceTests(unittest.TestCase):
         plain = _MODULE._safe_error(RuntimeError("boom"))
         self.assertNotIn("reason", plain)
         self.assertNotIn("diagnostics", plain)
+        self.assertNotIn("reason_tokens", plain)
+
+    def test_a_refusal_keeps_every_typed_code_of_its_detail(self):
+        """Astra R6: stage-100 rows had only the detail hash for a nested hot-path reason."""
+        from qdl.runtime.refusal_log import reason_tokens
+        from qdl_sdk.errors import DataLayerError
+
+        detail = "HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND: HOT_READER_BUSY"
+        evidence = _MODULE._safe_error(DataLayerError("DATA_NOT_READY", detail, retryable=True))
+        self.assertEqual(evidence["reason_tokens"], ["HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND", "HOT_READER_BUSY"])
+        self.assertEqual(tuple(evidence["reason_tokens"]), reason_tokens(detail))  # same vocabulary as Query's line
+        self.assertNotIn("reason", evidence)
 
 
 class Kn4FixedWindowHandoffVerdictTests(unittest.TestCase):

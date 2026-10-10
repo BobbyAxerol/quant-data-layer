@@ -135,7 +135,7 @@ class HotQuerySelectionTests(unittest.TestCase):
         envelope.published_at_ns=self.now-7_000_000
         self.backup=CanonicalHotView(self.lpk,(CacheRow(envelope.SerializeToString(),30),),SourceBoundary("topic",0,40))
         self.calls=0
-        def backup(*args):
+        def backup(*args,**_kwargs):
             self.calls+=1
             if isinstance(self.backup,Exception):raise self.backup
             return self.backup

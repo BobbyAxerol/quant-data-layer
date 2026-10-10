@@ -97,6 +97,8 @@ CURSOR_TTL_ENV = "QDL_KN_CURSOR_TTL_SECONDS"
 DEFAULT_ROW_CACHE_ENTRIES = 20_000
 # A MARK/INDEX hot-view lookup is shared by every read of that binding on one replica for this long.
 MARK_HOT_MEMO_NS = 50_000_000
+# Wait + lookup budget of one shared MARK read when the hot client declares no deadline (CanonicalHotClient does).
+MARK_HOT_DEFAULT_BUDGET_SECONDS = 0.25
 # Item fields rebuilt per request (time/request dependent); never cached.
 _DYNAMIC_ITEM_FIELDS = frozenset({"quality", "watermark_offset", "cursor", "snapshot_id", "render_key", "render_slot"})
 
@@ -331,16 +333,32 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         key = binding.binding_id
         with self._mark_hot_locks_guard:
             lock = self._mark_hot_locks.setdefault(key, threading.Lock())
-        with lock:
+        # Astra R3: ONE budget (the hot client's own deadline) covers the wait for
+        # this binding's lookup slot AND the lookup itself. Before, the wait was
+        # unbounded and every queued reader whose memo had expired started a
+        # fresh full-deadline lookup in turn. A reader whose budget runs out is
+        # refused HOT_READ_DEADLINE, which the IDR-084 caller treats as transient
+        # (the valid cache view stands); that refusal is this reader's own wait,
+        # not the hot reader's answer, so it is never memoised.
+        budget = float(getattr(self.hot_client, "timeout_seconds", MARK_HOT_DEFAULT_BUDGET_SECONDS))
+        started = time.monotonic()
+        if not lock.acquire(timeout=budget):
+            raise HotViewUnavailable("HOT_READ_DEADLINE")
+        try:
             now = self._monotonic_ns()
             memo = self._mark_hot_memo.get(key)
             if memo is None or now - memo[0] >= MARK_HOT_MEMO_NS:
+                remaining = budget - (time.monotonic() - started)
+                if remaining <= 0:
+                    raise HotViewUnavailable("HOT_READ_DEADLINE")
                 try:
-                    outcome = self.hot_client.latest(binding, self.product_key(binding))
+                    outcome = self.hot_client.latest(binding, self.product_key(binding), timeout_seconds=remaining)
                 except HotViewUnavailable as error:
                     outcome = error
                 memo = (now, outcome)
                 self._mark_hot_memo[key] = memo
+        finally:
+            lock.release()
         if isinstance(memo[1], HotViewUnavailable):
             raise type(memo[1])(*memo[1].args)  # a fresh exception per reader thread
         return memo[1]
@@ -468,14 +486,20 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
             # ~300 ms after the venue event). The Rust hot view serves the same committed bytes without the projector,
             # so MARK/INDEX takes the newer of the two. Every lineage/monotonic gate of the backup path applies; a hot
             # read that is behind or unavailable leaves the cache view in place (the previous behaviour).
+            #
+            # Astra R1: only a TRANSIENT hot outcome leaves the cache view in place - HotViewUnavailable (busy,
+            # capacity, deadline, catching up, behind the cache view, or a reply not attributable to this Query's
+            # authority, which says nothing about the canonical record). A typed hard refusal from _hot_candidate is a
+            # fact about the newest committed record of THIS product and is never downgraded to the older cache view:
+            # a gap/resync on the newest record (HotViewGap -> OPEN_SEQUENCE_GAP; once projected, the MARK view drops
+            # it as GAP_OR_RESYNC anyway), a source partition/generation conflict (DATA_NOT_READY) or a payload/lineage
+            # conflict (INTERNAL_ERROR). Same state mapping as the backup path above.
             try:
                 candidate = self._hot_candidate(binding, view, shared=True)
             except HotViewUnavailable:
                 candidate = None
             except QueryBackendError as error:
-                if error.problem.code is CanonicalErrorCode.INTERNAL_ERROR:
-                    return None, "INTEGRITY"  # same offset, different bytes: never pick one silently
-                candidate = None
+                return None, "FENCED" if error.problem.code is CanonicalErrorCode.DATA_NOT_READY else "INTEGRITY"
             if candidate is not None and candidate.rows[0].source_offset > view.rows[0].source_offset:
                 view = candidate
         if view is None:

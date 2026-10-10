@@ -16,7 +16,7 @@ class _Hot:
         self.outcomes = list(outcomes)
         self.calls = 0
 
-    def latest(self, binding, key):
+    def latest(self, binding, key, **_kwargs):
         self.calls += 1
         outcome = self.outcomes[min(self.calls, len(self.outcomes)) - 1]
         if isinstance(outcome, BaseException):
@@ -94,9 +94,9 @@ class MarkHotMemoTests(unittest.TestCase):
         gate = threading.Event()
 
         class SlowHot(_Hot):
-            def latest(self, binding, key):
+            def latest(self, binding, key, **kwargs):
                 gate.wait(1)
-                return super().latest(binding, key)
+                return super().latest(binding, key, **kwargs)
 
         hot = SlowHot(["v"])
         backend = _backend(hot, clock)
@@ -226,7 +226,7 @@ class RealOrderingChecksTests(unittest.TestCase):
                 raise self.primary
             return self.primary
 
-        def latest(binding, key):
+        def latest(binding, key, **_kwargs):
             self.calls += 1
             if isinstance(self.reply, Exception):
                 raise self.reply
@@ -378,6 +378,253 @@ class RealOrderingChecksTests(unittest.TestCase):
         self.assertEqual(self.served(rc5), "H2")
         stored, state = rc5.latest_stored_event(self.binding, prefer_hot=True)
         self.assertEqual((state, self.name_of(stored.event.payload)), ("OK", "H2"))
+
+    # (d) Astra R1: a hard hot refusal is never downgraded to the older cache view -------------
+
+    def view_read(self, backend):
+        """The execution MARK view over this backend (the TS at-use path), at the fixture clock."""
+        import asyncio
+
+        from qdl.reference.local_mark_index import CacheRefreshingMarkIndexView
+
+        view = CacheRefreshingMarkIndexView.from_catalog(self.catalog).attach_cache(
+            backend=backend, relax_to_alpha=False)
+        return asyncio.run(view.read(
+            instrument_uid=self.binding.instrument.instrument_uid,
+            instrument_revision=self.binding.instrument.metadata_revision,
+            source_policy_id=self.binding.source_policy_id, max_freshness_ms=2000, gateway_epoch=1,
+            now_ns=self.now))
+
+    def hot_reply(self, name, *, topic="topic", partition=0, payload=None):
+        from dataclasses import replace
+
+        hot = self.hot(name)
+        hot = replace(hot, boundary=replace(hot.boundary, topic_id=topic, partition=partition))
+        if payload is not None:
+            hot = replace(hot, rows=(replace(hot.rows[0], canonical=payload),))
+        return hot
+
+    def test_d_hard_refusals_are_not_downgraded_to_the_cache_view(self):
+        """Before the fix every row below except the payload conflict returned (C10, OK)."""
+        cases = {
+            "gap": (HotViewGap("HOT_RECORD_GAPPED"), "INTEGRITY"),
+            "other partition": (lambda: self.hot_reply("H1", partition=1), "FENCED"),
+            # Unreachable through CanonicalHotClient (its reply check refuses another topic as the transient
+            # HOT_REPLY_INVALID, see test_d_real_client_*), still a hard refusal at the backend gate.
+            "other topic": (lambda: self.hot_reply("H1", topic="different-topic"), "FENCED"),
+            "same offset, other bytes": (lambda: self.hot_reply("C10", payload=self.payloads["H1"]), "INTEGRITY"),
+            "lineage invalid": (lambda: self.hot_reply("H1", payload=b"\x0a\x01x"), "INTEGRITY"),
+        }
+        for name, (reply, state) in cases.items():
+            with self.subTest(name):
+                self.setUp()
+                self.reply = reply() if callable(reply) else reply
+                backend = self.backend()
+                self.assertEqual(backend.latest_stored_event(self.binding), (None, state))
+                self.assertEqual(self.calls, 1)
+                self.assertNotIn(self.binding.binding_id, backend._hot_boundaries, "nothing recorded")
+                # The TS at-use path: refused with the layer's state, no second (prefer_hot) attempt that could
+                # heal it, and inside the memo window the shared refusal still holds.
+                result = self.view_read(backend)
+                self.assertIsNone(result.record)
+                self.assertEqual(result.reason, f"MARKET_CACHE_{state}")
+                self.assertEqual(self.calls, 1)
+
+    def test_d_transient_outcomes_keep_the_valid_cache_view(self):
+        for name in ("HOT_READER_BUSY", "HOT_READ_CAPACITY", "HOT_READ_DEADLINE", "HOT_READER_CATCHING_UP",
+                     "HOT_BROKER_UNCONFIRMED", "HOT_RECORD_MISSING", "HOT_REPLY_INVALID",
+                     "HOT_AUTHORITY_OR_PROTOCOL_REFUSED"):
+            with self.subTest(name):
+                self.setUp()
+                self.reply = HotViewUnavailable(name)
+                backend = self.backend()
+                stored, state = backend.latest_stored_event(self.binding)
+                self.assertEqual((state, self.name_of(stored.event.payload)), ("OK", "C10"))
+                self.assertEqual(self.recorded(backend), 10)
+                result = self.view_read(backend)
+                self.assertIsNotNone(result.record, result.reason)
+                self.assertEqual(result.record.canonical, self.payloads["C10"])
+        # A hot record older than the cache view is not newer: the cache view stands (HOT_BACKUP_BEHIND_PRIMARY).
+        self.setUp()
+        self.primary, self.reply = self.cache("H1"), self.hot("C10")
+        stored, state = self.backend().latest_stored_event(self.binding)
+        self.assertEqual((state, self.name_of(stored.event.payload)), ("OK", "H1"))
+
+    def test_d_recovery_after_a_gap_refusal(self):
+        backend = self.backend()
+        self.reply = HotViewGap("HOT_RECORD_GAPPED")
+        self.assertEqual(backend.latest_stored_event(self.binding), (None, "INTEGRITY"))
+        # Inside the window the shared gap still refuses, even though the cache view did not change.
+        self.reply = self.hot("H2")
+        self.mono[0] += MARK_HOT_MEMO_NS - 1
+        self.assertEqual(backend.latest_stored_event(self.binding), (None, "INTEGRITY"))
+        self.assertEqual(self.calls, 1)
+        # Window over: the newer clean committed record is served through every gate.
+        self.mono[0] += 1
+        stored, state = backend.latest_stored_event(self.binding)
+        self.assertEqual((state, self.name_of(stored.event.payload), self.calls), ("OK", "H2", 2))
+        self.assertEqual(self.recorded(backend), 50)
+        # The backup path (prefer_hot) keeps its existing hard mapping for the same refusal.
+        self.reply = HotViewGap("HOT_RECORD_GAPPED")
+        self.assertEqual(backend.latest_stored_event(self.binding, prefer_hot=True), (None, "INTEGRITY"))
+
+    def test_d_real_client_refuses_another_topic_as_a_transient_reply_error(self):
+        """Through CanonicalHotClient a reply for another canonical topic never reaches the backend gate: the
+        client's identity check (kn_hot_view.py _decode; expectation source_topic_id is Query's own topic,
+        stable.py hot_client_from_environment) turns it into HOT_REPLY_INVALID. A reply that cannot be attributed
+        to this Query's authority says nothing about the cache view, which stands. The same reply for the right
+        topic is taken (newer)."""
+        import base64
+        import json
+
+        from google.protobuf.wrappers_pb2 import BytesValue
+
+        from qdl.runtime.kn_hot_view import SCHEMA, CanonicalHotClient
+
+        def client(topic):
+            body = dict(schema=SCHEMA, binding_id=self.binding.binding_id, product_key=self.lpk.encode(),
+                        physical_key=self.binding.partition_key, source_topic_id=topic, source_partition=0,
+                        source_offset=40, record_offset=30,
+                        canonical=base64.b64encode(self.payloads["H1"]).decode())
+            return CanonicalHotClient(calls=(lambda *a, **k: BytesValue(value=json.dumps(body).encode()),),
+                                      expectation={"source_topic_id": "topic"}, secret=b"x" * 32)
+
+        for topic, expected in (("different-topic", "C10"), ("topic", "H1")):
+            with self.subTest(topic):
+                self.setUp()
+                backend = self.backend()
+                backend.hot_client = client(topic)
+                stored, state = backend.latest_stored_event(self.binding)
+                self.assertEqual((state, self.name_of(stored.event.payload)), ("OK", expected))
+
+
+MARK_BINDING = SimpleNamespace(binding_id="mark-a", feed=FeedType.MARK_INDEX_PRICE, interval=None)
+
+
+class MarkHotBudgetTests(unittest.TestCase):
+    """Astra R3: one budget bounds the wait for a binding's lookup slot plus the lookup itself."""
+
+    def test_a_waiter_behind_a_slow_leader_is_refused_within_its_budget_and_not_memoised(self):
+        import time as _time
+
+        clock = [0]
+        release = threading.Event()
+        entered = threading.Event()
+
+        class SlowHot(_Hot):
+            timeout_seconds = 0.05
+
+            def latest(self, binding, key, **kwargs):
+                entered.set()
+                release.wait(2)
+                return super().latest(binding, key, **kwargs)
+
+        hot = SlowHot(["v1", "v2"])
+        backend = _backend(hot, clock)
+        leader_result = []
+        leader = threading.Thread(target=lambda: leader_result.append(backend._hot_latest(MARK)))
+        leader.start()
+        self.assertTrue(entered.wait(2))
+        started = _time.monotonic()
+        with self.assertRaisesRegex(HotViewUnavailable, "HOT_READ_DEADLINE"):
+            backend._hot_latest(MARK)
+        waited = _time.monotonic() - started
+        self.assertGreaterEqual(waited, 0.04)
+        self.assertLess(waited, 1.0, "bounded by the 50 ms budget, not by the leader")
+        release.set()
+        leader.join(2)
+        self.assertEqual(leader_result, ["v1"])
+        self.assertEqual(hot.calls, 1)
+        # The waiter's own deadline was not memoised: the next reader inside the window gets the leader's value.
+        self.assertEqual(backend._hot_latest(MARK), "v1")
+        self.assertEqual(hot.calls, 1)
+
+    def test_the_lookup_gets_only_the_remaining_budget(self):
+        clock = [0]
+        seen = []
+
+        class BudgetHot(_Hot):
+            timeout_seconds = 0.2
+
+            def latest(self, binding, key, **kwargs):
+                seen.append(kwargs.get("timeout_seconds"))
+                return super().latest(binding, key, **kwargs)
+
+        backend = _backend(BudgetHot(["v"]), clock)
+        self.assertEqual(backend._hot_latest(MARK), "v")
+        self.assertEqual(len(seen), 1)
+        self.assertGreater(seen[0], 0)
+        self.assertLessEqual(seen[0], 0.2)
+
+    def test_an_unavailable_outcome_expires_and_recovers(self):
+        clock = [0]
+        hot = _Hot([HotViewUnavailable("HOT_READER_BUSY"), "v"])
+        backend = _backend(hot, clock)
+        with self.assertRaises(HotViewUnavailable):
+            backend._hot_latest(MARK)
+        clock[0] += MARK_HOT_MEMO_NS
+        self.assertEqual(backend._hot_latest(MARK), "v")
+        self.assertEqual(hot.calls, 2)
+
+    def test_other_feeds_keep_the_direct_call(self):
+        clock = [0]
+        seen = []
+
+        class Direct(_Hot):
+            def latest(self, binding, key, **kwargs):
+                seen.append(kwargs)
+                return super().latest(binding, key)
+
+        backend = _backend(Direct(["q"]), clock)
+        self.assertEqual(backend._hot_latest(QUOTE), "q")
+        self.assertEqual(seen, [{}])
+
+
+class HotClientBudgetTests(unittest.TestCase):
+    """CanonicalHotClient.latest(timeout_seconds=...) can only shorten its configured deadline."""
+
+    def client(self, call, timeout=0.25):
+        from qdl.runtime.kn_hot_view import CanonicalHotClient
+
+        return CanonicalHotClient(calls=(call,), expectation={}, secret=b"x" * 32, timeout_seconds=timeout)
+
+    def test_an_exhausted_budget_never_calls_the_reader(self):
+        def call(*args, **kwargs):
+            raise AssertionError("no RPC without budget")
+
+        client = self.client(call)
+        self.assertEqual(client.timeout_seconds, 0.25)
+        for remaining in (0, -0.1):
+            with self.assertRaisesRegex(HotViewUnavailable, "HOT_READ_DEADLINE"):
+                client.latest(MARK_BINDING, "k", timeout_seconds=remaining)
+        self.assertTrue(client._slots.acquire(False))
+        client._slots.release()
+
+    def test_the_rpc_timeout_is_the_smaller_budget(self):
+        import grpc
+
+        timeouts = []
+
+        class Busy(grpc.RpcError):
+            def code(self):
+                return grpc.StatusCode.RESOURCE_EXHAUSTED
+
+            def details(self):
+                return "HOT_READER_BUSY"
+
+        def call(body, *, timeout, metadata, wait_for_ready):
+            timeouts.append(timeout)
+            raise Busy()
+
+        client = self.client(call)
+        for budget in (0.05, 5.0, None):
+            with self.assertRaisesRegex(HotViewUnavailable, "HOT_READER_BUSY"):
+                client.latest(MARK_BINDING, "k", timeout_seconds=budget)
+        self.assertLessEqual(timeouts[0], 0.05)
+        self.assertLessEqual(timeouts[1], 0.25)
+        self.assertGreater(timeouts[1], 0.05)
+        self.assertLessEqual(timeouts[2], 0.25)
+        self.assertGreater(timeouts[2], 0.05)
 
 
 if __name__ == "__main__":

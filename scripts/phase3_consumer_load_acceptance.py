@@ -77,6 +77,17 @@ def _safe_error(error: BaseException) -> dict[str, object]:
     reason = re.search(r"\(([A-Z_]{1,40})\)$", detail)
     if reason:
         out["reason"] = reason.group(1)
+    # Astra R6: every typed UPPER_SNAKE code in the detail (e.g. "HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND:
+    # HOT_READER_BUSY"), bounded; the same extraction as qdl/runtime/refusal_log.py reason_tokens, whose
+    # Query line carries this detail_sha256. Additive receipt field.
+    tokens: list[str] = []
+    for token in re.findall(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b", detail[:4096]):
+        if len(token) <= 64 and token not in tokens:
+            tokens.append(token)
+            if len(tokens) == 4:
+                break
+    if tokens:
+        out["reason_tokens"] = tokens
     # Query's quality at the refusal (KN-4 review): only the known,
     # non-secret fields, bounded.
     diagnostics = getattr(error, "diagnostics", None)

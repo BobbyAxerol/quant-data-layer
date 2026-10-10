@@ -304,6 +304,40 @@ class Phase5ApiTests(unittest.TestCase):
         self.assertEqual(response.json()["code"], "PARTIAL_RESULT")
         self.assertTrue(response.json()["retryable"])
 
+    def test_a_refusal_leaves_one_bounded_payload_free_line(self):
+        """Astra R6: the Query problem handler records the refusal's typed reasons and detail digest."""
+        import hashlib
+        import json
+
+        router_module = importlib.import_module("qdl.api_v2.router")
+        from qdl.runtime.refusal_log import RefusalLog
+
+        detail = "HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND: HOT_READER_BUSY"
+
+        async def refused():
+            raise QueryServiceError(
+                QueryProblem(CanonicalErrorCode.DATA_NOT_READY, detail, True, retry_after_ms=1_000),
+                request_id="r6-request", instrument_uid="u-r6",
+            )
+
+        lines = []
+        log = RefusalLog(emit=lambda line: lines.append(json.loads(line)), replica="query-test")
+        with patch.object(self.service, "open_gaps_async", new=refused), \
+                patch.object(router_module, "REFUSALS", log):
+            response = self.client.get("/v2/data-quality/gaps")
+        problem = response.json()
+        self.assertEqual((problem["code"], problem["detail"]), ("DATA_NOT_READY", detail))  # response unchanged
+        (line,) = lines
+        self.assertEqual(
+            {key: line[key] for key in ("origin", "code", "status", "retryable", "reasons", "request_id",
+                                        "instrument_uid", "route", "replica")},
+            {"origin": "query", "code": "DATA_NOT_READY", "status": response.status_code, "retryable": True,
+             "reasons": ["HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND", "HOT_READER_BUSY"],
+             "request_id": "r6-request", "instrument_uid": "u-r6", "route": "/v2/data-quality/gaps",
+             "replica": "query-test"},
+        )
+        self.assertEqual(line["detail_sha256"], hashlib.sha256(detail.encode()).hexdigest())
+
     def test_query_routes_pass_authenticated_identity_to_owned_read_lanes(self):
         calls = []
         snapshot_original = self.service.snapshot_async

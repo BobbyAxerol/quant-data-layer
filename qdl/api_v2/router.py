@@ -68,6 +68,7 @@ from qdl.security import (
 )
 from qdl.runtime.bounds import BoundedRequestMiddleware, RequestBounds
 from qdl.runtime.readiness import FailClosedReadiness
+from qdl.runtime.refusal_log import REFUSALS
 from qdl.warmup.contracts import (
     IntervalSourcePolicy,
     WarmupSpecification,
@@ -1414,9 +1415,17 @@ def create_v2_app(
 
     app.openapi = data_plane_openapi
 
+    def _route_of(request: Request) -> str | None:
+        route = request.scope.get("route")
+        return getattr(route, "path", None)
+
     @app.exception_handler(DataPlaneAccessError)
     async def data_access_error_handler(_request: Request, error: DataPlaneAccessError):
         request_id = service.request_id() if service is not None else "unavailable"
+        # Astra R6: the identity/quota layer's refusal, bounded and payload-free.
+        REFUSALS.record(origin="data_plane_access", code=error.code, detail=error.detail,
+                        status=error.status_code, retryable=error.status_code in {429, 503},
+                        request_id=request_id, route=_route_of(_request))
         problem = ProblemDetails(
             type=f"urn:qdl:error:{error.code.lower().replace('_', '-')}",
             title=error.code.replace("_", " ").title(),
@@ -1435,6 +1444,10 @@ def create_v2_app(
     @app.exception_handler(QueryServiceError)
     async def query_error_handler(_request: Request, error: QueryServiceError):
         problem = _problem(error)
+        # Astra R6: one bounded, payload-free line per Query refusal (typed reasons + detail digest).
+        REFUSALS.record(origin="query", code=problem.code, detail=problem.detail, status=problem.status,
+                        retryable=problem.retryable, request_id=problem.request_id,
+                        instrument_uid=problem.instrument_uid, route=_route_of(_request))
         return JSONResponse(
             status_code=problem.status,
             content=problem.model_dump(exclude_none=True),
