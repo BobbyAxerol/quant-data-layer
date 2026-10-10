@@ -472,9 +472,7 @@ class ReferenceServiceAndApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_stale_reference_result_fails_closed(self):
         registry = InstrumentRegistry()
         registry.register(self.binance, [])
-        # Beyond the declared bound plus the 60 s funding settlement
-        # publication allowance (stage 100g, 2026-10-10).
-        adapter = FixtureReferenceAdapter(observed_at_ns=NOW_NS - 60_101_000_000)
+        adapter = FixtureReferenceAdapter(observed_at_ns=NOW_NS - 101_000_000)
         stale = V2QueryService(
             instruments=InstrumentQuery(registry),
             backend=MemoryMarketDataBackend(),
@@ -520,19 +518,16 @@ class ReferenceServiceAndApiTests(unittest.IsolatedAsyncioTestCase):
             purpose=AccessPurpose.INTERNAL_ALPHA,
         )
 
-    async def test_funding_settlement_due_but_unpublished_is_not_stale(self):
-        """Stage 100g (2026-10-10): an 8 h bound on 8 h OKX funding refused SOL-USDT-SWAP at
-        08:00:07Z, seven seconds after the settlement fell due and before the venue published it."""
+    async def test_funding_bound_stays_strict_until_publication_delay_is_measured(self):
+        """Stage 100g (2026-10-10) refused OKX SOL-USDT-SWAP funding 7 s after the 08:00Z settlement. The cause is
+        probable, not proven (Codex review), so no settlement allowance is granted: the declared bound is exact."""
         clock = {"ns": NOW_NS}
-        adapter = FixtureReferenceAdapter(observed_at_ns=NOW_NS - (_FUNDING_8H_MS + 7_000) * 1_000_000)
-        result = await self._funding_read(self._funding_service(adapter, clock))
-        self.assertIsNone(result.results[0].problem)
-        # The allowance is bounded: a settlement still unpublished after it stays fail-closed.
-        late = FixtureReferenceAdapter(observed_at_ns=NOW_NS - (_FUNDING_8H_MS + 60_001) * 1_000_000)
-        result = await self._funding_read(self._funding_service(late, clock))
-        self.assertEqual(result.results[0].problem.code.value, "DATA_STALE")
-        self.assertTrue(result.results[0].problem.retryable)
-        self.assertEqual(late.calls, 1)  # a provider-fresh stale series is not re-read
+        for past_ms in (7_000, 60_001):
+            adapter = FixtureReferenceAdapter(observed_at_ns=NOW_NS - (_FUNDING_8H_MS + past_ms) * 1_000_000)
+            result = await self._funding_read(self._funding_service(adapter, clock))
+            self.assertEqual(result.results[0].problem.code.value, "DATA_STALE")
+            self.assertTrue(result.results[0].problem.retryable)
+            self.assertEqual(adapter.calls, 1)  # a provider-fresh stale series is not re-read
 
     async def test_a_cached_funding_series_is_re_read_once_when_it_crosses_its_bound(self):
         clock = {"ns": NOW_NS}
