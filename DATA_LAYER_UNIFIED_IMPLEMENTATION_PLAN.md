@@ -71692,3 +71692,33 @@ Packet: upgrade/evidence/p184-g12-isolated-fault-packet.md.
   removed by ID (the harness now passes -v). Production guard: 0 breaches.
 - Tests: 46 PASS; after the cherry-pick, g12 + dr05_dl_fault + kn_recovery_observe OK.
 - Limits: same host, a single projector/Stream replica, synthetic BOOK only. Not HA or production evidence.
+
+### IDR-040 fix 2: in-band quiet-book proof (v2.2.3, additive, default off) - 2026-10-10 (Claude, subagent)
+
+Owner decision 2026-10-10: fix 2 goes into v2.2.3. Commit 1a2daf1, cherry-picked from 5062d4e; the CHANGELOG conflict
+was resolved by keeping all entries, and the regenerated OpenAPI snapshot is byte-identical to the merged one.
+Status: tested locally, not deployed.
+- Native ingestor (opt-in `book_liveness_proof_ms` 250..5000, default off): for a quiet Binance book it writes
+  `{"qdl_transport_liveness":"v1","stream":...}` into that book's own raw partition.
+  - The marker is stamped with the receipt time of the newest WebSocket message (frame or pong); the ingestor pings
+    when idle.
+  - TCP and partition order put every earlier frame of that book ahead of the marker.
+- Realtime core:
+  - A marker becomes a quiet-proof BOOK_SNAPSHOT only for the exact owning session/generation of a READY,
+    non-invalidated book, at most once per materialization interval.
+  - The snapshot is the current view with the original provider time and the new additive
+    `OrderBookSnapshot.proof_observed_at_ns = 8`.
+  - Otherwise it filters TRANSPORT_LIVENESS_UNPROVEN/_NOT_DUE or quarantines the marker. Markers never start, reset or
+    fence a book.
+- Query and the SDK projection report `quality.proof_observed_at_ns` (and the refusal diagnostics) for verified
+  snapshots only. freshness_ms, state and eligibility are unchanged. The key is emitted only when present.
+- Tests (subagent):
+  - Rust core 51/0 + 56/0 (3 new); ingestor 28/0; workspace 360/0 with 66 ignored; clippy -D warnings clean;
+  - Python new 9/0; affected 75 OK;
+  - full discover: only failures that also fail at base or come from the mount.
+- After merging with IDR-082 and the rc4 fixes: 13 modules, 128 tests OK (33 Redis skips).
+- Rollout order:
+  1. new core and Query first;
+  2. readers on SDK 2.1.0+;
+  3. then render the ingestor flag (stable_deployment.py does not emit it yet).
+- The contract digest changes at the next bundle refresh. Ping cadence and marker volume are not measured.
