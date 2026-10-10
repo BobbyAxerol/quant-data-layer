@@ -71770,3 +71770,35 @@ disconnect). The rc4 regression did not recur.
   3. The MARK watcher counted an unreadable log as 0 and its e copy still matched `stage100d.sh`. Replaced: UNKNOWN on
      a read failure.
   4. The rc5 regression test mocked the monotonic check. A real-ordering case is being added.
+
+### Astra advisory architecture review handoff - 2026-10-10
+
+Status REVIEW_HANDOFF_COMPLETE_IMPLEMENTATION_NOT_AUTHORIZED; owner requested a
+detailed advisory Markdown for Claude, not implementation or rollout. Review
+baseline `4e19966`. Scope existing
+Phase D correctness, hot-read contention/deadlines, quiet-book liveness, warmup,
+acceptance and release convergence. Guide: Kafka-native architecture review
+sections18.3-18.5 and Execution Handoff Hot Backup. Preserve source truth,
+freshness/generation/ordering, prior receipts and Claude's concurrent edits.
+Planned artifact upgrade/evidence/p184-astra-architecture-advisory-20261010.md.
+Only docs/journal edits; optional network-none source reproduction, no shared
+runtime calls, no builds/push/merge. Record findings as evidence-ranked options,
+not new gates or an instruction to rebuild architecture; cleanup any owned test.
+
+Completed advisory: [Astra architecture and closure review](upgrade/evidence/p184-astra-architecture-advisory-20261010.md).
+Seven evidence-ranked review groups R1-R7 include alternatives, trade-offs,
+focused tests and recommended closure order; these are advisory, not new gates.
+Acknowledges fixes 713aa90/7f974c3/4e19966 instead of reopening superseded findings.
+R1 reproduction uses golden MARK bytes and actual parser/lineage/ordering with
+stand-in transports: hard GAP and topic mismatch both return old primary C10/OK;
+transient HOT_READER_BUSY does too. Three behavioral observations, not acceptance
+PASSes or proof of incorrect live execution. R4 newly identified timer interaction
+is source-confirmed, default-off and still needs an async silent-peer fault test.
+Command: existing image 77682eea5054, docker run --rm --network none, read-only
+source, Python -B; full recipe and resource bounds in advisory section 13.
+Exit 0; disposable qdl-astra-review-20261010-fence confirmed absent afterwards.
+No new image, network, volume, credential or shared mutation; no full suite rerun.
+No broad cleanup or disk reclamation claimed; retain active/rollback artifacts
+while Claude works. Only this plan and advisory changed; no push/merge/rollout.
+Remaining decision: Claude assesses each recommendation and selects or disproves
+options against existing gates; this review does not certify release readiness.
