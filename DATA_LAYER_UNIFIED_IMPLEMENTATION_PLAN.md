@@ -71899,3 +71899,47 @@ Run 07:36-08:08Z under supervisor v2; guard all READY 64/64; MARK watcher 0 erro
   - `docker restart` of ingestor_okx_swap at 08:09:07Z (after the run, same image): restarts 0, 5 established
     sockets to remote port 443 (0x01BB), 0 to 8443.
   - TS endpoint_profiles.py moved too (TS 8b03ff2, pushed).
+
+### Pre-rc7 closure: heartbeat liveness, funding settlement boundary, per-item diagnostics, G13 producers - 2026-10-10 (Claude, subagents)
+
+Owner approved the full remaining sequence (rc7 build + CI, rollout, final stage 100 + G2, G13, G1-G14, release,
+cleanup). All items below are tested locally and not deployed.
+- Silent-socket liveness (0f30e17 from 40b7a3c):
+  - New optional ingestor fields liveness_ping_ms / liveness_dead_ms (absent = the old 15/30 s heartbeat rule;
+    bounds: ping >= 500, dead - ping >= 1000, dead <= 29000).
+  - A ping gets its full pong window from when it was actually sent. Busy sockets never ping.
+  - Renderer emits 1500/4000: worst-case detection 4.0 s after the last frame; quiet sockets send <= 0.67 pings/s
+    (Binance USD-M allows 10 incoming messages/s; OKX limits only subscribe/unsubscribe/login).
+  - Tests: ingestor 44/0, fmt and clippy clean.
+  - Rollout: the binary first (deny_unknown_fields), then the config from the new release dir
+    releases/v2.2.3-rc7-ingestor-liveness/ (prepared 2026-10-10 via a root --rm container: exactly the two keys
+    added; OKX URL 443; config_revision OKX 20 / Binance 19).
+- Stage 100g PARTIAL_RESULT root cause (a2184f4 from ec9abe9; probable, the item code was not recorded):
+  - The request was at 08:00:07Z, 7.1 s after an 8 h OKX funding settlement. stage100g is the only stage-100 run that
+    crossed a settlement, and this was its only funding failure.
+  - The alpha manifests set FUNDING_RATE max_freshness_ms 28,800,000, equal to the cadence. Query measured age from
+    the newest fundingTime with no allowance, so before OKX publishes the due row a healthy series is DATA_STALE.
+  - Fix: a 60 s settlement-publication allowance (the existing funding boundary tolerance) and one cache-bypassing
+    re-read of a cache-served stale funding series.
+  - Per-item diagnostics (R6 extension): `qdl_refusal` lines for reference_batch_item / warmup_batch_item; SDK
+    2.2.0 DataLayerError.diagnostics.item_problems on a require_all PARTIAL_RESULT; driver receipt item_problems.
+  - OKX publication latency after settlement is unmeasured; a read-only poll at a settlement will confirm the 60 s.
+- G13:
+  - e04db5b runner and inherit/rerun matrix: 0/65 cells inheritable (no final-provenance receipts).
+  - afe19f7 harness image set as a parameter.
+  - e4dfc3c DR05 scopes BINANCE/OKX/OKX_INVERSE.
+  - TS 3538b48 matrix v2: 325 + 11 inverse cells, exclusions with reasons. TS acce72d inverse DR05 producers. TS
+    aeb63f1 regenerated the W01 roster: the ROSTER_DRIFT root cause was that 6c44bf2 added a test naming 9 routes
+    and the roster was not regenerated.
+  - TS 6c44bf2 DR01 WRONG_ACCOUNT runner. It found IDR-085 (gateway scope lookup before the API key, i.e. account
+    enumeration), fixed in TS be21d49. The WRONG_ACCOUNT cell is deferred to the TS release (no gateway runs now).
+  - All 76 cells have producers.
+  - Runtime inputs prepared:
+    - catalog = the deployed /runtime/stable-source-bindings.yaml, sha fc3a1e1e..., identical to
+      p184-d1-rev11-20261009/base-catalog.yaml (catalog_revision 12, includes BTC-USD-SWAP);
+    - DR05 export = ~/.local/state/qdl-v2/dr05-export-20261010/public-export.json: 17 l2 bindings, public fields
+      only, from rust_core /runtime/core.json sha 91b19310...; validated by isolated_config for all three scopes.
+- Note for the release: the repo catalog stays revision 11, baked into the image for the bar edge checkpoint
+  (C.19). Query reads the runtime-mounted revision 12. This split is kept deliberately and stated in the release
+  notes.
+- Tests after merging everything: 18 modules, 347 OK (34 Redis skips).
