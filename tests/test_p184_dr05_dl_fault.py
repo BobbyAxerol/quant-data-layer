@@ -21,9 +21,12 @@ class PreparationTests(unittest.TestCase):
                             and r["level"] == "ISOLATED_FAULT" for r in rows))
 
     def test_namespace_rejects_shared_and_injection(self):
-        for value in ("production", NS + ";sh", "", "p184-dr08-0123456789abcdef"):
+        for value in ("production", NS + ";sh", "", "p184-dr08-0123456789abcdef",
+                      "p184-g12-dl-0123456789abcde", "p184-g12-dl-0123456789abcdef;sh",
+                      "p184-g13-dl-0123456789abcdef"):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 dr.namespace(value)
+        self.assertEqual(dr.namespace("p184-g12-dl-0123456789abcdef"), "p184-g12-dl-0123456789abcdef")
 
     def test_topology_is_bounded_and_disconnected(self):
         commands = dr.topology(NS, "/tmp/dr05-test")

@@ -33,8 +33,10 @@ CELLS = tuple(f"DR05.{fault}@{venue}" for venue in VENUES for fault in FAULTS)
 
 
 def namespace(value):
-    if not re.fullmatch(r"p184-dr05-dl-[0-9a-f]{16}", value):
-        raise ValueError("exact disposable DR05 namespace required")
+    # G12 (scripts/p184_g12_isolated_fault.py) reuses this material/frame code
+    # for its own disposable namespace; both shapes stay exact and disposable.
+    if not re.fullmatch(r"p184-(?:dr05|g12)-dl-[0-9a-f]{16}", value):
+        raise ValueError("exact disposable DR05/G12 namespace required")
     return value
 
 
