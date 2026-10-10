@@ -71616,3 +71616,26 @@ Guard: 93 samples, TS READY 64/64, restarts 0, OOM 0, disk 88 GB. Client contain
   - No gate or budget was changed.
 - Status: window C stage 100 NOT PASSED. Next: owner rolls query_kn_1, then query_kn_2, to rc3 (image only;
   rollback 514506122111), then a stage-100 rerun.
+
+### IDR-082 DL side: view event identity (v2.2.3, additive) - 2026-10-10 (Claude, subagent)
+
+Owner decision 2026-10-10: DL adds the trade identity; TS uses it in phase E. Commit 616342c, cherry-picked from
+3d5e14a.
+- The public market-data view now carries `event_id`: the lowercase hex of the canonical `EventEnvelope.event_id`.
+  - The id is a deterministic blake2b of venue, market, instrument, source and native trade id
+    (qdl/canonical/trade.py:129-139, qdl/domain/event_id.py).
+  - The stable catalog admits only 16-byte ids.
+- Query derives it in `StableSpoolQueryBackend._item`, which the KN backend inherits and caches as a static row field.
+  The SDK stream projection derives it from the same canonical envelope bytes. A snapshot of a trade and its stream
+  delivery therefore carry the same value.
+- Resampled aggregates and pass-through windows carry none.
+- The field is appended last, so existing members keep their bytes; the render-slot static layout includes it.
+  The SDK field is optional, and 2.1.0 readers ignore it (extra=ignore).
+- Also regenerated: OpenAPI snapshot; updated: KN contract doc and SDK changelog.
+- Tests:
+  - new tests/test_p184_view_event_identity.py (7, real Binance/OKX golden trades) and a KN Redis case;
+  - subagent: 26 modules, 386 tests, 1 known phase7 failure, 33 skipped; 127 more OK; KN on a disposable --rm Redis
+    33 OK;
+  - after the cherry-pick: 5 modules OK (33 Redis skips).
+- Cost: about 45 bytes more per row; warmup throughput not measured.
+- Status: tested locally, not deployed.
