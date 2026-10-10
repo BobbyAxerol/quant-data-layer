@@ -608,6 +608,16 @@ impl SessionLivenessWriter {
         self.write(session_id, generation, "LIVE", transport_at_ns, false)
     }
 
+    /// First record of a new session: written at once, never throttled.
+    fn begin(
+        &mut self,
+        session_id: &str,
+        generation: u64,
+        transport_at_ns: i64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.write(session_id, generation, "LIVE", transport_at_ns, true)
+    }
+
     fn disconnected(
         &mut self,
         session_id: &str,
@@ -645,11 +655,6 @@ impl SessionLivenessWriter {
         {
             return Ok(());
         }
-        let parent = self
-            .path
-            .parent()
-            .ok_or("session liveness path has no parent")?;
-        fs::create_dir_all(parent)?;
         let payload = serde_json::to_vec(&ProviderSessionLiveness {
             schema: SESSION_LIVENESS_SCHEMA,
             source_session_id: session_id,
@@ -659,19 +664,131 @@ impl SessionLivenessWriter {
             updated_at_ns: now_ns()?,
             config_revision: self.config_revision,
         })?;
-        let temporary =
-            self.path
-                .with_extension(format!("tmp-{}-{}", std::process::id(), now_ns()?));
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary)?;
-        file.write_all(&payload)?;
-        file.sync_all()?;
-        fs::rename(&temporary, &self.path)?;
-        File::open(parent)?.sync_all()?;
+        write_state_atomically(&self.path, &payload)?;
         self.last_written_ns = Some(transport_at_ns);
         Ok(())
+    }
+}
+
+/// Replace a small state file by rename, so a reader sees the old or the new
+/// content, never a partial one.
+fn write_state_atomically(
+    path: &Path,
+    payload: &[u8],
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let parent = path.parent().ok_or("state path has no parent")?;
+    fs::create_dir_all(parent)?;
+    let temporary = path.with_extension(format!("tmp-{}-{}", std::process::id(), now_ns()?));
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&temporary)?;
+    file.write_all(payload)?;
+    file.sync_all()?;
+    fs::rename(&temporary, path)?;
+    File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+const SESSION_LINEAGE_SCHEMA: &str = "qdl.provider-session-lineage.v1";
+const MAX_SESSION_LINEAGE_LINKS: usize = 32;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct SessionLink {
+    source_session_id: String,
+    connection_generation: u64,
+}
+
+#[derive(Serialize)]
+struct ProviderSessionLineage<'a> {
+    schema: &'static str,
+    lane: &'a str,
+    chain: Vec<SessionLink>,
+    updated_at_ns: i64,
+    config_revision: u64,
+}
+
+/// Per-lane chain of sessions that succeeded each other with no uncovered
+/// window (make-before-break on an OKX service-upgrade notice).
+///
+/// Each link was subscribed and ACKed while its predecessor was still
+/// reading, and the predecessor stopped reading only after that. So the last
+/// event a predecessor published for a binding stays that binding's latest
+/// event for as long as the chain's last session is live: anything newer was
+/// published by a later link. A reconnect that left a gap starts a new chain.
+/// The file is `lineage/<lane>.lineage` under the liveness directory:
+/// liveness readers that predate it list only regular files of that
+/// directory, and the container healthcheck (`find -name '*.json'`, which
+/// does recurse) does not match the extension.
+struct SessionLineageWriter {
+    path: PathBuf,
+    lane: String,
+    config_revision: u64,
+    chain: VecDeque<SessionLink>,
+}
+
+impl SessionLineageWriter {
+    fn new(
+        config: &IngestorConfig,
+        lane: &str,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        Self::at(
+            Path::new(&config.session_liveness_dir),
+            lane,
+            config.config_revision,
+        )
+    }
+
+    fn at(
+        liveness_dir: &Path,
+        lane: &str,
+        config_revision: u64,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        if lane.is_empty()
+            || lane.len() > 120
+            || !lane.chars().all(|character| {
+                character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+            })
+        {
+            return Err("session lineage lane is invalid".into());
+        }
+        Ok(Self {
+            path: liveness_dir.join("lineage").join(format!("{lane}.lineage")),
+            lane: lane.into(),
+            config_revision,
+            chain: VecDeque::new(),
+        })
+    }
+
+    /// Record a new session; `continued` only when it took over from the
+    /// chain's last session with overlap.
+    fn begin(
+        &mut self,
+        session_id: &str,
+        generation: u64,
+        continued: bool,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if session_id.is_empty() || session_id.len() > 256 || generation == 0 {
+            return Err("provider session lineage identity is invalid".into());
+        }
+        if !continued {
+            self.chain.clear();
+        }
+        self.chain.push_back(SessionLink {
+            source_session_id: session_id.into(),
+            connection_generation: generation,
+        });
+        while self.chain.len() > MAX_SESSION_LINEAGE_LINKS {
+            self.chain.pop_front();
+        }
+        let payload = serde_json::to_vec(&ProviderSessionLineage {
+            schema: SESSION_LINEAGE_SCHEMA,
+            lane: &self.lane,
+            chain: self.chain.iter().cloned().collect(),
+            updated_at_ns: now_ns()?,
+            config_revision: self.config_revision,
+        })?;
+        write_state_atomically(&self.path, &payload)
     }
 }
 
@@ -2211,13 +2328,264 @@ struct OkxServiceShard {
     bindings: Vec<RawBinding>,
 }
 
+type BoxError = Box<dyn std::error::Error + Send + Sync>;
+type OkxSocket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+type OkxWriter = futures_util::stream::SplitSink<OkxSocket, Message>;
+type OkxReader = futures_util::stream::SplitStream<OkxSocket>;
+type OkxStandby = Pin<Box<dyn Future<Output = Result<OkxEstablished, OkxEstablishError>> + Send>>;
+
+/// OKX documents at most three WebSocket connection requests per second per
+/// IP. Every OKX lane of this process connects through one pacer, so an
+/// immediate reconnect of several lanes at once cannot exceed that limit.
+const OKX_CONNECT_SPACING: Duration = Duration::from_millis(350);
+
+#[derive(Clone, Default)]
+struct OkxConnectPacer {
+    next: Arc<tokio::sync::Mutex<Option<Instant>>>,
+}
+
+impl OkxConnectPacer {
+    async fn admit(&self) {
+        let mut next = self.next.lock().await;
+        if let Some(at) = *next {
+            tokio::time::sleep_until(at).await;
+        }
+        *next = Some(Instant::now() + OKX_CONNECT_SPACING);
+    }
+}
+
+/// Why an OKX session ended; logged with every disconnect so the cause of a
+/// stale window is evidence, not inference.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum OkxSessionEnd {
+    /// `event: notice` (64008: service upgrade). The standby session took over
+    /// before this one stopped reading; no frame window was left uncovered.
+    NoticeHandover {
+        code: String,
+    },
+    /// `event: notice`, but no standby session could be established before
+    /// the old connection ended.
+    Notice {
+        code: String,
+    },
+    Closed {
+        code: Option<u16>,
+        reason: String,
+    },
+    Eof,
+    ReadError(String),
+    WriteError(String),
+    HeartbeatTimeout,
+    BookResync,
+}
+
+impl OkxSessionEnd {
+    fn cause(&self) -> &'static str {
+        match self {
+            Self::NoticeHandover { .. } => "NOTICE_HANDOVER",
+            Self::Notice { .. } => "NOTICE",
+            Self::Closed { .. } => "CLOSE_FRAME",
+            Self::Eof => "EOF",
+            Self::ReadError(_) => "READ_ERROR",
+            Self::WriteError(_) => "WRITE_ERROR",
+            Self::HeartbeatTimeout => "HEARTBEAT_TIMEOUT",
+            Self::BookResync => "BOOK_RESYNC",
+        }
+    }
+
+    fn detail(&self) -> Value {
+        match self {
+            Self::NoticeHandover { code } | Self::Notice { code } => json!({"code": code}),
+            Self::Closed { code, reason } => json!({"code": code, "reason": reason}),
+            Self::ReadError(error) | Self::WriteError(error) => json!({"error": error}),
+            Self::Eof | Self::HeartbeatTimeout | Self::BookResync => Value::Null,
+        }
+    }
+
+    fn handed_over(&self) -> bool {
+        matches!(self, Self::NoticeHandover { .. })
+    }
+}
+
+/// The OKX service-upgrade notice code, or None for any other payload.
+///
+/// OKX pushes `{"event":"notice","code":"64008",...}` 60 seconds before a
+/// service upgrade closes the connection (public, private and, since
+/// 2026-06-11, business endpoints).
+fn okx_notice_code(payload: &Value) -> Option<String> {
+    (payload.get("event").and_then(Value::as_str) == Some("notice")).then(|| {
+        payload
+            .get("code")
+            .and_then(Value::as_str)
+            .unwrap_or("missing")
+            .to_owned()
+    })
+}
+
+/// Delay before reconnecting after a session ended.
+///
+/// `failures` counts consecutive session ends and connect failures and is
+/// reset by any durable publish. A session that delivered data reconnects at
+/// once (`failures == 1`): a fixed backoff there is pure stale window. A
+/// session that ended again without delivering anything backs off as before.
+fn okx_reconnect_delay_ms(backoff: BackoffPolicy, failures: u32) -> u64 {
+    if failures <= 1 {
+        0
+    } else {
+        backoff.delay_ms(failures, failures.min(10_000) as u16)
+    }
+}
+
+/// Idle-read outcome of the OKX keepalive: OKX closes a connection that has
+/// pushed nothing for 30 seconds; a client sends the text `ping` after N < 30
+/// idle seconds and reconnects when no `pong` follows within N seconds.
+#[derive(Debug, Eq, PartialEq)]
+enum OkxKeepalive {
+    SendPing,
+    Dead,
+}
+
+fn okx_keepalive_on_idle(ping_outstanding: bool) -> OkxKeepalive {
+    if ping_outstanding {
+        OkxKeepalive::Dead
+    } else {
+        OkxKeepalive::SendPing
+    }
+}
+
+struct OkxEstablished {
+    writer: OkxWriter,
+    reader: OkxReader,
+    generation: u64,
+    session_id: String,
+    pre_ack_frames: VecDeque<PendingRawFrame>,
+    connect_started_ns: i64,
+    ready_at_ns: i64,
+    /// A service-upgrade notice arrived while subscribing; this session must
+    /// be replaced as soon as it is live.
+    notice_code: Option<String>,
+}
+
+#[derive(Debug)]
+enum OkxEstablishError {
+    Connect(BoxError),
+    Subscribe(BoxError),
+}
+
+impl std::fmt::Display for OkxEstablishError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Connect(error) => write!(formatter, "connect: {error}"),
+            Self::Subscribe(error) => write!(formatter, "subscribe: {error}"),
+        }
+    }
+}
+
+/// Connect one OKX session and wait until every subscription is ACKed.
+///
+/// It never publishes: frames that arrive before the last ACK are returned in
+/// `pre_ack_frames`, stamped with this session's identity, for the caller to
+/// publish only after the previous generation has stopped publishing. That
+/// keeps the connection-generation fences (ordering tracker and L2 book core)
+/// seeing generation N strictly before N+1 even when the two sockets overlap.
+async fn okx_establish(
+    url: String,
+    subscriptions: Arc<Vec<OkxSubscription>>,
+    bindings: Arc<HashMap<String, RawBinding>>,
+    session_prefix: String,
+    generation: u64,
+    max_pre_ack_frames: usize,
+    pacer: OkxConnectPacer,
+) -> Result<OkxEstablished, OkxEstablishError> {
+    pacer.admit().await;
+    let connect_started_ns = now_ns().map_err(OkxEstablishError::Connect)?;
+    let (socket, _) = connect_async(&url)
+        .await
+        .map_err(|error| OkxEstablishError::Connect(error.into()))?;
+    let (mut writer, mut reader) = socket.split();
+    let subscribed: Result<_, BoxError> = async {
+        let command_id = generation.to_string();
+        writer
+            .send(Message::Text(okx_subscription_command(
+                &command_id,
+                &subscriptions,
+            )?))
+            .await?;
+        let session_id = format!("{session_prefix}-{generation}-{}", now_ns()?);
+        let mut pending = subscriptions
+            .iter()
+            .map(|item| (item.channel.clone(), item.inst_id.clone()))
+            .collect::<Vec<_>>();
+        let mut pre_ack_frames = VecDeque::new();
+        let mut notice_code = None;
+        while !pending.is_empty() {
+            let message = tokio::time::timeout(Duration::from_secs(10), reader.next())
+                .await
+                .map_err(|_| "OKX subscription ACK timed out")?
+                .ok_or("OKX socket closed before subscription ACK")??;
+            match message {
+                Message::Ping(payload) => {
+                    writer.send(Message::Pong(payload)).await?;
+                }
+                Message::Pong(_) => {}
+                Message::Text(payload) => {
+                    let raw_text = payload.to_string();
+                    if raw_text == "pong" {
+                        continue;
+                    }
+                    let decoded: Value = serde_json::from_str(&raw_text)?;
+                    if let Some(code) = okx_notice_code(&decoded) {
+                        notice_code = Some(code);
+                        continue;
+                    }
+                    if parse_okx_subscription_ack(&decoded, &command_id, &mut pending)? {
+                        continue;
+                    }
+                    if pre_ack_frames.len() >= max_pre_ack_frames {
+                        return Err(
+                            "OKX pre-ACK frame buffer exceeded durable publish bound".into()
+                        );
+                    }
+                    pre_ack_frames.push_back(pending_okx_frame(
+                        &bindings,
+                        &session_id,
+                        generation,
+                        raw_text,
+                        now_ns()?,
+                    )?);
+                }
+                Message::Close(_) => {
+                    return Err("OKX socket closed before subscription ACK".into());
+                }
+                _ => {}
+            }
+        }
+        Ok::<_, BoxError>((session_id, pre_ack_frames, notice_code))
+    }
+    .await;
+    let (session_id, pre_ack_frames, notice_code) =
+        subscribed.map_err(OkxEstablishError::Subscribe)?;
+    Ok(OkxEstablished {
+        writer,
+        reader,
+        generation,
+        session_id,
+        pre_ack_frames,
+        connect_started_ns,
+        ready_at_ns: now_ns().map_err(OkxEstablishError::Subscribe)?,
+        notice_code,
+    })
+}
+
 async fn run_okx_service(
     shard: OkxServiceShard,
     config: Arc<IngestorConfig>,
     accepted: Arc<AtomicU64>,
     coalesced_latest: Arc<AtomicU64>,
     stopped: Arc<AtomicBool>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pacer: OkxConnectPacer,
+) -> Result<(), BoxError> {
     let OkxServiceShard {
         service,
         shard_index,
@@ -2227,38 +2595,28 @@ async fn run_okx_service(
     if bindings.is_empty() {
         return Ok(());
     }
-    let publisher = RawPublisher::new(
-        &config,
-        &format!(
-            "{}-{shard_index:03}",
-            match service {
-                OkxService::Public => "okx-public",
-                OkxService::Business => "okx-business",
-            }
-        ),
-    )?;
-    let subscriptions: Vec<OkxSubscription> = bindings
-        .iter()
-        .map(|binding| OkxSubscription {
-            channel: binding.native_channel.clone(),
-            inst_id: binding.native_symbol.clone(),
-        })
-        .collect();
-    let binding_map: HashMap<String, RawBinding> = bindings
-        .into_iter()
-        .map(|binding| (binding.key(), binding))
-        .collect();
-    let mut resync_listener = book_resync_listener(
-        &config,
-        &format!(
-            "okx-{}-{shard_index:03}",
-            match service {
-                OkxService::Public => "public",
-                OkxService::Business => "business",
-            }
-        ),
-        &binding_map,
-    )?;
+    let service_name = match service {
+        OkxService::Public => "public",
+        OkxService::Business => "business",
+    };
+    let lane = format!("okx-{service_name}-{shard_index:03}");
+    let publisher = RawPublisher::new(&config, &lane)?;
+    let subscriptions: Arc<Vec<OkxSubscription>> = Arc::new(
+        bindings
+            .iter()
+            .map(|binding| OkxSubscription {
+                channel: binding.native_channel.clone(),
+                inst_id: binding.native_symbol.clone(),
+            })
+            .collect(),
+    );
+    let binding_map: Arc<HashMap<String, RawBinding>> = Arc::new(
+        bindings
+            .into_iter()
+            .map(|binding| (binding.key(), binding))
+            .collect(),
+    );
+    let mut resync_listener = book_resync_listener(&config, &lane, &binding_map)?;
     let backoff = BackoffPolicy {
         initial_ms: 250,
         maximum_ms: 30_000,
@@ -2267,259 +2625,202 @@ async fn run_okx_service(
     }
     .validate()?;
     let expires = deadline(config.max_runtime_seconds);
-    let service_name = match service {
-        OkxService::Public => "public",
-        OkxService::Business => "business",
-    };
-    let generation_path = format!(
-        "{}.okx-{service_name}-{shard_index:03}",
-        config.generation_state_path
-    );
+    let generation_path = format!("{}.{lane}", config.generation_state_path);
     let mut failures = 0_u32;
     let mut budget = ControlRequestBudget::default();
+    let mut liveness = SessionLivenessWriter::new(&config, &lane)?;
+    let mut lineage = SessionLineageWriter::new(&config, &lane)?;
+    // A standby session that was already established when the previous one
+    // handed over; it is used instead of opening a new connection.
+    let mut handover: Option<OkxEstablished> = None;
+    // When the previous session ended, for the reconnect-time evidence.
+    let mut previous_end: Option<(String, u64, i64, i64)> = None;
+    let establish = |generation: u64| {
+        okx_establish(
+            url.clone(),
+            subscriptions.clone(),
+            binding_map.clone(),
+            lane.clone(),
+            generation,
+            config.max_inflight_publishes,
+            pacer.clone(),
+        )
+    };
     while !should_stop(&stopped, &accepted, config.max_events, expires) {
-        let generation = next_connection_generation(Path::new(&generation_path))?;
-        match connect_async(&url).await {
-            Ok((socket, _)) => {
-                let (mut writer, mut reader) = socket.split();
-                let command_id = generation.to_string();
+        let continued = handover.is_some();
+        let established = match handover.take() {
+            Some(established) => established,
+            None => {
+                let generation = next_connection_generation(Path::new(&generation_path))?;
                 budget.permit(now_ns()?)?;
-                writer
-                    .send(Message::Text(okx_subscription_command(
-                        &command_id,
-                        &subscriptions,
-                    )?))
-                    .await?;
-                let session_id = format!(
-                    "okx-{}-{shard_index:03}-{generation}-{}",
-                    match service {
-                        OkxService::Public => "public",
-                        OkxService::Business => "business",
-                    },
-                    now_ns()?
-                );
-                let mut pending = subscriptions
-                    .iter()
-                    .map(|item| (item.channel.clone(), item.inst_id.clone()))
-                    .collect::<Vec<_>>();
-                let mut pre_ack_frames = VecDeque::new();
-                while !pending.is_empty() {
-                    let message = tokio::time::timeout(Duration::from_secs(10), reader.next())
-                        .await
-                        .map_err(|_| "OKX subscription ACK timed out")?
-                        .ok_or("OKX socket closed before subscription ACK")??;
-                    match message {
-                        Message::Ping(payload) => {
-                            writer.send(Message::Pong(payload)).await?;
-                        }
-                        Message::Pong(_) => {}
-                        Message::Text(payload) => {
-                            let raw_text = payload.to_string();
-                            let decoded: Value = serde_json::from_str(&raw_text)?;
-                            if parse_okx_subscription_ack(&decoded, &command_id, &mut pending)? {
-                                continue;
-                            }
-                            if pre_ack_frames.len() >= config.max_inflight_publishes {
-                                return Err(
-                                    "OKX pre-ACK frame buffer exceeded durable publish bound"
-                                        .into(),
-                                );
-                            }
-                            pre_ack_frames.push_back(pending_okx_frame(
-                                &binding_map,
-                                &session_id,
-                                generation,
-                                raw_text,
-                                now_ns()?,
-                            )?);
-                        }
-                        Message::Close(_) => {
-                            return Err("OKX socket closed before subscription ACK".into());
-                        }
-                        _ => {}
+                match establish(generation).await {
+                    Ok(established) => established,
+                    Err(OkxEstablishError::Subscribe(error)) => return Err(error),
+                    Err(OkxEstablishError::Connect(error)) => {
+                        failures = failures.saturating_add(1);
+                        eprintln!(
+                            "{}",
+                            serde_json::to_string(&json!({
+                                "event": "qdl_native_connect_failed",
+                                "runtime": "OKX",
+                                "service": format!("{:?}", service).to_ascii_uppercase(),
+                                "lane": lane,
+                                "attempt": failures,
+                                "error": error.to_string(),
+                            }))?
+                        );
+                        tokio::time::sleep(Duration::from_millis(
+                            backoff.delay_ms(failures, failures.min(10_000) as u16),
+                        ))
+                        .await;
+                        continue;
                     }
                 }
-                let mut liveness = SessionLivenessWriter::new(
-                    &config,
-                    &format!("okx-{service_name}-{shard_index:03}"),
-                )?;
-                liveness.live(&session_id, generation, now_ns()?)?;
-                let mut inflight = FuturesUnordered::<RawPublishFuture>::new();
-                let mut latest = LatestStateBuffer::default();
-                let mut latest_tick =
-                    tokio::time::interval(Duration::from_millis(config.latest_state_flush_ms));
-                latest_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                latest_tick.tick().await;
-                match book_session_bootstrap(ProviderRuntime::Okx, &binding_map) {
-                    Some(BookSessionBootstrap::InitialSnapshotAndGapResync) | None => {}
-                    Some(BookSessionBootstrap::PeriodicRestAnchor(_)) => {
-                        return Err("OKX BOOK lane cannot use a periodic REST-anchor policy".into())
+            }
+        };
+        let OkxEstablished {
+            mut writer,
+            mut reader,
+            generation,
+            session_id,
+            mut pre_ack_frames,
+            connect_started_ns,
+            ready_at_ns,
+            notice_code: early_notice,
+        } = established;
+        // Lineage first, then the session record: a reader that sees the new
+        // record can always resolve the predecessor through the chain.
+        lineage.begin(&session_id, generation, continued)?;
+        liveness.begin(&session_id, generation, ready_at_ns)?;
+        eprintln!(
+            "{}",
+            serde_json::to_string(&json!({
+                "event": "qdl_native_session_ready",
+                "runtime": "OKX",
+                "service": format!("{:?}", service).to_ascii_uppercase(),
+                "lane": lane,
+                "generation": generation,
+                "session": session_id,
+                "continued": continued,
+                "connect_to_ready_ms": (ready_at_ns - connect_started_ns) / 1_000_000,
+                "previous_session": previous_end.as_ref().map(|value| value.0.clone()),
+                "previous_generation": previous_end.as_ref().map(|value| value.1),
+                "previous_last_frame_to_ready_ms": previous_end
+                    .as_ref()
+                    .map(|value| (ready_at_ns - value.2) / 1_000_000),
+                "previous_end_to_ready_ms": previous_end
+                    .as_ref()
+                    .map(|value| (ready_at_ns - value.3) / 1_000_000),
+            }))?
+        );
+        previous_end = None;
+        let mut inflight = FuturesUnordered::<RawPublishFuture>::new();
+        let mut latest = LatestStateBuffer::default();
+        let mut latest_tick =
+            tokio::time::interval(Duration::from_millis(config.latest_state_flush_ms));
+        latest_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        latest_tick.tick().await;
+        match book_session_bootstrap(ProviderRuntime::Okx, &binding_map) {
+            Some(BookSessionBootstrap::InitialSnapshotAndGapResync) | None => {}
+            Some(BookSessionBootstrap::PeriodicRestAnchor(_)) => {
+                return Err("OKX BOOK lane cannot use a periodic REST-anchor policy".into())
+            }
+        }
+        let mut ended: Option<OkxSessionEnd> = None;
+        let mut publish_error = None;
+        let mut exhausted = false;
+        let mut last_frame_at_ns = ready_at_ns;
+        let mut ping_outstanding = false;
+        let mut standby: Option<OkxStandby> = None;
+        let mut notice: Option<String> = None;
+        if let Some(code) = early_notice {
+            let generation = next_connection_generation(Path::new(&generation_path))?;
+            budget.permit(now_ns()?)?;
+            standby = Some(Box::pin(establish(generation)));
+            notice = Some(code);
+        }
+        while let Some(frame) = pre_ack_frames.pop_front() {
+            if !publish_pending_frame(
+                frame,
+                &mut PendingPublishWindow {
+                    publisher: &publisher,
+                    latest: &mut latest,
+                    inflight: &mut inflight,
+                    accepted: &accepted,
+                    coalesced_latest: &coalesced_latest,
+                    max_events: config.max_events,
+                    max_inflight: config.max_inflight_publishes,
+                    stopped: &stopped,
+                },
+            )
+            .await?
+            {
+                exhausted = true;
+                break;
+            }
+        }
+        while !exhausted && !should_stop(&stopped, &accepted, config.max_events, expires) {
+            if inflight.len() >= config.max_inflight_publishes {
+                match inflight.next().await {
+                    Some(Ok(())) => {
+                        failures = 0;
+                        continue;
                     }
-                }
-                let mut disconnected = false;
-                let mut publish_error = None;
-                let mut exhausted = false;
-                while let Some(frame) = pre_ack_frames.pop_front() {
-                    if !publish_pending_frame(
-                        frame,
-                        &mut PendingPublishWindow {
-                            publisher: &publisher,
-                            latest: &mut latest,
-                            inflight: &mut inflight,
-                            accepted: &accepted,
-                            coalesced_latest: &coalesced_latest,
-                            max_events: config.max_events,
-                            max_inflight: config.max_inflight_publishes,
-                            stopped: &stopped,
-                        },
-                    )
-                    .await?
-                    {
-                        exhausted = true;
+                    Some(Err(error)) => {
+                        publish_error = Some(error);
                         break;
                     }
+                    None => return Err("lossless publish window became inconsistent".into()),
                 }
-                while !exhausted && !should_stop(&stopped, &accepted, config.max_events, expires) {
-                    if inflight.len() >= config.max_inflight_publishes {
-                        match inflight.next().await {
-                            Some(Ok(())) => {
-                                failures = 0;
-                                continue;
-                            }
-                            Some(Err(error)) => {
-                                publish_error = Some(error);
-                                break;
-                            }
-                            None => {
-                                return Err("lossless publish window became inconsistent".into())
-                            }
-                        }
+            }
+            let read =
+                tokio::time::timeout(Duration::from_secs(config.heartbeat_seconds), reader.next());
+            tokio::pin!(read);
+            // Control backlog must not take priority over socket and publish progress.
+            let outcome = tokio::select! {
+                requested = book_resync_requested(&mut resync_listener, &config, &binding_map, &session_id, generation) => {
+                    if requested? {
+                        eprintln!("{{\"event\":\"qdl_native_book_resync_requested\",\"session\":\"{}\",\"generation\":{}}}", session_id, generation);
+                        ended = Some(OkxSessionEnd::BookResync);
+                        break;
                     }
-                    let read = tokio::time::timeout(
-                        Duration::from_secs(config.heartbeat_seconds),
-                        reader.next(),
-                    );
-                    tokio::pin!(read);
-                    // Control backlog must not take priority over socket and publish progress.
-                    let outcome = tokio::select! {
-                        requested = book_resync_requested(&mut resync_listener, &config, &binding_map, &session_id, generation) => {
-                            if requested? {
-                                eprintln!("{{\"event\":\"qdl_native_book_resync_requested\",\"session\":\"{}\",\"generation\":{}}}", session_id, generation);
-                                disconnected = true;
-                                break;
-                            }
-                            continue;
-                        }
-                        _ = latest_tick.tick(), if !latest.is_empty() => {
-                            if !flush_latest_concurrent(
-                                &mut latest,
-                                &publisher,
-                                &mut inflight,
-                                &accepted,
-                                config.max_events,
-                                config.max_inflight_publishes,
-                                &stopped,
-                            ).await? {
-                                break;
-                            }
-                            failures = 0;
-                            continue;
-                        }
-                        result = &mut read => Some(result),
-                        completed = inflight.next(), if !inflight.is_empty() => {
-                            match completed {
-                                Some(Ok(())) => {
-                                    failures = 0;
-                                    continue;
-                                }
-                                Some(Err(error)) => {
-                                    publish_error = Some(error);
-                                    break;
-                                }
-                                None => {
-                                return Err("lossless publish window became inconsistent".into())
-                            }
-                            }
-                        }
-                    };
-                    let message = match outcome.expect("OKX read outcome is present") {
-                        Ok(Some(Ok(message))) => {
-                            if !matches!(message, Message::Close(_)) {
-                                liveness.live(&session_id, generation, now_ns()?)?;
-                            }
-                            message
-                        }
-                        Ok(Some(Err(_))) | Ok(None) => {
-                            liveness.disconnected(&session_id, generation, now_ns()?)?;
-                            disconnected = true;
+                    continue;
+                }
+                ready = async {
+                    match standby.as_mut() {
+                        Some(future) => future.await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    standby = None;
+                    match ready {
+                        Ok(next) => {
+                            // Make-before-break: the successor is subscribed
+                            // while this socket still delivers, so stopping
+                            // here leaves no uncovered window.
+                            handover = Some(next);
+                            ended = Some(OkxSessionEnd::NoticeHandover {
+                                code: notice.clone().unwrap_or_default(),
+                            });
                             break;
                         }
-                        Err(_) => {
-                            writer.send(Message::Text("ping".into())).await?;
-                            match tokio::time::timeout(
-                                Duration::from_secs(config.heartbeat_seconds),
-                                reader.next(),
-                            )
-                            .await
-                            {
-                                Ok(Some(Ok(message)))
-                                    if message.is_text() && message.to_text()? == "pong" =>
-                                {
-                                    liveness.live(&session_id, generation, now_ns()?)?;
-                                    continue;
-                                }
-                                _ => {
-                                    liveness.disconnected(&session_id, generation, now_ns()?)?;
-                                    disconnected = true;
-                                    break;
-                                }
-                            }
+                        Err(error) => {
+                            eprintln!(
+                                "{}",
+                                serde_json::to_string(&json!({
+                                    "event": "qdl_native_standby_failed",
+                                    "runtime": "OKX",
+                                    "lane": lane,
+                                    "generation": generation,
+                                    "error": error.to_string(),
+                                }))?
+                            );
+                            continue;
                         }
-                    };
-                    if let Message::Ping(payload) = message {
-                        writer.send(Message::Pong(payload)).await?;
-                        continue;
-                    }
-                    if !message.is_text() {
-                        continue;
-                    }
-                    let raw_text = message.to_text()?.to_owned();
-                    let payload: Value = serde_json::from_str(&raw_text)?;
-                    if payload.get("event").and_then(Value::as_str) == Some("notice") {
-                        liveness.disconnected(&session_id, generation, now_ns()?)?;
-                        disconnected = true;
-                        break;
-                    }
-                    if payload.get("event").is_some() {
-                        return Err("unexpected OKX control event after subscription".into());
-                    }
-                    let frame = pending_okx_frame(
-                        &binding_map,
-                        &session_id,
-                        generation,
-                        raw_text,
-                        now_ns()?,
-                    )?;
-                    if !publish_pending_frame(
-                        frame,
-                        &mut PendingPublishWindow {
-                            publisher: &publisher,
-                            latest: &mut latest,
-                            inflight: &mut inflight,
-                            accepted: &accepted,
-                            coalesced_latest: &coalesced_latest,
-                            max_events: config.max_events,
-                            max_inflight: config.max_inflight_publishes,
-                            stopped: &stopped,
-                        },
-                    )
-                    .await?
-                    {
-                        break;
                     }
                 }
-                if publish_error.is_none() {
-                    if let Err(error) = flush_latest_concurrent(
+                _ = latest_tick.tick(), if !latest.is_empty() => {
+                    if !flush_latest_concurrent(
                         &mut latest,
                         &publisher,
                         &mut inflight,
@@ -2527,58 +2828,234 @@ async fn run_okx_service(
                         config.max_events,
                         config.max_inflight_publishes,
                         &stopped,
-                    )
-                    .await
-                    {
-                        publish_error = Some(error);
+                    ).await? {
+                        break;
+                    }
+                    failures = 0;
+                    continue;
+                }
+                result = &mut read => result,
+                completed = inflight.next(), if !inflight.is_empty() => {
+                    match completed {
+                        Some(Ok(())) => {
+                            failures = 0;
+                            continue;
+                        }
+                        Some(Err(error)) => {
+                            publish_error = Some(error);
+                            break;
+                        }
+                        None => {
+                            return Err("lossless publish window became inconsistent".into())
+                        }
                     }
                 }
-                while let Some(result) = inflight.next().await {
-                    match result {
-                        Ok(()) => failures = 0,
-                        Err(error) if publish_error.is_none() => publish_error = Some(error),
-                        Err(_) => {}
+            };
+            let message = match outcome {
+                Ok(Some(Ok(message))) => {
+                    if let Message::Close(frame) = &message {
+                        ended = Some(OkxSessionEnd::Closed {
+                            code: frame.as_ref().map(|value| u16::from(value.code)),
+                            reason: frame
+                                .as_ref()
+                                .map(|value| value.reason.to_string())
+                                .unwrap_or_default(),
+                        });
+                        break;
                     }
+                    let read_at_ns = now_ns()?;
+                    last_frame_at_ns = read_at_ns;
+                    ping_outstanding = false;
+                    liveness.live(&session_id, generation, read_at_ns)?;
+                    message
                 }
-                liveness.disconnected(&session_id, generation, now_ns()?)?;
-                if let Some(error) = publish_error {
-                    return Err(error.into());
+                Ok(Some(Err(error))) => {
+                    ended = Some(OkxSessionEnd::ReadError(error.to_string()));
+                    break;
                 }
-                if disconnected && !should_stop(&stopped, &accepted, config.max_events, expires) {
-                    failures = failures.saturating_add(1);
-                    eprintln!(
-                        "{}",
-                        serde_json::to_string(&json!({
-                            "event": "qdl_native_session_disconnected",
-                            "runtime": "OKX",
-                            "service": format!("{:?}", service).to_ascii_uppercase(),
-                            "attempt": failures,
-                            "generation": generation,
-                        }))?
-                    );
-                    tokio::time::sleep(Duration::from_millis(
-                        backoff.delay_ms(failures, failures.min(10_000) as u16),
-                    ))
-                    .await;
+                Ok(None) => {
+                    ended = Some(OkxSessionEnd::Eof);
+                    break;
                 }
+                Err(_) => match okx_keepalive_on_idle(ping_outstanding) {
+                    OkxKeepalive::Dead => {
+                        ended = Some(OkxSessionEnd::HeartbeatTimeout);
+                        break;
+                    }
+                    OkxKeepalive::SendPing => {
+                        if let Err(error) = writer.send(Message::Text("ping".into())).await {
+                            ended = Some(OkxSessionEnd::WriteError(error.to_string()));
+                            break;
+                        }
+                        ping_outstanding = true;
+                        continue;
+                    }
+                },
+            };
+            if let Message::Ping(payload) = message {
+                if let Err(error) = writer.send(Message::Pong(payload)).await {
+                    ended = Some(OkxSessionEnd::WriteError(error.to_string()));
+                    break;
+                }
+                continue;
             }
-            Err(error) => {
-                failures = failures.saturating_add(1);
+            if !message.is_text() {
+                continue;
+            }
+            let raw_text = message.to_text()?.to_owned();
+            if raw_text == "pong" {
+                continue;
+            }
+            let payload: Value = serde_json::from_str(&raw_text)?;
+            if let Some(code) = okx_notice_code(&payload) {
+                // Keep publishing from this connection until the successor is
+                // subscribed; OKX keeps it open for 60 seconds after the notice.
+                // A repeated notice retries a standby that failed earlier.
+                if standby.is_none() {
+                    let next_generation = next_connection_generation(Path::new(&generation_path))?;
+                    budget.permit(now_ns()?)?;
+                    standby = Some(Box::pin(establish(next_generation)));
+                }
                 eprintln!(
                     "{}",
                     serde_json::to_string(&json!({
-                        "event": "qdl_native_connect_failed",
+                        "event": "qdl_native_session_notice",
                         "runtime": "OKX",
-                        "service": format!("{:?}", service).to_ascii_uppercase(),
-                        "attempt": failures,
-                        "error": error.to_string(),
+                        "lane": lane,
+                        "generation": generation,
+                        "code": code,
                     }))?
                 );
-                tokio::time::sleep(Duration::from_millis(
-                    backoff.delay_ms(failures, failures.min(10_000) as u16),
-                ))
-                .await;
+                notice = Some(code);
+                continue;
             }
+            if payload.get("event").is_some() {
+                return Err("unexpected OKX control event after subscription".into());
+            }
+            let frame = pending_okx_frame(
+                &binding_map,
+                &session_id,
+                generation,
+                raw_text,
+                last_frame_at_ns,
+            )?;
+            if !publish_pending_frame(
+                frame,
+                &mut PendingPublishWindow {
+                    publisher: &publisher,
+                    latest: &mut latest,
+                    inflight: &mut inflight,
+                    accepted: &accepted,
+                    coalesced_latest: &coalesced_latest,
+                    max_events: config.max_events,
+                    max_inflight: config.max_inflight_publishes,
+                    stopped: &stopped,
+                },
+            )
+            .await?
+            {
+                break;
+            }
+        }
+        // A notice whose standby never became ready is still the cause.
+        if let (Some(code), Some(end)) = (notice.as_ref(), ended.as_ref()) {
+            if !end.handed_over() {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&json!({
+                        "event": "qdl_native_notice_without_handover",
+                        "runtime": "OKX",
+                        "lane": lane,
+                        "generation": generation,
+                        "code": code,
+                        "cause": end.cause(),
+                    }))?
+                );
+                if !matches!(end, OkxSessionEnd::BookResync) {
+                    ended = Some(OkxSessionEnd::Notice { code: code.clone() });
+                }
+            }
+        }
+        // An unfinished standby is dropped here; its generation number stays
+        // consumed (generations only need to increase).
+        drop(standby);
+        let detected_at_ns = now_ns()?;
+        let handed_over = ended.as_ref().is_some_and(OkxSessionEnd::handed_over);
+        if ended.is_some() && !handed_over {
+            // Not covered by a successor: mark this session down at once,
+            // before the drain below, so readers stop trusting it.
+            liveness.disconnected(&session_id, generation, detected_at_ns)?;
+        }
+        if publish_error.is_none() {
+            if let Err(error) = flush_latest_concurrent(
+                &mut latest,
+                &publisher,
+                &mut inflight,
+                &accepted,
+                config.max_events,
+                config.max_inflight_publishes,
+                &stopped,
+            )
+            .await
+            {
+                publish_error = Some(error);
+            }
+        }
+        while let Some(result) = inflight.next().await {
+            match result {
+                Ok(()) => failures = 0,
+                Err(error) if publish_error.is_none() => publish_error = Some(error),
+                Err(_) => {}
+            }
+        }
+        let stopping = should_stop(&stopped, &accepted, config.max_events, expires);
+        // A handed-over session stays LIVE until its successor's record
+        // replaces it, unless that successor will not be used after all.
+        if !handed_over || stopping || publish_error.is_some() {
+            liveness.disconnected(&session_id, generation, now_ns()?)?;
+        }
+        if let Some(error) = publish_error {
+            return Err(error.into());
+        }
+        let Some(end) = ended else {
+            // Stopped, or the event budget is spent.
+            continue;
+        };
+        if stopping {
+            continue;
+        }
+        failures = failures.saturating_add(1);
+        let drained_at_ns = now_ns()?;
+        eprintln!(
+            "{}",
+            serde_json::to_string(&json!({
+                "event": "qdl_native_session_disconnected",
+                "runtime": "OKX",
+                "service": format!("{:?}", service).to_ascii_uppercase(),
+                "lane": lane,
+                "attempt": failures,
+                "generation": generation,
+                "session": session_id,
+                "cause": end.cause(),
+                "detail": end.detail(),
+                "last_frame_to_detected_ms": (detected_at_ns - last_frame_at_ns) / 1_000_000,
+                "drain_ms": (drained_at_ns - detected_at_ns) / 1_000_000,
+            }))?
+        );
+        previous_end = Some((
+            session_id.clone(),
+            generation,
+            last_frame_at_ns,
+            detected_at_ns,
+        ));
+        if handed_over {
+            // The successor is live already; nothing to wait for.
+            failures = 0;
+            continue;
+        }
+        let delay = okx_reconnect_delay_ms(backoff, failures);
+        if delay > 0 {
+            tokio::time::sleep(Duration::from_millis(delay)).await;
         }
     }
     Ok(())
@@ -2620,6 +3097,7 @@ async fn run_okx(
         .business_websocket_url
         .clone()
         .ok_or("OKX business WebSocket URL is required")?;
+    let pacer = OkxConnectPacer::default();
     let mut futures = Vec::new();
     for (index, bindings) in
         partition_okx_bindings(&public, config.max_subscriptions_per_connection)
@@ -2637,6 +3115,7 @@ async fn run_okx(
             accepted.clone(),
             coalesced_latest.clone(),
             stopped.clone(),
+            pacer.clone(),
         ));
     }
     for (index, bindings) in
@@ -2655,6 +3134,7 @@ async fn run_okx(
             accepted.clone(),
             coalesced_latest.clone(),
             stopped.clone(),
+            pacer.clone(),
         ));
     }
     try_join_all(futures).await?;
@@ -3823,5 +4303,326 @@ mod resync_tests {
         )
         .await
         .is_err());
+    }
+}
+
+#[cfg(test)]
+mod okx_reconnect_tests {
+    use super::{
+        okx_establish, okx_keepalive_on_idle, okx_notice_code, okx_reconnect_delay_ms,
+        BackoffPolicy, DeliveryClass, OkxConnectPacer, OkxEstablishError, OkxKeepalive,
+        OkxSessionEnd, OkxSubscription, RawBinding, RawFeed, SessionLineageWriter,
+        OKX_CONNECT_SPACING,
+    };
+    use futures_util::{SinkExt, StreamExt};
+    use serde_json::{json, Value};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::net::TcpListener;
+    use tokio::time::Instant;
+    use tokio_tungstenite::tungstenite::Message;
+
+    fn okx_trade_binding() -> RawBinding {
+        RawBinding {
+            provider: "OKX_DIRECT".into(),
+            venue: "OKX".into(),
+            market: "SWAP".into(),
+            product_type: "PERPETUAL".into(),
+            native_symbol: "BTC-USDT-SWAP".into(),
+            native_channel: "trades".into(),
+            subscription_id: "test-source".into(),
+            adapter_version: "test/2.0.0".into(),
+            instrument_catalog_revision: 1,
+            feed: RawFeed::Trade,
+            delivery_class: DeliveryClass::Lossless,
+            l2: None,
+            mark_index_target: None,
+        }
+    }
+
+    fn backoff() -> BackoffPolicy {
+        BackoffPolicy {
+            initial_ms: 250,
+            maximum_ms: 30_000,
+            multiplier: 2,
+            jitter_bps: 2_000,
+        }
+        .validate()
+        .unwrap()
+    }
+
+    fn scratch_dir(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "qdl-okx-lineage-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn a_session_that_delivered_reconnects_without_backoff() {
+        // Production evidence 2026-10-10: every OKX reconnect took ~630 ms
+        // from the disconnect log to the new session id, 400 ms of it this
+        // fixed sleep (delay_ms(1, 1) of the 250 ms policy, jitter basis 1).
+        assert_eq!(backoff().delay_ms(1, 1), 400);
+        assert_eq!(okx_reconnect_delay_ms(backoff(), 1), 0);
+        // A session that ended again before delivering anything still backs off.
+        assert!(okx_reconnect_delay_ms(backoff(), 2) >= 800);
+        assert!((24_000..=30_000).contains(&okx_reconnect_delay_ms(backoff(), 30)));
+    }
+
+    #[test]
+    fn idle_read_pings_once_then_declares_the_connection_dead() {
+        assert_eq!(okx_keepalive_on_idle(false), OkxKeepalive::SendPing);
+        assert_eq!(okx_keepalive_on_idle(true), OkxKeepalive::Dead);
+    }
+
+    #[test]
+    fn only_the_okx_notice_event_is_a_service_upgrade_notice() {
+        let notice = json!({
+            "event": "notice",
+            "code": "64008",
+            "msg": "The connection will soon be closed for a service upgrade. Please reconnect.",
+            "connId": "a4d3ae55",
+        });
+        assert_eq!(okx_notice_code(&notice).as_deref(), Some("64008"));
+        assert_eq!(
+            okx_notice_code(&json!({"event": "notice"})).as_deref(),
+            Some("missing")
+        );
+        assert_eq!(
+            okx_notice_code(&json!({"event": "error", "code": "60012"})),
+            None
+        );
+        assert_eq!(
+            okx_notice_code(&json!({"arg": {"channel": "trades"}, "data": []})),
+            None
+        );
+    }
+
+    #[test]
+    fn only_a_notice_handover_counts_as_covered() {
+        let covered = OkxSessionEnd::NoticeHandover {
+            code: "64008".into(),
+        };
+        assert!(covered.handed_over());
+        assert_eq!(covered.cause(), "NOTICE_HANDOVER");
+        for end in [
+            OkxSessionEnd::Notice {
+                code: "64008".into(),
+            },
+            OkxSessionEnd::Closed {
+                code: Some(1001),
+                reason: "going away".into(),
+            },
+            OkxSessionEnd::Eof,
+            OkxSessionEnd::ReadError("reset".into()),
+            OkxSessionEnd::WriteError("broken pipe".into()),
+            OkxSessionEnd::HeartbeatTimeout,
+            OkxSessionEnd::BookResync,
+        ] {
+            assert!(!end.handed_over(), "{end:?}");
+        }
+        assert_eq!(
+            OkxSessionEnd::Closed {
+                code: Some(1001),
+                reason: "going away".into()
+            }
+            .detail(),
+            json!({"code": 1001, "reason": "going away"})
+        );
+    }
+
+    #[test]
+    fn lineage_chain_grows_only_on_overlap_and_resets_after_a_gap() {
+        let dir = scratch_dir("chain");
+        let mut writer = SessionLineageWriter::at(&dir, "okx-public-002", 20).unwrap();
+        let path = dir.join("lineage").join("okx-public-002.lineage");
+        let read = || -> Value { serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap() };
+        let chain = |value: &Value| -> Vec<(String, u64)> {
+            value["chain"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|link| {
+                    (
+                        link["source_session_id"].as_str().unwrap().to_owned(),
+                        link["connection_generation"].as_u64().unwrap(),
+                    )
+                })
+                .collect()
+        };
+
+        writer.begin("okx-public-002-167-1", 167, false).unwrap();
+        writer.begin("okx-public-002-168-2", 168, true).unwrap();
+        let value = read();
+        assert_eq!(value["schema"], "qdl.provider-session-lineage.v1");
+        assert_eq!(value["lane"], "okx-public-002");
+        assert_eq!(value["config_revision"], 20);
+        assert_eq!(
+            chain(&value),
+            vec![
+                ("okx-public-002-167-1".into(), 167),
+                ("okx-public-002-168-2".into(), 168)
+            ]
+        );
+
+        // A reconnect after a gap must not vouch for any earlier session.
+        writer.begin("okx-public-002-169-3", 169, false).unwrap();
+        assert_eq!(chain(&read()), vec![("okx-public-002-169-3".into(), 169)]);
+
+        for generation in 170..250_u64 {
+            writer
+                .begin(&format!("okx-public-002-{generation}-9"), generation, true)
+                .unwrap();
+        }
+        let links = chain(&read());
+        assert_eq!(links.len(), 32);
+        assert_eq!(links.last().unwrap().1, 249);
+        // The healthcheck matches '*.json' recursively; the lineage file must
+        // never be mistaken for a session record.
+        assert!(std::fs::read_dir(dir.join("lineage"))
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".json")));
+        assert!(SessionLineageWriter::at(&dir, "OKX_PUBLIC", 20).is_err());
+        assert!(writer.begin("", 1, true).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn connect_pacer_keeps_okx_connection_requests_under_three_per_second() {
+        let pacer = OkxConnectPacer::default();
+        let start = Instant::now();
+        for _ in 0..4 {
+            pacer.admit().await;
+        }
+        // Four admissions need three full spacings: fewer than 3 per second.
+        assert_eq!(start.elapsed(), OKX_CONNECT_SPACING * 3);
+        assert!(OKX_CONNECT_SPACING * 3 > Duration::from_secs(1));
+    }
+
+    /// One fake OKX endpoint: sends `script` before (optionally) ACKing.
+    async fn fake_okx(script: Vec<Value>, ack: bool) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let command = socket.next().await.unwrap().unwrap();
+            let command: Value = serde_json::from_str(command.to_text().unwrap()).unwrap();
+            assert_eq!(command["op"], "subscribe");
+            for message in script {
+                socket
+                    .send(Message::Text(message.to_string()))
+                    .await
+                    .unwrap();
+            }
+            if ack {
+                for arg in command["args"].as_array().unwrap() {
+                    socket
+                        .send(Message::Text(
+                            json!({"event": "subscribe", "arg": arg, "id": command["id"]})
+                                .to_string(),
+                        ))
+                        .await
+                        .unwrap();
+                }
+                // Hold the connection open, like a live venue.
+                while socket.next().await.is_some() {}
+            } else {
+                let _ = socket.close(None).await;
+            }
+        });
+        format!("ws://{address}/ws/v5/public")
+    }
+
+    fn subscriptions() -> (Arc<Vec<OkxSubscription>>, Arc<HashMap<String, RawBinding>>) {
+        let binding = okx_trade_binding();
+        (
+            Arc::new(vec![OkxSubscription {
+                channel: binding.native_channel.clone(),
+                inst_id: binding.native_symbol.clone(),
+            }]),
+            Arc::new(HashMap::from([(binding.key(), binding)])),
+        )
+    }
+
+    #[tokio::test]
+    async fn establish_buffers_pre_ack_frames_under_the_new_generation_and_reports_a_notice() {
+        let trade = json!({
+            "arg": {"channel": "trades", "instId": "BTC-USDT-SWAP"},
+            "data": [{"instId": "BTC-USDT-SWAP", "tradeId": "42", "px": "1", "sz": "1", "side": "buy", "ts": "1"}],
+        });
+        let notice = json!({"event": "notice", "code": "64008", "msg": "upgrade"});
+        let url = fake_okx(vec![trade, notice], true).await;
+        let (subscriptions, bindings) = subscriptions();
+        let established = okx_establish(
+            url,
+            subscriptions,
+            bindings,
+            "okx-public-002".into(),
+            168,
+            16,
+            OkxConnectPacer::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(established.generation, 168);
+        assert!(established.session_id.starts_with("okx-public-002-168-"));
+        assert!(established.ready_at_ns >= established.connect_started_ns);
+        assert_eq!(established.notice_code.as_deref(), Some("64008"));
+        // Nothing is published here: the caller publishes these only after the
+        // previous generation stopped, so the generation fences see N before N+1.
+        assert_eq!(established.pre_ack_frames.len(), 1);
+        let frame = &established.pre_ack_frames[0];
+        assert_eq!(frame.generation, 168);
+        assert_eq!(frame.session_id, established.session_id);
+    }
+
+    #[tokio::test]
+    async fn establish_failures_are_typed_so_a_standby_failure_spares_the_live_session() {
+        let url = fake_okx(vec![], false).await;
+        let (subscriptions, bindings) = subscriptions();
+        let error = okx_establish(
+            url,
+            subscriptions.clone(),
+            bindings.clone(),
+            "okx-public-002".into(),
+            169,
+            16,
+            OkxConnectPacer::default(),
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(matches!(error, OkxEstablishError::Subscribe(_)), "{error}");
+
+        let unused = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = unused.local_addr().unwrap();
+        drop(unused);
+        let error = okx_establish(
+            format!("ws://{address}/ws/v5/public"),
+            subscriptions,
+            bindings,
+            "okx-public-002".into(),
+            170,
+            16,
+            OkxConnectPacer::default(),
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(matches!(error, OkxEstablishError::Connect(_)), "{error}");
     }
 }

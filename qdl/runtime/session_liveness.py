@@ -19,9 +19,14 @@ from typing import Callable
 
 
 SESSION_LIVENESS_SCHEMA = "qdl.provider-session-liveness.v1"
+SESSION_LINEAGE_SCHEMA = "qdl.provider-session-lineage.v1"
+SESSION_CONTINUED_FLAG = "SOURCE_SESSION_CONTINUED"
 _SESSION_STATES = frozenset({"LIVE", "DISCONNECTED"})
 _SAFE_FILE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,119}\.json$")
+_SAFE_LINEAGE_FILE = re.compile(r"^[a-z0-9][a-z0-9-]{0,119}\.lineage$")
+_LINEAGE_DIRECTORY = "lineage"
 _MAX_STATE_FILES = 256
+_MAX_LINEAGE_LINKS = 64
 _MAX_SESSION_ID_LENGTH = 256
 
 
@@ -88,6 +93,71 @@ class ProviderSessionLiveness:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderSessionLineage:
+    """Sessions of one lane that succeeded each other with no uncovered window.
+
+    The Rust ingestor writes ``lineage/<lane>.lineage`` only for a
+    make-before-break handover (OKX service-upgrade notice): every link was
+    subscribed while its predecessor still read, and the predecessor stopped
+    only after that. While the chain's last session is live, the last event an
+    earlier link published for a binding is still that binding's latest event;
+    anything newer would have come from a later link. A reconnect with a gap
+    starts a new chain, so it never vouches for an older session.
+    """
+
+    lane: str
+    chain: tuple[tuple[str, int], ...]
+    config_revision: int
+
+    @classmethod
+    def from_mapping(cls, value: object) -> "ProviderSessionLineage":
+        if not isinstance(value, dict) or set(value) != {
+            "schema",
+            "lane",
+            "chain",
+            "updated_at_ns",
+            "config_revision",
+        }:
+            raise ValueError("provider session lineage schema is invalid")
+        if value["schema"] != SESSION_LINEAGE_SCHEMA:
+            raise ValueError("provider session lineage schema is unsupported")
+        chain = value["chain"]
+        revision = value["config_revision"]
+        if (
+            not isinstance(value["lane"], str)
+            or not value["lane"]
+            or not isinstance(chain, list)
+            or not 1 <= len(chain) <= _MAX_LINEAGE_LINKS
+            or isinstance(revision, bool)
+            or not isinstance(revision, int)
+            or revision < 1
+        ):
+            raise ValueError("provider session lineage fields are invalid")
+        links: list[tuple[str, int]] = []
+        for link in chain:
+            if not isinstance(link, dict) or set(link) != {
+                "source_session_id",
+                "connection_generation",
+            }:
+                raise ValueError("provider session lineage link is invalid")
+            session = link["source_session_id"]
+            generation = link["connection_generation"]
+            if (
+                not isinstance(session, str)
+                or not session
+                or len(session) > _MAX_SESSION_ID_LENGTH
+                or isinstance(generation, bool)
+                or not isinstance(generation, int)
+                or generation < 1
+                # Each successor was allocated after its predecessor.
+                or (links and generation <= links[-1][1])
+            ):
+                raise ValueError("provider session lineage link is invalid")
+            links.append((session, generation))
+        return cls(lane=value["lane"], chain=tuple(links), config_revision=revision)
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderSessionStatus:
     """Lookup result deliberately carries no raw provider payload."""
 
@@ -114,11 +184,14 @@ class StableSessionLivenessReader:
         # Parsed file contents by directory and name, keyed by the file's
         # (inode, mtime, size). Only content is kept - never a verdict: age,
         # skew and the session match are judged on every call.
-        self._parsed: dict[str, dict[str, tuple[tuple[int, int, int], ProviderSessionLiveness | None]]] = {}
+        self._parsed: dict[str, dict[str, tuple[tuple[int, int, int], object | None]]] = {}
 
     def _records(
-        self, directory: Path, names: list[str]
-    ) -> list[ProviderSessionLiveness | None]:
+        self,
+        directory: Path,
+        names: list[str],
+        parse: Callable[[object], object] = ProviderSessionLiveness.from_mapping,
+    ) -> list:
         """The records of ``names``, each re-read only when its file changed.
 
         The ingestor replaces a record by rename (a new inode), so the stat key
@@ -128,8 +201,8 @@ class StableSessionLivenessReader:
         """
 
         previous = self._parsed.get(str(directory), {})
-        current: dict[str, tuple[tuple[int, int, int], ProviderSessionLiveness | None]] = {}
-        records: list[ProviderSessionLiveness | None] = []
+        current: dict[str, tuple[tuple[int, int, int], object | None]] = {}
+        records: list = []
         for name in names:
             path = directory / name
             try:
@@ -143,9 +216,7 @@ class StableSessionLivenessReader:
                 record = cached[1]
             else:
                 try:
-                    record = ProviderSessionLiveness.from_mapping(
-                        json.loads(path.read_text(encoding="utf-8"))
-                    )
+                    record = parse(json.loads(path.read_text(encoding="utf-8")))
                 except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
                     record = None
             current[name] = (key, record)
@@ -202,7 +273,8 @@ class StableSessionLivenessReader:
             return ProviderSessionStatus("UNKNOWN", None, ("SOURCE_SESSION_UNAVAILABLE",))
         match: ProviderSessionLiveness | None = None
         malformed = False
-        for record in self._records(directory, candidates):
+        records = self._records(directory, candidates)
+        for record in records:
             if record is None:
                 malformed = True
                 continue
@@ -213,6 +285,15 @@ class StableSessionLivenessReader:
                 if match is not None:
                     return ProviderSessionStatus("UNKNOWN", None, ("SOURCE_SESSION_AMBIGUOUS",))
                 match = record
+        flags: tuple[str, ...] = ()
+        if match is None:
+            match = self._successor(
+                directory,
+                [record for record in records if record is not None],
+                source_session_id,
+                connection_generation,
+            )
+            flags = (SESSION_CONTINUED_FLAG,)
         if match is None:
             flag = "SOURCE_SESSION_MALFORMED" if malformed else "SOURCE_SESSION_UNAVAILABLE"
             return ProviderSessionStatus("UNKNOWN", None, (flag,))
@@ -228,4 +309,53 @@ class StableSessionLivenessReader:
         if match.last_transport_at_ns > evaluated_ns:
             return ProviderSessionStatus("UNKNOWN", None, ("SOURCE_SESSION_CLOCK_SKEW",))
         age_ms = (evaluated_ns - match.last_transport_at_ns) // 1_000_000
-        return ProviderSessionStatus(match.state, int(age_ms))
+        return ProviderSessionStatus(match.state, int(age_ms), flags)
+
+    def _successor(
+        self,
+        directory: Path,
+        records: list[ProviderSessionLiveness],
+        source_session_id: str,
+        connection_generation: int,
+    ) -> ProviderSessionLiveness | None:
+        """The live record that continues an older session without a gap.
+
+        Only a lineage chain proves continuity, and only when its last link is
+        exactly one current session record of the same config revision. Any
+        doubt (unreadable lineage, two chains, no or two successor records)
+        returns None, so the caller fails closed as before.
+        """
+
+        lineage_directory = directory / _LINEAGE_DIRECTORY
+        try:
+            names = []
+            with os.scandir(lineage_directory) as entries:
+                for entry in entries:
+                    if entry.is_file() and _SAFE_LINEAGE_FILE.fullmatch(entry.name):
+                        names.append(entry.name)
+                        if len(names) > _MAX_STATE_FILES:
+                            return None
+            names.sort()
+        except OSError:
+            return None
+        if not names:
+            self._parsed.pop(str(lineage_directory), None)
+            return None
+        target = (source_session_id, connection_generation)
+        successors: list[ProviderSessionLiveness] = []
+        for lineage in self._records(
+            lineage_directory, names, ProviderSessionLineage.from_mapping
+        ):
+            if lineage is None or target not in lineage.chain[:-1]:
+                continue
+            last = lineage.chain[-1]
+            current = [
+                record
+                for record in records
+                if (record.source_session_id, record.connection_generation) == last
+                and record.config_revision == lineage.config_revision
+            ]
+            if len(current) != 1:
+                return None
+            successors.append(current[0])
+        return successors[0] if len(successors) == 1 else None
