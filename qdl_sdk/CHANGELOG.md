@@ -1,5 +1,12 @@
 # SDK Changelog
 
+## 2.2.1 (v2.2.3 Data Layer)
+
+`GrpcStreamTransport` starts on a random target per instance instead of always
+the first one, so the stream replicas share the subscriptions; failover on
+UNAVAILABLE is unchanged. A new keyword `start_index` pins the start (tests,
+diagnostics). Additive; no request or response change.
+
 ## 2.2.0 (v2.2.3 Data Layer)
 
 `ReplicatedRestQueryTransport` starts its round-robin on a random replica per

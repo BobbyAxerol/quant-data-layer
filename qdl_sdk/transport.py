@@ -472,6 +472,7 @@ class GrpcStreamTransport:
         tls: WorkloadTlsConfig | None = None,
         allow_insecure_loopback: bool = False,
         credential_provider: CredentialProvider | None = None,
+        start_index: int | None = None,
     ) -> None:
         raw_targets = (target,) if isinstance(target, str) else tuple(target)
         targets = tuple(
@@ -482,9 +483,17 @@ class GrpcStreamTransport:
         )
         if not targets or len(set(targets)) != len(targets):
             raise ValueError("gRPC stream targets must be non-empty and unique")
+        if start_index is not None and not 0 <= start_index < len(targets):
+            raise ValueError("gRPC stream start_index is outside target bounds")
         self.targets = targets
-        self.target = targets[0]
-        self._target_index = 0
+        # Each instance starts on a random replica, like the replicated Query
+        # transport. A fixed start put every client's streams on target 0
+        # (P18.4 rc8 campaign: stream_kn_1 served 244 streams, stream_kn_2
+        # none), so one replica's live byte budget carried the whole load.
+        self._target_index = (
+            random.randrange(len(targets)) if start_index is None else start_index
+        )
+        self.target = targets[self._target_index]
         self._credential_provider = credential_provider
         if credentials is not None and tls is not None:
             raise ValueError("provide either credentials or workload TLS, not both")

@@ -878,6 +878,7 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             (f"127.0.0.1:{standby_port}", f"127.0.0.1:{active_port}"),
             allow_insecure_loopback=True,
             credential_provider=self.credential,
+            start_index=0,
         )
         requirement = DataRequirement(
             self.record.instrument_uid,

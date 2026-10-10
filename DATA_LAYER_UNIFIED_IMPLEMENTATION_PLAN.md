@@ -72128,3 +72128,10 @@ no build, CI or subagent job running.
   - Tests: fmt, clippy -D warnings, cargo test 49+1+37 pass (qdl-rust-builder:r134-test). Status: tested locally.
 - Found alongside: stream_kn_2 served 0 of 244 streams. The SDK GrpcStreamTransport always starts at target 0;
   5c81c25 randomised only the REST Query transport. Fixed in the SDK (next slice).
+- SDK 2.2.1:
+  - GrpcStreamTransport starts on a random target per instance; keyword start_index pins it. Failover on
+    UNAVAILABLE is unchanged. Additive, no wire change.
+  - SDK 2.2.0 was never published (DL not pushed), but its wheel hash is recorded in the release evidence, so the
+    version is bumped rather than reused.
+  - Tests: 57 OK (transport security, stream SDK incl. failover with a pinned start, replica read, release
+    wheel).
