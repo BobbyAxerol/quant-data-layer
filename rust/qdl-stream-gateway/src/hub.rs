@@ -25,11 +25,11 @@
 //! of different (or the same) products no longer refuse each other.
 
 use crate::generated::marketdata_v2::EventEnvelope;
-use crate::subscription::Subscription;
+use crate::subscription::{ByteBudget, Charge, Subscription};
 use prost::Message as _;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError};
 use std::time::{Duration, Instant};
 
 /// Accounting overhead per queued/ringed record beyond key and payload.
@@ -66,6 +66,13 @@ pub struct HotRecord {
 pub struct LiveRecord {
     pub raw: SharedRecord,
     pub envelope: EventEnvelope,
+    /// The live budget charge for this one decoded copy, taken once at
+    /// dispatch and released exactly once, when the last `Arc` (a queue
+    /// entry or a subscription task) drops. Subscribers then charge the
+    /// replica budget only their queue entry overhead. `None` for replay/ring decodes (charged per record to the
+    /// replay budget by their owner) and when the dispatch-time charge was
+    /// refused: each subscriber then charges the full weight itself.
+    pub shared_charge: Option<Charge>,
 }
 
 /// Empirical decoded-size allowance per payload byte: measured
@@ -87,10 +94,25 @@ impl LiveRecord {
         live_weight(&self.raw)
     }
 
+    /// Decode without a shared charge (the caller accounts for it).
     pub fn decode(raw: SharedRecord) -> Result<Arc<Self>, String> {
+        Self::decode_charged(raw, None)
+    }
+
+    /// Decode once and charge the decoded copy to `budget` once, for every
+    /// holder together. A refused charge leaves `shared_charge` empty.
+    pub fn decode_charged(
+        raw: SharedRecord,
+        budget: Option<&Arc<ByteBudget>>,
+    ) -> Result<Arc<Self>, String> {
         let envelope = EventEnvelope::decode(raw.payload.as_slice())
             .map_err(|error| format!("canonical record failed to decode: {error}"))?;
-        Ok(Arc::new(Self { raw, envelope }))
+        let shared_charge = budget.and_then(|budget| budget.charge(live_weight(&raw)));
+        Ok(Arc::new(Self {
+            raw,
+            envelope,
+            shared_charge,
+        }))
     }
 }
 
@@ -175,6 +197,9 @@ pub struct HubMetrics {
     pub duplicates: AtomicU64,
     pub decode_failures: AtomicU64,
     pub offers: AtomicU64,
+    /// Dispatches whose shared live-budget charge was refused (the replica
+    /// live budget is really full); their subscribers charged in full.
+    pub live_budget_refused: AtomicU64,
     pub ring_evictions: AtomicU64,
     pub reader_errors: AtomicU64,
 }
@@ -261,6 +286,9 @@ pub struct Hub {
     /// Records produced before this replica started (the warm range, a
     /// restart backlog) are not live-path lag and stay out of the histogram.
     started_ms: i64,
+    /// The replica live budget a dispatched record is charged to once
+    /// ([`Hub::attach_live_budget`]); unset, subscribers charge in full.
+    live_budget: OnceLock<Arc<ByteBudget>>,
 }
 
 fn now_ns() -> i64 {
@@ -303,7 +331,15 @@ impl Hub {
                 .unwrap_or_else(Instant::now),
             key_home: Mutex::new(HashMap::new()),
             started_ms: now_ns() / 1_000_000,
+            live_budget: OnceLock::new(),
         }
+    }
+
+    /// Charge each decoded live record to `budget` once, at dispatch,
+    /// instead of once per subscriber. The first attachment wins; returns
+    /// whether this one was attached.
+    pub fn attach_live_budget(&self, budget: Arc<ByteBudget>) -> bool {
+        self.live_budget.set(budget).is_ok()
     }
 
     pub fn partitions(&self) -> Vec<i32> {
@@ -403,8 +439,14 @@ impl Hub {
         let Some(subscribers) = state.subscribers.get(&record.key) else {
             return;
         };
-        match LiveRecord::decode(record) {
+        let budget = self.live_budget.get();
+        match LiveRecord::decode_charged(record, budget) {
             Ok(live) => {
+                if budget.is_some() && live.shared_charge.is_none() {
+                    self.metrics
+                        .live_budget_refused
+                        .fetch_add(1, Ordering::Relaxed);
+                }
                 let at = now_ns();
                 for subscriber in subscribers {
                     self.metrics.offers.fetch_add(1, Ordering::Relaxed);
@@ -1191,5 +1233,204 @@ mod tests {
         stop.store(true, Ordering::Relaxed);
         assert!(writer.join().unwrap() > 1);
         assert!(total > 0);
+    }
+
+    // ----------------------------------------------- live budget charge-once
+
+    use crate::generated::query_v2 as query;
+    use crate::requirement::StreamRequirement;
+    use crate::subscription::{Next, QUEUE_ENTRY_OVERHEAD};
+
+    fn trade_requirement() -> StreamRequirement {
+        StreamRequirement::from_proto(&query::DataRequirement {
+            instrument_uid: "u".into(),
+            source_policy_id: "p".into(),
+            require_full_coverage: true,
+            require_final_bars: true,
+            feed_type: query::FeedType::Trade as i32,
+            grade: query::ConsumerGrade::Alpha as i32,
+            stale_policy_type: query::StalePolicy::Block as i32,
+            gap_policy_type: query::GapPolicy::Block as i32,
+            recovery_policy: query::RecoveryPolicy::SnapshotAndReplay as i32,
+            revision_policy: query::BarRevisionPolicy::Latest as i32,
+            ..Default::default()
+        })
+        .expect("requirement")
+    }
+
+    /// A lossless TRADE whose decoded weight dwarfs the queue entry overhead.
+    fn big_trade(key: &[u8], offset: i64) -> RawRecord {
+        use crate::generated::marketdata_v2::{event_envelope::Payload, Trade};
+        RawRecord {
+            partition: 0,
+            offset,
+            key: key.to_vec(),
+            timestamp_ms: 1,
+            payload: EventEnvelope {
+                payload: Some(Payload::Trade(Trade {
+                    native_trade_id: "x".repeat(4_000),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            }
+            .encode_to_vec(),
+        }
+    }
+
+    fn big_weight() -> usize {
+        live_weight(&big_trade(b"fan", 0))
+    }
+
+    fn subscribe(
+        hub: &Hub,
+        key: &[u8],
+        id: u64,
+        depth: usize,
+        max_bytes: usize,
+        budget: &Arc<ByteBudget>,
+    ) -> Arc<Subscription> {
+        let subscription = Arc::new(Subscription::new(
+            id,
+            "c".into(),
+            trade_requirement(),
+            depth,
+            max_bytes,
+            budget.clone(),
+            -1,
+        ));
+        hub.register(0, key, subscription.clone(), -1).unwrap();
+        subscription
+    }
+
+    #[tokio::test]
+    async fn a_record_fanned_out_to_four_subscribers_is_charged_once() {
+        let weight = big_weight();
+        assert!(weight > 8 * QUEUE_ENTRY_OVERHEAD, "{weight}");
+        let budget = ByteBudget::new(1 << 20);
+        let hub = Hub::new(&[(0, 0)], HubConfig::default());
+        assert!(hub.attach_live_budget(budget.clone()));
+        assert!(!hub.attach_live_budget(ByteBudget::new(1)), "first wins");
+        let subscribers: Vec<_> = (0..4)
+            .map(|id| subscribe(&hub, b"fan", id, 16, 1 << 20, &budget))
+            .collect();
+        hub.dispatch(big_trade(b"fan", 0));
+        assert_eq!(budget.used(), weight + 4 * QUEUE_ENTRY_OVERHEAD);
+        for subscriber in &subscribers {
+            // The per-subscription cap still counts the full weight.
+            assert_eq!(subscriber.queued(), (1, weight));
+        }
+        assert_eq!(hub.metrics.live_budget_refused.load(Ordering::Relaxed), 0);
+        // Three subscribers hand their copy to the transport and finish.
+        for subscriber in &subscribers[..3] {
+            match subscriber.next().await {
+                Next::Record(record, _, charge) => {
+                    assert_eq!(charge.bytes(), QUEUE_ENTRY_OVERHEAD);
+                    assert!(record.shared_charge.is_some());
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        assert_eq!(budget.used(), weight + QUEUE_ENTRY_OVERHEAD);
+        // The last holder keeps the shared charge until it drops the record.
+        let (record, charge) = match subscribers[3].next().await {
+            Next::Record(record, _, charge) => (record, charge),
+            other => panic!("{other:?}"),
+        };
+        drop(charge);
+        assert_eq!(budget.used(), weight);
+        drop(record);
+        assert_eq!(budget.used(), 0, "released exactly once");
+    }
+
+    #[tokio::test]
+    async fn a_budget_for_one_decoded_record_delivers_it_to_all_four() {
+        let weight = big_weight();
+        let total = weight + 4 * QUEUE_ENTRY_OVERHEAD;
+        assert!(total < 2 * weight, "fits one decoded copy, not four");
+        let budget = ByteBudget::new(total);
+        let hub = Hub::new(&[(0, 0)], HubConfig::default());
+        hub.attach_live_budget(budget.clone());
+        let subscribers: Vec<_> = (0..4)
+            .map(|id| subscribe(&hub, b"fan", id, 16, 1 << 20, &budget))
+            .collect();
+        hub.dispatch(big_trade(b"fan", 0));
+        assert_eq!(budget.used(), total);
+        for subscriber in &subscribers {
+            assert!(matches!(subscriber.next().await, Next::Record(..)));
+        }
+        assert_eq!(budget.used(), 0);
+
+        // Before: every subscriber charged the full weight; three of four
+        // overflowed with an empty queue (the 2026-10-10 17:22:48Z shape).
+        let budget = ByteBudget::new(total);
+        let hub = Hub::new(&[(0, 0)], HubConfig::default());
+        let subscribers: Vec<_> = (0..4)
+            .map(|id| subscribe(&hub, b"fan", id, 16, 1 << 20, &budget))
+            .collect();
+        hub.dispatch(big_trade(b"fan", 0));
+        let mut overflowed = 0;
+        for subscriber in &subscribers {
+            if matches!(subscriber.next().await, Next::Overflow) {
+                overflowed += 1;
+                assert_eq!(subscriber.queued(), (0, 0));
+            }
+        }
+        assert_eq!(overflowed, 3);
+    }
+
+    #[tokio::test]
+    async fn a_refused_dispatch_charge_falls_back_to_full_per_subscriber_charges() {
+        // Real exhaustion: the decoded copy itself does not fit. Lossless
+        // subscribers overflow typed, as before; nothing leaks.
+        let budget = ByteBudget::new(4 * QUEUE_ENTRY_OVERHEAD);
+        let hub = Hub::new(&[(0, 0)], HubConfig::default());
+        hub.attach_live_budget(budget.clone());
+        let subscribers: Vec<_> = (0..2)
+            .map(|id| subscribe(&hub, b"fan", id, 16, 1 << 20, &budget))
+            .collect();
+        hub.dispatch(big_trade(b"fan", 0));
+        assert_eq!(hub.metrics.live_budget_refused.load(Ordering::Relaxed), 1);
+        for subscriber in &subscribers {
+            assert!(matches!(subscriber.next().await, Next::Overflow));
+        }
+        assert_eq!(budget.used(), 0);
+        // A fitting fallback record carries its full weight per subscriber.
+        let budget = ByteBudget::new(4 * big_weight());
+        let hub = Hub::new(&[(0, 0)], HubConfig::default());
+        hub.attach_live_budget(ByteBudget::new(1));
+        let subscriber = subscribe(&hub, b"fan", 0, 16, 1 << 20, &budget);
+        hub.dispatch(big_trade(b"fan", 0));
+        assert_eq!(budget.used(), big_weight());
+        subscriber.close();
+        assert_eq!(budget.used(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_slow_lossless_subscriber_at_its_cap_cannot_overflow_an_idle_one() {
+        let weight = big_weight();
+        let total = 16 * weight;
+        // `idle` is offered one record after `slow` filled up and stalled.
+        async fn run(total: usize, max_bytes: usize) -> (bool, bool) {
+            let budget = ByteBudget::new(total);
+            let hub = Hub::new(&[(0, 0)], HubConfig::default());
+            hub.attach_live_budget(budget.clone());
+            let slow = subscribe(&hub, b"slow", 0, 1_000, max_bytes, &budget);
+            let idle = subscribe(&hub, b"idle", 1, 1_000, max_bytes, &budget);
+            for offset in 0..64 {
+                hub.dispatch(big_trade(b"slow", offset));
+            }
+            hub.dispatch(big_trade(b"idle", 64));
+            assert!(budget.used() <= total);
+            let slow_overflowed = matches!(slow.next().await, Next::Overflow);
+            let idle_delivered = matches!(idle.next().await, Next::Record(..));
+            (slow_overflowed, idle_delivered)
+        }
+        // A fair share (the new default, queue_total / 2): the slow
+        // subscriber overflows on its own cap; the idle one is untouched.
+        let share = crate::memory::default_queue_bytes_per_subscription(total as u64) as usize;
+        assert_eq!(run(total, share).await, (true, true));
+        // A per-subscription cap equal to the whole budget (the old default)
+        // lets the slow subscriber take it all and overflow the idle one.
+        assert_eq!(run(total, total).await, (true, false));
     }
 }

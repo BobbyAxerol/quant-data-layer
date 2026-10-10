@@ -1,9 +1,14 @@
 //! One subscriber's bounded queue (KN-2 K2.2/K2.4, D1/D5).
 //!
 //! The live reader offers records without ever blocking on a subscriber: the
-//! queue is bounded by items and bytes, and bytes are also charged to a
-//! replica-wide budget, so total queued memory is bounded whatever the
-//! number of slow clients. When the queue is full, a record is dropped only if
+//! queue is bounded by items and by the full weight of what it references,
+//! and a replica-wide budget bounds what is really held, so total queued
+//! memory is bounded whatever the number of slow clients. A record decoded
+//! once by the hub carries one shared budget charge for that copy
+//! ([`LiveRecord::shared_charge`]); a queue entry then charges the budget
+//! only [`QUEUE_ENTRY_OVERHEAD`], never the decoded weight once per
+//! subscriber. Without a shared charge it charges the full weight, as
+//! before. When the queue is full, a record is dropped only if
 //! the record **right after it** has the same lifecycle key and signature
 //! (`qdl_contracts::delivery`): a coalesced run keeps its latest record and
 //! every transition between runs survives (A B A B stays four records).
@@ -24,6 +29,10 @@ use tokio::sync::Notify;
 /// A latest-state subscription holds at most this many records (DL-V2 R1.8,
 /// `LATEST_STATE_BUFFER_EVENTS`): a deep FIFO of quotes only ages them out.
 pub const LATEST_STATE_BUFFER_EVENTS: usize = 8;
+
+/// Replica budget bytes of one queue entry beyond the shared record: the
+/// `Queued` slot (~200 B) plus the lifecycle signature's strings.
+pub const QUEUE_ENTRY_OVERHEAD: usize = 512;
 
 /// Replica-wide byte budget shared by every subscriber queue.
 #[derive(Debug)]
@@ -77,6 +86,20 @@ pub struct Charge {
 }
 
 impl Charge {
+    pub fn bytes(&self) -> usize {
+        self.bytes
+    }
+
+    /// Fold `other` into this charge (one release later, no budget change).
+    /// Both must hold the same budget.
+    pub fn absorb(&mut self, mut other: Charge) {
+        assert!(
+            Arc::ptr_eq(&self.budget, &other.budget),
+            "charges of different budgets cannot be merged"
+        );
+        self.bytes += std::mem::take(&mut other.bytes);
+    }
+
     /// Move up to `bytes` of this charge into a new one (no budget change).
     pub fn split(&mut self, bytes: usize) -> Charge {
         let moved = bytes.min(self.bytes);
@@ -106,7 +129,9 @@ pub struct Queued {
 #[derive(Debug)]
 pub enum Next {
     /// A record, when it was queued (the send-path queue wait) and its
-    /// budget charge, which the caller hands on to the transport.
+    /// budget charge, which the caller hands on to the transport. The charge
+    /// is only the entry overhead when the record carries a shared charge;
+    /// the caller tops it up before it copies the record for the transport.
     Record(Arc<LiveRecord>, Instant, Charge),
     Overflow,
     Failed(String),
@@ -217,11 +242,18 @@ impl Subscription {
         }
         self.counters.offered.fetch_add(1, Ordering::Relaxed);
         let lifecycle = RecordLifecycle::of(&self.requirement.delivery.feed, &record.envelope);
+        // The per-subscription cap counts the full weight this queue keeps
+        // alive; the replica budget only what this entry adds to memory.
         let weight = record.weight();
+        let held = if record.shared_charge.is_some() {
+            QUEUE_ENTRY_OVERHEAD
+        } else {
+            weight
+        };
         let charge = loop {
             let fits = state.queue.len() < self.depth && state.bytes + weight <= self.max_bytes;
             if fits {
-                if let Some(charge) = self.budget.charge(weight) {
+                if let Some(charge) = self.budget.charge(held) {
                     break charge;
                 }
             }
@@ -366,6 +398,7 @@ mod tests {
                 timestamp_ms: 0,
             }),
             envelope,
+            shared_charge: None,
         })
     }
 
@@ -393,6 +426,16 @@ mod tests {
             subscription.counters.offered.load(Ordering::Relaxed),
             subscription.counters.dequeued.load(Ordering::Relaxed),
         )
+    }
+
+    #[test]
+    fn the_queue_entry_overhead_covers_an_entry() {
+        // The slot itself; the lifecycle signature's short ids live in the rest.
+        assert!(
+            std::mem::size_of::<Queued>() * 2 <= QUEUE_ENTRY_OVERHEAD,
+            "{}",
+            std::mem::size_of::<Queued>()
+        );
     }
 
     #[tokio::test]

@@ -72111,3 +72111,20 @@ no build, CI or subagent job running.
   - MARK EXECUTION age stays measured from the source event: stricter than the server's provider-confirmation
     anchor, kept so the frozen UNSAFE definition is unchanged.
   - 20 s live check: 197 reads, 0 unsafe. Tests: 138 OK (unittest in a disposable rc8 container).
+- Stream gateway budget defect, behind the 17:22:48Z G2 QUOTE/BOOK max:
+  - Incident: 84 streams on stream_kn_1 (all feeds, both venues, 24 TS writer + 60 alpha) closed with
+    BACKPRESSURE in 37 ms, each with an EMPTY own queue.
+  - Cause: the replica-wide 32 MiB ByteBudget was charged the full decoded weight per subscriber, while hub
+    dispatch shares one Arc<LiveRecord> (counted ~fanout x, ~4 here). A 1-2 s delivery stall exhausted it.
+    Separately, the per-subscription cap equalled the replica total.
+  - Fix (rust/qdl-stream-gateway; no endpoint/proto/manifest change):
+    - the decoded record is charged once at dispatch, released with the last Arc;
+    - each queue entry adds 512 B, and each transport copy its full weight (handoff_charge waits up to
+      slow_consumer_after before typed backpressure);
+    - a refused dispatch charge falls back to the old per-subscriber charge;
+    - default QDL_KN_QUEUE_BYTES_PER_SUBSCRIPTION = total/2 (16 MiB). Not /8: the TS writer legitimately held
+      15.85 MB of BOOK_DELTA in one subscription at 14:28Z;
+    - new metric hub_live_budget_refused.
+  - Tests: fmt, clippy -D warnings, cargo test 49+1+37 pass (qdl-rust-builder:r134-test). Status: tested locally.
+- Found alongside: stream_kn_2 served 0 of 244 streams. The SDK GrpcStreamTransport always starts at target 0;
+  5c81c25 randomised only the REST Query transport. Fixed in the SDK (next slice).

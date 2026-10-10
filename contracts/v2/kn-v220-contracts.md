@@ -229,6 +229,16 @@ away. The earlier Python stream's coalescing of BOOK_SNAPSHOT is not ported.
 - **Every held record is inside one replica byte budget**, charged once
   (`raw + 8 x payload`, an empirical decoded-size allowance) from the moment it
   enters a queue, replay channel or ring replay until the transport takes it.
+  A live record is decoded once per replica and shared by every subscriber
+  of its key, so its decoded copy is charged once at dispatch (released when
+  the last holder drops it); each queue entry adds a fixed 512-byte overhead
+  and each transport copy its own full weight. If the dispatch-time charge
+  is refused, every subscriber charges the full weight itself (lossless
+  subscribers then end with typed backpressure, as before). One subscription
+  may reference at most `QDL_KN_QUEUE_BYTES_PER_SUBSCRIPTION` bytes (full
+  weight); unset, it defaults to `QDL_KN_QUEUE_BYTES_TOTAL / 2` (16 MiB of the
+  default 32 MiB), so one slow subscriber cannot hold the whole live budget
+  and overflow the others.
   Concurrent Replay RPCs are admitted per replica and per consumer (manifest
   `max_streams`); refusal is `RESOURCE_EXHAUSTED RATE_LIMITED`.
   The factor eight exceeds the largest measured ratio (7.28) in the retained

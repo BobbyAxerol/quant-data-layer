@@ -43,6 +43,9 @@ use tonic::{Request, Response, Status};
 /// queue (DL-V2 R1.8) and hide a slow client from the overflow signal.
 pub const OUTBOUND_HANDOFF: usize = 2;
 
+/// How often a send waiting for live budget to copy a record retries.
+const HANDOFF_BUDGET_RETRY: Duration = Duration::from_millis(5);
+
 #[derive(Clone, Debug)]
 pub struct StreamLimits {
     pub cursor_ttl_seconds: u64,
@@ -66,7 +69,8 @@ impl Default for StreamLimits {
             replay: ReplayLimits::default(),
             catchup_deadline: Duration::from_secs(10),
             slow_consumer_after: Duration::from_secs(10),
-            queue_bytes_per_subscription: 32 << 20,
+            // A fair share of the default 32 MiB live budget (memory.rs).
+            queue_bytes_per_subscription: 16 << 20,
             max_subscriptions: 384,
             max_replay_rpcs: 32,
             replay_page_default: 1_000,
@@ -124,6 +128,8 @@ impl GatewayState {
         budget: Arc<ByteBudget>,
         limits: StreamLimits,
     ) -> Self {
+        // Dispatch charges each decoded record to the live budget once.
+        hub.attach_live_budget(budget.clone());
         Self {
             authority,
             quota,
@@ -1108,6 +1114,46 @@ impl SubscriptionTask {
         }
     }
 
+    /// Top a dequeued entry's charge up to the record's full weight before
+    /// the record is copied for the transport: the response owns a private
+    /// decoded copy until tonic takes it (F4). The wait is this stream's own
+    /// backpressure, bounded like a blocked send; `None` ends the stream.
+    async fn handoff_charge(&self, record: &LiveRecord, mut charge: Charge) -> Option<Charge> {
+        let missing = record.weight().saturating_sub(charge.bytes());
+        let fresh = delivery_decision(
+            &self.subscription.requirement,
+            &record.envelope,
+            now_ns() as i64,
+        ) == Delivery::Deliver;
+        // A record that will be skipped is never copied: no top-up.
+        if missing == 0 || !fresh {
+            return Some(charge);
+        }
+        let deadline = Instant::now() + self.state.limits.slow_consumer_after;
+        loop {
+            if let Some(extra) = self.state.budget.charge(missing) {
+                charge.absorb(extra);
+                return Some(charge);
+            }
+            if Instant::now() >= deadline {
+                self.backpressure(
+                    record.raw.offset - 1,
+                    "replica live memory budget exhausted at handoff; replay is required",
+                )
+                .await;
+                return None;
+            }
+            tokio::select! {
+                biased;
+                status = self.auth.revoked() => {
+                    self.revoke(status).await;
+                    return None;
+                }
+                _ = tokio::time::sleep(HANDOFF_BUDGET_RETRY) => {}
+            }
+        }
+    }
+
     /// [`Self::deliver`] for a live record, recording its send-path waits.
     async fn deliver_timed(
         &self,
@@ -1116,6 +1162,7 @@ impl SubscriptionTask {
         charge: Charge,
     ) -> Option<bool> {
         let taken = Instant::now();
+        let charge = self.handoff_charge(record, charge).await?;
         let result = self.deliver(record, Some(charge)).await;
         let metrics = &self.state.metrics;
         metrics
