@@ -455,10 +455,11 @@ class StableAcquisitionBinding:
                 raise ValueError("Rust native acquisition cannot use a REST BAR provider kind")
             self._require_wss(self.websocket_url)
             if self.runtime == "OKX":
-                # Refuse port 8443, which OKX discontinues on 2026-10-31, here
-                # rather than at connect time after a role was recreated.
-                require_okx_websocket_url(self.websocket_url, "public")
-                require_okx_websocket_url(self.business_websocket_url, "business")
+                # Port 8443 (discontinued by OKX on 2026-10-31) is refused where an
+                # ingestor config is rendered (native_ingestor_configs), not here:
+                # Query and the bar edge only read the plan, and a deployed runtime
+                # plan may still carry the old transport URL (rc7 rollout 2026-10-10:
+                # a load-time refusal crashed Query on an unchanged runtime bundle).
                 if self.market_websocket_url is not None:
                     raise ValueError(
                         "OKX does not use a Binance /market routed base"
@@ -1074,6 +1075,11 @@ class StableAcquisitionPlan:
                     binding["mark_index_target"] = source.instrument.instrument_uid
                 bindings.append(binding)
             key = f"{runtime.lower()}-{market.lower()}"
+            if runtime == "OKX":
+                # The rendered config is what an ingestor connects with: refuse the
+                # retired port here so it can never reach a role.
+                require_okx_websocket_url(first.websocket_url, "public")
+                require_okx_websocket_url(first.business_websocket_url, "business")
             result[key] = {
                 "runtime": runtime,
                 "websocket_url": first.websocket_url,

@@ -71943,3 +71943,23 @@ cleanup). All items below are tested locally and not deployed.
   (C.19). Query reads the runtime-mounted revision 12. This split is kept deliberately and stated in the release
   notes.
 - Tests after merging everything: 18 modules, 347 OK (34 Redis skips).
+
+### rc7 rollout stopped at query_kn_1: plan-load 8443 refusal crashed Query; fixed - 2026-10-10 (Claude)
+
+- rc7 (dacde94; python sha256:c816fedbd1b6, rust sha256:53c74bf236a2) was rolled one role at a time.
+  - query_kn_1 restarted during startup.
+  - The script rolled it back within 12 s to rc7-47bec04 (sha256:4fcf724b6b36), healthy. No other role was touched.
+- Cause: 6674d0b made StableAcquisitionPlan validation refuse OKX `:8443` URLs at LOAD.
+  - The deployed runtime bundle mounted by Query and the bar edge (releases/v2.2.0-02cd827/runtime) still names
+    8443: 220 lines, plan sha 09c895f1....
+  - Isolated import of the Query entrypoint was clean; the refusal is in plan loading.
+  - Readers that never connect to OKX must not die on a transport URL.
+- Fix (this commit):
+  - The 8443 refusal moved to `native_ingestor_configs`, where ingestor configs are rendered (the only consumer that
+    connects). Plan load accepts the old URL. The live ingestor config is already on 443.
+  - Tests: a deployed plan naming 8443 loads (identity unchanged); rendering an ingestor config from it is refused.
+  - With the fix, the real deployed runtime (catalog 12, plan revision 20, 716 bindings) loads.
+- Lesson: check every load-time validator against the deployed runtime files before a rollout, not only against
+  repo files.
+- rc7 is rebuilt (Python and Rust) from this commit. CI on dacde94 continues for early signal; the certifying CI runs
+  on the final commit.

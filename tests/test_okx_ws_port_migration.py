@@ -99,18 +99,35 @@ class AcquisitionPlanTests(unittest.TestCase):
             self.assertEqual(item.websocket_url, OKX_PUBLIC_WS)
             self.assertEqual(item.business_websocket_url, OKX_BUSINESS_WS)
 
-    def test_a_plan_that_still_names_port_8443_does_not_load(self):
+    def _plan_with_port_8443(self, directory):
         payload = yaml.safe_load(ACQUISITION.read_text(encoding="utf-8"))
-        target = next(
-            item for item in payload["bindings"]
-            if item["runtime"] == "OKX" and item["mode"] == "RUST_NATIVE"
-        )
-        target["business_websocket_url"] = OLD_BUSINESS
+        for item in payload["bindings"]:
+            if item["runtime"] == "OKX" and item["mode"] == "RUST_NATIVE":
+                item["websocket_url"] = OLD_PUBLIC
+                item["business_websocket_url"] = OLD_BUSINESS
+        path = Path(directory) / "acquisition.yaml"
+        path.write_text(yaml.safe_dump(payload, sort_keys=True), encoding="utf-8")
+        return path
+
+    def test_a_deployed_plan_still_naming_port_8443_loads_for_readers(self):
+        # rc7 rollout 2026-10-10: Query and the bar edge only read the plan; a load-time refusal crashed Query on the
+        # unchanged runtime bundle (releases/v2.2.0-02cd827/runtime still names 8443). Loading must succeed.
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "acquisition.yaml"
-            path.write_text(yaml.safe_dump(payload, sort_keys=True), encoding="utf-8")
+            plan = StableAcquisitionPlan.load(self._plan_with_port_8443(directory), catalog=self.catalog)
+            self.assertEqual(plan.identity_digest(), self.plan.identity_digest())
+
+    def test_an_ingestor_config_is_never_rendered_with_port_8443(self):
+        authority = stable_authority_record(
+            rust_image_digest="sha256:" + "a" * 64,
+            capability_manifest=ROOT / "config/v2/stable-capabilities.yaml",
+            contract=ROOT / "contracts/proto/qdl/marketdata/v2/market_data.proto",
+            partition_plan=ACQUISITION.read_bytes(),
+            effective_at_ns=1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            plan = StableAcquisitionPlan.load(self._plan_with_port_8443(directory), catalog=self.catalog)
             with self.assertRaisesRegex(ValueError, "8443"):
-                StableAcquisitionPlan.load(path, catalog=self.catalog)
+                plan.native_ingestor_configs(catalog=self.catalog, authority=authority)
 
     def test_an_endpoint_move_is_not_an_identity_change(self):
         moved = dataclasses.replace(
