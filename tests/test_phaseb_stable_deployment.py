@@ -510,6 +510,17 @@ class StableDeploymentContractTests(unittest.TestCase):
         self.assertEqual(
             {item["latest_state_flush_ms"] for item in native.values()}, {50}
         )
+        self.assertEqual(
+            {
+                (
+                    item["heartbeat_seconds"],
+                    item["liveness_ping_ms"],
+                    item["liveness_dead_ms"],
+                )
+                for item in native.values()
+            },
+            {(15, 1500, 4000)},
+        )
         delivery_by_feed = {
             binding["feed"]: binding["delivery_class"]
             for item in native.values()

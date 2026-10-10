@@ -1085,6 +1085,15 @@ class StableAcquisitionPlan:
                 "partition_plan_epoch": 1,
                 "config_revision": self.revision,
                 "heartbeat_seconds": 15,
+                # Silent-socket detection < 5 s (ingestor LivenessPolicy):
+                # ping after 1.5 s of inbound silence, dead 4 s after the last
+                # message read. A socket with data never pings; a quiet one
+                # sends <= 0.67 pings/s, under Binance USD-M's 10 incoming
+                # messages/s per connection; OKX limits only subscribe,
+                # unsubscribe and login. Requires an ingestor binary that
+                # knows these fields (older ones deny unknown fields).
+                "liveness_ping_ms": 1500,
+                "liveness_dead_ms": 4000,
                 "max_events": max_events,
                 "max_runtime_seconds": max_runtime_seconds,
                 "metrics_every_events": 1000,
