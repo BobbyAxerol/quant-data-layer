@@ -71667,3 +71667,28 @@ OOM 0.
     one variable be tuned on the same image against the frozen G5 limit while the hot latency classes are watched.
   - Tests: new tests/test_kn_mark_hot_memo.py (6), ColdSliceEnvTests; 96 related tests OK (33 Redis skips).
 - G4 (g4b-1..4) is summarized with the rc4 run.
+
+### D4-R3 G12 isolated broker/projector/Stream fault acceptance - 2026-10-10 (Claude, subagent)
+
+Owner-approved isolated run. Status: G12 PASS at ISOLATED_FAULT (BOOK at the TS writer-clone cache); G2/G3
+NOT_MEASURED. Commits 75673bc (harness and packet, written before the run) and 2a5e809 (run fixes and result), cherry-picked.
+Packet: upgrade/evidence/p184-g12-isolated-fault-packet.md.
+- scripts/p184_g12_isolated_fault.py, namespace p184-g12-dl-cfcba18d978b452f inside one --network none holder:
+  - 3 KRaft brokers (RF3, min ISR 2, mTLS);
+  - deployed core/projector/Stream/Query images by ID;
+  - TEST_ONLY BOOK at 4 Hz per venue;
+  - 2 TS WriterClones (4 workers);
+  - a 50 ms sampler with the TS at-use book validator.
+  It reuses the DR05 material, DR08 serve_query and kn_recovery_observe KafkaAdminSource (first run against real brokers).
+- Caught up after the fault cleared (<= 600 s), B/O:
+  - broker kafka-3 (partition leader) stopped 60 s: 0.202 s;
+  - projector restart: 0.256 s;
+  - Stream restart: 2.355 s.
+  G1 300 s windows p95 <= 103.9 ms, p99 <= 120.5 ms, max <= 844 ms, n >= 1,198 per venue; baseline p95 ~104 ms;
+  0 publisher errors.
+- Seen by the TS clones: Stream restart B max view age 3,062 ms (5 non-APPROVED samples), O 1,772 ms. Broker and
+  projector faults: max 176 ms.
+- Resources: peak 162 % CPU / 2.6 GiB total. Teardown: 18 containers, 0 networks, 2 WriterClone anonymous volumes
+  removed by ID (the harness now passes -v). Production guard: 0 breaches.
+- Tests: 46 PASS; after the cherry-pick, g12 + dr05_dl_fault + kn_recovery_observe OK.
+- Limits: same host, a single projector/Stream replica, synthetic BOOK only. Not HA or production evidence.
