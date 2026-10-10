@@ -208,3 +208,69 @@ Before starting:
 - `ps -eo args | grep -E '/run_stage100.sh [a-z] '` must be empty. If a load run is active, wait and re-check every
   2 min; give up after 60 min.
 - `df /` must show >= 20 GB free.
+
+## 13. Result - final images, 2026-10-10 (run 16:16-16:42 UTC, attempt 4)
+
+Verdict: G12 PASS on all three faults at the `ISOLATED_FAULT` level (BOOK at the TS writer-clone cache), on the final
+image set of section 12. G2 and G3 are NOT_MEASURED. All 21 container starts matched the passed image IDs (18 roles
+plus 3 restarts; `provenance.jsonl`). `core.json` names core `sha256:64468c72...`. Query ran from the image's /app.
+Evidence: `~/.local/state/qdl-v2/p184-g12-final-20261010/evidence/`. Failed attempts are under
+`p184-g12-final-20261010-attempts/`:
+- a1: topics helper hit `UNKNOWN_TOPIC_OR_PART` on describe right after create. Fixed with a bounded 30 s retry.
+- a2: the host orchestrator died with the agent session. The 18 orphaned roles were removed with `--down`
+  (0 left, volumes 211 -> 211). Fixed: SIGTERM/SIGHUP/SIGINT now run teardown, and the run is launched with
+  `setsid nohup timeout`.
+- a3: the monitor container exited about 4 s into the broker stop and left no log (`--rm`). Fixed: detached roles
+  now write stderr and faulthandler output to `<out>.stderr`. In a4 the monitor survived; the a3 cause is unknown.
+
+Times are UTC. Each per-venue cell is BINANCE / OKX.
+
+| Fault | Injected | Restart issued | Cleared | First valid apply | Caught up (s after clear) | Consumers caught-up s |
+|---|---|---|---|---|---|---|
+| broker kafka-3 (canonical leader), stop 60 s, then start | 16:22:47.491 | 16:23:51.381 | 16:24:13.048 (ISR full 16:24:14.048) | 16:24:14.147 / 16:24:13.685 | 16:25:01.905 (48.857) / 16:24:13.685 (0.637) | 48.857 |
+| projector restart | 16:30:05.163 | 16:30:06.385 | 16:30:07.085 | 16:30:07.707 / 16:30:08.120 | 16:30:21.129 (14.044) / 16:31:03.619 (56.534) | 56.534 |
+| Stream restart | 16:36:05.801 | 16:36:08.734 | 16:36:09.122 | 16:36:09.801 / 16:36:10.727 | 16:36:17.887 (8.764) / 16:36:10.727 (1.605) | 8.764 |
+
+G1 for the 300 s window from caught-up, p95 / p99 / max in ms:
+
+| Fault | BINANCE (n) | OKX (n) |
+|---|---|---|
+| broker | 103.9 / 137.0 / 626.2 (297) | 105.0 / 198.7 / 1127.0 (298) |
+| projector | 99.2 / 103.8 / 158.7 (298) | 99.1 / 111.2 / 139.4 (298) |
+| Stream | 98.8 / 103.1 / 112.7 (300) | 98.6 / 103.7 / 109.7 (300) |
+
+All windows were complete and passed: p95 <= 500, p99 <= 1000, max < 2000.
+- Baseline (300 s), BINANCE / OKX: p95 105.0 / 104.2 ms, p99 113.0 / 115.2 ms, max 131.5 / 124.3 ms; n 298 each.
+- Publisher: 11,472 frames, 11,472 acked, 0 delivery errors, 0 resyncs.
+- Projector stage-A lag back to <= 1 after each clear: 0 s / 7.0 s / 24.0 s.
+- Peak view age between injection and caught-up, BINANCE / OKX:
+  - broker: 1,141 / 1,094 ms, 0 non-APPROVED samples;
+  - projector: 1,188 / 1,136 ms, 0 non-APPROVED;
+  - Stream: 3,045 / 3,567 ms, with 3 / 4 non-APPROVED samples.
+
+Difference from section 11: in this run the TS view moved once a second, not once per frame. Caught-up times are
+therefore tens of seconds, not sub-second.
+- The DR05 export used for material (`dr05-export-20261010/public-export.json`, refreshed 08:47, after the
+  03:48 run) carries `materialized_snapshot_interval_ms: 1000` for both books. The 03:48 run's `core.json` had 100.
+- The clone's cache shows each materialized snapshot. That is every 4th frame, about 1,000 ms apart (sampler).
+  Stream delivered every event (`qdl_kn_gateway_metrics`).
+- A view therefore ages to about 1.0-1.2 s between snapshots. That breaks the caught-up hold (age <= 1,000 ms for
+  30 s) until a hold happens to fit. The 48.9 s and 56.5 s are this predicate/cadence interaction, not consumer
+  lag: the first valid apply came within 1.1 s of the clear for every fault and venue.
+- G1 n is about 300 per window (one per snapshot), not 1,200.
+
+Resources (`docker stats`, 45 samples of all 18 roles):
+- total CPU max 162 %, mean 64 %; total memory max 2,561 MiB;
+- peaks: kafka-1 608 MiB, kafka-3 81 %, query 53 % / 122 MiB, TS writers 7 % / 261 MiB each.
+
+Disk free: 123.4 GB at preflight, 121.8 GB after.
+
+Teardown:
+- Removed 12 namespace containers plus 6 WriterClone containers (with `-v`) and 2 log dirs.
+- Left by label 0, by name 0. Networks: 0 created, 0 left.
+- Docker volumes: 211 before, 211 after.
+- Private material and broker data dirs were deleted.
+- Production guard: 0 breaches, 0 external recreates.
+
+Limits: same as section 11. This is a same-host loopback rehearsal with one projector and one Stream replica and
+synthetic TEST_ONLY BOOK at 4 Hz per venue; the sampler resolution is 50 ms.
