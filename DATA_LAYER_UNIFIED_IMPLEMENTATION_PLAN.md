@@ -72321,3 +72321,9 @@ no build, CI or subagent job running.
   - Tests: 101 OK.
   - Open drift: the repo's consumers/stable/alpha-*-paper.yaml are still rev 14 while the live realm serves rev 15.
     Change them only with a python image rebuild (coupling #3).
+- R1, G4 baseline run `p184-g4-baseline-20261011T175720Z`:
+  - Plane: rc13, writer 44baacc0, 100 sessions, 4 windows, driver exit 0.
+  - Addendum frozen as config/v2/p184-stage100-g4-addendum.json (sha256 4ed59dca) before any candidate.
+  - GATED (limit = 1.2 x baseline max): OKX_INVERSE book_delta 235.4, book_snapshot 250.6, mark 2164.8, quote
+    268.8 ms.
+  - REPORT_ONLY: 11 bar rows (1h-6h by rule; 5m/15m had no window with >= 5 samples).
