@@ -1022,10 +1022,13 @@ class V2QueryService:
                     continue
                 error = execution.error
                 if isinstance(error, RetryableWarmupError) and isinstance(
-                    error.cause, QueryServiceError
+                    error.cause, (QueryServiceError, QueryBackendError)
                 ):
                     problem = error.cause.problem
-                elif isinstance(error, QueryServiceError):
+                elif isinstance(error, (QueryServiceError, QueryBackendError)):
+                    # A typed backend refusal (e.g. KN DATA_NOT_READY from the local
+                    # batch) keeps its code and retryability, as on the single-item
+                    # path; it is not an internal error.
                     problem = error.problem
                 elif isinstance(error, RetryableWarmupError):
                     problem = QueryProblem(

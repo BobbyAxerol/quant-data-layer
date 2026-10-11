@@ -72207,3 +72207,16 @@ no build, CI or subagent job running.
     a PASS.
   - Container die/oom events are kept as evidence (open item from attempt 1).
   - Tests: 99 + 157 OK (unittest in rc10). Status: tested locally; the live run follows.
+- DL defect fixed (found by the extended G12 run, 2026-10-11): the warmup batch route turned a typed per-item
+  QueryBackendError from the KN local batch (kn_query_backend.history_many) into a non-retryable INTERNAL_ERROR
+  500 ("warmup batch item failed inside the bounded executor"). That hid every retryable DATA_NOT_READY BAR warmup,
+  in production too.
+  - qdl/query/service.py now keeps the backend problem (code and retryability), as the single-item path already did.
+  - Regression test added; 116 warmup/backend tests OK.
+  - Needs a Query image rebuild and roll (owner approval).
+- Redis `redis_marketdata` read-only diagnosis (owner approved), then cpu-shares 4096 (owner approved):
+  - Found: no cgroup limit, no throttling, no eviction or fork, 5 MB used; 44.6 M involuntary context switches on a
+    CPU-pressured host. This is the likely cause of the 10-40 ms EVAL stalls (inferred).
+  - After the change, involuntary switches went 209 -> 160 per 60 s at similar load. G8 is re-measured in the next
+    campaign.
+  - Receipt: ~/.local/state/qdl-v2/redis-cpu-shares-20261011/. Rollback (failure only): --cpu-shares 0.

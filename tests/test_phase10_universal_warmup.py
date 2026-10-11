@@ -41,7 +41,7 @@ from qdl.query import (
     V2QueryService,
 )
 from qdl.domain.calendar import trading_calendar_for_id
-from qdl.query.results import MarketDataItem
+from qdl.query.results import MarketDataItem, QueryBackendError
 from qdl.query.lanes import ReadLaneRejected
 from qdl.query.service import _LocalBatchAdmission
 from qdl.runtime.closed_bar_cache import ClosedBarWindowCache
@@ -1683,6 +1683,65 @@ class SingleWarmupExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(service.last_batch_evidence["local_batch_snapshot"])
         self.assertEqual(service.last_batch_evidence["local_batch_items"], 2)
         self.assertEqual(service.warmup_executor._pending, {})
+
+    async def test_query_local_batch_keeps_a_backend_refusal_typed_and_retryable(self):
+        # The KN backend stores QueryBackendError per item (kn_query_backend.history_many). The batch
+        # route turned it into a non-retryable INTERNAL_ERROR 500 and hid every retryable not-ready
+        # BAR warmup (P18.4 G12 isolated run, 2026-10-11).
+        class Backend:
+            @staticmethod
+            def warmup_is_local(_requirement):
+                return True
+
+            def history_many(self, requirements):
+                return {
+                    requirements[0]: QueryBackendError(
+                        QueryProblem(CanonicalErrorCode.DATA_NOT_READY, "source boundary unknown", True)
+                    )
+                }
+
+        class Service(V2QueryService):
+            def __init__(self):
+                self.backend = Backend()
+                self.instruments = SimpleNamespace()
+                self.warmup_executor = BoundedWarmupExecutor(
+                    provider_policies={
+                        "LOCAL_CANONICAL_CACHE": ProviderBudgetPolicy(
+                            max_concurrency=1,
+                            requests_per_second=None,
+                            max_attempts=1,
+                            max_pending=2,
+                            deadline_starts_after_admission=True,
+                            max_batch_concurrency=1,
+                        )
+                    }
+                )
+                self.last_batch_evidence = {}
+
+            def _warmup_from_history(self, requirement, history, *, purpose, request_id):
+                raise AssertionError("a refused item is never materialized")
+
+        service = Service()
+        result = await service.warmup_batch_async(
+            BatchRequirement(
+                consumer_id="phase10-local-batch-backend-refusal",
+                requirements=(
+                    DataRequirement(
+                        instrument_uid="local-batch-backend-refusal",
+                        feed=FeedType.BAR,
+                        consumer_grade=ConsumerGrade.ALPHA,
+                        source_policy_id="crypto_primary_v2",
+                        interval="1m",
+                        warmup=WarmupSpecification.for_rows(1),
+                    ),
+                ),
+            ),
+            purpose=AccessPurpose.INTERNAL_ALPHA,
+        )
+        service._query_work_pools_for().close()
+        (item,) = result.results
+        self.assertEqual(item.status, "DATA_NOT_READY")
+        self.assertTrue(item.problem.retryable)
 
     async def test_query_local_batch_snapshot_cancellation_releases_admission(self):
         class Backend:
