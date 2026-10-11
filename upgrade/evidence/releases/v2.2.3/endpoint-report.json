@@ -1,0 +1,1165 @@
+{
+  "after_rollout": {
+    "latency_remeasured_after_rc13": false,
+    "note": "Each of the 12 application roles was recreated one at a time; the TS writer was READY 64/64 after every step. No latency campaign was run on the rc13 digests; the measured section applies to rc13 only through the source-identity/equivalence statements in before_rollout.",
+    "release_images": {
+      "python": "sha256:ccbea12e87e42273364b1a78847ea97f5659cc5f43b14c0b1b807f5aa6e00677",
+      "revision_label": "481fd6704b28d8fa63deee39d59eeba23d87f5a8",
+      "rust": "sha256:6afdc155ba3e4e0e87216c209a23a2938897d235b30bc5d52e054c2e21cb65ad"
+    },
+    "roles": [
+      {
+        "health": "healthy",
+        "new_image": "sha256:ccbea12e87e42273364b1a78847ea97f5659cc5f43b14c0b1b807f5aa6e00677",
+        "ok": true,
+        "old_image": "sha256:3b585597570f3f7065c17b0a7f9228a2dad2f71224905e2f105a1754b9d4a75c",
+        "receipt_sha256": "2f52c5c0d59bdbe0f58fd29168c15f144c0e7384034c4c870a79310f3c588d7f",
+        "role": "query_kn_1",
+        "writer": "READY 64 64",
+        "writer_ready": true
+      },
+      {
+        "health": "healthy",
+        "new_image": "sha256:ccbea12e87e42273364b1a78847ea97f5659cc5f43b14c0b1b807f5aa6e00677",
+        "ok": true,
+        "old_image": "sha256:3b585597570f3f7065c17b0a7f9228a2dad2f71224905e2f105a1754b9d4a75c",
+        "receipt_sha256": "3e426beecd699ed7c27871f53b0acb727d8e06c24fbeef5b9394b813471f51a8",
+        "role": "query_kn_2",
+        "writer": "READY 64 64",
+        "writer_ready": true
+      },
+      {
+        "health": "healthy",
+        "new_image": "sha256:ccbea12e87e42273364b1a78847ea97f5659cc5f43b14c0b1b807f5aa6e00677",
+        "ok": true,
+        "old_image": "sha256:3b585597570f3f7065c17b0a7f9228a2dad2f71224905e2f105a1754b9d4a75c",
+        "receipt_sha256": "b500719e493be645c0ccd055119fef7ee54eb56bf50f2dd2ad91a583fd260176",
+        "role": "binance_bar_edge",
+        "writer": "READY 64 64",
+        "writer_ready": true
+      },
+      {
+        "health": null,
+        "new_image": "sha256:6afdc155ba3e4e0e87216c209a23a2938897d235b30bc5d52e054c2e21cb65ad",
+        "ok": true,
+        "old_image": "sha256:ebc7b7944e57ab02d3d2bb3eb68b7ef4365c8e3b51e97a2f46ebc1817540dd5f",
+        "receipt_sha256": "2e4cccbb41827a9cfb4302ef1fb1a3e1c11705eafe3de5a852ba5bc742b40a27",
+        "role": "stream_kn_1",
+        "writer": "READY 64 64",
+        "writer_ready": true
+      },
+      {
+        "health": null,
+        "new_image": "sha256:6afdc155ba3e4e0e87216c209a23a2938897d235b30bc5d52e054c2e21cb65ad",
+        "ok": true,
+        "old_image": "sha256:ebc7b7944e57ab02d3d2bb3eb68b7ef4365c8e3b51e97a2f46ebc1817540dd5f",
+        "receipt_sha256": "23b2b1450fe6ab7e7c08a6441c008eac21ffdb21aec67337a957484486e239cc",
+        "role": "stream_kn_2",
+        "writer": "READY 64 64",
+        "writer_ready": true
+      },
+      {
+        "health": null,
+        "new_image": "sha256:6afdc155ba3e4e0e87216c209a23a2938897d235b30bc5d52e054c2e21cb65ad",
+        "ok": true,
+        "old_image": "sha256:ebc7b7944e57ab02d3d2bb3eb68b7ef4365c8e3b51e97a2f46ebc1817540dd5f",
+        "receipt_sha256": "bd260d07921c8e1cf26cc961caf40d4fa76fecc932971416240dc6042e0bc4f9",
+        "role": "market_projector_1",
+        "writer": "READY 64 64",
+        "writer_ready": true
+      },
+      {
+        "health": null,
+        "new_image": "sha256:6afdc155ba3e4e0e87216c209a23a2938897d235b30bc5d52e054c2e21cb65ad",
+        "ok": true,
+        "old_image": "sha256:ebc7b7944e57ab02d3d2bb3eb68b7ef4365c8e3b51e97a2f46ebc1817540dd5f",
+        "receipt_sha256": "c4eca21e6c6dda96690ff3f1acbb0a218eaeb43def65286796a76f20bf2f16f0",
+        "role": "market_projector_2",
+        "writer": "READY 64 64",
+        "writer_ready": true
+      },
+      {
+        "health": null,
+        "new_image": "sha256:6afdc155ba3e4e0e87216c209a23a2938897d235b30bc5d52e054c2e21cb65ad",
+        "ok": true,
+        "old_image": "sha256:ebc7b7944e57ab02d3d2bb3eb68b7ef4365c8e3b51e97a2f46ebc1817540dd5f",
+        "receipt_sha256": "1c6264a1f62c2d359d59db996e0067b8725c5a8bde705e9a02067abaa28616b1",
+        "role": "rust_core",
+        "writer": "READY 64 64",
+        "writer_ready": true
+      },
+      {
+        "health": null,
+        "new_image": "sha256:6afdc155ba3e4e0e87216c209a23a2938897d235b30bc5d52e054c2e21cb65ad",
+        "ok": true,
+        "old_image": "sha256:ebc7b7944e57ab02d3d2bb3eb68b7ef4365c8e3b51e97a2f46ebc1817540dd5f",
+        "receipt_sha256": "50c9fabf26712102dc631979519efcaa32768c30e95bb20dd6e22400bb30b617",
+        "role": "rust_core_2",
+        "writer": "READY 64 64",
+        "writer_ready": true
+      },
+      {
+        "health": null,
+        "new_image": "sha256:6afdc155ba3e4e0e87216c209a23a2938897d235b30bc5d52e054c2e21cb65ad",
+        "ok": true,
+        "old_image": "sha256:ebc7b7944e57ab02d3d2bb3eb68b7ef4365c8e3b51e97a2f46ebc1817540dd5f",
+        "receipt_sha256": "470127e16b7c09676283d30b412b839a38fc1cd56fc4b10eb0058f102210d0a2",
+        "role": "rust_core_3",
+        "writer": "READY 64 64",
+        "writer_ready": true
+      },
+      {
+        "health": "healthy",
+        "new_image": "sha256:6afdc155ba3e4e0e87216c209a23a2938897d235b30bc5d52e054c2e21cb65ad",
+        "ok": true,
+        "old_image": "sha256:ebc7b7944e57ab02d3d2bb3eb68b7ef4365c8e3b51e97a2f46ebc1817540dd5f",
+        "receipt_sha256": "165650757049e537b5fa57ebd3be74e27a2617a4fde92a831dfcd41500095a8f",
+        "role": "ingestor_okx_swap",
+        "writer": "READY 64 64",
+        "writer_ready": true
+      },
+      {
+        "health": "healthy",
+        "new_image": "sha256:6afdc155ba3e4e0e87216c209a23a2938897d235b30bc5d52e054c2e21cb65ad",
+        "ok": true,
+        "old_image": "sha256:ebc7b7944e57ab02d3d2bb3eb68b7ef4365c8e3b51e97a2f46ebc1817540dd5f",
+        "receipt_sha256": "42574d8a10dd2e2fc7d1d0c7013b942e89b03e23f595e52a03154a4aa9ef08e8",
+        "role": "ingestor_binance_usdm",
+        "writer": "READY 64 64",
+        "writer_ready": true
+      }
+    ],
+    "rolled": "2026-10-11T14:26:16Z-14:31:42Z, one role at a time, writer READY 64/64 after every step (rollout-rc6/<role>-receipt-20261011T14*.json)",
+    "stage": "RC13_ROLL_READINESS_ONLY"
+  },
+  "before_rollout": {
+    "measurement_identity": {
+      "binance_bar_edge": {
+        "diff_to_481fd67": "on its import path (stable_bar_edge.py and its direct qdl imports, checked one level): the IDR-087 files only; the other Python diffs (qdl/query/service.py IDR-086, kn_query_backend.py IDR-088, qdl_sdk 2.3.0, generated query_pb2) are not imported by it",
+        "equivalence": "NOT source-identical: the measured bar edge ran the in-process Kafka backlog probe that IDR-087 moves into a supervised child; the change acts only when the probe crashes or hangs",
+        "image": "sha256:a0c3649d9a47cf59300746cb521fd020b190fbeefb3ff0bda6851ea8033119eb",
+        "source": "413c5b9",
+        "tag": "qdl-v2-python:2.2.3-rc10-413c5b9"
+      },
+      "note": "the step-2 campaign ran 12:35-13:10Z on the mix below, before the rc12 (13:12-13:18Z) and rc13 (14:26-14:31Z) rolls; diffs are `git diff --stat <rev> 481fd67` without tests, scripts, docs and upgrade/",
+      "query_kn_1/2": {
+        "diff_to_481fd67": "qdl/runtime/history_backpressure.py +50/-7, qdl/runtime/isolated_probe.py +141 (IDR-087); imported only by qdl/runtime/stable_bar_edge.py",
+        "equivalence": "source-identical for every Query path",
+        "image": "sha256:3b585597570f3f7065c17b0a7f9228a2dad2f71224905e2f105a1754b9d4a75c",
+        "rolled": "11:55:46Z / 11:56:04Z",
+        "source": "5ee9463",
+        "tag": "qdl-v2-python:2.2.3-rc12-5ee9463"
+      },
+      "rust_core x3, market_projector_1/2, ingestor_okx_swap, ingestor_binance_usdm": {
+        "diff_to_481fd67": "rust/qdl-stream-gateway (no other crate depends on it) and generated/rust/qdl/query/v2/qdl.query.v2.rs +16 (two additive prost fields, SubscribeRequest.max_records_per_response and SubscribeResponse.records), included by rust/qdl-contracts, which every crate depends on; no code outside qdl-stream-gateway references SubscribeRequest/SubscribeResponse (git grep)",
+        "equivalence": "source-equivalent for the core, projector and ingestor binaries (rebuilt, not byte-compared)",
+        "image": "sha256:96a2c9120ef42892f56278df5d6c6dc5371cc83aa713b7b692902d657f74c3d5",
+        "source": "413c5b9",
+        "tag": "qdl-v2-rust:2.2.3-rc10-413c5b9"
+      },
+      "stream_kn_1/2": {
+        "diff_to_481fd67": "Python only (IDR-087 files, qdl/runtime/kn_query_backend.py IDR-088); rust/, generated/rust, Cargo files, config: empty diff",
+        "equivalence": "source-identical for the Stream binary (includes batched Subscribe 4c779ac)",
+        "image": "sha256:ddb2ad19d6106baee8c35f1660f15e4dec8a220a26f91e52651fbd77a54b58fd",
+        "rolled": "10:34:18Z / 10:35:18Z",
+        "source": "4704edd",
+        "tag": "qdl-v2-rust:2.2.3-rc11-4704edd"
+      }
+    },
+    "note": "The step-2 campaign (12:35-13:10Z) ran before the rc12 (13:12-13:18Z) and rc13 (14:26-14:31Z) rolls, on the image mix below. Query, Stream and the Rust core/projector/ingestor roles are source-identical or source-equivalent to 481fd67; the bar edge is not (IDR-087 only).",
+    "one_variable_comparison": {
+      "caveat": "TRADE volume differed between the two runs: TRADE BINANCE/OKX n 66303/12492 in step 2 against 92415/26567 in step 1, and 160328/39292 in campaign 4. Part of the improvement may come from the lower TRADE volume; the step-2 PASS is a measurement at that volume, not a capacity claim at the campaign-4 volume",
+      "step_1": {
+        "dir": "~/.local/state/qdl-v2/p184-final-campaign-20261011T115743Z",
+        "rows": {
+          "MARK_INDEX_PRICE|BINANCE": {
+            "max": 801.0,
+            "n": 8998,
+            "p95": 359.3
+          },
+          "MARK_INDEX_PRICE|OKX": {
+            "max": 820.9,
+            "n": 21505,
+            "p95": 338.5
+          },
+          "QUOTE|BINANCE": {
+            "max": 1067.2,
+            "n": 108047,
+            "p95": 166.5
+          },
+          "QUOTE|OKX": {
+            "max": 1283.3,
+            "n": 94647,
+            "p95": 173.3
+          },
+          "TRADE|BINANCE": {
+            "max": 3284.0,
+            "n": 92415,
+            "p95": 801.2
+          },
+          "TRADE|OKX": {
+            "max": 3208.8,
+            "n": 26567,
+            "p95": 817.2
+          }
+        },
+        "verdict": "FAIL"
+      },
+      "step_1_scorecard": {
+        "path": "~/.local/state/qdl-v2/p184-final-campaign-20261011T115743Z/scorecard.json",
+        "sha256": "6ae2945de18852fc2fd0b514d5679f0c269ce444719285f4a5800adba71990d9"
+      },
+      "variable": "TS writer DATA_LAYER_V2_MAX_RECORDS_PER_RESPONSE (batched Subscribe, SDK 2.3.0): absent = default 1 in step 1, 64 in step 2; same DL images, writer image, pins, depth and MARK delay"
+    },
+    "stage": "MEASURED_ON_PRE_RC13_MIX",
+    "ts_writer": {
+      "container": "market_data_service_p184w",
+      "env": {
+        "DATA_LAYER_V2_MARK_WAKE_READ_DELAY_BY_VENUE": "BINANCE=100",
+        "DATA_LAYER_V2_MAX_RECORDS_PER_RESPONSE": "64",
+        "DATA_LAYER_V2_STREAM_PIPELINE_DEPTH": "0",
+        "MARKET_DATA_FIXED_WORKER_PINS": "OKX:BTCUSDT=2,OKX:ETHUSDT=0"
+      },
+      "env_source": {
+        "path": "~/.local/state/trading-system/p184-rev11-window/campaign-roll/trace-20261011T123412Z.compose.json",
+        "sha256": "8b28aeeba20abb9657b06176b509d8732c65d2b07cea47af17881048ba04b58c"
+      },
+      "image": "sha256:64347a94a3ed682d155690f3afaed5aaeba6d8feb8e8febcaeb7dc33dea488d9",
+      "sdk": "2.3.0",
+      "source": "a3035c8cf257cd5b3935224612e55e93ba1f4bf5",
+      "tag": "local/trading-system:p184-writer-a3035c8"
+    }
+  },
+  "campaign": {
+    "demanded_slices": 64,
+    "dir": "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z",
+    "files": {
+      "campaign": {
+        "path": "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/campaign.json",
+        "sha256": "b926a20e3acbe5dcdde965ec7147fe3ee46b1d5a6fe0ca95795d36614aa71c2b"
+      },
+      "campaign_scorecard": {
+        "path": "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/scorecard.json",
+        "sha256": "747e476489a3ef9807e7ade9bd347b00a8e56226a5bc85a99b8fa03b5e7fa58e"
+      },
+      "g11": {
+        "path": "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/g11/g11-summary.json",
+        "sha256": "c85e4566e327328b0bd4c5f5cc75a4825f1edcff1586a4bad3226e3233c5b764"
+      },
+      "g3": {
+        "path": "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/g3/g3-summary.json",
+        "sha256": "fafca1be177364c2032dd18afd5f7e2c8d67468403b2de3fde2658ee69274e07"
+      },
+      "g6_ts": {
+        "path": "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/g6-ts/summary.json",
+        "sha256": "5a9fc905a71d86e1d013bfeed463bee3bfb366545fd742189b6ddedc3ee1bede"
+      },
+      "g8": {
+        "path": "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/g8/g8-summary.json",
+        "sha256": "0314b552d3f09b7d2143304ee77c9cd0c27a959fb10b764e2996865a2ffae7e5"
+      },
+      "g9g10": {
+        "path": "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/g9g10/g9-g10-summary.json",
+        "sha256": "247c62e6702c264efb4b7b8e1a3089b369a378a8baf21e81d525945b3d8bf5d0"
+      },
+      "mark": {
+        "path": "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/trace/mark-load.json",
+        "sha256": "b6a5198116d7916e32b8b05f48e2bf45798b7863aeb64e32247b874c442f8c9f"
+      },
+      "stage100_gates": {
+        "path": "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/stage100/gates.json",
+        "sha256": "86b74f26c3f7dc68228d260becffa77247d080bfc5d6ce9736ebba495df81544"
+      },
+      "stage100_host": {
+        "path": "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/stage100/host.json",
+        "sha256": "a5ba4fcf963ff2c003f4f6f211fa6a8210f453d56b6a37fd3e8fb19276c894e1"
+      },
+      "stage100_receipt": {
+        "path": "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/stage100/receipt.json",
+        "sha256": "fdf26baa323115015501aa56b6450e51deaa83e9bf284d6ef8ec1574c20825eb"
+      },
+      "transit": {
+        "path": "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/trace/transit-load.json",
+        "sha256": "bd1ccac05fad1728d73bbab833a629d43266756c3575e09082a498e1ee7c78c7"
+      }
+    },
+    "frozen_budget": {
+      "path": "config/v2/p184-stage100-budget.json",
+      "sha256": "ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541"
+    },
+    "load_window_unix_s": [
+      1791722221.9021854,
+      1791724021.9021854
+    ],
+    "load_window_utc": "2026-10-11T12:37:01Z-13:07:01Z",
+    "protocol_met": true,
+    "protocol_problems": [],
+    "scoring_rule": "steady state >= 30 min at the stage-100 workload plus one burst window (gate table 'Measurement rules'); a measurement outside this rule can FAIL a gate but cannot PASS it. Verdicts: PASS, FAIL, NOT_MEASURED, DEFERRED; a NOT_MEASURED is never upgraded. 'observed' records the value against the threshold when the measurement does not meet the protocol.",
+    "tool_sha256": "39c22d78d37dbacac0042c85a6bfafafdd3dc70a9b21179c053f30a9d6cc19f3",
+    "tooling_source": "5ee94636a3b41d4d482eadbc9dd80f51e126cf84",
+    "writer_restarts": 0
+  },
+  "limits": [
+    "Single host for every run: no HA, no independent failure domains, no mainnet or funded claim.",
+    "Latency numbers were measured on the pre-rc13 image mix; rc13 is source-identical for Query/Stream and source-equivalent (rebuilt, not byte-compared) for core/projector/ingestors; the bar edge differs by IDR-087 only.",
+    "G2/G8 PASS depends on the TS writer using batched Subscribe (DATA_LAYER_V2_MAX_RECORDS_PER_RESPONSE=64); at knob 1 G2 failed in step 1.",
+    "TRADE volume in step 2 (BINANCE/OKX n 66303/12492) was lower than step 1 (92415/26567) and campaign 4 (160328/39292); the PASS is at that volume, not a capacity claim at the campaign-4 volume.",
+    "G4 stays NOT_MEASURED: observed rows without a frozen baseline (bar 1h/5m both venues, OKX_INVERSE book_delta/book_snapshot/mark/quote); every baselined row (17) PASS; no baseline added after measuring.",
+    "G6 has no BOOK_DELTA row (not a Query shape in the frozen workload); TRADE OKX probe ages reach 139576 ms max in quiet markets and are typed NOT_ELIGIBLE, never unsafe.",
+    "DL mean CPU sum at stage 100 was 5.08 vCPU, above the owner's 5 vCPU DL budget (G14 passes its per-role headroom rule only).",
+    "Timing for request latency (G5) is SDK request latency on the load driver; transit (G1/G2) ends at the TS Redis APPLY reply."
+  ],
+  "measured": {
+    "g6_execution_probe": {
+      "errors": {},
+      "kind": "final",
+      "note": "TRADE NOT_ELIGIBLE rows are typed refusals in quiet markets (policy 3000 ms); unsafe 0 in every row",
+      "per_binding_period_s": 3.2,
+      "quantity": "durable-view event age and typed execution quality at the Query endpoint (TS EXECUTION probe)",
+      "reads": 19213,
+      "rows": [
+        {
+          "age_basis": "CLIENT_RECEIPT_MINUS_NEWEST_SOURCE_EVENT",
+          "age_p50_ms": 656,
+          "age_p95_ms": 1107,
+          "age_p99_ms": 1151,
+          "classes": {
+            "ELIGIBLE": 3005
+          },
+          "feed": "MARK_INDEX_PRICE",
+          "max_age_ms": 1250,
+          "n": 3005,
+          "policy_basis": "D3_EXECUTION",
+          "policy_ms": 2000,
+          "refusals": {},
+          "unsafe": 0,
+          "venue": "BINANCE"
+        },
+        {
+          "age_basis": "CLIENT_RECEIPT_MINUS_NEWEST_SOURCE_EVENT",
+          "age_p50_ms": 567.5,
+          "age_p95_ms": 1527,
+          "age_p99_ms": 2016,
+          "classes": {
+            "ELIGIBLE": 3566,
+            "ELIGIBLE_QUIET": 40
+          },
+          "feed": "MARK_INDEX_PRICE",
+          "max_age_ms": 2278,
+          "n": 3606,
+          "policy_basis": "D3_EXECUTION",
+          "policy_ms": 2000,
+          "refusals": {},
+          "unsafe": 0,
+          "venue": "OKX"
+        },
+        {
+          "age_basis": null,
+          "age_p50_ms": 324.0,
+          "age_p95_ms": 591,
+          "age_p99_ms": 909,
+          "classes": {
+            "ELIGIBLE": 3002
+          },
+          "feed": "QUOTE",
+          "max_age_ms": 1720,
+          "n": 3002,
+          "policy_basis": "D3_EXECUTION",
+          "policy_ms": 2000,
+          "refusals": {},
+          "unsafe": 0,
+          "venue": "BINANCE"
+        },
+        {
+          "age_basis": null,
+          "age_p50_ms": 366.0,
+          "age_p95_ms": 1227,
+          "age_p99_ms": 3518,
+          "classes": {
+            "ELIGIBLE": 3515,
+            "ELIGIBLE_QUIET": 85
+          },
+          "feed": "QUOTE",
+          "max_age_ms": 11131,
+          "n": 3600,
+          "policy_basis": "D3_EXECUTION",
+          "policy_ms": 2000,
+          "refusals": {},
+          "unsafe": 0,
+          "venue": "OKX"
+        },
+        {
+          "age_basis": null,
+          "age_p50_ms": 634.0,
+          "age_p95_ms": 2930,
+          "age_p99_ms": 5369,
+          "classes": {
+            "ELIGIBLE": 2862,
+            "NOT_ELIGIBLE": 138
+          },
+          "feed": "TRADE",
+          "max_age_ms": 10230,
+          "n": 3000,
+          "policy_basis": "D3_EXECUTION",
+          "policy_ms": 3000,
+          "refusals": {},
+          "unsafe": 0,
+          "venue": "BINANCE"
+        },
+        {
+          "age_basis": null,
+          "age_p50_ms": 1410.5,
+          "age_p95_ms": 25883,
+          "age_p99_ms": 64896,
+          "classes": {
+            "ELIGIBLE": 2084,
+            "NOT_ELIGIBLE": 916
+          },
+          "feed": "TRADE",
+          "max_age_ms": 139576,
+          "n": 3000,
+          "policy_basis": "D3_EXECUTION",
+          "policy_ms": 3000,
+          "refusals": {},
+          "unsafe": 0,
+          "venue": "OKX"
+        }
+      ],
+      "scorecard_verdict": "PASS",
+      "stopped_by": "signal",
+      "targets": 32,
+      "window_unix_s": [
+        1791722125.7330813,
+        1791724056.2921798
+      ]
+    },
+    "readiness_g9": {
+      "g10_trade_integrity": {
+        "codes": {},
+        "examples": [],
+        "log_polls": 129,
+        "log_unreadable": 0,
+        "other_feed_disconnects": 0,
+        "trade_disconnect_other": 0,
+        "trade_gap": 0,
+        "trade_overflow": 0,
+        "trade_replay_expired": 0,
+        "trade_resumed": 0
+      },
+      "note": "the file covers the whole run (194 samples); the scorecard scores the 30-min load window (180 samples)",
+      "scored_load_window": {
+        "demanded_ne_session_ready_samples": 0,
+        "demanded_values": [
+          64
+        ],
+        "eligibility_loss_causes": {},
+        "eligibility_loss_rows": [],
+        "eligibility_losses_data_path": 0,
+        "execution_ready_max": 53,
+        "execution_ready_min": 48,
+        "legit_quiet_refusals": {
+          "TRADE:TRADE_EVENT_STALE": 48
+        },
+        "purpose_errors": 0,
+        "purpose_fields_present": true,
+        "readable_samples": 180,
+        "samples": 180,
+        "session_loss_causes": {},
+        "unknown_samples": 0,
+        "v1_fallback_delta": 0,
+        "v1_fallback_max": 0
+      },
+      "whole_run_file": {
+        "demanded_ne_session_ready_samples": 0,
+        "demanded_values": [
+          64
+        ],
+        "eligibility_loss_causes": {},
+        "eligibility_loss_rows": [],
+        "eligibility_losses_data_path": 0,
+        "execution_ready_max": 53,
+        "execution_ready_min": 48,
+        "legit_quiet_refusals": {
+          "TRADE:TRADE_EVENT_STALE": 50
+        },
+        "purpose_errors": 0,
+        "purpose_fields_present": true,
+        "readable_samples": 194,
+        "samples": 194,
+        "session_loss_causes": {},
+        "unknown_samples": 0,
+        "v1_fallback_delta": 0,
+        "v1_fallback_max": 0
+      },
+      "whole_run_verdict": [
+        "PASS",
+        []
+      ]
+    },
+    "request_latency_g5": {
+      "basis": "stage100/gates.json, SDK request latency per class and venue; targets are the frozen stage-50 p95/p99",
+      "cold": [
+        {
+          "bad": 0,
+          "gate": "cold:2500_5000_overlap_per_venue",
+          "runs": 4,
+          "status": "PASS"
+        },
+        {
+          "count": 1,
+          "gate": "g5:COLD_2500:BINANCE",
+          "limit_ms": 6265.1,
+          "max_ms": 3557.278,
+          "rule": "small sample: max within the frozen limit",
+          "status": "PASS"
+        },
+        {
+          "count": 1,
+          "gate": "g5:COLD_2500:OKX",
+          "limit_ms": 6265.1,
+          "max_ms": 4074.877,
+          "rule": "small sample: max within the frozen limit",
+          "status": "PASS"
+        },
+        {
+          "count": 1,
+          "gate": "g5:COLD_5000:BINANCE",
+          "limit_ms": 15267.0,
+          "max_ms": 6048.93,
+          "rule": "small sample: max within the frozen limit",
+          "status": "PASS"
+        },
+        {
+          "count": 1,
+          "gate": "g5:COLD_5000:OKX",
+          "limit_ms": 15267.0,
+          "max_ms": 7011.598,
+          "rule": "small sample: max within the frozen limit",
+          "status": "PASS"
+        }
+      ],
+      "failed_gates": [],
+      "groups": [
+        {
+          "count": 355,
+          "gate": "latency:BAR_LATEST:BINANCE",
+          "max": 267.327,
+          "p50": 15.524,
+          "p95": 25.601,
+          "p99": 41.544,
+          "rule": "p95 and p99",
+          "status": "PASS",
+          "target_p95": 1000,
+          "target_p99": 2000
+        },
+        {
+          "count": 355,
+          "gate": "latency:BAR_LATEST:OKX",
+          "max": 354.887,
+          "p50": 27.242,
+          "p95": 77.565,
+          "p99": 234.588,
+          "rule": "p95 and p99",
+          "status": "PASS",
+          "target_p95": 1000,
+          "target_p99": 2000
+        },
+        {
+          "count": 355,
+          "gate": "latency:L2_SNAPSHOT:BINANCE",
+          "max": 479.697,
+          "p50": 40.045,
+          "p95": 69.358,
+          "p99": 251.959,
+          "rule": "p95 and p99",
+          "status": "PASS",
+          "target_p95": 300,
+          "target_p99": 750
+        },
+        {
+          "count": 355,
+          "gate": "latency:L2_SNAPSHOT:OKX",
+          "max": 440.775,
+          "p50": 29.848,
+          "p95": 54.544,
+          "p99": 220.378,
+          "rule": "p95 and p99",
+          "status": "PASS",
+          "target_p95": 300,
+          "target_p99": 750
+        },
+        {
+          "count": 53250,
+          "gate": "latency:MARK_INDEX_REFERENCE:BINANCE",
+          "max": 499.112,
+          "p50": 20.096,
+          "p95": 58.353,
+          "p99": 83.549,
+          "rule": "p95 and p99",
+          "status": "PASS",
+          "target_p95": 250,
+          "target_p99": 500
+        },
+        {
+          "count": 53250,
+          "gate": "latency:MARK_INDEX_REFERENCE:OKX",
+          "max": 550.297,
+          "p50": 23.962,
+          "p95": 57.627,
+          "p99": 71.045,
+          "rule": "p95 and p99",
+          "status": "PASS",
+          "target_p95": 250,
+          "target_p99": 500
+        },
+        {
+          "count": 35500,
+          "gate": "latency:QUOTE_SNAPSHOT:BINANCE",
+          "max": 613.678,
+          "p50": 12.77,
+          "p95": 31.472,
+          "p99": 65.693,
+          "rule": "p95 and p99",
+          "status": "PASS",
+          "target_p95": 100,
+          "target_p99": 250
+        },
+        {
+          "count": 35500,
+          "gate": "latency:QUOTE_SNAPSHOT:OKX",
+          "max": 613.255,
+          "p50": 12.329,
+          "p95": 32.554,
+          "p99": 63.39,
+          "rule": "p95 and p99",
+          "status": "PASS",
+          "target_p95": 100,
+          "target_p99": 250
+        },
+        {
+          "count": 354,
+          "gate": "latency:TRADE_SNAPSHOT:BINANCE",
+          "max": 285.234,
+          "p50": 11.533,
+          "p95": 28.489,
+          "p99": 50.097,
+          "rule": "p95 and p99",
+          "status": "PASS",
+          "target_p95": 100,
+          "target_p99": 250
+        },
+        {
+          "count": 355,
+          "gate": "latency:TRADE_SNAPSHOT:OKX",
+          "max": 255.068,
+          "p50": 13.836,
+          "p95": 30.461,
+          "p99": 64.057,
+          "rule": "p95 and p99",
+          "status": "PASS",
+          "target_p95": 100,
+          "target_p99": 250
+        }
+      ],
+      "request_and_stream_accounting": [
+        {
+          "gate": "requests:offered_equals_sent_plus_missed",
+          "offered": 182709,
+          "status": "PASS",
+          "unbalanced": 0
+        },
+        {
+          "gate": "requests:no_missed_ticks",
+          "missed": 0,
+          "status": "PASS"
+        },
+        {
+          "codes": {},
+          "failed": 0,
+          "gate": "requests:no_failures",
+          "status": "PASS"
+        },
+        {
+          "gate": "requests:no_starved_session",
+          "starved": 0,
+          "status": "PASS"
+        },
+        {
+          "gate": "client:scheduler_lag_valid",
+          "p99_ms": 3.521,
+          "status": "PASS"
+        },
+        {
+          "errors": 0,
+          "gate": "streams:no_errors",
+          "status": "PASS",
+          "streams": 180
+        },
+        {
+          "gate": "streams:every_live_stream_delivered",
+          "silent": [],
+          "status": "PASS"
+        },
+        {
+          "bar_streams": 60,
+          "gate": "streams:final_bar_every_bar_stream",
+          "missing": [],
+          "status": "PASS"
+        },
+        {
+          "failures": [],
+          "gate": "startup:bounded",
+          "retries": 193,
+          "seconds": 70.41,
+          "status": "PASS"
+        },
+        {
+          "gate": "teardown:no_leaked_work",
+          "leaked": 0,
+          "status": "PASS"
+        },
+        {
+          "expected": 154,
+          "gate": "ts:ready_60_every_sample",
+          "not_ready": 0,
+          "samples": 154,
+          "status": "PASS",
+          "unreadable": 0
+        },
+        {
+          "first": 0,
+          "gate": "ts:v2_error_not_increased",
+          "last": 0,
+          "status": "PASS"
+        },
+        {
+          "forbidden": {},
+          "gate": "ts:no_auth_or_manifest_disconnect",
+          "status": "PASS"
+        },
+        {
+          "baseline_per_minute": 0.0,
+          "codes": {},
+          "gate": "ts:disconnects_within_baseline",
+          "run_per_minute": 0.0,
+          "status": "PASS"
+        },
+        {
+          "gate": "final:fault_windows_ran",
+          "status": "PASS",
+          "windows": {
+            "BURST": [
+              720.0,
+              730.0
+            ],
+            "BURST_unix_s": [
+              1791722941.902,
+              1791722951.902
+            ],
+            "RECONNECT": 20,
+            "RECONNECT_unix_s": [
+              1791723481.902,
+              1791723496.902
+            ],
+            "SLOW_READER": 1,
+            "reconnect_restored": 20
+          }
+        },
+        {
+          "count": 1264,
+          "gate": "final:burst_window_measured",
+          "status": "PASS"
+        },
+        {
+          "count": 1520,
+          "gate": "final:reconnect_window_measured",
+          "status": "PASS"
+        }
+      ],
+      "stage": 100,
+      "status": "PASS"
+    },
+    "transit_g1_g2": {
+      "dropped_at_export_total": 0,
+      "excluded_from_transit": {
+        "BOOK_DELTA|BINANCE|no_venue_clock_SDK_QUERY_RETURN": 1,
+        "BOOK_DELTA|BINANCE|outcome_DUPLICATE": 18,
+        "BOOK_DELTA|BINANCE|outcome_REJECTED": 581,
+        "BOOK_DELTA|OKX|no_venue_clock_SDK_QUERY_RETURN": 1,
+        "BOOK_DELTA|OKX|outcome_DUPLICATE": 76,
+        "BOOK_DELTA|OKX|outcome_REJECTED": 642,
+        "QUOTE|BINANCE|no_venue_clock_NOT_MEASURED": 536,
+        "QUOTE|BINANCE|outcome_DUPLICATE": 7337,
+        "QUOTE|BINANCE|outcome_REFRESHED": 933,
+        "QUOTE|OKX|no_venue_clock_NOT_MEASURED": 3011,
+        "QUOTE|OKX|outcome_DUPLICATE": 6762,
+        "QUOTE|OKX|outcome_REFRESHED": 811,
+        "TRADE|BINANCE|no_venue_clock_NOT_MEASURED": 299,
+        "TRADE|BINANCE|no_venue_clock_SDK_QUERY_RETURN": 26,
+        "TRADE|BINANCE|outcome_DUPLICATE": 178,
+        "TRADE|BINANCE|outcome_REFRESHED": 97,
+        "TRADE|OKX|no_venue_clock_NOT_MEASURED": 248,
+        "TRADE|OKX|no_venue_clock_SDK_QUERY_RETURN": 178,
+        "TRADE|OKX|outcome_DUPLICATE": 60,
+        "TRADE|OKX|outcome_REFRESHED": 113
+      },
+      "g7_consumer_path": {
+        "BOOK_DELTA": {
+          "sdk_to_writer_ms": {
+            "max": 350.1,
+            "min": 0.2,
+            "n": 178828,
+            "p50": 22.6,
+            "p95": 33.8,
+            "p99": 72.2
+          },
+          "verdict": {
+            "sdk_to_writer_ms": "INSIDE",
+            "writer_to_redis_ms": "INSIDE"
+          },
+          "writer_to_redis_ms": {
+            "max": 195.5,
+            "min": 0.5,
+            "n": 177511,
+            "p50": 2.7,
+            "p95": 13.5,
+            "p99": 24.6
+          }
+        },
+        "BOOK_SNAPSHOT": {
+          "sdk_to_writer_ms": {
+            "max": 361.7,
+            "min": 15.3,
+            "n": 19767,
+            "p50": 30.0,
+            "p95": 44.8,
+            "p99": 108.5
+          },
+          "verdict": {
+            "sdk_to_writer_ms": "INSIDE",
+            "writer_to_redis_ms": "INSIDE"
+          },
+          "writer_to_redis_ms": {
+            "max": 284.2,
+            "min": 1.5,
+            "n": 19767,
+            "p50": 5.5,
+            "p95": 20.5,
+            "p99": 61.0
+          }
+        },
+        "MARK_INDEX_PRICE": {
+          "sdk_to_writer_ms": {
+            "max": 3.8,
+            "min": 0.2,
+            "n": 30514,
+            "p50": 0.4,
+            "p95": 0.6,
+            "p99": 0.7
+          },
+          "verdict": {
+            "sdk_to_writer_ms": "INSIDE",
+            "writer_to_redis_ms": "INSIDE"
+          },
+          "writer_to_redis_ms": {
+            "max": 339.1,
+            "min": 1.1,
+            "n": 30514,
+            "p50": 3.7,
+            "p95": 14.4,
+            "p99": 28.8
+          }
+        },
+        "QUOTE": {
+          "sdk_to_writer_ms": {
+            "max": 386.1,
+            "min": 1.1,
+            "n": 183275,
+            "p50": 22.1,
+            "p95": 30.7,
+            "p99": 47.4
+          },
+          "verdict": {
+            "sdk_to_writer_ms": "INSIDE",
+            "writer_to_redis_ms": "INSIDE"
+          },
+          "writer_to_redis_ms": {
+            "max": 230.7,
+            "min": 0.5,
+            "n": 202646,
+            "p50": 1.3,
+            "p95": 5.9,
+            "p99": 15.2
+          }
+        },
+        "TRADE": {
+          "sdk_to_writer_ms": {
+            "max": 228.7,
+            "min": 0.2,
+            "n": 79000,
+            "p50": 23.1,
+            "p95": 45.3,
+            "p99": 97.9
+          },
+          "verdict": {
+            "sdk_to_writer_ms": "INSIDE",
+            "writer_to_redis_ms": "INSIDE"
+          },
+          "writer_to_redis_ms": {
+            "max": 247.0,
+            "min": 0.5,
+            "n": 79994,
+            "p50": 4.9,
+            "p95": 33.3,
+            "p99": 77.0
+          }
+        }
+      },
+      "invalid": {},
+      "mark": {
+        "records": 36537,
+        "rows": [
+          {
+            "feed": "MARK_INDEX_PRICE",
+            "gate": "G2",
+            "index_age_max_ms": 803.1,
+            "index_age_p95_ms": 360.3,
+            "max": 803.1,
+            "min": 227.6,
+            "n": 9000,
+            "p50": 304.1,
+            "p95": 360.3,
+            "p99": 419.8,
+            "quantity": "new_event_transit_ms (first apply per mark event)",
+            "upstream_p95_ms": 350.7,
+            "venue": "BINANCE",
+            "verdict": "INSIDE",
+            "writer_p95_ms": 15.5
+          },
+          {
+            "feed": "MARK_INDEX_PRICE",
+            "gate": "G2",
+            "index_age_max_ms": 2332.2,
+            "index_age_p95_ms": 1512.3,
+            "max": 712.7,
+            "min": 77.3,
+            "n": 21514,
+            "p50": 231.1,
+            "p95": 337.4,
+            "p99": 371.2,
+            "quantity": "new_event_transit_ms (first apply per mark event)",
+            "upstream_p95_ms": 330.5,
+            "venue": "OKX",
+            "verdict": "INSIDE",
+            "writer_p95_ms": 14.6
+          }
+        ],
+        "rule": {
+          "max_lt_ms": 1000.0,
+          "p95_le_ms": 500.0
+        },
+        "sdk_receive_basis": {
+          "BINANCE:ADAPTER_REFERENCE_RETURN": 9000,
+          "OKX:ADAPTER_REFERENCE_RETURN": 21514
+        },
+        "window": {
+          "from_ns": 1791722221902185472,
+          "seconds": 1800.0,
+          "to_ns": 1791724021902185472
+        }
+      },
+      "quantity": "venue event -> TS Redis APPLY reply (end-to-end to TS cache)",
+      "records": 618496,
+      "rows": [
+        {
+          "feed": "BOOK_DELTA",
+          "gate": "G1",
+          "max": 570.4,
+          "min": 65.0,
+          "n": 82692,
+          "p50": 103.9,
+          "p95": 138.8,
+          "p99": 190.3,
+          "split_p95_ms": {
+            "ingest_to_sdk_ms": 76.4,
+            "sdk_to_reply_ms": 42.4,
+            "venue_to_ingest_ms": 29.3
+          },
+          "venue": "BINANCE",
+          "verdict": "INSIDE"
+        },
+        {
+          "feed": "BOOK_DELTA",
+          "gate": "G1",
+          "max": 585.9,
+          "min": 69.2,
+          "n": 94817,
+          "p50": 106.2,
+          "p95": 146.4,
+          "p99": 199.5,
+          "split_p95_ms": {
+            "ingest_to_sdk_ms": 76.7,
+            "sdk_to_reply_ms": 47.5,
+            "venue_to_ingest_ms": 35.1
+          },
+          "venue": "OKX",
+          "verdict": "INSIDE"
+        },
+        {
+          "feed": "BOOK_SNAPSHOT",
+          "gate": "G1",
+          "max": 571.2,
+          "min": 76.1,
+          "n": 8894,
+          "p50": 115.1,
+          "p95": 176.5,
+          "p99": 242.4,
+          "split_p95_ms": {
+            "ingest_to_sdk_ms": 81.1,
+            "sdk_to_reply_ms": 75.8,
+            "venue_to_ingest_ms": 28.8
+          },
+          "venue": "BINANCE",
+          "verdict": "INSIDE"
+        },
+        {
+          "feed": "BOOK_SNAPSHOT",
+          "gate": "G1",
+          "max": 503.2,
+          "min": 80.2,
+          "n": 10873,
+          "p50": 118.5,
+          "p95": 177.6,
+          "p99": 237.8,
+          "split_p95_ms": {
+            "ingest_to_sdk_ms": 80.3,
+            "sdk_to_reply_ms": 74.4,
+            "venue_to_ingest_ms": 35.5
+          },
+          "venue": "OKX",
+          "verdict": "INSIDE"
+        },
+        {
+          "feed": "QUOTE",
+          "gate": "G2",
+          "max": 531.5,
+          "min": 65.9,
+          "n": 103534,
+          "p50": 122.5,
+          "p95": 162.2,
+          "p99": 199.4,
+          "split_p95_ms": {
+            "ingest_to_sdk_ms": 107.2,
+            "sdk_to_reply_ms": 34.5,
+            "venue_to_ingest_ms": 28.8
+          },
+          "venue": "BINANCE",
+          "verdict": "INSIDE"
+        },
+        {
+          "feed": "QUOTE",
+          "gate": "G2",
+          "max": 532.0,
+          "min": 63.9,
+          "n": 79722,
+          "p50": 126.0,
+          "p95": 169.1,
+          "p99": 217.2,
+          "split_p95_ms": {
+            "ingest_to_sdk_ms": 110.4,
+            "sdk_to_reply_ms": 37.9,
+            "venue_to_ingest_ms": 29.8
+          },
+          "venue": "OKX",
+          "verdict": "INSIDE"
+        },
+        {
+          "feed": "TRADE",
+          "gate": "G2",
+          "max": 583.1,
+          "min": 68.2,
+          "n": 66303,
+          "p50": 118.2,
+          "p95": 243.4,
+          "p99": 381.4,
+          "split_p95_ms": {
+            "ingest_to_sdk_ms": 154.8,
+            "sdk_to_reply_ms": 77.6,
+            "venue_to_ingest_ms": 36.4
+          },
+          "venue": "BINANCE",
+          "verdict": "INSIDE"
+        },
+        {
+          "feed": "TRADE",
+          "gate": "G2",
+          "max": 495.5,
+          "min": 71.5,
+          "n": 12492,
+          "p50": 114.4,
+          "p95": 210.3,
+          "p99": 330.7,
+          "split_p95_ms": {
+            "ingest_to_sdk_ms": 115.1,
+            "sdk_to_reply_ms": 77.8,
+            "venue_to_ingest_ms": 37.1
+          },
+          "venue": "OKX",
+          "verdict": "INSIDE"
+        }
+      ],
+      "rules": {
+        "BOOK_DELTA": {
+          "gate": "G1",
+          "max_lt_ms": 2000.0,
+          "p95_le_ms": 500.0,
+          "p99_le_ms": 1000.0
+        },
+        "BOOK_SNAPSHOT": {
+          "gate": "G1",
+          "max_lt_ms": 2000.0,
+          "p95_le_ms": 500.0,
+          "p99_le_ms": 1000.0
+        },
+        "QUOTE": {
+          "gate": "G2",
+          "max_lt_ms": 1000.0,
+          "p95_le_ms": 500.0
+        },
+        "TRADE": {
+          "gate": "G2",
+          "max_lt_ms": 1500.0,
+          "p95_le_ms": 500.0
+        }
+      },
+      "window": {
+        "from_ns": 1791722221902185472,
+        "seconds": 1800.0,
+        "to_ns": 1791724021902185472
+      }
+    },
+    "writer_restart_g11": {
+      "caught_up_s": {
+        "max": 7.511,
+        "min": 0.158,
+        "n": 64,
+        "p50": 0.158,
+        "p95": 4.51,
+        "p99": null
+      },
+      "first_valid_apply_s": {
+        "max": 7.511,
+        "min": 0.158,
+        "n": 64,
+        "p50": 0.158,
+        "p95": 4.51,
+        "p99": null
+      },
+      "outage_seconds": 0.132,
+      "rewinds_total": 0
+    }
+  },
+  "release": "v2.2.3",
+  "schema": "qdl.release-endpoint-report.v2",
+  "scope": "Data Layer P18.4 phase D closure on the Kafka-native stack at the stage-100 workload: 64 demanded TS Paper slices, BINANCE and OKX (incl. OKX_INVERSE), one TS writer on the same host. Numbers are copied from the phase E step-2 campaign files cited below; nothing is re-measured here. Not a TS order/accounting/alpha certification, not HA, not independent failure domains."
+}

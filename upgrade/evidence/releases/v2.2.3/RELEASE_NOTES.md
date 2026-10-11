@@ -1,8 +1,11 @@
 # Quant Data Layer v2.2.3
 
-Status: `PREPARED_NOT_PUBLISHED`. This is not a published release, a Git tag or an owner publication decision.
-Publication needs the owner's decision and a tag. Remote CI must also run on the final head. The published stable
-release is still v2.2.2.
+Status: certified (scoped PASS, [certificate.json](certificate.json)). It is published by the tag workflow after the
+owner's decision (2026-10-11).
+- Publication path: required remote CI at the final head, feature -> dev (PR #31), release PR dev -> main, tag
+  `v2.2.3` on main.
+- Scope: the Data Layer release under the limits below. Not a Trading System release; not HA (single host).
+- Previous stable release: v2.2.2.
 
 Scorecard: [scorecard.json](scorecard.json). Inventory, hashes, the SDK build and CI: [release-preparation.json](release-preparation.json).
 
@@ -348,7 +351,7 @@ their recorded sha256 no longer match the files on disk.
    and main.
 3. An annotated tag `v2.2.3` that links the final CI runs and the hashes of scorecard.json and this file.
 
-No merge or tag was performed. The branch was pushed before this record. This record is not committed.
+This record was committed and pushed on fix/p184-dl-closure; the merge and tag follow the publication path above.
 
 ## Appendix: Preparation History
 

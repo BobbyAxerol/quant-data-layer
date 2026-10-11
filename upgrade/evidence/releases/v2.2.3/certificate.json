@@ -1,0 +1,503 @@
+{
+  "ci": {
+    "head_sha": "481fd6704b28d8fa63deee39d59eeba23d87f5a8",
+    "later_run_at_assembly": {
+      "head_sha": "63640c2fae12d34fdbd5675cfe7da4905944285d",
+      "id": 38151850803,
+      "passed": [
+        "consolidated-source-preflight",
+        "sdk-python310"
+      ],
+      "pending": [
+        "contract-tests",
+        "unit-tests",
+        "kn-native-integration"
+      ]
+    },
+    "local_exact_source": {
+      "jobs": {
+        "consolidated-source-preflight": "PASS",
+        "contract-tests": "PASS",
+        "kn-native-integration": "PASS",
+        "sdk-python310": "PASS",
+        "unit-tests": "INCOMPLETE"
+      },
+      "path": "~/.local/state/qdl-v2/p184-local-ci-481fd67/summary.json",
+      "sha": "481fd6704b28d8fa63deee39d59eeba23d87f5a8",
+      "sha256": "83e7dda9f3605b52b4dc94d63f51fbc5c7d1d7f06a119e920c20b4a64a47ca0a",
+      "status": "INCOMPLETE",
+      "steps": "41 PASS, 3 SKIPPED (contract-tests #2/#5 pull-request-only; unit-tests #4 needs sudo)"
+    },
+    "note": "Metadata is frozen before final-head CI; job conclusions below are a snapshot at assembly (2026-10-11T15:37Z, GitHub API), not a claim that pending checks passed.",
+    "pull_request": "https://github.com/BobbyAxerol/quant-data-layer/pull/31",
+    "release_metadata_head_requires_checks": true,
+    "required_jobs": [
+      "consolidated-source-preflight",
+      "contract-tests",
+      "sdk-python310",
+      "unit-tests",
+      "kn-native-integration"
+    ],
+    "reviewed_source_run": {
+      "event": "pull_request",
+      "head_sha": "481fd6704b28d8fa63deee39d59eeba23d87f5a8",
+      "id": 38151336521,
+      "passed": [
+        "consolidated-source-preflight",
+        "contract-tests",
+        "sdk-python310",
+        "kn-native-integration"
+      ],
+      "pending": [
+        "unit-tests"
+      ]
+    },
+    "status": "REQUIRED_EXTERNAL_GATE"
+  },
+  "classification": "SCOPED_DATA_LAYER_STAGE100_PASS_G4_NOT_MEASURED_G13_TS_DEFERRED_SINGLE_HOST_NOT_HA",
+  "classification_note": "PASS certifies only the Data Layer release under the limits below: 12 of 14 gates PASS in a protocol-met stage-100 campaign plus isolated G12, G4 NOT_MEASURED (rows without a frozen baseline; every baselined row PASS), G13 DEFERRED (41/41 DL-side cells ok; 4 TS-stack cells belong to the TS release). It is not a Trading System release, not HA, not uninterrupted availability and not a capacity claim beyond the measured volume.",
+  "endpoint_report_sha256": "8e09cda5838f1fb398e90358e2f3627dfadc56fe09cb9223de5e79ecd30378a6",
+  "evidence_sha256": {
+    "upgrade/evidence/releases/v2.2.3/RELEASE_NOTES.md": "84bb4c2387eff4e8f2fb487aa8f4b451b316e7c4e0469362154993cd2153dafb",
+    "upgrade/evidence/releases/v2.2.3/release-preparation.json": "a17f15e5ab48d09bdbd4ddf55ee760b5412825eaceb57a402cb20f9fca9fb1ee",
+    "upgrade/evidence/releases/v2.2.3/scorecard.json": "23b79a01d81d378074043050810e5cb34f01d01e919561366e63d0ccd1137a81",
+    "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/campaign.json": "b926a20e3acbe5dcdde965ec7147fe3ee46b1d5a6fe0ca95795d36614aa71c2b",
+    "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/g11/g11-summary.json": "c85e4566e327328b0bd4c5f5cc75a4825f1edcff1586a4bad3226e3233c5b764",
+    "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/g3/g3-summary.json": "fafca1be177364c2032dd18afd5f7e2c8d67468403b2de3fde2658ee69274e07",
+    "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/g4-1-summary.json": "717bf3b8be882a4801468b61fdb4a094861265b135d53bade2c04661c12e3c3c",
+    "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/g4-2-summary.json": "3f080361fb9b7d9d9fb3e4af204fd8e7c67a7e199f70aee9d97a849fc936e52a",
+    "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/g4-3-summary.json": "21b72b595926f62e15d712e58a0f7bdacfed3a53bacb067ab66ce72f4a494f6b",
+    "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/g4-4-summary.json": "0b68e97fb3744c57dba8b337f230c2e0d33fae5c9442a15d6b0809d6a6d6f322",
+    "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/g4-5-summary.json": "eeaa9a683f48c73c1bb891bbc2abb188168d871865bb79e2a4517ccd6a9a619f",
+    "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/g6-ts/summary.json": "5a9fc905a71d86e1d013bfeed463bee3bfb366545fd742189b6ddedc3ee1bede",
+    "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/g8/g8-summary.json": "0314b552d3f09b7d2143304ee77c9cd0c27a959fb10b764e2996865a2ffae7e5",
+    "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/g9g10/g9-g10-summary.json": "247c62e6702c264efb4b7b8e1a3089b369a378a8baf21e81d525945b3d8bf5d0",
+    "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/scorecard.json": "747e476489a3ef9807e7ade9bd347b00a8e56226a5bc85a99b8fa03b5e7fa58e",
+    "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/stage100/gates.json": "86b74f26c3f7dc68228d260becffa77247d080bfc5d6ce9736ebba495df81544",
+    "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/stage100/host.json": "a5ba4fcf963ff2c003f4f6f211fa6a8210f453d56b6a37fd3e8fb19276c894e1",
+    "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/stage100/receipt.json": "fdf26baa323115015501aa56b6450e51deaa83e9bf284d6ef8ec1574c20825eb",
+    "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/trace/mark-load.json": "b6a5198116d7916e32b8b05f48e2bf45798b7863aeb64e32247b874c442f8c9f",
+    "~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/trace/transit-load.json": "bd1ccac05fad1728d73bbab833a629d43266756c3575e09082a498e1ee7c78c7",
+    "~/.local/state/qdl-v2/p184-g12-rc12-20261011/evidence/exit-states.json": "52d7ce96025dc75a48fad58e64e724bac61acb4c30bd830dbc00767a66206a6d",
+    "~/.local/state/qdl-v2/p184-g12-rc12-20261011/evidence/monitor.jsonl": "8aa135ab0bdaefa6df5cd6aa1f260164dd87f58ebe407341d884f324ba9ad063",
+    "~/.local/state/qdl-v2/p184-g12-rc12-20261011/evidence/teardown.json": "a5fceec5d8f40626ce01dfc83d93514dbd378824957966f944c6920154a3e71b",
+    "~/.local/state/qdl-v2/p184-g12-rc12-20261011/evidence/verdict.json": "20f296719c740dd53a2f32f20b0f18b673b7fa082532c54ee478d7166fbc5e3e",
+    "~/.local/state/qdl-v2/p184-g12-rc12-20261011/image-set.json": "838c0503cc99229ac5b1b02393ec8df0fece3abfe07af1ef0fe91d69dc69b85a",
+    "~/.local/state/qdl-v2/p184-g13-20261011T134532Z/dr05-transport/dr05-transport.jsonl": "95a6540104b1c566773d8b52281304c15ff671b3e9795ba022a51c77d159ff93",
+    "~/.local/state/qdl-v2/p184-g13-20261011T134532Z/dr05-upstream/dr05-upstream-rows.jsonl": "b01f3f4ad86bef3b4c982aa86a3cff2ae3f981e5ede5afc04cf5c8932de3825b",
+    "~/.local/state/qdl-v2/p184-g13-20261011T134532Z/dr08-isolated/work/evidence.jsonl": "b996d55d41354975764fa9dcdd6ac5ae944e73f2497b0b9648dfa42d38f64489",
+    "~/.local/state/qdl-v2/p184-g13-20261011T134532Z/summary.json": "445e05c9de1a0074fb0f94acc950e25536e9a74342edea44e4142a8d6765e55c",
+    "~/.local/state/qdl-v2/p184-g13-20261011T140432Z/dr04-dr06-views/views.rows": "0fb613f61b14e0553103e64a47d040e1e24ab2fbd7f1ec766180170aa7a2ea10",
+    "~/.local/state/qdl-v2/p184-g13-20261011T140432Z/summary.json": "f0b7b523fa6af40503f009f97d4ebde9119dda228b7902644f93e0629de40a6c",
+    "~/.local/state/qdl-v2/p184-g13-inputs/runtime-approval-rc12.md": "9e786bfd2205b5d69977f5fc547a2880d79450bb9856d2a70d1833bbcb638aa8",
+    "~/.local/state/qdl-v2/p184-local-ci-481fd67/summary.json": "83e7dda9f3605b52b4dc94d63f51fbc5c7d1d7f06a119e920c20b4a64a47ca0a"
+  },
+  "gates": {
+    "G10_trade_integrity": "PASS 0 gaps, 0 duplicates applied, 0 replay-expired, 0 overflow",
+    "G11_writer_restart": "PASS outage 0.132 s, first valid apply/caught up max 7.511 s over 64 slices, 0 rewinds",
+    "G12_restart_recovery": "PASS isolated (TEST_ONLY, rc12 digests; rc13 differs by IDR-087 only): broker 224.704 s, projector 19.4 s, stream 138.381 s <= 600 s, then G1-G3 inside",
+    "G13_dr_acceptance": "DEFERRED 41/41 DL cells ok on rc12 + final writer 44baacc0; dr01-deployed, dr01-wrong-account, dr02-dr03-alpha, dr07-reference deferred to the TS release",
+    "G14_resources": "PASS 18 roles recorded with headroom; DL mean CPU sum 5.08 vCPU is above the owner's 5 vCPU budget (limit)",
+    "G1_book_transit": "PASS every BOOK row inside (p95 138.8-177.6 ms, max <= 585.9 ms; rule p95<=500, p99<=1000, max<2000)",
+    "G2_trade_quote_mark_transit": "PASS every row inside (TRADE p95 243.4/210.3, max 583.1/495.5; QUOTE max 531.5/532.0; MARK max 803.1/712.7 ms BINANCE/OKX) with writer knob 64; step 1 at knob 1 FAIL kept",
+    "G3_bar_from_close": "PASS BINANCE p95 2680 ms max 3330; OKX p95 1493 max 1546; 0 unseen",
+    "G4_delivery_lag_vs_baseline": "NOT_MEASURED 17/17 baselined rows PASS; 8 observed rows have no frozen baseline; none added after measuring",
+    "G5_request_latency": "PASS 10 latency class/venue gates + cold overlap 4 runs 0 bad; 0 failed, 0 missed of 182709 offered",
+    "G6_execution_quality": "PASS 6 D3 rows, 0 unsafe, 19213 probe reads, 0 errors",
+    "G7_ts_consumer_path": "PASS SDK->writer p95 <= 45.3 ms, writer->Redis p95 <= 33.3 ms",
+    "G8_ts_redis": "PASS ping p99 0.779 ms, 0 slowlog, core fraction <= 0.0612",
+    "G9_readiness": "PASS demanded 64 == session-ready in 180/180 scored samples, 0 data-path eligibility losses, v1 fallback 0",
+    "remote_ci": "PENDING_REQUIRED_CHECKS",
+    "summary": {
+      "DEFERRED": [
+        "G13"
+      ],
+      "FAIL": [],
+      "NOT_MEASURED": [
+        "G4"
+      ],
+      "PASS": [
+        "G1",
+        "G2",
+        "G3",
+        "G5",
+        "G6",
+        "G7",
+        "G8",
+        "G9",
+        "G10",
+        "G11",
+        "G12",
+        "G14"
+      ]
+    }
+  },
+  "limits": [
+    "Scoped Data Layer certificate: not a Trading System order, accounting, alpha or DR01/DR02/DR03/DR07 certification.",
+    "Single host for every run: no HA, no independent failure domains, no zero-downtime, no mainnet or funded sizing claim.",
+    "G4 NOT_MEASURED: rows without a frozen baseline (bar BINANCE/OKX 1h and 5m, OKX_INVERSE book_delta/book_snapshot/mark/quote).",
+    "G13 DEFERRED: four TS-stack cells open; DR05.QUIET_TYPED BINANCE/OKX are NOT_OBSERVED, not a positive quiet-state proof.",
+    "G12 is ISOLATED_FAULT with TEST_ONLY sources on the rc12 digests, single projector/Stream replica, same host.",
+    "Latency gates were measured on the pre-rc13 mix (source-identical Query/Stream, source-equivalent Rust roles, bar edge differs by IDR-087); rc13 itself has readiness receipts only.",
+    "IDR-087 (bar edge backlog probe in a supervised child) is tested locally only; the bar edge has not been through a live broker stop.",
+    "G2/G8 PASS requires the TS writer batched Subscribe knob 64; TRADE volume in the PASS run was lower than earlier runs, so no capacity claim at higher TRADE volume.",
+    "DL mean CPU 5.08 vCPU at stage 100 exceeds the owner's 5 vCPU budget; Kafka is the largest share; tuning is open.",
+    "IDR-040 fix 2 is OFF (book_liveness_proof_ms unset): a quiet Binance book stays stale, never falsely fresh.",
+    "Catalog revision split (C.19) unchanged: image catalog 11, runtime-mounted 12.",
+    "Remote CI at the final head is not yet green at assembly time (see ci); historical failures, refusals and FAIL campaigns stay recorded and are not erased by this PASS."
+  ],
+  "previous_published_release": "v2.2.2",
+  "publication_requires": "Owner publication decision; all required remote CI jobs (consolidated-source-preflight, contract-tests, sdk-python310, unit-tests, kn-native-integration) green at the final head that contains this certificate (required at final head; run 38151336521 on 481fd67 and the run on 63640c2 do not cover the certificate commit); PR fix/p184-dl-closure -> dev (#31), then release PR dev -> main; annotated tag v2.2.3 on a main commit (the workflow checks main ancestry) that links the CI runs and the scorecard/notes hashes. statusPASS here certifies only the scoped DL release above.",
+  "publication_status": "REQUIRES_OWNER_DECISION_FINAL_HEAD_CI_DEV_MAIN_MERGE_AND_TAG",
+  "release": "v2.2.3",
+  "release_images": {
+    "python": {
+      "digest": "sha256:ccbea12e87e42273364b1a78847ea97f5659cc5f43b14c0b1b807f5aa6e00677",
+      "revision_label": "481fd6704b28d8fa63deee39d59eeba23d87f5a8",
+      "tag": "qdl-v2-python:2.2.3-rc13-481fd67"
+    },
+    "rust": {
+      "digest": "sha256:6afdc155ba3e4e0e87216c209a23a2938897d235b30bc5d52e054c2e21cb65ad",
+      "revision_label": "481fd6704b28d8fa63deee39d59eeba23d87f5a8",
+      "tag": "qdl-v2-rust:2.2.3-rc13-481fd67"
+    }
+  },
+  "rollback": {
+    "images": {
+      "query_kn_1/2, binance_bar_edge": "sha256:3b585597570f3f7065c17b0a7f9228a2dad2f71224905e2f105a1754b9d4a75c (qdl-v2-python:2.2.3-rc12-5ee9463)",
+      "stream_kn_1/2, projectors, cores, ingestors": "sha256:ebc7b7944e57ab02d3d2bb3eb68b7ef4365c8e3b51e97a2f46ebc1817540dd5f (qdl-v2-rust:2.2.3-rc12-5ee9463)"
+    },
+    "kafka_config": "--delete-config log.cleaner.io.max.bytes.per.second",
+    "not_touched": [
+      "kafka1-3",
+      "market_cache",
+      "stable_redis",
+      "stable_state_init",
+      "stable_tls_init",
+      "Kafka offsets",
+      "Redis data",
+      "realm dirs"
+    ],
+    "order": "reverse role order, failure only",
+    "packets": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/rollout-rc6/<role>-rollback.compose.json",
+    "preserve": "same environment, TLS, mounts, state, groups, offsets, config and consumer identity; no data migration",
+    "redis_cpu_shares": "docker update --cpu-shares 0 redis_marketdata",
+    "roles": [
+      "ingestor_binance_usdm",
+      "ingestor_okx_swap",
+      "rust_core_3",
+      "rust_core_2",
+      "rust_core",
+      "market_projector_2",
+      "market_projector_1",
+      "stream_kn_2",
+      "stream_kn_1",
+      "binance_bar_edge",
+      "query_kn_2",
+      "query_kn_1"
+    ],
+    "rollback_compose_sha256": {
+      "binance_bar_edge": "2a38cba97b6431e4aa0cd0b4f0ef438e0849dd565e202d2f0c129f93b5c7fbf5",
+      "ingestor_binance_usdm": "fb8655b4e3efb7731bf1c5c747ad1052f23661cf282aa7df9aef97a079d2c30a",
+      "ingestor_okx_swap": "d101a5198bfcb93562580f90d2a02665811fe0efd4fe8be0e34fd8399e2c9d49",
+      "market_projector_1": "c957bcd8db42b34333c25a5544c3d72ba1ddbc260d6699dd818f110f4b72a5f3",
+      "market_projector_2": "0810b910c897c7b066efa21682d2120bc03bbbfc9598e39559fd15bd4ea8218d",
+      "query_kn_1": "9b0890cc4ede2af26f2f24b3c876035f1406df1b92060874cc624754d516c5d0",
+      "query_kn_2": "12f9e6888399ca47e34a44bd3e801dfb2d42451a3a16ddd0d922f63e607776b3",
+      "rust_core": "ccdc9b50198a86f277e1e37796c9110c744d9728881825bc9ef7a7aaa3ac2fef",
+      "rust_core_2": "b88cab5e8b718193549dab8848d6588bfc39877a39536e639ed6c2c3a4f3cde5",
+      "rust_core_3": "d7b1ac8c128ea57446141eb49bf685359b223be6e9e2ae3001cc7fb4c6111b5f",
+      "stream_kn_1": "d3e8343d7ef27cfc7109375f074b6ceb9994c1d3567f6a21e477b73067edabce",
+      "stream_kn_2": "83b98c51e1ac20580225bd34aa022931ea98bd0739cbb323351a09dda73e2953"
+    },
+    "ts_writer": {
+      "path": "~/.local/state/trading-system/p184-rev11-window/campaign-roll/rollback-20261011T134403Z.compose.json",
+      "sha256": "d673be459f0bf8b6ba5b41cf361237f99116abfc018ccfbdceea3205d7415697"
+    }
+  },
+  "runtime": [
+    {
+      "health": null,
+      "image": "sha256:44baacc0a3ff95f71029d230e48e1b7282627f26de9bd99e13d1148862e09068",
+      "oom": false,
+      "restart": 0,
+      "revision_label": "a37ff4dcef418947b89578c1870726cb03db4fd3",
+      "service": "market_data_service_p184w",
+      "started": "2026-10-11T13:44:14.494194887Z",
+      "status": "running"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:ccbea12e87e42273364b1a78847ea97f5659cc5f43b14c0b1b807f5aa6e00677",
+      "oom": false,
+      "restart": 0,
+      "revision_label": "481fd6704b28d8fa63deee39d59eeba23d87f5a8",
+      "service": "qdl_v2_stable_candidate-binance_bar_edge-1",
+      "started": "2026-10-11T14:26:52.382759721Z",
+      "status": "running"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:6afdc155ba3e4e0e87216c209a23a2938897d235b30bc5d52e054c2e21cb65ad",
+      "oom": false,
+      "restart": 0,
+      "revision_label": "481fd6704b28d8fa63deee39d59eeba23d87f5a8",
+      "service": "qdl_v2_stable_candidate-ingestor_binance_usdm-1",
+      "started": "2026-10-11T14:31:35.59199243Z",
+      "status": "running"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:6afdc155ba3e4e0e87216c209a23a2938897d235b30bc5d52e054c2e21cb65ad",
+      "oom": false,
+      "restart": 0,
+      "revision_label": "481fd6704b28d8fa63deee39d59eeba23d87f5a8",
+      "service": "qdl_v2_stable_candidate-ingestor_okx_swap-1",
+      "started": "2026-10-11T14:31:27.839139393Z",
+      "status": "running"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "oom": false,
+      "restart": 0,
+      "revision_label": null,
+      "service": "qdl_v2_stable_candidate-kafka1-1",
+      "started": "2026-10-08T16:23:33.912058555Z",
+      "status": "running"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "oom": false,
+      "restart": 0,
+      "revision_label": null,
+      "service": "qdl_v2_stable_candidate-kafka2-1",
+      "started": "2026-10-08T16:23:34.12626004Z",
+      "status": "running"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+      "oom": false,
+      "restart": 0,
+      "revision_label": null,
+      "service": "qdl_v2_stable_candidate-kafka3-1",
+      "started": "2026-10-08T16:23:34.326288421Z",
+      "status": "running"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+      "oom": false,
+      "restart": 0,
+      "revision_label": null,
+      "service": "qdl_v2_stable_candidate-market_cache-1",
+      "started": "2026-09-27T05:29:58.000340326Z",
+      "status": "running"
+    },
+    {
+      "health": null,
+      "image": "sha256:6afdc155ba3e4e0e87216c209a23a2938897d235b30bc5d52e054c2e21cb65ad",
+      "oom": false,
+      "restart": 0,
+      "revision_label": "481fd6704b28d8fa63deee39d59eeba23d87f5a8",
+      "service": "qdl_v2_stable_candidate-market_projector_1-1",
+      "started": "2026-10-11T14:28:29.10000567Z",
+      "status": "running"
+    },
+    {
+      "health": null,
+      "image": "sha256:6afdc155ba3e4e0e87216c209a23a2938897d235b30bc5d52e054c2e21cb65ad",
+      "oom": false,
+      "restart": 0,
+      "revision_label": "481fd6704b28d8fa63deee39d59eeba23d87f5a8",
+      "service": "qdl_v2_stable_candidate-market_projector_2-1",
+      "started": "2026-10-11T14:29:00.699668563Z",
+      "status": "running"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:ccbea12e87e42273364b1a78847ea97f5659cc5f43b14c0b1b807f5aa6e00677",
+      "oom": false,
+      "restart": 0,
+      "revision_label": "481fd6704b28d8fa63deee39d59eeba23d87f5a8",
+      "service": "qdl_v2_stable_candidate-query_kn_1-1",
+      "started": "2026-10-11T14:26:17.881199252Z",
+      "status": "running"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:ccbea12e87e42273364b1a78847ea97f5659cc5f43b14c0b1b807f5aa6e00677",
+      "oom": false,
+      "restart": 0,
+      "revision_label": "481fd6704b28d8fa63deee39d59eeba23d87f5a8",
+      "service": "qdl_v2_stable_candidate-query_kn_2-1",
+      "started": "2026-10-11T14:26:38.472711377Z",
+      "status": "running"
+    },
+    {
+      "health": null,
+      "image": "sha256:6afdc155ba3e4e0e87216c209a23a2938897d235b30bc5d52e054c2e21cb65ad",
+      "oom": false,
+      "restart": 0,
+      "revision_label": "481fd6704b28d8fa63deee39d59eeba23d87f5a8",
+      "service": "qdl_v2_stable_candidate-rust_core-1",
+      "started": "2026-10-11T14:29:32.163633283Z",
+      "status": "running"
+    },
+    {
+      "health": null,
+      "image": "sha256:6afdc155ba3e4e0e87216c209a23a2938897d235b30bc5d52e054c2e21cb65ad",
+      "oom": false,
+      "restart": 0,
+      "revision_label": "481fd6704b28d8fa63deee39d59eeba23d87f5a8",
+      "service": "qdl_v2_stable_candidate-rust_core_2-1",
+      "started": "2026-10-11T14:30:03.591093881Z",
+      "status": "running"
+    },
+    {
+      "health": null,
+      "image": "sha256:6afdc155ba3e4e0e87216c209a23a2938897d235b30bc5d52e054c2e21cb65ad",
+      "oom": false,
+      "restart": 0,
+      "revision_label": "481fd6704b28d8fa63deee39d59eeba23d87f5a8",
+      "service": "qdl_v2_stable_candidate-rust_core_3-1",
+      "started": "2026-10-11T14:30:56.132123836Z",
+      "status": "running"
+    },
+    {
+      "health": "healthy",
+      "image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+      "oom": false,
+      "restart": 0,
+      "revision_label": null,
+      "service": "qdl_v2_stable_candidate-stable_redis-1",
+      "started": "2026-09-16T06:38:55.588316335Z",
+      "status": "running"
+    },
+    {
+      "health": null,
+      "image": "sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d",
+      "oom": false,
+      "restart": 0,
+      "revision_label": "8ba4165",
+      "service": "qdl_v2_stable_candidate-stable_state_init-1",
+      "started": "2026-09-03T12:36:17.69711623Z",
+      "status": "exited"
+    },
+    {
+      "health": null,
+      "image": "sha256:bd0163fd76b045ca3b37089d6aacd5412ca55f0a4dc426d04e023ad5236aed4d",
+      "oom": false,
+      "restart": 0,
+      "revision_label": "8ba4165",
+      "service": "qdl_v2_stable_candidate-stable_tls_init-1",
+      "started": "2026-09-03T12:36:17.691555089Z",
+      "status": "exited"
+    },
+    {
+      "health": null,
+      "image": "sha256:6afdc155ba3e4e0e87216c209a23a2938897d235b30bc5d52e054c2e21cb65ad",
+      "oom": false,
+      "restart": 0,
+      "revision_label": "481fd6704b28d8fa63deee39d59eeba23d87f5a8",
+      "service": "qdl_v2_stable_candidate-stream_kn_1-1",
+      "started": "2026-10-11T14:27:02.493271338Z",
+      "status": "running"
+    },
+    {
+      "health": null,
+      "image": "sha256:6afdc155ba3e4e0e87216c209a23a2938897d235b30bc5d52e054c2e21cb65ad",
+      "oom": false,
+      "restart": 0,
+      "revision_label": "481fd6704b28d8fa63deee39d59eeba23d87f5a8",
+      "service": "qdl_v2_stable_candidate-stream_kn_2-1",
+      "started": "2026-10-11T14:27:36.229558337Z",
+      "status": "running"
+    }
+  ],
+  "runtime_basis": "docker inspect, read-only, at certificate assembly (2026-10-11 ~15:38Z)",
+  "runtime_scope_note": "All 12 Data Layer application roles run the rc13 digests with revision label 481fd67 (IDR-039 closed); kafka1-3, market_cache, stable_redis and the two init one-shots are unchanged; market_data_service_p184w is the TS writer (TS a37ff4d, SDK 2.3.0), owned by TS.",
+  "runtime_scope_totals": {
+    "application_roles_on_release_digests": 12,
+    "python_roles": [
+      "binance_bar_edge",
+      "query_kn_1",
+      "query_kn_2"
+    ],
+    "rust_roles": [
+      "ingestor_binance_usdm",
+      "ingestor_okx_swap",
+      "market_projector_1",
+      "market_projector_2",
+      "rust_core",
+      "rust_core_2",
+      "rust_core_3",
+      "stream_kn_1",
+      "stream_kn_2"
+    ],
+    "unchanged_roles": [
+      "kafka1",
+      "kafka2",
+      "kafka3",
+      "market_cache",
+      "stable_redis",
+      "stable_state_init",
+      "stable_tls_init"
+    ]
+  },
+  "schema": "qdl.scoped-release-certificate.v2",
+  "sdk": {
+    "builder": "scripts/build_qdl_sdk_release.py from a git archive of 481fd67, two builds, image qdl-v2-python:2.2.3-rc13-481fd67, --network none, non-root, read-only source",
+    "builds": [
+      {
+        "dir": "~/.local/state/qdl-v2/releases/v2.2.3/sdk230-build-1",
+        "release_json_sha256": "218b45b0250c95c1b273b9b809afc234984ab5fffdefcfdf541ebd635111ea15",
+        "sbom_sha256": "4c69c98d56f29962d9981d1acd517cf44717aa4c224f9df5b2e3e913ceff488b",
+        "wheel_sha256": "b9c74157db2a2d147564d72b65bbbafc9a7d3d055bccee67645b831470ad38c3"
+      },
+      {
+        "dir": "~/.local/state/qdl-v2/releases/v2.2.3/sdk230-build-2",
+        "release_json_sha256": "218b45b0250c95c1b273b9b809afc234984ab5fffdefcfdf541ebd635111ea15",
+        "sbom_sha256": "4c69c98d56f29962d9981d1acd517cf44717aa4c224f9df5b2e3e913ceff488b",
+        "wheel_sha256": "b9c74157db2a2d147564d72b65bbbafc9a7d3d055bccee67645b831470ad38c3"
+      }
+    ],
+    "contains_service_internals": false,
+    "dependencies": [
+      "grpcio>=1.70.0,<2.0.0",
+      "httpx>=0.28.0,<1.0.0",
+      "protobuf>=6.31.1,<7.0.0",
+      "pydantic>=2.0.0,<3.0.0",
+      "PyJWT[crypto]>=2.15.1,<3.0.0"
+    ],
+    "generated_contract_digest": "2c59805220f06caf1a19b6df5d4ec7bf44282a780d265e0dd667b9abd4d7c1d1",
+    "name": "qdl-sdk",
+    "python_requires": ">=3.10",
+    "reproducibility_check_2026_10_11": {
+      "environments_byte_identical": [
+        "qdl-v2-python:2.2.3-rc13-481fd67 (CPython 3.12.14, zlib 1.3.1), two builds, --network none, non-root, read-only source",
+        "python:3.10-slim (CPython 3.10.22, zlib 1.3.1)",
+        "python:3.12-slim (CPython 3.12.14, zlib 1.3.1)",
+        "host Ubuntu 24.04.4 /usr/bin/python3 (CPython 3.12.3, zlib 1.3), the same OS image family as GitHub ubuntu-latest"
+      ],
+      "residual_risk": "a runner whose python3 links zlib-ng or a future zlib with changed deflate output would produce a different wheel; the workflow then fails closed (hash mismatch), it cannot publish a different artifact",
+      "source": "git archive HEAD 63640c2 (qdl_sdk, generated/python, contracts, LICENSE and the builder have an empty diff to 481fd67)",
+      "wheel_sha256": "b9c74157db2a2d147564d72b65bbbafc9a7d3d055bccee67645b831470ad38c3",
+      "why": "fixed zip timestamps and modes, sorted entries, no environment or clock input; deflate output depends only on the zlib deflate implementation"
+    },
+    "reproducible": true,
+    "reproducible_timestamp": "2020-01-01T00:00:00Z",
+    "schema": "qdl.sdk.release.v1",
+    "sdk_source_digest": "e0e5d044c5edfffb1084bc84b69d4cf1898a4221004ca720c0c9dd02fb0d895b",
+    "source_unchanged_since": "4c779ac (git diff 4c779ac 481fd67 -- qdl_sdk generated/python contracts scripts/build_qdl_sdk_release.py: empty); the wheel equals the TS-vendored vendor/qdl_sdk-2.3.0-py3-none-any.whl (same sha256)",
+    "supersedes": "2.2.1 (wheel 27db3971..., never published; 2.2.0 before it)",
+    "ts_writer_sdk": "2.3.0 (writer images 64347a94 and 44baacc0, qdl_sdk.__version__ read with --network none)",
+    "version": "2.3.0",
+    "wheel": "qdl_sdk-2.3.0-py3-none-any.whl",
+    "wheel_sha256": "b9c74157db2a2d147564d72b65bbbafc9a7d3d055bccee67645b831470ad38c3"
+  },
+  "source_code_sha": "481fd6704b28d8fa63deee39d59eeba23d87f5a8",
+  "status": "PASS"
+}
