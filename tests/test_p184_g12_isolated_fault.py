@@ -221,7 +221,8 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(result["g1"]["OKX"]["n"], 1200)
         self.assertEqual(result["parts"], {"caught_up": True, "window_complete": True, "g1": "PASS",
                                            "g2": "PASS", "g2_feeds": {"TRADE": "PASS", "QUOTE": "PASS",
-                                                                      "MARK": "PASS"}, "g3": "PASS"})
+                                                                      "MARK": "PASS"}, "g3": "PASS",
+                                           "monitor": "PASS"})
         self.assertEqual(result["g2"]["TRADE"]["BINANCE"]["n"], 1200)
         self.assertEqual(result["g3"]["BAR_1m"]["OKX"]["n"], 5)  # closes 120..360 s in [62.1, 362.1) s
         short = g12.evaluate_fault(fault, pubs, [v for v in views if v["t"] < 200 * S], monitor)
@@ -1012,6 +1013,148 @@ class QueryStateTopicTests(unittest.TestCase):
             with patch.object(g12, "owned_names", return_value=[]):
                 run.keep_logs()
             self.assertEqual((Path(base) / "evidence/logs/tswriter-okx.stderr.log").read_text(), "Traceback: boom\n")
+
+
+def _crash_on_second(calls=[]):  # noqa: B006 - per-process call counter of the forked child
+    def sampler(phase):
+        calls.append(1)
+        phase("list_offsets:kn-projector-v3-a")
+        if len(calls) == 2:
+            import os
+            import signal
+            os.kill(os.getpid(), signal.SIGSEGV)
+        return {"cluster": {"broker_ids": [1, 2, 3]}, "n": len(calls)}
+    return sampler
+
+
+class MonitorSupervisorTests(unittest.TestCase):
+    """G12 run 2026-10-11 full2: the monitor (librdkafka admin calls) died with SIGSEGV (exit 139) one second
+    into a broker stop and the run stopped. A crash now costs one typed sample, never the monitor."""
+
+    def test_native_crash_is_a_typed_sample_error_and_the_next_sample_works(self):
+        supervisor = g12.SampleSupervisor(_crash_on_second, timeout_s=5)
+        try:
+            first, error = supervisor.sample()
+            self.assertEqual((first["n"], error), (1, None))
+            fields, error = supervisor.sample()
+            self.assertIsNone(fields)
+            self.assertEqual((error["error"], error["phase"], error["exitcode"]),
+                             ("SIGSEGV", "list_offsets:kn-projector-v3-a", -11))
+            again, error = supervisor.sample()  # a fresh child (its own counter)
+            self.assertEqual((again["n"], error, supervisor.restarts), (1, None, 1))
+        finally:
+            supervisor.close()
+
+    def test_hang_and_exception_are_bounded(self):
+        def hang():
+            def sampler(phase):
+                phase("describe_consumer_groups")
+                import time as clock
+                clock.sleep(30)
+            return sampler
+
+        def broken():
+            raise RuntimeError("no TLS material")
+        supervisor = g12.SampleSupervisor(hang, timeout_s=0.5)
+        try:
+            started = g12.time.monotonic()
+            fields, error = supervisor.sample()
+            self.assertLess(g12.time.monotonic() - started, 5)
+            self.assertEqual((fields, error["error"], error["phase"]), (None, "TIMEOUT", "describe_consumer_groups"))
+        finally:
+            supervisor.close()
+        supervisor = g12.SampleSupervisor(broken, timeout_s=5)
+        try:
+            fields, error = supervisor.sample()
+            self.assertEqual((fields, error["error"]), (None, "EXCEPTION"))
+            self.assertIn("no TLS material", error["detail"])
+        finally:
+            supervisor.close()
+        self.assertEqual([g12.exit_reason(c) for c in (-11, -9, 1, None)],
+                         ["SIGSEGV", "SIGKILL", "EXIT_1", "EXIT_None"])
+
+    def test_monitor_writes_sample_error_rows_and_keeps_running(self):
+        import signal
+        import tempfile
+        from pathlib import Path
+        outcomes = [({"cluster": {"broker_ids": [1, 2, 3]}}, None),
+                    (None, {"error": "SIGSEGV", "phase": "describe_cluster", "exitcode": -11}),
+                    ({"cluster": {"broker_ids": [1, 2, 3]}}, None)]
+
+        class Supervisor:
+            restarts = 1
+
+            def __init__(self, make_sampler, timeout_s):
+                self.timeout_s = timeout_s
+
+            def sample(self):
+                return outcomes.pop(0) if outcomes else ({"cluster": {}}, None)
+
+            def close(self):
+                pass
+        before = signal.getsignal(signal.SIGTERM)
+        try:
+            with tempfile.TemporaryDirectory() as tmp, \
+                    patch.object(g12, "_packet", return_value={"namespace": NS}), \
+                    patch.object(g12, "SampleSupervisor", Supervisor), \
+                    patch.object(g12, "local_sample", return_value={"ports": {"8210": True}}):
+                out = Path(tmp) / "monitor.jsonl"
+                g12.monitor(tmp, out, seconds=0.35, period=0.1)
+                rows = g12.load_jsonl(out)
+        finally:
+            signal.signal(signal.SIGTERM, before)
+        self.assertEqual(rows[1]["k"], "sample_error")
+        self.assertEqual((rows[1]["error"], rows[1]["phase"], rows[1]["restarts"]), ("SIGSEGV", "describe_cluster", 1))
+        self.assertNotIn("ports", rows[1])  # a crashed sample observes nothing
+        self.assertEqual(rows[2]["ports"], {"8210": True})
+        self.assertEqual(rows[-1]["k"], "end")
+
+
+class MonitorGapRuleTests(unittest.TestCase):
+    FAULT = {"k": "fault", "name": "stream_restart", "kind": "stream", "injected_ns": 60 * S, "restart_ns": 61 * S}
+
+    def run_fault(self, monitor):
+        pubs, views = [], []
+        for venue in g12.VENUES:
+            p, v = stream_rows(venue, 0, 500 * S)
+            pubs += p
+            views += v
+            p, v = md_rows(venue, 0, 500 * S)
+            pubs += p
+            views += v
+        return g12.evaluate_fault(self.FAULT, pubs, views, sorted(monitor, key=lambda r: r["t"]))
+
+    @staticmethod
+    def sample(t_s, up):
+        return {"t": int(t_s * S), "ports": {"8210": up}, "projector_lag": 0, "under_replicated": 0}
+
+    def test_crash_samples_are_excluded_and_a_short_hole_still_passes(self):
+        monitor = [self.sample(t, t >= 64) for t in range(0, 500) if not 62 <= t <= 63]
+        # Crashed samples in the hole: even carrying an "up" port they are never evidence.
+        monitor += [{"t": t * S, "k": "sample_error", "error": "SIGSEGV", "phase": "describe_cluster",
+                     "ports": {"8210": True}} for t in (62, 63)]
+        result = self.run_fault(monitor)
+        self.assertEqual(result["fault_cleared_ns"], 64 * S)
+        self.assertEqual(result["monitor_max_gap_s"], 3.0)  # 61 -> 64 s, restart to clearance
+        self.assertEqual(result["parts"]["monitor"], "PASS")
+        self.assertEqual([e["error"] for e in result["monitor_sample_errors"]], ["SIGSEGV", "SIGSEGV"])
+        self.assertTrue(result["pass"])
+
+    def test_a_gap_over_five_seconds_at_clearance_is_not_measured(self):
+        monitor = [self.sample(t, t >= 62) for t in range(0, 500) if not 55 <= t <= 67]
+        monitor += [{"t": 61.5 * S, "k": "sample_error", "error": "SIGSEGV", "phase": "list_offsets:x",
+                     "ports": {"8210": True}}]
+        result = self.run_fault(monitor)
+        self.assertEqual(result["fault_cleared_ns"], 68 * S)  # the first valid sample after the hole
+        self.assertGreater(result["monitor_max_gap_s"], g12.MONITOR_MAX_GAP_S)
+        self.assertEqual((result["parts"]["monitor"], result["reason"]), ("NOT_MEASURED", "MONITOR_GAP"))
+        self.assertFalse(result["pass"])
+
+    def test_gap_helper_counts_edges(self):
+        rows = [{"t": 3 * S}, {"t": 4 * S, "k": "sample_error"}, {"t": 9 * S}]
+        self.assertEqual(g12.monitor_max_gap_s(rows, 0, 10 * S), 6.0)
+        self.assertEqual(g12.monitor_max_gap_s([], 0, 2 * S), 2.0)
+        self.assertEqual(g12.cleared_at("stream", [{"t": 5, "k": "sample_error", "ports": {"8210": True}}], 0), None)
 
 
 if __name__ == "__main__":

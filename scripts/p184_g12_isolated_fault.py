@@ -111,7 +111,11 @@ GATE = {"caught_up_s": 600, "age_ms": 1000, "hold_s": 30, "window_s": 300,
         "p95_ms": 500, "p99_ms": 1000, "max_ms": 2000, "p99_min_n": 100}
 LIMITS = {"disk_free_bytes": 20 * 10**9, "mem_available_bytes": 3 * 2**30,
           "deadline_s": 3600, "holder_s": 5400, "broker_outage_s": 60,
-          "role_return_s": 120, "clone_ready_s": 300, "baseline_s": 300, "md_ready_s": 180}
+          "role_return_s": 120, "clone_ready_s": 300, "baseline_s": 300, "md_ready_s": 180,
+          "monitor_sample_s": 5}
+# A fault whose clearance / catch-up interval has no valid monitor sample for longer than this is NOT_MEASURED:
+# its fault-cleared time (the monitor's) would be uncertain by more than the gap (steady cadence: 1.0 s).
+MONITOR_MAX_GAP_S = 5
 # G2 / G3 (frozen TS gate rows; owner decision 2026-10-09). min_n: below it the part is NOT_MEASURED.
 # G2 is new-event transit (publish -> first applied notification); G3 is BAR 1m from close.
 GATE_G2_G3 = {"TRADE": {"p95_ms": 500, "max_ms": 1500, "min_n": 100},
@@ -772,10 +776,22 @@ def exit_states(event_rows):
     return states
 
 
+def monitor_valid(monitor_rows):
+    """Monitor samples that observed: a ``sample_error`` (crashed / timed-out sample) or the end marker is
+    never evidence of anything."""
+    return [row for row in monitor_rows if not row.get("k")]
+
+
+def monitor_max_gap_s(monitor_rows, start_ns, end_ns):
+    """Longest interval (s) in [start, end] without a valid monitor sample, the edges included."""
+    points = [start_ns, *sorted(r["t"] for r in monitor_valid(monitor_rows) if start_ns < r["t"] < end_ns), end_ns]
+    return round(max(b - a for a, b in zip(points, points[1:])) / 1e9, 3) if end_ns > start_ns else 0.0
+
+
 def cleared_at(kind, monitor_rows, restart_ns, node=None):
     """Fault-cleared time from the monitor (packet section 5)."""
     for row in monitor_rows:
-        if row.get("t", 0) < restart_ns:
+        if row.get("t", 0) < restart_ns or row.get("k"):
             continue
         if kind == "broker" and node in ((row.get("cluster") or {}).get("broker_ids") or ()):
             return row["t"]
@@ -788,7 +804,7 @@ def cleared_at(kind, monitor_rows, restart_ns, node=None):
 
 def first_monitor(monitor_rows, start_ns, predicate):
     for row in monitor_rows:
-        if row.get("t", 0) >= start_ns and predicate(row):
+        if row.get("t", 0) >= start_ns and not row.get("k") and predicate(row):
             return row["t"]
     return None
 
@@ -831,13 +847,22 @@ def evaluate_fault(fault, publish_rows, sampler_rows, monitor_rows, *, window_s=
         monitor_rows, cleared, lambda r: r.get("projector_lag") is not None and r["projector_lag"] <= 1)
     result["isr_restored_ns"] = first_monitor(monitor_rows, cleared, lambda r: r.get("under_replicated") == 0)
     result["g12_caught_up_pass"] = result["caught_up_s"] <= GATE["caught_up_s"]
+    # The fault-cleared time is the monitor's: with no valid sample for longer than MONITOR_MAX_GAP_S between the
+    # restart and catch-up it is uncertain by that much, so the fault is NOT_MEASURED (never a PASS).
+    result["monitor_max_gap_s"] = monitor_max_gap_s(monitor_rows, fault["restart_ns"], caught)
+    result["monitor_sample_errors"] = [
+        {k: r.get(k) for k in ("t", "error", "phase")} for r in monitor_rows
+        if r.get("k") == "sample_error" and fault["injected_ns"] <= r["t"] <= caught]
+    monitored = "PASS" if result["monitor_max_gap_s"] <= MONITOR_MAX_GAP_S else "NOT_MEASURED"
+    if monitored != "PASS":
+        result["reason"] = "MONITOR_GAP"
     # G2/G3 over the same window as G1 (new events whose publish time / bar close lies in it).
     result.update(md_window(publish_rows, sampler_rows, *window))
     result["parts"] = {"caught_up": result["g12_caught_up_pass"], "window_complete": complete,
                        "g1": "PASS" if all(result["g1"][v]["pass"] for v in VENUES) else "FAIL",
                        "g2": result["g2_status"], "g2_feeds": result["g2_feed_status"],
-                       "g3": result["g3_status"]}
-    result["pass"] = (result["g12_caught_up_pass"] and complete
+                       "g3": result["g3_status"], "monitor": monitored}
+    result["pass"] = (monitored == "PASS" and result["g12_caught_up_pass"] and complete
                       and all(result["g1"][v]["pass"] for v in VENUES)
                       and result["g2_status"] == "PASS" and result["g3_status"] == "PASS")
     return result
@@ -869,6 +894,10 @@ def evaluate(evidence):
                         "resyncs": sum(1 for r in publish_rows if r.get("k") == "resync"),
                         "market_data": publisher_md_summary(publish_rows)}
     out["exit_states"] = exit_states(load_jsonl(evidence / "container-events.jsonl"))
+    errors = [r for r in monitor_rows if r.get("k") == "sample_error"]
+    out["monitor"] = {"samples": len(monitor_valid(monitor_rows)), "sample_errors": len(errors),
+                      "errors": sorted({(r.get("error"), r.get("phase")) for r in errors}, key=str),
+                      "max_gap_rule_s": MONITOR_MAX_GAP_S}
     out["pass"] = bool(out["faults"]) and len(out["faults"]) == 3 and all(f["pass"] for f in out["faults"])
     return out
 
@@ -1496,78 +1525,220 @@ def publish(work, out, seconds, hz):
     return {"stopped": True}
 
 
+def kafka_sample(source, admin, roster, rosters, groups, phase=lambda name: None):
+    """The Kafka part of one monitor sample (cluster/ISR, projector committed vs LSO, group membership).
+    ``phase(name)`` is announced before each admin call, so a native crash names the call it died in."""
+    from scripts.kn_recovery_observe import Deadline
+    row = {}
+    phase("describe_cluster")
+    try:
+        row["cluster"] = source.describe_cluster(Deadline(3.0))
+    except Exception as error:  # noqa: BLE001 - recorded, never inferred
+        row["cluster_error"] = type(error).__name__
+    phase("describe_topics")
+    try:
+        described = source.describe_topics(sorted(roster), Deadline(3.0))
+        parts = [p for values in described.values() for p in values]
+        row["under_replicated"] = sum(1 for p in parts if len(p["isr"]) < len(p["replicas"]))
+        row["offline"] = sum(1 for p in parts if p["leader"] is None)
+        row["leaders"] = {f"{t}/{p['partition']}": p["leader"] for t, ps in described.items() for p in ps}
+        row["min_isr_size"] = min(len(p["isr"]) for p in parts)
+    except Exception as error:  # noqa: BLE001
+        row["topics_error"] = type(error).__name__
+    try:
+        lag = {}
+        for group, group_roster in rosters.items():
+            phase("list_consumer_group_offsets:" + group)
+            committed = source.committed_offsets(group, group_roster, Deadline(3.0))
+            phase("list_offsets:" + group)
+            ends = source.log_end_offsets(sorted(committed), Deadline(3.0))
+            lag[group] = sum(max(0, ends[tp] - max(committed[tp], 0)) for tp in committed)
+        row["lag"] = lag
+        row["projector_lag"] = lag["kn-projector-v3-a"]
+    except Exception as error:  # noqa: BLE001
+        row["lag_error"] = type(error).__name__
+    phase("describe_consumer_groups")
+    try:
+        described = admin.describe_consumer_groups(list(groups), request_timeout=3)
+        row["groups"] = {}
+        for group, future in described.items():
+            value = future.result(timeout=4)
+            row["groups"][group] = {"state": str(getattr(value, "state", "")).split(".")[-1],
+                                    "members": len(value.members or ())}
+    except Exception as error:  # noqa: BLE001
+        row["groups_error"] = type(error).__name__
+    phase("done")
+    return row
+
+
+def local_sample(work):
+    """The non-Kafka part of one monitor sample: Query/Stream ports, disk, projector status file."""
+    import socket
+    row = {"ports": {}}
+    for port in (8200, 8210):
+        try:
+            with socket.create_connection(("localhost", port), timeout=.5):
+                row["ports"][str(port)] = True
+        except OSError:
+            row["ports"][str(port)] = False
+    row["disk_free_bytes"] = shutil.disk_usage(str(work)).free
+    try:
+        row["projector_status_mtime"] = (Path(work) / "g12-projector-status.json").stat().st_mtime
+    except FileNotFoundError:
+        row["projector_status_mtime"] = None
+    return row
+
+
+def exit_reason(code):
+    """A child's exit as a typed reason: SIGSEGV / SIGKILL / ... for a signal, EXIT_<n> otherwise."""
+    if code is not None and code < 0:
+        try:
+            return signal.Signals(-code).name
+        except ValueError:
+            return f"SIGNAL_{-code}"
+    return f"EXIT_{code}"
+
+
+def _sample_child(conn, make_sampler):
+    """Forked sampler: builds its own client on first use, answers one sample per request."""
+    sampler = None
+    while True:
+        try:
+            request = conn.recv()
+        except (EOFError, OSError):
+            return
+        if request is None:
+            return
+        try:
+            if sampler is None:
+                sampler = make_sampler()
+            fields = sampler(lambda name: conn.send(("phase", name)))
+        except Exception as error:  # noqa: BLE001 - typed back to the parent, then this child ends
+            conn.send(("error", type(error).__name__ + ":" + str(error)[:200]))
+            return
+        conn.send(("row", fields))
+
+
+class SampleSupervisor:
+    """Runs each sample in a long-lived forked child with a hard per-sample timeout.
+
+    A native crash (librdkafka SIGSEGV, G12 run 2026-10-11 full2: the monitor exited 139 one second into a
+    broker stop) or a hang loses only the sample in flight: it comes back as a typed error ({error, phase,
+    exitcode}) and the next sample starts a fresh child. The parent never loads the Kafka client (fork-safe).
+    """
+
+    def __init__(self, make_sampler, timeout_s, context=None):
+        import multiprocessing
+        self.make_sampler, self.timeout_s = make_sampler, timeout_s
+        self.context = context or multiprocessing.get_context("fork")
+        self.proc = self.conn = None
+        self.restarts, self.started = 0, False
+
+    def _start(self):
+        parent, child = self.context.Pipe()
+        self.proc = self.context.Process(target=_sample_child, args=(child, self.make_sampler), daemon=True)
+        self.proc.start()
+        child.close()
+        self.conn = parent
+
+    def _stop(self, kill):
+        proc, conn, self.proc, self.conn = self.proc, self.conn, None, None
+        if proc is None:
+            return None
+        if kill and proc.is_alive():
+            proc.kill()
+        proc.join(5)
+        if conn is not None:
+            conn.close()
+        return proc.exitcode
+
+    def sample(self):
+        """(fields, None) or (None, error)."""
+        if self.proc is None or not self.proc.is_alive():
+            if self.proc is not None:
+                self._stop(kill=True)
+            if self.started:
+                self.restarts += 1
+            self._start()
+            self.started = True
+        phase, limit = None, time.monotonic() + self.timeout_s
+        try:
+            self.conn.send("sample")
+        except (BrokenPipeError, OSError):
+            code = self._stop(kill=True)
+            return None, {"error": exit_reason(code), "phase": None, "exitcode": code}
+        while True:
+            left = limit - time.monotonic()
+            if left <= 0:
+                code = self._stop(kill=True)
+                return None, {"error": "TIMEOUT", "phase": phase, "exitcode": code}
+            try:
+                if self.conn.poll(min(left, .05)):
+                    kind, value = self.conn.recv()
+                    if kind == "phase":
+                        phase = value
+                        continue
+                    if kind == "row":
+                        return value, None
+                    code = self._stop(kill=True)
+                    return None, {"error": "EXCEPTION", "detail": value, "phase": phase, "exitcode": code}
+            except (EOFError, OSError):
+                pass
+            if not self.proc.is_alive():
+                code = self._stop(kill=False)
+                return None, {"error": exit_reason(code), "phase": phase, "exitcode": code}
+
+    def close(self):
+        if self.conn is not None:
+            try:
+                self.conn.send(None)
+            except (BrokenPipeError, OSError):
+                pass
+        self._stop(kill=True)
+
+
 def monitor(work, out, seconds, period=1.0):
     """Read-only 1 s observation: cluster/ISR, projector committed vs LSO,
-    group membership, Query/Stream ports, disk. No group join or commit."""
-    import socket
-    from confluent_kafka.admin import AdminClient
-    from scripts.kn_recovery_observe import Deadline, KafkaAdminSource
+    group membership, Query/Stream ports, disk. No group join or commit.
+
+    The Kafka admin calls run in a supervised child (SampleSupervisor): a crash or
+    hang of one sample is written as ``{"k": "sample_error", "error": "SIGSEGV" |
+    "TIMEOUT" | ..., "phase": <the admin call>}`` and never stops the monitor; the
+    G12 analysis excludes those rows and refuses a fault whose clearance or
+    catch-up falls in a monitor gap (MONITOR_MAX_GAP_S)."""
     packet = _packet(work)
     ns = packet["namespace"]
-    admin = AdminClient(_security(packet))
-    source = KafkaAdminSource(admin)
     roster = topics(ns)
     rosters = {"kn-projector-v3-a": {ns + ".canonical": roster[ns + ".canonical"][0]},
                "kn-projector-v3-b": {ns + ".latest": roster[ns + ".latest"][0],
                                      ns + ".bars": roster[ns + ".bars"][0]}}
     groups = (*PROJECTOR_GROUPS, "kn-" + ns, ns)
+
+    def make_sampler():
+        from confluent_kafka.admin import AdminClient
+        from scripts.kn_recovery_observe import KafkaAdminSource
+        admin = AdminClient(_security(packet))
+        source = KafkaAdminSource(admin)
+        return lambda phase: kafka_sample(source, admin, roster, rosters, groups, phase)
+
+    supervisor = SampleSupervisor(make_sampler, LIMITS["monitor_sample_s"])
     stop, end = _Stop(), time.monotonic() + seconds
-    status_path = Path(work) / "g12-projector-status.json"
-    with open(out, "a", buffering=1) as log:
-        while time.monotonic() < end and not stop.requested:
-            started = time.monotonic()
-            row = {"t": time.time_ns()}
-            deadline = Deadline(3.0)
-            try:
-                row["cluster"] = source.describe_cluster(deadline)
-            except Exception as error:  # noqa: BLE001 - recorded, never inferred
-                row["cluster_error"] = type(error).__name__
-            try:
-                described = source.describe_topics(sorted(roster), Deadline(3.0))
-                parts = [p for values in described.values() for p in values]
-                row["under_replicated"] = sum(1 for p in parts if len(p["isr"]) < len(p["replicas"]))
-                row["offline"] = sum(1 for p in parts if p["leader"] is None)
-                row["leaders"] = {f"{t}/{p['partition']}": p["leader"] for t, ps in described.items() for p in ps}
-                row["min_isr_size"] = min(len(p["isr"]) for p in parts)
-            except Exception as error:  # noqa: BLE001
-                row["topics_error"] = type(error).__name__
-            try:
-                lag = {}
-                for group, group_roster in rosters.items():
-                    committed = source.committed_offsets(group, group_roster, Deadline(3.0))
-                    ends = source.log_end_offsets(sorted(committed), Deadline(3.0))
-                    lag[group] = sum(max(0, ends[tp] - max(committed[tp], 0)) for tp in committed)
-                row["lag"] = lag
-                row["projector_lag"] = lag["kn-projector-v3-a"]
-            except Exception as error:  # noqa: BLE001
-                row["lag_error"] = type(error).__name__
-            try:
-                described = admin.describe_consumer_groups(list(groups), request_timeout=3)
-                row["groups"] = {}
-                for group, future in described.items():
-                    value = future.result(timeout=4)
-                    row["groups"][group] = {"state": str(getattr(value, "state", "")).split(".")[-1],
-                                            "members": len(value.members or ())}
-            except Exception as error:  # noqa: BLE001
-                row["groups_error"] = type(error).__name__
-            row["ports"] = {}
-            for port in (8200, 8210):
-                try:
-                    with socket.create_connection(("localhost", port), timeout=.5):
-                        row["ports"][str(port)] = True
-                except OSError:
-                    row["ports"][str(port)] = False
-            usage = shutil.disk_usage("/work")
-            row["disk_free_bytes"] = usage.free
-            try:
-                stat = status_path.stat()
-                row["projector_status_mtime"] = stat.st_mtime
-            except FileNotFoundError:
-                row["projector_status_mtime"] = None
-            log.write(json.dumps(row, default=list) + "\n")
-            time.sleep(max(0.0, period - (time.monotonic() - started)))
-        log.write(json.dumps({"k": "end", "t": time.time_ns(),
-                              "reason": "SIGTERM" if stop.requested else "seconds"}) + "\n")
+    try:
+        with open(out, "a", buffering=1) as log:
+            while time.monotonic() < end and not stop.requested:
+                started = time.monotonic()
+                t = time.time_ns()
+                fields, error = supervisor.sample()
+                if error is not None:
+                    row = {"t": t, "k": "sample_error", **error, "restarts": supervisor.restarts}
+                else:
+                    row = {"t": t, **fields, **local_sample(work)}
+                log.write(json.dumps(row, default=list) + "\n")
+                time.sleep(max(0.0, period - (time.monotonic() - started)))
+            log.write(json.dumps({"k": "end", "t": time.time_ns(),
+                                  "reason": "SIGTERM" if stop.requested else "seconds"}) + "\n")
+    finally:
+        supervisor.close()
     return {"stopped": True}
 
 
