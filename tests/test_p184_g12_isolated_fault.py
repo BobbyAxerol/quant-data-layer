@@ -955,5 +955,64 @@ class ExitStateTests(unittest.TestCase):
             self.assertIsNone(run.events_proc)
 
 
+class QueryStateTopicTests(unittest.TestCase):
+    """G12 run 2026-10-11 (p184-g12-rc10-full): BAR never reached the clones because the isolated Query read the
+    BAR source boundary from the production bars checkpoint (DR08 serve_query passes a literal two-key env)."""
+
+    DR08_ENV = {"QDL_KN3_MARKET_CACHE_URL": "redis://localhost:6379/1", "QDL_KN3_ENVIRONMENT": "paper"}
+
+    def test_reader_reads_this_namespace_state_topics(self):
+        from qdl.runtime import kn_market_cache
+        default = kn_market_cache.reader_from_environment(self.DR08_ENV)  # the cause: production defaults
+        self.assertEqual((default.bars_topic, default.bars_partitions), ("md.bars.v2", 6))
+        reader = g12.with_isolated_state_topics(kn_market_cache.reader_from_environment, NS)(self.DR08_ENV)
+        wanted = g12.topics(NS)
+        self.assertEqual((reader.bars_topic, reader.bars_partitions), (NS + ".bars", wanted[NS + ".bars"][0]))
+        self.assertEqual((reader.latest_topic, reader.latest_partitions),
+                         (NS + ".latest", wanted[NS + ".latest"][0]))
+        # The BAR head reads its source watermark from the checkpoint the projector writes for its own topic.
+        self.assertEqual(reader.checkpoint_key(reader.bars_topic, 1), f"kn3:paper:ckpt:{NS}.bars:1")
+        self.assertEqual(g12.isolated_state_topics(NS)["QDL_KN_BARS_PARTITIONS"], "3")
+
+    def test_serve_query_patches_reader_and_stack_then_runs_the_dr05_query(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from qdl.runtime import kn_market_cache, stable_source
+        from scripts import p184_dr05_observer
+        reader, stack = kn_market_cache.reader_from_environment, stable_source.build_stable_query_stack
+        seen = {}
+
+        def fake_query(work):
+            seen["reader"] = kn_market_cache.reader_from_environment(self.DR08_ENV)
+            seen["stack"] = stable_source.build_stable_query_stack
+            seen["work"] = work
+        try:
+            with tempfile.TemporaryDirectory() as tmp, patch.object(p184_dr05_observer, "diagnostic_query",
+                                                                    side_effect=fake_query):
+                (Path(tmp) / "packet.json").write_text(json.dumps({"namespace": NS}))
+                g12.serve_query(tmp)
+        finally:
+            kn_market_cache.reader_from_environment, stable_source.build_stable_query_stack = reader, stack
+        self.assertEqual(seen["reader"].bars_topic, NS + ".bars")
+        self.assertIsNot(seen["stack"], stack)
+        self.assertEqual(str(seen["work"]), tmp)
+
+    def test_keep_logs_keeps_the_writer_stderr(self):
+        import tempfile
+        from pathlib import Path
+
+        class Clone:
+            def stderr_tail(self, limit):
+                return "Traceback: boom\n"
+        with tempfile.TemporaryDirectory() as base:
+            run = g12.Run(base, "/home/bobby/e.json", NS)
+            run.evidence.mkdir(parents=True)
+            run.clones = {"OKX": Clone()}
+            with patch.object(g12, "owned_names", return_value=[]):
+                run.keep_logs()
+            self.assertEqual((Path(base) / "evidence/logs/tswriter-okx.stderr.log").read_text(), "Traceback: boom\n")
+
+
 if __name__ == "__main__":
     unittest.main()

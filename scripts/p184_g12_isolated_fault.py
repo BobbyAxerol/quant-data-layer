@@ -1344,11 +1344,41 @@ def with_execution_mark_index(build):
     return stack
 
 
+def isolated_state_topics(ns):
+    """The market-cache reader's state-topic settings of this namespace (the projector's own topics; it takes
+    their partition counts from the topic metadata, ``topics()`` creates them)."""
+    from qdl.runtime.kn_market_cache import (
+        BARS_PARTITIONS_ENV, BARS_TOPIC_ENV, LATEST_PARTITIONS_ENV, LATEST_TOPIC_ENV)
+    wanted = topics(ns)
+    return {LATEST_TOPIC_ENV: ns + ".latest", LATEST_PARTITIONS_ENV: str(wanted[ns + ".latest"][0]),
+            BARS_TOPIC_ENV: ns + ".bars", BARS_PARTITIONS_ENV: str(wanted[ns + ".bars"][0])}
+
+
+def with_isolated_state_topics(build_reader, ns):
+    """Wrap ``reader_from_environment`` so the Query reads this namespace's state topics.
+
+    The DR08 ``serve_query`` passes a literal two-key environment, so the reader fell back to the production
+    defaults ``md.latest.v2`` / ``md.bars.v2`` with 6 partitions. A BAR read takes its source boundary from the
+    bars checkpoint ``ckpt:<bars topic>:<state partition>``; under the wrong topic that hash does not exist, every
+    BAR history is ``SOURCE_BOUNDARY_UNKNOWN`` (typed DATA_NOT_READY) and the writer's BAR slice never starts
+    (G12 run 2026-10-11 p184-g12-rc10-full: 22 warmup refusals, BAR never applied; latest feeds were unaffected
+    because a latest read also proves its boundary from the entry's own offset)."""
+    extra = isolated_state_topics(ns)
+
+    def reader(environ):
+        return build_reader({**dict(environ), **extra})
+    return reader
+
+
 def serve_query(work):
     """In-namespace Query (--query): the unchanged DR05 diagnostic Query (DR08 serve_query, public HTTP boundary,
-    KN market cache + hot view) of the code under test, with execution MARK/INDEX reads enabled."""
+    KN market cache + hot view) of the code under test, with execution MARK/INDEX reads enabled and the cache
+    reader on this namespace's state topics."""
+    import qdl.runtime.kn_market_cache as kn_market_cache
     import qdl.runtime.stable_source as stable_source
     from scripts.p184_dr05_observer import diagnostic_query
+    ns = namespace(json.loads((Path(work) / "packet.json").read_text())["namespace"])
+    kn_market_cache.reader_from_environment = with_isolated_state_topics(kn_market_cache.reader_from_environment, ns)
     stable_source.build_stable_query_stack = with_execution_mark_index(stable_source.build_stable_query_stack)
     diagnostic_query(Path(work))
 
@@ -1998,7 +2028,8 @@ class Run:
             raise RuntimeError(f"STOP {name}: G12 verdict not PASS: " + json.dumps(verdict.get("parts")))
 
     def keep_logs(self):
-        """Bounded log tails of every owned container (--rm loses them at stop)."""
+        """Bounded log tails of every owned container (--rm loses them at stop), and each TS writer clone's own
+        stderr file (the writer logs there, not to docker logs; the file is erased with work/tslogs)."""
         logs = self.evidence / "logs"
         logs.mkdir(exist_ok=True)
         for name in owned_names(self.ns):
@@ -2006,6 +2037,8 @@ class Run:
                                     text=True, timeout=30)
             (logs / (name[len(self.ns) + 1:] + ".log")).write_text(
                 (result.stdout + result.stderr)[-60000:])
+        for venue, clone in self.clones.items():
+            (logs / f"tswriter-{venue.lower()}.stderr.log").write_text(clone.stderr_tail(60000))
 
     def down(self):
         removed, errors = [], []
