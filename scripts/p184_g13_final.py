@@ -13,7 +13,8 @@ ONLY the existing harnesses, sequentially, each under a hard timeout:
                     OKX_INVERSE = BTC-USD-SWAP BOOK, defined by the --catalog input `dr05_catalog`)
     dr08-isolated   DL scripts/p184_dr08_isolated.py --orchestrate (QUALIFICATION mode, >= 5 restart samples)
   RUNTIME phase (reads the shared stack after the final rollout; needs the owner-approved runtime packet):
-    dr01-deployed   DL scripts/p184_dr01_deployed.py prepare/probe/record (7 DL cells)
+    dr01-deployed   DL scripts/p184_dr01_deployed.py prepare/probe/record (7 DL cells); inputs dr01.manifest_dir
+                    (the deployed reader realm dir) + dr01.manifest_revision, optional dr01.wrong_revision
     dr01-wrong-account TS scripts/p184_dr01_wrong_account.py probe (inside the deployed Gateway) + record;
                     GATEWAY-DEPENDENT: refused as GATEWAY_NOT_RUNNING (other steps still run) unless the Gateway
                     container runs the declared gateway image; it closes with the TS release (IDR-085 Gateway)
@@ -234,7 +235,7 @@ def required_inputs(step):
         "dr05-upstream": ("dr05_public_export", "dr05_catalog", "redis_image", "postgres_image"),
         "dr08-isolated": (),
         "dr01-deployed": ("dr01.inventory", "dr01.deployments.BINANCE", "dr01.deployments.OKX", "dr01.compose",
-                          "dr01.alpha_service"),
+                          "dr01.alpha_service", "dr01.manifest_dir", "dr01.manifest_revision"),
         "dr01-wrong-account": ("gateway_container", "gateway_image_digest"),
         "dr02-dr03-alpha": ("alpha.containers.BINANCE", "alpha.containers.OKX", "alpha.symbols.BINANCE",
                             "alpha.symbols.OKX"),
@@ -292,9 +293,12 @@ def commands(step, final, inputs, work, ts_root):
         for venue in VENUES:
             packet = work / f"dr01-{venue.lower()}-packet.json"
             prepare = ["scripts/p184_dr01_deployed.py", "prepare", "--root", DL_ROOT, "--inventory", d["inventory"],
-                       "--deployment", d["deployments"][venue], "--venue", venue, "--output", packet]
+                       "--deployment", d["deployments"][venue], "--venue", venue, "--output", packet,
+                       "--manifest-dir", d["manifest_dir"], "--manifest-revision", str(d["manifest_revision"])]
             if d.get("catalog"):
                 prepare += ["--catalog", d["catalog"]]
+            if d.get("wrong_revision") is not None:
+                prepare += ["--wrong-revision", str(d["wrong_revision"])]
             out.append(cmd(py + prepare, cwd=DL_ROOT))
             out.append(cmd(["docker", "compose", "-f", d["compose"], "run", "--rm", "--no-deps", "-T", "--entrypoint",
                             "python", "-v", f"{packet}:/run/p184/dr01-packet.json:ro", d["alpha_service"], "-B", "-",

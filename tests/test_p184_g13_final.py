@@ -25,7 +25,7 @@ def matrix_of(dr_cells):
 MATRIX_OK = matrix_of([c for case in g13.DR_CELLS.values() for c in case])
 INPUTS = {"dr05_public_export": "/x/export.json", "dr05_catalog": "/x/catalog-r12.yaml", "redis_image": "redis:7.2-alpine", "postgres_image": "pg@sha256:1",
           "dr01": {"inventory": "/x/inv.json", "deployments": {"BINANCE": "db", "OKX": "do"}, "compose": "/x/c.json",
-                   "alpha_service": "alpha"},
+                   "alpha_service": "alpha", "manifest_dir": "/x/reader-public", "manifest_revision": 15},
           "alpha": {"containers": {"BINANCE": "ab", "OKX": "ao"}, "symbols": {"BINANCE": "ETHUSDT",
                                                                               "OKX": "ETH-USDT-SWAP"}},
           "ts_container": "market_data_service_p184w",
@@ -157,6 +157,16 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(dr01[1]["cwd"], "/home/bobby/execution_alpha")
         self.assertNotIn("--ci-confirmed", dr01[-1]["argv"])
         self.assertTrue(all(c["argv"][-1] != "-" for c in dr01))
+        prepare = dr01[0]["argv"]
+        self.assertEqual(prepare[prepare.index("--manifest-dir") + 1], "/x/reader-public")
+        self.assertEqual(prepare[prepare.index("--manifest-revision") + 1], "15")
+        self.assertNotIn("--wrong-revision", prepare)
+        inputs = json.loads(json.dumps(INPUTS)); inputs["dr01"]["wrong_revision"] = 13
+        steps = {e["step"]: e for e in make_plan("runtime", inputs=inputs)["steps"]}
+        prepare = steps["dr01-deployed"]["commands"][0]["argv"]
+        self.assertEqual(prepare[prepare.index("--wrong-revision") + 1], "13")
+        del inputs["dr01"]["manifest_revision"]
+        self.assertIn("dr01.manifest_revision", g13.missing_inputs(["dr01-deployed"], inputs)["dr01-deployed"])
         for e in result["steps"]:
             for c in e["commands"]:
                 outputs = [a for a in c["argv"] if a.startswith(result["receipts"])] + [c["stdout"] or ""]

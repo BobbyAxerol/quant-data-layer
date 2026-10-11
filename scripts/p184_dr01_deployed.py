@@ -3,6 +3,15 @@
 prepare is offline DL compilation; probe runs only when Claude explicitly invokes
 it in the alpha compose --rm container; record joins the two venue observations.
 No account cells, orchestration, retries, entitlement edits or order calls.
+
+The JWT manifest revision is never assumed. prepare takes the revision the live
+readers serve (--manifest-revision) and the deployed realm directory that the
+readers mount at /consumer-realms (--manifest-dir); it refuses unless exactly one
+paper manifest for the venue's alpha consumer in that directory, and its entry in
+the realm's bundle.json, both carry that revision (bundle sha = the reader's
+canonical manifest sha). The wrong revision is --wrong-revision or, by default,
+the declared revision minus one. Both are sealed in the packet; probe compares the
+alpha env against the packet and signs with those values only.
 """
 from __future__ import annotations
 
@@ -23,6 +32,7 @@ from urllib.request import HTTPSHandler, HTTPRedirectHandler, ProxyHandler, Requ
 VENUES = ("BINANCE", "OKX")
 CASES = ("BINDING_COMPILE", "WRONG_REALM_DENIED", "WRONG_REVISION_DENIED")
 MAX_BYTES = 2_000_000
+MAX_REALM_FILES = 64
 
 
 def digest(raw):
@@ -42,6 +52,55 @@ def read_json(path):
 
 def identity(req):
     return tuple(req.get(k) for k in ("instrument_uid", "feed", "interval", "source_policy_id"))
+
+
+def manifest_sha(payload):
+    # Same canonical form as qdl.consumer.manifest.ConsumerManifestLoader (the reader's bundle sha).
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def revisions(declared, wrong=None):
+    """(revision, wrong_revision) as positive ints; wrong defaults to declared-1 and never equals declared."""
+    if type(declared) is not int or declared < 1:
+        raise ValueError("manifest revision must be a positive integer")
+    wrong = declared - 1 if wrong is None else wrong
+    if type(wrong) is not int or wrong < 1 or wrong == declared:
+        raise ValueError("wrong revision must be a positive integer other than the manifest revision")
+    return declared, wrong
+
+
+def realm_manifest(directory, venue, declared):
+    """The deployed paper manifest of the venue's alpha consumer, checked against the realm bundle and revision."""
+    import yaml
+    directory = Path(directory).resolve()
+    consumer_id = f"alpha.{venue.lower()}.paper.stable"
+    files = sorted(p for p in directory.iterdir() if p.suffix in (".yaml", ".yml") and p.is_file())
+    if len(files) > MAX_REALM_FILES:
+        raise ValueError("realm directory exceeds bound")
+    found = []
+    for path in files:
+        raw = path.read_bytes()
+        if len(raw) > MAX_BYTES:
+            raise ValueError("input exceeds bound")
+        doc = yaml.safe_load(raw)
+        meta = doc.get("metadata") if isinstance(doc, dict) else None
+        if isinstance(meta, dict) and meta.get("id") == consumer_id:
+            found.append((path, raw, doc))
+    if len(found) != 1:
+        raise ValueError("expected exactly one realm manifest for the alpha consumer")
+    path, raw, doc = found[0]
+    if doc["metadata"].get("environment") != "paper" or doc["metadata"].get("revision") != declared:
+        raise ValueError("realm manifest revision differs from the declared revision")
+    bundle_raw = (directory / "bundle.json").read_bytes()
+    if len(bundle_raw) > MAX_BYTES:
+        raise ValueError("input exceeds bound")
+    bundle = json.loads(bundle_raw)
+    served = [m for m in bundle.get("manifests", ()) if m.get("consumer_id") == consumer_id
+              and m.get("environment") == "paper"]
+    if (bundle.get("environment") != "paper" or len(served) != 1
+            or served[0].get("manifest_revision") != declared or served[0].get("manifest_sha256") != manifest_sha(doc)):
+        raise ValueError("realm bundle does not serve the declared manifest revision")
+    return path, raw, doc, digest(bundle_raw)
 
 
 def wildcard_paths(obj, path="$"):
@@ -72,17 +131,16 @@ def prepare(args):
         raise ValueError("deployment not admitted")
     binding = entry["binding"]
     ConsumerRouteBinding.from_canonical_mapping(binding)
-    manifest_path = root / f"consumers/stable/alpha-{args.venue.lower()}-paper.yaml"
-    manifest_raw = manifest_path.read_bytes()
-    manifest = yaml.safe_load(manifest_raw)
+    revision, wrong_revision = revisions(args.manifest_revision, args.wrong_revision)
+    manifest_path, manifest_raw, manifest, bundle_sha = realm_manifest(args.manifest_dir, args.venue, revision)
     requirements = manifest["spec"]["requirements"]
     # Check concrete source entitlement selectors as well as consumer selectors.
     selectors = {"consumer": manifest["spec"], "bindings": [
         {k: b.get(k) for k in ("instrument_uid", "feed", "interval", "source")}
         for b in values["catalog"]["bindings"]]}
     wildcards = wildcard_paths(selectors)
-    if wildcards or manifest["metadata"]["revision"] != 14:
-        raise ValueError("wildcard entitlement or manifest revision drift")
+    if wildcards:
+        raise ValueError("wildcard entitlement")
     products = [p for p in binding["products"] if p["venue"] == args.venue]
     baseline = next(r for p in products if p["feed"] == "QUOTE"
                     for r in requirements if identity(r) == identity(p))
@@ -96,14 +154,15 @@ def prepare(args):
                                  for r in requirements))
     negative = dict(baseline, instrument_uid=forbidden["instrument_uid"], feed=forbidden["feed"],
                     interval=forbidden.get("interval"), source_policy_id=forbidden["source"]["source_policy_id"])
-    evidence = {"manifest_path": str(manifest_path.relative_to(root)),
-                "manifest_sha256": digest(manifest_raw), "wildcard_paths": wildcards,
+    evidence = {"manifest_path": str(manifest_path), "manifest_sha256": digest(manifest_raw),
+                "manifest_canonical_sha256": manifest_sha(manifest), "realm_bundle_sha256": bundle_sha,
+                "manifest_revision": revision, "wildcard_paths": wildcards,
                 "selector_count": len(requirements),
-                "grep_equivalent_command": "rg -n 'instrument_uid:|feed:|source_policy_id:' consumers/stable/alpha-*-paper.yaml",
+                "grep_equivalent_command": f"rg -n 'instrument_uid:|feed:|source_policy_id:' {manifest_path}",
                 "source_files": {str(paths[k]): digest(v) for k, v in raw.items()}}
     packet = {"schema": "p184.dr01.deployed-packet.v1", "venue": args.venue,
               "access_consumer_id": manifest["metadata"]["id"], "subject": manifest["metadata"]["subject"],
-              "jwt_revision": 14, "environment": "paper", "binding": binding,
+              "jwt_revision": revision, "wrong_revision": wrong_revision, "environment": "paper", "binding": binding,
               "baseline": baseline, "forbidden": negative, "entitlements": evidence}
     with Path(args.output).open("x") as out:
         json.dump(packet, out, sort_keys=True)
@@ -112,6 +171,9 @@ def prepare(args):
 def validate(packet, binding, env):
     if packet.get("schema") != "p184.dr01.deployed-packet.v1" or packet.get("venue") not in VENUES:
         raise ValueError("invalid packet")
+    if packet.get("wrong_revision") is None:
+        raise ValueError("invalid packet")
+    revision, _ = revisions(packet.get("jwt_revision"), packet["wrong_revision"])
     expected = packet["binding"]
     for obj in (binding, expected):
         claimed = obj["binding_sha256"]
@@ -122,11 +184,11 @@ def validate(packet, binding, env):
     required = {"DATA_LAYER_V2_ACCESS_CONSUMER_ID": packet["access_consumer_id"],
                 "DATA_LAYER_V2_CONSUMER_ID": binding["consumer_id"],
                 "DATA_LAYER_V2_JWT_SUBJECT": packet["subject"],
-                "DATA_LAYER_V2_JWT_ENVIRONMENT": "paper", "DATA_LAYER_V2_JWT_MANIFEST_REVISION": "14",
+                "DATA_LAYER_V2_JWT_ENVIRONMENT": "paper", "DATA_LAYER_V2_JWT_MANIFEST_REVISION": str(revision),
                 "DATA_LAYER_V2_RELEASE_MANIFEST_SHA256": binding["universal_manifest_sha256"]}
     if any(env.get(k) != v for k, v in required.items()):
         raise ValueError("alpha identity or revision drift")
-    if packet["entitlements"]["wildcard_paths"] or packet["jwt_revision"] != 14:
+    if packet["entitlements"]["wildcard_paths"] or packet["entitlements"].get("manifest_revision") != revision:
         raise ValueError("entitlement drift")
     if identity(packet["baseline"]) not in {identity(p) for p in binding["products"]}:
         raise ValueError("baseline outside binding")
@@ -178,7 +240,8 @@ async def token(env, **overrides):
     settings = dict(private_key_file=env["DATA_LAYER_V2_JWT_PRIVATE_KEY_FILE"],
         key_id=env["DATA_LAYER_V2_JWT_KEY_ID"], algorithm=env.get("DATA_LAYER_V2_JWT_ALGORITHM", "RS256"),
         issuer=env["DATA_LAYER_V2_JWT_ISSUER"], audience=env["DATA_LAYER_V2_JWT_AUDIENCE"],
-        subject=env["DATA_LAYER_V2_JWT_SUBJECT"], environment="paper", consumer_manifest_revision=14,
+        subject=env["DATA_LAYER_V2_JWT_SUBJECT"], environment="paper",
+        consumer_manifest_revision=int(env["DATA_LAYER_V2_JWT_MANIFEST_REVISION"]),
         roles=tuple(env.get("DATA_LAYER_V2_JWT_ROLES", "market_data_reader,historical_reader,stream_consumer").split(",")),
         venues=tuple(env.get("DATA_LAYER_V2_JWT_VENUES", "BINANCE,OKX").split(",")),
         lifetime_seconds=120, refresh_before_seconds=30)
@@ -197,7 +260,8 @@ def evaluate(packet, observations):
     return [{"cell": f"DR01.{case}@{packet['venue'] if case != 'NO_GLOBAL_GRANT' else 'ANY'}",
              "level": "RUNTIME", "ok": bool(ok), "outcome": "OBSERVED", "venue": packet["venue"],
              "evidence": {"observations": observations, "binding_sha256": packet["binding"]["binding_sha256"],
-                          "release_revision": packet["binding"]["release_revision"], "jwt_revision": 14,
+                          "release_revision": packet["binding"]["release_revision"],
+                          "jwt_revision": packet["jwt_revision"], "wrong_revision": packet["wrong_revision"],
                           "entitlements": packet["entitlements"], "mtls": True}}
             for case, ok in checks.items()]
 
@@ -212,7 +276,7 @@ def probe(args):
     observations = {}
     for name, changes, req in (("baseline", {}, packet["baseline"]),
         ("realm", {"environment": "live"}, packet["baseline"]),
-        ("revision", {"consumer_manifest_revision": 13}, packet["baseline"]),
+        ("revision", {"consumer_manifest_revision": packet["wrong_revision"]}, packet["baseline"]),
         ("forbidden", {}, packet["forbidden"])):
         headers = {"Authorization": "Bearer " + asyncio.run(token(os.environ, **changes)),
                    "X-QDL-Consumer-ID": packet["access_consumer_id"], "X-QDL-Purpose": "INTERNAL_ALPHA"}
@@ -254,6 +318,10 @@ def main(argv=None):
         p.add_argument("--" + name, required=True)
     p.add_argument("--venue", choices=VENUES, required=True)
     p.add_argument("--catalog")
+    p.add_argument("--manifest-dir", required=True,
+                   help="deployed reader realm directory (the host source of /consumer-realms)")
+    p.add_argument("--manifest-revision", type=int, required=True, help="JWT manifest revision the readers serve")
+    p.add_argument("--wrong-revision", type=int, help="revision for WRONG_REVISION_DENIED (default: revision-1)")
     p = subs.add_parser("probe")
     p.add_argument("--packet", required=True)
     p = subs.add_parser("record")
