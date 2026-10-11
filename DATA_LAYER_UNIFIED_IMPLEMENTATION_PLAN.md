@@ -72159,3 +72159,39 @@ no build, CI or subagent job running.
     - other MARK reads: min observed_at;
     - every other product: max observed_at.
   - Driver and probe copies stay in parity. Tests: 140 OK.
+
+### Final campaign 4, Kafka cleaner throttle, rc10 on all roles, G12/G13 on rc10, v2.2.3 evidence - 2026-10-11 (Claude, subagents)
+
+- Kafka (owner-approved question, ~03:40Z): cluster dynamic default log.cleaner.io.max.bytes.per.second=8388608,
+  applied 03:40:56Z, no broker restart. Cause: md.latest.v2 compaction on kafka1 (1.25 vCPU) stalled every
+  rust_core commit ~2.06 s (2026-10-10 14:12, 15:29, 19:09Z). Receipt kafka-cleaner-throttle-20261010/; rollback
+  --delete-config. Campaign 20261011T033641Z was aborted to apply it.
+- Earlier campaign 20261010T185053Z (writer bae2509f, depth 0): protocol not met (startup:bounded, s89 exhausted 10
+  retries); G1/G2/G4 excess from the 19:09Z stall.
+- Final campaign 4 (20261011T034233Z, protocol met, writer bae2509f 8b567eb depth 1, pinned OKX workers; DL mix
+  Query rc8, Stream rc9, bar edge rc10, rest rc7d):
+  - PASS G1 G3 G5 G6 G7 G9 G10 G11 G14; FAIL G2 (TRADE B/O p95 1562.1/2084.2, max 5338.8/4301.8; QUOTE max
+    1439/1341; MARK max 1125/1228 ms) and G8 (6 SLOWLOG EVALSHA 10.0-19.7 ms); G4 NOT_MEASURED (17/17 baselined
+    rows PASS, 10 rows without a frozen baseline).
+  - Attribution (read-only per-second trace analysis): 1699/1801 s max e2e < 500 ms; 28 s > 1500 ms, 25 of them
+    TRADE-only; bursts up to 4274 TRADE rec in one source second on one slice/worker, <= 1138 applied rec/s per
+    worker; G4 TRADE canonical p95 108-137 ms; 0 overflow. TRADE volume ~2.2x earlier runs (n 160328). All 6 SLOWLOG
+    entries sit in TRADE burst seconds.
+  - Owner decision (AskUserQuestion): release DL; writer throughput (SDK batch decode, Rust projection, EVAL
+    chunking) is the first TS phase E item; gates not widened.
+- Writer set to depth 0 after the campaign (04:24:53Z; rollback campaign-roll/rollback-20261011T042442Z).
+- rc10 (413c5b9) rolled on all 12 application roles 04:30-04:35Z, writer READY 64/64 after every step: python
+  sha256:a0c3649d9a47, rust sha256:96a2c9120ef4; IDR-039 closed. Rollback per role in rollout-rc6/.
+- G12 isolated on rc10 (p184-g12-rc10-20261011-a2): NOT_MEASURED by the strict rule (G2/G3 after recovery not measured on a BOOK-only source); caught up broker 22.334 s, projector 0.935 s, Stream 2.294 s; G1
+  windows inside (max 1970 ms OKX); teardown 12 removed, 0 left, volumes 217 -> 217. Attempt 1 FAILED on a harness
+  STOP (in-namespace monitor exited, no traceback/OOM kept); duplicate -r2 stopped. Open: keep monitor exit
+  code/OOM state.
+- G13 on rc10: 41/41 DL cells ok (043821Z: dr05-upstream 6, dr08 4, dr05-transport 9; 045533Z: views 22). First
+  views run refused DR04.EXPLICIT_LAST@BINANCE EXECUTION_CONTEXT_STALE in a quiet market (correct typed refusal).
+  Four TS steps deferred to the TS release.
+- SDK 2.2.1 wheel 27db3971... reproducible over two builds; 2.2.0 superseded, never published.
+- Local CI on 2f489b1: all jobs except unit-tests PASS or INCOMPLETE only by skips (contract-tests #10 needs a
+  download, PR-only steps n/a); unit-tests 19 PASS, 3 SKIPPED (#4 sudo, #19/#20 no trivy image); re-run with
+  aquasec/trivy:0.58.1 (unit-r2, f6b6b5e7): every step PASS except #4 sudo. Remote CI not run.
+- Release evidence updated (upgrade/evidence/releases/v2.2.3/): status PREPARED_NOT_PUBLISHED; the 2026-10-10
+  record moved into the history. Publication needs owner push, tag and remote CI.
