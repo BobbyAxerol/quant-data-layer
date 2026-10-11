@@ -130,6 +130,7 @@
       "G9",
       "G10",
       "G11",
+      "G12",
       "G14"
     ],
     "FAIL": [
@@ -137,8 +138,7 @@
       "G8"
     ],
     "NOT_MEASURED": [
-      "G4",
-      "G12"
+      "G4"
     ],
     "DEFERRED": [
       "G13"
@@ -2121,8 +2121,8 @@
       "id": "G12",
       "quantity": "Kafka broker / projector / Stream restart recovery",
       "rule": "fault cleared -> consumers caught up to live <= 600 s, then G1-G3 inside gate; the same four timestamps as G11",
-      "verdict": "NOT_MEASURED",
-      "reason": "isolated run on the release digests (python a0c3649d, rust 96a2c912, writer bae2509f): all three faults caught up <= 600 s and G1 inside in the 300 s window after each; G2/G3 after recovery are NOT_MEASURED (BOOK-only isolated source), and the rule requires G1-G3, so the gate is NOT_MEASURED, not PASS",
+      "verdict": "PASS",
+      "reason": "full isolated run on the release digests (python a0c3649d, rust 96a2c912, writer bae2509f) with harness 2d4b88c (TEST_ONLY BOOK, TRADE, QUOTE, MARK/INDEX and BAR 1m sources): every fault caught up <= 600 s, then G1, G2 (TRADE, QUOTE, MARK) and G3 inside in the 300 s window; monitor 2511 samples, 0 sample errors, no gap",
       "level": "ISOLATED_FAULT",
       "provenance": "TEST_ONLY",
       "measured": [
@@ -2238,7 +2238,25 @@
           "sha256": "7576125751ef20235bad4c139188fe8b31bd10ee3113efea7cd153f11282c87d"
         }
       },
-      "observed": "caught up and G1 INSIDE for all three faults"
+      "observed": "caught up 483.8 / 405.8 / 275.4 s; all parts PASS",
+      "full_run": {
+        "dir": "~/.local/state/qdl-v2/p184-g12-rc10-full3-20261011",
+        "verdict_sha256": "c7b8ea951fcf2c008e3d97d15584162c064b17ecbbd54b865fbbfb66862cac39",
+        "teardown_sha256": "fc11efb3ca785a93df184b76caa1c44a0aa2408dd22742440248b87c27173e63",
+        "harness_commit": "2d4b88c",
+        "caught_up_s": {
+          "broker_stop_start": 483.833,
+          "projector_restart": 405.8,
+          "stream_restart": 275.425
+        },
+        "g2_max_ms": "TRADE <= 96.8, QUOTE <= 96.6 (n 1060 / 600 per venue per fault)",
+        "g3_bar_1m_max_ms": 477.6
+      },
+      "superseded_bookonly_verdict": {
+        "verdict": "NOT_MEASURED",
+        "reason": "isolated run on the release digests (python a0c3649d, rust 96a2c912, writer bae2509f): all three faults caught up <= 600 s and G1 inside in the 300 s window after each; G2/G3 after recovery are NOT_MEASURED (BOOK-only isolated source), and the rule requires G1-G3, so the gate is NOT_MEASURED, not PASS",
+        "observed": "caught up and G1 INSIDE for all three faults"
+      }
     },
     {
       "id": "G13",

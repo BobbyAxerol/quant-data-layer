@@ -72238,3 +72238,10 @@ no build, CI or subagent job running.
     response.
   - Old SDK 2.1.0 and 2.2.1 against the new gateway: unchanged shape (real gRPC).
   - Status: tested locally; needs a gateway image and roll, then TS SDK 2.3.0 adoption.
+- G12 full run on the release digests, harness 2d4b88c, `p184-g12-rc10-full3-20261011` (verdict c7b8ea95): PASS.
+  - Caught up: broker 483.8 s, projector 405.8 s, Stream 275.4 s (<= 600).
+  - In every post-catch-up window: G1, G2 TRADE/QUOTE/MARK (max <= 96.8 ms, n 1060/600 per venue) and G3 BAR
+    1m (max 477.6 ms) inside.
+  - Monitor: 2511 samples, 0 crashes.
+  - Teardown clean.
+  - The v2.2.3 scorecard moves G12 to PASS; the BOOK-only verdict is kept as superseded.

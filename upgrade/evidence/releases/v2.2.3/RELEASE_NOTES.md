@@ -90,9 +90,9 @@ sha256 `01336708...`, `protocol_met: true`, no protocol problems, load 03:44:05-
 restarts 0). G12 and G13 are scored from their own receipts on the release digests.
 
 Summary:
-- PASS: G1, G3, G5, G6, G7, G9, G10, G11, G14.
+- PASS: G1, G3, G5, G6, G7, G9, G10, G11, G12, G14.
 - FAIL: G2, G8.
-- NOT_MEASURED: G4, G12.
+- NOT_MEASURED: G4.
 - DEFERRED: G13.
 
 Paths under `~/.local/state/qdl-v2/`; sha256 prefixes, full hashes in scorecard.json.
@@ -110,7 +110,7 @@ Paths under `~/.local/state/qdl-v2/`; sha256 prefixes, full hashes in scorecard.
 | G9 readiness | demanded == session-ready; 0 data-path eligibility losses; v1 fallback 0 | 180/180 samples readable, demanded 64 == session-ready in every sample, 0 data-path losses, 24 legitimate quiet TRADE refusals, v1 fallback 0 | `g9g10/g9-g10-summary.json` (3015c2db) | **PASS** |
 | G10 TRADE integrity | 0 gaps, 0 dup applied, 0 replay-expired, 0 overflow | all 0; 2 RECONNECTED resumes; 129 log polls, 0 unreadable | same file and trace | **PASS** |
 | G11 writer restart recovery | first valid apply <= 30 s; caught up <= 60 s | outage 0.121 s; 64/64 slices caught up, p50 3.919, max 18.923 s; 0 rewinds; cursor never ahead | `g11/g11-summary.json` (c59cccf3) | **PASS** |
-| G12 broker/projector/Stream recovery | caught up <= 600 s, then G1-G3 | Isolated, release digests: broker stop/start 22.334 s, projector restart 0.935 s, Stream restart 2.294 s; G1 300 s windows after each inside (max 1970.0 ms OKX after the broker fault). G2/G3 after recovery: NOT_MEASURED (BOOK-only source) | `p184-g12-rc10-20261011-a2/evidence/verdict.json` (05c0652d), `teardown.json` (f17de5ca) | **NOT_MEASURED** (catch-up and G1 inside; G2/G3 after recovery not measured) |
+| G12 broker/projector/Stream recovery | caught up <= 600 s, then G1-G3 | Isolated, release digests: broker stop/start 22.334 s, projector restart 0.935 s, Stream restart 2.294 s; G1 300 s windows after each inside (max 1970.0 ms OKX after the broker fault). G2/G3 after recovery: NOT_MEASURED (BOOK-only source) | `p184-g12-rc10-20261011-a2/evidence/verdict.json` (05c0652d), `teardown.json` (f17de5ca) | **PASS**: full run `p184-g12-rc10-full3-20261011` (verdict c7b8ea95, harness 2d4b88c): caught up 483.8 / 405.8 / 275.4 s; G1, G2 TRADE/QUOTE/MARK (max <= 96.8 ms), G3 BAR (max 477.6 ms) inside after every fault; the BOOK-only run above is superseded |
 | G13 DR01-DR08 | every cell once on the final digests | 41/41 DL cells ok on the release digests: dr05-upstream 6, dr08 4, dr05-transport 9, views 22 (2 quiet cells NOT_OBSERVED). 4 TS steps deferred | `p184-g13-20261011T043821Z/summary.json` (3a3a34e2), `...T045533Z/summary.json` (309199f1) | DEFERRED |
 | G14 resources | CPU/RAM per role at stage 100, with headroom | 18/18 roles, 151 samples, none at or over its memory limit. Mean CPU: kafka 81/98/102 %, query 57/66 %, writer 151 %; DL mean sum 5.37 vCPU. Lowest memory headroom query_kn_1 14.3 % | `stage100/host.json` (06eab7ba) | **PASS** |
 
