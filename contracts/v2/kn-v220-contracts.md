@@ -251,6 +251,38 @@ away. The earlier Python stream's coalescing of BOOK_SNAPSHOT is not ported.
   payload/cursor semantics do not change; overload is typed and retryable,
   never silently truncated or reinterpreted as an empty successful page.
 
+## 8. Batched Subscribe responses (additive, SDK 2.3.0)
+
+- `SubscribeRequest.max_records_per_response = 7` (uint32) and
+  `SubscribeResponse.records = 2` (repeated `StreamRecord`) are additive; no
+  field number is reused. 0/absent and 1 mean one record per response, the
+  2.0-2.2 behavior, and such a client receives exactly the responses it did
+  before (`record` set, `records` empty).
+- Exactly one of `record` or `records` is set. `records` carries two or more
+  event records in delivery order; a control (REPLAYING, LIVE, BACKPRESSURE)
+  is always a response of its own in `record`. Every record keeps its own
+  `logical_offset` and signed resume token, so ACK/resume per record is
+  unchanged.
+- The gateway packs only records already queued for the subscription; it
+  never waits to fill a batch. It clamps the request to 256 records and stops
+  a batch at about 1 MiB of payload (a single larger record is still sent
+  alone). It batches lossless feeds only (TRADE, BOOK_SNAPSHOT, BOOK_DELTA);
+  latest-state and lifecycle-coalesced feeds keep one record per response so
+  they stay in the coalescing queue. Committed replay responses stay one
+  record each.
+- A batch never crosses an overflow, failure or close of the subscription
+  queue: those are reported after the records gathered before them are handed
+  to the transport. Revocation is checked before every response, batched or
+  not, exactly as for a single record. A record that ages out while queued ends the current batch first,
+  so cursor movement and the aged-out accounting match one-record delivery.
+  A batch carries the merged budget charges of its records until the
+  transport takes it; a record that cannot top up its charge without waiting
+  ends the batch, and only then waits, holding nothing else. A slow client
+  gets BACKPRESSURE with the token before the batch's first record.
+- Readers: 2.3.0+ read `records` when present and `record` otherwise, so they
+  work against older gateways (one record per response) unchanged.
+  `delivered` counters count records, not responses.
+
 
 ### KN-5 Derived BAR Diagnostic Index
 

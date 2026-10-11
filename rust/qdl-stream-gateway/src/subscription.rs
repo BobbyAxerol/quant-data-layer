@@ -333,6 +333,21 @@ impl Subscription {
         }
     }
 
+    /// The next queued record only if one is already available: never waits
+    /// (batched delivery packs what is queued, it does not wait to fill).
+    /// `None` also when the stream must end; [`Self::next`] then reports the
+    /// overflow, failure or close, so a batch never crosses that boundary.
+    pub fn try_next(&self) -> Option<(Arc<LiveRecord>, Instant, Charge)> {
+        let mut state = self.state.lock().ok()?;
+        if state.failed.is_some() || state.overflowed || state.closed {
+            return None;
+        }
+        let item = state.queue.pop_front()?;
+        state.bytes -= item.weight;
+        self.counters.dequeued.fetch_add(1, Ordering::Relaxed);
+        Some((item.record, item.enqueued, item.charge))
+    }
+
     pub fn queued(&self) -> (usize, usize) {
         self.state
             .lock()
@@ -588,6 +603,41 @@ mod tests {
         subscription.close();
         assert_eq!(counts(&subscription), (5, 0));
         assert_eq!(budget.used(), 0);
+    }
+
+    #[tokio::test]
+    async fn try_next_takes_only_queued_records_and_never_crosses_an_end() {
+        let trade = |offset| {
+            record(
+                offset,
+                event_envelope::Payload::Trade(Trade::default()),
+                vec![],
+            )
+        };
+        let subscription = queue(query::FeedType::Trade, 8);
+        assert!(subscription.try_next().is_none(), "never waits");
+        for offset in 1..=3 {
+            subscription.offer(&trade(offset), 0);
+        }
+        let (first, _, charge) = subscription.try_next().expect("queued");
+        assert_eq!(first.raw.offset, 1);
+        assert_eq!(counts(&subscription), (3, 1));
+        assert_eq!(subscription.queued().0, 2);
+        drop(charge);
+        // A failure ends batching even with records queued; next() reports it.
+        subscription.fail("test-only failure");
+        assert!(subscription.try_next().is_none());
+        assert!(matches!(subscription.next().await, Next::Failed(_)));
+        subscription.close();
+        assert_eq!(subscription.budget.used(), 0);
+
+        let overflow = queue(query::FeedType::Trade, 1);
+        overflow.offer(&trade(1), 0);
+        overflow.offer(&trade(2), 0); // Lossless: overflows, nothing dropped.
+        assert!(overflow.try_next().is_none());
+        assert!(matches!(overflow.next().await, Next::Overflow));
+        overflow.close();
+        assert_eq!(overflow.budget.used(), 0);
     }
 
     #[tokio::test]

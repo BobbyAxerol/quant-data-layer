@@ -463,7 +463,18 @@ class ReplicatedRestQueryTransport:
         return selected[: self._max_attempts]
 
 
+# Records the SDK accepts in one SubscribeResponse (SDK 2.3.0). A gateway that
+# knows `SubscribeRequest.max_records_per_response` packs up to this many
+# already-available lossless records into `SubscribeResponse.records`; an older
+# gateway ignores the field and keeps sending one `record` per response.
+DEFAULT_MAX_RECORDS_PER_RESPONSE = 64
+MAX_RECORDS_PER_RESPONSE = 256
+
+
 class GrpcStreamTransport:
+    # Class default for instances built without __init__ (test doubles).
+    max_records_per_response: int = DEFAULT_MAX_RECORDS_PER_RESPONSE
+
     def __init__(
         self,
         target: str | Sequence[str],
@@ -473,7 +484,18 @@ class GrpcStreamTransport:
         allow_insecure_loopback: bool = False,
         credential_provider: CredentialProvider | None = None,
         start_index: int | None = None,
+        max_records_per_response: int = DEFAULT_MAX_RECORDS_PER_RESPONSE,
     ) -> None:
+        if (
+            type(max_records_per_response) is not int
+            or not 1 <= max_records_per_response <= MAX_RECORDS_PER_RESPONSE
+        ):
+            raise ValueError(
+                "max_records_per_response must be an int between 1 and "
+                f"{MAX_RECORDS_PER_RESPONSE}"
+            )
+        # 1 sends the pre-2.3.0 request (field absent): one record per response.
+        self.max_records_per_response = max_records_per_response
         raw_targets = (target,) if isinstance(target, str) else tuple(target)
         targets = tuple(
             value.strip()
@@ -531,6 +553,8 @@ class GrpcStreamTransport:
             cursor_token=cursor_token,
             max_buffer_events=max_buffer_events,
         )
+        if self.max_records_per_response > 1:
+            request.max_records_per_response = self.max_records_per_response
         if self._credential_provider is None:
             raise DataLayerError(
                 "UNAUTHENTICATED",
@@ -555,21 +579,24 @@ class GrpcStreamTransport:
                 call = subscribe(request, metadata=metadata)
                 async for response in call:
                     responses_seen = True
-                    record = response.record
-                    payload = record.WhichOneof("payload")
-                    if payload == "control":
-                        yield ControlEvent(
-                            record.control.code,
-                            record.control.detail,
-                            {"high_watermark": record.control.high_watermark},
-                        )
-                        continue
-                    if payload == "event":
-                        yield StreamEvent(
-                            record.logical_offset,
-                            record.resume_token,
-                            record.event,
-                        )
+                    # A batched response carries `records` (2.3.0 gateway);
+                    # every other response, and any older gateway, `record`.
+                    # Callers see the same per-record events either way.
+                    records = response.records or (response.record,)
+                    for record in records:
+                        payload = record.WhichOneof("payload")
+                        if payload == "control":
+                            yield ControlEvent(
+                                record.control.code,
+                                record.control.detail,
+                                {"high_watermark": record.control.high_watermark},
+                            )
+                        elif payload == "event":
+                            yield StreamEvent(
+                                record.logical_offset,
+                                record.resume_token,
+                                record.event,
+                            )
                 return
             except grpc.aio.AioRpcError as error:
                 detail = error.details() or "gRPC stream failed"

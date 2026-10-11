@@ -1,5 +1,24 @@
 # SDK Changelog
 
+## 2.3.0 (batched Subscribe)
+
+`GrpcStreamTransport` asks the stream gateway for up to
+`max_records_per_response` records per `SubscribeResponse` (new keyword,
+default 64, 1..256; 1 sends the pre-2.3.0 request without the field). The
+protobuf contract gains `SubscribeRequest.max_records_per_response = 7` and
+`SubscribeResponse.records = 2` (repeated `StreamRecord`); both are additive.
+A gateway that knows the field packs only records it already has queued for
+a lossless feed (TRADE, BOOK_SNAPSHOT, BOOK_DELTA), never waits to fill a
+batch, never puts a control in a batch and clamps the value to 256 records or
+1 MiB; latest-state and lifecycle-coalesced feeds keep one record per response.
+The transport reads `records` when present and `record` otherwise, so callers
+get the identical sequence of per-record `StreamEvent`/`ControlEvent` objects,
+each with its own logical offset and resume token, from a batching gateway, a
+gateway without the field (one record per response) or with batching off.
+`StreamTransport.subscribe`, `WarmupStreamSession` and acknowledgement are
+unchanged. 2.1.x/2.2.x clients never set the field and are served exactly as
+before by a 2.3.0 gateway.
+
 ## 2.2.1 (v2.2.3 Data Layer)
 
 `GrpcStreamTransport` starts on a random target per instance instead of always

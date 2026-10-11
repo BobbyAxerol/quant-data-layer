@@ -64,6 +64,12 @@ async with client.warmup_then_stream(
             handle_control(item)
 ```
 
+`GrpcStreamTransport(..., max_records_per_response=64)` (SDK 2.3.0) lets a
+gateway that supports it carry up to that many already-queued records in one
+gRPC message. The session still yields one event per record with its own
+resume token; against an older gateway, or with `max_records_per_response=1`,
+every message carries one record as before.
+
 ## Universal BAR warmup and closed-bar handoff
 
 BAR consumers declare either an exact row count or an exact half-open time
@@ -146,7 +152,7 @@ Build the standalone artifact with:
 python scripts/build_qdl_sdk_release.py --output-dir dist/qdl-sdk
 ```
 
-The output contains a reproducible `qdl_sdk-2.2.1-py3-none-any.whl`, a release
+The output contains a reproducible `qdl_sdk-2.3.0-py3-none-any.whl`, a release
 manifest with the wheel/source/generated-contract SHA-256 digests, and a
 CycloneDX SBOM. The wheel contains only the public SDK plus generated Protobuf
 contracts; it does not package `qdl.api_v2`, runtime adapters, provider code or

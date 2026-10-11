@@ -46,6 +46,29 @@ pub const OUTBOUND_HANDOFF: usize = 2;
 /// How often a send waiting for live budget to copy a record retries.
 const HANDOFF_BUDGET_RETRY: Duration = Duration::from_millis(5);
 
+/// Most event records one batched `SubscribeResponse` carries, whatever the
+/// client asks for (`SubscribeRequest.max_records_per_response`, SDK 2.3.0).
+pub const MAX_RECORDS_PER_RESPONSE: usize = 256;
+
+/// A batch stops growing once its records reach this many encoded bytes, far
+/// below the 4 MiB default receive limit of gRPC clients. A single record is
+/// always sent whatever its size, as before batching.
+pub const MAX_BATCH_BYTES: usize = 1 << 20;
+
+/// Records one response may carry for this request: 1 (the pre-2.3.0 shape)
+/// unless the client asked for more and the feed is lossless. Latest-state
+/// and lifecycle-coalesced feeds keep one record per response, so records
+/// stay in the coalescing queue (DL-V2 R1.8) instead of the handoff.
+pub fn response_batch_limit(requested: u32, feed: &str) -> usize {
+    let lossless = qdl_contracts::delivery::delivery_policy(feed, None)
+        == Ok(qdl_contracts::delivery::DeliveryPolicy::Lossless);
+    if lossless {
+        (requested as usize).clamp(1, MAX_RECORDS_PER_RESPONSE)
+    } else {
+        1
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct StreamLimits {
     pub cursor_ttl_seconds: u64,
@@ -294,6 +317,7 @@ fn subscribe_control(
 ) -> query::SubscribeResponse {
     query::SubscribeResponse {
         record: Some(control(state as i32, code, detail, high, token)),
+        records: Vec::new(),
     }
 }
 
@@ -484,6 +508,10 @@ impl MarketDataStreamService for Gateway {
             Entitlement::Requirement(Box::new(requirement.clone())),
             generation,
         );
+        let batch_limit = response_batch_limit(
+            body.max_records_per_response,
+            &subscription.requirement.delivery.feed,
+        );
         let task = SubscriptionTask {
             report: Report {
                 outcome: Mutex::new("ended"),
@@ -501,6 +529,7 @@ impl MarketDataStreamService for Gateway {
             partition,
             key,
             after,
+            batch_limit,
         };
         tokio::spawn(task.run(registration.barrier, ring));
         Ok(Response::new(Box::pin(
@@ -957,6 +986,59 @@ struct SubscriptionTask {
     partition: i32,
     key: Vec<u8>,
     after: i64,
+    /// Records per live response (1 = one record per response, pre-2.3.0).
+    batch_limit: usize,
+}
+
+/// Live event records gathered for one response, in delivery order, with
+/// their budget charges merged: the charge travels with the response until
+/// tonic takes it, exactly as a single record's does.
+#[derive(Default)]
+struct Batch {
+    records: Vec<query::StreamRecord>,
+    charge: Option<Charge>,
+    bytes: usize,
+    /// Offset of the first and of the last record.
+    first: i64,
+    last: i64,
+    /// When the first record was taken from the queue.
+    started: Option<Instant>,
+}
+
+impl Batch {
+    fn push(&mut self, record: query::StreamRecord, offset: i64, bytes: usize, charge: Charge) {
+        if self.records.is_empty() {
+            self.first = offset;
+        }
+        self.last = offset;
+        self.bytes += bytes;
+        self.records.push(record);
+        match self.charge.as_mut() {
+            Some(held) => held.absorb(charge),
+            None => self.charge = Some(charge),
+        }
+    }
+
+    /// One record goes in `record` (the shape every client reads), two or
+    /// more in `records` (only clients that asked for batches get these).
+    fn take_response(&mut self) -> (query::SubscribeResponse, Option<Charge>, usize) {
+        let mut records = std::mem::take(&mut self.records);
+        let count = records.len();
+        let response = if count == 1 {
+            query::SubscribeResponse {
+                record: records.pop(),
+                records: Vec::new(),
+            }
+        } else {
+            query::SubscribeResponse {
+                record: None,
+                records,
+            }
+        };
+        self.bytes = 0;
+        self.started = None;
+        (response, self.charge.take(), count)
+    }
 }
 
 enum Sent {
@@ -1099,6 +1181,7 @@ impl SubscriptionTask {
         };
         let response = query::SubscribeResponse {
             record: Some(event_record(record, token)),
+            records: Vec::new(),
         };
         match self.send(response, charge).await {
             Sent::Ok => Some(true),
@@ -1154,24 +1237,176 @@ impl SubscriptionTask {
         }
     }
 
-    /// [`Self::deliver`] for a live record, recording its send-path waits.
-    async fn deliver_timed(
+    /// [`Self::handoff_charge`] without waiting: a record joining a batch
+    /// that already holds charges never waits for budget (no wait while
+    /// holding). `Err` hands the entry charge back.
+    fn try_handoff_charge(
         &self,
         record: &LiveRecord,
-        enqueued: Instant,
-        charge: Charge,
-    ) -> Option<bool> {
-        let taken = Instant::now();
-        let charge = self.handoff_charge(record, charge).await?;
-        let result = self.deliver(record, Some(charge)).await;
-        let metrics = &self.state.metrics;
-        metrics
-            .queue_wait
-            .record(taken.duration_since(enqueued).as_millis() as i64);
-        metrics
-            .handoff_wait
-            .record(taken.elapsed().as_millis() as i64);
-        result
+        mut charge: Charge,
+    ) -> Result<Charge, Charge> {
+        let missing = record.weight().saturating_sub(charge.bytes());
+        let fresh = delivery_decision(
+            &self.subscription.requirement,
+            &record.envelope,
+            now_ns() as i64,
+        ) == Delivery::Deliver;
+        if missing == 0 || !fresh {
+            return Ok(charge);
+        }
+        match self.state.budget.charge(missing) {
+            Some(extra) => {
+                charge.absorb(extra);
+                Ok(charge)
+            }
+            None => Err(charge),
+        }
+    }
+
+    /// Send the gathered records as one response. `false` ends the stream
+    /// (it already failed typed); a slow client gets BACKPRESSURE with the
+    /// token before the batch's first record, as for a single record.
+    async fn flush(&self, batch: &mut Batch, last: &mut i64) -> bool {
+        if batch.records.is_empty() {
+            return true;
+        }
+        let (first, newest, started) = (batch.first, batch.last, batch.started);
+        let (response, charge, count) = batch.take_response();
+        let sent = self.send(response, charge).await;
+        if let Some(started) = started {
+            self.state
+                .metrics
+                .handoff_wait
+                .record(started.elapsed().as_millis() as i64);
+        }
+        match sent {
+            Sent::Ok => {
+                *last = newest;
+                let count = count as u64;
+                self.state
+                    .metrics
+                    .delivered
+                    .fetch_add(count, Ordering::Relaxed);
+                self.report.delivered.fetch_add(count, Ordering::Relaxed);
+                true
+            }
+            Sent::Closed => false,
+            Sent::Slow => {
+                self.backpressure(
+                    first - 1,
+                    "slow consumer exceeded its stream buffer; replay is required",
+                )
+                .await;
+                false
+            }
+        }
+    }
+
+    /// Deliver a dequeued live record and, when the client asked for
+    /// batches, the records already queued behind it (never waiting for more)
+    /// in one response, in queue order. Every record keeps its own offset,
+    /// resume token, freshness check and charge; overflow, failure and close
+    /// are never crossed ([`Subscription::try_next`]), and controls are sent
+    /// alone elsewhere. `false` ends the stream (it already failed typed).
+    async fn deliver_live(
+        &self,
+        first: (Arc<LiveRecord>, Instant, Charge),
+        last: &mut i64,
+        filtered_since_delivery: &mut usize,
+    ) -> bool {
+        let mut batch = Batch::default();
+        let mut item = Some(first);
+        while let Some((record, enqueued, charge)) = item.take() {
+            let taken = Instant::now();
+            self.state
+                .metrics
+                .queue_wait
+                .record(taken.duration_since(enqueued).as_millis() as i64);
+            let charge = if batch.records.is_empty() {
+                match self.handoff_charge(&record, charge).await {
+                    Some(charge) => charge,
+                    None => return false,
+                }
+            } else {
+                match self.try_handoff_charge(&record, charge) {
+                    Ok(charge) => charge,
+                    Err(charge) => {
+                        // Budget is short: send what is gathered, then wait
+                        // for this record's top-up holding nothing else.
+                        if !self.flush(&mut batch, last).await {
+                            return false;
+                        }
+                        match self.handoff_charge(&record, charge).await {
+                            Some(charge) => charge,
+                            None => return false,
+                        }
+                    }
+                }
+            };
+            match delivery_decision(
+                &self.subscription.requirement,
+                &record.envelope,
+                now_ns() as i64,
+            ) {
+                Delivery::Deliver => {
+                    let token = match self.state.sign(&self.claims, record.raw.offset) {
+                        Ok(token) => token,
+                        Err(status) => {
+                            self.fail(status).await;
+                            return false;
+                        }
+                    };
+                    let bytes = record.raw.payload.len() + token.len() + 32;
+                    let full = !batch.records.is_empty() && batch.bytes + bytes > MAX_BATCH_BYTES;
+                    if full && !self.flush(&mut batch, last).await {
+                        return false;
+                    }
+                    batch.started.get_or_insert(taken);
+                    batch.push(
+                        event_record(&record, token),
+                        record.raw.offset,
+                        bytes,
+                        charge,
+                    );
+                    *filtered_since_delivery = 0;
+                }
+                Delivery::OtherProduct | Delivery::TooOld => {
+                    drop(charge);
+                    // Delivered records ahead of it go first, so the cursor
+                    // and the aged-out accounting match one-record delivery.
+                    if !self.flush(&mut batch, last).await {
+                        return false;
+                    }
+                    self.state
+                        .metrics
+                        .handoff_wait
+                        .record(taken.elapsed().as_millis() as i64);
+                    // Aged out while queued: the cursor moves past it, and
+                    // a whole buffer of such records without a delivery
+                    // is a slow consumer (DL-V2 R1.13).
+                    *last = record.raw.offset;
+                    *filtered_since_delivery += 1;
+                    self.state
+                        .metrics
+                        .aged_out_at_read
+                        .fetch_add(1, Ordering::Relaxed);
+                    self.report.aged_out.fetch_add(1, Ordering::Relaxed);
+                    if *filtered_since_delivery > self.subscription.depth {
+                        self.backpressure(
+                            *last,
+                            "records aged out of the bounded buffer before delivery; \
+                         replay from the last confirmed token is required",
+                        )
+                        .await;
+                        return false;
+                    }
+                }
+            }
+            if batch.records.len() < self.batch_limit && self.batch_limit > 1 {
+                item = self.subscription.try_next();
+            }
+        }
+        self.flush(&mut batch, last).await
     }
 
     /// Replay one record; `false` ends the stream (it already failed typed).
@@ -1343,35 +1578,15 @@ impl SubscriptionTask {
             };
             match next {
                 Next::Record(record, enqueued, charge) => {
-                    match self.deliver_timed(&record, enqueued, charge).await {
-                        Some(true) => {
-                            filtered_since_delivery = 0;
-                            last = record.raw.offset;
-                            self.state.metrics.delivered.fetch_add(1, Ordering::Relaxed);
-                            self.report.delivered.fetch_add(1, Ordering::Relaxed);
-                        }
-                        Some(false) => {
-                            // Aged out while queued: the cursor moves past it, and
-                            // a whole buffer of such records without a delivery
-                            // is a slow consumer (DL-V2 R1.13).
-                            last = record.raw.offset;
-                            filtered_since_delivery += 1;
-                            self.state
-                                .metrics
-                                .aged_out_at_read
-                                .fetch_add(1, Ordering::Relaxed);
-                            self.report.aged_out.fetch_add(1, Ordering::Relaxed);
-                            if filtered_since_delivery > self.subscription.depth {
-                                self.backpressure(
-                                    last,
-                                    "records aged out of the bounded buffer before delivery; \
-                                 replay from the last confirmed token is required",
-                                )
-                                .await;
-                                return;
-                            }
-                        }
-                        None => return,
+                    if !self
+                        .deliver_live(
+                            (record, enqueued, charge),
+                            &mut last,
+                            &mut filtered_since_delivery,
+                        )
+                        .await
+                    {
+                        return;
                     }
                 }
                 Next::Overflow => {

@@ -72220,3 +72220,21 @@ no build, CI or subagent job running.
   - After the change, involuntary switches went 209 -> 160 per 60 s at similar load. G8 is re-measured in the next
     campaign.
   - Receipt: ~/.local/state/qdl-v2/redis-cpu-shares-20261011/. Rollback (failure only): --cpu-shares 0.
+- Phase E step 3, batched Subscribe (additive, versioned):
+  - Wire: SubscribeRequest.max_records_per_response = 7 (0/absent/1 = one record per response, as before);
+    SubscribeResponse.records = 2 (repeated). Exactly one of record/records is set.
+  - Gateway: batches only lossless live feeds (TRADE, BOOK_SNAPSHOT, BOOK_DELTA) from records already queued.
+    - It never waits to fill a batch and never crosses an overflow, failure or close.
+    - Batch clamp 256 records / ~1 MiB.
+    - QUOTE/latest-state, BAR, controls and committed replay stay single.
+    - Per-record freshness, token and offset are kept; the merged budget charge is held until tonic takes the batch.
+  - SDK 2.3.0: GrpcStreamTransport(max_records_per_response=64, 1..256). At 1 the request bytes equal 2.2.x; the
+    SDK falls back on an older gateway.
+  - Tests:
+    - Rust: fmt, clippy, cargo test (lib 50, native_stream 41 incl. b01-b04);
+    - Python: 156 SDK/contract tests; new parity tests 6/6;
+    - buf lint and breaking against both frozen baselines pass.
+  - Bench, real gateway over loopback, 4274 TRADE: client gRPC 0.088-0.099 -> 0.0066-0.0076 ms/rec at 64 per
+    response.
+  - Old SDK 2.1.0 and 2.2.1 against the new gateway: unchanged shape (real gRPC).
+  - Status: tested locally; needs a gateway image and roll, then TS SDK 2.3.0 adoption.
