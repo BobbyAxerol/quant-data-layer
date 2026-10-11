@@ -84,6 +84,21 @@ class Phase3ConsumerLoadDriverTests(unittest.TestCase):
         self.assertTrue(identity["tls"]["ca_file"].startswith("/tmp/identity/"))
         self.assertTrue(identity["jwt"]["private_key_file"].startswith("/tmp/identity/"))
 
+    def test_sdk_from_source_brings_its_generated_contracts(self):
+        # An SDK newer than the image's protobuf read SubscribeResponse.records from a 2.2.2 image and every
+        # stream failed with AttributeError (2026-10-11); the source SDK must carry the source contracts.
+        with tempfile.TemporaryDirectory() as temporary:
+            raw = self._profile(Path(temporary))
+            for flag, expected in ((False, False), (True, True)):
+                raw["sdk_from_source"] = flag
+                command, _ = _MODULE.docker_command(
+                    _MODULE.validate_profile(raw), name="qdl-phase3-load-unit", image_id="sha256:" + "a" * 64,
+                    mode="load", sessions=1, duration_seconds=60)
+                mounts = [value for value in command if value.startswith("type=bind,")]
+                self.assertEqual(any(m.endswith("dst=/app/qdl_sdk,readonly") for m in mounts), expected)
+                self.assertEqual(
+                    any(m.endswith("dst=/app/generated/python/qdl,readonly") for m in mounts), expected)
+
     def test_profile_rejects_unknown_field_before_docker_is_called(self):
         with tempfile.TemporaryDirectory() as temporary:
             profile = self._profile(Path(temporary))

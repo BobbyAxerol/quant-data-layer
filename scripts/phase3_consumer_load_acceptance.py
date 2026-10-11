@@ -563,7 +563,11 @@ def docker_command(
         "--mount", f"type=bind,src={profile['runtime_dir']},dst=/runtime,readonly",
         *[arg for consumer, path in sorted((profile.get("manifest_overrides") or {}).items())
           for arg in ("--mount", f"type=bind,src={path},dst={_PHASE3_CONSUMER_MANIFESTS[consumer]},readonly")],
-        *(("--mount", f"type=bind,src={ROOT / 'qdl_sdk'},dst=/app/qdl_sdk,readonly")
+        # The SDK from source carries its generated contracts from the same source, as its wheel does: an SDK
+        # newer than the image's contracts otherwise reads fields the old protobuf lacks (SDK 2.3.0
+        # SubscribeResponse.records against a 2.2.2 image, 2026-10-11).
+        *(("--mount", f"type=bind,src={ROOT / 'qdl_sdk'},dst=/app/qdl_sdk,readonly",
+           "--mount", f"type=bind,src={ROOT / 'generated/python/qdl'},dst=/app/generated/python/qdl,readonly")
           if profile.get("sdk_from_source") else ()),
         "--mount", f"type=bind,src={ROOT / 'qdl/certification/phase3_consumer_load.py'},dst=/app/qdl/certification/phase3_consumer_load.py,readonly",
         "--mount", f"type=bind,src={Path(__file__).resolve()},dst=/driver/phase3_consumer_load_acceptance.py,readonly",
