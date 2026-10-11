@@ -72258,3 +72258,26 @@ no build, CI or subagent job running.
     invented, and the record-regression and payload-mismatch guards are unchanged.
   - Regression tests added; 181 tests OK.
   - Not caused by the writer or SDK 2.3.0 change, nor by Query rc11 (diffs checked).
+- IDR-087 confirmed and fixed:
+  - The G12 harness named the crashing call: SIGSEGV in confluent-kafka/librdkafka 2.15.0
+    AdminClient.list_consumer_group_offsets during a broker stop (p184-g12-rc12-20261011 monitor.errors).
+  - The product bar edge used the same call in its history backpressure gate.
+  - Fix: qdl/runtime/isolated_probe.py SupervisedProbe.
+    - The Kafka offset reads run in one spawn-started child; spawn because the bar edge process already holds
+      librdkafka threads, so fork is unsafe.
+    - Hard timeout 15 s (QDL_STABLE_BAR_BACKPRESSURE_PROBE_TIMEOUT_S).
+    - A crash, hang or child error becomes ProbeUnavailable. The gate closes (fail-safe: history pauses, live
+      continues) and the next call respawns the child.
+  - Tests: 13 new (real SIGSEGV child, timeout, child error, parity with in-process numbers) plus 271 related.
+  - Status: tested locally; a real broker-stop check of the bar edge needs a live fault.
+- G12 full on rc12 digests (python 3b585597, rust ebc7b794, writer 64347a94), `p184-g12-rc12-20261011` (verdict
+  20f29671): PASS.
+  - Caught up: broker 224.7 s, projector 19.4 s, Stream 138.4 s.
+  - G1/G2/G3 inside after every fault.
+  - The monitor survived 2 SIGSEGV samples.
+- G13 on rc12 digests with writer 44baacc0 (TS a37ff4d): 41/41 DL cells ok.
+  - dr05-upstream 6, dr08 4, dr05-transport 9 (`p184-g13-20261011T134532Z`); views 22 on the re-run
+    (`...T140432Z`).
+  - The first views run refused DR04.EXPLICIT_LAST@OKX for a stale LAST in a quiet market.
+  - DR05 DISCONNECT_RECONNECT now counts only controls after the cut. The 04:38Z PASS was a false positive from
+    startup quota controls; TS a37ff4d logs a bridge RECONNECTED control.

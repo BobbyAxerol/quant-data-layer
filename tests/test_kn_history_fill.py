@@ -103,7 +103,10 @@ class BackpressureTests(unittest.TestCase):
                 factory.assert_called_once_with("broker:9092", stages, {
                     "security.protocol": "ssl", "ssl.ca.location": str(root / "ca.crt"),
                     "ssl.certificate.location": str(root / "client.crt"),
-                    "ssl.key.location": str(root / "client.key")})
+                    "ssl.key.location": str(root / "client.key")}, timeout_s=15.0)
+                factory.reset_mock()
+                kafka_backlog_from_environment({**env, "QDL_STABLE_BAR_BACKPRESSURE_PROBE_TIMEOUT_S": "4"}, stages)
+                self.assertEqual(factory.call_args.kwargs, {"timeout_s": 4.0})
                 factory.reset_mock()
                 (root / "client.key").unlink()
                 with self.assertRaisesRegex(ValueError, "TLS file unavailable"):
