@@ -14,15 +14,26 @@ ONLY the existing harnesses, sequentially, each under a hard timeout:
     dr08-isolated   DL scripts/p184_dr08_isolated.py --orchestrate (QUALIFICATION mode, >= 5 restart samples)
   RUNTIME phase (reads the shared stack after the final rollout; needs the owner-approved runtime packet):
     dr01-deployed   DL scripts/p184_dr01_deployed.py prepare/probe/record (7 DL cells); inputs dr01.manifest_dir
-                    (the deployed reader realm dir) + dr01.manifest_revision, optional dr01.wrong_revision
+                    (the deployed reader realm dir) + dr01.manifest_revision, optional dr01.wrong_revision.
+                    prepare runs offline in a --rm container of the final python image (network none, host uid,
+                    read-only mounts of the DL checkout and the declared inputs); probe runs per venue in that
+                    venue's alpha compose service, dr01.alpha_service = {"BINANCE": svc, "OKX": svc}
     dr01-wrong-account TS scripts/p184_dr01_wrong_account.py probe (inside the deployed Gateway) + record;
                     GATEWAY-DEPENDENT: refused as GATEWAY_NOT_RUNNING (other steps still run) unless the Gateway
-                    container runs the declared gateway image; it closes with the TS release (IDR-085 Gateway)
+                    container runs the declared gateway image; it closes with the TS release (IDR-085 Gateway).
+                    The run id is fixed (dr01_wrong_account.run_id): the Gateway writer scope is an exact account
+                    list checked before the API key, so the 4 runner accounts (plan field writer_scope_accounts)
+                    must be in the Gateway's WRITER_ACCOUNT_SCOPE_JSON; checked before the probe. The probe refuses
+                    a run id whose alphas exist (RUN_IDENTITY_NOT_FRESH), so each real run needs a new run id
     dr02-dr03-alpha TS scripts/p184_dr_alpha_reads.py probe (inside each alpha runtime) + record
     dr04-dr06-views TS scripts/p184_dr_views.py (inside the TS writer image; binance, okx, okx_inverse) + record;
                     also DR05.QUIET_TYPED (linear only: QUIET is a TRADE state, TRADE is not granted for inverse)
     dr05-transport  TS scripts/p184_dr05_isolated.py (writer clone, transport cut at the clone only; same 3 scopes)
-    dr07-reference  TS scripts/p184_dr07_reference.py
+    dr07-reference  TS scripts/p184_dr07_reference.py in a --rm container of the TS image (dr07.image, default
+                    the writer image: alpha_sdk, qdl_sdk, asyncpg) on the DL consumer + TS database networks; mounts
+                    the TS checkout, the connections file and the identity file dirs read-only, the cursor dirs and
+                    the step dir read-write; POSTGRES_DSN only via --env-file dr07.env_file (0600, never printed).
+                    Root with CAP_DAC_OVERRIDE only: the alpha identity dirs are uid 10001 mode 0700
 Receipts: a NEW directory ~/.local/state/qdl-v2/p184-g13-<YYYYMMDD>T<HHMMSS>Z/ (exclusive create) with plan.json,
 one <step>/receipt.json per step (argv, cwd, times, exit, timeout, output sha256, cleanup) and summary.json.
 
@@ -51,6 +62,7 @@ from pathlib import Path
 import re
 import shlex
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -137,7 +149,8 @@ STEP_SPEC = (
     ("dr05-upstream", "isolated", cells("DR05", ("GAP_REFUSAL", "GENERATION_CHANGE_FENCED"), DR05_SCOPES), 1800, 6,
      ("p184-dr05-",)),
     ("dr08-isolated", "isolated", DR_CELLS["DR08"], 1500, 12, ("p184-dr08-",)),
-    ("dr01-deployed", "runtime", tuple(c for c in DR_CELLS["DR01"] if "WRONG_ACCOUNT" not in c), 600, 3, ()),
+    ("dr01-deployed", "runtime", tuple(c for c in DR_CELLS["DR01"] if "WRONG_ACCOUNT" not in c), 600, 3,
+     ("p184-g13-dr01-",)),
     ("dr01-wrong-account", "runtime", cells("DR01", ("WRONG_ACCOUNT_DENIED",)), 600, 2, ()),
     ("dr02-dr03-alpha", "runtime", DR_CELLS["DR02"] + DR_CELLS["DR03"], 1200, 10, ()),
     ("dr04-dr06-views", "runtime", DR_CELLS["DR04"] + DR_CELLS["DR06"] + cells("DR05", ("QUIET_TYPED",)), 1200, 14,
@@ -145,7 +158,7 @@ STEP_SPEC = (
     ("dr05-transport", "runtime", cells("DR05", ("STALE_TYPED", "DISCONNECT_RECONNECT",
                                                  "APPROVED_FALLBACK_AND_RETURN_NO_FORBIDDEN_V1"), DR05_SCOPES), 1500, 8,
      ("p184-dr05-",)),
-    ("dr07-reference", "runtime", DR_CELLS["DR07"], 600, 2, ()),
+    ("dr07-reference", "runtime", DR_CELLS["DR07"], 600, 2, ("p184-g13-dr07-",)),
 )
 STEPS = tuple(s[0] for s in STEP_SPEC)
 
@@ -235,13 +248,14 @@ def required_inputs(step):
         "dr05-upstream": ("dr05_public_export", "dr05_catalog", "redis_image", "postgres_image"),
         "dr08-isolated": (),
         "dr01-deployed": ("dr01.inventory", "dr01.deployments.BINANCE", "dr01.deployments.OKX", "dr01.compose",
-                          "dr01.alpha_service", "dr01.manifest_dir", "dr01.manifest_revision"),
-        "dr01-wrong-account": ("gateway_container", "gateway_image_digest"),
+                          "dr01.alpha_service.BINANCE", "dr01.alpha_service.OKX", "dr01.manifest_dir",
+                          "dr01.manifest_revision"),
+        "dr01-wrong-account": ("gateway_container", "gateway_image_digest", "dr01_wrong_account.run_id"),
         "dr02-dr03-alpha": ("alpha.containers.BINANCE", "alpha.containers.OKX", "alpha.symbols.BINANCE",
                             "alpha.symbols.OKX"),
         "dr04-dr06-views": ("ts_container",),
         "dr05-transport": ("redis_image", "postgres_image"),
-        "dr07-reference": ("dr07.connections", "dr07.fx_account"),
+        "dr07-reference": ("dr07.connections", "dr07.fx_account", "dr07.env_file"),
     }[step]
 
 
@@ -257,6 +271,107 @@ def lookup(inputs, dotted):
 def missing_inputs(steps, inputs):
     return {s: [k for k in required_inputs(s) if lookup(inputs, k) in (None, "")] for s in steps
             if any(lookup(inputs, k) in (None, "") for k in required_inputs(s))}
+
+
+RUN_ID = re.compile(r"[0-9a-z]{6,32}")  # TS scripts/p184_dr01_wrong_account.py identities()
+DR07_NETWORKS = ("qdl_v2_native_consumer", "executor_network")  # DL readers/stream; TS Postgres
+# DataLayerV2ConnectionConfig file fields (TS alpha_sdk/data_layer_v2.py): identity files are read-only, the SDK
+# writes its cursor file.
+DR07_READ_FILES = ("credential_file", "tls_ca_file", "tls_certificate_file", "tls_private_key_file",
+                   "jwt_private_key_file")
+
+
+def wrong_account_identities(run_id):
+    """The runner alphas/accounts of a fixed run id; same derivation as TS p184_dr01_wrong_account.identities."""
+    if not isinstance(run_id, str) or not RUN_ID.fullmatch(run_id):
+        raise Blocked("DR01_RUN_ID_INVALID: dr01_wrong_account.run_id must match [0-9a-z]{6,32}")
+    alphas = {label: f"p184-dr01-{run_id}-{label.lower()}" for label in ("A", "B")}
+    return {"run_id": run_id, "alphas": alphas,
+            "accounts": {label: {v: f"paper-{alphas[label]}-{v.lower()}" for v in VENUES} for label in alphas}}
+
+
+def writer_scope_accounts(run_id):
+    """The exact account ids the Gateway WRITER_ACCOUNT_SCOPE_JSON include list must carry for this run id."""
+    ids = wrong_account_identities(run_id)
+    return sorted(acc for per in ids["accounts"].values() for acc in per.values())
+
+
+def writer_scope_problem(raw, accounts):
+    """None when a Gateway WRITER_ACCOUNT_SCOPE_JSON value admits every runner account (same rules as TS
+    shared/writer_account_scope.py: unset = disabled; {"include": [...]} or {"exclude": [...]})."""
+    if raw is None:
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return "WRITER_SCOPE_INVALID"
+    if (not isinstance(value, dict) or set(value) not in ({"include"}, {"exclude"})
+            or not all(isinstance(v, list) for v in value.values())):
+        return "WRITER_SCOPE_INVALID"
+    if "include" in value:
+        denied = sorted(set(accounts) - set(value["include"]))
+    else:
+        denied = sorted(set(accounts) & set(value["exclude"]))
+    return ("WRITER_SCOPE_DENIES_RUNNER_ACCOUNTS: " + ", ".join(denied)) if denied else None
+
+
+def alpha_services(d):
+    """{venue: alpha compose service}; the probe checks the alpha identity per venue, so one service cannot serve
+    both venues."""
+    services = d.get("alpha_service")
+    if not isinstance(services, dict) or set(services) != set(VENUES) or not all(
+            isinstance(v, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", v) for v in services.values()):
+        raise Blocked('DR01_ALPHA_SERVICE_PER_VENUE: dr01.alpha_service = {"BINANCE": svc, "OKX": svc}')
+    if services["BINANCE"] == services["OKX"]:
+        raise Blocked("DR01_ALPHA_SERVICE_PER_VENUE: one service cannot carry both venue identities")
+    return services
+
+
+def host_path(value, what):
+    """An absolute host path that is safe inside a docker -v spec."""
+    if not isinstance(value, str) or not value.startswith("/") or any(c in value for c in (":", ",", "\n")):
+        raise Blocked(f"PATH_INVALID: {what} must be an absolute path without ':' or ','")
+    return os.path.normpath(value)
+
+
+def dr07_mounts(connections):
+    """(read-only dirs, read-write dirs) a DR07 container needs for a loaded --connections file."""
+    if not isinstance(connections, dict) or not set(VENUES) <= set(connections):
+        raise Blocked("DR07_CONNECTIONS_INVALID: one entry per venue BINANCE, OKX")
+    ro, rw = set(), set()
+    for venue in VENUES:
+        conf = connections[venue]
+        if not isinstance(conf, dict):
+            raise Blocked("DR07_CONNECTIONS_INVALID: " + venue)
+        for key in DR07_READ_FILES:
+            if conf.get(key):
+                ro.add(os.path.dirname(host_path(conf[key], f"dr07 {venue}.{key}")))
+        rw.add(os.path.dirname(host_path(conf.get("cursor_file"), f"dr07 {venue}.cursor_file")))
+    ro -= rw
+    return sorted(ro), sorted(rw)
+
+
+def container_argv(image, name, *, user, networks=("none",), ro=(), rw=(), env=(), env_files=(), workdir,
+                   cap_add=(), memory="1g"):
+    """docker run --rm of an existing image (never pulled or built) with exactly the declared mounts, at their host
+    paths, so every path a harness records is the host path."""
+    argv = ["docker", "run", "--rm", "--pull=never", "--name", name, "--label", "p184.g13.step=" + name,
+            "--user", user, "--read-only", "--tmpfs", "/tmp:rw,size=64m,mode=1777", "--cpus", "1",
+            "--memory", memory, "--pids-limit", "256", "--log-opt", "max-size=4m", "--log-opt", "max-file=1",
+            "--security-opt", "no-new-privileges", "--cap-drop", "ALL"]
+    for cap in cap_add:
+        argv += ["--cap-add", cap]
+    for net in networks:
+        argv += ["--network", net]
+    for path in ro:
+        argv += ["-v", f"{path}:{path}:ro"]
+    for path in rw:
+        argv += ["-v", f"{path}:{path}"]
+    for path in env_files:
+        argv += ["--env-file", path]
+    for item in ("HOME=/tmp", "PYTHONDONTWRITEBYTECODE=1", *env):
+        argv += ["-e", item]
+    return argv + ["-w", str(workdir), "--entrypoint", "python", image, "-B"]
 
 
 def cmd(argv, *, cwd, stdin=None, stdout=None):
@@ -289,6 +404,11 @@ def commands(step, final, inputs, work, ts_root):
                           "--query-image-ref", final["python_ref"]], cwd=DL_ROOT)]
     if step == "dr01-deployed":
         d = inputs["dr01"]
+        services = alpha_services(d)
+        # prepare imports qdl (redis, pydantic, yaml): offline, in the final python image, as the host user.
+        inputs_ro = [host_path(d["inventory"], "dr01.inventory"), host_path(d["manifest_dir"], "dr01.manifest_dir")]
+        if d.get("catalog"):
+            inputs_ro.append(host_path(d["catalog"], "dr01.catalog"))
         out = []
         for venue in VENUES:
             packet = work / f"dr01-{venue.lower()}-packet.json"
@@ -299,9 +419,12 @@ def commands(step, final, inputs, work, ts_root):
                 prepare += ["--catalog", d["catalog"]]
             if d.get("wrong_revision") is not None:
                 prepare += ["--wrong-revision", str(d["wrong_revision"])]
-            out.append(cmd(py + prepare, cwd=DL_ROOT))
+            box = container_argv(final["python"], f"p184-g13-dr01-prepare-{venue.lower()}",
+                                 user=f"{os.getuid()}:{os.getgid()}", ro=[str(DL_ROOT), *inputs_ro], rw=[str(work)],
+                                 env=[f"PYTHONPATH={DL_ROOT}:{DL_ROOT}/generated/python"], workdir=DL_ROOT)
+            out.append(cmd(box + prepare, cwd=DL_ROOT))
             out.append(cmd(["docker", "compose", "-f", d["compose"], "run", "--rm", "--no-deps", "-T", "--entrypoint",
-                            "python", "-v", f"{packet}:/run/p184/dr01-packet.json:ro", d["alpha_service"], "-B", "-",
+                            "python", "-v", f"{packet}:/run/p184/dr01-packet.json:ro", services[venue], "-B", "-",
                             "probe", "--packet", "/run/p184/dr01-packet.json"],
                            cwd=d.get("compose_cwd", "/home/bobby/execution_alpha"),
                            stdin=DL_ROOT / "scripts/p184_dr01_deployed.py",
@@ -315,8 +438,10 @@ def commands(step, final, inputs, work, ts_root):
         return out
     if step == "dr01-wrong-account":
         script = ts_root / "scripts/p184_dr01_wrong_account.py"
-        return [cmd(["docker", "exec", "-i", inputs["gateway_container"], "python", "-B", "-", "probe"], cwd=ts_root,
-                    stdin=script, stdout=work / "dr01-wrong-account.rows"),
+        run_id = inputs["dr01_wrong_account"]["run_id"]
+        wrong_account_identities(run_id)
+        return [cmd(["docker", "exec", "-i", inputs["gateway_container"], "python", "-B", "-", "probe", "--run-id",
+                     run_id], cwd=ts_root, stdin=script, stdout=work / "dr01-wrong-account.rows"),
                 cmd(py + [script, "record", "--rows", work / "dr01-wrong-account.rows", *ts_ev,
                           "--gateway-image-digest", inputs["gateway_image_digest"], "--output",
                           work / "dr01-wrong-account.jsonl"], cwd=ts_root)]
@@ -345,9 +470,24 @@ def commands(step, final, inputs, work, ts_root):
                           "--output", work / "dr05-transport.jsonl", "--venues", *DR05_SCOPES], cwd=ts_root)]
     if step == "dr07-reference":
         d = inputs["dr07"]
-        return [cmd(py + ["scripts/p184_dr07_reference.py", "--connections", d["connections"], *ts_ev, "--output",
-                          work / "dr07.jsonl", "--fx-account", d["fx_account"], "--dsn-env",
-                          d.get("dsn_env", "POSTGRES_DSN")], cwd=ts_root)]
+        if "_connections" not in d:
+            raise Blocked("DR07_CONNECTIONS_UNREADABLE: " + str(d["connections"]))
+        ro, rw = dr07_mounts(d["_connections"])
+        networks = d.get("networks") or DR07_NETWORKS
+        if not isinstance(networks, list | tuple) or not all(
+                isinstance(n, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", n) for n in networks):
+            raise Blocked("DR07_NETWORKS_INVALID")
+        image = d.get("image") or final["writer"]
+        if not DIGEST.fullmatch(image):
+            raise Blocked("DR07_IMAGE_DIGEST_REQUIRED: dr07.image must be a sha256 image ID")
+        box = container_argv(image, "p184-g13-dr07-reference", user="0", networks=networks,
+                             ro=sorted({str(ts_root), os.path.dirname(host_path(d["connections"], "dr07.connections")),
+                                        *ro} - {str(work), *rw}),
+                             rw=[str(work), *rw], env_files=[host_path(d["env_file"], "dr07.env_file")],
+                             workdir=ts_root, cap_add=("DAC_OVERRIDE",))
+        return [cmd(box + ["scripts/p184_dr07_reference.py", "--connections", d["connections"], *ts_ev, "--output",
+                           work / "dr07.jsonl", "--fx-account", d["fx_account"], "--dsn-env",
+                           d.get("dsn_env", "POSTGRES_DSN")], cwd=ts_root)]
     raise Blocked("UNKNOWN_STEP: " + step)
 
 
@@ -398,7 +538,13 @@ def plan(final, inputs, phase, only, ts_root, base, now, matrix=None):
         entry = {"step": step, "phase": ph, "cells": list(step_cells), "timeout_s": timeout, "est_minutes": est,
                  "owned_prefixes": list(prefixes), "blocked": blocked, "gateway_dependent": step in GATEWAY_STEPS}
         if not blocked:
-            entry["commands"] = commands(step, final, inputs, root / step, ts_root)
+            try:
+                entry["commands"] = commands(step, final, inputs, root / step, ts_root)
+            except Blocked as exc:
+                blocked.append(str(exc))
+        if step == "dr01-wrong-account" and not blocked:
+            # The Gateway compose must list exactly these in WRITER_ACCOUNT_SCOPE_JSON (checked before the probe).
+            entry["writer_scope_accounts"] = writer_scope_accounts(inputs["dr01_wrong_account"]["run_id"])
         out.append(entry)
         if blocked:
             problems[step] = blocked
@@ -441,6 +587,24 @@ def gateway_problem(state, expected_image):
         return "GATEWAY_NOT_RUNNING: container not running"
     if state.get("image") != expected_image:
         return f"GATEWAY_NOT_RUNNING: runs {state.get('image')} != declared gateway image {expected_image}"
+    return None
+
+
+def gateway_writer_scope(name):
+    """The Gateway's WRITER_ACCOUNT_SCOPE_JSON value only (no other env entry leaves docker), or None when unset."""
+    line = sh(["docker", "inspect", "--format", '{{range .Config.Env}}{{if eq (index (split . "=") 0) '
+               '"WRITER_ACCOUNT_SCOPE_JSON"}}{{println .}}{{end}}{{end}}', name]).strip()
+    return line.split("=", 1)[1] if line else None
+
+
+def env_file_problem(path):
+    """None when the DSN env file is a regular file readable by its owner only."""
+    try:
+        st = os.stat(path)
+    except OSError as exc:
+        return f"DR07_ENV_FILE_UNREADABLE: {type(exc).__name__}"
+    if not stat.S_ISREG(st.st_mode) or st.st_mode & 0o077:
+        return "DR07_ENV_FILE_MODE: regular file, mode 0600 required"
     return None
 
 
@@ -550,6 +714,14 @@ def run_step(entry, final, inputs, ts_root):
                 if problem:
                     receipt["deferred"] = problem  # closes with the TS release; the other steps still run
                     raise Blocked(problem)
+                problem = writer_scope_problem(gateway_writer_scope(inputs["gateway_container"]),
+                                               entry["writer_scope_accounts"])
+                if problem:
+                    raise Blocked(problem)
+            if entry["step"] == "dr07-reference":
+                problem = env_file_problem(inputs["dr07"]["env_file"])
+                if problem:
+                    raise Blocked(problem)
             if entry["step"] == "dr05-upstream":
                 codes = run_dr05_upstream(entry, final, inputs, work, deadline, log, ts_root)
             else:
@@ -576,6 +748,17 @@ def run_step(entry, final, inputs, ts_root):
     return receipt
 
 
+def load_dr07_connections(inputs):
+    """The DR07 container mounts derive from the connections file (paths only, no secret bytes); unreadable -> the
+    step is blocked with DR07_CONNECTIONS_UNREADABLE."""
+    d = inputs.get("dr07")
+    if isinstance(d, dict) and d.get("connections"):
+        try:
+            d["_connections"] = json.loads(Path(d["connections"]).read_text())
+        except (OSError, ValueError):
+            d.pop("_connections", None)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--python-image", required=True)
@@ -597,6 +780,7 @@ def main(argv=None):
     inputs = json.loads(a.inputs.read_text()) if a.inputs else {}
     if a.runtime_approval:
         inputs["_runtime_approval"] = {"path": str(a.runtime_approval), "sha256": sha256(a.runtime_approval)}
+    load_dr07_connections(inputs)
     try:
         validate_final(final)
         matrix_path = a.ts_root / MATRIX_V2

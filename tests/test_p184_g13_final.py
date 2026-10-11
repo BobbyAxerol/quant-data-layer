@@ -25,12 +25,21 @@ def matrix_of(dr_cells):
 MATRIX_OK = matrix_of([c for case in g13.DR_CELLS.values() for c in case])
 INPUTS = {"dr05_public_export": "/x/export.json", "dr05_catalog": "/x/catalog-r12.yaml", "redis_image": "redis:7.2-alpine", "postgres_image": "pg@sha256:1",
           "dr01": {"inventory": "/x/inv.json", "deployments": {"BINANCE": "db", "OKX": "do"}, "compose": "/x/c.json",
-                   "alpha_service": "alpha", "manifest_dir": "/x/reader-public", "manifest_revision": 15},
+                   "alpha_service": {"BINANCE": "alpha_b", "OKX": "alpha_o"}, "manifest_dir": "/x/reader-public",
+                   "manifest_revision": 15},
           "alpha": {"containers": {"BINANCE": "ab", "OKX": "ao"}, "symbols": {"BINANCE": "ETHUSDT",
                                                                               "OKX": "ETH-USDT-SWAP"}},
           "ts_container": "market_data_service_p184w",
           "gateway_container": "gateway_service", "gateway_image_digest": "sha256:" + "e" * 64,
-          "dr07": {"connections": "/x/conn.json", "fx_account": "acct"},
+          "dr01_wrong_account": {"run_id": "g13r3abc"},
+          "dr07": {"connections": "/x/conn.json", "fx_account": "acct", "env_file": "/x/dsn.env",
+                   "_connections": {v: {"cursor_file": f"/x/cursors/{v.lower()}.json",
+                                        "tls_ca_file": f"/x/id/alpha-{v.lower()}/tls/ca.crt",
+                                        "tls_certificate_file": f"/x/id/alpha-{v.lower()}/tls/client.crt",
+                                        "tls_private_key_file": f"/x/id/alpha-{v.lower()}/tls/client.key",
+                                        "jwt_private_key_file": f"/x/id/alpha-{v.lower()}/jwt/signing.key",
+                                        "credential_file": "", "native_symbol": "S", "market": "M"}
+                                    for v in ("BINANCE", "OKX")}},
           "_runtime_approval": {"path": "/x/packet.md", "sha256": "e" * 64}}
 NOW = datetime(2026, 10, 10, 9, 0, 0, tzinfo=timezone.utc)
 
@@ -176,7 +185,8 @@ class PlanTests(unittest.TestCase):
         inputs = {k: v for k, v in INPUTS.items() if k not in ("_runtime_approval", "dr07")}
         result = make_plan("runtime", inputs=inputs)
         self.assertEqual(sorted(result["blocked"]), sorted(s for s in g13.STEPS if s not in g13.select("isolated")))
-        self.assertIn("MISSING_INPUTS: dr07.connections, dr07.fx_account", result["blocked"]["dr07-reference"])
+        self.assertIn("MISSING_INPUTS: dr07.connections, dr07.fx_account, dr07.env_file",
+                      result["blocked"]["dr07-reference"])
         isolated = make_plan("isolated", inputs={k: v for k, v in INPUTS.items() if k != "_runtime_approval"})
         self.assertEqual(isolated["blocked"], {})
 
@@ -187,6 +197,200 @@ class PlanTests(unittest.TestCase):
             self.assertEqual([Path(c["stdout"]).name for c in commands[:len(parts)]], list(parts))
             record = commands[-1]["argv"]
             self.assertEqual(Path(record[record.index("--rows") + 1]).name, target)
+
+
+def runtime_steps(inputs=None):
+    return {e["step"]: e for e in make_plan("runtime", inputs=inputs)["steps"]}
+
+
+def copy_inputs():
+    return json.loads(json.dumps(INPUTS))
+
+
+class Dr01PerVenueServiceTests(unittest.TestCase):
+    """B5: the probe validates the alpha identity per venue, so each venue probes in its own alpha service."""
+
+    def test_each_venue_probes_in_its_own_service(self):
+        dr01 = runtime_steps()["dr01-deployed"]["commands"]
+        probes = [c["argv"] for c in dr01 if c["argv"][:2] == ["docker", "compose"]]
+        self.assertEqual(len(probes), 2)
+        for argv, service, venue in zip(probes, ("alpha_b", "alpha_o"), ("binance", "okx")):
+            self.assertEqual(argv[argv.index("-B") - 1], service)
+            self.assertIn(f"dr01-{venue}-packet.json:/run/p184/dr01-packet.json:ro", argv[argv.index("-v") + 1])
+
+    def test_single_or_shared_service_refused(self):
+        for value in ("alpha", {"BINANCE": "same", "OKX": "same"}, {"BINANCE": "a", "OKX": "b", "X": "c"},
+                      {"BINANCE": "a b", "OKX": "b"}):
+            inputs = copy_inputs()
+            inputs["dr01"]["alpha_service"] = value
+            with self.subTest(value=value):
+                blocked = make_plan("runtime", inputs=inputs)["blocked"]["dr01-deployed"]
+                self.assertTrue(any("DR01_ALPHA_SERVICE_PER_VENUE" in b or "MISSING_INPUTS: dr01.alpha_service" in b
+                                    for b in blocked), blocked)
+                self.assertNotIn("commands", runtime_steps(inputs)["dr01-deployed"])
+
+
+class ContainerStepTests(unittest.TestCase):
+    """B6: dr01 prepare and dr07 need qdl/redis/asyncpg/grpc, container DNS and the alpha identity dirs."""
+
+    @staticmethod
+    def mounts(argv):
+        return [argv[i + 1] for i, a in enumerate(argv) if a == "-v"]
+
+    def test_dr01_prepare_runs_offline_in_the_final_python_image(self):
+        work = "/state/p184-g13-20261010T090000Z/dr01-deployed"
+        dr01 = runtime_steps()["dr01-deployed"]["commands"]
+        for venue, c in zip(("binance", "okx"), (dr01[0], dr01[2])):
+            argv = c["argv"]
+            self.assertEqual(argv[:3], ["docker", "run", "--rm"])
+            self.assertIn("--pull=never", argv)
+            self.assertEqual(argv[argv.index("--name") + 1], f"p184-g13-dr01-prepare-{venue}")
+            self.assertEqual(argv[argv.index("--network") + 1], "none")
+            self.assertEqual(argv[argv.index("--user") + 1], f"{g13.os.getuid()}:{g13.os.getgid()}")
+            self.assertIn("--read-only", argv)
+            self.assertEqual(argv[argv.index("--cap-drop") + 1], "ALL")
+            self.assertNotIn("--cap-add", argv)
+            self.assertEqual(argv[argv.index("--entrypoint") + 1:argv.index("--entrypoint") + 4], ["python", PY, "-B"])
+            dl = str(g13.DL_ROOT)
+            self.assertEqual(self.mounts(argv), [f"{dl}:{dl}:ro", "/x/inv.json:/x/inv.json:ro",
+                                                 "/x/reader-public:/x/reader-public:ro", f"{work}:{work}"])
+            self.assertEqual(argv[argv.index("-w") + 1], dl)
+            prepare = argv[argv.index("-B") + 1:]
+            self.assertEqual(prepare[:2], ["scripts/p184_dr01_deployed.py", "prepare"])
+            self.assertEqual(prepare[prepare.index("--output") + 1], f"{work}/dr01-{venue}-packet.json")
+        self.assertTrue(g13.STEP_SPEC[2][5][0].startswith("p184-g13-dr01-"))
+
+    def test_dr01_catalog_is_mounted_when_declared(self):
+        inputs = copy_inputs()
+        inputs["dr01"]["catalog"] = "/x/sealed/active-catalog.yaml"
+        argv = runtime_steps(inputs)["dr01-deployed"]["commands"][0]["argv"]
+        self.assertIn("/x/sealed/active-catalog.yaml:/x/sealed/active-catalog.yaml:ro", self.mounts(argv))
+        self.assertEqual(argv[argv.index("--catalog") + 1], "/x/sealed/active-catalog.yaml")
+        inputs["dr01"]["catalog"] = "relative/catalog.yaml"
+        self.assertIn("PATH_INVALID", make_plan("runtime", inputs=inputs)["blocked"]["dr01-deployed"][0])
+
+    def test_dr07_runs_in_the_ts_image_on_both_networks_with_exact_mounts(self):
+        work = "/state/p184-g13-20261010T090000Z/dr07-reference"
+        (c,) = runtime_steps()["dr07-reference"]["commands"]
+        argv = c["argv"]
+        self.assertEqual(argv[:3], ["docker", "run", "--rm"])
+        self.assertEqual(argv[argv.index("--name") + 1], "p184-g13-dr07-reference")
+        self.assertEqual([argv[i + 1] for i, a in enumerate(argv) if a == "--network"],
+                         ["qdl_v2_native_consumer", "executor_network"])
+        self.assertEqual(argv[argv.index("--user") + 1], "0")
+        self.assertEqual([argv[i + 1] for i, a in enumerate(argv) if a in ("--cap-drop", "--cap-add")],
+                         ["ALL", "DAC_OVERRIDE"])
+        self.assertEqual(argv[argv.index("--entrypoint") + 2], WRITER)  # default: the writer image
+        self.assertEqual(argv[argv.index("--env-file") + 1], "/x/dsn.env")
+        self.assertEqual(argv[argv.index("-w") + 1], "/ts")
+        ro = sorted(m for m in self.mounts(argv) if m.endswith(":ro"))
+        rw = sorted(m for m in self.mounts(argv) if not m.endswith(":ro"))
+        self.assertEqual(ro, sorted(f"{d}:{d}:ro" for d in (
+            "/ts", "/x", "/x/id/alpha-binance/jwt", "/x/id/alpha-binance/tls", "/x/id/alpha-okx/jwt",
+            "/x/id/alpha-okx/tls")))
+        self.assertEqual(rw, sorted([f"{work}:{work}", "/x/cursors:/x/cursors"]))
+        harness = argv[argv.index("-B") + 1:]
+        self.assertEqual(harness[0], "scripts/p184_dr07_reference.py")
+        self.assertEqual(harness[harness.index("--dsn-env") + 1], "POSTGRES_DSN")
+        self.assertEqual(harness[harness.index("--fx-account") + 1], "acct")
+        self.assertFalse(any("postgres" in a.lower() and "://" in a for a in argv))  # DSN only via --env-file
+
+    def test_dr07_image_and_networks_override_and_refusals(self):
+        inputs = copy_inputs()
+        inputs["dr07"].update(image="sha256:" + "d4" * 32, networks=["netx"])
+        argv = runtime_steps(inputs)["dr07-reference"]["commands"][0]["argv"]
+        self.assertEqual(argv[argv.index("--entrypoint") + 2], "sha256:" + "d4" * 32)
+        self.assertEqual([argv[i + 1] for i, a in enumerate(argv) if a == "--network"], ["netx"])
+        for change, reason in ((dict(image="local/ts:latest"), "DR07_IMAGE_DIGEST_REQUIRED"),
+                               (dict(networks=["bad net"]), "DR07_NETWORKS_INVALID"),
+                               (dict(env_file="dsn.env"), "PATH_INVALID")):
+            bad = copy_inputs()
+            bad["dr07"].update(change)
+            with self.subTest(change=change):
+                self.assertTrue(make_plan("runtime", inputs=bad)["blocked"]["dr07-reference"][0].startswith(reason))
+        bad = copy_inputs()
+        bad["dr07"]["_connections"]["OKX"]["cursor_file"] = "cursor.json"
+        self.assertIn("PATH_INVALID", make_plan("runtime", inputs=bad)["blocked"]["dr07-reference"][0])
+        del bad["dr07"]["_connections"]
+        self.assertIn("DR07_CONNECTIONS_UNREADABLE", make_plan("runtime", inputs=bad)["blocked"]["dr07-reference"][0])
+
+    def test_connections_and_env_file_are_checked_on_the_host(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = Path(tmp) / "conn.json"
+            conn.write_text(json.dumps(INPUTS["dr07"]["_connections"]))
+            inputs = {"dr07": {"connections": str(conn)}}
+            g13.load_dr07_connections(inputs)
+            self.assertEqual(inputs["dr07"]["_connections"], INPUTS["dr07"]["_connections"])
+            inputs = {"dr07": {"connections": str(Path(tmp) / "absent.json")}}
+            g13.load_dr07_connections(inputs)
+            self.assertNotIn("_connections", inputs["dr07"])
+            env = Path(tmp) / "dsn.env"
+            env.write_text("POSTGRES_DSN=x\n")
+            env.chmod(0o644)
+            self.assertTrue(g13.env_file_problem(str(env)).startswith("DR07_ENV_FILE_MODE"))
+            env.chmod(0o600)
+            self.assertIsNone(g13.env_file_problem(str(env)))
+            self.assertTrue(g13.env_file_problem(str(Path(tmp) / "none")).startswith("DR07_ENV_FILE_UNREADABLE"))
+
+
+class WrongAccountRunIdTests(unittest.TestCase):
+    """B7: the Gateway writer scope is an exact account list checked before the API key."""
+
+    ACCOUNTS = ["paper-p184-dr01-g13r3abc-a-binance", "paper-p184-dr01-g13r3abc-a-okx",
+                "paper-p184-dr01-g13r3abc-b-binance", "paper-p184-dr01-g13r3abc-b-okx"]
+
+    def test_fixed_run_id_is_passed_and_its_accounts_are_emitted(self):
+        entry = runtime_steps()["dr01-wrong-account"]
+        probe = entry["commands"][0]["argv"]
+        self.assertEqual(probe[-3:], ["probe", "--run-id", "g13r3abc"])
+        self.assertEqual(entry["writer_scope_accounts"], self.ACCOUNTS)
+
+    def test_run_id_is_required_and_validated(self):
+        inputs = copy_inputs()
+        del inputs["dr01_wrong_account"]
+        self.assertIn("MISSING_INPUTS: dr01_wrong_account.run_id",
+                      make_plan("runtime", inputs=inputs)["blocked"]["dr01-wrong-account"])
+        for bad in ("ABCDEF12", "abc", "a" * 33, "abc-def1", 12345678):
+            inputs["dr01_wrong_account"] = {"run_id": bad}
+            with self.subTest(run_id=bad):
+                self.assertTrue(make_plan("runtime", inputs=inputs)["blocked"]["dr01-wrong-account"][0]
+                                .startswith("DR01_RUN_ID_INVALID"))
+
+    def test_derivation_equals_the_ts_probe(self):
+        script = TS_MATRIX_V2.parents[4] / "scripts/p184_dr01_wrong_account.py"
+        if not script.is_file():
+            self.skipTest("TS worktree not mounted")
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("ts_dr01_wrong_account", script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        for run_id in ("g13r3abc", "20261011t190000abcdef"):
+            self.assertEqual(g13.wrong_account_identities(run_id), module.identities(run_id))
+
+    def test_writer_scope_check(self):
+        acc = self.ACCOUNTS
+        self.assertIsNone(g13.writer_scope_problem(None, acc))  # scope disabled
+        self.assertIsNone(g13.writer_scope_problem(json.dumps({"include": ["other", *acc]}), acc))
+        self.assertIsNone(g13.writer_scope_problem(json.dumps({"exclude": ["other"]}), acc))
+        self.assertEqual(g13.writer_scope_problem(json.dumps({"include": acc[:3]}), acc),
+                         "WRITER_SCOPE_DENIES_RUNNER_ACCOUNTS: " + acc[3])
+        self.assertTrue(g13.writer_scope_problem(json.dumps({"exclude": [acc[0]]}), acc).endswith(acc[0]))
+        for raw in ("{", "[]", json.dumps({"include": "x"}), json.dumps({"include": [], "exclude": []})):
+            self.assertEqual(g13.writer_scope_problem(raw, acc), "WRITER_SCOPE_INVALID")
+
+    def test_scope_denial_stops_the_step_before_the_probe(self):
+        from unittest import mock
+        entry = runtime_steps()["dr01-wrong-account"]
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(g13, "containers", return_value={}), \
+                mock.patch.object(g13, "gateway_state", return_value={"running": True,
+                                                                      "image": INPUTS["gateway_image_digest"]}), \
+                mock.patch.object(g13, "gateway_writer_scope", return_value=json.dumps({"include": ["x"]})), \
+                mock.patch.object(g13, "bounded") as bounded:
+            receipt = g13.run_step(entry, FINAL, {**INPUTS, "_root": tmp}, Path("/ts"))
+        bounded.assert_not_called()
+        self.assertNotIn("deferred", receipt)
+        self.assertIn("WRITER_SCOPE_DENIES_RUNNER_ACCOUNTS", receipt["error"])
 
 
 class InverseDr05Tests(unittest.TestCase):
@@ -230,7 +434,7 @@ class GatewayStepTests(unittest.TestCase):
         self.assertEqual(entry["cells"], ["DR01.WRONG_ACCOUNT_DENIED@BINANCE", "DR01.WRONG_ACCOUNT_DENIED@OKX"])
         probe, record = entry["commands"]
         self.assertEqual(probe["argv"][:4], ["docker", "exec", "-i", "gateway_service"])
-        self.assertEqual(probe["argv"][-2:], ["-", "probe"])
+        self.assertEqual(probe["argv"][-4:], ["-", "probe", "--run-id", "g13r3abc"])
         self.assertTrue(probe["stdin"].endswith("scripts/p184_dr01_wrong_account.py"))
         argv = record["argv"]
         self.assertEqual(argv[argv.index("--gateway-image-digest") + 1], INPUTS["gateway_image_digest"])

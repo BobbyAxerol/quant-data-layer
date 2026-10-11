@@ -72327,3 +72327,11 @@ no build, CI or subagent job running.
   - GATED (limit = 1.2 x baseline max): OKX_INVERSE book_delta 235.4, book_snapshot 250.6, mark 2164.8, quote
     268.8 ms.
   - REPORT_ONLY: 11 bar rows (1h-6h by rule; 5m/15m had no window with >= 5 samples).
+- Phase E R3 runner blockers fixed (tested locally; dry-run on real inputs: blocked {}):
+  - B5: dr01.alpha_service is per venue.
+  - B6: dr01 prepare runs in a --rm rc13 container (network none); dr07 runs in a --rm writer-image container on
+    the consumer networks. The DSN comes only from a 0600 env file; read-only mounts.
+  - B7: dr01-wrong-account takes a fixed run_id; the plan emits the 4 writer-scope accounts the Gateway must list;
+    the runner checks WRITER_ACCOUNT_SCOPE_JSON first.
+  - Offline: dr01 prepare compiles bindings equal to the sealed alpha bindings (B11 closed).
+  - Tests: 75 OK.
