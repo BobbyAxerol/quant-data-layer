@@ -1,12 +1,366 @@
 # Quant Data Layer v2.2.3
 
 Status: `PREPARED_NOT_PUBLISHED`. This is not a published release, a Git tag or an owner publication decision.
-Publication needs the owner to push and tag. Remote CI must also run on the final head. The published stable
+Publication needs the owner's decision and a tag. Remote CI must also run on the final head. The published stable
 release is still v2.2.2.
 
 Scorecard: [scorecard.json](scorecard.json). Inventory, hashes, the SDK build and CI: [release-preparation.json](release-preparation.json).
 
 ## Scope
+
+This release closes the P18.4 phase D Data Layer work on the Kafka-native stack. It contains:
+- one-commit images for every application role (IDR-039, closed again on 481fd67);
+- execution-view correctness fixes (IDR-062, IDR-040, IDR-084, IDR-088, Astra R1/R3);
+- hot-path contention fixes (Astra R2/R3), the OKX session fixes and the ingestor liveness knob;
+- the G5 warmup fixes and IDR-086 (a typed refusal in a warmup batch keeps its code and retryability);
+- the Stream replica byte budget fix and the provider admission INFLIGHT_CAPACITY wait fix;
+- the funding settlement publication allowance (60 s, backed by a measurement);
+- batched Subscribe responses for lossless live feeds (additive wire fields, SDK 2.3.0);
+- IDR-087: the bar edge's Kafka backlog probe runs in a supervised child, so a librdkafka crash closes the history
+  gate instead of killing the bar edge;
+- additive public fields `event_id` (IDR-082) and `proof_observed_at_ns` (IDR-040 fix 2).
+
+Public endpoints keep their versions. Every change is additive. A client that does not ask for batches gets the
+unchanged single-record Subscribe shape, and readers on SDK 2.1.0 ignore the new fields.
+
+This is not a Trading System order, accounting or alpha certification. It is not HA or independent-failure-domain
+evidence, because every run used the same host.
+
+## Source And Images
+
+- Release source: `481fd6704b28d8fa63deee39d59eeba23d87f5a8` on `fix/p184-dl-closure`. The branch is pushed
+  (`origin/fix/p184-dl-closure` contains it). No later commit exists at assembly time.
+- Commits since the previous evidence source 413c5b9 (`git log --oneline 413c5b9..481fd67`):
+  - runtime code: 139dafe (IDR-086, Query warmup batch typed refusal), 4c779ac (batched Subscribe, Stream gateway,
+    contracts, SDK 2.3.0), 5ee9463 (IDR-088, Query serves a proven same hot record at its recorded boundary),
+    481fd67 (IDR-087, supervised bar-edge Kafka probe);
+  - harness and tooling: 1a161f4, 22ca8df and 2d4b88c (the full G12 harness), f1849e0 (the load driver mounts its
+    source generated contracts);
+  - evidence: 4704edd (the previous record) and cb87370 (before it).
+
+Images were checked with `docker image inspect`. Both revision labels equal 481fd67, which closes IDR-039 again. The
+version label reads `2.2.3-rc13`, because a tag never changes a digest.
+
+| Image | Digest | Tag | Roles |
+| --- | --- | --- | --- |
+| Python | `sha256:ccbea12e87e42273364b1a78847ea97f5659cc5f43b14c0b1b807f5aa6e00677` | `qdl-v2-python:2.2.3-rc13-481fd67` | query_kn_1/2, binance_bar_edge |
+| Rust | `sha256:6afdc155ba3e4e0e87216c209a23a2938897d235b30bc5d52e054c2e21cb65ad` | `qdl-v2-rust:2.2.3-rc13-481fd67` | stream_kn_1/2, market_projector_1/2, rust_core x3, ingestor_okx_swap, ingestor_binance_usdm |
+
+All 12 application roles run these two digests: restart count 0, OOM false (`docker inspect`, 2026-10-11 ~14:40Z).
+They were rolled one role at a time between 14:26:16Z and 14:31:42Z on 2026-10-11, with the writer READY 64/64 after
+every step (receipts `p184-d3-capacity-20261009/rollout-rc6/<role>-receipt-20261011T14*.json`). Every role came
+from rc12 (python `3b585597`, rust `ebc7b794`, 5ee9463), which is the rollback target.
+
+The following were not changed by this release:
+- kafka1-3 (`sha256:9516fb7634ba`), apart from the dynamic broker config below;
+- market_cache and stable_redis (`sha256:dfa18828cbc0`);
+- the one-shots stable_state_init and stable_tls_init (`sha256:bd0163fd76b0`).
+
+Ingestor configs are unchanged and were re-read for this record through a `--network none` container: OKX revision
+20 (`eb982fac...`), Binance revision 19 (`5833bc4e...`), liveness 1500/4000 ms, no `book_liveness_proof_ms`, so
+IDR-040 fix 2 is OFF.
+
+TS writer `market_data_service_p184w` (TS repo `trading-system-next-upgrade`, pushed):
+- image `sha256:44baacc0a3ff95f71029d230e48e1b7282627f26de9bd99e13d1148862e09068`, TS `a37ff4d`, SDK 2.3.0, running
+  since 2026-10-11T13:44:14Z, restart count 0;
+- env (`docker inspect`, only these keys): `DATA_LAYER_V2_MAX_RECORDS_PER_RESPONSE=64`,
+  `DATA_LAYER_V2_STREAM_PIPELINE_DEPTH=0`, `MARKET_DATA_FIXED_WORKER_PINS=OKX:BTCUSDT=2,OKX:ETHUSDT=0`,
+  `DATA_LAYER_V2_MARK_WAKE_READ_DELAY_BY_VENUE=BINANCE=100`;
+- the gate campaign ran writer `64347a94` (TS a3035c8, SDK 2.3.0) with the same four values. `git diff --stat
+  a3035c8 a37ff4d` changes one runtime file, `services/market_data/data_layer_bridge.py` +17: a slice the bridge
+  reopened logs one `RECONNECTED origin=bridge` control. The rest is tests, the DR05 harness, the register and the
+  plan.
+
+## Runtime Config
+
+Kafka log-cleaner throttle (unchanged since the previous record, not re-read here):
+- cluster-wide dynamic default `log.cleaner.io.max.bytes.per.second=8388608` (8 MiB/s), applied
+  2026-10-11T03:40:56Z without a broker restart, owner-approved;
+- cause: `md.latest.v2` compaction on kafka1 stalled every rust_core commit about 2.06 s on 2026-10-10;
+- receipt `~/.local/state/qdl-v2/kafka-cleaner-throttle-20261010/` (README.md `72cbcf87...`, alter.out
+  `a59f5deb...`, after.out `8a635a9b...`, applied_at.txt `5f94630c...`);
+- rollback, failure only: `kafka-configs.sh --alter --delete-config log.cleaner.io.max.bytes.per.second`.
+
+TS execution Redis `redis_marketdata`, cpu-shares 4096 (owner-approved, plan journal 2026-10-11):
+- applied about 08:09Z on 2026-10-11, before both phase E campaigns; `docker inspect` reads `CpuShares 4096` now;
+- receipt `~/.local/state/qdl-v2/redis-cpu-shares-20261011/receipt.txt` (`c1b5f23e...`): involuntary context
+  switches 209 -> 160 per 60 s at similar load;
+- rollback, failure only: `docker update --cpu-shares 0 redis_marketdata`.
+
+## Gate Scorecard (G1-G14)
+
+Gates come from the frozen TS table `upgrade/p184-phase-d-gates.md` (TS 31cf663, sha256 `c67bf69b...`) and the
+frozen budget `config/v2/p184-stage100-budget.json` (sha256 `ff85335b...`, unchanged at 481fd67).
+
+Scoring rule: a PASS needs the table's measurement rule, which is steady state for at least 30 min at the stage-100
+workload plus a burst window. A measurement outside that rule can FAIL a gate but cannot PASS it. A NOT_MEASURED is
+never upgraded. No frozen gate was widened.
+
+The gate scorecard is the phase E step-2 campaign `~/.local/state/qdl-v2/p184-final-campaign-20261011T123525Z/`
+(scorecard sha256 `747e4764...`, `protocol_met: true`, no protocol problems, load 12:37:01-13:07:01Z, 64 demanded
+slices, writer restarts 0, `startup:bounded` PASS). G12 and G13 are scored from their own receipts.
+
+Summary:
+- PASS: G1, G2, G3, G5, G6, G7, G8, G9, G10, G11, G12, G14.
+- NOT_MEASURED: G4.
+- DEFERRED: G13.
+- FAIL: none.
+
+Paths under `~/.local/state/qdl-v2/`; sha256 prefixes, full hashes in scorecard.json.
+
+| Gate | Rule | Measured | Source (sha256) | Verdict |
+| --- | --- | --- | --- | --- |
+| G1 BOOK e2e to TS cache | p95 <= 500, p99 <= 1000, max < 2000 ms | DELTA B/O p95 138.8/146.4, p99 190.3/199.5, max 570.4/585.9 (n 82692/94817); SNAPSHOT B/O p95 176.5/177.6, max 571.2/503.2 | campaign `trace/transit-load.json` (bd1ccac0), `trace/mark-load.json` (b6a51981) | **PASS** |
+| G2 TRADE/QUOTE/MARK new-event transit | TRADE p95 <= 500, max < 1500; QUOTE/MARK p95 <= 500, max < 1000 ms | TRADE B p95 243.4, max 583.1 (n 66303); TRADE O p95 210.3, max 495.5 (n 12492); QUOTE B/O p95 162.2/169.1, max 531.5/532.0; MARK B/O p95 360.3/337.4, max 803.1/712.7 | same two files | **PASS** |
+| G3 BAR e2e from close | p95 <= 5 s, max < 60 s | pooled n 320, p95 1914, max 3330 ms; 0 unseen, 0 read errors | `g3/g3-summary.json` (fafca1be) | **PASS** |
+| G4 venue -> canonical | candidate p95 <= baseline p95 x 1.2 per row | 17/17 baselined rows PASS in every window they were sampled (e.g. trade B/O 99.8-105.3 / 102.1-111.9 vs limits 269.3/257.4). 8 observed rows have no frozen baseline: bar BINANCE 1h/5m, bar OKX 1h/5m, OKX_INVERSE book_delta/book_snapshot/mark/quote | `g4-{1..5}-summary.json` (717bf3b8, 3f080361, 21b72b59, 0b68e97f, eeaa9a68) | NOT_MEASURED: rows without baseline |
+| G5 request latency | certified p95/p99 per class and venue; frozen cold limits | All 10 class/venue rows PASS (worst p95 77.6 OKX BAR_LATEST, worst p99 252.0 BINANCE L2); cold 2500/5000 overlap 4 runs, 0 bad | `stage100/gates.json` (86b74f26), `receipt.json` (fdf26baa) | **PASS** |
+| G6 durable-view event age + quality | per-binding D3 policy of the TS EXECUTION consumer; zero unsafe | TS EXECUTION probe 19213 reads over 32 targets: every D3 binding measured, 0 unsafe (e.g. MARK OKX 3566 ELIGIBLE + 40 ELIGIBLE_QUIET; QUOTE OKX 3515 + 85; TRADE NOT_ELIGIBLE B/O 138/916, typed). Alpha reads: 0 unsafe under their own requirement | `g6-ts/summary.json` (5a9fc905) | **PASS** |
+| G7 TS consumer path | SDK -> writer p95 <= 100; writer -> Redis p95 <= 50 ms per feed | SDK -> writer p95: BOOK_DELTA 33.8, BOOK_SNAPSHOT 44.8, QUOTE 30.7, TRADE 45.3, MARK 0.6. Writer -> Redis p95: 13.5, 20.5, 5.9, 33.3, 14.4 | `trace/transit-load.json` (bd1ccac0) | **PASS** |
+| G8 TS execution Redis | commandstats <= 60 % core per 10 min; SLOWLOG 0 in steady state; PING p99 <= 5 ms | commandstats <= 0.0612 core; PING p99 <= 1.15 ms per window (n 3861, 0 failures); SLOWLOG 0 new entries; 0 MONITOR clients | `g8/g8-summary.json` (0314b552) | **PASS** |
+| G9 readiness | demanded == session-ready; 0 data-path eligibility losses; v1 fallback 0 | 180/180 samples readable, demanded 64 == session-ready in every sample, 0 data-path losses, 48 legitimate quiet TRADE refusals, v1 fallback 0 | `g9g10/g9-g10-summary.json` (247c62e6) | **PASS** |
+| G10 TRADE integrity | 0 gaps, 0 dup applied, 0 replay-expired, 0 overflow | all 0; 0 resumed reconnects; 129 log polls, 0 unreadable | same file and trace | **PASS** |
+| G11 writer restart recovery | first valid apply <= 30 s; caught up <= 60 s | outage 0.132 s; 64/64 slices caught up, p50 0.158, max 7.511 s; 0 rewinds; cursor never ahead | `g11/g11-summary.json` (c85e4566) | **PASS** |
+| G12 broker/projector/Stream recovery | caught up <= 600 s, then G1-G3 | Isolated, rc12 digests (python 3b585597, rust ebc7b794, writer 64347a94): caught up broker stop/start 224.704 s, projector restart 19.4 s, Stream restart 138.381 s; G1, G2 TRADE/QUOTE/MARK and G3 BAR 1m inside after every fault (largest max: G1 574.5 ms, G2 541.1 ms, both after the broker fault; G3 341.1 ms) | `p184-g12-rc12-20261011/evidence/verdict.json` (20f29671), `teardown.json` (a5fceec5) | **PASS** |
+| G13 DR01-DR08 | every cell once on the final digests | 41/41 DL cells ok on the rc12 digests with the final writer 44baacc0: dr05-upstream 6, dr08 4, dr05-transport 9, views 22 (2 quiet cells NOT_OBSERVED). 4 TS steps deferred | `p184-g13-20261011T134532Z/summary.json` (445e05c9), `...T140432Z/summary.json` (f0b7b523) | DEFERRED |
+| G14 resources | CPU/RAM per role at stage 100, with headroom | 18/18 roles, 152 samples, none at or over its memory limit. Mean CPU: kafka 78/94/97 %, query 64/56 %, writer 134 %; DL mean sum 5.08 vCPU. Lowest memory headroom query_kn_2 31.2 % | `stage100/host.json` (a5ba4fcf) | **PASS** |
+
+Measurement identity. The step-2 campaign ran before the rc12 (13:12-13:18Z) and rc13 (14:26-14:31Z) rolls. Diffs
+below are `git diff --stat <rev> 481fd67` without tests, scripts, docs and `upgrade/`:
+- query_kn_1/2: rc12 `sha256:3b585597570f` (5ee9463, rolled 11:55-11:56Z). The diff is
+  `qdl/runtime/history_backpressure.py` +50/-7 and `qdl/runtime/isolated_probe.py` +141 (IDR-087). Only
+  `qdl/runtime/stable_bar_edge.py` imports them: **source-identical for every Query path**.
+- stream_kn_1/2: rc11 `sha256:ddb2ad19d610` (4704edd, rolled 10:34-10:35Z). The Rust tree, `generated/rust`, Cargo
+  files and config have an empty diff: **source-identical for the Stream binary**, batched Subscribe included.
+- rust_core x3, projectors and ingestors: rc10 `sha256:96a2c9120ef4` (413c5b9). The Rust diff is
+  `rust/qdl-stream-gateway` (no other crate depends on it) and `generated/rust/qdl/query/v2/qdl.query.v2.rs` +16,
+  which adds two prost fields (`SubscribeRequest.max_records_per_response`, `SubscribeResponse.records`) to
+  `qdl-contracts`. Every crate depends on `qdl-contracts`, but no code outside the gateway references those two
+  messages (`git grep`): **source-equivalent** for these binaries (rebuilt, not byte-compared).
+- binance_bar_edge: rc10 `sha256:a0c3649d9a47` (413c5b9). On its import path (checked one level deep) the only
+  diff is IDR-087. **Not source-identical:** the measured bar edge ran the in-process Kafka backlog probe. IDR-087
+  changes behaviour only when that probe crashes or hangs.
+- Writer: `64347a94` (a3035c8) with knob 64; the final writer `44baacc0` adds only the reconnect control log (see
+  above).
+
+G12 and G13 ran on the rc12 digests. The rc13 images differ from rc12 only by IDR-087: the Python diff is the two
+bar-edge files above, and the Rust diff is empty. The bar edge is not part of the isolated G12 stack, and no G13 step
+exercises it.
+
+### One-Variable Comparison: Batched Subscribe
+
+Phase E step 1 and step 2 ran on the same DL images (Query rc12, Stream rc11, rest rc10), the same writer image
+`64347a94`, depth 0, the same pins and MARK delay, the Kafka throttle and the Redis cpu-shares. Only the writer
+knob `DATA_LAYER_V2_MAX_RECORDS_PER_RESPONSE` differed. Step 1 had it unset, which is the default of 1 (writer
+composes `trace-20261011T115631Z.compose.json` and `trace-20261011T123412Z.compose.json` in the TS campaign-roll
+directory).
+
+| Campaign | Knob | G2 TRADE B/O p95 / max (ms) | QUOTE B/O max | G2 | G8 | Scorecard |
+| --- | --- | --- | --- | --- | --- | --- |
+| `p184-final-campaign-20261011T115743Z` (step 1, protocol met) | 1 | 801.2/817.2 / 3284.0/3208.8 | 1067.2/1283.3 | **FAIL** | PASS | `6ae2945d` |
+| `p184-final-campaign-20261011T123525Z` (step 2, protocol met) | 64 | 243.4/210.3 / 583.1/495.5 | 531.5/532.0 | **PASS** | PASS | `747e4764` |
+
+Caveat: TRADE volume was not equal. TRADE BINANCE/OKX n was 66303/12492 in step 2, 92415/26567 in step 1 and
+160328/39292 in campaign 4. Part of the improvement may come from the lower TRADE volume. The step-2 PASS is a
+measurement at that volume. It is not a capacity claim at the campaign-4 volume.
+
+From campaign 4 (the previous record, G2/G8 FAIL) to step 2, more than one variable changed:
+- the writer image (8b567eb -> a3035c8, adding SDK 2.3.0, a FLAT apply script and a latest-wins cursor commit);
+- the Redis cpu-shares;
+- the Query/Stream images.
+
+That comparison is not attributed to one cause.
+
+## Campaigns Since The Previous Record (2026-10-11)
+
+Paths under `~/.local/state/qdl-v2/`. Every result is kept, and none is erased by the step-2 PASS.
+
+| Campaign | Setup | Result | What it led to |
+| --- | --- | --- | --- |
+| `p184-final-campaign-20261011T103749Z` (c55e2e39) | Query rc11 b128de1e, Stream rc11 ddb2ad19, rest rc10, writer 64347a94 | protocol NOT met (driver acceptance FAIL: streams no_errors / every_live_stream_delivered / final_bar, fault windows); G2 FAIL | The load driver mounted SDK 2.3.0 over a 2.2.2 image's generated protobuf, so alpha streams failed with `AttributeError` on `SubscribeResponse.records` (driver error_count 180; all 40 listed errors are STREAM `AttributeError`) -> f1849e0 |
+| `p184-final-campaign-20261011T111700Z` (2ec43e87) | same | stopped by its guard at 11:38Z (driver SIGINT); G9 FAIL (demanded != session-ready in 6 samples) | The writer went DEGRADED 63/64 at 11:37:40Z: OKX BNB-USDT-SWAP TRADE was quiet for more than 120 s, and Query refused the same record PRIMARY_BEHIND after ring eviction (IDR-088) -> 5ee9463 |
+| `p184-final-campaign-20261011T115743Z` (6ae2945d) | Query rc12, Stream rc11, rest rc10, writer 64347a94, knob 1 | protocol met; FAIL G2; PASS G8; G4 NOT_MEASURED | the one-variable baseline above |
+| `p184-final-campaign-20261011T123525Z` (747e4764) | same, knob 64 | protocol met; the gate scorecard | - |
+
+`startup:bounded` passed in both protocol-met step campaigns (212 and 193 retries). The frozen budget is kept.
+
+## G12 And G13
+
+G12, isolated, `p184-g12-rc12-20261011`:
+- `status COMPLETED`, `pass true`. Image set: core/projector/Stream rust `ebc7b794`, python `3b585597`, writer
+  `64347a94`. Harness: `scripts/p184_g12_isolated_fault.py` (sha256 `2fa21904...`). The file is identical at
+  2d4b88c and 481fd67. The run receipt does not record the harness commit itself.
+- Caught up after the fault cleared: broker stop/start 224.704 s (BINANCE 182.931 s), projector restart 19.4 s,
+  Stream restart 138.381 s, all <= 600 s.
+- Every part passed after every fault: G1, G2 TRADE/QUOTE/MARK (n 1060/600/300 per venue) and G3 BAR 1m (n 5 per
+  venue). The monitor passed too.
+- Monitor: 1718 samples, max gap 2.0 s. There were 2 typed `SIGSEGV` sample errors in
+  `list_consumer_group_offsets:kn-projector-v3-a` during the broker fault. They are the evidence for IDR-087: the
+  product bar edge called the same AdminClient method in-process.
+- Teardown: 12 containers removed, 0 left by label or name, 0 volumes by label, no errors.
+- Scope: same host, TEST_ONLY sources, single projector/Stream replica.
+- The earlier rc10 full run `p184-g12-rc10-full3-20261011` (PASS, verdict `c7b8ea95`) and the rc10 attempts stay in
+  the appendix.
+
+G13, on DL 5ee9463 (rc12 digests) and the final writer 44baacc0 (TS a37ff4d):
+- `p184-g13-20261011T134532Z`: dr05-upstream 6/6, dr08-isolated 4/4, dr05-transport 9/9 ok.
+- Its dr04-dr06-views step failed on DR04.EXPLICIT_LAST@OKX with `EXECUTION_CONTEXT_STALE`. The LAST trigger was
+  stale in a quiet market, so the refusal is correct and typed (rows `views-okx.rows`, `efa7882a...`).
+- `p184-g13-20261011T140432Z`: dr04-dr06-views 22/22 ok. DR05.QUIET_TYPED BINANCE/OKX are ok but NOT_OBSERVED.
+- Finding from the earlier runs `p184-g13-20261011T131833Z` and `...T133254Z` (writer 64347a94):
+  - DR05.DISCONNECT_RECONNECT failed with 0 logged controls after the cut. Data recovered (validator APPROVED about
+    6.2-6.4 s after the reconnect).
+  - A transport cut ends with the bridge reopening the slice in a fresh session, which yields no SDK RECONNECTED
+    control.
+  - The rc10 PASS of this cell (`043821Z`) had counted startup quota controls logged before the cut, so it was a
+    false positive.
+  - Fixed in TS a37ff4d: the bridge logs `RECONNECTED origin=bridge`, and the harness counts only controls after the
+    cut.
+- Runtime approval: the owner's chat approval of 2026-10-11, written down by the coordinating session in
+  `p184-g13-inputs/runtime-approval-rc12.md` (`9e786bfd...`). The owner did not write the file.
+- Deferred to the TS release: dr01-deployed, dr01-wrong-account, dr02-dr03-alpha, dr07-reference.
+
+## Items Closed (commit)
+
+| Item | Commit(s) | State |
+| --- | --- | --- |
+| IDR-039 one-commit images for every application role | rc13 rollout of 481fd67 | **closed**: 12/12 roles on 481fd67 |
+| IDR-086 warmup batch keeps a typed backend refusal (code, retryability) | 139dafe | in images (Query); tested locally |
+| IDR-088 Query serves a proven same hot record at its recorded boundary | 5ee9463 | in images (Query); in the step-2 campaign: 0 data-path eligibility losses |
+| IDR-087 bar-edge Kafka backlog probe in a supervised spawn child (fail-safe gate) | 481fd67 | in images (bar edge); **tested locally only**, no live broker stop of the bar edge |
+| Batched Subscribe (`max_records_per_response`, `records`), SDK 2.3.0 | 4c779ac | in images (Stream gateway); TS writer adopted it with knob 64 |
+| G12 harness: G2/G3 after recovery, namespace state topics, crash-tolerant monitor | 1a161f4, 22ca8df, 2d4b88c | tooling |
+| Load driver mounts its source generated contracts | f1849e0 | tooling |
+| Redis `redis_marketdata` cpu-shares 4096 | runtime config, receipt above | runtime |
+| Items closed in the rc10 record (dadb9c8, 413c5b9, 2e0de95, 70bef7d, Kafka cleaner throttle, tooling) and the 2026-10-10 record | see appendix | in images |
+
+The defect register lives in the TS repo, `INTEGRATION_DEFECT_REGISTER.md` (TS 68cd019, sha256 `e1c9a2fc...`). Its
+status text for IDR-086 and IDR-088 still says that an image rebuild and roll are needed. Both rolls have since
+happened (Query rc12 at 11:55Z, rc13 at 14:26Z). This DL record does not edit the TS register.
+
+## SDK 2.3.0 Wheel
+
+SDK 2.3.0 supersedes 2.2.1. Neither 2.2.1 nor 2.2.0 was published.
+
+| Field | Value |
+| --- | --- |
+| wheel | `qdl_sdk-2.3.0-py3-none-any.whl` |
+| wheel sha256 | `b9c74157db2a2d147564d72b65bbbafc9a7d3d055bccee67645b831470ad38c3` |
+| reproducible | two builds from a `git archive` of 481fd67 are byte-identical (`cmp`); wheel, SBOM and release json hashes are equal |
+| builder | `scripts/build_qdl_sdk_release.py` in `qdl-v2-python:2.2.3-rc13-481fd67`, `--network none`, non-root, read-only source |
+| sdk_source_digest | `e0e5d044c5edfffb1084bc84b69d4cf1898a4221004ca720c0c9dd02fb0d895b` |
+| generated_contract_digest | `2c59805220f06caf1a19b6df5d4ec7bf44282a780d265e0dd667b9abd4d7c1d1` |
+| release json sha256 | `218b45b0250c95c1b273b9b809afc234984ab5fffdefcfdf541ebd635111ea15` |
+| SBOM sha256 | `4c69c98d56f29962d9981d1acd517cf44717aa4c224f9df5b2e3e913ceff488b` |
+
+`qdl_sdk`, `generated/python`, `contracts` and the builder have an empty diff from 4c779ac to 481fd67. The wheel is
+byte-identical to the TS-vendored `vendor/qdl_sdk-2.3.0-py3-none-any.whl` (same sha256). Both writer images
+(`64347a94`, `44baacc0`) report `qdl_sdk.__version__` 2.3.0. The artifacts are under
+`~/.local/state/qdl-v2/releases/v2.2.3/sdk230-build-{1,2}/`, outside Git.
+
+## CI
+
+Local exact-source CI on 481fd67 (`scripts/p184_local_ci.py --sha 481fd67 --allow-pull --allow-download
+--trivy-image aquasec/trivy:0.58.1`): summary `p184-local-ci-481fd67/summary.json` (sha256 `83e7dda9...`, status
+`INCOMPLETE` only because of skips). Of 44 steps, 41 PASS and 3 SKIPPED:
+- contract-tests #2 and #5 are pull-request-only steps, so their condition is false for a push event;
+- unit-tests #4 (prepare non-root runtime bind mounts) needs sudo. Host preparation is reported, never escalated.
+
+Every other step passed. That includes consolidated-source-preflight, contract-tests #10 (Rust dependency, license
+and advisory policy, run with the download allowed), sdk-python310, the unit tests, both trivy scans (#19, #20), the
+SBOM rehearsal and kn-native-integration.
+
+The previous local CI on 2f489b1 is in the appendix record. Remote GitHub CI on the final head is not cited in this
+record. Publication requires the required jobs on the final head.
+
+## Runtime Changes Performed (2026-10-11, after the rc10 record)
+
+Receipts were checked for every change below. Each role was recreated one at a time, and the writer was READY 64/64
+after every DL step. The approval wording for each roll was given to the coordinating session and is not re-verified
+in this record.
+
+| Change | Rollback reference |
+| --- | --- |
+| Redis `redis_marketdata` cpu-shares 4096, ~08:09Z | `docker update --cpu-shares 0 redis_marketdata` |
+| Query rc11 `b128de1e` and Stream rc11 `ddb2ad19` (4704edd), 10:33-10:35Z | superseded by the later rolls |
+| TS writer `64347a94` (a3035c8, SDK 2.3.0), 10:36Z | TS campaign-roll `rollback-20261011T103624Z.compose.json` |
+| Query rc12 `3b585597` (5ee9463), 11:55-11:56Z | superseded |
+| TS writer knob `DATA_LAYER_V2_MAX_RECORDS_PER_RESPONSE=64`, 12:34Z | TS campaign-roll `rollback-20261011T123412Z.compose.json` |
+| rc12 (5ee9463) on all 12 application roles, 13:12-13:18Z | superseded |
+| TS writer `44baacc0` (a37ff4d), 13:44Z | TS campaign-roll `rollback-20261011T134403Z.compose.json` (`d673be45`, back to 64347a94 with knob 64) |
+| **rc13 (481fd67), all 12 application roles, 14:26-14:31Z** | `p184-d3-capacity-20261009/rollout-rc6/<role>-rollback.compose.json` -> python rc12 `3b585597`, rust rc12 `ebc7b794` |
+
+Rollback runs in reverse role order. Kafka data, Redis, realm dirs and offsets need no data migration. Rollback is
+for failure only. The rc10 rollback composes cited in the appendix record were overwritten by these later rolls, so
+their recorded sha256 no longer match the files on disk.
+
+## Known Limits
+
+- **Single host:** every run used the same host. No HA and no independent failure domains. No mainnet or funded
+  claim.
+- **G4 rows without a frozen baseline** (bar BINANCE 1h/5m, bar OKX 1h/5m, OKX_INVERSE book_delta, book_snapshot,
+  mark and quote in the step-2 campaign) keep G4 NOT_MEASURED. No baseline is added after measuring.
+- **G6 BOOK_DELTA** is not a Query shape in the frozen workload, so it has no G6 row.
+- **startup:bounded** is a stochastic tail of the warmup lane. One session exhausted its 10 retries in one earlier
+  stage-100 run (20261010T185053Z). The frozen budget is kept.
+- **DL CPU above the owner's 5 vCPU budget:** G14 passes its per-role headroom rule, but the DL mean sum at stage
+  100 was 5.08 vCPU in the step-2 campaign (`stage100/host.json`, `a5ba4fcf...`; 5.18 in step 1, 5.37 in campaign 4).
+  Kafka is the largest share. Tuning it is open: one variable at a time, measured against G1/G2.
+- **Writer burst capacity depends on batched Subscribe:**
+  - G2 and G8 pass with the writer knob at 64; at knob 1, G2 failed in step 1.
+  - TRADE volume in step 2 was lower than in step 1 and campaign 4, so the TRADE-burst capacity at the campaign-4
+    volume is not shown.
+  - A writer that drops the knob loses the PASS.
+- **IDR-087 is tested locally only.** A real SIGSEGV child, timeout and child error are covered by tests. The bar
+  edge itself has not been through a live broker stop.
+- **Measurement identity:** the step-2 campaign ran the rc12/rc11/rc10 mix. Query, Stream and the other Rust roles
+  are source-identical or source-equivalent to 481fd67. The bar edge is not, by the IDR-087 change only.
+- **G13:** the four TS-stack steps stay OPEN. The two DR05.QUIET_TYPED cells are NOT_OBSERVED, not a positive
+  quiet-state proof.
+- **IDR-040 fix 2 is OFF** (`book_liveness_proof_ms` unset). A quiet Binance book stays stale, never falsely fresh.
+- **Catalog revision split (C.19)** is unchanged: image catalog revision 11, runtime-mounted revision 12.
+- **CI:** local only (41 PASS, 3 SKIPPED). Remote CI on the final head is not cited.
+- Historical failures stay recorded:
+  - the campaigns above and in the appendix;
+  - the G12 attempts;
+  - the G13 view refusals and the DR05 false positive;
+  - every failure listed in the appendix.
+
+  None is erased by a later PASS.
+
+## Consumer Hand-Off (TS phase E)
+
+- Writer adoption is live: image `44baacc0` (TS a37ff4d) with SDK 2.3.0 (wheel `b9c74157...`) and
+  `DATA_LAYER_V2_MAX_RECORDS_PER_RESPONSE=64`. Keep the knob, `BINANCE=100` for the MARK wake read delay, depth 0 and
+  the OKX worker pins.
+- Remaining TS items:
+  - close the four deferred G13 steps: dr01-deployed, dr01-wrong-account, dr02-dr03-alpha, dr07-reference;
+  - alpha callers mint JWTs for manifest revision **15** (4950 RPM / 300 streams); an older JWT revision gets 401;
+  - deploy the IDR-085 gateway fix (TS be21d49) with the TS release, which closes the deferred DR01 cells;
+  - IDR-040 fix 2: activate the in-band quiet-book proof flag through its own packet when TS needs it;
+  - use `event_id` (IDR-082) for trade identity.
+- TS Paper manifest/JWT revision 11 (64 products incl. OKX BTC-USD-SWAP) is live.
+
+## Publication Requires
+
+1. The owner's publication decision.
+2. Remote CI (contract-tests, sdk-python310, unit-tests, kn-native-integration) on the final head, and a merge to dev
+   and main.
+3. An annotated tag `v2.2.3` that links the final CI runs and the hashes of scorecard.json and this file.
+
+No merge or tag was performed. The branch was pushed before this record. This record is not committed.
+
+## Appendix: Preparation History
+
+### 2026-10-11 rc10 record at 413c5b9 (verbatim, superseded by the record above)
+
+Status: `PREPARED_NOT_PUBLISHED`. This is not a published release, a Git tag or an owner publication decision.
+Publication needs the owner to push and tag. Remote CI must also run on the final head. The published stable
+release is still v2.2.2.
+
+Scorecard: [scorecard.json](scorecard.json). Inventory, hashes, the SDK build and CI: [release-preparation.json](release-preparation.json).
+
+#### Scope
 
 This release closes the P18.4 phase D Data Layer work on the Kafka-native stack. It contains:
 - one-commit images for every application role (IDR-039, closed on 413c5b9);
@@ -23,7 +377,7 @@ Public endpoints keep their versions. Every change is additive, and readers on S
 This is not a Trading System order, accounting or alpha certification. It is not HA or independent-failure-domain
 evidence, because every run used the same host.
 
-## Source And Images
+#### Source And Images
 
 - Release source: `413c5b914f8c6fd0f67429fdddb39451589e9745` on `fix/p184-dl-closure`.
 - The only later commit, 2f489b1, changes scripts, tests and the plan journal (`git diff --stat 413c5b9 2f489b1`:
@@ -65,7 +419,7 @@ TS writer `market_data_service_p184w` (TS repo `trading-system-next-upgrade`, pu
 - since 2026-10-11T04:24:53Z the writer runs depth 0 with the same pins and MARK delay (`docker inspect`). Depth 0
   was the coordinator's choice from two comparisons; that comparison is not re-verified in this record.
 
-## Runtime Config Change: Kafka Log-Cleaner Throttle
+#### Runtime Config Change: Kafka Log-Cleaner Throttle
 
 - Change: cluster-wide dynamic default `log.cleaner.io.max.bytes.per.second=8388608` (8 MiB/s), applied
   2026-10-11T03:40:56Z without a broker restart. The owner approved it through a question at about 03:40Z.
@@ -76,7 +430,7 @@ TS writer `market_data_service_p184w` (TS repo `trading-system-next-upgrade`, pu
   `a59f5deb...`, after.out `8a635a9b...`, applied_at.txt `5f94630c...`).
 - Rollback, failure only: `kafka-configs.sh --alter --delete-config log.cleaner.io.max.bytes.per.second`.
 
-## Gate Scorecard (G1-G14)
+#### Gate Scorecard (G1-G14)
 
 Gates come from the frozen TS table `upgrade/p184-phase-d-gates.md` (TS 31cf663, sha256 `c67bf69b...`) and the
 frozen budget `config/v2/p184-stage100-budget.json` (sha256 `ff85335b...`).
@@ -153,7 +507,7 @@ Findings behind the verdicts:
 - G4 bar latency for OKX is measured from bar open (the OKX source time is the open). The baseline used the same
   metric.
 
-## Earlier Final Campaigns (2026-10-10 .. 2026-10-11)
+#### Earlier Final Campaigns (2026-10-10 .. 2026-10-11)
 
 Paths under `~/.local/state/qdl-v2/`. None of these results is erased by campaign 4.
 
@@ -168,7 +522,7 @@ Paths under `~/.local/state/qdl-v2/`. None of these results is erased by campaig
 20261010T185053Z, where session s89 exhausted the frozen 10 retries (`retry_max_attempts` 10, retry code
 RATE_LIMITED; gates.json `8a0db47a...`). The frozen budget is kept.
 
-## G12 And G13 On The Release Digests
+#### G12 And G13 On The Release Digests
 
 G12, isolated (owner approved), `p184-g12-rc10-20261011-a2`:
 - `status COMPLETED`, `pass true`. Image set: core/projector/Stream rust `96a2c912`, python `a0c3649d`, writer
@@ -200,7 +554,7 @@ G13, on DL 413c5b9 and writer bae2509f (TS 8b567eb):
   `p184-g13-inputs/runtime-approval-rc10.md` (`55189088...`) was written by an agent from that relayed approval.
 - Deferred to the TS release: dr01-deployed, dr01-wrong-account, dr02-dr03-alpha, dr07-reference.
 
-## Items Closed (commit)
+#### Items Closed (commit)
 
 | Item | Commit(s) | State |
 | --- | --- | --- |
@@ -217,7 +571,7 @@ G13, on DL 413c5b9 and writer bae2509f (TS 8b567eb):
 
 The funding allowance revert 530a406 listed in the 2026-10-10 record is superseded by 2e0de95.
 
-## SDK 2.2.1 Wheel
+#### SDK 2.2.1 Wheel
 
 SDK 2.2.0 is superseded. It was never published, but its wheel hash is in the 2026-10-10 record, so the version was
 bumped rather than reused.
@@ -235,7 +589,7 @@ bumped rather than reused.
 The artifacts are under `~/.local/state/qdl-v2/releases/v2.2.3/sdk221-build-{1,2}/`, outside Git. The TS writer runs
 SDK 2.1.0.
 
-## CI
+#### CI
 
 Local exact-source CI (`scripts/p184_local_ci.py` replaying `.github/workflows/ci.yml` on an archive of 2f489b1):
 - all jobs except unit-tests, summary `p184-local-ci-2f489b1/summary.json` (sha256 `f00a9423...`, receipt status
@@ -253,7 +607,7 @@ Local exact-source CI (`scripts/p184_local_ci.py` replaying `.github/workflows/c
 Remote GitHub CI did NOT run, because the DL repository is not pushed. Publication requires the required jobs on
 the final head.
 
-## Runtime Changes Performed (2026-10-10 .. 2026-10-11)
+#### Runtime Changes Performed (2026-10-10 .. 2026-10-11)
 
 Each change was owner-approved. Each role was recreated one at a time.
 
@@ -270,7 +624,7 @@ Each change was owner-approved. Each role was recreated one at a time.
 Rollback runs in reverse role order. Kafka data, Redis, realm dirs and offsets need no data migration. Rollback is
 for failure only. The 2026-10-08 .. 2026-10-10 changes are listed in the appendix.
 
-## Known Limits
+#### Known Limits
 
 - **G2 TRADE and G8 SLOWLOG FAIL: writer throughput under TRADE bursts.** Owner decision: TS phase E, first item.
   The gates are not widened.
@@ -296,7 +650,7 @@ for failure only. The 2026-10-08 .. 2026-10-10 changes are listed in the appendi
 - Historical failures stay recorded: the four earlier final campaigns above, the failed G12 attempt, the first G13
   views run, and every failure listed in the appendix. None is erased by a later PASS.
 
-## Consumer Hand-Off (TS phase E)
+#### Consumer Hand-Off (TS phase E)
 
 - Adopt SDK **2.2.1** (wheel sha256 `27db3971...`). The writer runs 2.1.0 today, which ignores the new fields.
 - Alpha callers mint JWTs for manifest revision **15** (4950 RPM / 300 streams). An older JWT revision gets 401.
@@ -309,7 +663,7 @@ for failure only. The 2026-10-08 .. 2026-10-10 changes are listed in the appendi
   against the same frozen gates.
 - The writer keeps `BINANCE=100` for the MARK wake read delay and the OKX worker pins.
 
-## Publication Requires
+#### Publication Requires
 
 1. The owner's publication decision. The 2026-10-11 release decision records G2/G8 as known limits; it does not turn
    them into PASS.
@@ -318,8 +672,6 @@ for failure only. The 2026-10-08 .. 2026-10-10 changes are listed in the appendi
 3. An annotated tag `v2.2.3` that links the final CI runs and the hashes of scorecard.json and this file.
 
 No push, merge or tag was performed.
-
-## Appendix: Preparation History
 
 ### 2026-10-10 record at bbfb3be (verbatim, superseded by the record above)
 

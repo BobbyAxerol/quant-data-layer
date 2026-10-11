@@ -72281,3 +72281,27 @@ no build, CI or subagent job running.
   - The first views run refused DR04.EXPLICIT_LAST@OKX for a stale LAST in a quiet market.
   - DR05 DISCONNECT_RECONNECT now counts only controls after the cut. The 04:38Z PASS was a false positive from
     startup quota controls; TS a37ff4d logs a bridge RECONNECTED control.
+
+### v2.2.3 final record: rc13 (481fd67) on all roles, phase E step-2 scorecard, SDK 2.3.0 - 2026-10-11 (Claude, subagent)
+
+- rc13 (481fd67, IDR-087) rolled on all 12 application roles 14:26-14:31Z from rc12, writer READY 64/64 after
+  every step: python sha256:ccbea12e87e4, rust sha256:6afdc155ba3e (labels 481fd67, IDR-039 closed again). Rollback
+  per role in rollout-rc6/ (back to rc12 3b585597 / ebc7b794).
+- Earlier the same day: Query/Stream rc11 (10:33Z), Query rc12 (11:55Z), rc12 on all roles (13:12-13:18Z); writer
+  64347a94 (a3035c8, SDK 2.3.0), then knob DATA_LAYER_V2_MAX_RECORDS_PER_RESPONSE=64 (12:34Z), then 44baacc0
+  (a37ff4d, bridge reconnect control log only) at 13:44Z.
+- Campaigns: 103749Z protocol not met (driver mounted SDK 2.3.0 over an old protobuf -> f1849e0); 111700Z stopped by
+  its guard (IDR-088 -> 5ee9463); step 1 115743Z, knob 1: protocol met, G2 FAIL (TRADE B/O p95 801/817, max
+  3284/3209 ms), G8 PASS; step 2 123525Z, knob 64: protocol met, PASS G1-G3, G5-G11, G14, G4 NOT_MEASURED (17/17
+  baselined rows PASS, 8 rows without baseline). Caveat: TRADE volume step 2 66303/12492 vs step 1 92415/26567.
+- G12 PASS from p184-g12-rc12-20261011 (verdict 20f29671); G13 41/41 DL cells (134532Z + 140432Z), 4 TS steps
+  DEFERRED. rc13 differs from rc12 only by IDR-087 (bar edge, not in either stack).
+- Measurement identity of step 2 vs 481fd67: Query rc12 and Stream rc11 source-identical on their paths; core,
+  projectors, ingestors rc10 source-equivalent (gateway crate + two additive prost fields no other crate uses); bar
+  edge rc10 not identical (IDR-087 only).
+- SDK 2.3.0 wheel b9c74157... reproducible over two builds from 481fd67 (= TS vendored wheel); supersedes 2.2.1.
+- Release evidence updated (upgrade/evidence/releases/v2.2.3/): final scorecard PASS 12, NOT_MEASURED G4, DEFERRED
+  G13, FAIL none; the rc10 record (campaign 4, G2/G8 FAIL) moved verbatim into the history. Status
+  PREPARED_NOT_PUBLISHED; local CI on 481fd67 41 PASS, 3 SKIPPED (2 PR-only, 1 sudo), summary 83e7dda9; remote CI, owner decision and tag open.
+- Open: IDR-087 tested locally only (no live broker stop of the bar edge); DL CPU 5.08 vCPU > 5 budget; writer burst
+  capacity depends on knob 64. Not committed.
