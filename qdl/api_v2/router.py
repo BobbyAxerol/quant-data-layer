@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import json
-from dataclasses import asdict
+from dataclasses import asdict, fields as dataclass_fields
+from functools import lru_cache
 from decimal import Decimal, InvalidOperation
 from typing import Annotated
 
@@ -11,13 +12,15 @@ from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import create_model
 
 from qdl.query.cold_work import await_in_thread, cold_yield
+from qdl.domain.decimal import PLAIN_DECIMAL_TEXT
+from qdl_sdk.models import ResponseModel
 from qdl.api_v2.models import (
     BatchItemResponse,
     BatchRequirementModel,
     BatchResponse,
-    DecimalValue,
     FeedStatusResponse,
     GapListResponse,
     InstrumentPageResponse,
@@ -31,7 +34,6 @@ from qdl.api_v2.models import (
     ReferenceBatchRequest,
     ReferenceBatchResponse,
     SnapshotResponse,
-    SourceView,
     SystemReadinessSummary,
     WarmupResponse,
 )
@@ -66,6 +68,7 @@ from qdl.security import (
 )
 from qdl.runtime.bounds import BoundedRequestMiddleware, RequestBounds
 from qdl.runtime.readiness import FailClosedReadiness
+from qdl.runtime.refusal_log import REFUSALS
 from qdl.warmup.contracts import (
     IntervalSourcePolicy,
     WarmupSpecification,
@@ -126,6 +129,27 @@ def _purpose(value: Annotated[str, Header(alias="X-QDL-Purpose")]):
         ) from error
 
 
+_REPLICA_REDIRECT_HEADER = "X-QDL-Replica-Redirect"
+
+
+def _replica_redirect(
+    value: Annotated[
+        str | None,
+        Header(
+            alias=_REPLICA_REDIRECT_HEADER,
+            description=(
+                "Optional. `1`: if this replica's large-warmup lane would make the "
+                "request wait, refuse it at once with retryable RATE_LIMITED "
+                "(retry_after_ms 0, detail and `X-QDL-Refusal-Reason` "
+                "REPLICA_LANE_BUSY) so the client can retry once on another "
+                "replica. Absent, `0` or any other value: queue as before."
+            ),
+        ),
+    ] = None,
+) -> bool:
+    return value is not None and value.strip() == "1"
+
+
 def _requirement(model) -> DataRequirement:
     return DataRequirement.from_mapping(model.model_dump())
 
@@ -169,27 +193,45 @@ def _reference_requirement(model) -> ReferenceDataRequirement:
     )
 
 
-def _decimal(value: object) -> DecimalValue:
-    if isinstance(value, dict):
-        return DecimalValue.model_validate(value)
-    if isinstance(value, float) or isinstance(value, bool):
-        raise ValueError("public V2 decimal fields cannot originate from binary float/bool")
+def _decimal_parts(source: str) -> tuple[str, int]:
+    """``(coefficient, scale)`` of a decimal text, as ``Decimal`` reads it."""
+
+    plain = PLAIN_DECIMAL_TEXT.fullmatch(source)
+    if plain is not None:
+        # ASCII ``-?digits[.digits]``: exactly the digits/exponent Decimal yields.
+        fraction = plain.group(2) or ""
+        return str(int(plain.group(1) + fraction)), len(fraction)
     try:
-        source = str(value)
         parsed = Decimal(source)
     except (InvalidOperation, TypeError, ValueError) as error:
         raise ValueError("canonical decimal field is invalid") from error
     if not parsed.is_finite():
         raise ValueError("canonical decimal field must be finite")
     sign, digits, exponent = parsed.as_tuple()
-    coefficient = int("".join(str(digit) for digit in digits) or "0")
+    coefficient = int("".join(map(str, digits)) or "0")
     if sign:
         coefficient = -coefficient
-    return DecimalValue(
-        coefficient=str(coefficient),
-        scale=-exponent,
-        source_text=source,
-    )
+    return str(coefficient), -exponent
+
+
+def _decimal(value: object) -> dict:
+    """The ``DecimalValue`` input of a canonical decimal text.
+
+    Returned as model input, not as a model: the enclosing public view
+    validates it with the same ``DecimalValue`` schema and validator in one
+    pydantic-core call, instead of one Python model construction per value
+    (P18.4 D3: 8 per BAR row)."""
+
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, float) or isinstance(value, bool):
+        raise ValueError("public V2 decimal fields cannot originate from binary float/bool")
+    try:
+        source = str(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError("canonical decimal field is invalid") from error
+    coefficient, scale = _decimal_parts(source)
+    return {"coefficient": coefficient, "scale": scale, "source_text": source}
 
 
 def _book_levels(values: object) -> list[dict]:
@@ -369,10 +411,41 @@ def _typed_payload(item) -> dict:
     raise ValueError(f"public typed payload is undefined for {item.feed.value}")
 
 
-def _market_item(item) -> MarketDataView:
-    quality = {**asdict(item.quality), "flags": list(item.quality.flags)}
+_SCALARS = (str, int, float, type(None))
+
+
+@lru_cache(maxsize=None)
+def _field_names(kind: type) -> tuple[str, ...]:
+    return tuple(field.name for field in dataclass_fields(kind))
+
+
+def _flat_asdict(value) -> dict:
+    """``dataclasses.asdict`` for a dataclass of scalars and tuples of scalars.
+
+    ``asdict`` recurses and copies every value (~15 us for the three metadata
+    objects of a view, P18.4 D3); for these values its result is this shallow
+    dict. Anything else takes ``asdict`` itself."""
+
+    result = {}
+    for name in _field_names(type(value)):
+        member = getattr(value, name)
+        if not isinstance(member, _SCALARS) and not (
+            type(member) is tuple and all(isinstance(element, _SCALARS) for element in member)
+        ):
+            return asdict(value)
+        result[name] = member
+    return result
+
+
+def _quality_fields(item) -> dict:
+    quality = {**_flat_asdict(item.quality), "flags": list(item.quality.flags)}
     if item.feed not in EXECUTION_PRICE_VALIDATION_FEEDS:
         quality["execution_eligible"] = False
+    return quality
+
+
+def _market_item(item) -> MarketDataView:
+    quality = _quality_fields(item)
     return MarketDataView(
         instrument_uid=item.instrument_uid,
         instrument_id=item.instrument_id,
@@ -383,13 +456,105 @@ def _market_item(item) -> MarketDataView:
         received_at_ns=item.received_at_ns,
         revision=item.revision,
         payload=_typed_payload(item),
-        source=SourceView(**asdict(item.source)),
-        quality=QualityView(**quality),
-        contract=asdict(item.contract),
+        # Model inputs: validated by the view with the same schemas.
+        source=_flat_asdict(item.source),
+        quality=quality,
+        contract=_flat_asdict(item.contract),
         cursor=item.cursor,
         snapshot_id=item.snapshot_id,
         watermark_offset=item.watermark_offset,
+        event_id=item.event_id,
     )
+
+
+# MarketDataView fields that depend on the request (time, cursor, view);
+# every other field is a function of the row's immutable content (KN-4 D30).
+_VIEW_DYNAMIC_FIELDS = ("quality", "cursor", "snapshot_id", "watermark_offset")
+# The same field definitions (types, bounds) as MarketDataView, validated
+# alone once a row's static fields were validated and encoded.
+_MarketDataViewDynamic = create_model(
+    "MarketDataViewDynamic",
+    __base__=ResponseModel,
+    **{name: (MarketDataView.model_fields[name].annotation, MarketDataView.model_fields[name])
+       for name in _VIEW_DYNAMIC_FIELDS},
+)
+
+
+# What ``json.dumps(value, ensure_ascii=False, allow_nan=False, indent=None,
+# separators=(",", ":"))`` builds per call (the ``JSONResponse`` encoding);
+# one stateless instance, without a constructor per row.
+_JSON_ENCODER = json.JSONEncoder(ensure_ascii=False, allow_nan=False, indent=None, separators=(",", ":"))
+
+
+def _encode_json(value) -> bytes:
+    return _JSON_ENCODER.encode(value).encode("utf-8")
+
+
+_VIEW_DYNAMIC_PREFIX = {name: _encode_json(name) + b":" for name in _VIEW_DYNAMIC_FIELDS}
+_RENDERED_ONCE = object()
+
+
+def _view_layout(dump: dict) -> tuple:
+    """A view's members in field order: each run of static members encoded
+    once as ``"k":v,...`` bytes, each dynamic member as its field name."""
+
+    parts, run = [], {}
+    for key, value in dump.items():
+        if key in _VIEW_DYNAMIC_FIELDS:
+            if run:
+                parts.append(_encode_json(run)[1:-1])
+                run = {}
+            parts.append(key)
+        else:
+            run[key] = value
+    if run:
+        parts.append(_encode_json(run)[1:-1])
+    return tuple(parts)
+
+
+def _splice_view(layout: tuple, dynamic: dict) -> bytes:
+    return b"{" + b",".join(
+        part if isinstance(part, bytes) else _VIEW_DYNAMIC_PREFIX[part] + _encode_json(dynamic[part])
+        for part in layout
+    ) + b"}"
+
+
+def _market_item_json(item) -> bytes:
+    """``_encode_json(_market_item(item).model_dump(mode="json", by_alias=True))``.
+
+    P18.4 D3 (measured): building, validating and dumping a ``MarketDataView``
+    was ~170 us per row, two thirds of a warm 2,500-row warmup, and most of it
+    re-derives the row's immutable fields (payload decimals, source, contract)
+    on every request. An item from the market-cache backend carries its row's
+    ``render_slot``: a render validates the whole view as before, and from
+    the row's second render on the encoded static members are kept there
+    (~1.7 KB per row, bounded and evicted with the row cache); later renders
+    validate only the request-dependent fields (same field definitions) and
+    splice them in. The view's cross-field rule reads static
+    fields only. Bytes are identical; items without a slot take the full path.
+    """
+
+    slot = item.render_slot
+    layout = slot.value if slot is not None else None
+    if layout is None:
+        # A row's first render keeps no layout: a row read once pays no
+        # layout encoding. Pydantic's own JSON serializer writes exactly the
+        # bytes of ``_encode_json(model_dump(mode="json"))`` (compact, UTF-8,
+        # same escapes; checked over every BAR shape and all BMP characters
+        # in tests) at half the cost of a Python dump plus ``json.dumps``.
+        if slot is not None:
+            slot.value = _RENDERED_ONCE
+        return _market_item(item).model_dump_json(by_alias=True).encode("utf-8")
+    if layout is _RENDERED_ONCE:
+        dump = _market_item(item).model_dump(mode="json", by_alias=True)
+        slot.value = layout = _view_layout(dump)
+        return _splice_view(layout, dump)
+    return _splice_view(layout, _MarketDataViewDynamic(
+        quality=_quality_fields(item),
+        cursor=item.cursor,
+        snapshot_id=item.snapshot_id,
+        watermark_offset=item.watermark_offset,
+    ).model_dump(mode="json", by_alias=True))
 
 
 def _warmup(result) -> WarmupResponse:
@@ -466,10 +631,10 @@ def _render_warmup_result(result) -> bytes:
     """
 
     items = result.history.items
-    return _render_chunked(
+    return _render_encoded_chunks(
         _warmup_envelope(result),
         len(items),
-        lambda start, stop: (_market_item(item) for item in _cold_rows(items[start:stop])),
+        lambda start, stop: b",".join(_market_item_json(item) for item in _cold_rows(items[start:stop])),
     )
 
 
@@ -486,24 +651,24 @@ def _render_chunked(envelope: WarmupResponse, count: int, views) -> bytes:
     never exists next to its bytes.
     """
 
-    def encode(value) -> bytes:
-        return json.dumps(
-            value, ensure_ascii=False, allow_nan=False, indent=None, separators=(",", ":"),
-        ).encode("utf-8")
+    def rows(start: int, stop: int) -> bytes:
+        return _encode_json([view.model_dump(mode="json", by_alias=True) for view in views(start, stop)])[1:-1]
+
+    return _render_encoded_chunks(envelope, count, rows)
+
+
+def _render_encoded_chunks(envelope: WarmupResponse, count: int, rows) -> bytes:
+    """Splice ``rows(start, stop)`` (the comma-joined encoded rows) into the envelope."""
 
     suffix = b',"data":[]}'
-    head = encode(envelope.model_copy(update={"data": []}).model_dump(mode="json", by_alias=True))
+    head = _encode_json(envelope.model_copy(update={"data": []}).model_dump(mode="json", by_alias=True))
     if not head.endswith(suffix):
         raise RuntimeError("warmup response layout no longer ends with its data list")
     parts = [head[: -len(suffix)], b',"data":[']
     for start in range(0, count, _RENDER_CHUNK_ROWS):
-        chunk = encode([
-            view.model_dump(mode="json", by_alias=True)
-            for view in views(start, start + _RENDER_CHUNK_ROWS)
-        ])
         if start:
             parts.append(b",")
-        parts.append(chunk[1:-1])
+        parts.append(rows(start, start + _RENDER_CHUNK_ROWS))
     parts.append(b"]}")
     return b"".join(parts)
 
@@ -522,7 +687,9 @@ async def _warmup_json_off_loop(build) -> Response:
     return Response(content=body, media_type="application/json")
 
 
-async def _single_warmup_response(request, access, service, requirement, purpose):
+async def _single_warmup_response(
+    request, access, service, requirement, purpose, *, redirect: bool = False
+):
     """One warmup, rendered inside the local lease exactly like ``warmup:batch``.
 
     Holding the lease through rendering keeps at most one large response being
@@ -547,10 +714,13 @@ async def _single_warmup_response(request, access, service, requirement, purpose
 
     complete = getattr(service, "warmup_batch_completed_async", None)
     if callable(complete):
+        # The opt-in is passed only when requested, so service doubles that
+        # predate it keep working for every request without the header.
         return await complete(
             BatchRequirement(access.consumer_id, (requirement,), require_all=True),
             purpose=purpose,
             completion=render,
+            **({"redirect_when_busy": True} if redirect else {}),
         )
     # Service doubles predating the completion hook keep the original path.
     result = await service.warmup_async(
@@ -609,6 +779,39 @@ def _warmup_batch_response(
     )
 
 
+_WARMUP_BATCH_ROUTE = "/v2/market-data/warmup:batch"
+_REFERENCE_BATCH_ROUTE = "/v2/market-data/reference:batch"
+
+
+def _record_batch_item_refusal(
+    origin: str,
+    problem: ProblemDetails,
+    *,
+    feed: object,
+    route: str,
+    extra_reasons: tuple[object, ...] = (),
+) -> None:
+    """Astra R6 extension: a per-item failure inside a 200 batch leaves the same line.
+
+    The batch envelope succeeds, so the Query problem handler never sees these
+    item problems; without this line a ``require_all`` client's PARTIAL_RESULT
+    (stage 100g, 2026-10-10) could not be joined to the item that failed.
+    """
+
+    REFUSALS.record(
+        origin=origin,
+        code=problem.code,
+        detail=problem.detail,
+        status=problem.status,
+        retryable=problem.retryable,
+        request_id=problem.request_id,
+        instrument_uid=problem.instrument_uid,
+        route=route,
+        feed=str(getattr(feed, "value", feed)) if feed is not None else None,
+        extra_reasons=extra_reasons,
+    )
+
+
 def _render_warmup_batch(request, access, result, requirements) -> bytes:
     """Render bounded row chunks per item, preserving the existing batch bytes."""
     def encode(value):
@@ -620,6 +823,10 @@ def _render_warmup_batch(request, access, result, requirements) -> bytes:
         cold_yield()
         problem = None if item.problem is None else _problem(QueryServiceError(
             item.problem, request_id=result.request_id, instrument_uid=item.instrument_uid))
+        if problem is not None:
+            _record_batch_item_refusal("warmup_batch_item", problem,
+                                       feed=getattr(requirement, "feed", None),
+                                       route=_WARMUP_BATCH_ROUTE)
         item_model = BatchItemResponse(instrument_uid=item.instrument_uid,
             status=item.status, data=None, problem=problem)
         item_models.append(item_model)
@@ -918,6 +1125,7 @@ async def warmup(
     purpose: AccessPurpose = Depends(_purpose),
     service: V2QueryService = Depends(_service),
     access: DataPlaneAccess = Depends(_data_access),
+    redirect: bool = Depends(_replica_redirect),
 ):
     try:
         warmup_spec = _warmup_specification(
@@ -944,7 +1152,9 @@ async def warmup(
     access.require_permission(DataPlanePermission.HISTORY_READ)
     access.require_purpose(purpose)
     access.require_requirement(requirement)
-    return await _single_warmup_response(request, access, service, requirement, purpose)
+    return await _single_warmup_response(
+        request, access, service, requirement, purpose, redirect=redirect
+    )
 
 
 @router.get("/market-data/{instrument_uid}/history", response_model=WarmupResponse)
@@ -1013,6 +1223,7 @@ async def warmup_batch(
     purpose: AccessPurpose = Depends(_purpose),
     service: V2QueryService = Depends(_service),
     access: DataPlaneAccess = Depends(_data_access),
+    redirect: bool = Depends(_replica_redirect),
 ):
     access.require_consumer(body.consumer_id)
     access.require_permission(DataPlanePermission.HISTORY_READ)
@@ -1035,7 +1246,12 @@ async def warmup_batch(
 
     complete = getattr(service, "warmup_batch_completed_async", None)
     if callable(complete):
-        return await complete(batch, purpose=purpose, completion=render)
+        return await complete(
+            batch,
+            purpose=purpose,
+            completion=render,
+            **({"redirect_when_busy": True} if redirect else {}),
+        )
     # Focused service doubles predating the internal completion hook retain the
     # old public service protocol. Production V2QueryService always uses it.
     return await render(await service.warmup_batch_async(batch, purpose=purpose))
@@ -1079,6 +1295,20 @@ async def reference_data_batch(
                     request_id=result.request_id,
                     instrument_uid=item.requirement.instrument_uid,
                 )
+            )
+            provider = item.result
+            _record_batch_item_refusal(
+                "reference_batch_item",
+                problem,
+                feed=item.requirement.product,
+                route=_REFERENCE_BATCH_ROUTE,
+                # Typed provider evidence only: the adapter's error code and
+                # the coverage terminal reason (e.g. PROVIDER_PROTOCOL,
+                # REACHED_REQUEST_START), never observations or prices.
+                extra_reasons=(
+                    getattr(provider, "error_code", None),
+                    getattr(getattr(provider, "coverage", None), "terminal_reason", None),
+                ) if provider is not None else (),
             )
         items.append(
             {
@@ -1271,9 +1501,17 @@ def create_v2_app(
 
     app.openapi = data_plane_openapi
 
+    def _route_of(request: Request) -> str | None:
+        route = request.scope.get("route")
+        return getattr(route, "path", None)
+
     @app.exception_handler(DataPlaneAccessError)
     async def data_access_error_handler(_request: Request, error: DataPlaneAccessError):
         request_id = service.request_id() if service is not None else "unavailable"
+        # Astra R6: the identity/quota layer's refusal, bounded and payload-free.
+        REFUSALS.record(origin="data_plane_access", code=error.code, detail=error.detail,
+                        status=error.status_code, retryable=error.status_code in {429, 503},
+                        request_id=request_id, route=_route_of(_request))
         problem = ProblemDetails(
             type=f"urn:qdl:error:{error.code.lower().replace('_', '-')}",
             title=error.code.replace("_", " ").title(),
@@ -1292,10 +1530,23 @@ def create_v2_app(
     @app.exception_handler(QueryServiceError)
     async def query_error_handler(_request: Request, error: QueryServiceError):
         problem = _problem(error)
+        # Astra R6: one bounded, payload-free line per Query refusal (typed reasons + detail digest).
+        REFUSALS.record(origin="query", code=problem.code, detail=problem.detail, status=problem.status,
+                        retryable=problem.retryable, request_id=problem.request_id,
+                        instrument_uid=problem.instrument_uid, route=_route_of(_request))
+        headers = None
+        reason = getattr(error, "reason", None)
+        if reason:
+            # Additive response headers for a typed refusal reason (P18.4 G5:
+            # REPLICA_LANE_BUSY); the problem body schema is unchanged.
+            headers = {"X-QDL-Refusal-Reason": reason}
+            if problem.retry_after_ms is not None:
+                headers["Retry-After"] = str(-(-problem.retry_after_ms // 1000))
         return JSONResponse(
             status_code=problem.status,
             content=problem.model_dump(exclude_none=True),
             media_type="application/problem+json",
+            headers=headers,
         )
 
     @app.exception_handler(RequestValidationError)

@@ -1,9 +1,14 @@
 //! One subscriber's bounded queue (KN-2 K2.2/K2.4, D1/D5).
 //!
 //! The live reader offers records without ever blocking on a subscriber: the
-//! queue is bounded by items and bytes, and bytes are also charged to a
-//! replica-wide budget, so total queued memory is bounded whatever the
-//! number of slow clients. When the queue is full, a record is dropped only if
+//! queue is bounded by items and by the full weight of what it references,
+//! and a replica-wide budget bounds what is really held, so total queued
+//! memory is bounded whatever the number of slow clients. A record decoded
+//! once by the hub carries one shared budget charge for that copy
+//! ([`LiveRecord::shared_charge`]); a queue entry then charges the budget
+//! only [`QUEUE_ENTRY_OVERHEAD`], never the decoded weight once per
+//! subscriber. Without a shared charge it charges the full weight, as
+//! before. When the queue is full, a record is dropped only if
 //! the record **right after it** has the same lifecycle key and signature
 //! (`qdl_contracts::delivery`): a coalesced run keeps its latest record and
 //! every transition between runs survives (A B A B stays four records).
@@ -24,6 +29,10 @@ use tokio::sync::Notify;
 /// A latest-state subscription holds at most this many records (DL-V2 R1.8,
 /// `LATEST_STATE_BUFFER_EVENTS`): a deep FIFO of quotes only ages them out.
 pub const LATEST_STATE_BUFFER_EVENTS: usize = 8;
+
+/// Replica budget bytes of one queue entry beyond the shared record: the
+/// `Queued` slot (~200 B) plus the lifecycle signature's strings.
+pub const QUEUE_ENTRY_OVERHEAD: usize = 512;
 
 /// Replica-wide byte budget shared by every subscriber queue.
 #[derive(Debug)]
@@ -77,6 +86,20 @@ pub struct Charge {
 }
 
 impl Charge {
+    pub fn bytes(&self) -> usize {
+        self.bytes
+    }
+
+    /// Fold `other` into this charge (one release later, no budget change).
+    /// Both must hold the same budget.
+    pub fn absorb(&mut self, mut other: Charge) {
+        assert!(
+            Arc::ptr_eq(&self.budget, &other.budget),
+            "charges of different budgets cannot be merged"
+        );
+        self.bytes += std::mem::take(&mut other.bytes);
+    }
+
     /// Move up to `bytes` of this charge into a new one (no budget change).
     pub fn split(&mut self, bytes: usize) -> Charge {
         let moved = bytes.min(self.bytes);
@@ -106,7 +129,9 @@ pub struct Queued {
 #[derive(Debug)]
 pub enum Next {
     /// A record, when it was queued (the send-path queue wait) and its
-    /// budget charge, which the caller hands on to the transport.
+    /// budget charge, which the caller hands on to the transport. The charge
+    /// is only the entry overhead when the record carries a shared charge;
+    /// the caller tops it up before it copies the record for the transport.
     Record(Arc<LiveRecord>, Instant, Charge),
     Overflow,
     Failed(String),
@@ -118,7 +143,10 @@ pub struct SubscriptionCounters {
     pub other_product: AtomicU64,
     pub rejected_at_push: AtomicU64,
     pub coalesced: AtomicU64,
+    /// Eligible live enqueue attempts, including the attempt that overflows.
     pub offered: AtomicU64,
+    /// Live queue pops, before read-time filtering or transport handoff; not ACKs.
+    pub dequeued: AtomicU64,
 }
 
 #[derive(Debug)]
@@ -214,11 +242,18 @@ impl Subscription {
         }
         self.counters.offered.fetch_add(1, Ordering::Relaxed);
         let lifecycle = RecordLifecycle::of(&self.requirement.delivery.feed, &record.envelope);
+        // The per-subscription cap counts the full weight this queue keeps
+        // alive; the replica budget only what this entry adds to memory.
         let weight = record.weight();
+        let held = if record.shared_charge.is_some() {
+            QUEUE_ENTRY_OVERHEAD
+        } else {
+            weight
+        };
         let charge = loop {
             let fits = state.queue.len() < self.depth && state.bytes + weight <= self.max_bytes;
             if fits {
-                if let Some(charge) = self.budget.charge(weight) {
+                if let Some(charge) = self.budget.charge(held) {
                     break charge;
                 }
             }
@@ -287,6 +322,7 @@ impl Subscription {
                 }
                 if let Some(item) = state.queue.pop_front() {
                     state.bytes -= item.weight;
+                    self.counters.dequeued.fetch_add(1, Ordering::Relaxed);
                     return Next::Record(item.record, item.enqueued, item.charge);
                 }
                 if state.closed {
@@ -295,6 +331,21 @@ impl Subscription {
             }
             notified.await;
         }
+    }
+
+    /// The next queued record only if one is already available: never waits
+    /// (batched delivery packs what is queued, it does not wait to fill).
+    /// `None` also when the stream must end; [`Self::next`] then reports the
+    /// overflow, failure or close, so a batch never crosses that boundary.
+    pub fn try_next(&self) -> Option<(Arc<LiveRecord>, Instant, Charge)> {
+        let mut state = self.state.lock().ok()?;
+        if state.failed.is_some() || state.overflowed || state.closed {
+            return None;
+        }
+        let item = state.queue.pop_front()?;
+        state.bytes -= item.weight;
+        self.counters.dequeued.fetch_add(1, Ordering::Relaxed);
+        Some((item.record, item.enqueued, item.charge))
     }
 
     pub fn queued(&self) -> (usize, usize) {
@@ -362,6 +413,7 @@ mod tests {
                 timestamp_ms: 0,
             }),
             envelope,
+            shared_charge: None,
         })
     }
 
@@ -382,6 +434,103 @@ mod tests {
             }
         }
         offsets
+    }
+
+    fn counts(subscription: &Subscription) -> (u64, u64) {
+        (
+            subscription.counters.offered.load(Ordering::Relaxed),
+            subscription.counters.dequeued.load(Ordering::Relaxed),
+        )
+    }
+
+    #[test]
+    fn the_queue_entry_overhead_covers_an_entry() {
+        // The slot itself; the lifecycle signature's short ids live in the rest.
+        assert!(
+            std::mem::size_of::<Queued>() * 2 <= QUEUE_ENTRY_OVERHEAD,
+            "{}",
+            std::mem::size_of::<Queued>()
+        );
+    }
+
+    #[tokio::test]
+    async fn counters_count_eligible_attempts_and_local_pops_only() {
+        let mut subscription = queue(query::FeedType::Trade, 2);
+        subscription.requirement.delivery.max_freshness_ms = Some(1);
+        let trade = |offset| {
+            record(
+                offset,
+                event_envelope::Payload::Trade(Trade::default()),
+                vec![],
+            )
+        };
+        assert_eq!(counts(&subscription), (0, 0));
+        subscription.offer(&trade(0), 0); // At cursor floor.
+        subscription.offer(&quote(1, vec![]), 0); // Other product.
+        subscription.offer(&trade(1), 2_000_000); // Too old at push.
+        assert_eq!(counts(&subscription), (0, 0));
+        assert_eq!(
+            subscription.counters.other_product.load(Ordering::Relaxed),
+            1
+        );
+        assert_eq!(
+            subscription
+                .counters
+                .rejected_at_push
+                .load(Ordering::Relaxed),
+            1
+        );
+        subscription.offer(&trade(1), 0);
+        subscription.offer(&trade(1), 0); // Duplicate.
+        assert_eq!(counts(&subscription), (1, 0));
+        let charge = match subscription.next().await {
+            Next::Record(record, _, charge) => {
+                // This record is already counted even if a later read rejects it.
+                assert_eq!(
+                    delivery_decision(&subscription.requirement, &record.envelope, 2_000_000),
+                    Delivery::TooOld
+                );
+                charge
+            }
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(counts(&subscription), (1, 1));
+        assert!(
+            subscription.budget.used() > 0,
+            "handoff still owns its bytes"
+        );
+        drop(charge);
+        assert_eq!(subscription.budget.used(), 0);
+        subscription.offer(&trade(2), 0);
+        subscription.close(); // Discard is not a dequeue.
+        subscription.offer(&trade(3), 0);
+        assert!(matches!(subscription.next().await, Next::Closed));
+        assert_eq!(counts(&subscription), (2, 1));
+    }
+
+    #[tokio::test]
+    async fn failure_and_budget_overflow_do_not_count_as_dequeues() {
+        let failed = queue(query::FeedType::Trade, 2);
+        let trade = record(1, event_envelope::Payload::Trade(Trade::default()), vec![]);
+        failed.offer(&trade, 0);
+        failed.fail("test-only failure");
+        failed.offer(
+            &record(2, event_envelope::Payload::Trade(Trade::default()), vec![]),
+            0,
+        );
+        assert!(matches!(failed.next().await, Next::Failed(_)));
+        assert_eq!(counts(&failed), (1, 0));
+        failed.close();
+        assert_eq!(failed.budget.used(), 0);
+
+        let mut overflow = queue(query::FeedType::Trade, 2);
+        overflow.budget = ByteBudget::new(0);
+        overflow.offer(&trade, 0);
+        assert!(matches!(overflow.next().await, Next::Overflow));
+        assert_eq!(counts(&overflow), (1, 0));
+        assert_eq!(overflow.queued(), (0, 0));
+        assert_eq!(overflow.budget.used(), 0);
+        assert_eq!(counts(&failed), (1, 0), "counters are subscription-local");
     }
 
     #[tokio::test]
@@ -414,6 +563,11 @@ mod tests {
         );
         assert!(delivered.windows(2).all(|pair| pair[1] > pair[0]));
         assert_eq!(budget.used(), 0, "every byte released after draining");
+        assert_eq!(counts(&subscription), (20, delivered.len() as u64));
+        assert_eq!(
+            subscription.counters.coalesced.load(Ordering::Relaxed),
+            20 - delivered.len() as u64
+        );
     }
 
     #[tokio::test]
@@ -440,8 +594,50 @@ mod tests {
         }
         assert!(matches!(subscription.next().await, Next::Overflow));
         assert_eq!(subscription.counters.coalesced.load(Ordering::Relaxed), 0);
+        assert_eq!(counts(&subscription), (5, 0));
+        subscription.offer(
+            &record(6, event_envelope::Payload::Trade(Trade::default()), vec![]),
+            0,
+        );
+        assert_eq!(counts(&subscription), (5, 0));
         subscription.close();
+        assert_eq!(counts(&subscription), (5, 0));
         assert_eq!(budget.used(), 0);
+    }
+
+    #[tokio::test]
+    async fn try_next_takes_only_queued_records_and_never_crosses_an_end() {
+        let trade = |offset| {
+            record(
+                offset,
+                event_envelope::Payload::Trade(Trade::default()),
+                vec![],
+            )
+        };
+        let subscription = queue(query::FeedType::Trade, 8);
+        assert!(subscription.try_next().is_none(), "never waits");
+        for offset in 1..=3 {
+            subscription.offer(&trade(offset), 0);
+        }
+        let (first, _, charge) = subscription.try_next().expect("queued");
+        assert_eq!(first.raw.offset, 1);
+        assert_eq!(counts(&subscription), (3, 1));
+        assert_eq!(subscription.queued().0, 2);
+        drop(charge);
+        // A failure ends batching even with records queued; next() reports it.
+        subscription.fail("test-only failure");
+        assert!(subscription.try_next().is_none());
+        assert!(matches!(subscription.next().await, Next::Failed(_)));
+        subscription.close();
+        assert_eq!(subscription.budget.used(), 0);
+
+        let overflow = queue(query::FeedType::Trade, 1);
+        overflow.offer(&trade(1), 0);
+        overflow.offer(&trade(2), 0); // Lossless: overflows, nothing dropped.
+        assert!(overflow.try_next().is_none());
+        assert!(matches!(overflow.next().await, Next::Overflow));
+        overflow.close();
+        assert_eq!(overflow.budget.used(), 0);
     }
 
     #[tokio::test]

@@ -2,9 +2,9 @@
 """Bounded read-only Phase 11.4 L2 provider capture.
 
 This verifier proves documented public-provider wire semantics only. It never
-starts Data Layer roles, writes Kafka/Redis/SQLite, changes routes or stores raw
-provider frames. The committed report keeps identifiers, timestamps, counts
-and SHA-256 digests only.
+starts Data Layer roles, writes Kafka/Redis/SQLite, changes routes. The default verifier stores no raw provider frames. The opt-in
+capture_replay_window API retains bounded bytes temporarily for offline pairing;
+its caller must hash and delete them. Reports keep identifiers/counts/digests only.
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ DEFAULT_ADMISSION = ROOT / "upgrade/evidence/phase111-active-demand-provider-adm
 DEFAULT_OUTPUT = ROOT / "upgrade/evidence/phase114-l2-real-provider-capture.json"
 BINANCE_WS = "wss://fstream.binance.com/ws"
 BINANCE_DEPTH = "https://fapi.binance.com/fapi/v1/depth"
-OKX_WS = "wss://ws.okx.com:8443/ws/v5/public"
+OKX_WS = "wss://ws.okx.com/ws/v5/public"
 
 
 class ProviderCaptureError(RuntimeError):
@@ -556,6 +556,104 @@ async def capture_okx(symbol: str, deadline: float, max_frames: int) -> OkxRepla
             replay = validate_okx_replay(symbol=symbol, frames=frames, raw_frames=raw_frames)
             if replay is not None:
                 return replay
+
+
+async def capture_replay_window(bindings: Sequence[Mapping[str, Any]], seconds: float) -> dict[str, Any]:
+    """Opt-in bounded raw capture for offline replay; caller must hash then delete it.
+
+    Reuses the public protocol/continuity validators. No production client state,
+    credentials or Kafka connection is used. Original provider text is retained.
+    """
+    if not 10 <= seconds <= 120 or not 1 <= len(bindings) <= 12:
+        raise ValueError("replay window must be 10..120 seconds and 1..12 bindings")
+
+    async def one(binding):
+        venue, symbol = binding["venue"], binding["native_symbol"]
+        rows = []
+        captured_bytes = 0
+        deadline = time.monotonic() + seconds + 15
+        def add(raw, protocol):
+            nonlocal captured_bytes
+            captured_bytes += len(raw.encode("utf-8"))
+            if len(rows) >= 10000 or captured_bytes > 64 * 1024 * 1024:
+                raise ProviderCaptureError("replay capture bound exceeded")
+            rows.append({"raw": raw, "protocol": protocol, "received_at_ns": time.time_ns()})
+        if venue == "BINANCE":
+            async with connect(BINANCE_WS, open_timeout=8, close_timeout=4, ping_interval=10) as socket:
+                await socket.send(json.dumps({"method": "SUBSCRIBE", "params": [symbol.lower() + "@depth@100ms"], "id": 114}))
+                while not rows:
+                    raw, frame = await _recv_json(socket, deadline)
+                    if frame.get("e") == "depthUpdate" and frame.get("s") == symbol:
+                        add(raw, "WS")
+                async def snapshot():
+                    async with httpx.AsyncClient(timeout=8) as client:
+                        response = await client.get(BINANCE_DEPTH, params={"symbol": symbol, "limit": 1000})
+                        response.raise_for_status()
+                        add(response.text, "HTTP")
+                        return response.json()
+                task = asyncio.create_task(snapshot())
+                try:
+                    while not task.done():
+                        try:
+                            raw, frame = await _recv_json(socket, min(deadline, time.monotonic() + .25))
+                        except TimeoutError:
+                            continue
+                        if frame.get("e") == "depthUpdate" and frame.get("s") == symbol:
+                            add(raw, "WS")
+                    anchor = await task
+                    stop = time.monotonic() + seconds
+                    while time.monotonic() < stop:
+                        try:
+                            raw, frame = await _recv_json(socket, stop)
+                        except (TimeoutError, ProviderCaptureError):
+                            break
+                        if frame.get("e") == "depthUpdate" and frame.get("s") == symbol:
+                            add(raw, "WS")
+                finally:
+                    if not task.done():
+                        task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+            ws = [r["raw"] for r in rows if r["protocol"] == "WS"]
+            result = validate_binance_replay(symbol=symbol, snapshot_sequence=int(anchor["lastUpdateId"]),
+                frames=[json.loads(r) for r in ws], raw_frames=ws, min_chain_frames=2)
+        elif venue == "OKX":
+            async with connect(OKX_WS, open_timeout=8, close_timeout=4, ping_interval=10) as socket:
+                await socket.send(json.dumps({"op": "subscribe", "args": [{"channel": "books", "instId": symbol}]}))
+                stop = None
+                while stop is None or time.monotonic() < stop:
+                    try:
+                        raw, frame = await _recv_json(socket, stop or deadline)
+                    except TimeoutError:
+                        if stop is None:
+                            raise ProviderCaptureError("OKX initial snapshot timed out")
+                        break
+                    if frame.get("arg", {}).get("instId") != symbol or frame.get("action") not in {"snapshot", "update"}:
+                        continue
+                    if stop is None:
+                        if frame["action"] != "snapshot":
+                            raise ProviderCaptureError("OKX update before snapshot")
+                        stop = time.monotonic() + seconds
+                    add(raw, "WS")
+            raw_frames = [r["raw"] for r in rows]
+            # Existing validator stops at the first proven update; validate every
+            # subsequent sequence too, not just the bootstrap prefix.
+            result = validate_okx_replay(symbol=symbol, frames=[json.loads(r) for r in raw_frames], raw_frames=raw_frames)
+            previous = None
+            for raw in raw_frames:
+                frame = json.loads(raw)
+                for row in frame["data"]:
+                    seq, prev = int(row["seqId"]), int(row["prevSeqId"])
+                    if frame["action"] != "snapshot" and prev != previous:
+                        raise ProviderCaptureError("OKX window sequence gap/reset")
+                    previous = seq
+        else:
+            raise ProviderCaptureError("unsupported replay venue")
+        if result is None:
+            raise ProviderCaptureError("replay window has no verified bridge")
+        return {"binding": dict(binding), "rows": rows, "bootstrap": asdict(result)}
+    return {"schema": "qdl.l2-offline-capture.v1", "seconds": seconds,
+            "provenance": "REAL_PUBLIC_PROVIDER_BYTES_OFFLINE_ONLY",
+            "captures": list(await asyncio.gather(*(one(b) for b in bindings)))}
 
 
 async def _capture_okx_symbols(

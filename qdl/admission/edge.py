@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import contextmanager
 import logging
+import random
 import threading
 import time
 import uuid
@@ -24,6 +25,7 @@ from typing import Any, Callable, Iterator
 
 from qdl.admission.contracts import (
     AdmissionDecision,
+    AdmissionDeferReason,
     AdmissionDisposition,
     AdmissionPriority,
     AdmissionRequest,
@@ -34,6 +36,11 @@ from qdl.admission.contracts import (
 logger = logging.getLogger(__name__)
 
 _CALL_TIMEOUT_S = 5.0
+# An INFLIGHT_CAPACITY deferral's retry_after is the earliest lease's MAXIMUM expiry (max_lease_ns, 30 s), not the
+# moment it is released (typically 0.1-0.3 s later). Sleeping the hint held a whole Binance bar-edge cycle ~30 s at
+# hour boundaries (2026-10-10 14:30/16:00/18:00Z, G4) and made callers that saw it first fail their deadline at once.
+# A capacity wait polls instead, jittered, never longer than the hint and still bounded by the deadline.
+_INFLIGHT_POLL_S = (0.05, 0.2)
 
 
 class AdmissionDeadlineExceeded(RuntimeError):
@@ -103,6 +110,8 @@ class BlockingProviderAdmission:
             if decision.disposition is AdmissionDisposition.GRANTED:
                 break
             wait_s = max(0.01, (decision.retry_after_ms or 100) / 1000.0)
+            if decision.defer_reason is AdmissionDeferReason.INFLIGHT_CAPACITY:
+                wait_s = min(wait_s, random.uniform(*_INFLIGHT_POLL_S))
             if self._clock() + wait_s > deadline:
                 raise AdmissionDeadlineExceeded(lane, decision)
             self._sleep(wait_s)

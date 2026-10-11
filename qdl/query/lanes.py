@@ -21,6 +21,15 @@ class ReadLaneRejected(RuntimeError):
     """A finite in-process read lane cannot accept more work."""
 
 
+class ReadLaneBusy(ReadLaneRejected):
+    """The lane would queue this request; the caller asked not to wait here.
+
+    Raised only when ``run(..., refuse_if_queued=True)``: the request could
+    not start at once (another job holds the active slot, an earlier waiter is
+    ahead, or the busy lane's queue is full). Nothing was reserved or queued.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class ReadLanePolicy:
     """One bounded fair lane with an optional reserved consumer share."""
@@ -102,6 +111,7 @@ class BoundedReadLane:
         self._rejected = 0
         self._rejected_bytes = 0
         self._queue_wait_timeouts = 0
+        self._busy_refusals = 0
 
     async def run(
         self,
@@ -110,6 +120,7 @@ class BoundedReadLane:
         consumer_id: str,
         reserved_bytes: int,
         wait_timeout_ms: int | None = None,
+        refuse_if_queued: bool = False,
     ) -> T:
         if not consumer_id.strip():
             raise ValueError("read lane consumer_id is required")
@@ -122,6 +133,17 @@ class BoundedReadLane:
         entry: _Entry | None = None
         active = False
         async with self._condition:
+            if (
+                refuse_if_queued
+                and (self._active or self._waiting)
+                and reserved_bytes <= self.policy.max_pending_bytes
+                and not self._admittable(consumer_id, reserved_bytes)
+            ):
+                # A full queue on a busy lane is also "busy here": the request
+                # could run on another replica, so say that instead of a plain
+                # capacity refusal the client must not redirect.
+                self._busy_refusals += 1
+                raise ReadLaneBusy("read lane is busy; its queue is full")
             self._reject_if_unadmittable(consumer_id, reserved_bytes)
             entry = _Entry(consumer_id, reserved_bytes, self._sequence)
             self._sequence += 1
@@ -130,6 +152,14 @@ class BoundedReadLane:
                 self._pending_by_consumer.get(consumer_id, 0) + 1
             )
             self._pending_bytes += reserved_bytes
+            if refuse_if_queued and not self._can_start(entry):
+                # Admissible, but it would wait behind active or earlier work.
+                # The caller can run it on another replica instead; withdraw
+                # before any waiter is notified, so nothing observes it.
+                self._waiting.remove(entry)
+                self._withdraw(entry)
+                self._busy_refusals += 1
+                raise ReadLaneBusy("read lane is busy; the request would queue")
             self._condition.notify_all()
             deadline = (
                 loop.time() + wait_timeout_ms / 1_000
@@ -195,7 +225,20 @@ class BoundedReadLane:
             "rejected": self._rejected,
             "rejected_bytes": self._rejected_bytes,
             "queue_wait_timeouts": self._queue_wait_timeouts,
+            "busy_refusals": self._busy_refusals,
         }
+
+    def _admittable(self, consumer_id: str, reserved_bytes: int) -> bool:
+        """``_reject_if_unadmittable`` as a predicate, without counting."""
+
+        pending = sum(self._pending_by_consumer.values())
+        return (
+            reserved_bytes <= self.policy.max_pending_bytes
+            and pending < self._class_pending_limit(consumer_id)
+            and self._pending_bytes + reserved_bytes <= self.policy.max_pending_bytes
+            and self._pending_by_consumer.get(consumer_id, 0)
+            < self._consumer_pending_limit(consumer_id)
+        )
 
     def _reject_if_unadmittable(self, consumer_id: str, reserved_bytes: int) -> None:
         pending = sum(self._pending_by_consumer.values())

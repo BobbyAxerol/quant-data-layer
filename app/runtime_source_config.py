@@ -61,9 +61,12 @@ class RuntimeSourceConfig:
                 default=True,
                 name="DATA_LAYER_DNSE_STREAM_ENABLED",
             ),
+            # The vnstock SDK is not a dependency of this source (pyproject) and
+            # is excluded from KN images, so the poller is opt-in. An explicit
+            # true on such an image still fails closed with VNSTOCK_UNAVAILABLE.
             vnstock_poller_enabled=_parse_bool(
                 env.get("DATA_LAYER_VNSTOCK_POLLER_ENABLED"),
-                default=True,
+                default=False,
                 name="DATA_LAYER_VNSTOCK_POLLER_ENABLED",
             ),
             preload_watchdog_enabled=_parse_bool(

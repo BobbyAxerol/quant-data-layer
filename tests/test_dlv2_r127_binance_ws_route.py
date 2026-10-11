@@ -288,7 +288,7 @@ class DeployedAcquisitionPlanTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._reload_with(
                 lambda binding: binding.update(
-                    {"business_websocket_url": "wss://ws.okx.com:8443/ws/v5/business"}
+                    {"business_websocket_url": "wss://ws.okx.com/ws/v5/business"}
                 )
             )
 
@@ -312,9 +312,9 @@ class OkxIsUnchangedTests(unittest.TestCase):
         ]
         self.assertTrue(okx)
         for item in okx:
-            self.assertEqual(item.websocket_url, "wss://ws.okx.com:8443/ws/v5/public")
+            self.assertEqual(item.websocket_url, "wss://ws.okx.com/ws/v5/public")
             self.assertEqual(
-                item.business_websocket_url, "wss://ws.okx.com:8443/ws/v5/business"
+                item.business_websocket_url, "wss://ws.okx.com/ws/v5/business"
             )
             self.assertIsNone(item.market_websocket_url)
 

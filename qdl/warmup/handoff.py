@@ -125,6 +125,8 @@ def resample_final_bars(
                 watermark_offset=max(item.watermark_offset for item in group),
                 bar_lifecycle=BarLifecycle.FINAL,
                 supersedes_event_id=None,
+                # An aggregate of several canonical events is none of them.
+                event_id=None,
                 contract=replace(
                     last.contract,
                     correlation_id=f"resample:{constituent_sha256}",

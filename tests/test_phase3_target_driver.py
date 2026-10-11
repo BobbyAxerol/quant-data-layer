@@ -65,6 +65,13 @@ class TickerTests(unittest.TestCase):
             self.assertEqual(DeclaredRateTicker(start=0.0, period=1.0, phase=phase, end=90.0).offered, 90)
         self.assertEqual(DeclaredRateTicker(start=10.0, period=60.0, phase=5.0, end=310.0).offered, 5)
 
+    def test_a_tick_due_at_the_end_is_not_offered_on_a_long_uptime_clock(self):
+        # Past 2**21 s of monotonic uptime (start + 0.2) - start rounds to 0.2000000002: still 4 ticks, not 5.
+        for start in (0.0, 2123918.89, 2.0 ** 21 + 0.02, 1e7 + 0.02):
+            self.assertEqual(DeclaredRateTicker(start=start, period=0.05, phase=0.0, end=start + 0.2).offered, 4)
+            self.assertEqual(DeclaredRateTicker(start=start, period=0.05, phase=0.0, end=start + 0.5).offered, 10)
+            self.assertEqual(DeclaredRateTicker(start=start, period=0.05, phase=0.0, end=start + 0.21).offered, 5)
+
     def test_a_client_a_full_period_behind_misses_ticks_it_cannot_retime(self):
         ticker = DeclaredRateTicker(start=0.0, period=1.0, phase=0.0, end=10.0)
         self.assertEqual(ticker.take(0.5), (0.0, 0))
@@ -163,7 +170,8 @@ def _passing_receipt(final: bool = False) -> dict[str, object]:
 
 def _passing_ts() -> dict[str, object]:
     sample = {"ready": 60, "demanded": 60, "fallback": 0, "v2_error": 7}
-    return {"samples": [sample] * 12, "disconnect_codes": {"DATA_STALE": 4},
+    return {"samples": [sample] * 12, "unreadable_samples": [], "expected_samples": 12,
+            "disconnect_codes": {"DATA_STALE": 4},
             "run_disconnects_per_minute": 2.0, "baseline_disconnects_per_minute": 1.5}
 
 
@@ -221,6 +229,19 @@ class AcceptanceTests(unittest.TestCase):
         ts = _passing_ts()
         ts["run_disconnects_per_minute"] = 30.0
         self.assertIn("ts:disconnects_within_baseline", self._evaluate(ts=ts)["failed_gates"])
+
+    def test_lost_observation_fails_readiness(self):
+        # Codex review 2026-10-10: 155 unreadable periodic samples were skipped and the gate passed on 2.
+        ts = _passing_ts()
+        ts["unreadable_samples"] = [{"error": {"type": "IndexError"}}]
+        ts["expected_samples"] = 13
+        self.assertIn("ts:ready_60_every_sample", self._evaluate(ts=ts)["failed_gates"])
+        ts = _passing_ts()
+        ts["expected_samples"] = 157
+        self.assertIn("ts:ready_60_every_sample", self._evaluate(ts=ts)["failed_gates"])
+        ts = _passing_ts()
+        del ts["expected_samples"]
+        self.assertIn("ts:ready_60_every_sample", self._evaluate(ts=ts)["failed_gates"])
 
     def test_quiet_or_disconnected_slices_cannot_bypass_readiness(self):
         for state in ("STALE", "DISCONNECTED", "UNKNOWN"):

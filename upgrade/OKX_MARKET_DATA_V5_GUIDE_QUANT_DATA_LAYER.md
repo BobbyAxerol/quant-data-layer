@@ -201,8 +201,8 @@ OKX có tài liệu và endpoint host khác nhau theo pháp nhân/khu vực. Age
 OKX_ENABLED=true
 OKX_REGION_PROFILE=global
 OKX_REST_BASE_URL=https://www.okx.com
-OKX_WS_PUBLIC_URL=wss://ws.okx.com:8443/ws/v5/public
-OKX_WS_BUSINESS_URL=wss://ws.okx.com:8443/ws/v5/business
+OKX_WS_PUBLIC_URL=wss://ws.okx.com/ws/v5/public
+OKX_WS_BUSINESS_URL=wss://ws.okx.com/ws/v5/business
 OKX_DEMO=false
 ```
 
@@ -214,13 +214,17 @@ OKX_REST_BASE_URL=https://openapi.okx.com
 
 Nhưng lựa chọn domain phải là config/deployment decision, không rải hard-code trong client.
 
+Note (OKX changelog, "WebSocket port 8443 discontinuation", updated 2026-09-30): port 8443
+stops accepting WebSocket connections on 2026-10-31. WebSocket URLs carry no port (wss = 443).
+The code owner of the URLs is `qdl/adapters/okx_endpoints.py`, which refuses `:8443`.
+
 Ví dụ profile EEA có thể là:
 
 ```env
 OKX_REGION_PROFILE=eea
 OKX_REST_BASE_URL=https://eea.okx.com
-OKX_WS_PUBLIC_URL=wss://wseea.okx.com:8443/ws/v5/public
-OKX_WS_BUSINESS_URL=wss://wseea.okx.com:8443/ws/v5/business
+OKX_WS_PUBLIC_URL=wss://wseea.okx.com/ws/v5/public
+OKX_WS_BUSINESS_URL=wss://wseea.okx.com/ws/v5/business
 ```
 
 ### 3.2 Demo trading

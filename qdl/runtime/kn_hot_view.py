@@ -30,6 +30,10 @@ class HotViewUnavailable(RuntimeError):
     """Bounded backup refused; never permission to relax primary quality."""
 
 
+class HotViewGap(HotViewUnavailable):
+    """Authoritative book refusal; neither a replica nor cache may hide it."""
+
+
 @dataclass(frozen=True)
 class CanonicalHotView:
     """Source coordinates, not a fabricated materialized-cache generation/fence."""
@@ -77,13 +81,23 @@ class CanonicalHotClient:
         for channel in getattr(self, "_channels", ()):
             channel.close()
 
-    def latest(self, binding, lpk) -> CanonicalHotView:
+    @property
+    def timeout_seconds(self) -> float:
+        """The configured per-lookup deadline (callers may only shorten it)."""
+        return self._timeout
+
+    def latest(self, binding, lpk, *, timeout_seconds: float | None = None) -> CanonicalHotView:
+        """``timeout_seconds`` (optional) is what is left of the caller's own budget; it can only shorten the
+        configured deadline, never extend it."""
+        timeout = self._timeout if timeout_seconds is None else min(self._timeout, timeout_seconds)
         if binding.feed.value not in HOT_FEEDS or binding.interval is not None:
             raise HotViewUnavailable("HOT_FEED_UNSUPPORTED")
+        if timeout <= 0:
+            raise HotViewUnavailable("HOT_READ_DEADLINE")
         if not self._slots.acquire(blocking=False):
             raise HotViewUnavailable("HOT_READ_CAPACITY")
         try:
-            deadline = time.monotonic() + self._timeout
+            deadline = time.monotonic() + timeout
             error = "HOT_READER_UNAVAILABLE"
             for index, call in enumerate(self._calls):
                 remaining = deadline - time.monotonic()
@@ -97,11 +111,14 @@ class CanonicalHotClient:
                     reply = call(BytesValue(value=body), timeout=remaining / (len(self._calls) - index),
                         metadata=(("x-qdl-hot-signature-bin", signature),), wait_for_ready=False)
                 except grpc.RpcError as failure:
+                    detail = getattr(failure, "details", lambda: None)()
+                    if failure.code() == grpc.StatusCode.FAILED_PRECONDITION and detail in {
+                            "HOT_RECORD_GAPPED", "HOT_RECORD_GENERATION_MISMATCH", "HOT_BOOK_UNVERIFIED"}:
+                        raise HotViewGap(detail) from failure
                     # Auth/contract failures are not healed by trying another replica.
                     if failure.code() not in {grpc.StatusCode.UNAVAILABLE,
                             grpc.StatusCode.DEADLINE_EXCEEDED, grpc.StatusCode.RESOURCE_EXHAUSTED}:
                         raise HotViewUnavailable("HOT_AUTHORITY_OR_PROTOCOL_REFUSED") from failure
-                    detail = getattr(failure, "details", lambda: None)()
                     error = detail if detail in {
                         "HOT_BROKER_UNCONFIRMED", "HOT_READER_CATCHING_UP",
                         "HOT_READER_STALLED", "HOT_READER_UNAVAILABLE", "HOT_READER_BUSY",

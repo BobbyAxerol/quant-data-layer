@@ -51,6 +51,7 @@ class WorkloadTlsConfigTests(unittest.IsolatedAsyncioTestCase):
                 stream = GrpcStreamTransport(
                     ("qdl-v2-stream-a:8210", "qdl-v2-stream-b:8210"),
                     tls=tls,
+                    start_index=0,
                 )
                 try:
                     self.assertEqual(
@@ -134,6 +135,30 @@ class WorkloadTlsConfigTests(unittest.IsolatedAsyncioTestCase):
                 GrpcStreamTransport(
                     ("stream-a:8210", "stream-b:8210"),
                     allow_insecure_loopback=True,
+                )
+
+    async def test_stream_targets_start_on_a_random_replica_per_instance(self):
+        targets = ("127.0.0.1:18220", "127.0.0.1:18221")
+        seen = set()
+        for _ in range(64):
+            stream = GrpcStreamTransport(targets, allow_insecure_loopback=True)
+            try:
+                self.assertEqual(stream.target, targets[stream._target_index])
+                seen.add(stream.target)
+            finally:
+                await stream.close()
+        self.assertEqual(seen, set(targets))
+        pinned = GrpcStreamTransport(
+            targets, allow_insecure_loopback=True, start_index=1
+        )
+        try:
+            self.assertEqual(pinned.target, targets[1])
+        finally:
+            await pinned.close()
+        for bad in (-1, 2):
+            with self.assertRaisesRegex(ValueError, "start_index"):
+                GrpcStreamTransport(
+                    targets, allow_insecure_loopback=True, start_index=bad
                 )
 
 

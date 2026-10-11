@@ -54,6 +54,11 @@ pub struct BookTransition {
     /// an already verified current view. It keeps native sequence semantics
     /// intact while making the periodic observation idempotency-distinct.
     pub materialized_snapshot_at_ms: Option<i64>,
+    /// Set only on a quiet-proof snapshot (IDR-040 fix 2): the local receipt
+    /// time of in-band transport evidence on the connection that owns this
+    /// book, ordered after every earlier frame of the book. It leaves
+    /// `observed_at_ms` (the provider event time) untouched.
+    pub proof_observed_at_ns: Option<i64>,
 }
 
 impl BookTransition {
@@ -240,10 +245,20 @@ impl L2BookAdapter {
         // window and can manufacture a false sequence gap. We still parse the
         // snapshot strictly so malformed provider data is never hidden.
         if generation == self.core.generation() && self.core.status() == BookStatus::Ready {
+            // Only a snapshot the stream-applied book already covers proves the book current at that time;
+            // a snapshot ahead of it would re-stamp a book that is behind the venue (IDR-040).
+            let covered = self
+                .core
+                .last_sequence()
+                .is_some_and(|last| sequence_end <= last);
             return Ok(self.transition(
                 BookTransitionKind::Snapshot,
                 BookPublication::None,
-                BookOutcome::Keepalive,
+                if covered {
+                    BookOutcome::Keepalive
+                } else {
+                    BookOutcome::RestAheadOfStream
+                },
                 TransitionMetadata::empty(observed_at_ms),
             ));
         }
@@ -458,6 +473,7 @@ impl L2BookAdapter {
             updates: metadata.updates,
             view: self.core.view(),
             materialized_snapshot_at_ms: None,
+            proof_observed_at_ns: None,
         }
     }
 
@@ -861,6 +877,20 @@ mod tests {
         assert_eq!(refresh.snapshot_sequence, Some(100));
         assert_eq!(refresh.last_sequence, Some(101));
         assert_eq!(refresh.view.unwrap().bids[0].quantity.canonical_text(), "2");
+        // IDR-040: a REST snapshot ahead of the stream-applied book (venue at 105, book at 101) is no quiet proof.
+        let ahead = adapter
+            .apply_binance_rest_snapshot(
+                &json!({"lastUpdateId": 105, "E": 4, "bids": [["10", "7"]], "asks": [["11", "7"]]}),
+                1,
+                4,
+            )
+            .unwrap();
+        assert_eq!(ahead.outcome, BookOutcome::RestAheadOfStream);
+        assert_eq!(
+            (ahead.status, ahead.last_sequence),
+            (BookStatus::Ready, Some(101))
+        );
+        assert_eq!(ahead.view.unwrap().bids[0].quantity.canonical_text(), "2"); // the book is not replaced
         assert!(adapter
             .apply_binance_rest_snapshot(&json!({"bids": [], "asks": []}), 1, 4)
             .is_err());

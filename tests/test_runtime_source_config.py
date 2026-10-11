@@ -11,8 +11,13 @@ class RuntimeSourceConfigTests(unittest.TestCase):
         self.assertFalse(config.spot_enabled)
         self.assertTrue(config.usdm_enabled)
         self.assertTrue(config.dnse_stream_enabled)
-        self.assertTrue(config.vnstock_poller_enabled)
+        self.assertFalse(config.vnstock_poller_enabled)
         self.assertTrue(config.preload_watchdog_enabled)
+
+    def test_vnstock_poller_is_opt_in(self):
+        config = RuntimeSourceConfig.from_env({"DATA_LAYER_VNSTOCK_POLLER_ENABLED": "true"})
+
+        self.assertTrue(config.vnstock_poller_enabled)
 
     def test_spot_can_be_disabled_without_disabling_usdm(self):
         config = RuntimeSourceConfig.from_env(

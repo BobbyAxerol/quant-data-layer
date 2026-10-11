@@ -20,6 +20,28 @@ from typing import Any, Hashable
 ROW_CACHE_ENTRIES_ENV = "QDL_KN_ROW_CACHE_ENTRIES"
 
 
+class RenderSlot:
+    """A renderer's derivation of one cached row, shared by reference.
+
+    The backend creates one slot per row-cache entry and hands it to every
+    item it builds from that row; the public renderer stores there the
+    encoded fields that depend only on the row's content (P18.4 D3). The slot
+    lives and is evicted with its entry, so the bound is the row cache's.
+    Copies return the same slot: it caches, it is not item state.
+    """
+
+    __slots__ = ("value",)
+
+    def __init__(self) -> None:
+        self.value: Any = None
+
+    def __copy__(self) -> "RenderSlot":
+        return self
+
+    def __deepcopy__(self, memo) -> "RenderSlot":
+        return self
+
+
 class BoundedRowCache:
     def __init__(self, max_entries: int) -> None:
         if max_entries < 0:

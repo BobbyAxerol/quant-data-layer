@@ -33,7 +33,7 @@ from qdl.query.contracts import (
 )
 from qdl.query.lifecycle import BarLifecycle
 from qdl.query.cold_work import await_in_thread, cold_yield
-from qdl.query.lanes import BoundedReadLane, ReadLanePolicy, ReadLaneRejected
+from qdl.query.lanes import BoundedReadLane, ReadLaneBusy, ReadLanePolicy, ReadLaneRejected
 from qdl.query.entitlement import AccessPurpose, DataProduct, EntitlementPolicy
 from qdl.query.reference import (
     ReferenceBatchRequirement,
@@ -63,6 +63,21 @@ from qdl.reference.contracts import (
 _EXECUTION_MARK_INDEX_LIVE_ENDPOINT = (
     "qdl://stable-stream/internal/v2/execution/mark-index/latest"
 )
+# A funding series is settlement-cadenced: its newest record is exactly one
+# interval old at the instant the next settlement falls due, and the venue only
+# publishes that next record after it has settled (OKX reports
+# ``settState=processing`` meanwhile). A freshness bound equal to the cadence
+# (the alpha manifests declare 8 h for 8 h funding) therefore refused a healthy
+# source at every settlement: stage 100g, 2026-10-10, OKX SOL-USDT-SWAP at
+# 08:00:07Z. The allowance is the same 60 s funding-boundary tolerance the
+# Binance adapter (_FUNDING_BOUNDARY_TOLERANCE_MS) and the acceptance window
+# (_FUNDING_SETTLEMENT_JITTER_NS) already use; it applies to FUNDING_RATE
+# history only, and a settlement still unpublished after it stays DATA_STALE.
+# Funding settlement publication allowance. Measured 2026-10-10 16:00Z (read-only public API poll, ~4.6 s cadence):
+# the settled row appeared in history OKX BTC/ETH/SOL-USDT-SWAP +10 s (settState processing at +5 s), Binance
+# BTC/SOL/ETH +5/+10/+24 s. 60 s = the existing Binance funding boundary tolerance, ~2.5x the observed max.
+# Evidence: ~/.local/state/qdl-v2/funding-publication-20261010/.
+_FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS = 60_000
 
 
 _BatchCompletion = TypeVar("_BatchCompletion")
@@ -98,6 +113,7 @@ class QueryServiceError(RuntimeError):
         instrument_uid: str | None = None,
         quality_state: str | None = None,
         diagnostics: dict[str, Any] | None = None,
+        reason: str | None = None,
     ) -> None:
         super().__init__(problem.detail)
         self.problem = problem
@@ -105,6 +121,9 @@ class QueryServiceError(RuntimeError):
         self.instrument_uid = instrument_uid
         self.quality_state = quality_state
         self.diagnostics = diagnostics
+        # A typed refusal reason a transport may expose next to the problem
+        # (REST: ``X-QDL-Refusal-Reason``); None for every ordinary refusal.
+        self.reason = reason
 
 
 @dataclass(frozen=True)
@@ -244,6 +263,17 @@ class _LocalBatchAdmissionRejected(ReadLaneRejected):
     """A bounded canonical-cache batch lane cannot accept more queued work."""
 
 
+class _LocalBatchLaneBusy(_LocalBatchAdmissionRejected):
+    """The large-warmup lane would queue a request that opted into redirect."""
+
+
+# Typed reason for a large local warmup refused because this replica's
+# single-active large-warmup lane is busy and the client opted into redirect
+# (REST header ``X-QDL-Replica-Redirect: 1``). Replica-local admission only:
+# it says nothing about the data, so another replica may serve the request.
+REPLICA_LANE_BUSY_REASON = "REPLICA_LANE_BUSY"
+
+
 _SMALL_LOCAL_WARMUP_ROWS = 2
 
 
@@ -358,6 +388,7 @@ class _LocalBatchAdmission:
         consumer_id: str | None = None,
         reserved_bytes: int = _LOCAL_HISTORY_BASE_BYTES,
         wait_timeout_ms: int | None = None,
+        refuse_if_queued: bool = False,
     ):
         if consumer_id is None:
             # Focused legacy callers did not carry an authenticated consumer
@@ -371,7 +402,12 @@ class _LocalBatchAdmission:
                 consumer_id=consumer_id,
                 reserved_bytes=reserved_bytes,
                 wait_timeout_ms=wait_timeout_ms,
+                refuse_if_queued=refuse_if_queued,
             )
+        except ReadLaneBusy as error:
+            raise _LocalBatchLaneBusy(
+                f"local canonical-cache batch admission {error}"
+            ) from error
         except ReadLaneRejected as error:
             raise _LocalBatchAdmissionRejected(
                 f"local canonical-cache batch admission {error}"
@@ -819,6 +855,7 @@ class V2QueryService:
         purpose: AccessPurpose,
         completion: Callable[[BatchQueryResult], Awaitable[_BatchCompletion]],
         request_id: str | None = None,
+        redirect_when_busy: bool = False,
     ) -> _BatchCompletion:
         """Run an internal response completion under a fully-local batch lease.
 
@@ -827,6 +864,15 @@ class V2QueryService:
         its public JSON before this finite canonical-cache lane is released.
         That prevents a second large local HTTP response from overlapping the
         first response's CPU-heavy conversion after the cache read is done.
+
+        ``redirect_when_busy`` (the client's opt-in, P18.4 G5): a fully-local
+        batch that needs the single-active large-warmup lane while that lane
+        would make it wait is refused at once with retryable ``RATE_LIMITED``
+        (``retry_after_ms=0``, reason ``REPLICA_LANE_BUSY``) instead of
+        queuing, so the client can run it on an idle replica. Nothing is
+        reserved or read. Small warmups, mixed/provider batches and requests
+        without the opt-in keep the queue. Stage 100f: two 2,500-row reads
+        on one replica took 3.5 s and 7.0 s while the other replica was idle.
         """
         request_id = request_id or self.request_id()
         executor_before = self.warmup_executor.stats()
@@ -976,10 +1022,13 @@ class V2QueryService:
                     continue
                 error = execution.error
                 if isinstance(error, RetryableWarmupError) and isinstance(
-                    error.cause, QueryServiceError
+                    error.cause, (QueryServiceError, QueryBackendError)
                 ):
                     problem = error.cause.problem
-                elif isinstance(error, QueryServiceError):
+                elif isinstance(error, (QueryServiceError, QueryBackendError)):
+                    # A typed backend refusal (e.g. KN DATA_NOT_READY from the local
+                    # batch) keeps its code and retryability, as on the single-item
+                    # path; it is not an internal error.
                     problem = error.problem
                 elif isinstance(error, RetryableWarmupError):
                     problem = QueryProblem(
@@ -1052,6 +1101,9 @@ class V2QueryService:
 
         if fully_local_batch:
             admission = self._local_batch_admission_for(local_requirements)
+            refuse_if_queued = bool(redirect_when_busy) and admission is not getattr(
+                self, "_small_local_warmup_admission", None
+            )
 
             async def execute_whole_local_batch() -> _BatchCompletion:
                 nonlocal prefetched_local_histories
@@ -1071,6 +1123,7 @@ class V2QueryService:
                     consumer_id=batch.consumer_id,
                     reserved_bytes=local_reserved_bytes,
                     wait_timeout_ms=local_admission_wait_ms,
+                    refuse_if_queued=refuse_if_queued,
                 )
             )
             try:
@@ -1081,6 +1134,26 @@ class V2QueryService:
                 # CPU budget. Keep the request-local lease until it drains.
                 local_batch_task.add_done_callback(self._consume_detached_local_batch)
                 raise
+            except _LocalBatchLaneBusy as error:
+                # Whole-request refusal: the batch never entered the lane, so
+                # the client may send it unchanged to another replica.
+                raise QueryServiceError(
+                    QueryProblem(
+                        CanonicalErrorCode.RATE_LIMITED,
+                        f"{REPLICA_LANE_BUSY_REASON}: this replica's large-warmup lane is busy; "
+                        "retry once on another replica without redirect "
+                        f"({error})",
+                        True,
+                        0,
+                    ),
+                    request_id=request_id,
+                    instrument_uid=(
+                        batch.requirements[0].instrument_uid
+                        if len(batch.requirements) == 1
+                        else None
+                    ),
+                    reason=REPLICA_LANE_BUSY_REASON,
+                ) from error
             except _LocalBatchAdmissionRejected as error:
                 # A bounded queued lane must fail typed before it can create
                 # cache work or borrow an external-provider budget.
@@ -1545,13 +1618,24 @@ class V2QueryService:
         completes. Separately, exchanges can expose a briefly delayed mark or
         index timestamp even though the same declared provider lane is current
         on the immediate next read. Both cases get one cache-bypassing re-read
-        through the same bounded admission path. This deliberately excludes
-        history and every other reference product: no freshness bound is
-        relaxed and a second stale observation remains terminal.
+        through the same bounded admission path. The only history included is
+        a cache-served FUNDING_RATE series (see below); no freshness bound is
+        relaxed by the re-read and a second stale observation remains terminal.
         """
 
         if self._is_execution_mark_index_live_result(result):
             return False
+        if (
+            request.product is ReferenceProduct.FUNDING_RATE
+            and request.is_history
+            and result.status is ReferenceStatus.OK
+            and result.cache_hit
+        ):
+            # A cached funding series cannot contain a settlement the venue
+            # published after it was cached; one cache-bypassing re-read
+            # through the same admission lane picks it up. A second stale
+            # observation remains terminal.
+            return True
         if self._reference_snapshot_was_current_at_receipt(
             requirement,
             request,
@@ -1680,7 +1764,12 @@ class V2QueryService:
                     0,
                     ((self._clock_ns() if at_ns is None else at_ns) - observed_ns) // 1_000_000,
                 )
-                if freshness_ms > requirement.max_freshness_ms:
+                allowance_ms = (
+                    _FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS
+                    if request.product is ReferenceProduct.FUNDING_RATE and request.is_history
+                    else 0
+                )
+                if freshness_ms > requirement.max_freshness_ms + allowance_ms:
                     return QueryProblem(
                         CanonicalErrorCode.DATA_STALE,
                         "reference provider result exceeds the declared freshness bound",
@@ -1985,7 +2074,7 @@ class V2QueryService:
     ) -> dict[str, Any]:
         """The quality this refusal was decided on, taken now (not re-read)."""
 
-        return {
+        diagnostics = {
             "evaluated_at_ns": self._clock_ns(),
             "state": quality.state,
             "freshness_ms": quality.freshness_ms,
@@ -2001,6 +2090,11 @@ class V2QueryService:
             "observed_at_ns": item.observed_at_ns if item is not None else None,
             "received_at_ns": (item.received_at_ns or None) if item is not None else None,
         }
+        # Additive (IDR-040 fix 2): only when the refused book carries a proof,
+        # so a strict older reader never meets the key on any other refusal.
+        if quality.proof_observed_at_ns is not None:
+            diagnostics["proof_observed_at_ns"] = quality.proof_observed_at_ns
+        return diagnostics
 
     def _with_execution_eligibility(
         self,

@@ -110,6 +110,17 @@ assert the rule and the message prefix (`rule_messages`). Refusal is
   identities or partitions the result is `NOT_COMPARABLE` and the sink fence
   decides. Offset gaps from filtering or transaction markers are valid; source
   gaps are proven from source sequence, never from `offset == previous + 1`.
+- **Event identity** (v2.2.3, additive; IDR-082): the public market-data
+  view (`MarketDataView` of Query snapshot, latest and warmup, and the SDK
+  stream projection) carries `event_id`, the lowercase hex of the canonical
+  `EventEnvelope.event_id` bytes (deterministic from venue, market,
+  instrument, source and the native identity; 16 bytes on the stable path).
+  It is not a coordinate and never appears in cursors or watermarks. A Query
+  snapshot of an event and the Stream delivery of the same event carry the
+  same value, across replays and cache rebuilds; consumers compare it to tell
+  a re-read of the same event from a new one. It is `null` when the server
+  predates it or the row is not one canonical event (provider pass-through
+  window, resampled aggregate); readers must accept its absence.
 
 ## 3. Logical product key
 
@@ -218,6 +229,16 @@ away. The earlier Python stream's coalescing of BOOK_SNAPSHOT is not ported.
 - **Every held record is inside one replica byte budget**, charged once
   (`raw + 8 x payload`, an empirical decoded-size allowance) from the moment it
   enters a queue, replay channel or ring replay until the transport takes it.
+  A live record is decoded once per replica and shared by every subscriber
+  of its key, so its decoded copy is charged once at dispatch (released when
+  the last holder drops it); each queue entry adds a fixed 512-byte overhead
+  and each transport copy its own full weight. If the dispatch-time charge
+  is refused, every subscriber charges the full weight itself (lossless
+  subscribers then end with typed backpressure, as before). One subscription
+  may reference at most `QDL_KN_QUEUE_BYTES_PER_SUBSCRIPTION` bytes (full
+  weight); unset, it defaults to `QDL_KN_QUEUE_BYTES_TOTAL / 2` (16 MiB of the
+  default 32 MiB), so one slow subscriber cannot hold the whole live budget
+  and overflow the others.
   Concurrent Replay RPCs are admitted per replica and per consumer (manifest
   `max_streams`); refusal is `RESOURCE_EXHAUSTED RATE_LIMITED`.
   The factor eight exceeds the largest measured ratio (7.28) in the retained
@@ -229,6 +250,38 @@ away. The earlier Python stream's coalescing of BOOK_SNAPSHOT is not ported.
   `max_streams`; Replay also has a separate replica cap of 32. Successful
   payload/cursor semantics do not change; overload is typed and retryable,
   never silently truncated or reinterpreted as an empty successful page.
+
+## 8. Batched Subscribe responses (additive, SDK 2.3.0)
+
+- `SubscribeRequest.max_records_per_response = 7` (uint32) and
+  `SubscribeResponse.records = 2` (repeated `StreamRecord`) are additive; no
+  field number is reused. 0/absent and 1 mean one record per response, the
+  2.0-2.2 behavior, and such a client receives exactly the responses it did
+  before (`record` set, `records` empty).
+- Exactly one of `record` or `records` is set. `records` carries two or more
+  event records in delivery order; a control (REPLAYING, LIVE, BACKPRESSURE)
+  is always a response of its own in `record`. Every record keeps its own
+  `logical_offset` and signed resume token, so ACK/resume per record is
+  unchanged.
+- The gateway packs only records already queued for the subscription; it
+  never waits to fill a batch. It clamps the request to 256 records and stops
+  a batch at about 1 MiB of payload (a single larger record is still sent
+  alone). It batches lossless feeds only (TRADE, BOOK_SNAPSHOT, BOOK_DELTA);
+  latest-state and lifecycle-coalesced feeds keep one record per response so
+  they stay in the coalescing queue. Committed replay responses stay one
+  record each.
+- A batch never crosses an overflow, failure or close of the subscription
+  queue: those are reported after the records gathered before them are handed
+  to the transport. Revocation is checked before every response, batched or
+  not, exactly as for a single record. A record that ages out while queued ends the current batch first,
+  so cursor movement and the aged-out accounting match one-record delivery.
+  A batch carries the merged budget charges of its records until the
+  transport takes it; a record that cannot top up its charge without waiting
+  ends the batch, and only then waits, holding nothing else. A slow client
+  gets BACKPRESSURE with the token before the batch's first record.
+- Readers: 2.3.0+ read `records` when present and `record` otherwise, so they
+  work against older gateways (one record per response) unchanged.
+  `delivered` counters count records, not responses.
 
 
 ### KN-5 Derived BAR Diagnostic Index

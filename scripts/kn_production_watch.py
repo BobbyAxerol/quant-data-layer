@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""Deadline-bounded KN-5 resource journal; emergency stop affects new roles only."""
+"""Bounded read-only resource journal; stopping requires explicit container IDs."""
 import argparse
 import json
+import re
 from pathlib import Path
 import subprocess
 import time
+
+if __package__:
+    from .kn_disk_pressure import DiskPressure, sample_disk
+else:
+    from kn_disk_pressure import DiskPressure, sample_disk
 
 PROJECT = "qdl_v2_stable_candidate"
 NATIVE = ("market_cache", "market_projector_1", "market_projector_2", "query_kn_1", "query_kn_2", "stream_kn_1", "stream_kn_2")
@@ -17,9 +23,9 @@ def read_values(path):
         return {}
 
 
-def sample():
+def sample(ts_container="market_data_service"):
     ids = subprocess.check_output(["docker", "ps", "-q", "--filter", f"label=com.docker.compose.project={PROJECT}"], text=True).split()
-    extra = subprocess.run(["docker", "inspect", "market_data_service"], capture_output=True, text=True)
+    extra = subprocess.run(["docker", "inspect", ts_container], capture_output=True, text=True)
     containers = json.loads(subprocess.check_output(["docker", "inspect", *ids])) if ids else []
     if extra.returncode == 0:
         containers.extend(json.loads(extra.stdout))
@@ -54,6 +60,19 @@ def stop_reasons(row, low_idle_seconds=0):
     return reasons
 
 
+def explicit_stop_ids(row, allowed):
+    """No lifecycle authority comes from a historic phase name or guard alert."""
+    allowed = list(allowed)
+    if len(set(allowed)) != len(allowed) or any(
+        re.fullmatch(r"[0-9a-f]{64}", value) is None for value in allowed
+    ):
+        raise ValueError("stop authorization requires distinct full container IDs")
+    eligible = {row["containers"].get(f"{PROJECT}-{role}-1", {}).get("id") for role in NATIVE}
+    if any(value not in eligible for value in allowed):
+        raise ValueError("authorized stop ID no longer belongs to the observed role")
+    return allowed
+
+
 def cpu_ticks():
     values = [int(x) for x in Path("/proc/stat").read_text().splitlines()[0].split()[1:9]]
     return sum(values), values[3] + values[4]
@@ -64,22 +83,51 @@ def main():
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--seconds", type=int, default=7200)
     parser.add_argument("--stop-file", type=Path, required=True)
+    parser.add_argument("--stop-container-id", action="append", default=[],
+                        help="Explicitly authorized full container ID; default is read-only")
+    parser.add_argument("--ts-container", default="market_data_service",
+                        help="Same TS writer target for inspect and logs")
+    parser.add_argument("--disk-path", action="append", default=[],
+                        help="Writer filesystem path; enables disk policy (repeatable)")
+    for name in ("reserve-bytes", "recovery-bytes", "reserve-inodes", "recovery-inodes",
+                 "reserve-seconds", "recovery-seconds"):
+        parser.add_argument("--disk-" + name, type=float if name.endswith("seconds") else int,
+                            help="Explicit operator threshold; recovery must exceed reserve. "
+                                 "Seconds are measured time to the capacity reserve.")
     args = parser.parse_args()
+    policy_values = [getattr(args, "disk_" + name) for name in
+                     ("reserve_bytes", "recovery_bytes", "reserve_inodes", "recovery_inodes",
+                      "reserve_seconds", "recovery_seconds")]
+    disk_policy = None
+    if args.disk_path or any(v is not None for v in policy_values):
+        if not args.disk_path or any(v is None for v in policy_values):
+            parser.error("disk paths and all six disk policy thresholds are required together")
+        if len(set(args.disk_path)) != len(args.disk_path):
+            parser.error("disk paths must be distinct")
+        try:
+            disk_policy = DiskPressure(*policy_values)
+        except (ValueError, OverflowError) as exc:
+            parser.error(str(exc))
     end = time.monotonic() + args.seconds
     previous_cpu = cpu_ticks()
     low_idle_seconds = 0
     tick = 0
     ts_count = 0
     with args.out.open("x") as handle:
+        if disk_policy:
+            # Prime measurement only; no readiness is asserted by a baseline.
+            for path in args.disk_path:
+                disk_policy.observe(path, sample_disk(path))
         while time.monotonic() < end and not args.stop_file.exists():
-            row = sample()
+            row = sample(args.ts_container)
+            stop_ids = explicit_stop_ids(row, args.stop_container_id)
             now_cpu = cpu_ticks()
             total_delta = now_cpu[0] - previous_cpu[0]
             idle = 100 * (now_cpu[1] - previous_cpu[1]) / total_delta if total_delta else 100
             previous_cpu = now_cpu
             low_idle_seconds = low_idle_seconds + 5 if idle < 5 else 0
             if tick % 6 == 0:
-                logs = subprocess.run(["docker", "logs", "--since", "60s", "--tail", "1000", "market_data_service"],
+                logs = subprocess.run(["docker", "logs", "--since", "60s", "--tail", "1000", args.ts_container],
                                       capture_output=True, text=True, timeout=10)
                 ts_count = sum("MARK_INDEX" in line and "SOURCE_UNAVAILABLE" in line
                                for line in (logs.stdout + logs.stderr).splitlines())
@@ -87,15 +135,19 @@ def main():
             row["ts_mark_index_unavailable_60s"] = ts_count
             row["host_idle_percent"] = idle
             row["stop_reasons"] = stop_reasons(row, low_idle_seconds)
+            if disk_policy:
+                row["disk_pressure"] = {path: disk_policy.observe(path, sample_disk(path))
+                                        for path in args.disk_path}
+                row["stop_reasons"].extend(reason + ":" + path
+                    for path, result in row["disk_pressure"].items() for reason in result["reasons"])
             danger = bool(row["stop_reasons"])
             row["guard_stop"] = danger
             handle.write(json.dumps(row, separators=(",", ":")) + "\n")
             handle.flush()
             if danger:
-                names = [f"{PROJECT}-{r}-1" for r in NATIVE if f"{PROJECT}-{r}-1" in row["containers"]]
-                if names:
-                    subprocess.run(["docker", "stop", "-t", "15", *names], check=True)
-                print("GUARD_STOP_NEW_KN_ROLES", flush=True)
+                if stop_ids:
+                    subprocess.run(["docker", "stop", "-t", "15", *stop_ids], check=True)
+                print("GUARD_STOP_EXPLICIT_IDS" if stop_ids else "GUARD_ALERT_NO_RUNTIME_MUTATION", flush=True)
                 return 3
             time.sleep(5)
     print("WATCH_COMPLETE", flush=True)

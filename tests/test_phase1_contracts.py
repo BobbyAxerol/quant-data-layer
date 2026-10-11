@@ -40,6 +40,34 @@ class CanonicalDecimalTests(unittest.TestCase):
             with self.subTest(value=invalid), self.assertRaises(ValueError):
                 CanonicalDecimal.from_text(invalid)
 
+    def test_plain_text_fast_path_equals_the_decimal_parse(self):
+        # P18.4 D3: ASCII ``-?digits[.digits]`` is read off the text; every
+        # other spelling takes the Decimal path. Both must agree exactly.
+        from decimal import Decimal
+
+        def by_decimal(text: str) -> CanonicalDecimal:
+            sign, digits, exponent = Decimal(text).as_tuple()
+            value = int("".join(map(str, digits)) or "0") * (-1 if sign else 1)
+            if exponent > 0:
+                value *= 10**exponent
+            coefficient = value if -(2**63) <= value <= 2**63 - 1 else str(value)
+            return CanonicalDecimal(coefficient, max(0, -exponent), text)
+
+        texts = ["61234.10", "0", "-0", "-0.000", "000.10", "00", "1.0", "-12.50",
+                 "123456789012345678901.123", "9223372036854775807", "9223372036854775808",
+                 "-9223372036854775808", "-9223372036854775809", "0.000000000000000000000000000000001",
+                 "1E+3", "-12.5e-2", "+1.5", "1_000.5", ".5", "5.", "٣.1"]
+        texts += [f"{whole}.{fraction}" for whole in ("0", "7", "-31", "100000000000")
+                  for fraction in ("0", "05", "1234567890", "9" * 30)]
+        for text in texts:
+            with self.subTest(text=text):
+                parsed = CanonicalDecimal.from_text(text)
+                self.assertEqual(parsed, by_decimal(text.strip()))
+                self.assertEqual(type(parsed.coefficient), type(by_decimal(text.strip()).coefficient))
+        for invalid in ("", "  ", "NaN", "-Infinity", "x1", "1.2.3", "--1", "1-"):
+            with self.subTest(value=invalid), self.assertRaises(ValueError):
+                CanonicalDecimal.from_text(invalid)
+
 
 class DeterministicEventIdTests(unittest.TestCase):
     def test_is_stable_and_length_delimited(self):

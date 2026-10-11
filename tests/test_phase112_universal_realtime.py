@@ -356,7 +356,7 @@ class UniversalRealtimePlanTests(unittest.TestCase):
             if item.feed is FeedType.BAR and item.venue == "OKX" and item.market == "SWAP"
         )
         self.assertEqual(okx_native_bar.native_channel, "candle1H")
-        self.assertEqual(okx_native_bar.business_websocket_url, "wss://ws.okx.com:8443/ws/v5/business")
+        self.assertEqual(okx_native_bar.business_websocket_url, "wss://ws.okx.com/ws/v5/business")
         dated = next(item for item in bars if item.product_type == "FUTURE")
         self.assertEqual(dated.native_symbol, "BTCUSDT_270326")
         self.assertIsNone(dated.websocket_url)

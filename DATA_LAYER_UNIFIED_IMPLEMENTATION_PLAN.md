@@ -68973,3 +68973,3335 @@ cleanup delta. Evidence final-scoped-cleanup.json. Prior testclients/buildcontex
 already cleaned; active/rollback/preparedimages unchanged. This is artifact
 housekeeping still open, not a market-data correctness or release gate claim.
 Known unstaged owner whitespace atline13073 is preserved; stagedclosure diffclean.
+
+#### P18.4 Phase A Data Layer Closure Fixes (2026-10-07, Claude)
+
+Branch `fix/p184-dl-closure` from dev f012cac; source and local tests only - no image, role, binding mount,
+Kafka, Redis or ledger change. Scope agreed with the owner: fix inside DL, keep every cross-system interface
+versioned and additive (owner rule 2026-10-07).
+
+- IDR-040 fix 1: a Binance REST refresh is a quiet proof only when `lastUpdateId <= last_sequence` of the
+  stream-applied book; a snapshot ahead of the stream returns the new outcome `REST_AHEAD_OF_STREAM` (no
+  publication, no re-stamp, logged with the other frame refusals). Rust qdl-core + qdl-realtime-core 98/0,
+  including `binance_rest_refresh_ahead_of_stream_does_not_materialize`. Fix 2 (heartbeat quiet proof) needs a new
+  quality field and is held for the owner decision on tolerant SDK response readers (qdl_sdk models are
+  extra=forbid, so any new response field breaks deployed consumers).
+- IDR-002: consumer route binding V3 = V2 + `request_policies` (requirement_id, event_recency_policy,
+  max_session_liveness_ms) rendered from the consumer manifest; products and the universal manifest digest are
+  unchanged (no manifest or JWT revision bump); V3 requires the manifest revision and covers every product once;
+  the sandbox extension carries policies. The TS reader (SDK 2.1.0) accepts V1/V2/V3 and is deployed first.
+- IDR-029: quota exhaustion is logged once per consumer and minute (`qdl_consumer_quota_exhausted`, count/limit).
+- SPOF: `docs/runbooks/kn-single-points-of-failure.md` - dependency map, effect, recovery and stated limits for
+  both ingestors, bar edge and stable_redis; no new service.
+Tests: full unittest discover 2512 run - 7 errors were mount-only (`/app/logs` not writable, `noexec` /tmp) and
+pass with correct mounts (17/17); universal release + sandbox 21/0; quota 14/0. The full Rust workspace needs the
+builder's system libraries (openssl) and is compiled by the release image build.
+Next: one Rust + one Python image from this commit (digests recorded) for the Phase C packet; closure table and
+owner decisions D1-D3 handed over in Phase B.
+
+#### P18.4 Phase B Handover - Data Layer closure for the consolidated release (2026-10-07, Claude -> Codex)
+
+Status: HANDOVER. Trading System Phase A is closed on candidates: TS r59b (image
+sha256:9150385e2bb3596793b6ee209dbc99696c3ed07439d6f4199356f417a97b6105, source 054cfe3 on
+feat/v2-rust-first-okx-demo) passed surface 93/93 with the strict verifier, and the TS Data Layer consumer
+(writer market_data_service_p184w) runs that image since 2026-10-07 10:20 UTC (owner packet; TS plan journal
+"P18.4 Phase A - candidate r59"). Nothing in this section has run on a Data Layer role.
+
+Owner decisions 2026-10-07: **D2 in this release** (tolerant SDK response readers), **D1 deferred** (a quiet Binance
+book stays stale, never falsely fresh), **D3 separate project** (ingestor/bar-edge/Redis HA; limits recorded in
+the SPOF runbook). Interface rule (owner): versioned, additive-only interfaces, readers accept every supported
+version; fix internals, not endpoints.
+
+Candidate images from 4eb08dc (built, not run on any role): qdl-v2-rust:2.2.3-rc1-4eb08dc
+sha256:3566a6e3e6c7f7d6b82e7beee9075a02e42f1c0ebb292d3802a1bd8423e19520, qdl-v2-python:2.2.3-rc1-4eb08dc
+sha256:acf5fd06b6a3f8c7d1540180cf8f429bfef89af0d479fc432b205993cf353e96. They are superseded once D2 lands
+(rebuild both from the final commit; delete these by digest).
+
+| Item | State on this branch | Remaining work (Codex) | Close condition |
+|---|---|---|---|
+| IDR-040 fix 1 - REST refresh ahead of stream | fixed 4eb08dc, Rust 98/0 | none in source | candidate rust_core: no REST_AHEAD materialization; refusal log visible |
+| IDR-040 fix 2 - heartbeat quiet proof | not built (D1 deferred) | none this release | recorded limit: quiet Binance book = stale |
+| D2 - tolerant SDK response readers | not started. `qdl_sdk/models.py:119-120` ClosedModel is `extra="forbid"` for every model; SDK 2.0.7 | response models ignore unknown fields; requests, signed payloads and binding/manifest documents stay closed; tests both ways; SDK minor bump (2.1.0) with changelog | old-server/new-SDK and new-server/old-field round trips green; TS can upgrade the SDK before any new response field ships |
+| IDR-002 - request policy sealed | binding V3 fixed 4eb08dc | render V3 for trading-system.paper.stable at release | TS reader 2.1.0 deployed first (done: r59 writer), then mount V3; rollback = V2 file |
+| IDR-029 - quota visibility | log added 4eb08dc | none in source | TS measured (minute quota counter, read-only): 1204 -> 975 requests/min after TS batching; no quota or manifest change |
+| BAR 15m/30m gaps | KN cache keeps by open time (`rust/qdl-projector/src/expiry.rs`) | read-only gap diagnostic on the KN cache for the affected bindings | 0 gaps reported, or a defect row |
+| IDR-039 - mixed revisions | 5 revisions across 13 roles (v2.2.2 certificate) | one commit -> one Rust + one Python image | Phase C packet recreates the 13 non-infrastructure roles from two digests, certified once |
+| SPOF | runbook `docs/runbooks/kn-single-points-of-failure.md` | recovery-time per role (optional this release) | measured or stated as not measured in the certificate |
+| IDR-062 - BOOK top lags QUOTE | confirmed by code: the core materializes BOOK_SNAPSHOT only on a timer (`rust/qdl-realtime-core/src/lib.rs:1392-1399`, interval `qdl/runtime/execution_l2.py:23` = 1000 ms). TS measured on the TS cache, 120 samples/venue: book age p50 ~730 ms p95 ~1.2 s vs QUOTE p50 ~200 ms; 18-21% of reads the quote crosses the book, so TS package admission (exact book top == quote, a kept safety rule) refuses | also materialize when best bid/ask changes, bounded by a minimum interval (keep the 1000 ms timer as the quiet floor); same feed and contract; tests for top-change, floor and quiet cases | candidate measurement, one variable at a time: BOOK_SNAPSHOT msg/s, Kafka, rust_core/query/stream CPU (DL budget <= 5 vcore) and the TS writer CPU; TS coherence probe >= 39/40 sustained and book age p95 well under the 2000 ms package cap |
+| Consumer gate | tooling hardcodes `query_v2_1/2` | parameterise replica names for `query_kn_1/2`; measure event -> TS apply, usable/refusal by reason | numbers recorded per the four latency quantities rule |
+
+Not Data Layer (stays TS): POV volume source, reservations, writer CPU.
+
+Order: Codex implements D2, the IDR-062 top-change materialization and the diagnostics on this branch (same worktree
+`/home/bobby/.worktrees/data-layer-p184-closure`), local CI, one commit per tested slice with this journal; then
+rebuild both images from that commit and write the Phase C packet (roles, digests, rollback, what is not touched).
+Phase C runtime changes, push and merge need the owner's approval per packet. Owner 2026-10-07: build and test now, but the Phase C release WAITS for the TS DR01-DR08 matrix and the broker delta (TS plan journal "P18.4 gap audit"); Data Layer defects they find join this closure first, so the release is cut once. CLAUDE.md section 4 couplings apply
+(manifest revision, image-baked catalog, stable_redis ephemeral, no compose up on KN containers).
+
+
+#### P18.4 Phase B implementation start (Codex, 2026-10-07)
+
+Status: IN_PROGRESS, source/local candidate only. Approved scope is the Phase B
+handover above at fa0cfa1: D2 tolerant responses with strict requests/documents,
+IDR-062 bounded top-change snapshots, read-only BAR 15m/30m coverage, configurable
+probe replicas. D1/D3 remain deferred. No TS file or canonical checkout edit.
+Tests target changed contracts and continuity first; inherited certificates are
+not rerun. Two final images must share one source SHA. Phase C packet is a draft,
+blocked on TS DR01-DR08/broker delta and explicit runtime approval. No shared data
+write, role restart, binding mount, push or merge. Rollback retains all active
+digests/config and V2 binding; only the two named rc1 candidates may be removed
+after replacement and reference checks. Record exact tests, resource limits and
+any unmeasured runtime gates per tested slice below. apply_patch failed with the
+known mountinfo helper error; exact scripted edits under workspace rule 32.
+
+
+##### Phase B slice D2 - tolerant SDK response readers
+
+Status: IMPLEMENTED / TESTED_LOCALLY, SDK 2.1.0; no server response field added.
+ResponseModel ignores additive unknown fields recursively through typed market,
+reference and problem responses. Known enums/decimals/domain validators remain
+strict. Warmup/reference requests and signed/binding/manifest documents unchanged.
+The shared response classes keep the published OpenAPI schema unchanged via
+json_schema_extra; initial regression found OpenAPI drift and the corrected run
+passed. Changelog: qdl_sdk/CHANGELOG.md. Version builder and two current-version
+tests updated, historical certificates untouched.
+Tests in existing acf5fd06 image, source mounted read-only, network none, 2 CPUs,
+1 GiB, tmpfs /tmp (exec) and /app/logs: SDK additive/release/projection/stable release
+28 PASS; stream SDK/reference V2/universal release/sandbox/quality/pre5/status/offset
+91 PASS, zero fail/skip in both final runs. First container failed before tests
+because /app/logs mount nested inside a read-only checkout; fixed mount layout
+(/src checkout, /app/logs tmpfs), not permissions on source. Containers --rm.
+No new image, shared mutation, push/merge or cleanup of retained artifacts.
+
+
+##### Phase B slice - consumer probe names and BAR diagnostic
+
+Status: IMPLEMENTED / TESTED_LOCALLY; BAR retained-window observation READ_ONLY.
+KN_QUERY_REPLICAS selects exactly two distinct DNS names in benchmark_kn_ts_consumer
+(defaults preserved); all coverage aggregation uses the same selected pair.
+measure_kn_ts_cache_delivery has no Query RPC or hardcoded Query name: it observes
+TS Redis only. Added explicitly labelled declared-replica metadata, not invented
+per-replica attribution. No consumer/load measurement run on shared runtime.
+Added diagnose_kn_bar_window.py using existing KN generation/source-fenced reader.
+It checks only 15m/30m retained windows; empty generation, topic mismatch, diagnostic
+flags or missing opens cannot PASS. Eight focused diagnostic/replica unit tests
+PASS (zero fail/skip), acf5fd06 image, network none, read-only source.
+Executed approved read-only diagnostic inside query_kn_1: 20 bindings, 214752
+retained rows, 0 missing opens/flags/errors. No coverage claim before/after retained
+bounds, no repair/publication. Evidence external p184-phaseb-20261007/evidence/
+bar-window-query-kn-1.json SHA256 b80d38099ec27aeb3520cc8c15d506a7d6e5193799195d691e12b6d1d1408241.
+Inventory correction: 12 active non-infrastructure application roles, not the
+handoff's 13: 3 core + 2 ingestor + 2 projector + 2 stream + 2 query + 1 BAR edge.
+Phase C must explicitly resolve this count; do not start an invented/thirteenth
+role, touch V1, or recreate state/TLS initializers to satisfy an incorrect count.
+No shared write/restart, test containers --rm, no TS edits or image cleanup yet.
+
+
+##### Phase B slice IDR-062 - bounded top-change materialization
+
+Status: IMPLEMENTED / TESTED_LOCALLY, not runtime-certified. Rust retains exact
+best bid/ask of the last emitted snapshot (not every delta); a changed top emits
+an additional snapshot after 100 ms of provider observation time. Suppressed
+changes remain pending. Unchanged top retains configured periodic cadence (1000 ms
+on execution bindings), evaluated only on verified provider transitions. No wall
+timer/heartbeat proof, timestamp rewrite, endpoint or binding/schema change.
+Comparison borrows exact decimal prices; allocations occur only when recording a
+published snapshot. Delta publication, event identity, sequence and generation
+fences stay intact. The floor bounds provider-time amplification, NOT wall-clock
+replay throughput or independent quote/book equality (channels are asynchronous).
+Tests: pinned Rust 1.82/OpenSSL builder, --locked, 2 CPU / 3 GiB; qdl-core 50 PASS,
+qdl-realtime-core 52 PASS, 0 fail, 1 existing ignored isolated-Redis admission test
+(outside changed BOOK path). New dual-venue tests: top/ask-only change, 99/100 ms
+floor, pending change on quantity-only delta, unchanged top at 999/1000 ms, exact
+delta/snapshot source sequence and timestamp, duplicate/gap rejection, 1000
+transitions yielding exactly 10 extra snapshots per provider second. Prior tests
+cover delayed replay, resync, lane and generation changes. Initial failures were
+test macro qualification and duplicate price rows in a new fixture; corrected
+without changing production validation. Offline builder cache was incomplete;
+locked crates downloaded in disposable builder, no runtime network credentials.
+Evidence rust-tests-final.log SHA256 fd9b80ac3b837485b41628b444de63b419edba8aa244c144ff262a3ff390f553.
+Real/capture candidate BOOK rate, Kafka/whole-stack CPU and TS coherence >=39/40
+remain unmeasured; do not infer those gates from synthetic source tests. Phase C
+remains held pending these measurements and TS DR01-DR08/broker delta. No role
+restart, shared state write, resource quota change, push or merge.
+
+
+##### Phase B candidate artifact and Phase C handoff (Codex, 2026-10-07)
+
+Status: SOURCE_CANDIDATE_READY_MEASUREMENT_PENDING. Not production-certified,
+not released, no Phase C execution. Source slices: eb7c649 (D2), f8f3770
+(probes/BAR), 43bbcf0 (L2); same application SHA for both completed images:
+
+- Rust qdl-v2-rust:2.2.3-rc2-43bbcf0 = sha256:69e3b2b214331a7ebb6a110dd8159c899bbbd6439aaf87293c8c68d145e3713d.
+- Python qdl-v2-python:2.2.3-rc2-43bbcf0 = sha256:77682eea5054ae9ddbd858323b083286669a55eeb4bc7bc065b04bae8854e32f.
+
+Canonical Dockerfiles, full native build includes 12 binaries, four runtime native
+role binaries have resolved shared libraries. Python dependency receipt PASS: 48
+locked packages, 5954 hashed files; ten packaged source files match candidate.
+Initial Python build correctly refused tag-only dependency input; rebuilt with
+immutable acf5fd06 digest, without bypassing dependency verification. Packaged
+Python affected tests 29 PASS / 0 fail / 0 skip. Source counts above remain separate
+(overlap with packaged tests; do not sum as unique coverage). SDK wheel 2.1.0 SHA256
+3ed58182f3b6a077e21b218589c33b0a1289eb5cd1609f4910200aae6a138c47, not published.
+
+Binding compatibility check found source renderer r27 differs from the deployed
+writer's r22 in inventory/release/universal hash despite identical 60 products.
+DO NOT mount generic r27 output. Prepared r22 V3 by canonical dataclass constructor
+with identical products and manifest-10 policies; only schema, binding checksum
+and request_policies change. Old V2 remains untouched. An initial constructor
+probe retained the old checksum, then an empty checksum; both correctly rejected.
+Using documented None builds a NEW checksum, never overwrites old evidence.
+V3 binding hash a7a4380581a923223bf40a067fd4f718c2ccf0b23705abf216abc38f86de84bd;
+file hash 4bdaa49410190948a8d15ad07ffae5bd73ccb48cc327fd2936b36b815daba5dc.
+Universal b4e43688...9afe, release r22, JWT/manifest 10 and 60 products unchanged.
+No binding was mounted; no TS source/image/config was edited.
+
+Draft exact-role packet: [P18.4 Phase C](upgrade/evidence/p184-dl-phase-c-packet.md).
+It preserves the observed 12-role roster (not 13), all rollback digests, config
+fingerprints, TLS/state and source/group ownership. Owner must resolve roster and
+approve packet after TS DR01-DR08/broker delta and the unmeasured IDR-062 real/capture
+resource/coherence gates. No current improvement in consumer latency, <=5 vCPU
+whole-stack usage or uninterrupted execution eligibility is claimed. D1/D3 remain
+explicit owner deferrals, not secretly implemented.
+
+External receipt: p184-phaseb-20261007/evidence/phase-b-receipt.json SHA256 7ab598b514087c22d46645691d8e3632eec59ff8f13b05d3f43a4a03d4900ecf.
+Runtime post-check: all 19 inventoried DL containers (17 running, 2 prior stopped
+initializers) retain image/start/restart values; zero scoped test containers remain.
+Cleanup: removed exactly rc1 digests 3566a6e3... and acf5fd06... after zero-reference
+checks; removed the task's 695 MiB Cargo target (root-owned build files required
+a disposable cleanup container bound only to that directory). Active digests and
+named rollbacks untouched; no volume/network/shared data deletion. Free disk
+100953247744 -> 101003780096 bytes; shared-host delta is NOT
+a precise attribution of bytes reclaimed. BuildKit cache was inventoried, not
+broad-pruned: ownership-safe exact cache cleanup remains for Phase C closure.
+Retain new rc2 images specifically for this active handoff, not as indefinite
+archive. Canonical /home/bobby/data_layer main5bf5cd5 and owner plan hunks untouched;
+only active feature worktree modified. Stable published line remains v2.2.2.
+No push/merge. Next: Claude/owner review this packet and pending measurements,
+complete TS gates, then approve Phase C; do not silently promote this receipt.
+
+
+##### IDR-062 paired offline measurement - approved follow-up start
+
+Status: IN_PROGRESS (2026-10-07). Same worktree/branch, no runtime mutation,
+no push/merge. Owner scope: capture active public ETH BOOK on Binance/OKX using
+phase114_l2_real_provider_capture.py; replay identical bytes/config/resource limits
+through the deployed baseline image and rc2-43bbcf0. No new image builds. Existing
+core executable requires Kafka: use disposable --rm broker/core/client containers
+on one internal test network, fresh test TLS and tmpfs state, no production mounts
+or credentials. This is offline replay, not production/consumer latency evidence.
+Guide: architecture review section 18.13; packet upgrade/evidence/p184-dl-phase-c-packet.md.
+Record snapshot msg/s and serialized bytes/s over captured provider duration;
+core CPU/RSS over paced replay, top-change-to-matching-snapshot delay in ms
+(p50/p95/max/n), superseded/unmatched changes and sequence/quarantine outcomes.
+Only downstream workload ratios are estimates, not measured whole-stack CPU.
+Activity must be demonstrated by actual top changes; no claim about market stress
+from an arbitrary short capture. Preserve compact hashes/metrics, delete this
+run's raw capture and disposable resources after measurement. Retain existing
+active/candidate/rollback images. Tests cover metric censoring and capture bounds.
+Second slice: move coherence to POST-core-rollout acceptance (>=117/120 per venue),
+explicit CPU/lag rollback and core-first order. Runtime execution remains held.
+Rollback for this offline slice is stop/remove exact disposable resources only.
+apply_patch helper failed (mountinfo path); workspace rule 32 exact edits used.
+
+
+##### IDR-062 offline pair completed (Codex, 2026-10-07)
+
+Status: PAIRED_OFFLINE_MEASURED_NOT_RUNTIME_CERTIFIED. Source/image/runtime unchanged;
+measurement tools and this journal only. Detailed immutable-image results, metric
+semantics, invalid harness attempts and cleanup:
+[IDR-062 paired report](upgrade/evidence/p184-idr062-offline-pair.md).
+Existing baseline 658a9570 vs rc2 69e3b2b2 on identical capture/config, one core per
+run, 1 CPU / 256 MiB, fresh internal Kafka --rm and tmpfs. No shared network/state.
+Capture started 12:52:17.878 UTC, 592 Binance ETH frames / 601 OKX ETH frames,
+44 / 41 actual top changes. Delta payload chains match (587 / 600 deltas); no
+post-bootstrap quarantine. One expected Binance bootstrap resnapshot advisory
+per core retained separately. Snapshot counts 59->87 and 61->87; msg/s .9832->1.4498
+and 1.0167->1.4500; protobuf bytes/s 7807.9->11509.5 and 8329.5->11877.4.
+Top-change -> next verified snapshot on provider clock: Binance baseline
+p50/p95/max 510/922/924 ms n43 plus 1 censored; OKX 500/900/900 ms n41.
+Candidate 0/0/0 ms n44/n41 (same-event materialization, NOT zero consumer latency).
+Exact-top and superseded-change denominators remain in report, no p99 claim.
+Core process CPU observed 3.60->3.76 s / 60 s (.0600->.0627 vCPU), observed RSS HWM
+19324->19612 KiB, 101 samples each. One short pair, not peak load or all-bindings
+certification. Combined snapshot workload estimate x1.45; combined BOOK messages
+x1.0413. No measured downstream CPU/consumer latency claim.
+Tests: existing Python candidate, network none, unittest modules
+`tests.test_l2_top_materialization_measurement tests.test_phase114_l2_provider_capture`:
+17 PASS, zero fail/skip. Initial pytest command unavailable in runtime image;
+used the suites' actual standard-library unittest runner. Four invalid/incomplete
+harness attempts kept as such; bounded bootstrap advisory classification and
+container auto-remove race fixes were tested, no production source changes.
+Evidence run5/paired-receipt.json SHA256 b9d14de49256e7fb15b80faa430c52a610f18d5aa83c1be6dfc88f85e4de4ecc;
+capture SHA256 3afa271cb5f1e99c84ebb68a90bdd1719b740c39c1bca7826f53c4727868d4a9,
+root ~/.local/state/qdl-v2/idr062-paired-20261007/. Captures/canonical raw dumps,
+fresh test keys, containers and internal network deleted; runtime image/start/
+restart inventory unchanged. Disk free 100669689856->100420591616 bytes (shared-host
+writes, not a reclaimed-byte claim). No image built or deleted; active/rc2/rollback
+retained. Shared cache inventoried 16.83 GB, not broad-pruned. Canonical main5bf5cd5
+and owner hunk untouched; published v2.2.2 unchanged. No push/merge, no TS edit.
+Next separate docs slice: core-first Phase C packet, post-core coherence gate.
+
+
+##### Phase C core-first packet amendment (Codex, 2026-10-07)
+
+Status: PACKET_UPDATED_RUNTIME_HELD. Measurement slice commit 5a261e0; no runtime
+approval or production certificate inferred. Guide section 18.13 unchanged;
+[packet](upgrade/evidence/p184-dl-phase-c-packet.md) now supersedes the prior
+pre-rollout coherence prerequisite and reader-first ordering. Approved user scope:
+three cores first -> Claude TS coherence -> remaining existing roles only.
+
+Post-core gate: 120 consecutive 1 Hz samples EACH venue, >=117 usable coherent
+samples EACH (39/40). Failures/timeouts remain in denominator; 4 failures permit
+early rollback. No exact top equality, freshness or risk contract relaxation.
+Incomplete measurement cannot open the remaining roles. CPU keeps the existing
+whole-stack 5.0 steady-state vCPU budget and accounting denominator, not the offline
+.0627 vCPU two-binding result. Proposed executable stop definition frozen in packet:
+two consecutive non-overlapping 30 s CPU means over budget; lag five consecutive
+increases over six 10 s readings. Missing offset/ownership is HOLD, never zero lag.
+These are packet operational observation rules, not claims they have run or new
+freshness/quality thresholds. Preflight already over budget means HOLD before
+changing any core. Stop on OOM/integrity/fencing failure as well.
+
+Rollback: all cores actually changed, reverse order, exact prior 658a9570...54023
+and per-role original config/mounts; no offsets reset, shared data delete, or
+reader rollback when readers never changed. Confirm recovery to consumer-usable,
+not just broker health. All other roles wait for Claude's complete accepted receipt.
+Reader/ingestor/projector/BAR digests and r22 V3 binding fields remain unchanged.
+Roster correction resolved: exactly 12 application roles, no invented 13th.
+Validation: packet diff, exact role/digest roster unchanged versus 5eb453d,
+117/120 arithmetic, linked paired report present, no stale reader-first sequence.
+No push/merge, no new test resources/images, no further runtime action. Cleanup
+and canonical/runtime/rollback inventory remain as recorded in paired slice above.
+Next permitted action is owner/Claude review; STOP and wait.
+
+
+##### Release-readiness read-only audit - owner decision 2026-10-07
+
+Status: IN_PROGRESS. Same fix/p184-dl-closure worktree, inherited reviewed commits
+5a261e0/9dbb93c. DL release waits on TS DR01-DR08 INCLUDING DR07 and broker delta,
+NOT TS Paper feature construction. Runtime/certificate gates remain fail-closed.
+Scope: actual BOOK binding count and 10/s per-binding provider-time ceiling;
+bounded higher-activity public capture replay using unchanged 5a261e0 harness and
+existing baseline/rc2 images; read-only current KN health/resource/quota/cache/log
+observation; capability/endpoint/version inventory; readiness report and packet.
+Guide: architecture review 18.13, Phase C packet and certification ledger.
+No production config/data/identity changes, order, restart, rollout, push/merge or
+image build. Passive observations first; additional request probes only at low
+rate after measured quota headroom, zero new stream subscriptions. Never run
+kn_production_watch.main (it can stop services); reuse sample() only. Never run
+full benchmark_kn_ts_consumer on shared runtime (isolated Redis writer/streams).
+Preregister higher-activity criterion: top changes/minute >=1.5x old 44/41 on BOTH
+venues. One 120 s capture in this bounded session; if criterion misses, report
+NOT_MEASURED for peak rather than relabel quiet data or wait indefinitely.
+Latency boundaries/p50/p95/max/n in ms; p99 only n>=100; no substitution of event
+age for request/commit/delivery timing. Unknowns explicitly NOT_MEASURED. rc2 is
+not deployed and current runtime measurements do not certify its rollout.
+Use scoped --rm offline resources only; hash/delete captures/test keys, preserve
+compact evidence. No new image/cache cleanup required; retain active/rc2/rollback.
+Each coherent slice committed with journal. Stop after report/packet for owner
+review. apply_patch sandbox failed; exact file edits per workspace rule 32.
+
+### Release-readiness slice 1 - active IDR-062 pair and capacity (2026-10-07)
+
+Status: MEASURED; current whole-stack CPU gate FAIL, candidate stack NOT_MEASURED.
+Readiness report: [capacity envelope](upgrade/evidence/p184-idr062-capacity-envelope.md).
+17 BOOK acquisition bindings confirmed in actual ingestors/core (7 Binance, 10 OKX), not multiplied by replicas.
+One unchanged-harness 120 s public capture: 270/312 top changes, about 135/156 per minute; preregistered active criterion PASS.
+Same-byte delta chains; rc2 top-change materialization delay 0/0/0 ms on n=270/312, source-time metric, not network latency.
+Snapshot counts 239 -> 639; core CPU 9.81 -> 10.51 CPU-s; RSS 21844 -> 23612 KiB, samples 199/198.
+Passive current-stack measurement: 61 samples/60 intervals, 307.156 s; mean 5.9618 vCPU exceeds unchanged 5-vCPU gate.
+No resource increase, production write, rebuild or rollout. Raw capture and isolated replay resources removed; disk accounting and retained images in report.
+Commands: unchanged scripts/measure_l2_top_materialization.py run --seconds 120; read-only kn_production_watch.sample wrapper; bounded docker inspect/config reads.
+Next: finish contract/latency/health report and amend Phase C HOLD conditions; no TS Paper feature dependency added.
+Verification: receipt invariant checks PASS (same config/delta chains, denominator, zero candidate tails, 17 bindings, capture deletion). Harness bytes equal 5a261e0. Attempted pytest on host and existing Python candidate: both lack pytest, so no new unit-pass claim; prior 9 measurement tests remain inherited unchanged. Temporary qdl-idr062-readiness-tests --rm container removed, no dependency install/build.
+
+### Release-readiness slice 2 - read-only report / Phase C HOLD (2026-10-07)
+
+Status: AUDIT_COMPLETE_WITH_GAPS; PHASE_C_HOLD_NOT_AUTHORIZED. Not a release certificate.
+Owner decision: DL waits only on TS DR01-DR08 including DR07 plus broker delta,
+not TS Paper construction. Existing safety/resource gates still apply.
+Report: [DL readiness](upgrade/evidence/p184-dl-release-readiness.md).
+Packet: [Phase C core-first](upgrade/evidence/p184-dl-phase-c-packet.md).
+
+Measured on deployed KN, not rc2: 12 app +5 infrastructure roles unchanged;
+61 resource samples/60 intervals,307.156s;5.9618vCPU mean >5 gate. All container
+IDs/images/restart counters stable; BAR-edge historical3 restarts retained.
+Correct-TLS serial TS60 reads through both replicas:119/120usable; per-feed n19/20,
+request p50/p95/max in report, no p99. Exact BNB/OKX TRADE refusal age4262ms,
+session live59ms, stale LAST; no provider-side attribution from a later green read.
+Shared quota measured at correct :identity namespace: previous961/1500 before
+probe; later885/1500. No new identity, stream, quota, manifest or order.
+Cache GET observer:1800reads/30rounds,zero missing; BOOK_DELTA age up to22825ms.
+Stream active log metrics:overflow+4 over about10min, reader/decode errors delta0.
+These are open DR07 attribution/availability evidence, not silently fixed.
+
+Measurement limitations/errors retained: first120 requests used wrong TLS alias,
+ConnectError; aliases corrected after2-request smoke, no TLS bypass. First PUBSUB
+observer connection closed; bounded60s observer may include notification backlog, so not
+used as exact Redis write latency. GET cache age/first-observation upper bounds
+are distinct from SET ACK timing; canonical delivery lag and alpha cache latency
+NOT_MEASURED. Initial quota lookup lacked :identity suffix; corrected before
+requests. Missing pytest on host/candidate, unchanged source tests inherited;
+receipt/schema/table consistency checked independently. No app source changed.
+
+Kafka per-partition lag and exact role digests/config references, 60 binding rows,
+all HTTP/gRPC surfaces, SDK2.0.7 deployed vs2.1.0 candidate, V1/V2/V3 r22/JWT
+revisions, quota/concurrency/headroom and known D1/D3 limits are in report.
+BAR3d remains excluded; existing history errors/inflight admission deferrals are
+reported, not fixed under this audit. Historical18s BAR-edge restart not remeasured.
+
+Cleanup: isolated pair --rm containers/network/capture/TLS keys removed; diagnostic
+raw cache payload hashed then removed. No new image/build/cache; Docker92images
+28.19GB, BuildKit227entries16.83GB. Keep active+rc2+named rollback; broad prune not
+permitted by read-only scope. Disk pre/post102468628480/100905811968bytes includes
+other host activity. Canonical main5bf5cd5 untouched; same active feature worktree.
+No runtime rollout, push or merge. Stop and return readiness/packet for owner review;
+do not continue into TS Paper features or roll a candidate against failing baseline.
+Final audit checks PASS:60unique binding products x2replicas=120reads (119usable);1800cache GETs/zero missing; report60-row coverage and local links valid; qdl-idr062 containers/networks zero. TLS negative explicitly confirms hostname mismatch; no TLS bypass. Readiness measurements are not a replacement certificate.
+
+### DR07 hardening - owner approval 2026-10-07
+
+Status: IN_PROGRESS. Owner approved the five-part corrective direction after
+readiness slice 2; existing DR07/Phase C scope, not a new phase. Goal: attribute
+and remove internal delivery/backpressure defects and obtain four-boundary latency
+and CPU evidence. Guide: architecture review 18.13-18.14 and existing Phase C packet.
+Order: bounded offset-correlated trace + CPU profile -> reproduce responsible stage
+-> narrow tested fix -> isolated replay/fault acceptance -> converged candidate and
+approved core-first rollout/coherence/remaining roles. Missing timestamps remain
+NOT_MEASURED; no PUBSUB/callback substitution for Redis ACK. TRADE quiet vs lag
+requires contemporaneous provider identity; preserve strict LAST/intent dependencies.
+Invariants: no endpoint/schema/realm/quota/freshness change, bigger buffer, order,
+offset reset/state deletion or durability reduction. Observation/isolated tests
+first; Phase C HOLD until resource gate, DR01-DR08/broker delta and packet approval.
+No automatic budget increase or dependency on TS Paper feature construction.
+Tests: identity/time/ordering negatives, lossless replay/monotonic ACK, slow-consumer
+isolation, bounded recovery and same-capture CPU/latency. No full catalogue/C2 to debug.
+Rollback: active digests/config in packet; no runtime action yet. Cleanup exact test
+resources, retain active/rc2/rollback. Journal each coherent tested slice.
+Concurrent TS Paper changes owned by Claude are preserved; delegated read-only
+BOOK_DELTA/ACK review, no edits to those files. apply_patch helper failed (mountinfo);
+exact file writes with immediate diff review follow workspace rule32.
+
+DR07 investigation checkpoint: delegated source reproducer confirmed64BOOK deltas
+perform64MGET+64CAS EVAL sequentially, and reset control+new-generation delta in
+one batch yields delta before Query anchor (batch1 hides it). These are source
+findings, not proven cause of historical22s observation. TS plan records narrow
+ordering fix/test slice; concurrent Paper source remains untouched.
+Read-only31.801s thread profile: TS Python1.507vCPU, broker network threads about
+2.069vCPU combined; not a function-level profile. No CPU configuration changes.
+Observer fix separates PUBSUB drain from batched MGET and requires matching view
+for correlated samples.19 stdlib regression tests passed; runtime observation pending.
+
+### DR07 slice - bounded cache observer and paired TRADE attribution
+
+Status: IMPLEMENTED_TESTED_DIAGNOSTIC / DR07_IN_PROGRESS; Phase C remains HOLD.
+Report: [DR07 hardening progress](upgrade/evidence/p184-dr07-hardening-progress.md).
+Observer fixes its own serial GET/backlog and false event-to-current-cache matching;
+MARK pairs use existing component lineage, never a fabricated scalar cursor.
+25 stdlib tests PASS, diff-check PASS. Two read-only60s windows retained; second
+36659notifications/80groups,106MGET,p50/p95/max26.298/189.489/294.093ms.
+Second result INCOMPLETE because2oversize notifications; not a full-latency gate.
+BOOK_DELTA current-cache ages max1469.907ms in this window, not proof old22.825s fixed.
+Independent public BNB comparison75.189s:278cache samples per venue;719Binance/33OKX
+public events. Stale>3s: OKX141 (132same last ID/time,8provider-newer,1unattributed),
+Binance10 (10same ID/time). No quiet inference for unobserved original refusal.
+First attribution attempt had wrong Binance product/channel; preserved as failed
+measurement, corrected from production config; no cache/config mutation.
+CPU thread attribution, original observer limitations and all hashes in report.
+No runtime rollout, order, new image, push/merge, shared Redis write or cleanup
+of active/rollback artifacts. Read-only processes finished; no new DL resources.
+Remain: function-level CPU evidence/optimization, overflow/backlog attribution,
+actual commit/Redis ACK boundaries, isolated lossless/fault acceptance and approved
+core-first Phase C. Narrow TS reset fix is separately tested/journaled.
+
+CPU profiling limit: a15s49Hz user-space perf sample on Kafka2 was denied by
+perf_event_paranoid=4/missing CAP_PERFMON. No sysctl/capability change or retry
+through elevated credentials. Thread attribution remains valid but insufficient
+for a function-level CPU root cause. Empty perf output removed; command/error
+receipt retained externally. This is not evidence that optimization is impossible.
+
+DR07 follow-up within approved recovery scope: existing late BOOK_DELTA integration
+cases fail even before the reset patch. Trace the SDK OBSERVE result path (returns
+noneligible view rather than DATA_STALE exception) through strict projection.
+If confirmed, preserve complete authoritative ordered deltas as replay-only facts,
+never renew execution eligibility/session/TTL from stale replay. Keep gap, source,
+generation and sequence guards and ACK-after-apply. Required tests include all10
+venue/symbol late cases and negatives, plus Query-ahead/reset/replay. Do not treat
+pre-existing failures as waived or change the Data Layer freshness contract.
+
+DR07 owner isolation handoff2026-10-07: stopped delegated edits on Claude's TS
+worktree; saved exact adapter patch/test/Codex journal under
+/tmp/codex-dr07-move-20261007 (hashed migration-receipt.json). Created branch
+codex/dr07-reset-anchor in /home/bobby/.worktrees/ts-codex-dr07 from be0c15f.
+Commit58287fcfbd2c06fd714d12ce32ca8497bd63637c contains only adapter, new reset
+regressions and TS journal.532affected tests PASS in13.69s in this worktree,
+including real isolated Redis and all10formerly failing late cases. Exact trace
+showed BOOK projection used market2000ms rather than the BOOK45000ms already
+declared by its request; corrected policy selection without new thresholds or
+replay exceptions. Reset Query-anchor/ACK ordering also fixed, not deployed.
+
+After commit, removed only the identical copied adapter/test/Codex journal from
+Claude worktree. Owner blank-line deletion preserved; unrelated new risk_pool
+and price_match changes preserved. New worktree clean, no push/merge. Claude
+reviews58287fc before bringing it into feat/v2-rust-first-okx-demo.
+Test evidence: ~/.local/state/qdl-v2/dr07-hardening-20261007/isolated-worktree/
+attempt-2/{commands.json,affected-tests.log,source-receipt.json}. First setup
+failed before pytest due missing tmpfs mountpoint; retained, fixed harness only.
+Cleanup: RedisDB15zero; ts-codex-dr07-tests network and exact test containers
+removed; empty logs mountpoint removed; no build/prune,92images28.19GB and
+227BuildKit entries16.83GB retained. Available disk90497032192->90442244096bytes,
+concurrent host activity. Production writer f63785a27af8/image9150385e2bb3,
+restart0 unchanged. DL canonical main5bf5cd5 and active12-role/config set
+unchanged; active/rc2/named rollback retained. DR07 remains IN_PROGRESS; CPU,
+causal overflow attribution and commit->RedisACK measurement remain open.
+
+### DR07 continuation - bounded delivery trace and CPU attribution (2026-10-07)
+
+Status: IN_PROGRESS; owner reconfirmed the approved five-part attachment.
+Scope/guide: existing DR07 hardening, architecture sections18.13-18.14 and Phase C
+packet. No new phase or Paper dependency. Keep reset slice58287fc for Claude review.
+TS changes only in ts-codex-dr07/codex/dr07-reset-anchor; never edit Claude's
+trading-system-next-upgrade worktree. Next slice: optional bounded internal
+measurement of existing apply/Redis ACK boundary with source identity, offsets,
+monotonic durations and honest missing commit/receive timestamps. No public schema
+change, new service, default hot-path logging or false PUBSUB-as-ACK claim.
+Tests: same apply semantics tracing off/on, negative/timeout/replay/no-ACK cases,
+bounded observer overhead and real isolated Redis. CPU: inspect existing bounded
+metrics/config; no sysctl/privilege, resource cap or durability change. Profile
+and optimize only with evidence. No rollout without converged packet; active
+digests/config unchanged, source revert is rollback. Journal/commit each tested
+slice; remove only exact test resources. No push/merge and no whole-catalogue/C2.
+
+CPU slice pre-edit evidence: isolated TEST_ONLY synthetic L2 microbenchmark,
+existing rust:1.83-slim image, no build/network/runtime mutation. Five alternating
+pairs per depth, 2,000 deltas/pair, 10 updates/delta, identical final view hashes.
+At depth400 each side, old clone-every-delta median324.303ms versus experimental
+in-place25.614ms; allocations/delta2790 versus258. At depth20:30.115/16.400ms;
+depth1000:852.838/24.977ms. Evidence: dr07-hardening-20261007/l2-cpu/.
+CPU optimization removes only two whole-book clones after all fallible
+validation/parsing completes. Exclusive &mut ownership, synchronous infallible
+update loop, no intermediate publication. Keep decimal comparator, protocol
+checks, snapshot frequency, Kafka durability and output unchanged. Validate
+existing golden fixture and baseline/candidate action parity including invalid
+updates/checksum/gap/generation/replay. Microbenchmark is not real-provider or
+full-stack capacity evidence; <=5vCPU remains UNPROVEN.
+
+## DR07 CPU Source Slice - 2026-10-07
+
+Status: TESTED_LOCALLY, not deployed, Phase C remains HOLD. Profiling already
+showed core normalization cost but did not provide a function-level CPU profile.
+A controlled TEST_ONLY allocation microbenchmark now isolates whole-book cloning
+on every L2 delta. All validations complete before the synchronous update loop;
+exclusive Rust ownership allows updating both sides without copying untouched
+levels. No changes to comparator, decimal precision, integrity/sequence/generation,
+publish cadence, Kafka durability or provider semantics.
+
+Reproducer: `python3 scripts/measure_l2_apply_cpu.py --baseline-ref 0fb731d
+--output <fresh-external-evidence-directory>`. Existing compiler image only,
+network none, 1 CPU / 512 MiB ceiling, alternating baseline/candidate order.
+Each sample applies 2,000 deltas of 10 updates. Five samples per side/depth;
+these are elapsed times with allocation instrumentation, NOT vCPU or live latency.
+
+| Levels per side | Baseline median / max (ms) | Candidate median / max (ms) | Allocations/delta old -> new |
+| --- | --- | --- | --- |
+| 20 | 35.635 / 38.471 | 15.646 / 18.101 | 280 -> 152 |
+| 400 | 330.114 / 359.657 | 24.486 / 27.836 | 2790 -> 258 |
+| 1000 | 816.535 / 833.999 | 23.063 / 27.816 | 6610 -> 276 |
+
+All paired final views identical. n=5 per row/variant; no p99 claim. Source
+regression: 3 Rust unit tests PASS, 0 fail/ignore, 2.23 s. Includes shared golden
+fixture (6 cases / 30 actions), exact decimal checks, and new full-depth clone
+oracle across 2,000 mixed deltas + duplicates, followed by invalid ask after valid
+bid. No partial state becomes visible after invalidation. Standalone test crate
+imports the unchanged module from the checkout; this is not a full workspace or
+provider acceptance. Candidate packaging / affected capture replay is still needed.
+
+External evidence: `dr07-hardening-20261007/l2-cpu/final-paired/receipt.json`, sha256
+`2ff2eec750555d7cd798a34ffc3634a4b01fc001ac8cd9abd6aee120258cec9f`,
+plus `l2-cpu/unit.log`, `source-hashes.json`, `cleanup.json`.
+Do not extrapolate the microbenchmark speedup to Kafka/projector/query/stream or
+claim the 5 vCPU full-stack gate passes. Kafka network CPU attribution remains
+open; perf is unavailable under current host policy and was not bypassed. No
+resource/durability/timeouts were changed to manufacture a pass.
+
+Cleanup: --rm compiler/benchmark containers gone; removed precisely 93 MiB test
+target and two exploratory binaries after hashes. Final harness removes its own
+scratch. Disk available 91,463,634,944 -> 91,565,522,944 bytes (concurrent host);
+no image builds or pruning. Inventory92 images28.19GB, BuildKit227entries16.83GB
+unchanged; active/rc2/named rollback retained. TS writer IDf63785a27af8,
+image9150385e2bb3, restart0/OOMfalse unchanged. Canonical DL main5bf5cd5 and
+12-role/config set unchanged. Source changes require a new immutable candidate
+before Phase C; rc2 cannot attest this new core optimization.
+
+Post-test formatting: rustfmt applied only to the new oracle test and standalone
+probe; the optimized production block is unchanged. Evidence hashes retain the
+measured pre-format source/harness, not silently rewritten. No new timing claim
+from formatting. New benchmark script parsed successfully; diff --check clean.
+
+DR07 TS trace handoff recorded2026-10-07: commit19d77e2 on
+codex/dr07-reset-anchor, /home/bobby/.worktrees/ts-codex-dr07, follows reset58287fc.
+Claude's Paper worktree untouched. BOOK/MARK writer opt-in fixed ring records real
+Redis reply monotonic clock, generation/native sequence and UNKNOWN lost-reply
+outcome; no PUBSUB-as-ACK, default OFF, no hot-path I/O/logging. 66 focused /725
+affected total PASS,0fail/skip,real isolated Redis; do not sum overlapping counts.
+Receipt dr07-hardening-20261007/ack-trace/source-test-receipt.json sha256
+f5af8b5beded6fcc484eefa106db8a9724d10eb8eb46113fffaabb5b6ffd286c.
+Five rounds of300calls: enabled diagnostic delta0.040279ms/apply (same-host),
+not live delivery latency. Canonical commit/SDK receive/other feeds still unmeasured.
+DB15zero, exact test containers/network removed; disk91,342,974,976->91,437,936,640
+bytes, no attributable whole-host reclaim. No builds/prune/runtime changes.
+DL core63238bf and TS19d77e2 are source handoffs only; Phase C HOLD. Do not use
+rc2 to claim new core bytes or deployed TS trace. No push/merge or active quota,
+freshness/manifest changes; next gate is affected source/candidate review and
+converged packet, not another catalogue/C2 debugging run.
+
+### DR07 runtime closure continuation - 2026-10-07
+
+Status: IN_PROGRESS. Owner asks to finish full-stack candidate CPU, actual
+ overflow/replay recovery and canonical-to-Redis/consumer latency, plus related
+in-scope gaps. No Paper feature dependency, full catalogue/C2 rerun, hidden policy
+relaxation, new service or interface. Governing guide sections18.13-18.14 and
+Phase C packet still apply. Source baseline: DL c33c90f (core63238bf), isolated TS
+19d77e2; Claude worktree remains read-only for coordination, never edited/tested.
+
+Execution sequence: capture uncontaminated read-only baseline; verify source/image
+and DR matrix handoff; build one immutable candidate because core source changed;
+affected native tests and captured-provider replay; then apply only the exact
+eligible bounded runtime packet with named rollback. Keep existing CPU5vCPU,
+coherence117/120 per venue and per-partition lag gates; never bypass a failed
+prerequisite. No duplicate writer or competing same-identity probe. No orders.
+Measurement must name canonical durable-visibility/commit boundary explicitly;
+Kafka CreateTime and Redis PUBSUB are not commit/ACK clocks. Preserve missing and
+negative results; distinguish current baseline from candidate observations.
+Cleanup exact test/build resources after hashes; preserve active/named rollback.
+No push/merge/release until evidence convergence. New blockers are recorded here,
+not renamed technical debt or closed by an isolated microbenchmark.
+
+New in-scope monitoring safety finding before runtime action: existing
+kn_production_watch.main() auto-stops seven canonical roles by historical KN
+names on a guard event, even without an explicit stop roster. Current audit uses
+sample() only and has performed NO stops. Fix diagnostic default to read-only;
+optional emergency stop must specify exact immutable container IDs and validate
+against the current eligible roster, never infer authority from phase names.
+Add negative tests proving missing/mismatched IDs cannot stop production. This
+is observer tooling only, not an application/runtime/API/config change.
+Measurement harness also now accepts an explicit immutable candidate digest;
+10 targeted unit tests passed before capture, no new provider calls yet.
+
+
+DR07 closure checkpoint: read-only baseline31samples/30intervals,299.996s;
+12application+5infra mean5.779832/p955.978048/max6.012644vCPU, FAIL5gate.
+Stream overflow+0/+0 during approximately290s is an observation, NOT proof
+historical replay loop fixed. Canonical->actual TS Redis ACK NOT_MEASURED.
+Built exactly one changed-source Rust image rc3-c33c90f, digest0d8da150...38411;
+12binary/linkage checks PASS. Paired60s real ETH Binance/OKX capture: same delta
+chains,586/602deltas, core3.59->3.01CPU-s, RSS18420->18424KiB,n101 each;
+49/53top changes candidate source-time delay0ms (not wall-clock delivery).
+Snapshot message rate x1.492, totalBOOK x1.045; downstream CPU not measured.
+Tooling16tests PASS in existingPythonimage; host lackedhttpx for capturemodule,
+recorded rather than installing/changing host. Watcher auto-stop finding fixed:
+defaultread-only, explicit exactcontainerIDs required tostop. No runtime action.
+Report upgrade/evidence/p184-dr07-runtime-closure.md and Phase C packet updated;
+statusIN_PROGRESS/HOLD. OldCPUprerequisite still fails; boundedtrialproposal has
+NOT waived final5vCPU or authorized new image. No catalogue/C2 or Paperret tests.
+Cleanup pairedcontainers/network/capture/TLS and buildcontext complete; full disk,
+imagecache inventory and retainedactive/rollback/candidate set recorded in report.
+No push/merge; no changes to Claude TSworktree. Source/app image provenance remains
+c33c90f; this slice only changes diagnostic/test/report tooling.
+
+
+### DR07 owner-approved core-only trial - 2026-10-07
+
+Owner explicitly approved changing gate order to trial the candidate. This
+supersedes ONLY the old-runtime<=5vCPU pre-action prerequisite for this bounded
+trial, not the final5vCPU release gate, not DR/broker release evidence, not TS
+source integration, and not permission to roll the other9application roles.
+Exact sequence rust_core -> rust_core_2 -> rust_core_3. Candidate
+sha256:0d8da150820ed684bda084e92f714537cb40bd81e2e3a6bc93fa9a4b33538411;
+rollback sha256:658a9570c5fc23f4906413aa2460f4d82e21772cc63c9ed900363d4d13d54023.
+Render private compose from current inspect using existing kn_production_packet
+helpers; preserve config/TLS/state/offsets/aliases/caps, only image changes.
+Readiness is actual partition progress and usable consumer data, not process-up.
+
+Freeze before first action: trial safety CPU boundary=5.978048vCPU (already
+measured old-runtime p95), two consecutive non-overlapping30s whole-stack means
+above it stop further steps and roll changed roles back in reverse order.
+This boundary governs transitional safety only; after convergence300s mean<=5
+remains required for promotion. OOM/restart loop, integrity/ownership failure,
+missing ISR/quorum, five consecutive10s per-partition lag increases, or failure
+to recover application progress within120s also stop/rollback. A failed final
+CPU gate or post-core TS coherence<117/120 on either venue means trialFAIL and
+rollback, not changing limits to keep the candidate. Preserve failed samples.
+Consumer QUOTE/BOOK freshness/policies remain unchanged; observations use actual
+Redis read path without shared writes/orders/subscriptions. Coherence result is
+review input for Claude; no replacement of complete TS DR01-DR08 acceptance.
+Observer begins before first lifecycle call; only this frozen scope is approved.
+A successful trial does not authorize release or rolling remaining roles.
+
+
+Pre-action safety refinement (no core has changed yet): the observer saw natural
+old-runtime CPU7.07vCPU/30s, later around6.0, before rollout. The prior calm-window
+5.978048 transient boundary would reinstate precisely the old-runtime resource
+prerequisite owner removed. Preserve those pre-action alerts, do not call them
+candidate failures. Before any trial, freeze revision2 safety at1.10 times the
+greater of old p95 and latest unmodified60s mean: baseline5.843292,
+trial stop threshold6.575853vCPU (two30s means). Full evidence and exact
+intervals core-trial/trial-safety-v2.json. This is a transitional non-regression
+guard, not resource-cap increase or release-gate change. Final5vCPU, coherence,
+lag, quorum, integrity and reverse rollback rules remain mandatory.
+
+
+DR07 coretrial RESULT: FAILED_ROLLED_BACK (owner-approved gate-order trial).
+Sourcec33c90f/image0d8da150 deployed exactly3cores, configchecksPASS; nootherroles.
+TSdeployedcache coherence103/120Binance105/120OKX<117, FAIL. Reverse rollback
+3->2->1 complete658a9570;13app+TSrolesrunning/noOOM. No replacementgreenwindow.
+19purecandidateintervals/189.995s CPUmean5.158006,p95/max5.405644vCPU, NOT300sPASS.
+Originalaggregate hitmissingcgroupkeyduringrollback; rawsamples preserved and
+segmentedbyID/time beforedecision. Per-rolecores0.325581/Kafka3.117959vCPU.
+Streamoverflow+4 BEFOREtrial,0additionalduringtrial/rollback; cannotcloseoldloop.
+Guardgenerationresetfalsealarms corrected with5checks; overlap32.938s, no rawgap.
+Coherencepredicate corrected(strictfresh vsquietproof) with10testchecks; allold
+observeroutputsretained. Continuouslagtrendmissing, do notclaimgatePASS.
+
+Fullreport upgrade/evidence/p184-dr07-runtime-closure.md now records exactlatencies,
+scopes, CPU,evidence androllback; packetstillHOLD for remainingroles/release.
+Current canonical->actual RedisACK stillNOT_MEASURED; isolatedQueryprobe0requests,
+stoppedbyharness/config/quota reserve androlloutcoordination, notproviderrefusal.
+TSprobe38testsPASS inexistingimage; sourcehandoff only, noTSruntimeimagechange.
+Alltestcontainers/network/captures/privateprobecopies removed;guardprobesfinished.
+Keepactiveold/explicitcandidate0d8/namedrollback; nobroadprune orpush/merge.
+StatusoverallIN_PROGRESS: close residualcoherence attribution + TSreset/ACK
+integration + fullruntimeCPU/recovery/delivery gates + DR/broker evidence.
+Do notwaitforTS Paperfeatures, do notrebuildunchangedimages orrepeatC2 toguess.
+
+
+### DR07 exact-event caller continuation - 2026-10-07
+
+Status IN_PROGRESS/RELEASE_HOLD, owner explicitly approves finishing exact-event
+canonical -> Stream -> SDK -> TS writer trace, reset/ACK caller integration,
+recovery, full-stack CPU/continuous lag and DR01-DR08 plus broker delta receipts.
+Guide18.13-18.14/Phase C invariants unchanged. Prior three-core trial remains
+FAILED_ROLLED_BACK; do not repeat it without new attribution. No Paper dependency.
+Work only DL fix/p184-dl-closure and TS codex/dr07-reset-anchor, never edit/test
+Claude checkout. TS patch scope actualmarket_data_service_p184w only; inspect
+source/image/config first, retain9150385e rollback and existing state/identity.
+No new credentials, quotas, freshness, publicinterface, datareset, or newservice.
+Freeze concrete packet/digest before mutation; receipt reports exact changes.
+Canonical read_committed visibility is not a broker commit clock. Pair same
+identity/partition/offset/generation; bounded trace must identify missingpoints.
+Stop on integrity/ownership failure or readiness regression; preserve errors,
+roll back changed writer if gates fail. No push/merge/release in this slice.
+
+TS source finding reproduced: bridge BOOK_DELTA used market session budget,
+not adapter BOOK-specific budget. Commit83131d4 changes selector only;7newcases
+3FAIL before, full bridge/reset144PASS0skip with isolatedRedis after. Exact
+RedisDB15zero and testnetwork removed. Deployedwriter unchanged, SDK2.0.7;
+fixedworkers/main/cache_projector/cache_reader/execution_ordering bytes match
+Codex source before trace edits. Overlay will not import unrelated Paper code.
+
+
+### DR07 caller runtime receipt - 2026-10-07
+
+Status CALLER_DEPLOYED_OBSERVED / RELEASE_HOLD. Full continuation receipt:
+[Actual caller rollout](upgrade/evidence/p184-dr07-runtime-closure.md#actual-caller-rollout-and-exact-event-receipt---2026-10-07).
+TS source83131d4/452955f, only writer5849d716 deployed, rollback9150385e retained.
+144/529/491 PASS separate overlapping suites, zero skip. 2556 exact BOOK event
+joins to actual Redis ACK, zero identity mismatches. 31/31 READY60/60sessions;
+execution eligibility minimum47/60, not FULL. Trace timeout retained UNKNOWN
+with successful subsequent same-generation MARK apply1121ms later.
+Continuous lag2160 valid samples, no five-increase alarm; no overflow/replay growth
+in300s. DL17-role mean5.303766vCPU FAIL, old/current DL runtime unchanged.
+Prior core trial remains failed/rolled back. DR01-08/broker indexing still pending;
+DL DR07 hardening must not be confused with TS DR07 reference-metrics family.
+Do not wait for Paper features; do not issue release on these partial results.
+Cleanup context removed, disk93753360384->93753577472bytes; tests/networks gone.
+No broad prune concurrent caches, no data reset, no push/merge/release.
+
+### DR07 Claude continuation - bar edge storm removed, product coherence gate - 2026-10-08
+
+Owner-authorized continuation of Codex's DR07 closure. Found by CPU attribution: binance_bar_edge on 2.2.0-rc4
+(without fba8863) retried Binance 3d overlapping history every ~2.4 s forever (attempt ~19,500), costing 0.56 vCPU,
+~850 Kafka request segments/s per broker, rust_core admissions and Binance REST quota. Owner-approved single-role
+recreate 02:17:33 UTC to qdl-v2-python:2.2.2-d6d2637 (sha256:51450612...); config/mounts/limits and baked
+acquisition/catalog/manifests unchanged; rollback compose retained. Whole DL 5.1996/5.4454 (mean/p95) ->
+4.3657/4.5680 and 4.2965/4.6351 in two later 300 s windows (lower load; one earlier window unattributed spike).
+Coherence gate redefined by the owner to the TS product path; with TS IDR-076 (bounded re-read) the current cores
+reach 120/120 per venue. Core candidate not needed for coherence. Evidence:
+upgrade/evidence/p184-dr07-runtime-closure.md (Claude continuation). Status RELEASE_HOLD for DR/broker receipts.
+
+
+### IDR-075 paired Paper entitlement and release-record continuation - 2026-10-08 (Codex)
+
+Status IN_PROGRESS / PREPARED_ONLY until approved runtime packet. Owner handoff
+supersedes the old core-first coherence gate: current658a9570 cores retained;
+TS product-path IDR-076 governs coherent reads. Existing bar edge51450612
+rollout is inherited with immutable evidence, not repeated. Scope: simultaneous
+readonly300s CPU/input-rate sample; prepare next DL release record; additive
+Paper inverse entitlement and TS manifest-revision/hash pairing. No other role
+may change without its exact approved packet. No push/merge/tag/publication.
+Read guide18.13-18.14 and PhaseC packet; do not wait for Paper feature completion.
+Source inspection shows BTC-USDT-SWAP MARK_INDEX_PRICE already entitled: preserve
+and prove its INDEX component path, do not add duplicate or confuse standalone
+INDEX reference products. Four inverse feeds only; copy ETH policy without
+weakening freshness/realm/quota, no TRADE/BAR additions. Use deployed catalog
+identity and bindingr22, not the source catalog that lacks runtime inverse rows.
+Prepare public artifacts outside runtime; sealedV3 rev11/r23 and paired TSenv
+change are not live authorization. Negatives: wrong realm/source/units, checksum,
+revision drift, missing pair, old policy mutation, duplicate/unapproved feed.
+Rollback preserves original paper manifest10/bindingr22/JWT10 together; no cache,
+cursor or financial mutation. Busy window must be supported by simultaneous
+input rates, not inferred from a CPU average. Cleanup only owned temp resources.
+
+
+### IDR-075 preparation and busy-window receipt - 2026-10-08 (Codex)
+
+Status PREPARED_NOT_ACTIVATED / RELEASE_HOLD. Owner's latest scope observed:
+no core candidate rollout, no reader/writer/runtime changes, no push/merge/tag.
+Release preparation v2.2.3 now records actual17role composition and inherited
+bar edge51450612 instead of stalef7351c3b. Published v2.2.2 not rewritten.
+See upgrade/evidence/releases/v2.2.3/{RELEASE_NOTES.md,release-preparation.json}
+and governing2026-10-08 section in upgrade/evidence/p184-dl-phase-c-packet.md.
+
+Busy readonlywindow03:21:03-03:26:03UTC,31samples/30intervals/299.992s:
+DLmean4.882532,p955.564052,max5.870669vCPU. Frozen300smean<=5 observedPASS;
+not allintervals<=5, not3000payload/s certificate. Input canonical952.48/raw826.28
+log-end offsets/s over302.110s, higher than all3priorbaselines; includesmarkers.
+BARmean0.016960vCPU. Noimage/config/restart/OOMchanges. ActiveStream overflow+2,
+replay+15901/subscriptions+3. Exactboundedlogs identify TS Paper BTC TRADE on
+Binance/OKX queued1000, then Binance replay10000 -> OUT_OF_RANGE. Do not call
+missingdata or infinite loop proved; affectedrecovery remainsopen. One TS
+BinanceBTC MARK timeout. No new consumerquota/probe used. Passiveunchanged.
+Evidence: ~/.local/state/qdl-v2/p184-codex-release-20261008/cpu/receipt.json
+SHA256e1434fe1 (fullhash in release record); overflow-attribution.json retains
+three exactclosures, commands/hash/samples preserved. No repeatedmeasurement.
+
+IDR075: scripts/prepare_paper_read_extension.py uses deployed public catalog and
+paperrev10/bindingr22, adds four already-acquired inverse feeds with ETHpolicy,
+keeps all60 products/61 priorrequirements/quotas. Target65manifestrequirements,
+64V2products, manifest/JWT11,bindingV3r23. BTC-USDT-SWAP MARK_INDEX_PRICE was
+alreadygranted; performance referenceINDEX uses same feed, no duplicategrant.
+No catalog/acquisition/sourcepolicy update or USD=USDT assumption. V3policies
+sealedfromactualmanifest, not guesseddefaults; consumerenvironmentpair validated.
+DLtests25PASS0fail0skip (unittest,89.939s) including9newnegatives/positives and
+existing sandbox/consumer/inversecontracts. Host lackedredis; image lackedpytest;
+used existing image's unittest, no dependencyinstall/build. TS28PASS0skip and
+actualpublicpacket validationPASS by strict TSparser, sourcefeature notoldbranch.
+Prepared packet SHA25627470ade38a9e638884de3f37fe41c8a66dc1c15aeca7de3d00bba808889a088;
+binding5a9a19385ae34d34213284f06aac8e5c7eb687068702f493590f2664dc0accdf;
+pairedreleasehash6d35f2cf26d9a348d3000ffbf80dc5266dbbe6e8c7cbc0fdc0675345f501ad27.
+Public artifacts/commands/receipts under sameevidenceroot/idr075/. Runtime still
+JWT10/bindingV2r22, no intended-read acceptance claimed for inversePaper.
+
+Next: reviewed exactreader/callerpacket, simultaneousgenerationcutover, actual
+Paperidentity no-orderpreflight, DR01-08 andbrokerreceipt; no waitforPaperfeatures.
+Do not infer permission to recreate any role from purepreparedfiles. Record new
+TRADE recovery finding with Claude before closing release, no buffer/gatewaiver.
+
+Cleanup: all --rm/no-networktestcontainers gone, no newimages/buildcache. Agents
+andboundedobserversfinished. Mergedclean codex/dr07-reset-anchor worktree/branch
+removed afterancestorcheck(dfc70bd merge), noClaude/Portal
+checkout removed. Only owncompiledscriptcache removed. Diskfree105165643776 ->
+105203245056bytes, concurrenthost noexclusiveattribution. Inventory94images28.31GB,
+BuildKit444/18.29GB; retaincurrent/candidate/namedrollback, no broadprune. Canonical
+DL /home/bobby/data_layer main5bf5cd5/v2.2.2 unchanged, featurefix/p184-dl-closure;
+TS canonical668e103 unchanged, workon feat/v2-rust-first-okx-demo perowner.
+
+
+### DR01/DR08 isolated runtime evidence and TRADE attribution - 2026-10-08 (Codex)
+
+Status IN_PROGRESS / v2.2.3 HOLD. Approved scope: nine DR01 runtime cells using
+disposable test credentials; four DR08 ISOLATED_FAULT cells on temporary
+Kafka/core/Stream; bounded readonly attribution of the 03:21 TRADE incident.
+Roster and evidence contract: TS scripts/p184_case_matrix.py and
+scripts/p184_dr07_reference.py; architecture guide owner continuation 2026-10-08
+and upgrade/evidence/p184-dl-phase-c-packet.md remain governing references.
+No shared runtime, credential, manifest, quota, topic or consumer mutation.
+No push/merge/release. Keep bar-edge rollback f7351c3b until release approval.
+Runner development uses explicitly dummy TS provenance; final evidence requires
+Claude's final source SHA and image digest, not a relabelled development receipt.
+Correctness gates: exact nine/four cell identities, fail-closed negative auth,
+bounded queues, independent fast-consumer progress, observable overflow/range
+signals and measured restart recovery. Do not infer account authorization from
+an unchecked JWT claim. Test data provenance must remain explicitly test-only.
+LATEST_STATE opt-in TRADE and batch_wait_ms 25->50 remain proposals only.
+Rollback: no operational changes to undo; remove only named disposable test
+containers/networks/credentials and retain bounded evidence/hashes. Record exact
+commands, tests, measurement limitations and cleanup with each completed slice.
+
+
+### DR TRADE attribution slice - 2026-10-08 (Codex)
+
+Status READONLY_ATTRIBUTION_COMPLETE / RELEASE_HOLD. Detailed report:
+upgrade/evidence/p184-dr01-dr08-trade-attribution.md. Recomputed retained hashes
+and paired counter deltas; independently checked rates with Python datetime/JSON.
+The 9.996720s interval enclosing both overflows has aggregate hub offers
+2370.778/s and local outbound deliveries1057.447/s. NOT per-subscription rates,
+NOT client Redis ACK; lifetime totals135298/240841 cannot be divided by300s.
+Closure lacks per-subscription offered sampling and transport window telemetry.
+Two queues1000 and Binance replay10000/OUT_OF_RANGE are observed; exact TS vs
+network cause remains NOT_ATTRIBUTED. TS IDR078 later fresh/advancing samples do
+not reconstruct incident-time recovery latency. No additional consumer requests.
+Inspected actual realtime-core entrypoint and its one shared batch deadline;
+25->50ms remains an isolated paired-experiment proposal, not an implemented fix.
+Per-subscription TRADE LATEST_STATE also remains proposal-only, default LOSSLESS;
+no changes to existing QUOTE mode, canonical durability or consumer contracts.
+No runtime/image/config changes, no disposable resources created in this slice,
+no cleanup required. Bar-edge f7351c3b retained. DR01/DR08 runner work remains
+in progress; final TS SHA/image still required before final case evidence.
+
+
+### DR isolated runner rehearsal packet - 2026-10-08 (Codex)
+
+Status IMPLEMENTING_AND_TESTING / NOT_FINAL_TS_EVIDENCE. DR01 loopback HTTP
+uses existing Python rc2 image77682eea, --rm/network none, .5CPU/512MiB,
+fresh RS256 keys removed on exit; public source mounted read-only. Initial
+13 tests PASS0skip; HTTP rehearsal7/9 passes, two account cells explicitly open.
+Exact TS verifier independently confirms those two failures, not a roster or
+provenance error. A consumer mismatch is not broker/account authorization.
+Final account probes must GET TS balances from an isolated final-image Gateway:
+A->A and B->B positive balances, A->B same venue rejected with
+ACCOUNT_ALPHA_SCOPE_MISMATCH, invalid-key negative, all four accounts within
+writer scope. No order command, broker key or shared financial-data access.
+
+DR08 disposable packet uses unique p184-dr08-<random> names and --rm. Kafka
+network none; other roles join only that container namespace, no published
+ports or production network. Limits: Kafka1CPU/1536MiB, core.5/256MiB,
+Stream.5/512MiB, Query.5/512MiB, quotaRedis.1/64MiB, driver.75/512MiB.
+Reuse existing immutable images, new TLS/JWT/cursor keys mode0600, read-only
+source and fresh scoped evidence/state only. Query is minimal existing read-view
+support for real GetSnapshot RPC, not a new production service or schema.
+Copy only current core public configuration read-only and restrict to test
+BTC TRADE; synthetic records explicitly test_provenance=true in test-only
+core authority. No claims of real-provider latency, HA or TS durable ACK.
+Queue1000/replay10000 unchanged. Overall driver deadline600s; preserve failed
+attempts and cleanup all intended names by ownership label even startup/CLI
+failure. Remove keys after hashes/logs, verify production image/start/restart
+inventory unchanged; retain active and bar-edge f7351c3b rollback images.
+No sourceimage build, runtime rollout, batch-wait change or LATEST_STATE change.
+Final case acceptance awaits actual TS SHA/image, fresh run, and DR/broker receipts.
+
+
+### DR01 runner implementation receipt - 2026-10-08 (Codex)
+
+Status RUNNER_TESTED / FINAL_RUNTIME_ACCEPTANCE_PENDING. New runner
+scripts/p184_dr01_runtime.py emits the exact nine TS cell IDs and wrapped
+p184.surface-evidence-provenance.v1 header. RS256 ephemeral keys use0600 and
+TemporaryDirectory cleanup; actual DL app handles loopback HTTP in --network
+none existingPythonimage77682eea. Existing compiler seals a one-product
+BAR1m ALPHA binding pervenue; positive wire control reads metadata, NOT all
+r22 product data or mTLS/image-byte certification. Scope is explicit in rows.
+Source tests plus actual HTTP:23PASS0fail0skip39.818s. Scope-label-only followup
+host run22PASS1skip (HTTP requires containerdeps), not counted as runtime proof.
+First source version had header wrapping/placeholder and boundary issues caught
+before commit; corrected with tests. Account option uses public TS GET balances,
+strict positive exact-decimal balances, same-venue A->B403scope denial and an
+independent invalid-key403. No broker JWT account claim is invented. Account
+option tests are HTTP unit mocks, NOT actual final-image Gateway evidence.
+
+Rehearsal JSONL (before account-option addition) retained outside Git:
+~/.local/state/qdl-v2/p184-dr01-20261008-agent/dr01.rehearsal.jsonl
+SHA2563b6e1a90ad4129738f822b79d530d8d7d43e561ded2d445be418508fbbcbcf1f.
+Actual TS scripts/p184_case_matrix.py independently parsed exact header/roster:
+7/9 closed, only two WRONG_ACCOUNT_DENIED cells failed/NOT_OBSERVED. Dummy TS
+SHA/image means this is DEVELOPMENT ONLY, never included in final release
+bundle or relabelled. Fresh final-provenance run with isolated Gateway packet
+is required for nine-cell acceptance; Claude final TS SHA/image not yet supplied.
+Runner --account-packet schema and setup contract are documented in code; use
+four Paper accounts within writer scope, two active alphas and isolated PG/Redis.
+No runtime, real credentials, consumer quota, manifest or TS source changed.
+Test containers removed (--rm); no images built or removed, private keys removed.
+No push/merge; v2.2.3 HOLD and f7351c3b rollback retained. DR08 remains in progress.
+
+
+### DR08 isolated fault receipt and final handoff - 2026-10-08 (Codex)
+
+Status RUNNERS_IMPLEMENTED_TESTED / FINAL_DR_ACCEPTANCE_PENDING / RELEASE_HOLD.
+Guide and final-provenance procedure: upgrade/evidence/p184-dr-runtime-runbook.md.
+Attribution/proposal report: upgrade/evidence/p184-dr01-dr08-trade-attribution.md.
+DR01 full source binding is now canonical-validated before deriving disposable
+one-BAR identities; source roster counts/hash are recorded, not implied all-feed
+wire coverage. Final check in existing Python image77682eea with --rm/network
+none/.5CPU/512MiB, source read-only: python -B -m unittest
+ tests.test_p184_dr01_runtime -v:23PASS0fail0skip38.615s.
+No final TS SHA/image supplied yet. DR01 retains7/9 rehearsal, two account cells
+require isolated final-image Gateway. Unit mocks do not close those cells.
+
+DR08 scripts/p184_dr08_isolated.py owns disposable Kafka/core/Stream/Query/Redis
+and driver. Existing images only, no published ports or external network,
+explicit synthetic test provenance, queue1000/replay10000 unchanged. Slow client
+process paused while independent fast client progresses. Actual gRPC overflow,
+OUT_OF_RANGE and newer GetSnapshot recovery observed. This is ISOLATED_FAULT
+rehearsal, not production/provider latency, HA, projector recovery or TS Redis ACK.
+Tests: python3 -B -m unittest tests.test_p184_dr08_isolated -q:
+25PASS0fail0skip0.037s (parent rerun).
+
+Attempts1-11 preserved outside Git; harness setup failures covered permissions,
+Kafka file/segment sizing, quota/group namespaces, startup and test lineage.
+No production code/policy fix inferred from those test-packet errors. Cold-start
+seed expiry fixed by publishing a NEW test event after readiness, never changing
+old timestamps or relaxing freshness. Attempt12 raw receipt preserved unchanged:
+~/.local/state/qdl-v2/p184-dr08-development-20261008-attempt12/evidence.jsonl
+SHA256 3e9e0b93581e6b65bc9b0e04c2895ffc1aff1f60481c0e2af0e50513bc5c4471.
+One original check failed because parser expected the wrong textual status name.
+Corrected parser plus regression and independently verified raw closure matched
+exact consumer/subscription and actual wire RESOURCE_EXHAUSTED. Supplement:
+queue-parser-supplement.json SHA256
+87b218116e287b8b4dbc1a30f6ad5aa01d81277faf473b2acc276ec37c8f5834.
+stream-runtime.log SHA256
+f179343f670ae103acc7e5842a0439dfb6174aa37a4e6079fed89613b845710e.
+Combined4/4 DEVELOPMENT checks; original failed receipt is not overwritten.
+
+Measured queue at closure1000events/4719110bytes; sampled queue bytes max4989098.
+Replay10000 then OUT_OF_RANGE. Independent fast consumer10001ordered events,
+71 progress points while slow stopped. Controls/counters: overflow+1, expired+1,
+69 metrics samples. Recovery n=1, units ms: snapshot1744.467,
+client restart->first event5241.271, OUT_OF_RANGE->first event6999.346.
+Snapshot tradeID2->10004 and offset3->10107; not a p99 or consumer durable ACK.
+Development JSONL remains nonqualifying. Final provenance requires a fresh run,
+not rewriting its header. No conclusion about TS-vs-network03:21 root cause.
+
+Cleanup: all8 owned attempt12 containers removed, private keys removed,
+cleanup_failures=[], shared_runtime_unchanged=true. Disk free before91924062208B,
+after91898748928B; concurrent jobs mean delta is not attributable to this test.
+All earlier failed attempts cleaned; final DR01 container --rm removed. Images
+built0/removed0. Docker inventory:95images/41active/28.96GB; BuildKit19.8GB,
+2.125GB reclaimable. No broad prune during Claude concurrent work. Retain active
+images plus explicitly retained bar-edge rollback f7351c3b (inspect confirmed).
+
+Canonical /home/bobby/data_layer main5bf5cd5, stable releasev2.2.2; feature
+/home/bobby/.worktrees/data-layer-p184-closure fix/p184-dl-closure. Runtime service
+set/config remains unchanged:3cores658a9570,2Stream1f13408f,2projector a696cfba,
+BAR/2Query51450612, ingestors0f6876e1, existing infrastructure. TS writer5849d716,
+manifest/JWT10 and bindingV2r22 unchanged. No TS source edits, rollout, push/merge.
+v2.2.3 HOLD for final DR/broker receipts. LATEST_STATE and batch25->50 proposals
+were neither implemented nor measured. Next permitted work: final-image isolated
+account fixture plus fresh provenance-bound DR01/DR08, then owner packet review.
+
+
+### DR owner correction and runtime-runner scope - 2026-10-08 (Codex)
+
+Status IMPLEMENTING / RELEASE_HOLD. Owner supersedes prior DR01 handoff:
+existing local application runner is CONTROLLED_SIM only, never closes DR01.
+New stdin runner targets deployed query_kn using existing alpha r22/JWT14/mTLS,
+GET-only, baseline and exact negative realm/revision/entitlement checks plus
+compiled binding hash comparison. Do not execute it on shared runtime here.
+WRONG_ACCOUNT_DENIED belongs to Claude's TS Gateway, not DL. DR08 must name
+Query2.2.3-rc2-43bbcf0 explicitly and final recovery needs>=5 restart samples
+with p50/max. Add per-subscription offered/dequeued closure counters only; no
+queue, contract, freshness, quota or topology change. Add owner-supplied03:21
+worker correlation, distinguish correlation from exact transport attribution.
+LATEST_STATE and batch25->50 proposals are withdrawn, not implemented.
+TS candidate2abbe394ea0fb8f7f5ebcbb745ff70a8c83c9769 /
+sha256:a6548ee36aeb0242c1734c071678c525c1506d05c10a70b533eb7110e7eaf16a
+is provisional until Claude confirms CI green; do not certify using it yet.
+Tests: isolated source/unit/protocol only; no shared runtime, credentials or
+consumer traffic. Rollback is source-only; cleanup own test resources, retain
+f7351c3b. Each coherent slice gets tested commit+journal; no push/merge.
+Guide: upgrade/evidence/p184-dr-runtime-runbook.md.
+
+
+### DR Stream closure counter slice - 2026-10-08 (Codex)
+
+Status SOURCE_TESTED / NOT_DEPLOYED / RELEASE_HOLD. Owner-approved additive
+closure JSON now includes subscription-local offered/dequeued. Offered counts
+eligible live enqueue attempts including overflow; dequeued counts actual live
+queue pops before read-time filtering/transport, excludes replay/discard/coalesce.
+No new queue, TTL, delivery mode, quota or runtime behavior. Neither is client ACK.
+Regression covers duplicate/wrong product/stale, capacity/byte overflow, failure,
+close discard, independent subscriptions and coalescing without false dequeues.
+Existing offline builder/cache command: cargo test --offline --locked
+-p qdl-stream-gateway --lib --test native_stream -- --test-threads=2:
+74PASS0fail0ignored. Two bounded closure-log checks also passed, including two
+subscriptions each emitting offered1/dequeued1. No image build or shared rollout.
+Disposable builder containers removed; shared caches retained for concurrent work.
+Report upgrade/evidence/p184-dr01-dr08-trade-attribution.md now records owner
+worker1 correlation, exact6.088298ms closure separation, no other family overflow
+in supplied window, and withdrawal of LATEST_STATE/batch25->50. Exact stall stage
+remains unmeasured; owner TS-side working attribution is not invented telemetry.
+No push/merge; keep bar-edge rollbackf7351c3b. Runtime unchanged.
+
+
+### DR08 provenance and repeated-restart slice - 2026-10-08 (Codex)
+
+Status SOURCE_TESTED / FINAL_RUN_PENDING. Runner now records and validates
+Query image2.2.3-rc2-43bbcf0 / sha256:77682eea5054ae9ddbd858323b083286669a55eeb4bc7bc065b04bae8854e32f
+against actual container inspection. Never labels it productionQueryv2.2.2.
+Final mode requires5-10 independently started consumer processes, strictly
+advancing trade IDs, raw monotonic start/first-event samples, n/p50/max ms.
+Copied, missing, out-of-order or oldn1 samples cannot qualify. Initial full
+OUT_OF_RANGE recovery and snapshot timing remain separately labelledn1.
+Unit: python3 -B -m unittest tests.test_p184_dr08_isolated -q:
+40PASS0fail0skip. Docker orchestration mocked in new tests; no fault rerun,
+no fresh recovery measurements and no new acceptance claim. Previous rehearsal
+receipt unchanged. No containers/images created by this slice; no rollout.
+Final TS provenance remains gated on Claude CI confirmation. v2.2.3 HOLD.
+
+
+### DR01 deployed runner handoff - 2026-10-08 (Codex)
+
+Status RUNNER_SOURCE_TESTED / DEPLOYED_PROBE_NOT_RUN / RELEASE_HOLD. Existing
+scripts/p184_dr01_runtime.py now emits CONTROLLED_SIM exclusively. Its historical
+account helpers remain regression-only, never used to close DR01. New
+scripts/p184_dr01_deployed.py separates offline prepare, stdin probe and record.
+Prepare reuses compile_alpha_deployment_bindings.compile_inventory against
+stable-v2-release-routing.yaml and original alpha inventory; rejects wildcards,
+seals expected binding+manifest hashes. Probe compares actual mounted binding
+bytes/checksum, identity, release hash and JWT14 before any request. GET-only,
+mTLS/hostname verification, no redirect/proxy/retry, bounded body/time. Four
+requests per venue: positive bound QUOTE, live401, revision13/401, valid catalog
+product absent from actual access manifest403PERMISSION_DENIED. Positive control
+failure never passes negatives. Runtime record requires both venues and explicit
+CI-green acknowledgement; exact7DL cells, no account cells. Claude supplies the
+remaining2Gateway account cells. Tokens, credentials and response bodies are not
+logged. No order/stream action, no actual alpha identity used in this slice.
+
+Offline actual compiler in existing image77682eea --rm/network none/.5CPU/768MiB:
+both BB deployment bindings match the files mounted by alpha-noorder-sdk2b.
+Observed release_revision27 (not22), access JWTmanifest14. Binance binding hash
+bbc8b0de1194778f70f94d5cd003fa251f3084250dee3590d4944b4e5f8b8fb8;
+OKX29e321e0c6067b34070227598fe8d694f3b491d017ffaa25d4e1073706225ac4.
+No configuration was rewritten to resolve naming confusion. Source selector
+inspection: rg -n '\*|\?' consumers/stable/alpha-binance-paper.yaml
+consumers/stable/alpha-okx-paper.yaml: exit1,0matches. Parsed concrete-selector
+audit also clean, hashes in prepared packet. This does not replace live403.
+Initial negative-selector prepare assumed same instrument had an ungranted feed;
+offline real inventory disproved it (StopIteration). Fixed selection to valid
+same-venue catalog instrument/feed outside access manifest, then both compile
+checks passed. No runtime requests occurred.
+
+Final tests in existing Python image, sourceRO/network none, ephemeral loopback
+HTTP only: python -B -m unittest tests.test_p184_dr01_deployed
+tests.test_p184_dr01_runtime tests.test_p184_dr08_isolated -q:
+73PASS0fail0skip38.268s (9new runner +24controlled regression +40DR08). Earlier
+test-mock environment parameter collision fixed; failed run retained in session
+output, not described as production defect. Readiness/latency/DR01 runtime cells
+not certified by these unit/controlled tests.
+
+Guide updated: upgrade/evidence/p184-dr-runtime-runbook.md includes exact
+prepare/probe/record commands, revision distinction and minimum5restart gate.
+TS SHA2abbe394/digesta6548ee3 remains provisional until Claude confirms CI green.
+No push/merge, shared runtime or manifest changes. Own --rm compile/test containers
+removed (docker ps -a --filter name=qdl-dr01 empty); no new images, secrets or
+networks retained. Rust cached build artifacts retained for concurrent work;
+no broad prune. Canonical /home/bobby/data_layer main5bf5cd5 releasev2.2.2;
+feature /home/bobby/.worktrees/data-layer-p184-closure fix/p184-dl-closure.
+Active runtime remains as previous inventory; patch not deployed. Keep BAR
+rollbackf7351c3b. Next: Claude reviews and runs DR window with final CI-green
+provenance, then combines Gateway cells/DR08/broker delta; v2.2.3 staysHOLD.
+
+
+### Pre-stage3 consolidated build, SDK and DR05 - 2026-10-08 (Codex)
+
+Status IMPLEMENTING / RELEASE_HOLD. Owner confirms TS2abbe394 CI green
+(unit11415/integration3068 no failures), imagea6548ee3. This authorizes provenance
+when scheduled, NOT immediate DR01 deployed/DR08 final execution. Work now:
+(1) single-source commit build recipe/CI for IDR039, including IDR040fix1, bindingV3,
+quota logs, b6a0119 counters and IDR075; release rebuild waits until TS tests end;
+(2) reproducible qdl-sdk2.1.0 wheel handoff for TS/alpha without consumer rollout;
+(3) isolated DL DR05 GAP/GENERATION preparation/tests. No shared runtime, grants,
+credential or image changes. No DR01/DR08 final probes. New TS data findings
+arrive via INTEGRATION_DEFECT_REGISTER, not speculative broad changes.
+Tests: source/build-contract, wheel RECORD/reproducibility/clean-install SDK
+compatibility; DR05 fault fixture isolation and exact typed gap/generation safety.
+Every slice tested+journalled, no push/merge. Cleanup owned --rm resources only;
+keep active and BARf7351c3b rollback. Release rebuild/rollout remains later packet.
+Guides: upgrade/evidence/p184-dl-phase-c-packet.md and p184-dr-runtime-runbook.md.
+
+
+### SDK2.1.0 reproducible package preparation - 2026-10-08 (Codex)
+
+Status SOURCE_TESTED / ARTIFACT_PUBLICATION_IN_PROGRESS / DL_RELEASE_HOLD.
+Existing build_qdl_sdk_release.py is the canonical deterministic wheel builder;
+no new packaging system. Correct packaged README2.0.4->2.1.0 and strengthen
+RECORD test to verify every payload digest/size, no duplicate entries. SDK code,
+dependencies and generated contracts unchanged. Existing image77682eea, network
+none, sourceRO, --rm: python -B -m unittest discover -s tests -p '*sdk*.py' -q:
+89PASS0fail0skip11.467s. Includes reconnect/offsetzero, replica, executionquality,
+projection, public API and reproduciblewheel tests. Disposable removed.
+Freeze this package source before building consumer artifact outside Git; then
+clean-install test on exact TS a6548ee3 and alpha a03c62f0 images without shared
+network/config/identity. No application image rebuild or consumer restart.
+Public GitHub wheel publication follows existing certified DL tag workflow;
+local immutable hash-pinned handoff does not publish v2.2.3 or bypass HOLD.
+
+
+### SDK2.1.0 consumer artifact handoff receipt - 2026-10-08 (Codex)
+
+Status LOCAL_ARTIFACT_PUBLISHED / TS_INSTALL_PASS / ALPHA_DEPENDENCY_UPDATE_REQUIRED.
+Guide upgrade/evidence/qdl-sdk-2.1.0-consumer-handoff.md. Package source
+b2c8c5696a7e6b9bdcf2d1f97e94f837f5ba0fe8; actual source files checked against
+that commit before attestation. Artifact outsideGit:
+~/.local/state/qdl-v2/sdk-2.1.0-b2c8c56/artifacts/qdl_sdk-2.1.0-py3-none-any.whl
+SHA2566923b46f46bd07c850b18a6074439bbcb4085d84428a8e72c476437dd51524e7.
+Manifest/SBOM alongside. consumer-install-receipt.json SHA256
+8a52a9b6967a5e516882f1988761c1a078cc7f2320ccdafb7489b06f17095b00.
+
+Isolated --rm/network none/pip --no-index --no-deps target installs: TS image
+a6548ee3 PASS; alpha a03c62f0 wheel imports PASS but existing PyJWT2.13.0 is below
+SDKdeclared>=2.15.1, so alpha AS-IS DEPENDENCY CHECK FAIL. Do not lower requirement.
+Downloaded exact public PyJWT2.15.1 wheel only (33KB), SHA256
+42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193; alpha disposable
+install with this wheel PASS, actual sdk/jwt paths under/tmp/sdk-only verified.
+All5declared dependency ranges checked with packaging.Requirement, protobuf
+query/marketdata imports PASS. This is packaging evidence, not DR or runtime
+acceptance; Claude must update alpha build dependency before consumer rollout.
+Initial smoke errors (venv pip absent, helper packaging absent, import cache
+selecting preinstalled SDK) corrected in harness only; record retained.
+
+All own test containers removed, no images built, no shared runtime/config/key
+mount. Retained deliverable128KB, not cleanup waste. No public tag/PyPI/GitHub
+publish: existing certified-tag release workflow still owns public distribution;
+local hash-pinned artifact is now available to both consumer builds. v2.2.3 HOLD.
+Canonical main5bf5cd5/v2.2.2 unchanged; feature fix/p184-dl-closure; no push/merge.
+
+
+### IDR039 one-commit build recipe and CI slice - 2026-10-08 (Codex)
+
+Status IMPLEMENTED_TESTED_LOCALLY / CI_CONFIGURED_NOT_RUN / BUILD_HOLD.
+Guide upgrade/evidence/p184-consolidated-build.md; generator
+scripts/p184_consolidated_build.py reads only full committed Git objects, checks
+ancestry/source contracts for IDR040fix1, bindingV3, quota log, b6a0119, IDR075.
+One private git archive is the source context for BOTH Python and Rust images;
+exact OCI revision/IDs checked, no overlays or per-role application source.
+Pending TS acceptance completion, exact-source DL CI and build approval produce
+HOLD with NO executable build script. Confirmed TS unit/integration CI is not
+substituted for completion of the pending TS acceptance window. No build executed.
+Final archived-source SDK rebuild must match handed-off wheel6923b46f; drift
+requires explicit review, never overwrite consumer artifacts.
+
+New CI consolidated-source-preflight job uses pinned checkout/setupPython and
+full Git history; proves exact github.sha source contracts and expectedHOLD.
+Existing deployment/release jobs unchanged. Initial real-Git unittest dependency
+would fail in application image without git/.git; moved real-source check to
+host CIjob and kept portable tests mocked. Parent verification:18PASS0fail0skip
+in network-none image77682eea; actual CI Pythonblock locally PASS against
+52642e52e01981590bc433bf95ac12d4e941cf10 (host python3, since no python alias).
+This is NOT remote CIgreen; workflow not dispatched or pushed. Source-marker
+checks do not replace semantic/package/DR regression. Operator receipt digests
+are attestations, not automatic remoteCI validation.
+Cleanup: no images built, temporary test container --rm removed, no runtime
+changes. Active/rollback retained, f7351c3b protected. Latest readonly disk
+inventory95images/28.96GB, BuildKit20.52GB/2.852GB reclaimable; no broadprune
+during Claude concurrent work. Canonicalmain5bf5cd5/v2.2.2 unchanged; same
+featureworktree/branch, no push/merge. Rebuild only after owner timing gate.
+
+
+### DR05 isolated stack and stage3 timing handoff - 2026-10-08 (Codex)
+
+Status STACK_STARTUP_TESTED / TS_FAULT_ACCEPTANCE_NOT_RUN / RELEASE_HOLD.
+Guide upgrade/evidence/p184-dr05-dl-fault.md; scripts/p184_dr05_dl_fault.py.
+Five bounded --rm roles, network-none Kafka and shared ONLY disposable namespace,
+fresh TLS/JWT, four ETH BOOK products across Binance/OKX; sanitized public config
+allowlist, no shared credentials/state. Query is rc2-43bbcf0 (77682eea), not
+runtime v2.2.2; no new application image. Source-mounted test harness is not
+release-image certification. Prepared TEST_ONLY GAP/generation schedules retain
+positive control, recovery anchor, old-generation fence and post-fence control.
+Actual raw publisher/TS observation adapter remains NOT_IMPLEMENTED; no DR05
+cell closed. Pending rows cannot be submitted as runtime evidence or emit PASS.
+
+Parent source tests: existing77682eea image, network none, .5CPU/512MiB,
+python -B -m unittest tests.test_p184_dr05_dl_fault -q:26PASS0fail0skip/68.539s.
+Agent isolated startup smoke:55.13s, all5roles process-ready/services-reachable,
+functional_ready=false/acceptance=false. Namespace p184-dr05-dl-fa9ce97d336d41a2.
+Initial cleanup check raced asynchronous Docker --rm; fixed bounded removal wait
+and vanished-between-list/inspect handling, regression tested. Full rerun removed
+all5roles/helper, credentials and temporary directory; parent scoped ps empty.
+Smoke metrics transcribed from agent tool session, not archived DR acceptance.
+Diskfree79,907,880,960 ->79,716,106,240bytes, concurrent host delta not attributed
+to this smoke. No test images built; no broad prune; active/BARf7351c3b retained.
+
+PhaseC packet now records confirmed TS CI2abbe394/a6548ee3 but keeps TS test
+completion separate: no consolidated image build until TS acceptance finishes
+and exact-source DL CI passes. DR01 deployed/DR08 final await Claude stage3.
+SDK local publication complete, hosted publication not performed; alpha requires
+PyJWT2.15.1 dependency update as documented. Recipe18PASS, SDK89PASS inherited;
+no rerun of unrelated gates. Hosted DL CI remains NOT_RUN, not claimed green.
+Canonical main5bf5cd5/v2.2.2 and shared runtime unchanged by this work. Active
+feature fix/p184-dl-closure; no push/merge. Main plan/guide/packet agree on HOLD.
+
+
+### Claude alignment and DR05 raw publisher - 2026-10-08 (Codex)
+
+Status IMPLEMENTING / NO_SHARED_RUNTIME. Read Claude HEAD2abbe39 and current
+dirty roster: Gateway/SDK history pagination is in progress; no TS files edited.
+His p184_dr05_isolated.py owns stale/disconnect/fallback and explicitly delegates
+GAP/generation upstream injection to the isolated DL stack. Implement the missing
+bounded raw-envelope publisher using existing qdl.raw.envelope builder, preserve
+broker-confirmed partition/offset and TEST_ONLY provenance. Test identity mismatch,
+delivery error/timeout and invalid offset; no invented status/ACK or cell PASS.
+Align handoff with Claude, without running DR01 deployed/DR08 final or building
+images. Keep IDR040fix2 deferred, IDR075 paired activation and release timing gates.
+Scope excludes TS edits, dependency changes in alpha and shared consumer probes.
+Use existing image, isolated tests; cleanup only own containers/private files.
+
+
+DR05 raw publisher slice RESULT: IMPLEMENTED_TESTED / TS_ACCEPTANCE_STILL_OPEN.
+8unit tests PASS0fail0skip/.230s in existing77682eea network-none container.
+Actual isolated Kafka/core/Stream/Query/Redis stack:16TEST_ONLY envelopes,
+16exact byte-hash/capture-ID/offset readbacks, Binance+OKX gap schedule including
+new-generation anchor/late old-generation. ACK is not canonical/TS acceptance;
+no DR05 PASS emitted. Runtime-free tests also reject wrong identity/provenance,
+wrong namespace/endpoint/topic, sentinel offset, delivery error and timeout;
+ambiguous attempt fences publisher rather than resending. Existing raw builder
+preserves original payload clocks/generation; no public contract changes.
+
+Receipt ~/.local/state/qdl-v2/dr05-publisher-20261008/receipt-1791453132486033908.json
+SHA2560764e3bb6ea676ba9e4b5009112ed4bacab95ca53ac354817c8e2a5aec9cbcfe.
+Source file digest0a0580078a4dd8fa4449aa528d9e027423cd1d44dbb988a6ffb00ab6aa2d0c4a.
+Elapsed66.087s includes material/startup/test/cleanup, not recovery latency.
+All5roles/helper removed, privatefiles0, parent label-scoped ps empty; no images
+built. Diskfree83,987,636,224 ->83,501,821,952bytes, concurrent-host delta not
+attributed to test. No broadprune; active and BARrollbackf7351c3b retained.
+
+Alignment guide upgrade/evidence/p184-claude-stage3-alignment.md records read-only
+inspection of Claude's dirty history-pagination work and alpha_sdk2.4.0, distinct
+from qdl_sdk2.1.0. His DR05 runner owns consumer stale/disconnect/fallback; Codex
+upstream observer integration remains open, not delegated away as done. CIgreen
+2abbe39 cannot certify uncommitted changes; re-pin source/image when finalized.
+No actual acknowledgement from Claude is claimed. No TS/alpha edits, shared
+runtime/manifest changes, DR01 deployed/DR08 final, push/merge or release.
+Canonicalmain5bf5cd5/v2.2.2 unchanged; feature fix/p184-dl-closure, releaseHOLD.
+
+
+### DR05 canonical reader and TS validation closure - 2026-10-08 (Codex)
+
+Status IMPLEMENTING. Owner approves completing the isolated observation path now.
+Guide upgrade/evidence/p184-dr05-dl-fault.md, alignment guide; preserve shared
+runtime, TS worktree, release HOLD, no DR01 deployed/DR08 final. Raw broker ACK
+is not acceptance. Match raw capture IDs through read_committed canonical or
+quarantine, capture real Query/Stream response and typed quality, then validate
+with code inside fixed TS image (no app-source overlay). Independent positive,
+gap/unanchored-generation, recovery and old-generation fencing controls on both
+venues. No manufactured quality/timestamp/status; unknown evidence fails closed.
+Tests: bounded observer correlation, wrong identity/offset, genuine refusal,
+positive/recovered book, isolated real stack. Cleanup exact owned labels/names
+and private material; retain bounded hashed receipts; no images built/push/merge.
+
+DR05 integration discovery: exact Kafka Uuid(2^63-1,2^63-1) string contains '/'.
+Query intermediate cursor regex rejects it, while signed cursor V3 accepts it.
+New regression on old source:3tests/2errors. Necessary narrow source correction:
+accept '/' without rewriting topic identity, retain delimiter/negative checks.
+No public contract or deployed image changes. Initial Binance observation cursor
+failure kept; OKX alternate UUID succeeded, not used to erase initial failure.
+
+Cursor parser slice RESULT: fixed only intermediate coordinate character class
+for standard-base64 Kafka UUID '/'. No rewriting/signature/schema changes.
+Counterfactual oldsource:3tests,2errors; candidate3PASS. Combined cursor/DR05/
+hot-view suite60PASS0fail0skip/33.706s in existing77682eea image network-none.
+Real Binance snapshot now returned signed cursor and reached actual pinned TS
+SDK/adapter/BOOK validator (positive control accepted). Runtime/shared images
+unchanged; no certification from this partial case, recovery adapter ongoing.
+
+
+DR05 observer/TS slice IN_PROGRESS: actual core read_committed canonical and
+quarantine are correlated by capture ID, with a post-commit EOF barrier for
+filtered frames. Query handoffs are captured from the actual public serializer;
+Stream unary GetFeedStatus/GetSnapshot use mTLS/JWT isolated EXECUTION identities.
+The fixed TS image a6548ee3 loads its own SDK/adapter/BOOK validator, then calls
+MarketCacheProjector.project_execution_snapshot and re-reads isolated Redis DB2.
+No TS application overlays, fabricated quality, clock override or state reset
+between generation changes. This is NOT the full TS writer Subscribe/ACK loop.
+
+NEW FINDING: real isolated OKX unanchored generation was quarantined by core,
+but both reader BOOK views remained LIVE and returned the old generation while
+within freshness. Initial exact receipt okx-generation-r1 SHA256
+0e7353eb42938c7ebfd2ae8317c6691c1b7913317fcd59375c0efc70dc5974bf.
+BOOK_SNAPSHOT age589ms, BOOK_DELTA731ms, each GetSnapshot OK. Later control
+recovers with genuine anchor and old-generation raw frame is filtered. Core
+src/lib.rs sequence-gap branch returns quarantine/resync, not reader invalidation.
+Do not close GAP/generation by waiting for DATA_STALE; no production incident
+is inferred from this TEST_ONLY injection. Shared runtime remains unchanged.
+
+Harness correction: a Redis NO_WRITE/cache equality false is not typed refusal.
+The preliminary okx-generation-final receipt (d5c2b8ce...) retains that weaker
+subcheck; the final verdict requires explicit ENDPOINT_REFUSED/APPLICATION_REFUSED
+and records BOOK validation separately from cache application. No old receipt
+rewritten. Parent final regression51PASS0fail0skip/31.718s. Four final isolated
+venue/fault cells now executing sequentially, using existing images only.
+
+Read-only coordination update: Claude TS HEAD01eb0d7 adds p184_dr05_upstream.py
+and WriterClone. Its JSONL reset_case/publish/canonical_observe orchestration is
+not yet the same as this per-case observer + in-image validator harness. Do not
+claim his full writer clone was run by these receipts. Alignment handoff will
+record the interfaces and the newly exposed upstream fault, without TS edits.
+
+
+DR05 slice RESULT: IMPLEMENTED_TESTED_ISOLATED / FAULT_PROPAGATION_FAIL.
+Report upgrade/evidence/p184-dr05-observer-results.md (exact hashes, commands,
+counts, images, cleanup); guide and Claude alignment updated together.
+Four selected cells (Binance/OKX x GAP/unanchored generation) all FAIL the real
+fault propagation check: previous BOOK_SNAPSHOT age473/544/465/542ms remains
+LIVE/eligible and passes actual TS BOOK validation. Core quarantines the exact
+fault capture. Redis NO_WRITE is not refusal. Twelve positive/recovery/post-fence
+controls match exact canonical snapshot byte hashes and reach TS Redis apply.
+Four late old-generation frames are filtered after raw commit; no generation
+rollback. No provider evidence or execution certification inferred.
+
+One fixture repair: Binance buffers delta201 and replays it at new anchor200;
+return_control must reference201, not200. Earlier generation-v2 failure retained;
+only that affected case rerun as generation-v3. Selected receipt SHA256 values:
+8e4eae0dc523256305a70e4066ba6397d3e18d6a86ddb1e0387db1a836b4b25e
+3703f46edf9bd308620724982a86d09b54e7b74b3a7b50ef0127278f744e53ac
+590291f159d34c89919ff9a864a43987800f99e70025d11426c2c087df294bdb
+f89356e55d6e688555c1fe943d97619a0fb4ca3567460e3a74f5b818658fd9c2
+(root ~/.local/state/qdl-v2/dr05-observer-20261008/, directories in report).
+
+Final parent DL suite52PASS0fail0skip32.861s (verdict, observer, raw publisher,
+stack material and cursor regression). Agent TS image+isolated Redis22PASS0skip
+5.992s, followed by3focused marker/cache tests PASS3.638s. Parent independent
+TS network-none19PASS3Redis skips2.311s. Overlap not summed. Exact production
+MarketCacheProjector handles new generation; no deletion/reset/clock fabrication.
+Helper application modules load from TSimagea6548ee3, not source mounts.
+
+Cleanup all owned cases complete, privatefiles0; report has byte-level disk
+pre/post. No images built; inventory95images28.96GB/BuildKit20.52GB is shared and
+not broad-pruned during Claude work. Retain active images and BARrollbackf7351c3b.
+Final read-only shared snapshot12app+5infra: restart0/OOMfalse, same role digests;
+not a runtime acceptance. Canonicalmain5bf5cd5/v2.2.2 and feature location unchanged.
+No runtime edits, TS edits, push/merge or release. v2.2.3 HOLD.
+
+Remaining implementation (not approval debt): propagate core BOOK gap/generation
+invalidation to canonical reader quality, then close on valid anchor. Both hot
+backup and primary need the fence. Full Claude WriterClone JSONL orchestration
+is not claimed completed: his new01eb0d7 interface needs fresh-case mapping and
+must not count eventual DATA_STALE as immediate GAP refusal. These interface
+points are recorded in p184-claude-stage3-alignment.md. Reuse this counterexample;
+no C2/full catalogue rerun, no shared rollout from this observer slice.
+
+
+### DR05 upstream invalidation and TS packet integration - 2026-10-08 (Codex)
+
+Status IMPLEMENTING. Owner approves fixing canonical BOOK gap/generation
+propagation and providing isolated TS consumer bindings plus reset_case and
+canonical_observe APIs. TS Claude owns TsDr05Adapter and final evidence; drive
+continues ok=false. Guide p184-dr05-dl-fault.md and owner packet contract apply.
+No shared runtime, manifests, ACLs, TS source edits, push/merge or release.
+Tests: valid book -> fault -> immediate typed refusal -> valid anchor recovery;
+old generation/identity fencing, duplicate replay, primary/hot reader parity;
+packet V3 compiler/policies, path-only secret references, namespace ownership,
+bounded reset/canonical observation. Reserved TS ports6391/5433 untouched.
+Reuse schemas/quality flags and real committed observations; no stale wait,
+timestamp rewriting, invented prices or buffer/timeout relaxation. Isolated
+compile/tests only; any candidate binary is test-only until release packet.
+Cleanup exact disposable labels/private files, retain active/rollback artifacts.
+
+
+DR05 tested-slice update: IMPLEMENTED_TESTED_ISOLATED / TS_FINAL_ACCEPTANCE_PENDING.
+Current guide/evidence upgrade/evidence/p184-dr05-fence-channel-handoff.md.
+Core emits bounded canonical invalidation for both BOOK products on GAP or
+unanchored generation; primary validator and hot reader preserve typed refusal.
+Four isolated counterexample cells now pass diagnostic checks;12 positive/
+recovery controls retain exact canonical bytes. Previous failing receipts intact.
+Python120PASS0fail0skip43.876s; separate reset4PASS0fail0skip0.006s.
+Rust core52PASS0fail1ignored; projector product8PASS0fail0ignored.
+JSONL handoff16 actual publish/observe steps,2 real resets21670.885/19807.860ms;
+broker ID stable, topic UUID changed, raw starts0. TS ports6391/5433 unused.
+No Docker socket in helper; exact owned roles/topics/groups only. No TS edits.
+Scope kept: final TS WriterClone/control/cache evidence remains Claude-owned;
+drive ok=false, no final provenance/certificate. No shared runtime/push/merge.
+Disposable stack cleanup/privatefiles0 in all5receipts, exact hashes in report.
+Final binary rebuild after redundant-borrow cleanup is recorded separately;
+prior receipts retain original core hash, not relabelled as final image tests.
+
+DR05 self-review before commit found two in-scope compatibility/recovery cases:
+production-core alternate runner rejects mixed quarantine+canonical fence batches;
+same-generation/native-sequence recovery anchor can be deduplicated. Fix both
+with targeted regression before closing this slice; retain quarantine evidence
+and stable replay identity. No runtime changes or expanded catalogue testing.
+
+Pre-commit recovery regression reproduced0published records for a valid OKX
+post-fence snapshot at the same generation/native sequence. Fixed using the
+new anchor's immutable raw capture discriminator, retaining native sequence,
+prices, generation and clocks; duplicate replay remains suppressed. Final core
+suite53PASS0fail1ignored0.11s. Packet exact-schema/field-set/V3 parity recheck
+1PASS9.114s (overlaps120suite; not added to unique total).
+Read-only shared inventory17roles(12app+5infra), restart0/OOMfalse; no shared
+mutations. Images95/28.96GB, BuildKit20.52GB shared with Claude; no broad prune.
+
+DR05 slice FINAL: IMPLEMENTED_TESTED_ISOLATED / TS_FINAL_ACCEPTANCE_PENDING.
+Alternate runner fixed narrowly: retain paired BOOK invalidation and quarantine
+in one transaction; other mixed outcomes rejected. Three pre-fix regressions
+failed; final runner7PASS0fail0ignored. Parent core53PASS0fail1ignored; projector
+products8PASS; Python120PASS plus separate4resetPASS (overlapping checks not summed).
+Final binarybaafcb489bb17fabdd73bef383dcf3448581cc8bb63578e9df83e2a57107b6f2
+retained at ~/.local/state/qdl-v2/dr05-fence-20261008/bin/qdl-realtime-core-baafcb48.
+Affected OKX generation final-binary rerun PASS; receiptfcf4b6593732cde3fc6897e750346dea2ed9d3744d80ce29add82aa1a824000a.
+Earlier4cell/JSONL receipts preserve earlier binary hashes; no false provenance.
+All6case stacks/privatefiles removed; no testcontainers left. Removed exact
+Cargo target1225121125filebytes, free59893260288->60988051456bytes; concurrent
+activity prevents attribution. Root-owned copied build artifacts required one
+network-none cleanup helper mounted only to that target. No new image or shared
+prune. Full report/commands/proof limits in p184-dr05-fence-channel-handoff.md.
+Canonicalmain5bf5cd5/v2.2.2 unchanged, featurefix/p184-dl-closure only.
+Shared digests/config untouched;17read-only roles restart0/OOMfalse. Retain all
+active and BARrollbackf7351c3b; no push/merge/deploy. Claude next runs his actual
+WriterClone/control/cache/ACK validation with honest TS source/image provenance.
+DR05 final acceptance and v2.2.3 remain HOLD pending joint DR/broker evidence.
+
+### DR08 continuity attribution and bounded recovery - 2026-10-08 (Codex)
+
+Status IN_PROGRESS. Approved scope: runtime/source attribution, bounded passive
+same-event tracing, isolated DR08 reproductions/fixes. Guides: upgrade/evidence/
+p184-dr-runtime-runbook.md and p184-dr01-dr08-trade-attribution.md. No shared
+runtime changes, extra TS subscription, orders, TS edits, push/merge or release.
+Prior observation: roughly15min overflow+59/replay+84263/expired+4; TRADE queue1000,
+replay10000/OUT_OF_RANGE; BOOK_DELTA queue~7.9MB/RESOURCE_EXHAUSTED. TS cache
+600reads/60keys had0missing but BOOK_DELTA source-age max8288.56ms. These are not
+same-event latency joins or proof of transport cause. Preserve LOSSLESS semantics.
+Fresh runtime: writer5849d716, Stream1f13408f, core658a9570, Query/BAR51450612,
+projectora696cfba. TS source8b41608; Claude owns OR and IDR078/081. IDR081 OPEN
+colocates both BTC venues in one worker; do not duplicate TS ownership changes.
+Linked DL report is the incident register for BOOK continuity; do not edit
+Claude's TS INTEGRATION_DEFECT_REGISTER.md. Missing trace spans NOT_MEASURED.
+Tests: bounded item/byte queue, slow/fast isolation, replay/refusal, valid snapshot
+anchor/generation, no rewind, cursor after apply. Reuse DR08 existing60s restart
+and600s run limits; no increased quota/buffer/freshness or retrospective gates.
+Source rollback only; no runtime deployment. Cleanup owned disposable resources,
+retain active/named rollback images/evidence, no shared prune. apply_patch helper
+failed twice (mountinfo sandbox); use exact-match replacement and inspect diff.
+
+DR08 source review: terminal error/backpressure sends currently ignore timeout
+when the two-slot transport handoff stays full; closing sender can become clean
+EOF. Reproduce before fixing terminal status outside the bounded data channel.
+Also strengthen exact10000 replay proof to require LIVE, and add BOOK_DELTA
+coverage (existing DR08 is TRADE-only). These are in-scope defects, not measured
+cause of every current overflow. Runtime trace expiry is1791401054410448004:
+new SDK/apply/ACK spans cannot be acquired read-only on that expired hook; retain
+NOT_MEASURED rather than rearming/restarting writer without a runtime packet.
+
+DR08 progress: report upgrade/evidence/p184-dr08-continuity-closure.md links raw
+bounded evidence and Claude handoff. Python43PASS; real isolated TRADE DR08
+4development checksPASS, exact10000->LIVE->marker,5restarts p505516.627/max5545.290ms.
+This is test-only input/actualKafka+gRPC, not TS final evidence. Passive canonical
+1465/cache720 joins380unique noidentity mismatch; ETH delta external visibility
+p505033/4556ms remains an open consumer path finding. All6trace inner boundaries
+not present are explicitly NOT_MEASURED, not filled using cache GET timestamps.
+No shared changes or TS edits. DR08 stack removed, cleanup errors0; disk values
+and named rollback retention in report. Rust terminal-status regression pending.
+
+Rust counterfactual: both prolonged-stall regressions fail on old service in
+10.31s (terminal error missing). Candidate39library+37nativePASS0fail0ignored,
+including BOOK_DELTA suffix replay and peer independence. These tests invoke
+service directly, not Kafka/wire. Binaryb5e1c2c retained, target1480911808bytes
+removed; free45976342528->47115079680 (concurrent activity). Source changed, so
+reuse existing image with development-only hashed candidate executable for
+isolated DR08 wire validation; no new image or runtime rollout. Harness44PASS,
+including development-only overlay/size/hash checks. Final image qualification
+cannot use this option. Report/runbook updated before wire experiment.
+
+DR08 tested slice status IMPLEMENTED_TESTED_ISOLATED / TRACE_PARTIAL, not full
+three-step runtime closure. Final harness46PASS; Rust39library+37nativePASS,
+0fail0ignored, oldsource2regressionsFAIL. Candidate binaryb5e1c2c actual isolated
+Kafka/gRPC4development checksPASS;5restarts p505400.475/max5542.696ms, expired
+backlog->new snapshot->firstevent7063.953ms(n1). BOOKDELTA prolongedstall/suffix
+replay/fastpeer are direct-service tests, not full TS+Redis crash acceptance.
+Receipt41da3328, cleanupd235cadc, noownedcontainers/privatefiles/temporarycopy.
+Sharedruntimeunchanged=true. Source/interface/buffer/freshness unchanged except
+terminal error preservation; replay proof strengthened rather than weakening gate.
+Inventory95images28.96GB/cache467entries20.52GB; no images built/pruned. Exact
+Cargo target1.48GB removed, one121.77MB review binary retained. Disk pre/post in
+report; concurrent activity precludes attribution. Agent/observers finished.
+Runtime pending: SDK2.0.7 writer has expired tracing; canonical/cache join is not
+SDK/apply/ACK/cursor trace. ETH BOOK delay remains open alongside TS IDR081.
+Canonicalmain5bf5cd5/v2.2.2, featurefix/p184-dl-closure only; active digests and
+BARrollbackf7351c3b untouched. No TS edits/push/merge/deploy/release; v2.2.3 HOLD.
+
+### Owner amendment: 100 alpha plus TS capacity and independent DL closure - 2026-10-08
+
+Status IN_PROGRESS, approved by owner in current conversation. Target is100alpha
+logical consumers with2-5declared data products each PLUS TS60, not100idle sockets.
+Optimize before sizing, but the previous fixed <=5vCPU target is no longer an
+absolute acceptance ceiling: owner permits adequate CPU/RAM and quota for the
+measured workload. Preserve feed freshness/integrity/LOSSLESS and bounded memory;
+no unlimited buffers, wildcard entitlement, fabricated evidence or hidden skips.
+Reconcile independent identities versus logical sessions and per-subscription
+fanout; quota admission is not capacity proof. Freeze workload/measurement and
+headroom assumptions before a load run. Report throughput, RAM, CPU/throttle,
+queue, recovery and actual consumer apply latency under sustained/burst traffic.
+Guides: p184-consolidated-build.md, p184-dr-runtime-runbook.md,
+p184-dr05-fence-channel-handoff.md and approved Kafka-native architecture review.
+Do not wait for TS Paper/OR feature completion. Claude retains exclusive TS edits;
+Codex may run existing TS helper against disposable DL/TS clone namespaces only.
+Prepare resource/identity candidate and scoped tests; no shared role change until
+exact digest/config/rollback packet is recorded and its safety checks pass.
+Immediate parallel work: capacity100 workload/quota design using existing planner;
+DR05 actual WriterClone integration on existing approved interfaces. Existing
+0b374bc recovery proof inherited, only affected tests rerun. Runtime currently
+v2.2.2 unchanged, v2.2.3 HOLD; no push/merge/order or broad cleanup. Disposable
+stack labels, ports, state/credentials isolated; cleanup exact resources after run.
+Apply-patch helper remains unavailable (mountinfo error previously reproduced),
+manual edits use exact-match fallback with diff verification per workspace rule32.
+
+Build-preflight slice: require DR05 fence d68fb2f and terminal-status0b374bc ancestry
+and source paths in consolidated recipe; keep old certified artifacts immutable.
+Clarify TS gate is market-data integration regressions, not completion of Paper/OR.
+Candidate build/CI preconditions remain explicit; final DR/broker runtime acceptance
+still follows packaging. No fake CI attestations or build/release execution here.
+
+Build-preflight verification: portable unittest20PASS0fail0skip; exact inline CI
+block rehearsed against committed0b374bc PASS with legitimate HOLD, not hosted CI.
+Real old d68fb2f rejected for missing terminal-status ancestry. CI expectations,
+guide and governing PhaseC packet updated atomically. No image/build/runtime
+change; no test resources created by this slice, cleanup intentionally unnecessary.
+Canonicalmain5bf5cd5/v2.2.2, active featurefix/p184-dl-closure. Active/runtime and
+named rollback digests inherited unchanged from prior inventory, not remeasured.
+Capacity and WriterClone agents remain independent work in progress; no TS edits.
+
+DR05 WriterClone attempt found startup/deadline/evaluator issues in the TS-owned
+harness, not a demonstrated new provider failure. No final fault cell passed;
+canonical positive anchor was observed but TS writer exited with local PG5433
+connection refusal. Report: upgrade/evidence/p184-dr05-writerclone-followup.md.
+Do not edit Claude's worktree or rerun blind. DL-owned cleanup also has an
+AutoRemove race after channel exit: assign a narrow exact-identity absence check
+plus negative tests. Failure inspection/replacement must still fail closed; no
+broad cleanup and no swallowing arbitrary stop errors. Record results below.
+
+Capacity100 guide: upgrade/evidence/p184-capacity100-candidate.md records exact
+mixed/stress workload, logical versus authenticated identities, TS reservation,
+quota arithmetic, one-replica headroom and source MemoryPlan limits. No measured
+100-alpha capacity or resource activation claimed. Driver integration assigned
+narrowly; prior stage50 certified budget/evaluator must remain unchanged. Final
+CPU/RAM sizing needs offered/dequeued/apply/recovery evidence, not quota arithmetic.
+
+Parent independently reproduced TS evaluator counterexample read-only: gap step,
+old quantity2 instead of faulty3, actual validator EXECUTION_CONTEXT_STALE yielded
+(True,[]) rather than requiredFalse. This is a TS harness correctness finding,
+not proof of DL GAP closure; no TS source edited. WriterClone final acceptance
+must wait for this narrow adapter correction, not for Paper/OR feature work.
+
+Capacity100 tested slice: typed planner reuses Phase3 and generates180streams
+mixed or500stress streams (+assumedTS50),660reservedslots stress. Existing384
+single-replica slots insufficient; existing1024model307MiB is an estimate only.
+Fixed startup arithmetic to include snapshot/warmup AND Subscribe on reconnect:
+stress4950RPM peralpha identity BEFORE driverprobe/coldoverhead, not4500.
+Unit6modules103PASS0fail0skip in existing image77682,4.535s; parent32PASS subset,
+not additive. Full commands and limitations in capacity100 guide. No runtime
+quota/resource changes. Stage100 hostdriver remains unfinished; do not claim
+capacity from slot arithmetic or inherit stage50 PASS. This work does not wait
+Paper/OR. Testcontainers--rm removed; noimagesbuilt, rollback/active preserved.
+
+DR05 cleanup slice verified: exact-ID AutoRemove disappearance accepted only
+for matching NoSuchContainer; replacement, inspection/auth/otherstop errors
+failclosed. Oldsource12lifecycle tests3fail+1error; final82PASS in image77682,
+30portablePASS overlapping. Parent in-image dr05_dl_fault30PASS36.196s; host
+attempt lacked redis dependency (1error), not silently counted PASS. Reports
+retain both failed upstream attempts; no finalDR05/ACK qualification. Both stack
+namespaces/privatefiles removed, noimagesbuilt/pruned. No TS edits or rollout.
+
+CRITICAL shared-host disk observation at end of slice: df -B1 reports root100%,
+available229122048bytes (~218.5MiB). Earlier agent observation1.46GB followed
+11.18GB after stack cleanup. Concurrent host work prevents attribution; no
+claim that DL test consumed the decrease. Do not launch load/build before disk
+headroom is restored. All owned p184-dr05 containers absent. No shared cleanup,
+no stopping Claude or production, no deletion of financial state/active images.
+Evidence/Claude handoff: upgrade/evidence/p184-dr05-writerclone-followup.md.
+
+Offline actual-manifest capacity compile additionally succeeded for both mixed
+andstress profiles at sourcefa10d1b (image77682,networknone,readonly): same230/550
+active and276/660reserved streams. Actual alpha source manifests2400RPM/60streams
+each are insufficient; assumedTS50active needs60reserved vssealed50. This is
+source contract arithmetic, not an observed runtime quota or performance result.
+Runtime/release/config unchanged; canonicalmain5bf5cd5/v2.2.2, branchfix/p184-dl-closure.
+v2.2.3 HOLD, phaseIN_PROGRESS. No push/merge; kept active and namedBARrollback.
+
+Final readonly disk recheck worsened to28430336bytes (~27.1MiB) available, root100%.
+Do not build/load until the concurrent writer/build owner restores disk headroom.
+All p184-capacity100 and p184-dr05 containers absent, worktree clean before this
+journal-only update. No causal attribution without process/disk investigation.
+
+### Owner-approved unused image and build-cache cleanup - 2026-10-08
+
+Status IN_PROGRESS. Owner explicitly authorizes deleting unnecessary images and
+unused build cache. Before cleanup root available17297408bytes,100%; Docker95
+images28.96GB/reclaimable8.491GB,467cacheentries20.52GB/reclaimable2.852GB.
+Kafka brokers already restart-loop before action. Scope: unused BuildKit cache
+older than1h (BuildKit retains in-use refs), then exact superseded DL/test image
+IDs after excluding ALL running/stopped container references, active candidates,
+named rollbacks and build bases. No force image deletion, container/volume/network
+removal, service restart or data/log deletion. Preserve source and evidence.
+Capture bounded pre/post image/container/restart inventory outside Git; compare
+runtime changes and record actual reclaimed bytes. No push/merge or release.
+
+First action: docker buildx prune --force --filter until=1h exited0, reported
+2.852GB reclaimed. Root free rose to101073723392bytes; gain exceeds this action,
+so concurrent cleanup/storage activity remains unattributed. No active cargo,
+rustc or docker-build/buildx process found in sanitized process scan afterward.
+Exact image cleanup allowlist: DLsuperseded0ed57643,b40b49c3,65918a65,f2040ac9,
+3af57ddf and retiredrc3candidate0d8da150; TSsupersededtest7a02c808,f2cc1f8d,
+3b4ee780 (no current script/Dockerfile/compose references). Preserve all69
+container image references including stopped rollback/operational containers;
+retainrc2Python77682/Rust69e3,buildbases,TSfinala654,alphaimages,allrollbacktags,
+BARf7351c3b,corehistorical7fe348 pendingretentionreview. Recheck beforeeachrmi;
+no --force. Detailed inventory/receipt outsideGit cleanup-20261008-unused-artifacts.
+
+Cleanup result SCOPED_CLEANUP_COMPLETE_KAFKA_UNRECOVERED. All9 allowlistedimages
+removed withoutforce, all69containers retained (including stopped rollback), no
+runtimeimage/start/restartcounter delta during imagecleanup, no volumes/networks
+or Kafka/DB/logdata touched. Second identical cacheprune reclaimed128.5MB after
+image deletion. Buildcache467->196entries,20.52->17.54GB,reportedreclaimable0B;
+35activecache refs retained. Images95->86. Remaining9.003GB Dockerlabelsreclaimable
+is NOT permission to delete activecandidate/buildbase/namedrollback artifacts.
+Exact retention inventory: retained-images.json f27db1c65b58b16c1ba00cf4e6cc10ec76646477b7c24d3062cc71677611cbe9.
+No cargo/rustc/dockerbuild process was seen during the sanitized safety scan.
+Disk17297408->101289484288freebytes (100%->68%used). Only2.852GB+128.5MB cache
+reclamation attributed to these cachecommands; muchlarger free-spacegain has
+concurrent/unidentified cause. Do not claim cleanup recovered101GB.
+Kafka1/2/3 stillrestart-loop, logsconfirm ENOSPC at2026-10-08T16:09:12Z before
+cleanup. No manual restart attempted; quorum/freshness NOT recertified. Broker
+recovery/integrity requires its own scoped operation, not another broadcleanup.
+Receipt 0af529653048ce4b8662f9c16a6c72ec080eef86f75abfb03e0bc0a2d3ec1e07, outsideGitroot cleanup-20261008-unused-artifacts;
+fullimagecommands/digests/containerinventory and exactretentions in that directory.
+Canonical /home/bobby/data_layer main5bf5cd5/v2.2.2 unchanged; featureworktree
+/home/bobby/.worktrees/data-layer-p184-closure fix/p184-dl-closure retainedactive.
+All runtime digests/configs preserved, BARrollbackf7351c3b andTSrollback artifacts
+retained. No source/runtimecodechange, no testsrerun, no push/merge/release.
+
+### Post-disk Kafka and consumer recovery verification - 2026-10-08
+
+Status IN_PROGRESS; owner approved read-only recovery verification before any load.
+Scope bounded Kafka quorum/ISR and committed group-lag sampling, projector/cache
+progress, actual TS cache observation and bounded error logs. Reuse existing
+admin identity and observers; no second TS Stream subscription/quota use, orders,
+config/ACL/schema edits, reset-offsets, lifecycle action or stress. Process health
+alone cannot pass recovery. Record missing evidence/refusals separately. No broad
+catalogue rerun or resource increase. Evidence private directory outside Git;
+only bounded receipts/hashes into journal. Temporary read-only helpers --rm.
+
+Read-only recovery verdict INFRA_PROGRESS_RECOVERED_CONSUMER_ACCEPTANCE_INCOMPLETE.
+Quorum3voters/leader3/followerlag0;ISRempty twice.6samples99.814s/36group-partitions,
+committedoffsetsnondecreasing,noevery-samplegrowinglag. Corepeak172/final71records;
+projectorA142/90,B116/16. Projectorinputs+30933/+62098,latestapply+16094/+12570,
+no newstatuserrors/conflicts/cache-reconnects. Runtimeidentities/restartsunchanged.
+Initial adminport9093 mistake rejected, corrected9092; not a provider/runtimebug.
+TS120.095s observer saw60execution/BARgroups but INCOMPLETE:7oversizedmessages
+hit observer256KiB limit. BOOKDELTAmax16676.651ms(BinanceETH,n147),TRADE9810.625ms
+(n170). These are eventages at cache-read, not requestlatency/RedisACK. TSheartbeat
+READY60/60 n1 does not certify all-vieweligibility. Heavyload remainsHOLD.
+Guide/report upgrade/evidence/p184-post-disk-recovery.md includes feedtable,
+limits,commands and receiptd0fc2764c74aa5bd5a8c7f28b8d72c44da35f1df63b62518b30295b9efe3e542. No newcontainers/images/TSsourceedits or
+runtimeconfig/ACL changes; allreadprocessesended, noadditionalcleanupneeded.
+Canonicalmain5bf5cd5/v2.2.2 unchanged;featurefix/p184-dl-closure retained,
+v2.2.3HOLD. No push/merge. Existingdownstreamgap not proven caused bydisk.
+
+### Cache observer bounded payload repair - 2026-10-08
+
+IN_PROGRESS. Owner approved closing the seven observer size refusals and continuing
+BOOK consumer attribution, not broad catalogue/load or runtime changes. Guide:
+upgrade/evidence/p184-post-disk-recovery.md and KN architecture review. Observer
+only: finite per-message and aggregate retained bytes, bounded size attribution,
+cache payload validation, regression for large valid BOOK and over-budget inputs.
+No production buffer, freshness or eligibility relaxation. Real cache probe uses
+Redis PubSub/MGET only; ACK stays NOT_MEASURED unless instrumented at the writer.
+TS source is Claude-owned and read-only. Rollback is observer source only. Tests
+and a bounded real run precede receipt; no new image. apply_patch helper failed
+with mountinfo-path error; exact scripted replacement used and diff verified.
+
+Observer repair tested:32unittest PASS; oldsource large-valid-message regression
+fails as expected. Real120.322s/118215notifications includes8above256KiB, max496519
+bytes; zeroobservererrors,60execution/BARgroups. Pendingpeak1029467bytes below8MiB.
+New bounds affect only observer; freshness/productionqueues unchanged.
+BOOK_DELTA still max13375.109ms(OKXBTC,n135); freshRedisACK NOT_MEASURED because
+writertrace expired. Existing trace hook is deployed, newer slice logging not.
+Status OBSERVER_REPAIRED_BOOK_CONTINUITY_OPEN. Report and next caller dependency:
+upgrade/evidence/p184-post-disk-recovery.md#observer-repair-and-fresh-observation.
+NoTSedit/rollout/newimage; temporary --rm container removed.86images/69containers/
+196buildcacheentries retained,0Breclaimablecache; free99461668864bytes. No pruning.
+Two pytest attempts unavailable; all32tests run with stdlibunittest instead.
+Canonicalmain5bf5cd5/v2.2.2 and runtimeidentities unchanged; feature retained,
+v2.2.3HOLD, no push/merge. Continue caller trace under single-writer packet,
+not broad catalogue or load.
+
+### BOOK exact-event trace reactivation - 2026-10-08
+
+IN_PROGRESS. Owner explicitly approved recreate ONLY market_data_service_p184w
+with same image5849d716, unchanged identity/binding/Redis/cursors/mounts, trace
+expiry <=300s and4096records/process. Same-image old-config rollback prepared
+before action; never two writers. Guide p184-post-disk-recovery.md BOOK caller
+handoff. NoTSsourceedit, noDLrolechanges or freshness relaxation. Read-only
+assigned Kafka observer filters BTC/ETH BOOK, no group join/offset commits; join
+real event hashes/offsets against writer trace. Redis ACK is not SDK ACK/cursor.
+Stop/rollback on config drift, crash/OOM or writer unable to recover; preserve
+all failed observations. Evidence private outsideGit; no full env/keys in logs.
+Record runtime diff, window coverage, cleanup and unresolved stages after run.
+
+Trace RESULT: MEASURED_CONSUMER_BACKLOG_OPEN. Sameimage writer recreate completed,
+onlytraceexpiry changed; expired naturally after<=300s. NoDLrolechange, noTSedit.
+Canonical4096records/150.136s;4writerexports16384attempts.3425exactmatches with
+zeroidentity/generation/clockfailures:2885applied,523rejected,17other. Export
+omissions1+6inflight retained. OKXBTC matched622successes SDK->writerp953882.532ms,
+writer->ACK301.008ms,SDK->ACK3956.305ms. Significant postSDK/prewriterwait proven;
+which preparation/scheduling/prior-write cost dominates still needs batchtrace.
+Cursor acknowledged14961->35617/errors0;aggregate notsameeventACK/cursor proof.
+Heartbeat13/13READY60 but executionready50; freshcache BOOKstill~11.6-14.6sage.
+No completeconsumer/releasecertification. New boundedoffline exactjoin analyzer
+15unittestPASS;invalididentity/clock/generation/ambiguity failclosed. Guide and
+Claudehandoff: upgrade/evidence/p184-book-ack-trace-20261008.md. Source architecture
+unchanged; no concurrent TSedits. 8boundedwriter timeouts retained, noclaim all
+feeds continuous. Unrelated trusting_ptolemy container appeared concurrently;
+wholehostequalityassertionfailed, scopedwriterconfigverifiedunchangedexceptexpiry.
+Observer initial330s/10000 rejected by tool, reduced to300s/4096beforeexecution.
+Allmeasurementprocessesended; noimagesbuilt orcleanupneeded, BuildKit0Breclaimable.
+Activeplusnamedrollback retained; free98887442432bytes. Canonicalmain5bf5cd5,
+releasev2.2.2/runtimeDLunchanged,featurefix/p184-dl-closure;v2.2.3HOLD,no push/merge.
+
+### Resilience closure - three approved packages - 2026-10-08
+
+Status IN_PROGRESS. Owner approved one scope, no architecture rewrite or broad
+catalogue rerun. Governing KN architecture guide and evidence
+upgrade/evidence/p184-book-ack-trace-20261008.md remain authoritative.
+
+R1 Consumer throughput / BOOK recovery: TS source remains Claude-owned. Reuse
+exact-event evidence and coordinate bounded ordered batch/ownership change,
+snapshot plus sequence/generation boundary resync, ACK only after confirmed
+apply. LOSSLESS TRADE must not silently become latest-state. Require slow-reader,
+partial apply, crash/ACK, old replay and generation/reset tests. No TS edits here.
+
+R2 Disk pressure / restart: extend existing read-only watcher with bytes/inodes,
+measured growth and explicit predeclared headroom policy; do not infer safety from
+process-up. No destructive auto-prune, FLUSH, offset reset or legacy spool recovery
+on KN. Check recovery tooling topology before mutation. Fail-closed on missing
+pressure/progress evidence, bounded retries and stable recovery before READY.
+Production policy derives from measured growth/retention, not guessed constants.
+
+R3 Fault acceptance / rollout: isolated storage/consumer faults first, fixed
+budgets before runs, exact role/image/config packet and rollback before deployment.
+Inherited unrelated tests remain inherited. Gate includes no loss/regression,
+quorum/ISR, projector progress, cache eligibility and consumer ACK/cursor; cleanup
+only owned test artifacts. Do not promote mocked faults to live acceptance.
+
+Initial slices: watcher disk safety and legacy-recovery topology fence, unit and
+isolated filesystem fault tests; no production mutations or release authority
+implied until concrete changed-role packet passes. Journal results per slice.
+
+R2 progress: source legacybootrecovery fence14unittestPASS; actualread-only
+assessment refuses KN with MANUAL before spool/cache I/O. Installedsystemdunit
+is inactive legacy canonical path, not KN controller. Broker/projector restart
+policy unless-stopped confirmed. No installedunit orruntime changed. Detailed
+threepackage tracking and currentOPENstates: upgrade/evidence/p184-resilience-closure.md.
+
+R2 initialsliceRESULT:35unitPASS(14boot/10watcher/11disk),0skip. Real isolated
+16MiB/64inode tmpfs exhausted bytes theninodes, pressure detected, ownedfiles
+removed, guard cleared andwrite/read succeeded in0.110404s. NoKafkafault
+certification inferred. Testcontainer --rm verifiedabsent; noimagebuild.
+Watchersource supports explicitpolicy/matchedTScontainer, failclosedunknown and
+hysteresis; no productionthresholds invented, noinstalledcontroller activated.
+Sourcefence rejects legacybootrecovery onKN (counterfactualRECOVER->MANUAL).
+R1 consumerfix, R2native recoverycoordinator and R3 endtoendfault/rollout remain
+implementationOPEN, nottechnicaldebt orcomplete. Guide includes evidencehashes:
+upgrade/evidence/p184-resilience-closure.md. NoTSworktreeedit;Claudeplan change
+preserved. No sharedruntimewrites/restart/flush/offsetreset, no push/merge.
+Images86 retainedactive/rollback;concurrentBuildKit219entries/50active observed,
+notowned/pruned. Testtmpfs removedautomatically, no sharedvolumes touched.
+
+Diskpost94548148224freebytes vs95856402432before; concurrenthost/buildusage,
+notattributed to16MiBtest(torn down). No reclaimclaim. Canonicalmain5bf5cd5 and
+v2.2.2 unchanged;DLcore658a9570/ingestor0f6876e1/QueryBAR51450612/projectora696cfba/
+Stream1f13408f,TSwriter5849d716 unchangedbyslice. Featurefix/p184-dl-closure
+retainedactive;v2.2.3HOLD, explicitrollbackimagesretained.
+
+### Resilience R2 native recovery coordination - 2026-10-08
+
+IN_PROGRESS, continuing approved R1/R2/R3 scope; guide
+upgrade/evidence/p184-resilience-closure.md. Implement bounded non-destructive
+KN recovery controller with explicit observed-role identity and deadlines. Gates:
+pressure cleared -> quorum/ISR -> projector committed progress -> exact consumer
+eligibility. Missing/stale observations never imply SERVING. Default observation
+only; exact-ID approved packet needed for Docker start of exited roles, never
+restart healthy roles, FLUSH, reset-offset, recreate or delete storage. Keep
+retry/backoff bounded and prevent repeated deadline extension. Unit/fault tests
+first; runtime changes remain role-specific packet-gated. TS worktree is active
+Claude-owned (274fb5f observed), no concurrent edits. Preserve plan dirty hunk.
+
+### Resilience R2 coordinator tested slice - 2026-10-08 (Codex)
+
+Guide: upgrade/evidence/p184-resilience-closure.md, R2 Coordinator Slice and R1
+Exact TS Handoff. Added scripts/kn_recovery_state.py, kn_recovery_runner.py and
+their two test files. Ordered gates, stable distinct observations, absolute
+deadline, bounded retries; default propose-only, exact approved exited-container
+start with fresh ID/image/state validation and shared inspect/start budget.
+No reset/delete/recreate or automatic OOM restart. Runner is bounded invocation,
+NOT installed native recovery service. Actual native observation adapter and
+Kafka/consumer fault acceptance still required. R1/R2/R3 remain IN_PROGRESS.
+
+Tests: python3 -B -m unittest tests.test_kn_recovery_state
+ tests.test_kn_recovery_runner tests.test_kn_disk_pressure
+ tests.test_kn_production_watch tests.test_v2_stable_boot_recovery:
+68PASS0FAIL0ERROR0SKIP in0.371s. Direct --help passed. Docker operations mocked;
+probe subprocess timeout/output-limit exercised with real temporary processes.
+Source-only, no runtime change. apply_patch failed with mountinfo-path sandbox
+helper error; exact scripted writes used under rule32, then diff verification.
+
+Claude TS ownership preserved at274fb5f; recorded specific bounded BOOK CAS
+batch handoff in guide, not a claim Claude has applied it. No TS files edited.
+Canonical DL /home/bobby/data_layer main5bf5cd5 / stablev2.2.2; feature
+/home/bobby/.worktrees/data-layer-p184-closure fix/p184-dl-closure; v2.2.3 HOLD.
+Runtime observed: core658a9570, ingestors0f6876e1, Query/BAR51450612,
+projectorsa696cfba, Stream1f13408f; writer5849d716, bindingr22/JWT10 per last
+packet (config not revalidated here). Named BAR rollbackf7351c3b retained.
+Cleanup: local temporary probe files/processes disposed; no image/build/container
+created by this slice. Inventory87images/73containers/223cacheentries39active;
+2.62GB build cache reclaimable but concurrent Claude CI/build resources active,
+so no broad prune. Disk available87240540160bytes at inventory; no freed-space
+claim. Production listing healthy/up is NOT consumer eligibility acceptance.
+
+### Phase D G4-G6 handoff and Redis APPLY attribution correction - 2026-10-09
+
+Owner delegated TS upgrade/p184-phase-d-gates.md to Codex. Documentation review
+filled G4-G6 with verified v2.2.0 certificate/endpoint hashes and TS paper source
+manifest revision10 semantics; no invented all-feed canonical baseline or batch
+p95 from n=1 history samples. Status DRAFT_PENDING_OWNER_FREEZE; missing numeric
+coverage and G2/G9 semantic conflicts listed for Claude/owner, not waived.
+TS phase-D a4507abb identifies Redis APPLY contention; updated resilience guide
+to supersede speculative BOOK-CAS batching. No unsynchronised TS application edit.
+Four workers unchanged; full mixed benchmark then explicit runtime packet needed.
+Validation: JSON/hash, per-row numeric cross-check, diff/Markdown checks only.
+No runtime/probe/build/container/secret changes, no resource cleanup needed.
+Canonical DL /home/bobby/data_layer main5bf5cd5, stablev2.2.2 as previously recorded;
+closure branch fix/p184-dl-closure; runtime digests/config/rollback unchanged by
+this docs-only review, not re-inspected. v2.2.3 HOLD. No push/merge.
+
+### DR05 public export, paired TRADE/MARK G4 and build lock audit - 2026-10-09
+
+Status IN_PROGRESS; owner requests existing public export or isolated init,
+concurrent TRADE/MARK canonical timing and uv-lock audit. Reuse public export
+dr05-observer-20261008/public-export.json, validate through isolated_config; do not
+start a duplicate DR05 stack while Claude starts adapter. Bounded read-only assigned
+Kafka observer, no joins/offset commits, no second TS stream, credentials only
+in-memory existing mount paths. At most120s/10000 observations/16MiB output.
+Measure exact-event source->published separately from read_committed visibility
+upper bound, never call CreateTime commit time. Keep missing/negative timestamps
+explicit. Same current window for TRADE and MARK; historical5-11s attribution
+requires matching TS event trace, not today's aggregate alone. No rollout/build,
+no broad runtime dependency changes. Audit Dockerfiles/lock verifier and document
+mutable toolchain/OS resolution separately from application lock. Cleanup only
+own temporary observer; retain bounded receipt.
+
+### DR05/G4/build handoff result - 2026-10-09
+
+Guide/report upgrade/evidence/p184-dr05-g4-build-handoff-20261009.md.
+Public export validated, existing path+hash handed to Claude; no duplicate stack.
+Real read-only canonical window08:19:24-08:21:24UTC,120s,2689sampled TRADE/MARK
+BTC/ETH observations. TRADE p95103-190ms; BinanceMARK150-181ms; OKXMARK928-985ms;
+max1885.003ms. Exact per-product counts and p50/p95/p99/max in report. Boundary
+read_committed observed visibility upper bound, not publish/commitclock; no same
+window TSACK trace so no retrospective5-11s causal claim. Writer observed162ea147,
+not previous5849d716. Observer no joins/commits/writes and exited0.
+Build audit: no uv sync; Poetrylock/main RECORD verification and cargolocked.
+Mutable setuptools>=78.1.1/bootstrap/OS dependencies remain reproducibility risk,
+not silently fixed or claimed fully reproducible. No new image or dependency.
+Host test36with2missing-dependency errors; existing-image final38PASS0ERROR0SKIP.
+Scoped --rm test removed, no persistent stack/build/volume created or broadprune.
+Report records immutable summary/capture/script hashes. Runtime roles unchanged
+by this turn; no push/merge/release. G4 fullscope/DR05 acceptance remain open.
+
+### DR05 r8 HTTP404 and OKX three-symbol TRADE G4 - 2026-10-09
+
+Owner requests exact failing Query route from fresh isolated run and concurrent
+BNB/DOGE/SOL OKX TRADE canonical observation. Status IN_PROGRESS. Existing DR05
+Query runner installs only internal read-view routes; inspect against TS SDK
+HTTP requirements before attributing image failure. New isolated init/up/readiness
+may be used, no shared config changes; cleanup exact namespace and private keys.
+G4 same bounded assigned read_committed observer120s/10000rows/16MiB, no join or
+commit, no TS quota/stream. Announce UTC window; do not claim paired TS evidence
+without matching same-window offset trace. No dependency/image build or rollout.
+
+### DR05 r8 HTTP404 reproduction and OKX TRADE G4 result - 2026-10-09
+
+Report upgrade/evidence/p184-dr05-http404-g4-trade3-20261009.md.
+Fresh isolated Query actualHTTPS mTLS8/8routes404: instruments/snapshot/warmup/
+status for both ETHbindings. OpenAPI paths empty. Query logs only startup because
+access_log=False; actual URL/status captured from requests, not invented log.
+Root cause DL harness serve_query uses bareFastAPI+internalreadview only, missing
+public production router/auth wiring required by TS SDK. No SDK blame, no
+productionQuery defect inferred. Fix remains implementation next; r8 rerun alone
+cannot pass. No code/auth weakening or shared rollout performed.
+G4 OKX BNB/DOGE/SOL same09:26:17-09:28:17UTCwindow,227samples; per-symbol n30/94/103,
+p95380.293/146.769/174.404ms,max391.672/412.521/386.183ms. Read_committed visibility
+upper bounds; matching Claude TSprobe NOT_VERIFIED. No5-11s tail in this sample,
+no quiet/LAST or runtimeFULL claim. Hashes/limits in report. No complete-suite rerun.
+Cleanup exact isolated5roles and credentials; label inventoryempty. Observerexit0.
+No build/image/volume created; broadprune deferred unrelatedownedcache. Diskafter
+113936941056bytes; no pre/post freed claim. CanonicalDL main5bf5cd5/stablev2.2.2
+per ledger, featurefix/p184-dl-closure; runtime unchanged by turn, v2.2.3HOLD.
+
+### DR05 public router and TS MARK quota - 2026-10-09
+
+Status IN_PROGRESS. Owner approved connecting public router in isolated Query and
+confirming ten additional TS MARK streams within stage100. Reuse production
+create_v2_app, packet JWT key/realm/subject pins, manifests, bounded requests and
+shared isolated Redis quota; keep mTLS/internal read-view and DR08 default intact.
+Tests: public route presence, authorized reads, realm/revision/identity/feed
+negatives and quota failure. No shared runtime or manifest activation. Rollback
+is reverting isolated harness source only; dispose owned test resources. Quota
+is workload arithmetic, not measured100-alpha capacity. Guide:
+upgrade/evidence/p184-capacity100-candidate.md. No push/merge/image build.
+
+### DR05 public router result - 2026-10-09
+
+Status IMPLEMENTED_ISOLATED_HTTP_TESTED. Guide/evidence:
+upgrade/evidence/p184-dr05-public-router-20261009.md. Production public router
+now mounted in DR05 with real isolated JWT/manifest/Redis quota and mTLS; DR08
+default unchanged. Existing-image scoped suite62PASS0fail0skip; includes next
+quota slice. Actual SDK transport HTTPS8/8 reads and4/4negative401. Test-only
+canonical data; not TS fault acceptance. Initial probe fixture gap retained and
+corrected, not reader policy. Exact5roles/keys cleaned; no build/sharedmutation.
+Diskafter111828414464bytesfree; unrelated cache retained for concurrentwork.
+Canonicalmain5bf5cd5/stablev2.2.2, runtime unchanged, v2.2.3HOLD. No push/merge.
+
+### TS ten MARK stream quota confirmation - 2026-10-09
+
+Status QUOTA_DESIGN_CONFIRMED_RUNTIME_NOT_ACTIVATED. Appended amendment in
+upgrade/evidence/p184-capacity100-candidate.md. Actual deployed bundle TSrev10:
+50streams/1500RPM; both Stream384+32replay, restart0/OOMfalse. Ten extraMARK
+requires60active,72reservedTS slots. Stage100realistic240/288 andstress560/672
+(active/reserved), tested with existingplanner. Current384doesnotfitstress
+failover.1024modeledplanfits but no capacitycertification. Inverseadditional
+subscriptions must be counted separately. No quota/buffer/manifest/runtimechange.
+Scoped62test final suite includes thisregression; no further build or resources.
+No push/merge; v2.2.3HOLD. Runtime/cleanup as precedingDR05entry.
+
+### Phase D DL closure plan - 2026-10-09
+
+Status: PLANNED_PENDING_OWNER_GO_AHEAD. Documentation only, not implementation
+or certification of D1-D6. Accept all six items of Claude's delegated prompt.
+Its section0 explicitly requires this plan commit before further runtime action.
+Previous rollout approvals do not authorize this new packet.
+
+#### Inputs and authority
+
+- DL working source d4e8d11, fix/p184-dl-closure, clean before this entry.
+- TS source inspected read-only aca225231b2bed91e86abcae879ea90d665c9167.
+- TS upgrade/p184-phase-d-codex-dl-prompt.md SHA256
+  8df6bf886bf570833b0c51fcd2d32fe2fd635ce59a0c23b3f43ca199773c6bba.
+- TS upgrade/p184-phase-d-gates.md SHA256
+  a2e10504531421068475d4960f14aee860eca4c81d49e4a987b1a8f033f31d4a.
+- TS upgrade/p184-phase-d-mark-quota-handoff.md SHA256
+  6b53e54902689f5d12e1885196af2af6d94cf96eec2e3efea1ab0b7a002448a7.
+- Read workspace/project rules, CLAUDE.md sections2/3/3b/4, ledger, this journal
+  from100-alpha amendment, TS phase-D slices/runtime incident and IDR002/003/
+  028/029/039/040/062/075/077. Existing detailed guides under upgrade/evidence/:
+  p184-capacity100-candidate.md, p184-consolidated-build.md,
+  p184-dl-phase-c-packet.md, p184-dr-runtime-runbook.md,
+  p184-resilience-closure.md, p184-dr05-fence-channel-handoff.md,
+  p184-dr05-public-router-20261009.md, p184-dr05-g4-build-handoff-20261009.md,
+  p184-dl-release-readiness.md. Historical observations are not current runtime.
+
+Frozen G1-G14 remain unchanged. G4 all-feed baseline/comparison and G5 missing
+shape-specific numeric limits are unresolved inputs, not permission to invent
+thresholds after results. Owner records those inputs before load; an actual gate
+change needs a reasoned owner amendment. Historical5-vCPU and core-first text in
+PhaseC is superseded by governing amendments. Preserve all failed evidence.
+
+#### Order and ownership
+
+Order: D1 packet -> D2 attribution -> D3 runnable measurement preparation -> D4
+resilience -> D5 final build/qualification/release. D6 reset diagnostics precedes
+further fault runs; D6 compatibility decisions precede final source freeze.
+These are slices of existing phaseD, not extra phases. Codex owns DL source,
+harnesses, packet/journal. Claude exclusively owns TS source/writer/validator,
+trace/alpha and broker delta. Never edit TS worktree or wait for Paper features.
+
+**D1: one Paper rev11 packet for inverse plus MARK wake, no double bump.**
+Compile demand from sealed products AND actual bridge paths. Sixty linear slices
+already include ten polled MARK slices; current stream count50 is not60.
+Adding ten wakes yields60 linear streams, NOT70. TS bridge lines881-884 select
+MARK separately. With four inverse QUOTE/MARK/BOOK_SNAPSHOT/BOOK_DELTA streams,
+planning demand becomes64 active/ceil(1.2x64)=77 reserved; verify with executable
+caller roster before sealing. Realistic100 would be244 active/293 reserved,
+stress100564/677. Current384 on one replica cannot cover stress peer loss. Do not
+sum two replicas to certify failover; do not increase per-client buffers.
+
+Audit request costs separately: TS _book_fast_retry_slot spaces attempts at1.5/s
+per process, not necessarily charged requests. qdl_sdk/client.py:957-1002 can
+snapshot/warmup then Subscribe; security/data_plane.py:395 and Rust auth.rs:554
+both consume quota. Warmup-refused and stream-fault-after-handoff cost different
+amounts. Verify real Redis URL/prefix parity, identity/global-vs-replica scope,
+fixed-minute boundaries, SDK internal retries, initial bursts, cold resolve,
+batch charging, all Paper callers and new wake reads before accepting1000+360
+against1500RPM. That arithmetic is NOT yet a proven worst-case request bound.
+Do not double-count replacement traffic. Freeze a measured recovery reserve.
+
+Deliver immutable rev11 manifest/bundle, r23 V3 binding and policy fingerprint,
+old/new hashes and paired JWT11 checklist. Explicitly supersede prior packet's
+no-quota-change statement, preserve its artifacts. Future exact scope: Query/
+Stream replicas and affected Paper callers, freshly inventoried digests/mounts;
+keep other realms/keys, ingestors/core/projectors, offsets/cache and orders intact.
+Quiesce callers during revision transition, verify readers then paired callers.
+Rollback readers to manifest10 and callers to r22/JWT10 together, never accept
+both revisions silently. Live/sandbox need separate owner decisions based on
+actual data identities/subscriptions, not the broker's execution mode.
+Owner approves exact quota/reader/caller packet; Claude confirms inverse roster
+and callers, then enables MARK wake only after admission/preflight.
+
+**D2: periodic TRADE/QUOTE attribution, not speculative code.**
+Read supplied trade-split.json; join offsets534102073/460611644/534133976 with UTC,
+identity/generation. Inspect dispatch/flush/keepalive, cursor refresh/signing,
+quota windows, Kafka poll/fetch/rebalance and projector cadence with file:line.
+A90.2s coincidence is a hypothesis, not causal proof. Check existing Stream send
+fields; aggregate counters are not per-event send time. Coordinate Claude's
+bounded rotating SDK/apply/ACK/cursor trace. No new TS stream, Redis MONITOR,
+offset commits or broad log dump. A read-only observer packet states duration,
+partitions/output bound/stop conditions; missing joins remain explicit. Include
+OKX QUOTE tail, separate quiet-state age from new-event transit. Only reproduced
+causality permits a proposed source fix/affected regression. Owner approves the
+observer window and any later runtime action; Claude supplies matching trace.
+
+**D3: stage100 driver and measurement freeze before load.**
+Finish candidate-only config, quota preflight, client/worker wiring, real TS
+clone and active per-stream apply/ACK proof. Do not reinterpret certified stage50.
+Freeze mixed/stress rosters including inverse/MARK, rates/fanout, startup/reconnect,
+probe overhead, batch symbols/interval/limit, warm/cold state, concurrency/bytes.
+Propose G5 limits per shape for owner freeze before results. G4 needs every
+feed/venue/interval paired by event/generation/partition/offset; read_committed
+observation is a visibility upper bound, not broker commit time. Owner freezes
+comparison tolerance after baseline but BEFORE candidate load. Missing/negative/
+skewed samples remain counted. BAR uses close; MARK component age is separate.
+Windows: one variable per>=10min comparison; >=30min stage100 steady, declared
+burst and faults; ramp20/50/100 with integrity/backlog/pressure stops. Report
+n,p50/p95/max, p99 only n>=100, refusals/errors included. G6 typed at-use quality
+is separate from G14 per-role CPU/throttle/RSS/cgroup memory/I/O/disk/queue;
+measure clients separately on aligned windows. Owner sets resource headroom from
+measurements, not a fixed5CPU ceiling. Confirm disk bytes/inodes/growth reserve
+before any approved load. Claude provides real receiver and ACK boundary.
+
+**D4: native recovery adapter and isolated fault acceptance.**
+Finish observation adapter for kn_recovery_runner/state: actual pressure,
+quorum/ISR, committed offsets/projector catch-up and TS at-use validator. READY
+or arbitrary success booleans cannot certify SERVING. Default observe/propose,
+typed unknown/fatal/fenced refusal, absolute deadline and bounded attempts;
+exact exited-container identity before an approved start. No auto-prune, FLUSH,
+offset reset, healthy-role restart or legacy spool recovery on KN.
+Use isolated broker/projector/Stream faults and production-shaped4-worker TS
+clone. Record outage start/fault cleared/first valid apply/caught-up per slice.
+G12 caught-up<=600s then G1-G3 inside; G10 loss/duplicate apply/overflow/replay
+expiry rules unchanged. Deliberately faulted slow-client controls separately
+labelled, never silently removed. Inherit unchanged ENOSPC/unit evidence.
+Owner approves fault/resource packet, then separate shared packet if needed;
+Claude supplies clone/validator/ACK. No mocked test becomes runtime acceptance.
+
+**D5: one-source image set and fresh final receipts.**
+Verify effective source plus ancestry for IDR040fix1,bindingV3,quota log,b6a0119,
+IDR075+D1,IDR062,d68fb2f,0b374bc and deployed IDR077 fact. A commit list alone
+cannot detect a revert. Exact-source CI/preflight before owner-approved build;
+hosted workflow/push needs separate permission, local rehearsal is not hosted CI.
+Build both images from one immutable archive, no overlays in final certificate.
+Rebuild SDK into fresh output; require exact wheel hash
+6923b46f46bd07c850b18a6074439bbcb4085d84428a8e72c476437dd51524e7.
+Drift HOLD, no overwrite; preserve mutable toolchain/OS risk and package inventory.
+Final DR01 joint account cells, DR05/DR07 with Claude, DR08>=5restarts use actual
+final DL+TS digests/configs in fresh directories. Final DR/broker delta is not
+Paper feature completion. G1-G14/source/images/artifacts must agree before
+certificate and owner release decision. Feature->dev CI->main/tag/assets only
+when authorized. No premature SDK publication, runtime freeze, push or deploy.
+
+**D6: narrow diagnostics and explicit compatibility decisions.**
+Keep bounded sanitized stderr/return code/stage/deadline for r13 reset failure;
+fail typed, immutable output, no blind retry or extending deadline. Regression:
+timeout/nonzero/topic error and existing reset isolation checks. Do this before
+another fault run, not after losing another diagnostic.
+For IDR040fix2 and IDR003 propose tolerant-reader-first rollout of an optional
+quality field, or explicit owner deferral with quiet-source refusal limits.
+SDK2.1.0 package availability does not mean every deployed reader tolerates it.
+Claude verifies TS/alpha/Risk reader versions before DL emits anything new.
+No silent schema/semantics change, invented heartbeat timestamp or eligibility.
+
+#### Safety, cleanup and this slice
+
+Before a runtime packet: fresh role IDs/digests/config/caps, proposed env checked
+against actual parser bounds. Guard RestartCount/OOM/heartbeat and real feed
+progress, not just memory. Do not repeat32768 vs4096 trace-cap incident. Reuse
+unchanged certified evidence; no broad catalogue/E03/E04 rerun.
+After each attempt stop owned observers/watchers, remove owned containers/private
+credentials/test artifacts after hashes, preserve immutable receipts and active/
+named rollback images. Record disk pre/post for actual cleanup; never prune
+Claude's concurrent work or shared operational state.
+This turn changes documentation only: no tests rerun, probes, Docker action,
+build, config/manifest change, runtime measurement or TS edit. Claude's writer
+0705cce3 and DR05r16 remain attributed reports, not independently recertified.
+CanonicalDL main5bf5cd5/v2.2.2 and active closure worktree confirmed by git worktree
+list. Runtime digests/config/rollback unchanged by this turn, not re-inspected.
+No resources created; Docker/BuildKit inventory/cleanup deferred for this
+planning-only slice. v2.2.3 remains HOLD. Commit plan and await owner go-ahead
+per prompt section0 before runtime action. apply_patch failed mountinfo helper;
+exact append fallback used under rule32, followed by diff verification.
+
+### Phase D Claude alignment - 2026-10-09 (9ca122a/e292195)
+
+Status: D1_ROSTER_CONFIRMED_RPM_NOT_FROZEN; D2_TRADE_QUOTE_ATTRIBUTION_CLOSED.
+Documentation-only continuation of86dd0ae; no runtime action authorized by this
+entry. Scope: incorporate Claude's updated handoff, preserve G1-G14, no TS edits.
+Guide: upgrade/evidence/p184-capacity100-candidate.md, final confirmed-demand
+section. D1 rev11 now explicitly sizes RPM together with77 reserved slots for64
+active streams. Baseline900/898 units/min (n=2) and fastretry240 units/min are
+reported by Claude, not newly measured here. MARK/inverse incremental requests,
+SDK reconnect/startup and observer reserve still need numerical inputs;1500RPM
+is not accepted by default. Guide records formula and paired rollback boundary.
+
+D2 supersedes the earlier proposed TRADE/QUOTE periodic-delay investigation.
+Read TS phase-D runtime action6: image923de4c448db6d8b1d4c5454f2841a462a791bf1aa5896a4fb8fc69527e88eab,
+trace14:07:43-14:17:33Z. Repeated quiet TRADE snapshots with newer watermarks
+caused the apparent tails (IDR082), not demonstrated Stream delivery delay.
+Claude's stream-event maxima: TRADE847/726ms, QUOTE806/809ms (Binance/OKX).
+These are attributed diagnostic-window results, not independent stage100
+acceptance; no sample count invented. Do not reopen DL TRADE/QUOTE search without
+independent reproducible evidence. IDR082 APPLIED-versus-REFRESHED semantics
+remain TS-owned/open; MARK wake/G2, G4 attribution and D3-D6 remain separate.
+
+Validation: read latest TS handoff/journal, checked quota arithmetic and SDK
+retry boundary; documentation diff checked. No source suite rerun, probe/build,
+runtime/manifest/quota mutation, push or merge. CanonicalDL main5bf5cd5/v2.2.2,
+active worktree fix/p184-dl-closure; v2.2.3HOLD. Runtime digests/config and named
+rollback artifacts unchanged by this slice, not freshly inventoried. No test
+resources created; Docker/BuildKit cleanup deferred for documentation-only work.
+apply_patch failed with mountinfo helper; exact append fallback under rule32,
+followed by diff verification. No historical journal evidence overwritten.
+
+### Phase D D1 rev11 packet closure - 2026-10-09 (TS f457e7a)
+
+Status D1_PACKET_COMPLETE_NOT_APPLIED. Owner requests packet only. Freeze Paper
+manifest11 at77 stream slots for64 active,3000RPM; paired TS r23/JWT11 with
+MARK_WAKE_MIN_INTERVAL_MS=500. Detailed checklist/rollback and sizing are in
+upgrade/evidence/p184-dl-phase-c-packet.md and p184-capacity100-candidate.md.
+Scope documentation only; no deployed manifest, credentials, runtime or TS edit.
+The old pending-MARK-rate sizing prerequisite is superseded by TS bounded wake.
+G1-G14 and final acceptance remain; D2 closed, IDR082 remains TS-owned.
+
+Reviewed TS f457e7a bridge interval guard/coalescing and its flood/bounds tests
+(source review, not a fresh test execution). Proposed load2480units/min leaves
+520units/min reserve at3000;900baseline and10-20reconnect/probe allowance are
+estimates, not hard workload bounds under arbitrary failures. SDK reconnects
+remain outside BOOK limiter; acceptance checks actual charged minute counters.
+No choice of2400 without evidence decomposing non-MARK<=300. Guide records
+startup/recovery bursts and immutable packet rerender requirements.
+
+Validation: arithmetic assertions, three-file documentation diff and diff-check.
+No source suite/build/probe or runtime action. apply_patch helper failed mountinfo;
+exact append fallback under rule32 used and diff reviewed. No push/merge.
+Canonical /home/bobby/data_layer main5bf5cd5/v2.2.2; active worktree
+/home/bobby/.worktrees/data-layer-p184-closure on fix/p184-dl-closure.
+Runtime image/config set and rollback artifacts unchanged, not re-inventoried.
+No disposable resources created; Docker/BuildKit cleanup intentionally deferred
+for this documentation slice. v2.2.3HOLD; D1 runtime acceptance NOT_RUN.
+
+### D1 rev11 rendered by Claude (owner reassigned DL closure to Claude) - 2026-10-09
+
+Status RENDERED_NOT_APPLIED. Owner reassigned the DL phase D work to Claude. Packet design is unchanged from 4fc987a.
+- `scripts/prepare_paper_read_extension.py`: optional upward quota change (`--max-streams`, `--requests-per-minute`), only
+  those two keys, only raised, recorded as `provenance.quota_change`. Without it the output is identical to the original
+  IDR-075 preparation. `tests.test_paper_read_extension` 11 PASS in the rc2 image (commit 76db472).
+- Inputs equal runtime byte for byte:
+  - catalog `fc3a1e1e` = `releases/v2.2.0-02cd827/runtime/stable-source-bindings.yaml`;
+  - Paper manifest `1e489237` = the file baked in Query 514506122111;
+  - binding `5703582a` = the writer mount (r22, rev 10).
+  Parity: `kn_gateway_bundle.py` from the reader image with those inputs reproduces the deployed bundle exactly
+  (`c5d964c4`).
+- Rendered in `~/.local/state/qdl-v2/p184-d1-rev11-20261009/`:
+  - `prepared.json` 553cab32;
+  - `trading-system-paper-r11.yaml` efd482fa: rev 11, quotas 77/3000, +4 inverse requirements, nothing removed;
+  - `trading-system.paper.stable-r23-v3.json` 685fdf6f: binding r23 V3, 64 products, binding_sha256 c9a28653;
+  - `bundle-r11.json` 65b790ec: gateway bundle sha256 f04ba6dc; only the Paper manifest entry differs, catalog,
+    environment and schema are equal, and manifest order follows paths.
+  - Paired consumer env: `DATA_LAYER_V2_JWT_MANIFEST_REVISION=11`,
+    `DATA_LAYER_V2_RELEASE_MANIFEST_SHA256=7b8af009...`.
+  - The TS validator `p184_validate_qdl_paper_extension.py` returns VALIDATED_PREPARATION_ONLY (60 preserved, 4 added).
+- Reader step rendered (TS state dir `p184-rev11-window/readers_rev11.py`): query_kn_1/2 and stream_kn_1/2 keep their images;
+  only the `/consumer-realms` mount moves to the new realm dir, and for Query the Paper entry of
+  QDL_STABLE_CONSUMER_MANIFESTS changes.
+- OPEN: the new realm dir `p184-d1-rev11-20261009/reader-public` (root-owned copy of the deployed one + the rev11 manifest)
+  still holds the OLD bundle.json. Installing the rev11 bundle needs a root write that requires owner permission. It must
+  not be mounted before that. No runtime change was made.
+
+### D1 rev11 window executed and rolled back - 2026-10-09 (Claude)
+
+Owner-approved window, 15:11:05-15:18:28Z. The four readers (query_kn_1/2, stream_kn_1/2) took the rev11 realm without
+error: healthy, bundle f04ba6dc, restarts 0. The TS writer reached only 54/64 ready: TS defect IDR-083 (the MARK ordering
+authority includes the release manifest hash, and the marker has no TTL). Everything was rolled back to rev10 / bundle
+c5d964c4 / writer 9ca122a, READY 60/60. DL artifacts and reader step are unchanged and reusable. The retry waits for the
+TS IDR-083 fix. Receipts are in the TS journal (runtime action 7). v2.2.3 HOLD.
+
+### D1 rev11 APPLIED - 2026-10-09 (Claude)
+
+Owner-approved retry window 15:47:40-15:50:02Z.
+- Runtime now:
+  - query_kn_1/2: same image 514506122111, /consumer-realms = `~/.local/state/qdl-v2/p184-d1-rev11-20261009/reader-public`,
+    Paper manifest path `/consumer-realms/trading-system.paper.stable-r11.yaml` (rev 11, 77 streams / 3000 RPM, +4 inverse);
+  - stream_kn_1/2: same image 1f13408fe946, bundle f04ba6dc.
+- TS writer 71404a7 on JWT 11 / binding r23: READY 64/64, 64 active subscriptions on stream_kn_1, identity quota
+  1575-1593/min, no 429.
+- Rollback per reader: the saved composes in the TS state dir `p184-rev11-window/readers/*-rollback.compose.json` (old
+  realm dir + baked Paper manifest).
+- No ingestor/core/projector/Kafka/Redis change.
+- Open: the live/sandbox TS realms remain at 50 streams/1500 RPM (no owner decision). MARK G2 is a TS item (Binance ~1.18 s).
+  v2.2.3 HOLD.
+
+### IDR-084 fixed in source: execution MARK takes the newer committed hot record - 2026-10-09 (Claude)
+
+Status IMPLEMENTED / TESTED_LOCALLY (not deployed; it goes into the consolidated D5 Query image).
+- Finding (TS register IDR-084, TS writer windows 2026-10-09):
+  - Query serves execution MARK/INDEX from the projected kn3 latest view (CacheRefreshingMarkIndexView ->
+    KnMarketCacheQueryBackend.latest_stored_event).
+  - That view is visible about 300 ms after the venue event (Binance p50 292-305 / p95 367-377 ms), while canonical
+    read_committed visibility is 150-181 ms p95 (2026-10-09 G4 observer).
+  - The TS MARK floor stayed about 400 ms p50 whatever the TS read cadence; OKX G2 p95 was 508-534 ms.
+- Fix in `qdl/runtime/kn_query_backend.py` latest_stored_event: for MARK_INDEX_PRICE with a valid cache view, read the
+  existing Rust canonical hot view (QDL_KN_HOT_READ_TARGETS) and take it only when its source offset is newer.
+  - It passes the same `_hot_candidate` lineage/monotonic/generation gates.
+  - Behind or unavailable -> the cache view stands (previous behaviour).
+  - Same offset with different bytes -> INTEGRITY.
+  - Other feeds are unchanged and never consult the hot view for a valid cache view.
+- Tests (disposable Redis, rc2 image 77682eea): tests.test_kn_query_backend + test_kn_hot_view +
+  test_kn_hot_book_invalidation + test_execution_mark_index_live_view: 90 PASS, 0 fail, 0 skip. New cases:
+  - newer hot record wins on both venues;
+  - hot outage keeps the valid cache view;
+  - a hot record behind the cache is never taken;
+  - non-MARK feeds never consult hot.
+- Load note: about 1 extra hot gRPC read per execution MARK read (TS: up to 2/s per symbol, 10 linear + 1 inverse) on the
+  Stream gateways. To measure in the D5 rollout; it is not a capacity claim.
+
+### Owner decisions for the DL closure - 2026-10-09 (Claude)
+
+AskUserQuestion answers, recorded before the respective work.
+- IDR-040 fix 2 and IDR-003 (new optional quality field): DEFERRED, not in v2.2.3. Recorded limit: a quiet Binance book is
+  refused as stale beyond its last frame, never falsely fresh. A later release adds the field with the tolerant reader first.
+- trading-system.live / .sandbox realms stay at 50 streams / 1500 RPM. A separate rev packet follows when a caller enables
+  MARK wake or inverse there.
+- G4/G5: the baseline rule is in TS upgrade/p184-phase-d-gates.md "Owner amendment 2026-10-09":
+  - G4 candidate p95 <= baseline x 1.2 per feed/venue;
+  - G5 stage-50 targets where they exist, otherwise baseline p95 x 1.5 per shape, frozen before candidate load.
+- Stage-100 load: synthetic driver with real SDK sessions on the capacity100 profiles plus the real TS writer.
+
+### D6 reset diagnostics - 2026-10-09 (Claude)
+
+Status IMPLEMENTED / TESTED_LOCALLY. DR05 r13 lost the cause of a reset failure: `serve_host` kept only
+`CalledProcessError:...`, and `reset_preserving_broker` had already stopped query/stream/core/quota, so `--down` found
+only kafka.
+- `scripts/p184_dr05_reset.py`: a failure after the readers were stopped raises `ResetStageError` with
+  `stage=stop_readers|reset_topics|start_readers|probe|verify_broker`, `readers_stopped=true`, the return code and a printable
+  240-character stderr tail (message <= 380 characters, inside the 400 the host result keeps). The broker-changed refusal keeps
+  its text. No retry was added and no deadline was extended.
+- Tests in the rc2 image: tests.test_p184_dr05_reset + channel + case: 53 PASS. The new case is a topic reset failing with rc 1
+  and stderr; it checks stage, rc, bound and non-printable stripping.
+
+### D3 slice 1: stage-100 ramp in the existing target driver - 2026-10-09 (Claude)
+
+Status IMPLEMENTED / TESTED_LOCALLY (no traffic, no runtime change).
+- `qdl/certification/phase3_consumer_load.py`, additive:
+  - P184_STAGE_MIX {20: (8,6,4,2), 50: (20,15,10,5), 100: (40,30,20,10)} and P184_STAGE_SECONDS {20: 600, 50: 600,
+    100: 1800}. The frozen v2.1.1 tables and budget are untouched.
+  - build_target_workload_plan accepts stage 100.
+  - load_p184_stage100_budget (schema `qdl.p184.stage100-budget.v1`) refuses budgets that are not marked
+    frozen_before_candidate, lack G5 shape limits or lack the TS route count.
+  - evaluate_target_acceptance adds `g5:COLD_<rows>:<venue>` gates: max of the cold reads within the frozen limit,
+    small-sample rule, so a missing or failed read fails.
+- `scripts/phase3_consumer_load_acceptance.py`: optional `--budget` selects the stage-100 budget, its stages and
+  durations; stage 100 is the final run. Without it the v2.1.1 behaviour is byte-identical.
+- Tests (rc2 image 77682eea, network none): tests.test_p184_stage100 (new, 7) + target workload/consumer load/target
+  driver/consumer load driver/capacity100/kn capacity budget: 111 run, 1 failure.
+  - The failure is pre-existing: `test_phase3_target_driver.test_a_typed_rejection_is_counted_by_code` counts 5 instead
+    of 4 rejections in 0.2 s, 3/3 at HEAD 522cf3e without this change.
+  - It is a tick fencepost in the test expectation, not caused by this slice. It is recorded, not hidden, and remains to
+    fix in the driver's own tests.
+- The stage-100 plan does not fit the deployed alpha manifests (2400 RPM / 60 streams). The capacity100 candidate quota
+  (4950 / 300) carries it. That runtime packet is the next D3 slice.
+
+### D3/D5 slices: ticker fix, budget freeze tooling, quota renderer, recipe prerequisite - 2026-10-09 (Claude)
+
+Status IMPLEMENTED / TESTED_LOCALLY.
+- ed2b284 (cherry-picked from a subagent worktree, which has since been removed): DeclaredRateTicker offered a phantom tick
+  at the window end on long-uptime hosts. time.monotonic() is about 2.1e6 s here, so `(start+0.2)-start` = 0.20000000019
+  and the quotient exceeded the 1e-9 tolerance. A due time within 1 us of the end now counts as the boundary; a
+  regression test was added. This is the root cause of the "pre-existing" test_a_typed_rejection_is_counted_by_code
+  failure noted in D3 slice 1, which was a product bug, not the test. Suites: 112 OK.
+- fc22491 scripts/p184_freeze_stage100_budget.py: v2.1.1 latency classes kept, G5 COLD_<rows> = baseline max x 1.5,
+  G4 table = baseline p95 x 1.2, TS routes 64; it validates through load_p184_stage100_budget. 9 tests OK.
+- 06b77e0 scripts/p184_render_quota_revision.py: revision +1 and named quotas upward only; any other difference is
+  refused. The repo alpha manifests equal the copies baked in Query 514506122111 (sha d201b2e7 / e8fb3ea7).
+- Recipe: PREREQUISITES + IDR084_hot_mark 922a6ec, and the kn_query_backend contract marker
+  `binding.feed is FeedType.MARK_INDEX_PRICE`; tests.test_p184_consolidated_build 20 OK. The preflight at HEAD stays HOLD.
+  Pending gates: TS integration receipt, exact-source DL CI, owner build approval.
+- Since 0b374bc, served runtime changed only in 922a6ec. 76db472/522cf3e/f831571/ed2b284 are scripts or certification
+  tooling, listed for the release notes.
+
+### D3 window A (baseline) executed; stage-100 budget frozen - 2026-10-09 (Claude)
+
+Status: owner-approved window A, runtime unchanged. Budget FROZEN before any candidate load.
+- G4 observer (scripts/p184_g4_observer.py, assigned read_committed, no join/commit), 4 x 120 s, 18:25:54-18:34:28Z.
+  Window 1 was idle; windows 2-4 overlapped the stage-50 run. 0 missing clocks, 0 negative samples. Per feed/venue p95
+  visibility (max of the four windows):
+  - trade 224/215 ms; quote 244/236; book_delta 219/241; book_snapshot 217/225;
+  - mark_index_price 309/1322 (Binance/OKX). The OKX composite carries the older (index) component time.
+  - OKX bar 1m 61.5 s: the OKX bar source time is the bar open. The same metric is used for baseline and candidate.
+- Stage-50 target run (v2.1.1 budget, alpha.binance/okx.paper.stable, image 514506122111, 4 workers), 300 s steady +
+  windows:
+  - every DL gate PASS. Latency p95 BAR 27/31, L2 37/75, MARK ref 24/28, QUOTE 34/39, TRADE 34/28 ms (Binance/OKX).
+  - requests, streams and cold all PASS. Cold 2500: 2337/4177 ms; cold 5000: 6572/10178 ms.
+  - The TS gates FAILED for a measurement reason: the driver sampled container market_data_service via core.config and
+    counted disconnects from docker logs only, so 0 TS samples were read. The writer is market_data_service_p184w, uses
+    shared.config and logs to /app/logs/*.log.
+  - Independent watcher (watch.log, 19 samples every 20 s, 18:29:22-18:35:30Z): TS READY 64/64 throughout, readers and
+    projectors restarts 0, disk 87 GB.
+  - With the fixed counter: TS disconnects 0 in the run window (18:28-18:36) and 0 in the 10 min before.
+- Driver fix (this commit): optional profile field ts_container; the heartbeat reads TRADING_REDIS_URL from the writer
+  environment; disconnects also read the writer's log files within the window. Checked live: heartbeat READY 64/64;
+  log-file counting finds 105 disconnects in an earlier window that had rolls. Driver suites 79 OK.
+- Frozen config/v2/p184-stage100-budget.json (scripts/p184_freeze_stage100_budget.py):
+  - G5 COLD_2500 <= 6265.1 ms, COLD_5000 <= 15267.0 ms (baseline max x 1.5);
+  - 17 G4 rows, candidate p95 <= baseline x 1.2;
+  - v2.1.1 latency targets kept; TS 64 routes.
+- Evidence ~/.local/state/qdl-v2/p184-d3-baseline-20261009/ (file, sha256 prefix):
+  - stage50/receipt.json 43ecd594aee10c3e
+  - stage50/gates.json 5ebec6252e9d1c96
+  - g4-1-summary.json 09bd7219c41e570a
+  - g4-2-summary.json 83c8ab8c3630bde9
+  - g4-3-summary.json f7174be2ebeaf4d9
+  - g4-4-summary.json a902171d065a9352
+  - watch.log 2c03e0528088e821
+  - profile-stage50.json 878c069f93dd63cc
+- Cleanup: driver client containers --rm (none left); the watcher was stopped; the observer ran inside query_kn_1 with no
+  leftover process.
+
+### D3 window B prepared (alpha rev15 quotas + Stream 1024 subscriptions) - 2026-10-09 (Claude)
+
+Status RENDERED_NOT_APPLIED.
+- Manifests (scripts/p184_render_quota_revision.py, from the repo copies that equal the Query-baked ones):
+  - alpha.binance.paper.stable rev 15: 4950 RPM / 300 streams, manifest_sha256 06db86f0, file sha256 8fed780a;
+  - alpha.okx.paper.stable rev 15: 4950 / 300, manifest_sha256 b2ba5729, file sha256 33b9cfd4;
+  - only the revision and those two quotas differ.
+- Gateway bundle: rebuilding the deployed inputs reproduces the live f04ba6dc (parity). The new bundle bce26969 (file
+  aa113b28) changes only the two alpha manifests; catalog/environment/schema are equal.
+- Reader step (~/.local/state/qdl-v2/p184-d3-capacity-20261009/readers_capacity.py, file sha256 5531bf81), same images:
+  - Query: two QDL_STABLE_CONSUMER_MANIFESTS entries now point at /consumer-realms/alpha.*-r15.yaml;
+  - Stream: QDL_KN_MAX_SUBSCRIPTIONS 384 -> 1024;
+  - all four readers: /consumer-realms -> the new realm dir (rev11 realm + the two r15 files + bundle bce26969).
+  Rollback composes = the current rev11 realm and 384.
+- Driver: profile field manifest_overrides (1f28448) mounts the r15 files over the client's baked manifests, so the client
+  quotas and JWT revision match the readers. Profile profile-stage100.json validates (ts_container market_data_service_p184w).
+- No alpha caller runs today. Before Phase E alphas must mint JWT revision 15.
+
+### D3 window B APPLIED (alpha rev15 quotas + Stream 1024) - 2026-10-09 (Claude)
+
+Owner-approved. The owner created the root-owned realm dir; checked: only bundle.json differs from the rev11 realm, plus the
+two r15 manifests (8fed780a / 33b9cfd4).
+- 18:55:30-18:56:52Z, readers recreated one at a time, same images:
+  - query_kn_1/2 healthy, restarts 0, manifest list now /consumer-realms/alpha.{binance,okx}.paper.stable-r15.yaml;
+  - stream_kn_1/2 restarts 0, bundle bce26969, QDL_KN_MAX_SUBSCRIPTIONS 1024; startup MemoryPlan streams 1056,
+    required 321,912,832 B, under the unchanged 512 MiB limit.
+- TS writer READY 64/64 at 18:57:11Z, restarts 0 (resubscribed after the Stream restarts).
+- Rollback per reader: ~/.local/state/qdl-v2/p184-d3-capacity-20261009/readers/*-rollback.compose.json (rev11 realm, 384).
+- Receipts (file, sha256 prefix):
+  - query_kn_1-candidate-1791572130606223397.json 088cbae06a6f28c6
+  - query_kn_2-candidate-1791572150685196750.json ba47ba27933bf346
+  - stream_kn_1-candidate-1791572170561766250.json 21ff33a4f2eda79a
+  - stream_kn_2-candidate-1791572184336405277.json 52353e1dea321214
+
+### D4 R2 native observation adapter - 2026-10-09 (Claude subagent)
+
+Status: IMPLEMENTED / TESTED_LOCALLY. Not runtime-certified; no fault acceptance.
+Base d8b0f67 (fix/p184-dl-closure). Source + tests only.
+
+Files:
+- scripts/kn_recovery_observe.py (new): read-only adapter producing the
+  `qdl.kn.recovery-observation.v1` input of kn_recovery_state.RecoveryController.
+  Disk reuses kn_disk_pressure.sample_disk/DiskPressure (operator thresholds, no
+  defaults). Quorum/ISR via AdminClient describe_cluster/describe_topics (broker
+  count + controller, leader in ISR, ISR >= min_isr, under-replicated <= explicit
+  max, default 0). Projector progress via list_consumer_group_offsets vs
+  list_offsets(READ_COMMITTED) per declared group/partition roster; regression of a
+  committed offset is FATAL. Consumer eligibility from the TS writer heartbeat
+  (status READY, session_ready == demanded > 0, ready/unhealthy consistent,
+  last_seen_unix fresh, optional exact demanded/instance roster) through a provided
+  reader. Roles via provided reader (default one `docker inspect`, identity checked).
+- tests/test_kn_recovery_observe.py (new): 22 tests, fakes for every source
+  (healthy, missing, stale, future, unparseable, timeout, late answer past deadline,
+  partial ISR, offline, brokers missing, lagging/stalled/regressed projector, TS
+  DEGRADED/partial, role source failure), real confluent_kafka result types with a
+  fake AdminClient, and end-to-end adapter -> controller progression
+  HOLD_UNKNOWN -> WAIT_QUORUM(start proposal) -> WAIT_QUORUM -> WAIT_PROJECTOR ->
+  WAIT_CONSUMER -> HOLD_UNKNOWN(heartbeat missing, reader Up) -> SERVING ->
+  HOLD_UNKNOWN(stale); persistent UNKNOWN ends BLOCKED, never SERVING.
+
+Semantics: UNKNOWN/FATAL gates are emitted non-boolean, so the controller holds
+HOLD_UNKNOWN. A stage role observed not running turns that stage's UNKNOWN into
+NOT_READY (start may be proposed); "running" never makes a gate READY. Gates
+short-circuit in coordinator order. One absolute deadline per cycle, every call
+gets the remaining budget, single attempt, late answers UNKNOWN. mode OBSERVE_ONLY,
+mutations 0; no group join/commit, no Redis write, no lifecycle call. CLI prints
+the observation (plus adapter_report) for use as runner probe_command.
+
+Tests: image sha256:77682eea, --network none, read-only source:
+`python -B -m unittest tests.test_kn_recovery_state tests.test_kn_recovery_runner
+tests.test_kn_recovery_observe tests.test_kn_disk_pressure
+tests.test_kn_production_watch` -> 76 PASS (24+9+22+11+10), 0 fail/error/skip.
+
+Open limits: not run against live brokers/Redis/Docker; no production packet,
+thresholds or installed service. Heartbeat is the TS writer's self-reported
+aggregate, not the at-use validator/ACK proof D4 ultimately requires (Claude TS
+side). Lag uses LSO; an idle dead-but-running projector with lag 0 reads READY.
+statvfs is not deadline-bounded (local paths only). Redis call time is bounded by
+client socket timeouts plus deadline checks between calls. Isolated
+broker/projector/Stream fault acceptance (G12) remains OPEN. No runtime change,
+no image build, test containers --rm. No push/merge.
+
+### D3 window C stages 20/50; stage 50 stopped on G5; SDK replica start fix - 2026-10-09 (Claude)
+
+Status: window C (owner-approved) ran on window B config (alpha rev15, Stream 1024). The SDK fix is implemented and
+tested locally; not deployed and not yet re-measured.
+- Stage 20 (600 s, P184 mix, 2 workers): every gate PASS. 12,739 requests, 0 missed/failed/starved; 36 streams, 0
+  errors; G5 cold B/O 2500 = 3254/5722 ms, 5000 = 4685/6617 ms; TS READY 64/64 throughout, restarts 0, OOM 0.
+- Stage 50 (600 s, 4 workers): 28/29 gates PASS, including every latency class, requests, streams and the four TS
+  gates. FAIL: g5:COLD_2500:BINANCE 6552.6 ms > frozen 6265.1 ms. Ramp stopped at the first failure (stage 100 not
+  run). Guard: READY 64/64, restarts 0, OOM 0, disk 87 GB.
+- Cause, measured:
+  - Server time of one 2500-row cold read (query_kn_2, read-only, cold_work marker) is 1.57-1.65 s at idle. bars() is
+    6-9 % of it: 2 head calls, 1 pipeline, and no `changed` retry in 8 reads. Most of the time is per-row
+    construction and render, plus the duty-cycle pauses.
+  - The driver runs both venues' cold reads at once (`_target_cold` via `asyncio.gather`). Every new SDK client
+    started its round-robin on replica 0 (qdl_sdk/transport.py `_next = 0`). So both reads hit query_kn_1, whose
+    large-warmup lane is `max_active=1` (qdl/query/service.py `_queued_local_batch_lane_policy`).
+  - In every receipt, the later venue finishes one warmup after the earlier one:
+    - baseline 2337 -> 4177 ms;
+    - stage 20 3254 -> 5722 ms;
+    - stage 50 3418 -> 6553 ms.
+    The frozen limit came from such a queued read. Under the P184 stage-50 mix, each read's own service time grew
+    35-45 % (duty cycle under heavier hot load).
+  - The same start-at-0 rule in production sends every alpha session's startup warmup to one replica.
+- Fix (this commit): `ReplicatedRestQueryTransport` starts on a random replica per instance. The new keyword-only
+  `start_index` pins it. Two tests: random starts cover both replicas; out-of-range start is rejected. The order-based
+  tests pin start_index=0. SDK CHANGELOG Unreleased; the version bump comes with the D5 release cut.
+- Tests: tests.test_qdl_sdk_replica_read_transport 7 OK; 11 SDK modules 91 OK (image 77682eea, --network none).
+- Not enough alone: with two independent clients, the chance they pick the same replica stays 1/2. The first-read
+  (row-cache-miss) server cost is the deterministic lever and is being optimized in a separate slice. The frozen
+  limit is unchanged.
+
+### D3 window C G5 COLD_2500:BINANCE miss - cold read cost measured, render reuse - 2026-10-09 (Claude subagent)
+
+Status: IMPLEMENTED / TESTED_LOCALLY; not deployed. Base 902c280 (branch p184-cold-fix).
+Gate: g5:COLD_2500:BINANCE 6552.6 ms > frozen 6265.1 ms (limit unchanged).
+
+Measured, read-only, inside query_kn_2 (image 514506122111, same BAR path as this branch), one
+process, reader/backend built like `create_stable_query_app`, run under `cold_work()` with
+`configure_query_interpreter()`, 8 reads, Redis reads only:
+- 2500 rows, empty row cache (Binance/OKX): bars() 94/97 ms, `_parsed` 43/56, `_history_from_records`
+  819/865, render 611/632, total 1567/1651 ms; duty-cycle pauses 491/505 ms of that.
+- 2500 rows, warm row cache: bars 112/98, parsed 45/37, history 227/196, render 610/685, total 994/1015.
+- 5000 rows: total 2500/2622 (empty cache), 1925/2003 (warm); render 1240-1306 ms.
+- bars(): 2 head calls, 1 pipeline, 24 (2500) / 46 (5000) buckets per read in every read; 0 `changed`
+  retries. The cache read is 6-9 % of the server time; the retry hypothesis is not the cause.
+- Dominant: per-row view building. Render (`router._market_item` + pydantic validate/dump) ~240 us/row,
+  and it re-derives the immutable payload decimals/source/contract on every request; row derivation on
+  a row-cache miss ~330 us/row (3-4 decimal parses per value across catalog, item and public layers).
+- Client side: the gate times `client.warmup` + per-row `validate_product_view` in the load driver. In
+  all three receipts the second venue of each concurrent pair finishes about one first-venue warmup
+  later (stage50: OKX 3418, Binance 6553), consistent with the single-active large-warmup lane per
+  replica (`qdl/query/service.py` `_queued_local_batch_lane_policy`, max_active=1). Not measured.
+
+Fix (source):
+- `qdl/api_v2/router.py` `_market_item_json`/`_render_encoded_chunks`: market-cache items carry their
+  row's `RenderSlot` (`qdl/query/row_cache.py`, in `_RowEntry`, bounded/evicted with the row cache).
+  The row's first render validates the whole `MarketDataView` as before and keeps the encoded static
+  members; later renders validate only quality/cursor/snapshot_id/watermark_offset with the same field
+  definitions (`_MarketDataViewDynamic`) and splice them. Byte-identical output.
+- `qdl/domain/decimal.py`: bounded lru (8192) for `CanonicalDecimal.from_text` (frozen result, errors
+  not cached); `map(str, digits)` instead of a generator (also `router._decimal`).
+- `qdl/runtime/stable_source.py`: cached `QualityFlag.Name` per value.
+- bars(), validation layers and the cold duty cycle are unchanged.
+
+Offline microbenchmark (image 77682eea, --cpus 1, fake Redis, synthetic random-walk rows from the
+golden OKX bar, median of 5; base 902c280 vs this commit; bodies sha256-identical):
+- 2500 first read 1029.5 -> 1036.9 ms (history 522 -> 463, render 409 -> 489);
+  repeated read 607.5 -> 277.6 ms (render 409 -> 91).
+- 5000 first read 2012.4 -> 2143.3 ms (+6.5 %; render 789 -> 995, history 1011 -> 954);
+  repeated read 1213.1 -> 569.8 ms (render 811 -> 181).
+- Slot memory 1734 B/row (getsizeof); at the default 20,000 row-cache entries <= ~35 MB per replica.
+
+Tests (image 77682eea, --network none): 29 Query/KN modules, 550 run, 36 skipped (Redis-backed cases
+without QDL_KN_TEST_REDIS), 1 failure `test_fund_phase7_contract_security...provider_fallthrough`
+which fails identically on 902c280 (ResponseModel extra="ignore"; pre-existing). New: render slot
+byte identity / request-field validation (`test_fund_phase5_api`), decimal cache equivalence
+(`test_phase1_contracts`); `test_kn_query_backend` row-cache test updated (skipped here).
+
+Open: a row read once gets no gain (first read neutral 2500, +6.5 % 5000); whether the probe's rows
+are in the row cache at stage 50 is unverified (no row-cache stats for single warmups). Effect on
+G5 needs a reader rollout (owner-approved packet) and a stage-50 rerun. No runtime change.
+
+### D3 window C G5 - first (row-cache-miss) cold read made cheaper - 2026-10-09 (Claude subagent)
+
+Status: IMPLEMENTED / TESTED_LOCALLY; not deployed. Supersedes the first-read part of the previous entry: the gate's
+read waits one full warmup in the single-active lane (max_active=1), so the first read's service time is what matters.
+- Per-row profile of the miss path (offline, image 77682eea, --cpus 1): history derivation ~200 us/row (catalog lineage
+  check, `bar_item_fields`, `_quality`, item construction), render ~160 us/row (`MarketDataView` input building and
+  validation, Python dump + `json.dumps`). Each decimal text was parsed by `Decimal` 3 times (catalog, item, public).
+- Changes:
+  - `qdl/domain/decimal.py` `CanonicalDecimal.from_text`: ASCII `-?digits[.digits]` read off the text (identical to the
+    Decimal result, ~5x cheaper); other spellings keep the Decimal path. Same fast path in `router._decimal_parts`.
+    The earlier per-text LRU caches were dropped: measured no faster than the fast path, and they thrash at 5000 rows.
+  - `router._decimal` and source/contract/quality metadata are passed to `MarketDataView` as model input (same
+    schemas, same validators, one pydantic-core call) instead of Python-built sub-models; `_flat_asdict` replaces a
+    recursive `asdict` for flat metadata (falls back to `asdict` otherwise).
+  - First render serializes with `model_dump_json` (byte-identical to `json.dumps(model_dump(mode="json"))` for every
+    shape tested, incl. control/non-BMP/U+2028 characters; a lone surrogate fails on both paths). The render slot keeps
+    its layout only from a row's second render on, so a row read once pays no layout encoding.
+  - `StableSpoolQueryBackend._item(..., extras=)` sets `render_key`/`render_slot` at construction (no second copy).
+    `MarketDataItem.with_view_fields` copies cursor/snapshot_id without re-running `__post_init__` (which reads
+    neither); used by `history_with_envelopes` and the cursor issuer's `bind_history`. `ContractMetadata` digest check
+    uses a set comparison (same rule).
+  - Unchanged: bars(), every validation layer, the cold duty cycle.
+- Microbenchmark (offline, synthetic random-walk BAR rows from the golden OKX bar, fake Redis, process parse caches
+  cleared before every first read, median of 5; base 902c280 vs this commit; body sha256 identical
+  2500 `76a976e71ac4d6b2`, 5000 `b5a1edd37e6a70ed`):
+  - production entry `history_with_envelopes` + render, first read: 2500 1091.0 -> 747.9 ms (-31 %);
+    5000 2065.2 -> 1539.7 ms (-25 %);
+  - first read by phase, 2500: history 520 -> 385, render 410 -> 243, total 1025.5 -> 728.0 ms (-29 %);
+    5000: history 1008 -> 791, render 801 -> 495, total 1996.3 -> 1479.5 ms (-26 %);
+  - repeated read (3rd): 2500 615.8 -> 275.1 ms; 5000 1178.9 -> 551.6 ms; 2nd read 614.5 -> 583.9 / 1197.2 -> 1158.5.
+  - The 35 % aim is not reached: what remains is pydantic validation/serialization (~70 us/row) and the protobuf
+    field reads of the catalog/item/quality layers, which this change keeps.
+- Tests (image 77682eea, --network none): 32 Query/KN modules, 569 run, 36 skipped (Redis-backed), 1 failure
+  (`test_fund_phase7_contract_security...provider_fallthrough`, identical on 902c280, pre-existing); plus 4 decimal
+  consumer modules (test_phase1_instrument_domain, test_phasec36_*) 39 OK. New: decimal fast path = Decimal reading over
+  edge spellings; first-render JSON identity over control/unicode text; out-of-contract decimals (scale 39, 29 digits,
+  129 chars) still fail in the view; `with_view_fields` equals `replace`.
+- Not verified: live effect at stage 50 (needs a reader rollout packet and a rerun).
+
+### D3 window C stage 50 rerun PASS with the SDK replica-start fix; stage 100 started - 2026-10-09 (Claude)
+
+Status: owner goal "run everything per Claude's recommendation". Server runtime unchanged.
+- Readers keep image 514506122111 (the rc3 Query rollout is blocked by the session permission classifier and left
+  to the owner).
+- The only change is client-side. Driver profile `sdk_from_source: true` (d2b9931) mounts this checkout's qdl_sdk,
+  including 5c81c25, over the client image copy. Mount verified on the client container (/app/qdl_sdk).
+- Stage 50 rerun (600 s, frozen p184-stage100-budget): 29/29 gates PASS, 0 failed. G5 cold:
+  - 2500 rows: B/O 2247/2578 ms (limit 6265.1);
+  - 5000 rows: 5621/5998 ms (limit 15267.0).
+  Both 2500-row reads took about one service time, without the earlier one-warmup step. This is consistent with the
+  two venues' cold reads using different replicas. The receipt has no per-read replica, so the routing is inferred
+  from timing, not observed.
+- Guard (20 s samples): TS READY 64/64, restarts 0, OOM 0, disk 88 GB. 0 client containers left.
+- Caveat: with two independent clients, random starts still collide with probability 1/2. The rc3 first-read speedup
+  (65e0757/76950c8) is the deterministic lever. It is built but not deployed.
+- Stage 100 (1800 s, 4 x 120 s G4 observer windows) started 21:01Z with the same SDK profile.
+
+### D3 window C stage 100 FAIL (2 of 32 gates); both point to the undeployed rc3 Query - 2026-10-09 (Claude)
+
+Run: 1800 s, 21:01Z, profile with sdk_from_source (5c81c25), readers on 514506122111, frozen p184-stage100-budget.
+Guard: 93 samples, TS READY 64/64, restarts 0, OOM 0, disk 88 GB. Client containers removed, guard stopped.
+- PASS (30/32):
+  - every latency class (p95 18-40 ms, p99 <= 207 ms);
+  - requests: 166,507 offered, 0 missed/failed/starved;
+  - streams: 161, 0 errors, all 51 bar streams delivered a final bar;
+  - fault windows BURST / RECONNECT measured;
+  - the four TS gates (0 disconnects, v2_error flat).
+- FAIL g5:COLD_2500:OKX 6658.3 ms > 6265.1. Binance was 3544.4 ms, so OKX ran 3114 ms later, about one warmup. Both
+  reads picked the same replica (probability 1/2 with random starts) and serialized behind the one-active lane.
+- FAIL startup:bounded: 9/100 sessions (s13 s29 s35 s37 s73 s77 s79 s81 s89) ended RATE_LIMITED in SETUP after 271
+  retries; setup 81.2 s (< 240 s).
+  - Arithmetic: 51 BAR sessions warm up 2500/5000 rows at once, about 25 per alpha identity.
+  - Lane per replica (qdl/query/service.py `_queued_local_batch_lane_policy`): max_active 1, 8 pending per consumer.
+    So about 18 slots per identity over 2 replicas.
+  - Each replica serves warmups one at a time at ~3-6 s under load. The frozen retry budget (10 attempts, <= 4 s)
+    gives up after ~28 s.
+  - The Query logs carry no line for these refusals, so the source (lane vs identity quota) is inferred.
+- G4 (4 x 120 s, observer assigned read_committed, 1 DONE each): every observed row is within baseline p95 x 1.2.
+  - trade 169/168, quote 178/183, book_delta 161/170, book_snapshot 157/162;
+  - mark 226/1407 (limits 371/1587);
+  - bar 1m 175/61356 (OKX open-time metric).
+  - bar 30m was NOT OBSERVED (no 30m close inside the windows). 5m rows have no baseline.
+- Both failures cost per-warmup service time on the one-active lane.
+  - rc3 (65e0757/76950c8) cuts the first read by 25-31 %. Repeated reads of the same product, which is what a fleet
+    start mostly is, get cheaper with it: 615 -> 275 ms at 2500 rows and 1179 -> 552 ms at 5000 (offline
+    microbench).
+  - rc3 image qdl-v2-python:2.2.3-rc3-76950c8 is built.
+  - The Query rollout was refused by the session permission classifier and is left to the owner.
+  - No gate or budget was changed.
+- Status: window C stage 100 NOT PASSED. Next: owner rolls query_kn_1, then query_kn_2, to rc3 (image only;
+  rollback 514506122111), then a stage-100 rerun.
+
+### IDR-082 DL side: view event identity (v2.2.3, additive) - 2026-10-10 (Claude, subagent)
+
+Owner decision 2026-10-10: DL adds the trade identity; TS uses it in phase E. Commit 616342c, cherry-picked from
+3d5e14a.
+- The public market-data view now carries `event_id`: the lowercase hex of the canonical `EventEnvelope.event_id`.
+  - The id is a deterministic blake2b of venue, market, instrument, source and native trade id
+    (qdl/canonical/trade.py:129-139, qdl/domain/event_id.py).
+  - The stable catalog admits only 16-byte ids.
+- Query derives it in `StableSpoolQueryBackend._item`, which the KN backend inherits and caches as a static row field.
+  The SDK stream projection derives it from the same canonical envelope bytes. A snapshot of a trade and its stream
+  delivery therefore carry the same value.
+- Resampled aggregates and pass-through windows carry none.
+- The field is appended last, so existing members keep their bytes; the render-slot static layout includes it.
+  The SDK field is optional, and 2.1.0 readers ignore it (extra=ignore).
+- Also regenerated: OpenAPI snapshot; updated: KN contract doc and SDK changelog.
+- Tests:
+  - new tests/test_p184_view_event_identity.py (7, real Binance/OKX golden trades) and a KN Redis case;
+  - subagent: 26 modules, 386 tests, 1 known phase7 failure, 33 skipped; 127 more OK; KN on a disposable --rm Redis
+    33 OK;
+  - after the cherry-pick: 5 modules OK (33 Redis skips).
+- Cost: about 45 bytes more per row; warmup throughput not measured.
+- Status: tested locally, not deployed.
+
+### D3 window C stage 100 on rc3: 30/32; DATA_NOT_READY root cause and rc4 fixes - 2026-10-10 (Claude)
+
+Run: owner-run roll of query_kn_1/2 to qdl-v2-python:2.2.3-rc3-76950c8 (sha256:672503b7fe87, label revision 76950c8,
+03:06Z); stage 100 at 1800 s, SDK profile, frozen budget, 4 x 120 s G4 windows; guard READY 64/64, restarts 0,
+OOM 0.
+- PASS: startup (setup 61.5 s, 0 failures, 190 retries; was 9 RATE_LIMITED on the old image); every latency class;
+  streams; TS gates.
+- FAIL requests:no_failures, 2 DATA_NOT_READY on OKX BNB-USDT-SWAP (TRADE probe 03:31:41Z, QUOTE snapshot 03:33:59Z,
+  query_v2_1).
+  - The detail hash matches `HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND: HOT_READER_BUSY` (kn_query_backend.py
+    `_latest_view`). Query logs carry no line for it.
+  - The Rust hot reader scans its ring under `try_lock` (rust/qdl-stream-gateway/src/hub.rs latest/check_hot_reader),
+    so concurrent lookups refuse each other.
+  - rc3 deployed IDR-084, which queries the hot reader on every MARK read. The stage-50/100 runs on the old image had
+    0 request failures. The added MARK lookup load is the likely trigger: inferred, not measured.
+- FAIL g5:COLD_2500:OKX 6992.6 ms. Binance took 3510.9 ms; the difference of 3482 ms is one warmup, so the two reads
+  shared a replica again.
+  - The Binance read barely improved (3544 -> 3511 ms) even though rc3 cuts first-read compute by about 31 %
+    offline. Under load the read time is dominated by GIL wait after each duty-cycle pause, not by compute.
+- Fixes (this commit, tested locally):
+  - MARK hot lookups are single-flight per binding for 50 ms (`_hot_latest`, MARK_HOT_MEMO_NS). The outcome is
+    shared, refusals included and re-raised fresh. Other feeds are unchanged. The caller keeps every
+    lineage/monotonic gate.
+  - Cold slice from env QDL_QUERY_COLD_SLICE_MS (integer 1..50, default 4; out of range refused at import). This lets
+    one variable be tuned on the same image against the frozen G5 limit while the hot latency classes are watched.
+  - Tests: new tests/test_kn_mark_hot_memo.py (6), ColdSliceEnvTests; 96 related tests OK (33 Redis skips).
+- G4 (g4b-1..4) is summarized with the rc4 run.
+
+### D4-R3 G12 isolated broker/projector/Stream fault acceptance - 2026-10-10 (Claude, subagent)
+
+Owner-approved isolated run. Status: G12 PASS at ISOLATED_FAULT (BOOK at the TS writer-clone cache); G2/G3
+NOT_MEASURED. Commits 75673bc (harness and packet, written before the run) and 2a5e809 (run fixes and result), cherry-picked.
+Packet: upgrade/evidence/p184-g12-isolated-fault-packet.md.
+- scripts/p184_g12_isolated_fault.py, namespace p184-g12-dl-cfcba18d978b452f inside one --network none holder:
+  - 3 KRaft brokers (RF3, min ISR 2, mTLS);
+  - deployed core/projector/Stream/Query images by ID;
+  - TEST_ONLY BOOK at 4 Hz per venue;
+  - 2 TS WriterClones (4 workers);
+  - a 50 ms sampler with the TS at-use book validator.
+  It reuses the DR05 material, DR08 serve_query and kn_recovery_observe KafkaAdminSource (first run against real brokers).
+- Caught up after the fault cleared (<= 600 s), B/O:
+  - broker kafka-3 (partition leader) stopped 60 s: 0.202 s;
+  - projector restart: 0.256 s;
+  - Stream restart: 2.355 s.
+  G1 300 s windows p95 <= 103.9 ms, p99 <= 120.5 ms, max <= 844 ms, n >= 1,198 per venue; baseline p95 ~104 ms;
+  0 publisher errors.
+- Seen by the TS clones: Stream restart B max view age 3,062 ms (5 non-APPROVED samples), O 1,772 ms. Broker and
+  projector faults: max 176 ms.
+- Resources: peak 162 % CPU / 2.6 GiB total. Teardown: 18 containers, 0 networks, 2 WriterClone anonymous volumes
+  removed by ID (the harness now passes -v). Production guard: 0 breaches.
+- Tests: 46 PASS; after the cherry-pick, g12 + dr05_dl_fault + kn_recovery_observe OK.
+- Limits: same host, a single projector/Stream replica, synthetic BOOK only. Not HA or production evidence.
+
+### IDR-040 fix 2: in-band quiet-book proof (v2.2.3, additive, default off) - 2026-10-10 (Claude, subagent)
+
+Owner decision 2026-10-10: fix 2 goes into v2.2.3. Commit 1a2daf1, cherry-picked from 5062d4e; the CHANGELOG conflict
+was resolved by keeping all entries, and the regenerated OpenAPI snapshot is byte-identical to the merged one.
+Status: tested locally, not deployed.
+- Native ingestor (opt-in `book_liveness_proof_ms` 250..5000, default off): for a quiet Binance book it writes
+  `{"qdl_transport_liveness":"v1","stream":...}` into that book's own raw partition.
+  - The marker is stamped with the receipt time of the newest WebSocket message (frame or pong); the ingestor pings
+    when idle.
+  - TCP and partition order put every earlier frame of that book ahead of the marker.
+- Realtime core:
+  - A marker becomes a quiet-proof BOOK_SNAPSHOT only for the exact owning session/generation of a READY,
+    non-invalidated book, at most once per materialization interval.
+  - The snapshot is the current view with the original provider time and the new additive
+    `OrderBookSnapshot.proof_observed_at_ns = 8`.
+  - Otherwise it filters TRANSPORT_LIVENESS_UNPROVEN/_NOT_DUE or quarantines the marker. Markers never start, reset or
+    fence a book.
+- Query and the SDK projection report `quality.proof_observed_at_ns` (and the refusal diagnostics) for verified
+  snapshots only. freshness_ms, state and eligibility are unchanged. The key is emitted only when present.
+- Tests (subagent):
+  - Rust core 51/0 + 56/0 (3 new); ingestor 28/0; workspace 360/0 with 66 ignored; clippy -D warnings clean;
+  - Python new 9/0; affected 75 OK;
+  - full discover: only failures that also fail at base or come from the mount.
+- After merging with IDR-082 and the rc4 fixes: 13 modules, 128 tests OK (33 Redis skips).
+- Rollout order:
+  1. new core and Query first;
+  2. readers on SDK 2.1.0+;
+  3. then render the ingestor flag (stable_deployment.py does not emit it yet).
+- The contract digest changes at the next bundle refresh. Ping cadence and marker volume are not measured.
+
+### rc4 regression: MARK SOURCE_UNAVAILABLE under load; stage 100c stopped, Query rolled back to rc3 - 2026-10-10 (Claude)
+
+- rc4 (bd74faa, sha256:5a9e1b4b8be1) was rolled to query_kn_1/2 at 03:43-03:44Z, and stage 100c started at 04:30Z.
+- From 04:30Z the TS writer logged `MARK_INDEX_PRICE ... IncompleteExecutionReferenceError code=SOURCE_UNAVAILABLE`:
+  53 and 28 per 10 min, against 0-6 per 10 min before. Guard: DEGRADED 63/64 at 04:32:59 and 04:42:56-04:43:16.
+- Cause, from code (Query logs carry no refusal line): bd74faa routed `_hot_candidate` through `_hot_latest` on EVERY
+  path, including the `_latest_view` backup. A shared hot record up to 50 ms old can be older than the projected
+  primary. The backup then fails its monotonic check, and the MARK read returns not-ready.
+- Action:
+  - stage 100c stopped at about 04:45Z (driver, guard, observer, client killed; 0 left);
+  - query_kn_1 then query_kn_2 recreated from the saved rc3 composes (sha256:672503b7fe87): healthy, restarts 0.
+- Fix (this commit): the single-flight applies only to the IDR-084 opportunistic branch (`shared=True`); the
+  backup path asks the hot reader every time.
+  - Regression tests BackupPathNeverSharesTests.
+  - kn_mark_hot_memo, kn_query_backend, kn_hot_book_invalidation and kn_hot_view OK (33 Redis skips).
+- Lesson: a shared cache on a path with a monotonic gate needs a test for that path before rollout; the rc4 unit
+  tests covered only the memo itself.
+
+### D3 stage 100e on rc5: 29/32; Codex review of the measurement harness accepted - 2026-10-10 (Claude)
+
+Run 05:49-06:26Z, Query rc5 (ec89a31, sha256:30261623e5d0), SDK profile, frozen budget. Guard: 92 samples, 1 DEGRADED
+63/64 at 06:18:37. The MARK error watcher read 0 errors in 34 of 40 minutes (max 7 in one minute, around the OKX
+disconnect). The rc4 regression did not recur.
+- PASS: every latency class (p95 34-89 ms); startup.
+- FAIL requests:no_failures (1 DATA_STALE) and streams:no_errors (3) on OKX BNB-USDT-SWAP at 06:11:48-54Z.
+  - The OKX PUBLIC session disconnected: `qdl_native_session_disconnected` generation 167 at 06:11:52Z.
+  - DL refused with the correct type (STALE, SOURCE_SESSION_UNKNOWN, freshness 6045 ms > 5000).
+  - The OKX ingestor has logged 37 disconnects since 2026-10-09 00:00Z, about 1.2 per hour. Reconnect speed is under
+    investigation.
+- FAIL g5:COLD_2500:OKX 7531.5 ms. Binance took 4288.6 ms, and OKX finished one warmup later (third time in four
+  runs). Same-replica queuing vs client-side serial validation in the single cold worker is not yet distinguished.
+- Codex review (accepted after checking the code):
+  1. The TS readiness gate was scored on 2 samples. The periodic observer called `_ts_heartbeat()` with its default
+     container `market_data_service` instead of `market_data_service_p184w`. Receipts: stage100 2 good / 157
+     unreadable, stage100b 2/155, stage50b 2/55; unreadable samples were dropped before scoring.
+     - Fix (this commit): the observer samples the configured writer; None samples count as unreadable;
+       `expected_samples` is recorded.
+     - `ts:ready_60_every_sample` now fails on any unreadable sample or on coverage below expected.
+     - Tests: test_lost_observation_fails_readiness; 50 driver/stage tests OK.
+     - Earlier TS-gate PASSes rest on 2 samples plus the independent 20 s guard log, which was not part of the
+       verifier. They are re-certified only by a run with this fix.
+  2. The supervisor and MARK watcher stopped processes and containers by generic name patterns.
+     - The rc5 supervisor even self-matched a stale shell and never saw 100e finish.
+     - Replaced by run-scoped (process-group) versions; the old ones were stopped.
+  3. The MARK watcher counted an unreadable log as 0 and its e copy still matched `stage100d.sh`. Replaced: UNKNOWN on
+     a read failure.
+  4. The rc5 regression test mocked the monotonic check. A real-ordering case is being added.
+
+### Astra advisory architecture review handoff - 2026-10-10
+
+Status REVIEW_HANDOFF_COMPLETE_IMPLEMENTATION_NOT_AUTHORIZED; owner requested a
+detailed advisory Markdown for Claude, not implementation or rollout. Review
+baseline `4e19966`. Scope existing
+Phase D correctness, hot-read contention/deadlines, quiet-book liveness, warmup,
+acceptance and release convergence. Guide: Kafka-native architecture review
+sections18.3-18.5 and Execution Handoff Hot Backup. Preserve source truth,
+freshness/generation/ordering, prior receipts and Claude's concurrent edits.
+Planned artifact upgrade/evidence/p184-astra-architecture-advisory-20261010.md.
+Only docs/journal edits; optional network-none source reproduction, no shared
+runtime calls, no builds/push/merge. Record findings as evidence-ranked options,
+not new gates or an instruction to rebuild architecture; cleanup any owned test.
+
+Completed advisory: [Astra architecture and closure review](upgrade/evidence/p184-astra-architecture-advisory-20261010.md).
+Seven evidence-ranked review groups R1-R7 include alternatives, trade-offs,
+focused tests and recommended closure order; these are advisory, not new gates.
+Acknowledges fixes 713aa90/7f974c3/4e19966 instead of reopening superseded findings.
+R1 reproduction uses golden MARK bytes and actual parser/lineage/ordering with
+stand-in transports: hard GAP and topic mismatch both return old primary C10/OK;
+transient HOT_READER_BUSY does too. Three behavioral observations, not acceptance
+PASSes or proof of incorrect live execution. R4 newly identified timer interaction
+is source-confirmed, default-off and still needs an async silent-peer fault test.
+Command: existing image 77682eea5054, docker run --rm --network none, read-only
+source, Python -B; full recipe and resource bounds in advisory section 13.
+Exit 0; disposable qdl-astra-review-20261010-fence confirmed absent afterwards.
+No new image, network, volume, credential or shared mutation; no full suite rerun.
+No broad cleanup or disk reclamation claimed; retain active/rollback artifacts
+while Claude works. Only this plan and advisory changed; no push/merge/rollout.
+Remaining decision: Claude assesses each recommendation and selects or disproves
+options against existing gates; this review does not certify release readiness.
+
+### D3 stage 100f (fixed harness, rc5): 28/32; R5 attribution measured; rc5 ordering tests; Astra R1/R3/R6 - 2026-10-10 (Claude)
+
+Run 06:30-07:03Z under supervisor v2 (process-group scoped; guard and watcher target the driver PID). Driver 713aa90
++ 7f974c3, profile with core/kafka monitored, Query rc5. Guard: 1 non-READY sample. MARK watcher: 28 minutes with 0
+errors, 5 with 1, 0 UNKNOWN.
+- PASS: streams 179 / 0 errors; latency classes; TS v2_error / auth / disconnect-rate gates.
+- ts:ready_60_every_sample FAIL, now scored on all 154 samples (0 unreadable, expected 154): 3 not ready. The TS
+  writer logged DATA_NOT_READY 12 and SOURCE_UNAVAILABLE 10 in the run.
+- requests:no_failures FAIL: 3 DATA_NOT_READY. The detail hash matches `HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND:
+  HOT_READER_BUSY` (Astra R2, Rust hot reader contention).
+- startup:bounded FAIL: s20 RATE_LIMITED after 208 retries in 74.7 s.
+- g5:COLD_2500:BINANCE FAIL 7315.9 ms. Attribution (R5) from 7f974c3:
+  - both 2500-row reads went to query_v2_1;
+  - OKX was sent 0.15 s earlier: transport 3469 ms, client 242 ms;
+  - Binance: transport 7031 ms, client 285 ms;
+  - the 5000-row reads both went to query_v2_2 (6004 / 7729 ms transport).
+  The cause is same-replica queueing on the one-active large-warmup lane at about 3.5 s per 2500-row read under load.
+  Client validation is not the cause. The worst case (same replica) must pass, without relying on random placement.
+- Also merged:
+  - 4e19966: rc5 real-ordering tests (Codex point 4);
+  - 57881a2 (from 6b0abdb), Astra R1/R3/R6, tested locally, not deployed:
+    - R1: hard hot refusals in the IDR-084 branch map to FENCED/INTEGRITY, never to an older cache OK.
+    - R3: memo lock wait and lookup share one budget (HOT_READ_DEADLINE is transient and not memoised).
+    - R6: payload-free, rate-bounded `qdl_refusal` log lines carrying the same detail_sha256 as the receipts;
+      receipts gain reason_tokens.
+    - Tests: 183 OK (33 Redis skips); after the merge, 9 modules OK.
+- Next (rc6): QDL_QUERY_COLD_SLICE_MS 4 -> 8 (the one tuned variable; Astra R5 option 2) to cut per-read service time
+  below ~3.1 s for the same-replica worst case, scored together with the hot tails. Plus the R2 Rust hot-reader fix
+  (Stream image) and R1/R3/R6 (Query image). Then stage 100g.
+
+### Astra advisory R1-R7 response, OKX reconnect, R2 hot reader - 2026-10-10 (Claude, subagents)
+
+Advisory: upgrade/evidence/p184-astra-architecture-advisory-20261010.md (1fb68ed). Every item was checked against the
+code before acting. All are tested locally and not deployed.
+
+| ID | Response | Selected option | Test / receipt | Runtime |
+| --- | --- | --- | --- | --- |
+| R1 | Accept (gap, partition/generation, lineage). The topic case is unreachable through the real client (`_decode` expectation); the backend gate is hardened anyway. Splitting DATA_LOSS details is staged | Hard refusals in the IDR-084 branch map to FENCED/INTEGRITY like the backup path; transient HotViewUnavailable keeps the validated cache view | 57881a2; RealOrderingChecks (d); counterfactual fails on 1fb68ed | not deployed |
+| R2 | Accept (reproduced: 82-84 % BUSY, dispatch ~2.5k of 20k rec/s at 1fb68ed) | Per-key ring view and key->partition directory maintained by dispatch under the partition lock; Arc copy in one short section, decode outside; head proof read with the boundary; atomic reader progress; lock wait bounded by the 100 ms deadline. Fence/gap/sibling/generation checks unchanged | fdd379e (from d1167fe); stream-gateway lib 43/0, hot_lookup_contention 1/0 (0 BUSY, 20k rec/s, p99 ~300 us, debug in-process), native_stream 37/0, clippy clean | not deployed |
+| R3 | Accept | One budget covers memo lock wait and lookup; HOT_READ_DEADLINE is transient and not memoised | 57881a2; MarkHotBudgetTests, HotClientBudgetTests | not deployed |
+| R4 | Accept, wider than reported: every competing select branch reset the per-pass read timeout, in both loops, and the nested pong wait stalled the loop 15 s | Absolute InboundDeadline moved only by a message actually read; ping at 15 s of silence; dead at 2 x heartbeat; proof stamped only from received data | d4f5ec9 (from beeaea4); silent-socket test proof on/off (dead at 30 s), pre-R4 shape reproduced (still alive at 150 s) | not deployed |
+| R5 | Accept; attribution measured in stage 100f (same-replica queue, client 242-285 ms) | Option 2: tune QDL_QUERY_COLD_SLICE_MS on the same workload, worst case same replica, with hot tails watched | stage100f receipt (7f974c3 split) | env on rc6 |
+| R6 | Accept | Rate-bounded, payload-free `qdl_refusal` lines matched by detail_sha256; receipts carry reason_tokens | 57881a2; tests/test_refusal_log.py | not deployed |
+| R7 | Accept as release discipline | Option B: one immutable packet with the IDR-040 proof flag OFF; check the final SDK wheel and image, not a mounted checkout; G12 scope stated as isolated BOOK; G4 unobserved rows NOT_MEASURED; historical failures and skips categorised | D5 packet | release |
+
+OKX reconnect (f861663 from 34dbdf9, d4f5ec9 from beeaea4):
+- The stage 100e refusal was a session-identity refusal, not an event-age one. The trade came from generation 167 after
+  the lane's liveness record became 168.
+- 37 OKX disconnects since 2026-10-09 00:00Z (1.22/h), all first attempts, clustered across lanes. This is consistent
+  with rolling upgrades but unproven.
+- Reconnect took 620-634 ms (n=5), of which 400 ms was a fixed backoff.
+- OKX documents notice 64008 60 s before a service upgrade.
+- Fix:
+  - make-before-break handover on 64008, with the generation fences intact;
+  - a per-lane lineage chain; Query accepts a predecessor's event only with proven continuity
+    (SOURCE_SESSION_CONTINUED);
+  - abrupt closes reconnect with no backoff through a shared <= 3/s pacer;
+  - a frame arriving during the pong wait is no longer dropped;
+  - disconnect logs carry cause, close code, last-frame-to-detection and drain time.
+- Tests: ingestor 39/0; session liveness 36 OK. After the cherry-pick, 7 related Python modules OK, including
+  test_phaseb_stable_edge and test_phase105_identity_acceptance.
+- Open:
+  - silent-socket detection under 5 s needs heartbeat_seconds <= 2 (deployment config);
+  - OKX ends port 8443 on 2026-10-31. Our URLs are in qdl/adapters/okx/client.py, qdl/runtime/l2_demand.py,
+    qdl/runtime/production_catalog.py and config/v2/stable-acquisition-bindings.yaml. The bindings change alters the
+    acquisition plan revision (C.19/C.32 bar-edge checkpoint coupling), so it needs its own packet before
+    2026-10-31 and is not mixed into rc6.
+
+### Stage 100g on Query rc7 + Stream rc6: 31/32 (G5, startup and TS readiness PASS); OKX port 443 live - 2026-10-10 (Claude)
+
+Stack:
+- Query query_kn_1/2 on qdl-v2-python:2.2.3-rc7-47bec04 (sha256:4fcf724b6b36): R1/R3/R6 and the G5 replica redirect,
+  cold slice at the DEFAULT 4 ms (tuning reverted, so the run tests the structural fix alone).
+- Stream stream_kn_1/2 on qdl-v2-rust:2.2.3-rc6-10f9f5c (sha256:3dd3c33d48b4): R2.
+- Rolled one role at a time with rollout_rc6.py; each healthy, writer READY 64/64 after each.
+Run 07:36-08:08Z under supervisor v2; guard all READY 64/64; MARK watcher 0 errors in 32 of 32 minutes.
+- PASS:
+  - G5 cold: 2500 rows B 4849.5 ms (query_v2_1), O 3813.6 ms (query_v2_2); 5000 rows B 7356.7, O 6365.7 ms.
+    Client side 240-727 ms.
+  - The redirect fired 63 times (REPLICA_LANE_BUSY: 31 on query_kn_1, 32 on query_kn_2).
+  - startup:bounded (0 failures, 74.2 s).
+  - ts:ready_60_every_sample: 154/154 samples, 0 unreadable.
+  - streams 180, 0 errors; every latency class.
+- FAIL requests:no_failures: 1 PARTIAL_RESULT, REFERENCE_BATCH, FUNDING_RATE OKX SOL-USDT-SWAP, query_v2_2, about
+  07:46:47Z.
+  - The hash matches the SDK's "required reference batch contains one or more explicit failures".
+  - The item's own code was not recorded (an R6 gap at the batch level). No OKX disconnect occurred in the run.
+  - Per-item diagnostics and root cause are in progress.
+- OKX port 8443 retirement (6674d0b packet), done live:
+  - scripts/migrate_okx_ws_port.py dry-run and then --apply on
+    releases/v2.2.1-0e00c81-recovery/ingestor_okx_swap.json, through a root --rm container;
+  - exactly 2 URL fields changed; config_revision 20; identity 056207ce... unchanged;
+  - sha 0c5d181c... -> d4bd4bae...; backup ingestor_okx_swap.json.pre-okx-port443-1791619322166921472.
+  - `docker restart` of ingestor_okx_swap at 08:09:07Z (after the run, same image): restarts 0, 5 established
+    sockets to remote port 443 (0x01BB), 0 to 8443.
+  - TS endpoint_profiles.py moved too (TS 8b03ff2, pushed).
+
+### Pre-rc7 closure: heartbeat liveness, funding settlement boundary, per-item diagnostics, G13 producers - 2026-10-10 (Claude, subagents)
+
+Owner approved the full remaining sequence (rc7 build + CI, rollout, final stage 100 + G2, G13, G1-G14, release,
+cleanup). All items below are tested locally and not deployed.
+- Silent-socket liveness (0f30e17 from 40b7a3c):
+  - New optional ingestor fields liveness_ping_ms / liveness_dead_ms (absent = the old 15/30 s heartbeat rule;
+    bounds: ping >= 500, dead - ping >= 1000, dead <= 29000).
+  - A ping gets its full pong window from when it was actually sent. Busy sockets never ping.
+  - Renderer emits 1500/4000: worst-case detection 4.0 s after the last frame; quiet sockets send <= 0.67 pings/s
+    (Binance USD-M allows 10 incoming messages/s; OKX limits only subscribe/unsubscribe/login).
+  - Tests: ingestor 44/0, fmt and clippy clean.
+  - Rollout: the binary first (deny_unknown_fields), then the config from the new release dir
+    releases/v2.2.3-rc7-ingestor-liveness/ (prepared 2026-10-10 via a root --rm container: exactly the two keys
+    added; OKX URL 443; config_revision OKX 20 / Binance 19).
+- Stage 100g PARTIAL_RESULT root cause (a2184f4 from ec9abe9; probable, the item code was not recorded):
+  - The request was at 08:00:07Z, 7.1 s after an 8 h OKX funding settlement. stage100g is the only stage-100 run that
+    crossed a settlement, and this was its only funding failure.
+  - The alpha manifests set FUNDING_RATE max_freshness_ms 28,800,000, equal to the cadence. Query measured age from
+    the newest fundingTime with no allowance, so before OKX publishes the due row a healthy series is DATA_STALE.
+  - Fix: a 60 s settlement-publication allowance (the existing funding boundary tolerance) and one cache-bypassing
+    re-read of a cache-served stale funding series.
+  - Per-item diagnostics (R6 extension): `qdl_refusal` lines for reference_batch_item / warmup_batch_item; SDK
+    2.2.0 DataLayerError.diagnostics.item_problems on a require_all PARTIAL_RESULT; driver receipt item_problems.
+  - OKX publication latency after settlement is unmeasured; a read-only poll at a settlement will confirm the 60 s.
+- G13:
+  - e04db5b runner and inherit/rerun matrix: 0/65 cells inheritable (no final-provenance receipts).
+  - afe19f7 harness image set as a parameter.
+  - e4dfc3c DR05 scopes BINANCE/OKX/OKX_INVERSE.
+  - TS 3538b48 matrix v2: 325 + 11 inverse cells, exclusions with reasons. TS acce72d inverse DR05 producers. TS
+    aeb63f1 regenerated the W01 roster: the ROSTER_DRIFT root cause was that 6c44bf2 added a test naming 9 routes
+    and the roster was not regenerated.
+  - TS 6c44bf2 DR01 WRONG_ACCOUNT runner. It found IDR-085 (gateway scope lookup before the API key, i.e. account
+    enumeration), fixed in TS be21d49. The WRONG_ACCOUNT cell is deferred to the TS release (no gateway runs now).
+  - All 76 cells have producers.
+  - Runtime inputs prepared:
+    - catalog = the deployed /runtime/stable-source-bindings.yaml, sha fc3a1e1e..., identical to
+      p184-d1-rev11-20261009/base-catalog.yaml (catalog_revision 12, includes BTC-USD-SWAP);
+    - DR05 export = ~/.local/state/qdl-v2/dr05-export-20261010/public-export.json: 17 l2 bindings, public fields
+      only, from rust_core /runtime/core.json sha 91b19310...; validated by isolated_config for all three scopes.
+- Note for the release: the repo catalog stays revision 11, baked into the image for the bar edge checkpoint
+  (C.19). Query reads the runtime-mounted revision 12. This split is kept deliberately and stated in the release
+  notes.
+- Tests after merging everything: 18 modules, 347 OK (34 Redis skips).
+
+### rc7 rollout stopped at query_kn_1: plan-load 8443 refusal crashed Query; fixed - 2026-10-10 (Claude)
+
+- rc7 (dacde94; python sha256:c816fedbd1b6, rust sha256:53c74bf236a2) was rolled one role at a time.
+  - query_kn_1 restarted during startup.
+  - The script rolled it back within 12 s to rc7-47bec04 (sha256:4fcf724b6b36), healthy. No other role was touched.
+- Cause: 6674d0b made StableAcquisitionPlan validation refuse OKX `:8443` URLs at LOAD.
+  - The deployed runtime bundle mounted by Query and the bar edge (releases/v2.2.0-02cd827/runtime) still names
+    8443: 220 lines, plan sha 09c895f1....
+  - Isolated import of the Query entrypoint was clean; the refusal is in plan loading.
+  - Readers that never connect to OKX must not die on a transport URL.
+- Fix (this commit):
+  - The 8443 refusal moved to `native_ingestor_configs`, where ingestor configs are rendered (the only consumer that
+    connects). Plan load accepts the old URL. The live ingestor config is already on 443.
+  - Tests: a deployed plan naming 8443 loads (identity unchanged); rendering an ingestor config from it is refused.
+  - With the fix, the real deployed runtime (catalog 12, plan revision 20, 716 bindings) loads.
+- Lesson: check every load-time validator against the deployed runtime files before a rollout, not only against
+  repo files.
+- rc7 is rebuilt (Python and Rust) from this commit. CI on dacde94 continues for early signal; the certifying CI runs
+  on the final commit.
+
+### rc7c rollout (all 13 DL roles on 54460ac), writer ed02064, stage 100j PASS 32/32 - 2026-10-10 (Claude)
+
+- Pre-rollout checks:
+  - C.19: old bar edge image and rc7c both have catalog_revision 11, acquisition revision 19, 712 bindings, catalog
+    sha 9d4ab51e4880.
+  - Isolated startup smoke (live env and mounts read-only, --network none) for Query, bar edge, Stream, projector,
+    core and ingestor. Every role passed config load; the only stops were network ones (the bar edge stops the same
+    way on the old image).
+  - The rc7c ingestor accepts the new liveness config: started with OKX 103 / Binance 27 bindings.
+- Rollout (rollout_rc6.py, one role at a time, health and writer READY 64/64 after each), rc7c = python
+  sha256:55e493786748 / rust sha256:206ae872a5fe (54460ac):
+  - order: query_kn_1/2, binance_bar_edge, stream_kn_1/2, market_projector_1/2, rust_core x3, ingestor_okx_swap,
+    ingestor_binance_usdm;
+  - ingestors moved to releases/v2.2.3-rc7-ingestor-liveness/ (liveness 1500/4000, OKX on 443).
+  - All 12 steps ok, 0 restarts. IDR-039 closed at runtime: every application role runs revision 54460ac.
+  - Kafka, Redis and the one-shots untouched. The OKX ingestor holds 5 sockets to port 443.
+- TS writer market_data_service_p184w: 15524c0b (9b86ed3) -> sha256:34202753bbe8 (TS ed02064).
+  - Image only; env and mounts verified identical. Guard all READY 64/64.
+  - The new DATA_LAYER_V2_BOOK_FAST_RETRY_RATE_PER_SECOND defaults to 0.5 (production pace unchanged); only the
+    isolated DR05 clone uses 2.0.
+  - Root cause of the G13 dr05-upstream 4/6 FAIL: the single-frame synthetic venue vs the 4 s writer retry spacing
+    since 12be5f9. DL was correct in every phase.
+- Stage 100j (pre-certification; a cargo fmt/clippy/test job ran concurrently): PASS 32/32.
+  - requests 0 failures; streams 180 / 0 errors.
+  - G5 cold 2500 B/O 4023/3482 ms; 5000 B/O 6986/6502 ms.
+  - startup 77.2 s, 0 failures; ts:ready 154/154 samples, 0 unreadable; guard 0 bad samples.
+  - MARK watcher: 24 minutes with 0 errors, 1 minute with 5.
+- G4 on 100j:
+  - window 1 (10:39:40-10:41:40Z, just after the fleet startup) is above the limits on 10 rows by 1-15 %;
+  - windows 2-4 are the best measured so far (trade B 107-117 ms vs 160-190 on rc5/rc7);
+  - venue->DL is flat in every window.
+  The same one-window pattern appeared before (100b w1, 100f w3), consistent with host CPU contention. The quiet-host
+  certification run decides whether the startup warmup burst itself delays core/Kafka (a G14 resource fix).
+- Certifying CI on 54460ac FAILED 2 steps, both pre-existing:
+  - cargo fmt --check (15 diffs);
+  - unit tests 3151: 2 failures, 23 errors. TS-bound test_p184_dr05_ts_validate in a DL-only checkout, and phase7
+    vs the SDK 2.1 tolerant response models.
+  Fix in progress (d6fb34c fmt, 2c84e2f tests); rc7d and a certifying CI follow.
+
+### Certifying stage 100m PASS 32/32 + G4 on the final digests; G14; G2 first window - 2026-10-10 (Claude)
+
+Final digests: the DL application roles all on rc7d bbfb3be (python sha256:e0252f4c96da, rust sha256:64468c72ce5a;
+rolled one role at a time, writer READY 64/64 after every step), TS writer sha256:34202753bbe8 (ed02064). Quiet host:
+no build, CI or subagent job running.
+- Stage 100m (12:45-13:17Z, supervisor v2, fixed harness): PASS 32/32.
+  - requests 0 failures; G5 cold 2500 B/O 3124/3727 ms, 5000 B/O 5299/6178 ms; startup 72.3 s, 0 failures.
+  - ts:ready 154/154, 0 unreadable; guard 0 bad samples; MARK watcher 0 errors in 32 of 32 minutes.
+  - G4 PASS on every measured row (16/17; the unmeasured one had no event in the windows). The 100j window-1 excess
+    did not recur on the quiet host, so it was the concurrent cargo job.
+- G14, per-role CPU/RAM from 152 samples (stage100m/g14-resources.txt), mean CPU (p95):
+  - kafka1/2/3: 77/95/98 % (87/107/110);
+  - query_kn_1/2: 68/48 % (101/78);
+  - stream_kn_1/2: 22/7 %; projectors: 18/8 %; cores: 9/11/8 %; ingestors: 11/12 %; market_cache: 8 %;
+  - DL total about 5.0 vCPU mean;
+  - TS writer 124 % mean.
+  - Max RSS is well inside every limit: Query 761 MiB / 1.5 GiB, Kafka <= 1019 MiB / 1.5-2 GiB, cores <= 47 MiB /
+    256 MiB, Stream <= 158 MiB / 512 MiB.
+- G2 MARK, first 590 s trace window (13:18-13:28Z, writer recreated with trace env only;
+  scripts/p184_g2_mark_trace_transit.py):
+  - OKX new-event transit n 6385, p50 215, p95 321, max 399 ms: PASS (was p95 1426 / max 2326 before IDR-084).
+  - Binance n 2667, p50 430, p95 500.7, max 776 ms: max PASS, p95 0.7 ms over the 500 ms bound.
+  - Binance has a structural floor (min 370 ms) from the 250 ms MARK wake read delay, which was set to avoid racing
+    the DL latest view before IDR-084.
+  - One-variable tuning window started: Binance MARK wake read delay 250 -> 100 ms via the per-venue override
+    (parser bounds 0..500 ms).
+
+### G2 PASS after one-variable tune; G13 41/41 DL cells PASS on the final digests - 2026-10-10 (Claude)
+
+- G2 MARK, second 590 s trace window (13:30-13:40Z; writer env DATA_LAYER_V2_MARK_WAKE_READ_DELAY_BY_VENUE=BINANCE=100,
+  parser bounds 0..500 ms, the only tuned variable; image unchanged):
+  - Binance new-event transit n 2671, p50 278.5, p95 339.3, max 708 ms: PASS (was p95 500.7);
+  - OKX n 6390, p50 212.3, p95 317.9, max 495 ms: PASS;
+  - writer READY in every guard sample.
+  The writer keeps BINANCE=100; the rollback compose is g2-tune/rollback-*.compose.json.
+- G13 on DL bbfb3be + writer ed02064, runner run from a DL worktree at bbfb3be. The first attempt was refused by the
+  runner because the DL checkout HEAD differed from the release sha; receipts are kept.
+  - dr05-upstream 6/6 PASS (BINANCE, OKX, OKX_INVERSE GAP_REFUSAL and GENERATION_CHANGE_FENCED; receipt
+    p184-g13-20261010T134219Z).
+  - dr04-dr06-views 22/22 PASS, the inverse scope included (same receipt).
+  - dr05-transport 9/9 PASS (STALE_TYPED, DISCONNECT_RECONNECT recovered in 6765 ms, APPROVED_FALLBACK_AND_RETURN
+    with no V1; receipt p184-g13-20261010T142735Z).
+    - Root cause of the first failure: the TS harness probe read QUOTE only while the production policy requires
+      MARK for USD_M/SWAP; fixed in TS 7d7fd0e (probe uses execution_required_feeds; validator unchanged).
+    - Provenance: writer image ed02064 (deployed); harness script 7d7fd0e.
+  - dr08-isolated 4/4 PASS in QUALIFICATION mode, 5 restart samples (receipt p184-g13-20261010T142914Z).
+  - Deferred to the TS release because the TS stack (gateway, alpha, risk) is not running:
+    - dr01-deployed and dr01-wrong-account (the runner and the IDR-085 gateway fix exist);
+    - dr02-dr03-alpha;
+    - dr07-reference.
+    These cells stay OPEN; they are not claimed.
+
+### Strict scorecard, G12 on final images, TRADE tail attribution, funding evidence - 2026-10-10 (Claude, subagents)
+
+- Release evidence 59e725a (status PREPARED_NOT_PUBLISHED). Scored strictly against the frozen gate windows: steady
+  >= 30 min at stage-100 load + burst + fault windows.
+  - G5 PASS (stage 100m).
+  - G2 FAIL: TRADE BINANCE p95 539.1 / max 1078.7 ms in the first trace window.
+  - G1, G3, G4 (16/17 rows), G6-G12, G14 (two roles missing) NOT_MEASURED under the protocol.
+  - G13: DL cells 41/41; TS-stack cells deferred.
+  - Correction (Claude): the earlier "G2 PASS" covered MARK only, and from unloaded trace windows. Method error:
+    a gate was scored on one feed instead of every feed it names.
+- TRADE tail attribution (analysis only, no code change):
+  - The DL is clean in both windows: Kafka->hub dispatch <= 100 ms (p99 <= 50); subscription queue->task <= 50 ms;
+    tonic handoff <= 10 ms; core raw_age <= 114 ms.
+  - The tail is the TS writer's per-slice sequential consumer: read 8-11 + project 13-15 + EVAL 9-14 ms per
+    64-event batch, i.e. ~1.3-2.0k rec/s per slice, against a Binance ETH burst of 4,205 rec/s. Backlog up to ~1 s.
+  - The difference between windows 1 and 2 is market activity (ETH 7,741 vs 4,705 trades).
+  - Chosen fix (owner rule: follow Claude's recommendation; no extra resources): in-slice pipelining in the writer,
+    in progress, plus additive TRADE integrity counters for G10.
+- G12 re-run on the final images (bbfb3be DL, ed02064 writer clone), 16:16-16:42Z; packet section 13; commits
+  627f19d, 7188b8b, 8bbcaae, 2d11a87:
+  - caught up after the fault cleared: broker kafka-3 stopped 60 s 48.857 s; projector restart 56.534 s; Stream
+    restart 8.764 s (all <= 600 s);
+  - G1 300 s windows after caught-up within the gate (max <= 1127 ms OKX after the broker fault);
+  - teardown: 0 containers, 0 networks, volumes 211 -> 211.
+  - Longer catch-up than the morning run because the fresh export carries the production
+    materialized_snapshot_interval_ms 1000 (morning: 100). First valid apply was within 1.1 s in every case.
+  - Inheritance for rc8: rc8 changes only Query (funding allowance) and scripts. Core, Stream and projector are
+    byte-identical in source, so G12 holds for rc8.
+- Funding evidence (read-only public API poll 15:58-16:04Z, ~4.6 s cadence):
+  - the 16:00Z settled row appeared in history at OKX BTC/ETH/SOL-USDT-SWAP +10 s (SOL settState processing at
+    +5 s), Binance BTC/SOL/ETH +5/+10/+24 s;
+  - this confirms the stage-100g cause (refusal at +7.1 s, before OKX published);
+  - the 60 s allowance was re-applied with the evidence in the code comment (2e0de95), tested; it ships in rc8.
+- Campaign tooling ready (TS b642e0d long trace window <= 3600 s and MAX_FILES <= 96; DL 848d5d2/65ada37 probes for
+  G3/G6/G8/G9/G10/G11/G14 and scripts/p184_gate_campaign.py). Still NOT_MEASURED by design:
+  - G6 BOOK_DELTA: the frozen workload has no Query shape for it;
+  - G4: 5 rows without a frozen baseline (no baseline is added after measuring).
+- rc8 final campaign, depth 1 (2026-10-10 17:11-17:48Z, `p184-final-campaign-20261010T171129Z`):
+  - Setup: Query on rc8 6d5da7f (python sha256:db5ae675...), the other 10 roles rc7d (source byte-identical);
+    writer 5ac15db (sha256:ace42326...) with pipeline depth 1.
+  - PASS: G1, G3, G5, G7, G8, G9, G10, G11 (64 slices caught up 3.7-14.2 s), G14.
+  - FAIL: G2 (TRADE p95 909/1068 ms, max 2.9 s; QUOTE max 1023/1024 ms) and G6.
+  - NOT_MEASURED: G4 (only bar 30m has no sample); G12/G13 are inherited.
+- G6 FAIL was a scorer defect, not DL behaviour:
+  - The collector applied the TS D3 EXECUTION table (QUOTE/MARK 2000 ms) to the stage-100 ALPHA reads, whose own
+    requirement is QUOTE 5000 / MARK 60000.
+  - For MARK it took the age after the response (RTT included) and demanded an EXECUTION-only quiet proof.
+  - The server classifies per the request's requirement (qdl/runtime/stable_source.py event_limit_ms).
+  - Fix, without widening the gate: each read is classified against its own requirement and carries a
+    `policy_basis`. Only D3_EXECUTION rows decide G6; ALPHA-only gives NOT_MEASURED; an unsafe view under the read's
+    own requirement still fails.
+  - New read-only probe scripts/p184_g6_ts_execution_probe.py runs inside the writer (the TS identity and the
+    writer's own requirements) for the whole load.
+  - MARK EXECUTION age stays measured from the source event: stricter than the server's provider-confirmation
+    anchor, kept so the frozen UNSAFE definition is unchanged.
+  - 20 s live check: 197 reads, 0 unsafe. Tests: 138 OK (unittest in a disposable rc8 container).
+- Stream gateway budget defect, behind the 17:22:48Z G2 QUOTE/BOOK max:
+  - Incident: 84 streams on stream_kn_1 (all feeds, both venues, 24 TS writer + 60 alpha) closed with
+    BACKPRESSURE in 37 ms, each with an EMPTY own queue.
+  - Cause: the replica-wide 32 MiB ByteBudget was charged the full decoded weight per subscriber, while hub
+    dispatch shares one Arc<LiveRecord> (counted ~fanout x, ~4 here). A 1-2 s delivery stall exhausted it.
+    Separately, the per-subscription cap equalled the replica total.
+  - Fix (rust/qdl-stream-gateway; no endpoint/proto/manifest change):
+    - the decoded record is charged once at dispatch, released with the last Arc;
+    - each queue entry adds 512 B, and each transport copy its full weight (handoff_charge waits up to
+      slow_consumer_after before typed backpressure);
+    - a refused dispatch charge falls back to the old per-subscriber charge;
+    - default QDL_KN_QUEUE_BYTES_PER_SUBSCRIPTION = total/2 (16 MiB). Not /8: the TS writer legitimately held
+      15.85 MB of BOOK_DELTA in one subscription at 14:28Z;
+    - new metric hub_live_budget_refused.
+  - Tests: fmt, clippy -D warnings, cargo test 49+1+37 pass (qdl-rust-builder:r134-test). Status: tested locally.
+- Found alongside: stream_kn_2 served 0 of 244 streams. The SDK GrpcStreamTransport always starts at target 0;
+  5c81c25 randomised only the REST Query transport. Fixed in the SDK (next slice).
+- SDK 2.2.1:
+  - GrpcStreamTransport starts on a random target per instance; keyword start_index pins it. Failover on
+    UNAVAILABLE is unchanged. Additive, no wire change.
+  - SDK 2.2.0 was never published (DL not pushed), but its wheel hash is recorded in the release evidence, so the
+    version is bumped rather than reused.
+  - Tests: 57 OK (transport security, stream SDK incl. failover with a pinned start, replica read, release
+    wheel).
+- Depth-0 campaign (17:49-18:25Z, `p184-final-campaign-20261010T174944Z`, writer depth 0):
+  - G2 TRADE p95 579/568 ms (max 2146/1854); QUOTE inside (max 678/745); no overflow incident this time.
+  - G4 FAIL: bar|BINANCE 3m/30m at the 18:00Z boundary, 36-41 s against limits of ~26-27 s.
+  - G8 FAIL: one writer APPLY EVALSHA of 10.15 ms in the steady window. The same script has taken 10-40 ms for
+    1-row calls today, so it is not batch-size bound (inferred: host scheduling noise).
+- G4 cause, a DL defect in admission:
+  - An INFLIGHT_CAPACITY deferral returns retry_after = the earliest lease's MAXIMUM expiry (max_lease_ns 30 s).
+  - qdl/admission/edge.py slept exactly that hint. Callers that saw it first failed their deadline at once
+    (28 of 35 bindings); the next ones slept ~30 s although the lease was released 0.1-0.3 s later.
+  - run_cycle publishes after every future, so one sleeper held the 7 hour-boundary bars.
+  - Seen at 14:30, 16:00 and 18:00Z today (first ACK +31-32 s, against +6.7-7.3 s at the other boundaries).
+  - No venue 429/418 since 12:00Z.
+  - Fix: an INFLIGHT_CAPACITY wait polls jittered 50-200 ms, never longer than the hint, still deadline-bound.
+    Other defer reasons keep the hint.
+  - Tests: 285 OK across the admission and bar-edge suites. The frozen G4 limits are unchanged.
+- Correction (Claude) to ba496ff:
+  - Fault: the G6 reference anchor always took min over observations. For FUNDING_RATE, a settlement history, that
+    is the oldest row, so the final campaign flagged 150/150 alpha funding reads UNSAFE (age ~11 h).
+  - Method error: the server rule was copied for the MARK branch only.
+  - The anchor now mirrors qdl/query/service.py _reference_freshness_timestamp:
+    - MARK EXECUTION read with all PROVIDER_CONFIRMATION: min provider_confirmation_ns;
+    - other MARK reads: min observed_at;
+    - every other product: max observed_at.
+  - Driver and probe copies stay in parity. Tests: 140 OK.
+
+### Final campaign 4, Kafka cleaner throttle, rc10 on all roles, G12/G13 on rc10, v2.2.3 evidence - 2026-10-11 (Claude, subagents)
+
+- Kafka (owner-approved question, ~03:40Z): cluster dynamic default log.cleaner.io.max.bytes.per.second=8388608,
+  applied 03:40:56Z, no broker restart. Cause: md.latest.v2 compaction on kafka1 (1.25 vCPU) stalled every
+  rust_core commit ~2.06 s (2026-10-10 14:12, 15:29, 19:09Z). Receipt kafka-cleaner-throttle-20261010/; rollback
+  --delete-config. Campaign 20261011T033641Z was aborted to apply it.
+- Earlier campaign 20261010T185053Z (writer bae2509f, depth 0): protocol not met (startup:bounded, s89 exhausted 10
+  retries); G1/G2/G4 excess from the 19:09Z stall.
+- Final campaign 4 (20261011T034233Z, protocol met, writer bae2509f 8b567eb depth 1, pinned OKX workers; DL mix
+  Query rc8, Stream rc9, bar edge rc10, rest rc7d):
+  - PASS G1 G3 G5 G6 G7 G9 G10 G11 G14; FAIL G2 (TRADE B/O p95 1562.1/2084.2, max 5338.8/4301.8; QUOTE max
+    1439/1341; MARK max 1125/1228 ms) and G8 (6 SLOWLOG EVALSHA 10.0-19.7 ms); G4 NOT_MEASURED (17/17 baselined
+    rows PASS, 10 rows without a frozen baseline).
+  - Attribution (read-only per-second trace analysis): 1699/1801 s max e2e < 500 ms; 28 s > 1500 ms, 25 of them
+    TRADE-only; bursts up to 4274 TRADE rec in one source second on one slice/worker, <= 1138 applied rec/s per
+    worker; G4 TRADE canonical p95 108-137 ms; 0 overflow. TRADE volume ~2.2x earlier runs (n 160328). All 6 SLOWLOG
+    entries sit in TRADE burst seconds.
+  - Owner decision (AskUserQuestion): release DL; writer throughput (SDK batch decode, Rust projection, EVAL
+    chunking) is the first TS phase E item; gates not widened.
+- Writer set to depth 0 after the campaign (04:24:53Z; rollback campaign-roll/rollback-20261011T042442Z).
+- rc10 (413c5b9) rolled on all 12 application roles 04:30-04:35Z, writer READY 64/64 after every step: python
+  sha256:a0c3649d9a47, rust sha256:96a2c9120ef4; IDR-039 closed. Rollback per role in rollout-rc6/.
+- G12 isolated on rc10 (p184-g12-rc10-20261011-a2): NOT_MEASURED by the strict rule (G2/G3 after recovery not measured on a BOOK-only source); caught up broker 22.334 s, projector 0.935 s, Stream 2.294 s; G1
+  windows inside (max 1970 ms OKX); teardown 12 removed, 0 left, volumes 217 -> 217. Attempt 1 FAILED on a harness
+  STOP (in-namespace monitor exited, no traceback/OOM kept); duplicate -r2 stopped. Open: keep monitor exit
+  code/OOM state.
+- G13 on rc10: 41/41 DL cells ok (043821Z: dr05-upstream 6, dr08 4, dr05-transport 9; 045533Z: views 22). First
+  views run refused DR04.EXPLICIT_LAST@BINANCE EXECUTION_CONTEXT_STALE in a quiet market (correct typed refusal).
+  Four TS steps deferred to the TS release.
+- SDK 2.2.1 wheel 27db3971... reproducible over two builds; 2.2.0 superseded, never published.
+- Local CI on 2f489b1: all jobs except unit-tests PASS or INCOMPLETE only by skips (contract-tests #10 needs a
+  download, PR-only steps n/a); unit-tests 19 PASS, 3 SKIPPED (#4 sudo, #19/#20 no trivy image); re-run with
+  aquasec/trivy:0.58.1 (unit-r2, f6b6b5e7): every step PASS except #4 sudo. Remote CI not run.
+- Release evidence updated (upgrade/evidence/releases/v2.2.3/): status PREPARED_NOT_PUBLISHED; the 2026-10-10
+  record moved into the history. Publication needs owner push, tag and remote CI.
+- G12 isolated harness extended so G12 can be scored in full (owner chose "close G12, then phase E", 2026-10-11):
+  - New TEST_ONLY deterministic sources, each on its own lane at generation 1: TRADE (3/s plus bursts of 8 every
+    15 s), QUOTE (2/s), BAR 1m closed, MARK/INDEX (Binance markPrice@1s; OKX mark-price + index-tickers pair).
+  - Core bindings are built from the production acquisition mapping; a guard refuses any entry that differs from
+    the production plan.
+  - The clones demand the feeds through their normal routes; the isolated Query adds the production KN
+    execution/alpha MARK readers (product code still from the image).
+  - G2 (TRADE/QUOTE/MARK, frozen thresholds, n >= 100 per venue) and G3 (BAR from close, n >= 3) are measured in the
+    same 300 s post-catch-up window as G1. A fault passes only if every part passes; NOT_MEASURED on any part blocks
+    a PASS.
+  - Container die/oom events are kept as evidence (open item from attempt 1).
+  - Tests: 99 + 157 OK (unittest in rc10). Status: tested locally; the live run follows.
+- DL defect fixed (found by the extended G12 run, 2026-10-11): the warmup batch route turned a typed per-item
+  QueryBackendError from the KN local batch (kn_query_backend.history_many) into a non-retryable INTERNAL_ERROR
+  500 ("warmup batch item failed inside the bounded executor"). That hid every retryable DATA_NOT_READY BAR warmup,
+  in production too.
+  - qdl/query/service.py now keeps the backend problem (code and retryability), as the single-item path already did.
+  - Regression test added; 116 warmup/backend tests OK.
+  - Needs a Query image rebuild and roll (owner approval).
+- Redis `redis_marketdata` read-only diagnosis (owner approved), then cpu-shares 4096 (owner approved):
+  - Found: no cgroup limit, no throttling, no eviction or fork, 5 MB used; 44.6 M involuntary context switches on a
+    CPU-pressured host. This is the likely cause of the 10-40 ms EVAL stalls (inferred).
+  - After the change, involuntary switches went 209 -> 160 per 60 s at similar load. G8 is re-measured in the next
+    campaign.
+  - Receipt: ~/.local/state/qdl-v2/redis-cpu-shares-20261011/. Rollback (failure only): --cpu-shares 0.
+- Phase E step 3, batched Subscribe (additive, versioned):
+  - Wire: SubscribeRequest.max_records_per_response = 7 (0/absent/1 = one record per response, as before);
+    SubscribeResponse.records = 2 (repeated). Exactly one of record/records is set.
+  - Gateway: batches only lossless live feeds (TRADE, BOOK_SNAPSHOT, BOOK_DELTA) from records already queued.
+    - It never waits to fill a batch and never crosses an overflow, failure or close.
+    - Batch clamp 256 records / ~1 MiB.
+    - QUOTE/latest-state, BAR, controls and committed replay stay single.
+    - Per-record freshness, token and offset are kept; the merged budget charge is held until tonic takes the batch.
+  - SDK 2.3.0: GrpcStreamTransport(max_records_per_response=64, 1..256). At 1 the request bytes equal 2.2.x; the
+    SDK falls back on an older gateway.
+  - Tests:
+    - Rust: fmt, clippy, cargo test (lib 50, native_stream 41 incl. b01-b04);
+    - Python: 156 SDK/contract tests; new parity tests 6/6;
+    - buf lint and breaking against both frozen baselines pass.
+  - Bench, real gateway over loopback, 4274 TRADE: client gRPC 0.088-0.099 -> 0.0066-0.0076 ms/rec at 64 per
+    response.
+  - Old SDK 2.1.0 and 2.2.1 against the new gateway: unchanged shape (real gRPC).
+  - Status: tested locally; needs a gateway image and roll, then TS SDK 2.3.0 adoption.
+- G12 full run on the release digests, harness 2d4b88c, `p184-g12-rc10-full3-20261011` (verdict c7b8ea95): PASS.
+  - Caught up: broker 483.8 s, projector 405.8 s, Stream 275.4 s (<= 600).
+  - In every post-catch-up window: G1, G2 TRADE/QUOTE/MARK (max <= 96.8 ms, n 1060/600 per venue) and G3 BAR
+    1m (max 477.6 ms) inside.
+  - Monitor: 2511 samples, 0 crashes.
+  - Teardown clean.
+  - The v2.2.3 scorecard moves G12 to PASS; the BOOK-only verdict is kept as superseded.
+- IDR-088, latent since rc10 and first triggered 2026-10-11 11:37Z (stage-100 run 111700Z stopped by its guard,
+  writer DEGRADED 63/64):
+  - Trigger: OKX BNB-USDT-SWAP TRADE was quiet for more than 120 s.
+  - The Stream ring evicted the key (ring_max_age 120 s).
+  - The primary held the same record, but its state-partition watermark only advances when that partition gets a
+    frame, so its boundary trailed the head an earlier hot read had recorded.
+  - Query refused with HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND / HOT_RECORD_MISSING although nothing newer existed.
+  - The writer's idle session probe treats that refusal as a disconnect.
+  - Fix (qdl/runtime/kn_query_backend.py): a primary that is the same record (source offset and payload digest)
+    an earlier hot read proved newest is served at the recorded boundary. The boundary stays monotonic, no gap is
+    invented, and the record-regression and payload-mismatch guards are unchanged.
+  - Regression tests added; 181 tests OK.
+  - Not caused by the writer or SDK 2.3.0 change, nor by Query rc11 (diffs checked).
+- IDR-087 confirmed and fixed:
+  - The G12 harness named the crashing call: SIGSEGV in confluent-kafka/librdkafka 2.15.0
+    AdminClient.list_consumer_group_offsets during a broker stop (p184-g12-rc12-20261011 monitor.errors).
+  - The product bar edge used the same call in its history backpressure gate.
+  - Fix: qdl/runtime/isolated_probe.py SupervisedProbe.
+    - The Kafka offset reads run in one spawn-started child; spawn because the bar edge process already holds
+      librdkafka threads, so fork is unsafe.
+    - Hard timeout 15 s (QDL_STABLE_BAR_BACKPRESSURE_PROBE_TIMEOUT_S).
+    - A crash, hang or child error becomes ProbeUnavailable. The gate closes (fail-safe: history pauses, live
+      continues) and the next call respawns the child.
+  - Tests: 13 new (real SIGSEGV child, timeout, child error, parity with in-process numbers) plus 271 related.
+  - Status: tested locally; a real broker-stop check of the bar edge needs a live fault.
+- G12 full on rc12 digests (python 3b585597, rust ebc7b794, writer 64347a94), `p184-g12-rc12-20261011` (verdict
+  20f29671): PASS.
+  - Caught up: broker 224.7 s, projector 19.4 s, Stream 138.4 s.
+  - G1/G2/G3 inside after every fault.
+  - The monitor survived 2 SIGSEGV samples.
+- G13 on rc12 digests with writer 44baacc0 (TS a37ff4d): 41/41 DL cells ok.
+  - dr05-upstream 6, dr08 4, dr05-transport 9 (`p184-g13-20261011T134532Z`); views 22 on the re-run
+    (`...T140432Z`).
+  - The first views run refused DR04.EXPLICIT_LAST@OKX for a stale LAST in a quiet market.
+  - DR05 DISCONNECT_RECONNECT now counts only controls after the cut. The 04:38Z PASS was a false positive from
+    startup quota controls; TS a37ff4d logs a bridge RECONNECTED control.
+
+### v2.2.3 final record: rc13 (481fd67) on all roles, phase E step-2 scorecard, SDK 2.3.0 - 2026-10-11 (Claude, subagent)
+
+- rc13 (481fd67, IDR-087) rolled on all 12 application roles 14:26-14:31Z from rc12, writer READY 64/64 after
+  every step: python sha256:ccbea12e87e4, rust sha256:6afdc155ba3e (labels 481fd67, IDR-039 closed again). Rollback
+  per role in rollout-rc6/ (back to rc12 3b585597 / ebc7b794).
+- Earlier the same day: Query/Stream rc11 (10:33Z), Query rc12 (11:55Z), rc12 on all roles (13:12-13:18Z); writer
+  64347a94 (a3035c8, SDK 2.3.0), then knob DATA_LAYER_V2_MAX_RECORDS_PER_RESPONSE=64 (12:34Z), then 44baacc0
+  (a37ff4d, bridge reconnect control log only) at 13:44Z.
+- Campaigns: 103749Z protocol not met (driver mounted SDK 2.3.0 over an old protobuf -> f1849e0); 111700Z stopped by
+  its guard (IDR-088 -> 5ee9463); step 1 115743Z, knob 1: protocol met, G2 FAIL (TRADE B/O p95 801/817, max
+  3284/3209 ms), G8 PASS; step 2 123525Z, knob 64: protocol met, PASS G1-G3, G5-G11, G14, G4 NOT_MEASURED (17/17
+  baselined rows PASS, 8 rows without baseline). Caveat: TRADE volume step 2 66303/12492 vs step 1 92415/26567.
+- G12 PASS from p184-g12-rc12-20261011 (verdict 20f29671); G13 41/41 DL cells (134532Z + 140432Z), 4 TS steps
+  DEFERRED. rc13 differs from rc12 only by IDR-087 (bar edge, not in either stack).
+- Measurement identity of step 2 vs 481fd67: Query rc12 and Stream rc11 source-identical on their paths; core,
+  projectors, ingestors rc10 source-equivalent (gateway crate + two additive prost fields no other crate uses); bar
+  edge rc10 not identical (IDR-087 only).
+- SDK 2.3.0 wheel b9c74157... reproducible over two builds from 481fd67 (= TS vendored wheel); supersedes 2.2.1.
+- Release evidence updated (upgrade/evidence/releases/v2.2.3/): final scorecard PASS 12, NOT_MEASURED G4, DEFERRED
+  G13, FAIL none; the rc10 record (campaign 4, G2/G8 FAIL) moved verbatim into the history. Status
+  PREPARED_NOT_PUBLISHED; local CI on 481fd67 41 PASS, 3 SKIPPED (2 PR-only, 1 sudo), summary 83e7dda9; remote CI, owner decision and tag open.
+- Open: IDR-087 tested locally only (no live broker stop of the bar edge); DL CPU 5.08 vCPU > 5 budget; writer burst
+  capacity depends on knob 64. Not committed.

@@ -286,7 +286,7 @@ class PhaseC36L2BindingTests(unittest.TestCase):
             execution_grade=False,
             provider_protocol="OKX_PUBLIC_BOOKS",
             native_channel="books",
-            websocket_url="wss://ws.okx.com:8443/ws/v5/public",
+            websocket_url="wss://ws.okx.com/ws/v5/public",
             rest_snapshot_url=None,
         )
         self.assertEqual(binding.subscription.market, "FUTURES")

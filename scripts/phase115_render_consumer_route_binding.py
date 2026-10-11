@@ -18,6 +18,7 @@ from typing import Any, Mapping
 import yaml
 
 from qdl.consumer.universal_release import (
+    ConsumerRequestPolicy,
     ConsumerRouteBinding,
     UniversalReleaseManifest,
     UniversalReleaseProduct,
@@ -38,7 +39,7 @@ def binding_from_stable_release(path: Path, root: Path, consumer_id: str) -> Con
     policy = UniversalReleasePolicy.load(root / "config/v2/universal-release-policy.yaml", manifest_root=root)
     catalog = StableSourceCatalog.load(plan.source_catalog.path)
     routes = {r.requirement_key: r for r in consumer.products}
-    products = []
+    products, policies = [], []
     consumer_class = UniversalConsumerClass.TRADING_SYSTEM
     if not consumer_id.startswith("trading-system."):
         raise ValueError("stable renderer currently supports the Trading System consumer only")
@@ -61,9 +62,16 @@ def binding_from_stable_release(path: Path, root: Path, consumer_id: str) -> Con
                   feed, requirement.interval)), None)
             if rule is None:
                 raise ValueError("stable V1 route has no matching compatibility rule")
+        requirement_id = hashlib.sha256(f"{consumer_id}:{key}".encode()).hexdigest()
+        recency = requirement.event_recency_policy
+        policies.append(ConsumerRequestPolicy(
+            requirement_id=requirement_id,
+            event_recency_policy=None if recency is None else str(getattr(recency, "value", recency)),
+            max_session_liveness_ms=requirement.max_session_liveness_ms,
+        ))
         products.append(UniversalReleaseProduct(
             consumer_id=consumer_id, consumer_class=consumer_class,
-            requirement_id=hashlib.sha256(f"{consumer_id}:{key}".encode()).hexdigest(),
+            requirement_id=requirement_id,
             instrument_uid=identity.instrument_uid, instrument_id=identity.instrument_id,
             venue=identity.venue, market=identity.market,
             product_type=identity.product_type.value, native_symbol=instrument.native_symbol,
@@ -87,6 +95,8 @@ def binding_from_stable_release(path: Path, root: Path, consumer_id: str) -> Con
         independent_v1_venues=("DNSE",),
         products=tuple(sorted(products, key=lambda p: p.requirement_id)),
         consumer_manifest_revision=consumer.manifest.manifest_revision,
+        # v3 (IDR-002): the manifest's request entitlement is sealed with the routes.
+        request_policies=tuple(sorted(policies, key=lambda p: p.requirement_id)),
     )
 
 

@@ -42,6 +42,34 @@ class RuntimeSourceLifespanTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(any(source.startswith("binance_spot") for source in sources))
                 self.assertIsNone(app_main.dnse_stream_manager)
 
+    async def test_default_env_starts_without_the_excluded_vnstock_sdk(self):
+        """KN images exclude vnstock; default startup must not reach its poller."""
+        async def idle_stream(*args, **kwargs):
+            await asyncio.Event().wait()
+
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key != "DATA_LAYER_VNSTOCK_POLLER_ENABLED"
+        }
+        env.update(
+            {
+                "DATA_LAYER_DNSE_STREAM_ENABLED": "false",
+                "DATA_LAYER_PRELOAD_WATCHDOG_ENABLED": "false",
+            }
+        )
+        with (
+            mock.patch.dict(os.environ, env, clear=True),
+            mock.patch.dict("sys.modules", {"vnstock": None}),
+            mock.patch.object(app_main.redis_cache, "init_ping", new=mock.AsyncMock()),
+            mock.patch.object(app_main, "start_stream", side_effect=idle_stream),
+            mock.patch.object(app_main, "load_vn_symbols", return_value=["VN30F1M"]),
+            mock.patch.object(app_main, "VnstockPoller") as poller,
+        ):
+            async with app_main.lifespan(app_main.app):
+                await asyncio.sleep(0)
+        poller.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

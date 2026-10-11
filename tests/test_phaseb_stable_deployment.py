@@ -127,8 +127,8 @@ class StableDeploymentContractTests(unittest.TestCase):
                 )
             else:
                 provider_kind = "okx_bar"
-                websocket_url = "wss://ws.okx.com:8443/ws/v5/public"
-                business_websocket_url = "wss://ws.okx.com:8443/ws/v5/business"
+                websocket_url = "wss://ws.okx.com/ws/v5/public"
+                business_websocket_url = "wss://ws.okx.com/ws/v5/business"
                 native_channel = f"candle{source.interval}"
             return replace(
                 item,
@@ -509,6 +509,17 @@ class StableDeploymentContractTests(unittest.TestCase):
         )
         self.assertEqual(
             {item["latest_state_flush_ms"] for item in native.values()}, {50}
+        )
+        self.assertEqual(
+            {
+                (
+                    item["heartbeat_seconds"],
+                    item["liveness_ping_ms"],
+                    item["liveness_dead_ms"],
+                )
+                for item in native.values()
+            },
+            {(15, 1500, 4000)},
         )
         delivery_by_feed = {
             binding["feed"]: binding["delivery_class"]

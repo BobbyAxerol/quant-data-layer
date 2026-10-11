@@ -212,6 +212,10 @@ class SuffixMaterializationTests(unittest.TestCase):
 class Item:
     snapshot_id: str = "test-only"
 
+    def with_view_fields(self, **fields):
+        # Mirrors MarketDataItem.with_view_fields, which history_with_envelopes uses.
+        return replace(self, **fields)
+
 
 class SuffixQueryCoverageTests(unittest.TestCase):
     def result(self, requested, *, venue="BINANCE", interval="3d", start_ns=None):

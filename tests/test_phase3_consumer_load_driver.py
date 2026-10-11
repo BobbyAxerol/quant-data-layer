@@ -84,6 +84,21 @@ class Phase3ConsumerLoadDriverTests(unittest.TestCase):
         self.assertTrue(identity["tls"]["ca_file"].startswith("/tmp/identity/"))
         self.assertTrue(identity["jwt"]["private_key_file"].startswith("/tmp/identity/"))
 
+    def test_sdk_from_source_brings_its_generated_contracts(self):
+        # An SDK newer than the image's protobuf read SubscribeResponse.records from a 2.2.2 image and every
+        # stream failed with AttributeError (2026-10-11); the source SDK must carry the source contracts.
+        with tempfile.TemporaryDirectory() as temporary:
+            raw = self._profile(Path(temporary))
+            for flag, expected in ((False, False), (True, True)):
+                raw["sdk_from_source"] = flag
+                command, _ = _MODULE.docker_command(
+                    _MODULE.validate_profile(raw), name="qdl-phase3-load-unit", image_id="sha256:" + "a" * 64,
+                    mode="load", sessions=1, duration_seconds=60)
+                mounts = [value for value in command if value.startswith("type=bind,")]
+                self.assertEqual(any(m.endswith("dst=/app/qdl_sdk,readonly") for m in mounts), expected)
+                self.assertEqual(
+                    any(m.endswith("dst=/app/generated/python/qdl,readonly") for m in mounts), expected)
+
     def test_profile_rejects_unknown_field_before_docker_is_called(self):
         with tempfile.TemporaryDirectory() as temporary:
             profile = self._profile(Path(temporary))
@@ -593,6 +608,39 @@ class RefusalEvidenceTests(unittest.TestCase):
         plain = _MODULE._safe_error(RuntimeError("boom"))
         self.assertNotIn("reason", plain)
         self.assertNotIn("diagnostics", plain)
+        self.assertNotIn("reason_tokens", plain)
+
+    def test_a_refusal_keeps_every_typed_code_of_its_detail(self):
+        """Astra R6: stage-100 rows had only the detail hash for a nested hot-path reason."""
+        from qdl.runtime.refusal_log import reason_tokens
+        from qdl_sdk.errors import DataLayerError
+
+        detail = "HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND: HOT_READER_BUSY"
+        evidence = _MODULE._safe_error(DataLayerError("DATA_NOT_READY", detail, retryable=True))
+        self.assertEqual(evidence["reason_tokens"], ["HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND", "HOT_READER_BUSY"])
+        self.assertEqual(tuple(evidence["reason_tokens"]), reason_tokens(detail))  # same vocabulary as Query's line
+        self.assertNotIn("reason", evidence)
+
+
+class BatchItemProblemEvidenceTests(unittest.TestCase):
+    def test_a_required_batch_failure_records_which_item_failed(self):
+        """Stage 100g: the receipt row held only the batch-level PARTIAL_RESULT hash."""
+        from qdl_sdk.errors import DataLayerError
+
+        item = {"instrument_uid": "u-sol", "feed": "FUNDING_RATE", "code": "DATA_STALE",
+                "reason_tokens": ["FUNDING_SETTLEMENT_PENDING"], "retryable": True, "retry_after_ms": None,
+                "detail_sha256": "d" * 64, "request_id": "r-1", "detail": "never copied", "price": "1.5"}
+        error = DataLayerError("PARTIAL_RESULT", "required reference batch contains one or more explicit failures",
+                               retryable=True, diagnostics={"origin": "sdk_reference_batch", "item_problem_count": 40,
+                                                            "item_problems": [item] * 40})
+        evidence = _MODULE._safe_error(error)
+        self.assertEqual(evidence["code"], "PARTIAL_RESULT")
+        self.assertEqual(evidence["item_problem_count"], 40)
+        self.assertEqual(len(evidence["item_problems"]), 32)
+        self.assertEqual(evidence["item_problems"][0], {
+            key: value for key, value in item.items() if key not in {"detail", "price"}})
+        self.assertEqual(evidence["diagnostics"], {})  # no quality fields: unchanged behaviour
+        self.assertNotIn("item_problems", _MODULE._safe_error(DataLayerError("DATA_STALE", "x")))
 
 
 class Kn4FixedWindowHandoffVerdictTests(unittest.TestCase):

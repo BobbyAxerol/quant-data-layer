@@ -135,7 +135,7 @@ class HotQuerySelectionTests(unittest.TestCase):
         envelope.published_at_ns=self.now-7_000_000
         self.backup=CanonicalHotView(self.lpk,(CacheRow(envelope.SerializeToString(),30),),SourceBoundary("topic",0,40))
         self.calls=0
-        def backup(*args):
+        def backup(*args,**_kwargs):
             self.calls+=1
             if isinstance(self.backup,Exception):raise self.backup
             return self.backup
@@ -168,6 +168,29 @@ class HotQuerySelectionTests(unittest.TestCase):
         self.backup=HotViewUnavailable("offline")
         self.assertTrue(self.backend.latest(self.requirement).quality.execution_eligible)
         self.assertEqual(self.calls,1)
+
+    def test_proven_same_record_behind_a_lagging_watermark_is_served_at_the_recorded_boundary(self):
+        # A quiet key: an earlier hot read proved record 30 newest up to 40; the primary now holds that same
+        # record, but its state-partition watermark trails (35) and the ring has evicted the key. It was refused
+        # HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND although nothing newer exists (2026-10-11 11:37Z, OKX BNB TRADE).
+        from qdl.runtime.kn_market_cache import ProductView, SourceBoundary
+        from qdl.runtime.kn_query_backend import parse_placeholder
+        self.assertTrue(self.backend.latest(self.requirement).quality.execution_eligible)
+        self.primary = ProductView(self.lpk, 2, 3, self.backup.rows, SourceBoundary("topic", 0, 35))
+        self.backup = HotViewUnavailable("HOT_RECORD_MISSING")
+        self.now += 10_000_000_000
+        result = self.backend.latest(self.requirement)
+        self.assertFalse(result.quality.execution_eligible)
+        self.assertEqual(parse_placeholder(result.cursor), ("topic", 0, 40))
+
+    def test_a_different_record_behind_the_recorded_boundary_is_still_refused(self):
+        from qdl.runtime.kn_market_cache import CacheRow, ProductView, SourceBoundary
+        from qdl.query.results import QueryBackendError
+        self.backend.latest(self.requirement)
+        self.primary = ProductView(self.lpk, 2, 3, (CacheRow(self.original, 25),), SourceBoundary("topic", 0, 35))
+        self.backup = HotViewUnavailable("HOT_RECORD_MISSING")
+        with self.assertRaisesRegex(QueryBackendError, "HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND"):
+            self.backend.latest(self.requirement)
 
     def test_stale_backup_does_not_turn_old_price_usable(self):
         self.now+=10_000_000_000

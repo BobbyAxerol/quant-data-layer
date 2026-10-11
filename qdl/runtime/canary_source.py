@@ -615,6 +615,7 @@ class SpoolCanonicalQueryBackend:
                 correlation_id=envelope.correlation_id or stored.event.event_id.hex(),
             ),
             watermark_offset=stored.cursor.offset,
+            event_id=bytes(envelope.event_id).hex() or None,
             bar_lifecycle=BarLifecycle(lifecycle_name),
             supersedes_event_id=(
                 bytes(bar.supersedes_event_id).hex() if bar.HasField("supersedes_event_id") else None

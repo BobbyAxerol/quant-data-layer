@@ -44,6 +44,7 @@ from qdl.query.cold_work import await_in_thread
 from qdl.query.contracts import CanonicalErrorCode, QueryProblem
 from qdl.query.service import QueryServiceError
 from qdl.runtime.internal_auth import stable_hmac_signature
+from qdl.runtime.refusal_log import REFUSALS
 from qdl.stream.grpc_service import requirement_from_proto
 
 READ_VIEW_PATH = "/internal/v2/kn/read-view"
@@ -57,6 +58,10 @@ _PURPOSE = {
 
 
 def _problem(error: QueryServiceError) -> JSONResponse:
+    # Astra R6: the Stream GetSnapshot read view's refusal, bounded and payload-free.
+    REFUSALS.record(origin="kn_read_view", code=error.problem.code.value, detail=error.problem.detail,
+                    status=409, retryable=error.problem.retryable, request_id=error.request_id,
+                    instrument_uid=error.instrument_uid)
     return JSONResponse(
         status_code=409,
         content={"code": error.problem.code.value, "detail": error.problem.detail},

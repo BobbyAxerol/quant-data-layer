@@ -37,7 +37,9 @@ use qdl_kafka::{
     shutdown_signal, FencedKafkaSink, KafkaEventSource, KafkaTlsConfig, KafkaTransportConfig,
     KafkaTransportError, PendingKafkaAppend,
 };
-use qdl_realtime_core::L2_RESNAPSHOT_REQUIRED_V1;
+use qdl_realtime_core::{
+    L2_RESNAPSHOT_REQUIRED_V1, L2_TRANSPORT_LIVENESS_KEY, L2_TRANSPORT_LIVENESS_VERSION,
+};
 use qdl_venue_core::authority::{AuthorityMode, AuthorityRecord, PublicationContext, SinkTarget};
 use qdl_venue_core::backpressure::DeliveryClass;
 use serde::{Deserialize, Serialize};
@@ -243,6 +245,23 @@ struct IngestorConfig {
     #[serde(default = "default_max_subscriptions_per_connection")]
     max_subscriptions_per_connection: usize,
     latest_state_flush_ms: u64,
+    /// IDR-040 fix 2: cadence of the in-band transport liveness marker for
+    /// quiet Binance BOOK bindings. Absent or zero (the default) emits none.
+    /// The realtime core that reads the marker must be deployed first.
+    #[serde(default)]
+    book_liveness_proof_ms: u64,
+    /// Silent-socket detection at sub-second resolution. Both absent (or
+    /// zero), the default, keeps the `heartbeat_seconds` rule: ping after
+    /// `heartbeat_seconds` of inbound silence, dead at twice that. Set
+    /// together: ping after `liveness_ping_ms` of inbound silence, dead once
+    /// `liveness_dead_ms` has passed since the last message read and the ping
+    /// has had at least `liveness_dead_ms - liveness_ping_ms` to be answered.
+    /// A socket that delivers data never pings. Old binaries reject these
+    /// fields (`deny_unknown_fields`), so the binary must ship first.
+    #[serde(default)]
+    liveness_ping_ms: u64,
+    #[serde(default)]
+    liveness_dead_ms: u64,
     authority: AuthorityRecord,
     bindings: Vec<RawBinding>,
     #[serde(default)]
@@ -393,6 +412,9 @@ impl IngestorConfig {
             || self.max_subscriptions_per_connection > 1_024
             || self.latest_state_flush_ms == 0
             || self.latest_state_flush_ms > 1_000
+            || (self.book_liveness_proof_ms != 0
+                && !(250..=5_000).contains(&self.book_liveness_proof_ms))
+            || self.liveness().is_none()
             || self.bindings.is_empty()
         {
             return Err(
@@ -599,6 +621,16 @@ impl SessionLivenessWriter {
         self.write(session_id, generation, "LIVE", transport_at_ns, false)
     }
 
+    /// First record of a new session: written at once, never throttled.
+    fn begin(
+        &mut self,
+        session_id: &str,
+        generation: u64,
+        transport_at_ns: i64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.write(session_id, generation, "LIVE", transport_at_ns, true)
+    }
+
     fn disconnected(
         &mut self,
         session_id: &str,
@@ -636,11 +668,6 @@ impl SessionLivenessWriter {
         {
             return Ok(());
         }
-        let parent = self
-            .path
-            .parent()
-            .ok_or("session liveness path has no parent")?;
-        fs::create_dir_all(parent)?;
         let payload = serde_json::to_vec(&ProviderSessionLiveness {
             schema: SESSION_LIVENESS_SCHEMA,
             source_session_id: session_id,
@@ -650,19 +677,131 @@ impl SessionLivenessWriter {
             updated_at_ns: now_ns()?,
             config_revision: self.config_revision,
         })?;
-        let temporary =
-            self.path
-                .with_extension(format!("tmp-{}-{}", std::process::id(), now_ns()?));
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary)?;
-        file.write_all(&payload)?;
-        file.sync_all()?;
-        fs::rename(&temporary, &self.path)?;
-        File::open(parent)?.sync_all()?;
+        write_state_atomically(&self.path, &payload)?;
         self.last_written_ns = Some(transport_at_ns);
         Ok(())
+    }
+}
+
+/// Replace a small state file by rename, so a reader sees the old or the new
+/// content, never a partial one.
+fn write_state_atomically(
+    path: &Path,
+    payload: &[u8],
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let parent = path.parent().ok_or("state path has no parent")?;
+    fs::create_dir_all(parent)?;
+    let temporary = path.with_extension(format!("tmp-{}-{}", std::process::id(), now_ns()?));
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&temporary)?;
+    file.write_all(payload)?;
+    file.sync_all()?;
+    fs::rename(&temporary, path)?;
+    File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+const SESSION_LINEAGE_SCHEMA: &str = "qdl.provider-session-lineage.v1";
+const MAX_SESSION_LINEAGE_LINKS: usize = 32;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct SessionLink {
+    source_session_id: String,
+    connection_generation: u64,
+}
+
+#[derive(Serialize)]
+struct ProviderSessionLineage<'a> {
+    schema: &'static str,
+    lane: &'a str,
+    chain: Vec<SessionLink>,
+    updated_at_ns: i64,
+    config_revision: u64,
+}
+
+/// Per-lane chain of sessions that succeeded each other with no uncovered
+/// window (make-before-break on an OKX service-upgrade notice).
+///
+/// Each link was subscribed and ACKed while its predecessor was still
+/// reading, and the predecessor stopped reading only after that. So the last
+/// event a predecessor published for a binding stays that binding's latest
+/// event for as long as the chain's last session is live: anything newer was
+/// published by a later link. A reconnect that left a gap starts a new chain.
+/// The file is `lineage/<lane>.lineage` under the liveness directory:
+/// liveness readers that predate it list only regular files of that
+/// directory, and the container healthcheck (`find -name '*.json'`, which
+/// does recurse) does not match the extension.
+struct SessionLineageWriter {
+    path: PathBuf,
+    lane: String,
+    config_revision: u64,
+    chain: VecDeque<SessionLink>,
+}
+
+impl SessionLineageWriter {
+    fn new(
+        config: &IngestorConfig,
+        lane: &str,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        Self::at(
+            Path::new(&config.session_liveness_dir),
+            lane,
+            config.config_revision,
+        )
+    }
+
+    fn at(
+        liveness_dir: &Path,
+        lane: &str,
+        config_revision: u64,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        if lane.is_empty()
+            || lane.len() > 120
+            || !lane.chars().all(|character| {
+                character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+            })
+        {
+            return Err("session lineage lane is invalid".into());
+        }
+        Ok(Self {
+            path: liveness_dir.join("lineage").join(format!("{lane}.lineage")),
+            lane: lane.into(),
+            config_revision,
+            chain: VecDeque::new(),
+        })
+    }
+
+    /// Record a new session; `continued` only when it took over from the
+    /// chain's last session with overlap.
+    fn begin(
+        &mut self,
+        session_id: &str,
+        generation: u64,
+        continued: bool,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if session_id.is_empty() || session_id.len() > 256 || generation == 0 {
+            return Err("provider session lineage identity is invalid".into());
+        }
+        if !continued {
+            self.chain.clear();
+        }
+        self.chain.push_back(SessionLink {
+            source_session_id: session_id.into(),
+            connection_generation: generation,
+        });
+        while self.chain.len() > MAX_SESSION_LINEAGE_LINKS {
+            self.chain.pop_front();
+        }
+        let payload = serde_json::to_vec(&ProviderSessionLineage {
+            schema: SESSION_LINEAGE_SCHEMA,
+            lane: &self.lane,
+            chain: self.chain.iter().cloned().collect(),
+            updated_at_ns: now_ns()?,
+            config_revision: self.config_revision,
+        })?;
+        write_state_atomically(&self.path, &payload)
     }
 }
 
@@ -1514,6 +1653,105 @@ async fn book_resync_requested(
     Ok(requested)
 }
 
+/// In-band transport evidence for the books of one Binance connection
+/// (IDR-040 fix 2).
+///
+/// Binance pushes nothing for a book that does not change, so a quiet book is
+/// otherwise indistinguishable from a stalled one. TCP delivers a connection's
+/// messages in order: when any message (a data frame or the pong to our ping)
+/// is read at `t`, every frame the venue sent before it on this connection has
+/// been read and enqueued. A marker stamped `t` and enqueued into a book's own
+/// raw partition therefore follows all of that book's earlier frames. It is
+/// emitted only for a book with no frame for one interval, never for a book
+/// that is not on this connection, and never with evidence older than one
+/// interval (the connection is pinged instead).
+struct BookLivenessProof {
+    interval_ns: i64,
+    last_transport_at_ns: i64,
+    last_frame_at_ns: HashMap<String, i64>,
+    last_marker_at_ns: HashMap<String, i64>,
+}
+
+impl BookLivenessProof {
+    fn new(
+        interval: Duration,
+        bindings: &HashMap<String, RawBinding>,
+        connected_at_ns: i64,
+    ) -> Self {
+        let interval_ns = i64::try_from(interval.as_nanos()).unwrap_or(i64::MAX);
+        let books = bindings
+            .values()
+            .filter(|binding| binding.feed == RawFeed::Book)
+            .map(|binding| (binding.native_channel.clone(), connected_at_ns));
+        Self {
+            interval_ns,
+            last_transport_at_ns: connected_at_ns,
+            last_frame_at_ns: books.collect(),
+            last_marker_at_ns: HashMap::new(),
+        }
+    }
+
+    fn transport(&mut self, at_ns: i64) {
+        self.last_transport_at_ns = self.last_transport_at_ns.max(at_ns);
+    }
+
+    fn frame(&mut self, channel: &str, at_ns: i64) {
+        if let Some(last) = self.last_frame_at_ns.get_mut(channel) {
+            *last = (*last).max(at_ns);
+        }
+    }
+
+    /// Markers due now, and whether the connection should be pinged so the
+    /// next tick has evidence newer than half an interval.
+    fn due(
+        &mut self,
+        bindings: &HashMap<String, RawBinding>,
+        session_id: &str,
+        generation: u64,
+        now_ns: i64,
+    ) -> (Vec<PendingRawFrame>, bool) {
+        let evidence = self.last_transport_at_ns;
+        let age = now_ns.saturating_sub(evidence);
+        let ping = age >= self.interval_ns / 2;
+        if age > self.interval_ns {
+            return (vec![], ping);
+        }
+        let mut channels = self.last_frame_at_ns.keys().cloned().collect::<Vec<_>>();
+        channels.sort();
+        let mut frames = Vec::new();
+        for channel in channels {
+            let quiet = self
+                .last_frame_at_ns
+                .get(&channel)
+                .is_some_and(|last| evidence.saturating_sub(*last) >= self.interval_ns);
+            let newer = self
+                .last_marker_at_ns
+                .get(&channel)
+                .map_or(true, |last| evidence > *last);
+            let Some(binding) = bindings.get(&channel) else {
+                continue;
+            };
+            if !quiet || !newer {
+                continue;
+            }
+            let marker = json!({
+                L2_TRANSPORT_LIVENESS_KEY: L2_TRANSPORT_LIVENESS_VERSION,
+                "stream": channel,
+            });
+            self.last_marker_at_ns.insert(channel.clone(), evidence);
+            frames.push(PendingRawFrame {
+                binding: binding.clone(),
+                session_id: session_id.into(),
+                generation,
+                raw_frame: marker.to_string().into_bytes(),
+                received_at_ns: evidence,
+                transport_protocol: TransportProtocol::Websocket,
+            });
+        }
+        (frames, ping)
+    }
+}
+
 async fn run_binance_connection(
     config: Arc<IngestorConfig>,
     route: BinanceRoute,
@@ -1568,6 +1806,11 @@ async fn run_binance_connection(
         }
         None => None,
     };
+    let liveness_proof_interval = (snapshot_period.is_some() && config.book_liveness_proof_ms > 0)
+        .then(|| Duration::from_millis(config.book_liveness_proof_ms));
+    let liveness_policy = config
+        .liveness()
+        .ok_or("native raw ingestor liveness bounds are invalid")?;
     let backoff = BackoffPolicy {
         initial_ms: 250,
         maximum_ms: 30_000,
@@ -1628,7 +1871,17 @@ async fn run_binance_connection(
                     now_ns()?
                 );
                 let mut liveness = SessionLivenessWriter::new(&config, &lane)?;
-                liveness.live(&session_id, generation, now_ns()?)?;
+                let connected_at_ns = now_ns()?;
+                liveness.live(&session_id, generation, connected_at_ns)?;
+                let mut book_proof = liveness_proof_interval
+                    .map(|interval| BookLivenessProof::new(interval, &bindings, connected_at_ns));
+                let mut book_proof_tick = liveness_proof_interval.map(tokio::time::interval);
+                if let Some(tick) = book_proof_tick.as_mut() {
+                    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                    tick.tick().await;
+                }
+                let mut ping_due = false;
+                let mut inbound = InboundDeadline::new(liveness_policy, Instant::now());
                 let mut inflight = FuturesUnordered::<RawPublishFuture>::new();
                 let mut latest = LatestStateBuffer::default();
                 let mut latest_tick =
@@ -1727,13 +1980,52 @@ async fn run_binance_connection(
                             }
                         }
                     }
-                    let read = tokio::time::timeout(
-                        Duration::from_secs(config.heartbeat_seconds),
-                        socket.next(),
-                    );
+                    if ping_due {
+                        ping_due = false;
+                        socket.send(Message::Ping(Vec::new())).await?;
+                    }
+                    // Absolute deadline: the proof tick or any other branch
+                    // winning never extends it (R4).
+                    let read = tokio::time::timeout_at(inbound.deadline(), socket.next());
                     tokio::pin!(read);
                     // Control backlog must not take priority over socket and publish progress.
                     let outcome = tokio::select! {
+                        _ = async {
+                            match book_proof_tick.as_mut() {
+                                Some(tick) => {
+                                    tick.tick().await;
+                                }
+                                None => std::future::pending::<()>().await,
+                            }
+                        }, if book_proof_tick.is_some() => {
+                            let Some(proof) = book_proof.as_mut() else {
+                                continue;
+                            };
+                            let (markers, ping) =
+                                proof.due(&bindings, &session_id, generation, now_ns()?);
+                            ping_due = ping;
+                            for marker in markers {
+                                if !publish_pending_frame(
+                                    marker,
+                                    &mut PendingPublishWindow {
+                                        publisher: &publisher,
+                                        latest: &mut latest,
+                                        inflight: &mut inflight,
+                                        accepted: &accepted,
+                                        coalesced_latest: &coalesced_latest,
+                                        max_events: config.max_events,
+                                        max_inflight: config.max_inflight_publishes,
+                                        stopped: &stopped,
+                                    },
+                                )
+                                .await?
+                                {
+                                    exhausted = true;
+                                    break;
+                                }
+                            }
+                            continue;
+                        }
                         requested = book_resync_requested(&mut resync_listener, &config, &bindings, &session_id, generation) => {
                             if requested? {
                                 eprintln!("{{\"event\":\"qdl_native_book_resync_requested\",\"session\":\"{}\",\"generation\":{}}}", session_id, generation);
@@ -1821,7 +2113,12 @@ async fn run_binance_connection(
                     let message = match outcome.expect("Binance read outcome is present") {
                         Ok(Some(Ok(message))) => {
                             if !matches!(message, Message::Close(_)) {
-                                liveness.live(&session_id, generation, now_ns()?)?;
+                                let read_at_ns = now_ns()?;
+                                inbound.inbound(Instant::now());
+                                liveness.live(&session_id, generation, read_at_ns)?;
+                                if let Some(proof) = book_proof.as_mut() {
+                                    proof.transport(read_at_ns);
+                                }
                             }
                             message
                         }
@@ -1857,41 +2154,30 @@ async fn run_binance_connection(
                             disconnected = true;
                             break;
                         }
-                        Err(_) => {
-                            socket.send(Message::Ping(Vec::new())).await?;
-                            match tokio::time::timeout(
-                                Duration::from_secs(config.heartbeat_seconds),
-                                socket.next(),
-                            )
-                            .await
-                            {
-                                Ok(Some(Ok(Message::Pong(_)))) => {
-                                    liveness.live(&session_id, generation, now_ns()?)?;
-                                    continue;
-                                }
-                                Ok(Some(Ok(message))) => {
-                                    if !matches!(message, Message::Close(_)) {
-                                        liveness.live(&session_id, generation, now_ns()?)?;
-                                    }
-                                    message
-                                }
-                                _ => {
-                                    failures = failures.saturating_add(1);
-                                    eprintln!(
-                                        "{}",
-                                        serde_json::to_string(&json!({
-                                            "event": "qdl_native_session_heartbeat_failed",
-                                            "runtime": "BINANCE",
-                                            "attempt": failures,
-                                            "generation": generation,
-                                        }))?
-                                    );
-                                    liveness.disconnected(&session_id, generation, now_ns()?)?;
-                                    disconnected = true;
-                                    break;
-                                }
+                        // The pong (or any frame) arrives through the same
+                        // select, so other branches keep running meanwhile; the
+                        // ping itself never moves the deadline.
+                        Err(_) => match inbound.expired(Instant::now()) {
+                            Keepalive::SendPing => {
+                                socket.send(Message::Ping(Vec::new())).await?;
+                                continue;
                             }
-                        }
+                            Keepalive::Dead => {
+                                failures = failures.saturating_add(1);
+                                eprintln!(
+                                    "{}",
+                                    serde_json::to_string(&json!({
+                                        "event": "qdl_native_session_heartbeat_failed",
+                                        "runtime": "BINANCE",
+                                        "attempt": failures,
+                                        "generation": generation,
+                                    }))?
+                                );
+                                liveness.disconnected(&session_id, generation, now_ns()?)?;
+                                disconnected = true;
+                                break;
+                            }
+                        },
                     };
                     if let Message::Ping(payload) = message {
                         socket.send(Message::Pong(payload)).await?;
@@ -1916,6 +2202,9 @@ async fn run_binance_connection(
                         raw_text,
                         now_ns()?,
                     )?;
+                    if let Some(proof) = book_proof.as_mut() {
+                        proof.frame(&frame.binding.native_channel, frame.received_at_ns);
+                    }
                     if !publish_pending_frame(
                         frame,
                         &mut PendingPublishWindow {
@@ -2037,13 +2326,377 @@ struct OkxServiceShard {
     bindings: Vec<RawBinding>,
 }
 
+type BoxError = Box<dyn std::error::Error + Send + Sync>;
+type OkxSocket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+type OkxWriter = futures_util::stream::SplitSink<OkxSocket, Message>;
+type OkxReader = futures_util::stream::SplitStream<OkxSocket>;
+type OkxStandby = Pin<Box<dyn Future<Output = Result<OkxEstablished, OkxEstablishError>> + Send>>;
+
+/// OKX documents at most three WebSocket connection requests per second per
+/// IP. Every OKX lane of this process connects through one pacer, so an
+/// immediate reconnect of several lanes at once cannot exceed that limit.
+const OKX_CONNECT_SPACING: Duration = Duration::from_millis(350);
+
+#[derive(Clone, Default)]
+struct OkxConnectPacer {
+    next: Arc<tokio::sync::Mutex<Option<Instant>>>,
+}
+
+impl OkxConnectPacer {
+    async fn admit(&self) {
+        let mut next = self.next.lock().await;
+        if let Some(at) = *next {
+            tokio::time::sleep_until(at).await;
+        }
+        *next = Some(Instant::now() + OKX_CONNECT_SPACING);
+    }
+}
+
+/// Why an OKX session ended; logged with every disconnect so the cause of a
+/// stale window is evidence, not inference.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum OkxSessionEnd {
+    /// `event: notice` (64008: service upgrade). The standby session took over
+    /// before this one stopped reading; no frame window was left uncovered.
+    NoticeHandover {
+        code: String,
+    },
+    /// `event: notice`, but no standby session could be established before
+    /// the old connection ended.
+    Notice {
+        code: String,
+    },
+    Closed {
+        code: Option<u16>,
+        reason: String,
+    },
+    Eof,
+    ReadError(String),
+    WriteError(String),
+    HeartbeatTimeout,
+    BookResync,
+}
+
+impl OkxSessionEnd {
+    fn cause(&self) -> &'static str {
+        match self {
+            Self::NoticeHandover { .. } => "NOTICE_HANDOVER",
+            Self::Notice { .. } => "NOTICE",
+            Self::Closed { .. } => "CLOSE_FRAME",
+            Self::Eof => "EOF",
+            Self::ReadError(_) => "READ_ERROR",
+            Self::WriteError(_) => "WRITE_ERROR",
+            Self::HeartbeatTimeout => "HEARTBEAT_TIMEOUT",
+            Self::BookResync => "BOOK_RESYNC",
+        }
+    }
+
+    fn detail(&self) -> Value {
+        match self {
+            Self::NoticeHandover { code } | Self::Notice { code } => json!({"code": code}),
+            Self::Closed { code, reason } => json!({"code": code, "reason": reason}),
+            Self::ReadError(error) | Self::WriteError(error) => json!({"error": error}),
+            Self::Eof | Self::HeartbeatTimeout | Self::BookResync => Value::Null,
+        }
+    }
+
+    fn handed_over(&self) -> bool {
+        matches!(self, Self::NoticeHandover { .. })
+    }
+}
+
+/// The OKX service-upgrade notice code, or None for any other payload.
+///
+/// OKX pushes `{"event":"notice","code":"64008",...}` 60 seconds before a
+/// service upgrade closes the connection (public, private and, since
+/// 2026-06-11, business endpoints).
+fn okx_notice_code(payload: &Value) -> Option<String> {
+    (payload.get("event").and_then(Value::as_str) == Some("notice")).then(|| {
+        payload
+            .get("code")
+            .and_then(Value::as_str)
+            .unwrap_or("missing")
+            .to_owned()
+    })
+}
+
+/// Delay before reconnecting after a session ended.
+///
+/// `failures` counts consecutive session ends and connect failures and is
+/// reset by any durable publish. A session that delivered data reconnects at
+/// once (`failures == 1`): a fixed backoff there is pure stale window. A
+/// session that ended again without delivering anything backs off as before.
+fn okx_reconnect_delay_ms(backoff: BackoffPolicy, failures: u32) -> u64 {
+    if failures <= 1 {
+        0
+    } else {
+        backoff.delay_ms(failures, failures.min(10_000) as u16)
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum Keepalive {
+    SendPing,
+    Dead,
+}
+
+/// Smallest silence before a liveness ping. Venue limits checked 2026-10-10:
+/// Binance USD-M allows 10 incoming messages per second per connection and
+/// OKX lists no ping limit (only subscribe/unsubscribe/login, 480 per hour).
+/// One ping per 500 ms of silence is at most 2 messages per second.
+const LIVENESS_PING_MIN_MS: u64 = 500;
+/// Smallest time a ping is given to be answered before the socket is dead.
+const LIVENESS_PONG_WINDOW_MIN_MS: u64 = 1_000;
+/// OKX closes a socket after 30 s without data and asks for a client timer
+/// N < 30 s, so no liveness bound may reach it.
+const LIVENESS_DEAD_MAX_MS: u64 = 29_000;
+
+/// When a silent connection is pinged and when it is declared dead.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LivenessPolicy {
+    /// Inbound silence after which one ping is sent.
+    ping_after: Duration,
+    /// Inbound silence after which the connection is dead, provided the ping
+    /// has had at least `dead_after - ping_after` to be answered.
+    dead_after: Duration,
+}
+
+impl LivenessPolicy {
+    /// The pre-knob rule: ping after `heartbeat`, dead at twice that.
+    fn heartbeat(heartbeat: Duration) -> Self {
+        Self {
+            ping_after: heartbeat,
+            dead_after: heartbeat * 2,
+        }
+    }
+
+    /// Validated sub-second policy; both zero selects the heartbeat rule.
+    fn from_config(heartbeat_seconds: u64, ping_ms: u64, dead_ms: u64) -> Option<Self> {
+        match (ping_ms, dead_ms) {
+            (0, 0) => Some(Self::heartbeat(Duration::from_secs(heartbeat_seconds))),
+            (ping, dead)
+                if ping >= LIVENESS_PING_MIN_MS
+                    && dead <= LIVENESS_DEAD_MAX_MS
+                    && dead.checked_sub(ping)? >= LIVENESS_PONG_WINDOW_MIN_MS =>
+            {
+                Some(Self {
+                    ping_after: Duration::from_millis(ping),
+                    dead_after: Duration::from_millis(dead),
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn pong_window(&self) -> Duration {
+        self.dead_after.saturating_sub(self.ping_after)
+    }
+}
+
+impl IngestorConfig {
+    /// None when the liveness fields are out of bounds (validation refuses).
+    fn liveness(&self) -> Option<LivenessPolicy> {
+        LivenessPolicy::from_config(
+            self.heartbeat_seconds,
+            self.liveness_ping_ms,
+            self.liveness_dead_ms,
+        )
+    }
+}
+
+/// Hard bound on detecting a silent socket (Astra R4).
+///
+/// The read loops also select on timers (book-liveness proof, latest-state
+/// flush, resync listener, snapshot renewal, publish completion). A read
+/// timeout created afresh on every iteration is discarded whenever one of
+/// those wins, so a socket that sends neither data nor pong was never
+/// declared dead while any of them kept firing. This deadline is absolute: it
+/// moves only on a message actually read from the socket (data, ping, pong or
+/// OKX text `pong`). Sending a ping, a timer tick or a publish completion never
+/// moves it. Idle for `ping_after` -> one ping; still nothing by `dead_after`
+/// after the last inbound message -> dead. With the heartbeat rule
+/// (`dead_after = 2 * ping_after`) that matches OKX's keepalive rule (send
+/// `ping` after N < 30 idle seconds, reconnect if no `pong` within N).
+///
+/// The ping is always given its full pong window from the moment it was
+/// actually sent: if the loop was held past `ping_after` (a REST snapshot
+/// fetch inside a select branch can take up to 5 s), the dead deadline moves
+/// to `sent + (dead_after - ping_after)` instead of firing before the venue
+/// could have answered. A busy socket never pings: every frame read resets it.
+#[derive(Debug)]
+struct InboundDeadline {
+    policy: LivenessPolicy,
+    last_inbound: Instant,
+    ping_sent_at: Option<Instant>,
+}
+
+impl InboundDeadline {
+    fn new(policy: LivenessPolicy, now: Instant) -> Self {
+        Self {
+            policy,
+            last_inbound: now,
+            ping_sent_at: None,
+        }
+    }
+
+    fn inbound(&mut self, now: Instant) {
+        self.last_inbound = now;
+        self.ping_sent_at = None;
+    }
+
+    fn deadline(&self) -> Instant {
+        match self.ping_sent_at {
+            None => self.last_inbound + self.policy.ping_after,
+            Some(sent) => {
+                (self.last_inbound + self.policy.dead_after).max(sent + self.policy.pong_window())
+            }
+        }
+    }
+
+    /// Called when `deadline()` has passed with nothing read.
+    fn expired(&mut self, now: Instant) -> Keepalive {
+        if self.ping_sent_at.is_some() {
+            Keepalive::Dead
+        } else {
+            self.ping_sent_at = Some(now);
+            Keepalive::SendPing
+        }
+    }
+}
+
+struct OkxEstablished {
+    writer: OkxWriter,
+    reader: OkxReader,
+    generation: u64,
+    session_id: String,
+    pre_ack_frames: VecDeque<PendingRawFrame>,
+    connect_started_ns: i64,
+    ready_at_ns: i64,
+    /// A service-upgrade notice arrived while subscribing; this session must
+    /// be replaced as soon as it is live.
+    notice_code: Option<String>,
+}
+
+#[derive(Debug)]
+enum OkxEstablishError {
+    Connect(BoxError),
+    Subscribe(BoxError),
+}
+
+impl std::fmt::Display for OkxEstablishError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Connect(error) => write!(formatter, "connect: {error}"),
+            Self::Subscribe(error) => write!(formatter, "subscribe: {error}"),
+        }
+    }
+}
+
+/// Connect one OKX session and wait until every subscription is ACKed.
+///
+/// It never publishes: frames that arrive before the last ACK are returned in
+/// `pre_ack_frames`, stamped with this session's identity, for the caller to
+/// publish only after the previous generation has stopped publishing. That
+/// keeps the connection-generation fences (ordering tracker and L2 book core)
+/// seeing generation N strictly before N+1 even when the two sockets overlap.
+async fn okx_establish(
+    url: String,
+    subscriptions: Arc<Vec<OkxSubscription>>,
+    bindings: Arc<HashMap<String, RawBinding>>,
+    session_prefix: String,
+    generation: u64,
+    max_pre_ack_frames: usize,
+    pacer: OkxConnectPacer,
+) -> Result<OkxEstablished, OkxEstablishError> {
+    pacer.admit().await;
+    let connect_started_ns = now_ns().map_err(OkxEstablishError::Connect)?;
+    let (socket, _) = connect_async(&url)
+        .await
+        .map_err(|error| OkxEstablishError::Connect(error.into()))?;
+    let (mut writer, mut reader) = socket.split();
+    let subscribed: Result<_, BoxError> = async {
+        let command_id = generation.to_string();
+        writer
+            .send(Message::Text(okx_subscription_command(
+                &command_id,
+                &subscriptions,
+            )?))
+            .await?;
+        let session_id = format!("{session_prefix}-{generation}-{}", now_ns()?);
+        let mut pending = subscriptions
+            .iter()
+            .map(|item| (item.channel.clone(), item.inst_id.clone()))
+            .collect::<Vec<_>>();
+        let mut pre_ack_frames = VecDeque::new();
+        let mut notice_code = None;
+        while !pending.is_empty() {
+            let message = tokio::time::timeout(Duration::from_secs(10), reader.next())
+                .await
+                .map_err(|_| "OKX subscription ACK timed out")?
+                .ok_or("OKX socket closed before subscription ACK")??;
+            match message {
+                Message::Ping(payload) => {
+                    writer.send(Message::Pong(payload)).await?;
+                }
+                Message::Pong(_) => {}
+                Message::Text(payload) => {
+                    let raw_text = payload.to_string();
+                    if raw_text == "pong" {
+                        continue;
+                    }
+                    let decoded: Value = serde_json::from_str(&raw_text)?;
+                    if let Some(code) = okx_notice_code(&decoded) {
+                        notice_code = Some(code);
+                        continue;
+                    }
+                    if parse_okx_subscription_ack(&decoded, &command_id, &mut pending)? {
+                        continue;
+                    }
+                    if pre_ack_frames.len() >= max_pre_ack_frames {
+                        return Err(
+                            "OKX pre-ACK frame buffer exceeded durable publish bound".into()
+                        );
+                    }
+                    pre_ack_frames.push_back(pending_okx_frame(
+                        &bindings,
+                        &session_id,
+                        generation,
+                        raw_text,
+                        now_ns()?,
+                    )?);
+                }
+                Message::Close(_) => {
+                    return Err("OKX socket closed before subscription ACK".into());
+                }
+                _ => {}
+            }
+        }
+        Ok::<_, BoxError>((session_id, pre_ack_frames, notice_code))
+    }
+    .await;
+    let (session_id, pre_ack_frames, notice_code) =
+        subscribed.map_err(OkxEstablishError::Subscribe)?;
+    Ok(OkxEstablished {
+        writer,
+        reader,
+        generation,
+        session_id,
+        pre_ack_frames,
+        connect_started_ns,
+        ready_at_ns: now_ns().map_err(OkxEstablishError::Subscribe)?,
+        notice_code,
+    })
+}
+
 async fn run_okx_service(
     shard: OkxServiceShard,
     config: Arc<IngestorConfig>,
     accepted: Arc<AtomicU64>,
     coalesced_latest: Arc<AtomicU64>,
     stopped: Arc<AtomicBool>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pacer: OkxConnectPacer,
+) -> Result<(), BoxError> {
     let OkxServiceShard {
         service,
         shard_index,
@@ -2053,38 +2706,31 @@ async fn run_okx_service(
     if bindings.is_empty() {
         return Ok(());
     }
-    let publisher = RawPublisher::new(
-        &config,
-        &format!(
-            "{}-{shard_index:03}",
-            match service {
-                OkxService::Public => "okx-public",
-                OkxService::Business => "okx-business",
-            }
-        ),
-    )?;
-    let subscriptions: Vec<OkxSubscription> = bindings
-        .iter()
-        .map(|binding| OkxSubscription {
-            channel: binding.native_channel.clone(),
-            inst_id: binding.native_symbol.clone(),
-        })
-        .collect();
-    let binding_map: HashMap<String, RawBinding> = bindings
-        .into_iter()
-        .map(|binding| (binding.key(), binding))
-        .collect();
-    let mut resync_listener = book_resync_listener(
-        &config,
-        &format!(
-            "okx-{}-{shard_index:03}",
-            match service {
-                OkxService::Public => "public",
-                OkxService::Business => "business",
-            }
-        ),
-        &binding_map,
-    )?;
+    let service_name = match service {
+        OkxService::Public => "public",
+        OkxService::Business => "business",
+    };
+    let lane = format!("okx-{service_name}-{shard_index:03}");
+    let publisher = RawPublisher::new(&config, &lane)?;
+    let subscriptions: Arc<Vec<OkxSubscription>> = Arc::new(
+        bindings
+            .iter()
+            .map(|binding| OkxSubscription {
+                channel: binding.native_channel.clone(),
+                inst_id: binding.native_symbol.clone(),
+            })
+            .collect(),
+    );
+    let binding_map: Arc<HashMap<String, RawBinding>> = Arc::new(
+        bindings
+            .into_iter()
+            .map(|binding| (binding.key(), binding))
+            .collect(),
+    );
+    let mut resync_listener = book_resync_listener(&config, &lane, &binding_map)?;
+    let liveness_policy = config
+        .liveness()
+        .ok_or("native raw ingestor liveness bounds are invalid")?;
     let backoff = BackoffPolicy {
         initial_ms: 250,
         maximum_ms: 30_000,
@@ -2093,259 +2739,202 @@ async fn run_okx_service(
     }
     .validate()?;
     let expires = deadline(config.max_runtime_seconds);
-    let service_name = match service {
-        OkxService::Public => "public",
-        OkxService::Business => "business",
-    };
-    let generation_path = format!(
-        "{}.okx-{service_name}-{shard_index:03}",
-        config.generation_state_path
-    );
+    let generation_path = format!("{}.{lane}", config.generation_state_path);
     let mut failures = 0_u32;
     let mut budget = ControlRequestBudget::default();
+    let mut liveness = SessionLivenessWriter::new(&config, &lane)?;
+    let mut lineage = SessionLineageWriter::new(&config, &lane)?;
+    // A standby session that was already established when the previous one
+    // handed over; it is used instead of opening a new connection.
+    let mut handover: Option<OkxEstablished> = None;
+    // When the previous session ended, for the reconnect-time evidence.
+    let mut previous_end: Option<(String, u64, i64, i64)> = None;
+    let establish = |generation: u64| {
+        okx_establish(
+            url.clone(),
+            subscriptions.clone(),
+            binding_map.clone(),
+            lane.clone(),
+            generation,
+            config.max_inflight_publishes,
+            pacer.clone(),
+        )
+    };
     while !should_stop(&stopped, &accepted, config.max_events, expires) {
-        let generation = next_connection_generation(Path::new(&generation_path))?;
-        match connect_async(&url).await {
-            Ok((socket, _)) => {
-                let (mut writer, mut reader) = socket.split();
-                let command_id = generation.to_string();
+        let continued = handover.is_some();
+        let established = match handover.take() {
+            Some(established) => established,
+            None => {
+                let generation = next_connection_generation(Path::new(&generation_path))?;
                 budget.permit(now_ns()?)?;
-                writer
-                    .send(Message::Text(okx_subscription_command(
-                        &command_id,
-                        &subscriptions,
-                    )?))
-                    .await?;
-                let session_id = format!(
-                    "okx-{}-{shard_index:03}-{generation}-{}",
-                    match service {
-                        OkxService::Public => "public",
-                        OkxService::Business => "business",
-                    },
-                    now_ns()?
-                );
-                let mut pending = subscriptions
-                    .iter()
-                    .map(|item| (item.channel.clone(), item.inst_id.clone()))
-                    .collect::<Vec<_>>();
-                let mut pre_ack_frames = VecDeque::new();
-                while !pending.is_empty() {
-                    let message = tokio::time::timeout(Duration::from_secs(10), reader.next())
-                        .await
-                        .map_err(|_| "OKX subscription ACK timed out")?
-                        .ok_or("OKX socket closed before subscription ACK")??;
-                    match message {
-                        Message::Ping(payload) => {
-                            writer.send(Message::Pong(payload)).await?;
-                        }
-                        Message::Pong(_) => {}
-                        Message::Text(payload) => {
-                            let raw_text = payload.to_string();
-                            let decoded: Value = serde_json::from_str(&raw_text)?;
-                            if parse_okx_subscription_ack(&decoded, &command_id, &mut pending)? {
-                                continue;
-                            }
-                            if pre_ack_frames.len() >= config.max_inflight_publishes {
-                                return Err(
-                                    "OKX pre-ACK frame buffer exceeded durable publish bound"
-                                        .into(),
-                                );
-                            }
-                            pre_ack_frames.push_back(pending_okx_frame(
-                                &binding_map,
-                                &session_id,
-                                generation,
-                                raw_text,
-                                now_ns()?,
-                            )?);
-                        }
-                        Message::Close(_) => {
-                            return Err("OKX socket closed before subscription ACK".into());
-                        }
-                        _ => {}
+                match establish(generation).await {
+                    Ok(established) => established,
+                    Err(OkxEstablishError::Subscribe(error)) => return Err(error),
+                    Err(OkxEstablishError::Connect(error)) => {
+                        failures = failures.saturating_add(1);
+                        eprintln!(
+                            "{}",
+                            serde_json::to_string(&json!({
+                                "event": "qdl_native_connect_failed",
+                                "runtime": "OKX",
+                                "service": format!("{:?}", service).to_ascii_uppercase(),
+                                "lane": lane,
+                                "attempt": failures,
+                                "error": error.to_string(),
+                            }))?
+                        );
+                        tokio::time::sleep(Duration::from_millis(
+                            backoff.delay_ms(failures, failures.min(10_000) as u16),
+                        ))
+                        .await;
+                        continue;
                     }
                 }
-                let mut liveness = SessionLivenessWriter::new(
-                    &config,
-                    &format!("okx-{service_name}-{shard_index:03}"),
-                )?;
-                liveness.live(&session_id, generation, now_ns()?)?;
-                let mut inflight = FuturesUnordered::<RawPublishFuture>::new();
-                let mut latest = LatestStateBuffer::default();
-                let mut latest_tick =
-                    tokio::time::interval(Duration::from_millis(config.latest_state_flush_ms));
-                latest_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                latest_tick.tick().await;
-                match book_session_bootstrap(ProviderRuntime::Okx, &binding_map) {
-                    Some(BookSessionBootstrap::InitialSnapshotAndGapResync) | None => {}
-                    Some(BookSessionBootstrap::PeriodicRestAnchor(_)) => {
-                        return Err("OKX BOOK lane cannot use a periodic REST-anchor policy".into())
+            }
+        };
+        let OkxEstablished {
+            mut writer,
+            mut reader,
+            generation,
+            session_id,
+            mut pre_ack_frames,
+            connect_started_ns,
+            ready_at_ns,
+            notice_code: early_notice,
+        } = established;
+        // Lineage first, then the session record: a reader that sees the new
+        // record can always resolve the predecessor through the chain.
+        lineage.begin(&session_id, generation, continued)?;
+        liveness.begin(&session_id, generation, ready_at_ns)?;
+        eprintln!(
+            "{}",
+            serde_json::to_string(&json!({
+                "event": "qdl_native_session_ready",
+                "runtime": "OKX",
+                "service": format!("{:?}", service).to_ascii_uppercase(),
+                "lane": lane,
+                "generation": generation,
+                "session": session_id,
+                "continued": continued,
+                "connect_to_ready_ms": (ready_at_ns - connect_started_ns) / 1_000_000,
+                "previous_session": previous_end.as_ref().map(|value| value.0.clone()),
+                "previous_generation": previous_end.as_ref().map(|value| value.1),
+                "previous_last_frame_to_ready_ms": previous_end
+                    .as_ref()
+                    .map(|value| (ready_at_ns - value.2) / 1_000_000),
+                "previous_end_to_ready_ms": previous_end
+                    .as_ref()
+                    .map(|value| (ready_at_ns - value.3) / 1_000_000),
+            }))?
+        );
+        previous_end = None;
+        let mut inflight = FuturesUnordered::<RawPublishFuture>::new();
+        let mut latest = LatestStateBuffer::default();
+        let mut latest_tick =
+            tokio::time::interval(Duration::from_millis(config.latest_state_flush_ms));
+        latest_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        latest_tick.tick().await;
+        match book_session_bootstrap(ProviderRuntime::Okx, &binding_map) {
+            Some(BookSessionBootstrap::InitialSnapshotAndGapResync) | None => {}
+            Some(BookSessionBootstrap::PeriodicRestAnchor(_)) => {
+                return Err("OKX BOOK lane cannot use a periodic REST-anchor policy".into())
+            }
+        }
+        let mut ended: Option<OkxSessionEnd> = None;
+        let mut publish_error = None;
+        let mut exhausted = false;
+        let mut last_frame_at_ns = ready_at_ns;
+        let mut inbound = InboundDeadline::new(liveness_policy, Instant::now());
+        let mut standby: Option<OkxStandby> = None;
+        let mut notice: Option<String> = None;
+        if let Some(code) = early_notice {
+            let generation = next_connection_generation(Path::new(&generation_path))?;
+            budget.permit(now_ns()?)?;
+            standby = Some(Box::pin(establish(generation)));
+            notice = Some(code);
+        }
+        while let Some(frame) = pre_ack_frames.pop_front() {
+            if !publish_pending_frame(
+                frame,
+                &mut PendingPublishWindow {
+                    publisher: &publisher,
+                    latest: &mut latest,
+                    inflight: &mut inflight,
+                    accepted: &accepted,
+                    coalesced_latest: &coalesced_latest,
+                    max_events: config.max_events,
+                    max_inflight: config.max_inflight_publishes,
+                    stopped: &stopped,
+                },
+            )
+            .await?
+            {
+                exhausted = true;
+                break;
+            }
+        }
+        while !exhausted && !should_stop(&stopped, &accepted, config.max_events, expires) {
+            if inflight.len() >= config.max_inflight_publishes {
+                match inflight.next().await {
+                    Some(Ok(())) => {
+                        failures = 0;
+                        continue;
                     }
-                }
-                let mut disconnected = false;
-                let mut publish_error = None;
-                let mut exhausted = false;
-                while let Some(frame) = pre_ack_frames.pop_front() {
-                    if !publish_pending_frame(
-                        frame,
-                        &mut PendingPublishWindow {
-                            publisher: &publisher,
-                            latest: &mut latest,
-                            inflight: &mut inflight,
-                            accepted: &accepted,
-                            coalesced_latest: &coalesced_latest,
-                            max_events: config.max_events,
-                            max_inflight: config.max_inflight_publishes,
-                            stopped: &stopped,
-                        },
-                    )
-                    .await?
-                    {
-                        exhausted = true;
+                    Some(Err(error)) => {
+                        publish_error = Some(error);
                         break;
                     }
+                    None => return Err("lossless publish window became inconsistent".into()),
                 }
-                while !exhausted && !should_stop(&stopped, &accepted, config.max_events, expires) {
-                    if inflight.len() >= config.max_inflight_publishes {
-                        match inflight.next().await {
-                            Some(Ok(())) => {
-                                failures = 0;
-                                continue;
-                            }
-                            Some(Err(error)) => {
-                                publish_error = Some(error);
-                                break;
-                            }
-                            None => {
-                                return Err("lossless publish window became inconsistent".into())
-                            }
-                        }
+            }
+            // Absolute deadline: other branches winning never extend it (R4).
+            let read = tokio::time::timeout_at(inbound.deadline(), reader.next());
+            tokio::pin!(read);
+            // Control backlog must not take priority over socket and publish progress.
+            let outcome = tokio::select! {
+                requested = book_resync_requested(&mut resync_listener, &config, &binding_map, &session_id, generation) => {
+                    if requested? {
+                        eprintln!("{{\"event\":\"qdl_native_book_resync_requested\",\"session\":\"{}\",\"generation\":{}}}", session_id, generation);
+                        ended = Some(OkxSessionEnd::BookResync);
+                        break;
                     }
-                    let read = tokio::time::timeout(
-                        Duration::from_secs(config.heartbeat_seconds),
-                        reader.next(),
-                    );
-                    tokio::pin!(read);
-                    // Control backlog must not take priority over socket and publish progress.
-                    let outcome = tokio::select! {
-                        requested = book_resync_requested(&mut resync_listener, &config, &binding_map, &session_id, generation) => {
-                            if requested? {
-                                eprintln!("{{\"event\":\"qdl_native_book_resync_requested\",\"session\":\"{}\",\"generation\":{}}}", session_id, generation);
-                                disconnected = true;
-                                break;
-                            }
-                            continue;
-                        }
-                        _ = latest_tick.tick(), if !latest.is_empty() => {
-                            if !flush_latest_concurrent(
-                                &mut latest,
-                                &publisher,
-                                &mut inflight,
-                                &accepted,
-                                config.max_events,
-                                config.max_inflight_publishes,
-                                &stopped,
-                            ).await? {
-                                break;
-                            }
-                            failures = 0;
-                            continue;
-                        }
-                        result = &mut read => Some(result),
-                        completed = inflight.next(), if !inflight.is_empty() => {
-                            match completed {
-                                Some(Ok(())) => {
-                                    failures = 0;
-                                    continue;
-                                }
-                                Some(Err(error)) => {
-                                    publish_error = Some(error);
-                                    break;
-                                }
-                                None => {
-                                return Err("lossless publish window became inconsistent".into())
-                            }
-                            }
-                        }
-                    };
-                    let message = match outcome.expect("OKX read outcome is present") {
-                        Ok(Some(Ok(message))) => {
-                            if !matches!(message, Message::Close(_)) {
-                                liveness.live(&session_id, generation, now_ns()?)?;
-                            }
-                            message
-                        }
-                        Ok(Some(Err(_))) | Ok(None) => {
-                            liveness.disconnected(&session_id, generation, now_ns()?)?;
-                            disconnected = true;
+                    continue;
+                }
+                ready = async {
+                    match standby.as_mut() {
+                        Some(future) => future.await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    standby = None;
+                    match ready {
+                        Ok(next) => {
+                            // Make-before-break: the successor is subscribed
+                            // while this socket still delivers, so stopping
+                            // here leaves no uncovered window.
+                            handover = Some(next);
+                            ended = Some(OkxSessionEnd::NoticeHandover {
+                                code: notice.clone().unwrap_or_default(),
+                            });
                             break;
                         }
-                        Err(_) => {
-                            writer.send(Message::Text("ping".into())).await?;
-                            match tokio::time::timeout(
-                                Duration::from_secs(config.heartbeat_seconds),
-                                reader.next(),
-                            )
-                            .await
-                            {
-                                Ok(Some(Ok(message)))
-                                    if message.is_text() && message.to_text()? == "pong" =>
-                                {
-                                    liveness.live(&session_id, generation, now_ns()?)?;
-                                    continue;
-                                }
-                                _ => {
-                                    liveness.disconnected(&session_id, generation, now_ns()?)?;
-                                    disconnected = true;
-                                    break;
-                                }
-                            }
+                        Err(error) => {
+                            eprintln!(
+                                "{}",
+                                serde_json::to_string(&json!({
+                                    "event": "qdl_native_standby_failed",
+                                    "runtime": "OKX",
+                                    "lane": lane,
+                                    "generation": generation,
+                                    "error": error.to_string(),
+                                }))?
+                            );
+                            continue;
                         }
-                    };
-                    if let Message::Ping(payload) = message {
-                        writer.send(Message::Pong(payload)).await?;
-                        continue;
-                    }
-                    if !message.is_text() {
-                        continue;
-                    }
-                    let raw_text = message.to_text()?.to_owned();
-                    let payload: Value = serde_json::from_str(&raw_text)?;
-                    if payload.get("event").and_then(Value::as_str) == Some("notice") {
-                        liveness.disconnected(&session_id, generation, now_ns()?)?;
-                        disconnected = true;
-                        break;
-                    }
-                    if payload.get("event").is_some() {
-                        return Err("unexpected OKX control event after subscription".into());
-                    }
-                    let frame = pending_okx_frame(
-                        &binding_map,
-                        &session_id,
-                        generation,
-                        raw_text,
-                        now_ns()?,
-                    )?;
-                    if !publish_pending_frame(
-                        frame,
-                        &mut PendingPublishWindow {
-                            publisher: &publisher,
-                            latest: &mut latest,
-                            inflight: &mut inflight,
-                            accepted: &accepted,
-                            coalesced_latest: &coalesced_latest,
-                            max_events: config.max_events,
-                            max_inflight: config.max_inflight_publishes,
-                            stopped: &stopped,
-                        },
-                    )
-                    .await?
-                    {
-                        break;
                     }
                 }
-                if publish_error.is_none() {
-                    if let Err(error) = flush_latest_concurrent(
+                _ = latest_tick.tick(), if !latest.is_empty() => {
+                    if !flush_latest_concurrent(
                         &mut latest,
                         &publisher,
                         &mut inflight,
@@ -2353,58 +2942,233 @@ async fn run_okx_service(
                         config.max_events,
                         config.max_inflight_publishes,
                         &stopped,
-                    )
-                    .await
-                    {
-                        publish_error = Some(error);
+                    ).await? {
+                        break;
+                    }
+                    failures = 0;
+                    continue;
+                }
+                result = &mut read => result,
+                completed = inflight.next(), if !inflight.is_empty() => {
+                    match completed {
+                        Some(Ok(())) => {
+                            failures = 0;
+                            continue;
+                        }
+                        Some(Err(error)) => {
+                            publish_error = Some(error);
+                            break;
+                        }
+                        None => {
+                            return Err("lossless publish window became inconsistent".into())
+                        }
                     }
                 }
-                while let Some(result) = inflight.next().await {
-                    match result {
-                        Ok(()) => failures = 0,
-                        Err(error) if publish_error.is_none() => publish_error = Some(error),
-                        Err(_) => {}
+            };
+            let message = match outcome {
+                Ok(Some(Ok(message))) => {
+                    if let Message::Close(frame) = &message {
+                        ended = Some(OkxSessionEnd::Closed {
+                            code: frame.as_ref().map(|value| u16::from(value.code)),
+                            reason: frame
+                                .as_ref()
+                                .map(|value| value.reason.to_string())
+                                .unwrap_or_default(),
+                        });
+                        break;
                     }
+                    let read_at_ns = now_ns()?;
+                    last_frame_at_ns = read_at_ns;
+                    inbound.inbound(Instant::now());
+                    liveness.live(&session_id, generation, read_at_ns)?;
+                    message
                 }
-                liveness.disconnected(&session_id, generation, now_ns()?)?;
-                if let Some(error) = publish_error {
-                    return Err(error.into());
+                Ok(Some(Err(error))) => {
+                    ended = Some(OkxSessionEnd::ReadError(error.to_string()));
+                    break;
                 }
-                if disconnected && !should_stop(&stopped, &accepted, config.max_events, expires) {
-                    failures = failures.saturating_add(1);
-                    eprintln!(
-                        "{}",
-                        serde_json::to_string(&json!({
-                            "event": "qdl_native_session_disconnected",
-                            "runtime": "OKX",
-                            "service": format!("{:?}", service).to_ascii_uppercase(),
-                            "attempt": failures,
-                            "generation": generation,
-                        }))?
-                    );
-                    tokio::time::sleep(Duration::from_millis(
-                        backoff.delay_ms(failures, failures.min(10_000) as u16),
-                    ))
-                    .await;
+                Ok(None) => {
+                    ended = Some(OkxSessionEnd::Eof);
+                    break;
                 }
+                Err(_) => match inbound.expired(Instant::now()) {
+                    Keepalive::Dead => {
+                        ended = Some(OkxSessionEnd::HeartbeatTimeout);
+                        break;
+                    }
+                    Keepalive::SendPing => {
+                        if let Err(error) = writer.send(Message::Text("ping".into())).await {
+                            ended = Some(OkxSessionEnd::WriteError(error.to_string()));
+                            break;
+                        }
+                        continue;
+                    }
+                },
+            };
+            if let Message::Ping(payload) = message {
+                if let Err(error) = writer.send(Message::Pong(payload)).await {
+                    ended = Some(OkxSessionEnd::WriteError(error.to_string()));
+                    break;
+                }
+                continue;
             }
-            Err(error) => {
-                failures = failures.saturating_add(1);
+            if !message.is_text() {
+                continue;
+            }
+            let raw_text = message.to_text()?.to_owned();
+            if raw_text == "pong" {
+                continue;
+            }
+            let payload: Value = serde_json::from_str(&raw_text)?;
+            if let Some(code) = okx_notice_code(&payload) {
+                // Keep publishing from this connection until the successor is
+                // subscribed; OKX keeps it open for 60 seconds after the notice.
+                // A repeated notice retries a standby that failed earlier.
+                if standby.is_none() {
+                    let next_generation = next_connection_generation(Path::new(&generation_path))?;
+                    budget.permit(now_ns()?)?;
+                    standby = Some(Box::pin(establish(next_generation)));
+                }
                 eprintln!(
                     "{}",
                     serde_json::to_string(&json!({
-                        "event": "qdl_native_connect_failed",
+                        "event": "qdl_native_session_notice",
                         "runtime": "OKX",
-                        "service": format!("{:?}", service).to_ascii_uppercase(),
-                        "attempt": failures,
-                        "error": error.to_string(),
+                        "lane": lane,
+                        "generation": generation,
+                        "code": code,
                     }))?
                 );
-                tokio::time::sleep(Duration::from_millis(
-                    backoff.delay_ms(failures, failures.min(10_000) as u16),
-                ))
-                .await;
+                notice = Some(code);
+                continue;
             }
+            if payload.get("event").is_some() {
+                return Err("unexpected OKX control event after subscription".into());
+            }
+            let frame = pending_okx_frame(
+                &binding_map,
+                &session_id,
+                generation,
+                raw_text,
+                last_frame_at_ns,
+            )?;
+            if !publish_pending_frame(
+                frame,
+                &mut PendingPublishWindow {
+                    publisher: &publisher,
+                    latest: &mut latest,
+                    inflight: &mut inflight,
+                    accepted: &accepted,
+                    coalesced_latest: &coalesced_latest,
+                    max_events: config.max_events,
+                    max_inflight: config.max_inflight_publishes,
+                    stopped: &stopped,
+                },
+            )
+            .await?
+            {
+                break;
+            }
+        }
+        // A notice whose standby never became ready is still the cause.
+        if let (Some(code), Some(end)) = (notice.as_ref(), ended.as_ref()) {
+            if !end.handed_over() {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&json!({
+                        "event": "qdl_native_notice_without_handover",
+                        "runtime": "OKX",
+                        "lane": lane,
+                        "generation": generation,
+                        "code": code,
+                        "cause": end.cause(),
+                    }))?
+                );
+                if !matches!(end, OkxSessionEnd::BookResync) {
+                    ended = Some(OkxSessionEnd::Notice { code: code.clone() });
+                }
+            }
+        }
+        // An unfinished standby is dropped here; its generation number stays
+        // consumed (generations only need to increase).
+        drop(standby);
+        let detected_at_ns = now_ns()?;
+        let handed_over = ended.as_ref().is_some_and(OkxSessionEnd::handed_over);
+        if ended.is_some() && !handed_over {
+            // Not covered by a successor: mark this session down at once,
+            // before the drain below, so readers stop trusting it.
+            liveness.disconnected(&session_id, generation, detected_at_ns)?;
+        }
+        if publish_error.is_none() {
+            if let Err(error) = flush_latest_concurrent(
+                &mut latest,
+                &publisher,
+                &mut inflight,
+                &accepted,
+                config.max_events,
+                config.max_inflight_publishes,
+                &stopped,
+            )
+            .await
+            {
+                publish_error = Some(error);
+            }
+        }
+        while let Some(result) = inflight.next().await {
+            match result {
+                Ok(()) => failures = 0,
+                Err(error) if publish_error.is_none() => publish_error = Some(error),
+                Err(_) => {}
+            }
+        }
+        let stopping = should_stop(&stopped, &accepted, config.max_events, expires);
+        // A handed-over session stays LIVE until its successor's record
+        // replaces it, unless that successor will not be used after all.
+        if !handed_over || stopping || publish_error.is_some() {
+            liveness.disconnected(&session_id, generation, now_ns()?)?;
+        }
+        if let Some(error) = publish_error {
+            return Err(error.into());
+        }
+        let Some(end) = ended else {
+            // Stopped, or the event budget is spent.
+            continue;
+        };
+        if stopping {
+            continue;
+        }
+        failures = failures.saturating_add(1);
+        let drained_at_ns = now_ns()?;
+        eprintln!(
+            "{}",
+            serde_json::to_string(&json!({
+                "event": "qdl_native_session_disconnected",
+                "runtime": "OKX",
+                "service": format!("{:?}", service).to_ascii_uppercase(),
+                "lane": lane,
+                "attempt": failures,
+                "generation": generation,
+                "session": session_id,
+                "cause": end.cause(),
+                "detail": end.detail(),
+                "last_frame_to_detected_ms": (detected_at_ns - last_frame_at_ns) / 1_000_000,
+                "drain_ms": (drained_at_ns - detected_at_ns) / 1_000_000,
+            }))?
+        );
+        previous_end = Some((
+            session_id.clone(),
+            generation,
+            last_frame_at_ns,
+            detected_at_ns,
+        ));
+        if handed_over {
+            // The successor is live already; nothing to wait for.
+            failures = 0;
+            continue;
+        }
+        let delay = okx_reconnect_delay_ms(backoff, failures);
+        if delay > 0 {
+            tokio::time::sleep(Duration::from_millis(delay)).await;
         }
     }
     Ok(())
@@ -2446,6 +3210,7 @@ async fn run_okx(
         .business_websocket_url
         .clone()
         .ok_or("OKX business WebSocket URL is required")?;
+    let pacer = OkxConnectPacer::default();
     let mut futures = Vec::new();
     for (index, bindings) in
         partition_okx_bindings(&public, config.max_subscriptions_per_connection)
@@ -2463,6 +3228,7 @@ async fn run_okx(
             accepted.clone(),
             coalesced_latest.clone(),
             stopped.clone(),
+            pacer.clone(),
         ));
     }
     for (index, bindings) in
@@ -2481,6 +3247,7 @@ async fn run_okx(
             accepted.clone(),
             coalesced_latest.clone(),
             stopped.clone(),
+            pacer.clone(),
         ));
     }
     try_join_all(futures).await?;
@@ -2625,9 +3392,11 @@ mod tests {
         book_snapshot_renewal_period, feed_lane_name, next_connection_generation,
         partition_binance_bindings, partition_binance_route, partition_bindings,
         partition_okx_bindings, pending_binance_frame, pending_okx_frame, AuthorityMode,
-        BinanceRoute, BookSessionBootstrap, DeliveryClass, KafkaTransportError, LatestStateBuffer,
-        PendingRawFrame, ProviderRuntime, RawBinding, RawFeed, SessionLivenessWriter,
+        BinanceRoute, BookLivenessProof, BookSessionBootstrap, DeliveryClass, KafkaTransportError,
+        LatestStateBuffer, PendingRawFrame, ProviderRuntime, RawBinding, RawFeed,
+        SessionLivenessWriter, TransportProtocol,
     };
+    use serde_json::{json, Value};
     use std::collections::HashMap;
     use std::fs;
     use std::path::PathBuf;
@@ -2667,6 +3436,83 @@ mod tests {
             l2: None,
             mark_index_target: None,
         }
+    }
+
+    fn proof_bindings() -> HashMap<String, RawBinding> {
+        let book = binding(RawFeed::Book, DeliveryClass::Lossless);
+        let mut other = book.clone();
+        other.native_symbol = "ETHUSDT".into();
+        other.native_channel = "ethusdt@depth@100ms".into();
+        let trade = binding(RawFeed::Trade, DeliveryClass::Lossless);
+        [book, other, trade]
+            .into_iter()
+            .map(|binding| (binding.native_channel.clone(), binding))
+            .collect()
+    }
+
+    #[test]
+    fn book_liveness_marker_needs_a_quiet_book_and_fresh_in_band_evidence() {
+        const MS: i64 = 1_000_000;
+        let bindings = proof_bindings();
+        let start = 1_000_000 * MS;
+        let mut proof = BookLivenessProof::new(Duration::from_millis(1_000), &bindings, start);
+
+        // Nothing is quiet for a full interval yet.
+        let (markers, ping) = proof.due(&bindings, "lane-1-1", 1, start + 400 * MS);
+        assert!(markers.is_empty());
+        assert!(!ping);
+
+        // BTC keeps trading; ETH stays quiet while frames keep arriving on the connection.
+        proof.frame("btcusdt@depth@100ms", start + 900 * MS);
+        proof.transport(start + 1_200 * MS);
+        let (markers, ping) = proof.due(&bindings, "lane-1-1", 1, start + 1_300 * MS);
+        assert!(!ping);
+        assert_eq!(markers.len(), 1, "only the quiet book gets a marker");
+        let marker = &markers[0];
+        assert_eq!(marker.binding.native_channel, "ethusdt@depth@100ms");
+        assert_eq!(
+            marker.received_at_ns,
+            start + 1_200 * MS,
+            "stamped with the read, not the tick"
+        );
+        assert_eq!(marker.transport_protocol, TransportProtocol::Websocket);
+        assert_eq!(
+            (marker.session_id.as_str(), marker.generation),
+            ("lane-1-1", 1)
+        );
+        let body: Value = serde_json::from_slice(&marker.raw_frame).unwrap();
+        assert_eq!(
+            body,
+            json!({"qdl_transport_liveness": "v1", "stream": "ethusdt@depth@100ms"})
+        );
+
+        // No new evidence: no repeated marker; the trade binding never gets one.
+        let (markers, _) = proof.due(&bindings, "lane-1-1", 1, start + 1_400 * MS);
+        assert!(markers.is_empty());
+
+        // An idle connection asks for a ping, and stale evidence emits nothing.
+        let (markers, ping) = proof.due(&bindings, "lane-1-1", 1, start + 1_800 * MS);
+        assert!(markers.is_empty());
+        assert!(ping);
+        let (markers, ping) = proof.due(&bindings, "lane-1-1", 1, start + 2_300 * MS);
+        assert!(
+            markers.is_empty(),
+            "evidence older than one interval proves nothing"
+        );
+        assert!(ping);
+
+        // The pong is new evidence: both books are now quiet for an interval.
+        proof.transport(start + 2_350 * MS);
+        let (markers, _) = proof.due(&bindings, "lane-1-1", 1, start + 2_400 * MS);
+        let mut channels = markers
+            .iter()
+            .map(|marker| marker.binding.native_channel.as_str())
+            .collect::<Vec<_>>();
+        channels.sort();
+        assert_eq!(channels, ["btcusdt@depth@100ms", "ethusdt@depth@100ms"]);
+        assert!(markers
+            .iter()
+            .all(|marker| marker.received_at_ns == start + 2_350 * MS));
     }
 
     #[test]
@@ -3337,6 +4183,9 @@ mod resync_tests {
             max_inflight_publishes: 16,
             max_subscriptions_per_connection: 100,
             latest_state_flush_ms: 50,
+            book_liveness_proof_ms: 0,
+            liveness_ping_ms: 0,
+            liveness_dead_ms: 0,
             authority: AuthorityRecord {
                 schema: "qdl.authority-record.v1".into(),
                 slice_id: "unit".into(),
@@ -3569,5 +4418,630 @@ mod resync_tests {
         )
         .await
         .is_err());
+    }
+}
+
+#[cfg(test)]
+mod okx_reconnect_tests {
+    use super::{
+        okx_establish, okx_notice_code, okx_reconnect_delay_ms, BackoffPolicy, DeliveryClass,
+        InboundDeadline, Keepalive, LivenessPolicy, OkxConnectPacer, OkxEstablishError,
+        OkxSessionEnd, OkxSubscription, RawBinding, RawFeed, SessionLineageWriter,
+        OKX_CONNECT_SPACING,
+    };
+    use futures_util::{SinkExt, StreamExt};
+    use serde_json::{json, Value};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::net::TcpListener;
+    use tokio::time::Instant;
+    use tokio_tungstenite::tungstenite::Message;
+
+    fn okx_trade_binding() -> RawBinding {
+        RawBinding {
+            provider: "OKX_DIRECT".into(),
+            venue: "OKX".into(),
+            market: "SWAP".into(),
+            product_type: "PERPETUAL".into(),
+            native_symbol: "BTC-USDT-SWAP".into(),
+            native_channel: "trades".into(),
+            subscription_id: "test-source".into(),
+            adapter_version: "test/2.0.0".into(),
+            instrument_catalog_revision: 1,
+            feed: RawFeed::Trade,
+            delivery_class: DeliveryClass::Lossless,
+            l2: None,
+            mark_index_target: None,
+        }
+    }
+
+    fn backoff() -> BackoffPolicy {
+        BackoffPolicy {
+            initial_ms: 250,
+            maximum_ms: 30_000,
+            multiplier: 2,
+            jitter_bps: 2_000,
+        }
+        .validate()
+        .unwrap()
+    }
+
+    fn scratch_dir(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "qdl-okx-lineage-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn a_session_that_delivered_reconnects_without_backoff() {
+        // Production evidence 2026-10-10: every OKX reconnect took ~630 ms
+        // from the disconnect log to the new session id, 400 ms of it this
+        // fixed sleep (delay_ms(1, 1) of the 250 ms policy, jitter basis 1).
+        assert_eq!(backoff().delay_ms(1, 1), 400);
+        assert_eq!(okx_reconnect_delay_ms(backoff(), 1), 0);
+        // A session that ended again before delivering anything still backs off.
+        assert!(okx_reconnect_delay_ms(backoff(), 2) >= 800);
+        assert!((24_000..=30_000).contains(&okx_reconnect_delay_ms(backoff(), 30)));
+    }
+
+    fn heartbeat_15s() -> LivenessPolicy {
+        LivenessPolicy::heartbeat(Duration::from_secs(15))
+    }
+
+    /// The values the stable renderer emits: ping after 1.5 s of silence,
+    /// dead 4 s after the last message read.
+    fn fast() -> LivenessPolicy {
+        LivenessPolicy::from_config(15, 1_500, 4_000).unwrap()
+    }
+
+    #[test]
+    fn inbound_deadline_pings_once_then_declares_the_connection_dead() {
+        let idle = Duration::from_secs(15);
+        let start = Instant::now();
+        let mut deadline = InboundDeadline::new(heartbeat_15s(), start);
+        assert_eq!(deadline.deadline(), start + idle);
+        assert_eq!(deadline.expired(start + idle), Keepalive::SendPing);
+        // Sending the ping opens exactly one pong window; nothing renews it.
+        assert_eq!(deadline.deadline(), start + idle * 2);
+        assert_eq!(deadline.expired(start + idle * 2), Keepalive::Dead);
+        assert_eq!(deadline.deadline(), start + idle * 2);
+        // Only a message read from the socket moves it.
+        let later = start + Duration::from_secs(20);
+        deadline.inbound(later);
+        assert_eq!(deadline.deadline(), later + idle);
+        assert_eq!(deadline.expired(later + idle), Keepalive::SendPing);
+    }
+
+    #[test]
+    fn sub_second_policy_pings_at_ping_after_and_is_dead_at_dead_after() {
+        let start = Instant::now();
+        let mut deadline = InboundDeadline::new(fast(), start);
+        assert_eq!(deadline.deadline(), start + Duration::from_millis(1_500));
+        assert_eq!(
+            deadline.expired(start + Duration::from_millis(1_500)),
+            Keepalive::SendPing
+        );
+        assert_eq!(deadline.deadline(), start + Duration::from_millis(4_000));
+        assert_eq!(
+            deadline.expired(start + Duration::from_millis(4_000)),
+            Keepalive::Dead
+        );
+    }
+
+    #[test]
+    fn a_late_ping_still_gets_its_full_pong_window() {
+        // The loop was held 5 s (a REST snapshot fetch inside a select
+        // branch) and only then saw the expired ping deadline. Declaring the
+        // socket dead at last_inbound + 4 s would be immediate, before the
+        // venue could answer; the pong gets dead_after - ping_after = 2.5 s.
+        let start = Instant::now();
+        let mut deadline = InboundDeadline::new(fast(), start);
+        let late = start + Duration::from_secs(5);
+        assert_eq!(deadline.expired(late), Keepalive::SendPing);
+        assert_eq!(deadline.deadline(), late + Duration::from_millis(2_500));
+        // The same holds for the heartbeat rule.
+        let mut deadline = InboundDeadline::new(heartbeat_15s(), start);
+        let late = start + Duration::from_secs(25);
+        assert_eq!(deadline.expired(late), Keepalive::SendPing);
+        assert_eq!(deadline.deadline(), late + Duration::from_secs(15));
+    }
+
+    #[test]
+    fn liveness_fields_are_bounded_and_absent_keeps_the_heartbeat_rule() {
+        // Absent (serde default 0/0): today's behaviour, 15 s ping, 30 s dead.
+        assert_eq!(LivenessPolicy::from_config(15, 0, 0), Some(heartbeat_15s()));
+        assert_eq!(
+            LivenessPolicy::from_config(15, 1_500, 4_000),
+            Some(LivenessPolicy {
+                ping_after: Duration::from_millis(1_500),
+                dead_after: Duration::from_millis(4_000),
+            })
+        );
+        // Edges that are accepted.
+        assert!(LivenessPolicy::from_config(15, 500, 1_500).is_some());
+        assert!(LivenessPolicy::from_config(15, 28_000, 29_000).is_some());
+        for (ping, dead) in [
+            (1_500, 0),      // only one field set
+            (0, 4_000),      // only one field set
+            (499, 4_000),    // ping faster than one per 500 ms of silence
+            (1_500, 2_499),  // pong window under 1 s
+            (4_000, 1_500),  // dead before the ping
+            (4_000, 4_000),  // no pong window at all
+            (1_500, 29_001), // reaches OKX's 30 s idle close
+            (u64::MAX, 4_000),
+        ] {
+            assert_eq!(
+                LivenessPolicy::from_config(15, ping, dead),
+                None,
+                "ping {ping} dead {dead}"
+            );
+        }
+    }
+
+    /// A venue socket that stays open and sends nothing: no frames, no pongs
+    /// (it never reads, so tungstenite never answers our pings). With
+    /// `answer_pings`, it reads and auto-answers every ping instead.
+    async fn silent_venue(answer_pings: bool) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            if answer_pings {
+                while socket.next().await.is_some() {}
+            } else {
+                std::future::pending::<()>().await;
+            }
+            drop(socket);
+        });
+        format!("ws://{address}/ws")
+    }
+
+    /// A venue that pushes a data frame every `every` and never reads (so it
+    /// never answers a ping either).
+    async fn busy_venue(every: Duration) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let mut tick = tokio::time::interval(every);
+            loop {
+                tick.tick().await;
+                if socket.send(Message::Text("{}".into())).await.is_err() {
+                    break;
+                }
+            }
+        });
+        format!("ws://{address}/ws")
+    }
+
+    #[derive(Debug)]
+    struct Detection {
+        /// When the connection was declared dead, or None if still alive.
+        dead_after: Option<Duration>,
+        /// Pings sent by the liveness deadline (not by the proof tick).
+        liveness_pings: u32,
+    }
+
+    /// The production read-loop shape: a book-liveness proof tick (flag on)
+    /// competes with the socket read in one select and `continue`s, sending a
+    /// proof ping like `BookLivenessProof::due` asks for. Returns when the
+    /// connection is declared dead, or with `dead_after` None if it is still
+    /// considered alive at `give_up`.
+    async fn detect_dead(
+        url: String,
+        policy: LivenessPolicy,
+        proof_tick: Option<Duration>,
+        absolute_deadline: bool,
+        give_up: Duration,
+    ) -> Detection {
+        let (mut socket, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+        let start = Instant::now();
+        let mut inbound = InboundDeadline::new(policy, start);
+        let mut liveness_pings = 0_u32;
+        let mut tick = proof_tick.map(tokio::time::interval);
+        if let Some(tick) = tick.as_mut() {
+            tick.tick().await;
+        }
+        while start.elapsed() < give_up {
+            let read = if absolute_deadline {
+                tokio::time::timeout_at(inbound.deadline(), socket.next())
+            } else {
+                // The pre-R4 shape: a fresh relative timeout every iteration.
+                tokio::time::timeout_at(Instant::now() + policy.ping_after, socket.next())
+            };
+            tokio::pin!(read);
+            tokio::select! {
+                _ = async {
+                    match tick.as_mut() {
+                        Some(tick) => { tick.tick().await; }
+                        None => std::future::pending::<()>().await,
+                    }
+                }, if tick.is_some() => {
+                    socket.send(Message::Ping(Vec::new())).await.unwrap();
+                    continue;
+                }
+                result = &mut read => match result {
+                    Ok(Some(Ok(_))) => inbound.inbound(Instant::now()),
+                    Ok(_) => panic!("the fake venue never closes"),
+                    Err(_) => match inbound.expired(Instant::now()) {
+                        Keepalive::SendPing => {
+                            liveness_pings += 1;
+                            socket.send(Message::Ping(Vec::new())).await.unwrap();
+                        }
+                        Keepalive::Dead => {
+                            return Detection {
+                                dead_after: Some(start.elapsed()),
+                                liveness_pings,
+                            }
+                        }
+                    },
+                },
+            }
+        }
+        Detection {
+            dead_after: None,
+            liveness_pings,
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_silent_socket_is_declared_dead_within_two_idle_periods_with_proof_on_and_off() {
+        let bound = Duration::from_secs(30);
+        for proof_tick in [None, Some(Duration::from_millis(250))] {
+            let detected = detect_dead(
+                silent_venue(false).await,
+                heartbeat_15s(),
+                proof_tick,
+                true,
+                Duration::from_secs(600),
+            )
+            .await
+            .dead_after
+            .unwrap_or_else(|| panic!("never detected, proof tick {proof_tick:?}"));
+            assert!(
+                detected >= Duration::from_secs(30) && detected <= bound + Duration::from_millis(1),
+                "proof tick {proof_tick:?}: detected after {detected:?}"
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_silent_socket_is_declared_dead_in_under_five_seconds_with_the_fast_policy() {
+        for proof_tick in [None, Some(Duration::from_millis(250))] {
+            let detection = detect_dead(
+                silent_venue(false).await,
+                fast(),
+                proof_tick,
+                true,
+                Duration::from_secs(60),
+            )
+            .await;
+            let detected = detection
+                .dead_after
+                .unwrap_or_else(|| panic!("never detected, proof tick {proof_tick:?}"));
+            assert!(
+                detected >= Duration::from_millis(4_000)
+                    && detected <= Duration::from_millis(4_001)
+                    && detected < Duration::from_secs(5),
+                "proof tick {proof_tick:?}: detected after {detected:?}"
+            );
+            assert_eq!(detection.liveness_pings, 1, "proof tick {proof_tick:?}");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_pre_r4_relative_timeout_never_detects_a_silent_socket_while_the_proof_ticks() {
+        // Reproduces Astra R4 on the old shape: 10 idle periods, still "alive".
+        assert_eq!(
+            detect_dead(
+                silent_venue(false).await,
+                heartbeat_15s(),
+                Some(Duration::from_millis(250)),
+                false,
+                Duration::from_secs(150),
+            )
+            .await
+            .dead_after,
+            None
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_socket_that_answers_pings_stays_alive_with_proof_on_and_off() {
+        for policy in [heartbeat_15s(), fast()] {
+            for proof_tick in [None, Some(Duration::from_millis(250))] {
+                let give_up = if policy == fast() {
+                    Duration::from_secs(60)
+                } else {
+                    Duration::from_secs(120)
+                };
+                let detection =
+                    detect_dead(silent_venue(true).await, policy, proof_tick, true, give_up).await;
+                assert_eq!(
+                    detection.dead_after, None,
+                    "policy {policy:?} proof tick {proof_tick:?}"
+                );
+                // At most one liveness ping per ping_after of silence: with the
+                // fast policy that is <= 0.67/s, far under Binance's 10
+                // incoming messages per second per connection.
+                let ceiling = (give_up.as_millis() / policy.ping_after.as_millis()) as u32 + 1;
+                assert!(
+                    detection.liveness_pings <= ceiling,
+                    "policy {policy:?} proof tick {proof_tick:?}: {} pings",
+                    detection.liveness_pings
+                );
+                if proof_tick.is_none() && policy == fast() {
+                    // A quiet-but-answering socket is pinged about every 1.5 s.
+                    assert!(detection.liveness_pings >= 30, "{detection:?}");
+                }
+            }
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_busy_socket_never_sends_a_liveness_ping() {
+        let detection = detect_dead(
+            busy_venue(Duration::from_millis(200)).await,
+            fast(),
+            None,
+            true,
+            Duration::from_secs(60),
+        )
+        .await;
+        assert_eq!(detection.dead_after, None);
+        assert_eq!(detection.liveness_pings, 0);
+    }
+
+    #[test]
+    fn only_the_okx_notice_event_is_a_service_upgrade_notice() {
+        let notice = json!({
+            "event": "notice",
+            "code": "64008",
+            "msg": "The connection will soon be closed for a service upgrade. Please reconnect.",
+            "connId": "a4d3ae55",
+        });
+        assert_eq!(okx_notice_code(&notice).as_deref(), Some("64008"));
+        assert_eq!(
+            okx_notice_code(&json!({"event": "notice"})).as_deref(),
+            Some("missing")
+        );
+        assert_eq!(
+            okx_notice_code(&json!({"event": "error", "code": "60012"})),
+            None
+        );
+        assert_eq!(
+            okx_notice_code(&json!({"arg": {"channel": "trades"}, "data": []})),
+            None
+        );
+    }
+
+    #[test]
+    fn only_a_notice_handover_counts_as_covered() {
+        let covered = OkxSessionEnd::NoticeHandover {
+            code: "64008".into(),
+        };
+        assert!(covered.handed_over());
+        assert_eq!(covered.cause(), "NOTICE_HANDOVER");
+        for end in [
+            OkxSessionEnd::Notice {
+                code: "64008".into(),
+            },
+            OkxSessionEnd::Closed {
+                code: Some(1001),
+                reason: "going away".into(),
+            },
+            OkxSessionEnd::Eof,
+            OkxSessionEnd::ReadError("reset".into()),
+            OkxSessionEnd::WriteError("broken pipe".into()),
+            OkxSessionEnd::HeartbeatTimeout,
+            OkxSessionEnd::BookResync,
+        ] {
+            assert!(!end.handed_over(), "{end:?}");
+        }
+        assert_eq!(
+            OkxSessionEnd::Closed {
+                code: Some(1001),
+                reason: "going away".into()
+            }
+            .detail(),
+            json!({"code": 1001, "reason": "going away"})
+        );
+    }
+
+    #[test]
+    fn lineage_chain_grows_only_on_overlap_and_resets_after_a_gap() {
+        let dir = scratch_dir("chain");
+        let mut writer = SessionLineageWriter::at(&dir, "okx-public-002", 20).unwrap();
+        let path = dir.join("lineage").join("okx-public-002.lineage");
+        let read = || -> Value { serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap() };
+        let chain = |value: &Value| -> Vec<(String, u64)> {
+            value["chain"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|link| {
+                    (
+                        link["source_session_id"].as_str().unwrap().to_owned(),
+                        link["connection_generation"].as_u64().unwrap(),
+                    )
+                })
+                .collect()
+        };
+
+        writer.begin("okx-public-002-167-1", 167, false).unwrap();
+        writer.begin("okx-public-002-168-2", 168, true).unwrap();
+        let value = read();
+        assert_eq!(value["schema"], "qdl.provider-session-lineage.v1");
+        assert_eq!(value["lane"], "okx-public-002");
+        assert_eq!(value["config_revision"], 20);
+        assert_eq!(
+            chain(&value),
+            vec![
+                ("okx-public-002-167-1".into(), 167),
+                ("okx-public-002-168-2".into(), 168)
+            ]
+        );
+
+        // A reconnect after a gap must not vouch for any earlier session.
+        writer.begin("okx-public-002-169-3", 169, false).unwrap();
+        assert_eq!(chain(&read()), vec![("okx-public-002-169-3".into(), 169)]);
+
+        for generation in 170..250_u64 {
+            writer
+                .begin(&format!("okx-public-002-{generation}-9"), generation, true)
+                .unwrap();
+        }
+        let links = chain(&read());
+        assert_eq!(links.len(), 32);
+        assert_eq!(links.last().unwrap().1, 249);
+        // The healthcheck matches '*.json' recursively; the lineage file must
+        // never be mistaken for a session record.
+        assert!(std::fs::read_dir(dir.join("lineage"))
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".json")));
+        assert!(SessionLineageWriter::at(&dir, "OKX_PUBLIC", 20).is_err());
+        assert!(writer.begin("", 1, true).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn connect_pacer_keeps_okx_connection_requests_under_three_per_second() {
+        let pacer = OkxConnectPacer::default();
+        let start = Instant::now();
+        for _ in 0..4 {
+            pacer.admit().await;
+        }
+        // Four admissions need three full spacings: fewer than 3 per second.
+        assert_eq!(start.elapsed(), OKX_CONNECT_SPACING * 3);
+        assert!(OKX_CONNECT_SPACING * 3 > Duration::from_secs(1));
+    }
+
+    /// One fake OKX endpoint: sends `script` before (optionally) ACKing.
+    async fn fake_okx(script: Vec<Value>, ack: bool) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let command = socket.next().await.unwrap().unwrap();
+            let command: Value = serde_json::from_str(command.to_text().unwrap()).unwrap();
+            assert_eq!(command["op"], "subscribe");
+            for message in script {
+                socket
+                    .send(Message::Text(message.to_string()))
+                    .await
+                    .unwrap();
+            }
+            if ack {
+                for arg in command["args"].as_array().unwrap() {
+                    socket
+                        .send(Message::Text(
+                            json!({"event": "subscribe", "arg": arg, "id": command["id"]})
+                                .to_string(),
+                        ))
+                        .await
+                        .unwrap();
+                }
+                // Hold the connection open, like a live venue.
+                while socket.next().await.is_some() {}
+            } else {
+                let _ = socket.close(None).await;
+            }
+        });
+        format!("ws://{address}/ws/v5/public")
+    }
+
+    fn subscriptions() -> (Arc<Vec<OkxSubscription>>, Arc<HashMap<String, RawBinding>>) {
+        let binding = okx_trade_binding();
+        (
+            Arc::new(vec![OkxSubscription {
+                channel: binding.native_channel.clone(),
+                inst_id: binding.native_symbol.clone(),
+            }]),
+            Arc::new(HashMap::from([(binding.key(), binding)])),
+        )
+    }
+
+    #[tokio::test]
+    async fn establish_buffers_pre_ack_frames_under_the_new_generation_and_reports_a_notice() {
+        let trade = json!({
+            "arg": {"channel": "trades", "instId": "BTC-USDT-SWAP"},
+            "data": [{"instId": "BTC-USDT-SWAP", "tradeId": "42", "px": "1", "sz": "1", "side": "buy", "ts": "1"}],
+        });
+        let notice = json!({"event": "notice", "code": "64008", "msg": "upgrade"});
+        let url = fake_okx(vec![trade, notice], true).await;
+        let (subscriptions, bindings) = subscriptions();
+        let established = okx_establish(
+            url,
+            subscriptions,
+            bindings,
+            "okx-public-002".into(),
+            168,
+            16,
+            OkxConnectPacer::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(established.generation, 168);
+        assert!(established.session_id.starts_with("okx-public-002-168-"));
+        assert!(established.ready_at_ns >= established.connect_started_ns);
+        assert_eq!(established.notice_code.as_deref(), Some("64008"));
+        // Nothing is published here: the caller publishes these only after the
+        // previous generation stopped, so the generation fences see N before N+1.
+        assert_eq!(established.pre_ack_frames.len(), 1);
+        let frame = &established.pre_ack_frames[0];
+        assert_eq!(frame.generation, 168);
+        assert_eq!(frame.session_id, established.session_id);
+    }
+
+    #[tokio::test]
+    async fn establish_failures_are_typed_so_a_standby_failure_spares_the_live_session() {
+        let url = fake_okx(vec![], false).await;
+        let (subscriptions, bindings) = subscriptions();
+        let error = okx_establish(
+            url,
+            subscriptions.clone(),
+            bindings.clone(),
+            "okx-public-002".into(),
+            169,
+            16,
+            OkxConnectPacer::default(),
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(matches!(error, OkxEstablishError::Subscribe(_)), "{error}");
+
+        let unused = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = unused.local_addr().unwrap();
+        drop(unused);
+        let error = okx_establish(
+            format!("ws://{address}/ws/v5/public"),
+            subscriptions,
+            bindings,
+            "okx-public-002".into(),
+            170,
+            16,
+            OkxConnectPacer::default(),
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(matches!(error, OkxEstablishError::Connect(_)), "{error}");
     }
 }

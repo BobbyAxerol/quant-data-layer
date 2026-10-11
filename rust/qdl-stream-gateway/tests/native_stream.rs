@@ -127,18 +127,19 @@ impl Log {
     /// lock: a reader past the last record has also passed trailing markers.
     fn end_if_caught_up(&self, partition: i32, position: i64) -> Option<i64> {
         let inner = self.0.lock().unwrap();
+        // Records are appended in offset order: only the last one can be pending.
         let pending = inner.records[&partition]
-            .iter()
-            .any(|record| record.offset >= position);
+            .last()
+            .is_some_and(|record| record.offset >= position);
         (!pending).then(|| inner.next[&partition])
     }
 
     fn first_at_or_after(&self, partition: i32, from: i64) -> Option<RawRecord> {
         let inner = self.0.lock().unwrap();
-        inner.records[&partition]
-            .iter()
-            .find(|record| record.offset >= from)
-            .cloned()
+        // Offset order: a binary search keeps long benchmark logs linear.
+        let records = &inner.records[&partition];
+        let index = records.partition_point(|record| record.offset < from);
+        records.get(index).cloned()
     }
 }
 
@@ -698,12 +699,27 @@ impl Harness {
         after: i64,
         buffer: u32,
     ) -> Result<Stream, Status> {
+        self.subscribe_batched(feed, interval, after, buffer, 0)
+            .await
+    }
+
+    /// Subscribe asking for up to `batch` records per response (SDK 2.3.0;
+    /// 0 is a pre-2.3.0 client that does not know the field).
+    async fn subscribe_batched(
+        &self,
+        feed: &str,
+        interval: Option<&str>,
+        after: i64,
+        buffer: u32,
+        batch: u32,
+    ) -> Result<Stream, Status> {
         let partition = 0;
         let request = self.authorized(query::SubscribeRequest {
             consumer_id: CONSUMER.into(),
             requirement: Some(requirement(feed, interval)),
             cursor_token: self.cursor(feed, interval, partition, after),
             max_buffer_events: buffer,
+            max_records_per_response: batch,
         });
         let response = self.gateway.subscribe(request).await?;
         Ok(Stream(response.into_inner()))
@@ -914,6 +930,7 @@ async fn t01_offset_zero_is_snapshot_state_not_a_genesis_or_skipped_event() {
                 requirement: Some(requirement("TRADE", None)),
                 cursor_token: snapshot.stream_cursor,
                 max_buffer_events: 100,
+                max_records_per_response: 0,
             }))
             .await
             .unwrap();
@@ -1389,6 +1406,76 @@ async fn t05_a_slow_lossless_reader_ends_typed_and_resources_return_to_baseline(
     assert!(harness.state().metrics.overflow.load(Ordering::Relaxed) >= 1);
 }
 
+async fn prolonged_lossless_stall(feed: &str, key: &str, event: fn(u64) -> EventEnvelope) {
+    let mut options = Options::default();
+    options.limits.slow_consumer_after = Duration::from_millis(200);
+    let harness = Harness::new(options);
+    let cursor = harness.log.append(0, key, &event(1));
+    harness.settle();
+    let mut slow = harness.subscribe(feed, None, cursor, 10).await.unwrap();
+    let mut fast = harness.subscribe(feed, None, cursor, 100).await.unwrap();
+    slow.until_live().await;
+    fast.until_live().await;
+    let mut expected = Vec::new();
+    for sequence in 2..32 {
+        let offset = harness.log.append(0, key, &event(sequence)) as u64;
+        expected.push(offset);
+        assert_eq!(fast.collect(1).await.1, vec![offset]);
+    }
+    // Keep the slow receiver unpolled until its task releases its slot. The
+    // wait budget covers both legacy notification deadlines; the peer stays open.
+    let deadline = Instant::now() + Duration::from_secs(12);
+    while harness.state().open_streams() != 1 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        harness.state().open_streams(),
+        1,
+        "stalled task releases its slot"
+    );
+    assert_eq!(harness.state().metrics.overflow.load(Ordering::Relaxed), 1);
+    let mut received = Vec::new();
+    loop {
+        match slow.next().await {
+            Item::Event(offset, _) => received.push(offset),
+            Item::Control(_) => {}
+            Item::Error(code, message) => {
+                assert_eq!(code, Code::ResourceExhausted);
+                assert!(message.starts_with("RATE_LIMITED:"), "{message}");
+                break;
+            }
+            Item::End => panic!("{feed}: stalled receiver ended without a terminal status"),
+        }
+    }
+    assert!(!received.is_empty(), "queued handoff records are preserved");
+    assert!(
+        expected.starts_with(&received),
+        "handoff order is preserved"
+    );
+    assert!(
+        slow.0.next().await.is_none(),
+        "terminal status is emitted once"
+    );
+    let after = *received.last().unwrap() as i64;
+    let mut resumed = harness.subscribe(feed, None, after, 100).await.unwrap();
+    assert_eq!(resumed.until_live().await, expected[received.len()..]);
+    let next = harness.log.append(0, key, &event(32)) as u64;
+    assert_eq!(fast.collect(1).await.1, vec![next]);
+    assert_eq!(resumed.collect(1).await.1, vec![next]);
+    drop((slow, fast, resumed));
+    harness.baseline().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn t05_prolonged_trade_stall_preserves_terminal_status_and_peer_progress() {
+    prolonged_lossless_stall("TRADE", TRADE_KEY, trade).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn t05_prolonged_book_delta_stall_preserves_terminal_status_and_peer_progress() {
+    prolonged_lossless_stall("BOOK_DELTA", BOOK_KEY, |sequence| delta(sequence, false)).await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn t05_the_replica_byte_budget_bounds_all_queues_together() {
     // A budget for about three records: a stalled reader cannot hold more.
@@ -1726,6 +1813,7 @@ async fn t07_every_rpc_refuses_missing_or_mismatched_identity() {
         requirement: Some(requirement("TRADE", None)),
         cursor_token: cursor.clone(),
         max_buffer_events: 10,
+        max_records_per_response: 0,
     };
     let replay = query::ReplayRequest {
         consumer_id: CONSUMER.into(),
@@ -2823,6 +2911,428 @@ async fn hot_read_real_grpc_framing_keeps_internal_auth_and_public_rpcs_separate
         )
         .await;
     assert_eq!(result.unwrap_err().code(), Code::Unauthenticated);
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
+}
+
+// ------------------------------------------- batched Subscribe (SDK 2.3.0)
+//
+// `SubscribeRequest.max_records_per_response` > 1 lets one response carry
+// the records already queued, in `SubscribeResponse.records`. These tests pin
+// that a client sees the same per-record sequence either way, that a client
+// without the field is served exactly as before, that controls are never
+// batched, and that budget and slots return to baseline.
+
+/// What one stream showed, response by response.
+#[derive(Default)]
+struct Shapes {
+    /// Records carried by each event response (1 for the single `record`).
+    sizes: Vec<usize>,
+    /// Responses that used `records` (the batched shape).
+    batched: usize,
+    events: Vec<(u64, String, EventEnvelope)>,
+    controls: Vec<String>,
+    status: Option<(Code, String)>,
+}
+
+impl Shapes {
+    fn offsets(&self) -> Vec<u64> {
+        self.events.iter().map(|(offset, _, _)| *offset).collect()
+    }
+}
+
+/// Read raw responses until `count` events arrived or the stream ended.
+async fn read_shapes(stream: &mut Stream, count: usize, shapes: &mut Shapes) {
+    while shapes.events.len() < count && shapes.status.is_none() {
+        let response = match tokio::time::timeout(Duration::from_secs(5), stream.0.next()).await {
+            Err(_) | Ok(None) => break,
+            Ok(Some(Err(status))) => {
+                shapes.status = Some((status.code(), status.message().to_owned()));
+                break;
+            }
+            Ok(Some(Ok(response))) => response,
+        };
+        if response.records.is_empty() {
+            let record = response.record.expect("a response carries a record");
+            match record.payload.expect("payload") {
+                query::stream_record::Payload::Control(control) => {
+                    shapes.controls.push(control.code)
+                }
+                query::stream_record::Payload::Event(event) => {
+                    shapes.sizes.push(1);
+                    shapes
+                        .events
+                        .push((record.logical_offset, record.resume_token, event));
+                }
+            }
+            continue;
+        }
+        assert!(
+            response.record.is_none(),
+            "exactly one of record or records is set"
+        );
+        assert!(
+            response.records.len() >= 2,
+            "a batch has two or more records"
+        );
+        shapes.batched += 1;
+        shapes.sizes.push(response.records.len());
+        for record in response.records {
+            match record.payload.expect("payload") {
+                query::stream_record::Payload::Control(control) => {
+                    panic!("a control was batched: {}", control.code)
+                }
+                query::stream_record::Payload::Event(event) => {
+                    shapes
+                        .events
+                        .push((record.logical_offset, record.resume_token, event));
+                }
+            }
+        }
+    }
+}
+
+impl Harness {
+    /// Every resume token names exactly its own record.
+    fn assert_tokens(&self, feed: &str, shapes: &Shapes) {
+        let digest = DeliveryRequirement::from_proto(&requirement(feed, None))
+            .unwrap()
+            .digest();
+        for (offset, token, _) in &shapes.events {
+            let claims = self
+                .codec
+                .verify(
+                    token,
+                    CONSUMER,
+                    "paper",
+                    &digest,
+                    &expectation(),
+                    now_ns() as u64,
+                )
+                .expect("a valid resume token");
+            assert_eq!(claims.source_offset, *offset, "token of offset {offset}");
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn b01_batched_delivery_equals_one_record_delivery_and_old_clients_are_unchanged() {
+    let harness = Harness::new(Options::default());
+    let cursor = harness.log.append(0, TRADE_KEY, &trade(1));
+    harness.settle();
+    // 0: a pre-2.3.0 client; 1: asks for one record; 64: batched.
+    let mut streams = Vec::new();
+    for batch in [0u32, 1, 64] {
+        let mut stream = harness
+            .subscribe_batched("TRADE", None, cursor, 1_000, batch)
+            .await
+            .unwrap();
+        assert!(stream.until_live().await.is_empty());
+        streams.push((batch, stream));
+    }
+    // A burst while nobody reads: it queues behind each stream's handoff.
+    for index in 0..300u64 {
+        harness.log.append(0, TRADE_KEY, &trade(10 + index));
+    }
+    harness.settle();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let expected = as_offsets(&harness.log.records_of(TRADE_KEY, cursor));
+    assert_eq!(expected.len(), 300);
+    let mut seen = Vec::new();
+    for (batch, stream) in streams.iter_mut() {
+        let mut shapes = Shapes::default();
+        read_shapes(stream, expected.len(), &mut shapes).await;
+        assert!(shapes.status.is_none(), "{:?}", shapes.status);
+        assert_eq!(
+            shapes.offsets(),
+            expected,
+            "batch {batch}: every record once, in order"
+        );
+        harness.assert_tokens("TRADE", &shapes);
+        if *batch <= 1 {
+            assert_eq!(shapes.batched, 0, "batch {batch}: the pre-2.3.0 shape only");
+            assert!(shapes.sizes.iter().all(|&size| size == 1));
+        } else {
+            assert!(shapes.batched > 0, "queued records were packed");
+            assert!(
+                shapes.sizes.iter().all(|&size| size <= 64),
+                "{:?}",
+                shapes.sizes
+            );
+        }
+        seen.push(shapes);
+    }
+    for shapes in &seen[1..] {
+        let left: Vec<_> = seen[0].events.iter().map(|(o, _, e)| (o, e)).collect();
+        let right: Vec<_> = shapes.events.iter().map(|(o, _, e)| (o, e)).collect();
+        assert_eq!(left, right, "same offsets and envelopes whatever the batch");
+    }
+    // One record available: a batching client gets the single `record` shape
+    // at once (never waits to fill a batch).
+    let next = harness.log.append(0, TRADE_KEY, &trade(999)) as u64;
+    for (batch, stream) in streams.iter_mut() {
+        let started = Instant::now();
+        let mut shapes = Shapes::default();
+        read_shapes(stream, 1, &mut shapes).await;
+        assert_eq!(shapes.offsets(), vec![next], "batch {batch}");
+        assert_eq!(shapes.batched, 0);
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+    let metrics = &harness.state().metrics;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while metrics.delivered.load(Ordering::Relaxed) != 3 * 301 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert_eq!(
+        metrics.delivered.load(Ordering::Relaxed),
+        3 * 301,
+        "delivered counts records, not responses"
+    );
+    drop(streams);
+    harness.baseline().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn b02_latest_state_feeds_and_controls_are_never_batched() {
+    let harness = Harness::new(Options::default());
+    let cursor = harness.log.append(0, QUOTE_KEY, &quote(0, vec![]));
+    harness.settle();
+    let mut stream = harness
+        .subscribe_batched("QUOTE", None, cursor, 1_000, 64)
+        .await
+        .unwrap();
+    // REPLAYING and LIVE are single controls (`Stream::next` reads `record`).
+    stream.until_live().await;
+    let mut last = 0;
+    for index in 1..=40u32 {
+        let flags = if index >= 20 { vec![9] } else { vec![] };
+        last = harness.log.append(0, QUOTE_KEY, &quote(index, flags));
+    }
+    harness.settle();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let mut shapes = Shapes::default();
+    while shapes.offsets().last() != Some(&(last as u64)) {
+        let before = shapes.events.len();
+        read_shapes(&mut stream, before + 1, &mut shapes).await;
+        assert!(shapes.status.is_none(), "{:?}", shapes.status);
+        assert!(
+            shapes.events.len() > before,
+            "ended after {:?}",
+            shapes.offsets()
+        );
+    }
+    assert_eq!(
+        shapes.batched, 0,
+        "a latest-state feed keeps one record per response"
+    );
+    assert!(shapes.controls.is_empty());
+    // Coalescing still works: depth 8 + the 2-response handoff + one in flight.
+    assert!(shapes.events.len() <= 11, "{:?}", shapes.offsets());
+    drop(stream);
+    harness.baseline().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn b03_a_slow_batched_reader_ends_typed_resumes_exactly_and_releases_budget() {
+    let harness = Harness::new(Options::default());
+    let cursor = harness.log.append(0, TRADE_KEY, &trade(1));
+    harness.settle();
+    let mut stream = harness
+        .subscribe_batched("TRADE", None, cursor, 10, 64)
+        .await
+        .unwrap();
+    assert!(stream.until_live().await.is_empty());
+    // The client stops reading; lossless records overflow its bounded queue.
+    for index in 0..200u64 {
+        harness.log.append(0, TRADE_KEY, &trade(10 + index));
+    }
+    harness.settle();
+    let expected = as_offsets(&harness.log.records_of(TRADE_KEY, cursor));
+    let mut shapes = Shapes::default();
+    read_shapes(&mut stream, usize::MAX, &mut shapes).await;
+    let (code, message) = shapes.status.clone().expect("a typed terminal status");
+    assert_eq!(code, Code::ResourceExhausted);
+    assert!(message.starts_with("RATE_LIMITED:"), "{message}");
+    assert_eq!(
+        shapes.controls,
+        vec!["RATE_LIMITED"],
+        "BACKPRESSURE is a single control before the status"
+    );
+    assert!(
+        expected.starts_with(&shapes.offsets()),
+        "delivered prefix in order"
+    );
+    harness.assert_tokens("TRADE", &shapes);
+    drop(stream);
+    harness.released().await;
+    // Resume from the last delivered record's token: the rest, exactly.
+    let after = shapes
+        .offsets()
+        .last()
+        .map_or(cursor, |&offset| offset as i64);
+    let mut resumed = harness
+        .subscribe_batched("TRADE", None, after, 1_000, 64)
+        .await
+        .unwrap();
+    let rest = resumed.until_live().await;
+    assert_eq!(rest, expected[shapes.events.len()..]);
+    drop(resumed);
+    harness.baseline().await;
+    assert!(harness.state().metrics.overflow.load(Ordering::Relaxed) >= 1);
+}
+
+#[test]
+fn b04_the_batch_limit_is_clamped_and_lossless_only() {
+    use qdl_stream_gateway::service::{response_batch_limit, MAX_RECORDS_PER_RESPONSE};
+    assert_eq!(response_batch_limit(0, "TRADE"), 1);
+    assert_eq!(response_batch_limit(1, "TRADE"), 1);
+    assert_eq!(response_batch_limit(64, "TRADE"), 64);
+    assert_eq!(response_batch_limit(64, "BOOK_DELTA"), 64);
+    assert_eq!(response_batch_limit(64, "BOOK_SNAPSHOT"), 64);
+    assert_eq!(
+        response_batch_limit(u32::MAX, "TRADE"),
+        MAX_RECORDS_PER_RESPONSE
+    );
+    for feed in ["QUOTE", "BAR", "MARK_INDEX_PRICE", "TICKER", "FUNDING_RATE"] {
+        assert_eq!(response_batch_limit(64, feed), 1, "{feed}");
+    }
+}
+
+/// Process CPU (user + system) in milliseconds, from `/proc/self/stat`
+/// (clock ticks of 10 ms at the usual 100 Hz).
+fn process_cpu_ms() -> f64 {
+    let stat = std::fs::read_to_string("/proc/self/stat").unwrap();
+    let fields: Vec<&str> = stat.rsplit_once(") ").unwrap().1.split(' ').collect();
+    let ticks: u64 = fields[11].parse::<u64>().unwrap() + fields[12].parse::<u64>().unwrap();
+    ticks as f64 * 10.0
+}
+
+/// Benchmark server, not a contract test: serves this harness's native
+/// Subscribe over real gRPC (tonic, loopback 127.0.0.1:18320, no TLS) and
+/// feeds `QDL_BENCH_RECORDS` live TRADE records (the phase-2 golden
+/// binance-usdm envelope, re-timed) per round to one client at a time,
+/// keeping its queue busy but below the 1000-event buffer. Per round it
+/// writes `round-<n>.json` (cursor, bearer, requirement) for the client and
+/// `server-<n>.json` (gateway process CPU per record) to `QDL_BENCH_DIR`.
+/// Run: `cargo test -p qdl-stream-gateway --test native_stream -- --ignored
+/// bench_serve_live_trade_bursts_over_grpc`, with the client in the same
+/// network namespace.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "benchmark server; run explicitly with a client"]
+async fn bench_serve_live_trade_bursts_over_grpc() {
+    use qdl_stream_gateway::generated::query_v2::market_data_stream_service_server::MarketDataStreamServiceServer;
+    let dir = std::path::PathBuf::from(std::env::var("QDL_BENCH_DIR").expect("QDL_BENCH_DIR"));
+    let env = |name: &str, default: u64| {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default)
+    };
+    let records = env("QDL_BENCH_RECORDS", 4_274);
+    let rounds = env("QDL_BENCH_ROUNDS", 6);
+    let harness = Harness::new(Options::default());
+    let golden = EventEnvelope::decode(
+        &include_bytes!("../../../contracts/golden/phase2/binance-usdm-trade.bin")[..],
+    )
+    .unwrap();
+    let event = |id: u64| {
+        let mut envelope = golden.clone();
+        envelope.instrument_uid = UID.into();
+        let now = now_ns();
+        envelope.source_event_time_ns = now;
+        envelope.received_at_ns = now;
+        envelope.normalized_at_ns = now;
+        envelope.published_at_ns = now;
+        envelope.partition_sequence = id;
+        if let Some(event_envelope::Payload::Trade(trade)) = envelope.payload.as_mut() {
+            trade.native_trade_id = id.to_string();
+        }
+        envelope
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:18320")
+        .await
+        .unwrap();
+    let service = MarketDataStreamServiceServer::new(Gateway {
+        state: harness.state().clone(),
+    });
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(
+        tonic::transport::Server::builder()
+            .add_service(service)
+            .serve_with_incoming_shutdown(
+                tokio_stream::wrappers::TcpListenerStream::new(listener),
+                async {
+                    let _ = stopped.await;
+                },
+            ),
+    );
+    let requirement_hex =
+        requirement("TRADE", None)
+            .encode_to_vec()
+            .iter()
+            .fold(String::new(), |mut hex, byte| {
+                use std::fmt::Write as _;
+                let _ = write!(hex, "{byte:02x}");
+                hex
+            });
+    let metrics = &harness.state().metrics;
+    async fn wait(what: &str, ready: &dyn Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while !ready() {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    }
+    let mut sequence = 1_000u64;
+    for round in 0..rounds {
+        let after = harness.log.end(0) - 1;
+        let bearer = bearer(
+            &harness.keys,
+            "k1",
+            &["stream_consumer", "market_data_reader", "historical_reader"],
+            3,
+        );
+        let ready = serde_json::json!({
+            "round": round,
+            "target": "127.0.0.1:18320",
+            "bearer": bearer.trim_start_matches("Bearer "),
+            "cursor": harness.cursor("TRADE", None, 0, after),
+            "consumer_id": CONSUMER,
+            "requirement_hex": requirement_hex,
+            "records": records,
+        });
+        std::fs::write(dir.join(format!("round-{round}.json")), ready.to_string()).unwrap();
+        wait("the client stream", &|| harness.state().open_streams() == 1).await;
+        tokio::time::sleep(Duration::from_millis(300)).await; // REPLAYING, LIVE.
+        let delivered = || metrics.delivered.load(Ordering::Relaxed);
+        let start = delivered();
+        let (cpu, started) = (process_cpu_ms(), Instant::now());
+        let mut appended = 0u64;
+        while appended < records {
+            if appended - (delivered() - start) < 700 {
+                for _ in 0..256.min(records - appended) {
+                    sequence += 1;
+                    harness.log.append(0, TRADE_KEY, &event(sequence));
+                    appended += 1;
+                }
+            } else {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        }
+        wait("delivery", &|| delivered() - start >= records).await;
+        let (cpu, wall) = (process_cpu_ms() - cpu, started.elapsed());
+        let result = serde_json::json!({
+            "round": round,
+            "records": records,
+            "server_cpu_ms_per_record": cpu / records as f64,
+            "server_wall_ms": wall.as_secs_f64() * 1000.0,
+        });
+        std::fs::write(dir.join(format!("server-{round}.json")), result.to_string()).unwrap();
+        wait("the client to leave", &|| {
+            harness.state().open_streams() == 0
+        })
+        .await;
+    }
     stop.send(()).unwrap();
     server.await.unwrap().unwrap();
 }
