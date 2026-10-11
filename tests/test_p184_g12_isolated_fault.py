@@ -22,6 +22,37 @@ def stream_rows(venue, start, end, *, step_ms=250, transit_ms=100, approved=True
     return pubs, views
 
 
+def md_rows(venue, start, end, *, trade_ms=100, quote_ms=100, bar_ms=800, mark_ms=300, step_ms=250, trades=True,
+            quotes=True, bars=True, marks=True):
+    """Publisher pub_md rows (a trade every step, a quote every other step, a mark every fourth step, a closed bar
+    per minute) and the clone's applied notifications (k == ev) the given transit later."""
+    pubs, evs = [], []
+    t, n = start, 0
+    while t < end:
+        n += 1
+        if trades:
+            pubs.append({"k": "pub_md", "t": t, "venue": venue, "feed": "TRADE", "id": str(n)})
+            evs.append({"k": "ev", "t": t + trade_ms * MS, "venue": venue, "feed": "TRADE", "id": str(n),
+                        "ev_ms": t // MS})
+        if quotes and n % 2 == 0:
+            pubs.append({"k": "pub_md", "t": t, "venue": venue, "feed": "QUOTE", "id": str(t // MS)})
+            evs.append({"k": "ev", "t": t + quote_ms * MS, "venue": venue, "feed": "QUOTE", "id": str(t // MS),
+                        "ev_ms": t // MS})
+        if marks and n % 4 == 0:
+            pubs.append({"k": "pub_md", "t": t, "venue": venue, "feed": "MARK", "id": str(t // MS)})
+            evs.append({"k": "ev", "t": t + mark_ms * MS, "venue": venue, "feed": "MARK", "id": str(t // MS),
+                        "ev_ms": t // MS})
+        t += step_ms * MS
+    if bars:
+        for close_ms in range((start // MS // 60_000 + 1) * 60_000, end // MS, 60_000):
+            open_ms = close_ms - 60_000
+            pubs.append({"k": "pub_md", "t": (close_ms + 200) * MS, "venue": venue, "feed": "BAR",
+                         "id": str(open_ms), "close_ms": close_ms, "seed": False})
+            evs.append({"k": "ev", "t": close_ms * MS + bar_ms * MS, "venue": venue, "feed": "BAR",
+                        "id": str(open_ms), "ev_ms": open_ms})
+    return pubs, evs
+
+
 class NamespaceAndTopologyTests(unittest.TestCase):
     def test_namespace_is_exact(self):
         self.assertEqual(g12.namespace(NS), NS)
@@ -174,6 +205,9 @@ class AnalysisTests(unittest.TestCase):
             p, v = stream_rows(venue, 0, 500 * S)
             pubs += p
             views += v
+            p, v = md_rows(venue, 0, 500 * S)
+            pubs += p
+            views += v
         monitor = [{"t": t * S, "ports": {"8210": t >= 62}, "projector_lag": 0, "under_replicated": 0}
                    for t in range(0, 500)]
         fault = {"k": "fault", "name": "stream_restart", "kind": "stream", "injected_ns": 60 * S,
@@ -185,6 +219,11 @@ class AnalysisTests(unittest.TestCase):
         self.assertTrue(result["g1_window_complete"])
         self.assertTrue(result["pass"])
         self.assertEqual(result["g1"]["OKX"]["n"], 1200)
+        self.assertEqual(result["parts"], {"caught_up": True, "window_complete": True, "g1": "PASS",
+                                           "g2": "PASS", "g2_feeds": {"TRADE": "PASS", "QUOTE": "PASS",
+                                                                      "MARK": "PASS"}, "g3": "PASS"})
+        self.assertEqual(result["g2"]["TRADE"]["BINANCE"]["n"], 1200)
+        self.assertEqual(result["g3"]["BAR_1m"]["OKX"]["n"], 5)  # closes 120..360 s in [62.1, 362.1) s
         short = g12.evaluate_fault(fault, pubs, [v for v in views if v["t"] < 200 * S], monitor)
         self.assertFalse(short["g1_window_complete"])
         self.assertFalse(short["pass"])
@@ -377,6 +416,543 @@ class OrchestratorSignalTests(unittest.TestCase):
             text = (Path(tmp) / "monitor.jsonl.stderr").read_text()
         self.assertIn('"k": "start"', text)
         self.assertIn("boom", text)
+
+
+class MarketDataFrameTests(unittest.TestCase):
+    AT = 1_791_696_000_123 * MS  # a minute boundary + 123 ms
+
+    def test_trade_frames_are_provider_shaped_and_deterministic(self):
+        b = g12.trade_frame("BINANCE", 7, self.AT)
+        self.assertEqual(b["payload"], {"e": "trade", "E": 1_791_696_000_123, "T": 1_791_696_000_123, "s": "ETHUSDT",
+                                        "t": 7, "p": "60000.7", "q": "0.010", "X": "MARKET", "m": False})
+        o = g12.trade_frame("OKX", 8, self.AT)
+        self.assertEqual(o["payload"]["arg"], {"channel": "trades", "instId": "ETH-USDT-SWAP"})
+        self.assertEqual(o["payload"]["data"], [{"instId": "ETH-USDT-SWAP", "tradeId": "8", "px": "60000.8",
+                                                 "sz": "1", "side": "sell", "ts": "1791696000123"}])
+        for frame in (b, o):
+            self.assertEqual((frame["provenance"], frame["test_provenance"], frame["adapter_version"], frame["lane"]),
+                             ("TEST_ONLY", True, g12.TEST_ADAPTER, "trade"))
+        self.assertEqual(g12.trade_frame("OKX", 8, self.AT), o)
+        for bad in (("BINANCE", 0, self.AT), ("BINANCE", 1, 0), ("DERIBIT", 1, self.AT), ("OKX", "1", self.AT)):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                g12.trade_frame(*bad)
+
+    def test_quotes_change_every_time(self):
+        b1, b2 = (g12.quote_frame("BINANCE", n, self.AT)["payload"] for n in (1, 2))
+        self.assertEqual((b1["u"], b1["T"], b1["b"], b1["a"]), (1, 1_791_696_000_123, "60000.0", "60001.0"))
+        self.assertNotEqual(b1["B"], b2["B"])
+        o = g12.quote_frame("OKX", 3, self.AT)["payload"]
+        self.assertEqual(o["arg"]["channel"], "bbo-tbt")
+        self.assertEqual((o["data"][0]["seqId"], o["data"][0]["ts"]), (3, "1791696000123"))
+
+    def test_bar_frames_are_final_and_only_after_close(self):
+        opened = 1_791_695_940_000
+        b = g12.bar_frame("BINANCE", opened, self.AT, trades=4)["payload"]
+        self.assertTrue(b["k"]["x"])
+        self.assertEqual((b["k"]["t"], b["k"]["T"], b["k"]["i"], b["k"]["n"]), (opened, opened + 59_999, "1m", 4))
+        o = g12.bar_frame("OKX", opened, self.AT)["payload"]
+        self.assertEqual(o["arg"]["channel"], "candle1m")
+        self.assertEqual((o["data"][0][0], o["data"][0][8]), (str(opened), "1"))
+        with self.assertRaises(ValueError):  # not closed yet at the stamp
+            g12.bar_frame("OKX", opened + 60_000, self.AT)
+        with self.assertRaises(ValueError):  # not minute aligned
+            g12.bar_frame("OKX", opened + 1, self.AT)
+
+    def test_market_plan_rates_and_burst(self):
+        hz = 4
+        plans = [g12.market_plan(tick, hz) for tick in range(60 * hz)]
+        trades = sum(t for t, _, _ in plans)
+        quotes = sum(q for _, q, _ in plans)
+        self.assertEqual(quotes, 2 * 60)
+        self.assertEqual(sum(m for _, _, m in plans), 60)  # one MARK/INDEX observation per second
+        bursts = 60 // g12.MD_RATE["burst_every_s"] - 1  # tick 0 never bursts
+        self.assertEqual(trades, 3 * 60 + bursts * g12.MD_RATE["burst_trades"])
+        base = (15 * hz + 1) * 3 // hz - 15 * hz * 3 // hz  # the steady share of that tick
+        self.assertEqual(g12.market_plan(15 * hz, hz)[0], base + g12.MD_RATE["burst_trades"])
+        self.assertEqual(plans, [g12.market_plan(tick, hz) for tick in range(60 * hz)])  # deterministic
+
+    def test_bars_due_and_seed(self):
+        now = 1_791_696_000_150
+        self.assertEqual(g12.seed_opens(now, 3), [1_791_695_820_000, 1_791_695_880_000, 1_791_695_940_000])
+        last = 1_791_695_940_000
+        self.assertEqual(g12.bars_due(now, last), [])  # close + 200 ms not reached yet
+        self.assertEqual(g12.bars_due(1_791_696_060_200, last), [1_791_696_000_000])
+        self.assertEqual(g12.bars_due(1_791_696_180_300, last),  # a stalled loop catches up without a gap
+                         [1_791_696_000_000, 1_791_696_060_000, 1_791_696_120_000])
+
+    def test_source_is_monotonic_contiguous_and_seeded(self):
+        clock = [1_791_696_000_000 * MS]
+
+        def now():
+            clock[0] += 1 * MS
+            return clock[0]
+        source = g12.MarketDataSource(clock=now)
+        seeds = source.seed(clock[0])
+        self.assertEqual(len(seeds), 2 * g12.MD_RATE["seed_bars"])
+        self.assertTrue(all(e["extra"]["seed"] for e in seeds))
+        events = []
+        for tick in range(4 * 200):  # 200 s at 4 Hz
+            clock[0] += 250 * MS
+            events += source.tick(tick, 4)
+        for venue in g12.VENUES:
+            trades = [int(e["id"]) for e in events if e["venue"] == venue and e["feed"] == "TRADE"]
+            self.assertEqual(trades, list(range(1, len(trades) + 1)))
+            quotes = [int(e["id"]) for e in events if e["venue"] == venue and e["feed"] == "QUOTE"]
+            self.assertEqual(quotes, sorted(set(quotes)))
+            opens = [int(e["id"]) for e in seeds + events if e["venue"] == venue and e["feed"] == "BAR"]
+            self.assertEqual(opens, list(range(opens[0], opens[-1] + 1, 60_000)))  # contiguous, each once
+            live = [e for e in events if e["venue"] == venue and e["feed"] == "BAR"]
+            self.assertEqual(len(live), 3)
+            for e in live:
+                self.assertFalse(e["extra"]["seed"])
+                self.assertEqual(e["extra"]["close_ms"], int(e["id"]) + 60_000)
+                self.assertGreaterEqual(e["frame"]["received_at_ns"] // MS, e["extra"]["close_ms"] + 200)
+            if venue == "BINANCE":  # a closed kline counts the trades of its minute
+                self.assertGreater(sum(e["frame"]["payload"]["k"]["n"] for e in live), 0)
+
+    def test_mark_frames_binance_one_okx_pair(self):
+        (b,) = g12.mark_frames("BINANCE", 3, self.AT)
+        self.assertEqual((b["feed"], b["lane"], b["native_symbol"]), ("MARK", "mark", "ETHUSDT"))
+        self.assertEqual({k: b["payload"][k] for k in ("e", "E", "s", "p", "i")},
+                         {"e": "markPriceUpdate", "E": 1_791_696_000_123, "s": "ETHUSDT", "p": "60000.53",
+                          "i": "60000.43"})
+        self.assertEqual(b["payload"]["T"] % 28_800_000, 0)
+        mark, index = g12.mark_frames("OKX", 3, self.AT, "ETH-USDT")
+        self.assertEqual((mark["feed"], mark["native_symbol"], mark["payload"]["arg"]),
+                         ("MARK", "ETH-USDT-SWAP", {"channel": "mark-price", "instId": "ETH-USDT-SWAP"}))
+        self.assertEqual((index["feed"], index["native_symbol"], index["payload"]["arg"]),
+                         ("INDEX", "ETH-USDT", {"channel": "index-tickers", "instId": "ETH-USDT"}))
+        self.assertEqual(mark["payload"]["data"][0]["ts"], index["payload"]["data"][0]["ts"])  # one pair, one ms
+        self.assertEqual((mark["lane"], index["lane"]), ("mark", "mark"))  # one session / generation
+        with self.assertRaises(ValueError):
+            g12.mark_frames("OKX", 0, self.AT)
+
+    def test_source_marks_once_per_second(self):
+        clock = [1_791_696_000_000 * MS]
+
+        def now():
+            clock[0] += 1 * MS
+            return clock[0]
+        source = g12.MarketDataSource(clock=now)
+        events = []
+        for tick in range(4 * 30):
+            clock[0] += 250 * MS
+            events += source.tick(tick, 4)
+        for venue, parts in (("BINANCE", 1), ("OKX", 2)):
+            marks = [e for e in events if e["venue"] == venue and e["feed"] == "MARK"]
+            self.assertEqual(len(marks), 30)
+            self.assertEqual([int(e["id"]) for e in marks], sorted({int(e["id"]) for e in marks}))
+            self.assertTrue(all(len(e["frames"]) == parts for e in marks))
+            self.assertTrue(all(e["id"] == str(e["frames"][0]["received_at_ns"] // MS) for e in marks))
+
+    def test_query_role_runs_the_harness_query_entry(self):
+        image = g12.topology(NS, "/home/bobby/x/work", uid="1:1", query_code="image")["query"]
+        self.assertIn(f"{g12.ROOT / 'scripts/p184_g12_isolated_fault.py'}:/harness/p184_g12_isolated_fault.py:ro",
+                      image)
+        self.assertEqual(image[-3:], ["/harness/p184_g12_isolated_fault.py", "--query", "/work"])
+        worktree = g12.topology(NS, "/home/bobby/x/work", uid="1:1")["query"]
+        self.assertEqual(worktree[-3:], ["scripts/p184_g12_isolated_fault.py", "--query", "/work"])
+        with patch.object(g12, "serve_query") as serve:
+            self.assertEqual(g12.main(["--query", "/work"]), 0)
+        serve.assert_called_once()
+
+    def test_notification_parser(self):
+        trade = g12.json.dumps({"observed_at_ms": 5, "payload": {"native_trade_id": "42", "price": "1"}})
+        self.assertEqual(g12.md_event_row("events.market.v2.execution.trade.OKX.SWAP.ETH-USDT-SWAP", trade),
+                         {"feed": "TRADE", "id": "42", "ev_ms": 5})
+        quote = g12.json.dumps({"observed_at_ms": 9, "payload": {"bid_price": "1"}})
+        self.assertEqual(g12.md_event_row("events.market.v2.execution.quote.BINANCE.USD_M.ETHUSDT", quote),
+                         {"feed": "QUOTE", "id": "9", "ev_ms": 9})
+        mark = g12.json.dumps({"observed_at_ms": 11, "feed": "MARK_INDEX_PRICE",
+                               "payload": {"mark_price": {}, "index_price": {}}})
+        self.assertEqual(g12.md_event_row("events.market.v2.execution.mark_index_price.OKX.SWAP.ETH-USDT-SWAP", mark),
+                         {"feed": "MARK", "id": "11", "ev_ms": 11})
+        closed = g12.json.dumps({"timestamp_ms": 60_000, "is_closed": True, "interval": "1m"})
+        self.assertEqual(g12.md_event_row("events.market.v2.bar.OKX.SWAP.ETH-USDT-SWAP.1m", closed),
+                         {"feed": "BAR", "id": "60000", "ev_ms": 60_000})
+        for channel, data in (("events.market.v2.bar.OKX.SWAP.X.1m", g12.json.dumps({"timestamp_ms": 1,
+                                                                                     "is_closed": False,
+                                                                                     "interval": "1m"})),
+                              ("events.market.v2.bar.OKX.SWAP.X.5m", g12.json.dumps({"timestamp_ms": 1,
+                                                                                     "is_closed": True,
+                                                                                     "interval": "5m"})),
+                              ("events.market.v2.execution.book_delta.OKX.SWAP.X", trade),
+                              ("events.market.v2.execution.trade.OKX.SWAP.X", "not json"),
+                              ("events.market.trade.OKX.X", trade)):
+            with self.subTest(channel=channel):
+                self.assertIsNone(g12.md_event_row(channel, data))
+        self.assertIn(g12.inspect.getsource(g12.md_event_row), g12.SAMPLER)  # the sampler runs this parser
+
+
+class MarketDataWindowTests(unittest.TestCase):
+    def window(self, pubs, evs, start=100 * S, end=400 * S):
+        return g12.md_window(pubs, evs + [{"k": "view", "t": 500 * S, "venue": "OKX", "seq": 1, "v": "APPROVED"}],
+                             start, end)
+
+    def rows(self, **kwargs):
+        pubs, evs = [], []
+        for venue in g12.VENUES:
+            p, e = md_rows(venue, 0, 500 * S, **kwargs)
+            pubs += p
+            evs += e
+        return pubs, evs
+
+    def test_pass(self):
+        result = self.window(*self.rows())
+        self.assertEqual((result["g2_status"], result["g3_status"]), ("PASS", "PASS"))
+        self.assertEqual(result["g2"]["TRADE"]["OKX"]["n"], 1200)
+        self.assertEqual(result["g2"]["QUOTE"]["OKX"]["n"], 600)
+        self.assertEqual(result["g2"]["TRADE"]["OKX"]["p95_ms"], 100.0)
+        self.assertEqual(result["g3"]["BAR_1m"]["BINANCE"]["n"], 5)  # closes 120..360 s
+        self.assertEqual(result["g3"]["BAR_1m"]["BINANCE"]["max_ms"], 800.0)  # from close, not from publish
+
+    def test_fail_on_max_and_p95(self):
+        pubs, evs = self.rows()
+        slow = next(e for e in evs if e["feed"] == "TRADE" and e["venue"] == "OKX" and e["t"] > 200 * S)
+        slow["t"] += 1500 * MS  # one trade 1.6 s: max >= 1500
+        result = self.window(pubs, evs)
+        self.assertEqual(result["g2"]["TRADE"]["OKX"]["status"], "FAIL")
+        self.assertEqual(result["g2"]["TRADE"]["BINANCE"]["status"], "PASS")
+        self.assertEqual(result["g2_status"], "FAIL")
+        result = self.window(*self.rows(bar_ms=6000))  # every bar 6 s after close: p95 > 5 s
+        self.assertEqual(result["g3_status"], "FAIL")
+        result = self.window(*self.rows(quote_ms=1000))  # QUOTE max must stay < 1000
+        self.assertEqual(result["g2"]["QUOTE"]["OKX"]["status"], "FAIL")
+
+    def test_few_samples_are_not_measured_never_pass(self):
+        pubs, evs = self.rows()
+        short = self.window(pubs, evs, 100 * S, 190 * S)  # one bar close (120 s), 360 trades
+        self.assertEqual(short["g3"]["BAR_1m"]["OKX"]["status"], "NOT_MEASURED")
+        self.assertEqual(short["g3_status"], "NOT_MEASURED")
+        self.assertEqual(short["g2_feed_status"], {"TRADE": "PASS", "QUOTE": "PASS", "MARK": "NOT_MEASURED"})
+        self.assertEqual(short["g2"]["QUOTE"]["OKX"]["n"], 180)
+        self.assertEqual(short["g2"]["MARK"]["OKX"]["n"], 90)
+        self.assertEqual(short["g2_status"], "NOT_MEASURED")
+        sparse = self.window(*self.rows(step_ms=4000))  # 75 trades in 300 s
+        self.assertEqual(sparse["g2"]["TRADE"]["OKX"]["status"], "NOT_MEASURED")
+        none = self.window(*self.rows(trades=False, quotes=False, bars=False, marks=False))
+        self.assertEqual((none["g2_status"], none["g3_status"]), ("NOT_MEASURED", "NOT_MEASURED"))
+
+    def test_lost_trade_fails_unseen_quote_does_not_pending_excluded(self):
+        pubs, evs = self.rows()
+        lost = next(e for e in evs if e["feed"] == "TRADE" and e["venue"] == "OKX" and e["t"] > 200 * S)
+        conflated = next(e for e in evs if e["feed"] == "QUOTE" and e["venue"] == "OKX" and e["t"] > 200 * S)
+        evs = [e for e in evs if e is not lost and e is not conflated]
+        result = self.window(pubs, evs)
+        self.assertEqual((result["g2"]["TRADE"]["OKX"]["lost"], result["g2"]["TRADE"]["OKX"]["status"]), (1, "FAIL"))
+        self.assertEqual(result["g2"]["QUOTE"]["OKX"]["unseen"], 1)
+        self.assertEqual(result["g2"]["QUOTE"]["OKX"]["status"], "PASS")
+        # The sampler has not yet covered reference + 10 s: undecidable, excluded rather than lost.
+        early = g12.md_window(pubs, [e for e in evs if e["t"] < 205 * S], 100 * S, 400 * S)
+        self.assertEqual(early["g2"]["TRADE"]["OKX"]["lost"], 0)
+        self.assertGreater(early["g2"]["TRADE"]["OKX"]["pending"], 0)
+
+    def test_mark_window_gate_and_unseen(self):
+        result = self.window(*self.rows())
+        self.assertEqual(result["g2"]["MARK"]["OKX"]["n"], 300)
+        self.assertEqual(result["g2_feed_status"]["MARK"], "PASS")
+        slow = self.window(*self.rows(mark_ms=1000))  # max must stay < 1000
+        self.assertEqual(slow["g2"]["MARK"]["BINANCE"]["status"], "FAIL")
+        self.assertEqual(slow["g2_status"], "FAIL")
+        pubs, evs = self.rows()
+        skipped = [e for e in evs if e["feed"] == "MARK" and e["venue"] == "OKX" and 200 * S < e["t"] < 210 * S]
+        evs = [e for e in evs if not any(e is x for x in skipped)]
+        result = self.window(pubs, evs)  # a latest-state read may skip a superseded observation
+        self.assertEqual((result["g2"]["MARK"]["OKX"]["unseen"], result["g2"]["MARK"]["OKX"]["lost"],
+                          result["g2"]["MARK"]["OKX"]["status"]), (len(skipped), 0, "PASS"))
+        sparse = self.window(*self.rows(marks=False))
+        self.assertEqual(sparse["g2"]["MARK"]["OKX"]["status"], "NOT_MEASURED")
+        self.assertEqual(sparse["g2_status"], "NOT_MEASURED")
+
+    def test_seed_bars_and_replays_do_not_count(self):
+        pubs, evs = self.rows()
+        for row in pubs:
+            if row["feed"] == "BAR":
+                row["seed"] = True
+        self.assertEqual(self.window(pubs, evs)["g3"]["BAR_1m"]["OKX"]["n"], 0)
+        pubs, evs = self.rows()
+        replay = [dict(e, t=e["t"] + 30 * S) for e in evs]  # re-projected after a restart: first receipt counts
+        result = self.window(pubs, evs + replay)
+        self.assertEqual(result["g2"]["TRADE"]["OKX"]["max_ms"], 100.0)
+
+    def test_fault_verdict_needs_g1_g2_and_g3(self):
+        monitor = [{"t": t * S, "ports": {"8210": t >= 62}, "projector_lag": 0, "under_replicated": 0}
+                   for t in range(0, 500)]
+        fault = {"k": "fault", "name": "stream_restart", "kind": "stream", "injected_ns": 60 * S,
+                 "restart_ns": 61 * S}
+
+        def run(**kwargs):
+            pubs, views = [], []
+            for venue in g12.VENUES:
+                p, v = stream_rows(venue, 0, 500 * S)
+                pubs += p
+                views += v
+                p, v = md_rows(venue, 0, 500 * S, **kwargs)
+                pubs += p
+                views += v
+            return g12.evaluate_fault(fault, pubs, views, monitor)
+        self.assertTrue(run()["pass"])
+        no_bars = run(bars=False)
+        self.assertEqual(no_bars["parts"]["g1"], "PASS")
+        self.assertEqual(no_bars["parts"]["g3"], "NOT_MEASURED")
+        self.assertFalse(no_bars["pass"])
+        slow = run(trade_ms=1600)
+        self.assertEqual(slow["parts"]["g2"], "FAIL")
+        self.assertFalse(slow["pass"])
+        no_mark = run(marks=False)
+        self.assertEqual(no_mark["parts"]["g2_feeds"], {"TRADE": "PASS", "QUOTE": "PASS", "MARK": "NOT_MEASURED"})
+        self.assertEqual(no_mark["parts"]["g2"], "NOT_MEASURED")
+        self.assertFalse(no_mark["pass"])
+        slow_mark = run(mark_ms=1000)  # MARK max must stay < 1000 ms
+        self.assertEqual(slow_mark["parts"]["g2_feeds"]["MARK"], "FAIL")
+        self.assertFalse(slow_mark["pass"])
+        book_only = run(trades=False, quotes=False, bars=False, marks=False)  # the 2026-10-11 rc10 evidence
+        self.assertEqual((book_only["parts"]["g2"], book_only["parts"]["g3"]), ("NOT_MEASURED", "NOT_MEASURED"))
+        self.assertFalse(book_only["pass"])
+
+    def test_readiness_and_publisher_summary(self):
+        pubs, evs = self.rows()
+        self.assertEqual(g12.md_missing(evs), [])
+        self.assertEqual(g12.md_missing([e for e in evs if e["feed"] != "BAR"]), ["BAR@BINANCE", "BAR@OKX"])
+        self.assertEqual(g12.md_missing([e for e in evs if e["feed"] != "MARK"]), ["MARK@BINANCE", "MARK@OKX"])
+        summary = g12.publisher_md_summary(pubs + [{"k": "ack_md", "feed": "TRADE", "venue": "OKX", "id": "1"},
+                                                   {"k": "ack_md", "feed": "TRADE", "venue": "OKX", "id": "2",
+                                                    "error": "_MSG_TIMED_OUT"}])
+        self.assertEqual(summary["TRADE"]["acked"], 1)
+        self.assertEqual(summary["TRADE"]["delivery_errors"], 1)
+        self.assertEqual(summary["BAR"]["published"], 2 * 8)
+
+
+class SealedFeedMaterialTests(unittest.TestCase):
+    """Real offline DR05 material + the G12 feed seal (python image: qdl, yaml, cryptography)."""
+
+    def test_seal_adds_trade_quote_bar_lanes_end_to_end(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from scripts import p184_dr05_dl_fault as dr
+        from scripts.kn_gateway_bundle import compile_bundle
+        from qdl.consumer.manifest import ConsumerManifestLoader
+        from qdl.runtime.stable_catalog import StableSourceCatalog
+        from tests.test_p184_dr05_dl_fault import MaterialTests
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp) / "work"
+            work.mkdir()
+            (work / "handoff.json").write_text(json.dumps({"namespace": NS, "images": g12.dr05_images(g12.IMAGES),
+                                                           "g12_images": g12.IMAGES}))
+            dr.material(work, MaterialTests.exported())
+            sealed = g12.seal_market_feeds(work, NS)
+            self.assertEqual(sealed["feeds"], ["BOOK_SNAPSHOT", "BOOK_DELTA", "TRADE", "QUOTE", "BAR",
+                                               "MARK_INDEX_PRICE"])
+            config = json.loads((work / "core.json").read_text())
+            lanes = g12.md_bindings(config)
+            expected = {("BINANCE", "TRADE"): ("binance_usdm_trade", "ethusdt@trade", "MONOTONIC", False),
+                        ("BINANCE", "QUOTE"): ("binance_usdm_bbo", "ethusdt@bookTicker", "MONOTONIC", False),
+                        ("BINANCE", "BAR"): ("binance_usdm_bar", "ethusdt@kline_1m", "NONE", True),
+                        ("OKX", "TRADE"): ("okx_trade", "trades", "MONOTONIC", False),
+                        ("OKX", "QUOTE"): ("okx_bbo", "bbo-tbt", "NONE", False),
+                        ("OKX", "BAR"): ("okx_bar", "candle1m", "NONE", True)}
+            for key, (kind, channel, policy, final) in expected.items():
+                binding = lanes[key]
+                self.assertEqual((binding["provider_kind"], binding["native_channel"], binding["sequence_policy"],
+                                  binding["require_final_bar"]), (kind, channel, policy, final), key)
+                self.assertNotIn("l2", binding)
+            # MARK_INDEX_PRICE as the deployment's physical components (production cadences).
+            mark = lanes[("BINANCE", "MARK")]
+            self.assertEqual((mark["provider_kind"], mark["physical_native_symbol"], mark["physical_native_channel"],
+                              mark["mark_index"], mark["sequence_policy"]),
+                             ("binance_usdm_mark_index", "ETHUSDT", "ethusdt@markPrice@1s",
+                              {"component": "BOTH", "quiet_after_ms": 5000}, "NONE"))
+            okx_mark, okx_index = lanes[("OKX", "MARK")], lanes[("OKX", "INDEX")]
+            self.assertEqual((okx_mark["provider_kind"], okx_mark["physical_native_symbol"],
+                              okx_mark["physical_native_channel"], okx_mark["mark_index"]),
+                             ("okx_mark_price", "ETH-USDT-SWAP", "mark-price",
+                              {"component": "MARK", "quiet_after_ms": 15000}))
+            self.assertEqual((okx_index["provider_kind"], okx_index["physical_native_symbol"],
+                              okx_index["physical_native_channel"], okx_index["mark_index"]),
+                             ("okx_index_price", "ETH-USDT", "index-tickers",
+                              {"component": "INDEX", "quiet_after_ms": 70000}))
+            self.assertEqual(okx_mark["source_id"], okx_index["source_id"])  # one logical source, two components
+            self.assertEqual((okx_mark["native_symbol"], okx_mark["native_channel"]), ("ETH-USDT-SWAP", "mark-price"))
+            books = [b for b in config["core"]["bindings"] if b.get("l2")]
+            self.assertEqual(len(books), 2)
+            self.assertEqual(len(config["core"]["bindings"]), 2 + 2 * 4 + 1)
+            self.assertEqual(len({b["source_id"] for b in config["core"]["bindings"]}), 10)
+            self.assertEqual(config["authority"]["contract_digest"], sealed["core_bindings_sha256"])
+            catalog = StableSourceCatalog.load(work / "catalog.yaml")
+            self.assertEqual(len(catalog.bindings), 4 + 8)
+            manifests = [work / "binance.yaml", work / "okx.yaml"]
+            for path in manifests:
+                manifest = ConsumerManifestLoader.load(path)
+                self.assertEqual({r.feed.value for r in manifest.requirements},
+                                 {"BOOK_SNAPSHOT", "BOOK_DELTA", "TRADE", "QUOTE", "BAR", "MARK_INDEX_PRICE"})
+                ref = next(r for r in manifest.requirements if r.feed.value == "MARK_INDEX_PRICE")
+                self.assertEqual((ref.max_freshness_ms, ref.source_policy_id, ref.recovery.value,
+                                  ref.require_final_bars, ref.event_recency_policy),
+                                 (2000, "crypto_liquid_v2", "FRESH_SNAPSHOT", False, None))
+                bar = next(r for r in manifest.requirements if r.feed.value == "BAR")
+                self.assertEqual((bar.interval, bar.max_freshness_ms, bar.require_final_bars), ("1m", 180000, True))
+                trade = next(r for r in manifest.requirements if r.feed.value == "TRADE")
+                self.assertEqual((trade.max_freshness_ms, trade.source_policy_id, trade.event_recency_policy),
+                                 (3000, "crypto_primary_v2", None))
+            for label in ("binance", "okx"):
+                route = json.loads((work / (label + ".binding.json")).read_text())
+                planes = {p["feed"]: p["provider_plane"] for p in route["products"]}
+                self.assertEqual(planes, {"BOOK_SNAPSHOT": "L2", "BOOK_DELTA": "L2", "TRADE": "REALTIME",
+                                          "QUOTE": "REALTIME", "BAR": "REALTIME", "MARK_INDEX_PRICE": "REFERENCE"})
+                self.assertEqual(next(p["interval"] for p in route["products"] if p["feed"] == "BAR"), "1m")
+                consumer = json.loads((work / ("ts-consumer." + label + ".json")).read_text())
+                # TS WriterClone maps crypto_source_policy_id -> DATA_LAYER_V2_CRYPTO_SOURCE_POLICY_ID.
+                self.assertEqual((consumer["crypto_source_policy_id"], consumer["execution_book_source_policy_id"],
+                                  consumer["execution_reference_source_policy_id"]),
+                                 ("crypto_primary_v2", "crypto_liquid_v2", "crypto_liquid_v2"))
+                import hashlib
+                self.assertEqual(consumer["release_manifest_sha256"],
+                                 hashlib.sha256((work / (label + ".yaml")).read_bytes()).hexdigest())
+            self.assertEqual(json.loads((work / "bundle.json").read_text()), compile_bundle(
+                environment="paper", catalog_path=work / "catalog.yaml", manifest_paths=manifests))
+            self.assertFalse(list(work.glob("*.g12-tmp")))
+            with self.assertRaises(ValueError):  # sealed once
+                g12.seal_market_feeds(work, NS)
+
+            # Raw envelopes of each lane: own session, generation 1, test provenance, exact binding identity.
+            from qdl.raw.envelope import validate_raw_envelope
+            at = 1_791_696_000_123 * MS
+            frames = {"TRADE": g12.trade_frame("OKX", 1, at), "QUOTE": g12.quote_frame("OKX", 1, at),
+                      "BAR": g12.bar_frame("OKX", 1_791_695_940_000, at)}
+            for feed, frame in frames.items():
+                raw = g12.md_envelope(lanes[("OKX", feed)], frame, NS)
+                validate_raw_envelope(raw)
+                self.assertEqual((raw.source_session_id, raw.connection_generation, raw.test_provenance),
+                                 (f"{NS}.OKX.{feed.lower()}", 1, True))
+                self.assertEqual((raw.subscription_id, raw.native_channel),
+                                 (lanes[("OKX", feed)]["source_id"], lanes[("OKX", feed)]["native_channel"]))
+            with self.assertRaises(ValueError):  # a trade frame on the bar lane
+                g12.md_envelope(lanes[("OKX", "BAR")], frames["TRADE"], NS)
+            okx_pair = g12.mark_frames("OKX", 1, at, okx_index["physical_native_symbol"])
+            for part, lane in zip(okx_pair, (okx_mark, okx_index)):
+                raw = g12.md_envelope(lanes[("OKX", part["feed"])], part, NS)
+                validate_raw_envelope(raw)
+                self.assertEqual((raw.native_symbol, raw.native_channel, raw.source_session_id,
+                                  raw.connection_generation),
+                                 (lane["physical_native_symbol"], lane["physical_native_channel"], f"{NS}.OKX.mark", 1))
+            (binance_mark,) = g12.mark_frames("BINANCE", 1, at)
+            raw = g12.md_envelope(mark, binance_mark, NS)
+            self.assertEqual((raw.native_symbol, raw.native_channel), ("ETHUSDT", "ethusdt@markPrice@1s"))
+            with self.assertRaises(ValueError):  # an index frame on the mark component
+                g12.md_envelope(okx_mark, okx_pair[1], NS)
+
+            # Query: the DR05 Query stack with the production KN execution MARK/INDEX reader wired in.
+            from qdl.reference.execution_live import HttpExecutionMarkIndexReader
+            captured = {}
+
+            def build(**kwargs):
+                captured.update(kwargs)
+                return "stack"
+            backend = object()
+            stack = g12.with_execution_mark_index(build)
+            self.assertEqual(stack(spool=None, catalog=catalog, backend=backend, issuer="i"), "stack")
+            self.assertTrue(captured["reference_data_enabled"])
+            self.assertIsInstance(captured["execution_mark_index_reader"], HttpExecutionMarkIndexReader)
+            self.assertIs(captured["backend"], backend)
+            self.assertEqual(captured["issuer"], "i")
+            self.assertIsNotNone(captured["alpha_mark_index_reader_factory"])
+            with self.assertRaises(ValueError):
+                g12.md_envelope(lanes[("BINANCE", "TRADE")], frames["TRADE"], NS)
+            with self.assertRaises(ValueError):
+                g12.md_envelope(lanes[("OKX", "TRADE")], dict(frames["TRADE"], provenance="LIVE"), NS)
+
+    def test_dr05_consumer_packet_default_is_unchanged(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from scripts import p184_dr05_dl_fault as dr
+        from tests.test_p184_dr05_dl_fault import MaterialTests
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp) / "work"
+            dr.prepare(work)
+            dr.material(work, MaterialTests.exported())
+            consumer = json.loads((work / "ts-consumer.okx.json").read_text())
+            self.assertNotIn("crypto_source_policy_id", consumer)
+            route = json.loads((work / "okx.binding.json").read_text())
+            self.assertEqual({p["provider_plane"] for p in route["products"]}, {"L2"})
+
+
+class ExitStateTests(unittest.TestCase):
+    @staticmethod
+    def event(action, role, t, **attrs):
+        return {"Type": "container", "Action": action, "status": action, "timeNano": t,
+                "Actor": {"ID": "x", "Attributes": {"name": f"{NS}-{role}", g12.LABEL: NS, **attrs}}}
+
+    def test_events_argv_is_bounded_and_label_scoped(self):
+        argv = g12.events_argv(NS, 100, 200)
+        self.assertEqual(argv[:6], ["docker", "events", "--since", "100", "--until", "200"])
+        self.assertIn(f"label={g12.LABEL}={NS}", argv)
+        for event in ("die", "oom", "kill"):
+            self.assertIn("event=" + event, argv)
+        for bad in ((NS, 0, 1), (NS, 5, 5), ("qdl_v2_stable_candidate", 1, 2)):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                g12.events_argv(*bad)
+
+    def test_exit_states_per_life(self):
+        rows = [self.event("kill", "projector", 1, signal="15"), self.event("die", "projector", 2, exitCode="143"),
+                self.event("oom", "monitor", 5), self.event("die", "monitor", 6, exitCode="137"),
+                self.event("die", "tswriter-okx", 7, exitCode="1"),
+                self.event("die", "projector", 9, exitCode="0"),
+                {"Action": "die", "timeNano": 3, "Actor": {"Attributes": {"name": "qdl_v2_stable_candidate-x",
+                                                                           "exitCode": "1"}}}]
+        states = g12.exit_states(rows)
+        self.assertEqual(set(states), {"projector", "monitor", "tswriter-okx"})
+        self.assertEqual((states["monitor"]["exit_code"], states["monitor"]["oom_killed"]), (137, True))
+        self.assertEqual(len(states["projector"]["lives"]), 2)
+        self.assertEqual(states["projector"]["lives"][0]["kill_signals"], ["15"])
+        self.assertEqual((states["projector"]["exit_code"], states["projector"]["oom_killed"]), (0, False))
+        self.assertEqual(states["tswriter-okx"]["exit_code"], 1)
+        self.assertTrue(g12.exit_states([self.event("die", "publisher", 1, exitCode="137",
+                                                    oomKilled="true")])["publisher"]["oom_killed"])
+
+    def test_check_stops_with_the_exit_state_of_a_vanished_role(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as base:
+            run = g12.Run(base, "/home/bobby/e.json", NS)
+            run.evidence.mkdir(parents=True)
+            with (run.evidence / "container-events.jsonl").open("w") as handle:
+                for row in (self.event("oom", "monitor", 1), self.event("die", "monitor", 2, exitCode="137")):
+                    handle.write(json.dumps(row) + "\n")
+            run.expected = {"monitor", "publisher", "sampler"}
+            with patch.object(g12, "host_resources", return_value={"disk_free_bytes": 10**12,
+                                                                   "mem_available_bytes": 10**11}), \
+                    patch.object(g12, "running_names", return_value={NS + "-publisher"}), \
+                    self.assertRaises(RuntimeError) as stop:
+                run.check()
+            message = str(stop.exception)
+            self.assertIn("STOP role exited", message)
+            self.assertIn('"monitor": {"exit_code": 137, "oom_killed": true}', message)
+            self.assertIn('"sampler": "NO_DIE_EVENT"', message)
+            notes = [json.loads(line) for line in
+                     (Path(base) / "evidence" / "orchestrator.jsonl").read_text().splitlines()]
+            self.assertEqual(notes[-1]["step"], "role_exited")
+
+    def test_stop_events_terminates_the_follower(self):
+        import tempfile
+
+        class Proc:
+            returncode = None
+
+            def terminate(self):
+                self.returncode = -15
+
+            def wait(self, timeout):
+                return self.returncode
+        with tempfile.TemporaryDirectory() as base:
+            run = g12.Run(base, "/home/bobby/e.json", NS)
+            self.assertIsNone(run.stop_events())
+            run.events_proc = Proc()
+            with patch.object(g12.time, "sleep"):
+                self.assertEqual(run.stop_events(), -15)
+            self.assertIsNone(run.events_proc)
 
 
 if __name__ == "__main__":

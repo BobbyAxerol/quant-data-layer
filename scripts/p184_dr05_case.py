@@ -18,7 +18,18 @@ import time
 from scripts import p184_dr05_dl_fault as dr
 
 
-def consumer_packet(manifest_path, catalog, venue, issuer, audience):
+BOOK_FEEDS = ("BOOK_SNAPSHOT", "BOOK_DELTA")
+REFERENCE_FEEDS = ("MARK_INDEX_PRICE",)
+
+
+def consumer_packet(manifest_path, catalog, venue, issuer, audience, *, feeds=BOOK_FEEDS):
+    """One isolated TS consumer (ts-consumer JSON) and its sealed V3 route binding.
+
+    ``feeds`` is the sealed feed set; the default is the DR05 BOOK pair (unchanged output). The G12
+    harness (scripts/p184_g12_isolated_fault.py) also seals TRADE/QUOTE/BAR 1m (REALTIME plane, their one
+    source policy -> ``crypto_source_policy_id``) and MARK_INDEX_PRICE (REFERENCE plane, its source policy ->
+    ``execution_reference_source_policy_id``).
+    """
     from qdl.consumer.manifest import ConsumerManifestLoader
     from qdl.consumer.realtime_route import requirement_key
     from qdl.consumer.universal_release import (
@@ -41,8 +52,8 @@ def consumer_packet(manifest_path, catalog, venue, issuer, audience):
         instrument = catalog.instrument_for(req.instrument_uid)
         identity = instrument.identity
         if ((identity.venue, identity.market, instrument.native_symbol) != (scope_venue, scope_market, scope_symbol)
-                or req.feed.value not in ("BOOK_SNAPSHOT", "BOOK_DELTA")):
-            raise ValueError("isolated scope BOOK requirements only")
+                or req.feed.value not in feeds or not set(BOOK_FEEDS) <= set(feeds)):
+            raise ValueError("isolated scope requirements of the sealed feeds only (BOOK pair included)")
         rid = hashlib.sha256(f"{cid}:{requirement_key(req)}".encode()).hexdigest()
         products.append(UniversalReleaseProduct(
             consumer_id=cid, consumer_class=UniversalConsumerClass.TRADING_SYSTEM,
@@ -50,7 +61,8 @@ def consumer_packet(manifest_path, catalog, venue, issuer, audience):
             instrument_id=identity.instrument_id, venue=identity.venue, market=identity.market,
             product_type=identity.product_type.value, native_symbol=instrument.native_symbol,
             feed=req.feed.value, interval=req.interval, source_policy_id=req.source_policy_id,
-            provider_plane="L2", max_freshness_ms=req.max_freshness_ms,
+            provider_plane=("L2" if req.feed.value in BOOK_FEEDS else "REFERENCE" if req.feed.value in REFERENCE_FEEDS
+                            else "REALTIME"), max_freshness_ms=req.max_freshness_ms,
             require_final_bars=req.require_final_bars, require_live=True,
             execution_grade=req.consumer_grade.value == "EXECUTION", route="V2_PRIMARY",
             fallback="BLOCKED", fallback_rule_id=None, blocked_reason="TEST_ONLY_NO_V1"))
@@ -66,9 +78,15 @@ def consumer_packet(manifest_path, catalog, venue, issuer, audience):
         products=tuple(sorted(products, key=lambda p: p.requirement_id)),
         consumer_manifest_revision=manifest.manifest_revision,
         request_policies=tuple(sorted(policies, key=lambda p: p.requirement_id)))
-    sources = {p.source_policy_id for p in products}
-    if len(products) != 2 or len(sources) != 1:
+    sources = {p.source_policy_id for p in products if p.feed in BOOK_FEEDS}
+    others = {p.source_policy_id for p in products if p.feed not in BOOK_FEEDS + REFERENCE_FEEDS}
+    references = {p.source_policy_id for p in products if p.feed in REFERENCE_FEEDS}
+    if (sum(p.feed in BOOK_FEEDS for p in products) != 2 or len(sources) != 1 or len(others) > 1
+            or len(references) > 1 or {p.feed for p in products} != set(feeds)):
         raise ValueError("exact BOOK snapshot/delta source policy required")
+    extra = {"crypto_source_policy_id": others.pop()} if others else {}
+    if references:
+        extra["execution_reference_source_policy_id"] = references.pop()
     return {"schema": "p184.dr05.ts-consumer.v1", "venue": venue,
         "consumer_id": cid, "subject": "spiffe://qdl/paper/" + cid,
         "jwt_private_key_file": "/work/" + label + ".key", "jwt_key_id": label,
@@ -77,7 +95,8 @@ def consumer_packet(manifest_path, catalog, venue, issuer, audience):
         "query_url": "https://localhost:8200", "grpc_target": "localhost:8210",
         "tls_ca_file": "/work/ca.crt", "tls_cert_file": "/work/client.crt",
         "tls_key_file": "/work/client.key", "binding_file": "/work/" + label + ".binding.json",
-        "release_manifest_sha256": digest, "execution_book_source_policy_id": sources.pop()}, binding.canonical_mapping()
+        "release_manifest_sha256": digest, "execution_book_source_policy_id": sources.pop(), **extra}, \
+        binding.canonical_mapping()
 
 
 def _deadline(timeout):

@@ -72195,3 +72195,15 @@ no build, CI or subagent job running.
   aquasec/trivy:0.58.1 (unit-r2, f6b6b5e7): every step PASS except #4 sudo. Remote CI not run.
 - Release evidence updated (upgrade/evidence/releases/v2.2.3/): status PREPARED_NOT_PUBLISHED; the 2026-10-10
   record moved into the history. Publication needs owner push, tag and remote CI.
+- G12 isolated harness extended so G12 can be scored in full (owner chose "close G12, then phase E", 2026-10-11):
+  - New TEST_ONLY deterministic sources, each on its own lane at generation 1: TRADE (3/s plus bursts of 8 every
+    15 s), QUOTE (2/s), BAR 1m closed, MARK/INDEX (Binance markPrice@1s; OKX mark-price + index-tickers pair).
+  - Core bindings are built from the production acquisition mapping; a guard refuses any entry that differs from
+    the production plan.
+  - The clones demand the feeds through their normal routes; the isolated Query adds the production KN
+    execution/alpha MARK readers (product code still from the image).
+  - G2 (TRADE/QUOTE/MARK, frozen thresholds, n >= 100 per venue) and G3 (BAR from close, n >= 3) are measured in the
+    same 300 s post-catch-up window as G1. A fault passes only if every part passes; NOT_MEASURED on any part blocks
+    a PASS.
+  - Container die/oom events are kept as evidence (open item from attempt 1).
+  - Tests: 99 + 157 OK (unittest in rc10). Status: tested locally; the live run follows.

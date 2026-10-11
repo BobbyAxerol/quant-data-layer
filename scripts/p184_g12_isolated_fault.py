@@ -3,12 +3,32 @@
 
 Purpose: run the G12 gate (TS upgrade/p184-phase-d-gates.md) once, in a disposable
 namespace: three KRaft brokers (RF3, min ISR 2, mTLS), the production core,
-projector, Stream and Query images, a test-provenance BOOK publisher, two TS
-writer clones (the TS-owned ``WriterClone``, production entrypoint, 4 workers)
-and a sampler that reads each clone's BOOK view through the TS at-use validator.
+projector, Stream and Query images, a test-provenance publisher (BOOK, and
+TRADE / QUOTE / closed BAR 1m / MARK-INDEX on their own provider lanes), two TS
+writer clones (the TS-owned ``WriterClone``, production entrypoint, 4 workers) and a
+sampler that reads each clone's BOOK view through the TS at-use validator and receives
+every TRADE / QUOTE / MARK / BAR the clone applies (its own ``events.market.v2.*``
+notifications).
 Faults: stop/start one broker, restart the projector, restart Stream. Per fault
 it records the G11 four timestamps (injected, cleared, first valid apply,
-caught up) and then G1 transit inside a fixed window.
+caught up) and then, inside one fixed window, G1 (BOOK), G2 (TRADE, QUOTE and
+MARK_INDEX_PRICE new-event transit) and G3 (BAR 1m from close). A fault passes only
+when caught up in time and G1, every G2 feed and G3 pass; a part with too few samples
+is NOT_MEASURED, never a pass.
+
+Feeds: the DR05 material is BOOK-only; the in-container ``--feeds`` step (network
+none) seals TRADE, QUOTE, BAR 1m and MARK_INDEX_PRICE for the same two instruments
+into the same material: core bindings from the production acquisition mapping
+(``ProductionCatalogBuilder._acquisition``, checked equal to the production plan;
+MARK/INDEX as the deployment's physical components), the source catalog's own
+bindings, the TS paper manifest's requirement shape (event recency / session
+liveness null like the DR05 BOOK requirements), the route binding and ts-consumer
+via the DR05 ``consumer_packet`` and a recompiled bundle. The writer reads MARK
+through Query reference reads woken by Stream: the Query role (``--query``) is the
+DR05 Query of the code under test with the production KN execution MARK/INDEX
+reader wired in (``qdl.runtime.stable`` kn3). Exits of every owned container
+(``--rm`` removes it, so its own inspect is gone) are recorded from the daemon's
+die/oom/kill events (``evidence/container-events.jsonl``, ``exit-states.json``).
 
 Reuse, not a new engine: material/frames/raw envelopes come from the DR05 tools
 (``p184_dr05_dl_fault``, ``p184_dr05_raw_publisher``), the Query read view is the
@@ -41,11 +61,15 @@ passed value for its role (``evidence/provenance.jsonl``). ``--query-code image`
 runs Query from the image's own /app (no worktree mount); the default ``worktree``
 keeps the earlier read-only worktree mount.
 In-container modes (python image, inside the namespace): ``--topics``,
-``--publish``, ``--monitor``; each bounded by ``--seconds`` / its own deadline.
+``--publish``, ``--monitor``; each bounded by ``--seconds`` / its own deadline;
+``--feeds`` (network none, material only); ``--query`` (the Query role).
 """
 from __future__ import annotations
 
 import argparse
+import copy
+import hashlib
+import inspect
 import json
 import math
 import os
@@ -87,7 +111,42 @@ GATE = {"caught_up_s": 600, "age_ms": 1000, "hold_s": 30, "window_s": 300,
         "p95_ms": 500, "p99_ms": 1000, "max_ms": 2000, "p99_min_n": 100}
 LIMITS = {"disk_free_bytes": 20 * 10**9, "mem_available_bytes": 3 * 2**30,
           "deadline_s": 3600, "holder_s": 5400, "broker_outage_s": 60,
-          "role_return_s": 120, "clone_ready_s": 300, "baseline_s": 300}
+          "role_return_s": 120, "clone_ready_s": 300, "baseline_s": 300, "md_ready_s": 180}
+# G2 / G3 (frozen TS gate rows; owner decision 2026-10-09). min_n: below it the part is NOT_MEASURED.
+# G2 is new-event transit (publish -> first applied notification); G3 is BAR 1m from close.
+GATE_G2_G3 = {"TRADE": {"p95_ms": 500, "max_ms": 1500, "min_n": 100},
+              "QUOTE": {"p95_ms": 500, "max_ms": 1000, "min_n": 100},
+              "MARK": {"p95_ms": 500, "max_ms": 1000, "min_n": 100},
+              "BAR": {"p95_ms": 5000, "max_ms": 60000, "min_n": 3}}
+G2_FEEDS = ("TRADE", "QUOTE", "MARK")  # MARK = MARK_INDEX_PRICE
+# An event not applied this long after its reference is lost (TRADE/BAR: a FAIL). QUOTE (ON_CHANGE) and MARK (a
+# latest-state reference read per Stream wake) may legitimately skip a superseded value: only counted as unseen.
+# Before that an event is pending and not sampled.
+LOST_AFTER_S = {"TRADE": 10, "QUOTE": 10, "MARK": 10, "BAR": 60}
+LATEST_STATE_FEEDS = ("QUOTE", "MARK")
+MD_FEEDS = ("TRADE", "QUOTE", "BAR", "MARK")
+CATALOG_FEED = {"TRADE": "TRADE", "QUOTE": "QUOTE", "BAR": "BAR", "MARK": "MARK_INDEX_PRICE"}
+# The production acquisition plan: read-only, only for the OKX index symbol of a MARK_INDEX binding (never inferred).
+PRODUCTION_ACQUISITION = "config/v2/stable-acquisition-bindings.yaml"
+BAR_INTERVAL, BAR_MS = "1m", 60_000
+# Synthetic venue cadence per instrument: steady trades plus a short burst, on-change quotes, one final bar per
+# minute shortly after its close (Binance's native lane measured 0.04-1.1 s), a few closed bars seeded at start
+# (the bar edge's REST bootstrap role) so the writer's BAR warmup has a retained view, one MARK/INDEX observation
+# per second (Binance @markPrice@1s; OKX mark-price + index-tickers pushed as one changed pair per second).
+MD_RATE = {"trade_per_s": 3, "burst_every_s": 15, "burst_trades": 8, "quote_per_s": 2,
+           "bar_delay_ms": 200, "seed_bars": 5, "mark_per_s": 1}
+TEST_ADAPTER = "p184-synthetic-test-only"
+# Requirement shape of the deployed TS paper manifest (consumers/stable/trading-system-paper.yaml r10) for these feeds;
+# event recency and session liveness stay null like the DR05 BOOK requirements (no isolated provider-session signal).
+MD_REQUIREMENTS = {"TRADE": {"max_freshness_ms": 3000, "warmup_limit": 0, "require_final_bars": True},
+                   "QUOTE": {"max_freshness_ms": 2000, "warmup_limit": 0, "require_final_bars": True},
+                   "BAR": {"max_freshness_ms": 180000, "warmup_limit": 1000, "interval": BAR_INTERVAL,
+                           "require_final_bars": True},
+                   "MARK": {"max_freshness_ms": 2000, "warmup_limit": 0, "require_final_bars": False,
+                            "recovery": "FRESH_SNAPSHOT"}}
+# provider kind suffix -> lane. MARK lanes: Binance one BOTH component; OKX a MARK and an INDEX component.
+MD_KIND_FEED = {"_trade": "TRADE", "_bbo": "QUOTE", "_bar": "BAR", "_mark_index": "MARK", "_mark_price": "MARK",
+                "_index_price": "INDEX"}
 IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}")
 QUERY_CODE = ("worktree", "image")
 # G12 role -> DR05/DR08 image role (handoff "images"; dr05 image_set() requires exactly these keys).
@@ -284,11 +343,18 @@ def topology(ns, work, topic_id="", *, uid=None, images=None, query_code="worktr
          "QDL_KN_QUEUE_BYTES_TOTAL": "33554432"}) + [
         "--entrypoint", "/usr/local/bin/qdl-stream-gateway", images["stream"], "serve"]
     # "image": the Query code is the image's own /app (the release under test); "worktree": read-only mount.
-    code = ["-w", "/app"] if query_code == "image" else ["-v", f"{ROOT}:/app:ro", "-w", "/app"]
+    # Either way the entry is this harness's --query (serve_query): the DR05/DR08 Query of that code plus the
+    # execution MARK/INDEX reader; with "image" only this one harness file is mounted, never the worktree.
+    if query_code == "image":
+        code = ["-v", f"{ROOT / 'scripts/p184_g12_isolated_fault.py'}:/harness/p184_g12_isolated_fault.py:ro",
+                "-w", "/app"]
+        entry = "/harness/p184_g12_isolated_fault.py"
+    else:
+        code, entry = ["-v", f"{ROOT}:/app:ro", "-w", "/app"], "scripts/p184_g12_isolated_fault.py"
     roles["query"] = _env(_base(ns, "query", network=net, memory="512m", cpus="0.5", uid=uid)
         + ["--tmpfs", "/tmp:rw,size=64m,mode=1777"] + mount + code,
         {**common, "PYTHONPATH": "/app:/app/generated/python", "PYTHONDONTWRITEBYTECODE": "1"}) + [
-        "--entrypoint", "python", images["python"], "-B", "scripts/p184_dr05_observer.py", "--query", "/work"]
+        "--entrypoint", "python", images["python"], "-B", entry, "--query", "/work"]
     return roles
 
 
@@ -312,6 +378,34 @@ def helper_argv(ns, work, args, *, role="helper", detach=False, evidence=None, n
     if evidence is not None:
         argv += ["-v", f"{Path(evidence).resolve()}:/evidence"]
     return argv + ["--entrypoint", "python", images["python"], "-B", script, *args]
+
+
+def md_event_row(channel, data):
+    """One applied TS notification -> evidence fields, or None (not a G2/G3 sample).
+
+    Runs inside the sampler (its source is embedded in SAMPLER). TRADE/QUOTE: the
+    writer's per-event ``events.market.v2.execution.<feed>.*`` publish (every applied
+    event; observed_at_ms = canonical source_event_time); id = native trade id, or the
+    quote's event ms. MARK: the ordered MARK_INDEX_PRICE state publish
+    (``execution.mark_index_price``, only when the CAS applies a newer view); id = the
+    pair's observed ms. BAR: ``events.market.v2.bar.*`` closed 1m rows; id = open ms.
+    """
+    parts = str(channel).split(".")
+    try:
+        payload = json.loads(data)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict) or parts[:3] != ["events", "market", "v2"] or len(parts) < 5:
+        return None
+    if parts[3] == "execution" and parts[4] in ("trade", "quote", "mark_index_price"):
+        feed = {"trade": "TRADE", "quote": "QUOTE", "mark_index_price": "MARK"}[parts[4]]
+        event_ms = payload.get("observed_at_ms")
+        ident = ((payload.get("payload") or {}).get("native_trade_id") if feed == "TRADE" else event_ms)
+        return {"feed": feed, "id": None if ident is None else str(ident), "ev_ms": event_ms}
+    if parts[3] == "bar" and payload.get("is_closed") is True and payload.get("interval") == "1m":
+        opened = payload.get("timestamp_ms")
+        return {"feed": "BAR", "id": None if opened is None else str(opened), "ev_ms": opened}
+    return None
 
 
 SAMPLER = r'''
@@ -348,6 +442,32 @@ async def beat(r):
     b = json.loads(await r.get(keys[0]) or "{}"); d = b.get("details") or {}
     return {"heartbeat": True, "status": b.get("status"), "demanded": d.get("demanded_v2_slices"),
             "session_ready": d.get("session_ready_v2_slices")}
+MD_PATTERNS = ("events.market.v2.execution.trade.*", "events.market.v2.execution.quote.*",
+               "events.market.v2.execution.mark_index_price.*", "events.market.v2.bar.*")
+async def listen(url, venue, f, end):
+    """PSUBSCRIBE only (read-only): receipt time of every applied TRADE/QUOTE/MARK/closed BAR of one clone."""
+    while time.monotonic() < end and not STOP:
+        r = Redis.from_url(url.rsplit("/", 1)[0] + "/0", socket_connect_timeout=1, decode_responses=True)
+        p = r.pubsub(ignore_subscribe_messages=True)
+        try:
+            await p.psubscribe(*MD_PATTERNS)
+            while time.monotonic() < end and not STOP:
+                m = await p.get_message(ignore_subscribe_messages=True, timeout=0.5)
+                if not m or m.get("type") != "pmessage":
+                    continue
+                t = time.time_ns()
+                row = md_event_row(m["channel"], m["data"])
+                if row is not None:
+                    f.write(json.dumps({"k": "ev", "t": t, "venue": venue, **row}) + "\n")
+        except Exception as e:
+            f.write(json.dumps({"k": "ev_error", "t": time.time_ns(), "venue": venue, "error": type(e).__name__}) + "\n")
+            await asyncio.sleep(1)
+        finally:
+            for close in (p.aclose, r.aclose):
+                try:
+                    await close()
+                except Exception:
+                    pass
 async def main(out, seconds, interval_ms, targets):
     views = {v: Redis.from_url(u, socket_timeout=1, socket_connect_timeout=1) for v, u in targets.items()}
     beats = {v: Redis.from_url(u.rsplit("/", 1)[0] + "/2", socket_timeout=1, socket_connect_timeout=1,
@@ -355,6 +475,7 @@ async def main(out, seconds, interval_ms, targets):
     end = time.monotonic() + seconds
     last, last_t, last_beat = {}, {}, 0.0
     with open(out, "a", buffering=1) as f:
+        listeners = [asyncio.create_task(listen(u, v, f, end)) for v, u in targets.items()]
         while time.monotonic() < end and not STOP:
             for venue, r in views.items():
                 t = time.time_ns()
@@ -376,11 +497,16 @@ async def main(out, seconds, interval_ms, targets):
                         row = {"heartbeat": None, "error": type(e).__name__}
                     f.write(json.dumps({"k": "hb", "t": time.time_ns(), "venue": venue, **row}) + "\n")
             await asyncio.sleep(interval_ms / 1000)
+        await asyncio.wait(listeners, timeout=3)
+        for task in listeners:
+            task.cancel()
     for r in (*views.values(), *beats.values()):
         await r.aclose()
 asyncio.run(main(sys.argv[1], float(sys.argv[2]), float(sys.argv[3]),
                  dict(item.split("=", 1) for item in sys.argv[4].split(","))))
 '''
+# The sampler runs the same parser the unit tests exercise.
+SAMPLER = SAMPLER.replace("STOP = []\n", "STOP = []\n" + inspect.getsource(md_event_row), 1)
 
 
 def sampler_argv(ns, evidence, seconds, interval_ms=50, images=None):
@@ -509,6 +635,143 @@ def g1_stats(values):
     return {k: (round(v, 3) if isinstance(v, float) else v) for k, v in stats.items()}
 
 
+def md_publish_index(rows):
+    """(feed, venue, id) -> the publisher's row of one TRADE/QUOTE/BAR source event (k == pub_md)."""
+    return {(r["feed"], r["venue"], str(r["id"])): r for r in rows if r.get("k") == "pub_md"}
+
+
+def md_first_seen(rows):
+    """(feed, venue, id) -> first receipt ns of the clone's applied notification (k == ev)."""
+    seen = {}
+    for r in rows:
+        if r.get("k") == "ev" and r.get("id") is not None:
+            key = (r["feed"], r["venue"], str(r["id"]))
+            if key not in seen or r["t"] < seen[key]:
+                seen[key] = r["t"]
+    return seen
+
+
+def md_reference_ns(row):
+    """Transit origin: the bar close for BAR (open + 1 m), else the publish stamp (= the frame's event time)."""
+    return (row["close_ms"] * 1_000_000) if row["feed"] == "BAR" else row["t"]
+
+
+def md_sample(index, seen, feed, venue, start_ns, end_ns, covered_ns):
+    """New-event transit (ms) of every non-seed event of one feed/venue whose reference lies in [start, end).
+
+    An event never applied is lost once the sampler covered reference + LOST_AFTER_S (QUOTE / MARK: unseen,
+    a latest-state feed may skip a superseded value), else pending (excluded: not yet decidable).
+    """
+    values, counts = [], {"lost": 0, "unseen": 0, "pending": 0}
+    for key, row in index.items():
+        if key[0] != feed or key[1] != venue or row.get("seed"):
+            continue
+        reference = md_reference_ns(row)
+        if not start_ns <= reference < end_ns:
+            continue
+        applied = seen.get(key)
+        if applied is not None:
+            values.append((applied - reference) / 1e6)
+        elif covered_ns >= reference + LOST_AFTER_S[feed] * 1_000_000_000:
+            counts["unseen" if feed in LATEST_STATE_FEEDS else "lost"] += 1
+        else:
+            counts["pending"] += 1
+    return values, counts
+
+
+def md_stats(feed, values, counts=None):
+    """G2/G3 verdict of one feed/venue: PASS, FAIL, or NOT_MEASURED below the minimum sample count."""
+    gate = GATE_G2_G3[feed]
+    values = sorted(values)
+    n = len(values)
+    stats = {"n": n, "p50_ms": quantile(values, .5), "p95_ms": quantile(values, .95),
+             "p99_ms": quantile(values, .99) if n >= 100 else None, "max_ms": values[-1] if values else None,
+             **(counts or {"lost": 0, "unseen": 0, "pending": 0})}
+    if stats["lost"]:
+        stats["status"] = "FAIL"
+        stats["note"] = "events never applied"
+    elif n < gate["min_n"]:
+        stats["status"] = "NOT_MEASURED"
+        stats["note"] = f"n < {gate['min_n']}"
+    else:
+        stats["status"] = ("PASS" if stats["p95_ms"] <= gate["p95_ms"] and stats["max_ms"] < gate["max_ms"]
+                           else "FAIL")
+    stats["pass"] = stats["status"] == "PASS"
+    return {k: (round(v, 3) if isinstance(v, float) else v) for k, v in stats.items()}
+
+
+def part_status(stats):
+    """One gate part over its cells: any FAIL -> FAIL, else any NOT_MEASURED -> NOT_MEASURED, else PASS."""
+    statuses = [s["status"] for s in stats]
+    if not statuses:
+        return "NOT_MEASURED"
+    return "FAIL" if "FAIL" in statuses else "NOT_MEASURED" if "NOT_MEASURED" in statuses else "PASS"
+
+
+def md_window(publish_rows, sampler_rows, start_ns, end_ns):
+    """G2 (TRADE, QUOTE, MARK_INDEX_PRICE) and G3 (BAR 1m) over one window, plus each part's status."""
+    index, seen = md_publish_index(publish_rows), md_first_seen(sampler_rows)
+    covered = max((r["t"] for r in sampler_rows if r.get("k") in ("view", "ev")), default=0)
+    cell = lambda feed, venue: md_stats(feed, *md_sample(index, seen, feed, venue, start_ns, end_ns, covered))
+    g2 = {feed: {venue: cell(feed, venue) for venue in VENUES} for feed in G2_FEEDS}
+    g3 = {"BAR_" + BAR_INTERVAL: {venue: cell("BAR", venue) for venue in VENUES}}
+    return {"g2": g2, "g3": g3,
+            "g2_feed_status": {feed: part_status(list(cells.values())) for feed, cells in g2.items()},
+            "g2_status": part_status([s for cells in g2.values() for s in cells.values()]),
+            "g3_status": part_status([s for cells in g3.values() for s in cells.values()])}
+
+
+def md_missing(sampler_rows):
+    """FEED@VENUE never applied by a clone yet (start-up gate before the baseline)."""
+    seen = {(key[0], key[1]) for key in md_first_seen(sampler_rows)}
+    return [f"{feed}@{venue}" for venue in VENUES for feed in MD_FEEDS if (feed, venue) not in seen]
+
+
+def publisher_md_summary(publish_rows):
+    """Per feed: published source events (seed bars apart), broker ACKs and delivery errors."""
+    out = {feed: {"published": 0, "seed": 0, "acked": 0, "delivery_errors": 0} for feed in MD_FEEDS}
+    for r in publish_rows:
+        feed = out.get(r.get("feed"))
+        if feed is None:
+            continue
+        if r.get("k") == "pub_md":
+            feed["seed" if r.get("seed") else "published"] += 1
+        elif r.get("k") == "ack_md":
+            feed["delivery_errors" if "error" in r else "acked"] += 1
+    return out
+
+
+def exit_states(event_rows):
+    """role -> exit record of every owned container life, from the daemon's container events.
+
+    ``--rm`` removes a container as it exits, so ``docker inspect`` has nothing left to read;
+    the die event carries exitCode, an oom event marks the OOM kill of that life, a kill event
+    the signal that was sent (docker stop / teardown). Attributes are the daemon's; never inferred.
+    """
+    states = {}
+    pending = {}
+    for row in sorted(event_rows, key=lambda r: r.get("timeNano") or 0):
+        attrs = (row.get("Actor") or {}).get("Attributes") or {}
+        match = re.fullmatch(NS_PATTERN + r"-(.+)", str(attrs.get("name", "")))
+        if not match:
+            continue
+        role, action = match.group(1), row.get("Action") or row.get("status")
+        life = pending.setdefault(role, {"oom_killed": False, "kill_signals": []})
+        if action == "oom":
+            life["oom_killed"] = True
+        elif action == "kill":
+            life["kill_signals"].append(attrs.get("signal"))
+        elif action == "die":
+            code = attrs.get("exitCode")
+            life.update(exit_code=int(code) if str(code).lstrip("-").isdigit() else None,
+                        died_ns=row.get("timeNano"),
+                        oom_killed=life["oom_killed"] or str(attrs.get("oomKilled", "")).lower() == "true")
+            states.setdefault(role, {"lives": []})["lives"].append(pending.pop(role))
+    for role, value in states.items():
+        value.update({k: value["lives"][-1][k] for k in ("exit_code", "oom_killed", "died_ns")})
+    return states
+
+
 def cleared_at(kind, monitor_rows, restart_ns, node=None):
     """Fault-cleared time from the monitor (packet section 5)."""
     for row in monitor_rows:
@@ -568,8 +831,15 @@ def evaluate_fault(fault, publish_rows, sampler_rows, monitor_rows, *, window_s=
         monitor_rows, cleared, lambda r: r.get("projector_lag") is not None and r["projector_lag"] <= 1)
     result["isr_restored_ns"] = first_monitor(monitor_rows, cleared, lambda r: r.get("under_replicated") == 0)
     result["g12_caught_up_pass"] = result["caught_up_s"] <= GATE["caught_up_s"]
+    # G2/G3 over the same window as G1 (new events whose publish time / bar close lies in it).
+    result.update(md_window(publish_rows, sampler_rows, *window))
+    result["parts"] = {"caught_up": result["g12_caught_up_pass"], "window_complete": complete,
+                       "g1": "PASS" if all(result["g1"][v]["pass"] for v in VENUES) else "FAIL",
+                       "g2": result["g2_status"], "g2_feeds": result["g2_feed_status"],
+                       "g3": result["g3_status"]}
     result["pass"] = (result["g12_caught_up_pass"] and complete
-                      and all(result["g1"][v]["pass"] for v in VENUES))
+                      and all(result["g1"][v]["pass"] for v in VENUES)
+                      and result["g2_status"] == "PASS" and result["g3_status"] == "PASS")
     return result
 
 
@@ -580,20 +850,25 @@ def evaluate(evidence):
     monitor_rows = sorted(load_jsonl(evidence / "monitor.jsonl"), key=lambda r: r.get("t", 0))
     faults = [r for r in load_jsonl(evidence / "faults.jsonl") if r.get("k") == "fault"]
     index, series = publish_index(publish_rows), view_series(sampler_rows)
-    out = {"schema": "p184.g12.verdict.v1", "provenance": "TEST_ONLY", "level": "ISOLATED_FAULT",
-           "gate": GATE, "faults": [], "g2": "NOT_MEASURED (BOOK-only isolated source)",
-           "g3": "NOT_MEASURED (BOOK-only isolated source)"}
+    out = {"schema": "p184.g12.verdict.v2", "provenance": "TEST_ONLY", "level": "ISOLATED_FAULT",
+           "gate": GATE, "gate_g2_g3": GATE_G2_G3, "faults": [],
+           "g2": "per fault: TRADE, QUOTE and MARK (MARK_INDEX_PRICE) new-event transit "
+                 "(publish -> first applied notification)",
+           "g3": "per fault: BAR 1m from close (open + 60 s -> first applied closed-bar notification)"}
     base = [r for r in load_jsonl(evidence / "faults.jsonl") if r.get("k") == "baseline"]
     if base:
         window = (base[0]["start_ns"], base[0]["end_ns"])
         out["baseline_g1"] = {v: g1_stats(transit(series, index, v, *window)) for v in VENUES}
+        out["baseline_g2_g3"] = md_window(publish_rows, sampler_rows, *window)
     for fault in faults:
         out["faults"].append(evaluate_fault(fault, publish_rows, sampler_rows, monitor_rows))
     acks = [r for r in publish_rows if r.get("k") == "ack"]
     out["publisher"] = {"frames": sum(1 for r in publish_rows if r.get("k") == "pub"),
                         "acked": sum(1 for r in acks if "error" not in r),
                         "delivery_errors": sum(1 for r in acks if "error" in r),
-                        "resyncs": sum(1 for r in publish_rows if r.get("k") == "resync")}
+                        "resyncs": sum(1 for r in publish_rows if r.get("k") == "resync"),
+                        "market_data": publisher_md_summary(publish_rows)}
+    out["exit_states"] = exit_states(load_jsonl(evidence / "container-events.jsonl"))
     out["pass"] = bool(out["faults"]) and len(out["faults"]) == 3 and all(f["pass"] for f in out["faults"])
     return out
 
@@ -676,9 +951,419 @@ class _Stop:
         self.requested = True
 
 
+SYMBOLS = {"BINANCE": "ETHUSDT", "OKX": "ETH-USDT-SWAP"}  # the DR05 linear scopes' native symbols
+
+
+def _md_frame(venue, feed, payload, at_ns, lane=None):
+    return {"venue": venue, "native_symbol": SYMBOLS[venue], "feed": feed, "lane": lane or feed.lower(),
+            "transport": "WEBSOCKET", "received_at_ns": at_ns, "test_provenance": True, "provenance": "TEST_ONLY",
+            "adapter_version": TEST_ADAPTER, "payload": payload}
+
+
+def _check_md(venue, at_ns):
+    if venue not in SYMBOLS or type(at_ns) is not int or at_ns <= 0:
+        raise ValueError("venue and positive integer timestamp required")
+    return at_ns // 1_000_000
+
+
+def trade_frame(venue, trade_id, at_ns):
+    """One provider-shaped trade (Binance ``@trade`` / OKX ``trades``), event time = the stamp; deterministic."""
+    ms = _check_md(venue, at_ns)
+    if type(trade_id) is not int or trade_id <= 0:
+        raise ValueError("positive integer trade id required")
+    price = f"{60000 + (trade_id % 20) / 10:.1f}"
+    if venue == "BINANCE":
+        payload = {"e": "trade", "E": ms, "T": ms, "s": SYMBOLS[venue], "t": trade_id, "p": price,
+                   "q": "0.010", "X": "MARKET", "m": trade_id % 2 == 0}
+    else:
+        payload = {"arg": {"channel": "trades", "instId": SYMBOLS[venue]}, "data": [{
+            "instId": SYMBOLS[venue], "tradeId": str(trade_id), "px": price, "sz": "1",
+            "side": "sell" if trade_id % 2 == 0 else "buy", "ts": str(ms)}]}
+    return _md_frame(venue, "TRADE", payload, at_ns)
+
+
+def quote_frame(venue, sequence, at_ns):
+    """One top-of-book quote (Binance ``@bookTicker`` / OKX ``bbo-tbt``); every quote differs from the previous
+    one (the bid size moves), so ON_CHANGE delivery has a change to deliver."""
+    ms = _check_md(venue, at_ns)
+    if type(sequence) is not int or sequence <= 0:
+        raise ValueError("positive integer quote sequence required")
+    size = f"{1 + (sequence % 97) / 100:.2f}"
+    if venue == "BINANCE":
+        payload = {"e": "bookTicker", "u": sequence, "s": SYMBOLS[venue], "b": "60000.0", "B": size,
+                   "a": "60001.0", "A": "1.00", "T": ms, "E": ms}
+    else:
+        payload = {"arg": {"channel": "bbo-tbt", "instId": SYMBOLS[venue]}, "data": [{
+            "asks": [["60001.0", "1", "0", "1"]], "bids": [["60000.0", size, "0", "1"]],
+            "ts": str(ms), "seqId": sequence}]}
+    return _md_frame(venue, "QUOTE", payload, at_ns)
+
+
+def bar_frame(venue, open_ms, at_ns, trades=0):
+    """One FINAL 1m bar (Binance closed kline x=true / OKX candle1m confirm=1), sent after its close."""
+    ms = _check_md(venue, at_ns)
+    if type(open_ms) is not int or open_ms <= 0 or open_ms % BAR_MS or ms < open_ms + BAR_MS:
+        raise ValueError("a closed minute-aligned bar is required")
+    if venue == "BINANCE":
+        payload = {"e": "kline", "E": ms, "s": SYMBOLS[venue], "k": {
+            "t": open_ms, "T": open_ms + BAR_MS - 1, "s": SYMBOLS[venue], "i": BAR_INTERVAL, "f": -1, "L": -1,
+            "o": "60000.0", "c": "60001.0", "h": "60001.9", "l": "60000.0", "v": "1.000", "n": int(trades),
+            "x": True, "q": "60000.50", "V": "0.500", "Q": "30000.25"}}
+    else:
+        payload = {"arg": {"channel": "candle" + BAR_INTERVAL, "instId": SYMBOLS[venue]}, "data": [[
+            str(open_ms), "60000.0", "60001.9", "60000.0", "60001.0", "10", "0.1", "6000.05", "1"]]}
+    return _md_frame(venue, "BAR", payload, at_ns)
+
+
+INDEX_SYMBOLS = {"OKX": "ETH-USDT"}  # default for frames only; the sealed binding's physical symbol is used at run
+
+
+def mark_frames(venue, sequence, at_ns, index_symbol=None):
+    """One MARK/INDEX observation: Binance one ``@markPrice@1s`` frame (mark and index together, component BOTH);
+    OKX a ``mark-price`` frame and an ``index-tickers`` frame of the index symbol, same ms (the core pairs them on
+    one generation). Each frame's ``feed`` is its component lane (MARK / INDEX)."""
+    ms = _check_md(venue, at_ns)
+    if type(sequence) is not int or sequence <= 0:
+        raise ValueError("positive integer mark sequence required")
+    mark, index = f"{60000.5 + (sequence % 10) / 100:.2f}", f"{60000.4 + (sequence % 10) / 100:.2f}"
+    if venue == "BINANCE":
+        funding = (ms // 28_800_000 + 1) * 28_800_000
+        return [_md_frame(venue, "MARK", {"e": "markPriceUpdate", "E": ms, "s": SYMBOLS[venue], "p": mark,
+                                          "P": mark, "i": index, "r": "0.00010000", "T": funding}, at_ns, "mark")]
+    index_symbol = index_symbol or INDEX_SYMBOLS[venue]
+    mark_frame = _md_frame(venue, "MARK", {"arg": {"channel": "mark-price", "instId": SYMBOLS[venue]}, "data": [{
+        "instType": "SWAP", "instId": SYMBOLS[venue], "markPx": mark, "ts": str(ms)}]}, at_ns, "mark")
+    index_frame = _md_frame(venue, "INDEX", {"arg": {"channel": "index-tickers", "instId": index_symbol}, "data": [{
+        "instId": index_symbol, "idxPx": index, "high24h": "60100.0", "low24h": "59900.0", "open24h": "60000.0",
+        "sodUtc0": "60000.0", "sodUtc8": "60000.0", "ts": str(ms)}]}, at_ns, "mark")
+    index_frame["native_symbol"] = index_symbol
+    return [mark_frame, index_frame]
+
+
+def market_plan(tick, hz, rate=MD_RATE):
+    """Deterministic (trades, quotes, marks) to send at publisher tick ``tick`` of a ``hz`` loop: the per-second
+    rates spread over the ticks, plus a burst of trades every ``burst_every_s``."""
+    def spread(per_s):
+        return math.floor((tick + 1) * per_s / hz) - math.floor(tick * per_s / hz)
+    every = max(1, round(rate["burst_every_s"] * hz))
+    trades = spread(rate["trade_per_s"]) + (rate["burst_trades"] if tick and tick % every == 0 else 0)
+    return trades, spread(rate["quote_per_s"]), spread(rate["mark_per_s"])
+
+
+def seed_opens(now_ms, count=MD_RATE["seed_bars"]):
+    """Open times of the ``count`` closed bars just before the current minute (oldest first)."""
+    current = now_ms // BAR_MS * BAR_MS
+    return [current - (count - i) * BAR_MS for i in range(count)]
+
+
+def bars_due(now_ms, last_open_ms, delay_ms=MD_RATE["bar_delay_ms"]):
+    """Opens of every bar after ``last_open_ms`` whose close + delay has passed, in order (no gap after a stall)."""
+    due, nxt = [], last_open_ms + BAR_MS
+    while nxt + BAR_MS + delay_ms <= now_ms:
+        due.append(nxt)
+        nxt += BAR_MS
+    return due
+
+
+class MarketDataSource:
+    """The synthetic venue's TRADE / QUOTE / BAR / MARK events, per tick of the publisher loop (no I/O).
+
+    Each event is {venue, feed, id, frame | frames, extra}: id is the identity the TS notification carries back
+    (trade id, quote event ms, bar open ms, mark observation ms); a frame is stamped by ``clock`` when it is
+    built (an OKX MARK event is its mark + index pair). Trade ids and quote / mark sequences only increase; bars
+    are contiguous from the seed on, each sent once after its close.
+    """
+
+    def __init__(self, venues=VENUES, rate=MD_RATE, clock=time.time_ns, index_symbols=None):
+        self.venues, self.rate, self.clock = tuple(venues), rate, clock
+        self.index_symbols = dict(INDEX_SYMBOLS if index_symbols is None else index_symbols)
+        self.mark_seq = {v: 0 for v in self.venues}
+        self.mark_ms = {v: 0 for v in self.venues}
+        self.trade_id = {v: 0 for v in self.venues}
+        self.quote_seq = {v: 0 for v in self.venues}
+        self.quote_ms = {v: 0 for v in self.venues}
+        self.last_open = {v: None for v in self.venues}
+        self.minute_trades = {v: {} for v in self.venues}
+
+    def _bar(self, venue, open_ms, at_ns, seed):
+        frame = bar_frame(venue, open_ms, at_ns, self.minute_trades[venue].pop(open_ms, 0))
+        self.last_open[venue] = open_ms
+        return {"venue": venue, "feed": "BAR", "id": str(open_ms), "frame": frame,
+                "extra": {"close_ms": open_ms + BAR_MS, "seed": seed}}
+
+    def seed(self, now_ns):
+        """The closed bars just before the current minute (a retained view for the writer's BAR warmup)."""
+        return [self._bar(venue, open_ms, now_ns, True) for venue in self.venues
+                for open_ms in seed_opens(now_ns // 1_000_000, self.rate["seed_bars"])]
+
+    def tick(self, tick, hz):
+        events = []
+        trades, quotes, marks = market_plan(tick, hz, self.rate)
+        for venue in self.venues:
+            for _ in range(trades):
+                self.trade_id[venue] += 1
+                at_ns = self.clock()
+                minute = at_ns // 1_000_000 // BAR_MS * BAR_MS
+                self.minute_trades[venue][minute] = self.minute_trades[venue].get(minute, 0) + 1
+                events.append({"venue": venue, "feed": "TRADE", "id": str(self.trade_id[venue]),
+                               "frame": trade_frame(venue, self.trade_id[venue], at_ns), "extra": {}})
+            for _ in range(quotes):
+                at_ns = self.clock()
+                if at_ns // 1_000_000 <= self.quote_ms[venue]:
+                    continue  # the quote identity is its event ms: never two in one ms
+                self.quote_seq[venue] += 1
+                self.quote_ms[venue] = at_ns // 1_000_000
+                events.append({"venue": venue, "feed": "QUOTE", "id": str(self.quote_ms[venue]),
+                               "frame": quote_frame(venue, self.quote_seq[venue], at_ns), "extra": {}})
+            for _ in range(marks):
+                at_ns = self.clock()
+                if at_ns // 1_000_000 <= self.mark_ms[venue]:
+                    continue  # the mark identity is its observation ms
+                self.mark_seq[venue] += 1
+                self.mark_ms[venue] = at_ns // 1_000_000
+                events.append({"venue": venue, "feed": "MARK", "id": str(self.mark_ms[venue]), "extra": {},
+                               "frames": mark_frames(venue, self.mark_seq[venue], at_ns,
+                                                     self.index_symbols.get(venue))})
+            if self.last_open[venue] is not None:
+                for open_ms in bars_due(self.clock() // 1_000_000, self.last_open[venue], self.rate["bar_delay_ms"]):
+                    events.append(self._bar(venue, open_ms, self.clock(), False))
+        return events
+
+
+def lane_feed(provider_kind):
+    """The lane of a sealed core binding by provider kind (TRADE/QUOTE/BAR/MARK/INDEX), None otherwise."""
+    return next((f for suffix, f in MD_KIND_FEED.items() if provider_kind.endswith(suffix)), None)
+
+
+def md_bindings(config):
+    """(venue, lane) -> the sealed core binding of each TRADE/QUOTE/BAR/MARK lane (and the OKX INDEX
+    component); exactly one each."""
+    out = {}
+    for binding in config["core"]["bindings"]:
+        if binding.get("l2"):
+            continue
+        feed = lane_feed(binding["provider_kind"])
+        if feed is None or (binding["venue"], feed) in out:
+            raise ValueError("unexpected or duplicate market-data binding " + binding["source_id"])
+        out[(binding["venue"], feed)] = binding
+    expected = {(venue, feed) for venue in VENUES for feed in MD_FEEDS} | {(v, "INDEX") for v in INDEX_SYMBOLS}
+    if set(out) != expected:
+        raise ValueError("sealed TRADE/QUOTE/BAR/MARK lane per venue (and the OKX INDEX component) required")
+    return out
+
+
+def md_envelope(binding, frame, ns):
+    """Raw envelope of a TRADE/QUOTE/BAR/MARK test frame on its own provider lane (session
+    ``<ns>.<venue>.<lane>``, generation 1, never changed): the BOOK lane's resync generations never fence these
+    lanes. A MARK/INDEX component carries its physical symbol/channel (the core's binding key)."""
+    from qdl.raw.envelope import build_raw_envelope
+    import uuid
+    namespace(ns)
+    if frame.get("test_provenance") is not True or frame.get("provenance") != "TEST_ONLY" \
+            or frame.get("adapter_version") != TEST_ADAPTER or frame.get("transport") != "WEBSOCKET":
+        raise ValueError("explicit test provenance and websocket transport required")
+    symbol = binding.get("physical_native_symbol") or binding["native_symbol"]
+    channel = binding.get("physical_native_channel") or binding["native_channel"]
+    if (binding["venue"], symbol) != (frame["venue"], frame["native_symbol"]) or \
+            lane_feed(binding["provider_kind"]) != frame["feed"]:
+        raise ValueError("frame/binding identity mismatch")
+    payload = json.dumps(frame["payload"], separators=(",", ":"), allow_nan=False).encode()
+    return build_raw_envelope(
+        capture_id=uuid.uuid4().bytes, provider=binding["provider"], venue=binding["venue"],
+        market=binding["market"], product_type=binding["product_type"],
+        native_symbol=symbol, native_channel=channel,
+        subscription_id=binding["source_id"], source_session_id=f"{ns}.{binding['venue']}.{frame['lane']}",
+        connection_generation=1, lease_epoch=1, authority_revision=1, partition_plan_epoch=1,
+        received_at_ns=frame["received_at_ns"], transport_protocol=1, transport_compression=1,
+        capture_boundary=2, raw_frame_bytes=payload, adapter_version=TEST_ADAPTER, config_revision=1,
+        instrument_catalog_revision=binding["instrument_catalog_revision"],
+        correlation_id=str(uuid.uuid4()), test_provenance=True)
+
+
+def md_core_binding(book, source, acquisition):
+    """Core binding of one TRADE/QUOTE/BAR lane: the BOOK binding's exported instrument identity, the source
+    catalog's source, the production acquisition mapping's provider kind / channel / sequence policy."""
+    if acquisition.get("mode") != "RUST_NATIVE":
+        raise ValueError("native acquisition lane required: " + source["binding_id"])
+    if source["instrument_uid"] != book["instrument_uid"] or source["source"]["provider"] != book["provider"]:
+        raise ValueError("source/instrument identity mismatch: " + source["binding_id"])
+    binding = {key: book[key] for key in ("provider", "venue", "market", "product_type", "native_symbol",
+                                          "instrument_uid", "instrument_id", "instrument_revision",
+                                          "instrument_catalog_revision")}
+    binding.update(native_channel=acquisition["native_channel"], provider_kind=acquisition["provider_kind"],
+                   source_id=source["source"]["source_id"], source_role=source["source"]["source_role"],
+                   normalizer_version=source["source"]["normalizer_version"],
+                   require_final_bar=bool(source["quality"]["require_final_bar"]),
+                   sequence_policy=acquisition["sequence_policy"])
+    return binding
+
+
+def md_core_bindings(book, source, acquisition):
+    """All core bindings of one lane: one, or the MARK_INDEX physical components exactly as the production
+    deployment emits them (StableMarkIndexAcquisition.component_entries + the core mapping): Binance one BOTH
+    component, OKX a MARK component and an INDEX component on the explicit index symbol, each with its signed
+    quiet cadence."""
+    binding = md_core_binding(book, source, acquisition)
+    mark_index = acquisition.get("mark_index")
+    if source["feed"] != "MARK_INDEX_PRICE":
+        if mark_index is not None:
+            raise ValueError("mark/index acquisition on a non-MARK lane")
+        return [binding]
+    cadence = mark_index["component_quiet_after_ms"]
+    if mark_index["provider_protocol"] == "BINANCE_MARK_PRICE":
+        entries = [(book["native_symbol"], acquisition["native_channel"], "binance_usdm_mark_index", "BOTH")]
+    elif mark_index["provider_protocol"] == "OKX_MARK_INDEX":
+        entries = [(book["native_symbol"], "mark-price", "okx_mark_price", "MARK"),
+                   (str(mark_index["index_native_symbol"]), "index-tickers", "okx_index_price", "INDEX")]
+    else:
+        raise ValueError("MARK_INDEX provider protocol is not certified")
+    out = []
+    for symbol, channel, kind, component in entries:
+        item = dict(binding, provider_kind=kind, physical_native_symbol=symbol, physical_native_channel=channel,
+                    mark_index={"component": component})
+        if cadence.get(component) is not None:
+            item["mark_index"]["quiet_after_ms"] = cadence[component]
+        out.append(item)
+    return out
+
+
+def _rewrite(path, value):
+    """Replace one non-private material file in place (same 0644 mode the DR05 material used)."""
+    path = Path(path)
+    temporary = path.with_name(path.name + ".g12-tmp")
+    with temporary.open("x") as handle:
+        os.chmod(temporary, 0o644)
+        handle.write(value if isinstance(value, str) else json.dumps(value))
+    os.replace(temporary, path)
+
+
+def seal_market_feeds(work, ns):
+    """Add TRADE / QUOTE / BAR 1m / MARK_INDEX_PRICE of the two sealed instruments to the DR05 BOOK material
+    (offline, no I/O outside ``work`` and the read-only source catalog / production acquisition plan): core.json,
+    catalog.yaml, both manifests, route bindings, ts-consumers and bundle.json. Each generated acquisition must
+    equal the production plan's entry for that binding. Once per run (handoff "g12_feeds")."""
+    import yaml
+    from qdl.query import ConsumerGrade, FeedType
+    from qdl.runtime.production_catalog import ProductionCatalogBuilder, ProductionDemand
+    from qdl.runtime.stable_catalog import StableSourceCatalog
+    from scripts.kn_gateway_bundle import compile_bundle
+    from scripts.kn_native_slice_probe import ISSUER, AUDIENCE
+    from scripts.p184_dr05_case import BOOK_FEEDS, consumer_packet
+    from scripts.p184_dr05_dl_fault import source_catalog_path
+
+    work = Path(work)
+    handoff = json.loads((work / "handoff.json").read_text())
+    if namespace(handoff["namespace"]) != namespace(ns) or handoff.get("g12_feeds") is not None:
+        raise ValueError("unsealed G12 material of this namespace required")
+    config = json.loads((work / "core.json").read_text())
+    books = config["core"]["bindings"]
+    if any(not b.get("l2") for b in books) or sorted(b["venue"] for b in books) != sorted(VENUES):
+        raise ValueError("the DR05 two-venue BOOK material is required")
+    source = yaml.safe_load(source_catalog_path(work).read_text())
+    catalog = yaml.safe_load((work / "catalog.yaml").read_text())
+    production = {item["binding_id"]: item for item in
+                  yaml.safe_load((ROOT / PRODUCTION_ACQUISITION).read_text())["bindings"]}
+    lanes = []
+    for book in books:
+        for feed in MD_FEEDS:
+            interval = BAR_INTERVAL if feed == "BAR" else None
+            matches = [b for b in source["bindings"] if b["instrument_uid"] == book["instrument_uid"]
+                       and b["feed"] == CATALOG_FEED[feed] and b.get("interval") == interval
+                       and b["source"]["source_role"] == "PRIMARY"]
+            if len(matches) != 1:
+                raise ValueError(f"exactly one primary {feed} source required for {book['instrument_id']}")
+            planned = production.get(matches[0]["binding_id"]) or {}
+            mark = ({"max_freshness_ms": MD_REQUIREMENTS["MARK"]["max_freshness_ms"], "require_live": True,
+                     "index_native_symbol": (planned.get("mark_index") or {}).get("index_native_symbol")}
+                    if feed == "MARK" else {})
+            demand = ProductionDemand(
+                consumer_id=ns + "." + book["venue"].lower(), consumer_grade=ConsumerGrade.EXECUTION,
+                venue=book["venue"], market=book["market"], product_type=book["product_type"],
+                native_symbol=book["native_symbol"], feed=FeedType(CATALOG_FEED[feed]), interval=interval,
+                source_policy_id=matches[0]["source"]["source_policy_id"], **mark)
+            acquisition = ProductionCatalogBuilder._acquisition(matches[0]["binding_id"], demand)
+            fields = ("mode", "provider_kind", "native_channel", "sequence_policy", "mark_index")
+            if {k: acquisition.get(k) for k in fields} != {k: planned.get(k) for k in fields}:
+                raise ValueError("generated acquisition differs from the production plan: "
+                                 + matches[0]["binding_id"])
+            entry = copy.deepcopy(matches[0])
+            entry["source"]["adapter_version"] = TEST_ADAPTER
+            lanes.append((book, feed, entry, md_core_bindings(book, matches[0], acquisition)))
+    config["core"]["bindings"] = books + [item for lane in lanes for item in lane[3]]
+    digest = hashlib.sha256(json.dumps(config["core"]["bindings"], sort_keys=True).encode()).hexdigest()
+    config["authority"].update(capability_manifest_digest=digest, contract_digest=digest,
+                               partition_plan_digest=digest)
+    catalog["bindings"] = catalog["bindings"] + [lane[2] for lane in lanes]
+    _rewrite(work / "core.json", config)
+    _rewrite(work / "catalog.yaml", yaml.safe_dump(catalog))
+    loaded = StableSourceCatalog.load(work / "catalog.yaml")
+    manifests = []
+    for book in books:
+        label = book["venue"].lower()  # the linear scopes: scope id == venue
+        path = work / (label + ".yaml")
+        mapping = yaml.safe_load(path.read_text())
+        template = next(r for r in mapping["spec"]["requirements"] if r["feed"] == "BOOK_SNAPSHOT")
+        for _, feed, entry, _ in (lane for lane in lanes if lane[0] is book):
+            requirement = {k: v for k, v in template.items() if k not in ("interval", "event_recency_policy",
+                                                                          "max_session_liveness_ms")}
+            requirement.update(feed=CATALOG_FEED[feed], source_policy_id=entry["source"]["source_policy_id"],
+                               bar_revision_policy="LATEST", **MD_REQUIREMENTS[feed])
+            mapping["spec"]["requirements"].append(requirement)
+        mapping["spec"]["quotas"]["max_streams"] = 50  # the TS paper manifest's; 6 slices per clone now
+        _rewrite(path, yaml.safe_dump(mapping))
+        consumer, route = consumer_packet(path, loaded, book["venue"], ISSUER, AUDIENCE,
+                                          feeds=BOOK_FEEDS + tuple(CATALOG_FEED[f] for f in MD_FEEDS))
+        _rewrite(work / (label + ".binding.json"), route)
+        _rewrite(work / ("ts-consumer." + label + ".json"), consumer)
+        manifests.append(path)
+    _rewrite(work / "bundle.json", compile_bundle(environment="paper", catalog_path=work / "catalog.yaml",
+                                                  manifest_paths=manifests))
+    handoff["g12_feeds"] = {"feeds": list(BOOK_FEEDS) + [CATALOG_FEED[f] for f in MD_FEEDS],
+                            "bar_interval": BAR_INTERVAL, "source_ids": [lane[2]["source"]["source_id"] for lane in lanes],
+                            "core_bindings_sha256": digest}
+    (work / "handoff.json").write_text(json.dumps(handoff, indent=2) + "\n")
+    return handoff["g12_feeds"]
+
+
+def with_execution_mark_index(build):
+    """Wrap ``build_stable_query_stack`` with the production KN execution MARK/INDEX wiring of
+    ``qdl.runtime.stable`` (query backend kn3): reference data enabled, execution reads from the market cache
+    (``build_cache_execution_mark_index_reader``), alpha reads likewise. No acquisition quiet policy and no
+    session-liveness reader: the sealed requirement is event-age BLOCK, which needs neither."""
+    from qdl.reference.local_mark_index import (
+        build_cache_alpha_mark_index_reader, build_cache_execution_mark_index_reader)
+
+    def stack(*, catalog, backend, **kwargs):
+        kwargs.update(
+            reference_data_enabled=True,
+            execution_mark_index_reader=build_cache_execution_mark_index_reader(
+                catalog=catalog, backend=backend, acquisition=None, session_liveness_reader=None),
+            alpha_mark_index_reader_factory=lambda: build_cache_alpha_mark_index_reader(
+                catalog=catalog, backend=backend))
+        return build(catalog=catalog, backend=backend, **kwargs)
+    return stack
+
+
+def serve_query(work):
+    """In-namespace Query (--query): the unchanged DR05 diagnostic Query (DR08 serve_query, public HTTP boundary,
+    KN market cache + hot view) of the code under test, with execution MARK/INDEX reads enabled."""
+    import qdl.runtime.stable_source as stable_source
+    from scripts.p184_dr05_observer import diagnostic_query
+    stable_source.build_stable_query_stack = with_execution_mark_index(stable_source.build_stable_query_stack)
+    diagnostic_query(Path(work))
+
+
+def extend_material(work):
+    """In-container --feeds (network none): attested namespace / image set, then seal_market_feeds."""
+    packet = _packet(work)
+    return seal_market_feeds(work, packet["namespace"])
+
+
 def publish(work, out, seconds, hz):
     """Steady provider-shaped BOOK frames per venue; resync (new generation +
-    snapshot) only after a failed delivery, as a venue adapter would."""
+    snapshot) only after a failed delivery, as a venue adapter would. TRADE /
+    QUOTE / closed BAR 1m / MARK-INDEX frames on their own lanes at the MD_RATE
+    cadence; their delivery errors are recorded, never a BOOK resync."""
     from confluent_kafka import Producer
     from scripts.p184_dr05_dl_fault import frame
     from scripts.p184_dr05_raw_publisher import raw_envelope
@@ -687,7 +1372,8 @@ def publish(work, out, seconds, hz):
     config = json.loads((Path(work) / "core.json").read_text())
     if config.get("raw_topics") != [ns + ".raw"] or config["core"].get("allow_test_provenance") is not True:
         raise ValueError("isolated test-only raw topic required")
-    bindings = {b["venue"]: b for b in config["core"]["bindings"]}
+    bindings = {b["venue"]: b for b in config["core"]["bindings"] if b.get("l2")}
+    lanes = md_bindings(config)
     if set(bindings) != set(VENUES) or not 0 < hz <= 20 or not 0 < seconds <= LIMITS["deadline_s"]:
         raise ValueError("two-venue roster and bounded rate/duration required")
     producer = Producer({**_security(packet), "enable.idempotence": True, "acks": "all",
@@ -711,8 +1397,43 @@ def publish(work, out, seconds, hz):
                 log.write(json.dumps(row) + "\n")
             return callback
 
+        def md_ack(event, sent_ns):
+            def callback(error, message):
+                row = {"k": "ack_md", "venue": event["venue"], "feed": event["feed"], "id": event["id"],
+                       "ack_ms": round((time.time_ns() - sent_ns) / 1e6, 3)}
+                if error is not None:
+                    row["error"] = str(error.code())
+                else:
+                    row["offset"] = message.offset()
+                log.write(json.dumps(row) + "\n")
+            return callback
+
+        def send_md(event):
+            frames = event.get("frames") or [event["frame"]]  # an OKX MARK event is its mark + index pair
+            at_ns = frames[0]["received_at_ns"]
+            for item in frames:
+                raw = md_envelope(lanes[(event["venue"], item["feed"])], item, ns)
+                try:
+                    producer.produce(config["raw_topics"][0], partition=0, key=raw.subscription_id.encode(),
+                                     value=raw.SerializeToString(), headers=[("qdl-event-id", raw.capture_id)],
+                                     on_delivery=md_ack(event, at_ns))
+                except BufferError:
+                    log.write(json.dumps({"k": "ack_md", "venue": event["venue"], "feed": event["feed"],
+                                          "id": event["id"], "error": "LOCAL_QUEUE_FULL"}) + "\n")
+                    return
+            log.write(json.dumps({"k": "pub_md", "t": at_ns, "venue": event["venue"], "feed": event["feed"],
+                                  "id": event["id"], **event["extra"]}) + "\n")
+
+        source = MarketDataSource(index_symbols={venue: lane["physical_native_symbol"]
+                                                 for (venue, feed), lane in lanes.items() if feed == "INDEX"})
+        for event in source.seed(time.time_ns()):
+            send_md(event)
+        tick = 0
         next_at = time.monotonic()
         while time.monotonic() < end and not stop.requested:
+            for event in source.tick(tick, hz):
+                send_md(event)
+            tick += 1
             for venue in VENUES:
                 s = state[venue]
                 snapshot = s["snapshot"]
@@ -920,6 +1641,17 @@ def image_record(image):
             "version": labels.get("org.opencontainers.image.version")}
 
 
+def events_argv(ns, since_s, until_s):
+    """Bounded read-only ``docker events`` of this namespace's containers: die (exitCode), oom, kill (signal).
+    ``--until`` makes the follower exit by itself even if the orchestrator is killed."""
+    namespace(ns)
+    if not 0 < since_s < until_s:
+        raise ValueError("bounded event window required")
+    return ["docker", "events", "--since", str(int(since_s)), "--until", str(int(until_s)),
+            "--filter", f"label={LABEL}={ns}", "--filter", "type=container", "--filter", "event=die",
+            "--filter", "event=oom", "--filter", "event=kill", "--format", "{{json .}}"]
+
+
 def load_writer_clone():
     import importlib.util
     path = TS_ROOT / "scripts/p184_dr05_isolated.py"
@@ -962,6 +1694,43 @@ class Run:
         self.guard0 = None
         self.last_guard = 0.0
         self.last_stats = 0.0
+        self.events_proc = None
+
+    # -- container exit states
+    def start_events(self):
+        """Follow this namespace's die/oom/kill events into the evidence for the whole run (bounded)."""
+        now = time.time()
+        out = (self.evidence / "container-events.jsonl").open("a")
+        err = (self.evidence / "container-events.stderr").open("a")
+        try:
+            self.events_proc = subprocess.Popen(
+                events_argv(self.ns, now - 1, now + LIMITS["deadline_s"] + 900), stdout=out, stderr=err,
+                stdin=subprocess.DEVNULL)
+        finally:
+            out.close()
+            err.close()
+
+    def exit_states(self, roles=(), wait_s=3.0):
+        """Exit states recorded so far; waits (bounded) until each named role has a die event."""
+        limit = time.monotonic() + wait_s
+        while True:
+            states = exit_states(load_jsonl(self.evidence / "container-events.jsonl"))
+            if all(role in states for role in roles) or time.monotonic() >= limit:
+                return states
+            time.sleep(.2)
+
+    def stop_events(self):
+        proc, self.events_proc = self.events_proc, None
+        if proc is None:
+            return None
+        time.sleep(1.0)  # the last teardown die events reach the follower
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+        return proc.returncode
 
     # -- evidence
     def note(self, step, **fields):
@@ -1000,7 +1769,12 @@ class Run:
             raise RuntimeError(f"STOP memory available {resources['mem_available_bytes']} < 3 GiB")
         missing = {f"{self.ns}-{r}" for r in self.expected - set(faulted)} - running_names(self.ns)
         if missing:
-            raise RuntimeError("STOP role exited: " + ",".join(sorted(missing)))
+            roles = sorted(name[len(self.ns) + 1:] for name in missing)
+            states = self.exit_states(roles)
+            detail = {role: ({k: states[role][k] for k in ("exit_code", "oom_killed")} if role in states
+                             else "NO_DIE_EVENT") for role in roles}
+            self.note("role_exited", roles=roles, exit_states={r: states.get(r) for r in roles})
+            raise RuntimeError("STOP role exited: " + ",".join(sorted(missing)) + " " + json.dumps(detail))
         now = time.monotonic()
         if now - self.last_guard >= 60:
             self.last_guard = now
@@ -1062,6 +1836,7 @@ class Run:
             raise RuntimeError("namespace already in use")
         self.guard0 = production_guard()
         self.note("production_guard_before", containers=len(self.guard0), guard=self.guard0)
+        self.start_events()
         self.volumes0 = len(sh(["docker", "volume", "ls", "-q"]).split())
         self.networks0 = len(sh(["docker", "network", "ls", "-q"]).split())
         (self.work / "handoff.json").write_text(json.dumps({
@@ -1075,6 +1850,8 @@ class Run:
         packet = json.loads((self.work / "packet.json").read_text())
         packet["bootstrap"] = BOOTSTRAP
         (self.work / "packet.json").write_text(json.dumps(packet))
+        feeds = sh(self.helper(self.ns, self.work, ["--feeds", "/work"], network="none"), timeout=180)
+        self.note("feeds_sealed", result=feeds.strip()[-400:])
         password = broker_password((self.work / "broker.properties").read_text())
         for node in BROKERS:
             path = self.work / f"broker-{node}.properties"
@@ -1159,6 +1936,12 @@ class Run:
         if not self.wait(LIMITS["clone_ready_s"], until=ready):
             raise RuntimeError("STOP TS clones never showed a fresh APPROVED book view")
         self.note("ts_views_fresh")
+        # Fail fast instead of an hour of NOT_MEASURED: every clone applies TRADE, QUOTE and a closed BAR.
+        if not self.wait(LIMITS["md_ready_s"], until=lambda: not md_missing(
+                load_jsonl(self.evidence / "sampler.jsonl"))):
+            raise RuntimeError("STOP TS clones never applied: " + ",".join(
+                md_missing(load_jsonl(self.evidence / "sampler.jsonl"))))
+        self.note("ts_market_data_applied")
 
     def baseline(self):
         start = time.time_ns()
@@ -1212,7 +1995,7 @@ class Run:
                                  load_jsonl(self.evidence / "sampler.jsonl"), monitor_rows())
         self.note("fault_verdict", fault=name, verdict=verdict)
         if not verdict["pass"]:
-            raise RuntimeError(f"STOP {name}: G12/G1 verdict FAIL")
+            raise RuntimeError(f"STOP {name}: G12 verdict not PASS: " + json.dumps(verdict.get("parts")))
 
     def keep_logs(self):
         """Bounded log tails of every owned container (--rm loses them at stop)."""
@@ -1243,6 +2026,14 @@ class Run:
         report["networks_before"] = getattr(self, "networks0", None)
         report["volumes_after"] = len(sh(["docker", "volume", "ls", "-q"]).split())
         report["networks_after"] = len(sh(["docker", "network", "ls", "-q"]).split())
+        try:
+            report["events_follower_exit"] = self.stop_events()
+            states = exit_states(load_jsonl(self.evidence / "container-events.jsonl"))
+            (self.evidence / "exit-states.json").write_text(json.dumps(states, indent=2) + "\n")
+            report["exit_states"] = {role: {k: s[k] for k in ("exit_code", "oom_killed")}
+                                     for role, s in sorted(states.items())}
+        except Exception as error:  # noqa: BLE001 - evidence is best effort, teardown is not
+            report["errors"].append("exit_states:" + type(error).__name__)
         erase_private(self.work)
         if self.guard0 is not None:
             breaches, recreated = guard_breaches(self.guard0, production_guard())
@@ -1346,7 +2137,7 @@ def keep_diagnostics(out):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     mode = parser.add_mutually_exclusive_group(required=True)
-    for flag in ("run", "down", "analyze", "topics", "publish", "monitor"):
+    for flag in ("run", "down", "analyze", "topics", "publish", "monitor", "feeds", "query"):
         mode.add_argument("--" + flag, type=Path)
     parser.add_argument("--export", type=Path)
     parser.add_argument("--namespace")
@@ -1371,6 +2162,12 @@ def main(argv=None):
     if args.analyze:
         print(json.dumps(evaluate(args.analyze / "evidence" if (args.analyze / "evidence").exists()
                                   else args.analyze), indent=2))
+        return 0
+    if args.feeds:
+        print(json.dumps(extend_material(args.feeds)))
+        return 0
+    if args.query:
+        serve_query(args.query)
         return 0
     if args.seconds is None and not args.topics:
         parser.error("--seconds required")
