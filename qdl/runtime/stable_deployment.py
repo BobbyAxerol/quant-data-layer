@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 from urllib.parse import urlsplit
 
 import yaml
 
+from qdl.adapters.okx_endpoints import require_okx_websocket_url
 from qdl.query import FeedType
 from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
 
@@ -454,7 +455,11 @@ class StableAcquisitionBinding:
                 raise ValueError("Rust native acquisition cannot use a REST BAR provider kind")
             self._require_wss(self.websocket_url)
             if self.runtime == "OKX":
-                self._require_wss(self.business_websocket_url)
+                # Port 8443 (discontinued by OKX on 2026-10-31) is refused where an
+                # ingestor config is rendered (native_ingestor_configs), not here:
+                # Query and the bar edge only read the plan, and a deployed runtime
+                # plan may still carry the old transport URL (rc7 rollout 2026-10-10:
+                # a load-time refusal crashed Query on an unchanged runtime bundle).
                 if self.market_websocket_url is not None:
                     raise ValueError(
                         "OKX does not use a Binance /market routed base"
@@ -551,6 +556,39 @@ class StableAcquisitionPlan:
         identities = [item.binding_id for item in self.bindings]
         if not identities or len(identities) != len(set(identities)):
             raise ValueError("stable acquisition binding IDs must be non-empty and unique")
+
+    # Where a binding connects, not what it is. Venues move endpoints (Binance
+    # routed USD-M on 2026-04-23, OKX retires port 8443 on 2026-10-31); such a
+    # move must not be an identity change, because the revision is pinned by
+    # edge checkpoints and a bump strands them (plan C.19/C.32).
+    TRANSPORT_FIELDS = (
+        "websocket_url", "business_websocket_url", "market_websocket_url",
+    )
+
+    def identity_digest(self) -> str:
+        """SHA-256 of everything that defines the plan except transport endpoints.
+
+        Two plans with the same ``revision`` must have the same identity
+        digest. A change that moves this digest is an identity change and needs
+        a revision bump plus the checkpoint handling recorded in C.19; a change
+        that leaves it equal (an endpoint move) needs neither.
+        """
+
+        bindings = []
+        for item in sorted(self.bindings, key=lambda value: value.binding_id):
+            payload = asdict(item)
+            for field in self.TRANSPORT_FIELDS:
+                payload.pop(field)
+            bindings.append(payload)
+        payload = {
+            "schema": self.schema,
+            "revision": self.revision,
+            "topics": [self.raw_topic, self.canonical_topic, self.quarantine_topic],
+            "bindings": bindings,
+        }
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
 
     @classmethod
     def load(
@@ -1037,6 +1075,11 @@ class StableAcquisitionPlan:
                     binding["mark_index_target"] = source.instrument.instrument_uid
                 bindings.append(binding)
             key = f"{runtime.lower()}-{market.lower()}"
+            if runtime == "OKX":
+                # The rendered config is what an ingestor connects with: refuse the
+                # retired port here so it can never reach a role.
+                require_okx_websocket_url(first.websocket_url, "public")
+                require_okx_websocket_url(first.business_websocket_url, "business")
             result[key] = {
                 "runtime": runtime,
                 "websocket_url": first.websocket_url,
@@ -1048,6 +1091,15 @@ class StableAcquisitionPlan:
                 "partition_plan_epoch": 1,
                 "config_revision": self.revision,
                 "heartbeat_seconds": 15,
+                # Silent-socket detection < 5 s (ingestor LivenessPolicy):
+                # ping after 1.5 s of inbound silence, dead 4 s after the last
+                # message read. A socket with data never pings; a quiet one
+                # sends <= 0.67 pings/s, under Binance USD-M's 10 incoming
+                # messages/s per connection; OKX limits only subscribe,
+                # unsubscribe and login. Requires an ingestor binary that
+                # knows these fields (older ones deny unknown fields).
+                "liveness_ping_ms": 1500,
+                "liveness_dead_ms": 4000,
                 "max_events": max_events,
                 "max_runtime_seconds": max_runtime_seconds,
                 "metrics_every_events": 1000,

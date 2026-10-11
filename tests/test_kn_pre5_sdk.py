@@ -82,6 +82,22 @@ class BoundedBatchTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(mutation=mutation), self.assertRaises(ContinuityError):
                 await client(query).warmup_batch(requirements(2), require_all=False)
 
+    async def test_required_batch_failure_names_the_failing_item(self):
+        """Stage 100g: a require_all PARTIAL_RESULT must say which item failed, payload-free."""
+        import hashlib
+        with self.assertRaises(DataLayerError) as captured:
+            await client(_SdkBatchTransport(fail_uids={"uid-1"})).warmup_batch(requirements(3))
+        error = captured.exception
+        self.assertEqual((error.code, error.retryable), ("PARTIAL_RESULT", True))  # unchanged fields
+        self.assertEqual(error.detail, "required warmup batch contains one or more explicit failures")
+        self.assertEqual(error.diagnostics["origin"], "sdk_warmup_batch")
+        self.assertEqual(error.diagnostics["item_problem_count"], 1)
+        self.assertEqual(error.diagnostics["item_problems"], [{
+            "instrument_uid": "uid-1", "feed": "BAR", "code": "SOURCE_UNAVAILABLE", "reason_tokens": [],
+            "retryable": True, "retry_after_ms": None, "request_id": "batch-request",
+            "detail_sha256": hashlib.sha256(b"injected provider failure").hexdigest(),
+        }])
+
     async def test_cancel_inflight_does_not_launch_next_chunk(self):
         entered, canceled = asyncio.Event(), asyncio.Event()
         query = _SdkBatchTransport()

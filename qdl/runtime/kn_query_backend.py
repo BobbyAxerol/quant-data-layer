@@ -36,7 +36,8 @@ spool stays the default until the KN-5 cutover.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
+from functools import lru_cache
 import hashlib
 import json
 from pathlib import Path
@@ -53,9 +54,9 @@ from qdl.marketdata.v2 import market_data_pb2
 from qdl.query import CoverageStatus, DataRequirement, FeedType, GapRecord, HistoryResult, MarketDataItem, RecoveryPolicy
 from qdl.query.contracts import CanonicalErrorCode, QueryProblem
 from qdl.query.results import NON_REPLAYABLE_STREAM_CURSOR, QueryBackendError, GapScanResult
-from qdl.query.row_cache import BoundedRowCache
+from qdl.query.row_cache import BoundedRowCache, RenderSlot
 from qdl.replay.cursor_v3 import CursorV3Claims, SignedCursorV3Codec, requirement_digest
-from qdl.runtime.kn_hot_view import HOT_FEEDS, HotViewUnavailable
+from qdl.runtime.kn_hot_view import HOT_FEEDS, HotViewGap, HotViewUnavailable
 from qdl.runtime.kn_bar_readback import binding_product_key
 from qdl.runtime.kn_market_cache import (
     KnCacheError,
@@ -84,7 +85,7 @@ from qdl.transport import Cursor, StoredEvent
 from qdl.transport.contracts import DurableEvent
 
 PLACEHOLDER_PREFIX = "kn3-source:"
-_PLACEHOLDER = re.compile(r"kn3-source:([A-Za-z0-9._@|+=-]{1,256}):([0-9]{1,10}):([0-9]{1,19})")
+_PLACEHOLDER = re.compile(r"kn3-source:([A-Za-z0-9._/@|+=-]{1,256}):([0-9]{1,10}):([0-9]{1,19})")
 QUERY_BACKEND_ENV = "QDL_STABLE_QUERY_BACKEND"
 QUERY_BACKENDS = ("spool", "kn3")
 CURSOR_KEYS_FILE_ENV = "QDL_KN_CURSOR_KEYS_FILE"
@@ -94,19 +95,33 @@ PARTITION_PLAN_EPOCH_ENV = "QDL_KN_PARTITION_PLAN_EPOCH"
 ROUTE_GENERATION_ENV = "QDL_KN_ROUTE_GENERATION"
 CURSOR_TTL_ENV = "QDL_KN_CURSOR_TTL_SECONDS"
 DEFAULT_ROW_CACHE_ENTRIES = 20_000
+# A MARK/INDEX hot-view lookup is shared by every read of that binding on one replica for this long.
+MARK_HOT_MEMO_NS = 50_000_000
+# Wait + lookup budget of one shared MARK read when the hot client declares no deadline (CanonicalHotClient does).
+MARK_HOT_DEFAULT_BUDGET_SECONDS = 0.25
 # Item fields rebuilt per request (time/request dependent); never cached.
-_DYNAMIC_ITEM_FIELDS = frozenset({"quality", "watermark_offset", "cursor", "snapshot_id", "render_key"})
+_DYNAMIC_ITEM_FIELDS = frozenset({"quality", "watermark_offset", "cursor", "snapshot_id", "render_key", "render_slot"})
+
+
+@lru_cache(maxsize=1)
+def _static_item_fields() -> tuple[str, ...]:
+    names = tuple(item_field.name for item_field in fields(MarketDataItem))
+    if not {"quality", "watermark_offset", "cursor", "snapshot_id"} <= set(names):
+        raise RuntimeError("MarketDataItem no longer has its request-dependent fields")
+    return tuple(name for name in names if name not in _DYNAMIC_ITEM_FIELDS)
 
 
 @dataclass
 class _RowEntry:
     """Derivations of one immutable row (D30): its envelope, whether its
-    lineage was proven against the catalog binding, and its static item
-    fields. Quality, cursor and watermark are not here."""
+    lineage was proven against the catalog binding, its static item fields
+    and the renderer's slot for its encoded static view. Quality, cursor and
+    watermark are not here."""
 
     envelope: market_data_pb2.EventEnvelope
     validated: bool = False
     static: dict | None = None
+    render: RenderSlot = field(default_factory=RenderSlot)
 
 
 def source_placeholder(view: ProductView) -> str:
@@ -184,6 +199,10 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         # Bounded by the immutable catalog, coordinates only (no second cache).
         self._hot_boundaries: dict[str, tuple[object, int, str]] = {}
         self._hot_boundary_lock = threading.Lock()
+        # IDR-084 MARK lookups, single-flight per binding (see _hot_latest).
+        self._mark_hot_memo: dict[str, tuple[int, object]] = {}
+        self._mark_hot_locks: dict[str, threading.Lock] = {}
+        self._mark_hot_locks_guard = threading.Lock()
 
     # ------------------------------------------------------------ cache view
 
@@ -260,11 +279,43 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
                 self._hot_boundaries[binding.binding_id] = (view.boundary, record_offset, digest)
             return True
 
-    def _hot_candidate(self, binding, primary=None):
-        """Authenticated committed bytes, validated by the same lineage oracle."""
+    def _proven_same_record(self, binding, view):
+        """The primary view lifted to the recorded boundary when it is the same record an earlier hot read proved
+        newest up to that boundary (same source offset and payload digest); None otherwise.
+
+        A quiet key's state partition watermark only advances when that partition receives a frame, so the primary
+        boundary can trail the head an earlier ring read recorded. Once the ring evicts the quiet key (ring_max_age),
+        the same record was refused HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND although nothing newer exists: a newer
+        record would carry a larger source offset. Serving it at the recorded boundary keeps the boundary monotonic
+        for the client and invents no gap (P18.4 stage 100, 2026-10-11 11:37Z, OKX BNB TRADE quiet > 120 s)."""
+        if view is None or len(view.rows) != 1 or view.rows[0].source_offset is None:
+            return None
+        digest = hashlib.sha256(view.rows[0].canonical).hexdigest()
+        with self._hot_boundary_lock:
+            previous = self._hot_boundaries.get(binding.binding_id)
+        if previous is None:
+            return None
+        boundary, prior_record_offset, prior_digest = previous
+        if ((view.boundary.topic_id, view.boundary.partition) != (boundary.topic_id, boundary.partition)
+                or view.rows[0].source_offset != prior_record_offset or digest != prior_digest
+                or view.boundary.offset >= boundary.offset):
+            return None
+        return replace(view, boundary=boundary)
+
+    def _hot_candidate(self, binding, primary=None, *, shared=False):
+        """Authenticated committed bytes, validated by the same lineage oracle.
+
+        ``shared`` (IDR-084 opportunistic MARK path only) may reuse a lookup made
+        up to MARK_HOT_MEMO_NS earlier; the backup path of ``_latest_view`` never
+        does, because a shared, older record could fail its monotonic check."""
         if self.hot_client is None or binding.feed.value not in HOT_FEEDS:
             return None
-        candidate = self.hot_client.latest(binding, self.product_key(binding))
+        try:
+            candidate = self._hot_latest(binding) if shared else self.hot_client.latest(binding, self.product_key(binding))
+        except HotViewGap as error:
+            raise QueryBackendError(QueryProblem(
+                CanonicalErrorCode.OPEN_SEQUENCE_GAP, str(error), True,
+            )) from error
         if primary is not None:
             if candidate.boundary.topic_id != primary.boundary.topic_id or candidate.boundary.partition != primary.boundary.partition:
                 raise _not_ready("HOT_SOURCE_GENERATION_MISMATCH")
@@ -284,6 +335,56 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         if len(records) != 1 or not self._hot_monotonic(binding, candidate):
             raise HotViewUnavailable("HOT_BACKUP_BEHIND_RETURNED_VIEW")
         return candidate
+
+    def _hot_latest(self, binding):
+        """One hot-view lookup; MARK/INDEX lookups are shared per binding for MARK_HOT_MEMO_NS.
+
+        P18.4 D3 stage 100 on rc3: the IDR-084 path made every MARK read query the
+        Rust hot reader, whose ring scan runs under try_lock
+        (rust/qdl-stream-gateway/src/hub.rs check_hot_reader/latest). Concurrent
+        lookups refused each other HOT_READER_BUSY, and two TRADE/QUOTE reads that
+        needed the backup ended DATA_NOT_READY. Many sessions read the same MARK
+        product, so concurrent and back-to-back MARK reads on one replica now share
+        one lookup (outcome, including a refusal) for 50 ms. Used ONLY by the
+        IDR-084 opportunistic branch, which keeps the cache view whenever the hot
+        record is not newer. rc4 also shared it on the _latest_view backup path:
+        under stage-100 load an older shared record failed the backup's monotonic
+        check and the TS writer saw MARK SOURCE_UNAVAILABLE (2026-10-10 04:30Z).
+        Other feeds are unchanged."""
+        if binding.feed is not FeedType.MARK_INDEX_PRICE:
+            return self.hot_client.latest(binding, self.product_key(binding))
+        key = binding.binding_id
+        with self._mark_hot_locks_guard:
+            lock = self._mark_hot_locks.setdefault(key, threading.Lock())
+        # Astra R3: ONE budget (the hot client's own deadline) covers the wait for
+        # this binding's lookup slot AND the lookup itself. Before, the wait was
+        # unbounded and every queued reader whose memo had expired started a
+        # fresh full-deadline lookup in turn. A reader whose budget runs out is
+        # refused HOT_READ_DEADLINE, which the IDR-084 caller treats as transient
+        # (the valid cache view stands); that refusal is this reader's own wait,
+        # not the hot reader's answer, so it is never memoised.
+        budget = float(getattr(self.hot_client, "timeout_seconds", MARK_HOT_DEFAULT_BUDGET_SECONDS))
+        started = time.monotonic()
+        if not lock.acquire(timeout=budget):
+            raise HotViewUnavailable("HOT_READ_DEADLINE")
+        try:
+            now = self._monotonic_ns()
+            memo = self._mark_hot_memo.get(key)
+            if memo is None or now - memo[0] >= MARK_HOT_MEMO_NS:
+                remaining = budget - (time.monotonic() - started)
+                if remaining <= 0:
+                    raise HotViewUnavailable("HOT_READ_DEADLINE")
+                try:
+                    outcome = self.hot_client.latest(binding, self.product_key(binding), timeout_seconds=remaining)
+                except HotViewUnavailable as error:
+                    outcome = error
+                memo = (now, outcome)
+                self._mark_hot_memo[key] = memo
+        finally:
+            lock.release()
+        if isinstance(memo[1], HotViewUnavailable):
+            raise type(memo[1])(*memo[1].args)  # a fresh exception per reader thread
+        return memo[1]
 
     def _latest_view(self, requirement, binding):
         primary_error = None
@@ -334,6 +435,9 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         if quiet_primary:
             raise _not_ready(f"HOT_QUIET_PRIMARY_UNVERIFIED: {backup_failure}")
         if primary is not None and not self._hot_monotonic(binding, primary):
+            lifted = self._proven_same_record(binding, primary)
+            if lifted is not None:
+                return lifted
             raise _not_ready(f"HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND: {backup_failure}")
         return primary
 
@@ -403,6 +507,27 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
                 return None, "BACKUP_UNAVAILABLE"
             except QueryBackendError as error:
                 return None, "FENCED" if error.problem.code is CanonicalErrorCode.DATA_NOT_READY else "INTEGRITY"
+        elif self.hot_client is not None and view is not None and binding.feed is FeedType.MARK_INDEX_PRICE:
+            # IDR-084: the projected cache trails the committed canonical record by ~150 ms (Binance MARK visible p50
+            # ~300 ms after the venue event). The Rust hot view serves the same committed bytes without the projector,
+            # so MARK/INDEX takes the newer of the two. Every lineage/monotonic gate of the backup path applies; a hot
+            # read that is behind or unavailable leaves the cache view in place (the previous behaviour).
+            #
+            # Astra R1: only a TRANSIENT hot outcome leaves the cache view in place - HotViewUnavailable (busy,
+            # capacity, deadline, catching up, behind the cache view, or a reply not attributable to this Query's
+            # authority, which says nothing about the canonical record). A typed hard refusal from _hot_candidate is a
+            # fact about the newest committed record of THIS product and is never downgraded to the older cache view:
+            # a gap/resync on the newest record (HotViewGap -> OPEN_SEQUENCE_GAP; once projected, the MARK view drops
+            # it as GAP_OR_RESYNC anyway), a source partition/generation conflict (DATA_NOT_READY) or a payload/lineage
+            # conflict (INTERNAL_ERROR). Same state mapping as the backup path above.
+            try:
+                candidate = self._hot_candidate(binding, view, shared=True)
+            except HotViewUnavailable:
+                candidate = None
+            except QueryBackendError as error:
+                return None, "FENCED" if error.problem.code is CanonicalErrorCode.DATA_NOT_READY else "INTEGRITY"
+            if candidate is not None and candidate.rows[0].source_offset > view.rows[0].source_offset:
+                view = candidate
         if view is None:
             return None, "NOT_READY"
         records = self._parsed(binding, view)
@@ -425,7 +550,33 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         for parsed in records:
             entry = self._row(binding, parsed.stored.payload_sha256, parsed.stored.event.payload)
             if not entry.validated:
-                super()._validate_records(binding, (parsed,))
+                try:
+                    super()._validate_records(binding, (parsed,))
+                except ValueError as error:
+                    envelope = parsed.envelope
+                    payload = envelope.WhichOneof("payload")
+                    # Catalog checks identity/provenance before these payload
+                    # errors. Empty fences are refusals, never readable books.
+                    expected_error = {
+                        "book_snapshot": "stable book snapshot sequence/depth is incomplete",
+                        "book_delta": "stable book delta lacks continuity/snapshot sequence",
+                    }.get(payload)
+                    flags = set(envelope.quality_flags)
+                    if (expected_error is not None and str(error) == expected_error
+                            and envelope.instrument_uid == binding.instrument.instrument_uid
+                            and envelope.source_id == binding.source_id
+                            and payload == binding.feed.value.lower()
+                            and {common_pb2.QUALITY_FLAG_SEQUENCE_GAP_BEFORE,
+                                 common_pb2.QUALITY_FLAG_RESYNC_REQUIRED} <= flags):
+                        book = getattr(envelope, payload)
+                        empty = (not book.levels if payload == "book_snapshot"
+                                 else not book.updates and book.reset)
+                        if empty and not book.sequence_verified:
+                            raise QueryBackendError(QueryProblem(
+                                CanonicalErrorCode.OPEN_SEQUENCE_GAP,
+                                "BOOK_INVALIDATED_RESYNC_REQUIRED", True,
+                            )) from error
+                    raise
                 entry.validated = True
 
     def _item(self, requirement, binding, stored, envelope, gap_open):
@@ -434,18 +585,16 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         key = self._row_key(binding, stored.payload_sha256)
         entry = self._row(binding, stored.payload_sha256, stored.event.payload)
         if entry.static is None:
-            item = super()._item(requirement, binding, stored, envelope, gap_open)
-            entry.static = {
-                item_field.name: getattr(item, item_field.name)
-                for item_field in fields(item)
-                if item_field.name not in _DYNAMIC_ITEM_FIELDS
-            }
-            return replace(item, render_key=key)
+            item = super()._item(requirement, binding, stored, envelope, gap_open,
+                                 extras={"render_key": key, "render_slot": entry.render})
+            entry.static = {name: getattr(item, name) for name in _static_item_fields()}
+            return item
         quality = self._quality(
             requirement, binding, envelope, gap_open=gap_open, watermark_offset=stored.cursor.offset,
         )
         return MarketDataItem(
             **entry.static, quality=quality, watermark_offset=stored.cursor.offset, render_key=key,
+            render_slot=entry.render,
         )
 
     def warmup_stats(self) -> dict[str, int]:
@@ -516,7 +665,7 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
             snapshot_id=snapshot_id,
             stream_cursor=source_placeholder(view),
             watermark_offset=view.boundary.offset,
-            items=tuple(replace(item, snapshot_id=snapshot_id) for item in result.items),
+            items=tuple(item.with_view_fields(snapshot_id=snapshot_id) for item in result.items),
         ), envelopes
 
     def _history_view(self, binding, requested, start_ns, end_ns):
@@ -796,7 +945,7 @@ class KnCursorV3Issuer:
             history,
             stream_cursor=token,
             items=tuple(
-                replace(item, snapshot_id=history.snapshot_id, cursor=token) for item in history.items
+                item.with_view_fields(snapshot_id=history.snapshot_id, cursor=token) for item in history.items
             ),
         )
 

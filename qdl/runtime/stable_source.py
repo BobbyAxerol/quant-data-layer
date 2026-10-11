@@ -1092,6 +1092,10 @@ class StableSpoolQueryBackend:
         )
         if book_unverified:
             flags = flags + ("BOOK_SEQUENCE_UNVERIFIED",)
+        # IDR-040 fix 2: reported, never folded into freshness or state.
+        proof_observed_at_ns = None
+        if payload_name == "book_snapshot" and not book_unverified:
+            proof_observed_at_ns = int(envelope.book_snapshot.proof_observed_at_ns) or None
         now_ns = self._clock_ns()
         decision = evaluate_binding_quality(
             BindingQualityInput(
@@ -1165,6 +1169,7 @@ class StableSpoolQueryBackend:
             event_recency_state=decision.event_recency_state,
             provider_session_state=decision.provider_session_state,
             provider_session_liveness_ms=decision.provider_session_liveness_ms,
+            proof_observed_at_ns=proof_observed_at_ns,
         )
 
     def _gaps(
@@ -1237,7 +1242,11 @@ class StableSpoolQueryBackend:
         stored: StoredEvent,
         envelope: market_data_pb2.EventEnvelope,
         gap_open: bool,
+        *,
+        extras: dict[str, Any] | None = None,
     ) -> MarketDataItem:
+        """``extras``: internal, non-rendered item fields (``render_key``,
+        ``render_slot``) set at construction instead of by a second copy."""
         payload_name = envelope.WhichOneof("payload")
         quality = self._quality(
             requirement,
@@ -1275,6 +1284,9 @@ class StableSpoolQueryBackend:
                 correlation_id=envelope.correlation_id or stored.event.event_id.hex(),
             ),
             watermark_offset=stored.cursor.offset,
+            # IDR-082: the canonical event identity Stream delivers unchanged.
+            event_id=bytes(envelope.event_id).hex() or None,
+            **(extras or {}),
         )
         if payload_name == "trade":
             side = common_pb2.AggressorSide.Name(

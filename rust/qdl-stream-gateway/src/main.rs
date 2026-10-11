@@ -14,7 +14,9 @@ use qdl_stream_gateway::bundle::Bundle;
 use qdl_stream_gateway::generated::marketdata_v2::EventEnvelope;
 use qdl_stream_gateway::generated::query_v2::market_data_stream_service_server::MarketDataStreamServiceServer;
 use qdl_stream_gateway::hub::{Hub, HubConfig};
-use qdl_stream_gateway::memory::{container_memory_limit, MemoryPlan};
+use qdl_stream_gateway::memory::{
+    container_memory_limit, default_queue_bytes_per_subscription, MemoryPlan,
+};
 use qdl_stream_gateway::query_view::QueryReadView;
 use qdl_stream_gateway::reader::{latest_for_key, KafkaLogSource, KafkaRangeSource, KafkaSettings};
 use qdl_stream_gateway::readview::{NotReadyReadView, ReadView};
@@ -199,7 +201,8 @@ fn process_usage() -> (u64, f64) {
     (rss, cpu)
 }
 
-fn limits() -> Result<StreamLimits, String> {
+fn limits(queue_total: u64) -> Result<StreamLimits, String> {
+    let per_subscription = default_queue_bytes_per_subscription(queue_total).to_string();
     Ok(StreamLimits {
         cursor_ttl_seconds: parsed("QDL_KN_CURSOR_TTL_SECONDS", "3600")?,
         replay: ReplayLimits {
@@ -210,7 +213,10 @@ fn limits() -> Result<StreamLimits, String> {
         },
         catchup_deadline: Duration::from_millis(parsed("QDL_KN_CATCHUP_DEADLINE_MS", "10000")?),
         slow_consumer_after: Duration::from_millis(parsed("QDL_KN_SLOW_CONSUMER_MS", "10000")?),
-        queue_bytes_per_subscription: parsed("QDL_KN_QUEUE_BYTES_PER_SUBSCRIPTION", "33554432")?,
+        queue_bytes_per_subscription: parsed(
+            "QDL_KN_QUEUE_BYTES_PER_SUBSCRIPTION",
+            &per_subscription,
+        )?,
         max_subscriptions: parsed("QDL_KN_MAX_SUBSCRIPTIONS", "384")?,
         max_replay_rpcs: parsed("QDL_KN_MAX_REPLAY_RPCS", "32")?,
         replay_page_default: 1_000,
@@ -224,11 +230,12 @@ async fn serve() -> Result<(), String> {
         &env("QDL_KN_QUOTA_PREFIX")?,
     )?;
     let readers: usize = parsed("QDL_KN_REPLAY_READERS", "4")?;
-    let limits = limits()?;
+    let queue_total: u64 = parsed("QDL_KN_QUEUE_BYTES_TOTAL", "33554432")?;
+    let limits = limits(queue_total)?;
     // Defaults fit a 256 MiB replica (K2-T08 sizing); checked, fail closed.
     let memory = MemoryPlan {
         ring_total: parsed("QDL_KN_RING_BYTES_TOTAL", "50331648")?,
-        queue_total: parsed("QDL_KN_QUEUE_BYTES_TOTAL", "33554432")?,
+        queue_total,
         replay_total: parsed("QDL_KN_REPLAY_BYTES_TOTAL", "33554432")?,
         replay_readers: readers as u64,
         streams: (limits.max_subscriptions + limits.max_replay_rpcs) as u64,
@@ -335,6 +342,7 @@ async fn serve() -> Result<(), String> {
                     "hub_duplicates": load(&hub.duplicates),
                     "hub_decode_failures": load(&hub.decode_failures),
                     "hub_offers": load(&hub.offers),
+                    "hub_live_budget_refused": load(&hub.live_budget_refused),
                     "hub_reader_errors": load(&hub.reader_errors),
                     "ring_bytes": reporter.hub.ring_bytes(),
                     "ring_evictions": load(&hub.ring_evictions),

@@ -138,7 +138,26 @@ class Assessment:
     reasons: list[str] = field(default_factory=list)
 
 
+KN_CACHE_SERVICES = ("market_cache", "market_projector_1", "market_projector_2",
+                     "query_kn_1", "query_kn_2", "stream_kn_1", "stream_kn_2")
+
+
+def native_topology_present(run: Runner) -> bool:
+    # Even stopped KN roles make legacy FLUSH/reset recovery the wrong authority.
+    return any(inspect(run, service)["status"] != "absent" for service in KN_CACHE_SERVICES)
+
+
+def require_legacy_topology(run: Runner) -> None:
+    if native_topology_present(run):
+        raise RuntimeError("KN_TOPOLOGY_REQUIRES_NATIVE_RECOVERY_NO_FLUSH_OR_OFFSET_RESET")
+    if any(inspect(run, service)["status"] == "absent" for service in STOP_SERVICES):
+        raise RuntimeError("LEGACY_RECOVERY_TOPOLOGY_UNVERIFIED")
+
+
 def assess(run: Runner) -> Assessment:
+    if native_topology_present(run):
+        return Assessment("MANUAL", {}, {}, None, None,
+                          ["KN_TOPOLOGY_REQUIRES_NATIVE_RECOVERY_NO_FLUSH_OR_OFFSET_RESET"])
     infra = {s: inspect(run, s) for s in INFRA_SERVICES}
     users = {s: inspect(run, s) for s in STOP_SERVICES}
     not_ready = [s for s, st in infra.items() if st["health"] != "healthy"]
@@ -183,6 +202,7 @@ class Recovery:
 
     def simulate_crash(self) -> None:
         """Reproduce the post-boot state on a running stack: cache users down, Redis tmpfs wiped."""
+        require_legacy_topology(self.run)
         _out(self.run, ["docker", "stop", "-t", "30", *[container(s) for s in STOP_SERVICES]])
         self.step("simulate_crash_stopped_cache_users", services=list(STOP_SERVICES))
         _out(self.run, ["docker", "restart", container(REDIS_SERVICE)])
@@ -190,6 +210,7 @@ class Recovery:
         self.step("simulate_crash_redis_restarted", redis_keys=redis_keys(self.run))
 
     def recover(self, *, timeout_seconds: float) -> dict[str, Any]:
+        require_legacy_topology(self.run)
         deadline = self.clock() + timeout_seconds
         running = [s for s in STOP_SERVICES if inspect(self.run, s)["status"] == "running"]
         if running:
@@ -244,6 +265,7 @@ class Recovery:
         return {"status": "PASS", "redis_keys": keys, "lag": {"total": last[0], "partitions": last[1], "max_partition": last[2]}}
 
     def start_only(self, *, timeout_seconds: float) -> dict[str, Any]:
+        require_legacy_topology(self.run)
         deadline = self.clock() + timeout_seconds
         for group in (STREAM_SERVICES, PROJECTOR_SERVICES, BAR_EDGE_SERVICES, QUERY_SERVICES):
             _out(self.run, ["docker", "start", *[container(s) for s in group]])

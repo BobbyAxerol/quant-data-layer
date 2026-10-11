@@ -93,6 +93,13 @@ pub struct SubscribeRequest {
     pub cursor_token: ::prost::alloc::string::String,
     #[prost(uint32, tag="6")]
     pub max_buffer_events: u32,
+    /// Additive (SDK 2.3.0): the most stream records the client accepts in one
+    /// SubscribeResponse. 0 (absent) and 1 mean one record per response, the
+    /// pre-2.3.0 behavior. A server that knows the field may pack up to this many
+    /// already-available event records into SubscribeResponse.records; it never
+    /// waits to fill a batch and clamps the value to its own cap.
+    #[prost(uint32, tag="7")]
+    pub max_records_per_response: u32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ReplayRequest {
@@ -135,8 +142,17 @@ pub mod stream_record {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SubscribeResponse {
+    /// Exactly one of `record` or `records` is set. A response that carries one
+    /// record (every control, and every record for a client that did not ask for
+    /// batches) uses `record`, unchanged since 2.0.
     #[prost(message, optional, tag="1")]
     pub record: ::core::option::Option<StreamRecord>,
+    /// Additive (SDK 2.3.0): two or more event records in delivery order, each
+    /// with its own logical_offset and resume_token. Sent only to a client that
+    /// set SubscribeRequest.max_records_per_response > 1; never contains a
+    /// control.
+    #[prost(message, repeated, tag="2")]
+    pub records: ::prost::alloc::vec::Vec<StreamRecord>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ReplayResponse {

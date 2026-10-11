@@ -192,3 +192,31 @@ class CliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NativeTopologyFenceTests(unittest.TestCase):
+    def test_kn_recovery_never_reads_or_deletes_legacy_data(self):
+        for status in ("running", "exited", "restarting"):
+            st = healthy_states()
+            st["market_projector_1"] = {"status": status}
+            fake = FakeDocker(states=st, keys=0, spool=100)
+            result = boot.assess(fake)
+            self.assertEqual(result.decision, "MANUAL")
+            self.assertIn("KN_TOPOLOGY", result.reasons[0])
+            self.assertTrue(all(c[:2] == ["docker", "inspect"] for c in fake.commands))
+
+    def test_direct_mutation_methods_are_fenced(self):
+        for method in ("simulate_crash", "start_only", "recover"):
+            st = healthy_states()
+            st["market_cache"] = {"status": "running"}
+            fake = FakeDocker(states=st)
+            recovery = boot.Recovery(fake, receipt={})
+            with self.assertRaisesRegex(RuntimeError, "KN_TOPOLOGY"):
+                getattr(recovery, method)(**({} if method == "simulate_crash" else {"timeout_seconds": 1}))
+            self.assertTrue(all(c[:2] == ["docker", "inspect"] for c in fake.commands))
+
+    def test_missing_legacy_topology_is_not_authority_to_start(self):
+        fake = FakeDocker(states={})
+        with self.assertRaisesRegex(RuntimeError, "TOPOLOGY_UNVERIFIED"):
+            boot.Recovery(fake, receipt={}).start_only(timeout_seconds=1)
+        self.assertTrue(all(c[:2] == ["docker", "inspect"] for c in fake.commands))

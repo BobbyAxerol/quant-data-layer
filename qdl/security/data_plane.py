@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import logging
 import os
 import threading
 import time
@@ -151,8 +152,15 @@ return {1, count}
 """
 
 
+logger = logging.getLogger(__name__)
+
+
 class RedisMinuteQuota:
-    """Shared, atomic beta quota; Redis failure denies access rather than bypassing."""
+    """Shared, atomic beta quota; Redis failure denies access rather than bypassing.
+
+    Exhaustion is reported once per consumer and minute (IDR-029: the per-identity spend was only visible by
+    reading the Redis minute key), so the log is bounded by consumers x minutes, never by request rate.
+    """
 
     def __init__(self, redis: Redis, *, prefix: str) -> None:
         normalized = prefix.strip(": ")
@@ -162,6 +170,7 @@ class RedisMinuteQuota:
             )
         self.redis = redis
         self.prefix = normalized
+        self._reported: dict[str, int] = {}
 
     @classmethod
     def from_url(cls, url: str, *, prefix: str) -> "RedisMinuteQuota":
@@ -183,7 +192,7 @@ class RedisMinuteQuota:
     def consume(self, manifest: ConsumerManifest) -> None:
         minute = int(time.time() // 60)
         try:
-            allowed, _ = self.redis.eval(
+            allowed, count = self.redis.eval(
                 _REDIS_MINUTE_QUOTA,
                 1,
                 self._key(manifest, minute),
@@ -197,6 +206,12 @@ class RedisMinuteQuota:
                 status_code=503,
             ) from error
         if int(allowed) != 1:
+            if self._reported.get(manifest.consumer_id) != minute:
+                self._reported[manifest.consumer_id] = minute
+                logger.warning(json.dumps({
+                    "event": "qdl_consumer_quota_exhausted", "consumer_id": manifest.consumer_id,
+                    "minute": minute, "count": int(count), "limit": manifest.quotas.requests_per_minute,
+                }, sort_keys=True))
             raise DataPlaneAccessError(
                 "RATE_LIMITED",
                 "consumer request quota is exhausted",

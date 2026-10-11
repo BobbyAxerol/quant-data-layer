@@ -304,6 +304,73 @@ class Phase5ApiTests(unittest.TestCase):
         self.assertEqual(response.json()["code"], "PARTIAL_RESULT")
         self.assertTrue(response.json()["retryable"])
 
+    def test_a_refusal_leaves_one_bounded_payload_free_line(self):
+        """Astra R6: the Query problem handler records the refusal's typed reasons and detail digest."""
+        import hashlib
+        import json
+
+        router_module = importlib.import_module("qdl.api_v2.router")
+        from qdl.runtime.refusal_log import RefusalLog
+
+        detail = "HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND: HOT_READER_BUSY"
+
+        async def refused():
+            raise QueryServiceError(
+                QueryProblem(CanonicalErrorCode.DATA_NOT_READY, detail, True, retry_after_ms=1_000),
+                request_id="r6-request", instrument_uid="u-r6",
+            )
+
+        lines = []
+        log = RefusalLog(emit=lambda line: lines.append(json.loads(line)), replica="query-test")
+        with patch.object(self.service, "open_gaps_async", new=refused), \
+                patch.object(router_module, "REFUSALS", log):
+            response = self.client.get("/v2/data-quality/gaps")
+        problem = response.json()
+        self.assertEqual((problem["code"], problem["detail"]), ("DATA_NOT_READY", detail))  # response unchanged
+        (line,) = lines
+        self.assertEqual(
+            {key: line[key] for key in ("origin", "code", "status", "retryable", "reasons", "request_id",
+                                        "instrument_uid", "route", "replica")},
+            {"origin": "query", "code": "DATA_NOT_READY", "status": response.status_code, "retryable": True,
+             "reasons": ["HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND", "HOT_READER_BUSY"],
+             "request_id": "r6-request", "instrument_uid": "u-r6", "route": "/v2/data-quality/gaps",
+             "replica": "query-test"},
+        )
+        self.assertEqual(line["detail_sha256"], hashlib.sha256(detail.encode()).hexdigest())
+
+    def test_a_warmup_batch_item_failure_leaves_one_line(self):
+        """Astra R6 extension: item problems inside a 200 warmup batch are not silent."""
+        import hashlib
+        import json
+        from dataclasses import replace
+        from qdl.query.service import BatchItemResult, BatchQueryResult, WarmupResult
+        from qdl.runtime.refusal_log import RefusalLog
+
+        router_module = importlib.import_module("qdl.api_v2.router")
+        history = self.backend.history(self.requirement)
+        detail = "HOT_READER_BUSY on the cold lane"
+        result = BatchQueryResult("batch-r6", (
+            BatchItemResult(self.binance.instrument_uid, "READY", WarmupResult("row", history)),
+            BatchItemResult(self.okx.instrument_uid, "DATA_NOT_READY", problem=QueryProblem(
+                CanonicalErrorCode.DATA_NOT_READY, detail, True)),
+        ))
+        requirements = (self.requirement, replace(self.requirement, instrument_uid=self.okx.instrument_uid))
+        lines = []
+        log = RefusalLog(emit=lambda line: lines.append(json.loads(line)), replica="query-test")
+        with patch.object(router_module, "_bind_history_cursor", side_effect=lambda _r, _a, _q, h: h), \
+                patch.object(router_module, "REFUSALS", log):
+            router_module._render_warmup_batch(None, None, result, requirements)
+        (line,) = lines
+        self.assertEqual(
+            {key: line[key] for key in ("origin", "code", "retryable", "reasons", "instrument_uid", "feed",
+                                        "route", "request_id")},
+            {"origin": "warmup_batch_item", "code": "DATA_NOT_READY", "retryable": True,
+             "reasons": ["HOT_READER_BUSY"], "instrument_uid": self.okx.instrument_uid,
+             "feed": self.requirement.feed.value, "route": "/v2/market-data/warmup:batch",
+             "request_id": "batch-r6"},
+        )
+        self.assertEqual(line["detail_sha256"], hashlib.sha256(detail.encode()).hexdigest())
+
     def test_query_routes_pass_authenticated_identity_to_owned_read_lanes(self):
         calls = []
         snapshot_original = self.service.snapshot_async
@@ -543,6 +610,108 @@ class Phase5ApiTests(unittest.TestCase):
         self.assertEqual(router_module._render_warmup_batch(None, None, empty, ()),
             JSONResponse(content=router_module._warmup_batch_response(None, None, empty, ())
                          .model_dump(mode="json", by_alias=True)).body)
+
+    def test_cached_static_view_renders_identical_bytes_and_still_validates_request_fields(self):
+        # P18.4 D3: a row's encoded static members are kept in its render slot
+        # after its first render; later renders validate and splice only the
+        # request-dependent fields (quality, cursor, snapshot, watermark).
+        import copy
+        from dataclasses import replace
+        from pydantic import ValidationError
+        from qdl.query.row_cache import RenderSlot
+        from qdl.query.service import WarmupResult
+
+        history = self.backend.history(self.requirement)
+        self.assertTrue(history.items)
+        slots = [RenderSlot() for _ in history.items]
+
+        def slotted(value):
+            return replace(value, items=tuple(
+                replace(item, render_slot=slot) for item, slot in zip(value.items, slots, strict=True)))
+
+        def reference(value):
+            return JSONResponse(content=router_module._warmup(WarmupResult("r", value))
+                                .model_dump(mode="json", by_alias=True)).body
+
+        # First render: full validation, no layout kept (a row read once pays
+        # nothing extra); second render: full validation, layout kept.
+        for render in ("first", "second"):
+            self.assertEqual(router_module._render_warmup_result(WarmupResult("r", slotted(history))),
+                             reference(history), render)
+            self.assertEqual(all(isinstance(slot.value, tuple) for slot in slots), render == "second")
+        later = replace(history, items=tuple(replace(
+            item, cursor=f"cursor-{index}", snapshot_id="snapshot-2", watermark_offset=item.watermark_offset + 9,
+            quality=replace(item.quality, state="STALE", freshness_ms=item.quality.freshness_ms + 61_000,
+                            flags=(*item.quality.flags, "STALE"), execution_eligible=False),
+        ) for index, item in enumerate(history.items)))
+        with patch.object(router_module, "_market_item", side_effect=AssertionError("static view rebuilt")):
+            cached = router_module._render_warmup_result(WarmupResult("r", slotted(later)))
+        self.assertEqual(cached, reference(later))
+        self.assertNotEqual(cached, reference(history))
+        # The request fields keep the public field definitions on the fast path.
+        for bad in (dict(cursor=123), dict(watermark_offset=-1),
+                    dict(quality=replace(history.items[0].quality, state="BOGUS"))):
+            item = replace(history.items[0], render_slot=slots[0])
+            try:
+                item = replace(item, **bad)
+            except ValueError:
+                continue  # the internal item already refuses it
+            with self.subTest(bad=bad), self.assertRaises(ValidationError):
+                router_module._market_item_json(item)
+            with self.subTest(bad=bad, path="full"), self.assertRaises(ValidationError):
+                router_module._market_item_json(replace(item, render_slot=None))
+        # A copied item shares its slot; equality ignores it.
+        self.assertIs(copy.deepcopy(slots[0]), slots[0])
+        self.assertEqual(replace(history.items[0], render_slot=slots[0]), history.items[0])
+
+    def test_first_render_json_and_decimal_inputs_match_the_model_path(self):
+        # P18.4 D3: the first render serializes with pydantic's JSON writer and
+        # passes decimals/metadata as model input; bytes and failures must be
+        # those of the model + json.dumps path.
+        from dataclasses import replace
+        from decimal import Decimal
+        from pydantic import ValidationError
+
+        history = self.backend.history(self.requirement)
+        item = history.items[-1]
+
+        def reference(value):
+            return router_module._encode_json(router_module._market_item(value).model_dump(mode="json", by_alias=True))
+
+        texts = ["é  \x00\x01\x1f\x7f\"\\/\t\n\r\b\f😀", *(chr(code) for code in range(0, 0xD800, 97))]
+        for text in texts:
+            changed = replace(item, cursor="c" + text, snapshot_id=text + "s")
+            self.assertEqual(router_module._market_item_json(changed), reference(changed))
+        broken = replace(item, cursor="a\ud800b")
+        for path in (lambda: router_module._market_item_json(broken), lambda: reference(broken)):
+            with self.assertRaises(ValueError):  # unencodable on both paths
+                path()
+        # Decimal parts: the ASCII fast path equals Decimal's reading.
+        for text in ("61234.10", "-0.000", "000.10", "9" * 40 + ".5", "1E+3", "1e-5", " 1.5", "+2", "1_0", ".5"):
+            sign, digits, exponent = Decimal(text).as_tuple()
+            value = int("".join(map(str, digits)) or "0") * (-1 if sign else 1)
+            with self.subTest(text=text):
+                self.assertEqual(router_module._decimal_parts(text), (str(value), -exponent))
+        for invalid in ("NaN", "x", "1.2.3", 1.5, True):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                router_module._decimal(invalid)
+        # Out-of-contract decimals still fail in the public view validation.
+        for text in ("1e-39", "1" * 29, "1" * 129):
+            bad = replace(item, payload={**item.payload, "close": text})
+            with self.subTest(text=text), self.assertRaises(ValidationError):
+                router_module._market_item_json(bad)
+
+    def test_view_field_copy_equals_replace_and_changes_only_view_fields(self):
+        from dataclasses import replace
+
+        item = self.backend.history(self.requirement).items[-1]
+        fast = item.with_view_fields(cursor="c-1", snapshot_id="s-1")
+        self.assertEqual(fast, replace(item, cursor="c-1", snapshot_id="s-1"))
+        self.assertEqual(vars(fast), vars(replace(item, cursor="c-1", snapshot_id="s-1")))
+        self.assertIsNot(fast, item)
+        self.assertNotEqual(item.cursor, "c-1")
+        with self.assertRaises(TypeError):
+            item.with_view_fields(watermark_offset=-1)
 
     def test_stale_and_unentitled_sources_return_stable_problem_details(self):
         stale_requirement = DataRequirement(

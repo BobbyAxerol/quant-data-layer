@@ -64,6 +64,12 @@ _DIAGNOSTIC_FIELDS = (
 )
 
 
+_ITEM_PROBLEM_FIELDS = (
+    "instrument_uid", "feed", "code", "reason_tokens", "retryable", "retry_after_ms",
+    "detail_sha256", "request_id",
+)
+
+
 def _safe_error(error: BaseException) -> dict[str, object]:
     code = getattr(error, "code", None)
     detail = str(getattr(error, "detail", error))
@@ -77,6 +83,17 @@ def _safe_error(error: BaseException) -> dict[str, object]:
     reason = re.search(r"\(([A-Z_]{1,40})\)$", detail)
     if reason:
         out["reason"] = reason.group(1)
+    # Astra R6: every typed UPPER_SNAKE code in the detail (e.g. "HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND:
+    # HOT_READER_BUSY"), bounded; the same extraction as qdl/runtime/refusal_log.py reason_tokens, whose
+    # Query line carries this detail_sha256. Additive receipt field.
+    tokens: list[str] = []
+    for token in re.findall(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b", detail[:4096]):
+        if len(token) <= 64 and token not in tokens:
+            tokens.append(token)
+            if len(tokens) == 4:
+                break
+    if tokens:
+        out["reason_tokens"] = tokens
     # Query's quality at the refusal (KN-4 review): only the known,
     # non-secret fields, bounded.
     diagnostics = getattr(error, "diagnostics", None)
@@ -85,6 +102,17 @@ def _safe_error(error: BaseException) -> dict[str, object]:
             key: (list(diagnostics[key])[:32] if key == "reason_codes" else diagnostics[key])
             for key in _DIAGNOSTIC_FIELDS if key in diagnostics
         }
+        # SDK 2.2.0 require_all batch PARTIAL_RESULT: which item failed and why
+        # (stage 100g had only the batch-level hash). Known keys only, bounded.
+        items = diagnostics.get("item_problems")
+        if isinstance(items, list):
+            out["item_problems"] = [
+                {key: item.get(key) for key in _ITEM_PROBLEM_FIELDS if key in item}
+                for item in items[:32] if isinstance(item, dict)
+            ]
+            count = diagnostics.get("item_problem_count")
+            if isinstance(count, int):
+                out["item_problem_count"] = count
     return out
 
 
@@ -232,7 +260,8 @@ def validate_profile(raw: dict[str, object]) -> dict[str, object]:
     # is recorded, never used to relax a gate.
     # KN-4 D41: a shadow kn4-matrix names the isolated canonical broker its
     # handoff oracle reads (never a production broker).
-    optional = {"monitored_containers", "scope", "oracle_bootstrap"}
+    optional = {"monitored_containers", "scope", "oracle_bootstrap", "ts_container", "manifest_overrides",
+                "sdk_from_source"}
     if not expected <= set(raw) or set(raw) - expected - optional:
         raise ValueError("Phase-3 profile fields are incomplete or unknown")
     scope = raw.get("scope", "production")
@@ -312,7 +341,34 @@ def validate_profile(raw: dict[str, object]) -> dict[str, object]:
         "monitored_containers": list(monitored) if monitored is not None else None,
         "scope": scope,
         "oracle_bootstrap": oracle,
+        "ts_container": raw.get("ts_container") if isinstance(raw.get("ts_container"), str)
+        and _NETWORK_RE.fullmatch(raw["ts_container"]) else None,
+        "manifest_overrides": _manifest_overrides(raw.get("manifest_overrides")),
+        "sdk_from_source": _sdk_from_source(raw.get("sdk_from_source")),
     }
+
+
+def _sdk_from_source(value: object) -> bool:
+    """P18.4 D3 window C: run the clients on this checkout's qdl_sdk (the SDK under release, e.g. the replica
+    round-robin start fix) instead of the copy baked into the client image. Opt-in; the server side is unchanged."""
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise ValueError("Phase-3 sdk_from_source must be a boolean")
+    return value
+
+
+def _manifest_overrides(value: object) -> dict[str, str]:
+    """P18.4 D3 window B: a deployed consumer manifest revision (e.g. alpha rev15) mounted over the client image's baked
+    copy, so the client loads the same quotas and mints JWTs for the same revision as the readers."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or set(value) - set(_PHASE3_CONSUMER_MANIFESTS):
+        raise ValueError("Phase-3 manifest overrides must name known consumers")
+    for path in value.values():
+        if not isinstance(path, str) or not path.endswith(".yaml") or not Path(path).is_file():
+            raise ValueError("Phase-3 manifest override file is unavailable")
+    return dict(value)
 
 
 def _docker_image_id(image: str) -> str:
@@ -505,6 +561,14 @@ def docker_command(
         "--env", "PYTHONPATH=/app:/driver",
         "--env", "QDL_PHASE3_LOAD_CONFIG=" + json.dumps(inner, sort_keys=True, separators=(",", ":")),
         "--mount", f"type=bind,src={profile['runtime_dir']},dst=/runtime,readonly",
+        *[arg for consumer, path in sorted((profile.get("manifest_overrides") or {}).items())
+          for arg in ("--mount", f"type=bind,src={path},dst={_PHASE3_CONSUMER_MANIFESTS[consumer]},readonly")],
+        # The SDK from source carries its generated contracts from the same source, as its wheel does: an SDK
+        # newer than the image's contracts otherwise reads fields the old protobuf lacks (SDK 2.3.0
+        # SubscribeResponse.records against a 2.2.2 image, 2026-10-11).
+        *(("--mount", f"type=bind,src={ROOT / 'qdl_sdk'},dst=/app/qdl_sdk,readonly",
+           "--mount", f"type=bind,src={ROOT / 'generated/python/qdl'},dst=/app/generated/python/qdl,readonly")
+          if profile.get("sdk_from_source") else ()),
         "--mount", f"type=bind,src={ROOT / 'qdl/certification/phase3_consumer_load.py'},dst=/app/qdl/certification/phase3_consumer_load.py,readonly",
         "--mount", f"type=bind,src={Path(__file__).resolve()},dst=/driver/phase3_consumer_load_acceptance.py,readonly",
         "--mount", f"type=bind,src={ROOT / 'scripts/phase3_consumer_load_bootstrap.sh'},dst=/driver/phase3_consumer_load_bootstrap.sh,readonly",
@@ -1690,16 +1754,19 @@ _TARGET_LATENCY_CLASS = {
     ("FUNDING_RATE", "REFERENCE_BATCH"): "FUNDING_REFERENCE",
 }
 _SERVED_BY: ContextVar[str | None] = ContextVar("phase3_served_by", default=None)
+# Wall time at which the attributed replica returned the transport response (P18.4 G5 split: server+network vs client).
+_SERVED_DONE_NS: ContextVar[int | None] = ContextVar("qdl_phase3_served_done_ns", default=None)
 _QUERY_METHODS = frozenset({
     "snapshot", "warmup", "warmup_batch", "reference_batch",
     "feed_status", "instruments", "instrument",
 })
 _TS_HEARTBEAT = """
 import asyncio, json, time
+import os
 import redis.asyncio as redis
-from core.config import settings
 async def main():
-    client = redis.from_url(settings.TRADING_REDIS_URL, decode_responses=True)
+    # The writer's own environment (current images use shared.config; older ones core.config).
+    client = redis.from_url(os.environ["TRADING_REDIS_URL"], decode_responses=True)
     rows = []
     async for key in client.scan_iter(match="service:heartbeat:market_data:*", count=100):
         value = await client.get(key)
@@ -1714,6 +1781,276 @@ async def main():
         "unhealthy": details.get("reported_unhealthy_slices") or []}))
 asyncio.run(main())
 """
+
+
+# P18.4 gate G6 (frozen TS gate table): durable-view event age and typed execution quality of every view the Query
+# endpoint returns, per binding, BEFORE client validation so that an eligible view the policy would reject is counted as
+# UNSAFE instead of disappearing into a refusal count. Each view is judged against the policy of the requirement it was
+# actually read with: the frozen D3 table (TS EXECUTION consumer, "applicable manifest/source policy plus stricter
+# consumer intent policy") applies, as min with the requirement's own max_freshness_ms, ONLY to an EXECUTION-grade
+# requirement (policy_basis D3_EXECUTION); any other grade is judged against its own requirement
+# (policy_basis REQUIREMENT_<grade>), which is what the server enforces (stable_source event_limit_ms = min(binding
+# stale_after, requirement.max_freshness_ms)). The stage-100 load reads as ALPHA, so its rows are REQUIREMENT_ALPHA and
+# cannot decide the D3 gate; the TS writer's own EXECUTION reads are sampled by scripts/p184_g6_ts_execution_probe.py.
+# Event age is the server's quality.freshness_ms for snapshot views. For MARK reference results see g6_reference_age.
+# Bounded: exact counts and max per binding, a reservoir of at most _G6_RESERVOIR ages per binding and worker.
+# g6_policy, g6_classify, g6_reference_anchor_ns, g6_reference_age and g6_reference_classify are pure and copied
+# verbatim into scripts/p184_g6_ts_execution_probe.py (the DL package is not in the TS image); a unit test pins parity.
+_G6_POLICY_MS = {"TRADE": 3000, "QUOTE": 2000, "MARK_INDEX_PRICE": 2000, "BOOK_DELTA": 2000,
+                 "BOOK_SNAPSHOT": 60000, "BAR|1m": 180000}
+G6_D3_BASIS = "D3_EXECUTION"
+_G6_RESERVOIR = 2048
+_G6_VIEW: ContextVar[list | None] = ContextVar("qdl_phase3_g6_view", default=None)
+
+
+def g6_policy(feed: str, interval: str | None, *, grade: object,
+              requirement_max_ms: int | None) -> tuple[int | None, str]:
+    """(policy_ms, policy_basis) of one read. Pure: unit-tested and copied into the TS execution probe."""
+    grade_name = str(getattr(grade, "value", grade) or "UNKNOWN").upper()
+    if grade_name != "EXECUTION":
+        return requirement_max_ms, f"REQUIREMENT_{grade_name}"
+    d3 = _G6_POLICY_MS.get(f"BAR|{interval}" if feed == "BAR" else feed)
+    bounds = [bound for bound in (d3, requirement_max_ms) if bound is not None]
+    return (min(bounds) if bounds else None), G6_D3_BASIS
+
+
+def g6_classify(*, feed: str, freshness_ms: int | None, eligible: bool, state: str | None, gap_open: bool,
+                complete: bool, event_recency_state: str | None, provider_session_state: str | None,
+                session_liveness_ms: int | None, max_session_liveness_ms: int | None, observe: bool,
+                on_change: bool, policy_ms: int | None) -> tuple[str, list[str]]:
+    """ELIGIBLE / ELIGIBLE_QUIET (beyond the event threshold with a proven live session under OBSERVE) /
+    NOT_ELIGIBLE / UNSAFE (eligible although the policy rejects it). Pure: unit-tested."""
+    beyond = freshness_ms is not None and policy_ms is not None and freshness_ms > policy_ms
+    session_ok = (provider_session_state == "LIVE"
+                  and (max_session_liveness_ms is None
+                       or (session_liveness_ms is not None and session_liveness_ms <= max_session_liveness_ms)))
+    quiet_proven = (observe and (feed in {"TRADE", "BOOK_DELTA"} or (feed == "QUOTE" and on_change))
+                    and event_recency_state == "STALE" and session_ok)
+    if not eligible:
+        return "NOT_ELIGIBLE", []
+    reasons = []
+    if gap_open:
+        reasons.append("GAP_OPEN")
+    if not complete:
+        reasons.append("INCOMPLETE")
+    if state not in (None, "LIVE"):
+        reasons.append(f"STATE_{state}")
+    if freshness_ms is None:
+        reasons.append("AGE_UNKNOWN")
+    elif beyond and not quiet_proven:
+        reasons.append("AGE_BEYOND_POLICY")
+    if (max_session_liveness_ms is not None and provider_session_state not in (None, "NOT_APPLICABLE")
+            and not session_ok):
+        reasons.append("SESSION_BEYOND_POLICY")
+    if reasons:
+        return "UNSAFE", reasons
+    return ("ELIGIBLE_QUIET" if beyond else "ELIGIBLE"), []
+
+
+def g6_reference_anchor_ns(observations, *, feed: str = "MARK_INDEX_PRICE", grade: object = None) -> int | None:
+    """The server's freshness anchor of a current reference result (qdl/query/service.py
+    _reference_freshness_timestamp). MARK/INDEX: an EXECUTION read whose observations are all PROVIDER_CONFIRMATION
+    based is anchored at min provider_confirmation_ns; otherwise min observed_at_ns (a pair is only as current as its
+    oldest component; mixed bases give None). Every other product (FUNDING_RATE) is anchored at max observed_at_ns:
+    how recently the series was updated, not its oldest settlement row (the min anchor aged funding by its whole
+    history and flagged every funding read UNSAFE, 2026-10-10 final campaign). observations: [(observed_at_ns,
+    labels mapping)]. Pure."""
+    items = list(observations or [])
+    if not items:
+        return None
+    try:
+        observed = [int(value) for value, _ in items]
+        if str(getattr(feed, "value", feed)) != "MARK_INDEX_PRICE":
+            return max(observed) if max(observed) > 0 else None
+        bases = {str((labels or {}).get("freshness_basis", "SOURCE_EVENT")) for _, labels in items}
+        execution = str(getattr(grade, "value", grade) or "").upper() == "EXECUTION"
+        if execution and bases == {"PROVIDER_CONFIRMATION"}:
+            values = [int(labels["provider_confirmation_ns"]) for _, labels in items]
+        elif bases <= {"SOURCE_EVENT", "PROVIDER_CONFIRMATION"} and (bases == {"SOURCE_EVENT"} or not execution):
+            values = observed
+        else:
+            return None
+    except (KeyError, TypeError, ValueError):
+        return None
+    return min(values) if all(value > 0 for value in values) else None
+
+
+def g6_reference_age(*, grade: object, observations, sent_ns: int, receipt_ns: int,
+                     feed: str = "MARK_INDEX_PRICE") -> dict[str, object]:
+    """Age of a MARK reference result. A reference result carries no served-at time, only the server's freshness
+    anchor (g6_reference_anchor_ns). EXECUTION keeps the unchanged use-time basis (client receipt minus the newest
+    source event), so what counts as unsafe for EXECUTION reads does not move. Any other grade is aged from the
+    request-sent time against the server's anchor: the server served at or after sent_ns, so an age beyond the policy
+    on this basis is beyond it at serve time too, and the network round trip can no longer manufacture UNSAFE.
+    client_age_ms (receipt minus the server anchor, includes the round trip) is kept for every grade. Pure."""
+    items = list(observations or [])
+    anchor = g6_reference_anchor_ns(items, feed=feed, grade=grade)
+    client_age = None if anchor is None else max(0, (receipt_ns - anchor) // 1_000_000)
+    if str(getattr(grade, "value", grade) or "").upper() == "EXECUTION":
+        newest = max((int(observed) for observed, _ in items), default=0)
+        age = max(0, (receipt_ns - newest) // 1_000_000) if newest > 0 else None
+        basis = "CLIENT_RECEIPT_MINUS_NEWEST_SOURCE_EVENT"
+    else:
+        age = None if anchor is None else max(0, (sent_ns - anchor) // 1_000_000)
+        basis = "REQUEST_SENT_MINUS_SERVER_FRESHNESS_ANCHOR"
+    return {"age_ms": age, "client_age_ms": client_age, "age_basis": basis}
+
+
+def g6_reference_classify(*, age_ms: int | None, policy_ms: int | None, quiet_proven: bool) -> tuple[str, list[str]]:
+    """An OK MARK reference result is a served (eligible) view: UNSAFE when beyond its policy without a quiet proof,
+    ELIGIBLE_QUIET with one. Pure."""
+    if age_ms is None:
+        return "UNSAFE", ["AGE_UNKNOWN"]
+    if policy_ms is not None and age_ms > policy_ms:
+        return ("ELIGIBLE_QUIET", []) if quiet_proven else ("UNSAFE", ["STALE_SERVED_WITHOUT_QUIET_PROOF"])
+    return "ELIGIBLE", []
+
+
+def g6_row_key(feed: str, venue: str, interval: str | None, basis: str) -> str:
+    """D3 rows keep the frozen gate key FEED|VENUE|INTERVAL; any other basis is kept apart with an @basis suffix."""
+    key = f"{feed}|{venue}|{interval or ''}"
+    return key if basis == G6_D3_BASIS else f"{key}@{basis}"
+
+
+def _g6_key(product) -> str:
+    requirement = getattr(product, "requirement", None)
+    _policy, basis = g6_policy(product.feed.value, product.interval,
+                               grade=getattr(requirement, "consumer_grade", None),
+                               requirement_max_ms=getattr(requirement, "max_freshness_ms", None))
+    return g6_row_key(product.feed.value, product.venue, product.interval, basis)
+
+
+def _g6_snapshot_observation(product, requirement, view) -> dict[str, object]:
+    quality = view.quality
+    policy = getattr(requirement, "effective_event_recency_policy", None)
+    policy_ms, basis = g6_policy(product.feed.value, product.interval,
+                                 grade=getattr(requirement, "consumer_grade", None),
+                                 requirement_max_ms=getattr(requirement, "max_freshness_ms", None))
+    verdict, reasons = g6_classify(
+        feed=product.feed.value, freshness_ms=quality.freshness_ms, eligible=bool(quality.execution_eligible),
+        state=quality.state, gap_open=bool(quality.gap_open), complete=bool(quality.complete),
+        event_recency_state=quality.event_recency_state, provider_session_state=quality.provider_session_state,
+        session_liveness_ms=quality.provider_session_liveness_ms,
+        max_session_liveness_ms=getattr(requirement, "max_session_liveness_ms", None),
+        observe=getattr(policy, "value", policy) == "OBSERVE",
+        on_change="DELIVERY_ON_CHANGE" in (quality.flags or []), policy_ms=policy_ms)
+    return {"key": g6_row_key(product.feed.value, product.venue, product.interval, basis), "age_ms":
+            quality.freshness_ms, "policy_ms": policy_ms, "policy_basis": basis, "class": verdict, "reasons": reasons,
+            "state": quality.state, "recency": quality.event_recency_state}
+
+
+def _g6_reference_observations(references, response, *, sent_ns: int, now_ns: int) -> list[dict[str, object]]:
+    from qdl.certification.reference_l2_acceptance import _quiet_execution_mark_index_evidence
+
+    out = []
+    for reference, item in zip(references, response.results):
+        product = reference
+        feed = product.requirement.feed.value
+        grade = product.requirement.consumer_grade
+        policy_ms, basis = g6_policy(feed, None, grade=grade,
+                                     requirement_max_ms=product.sdk_requirement.max_freshness_ms)
+        key = g6_row_key(feed, product.venue, None, basis)
+        data = getattr(item, "data", None)
+        observations = getattr(data, "observations", None) or []
+        if getattr(item, "status", None) != "OK" or not observations:
+            code = getattr(getattr(item, "problem", None), "code", None) or "NO_OBSERVATION"
+            out.append({"key": key, "age_ms": None, "policy_ms": policy_ms, "policy_basis": basis,
+                        "class": "NOT_ELIGIBLE", "reasons": [str(code)[:64]]})
+            continue
+        ages = g6_reference_age(grade=grade, observations=[(o.observed_at_ns, dict(o.labels or {}))
+                                                           for o in observations],
+                                sent_ns=sent_ns, receipt_ns=now_ns, feed=feed)
+        try:
+            quiet = _quiet_execution_mark_index_evidence(product, item, observed_at_ns=now_ns) is not None
+        except Exception:
+            quiet = False
+        verdict, reasons = g6_reference_classify(age_ms=ages["age_ms"], policy_ms=policy_ms, quiet_proven=quiet)
+        out.append({"key": key, **ages, "policy_ms": policy_ms, "policy_basis": basis, "class": verdict,
+                    "reasons": reasons})
+    return out
+
+
+class _G6Recorder:
+    def __init__(self, reservoir: int = _G6_RESERVOIR) -> None:
+        self.reservoir = reservoir
+        self.rows: dict[str, dict[str, object]] = {}
+
+    def _row(self, key: str) -> dict[str, object]:
+        basis = key.split("@", 1)[1] if "@" in key else G6_D3_BASIS
+        return self.rows.setdefault(key, {"n": 0, "seen_ages": 0, "ages": [], "max_age_ms": None, "policy_ms": None,
+                                          "policy_basis": basis, "age_basis": None, "max_client_age_ms": None,
+                                          "classes": Counter(), "reasons": Counter(), "refusals": Counter(),
+                                          "windows": Counter(), "unsafe_examples": []})
+
+    def view(self, observation: dict[str, object], window: str) -> None:
+        row = self._row(observation["key"])
+        row["n"] += 1
+        row["windows"][window] += 1
+        row["policy_ms"] = observation.get("policy_ms")
+        row["policy_basis"] = observation.get("policy_basis") or row["policy_basis"]
+        if observation.get("age_basis"):
+            row["age_basis"] = observation["age_basis"]
+        client_age = observation.get("client_age_ms")
+        if isinstance(client_age, int):
+            row["max_client_age_ms"] = (client_age if row["max_client_age_ms"] is None
+                                        else max(row["max_client_age_ms"], client_age))
+        row["classes"][observation["class"]] += 1
+        for reason in observation.get("reasons") or []:
+            row["reasons"][reason] += 1
+        age = observation.get("age_ms")
+        if isinstance(age, int):
+            row["seen_ages"] += 1
+            row["max_age_ms"] = age if row["max_age_ms"] is None else max(row["max_age_ms"], age)
+            if len(row["ages"]) < self.reservoir:
+                row["ages"].append(age)
+            else:
+                slot = random.randrange(row["seen_ages"])
+                if slot < self.reservoir:
+                    row["ages"][slot] = age
+        if observation["class"] == "UNSAFE" and len(row["unsafe_examples"]) < 8:
+            row["unsafe_examples"].append({k: observation.get(k) for k in ("age_ms", "client_age_ms", "reasons",
+                                                                         "state", "recency")}
+                                          | {"window": window, "at_ns": time.time_ns()})
+
+    def refusal(self, key: str, code: str, window: str) -> None:
+        row = self._row(key)
+        row["refusals"][code] += 1
+        row["windows"][window] += 1
+
+    def evidence(self) -> dict[str, object]:
+        return {key: {**row, "classes": dict(row["classes"]), "reasons": dict(row["reasons"]),
+                      "refusals": dict(row["refusals"]), "windows": dict(row["windows"])}
+                for key, row in self.rows.items()}
+
+
+def merge_g6(blocks: list[dict[str, object]]) -> dict[str, object]:
+    """Merge per-worker G6 evidence: exact counts/max, pooled bounded reservoirs for p50/p95."""
+    merged: dict[str, dict[str, object]] = {}
+    for block in blocks:
+        for key, row in (block or {}).items():
+            out = merged.setdefault(key, {"n": 0, "ages": [], "max_age_ms": None, "policy_ms": row.get("policy_ms"),
+                                          "policy_basis": row.get("policy_basis"), "age_basis": row.get("age_basis"),
+                                          "max_client_age_ms": None,
+                                          "classes": Counter(), "reasons": Counter(), "refusals": Counter(),
+                                          "windows": Counter(), "unsafe_examples": []})
+            out["n"] += row["n"]
+            out["ages"].extend(row["ages"])
+            out["age_basis"] = out["age_basis"] or row.get("age_basis")
+            for name in ("max_age_ms", "max_client_age_ms"):
+                if row.get(name) is not None:
+                    out[name] = row[name] if out[name] is None else max(out[name], row[name])
+            for name in ("classes", "reasons", "refusals", "windows"):
+                out[name].update(row[name])
+            out["unsafe_examples"].extend(row["unsafe_examples"][:8])
+    result = {}
+    for key, row in sorted(merged.items()):
+        ages = row.pop("ages")
+        result[key] = {**{k: (dict(v) if isinstance(v, Counter) else v) for k, v in row.items()},
+                       "age_ms": {**_percentiles([float(a) for a in ages]),
+                                  "basis": "reservoir sample per worker (exact n and max above)"},
+                       "unsafe": row["classes"].get("UNSAFE", 0)}
+        result[key]["unsafe_examples"] = result[key]["unsafe_examples"][:16]
+    return result
 
 
 def target_worker_count(sessions: int) -> int:
@@ -1735,7 +2072,9 @@ class _AttributedReplica:
 
         async def call(*args, **kwargs):
             _SERVED_BY.set(self.name)
-            return await value(*args, **kwargs)
+            result = await value(*args, **kwargs)
+            _SERVED_DONE_NS.set(time.time_ns())
+            return result
 
         return call
 
@@ -1793,7 +2132,12 @@ async def _target_read(client, operation: str, products) -> object:
 
     if operation == "REFERENCE_BATCH":
         references = [_reference_product(product, now_ns=time.time_ns()) for product in products]
+        sent_ns = time.time_ns()
         response = await client.reference_batch([item.sdk_requirement for item in references], require_all=True)
+        try:
+            _G6_VIEW.set(_g6_reference_observations(references, response, sent_ns=sent_ns, now_ns=time.time_ns()))
+        except Exception:
+            _G6_VIEW.set(None)  # diagnostics never change the read result
         if response.partial or len(response.results) != len(references):
             raise ValueError("PARTIAL_RESULT")
         for reference, result in zip(references, response.results, strict=True):
@@ -1808,6 +2152,10 @@ async def _target_read(client, operation: str, products) -> object:
         # reads, and would make every latest read judge a 10,000-row horizon.
         requirement = replace(requirement, warmup_limit=0)
     response = await client.snapshot(requirement)
+    try:
+        _G6_VIEW.set([_g6_snapshot_observation(product, product.requirement, response.data)])
+    except Exception:
+        _G6_VIEW.set(None)  # diagnostics never change the read result
     validate_product_view(product, response.data, require_current_quality=True)
     return response
 
@@ -1860,6 +2208,7 @@ class _TargetRecorder:
         # Bounded timeline of slow reads and scheduler lag, in wall-clock
         # milliseconds, so a tail can be matched to server-side samples.
         self.outliers: list[list[object]] = []
+        self.g6 = _G6Recorder()
 
     def outlier(self, kind: str, value_ms: float, label: str) -> None:
         if len(self.outliers) < 400:
@@ -1886,6 +2235,19 @@ class _TargetRecorder:
             self.outlier("READ", value, f"{name}|{product.venue}|{_SERVED_BY.get() or '?'}")
         symbols = "+".join(item.native_symbol for item in products)
         self.groups["|".join((name, product.venue, symbols, _SERVED_BY.get() or "?", window))].append(value)
+
+
+def _g6_record(recorder, products, window: str, error_code: str | None) -> None:
+    """Count every returned view (also one the client then refused); a read with no view is a typed refusal."""
+    try:
+        observations = _G6_VIEW.get()
+        if observations:
+            for item in observations:
+                recorder.g6.view(item, window)
+        elif error_code is not None:
+            recorder.g6.refusal(_g6_key(products[0]), error_code, window)
+    except Exception:
+        pass
 
 
 async def _target_poll_loop(*, client, label, operation, products, period, phase, start, end, recorder,
@@ -1916,6 +2278,7 @@ async def _target_poll_loop(*, client, label, operation, products, period, phase
             ledger.sent += 1
             window = recorder.window(sent)
             _SERVED_BY.set(None)
+            _G6_VIEW.set(None)
             sent_ns = time.time_ns()
             try:
                 await _target_read(client, operation, products)
@@ -1924,12 +2287,14 @@ async def _target_poll_loop(*, client, label, operation, products, period, phase
             except Exception as error:
                 failed_ns = time.time_ns()
                 ledger.record_failure(_error_code(error))
+                _g6_record(recorder, products, window, _error_code(error))
                 recorder.error(operation=operation, poll=label, window=window,
                                product=_product_evidence(products[0]), error=_safe_error(error),
                                served_by=_SERVED_BY.get(), sent_ns=sent_ns, failed_ns=failed_ns,
                                elapsed_ms=round((failed_ns - sent_ns) / 1e6, 3))
                 continue
             done = time.monotonic()
+            _g6_record(recorder, products, window, None)
             ledger.completed += 1
             if done > due + period:
                 ledger.late += 1
@@ -2206,8 +2571,18 @@ async def _target_cold(*, client, product, recorder) -> None:
         started = time.monotonic()
         entry = {"venue": product.venue, "native_symbol": product.native_symbol, "rows": rows,
                  "window": recorder.window(started)}
+        _SERVED_BY.set(None)
+        _SERVED_DONE_NS.set(None)
+        sent_ns = time.time_ns()
         try:
             response = await client.warmup(replace(sdk_requirement(product), warmup_limit=rows))
+            # G5 split (2026-10-10): which replica served it, transport time (server + network + body read) and the
+            # client remainder (SDK model parse + per-row validation), so queueing is told apart from client CPU.
+            done_ns = _SERVED_DONE_NS.get()
+            entry["served_by"] = _SERVED_BY.get()
+            entry["sent_at_ns"] = sent_ns
+            if done_ns is not None:
+                entry["transport_ms"] = round((done_ns - sent_ns) / 1e6, 3)
             entry["returned"] = len(response.data)
             for item in response.data:
                 validate_product_view(product, item, require_current_quality=False)
@@ -2224,6 +2599,8 @@ async def _target_cold(*, client, product, recorder) -> None:
             recorder.error(operation="COLD", product=_product_evidence(product), rows=rows,
                            error=_safe_error(error))
         entry["ms"] = round((time.monotonic() - started) * 1000.0, 3)
+        if "transport_ms" in entry:
+            entry["client_ms"] = round(entry["ms"] - entry["transport_ms"], 3)
         recorder.cold.append(entry)
 
 
@@ -2307,6 +2684,7 @@ async def _target_worker(config: dict[str, object], worker: int, workers: int) -
     poll_tasks: list[asyncio.Task] = []
     setup_seconds: float | None = None
     start: float | None = None
+    go_unix: float | None = None
     try:
         results = await asyncio.gather(*(establish(item) for item in mine), return_exceptions=True)
         for session, result in zip(mine, results, strict=True):
@@ -2334,7 +2712,8 @@ async def _target_worker(config: dict[str, object], worker: int, workers: int) -
         line = await asyncio.get_running_loop().run_in_executor(None, sys.stdin.readline)
         if not line.startswith("GO "):
             raise RuntimeError("target worker did not receive a start signal")
-        start = time.monotonic() + (float(line.split()[1]) - time.time())
+        go_unix = float(line.split()[1])
+        start = time.monotonic() + (go_unix - time.time())
         end = start + duration
         if final:
             burst = final_cfg["burst"]
@@ -2426,12 +2805,18 @@ async def _target_worker(config: dict[str, object], worker: int, workers: int) -
                        for key, value in series_by_session.items()},
         "cold": recorder.cold,
         "outliers": recorder.outliers,
+        "g6_view_quality": recorder.g6.evidence(),
         "counters": dict(recorder.counters),
         "errors": recorder.errors,
         "error_count": recorder.error_count,
         "leaked_tasks": len(leaked),
         "fault_windows": ({} if start is None else
                           {name: [round(a - start, 3), round(b - start, 3)] for name, (a, b) in windows.items()}),
+        # Host-comparable wall clock of the load window and fault windows (same host clock as the campaign probes).
+        "load_window_unix_s": None if go_unix is None else [go_unix, go_unix + duration],
+        "fault_windows_unix_s": ({} if go_unix is None else
+                                 {name: [round(go_unix + a - start, 3), round(go_unix + b - start, 3)]
+                                  for name, (a, b) in windows.items()}),
         "cpu_seconds": round(usage.ru_utime + usage.ru_stime, 3),
         "max_rss_kib": usage.ru_maxrss,
     }
@@ -2459,6 +2844,8 @@ def _merge_target(results: list[dict[str, object]], *, plan, final: bool) -> dic
         worker0 = next((item for item in results if item["worker"] == 0), {})
         windows = {
             "BURST": worker0.get("fault_windows", {}).get("BURST"),
+            "BURST_unix_s": worker0.get("fault_windows_unix_s", {}).get("BURST"),
+            "RECONNECT_unix_s": worker0.get("fault_windows_unix_s", {}).get("RECONNECT"),
             "SLOW_READER": sum(item["counters"].get("slow_reader_pauses", 0) for item in results),
             "RECONNECT": sum(item["reconnects"] for item in streams),
             "reconnect_restored": sum(item["restored"] for item in streams),
@@ -2513,6 +2900,8 @@ def _merge_target(results: list[dict[str, object]], *, plan, final: bool) -> dic
         "bar_series": {key: value for result in results for key, value in result["bar_series"].items()},
         "cold": [item for result in results for item in result["cold"]],
         "outliers": sorted(entry for result in results for entry in result.get("outliers", [])),
+        "g6_view_quality": merge_g6([result.get("g6_view_quality") for result in results]),
+        "load_window_unix_s": next((item.get("load_window_unix_s") for item in results if item["worker"] == 0), None),
         "counters": dict(sum((Counter(item["counters"]) for item in results), Counter())),
         "errors": [item for result in results for item in result["errors"]][:40],
         "error_count": sum(item["error_count"] for item in results),
@@ -3117,9 +3506,12 @@ async def run_kn4_matrix_inside() -> dict[str, object]:
     }
 
 
-def _ts_heartbeat() -> dict[str, object] | None:
+_TS_LOG_LINE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
+
+
+def _ts_heartbeat(container: str = "market_data_service") -> dict[str, object] | None:
     try:
-        result = subprocess.run(["docker", "exec", "-i", "market_data_service", "python", "-"],
+        result = subprocess.run(["docker", "exec", "-i", container, "python", "-"],
                                 input=_TS_HEARTBEAT, capture_output=True, text=True, timeout=20)
         value = json.loads(result.stdout.strip().splitlines()[-1])
         value["at_ns"] = time.time_ns()
@@ -3128,11 +3520,22 @@ def _ts_heartbeat() -> dict[str, object] | None:
         return {"at_ns": time.time_ns(), "error": _safe_error(error)}
 
 
-def _ts_disconnects(since: str, until: str) -> tuple[int, Counter]:
-    result = subprocess.run(["docker", "logs", "--since", since, "--until", until, "market_data_service"],
+def _ts_disconnects(since: str, until: str, container: str = "market_data_service") -> tuple[int, Counter]:
+    """Writer disconnects in [since, until): its docker log AND its worker log files (fixed workers log to
+    /app/logs/*.log, not stdout - counting docker logs alone reported 0 for the P18.4 writer)."""
+    result = subprocess.run(["docker", "logs", "--since", since, "--until", until, container],
                             capture_output=True, text=True, timeout=60)
+    lines = (result.stdout + result.stderr).splitlines()
+    files = subprocess.run(["docker", "exec", container, "sh", "-c",
+                            "cat /app/logs/market_data_worker-*.log /app/logs/market_data_service.log 2>/dev/null"],
+                           capture_output=True, text=True, timeout=60)
+    low, high = since.replace("T", " ").rstrip("Z"), until.replace("T", " ").rstrip("Z")
+    for line in files.stdout.splitlines():
+        stamp = _TS_LOG_LINE.match(line)
+        if stamp and low <= stamp.group(1) < high:
+            lines.append(line)
     codes: Counter[str] = Counter()
-    for line in (result.stdout + result.stderr).splitlines():
+    for line in lines:
         if "slice disconnected" in line:
             match = re.search(r"code=([A-Z_]+)", line)
             codes[match.group(1) if match else "UNKNOWN"] += 1
@@ -3196,15 +3599,25 @@ def run_target_host(args: argparse.Namespace) -> int:
     profile = validate_profile(_read_json(args.profile))
     if {item["id"] for item in profile["identities"]} != set(_TARGET_VENUE_IDENTITY.values()):
         raise ValueError("target mode runs exactly the two alpha platform identities")
-    budget_bytes = _TARGET_BUDGET_PATH.read_bytes()
-    budget = load_target_budget(json.loads(budget_bytes))
     matrix = args.mode in {"target-matrix", "kn4-matrix"}
-    if args.sessions not in TARGET_STAGE_SECONDS:
-        raise ValueError("target sessions must be exactly one of 5,20,35,50")
-    duration = 0 if matrix else TARGET_STAGE_SECONDS[args.sessions]
+    budget_path = getattr(args, "budget", None)
+    if budget_path is not None:
+        # P18.4 stage-100 ramp: its own frozen budget; the v2.1.1 contract below stays untouched.
+        budget_bytes = Path(budget_path).read_bytes()
+        budget = planner.load_p184_stage100_budget(json.loads(budget_bytes))
+        stage_seconds = planner.P184_STAGE_SECONDS
+        final_stage = 100
+    else:
+        budget_bytes = _TARGET_BUDGET_PATH.read_bytes()
+        budget = load_target_budget(json.loads(budget_bytes))
+        stage_seconds = TARGET_STAGE_SECONDS
+        final_stage = 50
+    if args.sessions not in stage_seconds:
+        raise ValueError(f"target sessions must be exactly one of {','.join(map(str, sorted(stage_seconds)))}")
+    duration = 0 if matrix else stage_seconds[args.sessions]
     if args.duration_seconds != duration:
         raise ValueError(f"target stage {args.sessions} runs exactly {duration} s from the frozen budget")
-    final = not matrix and args.sessions == 50
+    final = not matrix and args.sessions == final_stage
     if final:
         assert_no_disposable_probes()
     workers = 1 if matrix else target_worker_count(args.sessions)
@@ -3228,11 +3641,12 @@ def run_target_host(args: argparse.Namespace) -> int:
         *query_names, f"{prefix}-stream_v2_active-1", f"{prefix}-stream_v2_passive-1",
         "market_data_service",
     ]
+    ts_container = profile.get("ts_container") or "market_data_service"
     shadow = profile.get("scope") == "shadow"
     # A shadow run still samples the production Trading System: it is the
     # packet's stop condition (TS ready routes must not drop), not a consumer
     # of the shadow targets.
-    ts_samples = [] if matrix else [_ts_heartbeat()]
+    ts_samples = [] if matrix else [_ts_heartbeat(ts_container)]
     started_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     baseline_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 600))
     started = time.monotonic()
@@ -3243,7 +3657,10 @@ def run_target_host(args: argparse.Namespace) -> int:
     try:
         process, telemetry, runtime_fault = _run_monitored_client(
             command, monitored, timeout=duration + 720,
-            observer=None if matrix else _ts_heartbeat, observations=ts_samples,
+            # The periodic observer samples the SAME writer as the first/last sample
+            # (Codex review 2026-10-10: it used the default container and 155 of 157
+            # stage-100b samples were unreadable, while the gate scored only 2).
+            observer=None if matrix else (lambda: _ts_heartbeat(ts_container)), observations=ts_samples,
         )
     finally:
         try:
@@ -3252,7 +3669,7 @@ def run_target_host(args: argparse.Namespace) -> int:
             cleanup_error = _safe_error(error)
     ended_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     if not matrix:
-        ts_samples.append(_ts_heartbeat())
+        ts_samples.append(_ts_heartbeat(ts_container))
     stdout = process.stdout if process is not None else ""
     stderr = process.stderr if process is not None else ""
     receipt = None
@@ -3276,13 +3693,19 @@ def run_target_host(args: argparse.Namespace) -> int:
             if isinstance(value, dict) and "failure" in value:
                 client_failure = str(value["failure"])[:500]
                 break
-    trading_system: dict[str, object] = {"samples": [item for item in ts_samples if item and "ready" in item],
-                                         "unreadable_samples": [item for item in ts_samples if item and "error" in item]}
+    # Every sample is either readable or counted as unreadable (None included);
+    # expected_samples lets the verifier fail lost coverage instead of skipping it.
+    trading_system: dict[str, object] = {
+        "samples": [item for item in ts_samples if item and "ready" in item],
+        "unreadable_samples": [item if item else {"error": {"type": "NoSample"}}
+                               for item in ts_samples if not item or "ready" not in item],
+        "expected_samples": len(ts_samples),
+    }
     evaluation = None
     if not matrix:
         run_minutes = max(1e-6, (time.monotonic() - started) / 60.0)
-        base_count, base_codes = _ts_disconnects(baseline_iso, started_iso)
-        run_count, run_codes = _ts_disconnects(started_iso, ended_iso)
+        base_count, base_codes = _ts_disconnects(baseline_iso, started_iso, ts_container)
+        run_count, run_codes = _ts_disconnects(started_iso, ended_iso, ts_container)
         trading_system.update(
             baseline_window=[baseline_iso, started_iso], run_window=[started_iso, ended_iso],
             baseline_disconnects_per_minute=round(base_count / 10.0, 3),
@@ -3353,6 +3776,7 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--inside-worker", nargs=2, type=int, metavar=("INDEX", "COUNT"), help=argparse.SUPPRESS)
     value.add_argument("--sessions", type=int)
     value.add_argument("--duration-seconds", type=int)
+    value.add_argument("--budget", type=Path, help="P18.4 stage-100 budget (qdl.p184.stage100-budget.v1)")
     return value
 
 

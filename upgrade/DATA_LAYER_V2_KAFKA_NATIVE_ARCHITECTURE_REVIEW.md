@@ -3156,3 +3156,31 @@ No alpha/mainnet activation, TS accounting redesign or P18.3E money certificate
 is implied. The original planning entry changed no runtime. The subsequent scoped
 TS handoff and additive proof migration are recorded in the receipt above; Data
 Layer runtime, limits and bindings remain unchanged.
+
+
+### Owner continuation 2026-10-08: existing-core coherence and Paper entitlement
+
+This narrow operational amendment preserves KN architecture. Coherence is now
+measured through the TS IDR-076 bounded product read path; a new core is not
+required merely for coherence. The failed0d8da150 trial is historical evidence,
+not the release target. Owner's already-applied bar-edge51450612 fixes runaway
+history retry. Busy-window/resource and release status are recorded in
+[evidence/releases/v2.2.3/RELEASE_NOTES.md](evidence/releases/v2.2.3/RELEASE_NOTES.md).
+IDR075 prepares four additive inversePaper reads, preserving existing linear
+MARK/INDEX and allpolicies; revision11/bindingr23 must activate with TSJWT11/hash
+in one approved reader/caller window. No newinterface, service, acquisition or
+realmpermission. Prepared files are not activation/certification. ActiveStream
+BTC TRADE overflow/replay observed under highertraffic remains a qualification
+finding. DR01-08/brokerdelta remain prerequisites; no dependency on building
+Paperfeatures. [PhaseCpacket](evidence/p184-dl-phase-c-packet.md) governs scope.
+
+
+### DR01/DR08 evidence and TRADE diagnosis follow-up
+
+Owner scope 2026-10-08: isolated runtime auth/fault runners, not a shared-runtime
+rollout. [Incident attribution and proposal boundaries](evidence/p184-dr01-dr08-trade-attribution.md)
+record why replica offers/local delivery counters cannot prove client apply rate.
+Use exact TS case roster/provenance; development placeholders are not acceptance.
+Retain v2.2.3 HOLD until DR/broker receipts and own DR01/DR08 meet their contracts.
+TRADE latest-state opt-in and realtime-core batch25->50 remain proposals only;
+no delivery-mode default, interface, broker config or core binary is changed.

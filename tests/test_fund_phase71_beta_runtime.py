@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import tempfile
 import threading
 import time
@@ -462,6 +463,30 @@ class Phase71ConfigAndTopologyTests(unittest.TestCase):
         with self.assertRaises(DataPlaneAccessError) as captured:
             second.consume(manifest)
         self.assertEqual(captured.exception.status_code, 503)
+
+    def test_quota_exhaustion_is_reported_once_per_consumer_and_minute(self):
+        """IDR-029: the per-identity spend becomes visible without a log line per request."""
+        payload = manifest_mapping(
+            consumer_id="phase71-quota-log",
+            subject="spiffe://qdl/paper/phase71-quota-log",
+            instrument_uid="00000000-0000-0000-0000-000000000001",
+        )
+        payload["spec"]["quotas"]["requests_per_minute"] = 1
+        manifest = ConsumerManifestLoader.from_mapping(payload)
+
+        class Exhausted:
+            def eval(self, script, key_count, key, limit, ttl):
+                return [0, 5]
+
+        quota = RedisMinuteQuota(Exhausted(), prefix="qdl:beta:v2:paper:phase71")
+        with self.assertLogs("qdl.security.data_plane", level="WARNING") as logs:
+            for _ in range(4):
+                with self.assertRaises(DataPlaneAccessError):
+                    quota.consume(manifest)
+        self.assertEqual(len(logs.records), 1)
+        event = json.loads(logs.records[0].getMessage())
+        self.assertEqual((event["event"], event["consumer_id"], event["count"], event["limit"]),
+                         ("qdl_consumer_quota_exhausted", "phase71-quota-log", 5, 1))
 
 
 if __name__ == "__main__":

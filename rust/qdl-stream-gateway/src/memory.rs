@@ -8,7 +8,11 @@
 //! - two byte budgets for everything holding decoded records (charged
 //!   `raw + 8 x payload`, see `hub::DECODED_FACTOR`, until the transport takes
 //!   the record): live subscriber queues, and replay (channels and ring-replay
-//!   references) - separate, so replay can never starve live delivery;
+//!   references) - separate, so replay can never starve live delivery. A
+//!   live record decoded once for N subscribers is charged once, plus a
+//!   small overhead per queue entry and a full charge per transport copy;
+//!   one subscription may reference at most a fair share of the live
+//!   budget ([`default_queue_bytes_per_subscription`]);
 //! - librdkafka's prefetch per consumer;
 //! - the transport of each admitted stream (Subscribe or Replay): tonic's
 //!   encode buffer yields at 32 KiB and hyper holds one chunk until the peer's
@@ -25,6 +29,20 @@ pub const REPLAY_QUEUE_KBYTES: u64 = 4_096;
 /// Transport bytes per admitted stream: tonic's 32 KiB encode yield plus one
 /// message (canonical book max measured 56,495 B, plus its resume token).
 pub const TRANSPORT_STREAM_BYTES: u64 = 96 * 1024;
+
+/// The default per-subscription byte cap is this fraction of the live
+/// budget, so one slow lossless subscriber cannot hold all of it and make
+/// every other subscriber overflow (2026-10-10 17:22:48Z: 84 streams with
+/// empty queues closed at once). Half, not less: the TS writer legitimately
+/// held 15.85 MB of BOOK_DELTA in one subscription during a stall
+/// (2026-10-10 14:28Z), so a tighter cap would close a healthy consumer.
+pub const SUBSCRIPTION_SHARE_DIVISOR: u64 = 2;
+
+/// `QDL_KN_QUEUE_BYTES_PER_SUBSCRIPTION` when unset: a fair share of the
+/// replica live budget (16 MiB of the default 32 MiB).
+pub fn default_queue_bytes_per_subscription(queue_total: u64) -> u64 {
+    (queue_total / SUBSCRIPTION_SHARE_DIVISOR).max(1)
+}
 
 /// Where the container memory limit is read (cgroup v2).
 pub const CGROUP_MEMORY_MAX: &str = "/sys/fs/cgroup/memory.max";
@@ -168,6 +186,13 @@ mod tests {
         let error = old.check().unwrap_err();
         assert!(error.contains("exceed the container limit"), "{error}");
         assert!(MemoryPlan { limit: None, ..old }.check().is_ok());
+    }
+
+    #[test]
+    fn one_subscription_defaults_to_a_fair_share_of_the_live_budget() {
+        assert_eq!(default_queue_bytes_per_subscription(32 * MIB), 16 * MIB);
+        assert!(default_queue_bytes_per_subscription(32 * MIB) < plan(None).queue_total);
+        assert_eq!(default_queue_bytes_per_subscription(0), 1);
     }
 
     #[test]

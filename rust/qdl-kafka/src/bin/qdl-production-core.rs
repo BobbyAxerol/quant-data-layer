@@ -421,6 +421,54 @@ fn validate_raw_authority(
     Ok(())
 }
 
+fn is_book_invalidation(result: &ProcessBatch) -> bool {
+    use qdl_contracts::qdl::{
+        common::v1::QualityFlag,
+        marketdata::v2::{event_envelope::Payload, EventEnvelope},
+    };
+    if result.canonical.len() != 2
+        || result.duplicates != 0
+        || result.canonical[0].partition_key != result.canonical[1].partition_key
+    {
+        return false;
+    }
+    let mut generation = None;
+    result.canonical.iter().enumerate().all(|(index, record)| {
+        let Ok(event) = EventEnvelope::decode(record.payload.as_slice()) else {
+            return false;
+        };
+        if !event
+            .quality_flags
+            .contains(&(QualityFlag::SequenceGapBefore as i32))
+            || !event
+                .quality_flags
+                .contains(&(QualityFlag::ResyncRequired as i32))
+        {
+            return false;
+        }
+        match (index, event.payload) {
+            (0, Some(Payload::BookSnapshot(book))) => {
+                generation = Some(book.book_generation);
+                book.book_generation > 0
+                    && !book.sequence_verified
+                    && book.levels.is_empty()
+                    && book.depth == 0
+                    && book.native_sequence.is_empty()
+            }
+            (1, Some(Payload::BookDelta(book))) => {
+                Some(book.book_generation) == generation
+                    && !book.sequence_verified
+                    && book.reset
+                    && book.updates.is_empty()
+                    && book.native_sequence_start.is_empty()
+                    && book.native_sequence_end.is_empty()
+                    && book.snapshot_sequence.is_empty()
+            }
+            _ => false,
+        }
+    })
+}
+
 fn decision(result: &ProcessBatch) -> Result<Phase92Decision, RuntimeError> {
     let active = [
         !result.canonical.is_empty(),
@@ -428,7 +476,9 @@ fn decision(result: &ProcessBatch) -> Result<Phase92Decision, RuntimeError> {
         result.duplicates > 0,
         result.filtered > 0,
     ];
-    if active.into_iter().filter(|value| *value).count() != 1 {
+    // A book fence is canonical output plus its raw rejection evidence, not
+    // competing normalization results. Keep other mixed outcomes fail-closed.
+    if active.into_iter().filter(|value| *value).count() != 1 && !is_book_invalidation(result) {
         return Err("normalizer produced an ambiguous decision for one raw event".into());
     }
     if !result.canonical.is_empty() {
@@ -440,6 +490,41 @@ fn decision(result: &ProcessBatch) -> Result<Phase92Decision, RuntimeError> {
     } else {
         Ok(Phase92Decision::Filtered)
     }
+}
+
+fn publication_outputs(
+    result: &ProcessBatch,
+    item_decision: Phase92Decision,
+    topics: &ProductionTopicConfig,
+    publication: &Phase92PublicationContext,
+    raw: &[u8],
+) -> Result<Vec<Phase92TransactionalOutput>, RuntimeError> {
+    let mut outputs = Vec::new();
+    if item_decision == Phase92Decision::Canonical {
+        for record in &result.canonical {
+            let mut projected = record.clone();
+            projected.stream = output_stream(topics, publication.target)?.into();
+            outputs.push(Phase92TransactionalOutput {
+                record: projected,
+                publication: publication.clone(),
+                raw_provider_envelope: Some(raw.to_vec()),
+            });
+        }
+    }
+    // Keep quarantine evidence in the same transaction/progress watermark as
+    // canonical fences, on the existing primary-only quarantine route.
+    if !result.quarantines.is_empty() && publication.target == SinkTarget::PrimaryCanonical {
+        for record in &result.quarantines {
+            let mut quarantined = record.clone();
+            quarantined.stream = topics.quarantine.clone();
+            outputs.push(Phase92TransactionalOutput {
+                record: quarantined,
+                publication: publication.clone(),
+                raw_provider_envelope: Some(raw.to_vec()),
+            });
+        }
+    }
+    Ok(outputs)
 }
 
 fn output_stream(topics: &ProductionTopicConfig, target: SinkTarget) -> Result<&str, RuntimeError> {
@@ -591,29 +676,13 @@ async fn run_generation(
                     source_cursor: input.cursor.clone(),
                     source_event_id: input.record.event_id.clone(),
                 });
-                if item_decision == Phase92Decision::Canonical {
-                    for record in &result.canonical {
-                        let mut projected = record.clone();
-                        projected.stream = output_stream(&config.topics, target)?.into();
-                        outputs.push(Phase92TransactionalOutput {
-                            record: projected,
-                            publication: publication.clone(),
-                            raw_provider_envelope: Some(input.record.payload.clone()),
-                        });
-                    }
-                } else if item_decision == Phase92Decision::Quarantine
-                    && target == SinkTarget::PrimaryCanonical
-                {
-                    for record in &result.quarantines {
-                        let mut quarantined = record.clone();
-                        quarantined.stream = config.topics.quarantine.clone();
-                        outputs.push(Phase92TransactionalOutput {
-                            record: quarantined,
-                            publication: publication.clone(),
-                            raw_provider_envelope: Some(input.record.payload.clone()),
-                        });
-                    }
-                }
+                outputs.extend(publication_outputs(
+                    &result,
+                    item_decision,
+                    &config.topics,
+                    &publication,
+                    &input.record.payload,
+                )?);
             }
         }
         bridge
@@ -727,6 +796,188 @@ mod tests {
             ..canonical
         };
         assert!(decision(&ambiguous).is_err());
+    }
+
+    fn fence_batch(quarantine: bool) -> ProcessBatch {
+        use qdl_contracts::qdl::{
+            common::v1::QualityFlag,
+            marketdata::v2::{
+                event_envelope::Payload, EventEnvelope, OrderBookDelta, OrderBookSnapshot,
+            },
+        };
+        let canonical = [
+            Payload::BookSnapshot(OrderBookSnapshot {
+                book_generation: 7,
+                ..Default::default()
+            }),
+            Payload::BookDelta(OrderBookDelta {
+                book_generation: 7,
+                reset: true,
+                ..Default::default()
+            }),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, payload)| {
+            let event = EventEnvelope {
+                quality_flags: vec![
+                    QualityFlag::SequenceGapBefore as i32,
+                    QualityFlag::ResyncRequired as i32,
+                ],
+                payload: Some(payload),
+                ..Default::default()
+            };
+            qdl_core::transport::DurableRecord {
+                stream: "canonical".into(),
+                partition_key: "TEST_ONLY.book".into(),
+                event_id: vec![index as u8 + 1],
+                payload: event.encode_to_vec(),
+                accepted_at_ns: 1,
+            }
+        })
+        .collect();
+        ProcessBatch {
+            canonical,
+            quarantines: if quarantine {
+                vec![qdl_core::transport::DurableRecord {
+                    stream: "quarantine".into(),
+                    partition_key: "TEST_ONLY.raw".into(),
+                    event_id: vec![3],
+                    payload: b"TEST_ONLY.quarantine".to_vec(),
+                    accepted_at_ns: 1,
+                }]
+            } else {
+                vec![]
+            },
+            duplicates: 0,
+            filtered: usize::from(!quarantine),
+            filtered_outcome: (!quarantine).then_some("BUFFERED_AWAITING_BOOTSTRAP"),
+        }
+    }
+
+    #[test]
+    fn book_fence_with_quarantine_has_canonical_progress() {
+        assert_eq!(
+            decision(&fence_batch(true)).unwrap(),
+            Phase92Decision::Canonical
+        );
+    }
+
+    #[test]
+    fn book_fence_with_filtered_bootstrap_has_canonical_progress() {
+        assert_eq!(
+            decision(&fence_batch(false)).unwrap(),
+            Phase92Decision::Canonical
+        );
+    }
+
+    #[test]
+    fn mixed_non_fences_remain_rejected() {
+        use qdl_contracts::qdl::marketdata::v2::{event_envelope::Payload, EventEnvelope};
+        for case in 0..7 {
+            let mut batch = fence_batch(true);
+            let mut event = EventEnvelope::decode(batch.canonical[0].payload.as_slice()).unwrap();
+            match case {
+                0 => event.quality_flags.clear(),
+                1 => {
+                    if let Some(Payload::BookSnapshot(book)) = &mut event.payload {
+                        book.sequence_verified = true;
+                    }
+                }
+                2 => {
+                    if let Some(Payload::BookSnapshot(book)) = &mut event.payload {
+                        book.native_sequence = "100".into();
+                    }
+                }
+                3 => {
+                    batch.canonical.pop();
+                }
+                4 => batch.canonical[1].partition_key = "other-book".into(),
+                5 => batch.duplicates = 1,
+                6 => {
+                    if let Some(Payload::BookSnapshot(book)) = &mut event.payload {
+                        book.book_generation = 8;
+                    }
+                }
+                _ => unreachable!(),
+            }
+            batch.canonical[0].payload = event.encode_to_vec();
+            assert!(
+                decision(&batch).is_err(),
+                "case {case} must not be admitted as a fence"
+            );
+        }
+        let mut empty = fence_batch(false);
+        empty.canonical.clear();
+        empty.filtered = 0;
+        empty.filtered_outcome = None;
+        assert!(decision(&empty).is_err());
+    }
+
+    #[test]
+    fn book_fence_outputs_preserve_quarantine_and_exact_bytes() {
+        let batch = fence_batch(true);
+        let topics = ProductionTopicConfig {
+            raw_inputs: vec!["raw".into()],
+            authority_control: "authority".into(),
+            target_checkpoints: "checkpoints".into(),
+            canary_canonical: "canary".into(),
+            primary_canonical: "primary".into(),
+            public_v2: "public".into(),
+            legacy_v1: "legacy".into(),
+            quarantine: "quarantine".into(),
+        };
+        for target in [
+            SinkTarget::PrimaryCanonical,
+            SinkTarget::CanaryCanonical,
+            SinkTarget::PublicV2,
+            SinkTarget::LegacyV1,
+        ] {
+            let publication = Phase92PublicationContext {
+                slice_id: "TEST_ONLY.slice".into(),
+                owner_id: "TEST_ONLY.owner".into(),
+                authority_revision: 1,
+                shard_id: "TEST_ONLY.shard".into(),
+                lease_epoch: 1,
+                partition_plan_epoch: 1,
+                source_watermark: 42,
+                target,
+            };
+            let outputs = publication_outputs(
+                &batch,
+                Phase92Decision::Canonical,
+                &topics,
+                &publication,
+                b"TEST_ONLY.raw",
+            )
+            .unwrap();
+            assert_eq!(
+                outputs.len(),
+                if target == SinkTarget::PrimaryCanonical {
+                    3
+                } else {
+                    2
+                }
+            );
+            for (index, output) in outputs.iter().enumerate() {
+                let mut expected = if index < 2 {
+                    batch.canonical[index].clone()
+                } else {
+                    batch.quarantines[0].clone()
+                };
+                expected.stream = if index < 2 {
+                    output_stream(&topics, target).unwrap().into()
+                } else {
+                    topics.quarantine.clone()
+                };
+                assert_eq!(output.record, expected);
+                assert_eq!(output.publication, publication);
+                assert_eq!(
+                    output.raw_provider_envelope.as_deref(),
+                    Some(b"TEST_ONLY.raw".as_slice())
+                );
+            }
+        }
     }
 
     #[test]

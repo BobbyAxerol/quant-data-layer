@@ -10,13 +10,20 @@ stage's limit the gate closes; the edge stops fetching more history until the
 backlog drains, and resumes from its checkpoint.
 
 Boundary: read-only Kafka metadata (group offsets, watermarks); never joins or
-commits a group; no venue call.
+commits a group; no venue call. In production the Kafka client lives in a
+supervised spawned child (IDR-087: librdkafka 2.15.0 segfaulted in
+``list_consumer_group_offsets`` during a broker stop); a crash or hang there is
+an unknown backlog, which keeps the gate closed, never a dead edge.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
+
+from qdl.runtime.isolated_probe import ProbeUnavailable, SupervisedProbe
+
+DEFAULT_PROBE_TIMEOUT_S = 15.0
 
 
 @dataclass(frozen=True)
@@ -35,15 +42,22 @@ def stage_backlog(committed: Mapping[int, int], ends: Mapping[int, int]) -> int:
 
 
 class KafkaStageBacklog:
-    def __init__(self, stages: Sequence[Stage], *, read_committed: Callable[[str, str], Mapping[int, int]],
-                 read_ends: Callable[[str], Mapping[int, int]]) -> None:
+    def __init__(self, stages: Sequence[Stage], *, read_committed: Callable[[str, str], Mapping[int, int]] | None = None,
+                 read_ends: Callable[[str], Mapping[int, int]] | None = None,
+                 read_backlog: Callable[[], Mapping[str, int]] | None = None) -> None:
         if not stages or any(stage.limit_records < 1 for stage in stages):
             raise ValueError("backpressure needs stages with positive limits")
+        if (read_backlog is None) == (read_committed is None or read_ends is None):
+            raise ValueError("backpressure needs either per-stage readers or one backlog reader")
         self.stages = tuple(stages)
         self._read_committed = read_committed
         self._read_ends = read_ends
+        self._read_backlog = read_backlog
 
     def backlog(self) -> dict[str, int]:
+        if self._read_backlog is not None:
+            backlog = self._read_backlog()
+            return {stage.name: int(backlog[stage.name]) for stage in self.stages}
         return {stage.name: stage_backlog(self._read_committed(stage.group, stage.topic),
                                           self._read_ends(stage.topic)) for stage in self.stages}
 
@@ -52,6 +66,8 @@ class KafkaStageBacklog:
 
         try:
             backlog = self.backlog()
+        except ProbeUnavailable as error:  # crashed/hung/failed probe child: backlog unknown
+            return False, {"error": f"ProbeUnavailable: {error}"[:200], "unknown": error.reason}
         except Exception as error:  # noqa: BLE001 - an unknown backlog never admits history
             return False, {"error": f"{type(error).__name__}: {error}"[:200]}
         over = {stage.name: backlog[stage.name] for stage in self.stages if backlog[stage.name] > stage.limit_records}
@@ -71,12 +87,32 @@ def kafka_backlog_from_environment(environ: Mapping[str, str], stages: Sequence[
         if not path.is_file():
             raise ValueError(f"history backpressure TLS file unavailable: {path}")
         security[option] = str(path)
-    return kafka_backlog_from_config(environ["QDL_STABLE_BAR_BACKPRESSURE_BOOTSTRAP"], stages, security)
+    timeout_s = float(environ.get("QDL_STABLE_BAR_BACKPRESSURE_PROBE_TIMEOUT_S", "").strip()
+                      or DEFAULT_PROBE_TIMEOUT_S)
+    return kafka_backlog_from_config(environ["QDL_STABLE_BAR_BACKPRESSURE_BOOTSTRAP"], stages, security,
+                                     timeout_s=timeout_s)
 
 
 def kafka_backlog_from_config(bootstrap: str, stages: Sequence[Stage],
-                              security: Mapping[str, str] | None = None) -> KafkaStageBacklog:
-    """Wire the gate to a broker with confluent-kafka (admin group offsets + watermarks)."""
+                              security: Mapping[str, str] | None = None, *,
+                              timeout_s: float = DEFAULT_PROBE_TIMEOUT_S) -> KafkaStageBacklog:
+    """The gate with its Kafka reads in a supervised spawned child (IDR-087).
+
+    The caller's process never loads librdkafka for this gate. Each gate call
+    asks the long-lived child for the whole backlog; a native crash, a hang past
+    ``timeout_s`` or a client error raises ``ProbeUnavailable`` -> gate closed,
+    and the next call starts a fresh child.
+    """
+
+    probe = SupervisedProbe(kafka_backlog_in_process, (bootstrap, tuple(stages), dict(security or {})),
+                            timeout_s=timeout_s)
+    return KafkaStageBacklog(stages, read_backlog=probe)
+
+
+def kafka_backlog_in_process(bootstrap: str, stages: Sequence[Stage],
+                             security: Mapping[str, str] | None = None) -> Callable[[], dict[str, int]]:
+    """Backlog reader with confluent-kafka (admin group offsets + watermarks) in
+    THIS process. Production runs it only inside the supervised child."""
 
     from confluent_kafka import Consumer, ConsumerGroupTopicPartitions, TopicPartition
     from confluent_kafka.admin import AdminClient
@@ -100,4 +136,4 @@ def kafka_backlog_from_config(bootstrap: str, stages: Sequence[Stage],
         return {p: metadata.get_watermark_offsets(TopicPartition(topic, p), timeout=10)[1]
                 for p in topic_partitions(topic)}
 
-    return KafkaStageBacklog(stages, read_committed=read_committed, read_ends=read_ends)
+    return KafkaStageBacklog(stages, read_committed=read_committed, read_ends=read_ends).backlog

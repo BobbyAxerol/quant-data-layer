@@ -123,6 +123,13 @@ def prepare_sandbox_extension(*, catalog, acquisition, manifest, binding, demand
         route["requirement_id"] = hashlib.sha256(
             f"{consumer.consumer_id}:{requirement_key(parsed)}".encode()).hexdigest()
         target_binding["products"].append(route)
+        if "request_policies" in target_binding:  # v3: every sealed product carries its manifest entitlement
+            recency = parsed.event_recency_policy
+            target_binding["request_policies"].append({
+                "requirement_id": route["requirement_id"],
+                "event_recency_policy": None if recency is None else str(getattr(recency, "value", recency)),
+                "max_session_liveness_ms": parsed.max_session_liveness_ms,
+            })
     provenance = {
         "schema": "qdl.v2.sandbox-extension-preparation.v1",
         "status": "PREPARED_NOT_ACTIVATED_NOT_CERTIFIED",
@@ -143,6 +150,8 @@ def prepare_sandbox_extension(*, catalog, acquisition, manifest, binding, demand
                           universal_manifest_sha256=_digest(provenance),
                           inventory_sha256=provenance["demand_sha256"])
     target_binding["products"].sort(key=lambda r: r["requirement_id"])
+    if "request_policies" in target_binding:
+        target_binding["request_policies"].sort(key=lambda r: r["requirement_id"])
     target_binding.pop("binding_sha256")
     target_binding["binding_sha256"] = _digest(target_binding)
     ConsumerRouteBinding.from_canonical_mapping(target_binding)

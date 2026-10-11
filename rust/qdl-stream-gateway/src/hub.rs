@@ -13,13 +13,23 @@
 //! replayed (from the ring when it still covers the range, else by a separate
 //! bounded reader), every record at or above it goes to the subscriber's
 //! queue. The live reader is never sought.
+//!
+//! Hot read (R2, Astra advisory 2026-10-10): a canonical hot lookup touches
+//! only the partition(s) that hold its key. Dispatch keeps, under the same
+//! partition lock, a per-key view of the ring (`by_key`) and a directory of
+//! the partitions whose ring holds each key (`key_home`). A lookup copies the
+//! key's `Arc` references, the dispatch boundary and the broker head proof in
+//! one short critical section and decodes/validates outside it. Locks are
+//! acquired with a bounded wait against the request deadline instead of a
+//! single `try_lock`, and reader progress is an atomic, so concurrent lookups
+//! of different (or the same) products no longer refuse each other.
 
 use crate::generated::marketdata_v2::EventEnvelope;
-use crate::subscription::Subscription;
+use crate::subscription::{ByteBudget, Charge, Subscription};
 use prost::Message as _;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError};
 use std::time::{Duration, Instant};
 
 /// Accounting overhead per queued/ringed record beyond key and payload.
@@ -56,6 +66,13 @@ pub struct HotRecord {
 pub struct LiveRecord {
     pub raw: SharedRecord,
     pub envelope: EventEnvelope,
+    /// The live budget charge for this one decoded copy, taken once at
+    /// dispatch and released exactly once, when the last `Arc` (a queue
+    /// entry or a subscription task) drops. Subscribers then charge the
+    /// replica budget only their queue entry overhead. `None` for replay/ring decodes (charged per record to the
+    /// replay budget by their owner) and when the dispatch-time charge was
+    /// refused: each subscriber then charges the full weight itself.
+    pub shared_charge: Option<Charge>,
 }
 
 /// Empirical decoded-size allowance per payload byte: measured
@@ -77,10 +94,25 @@ impl LiveRecord {
         live_weight(&self.raw)
     }
 
+    /// Decode without a shared charge (the caller accounts for it).
     pub fn decode(raw: SharedRecord) -> Result<Arc<Self>, String> {
+        Self::decode_charged(raw, None)
+    }
+
+    /// Decode once and charge the decoded copy to `budget` once, for every
+    /// holder together. A refused charge leaves `shared_charge` empty.
+    pub fn decode_charged(
+        raw: SharedRecord,
+        budget: Option<&Arc<ByteBudget>>,
+    ) -> Result<Arc<Self>, String> {
         let envelope = EventEnvelope::decode(raw.payload.as_slice())
             .map_err(|error| format!("canonical record failed to decode: {error}"))?;
-        Ok(Arc::new(Self { raw, envelope }))
+        let shared_charge = budget.and_then(|budget| budget.charge(live_weight(&raw)));
+        Ok(Arc::new(Self {
+            raw,
+            envelope,
+            shared_charge,
+        }))
     }
 }
 
@@ -165,6 +197,9 @@ pub struct HubMetrics {
     pub duplicates: AtomicU64,
     pub decode_failures: AtomicU64,
     pub offers: AtomicU64,
+    /// Dispatches whose shared live-budget charge was refused (the replica
+    /// live budget is really full); their subscribers charged in full.
+    pub live_budget_refused: AtomicU64,
     pub ring_evictions: AtomicU64,
     pub reader_errors: AtomicU64,
 }
@@ -186,6 +221,53 @@ struct PartitionState {
     /// The ring holds every dispatched record in `[ring_start, next_offset)`.
     ring_start: i64,
     subscribers: HashMap<Vec<u8>, Vec<Arc<Subscription>>>,
+    /// The ring's records per key, in ring (offset) order. Same entries as
+    /// `ring`, so it is bounded by the ring and evicted with it.
+    by_key: HashMap<Vec<u8>, VecDeque<(Instant, SharedRecord)>>,
+    /// Last broker head this partition had caught up to, and when the broker
+    /// confirmed it. Read under the same lock as `next_offset`.
+    broker_head: Option<(i64, Instant)>,
+}
+
+/// Ring entries a hot lookup copies per critical section. Non-book keys
+/// resolve on the newest entry; a BOOK_SNAPSHOT lookup behind many deltas
+/// continues with further chunks, each one short lock.
+const HOT_SCAN_CHUNK: usize = 256;
+
+/// What a hot lookup copies out of one partition in one critical section.
+struct KeySnapshot {
+    partition: i32,
+    /// The key's newest ring entries (at most [`HOT_SCAN_CHUNK`]), newest first.
+    entries: Vec<(Instant, SharedRecord)>,
+    boundary_offset: i64,
+    broker_head: Option<(i64, Instant)>,
+}
+
+/// Acquire `mutex` without blocking past `deadline`. A lock still held at the
+/// deadline is `HOT_READER_BUSY`; a poisoned one means a reader-side panic.
+fn lock_until<T>(mutex: &Mutex<T>, deadline: Instant) -> Result<MutexGuard<'_, T>, String> {
+    let mut spins = 0u32;
+    loop {
+        match mutex.try_lock() {
+            Ok(guard) => return Ok(guard),
+            Err(TryLockError::Poisoned(_)) => return Err("HOT_READER_UNAVAILABLE".into()),
+            Err(TryLockError::WouldBlock) => {
+                if Instant::now() >= deadline {
+                    return Err("HOT_READER_BUSY".into());
+                }
+                // Holders keep these locks for O(record) work; spin briefly,
+                // then back off so a waiter never burns a core.
+                if spins < 64 {
+                    std::hint::spin_loop();
+                } else if spins < 128 {
+                    std::thread::yield_now();
+                } else {
+                    std::thread::sleep(Duration::from_micros(20));
+                }
+                spins = spins.saturating_add(1);
+            }
+        }
+    }
 }
 
 pub struct Hub {
@@ -194,11 +276,19 @@ pub struct Hub {
     pub metrics: HubMetrics,
     stop: AtomicBool,
     reader_failed: AtomicBool,
-    reader_progress: Mutex<Option<Instant>>,
-    broker_heads: Mutex<HashMap<i32, (i64, Instant)>>,
+    /// Last reader poll, in ns after `origin` plus one; 0 = never.
+    reader_progress: AtomicU64,
+    origin: Instant,
+    /// Partitions whose ring currently holds each key. Changed only when a
+    /// key enters or leaves a partition's ring (lock order: partition, then
+    /// this); lookups hold it alone, for a map read.
+    key_home: Mutex<HashMap<Vec<u8>, Vec<i32>>>,
     /// Records produced before this replica started (the warm range, a
     /// restart backlog) are not live-path lag and stay out of the histogram.
     started_ms: i64,
+    /// The replica live budget a dispatched record is charged to once
+    /// ([`Hub::attach_live_budget`]); unset, subscribers charge in full.
+    live_budget: OnceLock<Arc<ByteBudget>>,
 }
 
 fn now_ns() -> i64 {
@@ -222,6 +312,8 @@ impl Hub {
                         ring_bytes: 0,
                         ring_start: start,
                         subscribers: HashMap::new(),
+                        by_key: HashMap::new(),
+                        broker_head: None,
                     }),
                 )
             })
@@ -232,10 +324,22 @@ impl Hub {
             metrics: HubMetrics::default(),
             stop: AtomicBool::new(false),
             reader_failed: AtomicBool::new(true),
-            reader_progress: Mutex::new(None),
-            broker_heads: Mutex::new(HashMap::new()),
+            reader_progress: AtomicU64::new(0),
+            // Before any reader instant, so an old progress mark is representable.
+            origin: Instant::now()
+                .checked_sub(Duration::from_secs(3_600))
+                .unwrap_or_else(Instant::now),
+            key_home: Mutex::new(HashMap::new()),
             started_ms: now_ns() / 1_000_000,
+            live_budget: OnceLock::new(),
         }
+    }
+
+    /// Charge each decoded live record to `budget` once, at dispatch,
+    /// instead of once per subscriber. The first attachment wins; returns
+    /// whether this one was attached.
+    pub fn attach_live_budget(&self, budget: Arc<ByteBudget>) -> bool {
+        self.live_budget.set(budget).is_ok()
     }
 
     pub fn partitions(&self) -> Vec<i32> {
@@ -250,7 +354,7 @@ impl Hub {
             .and_then(|state| state.lock().ok().map(|state| state.next_offset))
     }
 
-    fn evict(&self, state: &mut PartitionState, now: Instant) {
+    fn evict(&self, partition: i32, state: &mut PartitionState, now: Instant) {
         while let Some((at, front)) = state.ring.front() {
             let aged = now.duration_since(*at) > self.config.ring_max_age;
             if state.ring_bytes <= self.config.ring_max_bytes && !aged {
@@ -259,8 +363,40 @@ impl Hub {
             let weight = front.weight();
             state.ring_start = front.offset + 1;
             state.ring_bytes -= weight;
-            state.ring.pop_front();
+            let Some((_, front)) = state.ring.pop_front() else {
+                break;
+            };
+            // The ring and every per-key view are in offset order, so the
+            // evicted record is the front of its key's view.
+            let emptied = state.by_key.get_mut(&front.key).is_some_and(|entries| {
+                entries.pop_front();
+                entries.is_empty()
+            });
+            if emptied {
+                state.by_key.remove(&front.key);
+                self.leave_home(&front.key, partition);
+            }
             self.metrics.ring_evictions.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn enter_home(&self, key: &[u8], partition: i32) {
+        if let Ok(mut homes) = self.key_home.lock() {
+            let entry = homes.entry(key.to_vec()).or_default();
+            if !entry.contains(&partition) {
+                entry.push(partition);
+            }
+        }
+    }
+
+    fn leave_home(&self, key: &[u8], partition: i32) {
+        if let Ok(mut homes) = self.key_home.lock() {
+            if let Some(entry) = homes.get_mut(key) {
+                entry.retain(|home| *home != partition);
+                if entry.is_empty() {
+                    homes.remove(key);
+                }
+            }
         }
     }
 
@@ -290,13 +426,27 @@ impl Hub {
         let now = Instant::now();
         state.ring_bytes += record.weight();
         state.ring.push_back((now, record.clone()));
+        if let Some(entries) = state.by_key.get_mut(&record.key) {
+            entries.push_back((now, record.clone()));
+        } else {
+            state
+                .by_key
+                .insert(record.key.clone(), VecDeque::from([(now, record.clone())]));
+            self.enter_home(&record.key, record.partition);
+        }
         state.next_offset = record.offset + 1;
-        self.evict(&mut state, now);
+        self.evict(record.partition, &mut state, now);
         let Some(subscribers) = state.subscribers.get(&record.key) else {
             return;
         };
-        match LiveRecord::decode(record) {
+        let budget = self.live_budget.get();
+        match LiveRecord::decode_charged(record, budget) {
             Ok(live) => {
+                if budget.is_some() && live.shared_charge.is_none() {
+                    self.metrics
+                        .live_budget_refused
+                        .fetch_add(1, Ordering::Relaxed);
+                }
                 let at = now_ns();
                 for subscriber in subscribers {
                     self.metrics.offers.fetch_add(1, Ordering::Relaxed);
@@ -323,13 +473,65 @@ impl Hub {
                         state.ring_start = position;
                     }
                 }
-                self.evict(&mut state, Instant::now());
+                self.evict(partition, &mut state, Instant::now());
             }
         }
     }
 
+    /// Copy `key`'s newest ring entries, the dispatch boundary and the broker
+    /// head proof of one partition in a single critical section.
+    fn key_snapshot(
+        &self,
+        partition: i32,
+        key: &[u8],
+        deadline: Instant,
+    ) -> Result<Option<KeySnapshot>, String> {
+        let Some(state) = self.partitions.get(&partition) else {
+            return Ok(None);
+        };
+        let state = lock_until(state, deadline)?;
+        let Some(entries) = state.by_key.get(key) else {
+            return Ok(None);
+        };
+        Ok(Some(KeySnapshot {
+            partition,
+            entries: entries.iter().rev().take(HOT_SCAN_CHUNK).cloned().collect(),
+            boundary_offset: state.next_offset - 1,
+            broker_head: state.broker_head,
+        }))
+    }
+
+    /// The next chunk of `key`'s ring entries strictly below `before`, newest
+    /// first. Records are immutable and only appended at the back or evicted
+    /// at the front, so this continues the first snapshot exactly; an
+    /// entry evicted meanwhile is simply absent (the scan then finds less).
+    fn key_entries_before(
+        &self,
+        partition: i32,
+        key: &[u8],
+        before: i64,
+        deadline: Instant,
+    ) -> Result<Vec<(Instant, SharedRecord)>, String> {
+        let Some(state) = self.partitions.get(&partition) else {
+            return Ok(Vec::new());
+        };
+        let state = lock_until(state, deadline)?;
+        let Some(entries) = state.by_key.get(key) else {
+            return Ok(Vec::new());
+        };
+        let end = entries.partition_point(|(_, record)| record.offset < before);
+        Ok(entries
+            .range(end.saturating_sub(HOT_SCAN_CHUNK)..end)
+            .rev()
+            .cloned()
+            .collect())
+    }
+
     /// A bounded read of committed canonical bytes, not an execution-quality verdict.
     /// No Redis, Query, new Kafka reader, offset commit, or retained decoded cache.
+    ///
+    /// Touches only the partition(s) whose ring holds `key`; the critical
+    /// section copies references, decoding and validation run outside it.
     pub fn latest_hot(
         &self,
         key: &[u8],
@@ -345,121 +547,172 @@ impl Hub {
             return Err("HOT_FEED_UNSUPPORTED".into());
         }
         self.check_hot_reader()?;
+        let homes = lock_until(&self.key_home, deadline)?
+            .get(key)
+            .cloned()
+            .unwrap_or_default();
+        // A key with unexpired records in two partitions breaks the
+        // partition plan; records past the ring age do not count.
+        let mut live = None;
+        for partition in homes {
+            let Some(snapshot) = self.key_snapshot(partition, key, deadline)? else {
+                continue;
+            };
+            let now = Instant::now();
+            if snapshot
+                .entries
+                .first()
+                .is_none_or(|(at, _)| now.duration_since(*at) > self.config.ring_max_age)
+            {
+                continue;
+            }
+            if live.is_some() {
+                return Err("HOT_PARTITION_MISMATCH".into());
+            }
+            live = Some(snapshot);
+        }
         let mut selected = None;
-        let mut key_partition = None;
-        for (partition, state) in &self.partitions {
-            let state = state.try_lock().map_err(|_| "HOT_READER_BUSY")?;
+        if let Some(snapshot) = live {
             let mut newest_scope = None;
-            for (at, raw) in state.ring.iter().rev() {
-                let now = Instant::now();
-                if now >= deadline {
-                    return Err("HOT_READ_DEADLINE".into());
+            let mut chunk = snapshot.entries;
+            'scan: loop {
+                for (at, raw) in &chunk {
+                    let now = Instant::now();
+                    if now >= deadline {
+                        return Err("HOT_READ_DEADLINE".into());
+                    }
+                    if now.duration_since(*at) > self.config.ring_max_age {
+                        break 'scan;
+                    }
+                    if raw.offset < 0 || raw.payload.len() > 256 * 1024 {
+                        return Err("HOT_RECORD_INVALID".into());
+                    }
+                    let envelope = EventEnvelope::decode(raw.payload.as_slice())
+                        .map_err(|_| "HOT_RECORD_INVALID")?;
+                    // A newer unsafe sibling (snapshot/delta share a physical key)
+                    // must not be hidden by returning an older healthy payload.
+                    if envelope.quality_flags.iter().any(|flag| {
+                        matches!(
+                            QualityFlag::try_from(*flag),
+                            Ok(QualityFlag::SequenceGapBefore
+                                | QualityFlag::OutOfOrder
+                                | QualityFlag::ResyncRequired)
+                        )
+                    }) {
+                        return Err("HOT_RECORD_GAPPED".into());
+                    }
+                    let book_generation = match &envelope.payload {
+                        Some(
+                            crate::generated::marketdata_v2::event_envelope::Payload::BookSnapshot(
+                                book,
+                            ),
+                        ) => {
+                            if !book.sequence_verified || book.book_generation == 0 {
+                                return Err("HOT_BOOK_UNVERIFIED".into());
+                            }
+                            book.book_generation
+                        }
+                        Some(
+                            crate::generated::marketdata_v2::event_envelope::Payload::BookDelta(
+                                book,
+                            ),
+                        ) => {
+                            if !book.sequence_verified || book.book_generation == 0 || book.reset {
+                                return Err("HOT_BOOK_UNVERIFIED".into());
+                            }
+                            book.book_generation
+                        }
+                        _ => 0,
+                    };
+                    let scope = (
+                        envelope.source_session_id.clone(),
+                        envelope.connection_generation,
+                        envelope.authority_revision,
+                        envelope.config_revision,
+                        envelope.lease_epoch,
+                        book_generation,
+                    );
+                    if newest_scope.as_ref().is_some_and(|newest| newest != &scope) {
+                        return Err("HOT_RECORD_GENERATION_MISMATCH".into());
+                    }
+                    newest_scope = Some(scope);
+                    if is_product(feed, None, &envelope) {
+                        selected = Some((
+                            HotRecord {
+                                raw: raw.clone(),
+                                boundary_offset: snapshot.boundary_offset,
+                            },
+                            snapshot.broker_head,
+                        ));
+                        break 'scan;
+                    }
+                    if !(matches!(feed, "BOOK_SNAPSHOT" | "BOOK_DELTA")
+                        && (is_product("BOOK_SNAPSHOT", None, &envelope)
+                            || is_product("BOOK_DELTA", None, &envelope)))
+                    {
+                        return Err("HOT_RECORD_PRODUCT_MISMATCH".into());
+                    }
                 }
-                if now.duration_since(*at) > self.config.ring_max_age {
+                let Some((_, oldest)) = chunk.last() else {
                     break;
-                }
-                if raw.key != key {
-                    continue;
-                }
-                if key_partition.is_some_and(|prior| prior != *partition) {
-                    return Err("HOT_PARTITION_MISMATCH".into());
-                }
-                key_partition = Some(*partition);
-                if raw.offset < 0 || raw.payload.len() > 256 * 1024 {
-                    return Err("HOT_RECORD_INVALID".into());
-                }
-                let envelope = EventEnvelope::decode(raw.payload.as_slice())
-                    .map_err(|_| "HOT_RECORD_INVALID")?;
-                // A newer unsafe sibling (snapshot/delta share a physical key)
-                // must not be hidden by returning an older healthy payload.
-                if envelope.quality_flags.iter().any(|flag| {
-                    matches!(
-                        QualityFlag::try_from(*flag),
-                        Ok(QualityFlag::SequenceGapBefore
-                            | QualityFlag::OutOfOrder
-                            | QualityFlag::ResyncRequired)
-                    )
-                }) {
-                    return Err("HOT_RECORD_GAPPED".into());
-                }
-                let book_generation = match &envelope.payload {
-                    Some(
-                        crate::generated::marketdata_v2::event_envelope::Payload::BookSnapshot(
-                            book,
-                        ),
-                    ) => {
-                        if !book.sequence_verified || book.book_generation == 0 {
-                            return Err("HOT_BOOK_UNVERIFIED".into());
-                        }
-                        book.book_generation
-                    }
-                    Some(crate::generated::marketdata_v2::event_envelope::Payload::BookDelta(
-                        book,
-                    )) => {
-                        if !book.sequence_verified || book.book_generation == 0 || book.reset {
-                            return Err("HOT_BOOK_UNVERIFIED".into());
-                        }
-                        book.book_generation
-                    }
-                    _ => 0,
                 };
-                let scope = (
-                    envelope.source_session_id.clone(),
-                    envelope.connection_generation,
-                    envelope.authority_revision,
-                    envelope.config_revision,
-                    envelope.lease_epoch,
-                    book_generation,
-                );
-                if newest_scope.as_ref().is_some_and(|newest| newest != &scope) {
-                    return Err("HOT_RECORD_GENERATION_MISMATCH".into());
-                }
-                newest_scope = Some(scope);
-                if is_product(feed, None, &envelope) {
-                    selected = Some(HotRecord {
-                        raw: raw.clone(),
-                        boundary_offset: state.next_offset - 1,
-                    });
+                if chunk.len() < HOT_SCAN_CHUNK {
                     break;
                 }
-                if !(matches!(feed, "BOOK_SNAPSHOT" | "BOOK_DELTA")
-                    && (is_product("BOOK_SNAPSHOT", None, &envelope)
-                        || is_product("BOOK_DELTA", None, &envelope)))
-                {
-                    return Err("HOT_RECORD_PRODUCT_MISMATCH".into());
-                }
+                let before = oldest.offset;
+                chunk = self.key_entries_before(snapshot.partition, key, before, deadline)?;
             }
         }
         self.check_hot_reader()?;
-        let selected = selected.ok_or_else(|| "HOT_RECORD_MISSING".to_owned())?;
-        let heads = self
-            .broker_heads
-            .try_lock()
-            .map_err(|_| "HOT_READER_BUSY")?;
-        let (head, confirmed) = heads
-            .get(&selected.raw.partition)
-            .ok_or("HOT_BROKER_UNCONFIRMED")?;
+        let (selected, head) = selected.ok_or_else(|| "HOT_RECORD_MISSING".to_owned())?;
+        // The head proof was copied with the boundary, under one lock.
+        let (head, confirmed) = head.ok_or("HOT_BROKER_UNCONFIRMED")?;
         if confirmed.elapsed() > Duration::from_secs(1) {
             return Err("HOT_BROKER_UNCONFIRMED".into());
         }
-        if selected.boundary_offset + 1 < *head {
+        if selected.boundary_offset + 1 < head {
             return Err("HOT_READER_CATCHING_UP".into());
         }
         Ok(selected)
+    }
+
+    fn mark_progress(&self, at: Instant) {
+        let since = at.saturating_duration_since(self.origin).as_nanos();
+        self.reader_progress.store(
+            u64::try_from(since).unwrap_or(u64::MAX - 1) + 1,
+            Ordering::Release,
+        );
     }
 
     fn check_hot_reader(&self) -> Result<(), String> {
         if self.stop.load(Ordering::Acquire) || self.reader_failed.load(Ordering::Acquire) {
             return Err("HOT_READER_UNAVAILABLE".into());
         }
-        let progress = self
-            .reader_progress
-            .try_lock()
-            .map_err(|_| "HOT_READER_BUSY")?;
-        if progress.is_none_or(|at| at.elapsed() > Duration::from_secs(1)) {
+        let progress = self.reader_progress.load(Ordering::Acquire);
+        let stalled = progress == 0
+            || (self.origin + Duration::from_nanos(progress - 1)).elapsed()
+                > Duration::from_secs(1);
+        if stalled {
             return Err("HOT_READER_STALLED".into());
         }
         Ok(())
+    }
+
+    /// Record a positive broker head for `partition` if the reader has
+    /// dispatched up to it; returns whether it was recorded. A head the
+    /// reader has not reached yet never replaces the last caught-up proof.
+    fn confirm_broker_head(&self, partition: i32, head: i64, confirmed: Instant) -> bool {
+        let Some(state) = self.partitions.get(&partition) else {
+            return false;
+        };
+        let Ok(mut state) = state.lock() else {
+            return false;
+        };
+        if state.next_offset < head {
+            return false;
+        }
+        state.broker_head = Some((head, confirmed));
+        true
     }
 
     /// Register `subscriber` for `key` on `partition`, resuming after
@@ -548,14 +801,10 @@ impl Hub {
                         Ok(Some(record)) => {
                             hub.dispatch(record);
                             hub.reader_failed.store(false, Ordering::Release);
-                            if let Ok(mut progress) = hub.reader_progress.lock() {
-                                *progress = Some(Instant::now());
-                            }
+                            hub.mark_progress(Instant::now());
                         }
                         Ok(None) => {
-                            if let Ok(mut progress) = hub.reader_progress.lock() {
-                                *progress = Some(Instant::now());
-                            }
+                            hub.mark_progress(Instant::now());
                             for (partition, position) in source.positions() {
                                 hub.advance(partition, position);
                             }
@@ -572,20 +821,14 @@ impl Hub {
                     let proofs: Vec<_> = source
                         .broker_heads()
                         .into_iter()
-                        .filter(|(partition, head, _)| {
-                            hub.next_offset(*partition)
-                                .is_some_and(|position| position >= *head)
+                        .filter(|(partition, head, confirmed)| {
+                            hub.confirm_broker_head(*partition, *head, *confirmed)
                         })
                         .collect();
                     if failed_at.is_some_and(|failed| proofs.iter().any(|(_, _, at)| *at > failed))
                     {
                         hub.reader_failed.store(false, Ordering::Release);
                         failed_at = None;
-                    }
-                    if let Ok(mut heads) = hub.broker_heads.lock() {
-                        for (partition, offset, confirmed) in proofs {
-                            heads.insert(partition, (offset, confirmed));
-                        }
                     }
                 }
             })
@@ -620,13 +863,15 @@ mod tests {
     }
     fn healthy(hub: &Hub) {
         hub.reader_failed.store(false, Ordering::Release);
-        *hub.reader_progress.lock().unwrap() = Some(Instant::now());
+        hub.mark_progress(Instant::now());
         for partition in hub.partitions.keys() {
-            hub.broker_heads
-                .lock()
-                .unwrap()
-                .insert(*partition, (0, Instant::now()));
+            set_head(hub, *partition, Some((0, Instant::now())));
         }
+    }
+
+    /// Install a head proof directly, bypassing the caught-up filter.
+    fn set_head(hub: &Hub, partition: i32, head: Option<(i64, Instant)>) {
+        hub.partitions[&partition].lock().unwrap().broker_head = head;
     }
 
     fn hot_record(
@@ -693,18 +938,15 @@ mod tests {
         let hub = Hub::new(&[(0, 0)], HubConfig::default());
         hub.dispatch(hot_record(0, 0, "QUOTE", 1, vec![]));
         healthy(&hub);
-        hub.broker_heads.lock().unwrap().clear();
+        set_head(&hub, 0, None);
         assert_eq!(latest(&hub, "QUOTE").unwrap_err(), "HOT_BROKER_UNCONFIRMED");
-        hub.broker_heads
-            .lock()
-            .unwrap()
-            .insert(0, (1, Instant::now() - Duration::from_secs(2)));
+        set_head(&hub, 0, Some((1, Instant::now() - Duration::from_secs(2))));
         assert_eq!(latest(&hub, "QUOTE").unwrap_err(), "HOT_BROKER_UNCONFIRMED");
-        hub.broker_heads
-            .lock()
-            .unwrap()
-            .insert(0, (2, Instant::now()));
+        set_head(&hub, 0, Some((2, Instant::now())));
         assert_eq!(latest(&hub, "QUOTE").unwrap_err(), "HOT_READER_CATCHING_UP");
+        // The reader path records only a head it has reached.
+        assert!(!hub.confirm_broker_head(0, 3, Instant::now()));
+        assert!(hub.confirm_broker_head(0, 1, Instant::now()));
         hub.advance(0, 2);
         assert_eq!(latest(&hub, "QUOTE").unwrap().raw.offset, 0);
     }
@@ -798,7 +1040,7 @@ mod tests {
         hub.dispatch(hot_record(0, 0, "QUOTE", 1, vec![]));
         assert_eq!(latest(&hub, "QUOTE").unwrap_err(), "HOT_READER_UNAVAILABLE");
         healthy(&hub);
-        *hub.reader_progress.lock().unwrap() = Some(Instant::now() - Duration::from_secs(2));
+        hub.mark_progress(Instant::now() - Duration::from_secs(2));
         assert_eq!(latest(&hub, "QUOTE").unwrap_err(), "HOT_READER_STALLED");
         healthy(&hub);
         assert_eq!(
@@ -832,7 +1074,363 @@ mod tests {
         healthy(&hub);
         assert_eq!(hub.ring_bytes(), 0);
         assert_eq!(latest(&hub, "QUOTE").unwrap_err(), "HOT_RECORD_MISSING");
+        // The per-key index and the directory are evicted with the ring.
+        assert!(hub.partitions[&0].lock().unwrap().by_key.is_empty());
+        assert!(hub.key_home.lock().unwrap().is_empty());
+        let hub = Hub::new(&[(0, 0)], HubConfig::default());
+        hub.dispatch(hot_record(0, 0, "QUOTE", 1, vec![]));
+        healthy(&hub);
+        // The key's own partition held past the deadline: BUSY at the deadline.
         let _lock = hub.partitions[&0].lock().unwrap();
-        assert_eq!(latest(&hub, "QUOTE").unwrap_err(), "HOT_READER_BUSY");
+        let started = Instant::now();
+        let budget = Duration::from_millis(30);
+        assert_eq!(
+            hub.latest_hot(b"hot", "QUOTE", started + budget)
+                .unwrap_err(),
+            "HOT_READER_BUSY"
+        );
+        let waited = started.elapsed();
+        assert!(waited >= budget, "{waited:?}");
+        assert!(waited < budget + Duration::from_millis(50), "{waited:?}");
+    }
+
+    fn keyed(partition: i32, offset: i64, key: &[u8]) -> RawRecord {
+        RawRecord {
+            key: key.to_vec(),
+            ..hot_record(partition, offset, "QUOTE", 1, vec![])
+        }
+    }
+
+    #[test]
+    fn hot_read_ignores_unrelated_partition_lock_and_quiet_product_skips_busy_ones() {
+        let hub = Hub::new(&[(0, 0), (1, 0)], HubConfig::default());
+        hub.dispatch(keyed(0, 0, b"quiet"));
+        for offset in 1..5_001 {
+            hub.dispatch(keyed(0, offset, b"busy"));
+        }
+        hub.dispatch(keyed(1, 0, b"other"));
+        healthy(&hub);
+        let quiet = hub
+            .latest_hot(b"quiet", "QUOTE", Instant::now() + Duration::from_secs(1))
+            .unwrap();
+        assert_eq!((quiet.raw.offset, quiet.boundary_offset), (0, 5_000));
+        // An unrelated partition held by someone else does not refuse.
+        let _held = hub.partitions[&1].lock().unwrap();
+        let busy = hub
+            .latest_hot(b"busy", "QUOTE", Instant::now() + Duration::from_millis(50))
+            .unwrap();
+        assert_eq!(busy.raw.offset, 5_000);
+    }
+
+    #[test]
+    fn book_snapshot_behind_many_deltas_is_found_across_chunks_and_gaps_still_refuse() {
+        for deltas in [
+            HOT_SCAN_CHUNK - 1,
+            HOT_SCAN_CHUNK,
+            HOT_SCAN_CHUNK + 1,
+            3 * HOT_SCAN_CHUNK + 7,
+        ] {
+            let hub = Hub::new(&[(0, 0)], HubConfig::default());
+            hub.dispatch(hot_record(0, 0, "BOOK_SNAPSHOT", 1, vec![]));
+            for offset in 1..=deltas as i64 {
+                hub.dispatch(hot_record(0, offset, "BOOK_DELTA", 1, vec![]));
+            }
+            healthy(&hub);
+            let view = latest(&hub, "BOOK_SNAPSHOT").unwrap();
+            assert_eq!((view.raw.offset, view.boundary_offset), (0, deltas as i64));
+            assert_eq!(
+                latest(&hub, "BOOK_DELTA").unwrap().raw.offset,
+                deltas as i64
+            );
+        }
+        // An unsafe sibling in a later chunk still refuses the old snapshot.
+        let hub = Hub::new(&[(0, 0)], HubConfig::default());
+        hub.dispatch(hot_record(0, 0, "BOOK_SNAPSHOT", 1, vec![]));
+        hub.dispatch(hot_record(0, 1, "BOOK_DELTA", 1, vec![16]));
+        for offset in 2..(2 * HOT_SCAN_CHUNK as i64) {
+            hub.dispatch(hot_record(0, offset, "BOOK_DELTA", 1, vec![]));
+        }
+        healthy(&hub);
+        assert_eq!(
+            latest(&hub, "BOOK_SNAPSHOT").unwrap_err(),
+            "HOT_RECORD_GAPPED"
+        );
+    }
+
+    #[test]
+    fn key_moving_partition_after_ring_expiry_is_not_a_mismatch() {
+        let hub = Hub::new(
+            &[(0, 0), (1, 0)],
+            HubConfig {
+                ring_max_age: Duration::from_millis(30),
+                ..Default::default()
+            },
+        );
+        hub.dispatch(keyed(0, 0, b"hot"));
+        healthy(&hub);
+        std::thread::sleep(Duration::from_millis(40));
+        // Partition 0 still holds the aged record (no eviction ran there).
+        hub.dispatch(keyed(1, 0, b"hot"));
+        assert_eq!(hub.key_home.lock().unwrap()[&b"hot".to_vec()].len(), 2);
+        assert_eq!(latest(&hub, "QUOTE").unwrap().raw.partition, 1);
+        hub.advance(0, 1);
+        assert_eq!(hub.key_home.lock().unwrap()[&b"hot".to_vec()], vec![1]);
+        hub.dispatch(keyed(0, 1, b"hot"));
+        assert_eq!(latest(&hub, "QUOTE").unwrap_err(), "HOT_PARTITION_MISMATCH");
+    }
+
+    #[test]
+    fn hot_read_snapshot_is_one_critical_section_under_concurrent_dispatch() {
+        // Lookups race a dispatcher that confirms the broker head right after
+        // each record. Every reply must be a dispatched record of the key at
+        // or below its boundary, the boundary must cover the head proof, and
+        // per-thread results never go backwards. No reply may be BUSY.
+        let hub = Arc::new(Hub::new(&[(0, 0), (1, 0)], HubConfig::default()));
+        hub.dispatch(keyed(0, 0, b"k0"));
+        hub.dispatch(keyed(1, 0, b"k1"));
+        healthy(&hub);
+        let stop = Arc::new(AtomicBool::new(false));
+        let writer = {
+            let (hub, stop) = (hub.clone(), stop.clone());
+            std::thread::spawn(move || {
+                let mut offset = 1;
+                while !stop.load(Ordering::Relaxed) {
+                    for partition in [0, 1] {
+                        let key = if partition == 0 { b"k0" } else { b"k1" };
+                        hub.dispatch(keyed(partition, offset, key));
+                        assert!(hub.confirm_broker_head(partition, offset + 1, Instant::now()));
+                    }
+                    hub.mark_progress(Instant::now());
+                    offset += 1;
+                }
+                offset
+            })
+        };
+        let readers: Vec<_> = (0..8)
+            .map(|index| {
+                let hub = hub.clone();
+                std::thread::spawn(move || {
+                    let key: &[u8] = if index % 2 == 0 { b"k0" } else { b"k1" };
+                    let (mut ok, mut last) = (0, -1);
+                    let until = Instant::now() + Duration::from_millis(300);
+                    while Instant::now() < until {
+                        let deadline = Instant::now() + Duration::from_millis(100);
+                        let view = hub.latest_hot(key, "QUOTE", deadline).unwrap();
+                        assert_eq!(view.raw.key, key);
+                        assert!(view.raw.offset <= view.boundary_offset);
+                        assert!(view.raw.offset >= last, "went backwards");
+                        assert!(
+                            view.boundary_offset < hub.next_offset(view.raw.partition).unwrap()
+                        );
+                        last = view.raw.offset;
+                        ok += 1;
+                    }
+                    ok
+                })
+            })
+            .collect();
+        let total: usize = readers.into_iter().map(|r| r.join().unwrap()).sum();
+        stop.store(true, Ordering::Relaxed);
+        assert!(writer.join().unwrap() > 1);
+        assert!(total > 0);
+    }
+
+    // ----------------------------------------------- live budget charge-once
+
+    use crate::generated::query_v2 as query;
+    use crate::requirement::StreamRequirement;
+    use crate::subscription::{Next, QUEUE_ENTRY_OVERHEAD};
+
+    fn trade_requirement() -> StreamRequirement {
+        StreamRequirement::from_proto(&query::DataRequirement {
+            instrument_uid: "u".into(),
+            source_policy_id: "p".into(),
+            require_full_coverage: true,
+            require_final_bars: true,
+            feed_type: query::FeedType::Trade as i32,
+            grade: query::ConsumerGrade::Alpha as i32,
+            stale_policy_type: query::StalePolicy::Block as i32,
+            gap_policy_type: query::GapPolicy::Block as i32,
+            recovery_policy: query::RecoveryPolicy::SnapshotAndReplay as i32,
+            revision_policy: query::BarRevisionPolicy::Latest as i32,
+            ..Default::default()
+        })
+        .expect("requirement")
+    }
+
+    /// A lossless TRADE whose decoded weight dwarfs the queue entry overhead.
+    fn big_trade(key: &[u8], offset: i64) -> RawRecord {
+        use crate::generated::marketdata_v2::{event_envelope::Payload, Trade};
+        RawRecord {
+            partition: 0,
+            offset,
+            key: key.to_vec(),
+            timestamp_ms: 1,
+            payload: EventEnvelope {
+                payload: Some(Payload::Trade(Trade {
+                    native_trade_id: "x".repeat(4_000),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            }
+            .encode_to_vec(),
+        }
+    }
+
+    fn big_weight() -> usize {
+        live_weight(&big_trade(b"fan", 0))
+    }
+
+    fn subscribe(
+        hub: &Hub,
+        key: &[u8],
+        id: u64,
+        depth: usize,
+        max_bytes: usize,
+        budget: &Arc<ByteBudget>,
+    ) -> Arc<Subscription> {
+        let subscription = Arc::new(Subscription::new(
+            id,
+            "c".into(),
+            trade_requirement(),
+            depth,
+            max_bytes,
+            budget.clone(),
+            -1,
+        ));
+        hub.register(0, key, subscription.clone(), -1).unwrap();
+        subscription
+    }
+
+    #[tokio::test]
+    async fn a_record_fanned_out_to_four_subscribers_is_charged_once() {
+        let weight = big_weight();
+        assert!(weight > 8 * QUEUE_ENTRY_OVERHEAD, "{weight}");
+        let budget = ByteBudget::new(1 << 20);
+        let hub = Hub::new(&[(0, 0)], HubConfig::default());
+        assert!(hub.attach_live_budget(budget.clone()));
+        assert!(!hub.attach_live_budget(ByteBudget::new(1)), "first wins");
+        let subscribers: Vec<_> = (0..4)
+            .map(|id| subscribe(&hub, b"fan", id, 16, 1 << 20, &budget))
+            .collect();
+        hub.dispatch(big_trade(b"fan", 0));
+        assert_eq!(budget.used(), weight + 4 * QUEUE_ENTRY_OVERHEAD);
+        for subscriber in &subscribers {
+            // The per-subscription cap still counts the full weight.
+            assert_eq!(subscriber.queued(), (1, weight));
+        }
+        assert_eq!(hub.metrics.live_budget_refused.load(Ordering::Relaxed), 0);
+        // Three subscribers hand their copy to the transport and finish.
+        for subscriber in &subscribers[..3] {
+            match subscriber.next().await {
+                Next::Record(record, _, charge) => {
+                    assert_eq!(charge.bytes(), QUEUE_ENTRY_OVERHEAD);
+                    assert!(record.shared_charge.is_some());
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        assert_eq!(budget.used(), weight + QUEUE_ENTRY_OVERHEAD);
+        // The last holder keeps the shared charge until it drops the record.
+        let (record, charge) = match subscribers[3].next().await {
+            Next::Record(record, _, charge) => (record, charge),
+            other => panic!("{other:?}"),
+        };
+        drop(charge);
+        assert_eq!(budget.used(), weight);
+        drop(record);
+        assert_eq!(budget.used(), 0, "released exactly once");
+    }
+
+    #[tokio::test]
+    async fn a_budget_for_one_decoded_record_delivers_it_to_all_four() {
+        let weight = big_weight();
+        let total = weight + 4 * QUEUE_ENTRY_OVERHEAD;
+        assert!(total < 2 * weight, "fits one decoded copy, not four");
+        let budget = ByteBudget::new(total);
+        let hub = Hub::new(&[(0, 0)], HubConfig::default());
+        hub.attach_live_budget(budget.clone());
+        let subscribers: Vec<_> = (0..4)
+            .map(|id| subscribe(&hub, b"fan", id, 16, 1 << 20, &budget))
+            .collect();
+        hub.dispatch(big_trade(b"fan", 0));
+        assert_eq!(budget.used(), total);
+        for subscriber in &subscribers {
+            assert!(matches!(subscriber.next().await, Next::Record(..)));
+        }
+        assert_eq!(budget.used(), 0);
+
+        // Before: every subscriber charged the full weight; three of four
+        // overflowed with an empty queue (the 2026-10-10 17:22:48Z shape).
+        let budget = ByteBudget::new(total);
+        let hub = Hub::new(&[(0, 0)], HubConfig::default());
+        let subscribers: Vec<_> = (0..4)
+            .map(|id| subscribe(&hub, b"fan", id, 16, 1 << 20, &budget))
+            .collect();
+        hub.dispatch(big_trade(b"fan", 0));
+        let mut overflowed = 0;
+        for subscriber in &subscribers {
+            if matches!(subscriber.next().await, Next::Overflow) {
+                overflowed += 1;
+                assert_eq!(subscriber.queued(), (0, 0));
+            }
+        }
+        assert_eq!(overflowed, 3);
+    }
+
+    #[tokio::test]
+    async fn a_refused_dispatch_charge_falls_back_to_full_per_subscriber_charges() {
+        // Real exhaustion: the decoded copy itself does not fit. Lossless
+        // subscribers overflow typed, as before; nothing leaks.
+        let budget = ByteBudget::new(4 * QUEUE_ENTRY_OVERHEAD);
+        let hub = Hub::new(&[(0, 0)], HubConfig::default());
+        hub.attach_live_budget(budget.clone());
+        let subscribers: Vec<_> = (0..2)
+            .map(|id| subscribe(&hub, b"fan", id, 16, 1 << 20, &budget))
+            .collect();
+        hub.dispatch(big_trade(b"fan", 0));
+        assert_eq!(hub.metrics.live_budget_refused.load(Ordering::Relaxed), 1);
+        for subscriber in &subscribers {
+            assert!(matches!(subscriber.next().await, Next::Overflow));
+        }
+        assert_eq!(budget.used(), 0);
+        // A fitting fallback record carries its full weight per subscriber.
+        let budget = ByteBudget::new(4 * big_weight());
+        let hub = Hub::new(&[(0, 0)], HubConfig::default());
+        hub.attach_live_budget(ByteBudget::new(1));
+        let subscriber = subscribe(&hub, b"fan", 0, 16, 1 << 20, &budget);
+        hub.dispatch(big_trade(b"fan", 0));
+        assert_eq!(budget.used(), big_weight());
+        subscriber.close();
+        assert_eq!(budget.used(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_slow_lossless_subscriber_at_its_cap_cannot_overflow_an_idle_one() {
+        let weight = big_weight();
+        let total = 16 * weight;
+        // `idle` is offered one record after `slow` filled up and stalled.
+        async fn run(total: usize, max_bytes: usize) -> (bool, bool) {
+            let budget = ByteBudget::new(total);
+            let hub = Hub::new(&[(0, 0)], HubConfig::default());
+            hub.attach_live_budget(budget.clone());
+            let slow = subscribe(&hub, b"slow", 0, 1_000, max_bytes, &budget);
+            let idle = subscribe(&hub, b"idle", 1, 1_000, max_bytes, &budget);
+            for offset in 0..64 {
+                hub.dispatch(big_trade(b"slow", offset));
+            }
+            hub.dispatch(big_trade(b"idle", 64));
+            assert!(budget.used() <= total);
+            let slow_overflowed = matches!(slow.next().await, Next::Overflow);
+            let idle_delivered = matches!(idle.next().await, Next::Record(..));
+            (slow_overflowed, idle_delivered)
+        }
+        // A fair share (the new default, queue_total / 2): the slow
+        // subscriber overflows on its own cap; the idle one is untouched.
+        let share = crate::memory::default_queue_bytes_per_subscription(total as u64) as usize;
+        assert_eq!(run(total, share).await, (true, true));
+        // A per-subscription cap equal to the whole budget (the old default)
+        // lets the slow subscriber take it all and overflow the idle one.
+        assert_eq!(run(total, total).await, (true, false));
     }
 }

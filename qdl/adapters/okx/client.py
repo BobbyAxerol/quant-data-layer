@@ -14,6 +14,8 @@ from typing import Any
 
 import requests
 
+# WebSocket URLs are re-exported from their single owner (port 8443 retirement).
+from qdl.adapters.okx_endpoints import OKX_BUSINESS_WS, OKX_PUBLIC_WS
 from qdl.reference.contracts import ReferenceProviderExhausted
 
 
@@ -51,8 +53,6 @@ def statistics_retry_after_ms(response: Any) -> int | None:
 
 
 OKX_REST_BASE = "https://www.okx.com"
-OKX_PUBLIC_WS = "wss://ws.okx.com:8443/ws/v5/public"
-OKX_BUSINESS_WS = "wss://ws.okx.com:8443/ws/v5/business"
 
 
 async def _receive_until_stop(socket: Any, stop: asyncio.Event, timeout: float) -> Any | None:

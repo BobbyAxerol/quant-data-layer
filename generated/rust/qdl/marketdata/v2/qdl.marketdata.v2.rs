@@ -109,6 +109,13 @@ pub struct OrderBookSnapshot {
     /// every provider level. Clients must not assume omitted levels are absent.
     #[prost(bool, tag="7")]
     pub truncated: bool,
+    /// Additive (IDR-040 fix 2). Zero/absent: no quiet proof; the book is current
+    /// only as of `source_event_time_ns`. Positive: local receipt time of in-band
+    /// transport evidence on the same provider connection, after every earlier
+    /// frame of this book was applied without a gap. It never re-dates
+    /// `source_event_time_ns` and is set only on a quiet-proof snapshot.
+    #[prost(int64, tag="8")]
+    pub proof_observed_at_ns: i64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct OrderBookDelta {

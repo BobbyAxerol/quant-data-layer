@@ -348,8 +348,8 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
                 self.assertEqual(item.provider_kind, "okx_bar")
                 self.assertEqual(item.mode, "RUST_NATIVE")
                 self.assertEqual(item.native_channel, f"candle{self.tool.okx_candle_channel(source.interval)[6:]}")
-                self.assertEqual(item.websocket_url, "wss://ws.okx.com:8443/ws/v5/public")
-                self.assertEqual(item.business_websocket_url, "wss://ws.okx.com:8443/ws/v5/business")
+                self.assertEqual(item.websocket_url, "wss://ws.okx.com/ws/v5/public")
+                self.assertEqual(item.business_websocket_url, "wss://ws.okx.com/ws/v5/business")
 
     def test_okx_native_bar_policy_refresh_is_revisioned_and_idempotent(self) -> None:
         before_acquisition = deepcopy(self.current_acquisition)

@@ -437,6 +437,11 @@ TARGET_STAGE_MIX: dict[int, tuple[int, int, int, int]] = {
     50: (20, 15, 10, 5),
 }
 TARGET_STAGE_SECONDS: dict[int, int] = {5: 90, 20: 120, 35: 180, 50: 300}
+# P18.4 phase D stage-100 ramp (owner 2026-10-08/09: 100 logical alphas plus TS, synthetic driver with real SDK sessions,
+# steady >= 30 min at stage 100). Additive: the frozen v2.1.1 table above and its budget are unchanged; stage 100 keeps
+# the same four-class proportions (40/30/20/10).
+P184_STAGE_MIX: dict[int, tuple[int, int, int, int]] = {20: (8, 6, 4, 2), 50: (20, 15, 10, 5), 100: (40, 30, 20, 10)}
+P184_STAGE_SECONDS: dict[int, int] = {20: 600, 50: 600, 100: 1800}
 TARGET_CLASSES = ("CANDLE", "REALTIME", "GRID", "MULTI")
 TARGET_HOT_PERIOD_SECONDS = 1.0
 TARGET_REFERENCE_PERIOD_SECONDS = 60.0
@@ -569,8 +574,9 @@ def build_target_workload_plan(
     the declared headroom.
     """
 
-    if stage not in TARGET_STAGE_MIX:
-        raise ValueError(f"target stage must be one of {sorted(TARGET_STAGE_MIX)}")
+    mix = TARGET_STAGE_MIX.get(stage) or P184_STAGE_MIX.get(stage)
+    if mix is None:
+        raise ValueError(f"target stage must be one of {sorted(set(TARGET_STAGE_MIX) | set(P184_STAGE_MIX))}")
     venues = sorted(venue_identity)
     # Interleave venues symbol by symbol so every stage, including five
     # sessions, spreads over both venues and both identities rather than
@@ -580,7 +586,7 @@ def build_target_workload_plan(
              for venue, column in zip(venues, columns) if row < len(column)]
     if not pairs:
         raise ValueError("target workload has no instruments")
-    classes = [name for name, count in zip(TARGET_CLASSES, TARGET_STAGE_MIX[stage]) for _ in range(count)]
+    classes = [name for name, count in zip(TARGET_CLASSES, mix) for _ in range(count)]
     sessions: list[TargetAlphaSession] = []
     for ordinal, alpha_class in enumerate(classes, start=1):
         venue, symbol = pairs[(ordinal - 1) % len(pairs)]
@@ -661,11 +667,17 @@ class DeclaredRateTicker:
         self._end = end
         self._next = 0
 
+    # A due time within this many seconds of ``end`` is at the boundary, not before it. Monotonic clocks are host
+    # uptime: past 2**21 s (~24 days) ``(start + 0.2) - start`` carries ~2e-10 s of rounding, which a tolerance on
+    # the period quotient (1e-9 of a period) does not absorb and which offered one phantom tick due exactly at ``end``.
+    _BOUNDARY_S = 1e-6
+
     @property
     def offered(self) -> int:
-        if self._first >= self._end:
+        window = self._end - self._first - self._BOUNDARY_S
+        if window <= 0:
             return 0
-        return math.ceil((self._end - self._first) / self._period - 1e-9)
+        return math.ceil(window / self._period)
 
     def take(self, now: float) -> tuple[float | None, int]:
         missed = 0
@@ -766,6 +778,28 @@ def load_target_budget(raw: Mapping[str, object]) -> Mapping[str, object]:
     return raw
 
 
+def load_p184_stage100_budget(raw: Mapping[str, object]) -> Mapping[str, object]:
+    """The P18.4 stage-100 budget: same gate shape as v2.1.1 plus frozen G5 shape limits and the TS route count."""
+    if raw.get("schema") != "qdl.p184.stage100-budget.v1":
+        raise ValueError("stage-100 budget schema is unknown")
+    stages = raw.get("stages")
+    if not isinstance(stages, Mapping) or {int(key) for key in stages} != set(P184_STAGE_MIX):
+        raise ValueError("stage-100 budget stages differ from the P18.4 ramp")
+    for key, value in stages.items():
+        if tuple(value["mix"]) != P184_STAGE_MIX[int(key)] or value["seconds"] != P184_STAGE_SECONDS[int(key)]:
+            raise ValueError("stage-100 budget stage mix or duration differs from the P18.4 ramp")
+    if raw.get("frozen_before_candidate") is not True:
+        raise ValueError("stage-100 budget must be frozen (baseline-derived limits) before candidate load")
+    shapes = raw.get("g5_shape_limits_ms")
+    if not isinstance(shapes, Mapping) or not shapes or any(
+            not isinstance(v, Mapping) or not isinstance(v.get("p95"), (int, float)) or v["p95"] <= 0
+            for v in shapes.values()):
+        raise ValueError("stage-100 budget needs frozen G5 shape limits")
+    if type(raw.get("trading_system", {}).get("demanded_routes")) is not int:
+        raise ValueError("stage-100 budget needs the TS demanded route count")
+    return raw
+
+
 def evaluate_latency(values_ms: Sequence[float], target: Mapping[str, object],
                      rule: Mapping[str, object]) -> dict[str, object]:
     count = len(values_ms)
@@ -845,6 +879,17 @@ def evaluate_target_acceptance(
     done = {(item["venue"], item["rows"]) for item in cold if not item.get("error")}
     gates.append(_gate("cold:2500_5000_overlap_per_venue", not cold_bad and wanted <= done,
                        runs=len(cold), bad=len(cold_bad)))
+    for shape, limit in sorted((budget.get("g5_shape_limits_ms") or {}).items()):
+        # P18.4 G5 (owner 2026-10-09): shapes without a certified target use baseline p95 x 1.5, frozen before load.
+        if not shape.startswith("COLD_"):
+            continue
+        rows = int(shape.split("_", 1)[1])
+        for venue in venues:
+            values = [item["ms"] for item in cold if item.get("rows") == rows and item.get("venue") == venue
+                      and not item.get("error") and isinstance(item.get("ms"), (int, float))]
+            gates.append(_gate(f"g5:{shape}:{venue}", bool(values) and max(values) <= limit["p95"],
+                               count=len(values), max_ms=max(values) if values else None, limit_ms=limit["p95"],
+                               rule="small sample: max within the frozen limit"))
     setup = receipt["setup"]
     gates.append(_gate("startup:bounded", not setup["failures"]
                        and setup["seconds"] <= budget["startup"]["max_setup_seconds"],
@@ -862,8 +907,13 @@ def evaluate_target_acceptance(
                 and not item.get("unhealthy"))
 
     not_ready = [item for item in samples if not sample_ready(item)]
-    gates.append(_gate("ts:ready_60_every_sample", bool(samples) and not not_ready,
-                       samples=len(samples), not_ready=len(not_ready)))
+    # Lost observation is a failure, never a skipped sample (Codex review 2026-10-10).
+    unreadable = len(trading_system.get("unreadable_samples", []))
+    expected = trading_system.get("expected_samples")
+    covered = isinstance(expected, int) and expected > 0 and len(samples) == expected
+    gates.append(_gate("ts:ready_60_every_sample", bool(samples) and not not_ready and not unreadable and covered,
+                       samples=len(samples), not_ready=len(not_ready), unreadable=unreadable,
+                       expected=expected))
     errors = [item.get("v2_error") for item in samples if isinstance(item.get("v2_error"), int)]
     gates.append(_gate("ts:v2_error_not_increased",
                        bool(errors) and max(errors) - min(errors) <= ts_budget["max_v2_error_increase"],

@@ -113,6 +113,12 @@ message OrderBookSnapshot {
   // The readable projection contains the requested top-N depth rather than
   // every provider level. Clients must not assume omitted levels are absent.
   bool truncated = 7;
+  // Additive (IDR-040 fix 2). Zero/absent: no quiet proof; the book is current
+  // only as of `source_event_time_ns`. Positive: local receipt time of in-band
+  // transport evidence on the same provider connection, after every earlier
+  // frame of this book was applied without a gap. It never re-dates
+  // `source_event_time_ns` and is set only on a quiet-proof snapshot.
+  int64 proof_observed_at_ns = 8;
 }
 
 message OrderBookDelta {

@@ -146,10 +146,10 @@ def crypto_specs(authority_record: dict):
          "wss://stream.binance.com:9443/stream", None,
          (("trade", "binance_spot_trade", 3), ("bookTicker", "binance_spot_bbo", 2))),
         ("OKX", "SWAP", "PERPETUAL", "BTC-USDT-SWAP", "OKX_DIRECT",
-         "wss://ws.okx.com:8443/ws/v5/public", "wss://ws.okx.com:8443/ws/v5/business",
+         "wss://ws.okx.com/ws/v5/public", "wss://ws.okx.com/ws/v5/business",
          (("trades", "okx_trade", 3), ("bbo-tbt", "okx_bbo", 2), ("candle1m", "okx_bar", 1))),
         ("OKX", "SPOT", "SPOT", "BTC-USDT", "OKX_DIRECT",
-         "wss://ws.okx.com:8443/ws/v5/public", "wss://ws.okx.com:8443/ws/v5/business",
+         "wss://ws.okx.com/ws/v5/public", "wss://ws.okx.com/ws/v5/business",
          (("trades", "okx_trade", 3), ("bbo-tbt", "okx_bbo", 2), ("candle1m", "okx_bar", 1))),
     )
     specs = []

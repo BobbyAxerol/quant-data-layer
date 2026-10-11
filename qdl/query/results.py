@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -17,6 +18,9 @@ from qdl.query.lifecycle import BarLifecycle
 
 if TYPE_CHECKING:
     from qdl.warmup.handoff import ResampleLineage
+
+# Public view event identity: canonical event ids are 16 or 32 bytes today.
+_EVENT_ID_HEX = re.compile(r"(?:[0-9a-f]{2}){1,64}")
 
 
 # A fresh provider snapshot has no durable canonical-log position to resume.
@@ -59,8 +63,17 @@ class QualityMetadata:
     event_recency_state: str = "LIVE"
     provider_session_state: str = "NOT_APPLICABLE"
     provider_session_liveness_ms: int | None = None
+    # IDR-040 fix 2 (additive): receipt time of the in-band quiet proof a
+    # verified BOOK_SNAPSHOT carries. It never changes ``freshness_ms``/state.
+    proof_observed_at_ns: int | None = None
 
     def __post_init__(self) -> None:
+        if self.proof_observed_at_ns is not None and (
+            isinstance(self.proof_observed_at_ns, bool)
+            or not isinstance(self.proof_observed_at_ns, int)
+            or self.proof_observed_at_ns <= 0
+        ):
+            raise ValueError("quiet proof time must be a positive integer")
         if self.freshness_ms < 0:
             raise ValueError("freshness_ms cannot be negative")
         if not self.state.strip() or not self.policy_id.strip():
@@ -82,6 +95,9 @@ class QualityMetadata:
             raise ValueError("provider session liveness cannot be negative")
 
 
+_LOWER_HEX = frozenset("0123456789abcdef")
+
+
 @dataclass(frozen=True)
 class ContractMetadata:
     schema_digest: str
@@ -95,9 +111,7 @@ class ContractMetadata:
     correlation_id: str
 
     def __post_init__(self) -> None:
-        if len(self.schema_digest) != 64 or any(
-            character not in "0123456789abcdef" for character in self.schema_digest
-        ):
+        if len(self.schema_digest) != 64 or not set(self.schema_digest) <= _LOWER_HEX:
             raise ValueError("contract schema digest must be lowercase SHA-256")
         if not all(
             value.strip()
@@ -139,10 +153,19 @@ class MarketDataItem:
     supersedes_event_id: str | None = None
     received_at_ns: int | None = None
     resample_lineage: "ResampleLineage | None" = None
+    # IDR-082 (v2.2.3, additive): lowercase hex of the canonical
+    # ``EventEnvelope.event_id`` this row was read from. The same canonical
+    # bytes reach Stream, so a stream-delivered event and a snapshot of it
+    # carry the same value. ``None`` when the row is not one canonical event
+    # (pass-through window, resampled aggregate) or the envelope has no id.
+    event_id: str | None = None
     # Internal only, never rendered: identifies immutable row content (binding
     # + canonical hash) so a renderer may reuse the validated static views of
     # the same row (KN-4 D30). Quality, cursor and watermark never enter it.
     render_key: str | None = field(default=None, compare=False, repr=False)
+    # Internal only, never rendered: the row cache's ``RenderSlot`` of this
+    # row, where the public renderer keeps the encoded static view fields.
+    render_slot: Any = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if not self.instrument_uid.strip() or not self.instrument_id.strip():
@@ -153,6 +176,8 @@ class MarketDataItem:
             raise ValueError("market-data watermark_offset cannot be negative")
         if self.received_at_ns is not None and self.received_at_ns <= 0:
             raise ValueError("market-data received_at_ns must be positive")
+        if self.event_id is not None and _EVENT_ID_HEX.fullmatch(self.event_id) is None:
+            raise ValueError("market-data event_id must be lowercase hex of 1..64 bytes")
         if self.feed is FeedType.BAR and not self.interval:
             raise ValueError("bar item requires interval")
         if self.feed in METRIC_INTERVAL_FEEDS and not self.interval:
@@ -183,6 +208,23 @@ class MarketDataItem:
             or self.resample_lineage is not None
         ):
             raise ValueError("bar lifecycle metadata is valid only for bar items")
+
+    def with_view_fields(self, **changes: str | None) -> "MarketDataItem":
+        """``dataclasses.replace`` restricted to ``cursor``/``snapshot_id``.
+
+        ``__post_init__`` reads neither field, so the copy does not re-run it
+        on fields that did not change; a warmup binds both on every row
+        (P18.4 D3). Any other field goes through ``replace``."""
+
+        if not changes.keys() <= _VIEW_FIELDS:
+            raise TypeError(f"with_view_fields changes only {sorted(_VIEW_FIELDS)}")
+        clone = object.__new__(type(self))
+        clone.__dict__.update(self.__dict__)
+        clone.__dict__.update(changes)
+        return clone
+
+
+_VIEW_FIELDS = frozenset({"cursor", "snapshot_id"})
 
 
 @dataclass(frozen=True)

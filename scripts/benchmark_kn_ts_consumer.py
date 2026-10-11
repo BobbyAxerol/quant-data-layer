@@ -52,6 +52,16 @@ def _market(venue):
     return ("binance", "futures") if venue == "BINANCE" else ("okx", "swap")
 
 
+def query_replicas():
+    """Explicit DNS names; keep legacy defaults for existing isolated packets."""
+    import re
+    names = tuple(os.environ.get("KN_QUERY_REPLICAS", "query_v2_1,query_v2_2").split(","))
+    if (len(names) != 2 or len(set(names)) != 2
+            or any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,252}", name) for name in names)):
+        raise ValueError("KN_QUERY_REPLICAS requires two distinct DNS names")
+    return names
+
+
 async def ts60(results):
     sys.path.insert(0, "/app")
     from adapters.market_data.data_layer_v2 import Feed, build_versioned_data_layer_client
@@ -80,7 +90,8 @@ async def ts60(results):
     rounds = int(os.environ.get("KN4_TS60_ROUNDS", "5"))
     good = settings.DATA_LAYER_V2_QUERY_URL
     phase_a = []
-    for replica in ("query_v2_1", "query_v2_2"):
+    replicas = query_replicas()
+    for replica in replicas:
         settings.DATA_LAYER_V2_QUERY_URL = f"https://{replica}:8200"
         client = build_versioned_data_layer_client(settings, consumer_id="trading-system.paper.stable",
                                                    mode_override="V2_PRIMARY")
@@ -176,11 +187,12 @@ async def ts60(results):
             for metric in ("sdk_ms", "total_ms", "ages_ms"):
                 cell[metric] = _dist(cell[metric])
     results.append({"consumer": "ts60", "phase": "A_snapshots_per_replica", "rounds": rounds,
+                    "query_replicas": list(replicas),
                     "concurrency_per_replica": int(os.environ.get("KN4_TS60_CONCURRENCY", "8")),
                     "reads": len(phase_a), "failed": sum(1 for row in phase_a if not row["ok"]),
                     "products": len(by_product),
                     "products_ok_on_both_replicas": sum(1 for e in by_product.values()
-                                                        if e["replicas_ok"] == {"query_v2_1", "query_v2_2"}),
+                                                        if e["replicas_ok"] == set(replicas)),
                     "timing_basis": "call_to_usable = consumer queue (semaphore) + SDK call incl. server queue "
                                     "and client validation; all from the call, per read",
                     "by_feed": {feed: {"reads": g["reads"], "failed": g["failed"],
@@ -190,7 +202,7 @@ async def ts60(results):
                     "per_binding_replica": per_binding,
                     "products_without_a_positive_read_on_both_replicas": sorted(
                         product for product, cells in per_binding.items()
-                        if not all(cells.get(r, {}).get("ok") for r in ("query_v2_1", "query_v2_2"))),
+                        if not all(cells.get(r, {}).get("ok") for r in replicas)),
                     "failures": {k: {"ok": v["ok"], "failed": v["failed"], "errors": v["errors"]}
                                  for k, v in sorted(by_product.items()) if v["failed"]}})
 

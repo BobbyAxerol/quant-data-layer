@@ -2102,3 +2102,73 @@ Published with `scripts/publish_github_release.py` against a fine-grained token
 held in a 0600 file outside the repository; the token was never printed and the
 tool refused to replace an existing release. `gh` is not installed on this host,
 which is why the script exists.
+
+
+## P18.4 DL closure candidate - 2026-10-07 (not certified)
+
+Status: SOURCE_CANDIDATE_READY_MEASUREMENT_PENDING. This entry does not replace
+previous immutable certificates or certify a runtime rollout. Published v2.2.2
+provenance is in upgrade/evidence/releases/v2.2.2/ and the Unified Plan publication
+closure; historical entries above are not a current runtime inventory.
+
+Candidate source 43bbcf0209f49e9cc1af6802af8f8a207a53ee3c, branch
+fix/p184-dl-closure. Rust 69e3b2b214331...; Python 77682eea5054...; exact
+digests/roles/rollback in [Phase C packet](upgrade/evidence/p184-dl-phase-c-packet.md).
+D2 SDK 2.1.0 response tolerance and IDR-062 top-change materialization are locally
+tested. Rust 102 PASS/1 existing ignored isolated-Redis test; SDK suites 28 and
+91 PASS; tools 8 PASS; packaged Python 29 PASS (overlapping source checks).
+Read-only BAR diagnostic: 20 retained 15m/30m windows, 214752 rows, zero gaps; not
+a proof beyond retained bounds. No shared mutation or latency improvement claim.
+
+External evidence: ~/.local/state/qdl-v2/p184-phaseb-20261007/evidence/phase-b-receipt.json.
+Inherited Phase A 4eb08dc, no catalogue/C2 rerun. Release waits for real/capture
+candidate resource/coherence evidence, TS DR01-DR08 and broker delta, and owner
+approval of the actual 12-role packet (handoff listed 13). D1/D3 remain deferred.
+Only source/docs, two candidate images and scoped test cleanup completed.
+
+
+### P18.4 IDR-062 offline pair and held core-first packet - 2026-10-07
+
+Status: PAIRED_OFFLINE_MEASURED_NOT_RUNTIME_CERTIFIED. Does not supersede any release
+certificate. [Paired result](upgrade/evidence/p184-idr062-offline-pair.md): identical
+ETH Binance/OKX public capture and configs on deployed 658a9570 / rc2 69e3b2b2;
+no shared changes. Top-change -> next snapshot p95 922/900 ms -> same-event 0 ms
+(provider timeline, NOT zero consumer latency). 44/41 actual top changes, exact
+delta parity; CPU observed .0600->.0627 vCPU and RSS HWM 19324->19612 KiB for one
+core/two bindings. 17 measurement/capture tests PASS. Capture hashed/deleted;
+test network/containers/keys cleaned; no new images or broad cache cleanup.
+[Phase C](upgrade/evidence/p184-dl-phase-c-packet.md): cores first, then Claude's
+post-rollout >=117/120 per-venue coherence receipt plus CPU/lag gates, then other
+roles. Prior pre-rollout coherence wording is superseded. Runtime remains HELD,
+TS DR01-DR08/broker delta and runtime approval still required. No release/push/merge.
+
+### 2026-10-07 - Read-only release-readiness audit (not promotion)
+
+Application rc2 remains43bbcf0, undeployed. See
+[readiness report](upgrade/evidence/p184-dl-release-readiness.md) and
+[active pair/capacity](upgrade/evidence/p184-idr062-capacity-envelope.md).
+Active pair PASS at135/156top-changes/minute; current whole-stack5vCPU gate FAIL
+(mean5.9618, n60intervals/307.156s). TS snapshot119/120usable; one strict LAST refusal.
+Stream overflow+4 and TS cache lag require DR07 attribution. Exact delivery lag/
+Redis-ACK/alpha cache latency NOT_MEASURED. Phase C HOLD, not authorized/deployed.
+Only TS DR01-DR08 includingDR07 +broker delta are release dependencies; no Paper
+feature construction added. Prior certificates kept immutable and scoped, no
+freshness/quota/resource threshold change. No required endpoint replacement identified.
+
+
+### 2026-10-08 - Bar edge inherited; v2.2.3 preparation only
+
+Owner-approved bar edge51450612 (sourced6d2637) replacedf7351c3b at02:17:33UTC.
+No other role changed in this Codex continuation. Existing658a9570 cores retained;
+coherence uses owner-approved TS IDR076 productpath. Failed0d8da150 excluded.
+[Prepared v2.2.3](upgrade/evidence/releases/v2.2.3/RELEASE_NOTES.md) names17runtime
+images and rollback; NOT certificate/tag. Busywindowmean4.882532vCPU,n30/299.992s
+meets frozen300smean<=5; p955.564052/max5.870669 exceed5. Canonical/raw952.48/
+826.28offsets/s exceed threebaselines, markersincluded, not3000payload/sproof.
+Streamoverflow+2/replay+15901: TSPaperBTC TRADEqueueclosures bothvenues, followed
+byBinance replayOUT_OF_RANGE remain affectedrecoveryfindings. No evidence erased.
+IDR075prepared/tested: DL25/TS28PASS, realpublicpacket validatedbothsides. Target
+manifest/JWT11,bindingV3r23/64products; runtime10/r22. Fourinversefeeds addedonly
+topreparedartifacts, linearINDEX alreadyexists. Pairedruntimepreflight, DR01-08/
+brokerreceipts, releaseattestation/CI and approvedrollout remain gates. No new
+build/push/merge/tag or further runtime mutation. See mainplan for cleanup.

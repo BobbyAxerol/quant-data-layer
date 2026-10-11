@@ -47,7 +47,7 @@ def _binding(
             )
         )
         websocket_url = (
-            "wss://ws.okx.com:8443/ws/v5/public"
+            "wss://ws.okx.com/ws/v5/public"
             if is_okx
             else (
                 "wss://stream.binance.com:9443/ws"

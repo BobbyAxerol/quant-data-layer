@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import re
 from typing import Iterable, Mapping
 
+from qdl.adapters.okx_endpoints import OKX_PUBLIC_WS
 from qdl.demand import (
     ActiveDemandConvergence,
     ActiveDemandInventory,
@@ -41,7 +42,6 @@ _BINANCE_REST_DEPTH = {
     "USDM": "https://fapi.binance.com/fapi/v1/depth",
     "SPOT": "https://api.binance.com/api/v3/depth",
 }
-_OKX_PUBLIC_WS = "wss://ws.okx.com:8443/ws/v5/public"
 
 
 @dataclass(frozen=True, slots=True)
@@ -339,5 +339,5 @@ def _provider_edge(
             _BINANCE_REST_DEPTH[market],
         )
     if venue == "OKX" and market in {"SWAP", "FUTURES", "SPOT"}:
-        return "OKX_PUBLIC_BOOKS", "books", _OKX_PUBLIC_WS, None
+        return "OKX_PUBLIC_BOOKS", "books", OKX_PUBLIC_WS, None
     raise InventoryError(f"L2 provider edge is not certified: {venue}/{market}")

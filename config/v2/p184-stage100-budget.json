@@ -1,0 +1,336 @@
+{
+ "cold": {
+  "max_errors": 0,
+  "per_venue": true,
+  "rows": [
+   2500,
+   5000
+  ],
+  "rows_must_equal_request": true
+ },
+ "final": {
+  "burst": {
+   "at_fraction": 0.4,
+   "extra_fraction": 0.25,
+   "seconds": 10
+  },
+  "reconnect": {
+   "at_fraction": 0.7,
+   "fraction": 0.1
+  },
+  "slow_reader": {
+   "at_fraction": 0.2,
+   "pause_seconds": 5,
+   "streams": 1
+  }
+ },
+ "frozen_before_candidate": true,
+ "g4_delivery_visibility": {
+  "rule": "candidate p95 <= baseline p95 x 1.2 per feed/venue(/interval); read_committed observation is a visibility upper bound",
+  "table": {
+   "bar|BINANCE|15m": {
+    "baseline_p95_ms": 33940.6,
+    "baseline_p95_ms_windows": [
+     33940.6
+    ],
+    "candidate_p95_limit_ms": 40728.7
+   },
+   "bar|BINANCE|1m": {
+    "baseline_p95_ms": 214.7,
+    "baseline_p95_ms_windows": [
+     214.7,
+     190.2,
+     155.5,
+     146.6
+    ],
+    "candidate_p95_limit_ms": 257.6
+   },
+   "bar|BINANCE|30m": {
+    "baseline_p95_ms": 21530.5,
+    "baseline_p95_ms_windows": [
+     21530.5
+    ],
+    "candidate_p95_limit_ms": 25836.6
+   },
+   "bar|BINANCE|3m": {
+    "baseline_p95_ms": 22727.7,
+    "baseline_p95_ms_windows": [
+     8968.9,
+     22727.7,
+     9862.3
+    ],
+    "candidate_p95_limit_ms": 27273.2
+   },
+   "bar|OKX|1m": {
+    "baseline_p95_ms": 61514.3,
+    "baseline_p95_ms_windows": [
+     61514.3,
+     61359.2,
+     61385.2,
+     61109.4
+    ],
+    "candidate_p95_limit_ms": 73817.2
+   },
+   "bar|OKX|30m": {
+    "baseline_p95_ms": 1800657.3,
+    "baseline_p95_ms_windows": [
+     1800657.3
+    ],
+    "candidate_p95_limit_ms": 2160788.8
+   },
+   "bar|OKX|3m": {
+    "baseline_p95_ms": 181318.4,
+    "baseline_p95_ms_windows": [
+     181318.4,
+     180839.5
+    ],
+    "candidate_p95_limit_ms": 217582.1
+   },
+   "book_delta|BINANCE|": {
+    "baseline_p95_ms": 219.4,
+    "baseline_p95_ms_windows": [
+     219.4,
+     164.8,
+     161.0,
+     160.1
+    ],
+    "candidate_p95_limit_ms": 263.3
+   },
+   "book_delta|OKX|": {
+    "baseline_p95_ms": 240.9,
+    "baseline_p95_ms_windows": [
+     240.9,
+     174.5,
+     172.1,
+     173.5
+    ],
+    "candidate_p95_limit_ms": 289.1
+   },
+   "book_snapshot|BINANCE|": {
+    "baseline_p95_ms": 216.7,
+    "baseline_p95_ms_windows": [
+     216.7,
+     160.5,
+     150.5,
+     150.1
+    ],
+    "candidate_p95_limit_ms": 260.0
+   },
+   "book_snapshot|OKX|": {
+    "baseline_p95_ms": 225.1,
+    "baseline_p95_ms_windows": [
+     225.1,
+     169.2,
+     164.8,
+     157.8
+    ],
+    "candidate_p95_limit_ms": 270.1
+   },
+   "mark_index_price|BINANCE|": {
+    "baseline_p95_ms": 309.1,
+    "baseline_p95_ms_windows": [
+     309.1,
+     219.9,
+     210.4,
+     215.6
+    ],
+    "candidate_p95_limit_ms": 370.9
+   },
+   "mark_index_price|OKX|": {
+    "baseline_p95_ms": 1322.2,
+    "baseline_p95_ms_windows": [
+     1322.2,
+     1289.4,
+     1296.2,
+     1195.2
+    ],
+    "candidate_p95_limit_ms": 1586.6
+   },
+   "quote|BINANCE|": {
+    "baseline_p95_ms": 243.9,
+    "baseline_p95_ms_windows": [
+     243.9,
+     167.3,
+     163.8,
+     177.2
+    ],
+    "candidate_p95_limit_ms": 292.7
+   },
+   "quote|OKX|": {
+    "baseline_p95_ms": 236.1,
+    "baseline_p95_ms_windows": [
+     236.1,
+     180.3,
+     182.1,
+     181.5
+    ],
+    "candidate_p95_limit_ms": 283.3
+   },
+   "trade|BINANCE|": {
+    "baseline_p95_ms": 224.4,
+    "baseline_p95_ms_windows": [
+     224.4,
+     173.5,
+     168.2,
+     175.5
+    ],
+    "candidate_p95_limit_ms": 269.3
+   },
+   "trade|OKX|": {
+    "baseline_p95_ms": 214.5,
+    "baseline_p95_ms_windows": [
+     214.5,
+     166.7,
+     165.5,
+     163.2
+    ],
+    "candidate_p95_limit_ms": 257.4
+   }
+  }
+ },
+ "g5_shape_limits_ms": {
+  "COLD_2500": {
+   "baseline_max_ms": 4176.758,
+   "baseline_n": 2,
+   "p95": 6265.1,
+   "rule": "baseline max x 1.5 (n per venue small)"
+  },
+  "COLD_5000": {
+   "baseline_max_ms": 10178.021,
+   "baseline_n": 2,
+   "p95": 15267.0,
+   "rule": "baseline max x 1.5 (n per venue small)"
+  }
+ },
+ "latency_ms": {
+  "BAR_LATEST": {
+   "feed": "BAR",
+   "operation": "SNAPSHOT",
+   "p95": 1000,
+   "p99": 2000
+  },
+  "L2_SNAPSHOT": {
+   "feed": "BOOK_SNAPSHOT",
+   "operation": "SNAPSHOT",
+   "p95": 300,
+   "p99": 750
+  },
+  "MARK_INDEX_REFERENCE": {
+   "feed": "MARK_INDEX_PRICE",
+   "operation": "REFERENCE_BATCH",
+   "p95": 250,
+   "p99": 500
+  },
+  "QUOTE_SNAPSHOT": {
+   "feed": "QUOTE",
+   "operation": "SNAPSHOT",
+   "p95": 100,
+   "p99": 250
+  },
+  "TRADE_SNAPSHOT": {
+   "feed": "TRADE",
+   "operation": "SNAPSHOT",
+   "p95": 100,
+   "p99": 250
+  }
+ },
+ "latency_scope": "Gated per latency class and venue on the steady window, across symbols and replicas; every venue/symbol/replica group is reported with its own count.",
+ "note": "Frozen from the baseline before any candidate load (owner 2026-10-09). A missed limit is an open exit to optimize, never a threshold edited after results.",
+ "probes": {
+  "feeds": [
+   "TRADE",
+   "BOOK_SNAPSHOT",
+   "BAR"
+  ],
+  "note": "Per-venue latency probes, rotating the five symbols; not part of the 50-alpha offered load.",
+  "period_seconds": 5.0
+ },
+ "requests": {
+  "client_validity_scheduler_lag_p99_ms": 250,
+  "max_failed_fault_windows": 0,
+  "max_failed_steady": 0,
+  "max_missed_ticks": 0
+ },
+ "sample_rule": {
+  "below_p95_min": "max must be within the p99 target",
+  "p95_min_samples": 20,
+  "p99_min_samples": 100
+ },
+ "schema": "qdl.p184.stage100-budget.v1",
+ "sources": {
+  "base": "473ea6b12f0d56278c3830ca6484e9129c4e9646de0021e3505395debf01baa8",
+  "g4": [
+   "09bd7219c41e570aa8524dbb022204f4854ff75be548727287f1e5aa0ee41b87",
+   "83c8ab8c3630bde923b70417c6c0e5347ebbb6267e498795b2fce6671509e215",
+   "f7174be2ebeaf4d9f070cf8fc7ac7a974172f3a3ada25c83a6ae2be5449f5c7e",
+   "a902171d065a9352ca0ad706c73d607dac8bc7be2da3f5b40624753526a72bcf"
+  ],
+  "receipt": "43ecd594aee10c3ec538e969f3356256aa810196bc0d22f75c8160f8503184b4"
+ },
+ "stages": {
+  "100": {
+   "mix": [
+    40,
+    30,
+    20,
+    10
+   ],
+   "seconds": 1800
+  },
+  "20": {
+   "mix": [
+    8,
+    6,
+    4,
+    2
+   ],
+   "seconds": 600
+  },
+  "50": {
+   "mix": [
+    20,
+    15,
+    10,
+    5
+   ],
+   "seconds": 600
+  }
+ },
+ "startup": {
+  "max_setup_seconds": 240,
+  "retry_base_seconds": 0.25,
+  "retry_codes": [
+   "RATE_LIMITED"
+  ],
+  "retry_max_attempts": 10,
+  "retry_max_seconds": 4.0
+ },
+ "streams": {
+  "bar_continuity": "consecutive final opens differ by exactly one interval; a repeated open is a revision, an older open is a FIFO violation",
+  "first_event_required_feeds": [
+   "TRADE",
+   "QUOTE",
+   "BOOK_DELTA"
+  ],
+  "max_stream_errors": 0,
+  "min_final_bars_per_bar_stream": 1
+ },
+ "trading_system": {
+  "allowed_quiet_slices": [],
+  "demanded_routes": 64,
+  "every_sample_ready": true,
+  "forbidden_disconnect_codes": [
+   "UNAUTHENTICATED",
+   "PERMISSION_DENIED",
+   "MANIFEST_REVISION_MISMATCH",
+   "INVALID_ARGUMENT"
+  ],
+  "max_disconnect_rate_over_baseline_per_minute": 10.0,
+  "max_fallback": 0,
+  "max_v2_error_increase": 0
+ },
+ "writer_health_report_only": {
+  "note": "Reported, not a gate: the single-writer ceiling is recorded at dl-v2-r1-outcome-20260916.",
+  "projector_canonical_age_ms_max": 60000
+ }
+}
