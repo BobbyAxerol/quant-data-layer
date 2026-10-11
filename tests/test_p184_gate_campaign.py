@@ -8,6 +8,7 @@ import io
 import json
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from scripts import p184_g3_bar_cache_probe as g3
@@ -471,6 +472,202 @@ class CampaignTests(unittest.TestCase):
             self.assertIn("outside the protocol", by_id["G6"]["reason"])
             self.assertEqual(by_id["G1"]["verdict"], "NOT_MEASURED")
             self.assertEqual({g["id"] for g in card["gates"]}, {f"G{i}" for i in range(1, 15)})
+
+
+BUDGET = Path("config/v2/p184-stage100-budget.json")
+
+
+def vis(n, mx):
+    return {"visibility_ms": {"n": n, "p95": mx, "max": mx}}
+
+
+def addendum_for(table, rows=None, **extra):
+    """A valid addendum: every owner row not in the table, REPORT_ONLY unless overridden by `rows`."""
+    out = {key: {"status": "REPORT_ONLY", "reason": "test"} for key in campaign.G4_ADDENDUM_OWNER_ROWS
+           if key not in table}
+    out.update(rows or {})
+    return {"schema": campaign.G4_ADDENDUM_SCHEMA, "frozen_before_candidate": True, "frozen_at_unix": 100.0,
+            "base_budget_sha256": "b" * 64, "baseline": {"role": "baseline"}, "rows": out,
+            "rule": {"statistic": "max", "factor": campaign.G4_ADDENDUM_FACTOR,
+                     "min_samples_per_window": campaign.G4_ADDENDUM_MIN_SAMPLES,
+                     "report_only_intervals": list(campaign.G4_REPORT_ONLY_INTERVALS)}, **extra}
+
+
+class G4AddendumScoringTests(unittest.TestCase):
+    TABLE = {"trade|OKX|": {"candidate_p95_limit_ms": 100.0}}
+    GATED = {"bar|OKX|5m": {"status": "GATED", "candidate_max_limit_ms": 360.0},
+             "quote|OKX_INVERSE|": {"status": "GATED", "candidate_max_limit_ms": 200.0}}
+
+    def windows(self, bar5m=(6, 300.0), quote_inv=(60, 150.0), extra=None):
+        summary = {"trade|OKX|": vis(5, 90.0), "bar|OKX|5m": vis(*bar5m), "bar|OKX|1h": vis(1, 9e9)}
+        summary.update(extra or {})
+        return [{"summary": summary, "inverse_rows": {"quote|OKX_INVERSE|": {"n": quote_inv[0], "p95": 1.0,
+                                                                            "max": quote_inv[1]}}}]
+
+    def score(self, windows):
+        return campaign.score_g4(windows, self.TABLE, addendum_for(self.TABLE, self.GATED))
+
+    def test_gated_rows_pass_and_report_only_never_blocks(self):
+        state, rows, why = self.score(self.windows())
+        self.assertEqual(state, "PASS", why)
+        by_row = {r["row"]: r for r in rows}
+        self.assertEqual(by_row["trade|OKX|"], {"row": "trade|OKX|", "p95_ms_per_window": [90.0], "n_per_window": [5],
+                                                "limit_p95_ms": 100.0, "verdict": "PASS"})
+        self.assertEqual(by_row["bar|OKX|5m"]["verdict"], "PASS")
+        self.assertEqual(by_row["bar|OKX|1h"]["verdict"], "REPORT_ONLY")  # 9e9 ms, still never fails
+        self.assertEqual(by_row["bar|OKX|1h"]["max_ms_per_window"], [9e9])
+
+    def test_gated_row_over_its_max_limit_fails(self):
+        state, _, why = self.score(self.windows(quote_inv=(60, 250.0)))
+        self.assertEqual(state, "FAIL")
+        self.assertIn("quote|OKX_INVERSE|", why[0])
+
+    def test_small_windows_are_reported_not_scored(self):
+        # 4 samples over the limit: not scored; no window with >= 5 samples -> the gated row is NOT_MEASURED.
+        state, rows, why = self.score(self.windows(bar5m=(4, 9999.0)))
+        self.assertEqual(state, "NOT_MEASURED")
+        self.assertEqual({r["row"]: r for r in rows}["bar|OKX|5m"]["gated_windows"], [False])
+        self.assertTrue(any(">= 5 samples" in item for item in why))
+
+    def test_row_in_neither_table_still_blocks(self):
+        state, _, why = self.score(self.windows(extra={"bar|OKX|7m": vis(9, 1.0)}))
+        self.assertEqual(state, "NOT_MEASURED")
+        self.assertIn("without a frozen baseline: bar|OKX|7m", why[-1])
+
+    def test_without_addendum_scoring_is_unchanged(self):
+        windows = self.windows()
+        self.assertEqual(campaign.score_g4(windows, self.TABLE), campaign.score_g4(windows, self.TABLE, None))
+        state, rows, why = campaign.score_g4(windows, self.TABLE)
+        self.assertEqual(state, "NOT_MEASURED")
+        self.assertEqual([r["row"] for r in rows], ["trade|OKX|"])
+        self.assertIn("bar|OKX|1h, bar|OKX|5m, quote|OKX_INVERSE|", why[0])
+
+    def test_validation_refuses_overlap_rule_drift_and_gated_report_only_interval(self):
+        table = {"bar|OKX|5m": {"candidate_p95_limit_ms": 1.0}}
+        self.assertEqual(campaign.validate_g4_addendum(addendum_for(table), table), [])
+        overlapping = addendum_for(table, {"bar|OKX|5m": {"status": "REPORT_ONLY"}})
+        self.assertTrue(any("overlap" in p for p in campaign.validate_g4_addendum(overlapping, table)))
+        drift = addendum_for(table)
+        drift["rule"]["statistic"] = "p95"
+        self.assertTrue(campaign.validate_g4_addendum(drift, table))
+        gated_1h = addendum_for(table, {"bar|OKX|1h": {"status": "GATED", "candidate_max_limit_ms": 5.0}})
+        self.assertTrue(any("report-only interval" in p for p in campaign.validate_g4_addendum(gated_1h, table)))
+
+    def _campaign_dir(self, tmp, addendum_path, started=200.0):
+        d = Path(tmp) / "candidate"
+        (d / "g4-1").mkdir(parents=True)
+        budget = json.loads(BUDGET.read_text())
+        table = budget["g4_delivery_visibility"]["table"]
+        summary = {key: vis(5, 1.0) for key in table}
+        summary["bar|BINANCE|5m"] = vis(6, 50.0)
+        (d / "g4-1-summary.json").write_text(json.dumps(summary))
+        (d / "campaign.json").write_text(json.dumps({
+            "started_unix": started, "budget_path": str(BUDGET.resolve()), "g4_addendum_path": str(addendum_path),
+            "budget_sha256": campaign.sha256_file(BUDGET), "g4_windows": [{"index": 1}]}))
+        return d, table
+
+    def test_scorecard_applies_only_an_addendum_frozen_before_the_campaign(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "addendum.json"
+            d, table = self._campaign_dir(tmp, path)
+            g4 = {g["id"]: g for g in campaign.build_scorecard(d)["gates"]}["G4"]
+            self.assertNotIn("report_only_rows", g4)  # no file: the original G4 entry
+            self.assertIn("bar|BINANCE|5m", g4["reason"])
+            add = addendum_for(table, {"bar|BINANCE|5m": {"status": "GATED", "candidate_max_limit_ms": 60.0}},
+                               base_budget_sha256=campaign.sha256_file(BUDGET))
+            path.write_text(json.dumps(add))
+            g4 = {g["id"]: g for g in campaign.build_scorecard(d)["gates"]}["G4"]
+            measured = {r["row"]: r["verdict"] for r in g4["measured"]}
+            self.assertEqual(measured["bar|BINANCE|5m"], "PASS")
+            self.assertEqual(len([r for r in g4["measured"] if r.get("basis") != "addendum"]), len(table))
+            self.assertTrue(all(r["verdict"] == "REPORT_ONLY" for r in g4["report_only_rows"]))
+            self.assertEqual(g4["g4_addendum"]["sha256"], campaign.sha256_file(path))
+            path.write_text(json.dumps({**add, "frozen_at_unix": 300.0}))  # frozen after the campaign started
+            g4 = {g["id"]: g for g in campaign.build_scorecard(d)["gates"]}["G4"]
+            self.assertIn("not frozen before this campaign started", g4["reason"])
+            self.assertNotEqual(g4["verdict"], "PASS")
+
+    def test_baseline_plan_runs_driver_and_g4_only(self):
+        import argparse
+        args = argparse.Namespace(state_tools="/tools", load_timeout=2400, budget="b.json", writer="w1", g11=False,
+                                  g11_wait=900, baseline=True, sessions=50)
+        plan = {"binding": None, "market_redis": {"container": "r", "db": 1},
+                "heartbeat_redis": {"container": "h", "db": 0}}
+        commands = campaign.command_plan(args, plan, Path("/c"), 0.0)
+        self.assertTrue(all(commands[name] is None for name in campaign.BASELINE_SKIPPED))
+        driver = commands["driver"]
+        self.assertEqual(driver[driver.index("--sessions") + 1], "50")
+        self.assertEqual(driver[driver.index("--output") + 1], "/c/stage50")
+        self.assertTrue(commands["g4_windows"])
+
+    def test_score_refuses_a_baseline_campaign(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "campaign.json").write_text(json.dumps({"role": "baseline"}))
+            with self.assertRaises(SystemExit):
+                campaign.main(["score", "--campaign-dir", tmp])
+
+
+class G4AddendumFreezeTests(unittest.TestCase):
+    def _baseline(self, tmp, role="baseline", marker=True, budget_sha=None):
+        from scripts import p184_freeze_g4_addendum as freeze
+        d = Path(tmp) / "run"
+        (d / "g4-1").mkdir(parents=True)
+        (d / "g4-2").mkdir()
+        (d / "g4-1-summary.json").write_text(json.dumps({"bar|BINANCE|5m": vis(5, 100.0), "bar|OKX|5m": vis(2, 1.0),
+                                                         "bar|BINANCE|1h": vis(50, 9.0)}))
+        (d / "g4-2-summary.json").write_text(json.dumps({"bar|BINANCE|5m": vis(7, 150.0)}))
+        obs = [{"kind": "canonical_observation", "feed": "quote", "identity": {"native_symbol": "BTC-USD-SWAP"},
+                "source_event_ns": i * S, "observer_receipt_wall_ns": i * S + (100 + i) * 1_000_000}
+               for i in range(1, 7)]
+        (d / "g4-2" / "observations.jsonl").write_text("\n".join(json.dumps(o) for o in obs) + "\n")
+        body = {"g4_windows": [{"index": 1, "boundary": None}, {"index": 2, "boundary": 1800}],
+                "budget_sha256": budget_sha or campaign.sha256_file(BUDGET), "started_unix": 1.0}
+        if role:
+            body["role"] = role
+        (d / "campaign.json").write_text(json.dumps(body))
+        if marker:
+            (d / "baseline.json").write_text(json.dumps({"role": "baseline"}))
+        return freeze, d
+
+    def test_freeze_derives_gated_and_report_only_rows_from_the_baseline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            freeze, d = self._baseline(tmp)
+            out = freeze.freeze(d, BUDGET, now=50.0)
+            table = json.loads(BUDGET.read_text())["g4_delivery_visibility"]["table"]
+            self.assertEqual(campaign.validate_g4_addendum(out, table), [])
+            rows = out["rows"]
+            self.assertFalse(set(rows) & set(table))
+            self.assertEqual(sorted(out["excluded_already_in_frozen_table"]),
+                             ["bar|BINANCE|15m", "bar|BINANCE|30m", "bar|OKX|30m"])
+            self.assertEqual(rows["bar|BINANCE|5m"]["status"], "GATED")
+            self.assertEqual(rows["bar|BINANCE|5m"]["candidate_max_limit_ms"], 180.0)  # max 150 x 1.2, not p95
+            self.assertEqual(rows["bar|BINANCE|1h"]["status"], "REPORT_ONLY")  # 50 samples, interval report-only
+            self.assertEqual(rows["bar|OKX|5m"]["status"], "REPORT_ONLY")  # 2 samples < 5
+            self.assertEqual(rows["quote|OKX_INVERSE|"]["status"], "GATED")  # from observations.jsonl
+            self.assertEqual(rows["quote|OKX_INVERSE|"]["candidate_max_limit_ms"], round(106.0 * 1.2, 1))
+            self.assertEqual(rows["book_delta|OKX_INVERSE|"]["status"], "REPORT_ONLY")  # never observed
+            self.assertEqual(out["base_budget_sha256"], campaign.sha256_file(BUDGET))
+            self.assertEqual(out["baseline"]["role"], "baseline")
+
+    def test_freeze_refuses_candidate_unfinished_and_other_budget_dirs(self):
+        for kwargs, message in ((dict(role=None), "not a baseline"), (dict(role="candidate"), "not a baseline"),
+                                (dict(marker=False), "not complete"), (dict(budget_sha="0" * 64), "different budget")):
+            with self.subTest(kwargs=kwargs), tempfile.TemporaryDirectory() as tmp:
+                freeze, d = self._baseline(tmp, **kwargs)
+                with self.assertRaisesRegex(ValueError, message):
+                    freeze.freeze(d, BUDGET)
+
+    def test_freeze_cli_writes_once_and_refuses_overwrite(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            freeze, d = self._baseline(tmp)
+            output = Path(tmp) / "addendum.json"
+            argv = ["--baseline-campaign", str(d), "--budget", str(BUDGET), "--output", str(output)]
+            with unittest.mock.patch("sys.stdout", new_callable=io.StringIO):
+                self.assertEqual(freeze.main(argv), 0)
+            first = output.read_bytes()
+            with self.assertRaises(SystemExit):
+                freeze.main(argv)
+            self.assertEqual(output.read_bytes(), first)
 
 
 if __name__ == "__main__":

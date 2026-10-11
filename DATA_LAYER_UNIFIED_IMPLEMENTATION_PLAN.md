@@ -72305,3 +72305,19 @@ no build, CI or subagent job running.
   PREPARED_NOT_PUBLISHED; local CI on 481fd67 41 PASS, 3 SKIPPED (2 PR-only, 1 sudo), summary 83e7dda9; remote CI, owner decision and tag open.
 - Open: IDR-087 tested locally only (no live broker stop of the bar edge); DL CPU 5.08 vCPU > 5 budget; writer burst
   capacity depends on knob 64. Not committed.
+- Phase E started after v2.2.3 was published (owner decisions 2026-10-11): G4 addendum; event_id in the TS writer;
+  IDR-040 stays OFF.
+  - S1, DR01 probe: the revision comes from the live realm (`--manifest-dir`, `--manifest-revision`, wrong =
+    N-1). No literal 14/13 remains; checked read-only against the live rev-15 realm.
+  - S2, G4 addendum tooling:
+    - scripts/p184_freeze_g4_addendum.py freezes one addendum from a dedicated baseline run
+      (`p184_gate_campaign.py run --baseline`, role=baseline) and refuses candidate dirs and overwrites.
+    - 15 rows: bar BINANCE 5m/1h/2h/4h/6h, bar OKX 5m/15m/1h/2h/4h/6h, and four OKX_INVERSE rows.
+    - Bar 1h-6h are REPORT_ONLY. Other rows are gated on max <= 1.2 x the baseline window max, using only windows
+      with >= 5 samples; a row with no such window is REPORT_ONLY if the baseline had none, otherwise
+      NOT_MEASURED.
+    - score_g4 applies the addendum only if it was frozen before the campaign start for the same budget. Without
+      the file, scoring is byte-identical to before (checked on 9 real campaigns).
+  - Tests: 101 OK.
+  - Open drift: the repo's consumers/stable/alpha-*-paper.yaml are still rev 14 while the live realm serves rev 15.
+    Change them only with a python image rebuild (coupling #3).

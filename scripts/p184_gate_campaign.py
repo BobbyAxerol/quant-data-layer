@@ -28,6 +28,14 @@ Scoring rule (v2.2.3 scorecard, unchanged): verdicts PASS / FAIL / NOT_MEASURED;
 can FAIL a gate but cannot PASS it; missing coverage is NOT_MEASURED; nothing is ever upgraded. G12 and G13 are not part
 of this campaign and are reported NOT_MEASURED with that reason.
 
+G4 addendum (owner decision 2026-10-11): rows outside the frozen 17-row G4 table are scored from
+config/v2/p184-stage100-g4-addendum.json when that file exists (frozen once by scripts/p184_freeze_g4_addendum.py from
+a `run --baseline` campaign, never from a candidate): candidate max <= baseline max x 1.2 on windows with >= 5 samples;
+bar 1h/2h/4h/6h and rows whose baseline had no window of >= 5 samples are REPORT_ONLY (never pass, never fail, never
+block). The original table and its p95 rule are unchanged; without the file the scoring is unchanged.
+`run --baseline [--sessions 50|100]` records role=baseline in campaign.json and runs only the driver workload (+ guard
+and MARK watch) and the G4 observer windows, then writes baseline.json; it never scores.
+
 Boundary: no image builds, no container create/recreate/restart, no Redis/Kafka writes. Children: the driver's own
 disposable client container (removed by the driver), the G4 observer (docker exec of a read-only consumer, as before)
 and the trace analysis container (--rm, --network none, read-only mounts).
@@ -79,6 +87,17 @@ G6_REQUIRED = tuple(f"{feed}|{venue}|" for feed in ("TRADE", "QUOTE", "MARK_INDE
 G6_GATED_FEEDS = ("TRADE", "QUOTE", "MARK_INDEX_PRICE", "BOOK_SNAPSHOT", "BOOK_DELTA", "BAR")
 G6_TS_PROBE_SUFFIX = "#ts-probe"
 G6_TS_PROBE_EMIT_SECONDS = 60
+# G4 addendum (owner decision 2026-10-11): rows outside the frozen 17-row table get their own frozen file, built ONLY
+# from a dedicated baseline run (run --baseline). The original table and its p95 rule stay byte-identical.
+G4_ADDENDUM_PATH = ROOT / "config/v2/p184-stage100-g4-addendum.json"
+G4_ADDENDUM_SCHEMA = "qdl.p184.stage100-g4-addendum.v1"
+G4_ADDENDUM_MIN_SAMPLES = 5      # per window; fewer -> the window is reported, never scored
+G4_ADDENDUM_FACTOR = 1.2         # candidate max <= baseline max x 1.2
+G4_REPORT_ONLY_INTERVALS = ("1h", "2h", "4h", "6h")
+# The owner's closed row set; keys already in the frozen table are excluded when the addendum is frozen.
+G4_ADDENDUM_OWNER_ROWS = tuple(
+    [f"bar|{venue}|{interval}" for venue in VENUES for interval in ("5m", "15m", "30m", "1h", "2h", "4h", "6h")]
+    + [f"{feed}|OKX_INVERSE|" for feed in ("book_delta", "book_snapshot", "mark_index_price", "quote")])
 
 
 # ---------------------------------------------------------------- plan helpers (pure, unit-tested)
@@ -237,8 +256,51 @@ def score_g7(transit: dict | None) -> tuple[str, dict, list[str]]:
     return "PASS", rows, []
 
 
-def score_g4(windows: list[dict], table: dict) -> tuple[str, list, list[str]]:
-    """windows: [{'summary': {row: {'visibility_ms': {...}}}, 'inverse_rows': {...}}]; table: budget rows."""
+def g4_window_stats(window: dict, key: str) -> dict:
+    """{'n', 'p95', 'max'} of one row in one observer window: summary rows first, then the OKX inverse split."""
+    value = ((window.get("summary") or {}).get(key) or {}).get("visibility_ms")
+    if value is None:
+        value = (window.get("inverse_rows") or {}).get(key)
+    return value or {}
+
+
+def g4_row_interval(key: str) -> str:
+    return key.split("|")[2] if key.count("|") == 2 else ""
+
+
+def validate_g4_addendum(addendum: dict, table: dict) -> list[str]:
+    """Problems that keep an addendum from being applied (empty list = valid against this frozen table)."""
+    problems = []
+    if not isinstance(addendum, dict) or addendum.get("schema") != G4_ADDENDUM_SCHEMA:
+        return ["unknown addendum schema"]
+    rule = addendum.get("rule") or {}
+    if (rule.get("min_samples_per_window") != G4_ADDENDUM_MIN_SAMPLES or rule.get("factor") != G4_ADDENDUM_FACTOR
+            or rule.get("statistic") != "max"
+            or list(rule.get("report_only_intervals") or []) != list(G4_REPORT_ONLY_INTERVALS)):
+        problems.append("addendum rule differs from the owner rule")
+    if not addendum.get("frozen_before_candidate") or (addendum.get("baseline") or {}).get("role") != "baseline":
+        problems.append("addendum is not frozen from a baseline campaign")
+    rows = addendum.get("rows") or {}
+    expected = [key for key in G4_ADDENDUM_OWNER_ROWS if key not in table]
+    if sorted(rows) != sorted(expected):
+        problems.append("addendum row set differs from the owner row set minus the frozen table")
+    overlap = sorted(set(rows) & set(table))
+    if overlap:
+        problems.append(f"addendum rows overlap the frozen table: {', '.join(overlap)}")
+    for key, spec in rows.items():
+        status = (spec or {}).get("status")
+        if status not in ("GATED", "REPORT_ONLY"):
+            problems.append(f"{key}: unknown status")
+        elif status == "GATED" and (g4_row_interval(key) in G4_REPORT_ONLY_INTERVALS
+                                    or not isinstance(spec.get("candidate_max_limit_ms"), (int, float))):
+            problems.append(f"{key}: GATED row without a limit or on a report-only interval")
+    return problems
+
+
+def score_g4(windows: list[dict], table: dict, addendum: dict | None = None) -> tuple[str, list, list[str]]:
+    """windows: [{'summary': {row: {'visibility_ms': {...}}}, 'inverse_rows': {...}}]; table: budget rows.
+    addendum (validated, optional): GATED rows score windows with >= 5 samples on max vs the frozen limit; REPORT_ONLY
+    rows are returned with verdict REPORT_ONLY and never change the gate; rows in neither stay NOT_MEASURED."""
     rows, failed, uncovered = [], [], []
     for key, limit in sorted(table.items()):
         values = [((w.get("summary") or {}).get(key) or {}).get("visibility_ms", {}) for w in windows]
@@ -252,14 +314,35 @@ def score_g4(windows: list[dict], table: dict) -> tuple[str, list, list[str]]:
             failed.append(key)
         elif verdict == "NOT_MEASURED":
             uncovered.append(key)
+    thin = []
+    for key, spec in sorted(((addendum or {}).get("rows") or {}).items()):
+        stats = [g4_window_stats(w, key) for w in windows]
+        n = [v.get("n", 0) for v in stats]
+        maxes = [v.get("max") if v.get("n") else None for v in stats]
+        row = {"row": key, "basis": "addendum", "max_ms_per_window": maxes, "n_per_window": n}
+        if spec["status"] == "REPORT_ONLY":
+            rows.append({**row, "verdict": "REPORT_ONLY", "reason": spec.get("reason")})
+            continue
+        limit = spec["candidate_max_limit_ms"]
+        gated = [m for m, k in zip(maxes, n) if k >= G4_ADDENDUM_MIN_SAMPLES and m is not None]
+        verdict = "NOT_MEASURED" if not gated else "FAIL" if any(m > limit for m in gated) else "PASS"
+        rows.append({**row, "limit_max_ms": limit, "verdict": verdict,
+                     "gated_windows": [k >= G4_ADDENDUM_MIN_SAMPLES for k in n]})
+        if verdict == "FAIL":
+            failed.append(key)
+        elif verdict == "NOT_MEASURED":
+            thin.append(key)
     observed = {key for w in windows for key in (w.get("summary") or {})}
     inverse = {key for w in windows for key in (w.get("inverse_rows") or {})}
-    unbaselined = sorted((observed | inverse) - set(table))
+    unbaselined = sorted((observed | inverse) - set(table) - set(((addendum or {}).get("rows") or {})))
     reasons = []
     if failed:
         reasons.append(f"over limit: {', '.join(failed)}")
     if uncovered:
         reasons.append(f"no sample in any window: {', '.join(uncovered)}")
+    if thin:
+        reasons.append(f"addendum rows without a window of >= {G4_ADDENDUM_MIN_SAMPLES} samples: {', '.join(thin)}")
+        uncovered = uncovered + thin
     if unbaselined:
         reasons.append(f"observed rows without a frozen baseline: {', '.join(unbaselined)}")
     if failed:
@@ -399,6 +482,31 @@ def sha256_file(path: Path) -> str | None:
         return None
 
 
+def applicable_g4_addendum(campaign: dict, table: dict) -> tuple[dict | None, list[str], dict | None]:
+    """(addendum or None, notes, source) for one candidate campaign. Absent file -> (None, [], None): the original
+    scoring is unchanged. A present file applies only when it is valid against this frozen table, was frozen for the
+    campaign's budget, was frozen BEFORE the campaign started and (when the campaign recorded it) is the same file."""
+    path = Path(campaign.get("g4_addendum_path") or G4_ADDENDUM_PATH)
+    if not path.exists():
+        if campaign.get("g4_addendum_sha256"):
+            return None, [f"G4 addendum not applied: {path} recorded at run time is missing"], None
+        return None, [], None
+    source = {"path": str(path), "sha256": sha256_file(path)}
+    addendum = load_json(path)
+    problems = validate_g4_addendum(addendum, table) if addendum is not None else ["unreadable addendum"]
+    if not problems:
+        if addendum.get("base_budget_sha256") != campaign.get("budget_sha256"):
+            problems.append("addendum frozen for a different budget")
+        frozen = addendum.get("frozen_at_unix")
+        if not isinstance(frozen, (int, float)) or not frozen < float(campaign.get("started_unix") or 0):
+            problems.append("addendum not frozen before this campaign started")
+        if campaign.get("g4_addendum_sha256") not in (None, source["sha256"]):
+            problems.append("addendum changed after the campaign recorded it")
+    if problems:
+        return None, ["G4 addendum not applied: " + "; ".join(problems)], source
+    return addendum, [], source
+
+
 def build_scorecard(campaign_dir: Path) -> dict:
     d = Path(campaign_dir)
     campaign = load_json(d / "campaign.json") or {}
@@ -440,16 +548,29 @@ def build_scorecard(campaign_dir: Path) -> dict:
         sources={"g3": sha256_file(d / "g3" / "g3-summary.json")})
     budget = load_json(campaign.get("budget_path", "")) if campaign.get("budget_path") else None
     table = ((budget or {}).get("g4_delivery_visibility") or {}).get("table") or {}
+    addendum, addendum_notes, addendum_src = applicable_g4_addendum(campaign, table)
     g4_windows = []
     for item in campaign.get("g4_windows", []):
         summary = load_json(d / f"g4-{item['index']}-summary.json")
         obs = d / f"g4-{item['index']}" / "observations.jsonl"
         inverse = g4_inverse_rows(read_jsonl(obs)) if obs.exists() else {}
         g4_windows.append({"summary": summary, "inverse_rows": inverse})
-    v, rows, why = score_g4(g4_windows, table) if table else ("NOT_MEASURED", [], ["no frozen G4 baseline table"])
-    add("G4", "delivery lag, venue -> canonical (read_committed visibility, upper bound)", "candidate p95 <= frozen "
-        "baseline p95 x 1.2 per row; missing coverage blocks the gate", v, "; ".join(why) or "every row inside",
-        measured=rows, inverse_rows=[w["inverse_rows"] for w in g4_windows])
+    v, rows, why = (score_g4(g4_windows, table, addendum) if table else
+                    ("NOT_MEASURED", [], ["no frozen G4 baseline table"]))
+    rule = "candidate p95 <= frozen baseline p95 x 1.2 per row; missing coverage blocks the gate"
+    if addendum is None and not addendum_notes:
+        add("G4", "delivery lag, venue -> canonical (read_committed visibility, upper bound)", rule, v,
+            "; ".join(why) or "every row inside", measured=rows, inverse_rows=[w["inverse_rows"] for w in g4_windows])
+    else:
+        if addendum is not None:
+            rule += (f"; addendum rows: candidate max <= baseline max x {G4_ADDENDUM_FACTOR} on windows with >= "
+                     f"{G4_ADDENDUM_MIN_SAMPLES} samples, {'/'.join(G4_REPORT_ONLY_INTERVALS)} and thin-baseline "
+                     "rows report-only")
+        add("G4", "delivery lag, venue -> canonical (read_committed visibility, upper bound)", rule, v,
+            "; ".join(why + addendum_notes) or "every row inside",
+            measured=[r for r in rows if r["verdict"] != "REPORT_ONLY"],
+            report_only_rows=[r for r in rows if r["verdict"] == "REPORT_ONLY"],
+            inverse_rows=[w["inverse_rows"] for w in g4_windows], g4_addendum=addendum_src)
     latency = [g for g in (gates or {}).get("gates", []) if str(g.get("gate", "")).startswith(("latency:", "cold"))]
     failed_latency = [g["gate"] for g in latency if g.get("status") != "PASS"]
     v = "FAIL" if failed_latency else "PASS" if latency else "NOT_MEASURED"
@@ -567,7 +688,8 @@ def preflight(args) -> dict:
                      "max_records": env.get("TS_DELIVERY_TRACE_MAX_RECORDS"),
                      "covers_load": until >= needed}
     if not plan["trace"]["covers_load"]:
-        (plan["warnings"] if args.allow_no_trace else plan["problems"]).append(
+        # A baseline run collects G4 windows only; the delivery trace is not read.
+        (plan["warnings"] if args.allow_no_trace or getattr(args, "baseline", False) else plan["problems"]).append(
             "delivery trace does not cover the load window (recreate the writer with the long trace first); "
             "G1/G2/G7/G10 would be NOT_MEASURED")
     plan["binding"] = mount_source(inspect, "/run/secrets/qdl-v2-binding/trading-system.paper.stable.json")
@@ -689,15 +811,20 @@ def stop_g6_ts_probe(writer: str, process, out: Path) -> None:
         (out / "summary.json").write_text(json.dumps(summary, indent=1, sort_keys=True) + "\n")
 
 
+def driver_output(args, d: Path) -> Path:
+    return d / f"stage{getattr(args, 'sessions', 100)}"
+
+
 def command_plan(args, plan: dict, d: Path, launch_unix: float) -> dict:
     tools = Path(args.state_tools)
     py = [sys.executable, "-B"]
     sampler_seconds = str(args.load_timeout + 60)
-    return {
+    baseline = getattr(args, "baseline", False)
+    commands = {
         "driver": ["timeout", str(args.load_timeout), *py, "scripts/phase3_consumer_load_acceptance.py",
                    "--profile", str(d / "profile.json"), "--budget", str(Path(args.budget).resolve()),
-                   "--output", str(d / "stage100"), "--mode", "target", "--sessions", "100",
-                   "--duration-seconds", str(LOAD_SECONDS)],
+                   "--output", str(driver_output(args, d)), "--mode", "target",
+                   "--sessions", str(getattr(args, "sessions", 100)), "--duration-seconds", str(LOAD_SECONDS)],
         "guard": [str(tools / "guard_v2.sh"), str(args.load_timeout), "<driver-pid>"],
         "mark_watch": [str(tools / "mark_watch_v2.sh"), str(args.load_timeout), "<driver-pid>"],
         "g3": [*py, "scripts/p184_g3_bar_cache_probe.py", "--binding", str(plan.get("binding")),
@@ -722,24 +849,51 @@ def command_plan(args, plan: dict, d: Path, launch_unix: float) -> dict:
                  "--db", str(plan["market_redis"]["db"]), "--wait-seconds", str(args.g11_wait),
                  "--observe-seconds", "180", "--out", str(d / "g11")] if args.g11 else None),
     }
+    if baseline:
+        # Baseline (owner 2026-10-11): the same driver workload and G4 observer windows, nothing else.
+        commands.update({name: None for name in BASELINE_SKIPPED})
+    return commands
+
+
+BASELINE_SKIPPED = ("g3", "g8", "g6_ts", "g6_ts_stdin", "g9g10", "g11")
+
+
+def baseline_receipt(d: Path, commands: dict, driver_code: int | None) -> dict:
+    """baseline.json: the completion marker the addendum freeze requires; lists each G4 window's files."""
+    windows = []
+    for window in commands["g4_windows"]:
+        summary = d / f"g4-{window['index']}-summary.json"
+        obs = d / f"g4-{window['index']}" / "observations.jsonl"
+        windows.append({"index": window["index"], "boundary": window["boundary"],
+                        "summary_sha256": sha256_file(summary), "observations_sha256": sha256_file(obs)})
+    return {"schema": "qdl.p184.g4-baseline-run.v1", "role": "baseline", "completed_unix": time.time(),
+            "driver_exit": driver_code, "g4_windows": windows}
 
 
 def run(args) -> int:
+    baseline = getattr(args, "baseline", False)
+    if baseline and args.g11:
+        raise SystemExit("--baseline collects G4 windows only; --g11 is a candidate fault window")
+    if not baseline and args.sessions != 100:
+        raise SystemExit("a candidate campaign is the stage-100 workload (--sessions 100)")
     plan = preflight(args)
     launch_unix = time.time() + 5
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    d = Path(args.campaign_dir or STATE / f"p184-final-campaign-{stamp}").resolve()
+    prefix = "p184-g4-baseline" if baseline else "p184-final-campaign"
+    d = Path(args.campaign_dir or STATE / f"{prefix}-{stamp}").resolve()
     commands = command_plan(args, plan, d, launch_unix)
     expected = (args.load_timeout + 60 + (args.g11_wait + 180 if args.g11 else 0) + 600)
     if args.dry_run:
-        print(json.dumps({"campaign_dir": str(d), "preflight": plan, "commands": commands,
-                          "expected_wall_seconds_max": expected,
-                          "order": ["preflight (read-only)", "samplers G3/G8/G9-G10 + G6 TS execution probe (docker "
-                                    "exec -i into the writer, read-only) start", "driver + guard + MARK watch",
-                                    "G4 windows on schedule", "driver exit -> samplers SIGTERM, G6 probe SIGTERM by its "
-                                    "in-container PID -> g6-ts/summary.json",
-                                    "G11 probe arms; COORDINATOR restarts the writer" if args.g11 else "G11 skipped",
-                                    "trace analysis (--rm, --network none)", "scorecard.json"]},
+        order = (["preflight (read-only)", "driver + guard + MARK watch", "G4 windows on schedule",
+                  "baseline.json (no samplers, no G6 probe, no trace analysis, no scorecard)"] if baseline else
+                 ["preflight (read-only)", "samplers G3/G8/G9-G10 + G6 TS execution probe (docker "
+                  "exec -i into the writer, read-only) start", "driver + guard + MARK watch",
+                  "G4 windows on schedule", "driver exit -> samplers SIGTERM, G6 probe SIGTERM by its "
+                  "in-container PID -> g6-ts/summary.json",
+                  "G11 probe arms; COORDINATOR restarts the writer" if args.g11 else "G11 skipped",
+                  "trace analysis (--rm, --network none)", "scorecard.json"])
+        print(json.dumps({"campaign_dir": str(d), "role": "baseline" if baseline else "candidate", "preflight": plan,
+                          "commands": commands, "expected_wall_seconds_max": expected, "order": order},
                          indent=1, sort_keys=True, default=str))
         return 0 if not plan["problems"] else 2
     if plan["problems"]:
@@ -750,7 +904,8 @@ def run(args) -> int:
     profile = derive_profile(base)
     (d / "profile.json").write_text(json.dumps(profile, indent=1, sort_keys=True) + "\n")
     os.chmod(d / "profile.json", 0o600)
-    campaign = {"schema": "qdl.p184.gate-campaign.v1", "started_unix": time.time(), "preflight": plan,
+    campaign = {"schema": "qdl.p184.gate-campaign.v1", "role": "baseline" if baseline else "candidate",
+                "sessions": args.sessions, "started_unix": time.time(), "preflight": plan,
                 "runtime_identity": plan.get("runtime_identity"), "trace": plan.get("trace"),
                 "market_redis": plan.get("market_redis"), "demanded_slices": plan.get("demanded_slices"),
                 "budget_path": str(Path(args.budget).resolve()), "budget_sha256": sha256_file(Path(args.budget)),
@@ -758,6 +913,8 @@ def run(args) -> int:
                 "g4_windows": [{k: v for k, v in w.items() if k != "command"} for w in commands["g4_windows"]],
                 "tool_sha256": sha256_file(Path(__file__)), "source_sha": subprocess.run(
                     ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()}
+    if not baseline and G4_ADDENDUM_PATH.exists():
+        campaign.update(g4_addendum_path=str(G4_ADDENDUM_PATH), g4_addendum_sha256=sha256_file(G4_ADDENDUM_PATH))
     (d / "campaign.json").write_text(json.dumps(campaign, indent=1, sort_keys=True, default=str) + "\n")
     children = Children()
     hard_deadline = time.monotonic() + expected + 600
@@ -770,13 +927,17 @@ def run(args) -> int:
                 children.stop_all()
                 return
     threading.Thread(target=watchdog, daemon=True).start()
+    code = None
     try:
-        samplers = {name: children.start(name, commands[name], log=d / f"{name}.log", cwd=ROOT)
-                    for name in ("g3", "g8", "g9g10")}
-        (d / "g6-ts").mkdir()
-        g6_probe = children.start("g6_ts", commands["g6_ts"], log=d / "g6-ts" / "probe.log", cwd=ROOT,
-                                  stdin_path=Path(commands["g6_ts_stdin"]), stdout_path=d / "g6-ts" / "probe.jsonl")
-        log_event(d, "g6_ts_started", pid=g6_probe.pid)
+        samplers, g6_probe = {}, None
+        if not baseline:
+            samplers = {name: children.start(name, commands[name], log=d / f"{name}.log", cwd=ROOT)
+                        for name in ("g3", "g8", "g9g10")}
+            (d / "g6-ts").mkdir()
+            g6_probe = children.start("g6_ts", commands["g6_ts"], log=d / "g6-ts" / "probe.log", cwd=ROOT,
+                                      stdin_path=Path(commands["g6_ts_stdin"]),
+                                      stdout_path=d / "g6-ts" / "probe.jsonl")
+            log_event(d, "g6_ts_started", pid=g6_probe.pid)
         time.sleep(max(0.0, launch_unix - time.time()))
         driver = children.start("driver", commands["driver"], log=d / "stage100.log", cwd=ROOT)
         log_event(d, "driver_started", pid=driver.pid)
@@ -811,8 +972,9 @@ def run(args) -> int:
         time.sleep(30)
         for process in samplers.values():
             children.stop(process)
-        stop_g6_ts_probe(args.writer, g6_probe, d / "g6-ts")
-        log_event(d, "samplers_stopped")
+        if g6_probe is not None:
+            stop_g6_ts_probe(args.writer, g6_probe, d / "g6-ts")
+            log_event(d, "samplers_stopped")
         if commands["g11"]:
             probe = children.start("g11", commands["g11"], log=d / "g11.log", cwd=ROOT)
             time.sleep(15)
@@ -826,6 +988,13 @@ def run(args) -> int:
     finally:
         watchdog_fired.set()
         children.stop_all()
+    if baseline:
+        receipt = baseline_receipt(d, commands, code)
+        with (d / "baseline.json").open("x") as handle:
+            handle.write(json.dumps(receipt, indent=1, sort_keys=True) + "\n")
+        print(json.dumps({"campaign_dir": str(d), "role": "baseline", "driver_exit": code,
+                          "g4_windows_with_summary": sum(1 for w in receipt["g4_windows"] if w["summary_sha256"])}))
+        return 0
     run_trace_analysis(campaign, d, image=args.analysis_image or profile["image"])
     card = build_scorecard(d)
     (d / "scorecard.json").write_text(json.dumps(card, indent=1, sort_keys=True, default=str) + "\n")
@@ -849,6 +1018,11 @@ def main(argv=None) -> int:
     r.add_argument("--g11", action="store_true", help="arm the G11 probe after the load (coordinator restarts)")
     r.add_argument("--g11-wait", type=int, default=900)
     r.add_argument("--allow-no-trace", action="store_true")
+    r.add_argument("--baseline", action="store_true",
+                   help="G4 baseline run (role=baseline): driver + G4 windows only, no scoring; input of "
+                        "scripts/p184_freeze_g4_addendum.py")
+    r.add_argument("--sessions", type=int, choices=(50, 100), default=100,
+                   help="driver stage (a candidate campaign is always 100; a baseline may mirror the stage-50 one)")
     s = sub.add_parser("score")
     s.add_argument("--campaign-dir", required=True)
     s.add_argument("--analysis-image")
@@ -857,6 +1031,8 @@ def main(argv=None) -> int:
     if args.command == "run":
         return run(args)
     d = Path(args.campaign_dir)
+    if (load_json(d / "campaign.json") or {}).get("role") == "baseline":
+        raise SystemExit("a baseline campaign is not scored; freeze it with scripts/p184_freeze_g4_addendum.py")
     if args.rerun_trace or not (d / "trace" / "transit-load.json").exists():
         campaign = load_json(d / "campaign.json") or {}
         image = args.analysis_image or (load_json(d / "profile.json") or {}).get("image")
