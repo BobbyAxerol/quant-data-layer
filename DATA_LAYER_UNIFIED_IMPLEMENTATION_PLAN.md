@@ -72245,3 +72245,16 @@ no build, CI or subagent job running.
   - Monitor: 2511 samples, 0 crashes.
   - Teardown clean.
   - The v2.2.3 scorecard moves G12 to PASS; the BOOK-only verdict is kept as superseded.
+- IDR-088, latent since rc10 and first triggered 2026-10-11 11:37Z (stage-100 run 111700Z stopped by its guard,
+  writer DEGRADED 63/64):
+  - Trigger: OKX BNB-USDT-SWAP TRADE was quiet for more than 120 s.
+  - The Stream ring evicted the key (ring_max_age 120 s).
+  - The primary held the same record, but its state-partition watermark only advances when that partition gets a
+    frame, so its boundary trailed the head an earlier hot read had recorded.
+  - Query refused with HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND / HOT_RECORD_MISSING although nothing newer existed.
+  - The writer's idle session probe treats that refusal as a disconnect.
+  - Fix (qdl/runtime/kn_query_backend.py): a primary that is the same record (source offset and payload digest)
+    an earlier hot read proved newest is served at the recorded boundary. The boundary stays monotonic, no gap is
+    invented, and the record-regression and payload-mismatch guards are unchanged.
+  - Regression tests added; 181 tests OK.
+  - Not caused by the writer or SDK 2.3.0 change, nor by Query rc11 (diffs checked).

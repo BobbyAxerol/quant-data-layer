@@ -279,6 +279,29 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
                 self._hot_boundaries[binding.binding_id] = (view.boundary, record_offset, digest)
             return True
 
+    def _proven_same_record(self, binding, view):
+        """The primary view lifted to the recorded boundary when it is the same record an earlier hot read proved
+        newest up to that boundary (same source offset and payload digest); None otherwise.
+
+        A quiet key's state partition watermark only advances when that partition receives a frame, so the primary
+        boundary can trail the head an earlier ring read recorded. Once the ring evicts the quiet key (ring_max_age),
+        the same record was refused HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND although nothing newer exists: a newer
+        record would carry a larger source offset. Serving it at the recorded boundary keeps the boundary monotonic
+        for the client and invents no gap (P18.4 stage 100, 2026-10-11 11:37Z, OKX BNB TRADE quiet > 120 s)."""
+        if view is None or len(view.rows) != 1 or view.rows[0].source_offset is None:
+            return None
+        digest = hashlib.sha256(view.rows[0].canonical).hexdigest()
+        with self._hot_boundary_lock:
+            previous = self._hot_boundaries.get(binding.binding_id)
+        if previous is None:
+            return None
+        boundary, prior_record_offset, prior_digest = previous
+        if ((view.boundary.topic_id, view.boundary.partition) != (boundary.topic_id, boundary.partition)
+                or view.rows[0].source_offset != prior_record_offset or digest != prior_digest
+                or view.boundary.offset >= boundary.offset):
+            return None
+        return replace(view, boundary=boundary)
+
     def _hot_candidate(self, binding, primary=None, *, shared=False):
         """Authenticated committed bytes, validated by the same lineage oracle.
 
@@ -412,6 +435,9 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         if quiet_primary:
             raise _not_ready(f"HOT_QUIET_PRIMARY_UNVERIFIED: {backup_failure}")
         if primary is not None and not self._hot_monotonic(binding, primary):
+            lifted = self._proven_same_record(binding, primary)
+            if lifted is not None:
+                return lifted
             raise _not_ready(f"HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND: {backup_failure}")
         return primary
 
