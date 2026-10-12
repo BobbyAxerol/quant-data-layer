@@ -72522,3 +72522,27 @@ Open:
 - the release-image rerun;
 - a 3-process binary rebalance case;
 - after rollout, watch the Rebalanced-abort and restart counters for cascades.
+
+### P18.4 IDR-094 release-image broker rerun (rc16) - K2 gate closed locally - 2026-10-12
+
+Status: K2 gate passed on the release image. Tested locally on an isolated broker, not on the live stack.
+
+Image: `qdl-v2-rust:2.2.3-rc16-bcb0283` sha256:f41ecb66, label revision bcb0283, qdl-realtime-core binary 0d8b0326.
+
+- Binary phase A (9000 records):
+  - outputs: read_committed 9000, all unique, in order, quarantine 0, committed offset 9000;
+  - recovery: fence -> generation 2; 15 s broker pause -> generation 3; after a SIGKILL the next core resumes.
+- K1 phase B: a SIGTERM during a pending, failing commit exits 1 with stop_drain_failed and starts no new generation.
+  rc14 and rc15 lose the stop.
+- K3 matrix: 0 duplicates and 0 missing out of 6000 in every case. Each membership change causes about one Rebalanced
+  abort and restart per affected member, then it settles.
+- Three rc16 processes in one group, 6 partitions, with core-2 restarted by SIGTERM and core-3 restarted by SIGKILL
+  mid-load:
+  - outputs: 18000 in, read_committed 18000, all unique, ordered per partition, offsets 3000 x 6;
+  - restarts did not cascade;
+  - once, the broker itself rejected a stale-generation offset commit; the batch aborted and retried, with no
+    duplicate.
+- A killed member holds its partitions until the session timeout (librdkafka default 45 s).
+  - Rollout recreates send SIGTERM, which makes the member leave cleanly.
+  - session.timeout.ms is kept at its default (one variable at a time).
+- Teardown: broker, volumes and network removed; scratch reduced to 8 MB.
