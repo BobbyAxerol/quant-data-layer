@@ -72724,3 +72724,65 @@ FAILED_PRECONDITION wins over queued controls/older terminal. Security/cursor ti
 unchanged, normal default path preserved. Evidence under TS p184-n1-final-20261012.
 All test containers --rm; no runtime changes, push/merge or release. Feature-only TEST
 image and historical integration are next; this source slice cannot certify6k/9k.
+
+N1 TEST packaging/integration (2026-10-12): source545e719 built release-mode feature
+binary9e8da24cf076 in isolated2CPU/3GiB builder; TEST imageb610238afa5b overlays pinned
+basece629061, never production release. TS image3e526ad83849 (source4ff59051) completed
+historical TEST native TRADE/QUOTE apply/PUBLISH/cursor on both venues. Receipt at TS
+p184-n1-final-20261012/dl-clock3/evidence/n1-clock-integration.json; no real-provider,
+throughput or live freshness claim.16 containers removed,zero residue/errors.
+Next approved N1 preparation: tiny offline Rust example reuses production
+RealtimeCore::process_at_transport_offset for captured raw bytes with explicit original
+transport offsets and declared processing time. No provider parser reimplementation,
+no runtime/core behavior change, no raw rewriting. Emit per-frame canonical identity/
+payload hashes and dispositions for a parent disk-backed uniqueness oracle; do not
+claim emitted count is unique count. TEST raw refused, bounded rows/input/output,
+ordering checked. Config/admission/clock provenance remains explicit; this inventory
+alone cannot certify runtime admission, historical authority or6k/9k.
+Agent owns example/tests only; parent reviews/tests/commits with this journal.
+
+N1 normalizer inventory source verified (2026-10-12): example n1_capture_inventory
+reuses RealtimeCore::process_at_transport_offset; no provider parser copy.9inline tests
+PASS/0fail/ignore and strict clippy PASS against immutable deployed-corebcb02833 source
+plus only this example. That pin matters: HEAD qdl-core normalization has unreleased
+changes; do not silently use HEAD as production oracle. Input/output each hard-capped
+at8GiB, rows12M, bounded config/line/partitions; original raw bytes/offset/time retained,
+explicit processing clock, exact config hash, TEST rejection and required completion
+record. No unique-count or runtime-authority claim from emitted rows alone.
+Historical MARK regression proves processing-time expiry: original-time pair emits1,
+fixed+24h processing emits0 with MARK_INDEX_COMPONENT_EXPIRED. Thus the existing
+historical integration validates native TRADE/QUOTE, not full MARK background; the
+core's TEST data-time boundary must also be addressed before full historical replay.
+Missing cached dependency in offline build retained as oracle-tests1; oracle-tests2
+fetched only locked versions and passed. No lockfile update, runtime change or rollout.
+Example binary/provenance recorded under TS p184-n1-final-20261012/oracle-binary1.json.
+
+Oracle owning-branch check: oracle-head-tests1 reused a target directory across two
+source exports mounted at /src; excluded from source-specific proof because Cargo
+mtime reuse can be ambiguous. Repeated with a separate oracle-head-target directory:
+oracle-head-tests2 rebuilt normalization dependencies and9PASS/0fail/ignore. Original
+baseline binary remains independently copied/hash-pinned; oracle-tests2 build log
+records its normalizer crates compiled from immutablebcb02833. Future source variants
+use separate targets. Real shard3 inventory completed120000rows with exit0; pending
+identity-ledger validation, do not yet call emitted records unique or background full.
+
+N1 inventory ledger verified (2026-10-12): shard3 has86211 emitted/unique canonical
+IDs,0repeated IDs,0payload conflicts,2core duplicate dispositions and36209 filtered
+raw outcomes. The complete120000-row footer and input-row SHA match the frozen input.
+Output SHA e0e4eef4b62b68235dc403e73091ed094cc4c5399b44795a85f05206703afd92.
+Fresh-core BOOK bootstrap is incomplete (16582 REJECTED_AWAITING_SNAPSHOT); the raw
+received clock regresses21038 times within partitions. Do not treat this declared
+raw-receipt processing clock as historical production timing, or raw count as6k/9k
+capacity. Ledger summary/index retained outside Git; bounded no-network helpers
+removed. Production unchanged; oracle slice ready to commit.
+
+Next N1 TEST-only boundary approved under the existing goal: mechanically extract
+Stream's guarded replay clock into a small shared crate and use it at Kafka core's
+normalization processing-time boundary only. Default feature remains off. Preserve
+provider clocks, security/wall telemetry, Kafka deadlines, TTL and durability. Clock
+failure is fatal and latched; validate idle/collect/pre-submit paths without dropping
+an already-submitted transaction. Same frozen namespace.stream timeline/hash across
+roles. Parent owns journals and commits; agent owns disjoint shared-clock/core source.
+Tests require default/feature parity, historical MARK and expiry fencing. TEST core
+image must overlay deployed bcb02833 source, not introduce HEAD normalizer changes.
+No production mutation, release or capacity claim; rollback removes only TEST overlay.
