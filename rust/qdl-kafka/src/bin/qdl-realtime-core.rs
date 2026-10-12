@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::env;
+use std::future::Future;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use prost::Message;
@@ -10,8 +11,8 @@ use qdl_core::backoff::BackoffPolicy;
 use qdl_core::transport::{AppendResult, RetryClass};
 use qdl_kafka::{
     shutdown_signal, CommittedTransaction, KafkaTlsConfig, KafkaTransportConfig,
-    KafkaTransportError, TransactionPipeline, TransactionalKafkaBridge, TransactionalKafkaOutput,
-    TransactionalShadowTopics,
+    KafkaTransportError, ShutdownSignal, TransactionPipeline, TransactionalKafkaBridge,
+    TransactionalKafkaOutput, TransactionalShadowTopics,
 };
 use qdl_realtime_core::{
     provider_admission_server::ProviderAdmissionServer, CoreError, RealtimeCore, RealtimeCoreConfig,
@@ -321,11 +322,122 @@ impl Progress {
 
 type CommitPipeline = TransactionPipeline<Vec<AppendResult>>;
 
+type SignalOutcome = Option<Result<ShutdownSignal, String>>;
+
+/// K1. Process-wide stop intent. One signal listener lives for the whole
+/// process, not per generation, so a SIGTERM that arrives while a generation
+/// fails, drains, or the supervisor sleeps in retry backoff is never lost.
+#[derive(Clone)]
+struct StopLatch {
+    receiver: tokio::sync::watch::Receiver<SignalOutcome>,
+}
+
+impl StopLatch {
+    fn install() -> Self {
+        let (sender, latch) = Self::manual();
+        tokio::spawn(async move {
+            let outcome = shutdown_signal().await.map_err(|error| error.to_string());
+            let _ = sender.send(Some(outcome));
+        });
+        latch
+    }
+
+    fn manual() -> (tokio::sync::watch::Sender<SignalOutcome>, Self) {
+        let (sender, receiver) = tokio::sync::watch::channel(None);
+        (sender, Self { receiver })
+    }
+
+    /// The stop already requested, if any. A failed signal listener counts as
+    /// a stop: the process can no longer be stopped gracefully.
+    fn requested(&self) -> Option<Result<&'static str, String>> {
+        self.receiver
+            .borrow()
+            .as_ref()
+            .map(|outcome| match outcome {
+                Ok(signal) => Ok(signal.as_str()),
+                Err(error) => Err(error.clone()),
+            })
+    }
+
+    /// Resolves once a stop is requested. Cancel-safe.
+    async fn wait(&self) -> Result<&'static str, RuntimeError> {
+        let mut receiver = self.receiver.clone();
+        loop {
+            if let Some(outcome) = receiver.borrow_and_update().as_ref() {
+                return outcome
+                    .as_ref()
+                    .map(|signal| signal.as_str())
+                    .map_err(|error| format!("shutdown signal listener failed: {error}").into());
+            }
+            if receiver.changed().await.is_err() {
+                // The listener task is gone without a signal; never resolve.
+                std::future::pending::<()>().await;
+            }
+        }
+    }
+}
+
+/// How a generation ended, after its in-flight transaction was settled.
+#[derive(Debug)]
+enum GenerationEnd {
+    /// A stop (signal or MAX_EVENTS) was requested and the in-flight
+    /// transaction, if any, committed. Clean exit.
+    Stopped,
+    /// A stop was requested but the in-flight transaction failed to commit (it
+    /// was aborted, or its abort failed too). Terminal: never retried, exits
+    /// non-zero, because those offsets are not durable.
+    StopDrainFailed {
+        reason: &'static str,
+        error: KafkaTransportError,
+    },
+}
+
+/// The settled outcome of one generation before logging.
+enum Settled<T> {
+    Stopped {
+        reason: &'static str,
+        committed: Option<CommittedTransaction<T>>,
+    },
+    StopDrainFailed {
+        reason: &'static str,
+        error: KafkaTransportError,
+    },
+    /// The generation failed without a stop intent of its own; the
+    /// supervisor decides between recovery and exit.
+    Failed {
+        error: RuntimeError,
+        drain_error: Option<KafkaTransportError>,
+    },
+}
+
+/// K1. Settle the transaction still in `pipeline` and keep the stop intent
+/// independent of that drain's result: once `served` says stop, a failed
+/// drain is a terminal stop failure, never a generation error that recovery
+/// could retry.
+async fn finish_generation<T: Send + 'static>(
+    served: Result<&'static str, RuntimeError>,
+    pipeline: &mut TransactionPipeline<T>,
+) -> Settled<T> {
+    // IDR-094. Whatever ended the loop, the batch already handed to Kafka is
+    // settled here - committed or aborted - before this generation returns,
+    // so no transaction outlives its generation or races the next producer.
+    let drained = pipeline.complete().await;
+    match (served, drained) {
+        (Ok(reason), Ok(committed)) => Settled::Stopped { reason, committed },
+        (Ok(reason), Err(error)) => Settled::StopDrainFailed { reason, error },
+        (Err(error), drained) => Settled::Failed {
+            error,
+            drain_error: drained.err(),
+        },
+    }
+}
+
 async fn run_generation(
     config: &RuntimeConfig,
     generation: u64,
     backoff: &BackoffPolicy,
-) -> Result<(), RuntimeError> {
+    stop: &StopLatch,
+) -> Result<GenerationEnd, RuntimeError> {
     let mut core = RealtimeCore::new(config.core.clone())?;
     let approved_subscriptions = approved_subscription_scope(config);
     // Refuse a non-shared authority before any Kafka client exists, as before.
@@ -366,20 +478,32 @@ async fn run_generation(
         &bridge,
         &mut pipeline,
         &mut progress,
+        stop,
     )
     .await;
-    // IDR-094. Whatever ended the loop, the batch already handed to Kafka is
-    // settled here - committed or aborted - before this generation returns,
-    // so no transaction outlives its generation or races the next producer.
-    let drained = pipeline.complete().await;
-    let stop_reason = match (served, drained) {
-        (Ok(reason), Ok(committed)) => {
+    let stop_reason = match finish_generation(served, &mut pipeline).await {
+        Settled::Stopped { reason, committed } => {
             progress.record_commit(committed, generation, config.metrics_every_batches)?;
             reason
         }
-        (Ok(_), Err(error)) => return Err(error.into()),
-        (Err(error), drained) => {
-            if let Err(commit_error) = drained {
+        Settled::StopDrainFailed { reason, error } => {
+            // The stop stands; the failed commit stays visible and is never
+            // reported as a clean stop.
+            eprintln!(
+                "{}",
+                serde_json::to_string(&json!({
+                    "event": "qdl_realtime_core_stop_drain_failed",
+                    "generation": generation,
+                    "reason": reason,
+                    "processed": progress.processed,
+                    "batches": progress.batches,
+                    "error": error.to_string(),
+                }))?
+            );
+            return Ok(GenerationEnd::StopDrainFailed { reason, error });
+        }
+        Settled::Failed { error, drain_error } => {
+            if let Some(commit_error) = drain_error {
                 eprintln!(
                     "{}",
                     serde_json::to_string(&json!({
@@ -409,7 +533,7 @@ async fn run_generation(
             "reason": stop_reason,
         }))?
     );
-    Ok(())
+    Ok(GenerationEnd::Stopped)
 }
 
 /// The consume-normalize-commit loop of one generation. Returns the stop
@@ -431,20 +555,23 @@ async fn serve_generation(
     bridge: &TransactionalKafkaBridge,
     pipeline: &mut CommitPipeline,
     progress: &mut Progress,
+    stop: &StopLatch,
 ) -> Result<&'static str, RuntimeError> {
     let (canonical_target, quarantine_target) = output_targets(config.authority.mode)?;
     let mut receive_failures = 0_u32;
-    let shutdown = shutdown_signal();
-    tokio::pin!(shutdown);
     let stop_reason = 'service: loop {
         let submitted = progress.processed + pipeline.in_flight_inputs();
         if config.max_events > 0 && submitted >= config.max_events {
             break 'service "MAX_EVENTS";
         }
+        // K3. Read before this batch's first input is polled: a revocation
+        // served while it is collected, or while it (or the batch before it)
+        // is in flight, makes its transaction abort instead of commit.
+        let rebalance_epoch = bridge.rebalance_epoch();
         let first = loop {
             let received = tokio::select! {
                 result = bridge.next() => result,
-                result = &mut shutdown => break 'service result?.as_str(),
+                result = stop.wait() => break 'service result?,
                 // Idle input must not hide a finished (or failed) commit.
                 committed = pipeline.complete(), if pipeline.is_in_flight() => {
                     progress.record_commit(committed?, generation, config.metrics_every_batches)?;
@@ -475,7 +602,7 @@ async fn serve_generation(
                                 receive_failures as u16,
                             ),
                         )) => {}
-                        result = &mut shutdown => break 'service result?.as_str(),
+                        result = stop.wait() => break 'service result?,
                     }
                 }
                 Err(error) => return Err(error.into()),
@@ -489,7 +616,7 @@ async fn serve_generation(
         {
             let received = tokio::select! {
                 biased;
-                result = &mut shutdown => break 'service result?.as_str(),
+                result = stop.wait() => break 'service result?,
                 result = receive_batch_input(batch_deadline, bridge.next()) => result,
             };
             match received {
@@ -645,11 +772,97 @@ async fn serve_generation(
         // begun: one open transaction per producer, batches in order.
         let previous = pipeline.complete().await?;
         progress.record_commit(previous, generation, config.metrics_every_batches)?;
-        let transaction = bridge.prepare_commit(&inputs, outputs).await?;
+        let transaction = bridge
+            .prepare_commit(&inputs, outputs, rebalance_epoch)
+            .await?;
         let previous = pipeline.submit(inputs.len() as u64, transaction).await?;
         progress.record_commit(previous, generation, config.metrics_every_batches)?;
     };
     Ok(stop_reason)
+}
+
+fn log_line(stream_err: bool, value: serde_json::Value) {
+    let line = value.to_string();
+    if stream_err {
+        eprintln!("{line}");
+    } else {
+        println!("{line}");
+    }
+}
+
+/// K1. Generation supervisor. A retryable generation failure starts a new
+/// generation after backoff, as before; but once a stop is requested - before
+/// a generation, inside one, or during the backoff - no further generation is
+/// constructed. A stop whose drain failed exits non-zero.
+async fn supervise<Run, Generation>(
+    stop: &StopLatch,
+    backoff: &BackoffPolicy,
+    mut run: Run,
+) -> Result<(), RuntimeError>
+where
+    Run: FnMut(u64) -> Generation,
+    Generation: Future<Output = Result<GenerationEnd, RuntimeError>>,
+{
+    let mut generation = 0_u64;
+    let mut failures = 0_u32;
+    loop {
+        if let Some(requested) = stop.requested() {
+            // Between generations nothing is in flight.
+            return requested.map(|_| ()).map_err(Into::into);
+        }
+        generation = generation.saturating_add(1);
+        match run(generation).await {
+            Ok(GenerationEnd::Stopped) => return Ok(()),
+            Ok(GenerationEnd::StopDrainFailed { reason, error }) => {
+                return Err(format!(
+                    "stopped on {reason} but the in-flight transaction did not commit: {error}"
+                )
+                .into());
+            }
+            Err(error) if stop.requested().is_some() => {
+                log_line(
+                    true,
+                    json!({
+                        "event": "qdl_realtime_core_retry_suppressed_by_stop",
+                        "generation": generation,
+                        "error": error.to_string(),
+                    }),
+                );
+                return Err(error);
+            }
+            Err(error) if retryable_runtime_error(&error) => {
+                failures = failures.saturating_add(1);
+                log_line(
+                    true,
+                    json!({
+                        "event": "qdl_realtime_core_retry",
+                        "generation": generation,
+                        "attempt": failures,
+                        "error": error.to_string(),
+                    }),
+                );
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_millis(
+                        backoff.delay_ms(failures, failures.min(10_000) as u16),
+                    )) => {}
+                    stopped = stop.wait() => {
+                        let reason = stopped?;
+                        log_line(
+                            false,
+                            json!({
+                                "event": "qdl_realtime_core_stopped",
+                                "generation": generation,
+                                "reason": reason,
+                                "during_retry_backoff": true,
+                            }),
+                        );
+                        return Ok(());
+                    }
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 #[tokio::main]
@@ -670,31 +883,11 @@ async fn main() -> Result<(), RuntimeError> {
         jitter_bps: 2_000,
     }
     .validate()?;
-    let mut generation = 0_u64;
-    let mut failures = 0_u32;
-    let result = loop {
-        generation = generation.saturating_add(1);
-        match run_generation(&config, generation, &backoff).await {
-            Ok(()) => break Ok(()),
-            Err(error) if retryable_runtime_error(&error) => {
-                failures = failures.saturating_add(1);
-                eprintln!(
-                    "{}",
-                    serde_json::to_string(&json!({
-                        "event": "qdl_realtime_core_retry",
-                        "generation": generation,
-                        "attempt": failures,
-                        "error": error.to_string(),
-                    }))?
-                );
-                tokio::time::sleep(Duration::from_millis(
-                    backoff.delay_ms(failures, failures.min(10_000) as u16),
-                ))
-                .await;
-            }
-            Err(error) => break Err(error),
-        }
-    };
+    let stop = StopLatch::install();
+    let result = supervise(&stop, &backoff, |generation| {
+        run_generation(&config, generation, &backoff, &stop)
+    })
+    .await;
     if let Some(server) = admission_server {
         server.stop().await?;
     }
@@ -812,6 +1005,188 @@ mod tests {
             "progress line resets its interval"
         );
         assert_eq!(progress.commit_wait.count, 0);
+    }
+
+    use std::cell::Cell;
+
+    fn test_backoff() -> BackoffPolicy {
+        BackoffPolicy {
+            initial_ms: 500,
+            maximum_ms: 30_000,
+            multiplier: 2,
+            jitter_bps: 0,
+        }
+        .validate()
+        .unwrap()
+    }
+
+    fn sigterm() -> SignalOutcome {
+        Some(Ok(ShutdownSignal::Terminate))
+    }
+
+    /// One generation shaped like `run_generation`: batch N's commit is in
+    /// flight, SIGTERM arrives, the loop stops and `finish_generation`
+    /// settles the pending commit with `commit` as its outcome.
+    async fn generation_with_pending_commit(
+        stop: &StopLatch,
+        signal: &tokio::sync::watch::Sender<SignalOutcome>,
+        commit: Result<u64, KafkaTransportError>,
+    ) -> Result<GenerationEnd, RuntimeError> {
+        let mut pipeline = TransactionPipeline::<u64>::new();
+        pipeline
+            .submit(3, async move {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                commit
+            })
+            .await?;
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        assert!(pipeline.is_in_flight(), "commit is still pending");
+        signal.send(sigterm()).unwrap();
+        let served = tokio::select! {
+            result = stop.wait() => result,
+            _ = std::future::pending::<()>() => unreachable!(),
+        };
+        match finish_generation(served, &mut pipeline).await {
+            Settled::Stopped { reason, committed } => {
+                assert_eq!(reason, "SIGTERM");
+                assert_eq!(committed.map(|done| done.inputs), Some(3));
+                Ok(GenerationEnd::Stopped)
+            }
+            Settled::StopDrainFailed { reason, error } => {
+                Ok(GenerationEnd::StopDrainFailed { reason, error })
+            }
+            Settled::Failed { error, .. } => Err(error),
+        }
+    }
+
+    async fn supervise_sigterm_with_pending_commit(
+        commit: impl Fn() -> Result<u64, KafkaTransportError>,
+    ) -> (Result<(), RuntimeError>, u64) {
+        let (signal, stop) = StopLatch::manual();
+        let generations = Cell::new(0_u64);
+        let result = supervise(&stop, &test_backoff(), |_| {
+            generations.set(generations.get() + 1);
+            generation_with_pending_commit(&stop, &signal, commit())
+        })
+        .await;
+        (result, generations.get())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn sigterm_with_pending_commit_that_commits_exits_cleanly() {
+        let (result, generations) = supervise_sigterm_with_pending_commit(|| Ok(7)).await;
+        result.expect("a committed drain is a clean stop");
+        assert_eq!(generations, 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn sigterm_with_pending_commit_that_fails_retryably_exits_without_new_generation() {
+        let (result, generations) = supervise_sigterm_with_pending_commit(|| {
+            Err(KafkaTransportError::SnapshotTimeout("commit".into()))
+        })
+        .await;
+        let error = result.expect_err("a failed drain must not be reported as success");
+        assert!(error.to_string().contains("SIGTERM"));
+        assert!(error.to_string().contains("did not commit"));
+        assert_eq!(generations, 1, "no generation after the signal");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn sigterm_with_pending_commit_whose_abort_fails_exits_without_new_generation() {
+        // A failed abort replaces the commit error (`run_kafka_transaction`)
+        // and is a retryable Kafka error, which used to start generation N+1.
+        let (result, generations) = supervise_sigterm_with_pending_commit(|| {
+            Err(KafkaTransportError::Kafka(
+                rdkafka::error::KafkaError::Canceled,
+            ))
+        })
+        .await;
+        assert!(result.is_err());
+        assert_eq!(generations, 1, "no generation after the signal");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retryable_failure_without_a_stop_still_recovers() {
+        let (signal, stop) = StopLatch::manual();
+        let generations = Cell::new(0_u64);
+        let result = supervise(&stop, &test_backoff(), |generation| {
+            generations.set(generations.get() + 1);
+            let signal = &signal;
+            async move {
+                if generation == 1 {
+                    Err(KafkaTransportError::SnapshotTimeout("receive".into()).into())
+                } else {
+                    signal.send(sigterm()).unwrap();
+                    Ok(GenerationEnd::Stopped)
+                }
+            }
+        })
+        .await;
+        result.unwrap();
+        assert_eq!(generations.get(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn sigterm_during_retry_backoff_constructs_no_new_generation() {
+        let (signal, stop) = StopLatch::manual();
+        let generations = Cell::new(0_u64);
+        let backoff = test_backoff();
+        let started = tokio::time::Instant::now();
+        let supervised = supervise(&stop, &backoff, |_| {
+            generations.set(generations.get() + 1);
+            async { Err(KafkaTransportError::SnapshotTimeout("receive".into()).into()) }
+        });
+        let signal_later = async {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            signal.send(sigterm()).unwrap();
+            std::future::pending::<()>().await;
+        };
+        let result = tokio::select! {
+            result = supervised => result,
+            _ = signal_later => unreachable!(),
+        };
+        result.expect("nothing is in flight during backoff: clean stop");
+        assert_eq!(generations.get(), 1);
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "backoff cut short"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn failure_after_a_stop_is_not_retried_and_signal_before_start_runs_nothing() {
+        let (signal, stop) = StopLatch::manual();
+        let generations = Cell::new(0_u64);
+        let result = supervise(&stop, &test_backoff(), |_| {
+            generations.set(generations.get() + 1);
+            let signal = &signal;
+            async move {
+                signal.send(sigterm()).unwrap();
+                Err(KafkaTransportError::SnapshotTimeout("receive".into()).into())
+            }
+        })
+        .await;
+        assert!(result.is_err());
+        assert_eq!(generations.get(), 1);
+
+        let (signal, stop) = StopLatch::manual();
+        signal.send(sigterm()).unwrap();
+        let generations = Cell::new(0_u64);
+        supervise(&stop, &test_backoff(), |_| {
+            generations.set(generations.get() + 1);
+            async { Ok(GenerationEnd::Stopped) }
+        })
+        .await
+        .unwrap();
+        assert_eq!(generations.get(), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn failed_signal_listener_is_a_failing_stop() {
+        let (signal, stop) = StopLatch::manual();
+        signal.send(Some(Err("no signal handler".into()))).unwrap();
+        assert!(stop.wait().await.is_err());
+        assert!(matches!(stop.requested(), Some(Err(_))));
     }
 
     #[test]

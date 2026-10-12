@@ -7,6 +7,7 @@ use std::fmt::{Display, Formatter};
 use std::future::Future;
 use std::io;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -18,8 +19,11 @@ use qdl_venue_core::authority::{
     Phase9AuthorityFence, Phase9AuthorityRecord, Phase9PublicationContext, PublicationContext,
     SinkTarget,
 };
+use rdkafka::client::ClientContext;
 use rdkafka::config::ClientConfig;
-use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
+use rdkafka::consumer::{
+    BaseConsumer, CommitMode, Consumer, ConsumerContext, Rebalance, StreamConsumer,
+};
 use rdkafka::error::KafkaError;
 use rdkafka::message::{Header, Headers, Message, OwnedHeaders};
 use rdkafka::producer::{DeliveryFuture, FutureProducer, FutureRecord, Producer};
@@ -198,6 +202,14 @@ pub enum KafkaTransportError {
     InvalidUtf8(&'static str),
     Fencing(String),
     SnapshotTimeout(String),
+    /// K3. The consumer processed a partition revocation (or rebalance error)
+    /// after the batch's first input was read, so its transaction was aborted
+    /// rather than commit offsets this member may no longer own. Retryable:
+    /// the generation restarts from committed offsets.
+    Rebalanced {
+        observed: u64,
+        current: u64,
+    },
 }
 
 impl KafkaTransportError {
@@ -214,7 +226,10 @@ impl KafkaTransportError {
             {
                 RetryClass::Capacity
             }
-            Self::Kafka(_) | Self::Delivery(_) | Self::SnapshotTimeout(_) => RetryClass::Retryable,
+            Self::Kafka(_)
+            | Self::Delivery(_)
+            | Self::SnapshotTimeout(_)
+            | Self::Rebalanced { .. } => RetryClass::Retryable,
         }
     }
 }
@@ -232,6 +247,10 @@ impl Display for KafkaTransportError {
             Self::SnapshotTimeout(message) => {
                 write!(formatter, "Kafka compacted snapshot timed out: {message}")
             }
+            Self::Rebalanced { observed, current } => write!(
+                formatter,
+                "consumer rebalanced during the transaction (epoch {observed} -> {current}); aborted"
+            ),
         }
     }
 }
@@ -724,6 +743,101 @@ fn transactional_output_headers(
     headers
 }
 
+/// K3. Rebalance epoch latch shared by the bridge's consumer context and its
+/// transactions.
+///
+/// The consumer uses the cooperative protocol, and since IDR-094 it polls batch
+/// N+1 (and so serves rebalance callbacks) while batch N's transaction is in
+/// flight. The group coordinator validates member id and generation on
+/// `send_offsets_to_transaction`, not per-partition ownership, so a batch whose
+/// partitions were revoked meanwhile could still commit their offsets with the
+/// newer group metadata while the new owner already consumes them from the last
+/// committed offset. The latch is bumped by the rebalance callbacks and checked
+/// by the transaction; it never waits on anything, so a rebalance callback can
+/// never block on an in-flight commit.
+#[derive(Debug, Default)]
+pub struct RebalanceEpoch(AtomicU64);
+
+impl RebalanceEpoch {
+    pub fn current(&self) -> u64 {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    fn bump(&self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// `Ok` only if no invalidating rebalance happened since `observed` was read.
+    pub fn ensure_unchanged(&self, observed: u64) -> Result<(), KafkaTransportError> {
+        let current = self.current();
+        if current == observed {
+            Ok(())
+        } else {
+            Err(KafkaTransportError::Rebalanced { observed, current })
+        }
+    }
+}
+
+/// Which rebalance events can invalidate a batch already read. A revocation
+/// (including partitions *lost* to a session timeout, which librdkafka reports
+/// as a revoke) or a rebalance error can take away a partition the batch read
+/// from. An assignment only adds partitions, so the batch's inputs stay owned;
+/// cooperative rebalances also deliver empty assign/revoke lists on every
+/// group change, and aborting on those would turn each restart of one core into
+/// aborts on the other cores.
+fn rebalance_invalidates_batch(rebalance: &Rebalance<'_>) -> bool {
+    match rebalance {
+        Rebalance::Assign(_) => false,
+        Rebalance::Revoke(partitions) => partitions.count() > 0,
+        Rebalance::Error(_) => true,
+    }
+}
+
+/// Consumer context of [`TransactionalKafkaBridge`]. Keeps rdkafka's default
+/// rebalance handling (incremental assign/unassign), logging and statistics;
+/// it only bumps the [`RebalanceEpoch`] before and after an invalidating
+/// rebalance. Both callbacks are wait-free.
+pub struct RebalanceEpochContext {
+    epoch: Arc<RebalanceEpoch>,
+}
+
+impl ClientContext for RebalanceEpochContext {}
+
+impl ConsumerContext for RebalanceEpochContext {
+    fn pre_rebalance(&self, _consumer: &BaseConsumer<Self>, rebalance: &Rebalance<'_>) {
+        if rebalance_invalidates_batch(rebalance) {
+            self.epoch.bump();
+        }
+    }
+
+    fn post_rebalance(&self, _consumer: &BaseConsumer<Self>, rebalance: &Rebalance<'_>) {
+        if rebalance_invalidates_batch(rebalance) {
+            self.epoch.bump();
+        }
+    }
+}
+
+type BridgeConsumer = StreamConsumer<RebalanceEpochContext>;
+
+/// K3. Send the batch's raw offsets and commit, unless the consumer processed
+/// an invalidating rebalance since the batch's first input was polled. Checked
+/// before send-offsets (no offsets are sent for a stale batch) and again after
+/// it returns: a revocation served in between means the new owner may have
+/// fetched the old committed offset before our offsets reached the
+/// coordinator, so committing could duplicate output. Either failure is
+/// returned before commit, so the caller aborts the transaction.
+fn commit_offsets_unless_rebalanced(
+    epoch: &RebalanceEpoch,
+    observed: u64,
+    send_offsets: impl FnOnce() -> Result<(), KafkaTransportError>,
+    commit: impl FnOnce() -> Result<(), KafkaTransportError>,
+) -> Result<(), KafkaTransportError> {
+    epoch.ensure_unchanged(observed)?;
+    send_offsets()?;
+    epoch.ensure_unchanged(observed)?;
+    commit()
+}
+
 /// Kafka consume-transform-produce boundary. Output records and the next raw
 /// consumer offset commit atomically, so a process crash cannot acknowledge raw
 /// input without its canonical/quarantine result or duplicate committed output.
@@ -731,7 +845,8 @@ fn transactional_output_headers(
 /// binds these private streams to either shadow or primary publication targets.
 pub struct TransactionalKafkaBridge {
     producer: FutureProducer,
-    consumer: Arc<StreamConsumer>,
+    consumer: Arc<BridgeConsumer>,
+    rebalance_epoch: Arc<RebalanceEpoch>,
     fence: Arc<tokio::sync::Mutex<AuthorityFence>>,
     topics: TransactionalShadowTopics,
     request_timeout: Duration,
@@ -786,7 +901,8 @@ where
 
 async fn execute_kafka_transaction(
     producer: FutureProducer,
-    consumer: Arc<StreamConsumer>,
+    consumer: Arc<BridgeConsumer>,
+    rebalance: (Arc<RebalanceEpoch>, u64),
     request_timeout: Duration,
     next_offsets: NextRawOffsets,
     outputs: &[TransactionalKafkaOutput],
@@ -830,25 +946,36 @@ async fn execute_kafka_transaction(
             });
             let accepted = try_join_all(deliveries).await?;
             let commit_producer = body_producer.clone();
+            let (epoch, observed) = rebalance;
             blocking_kafka_call(move || {
                 let mut offsets = TopicPartitionList::new();
                 for ((topic, partition), offset) in next_offsets {
                     offsets.add_partition_offset(&topic, partition, Offset::Offset(offset))?;
                 }
-                // Read at send-offsets time, as before IDR-094: the group
-                // generation in this metadata is what fences a zombie member.
-                let group = consumer.group_metadata().ok_or_else(|| {
-                    KafkaTransportError::Configuration(
-                        "consumer group metadata is unavailable".into(),
-                    )
-                })?;
-                commit_producer.send_offsets_to_transaction(
-                    &offsets,
-                    &group,
-                    Timeout::After(request_timeout),
-                )?;
-                commit_producer.commit_transaction(Timeout::After(request_timeout))?;
-                Ok(())
+                commit_offsets_unless_rebalanced(
+                    &epoch,
+                    observed,
+                    || {
+                        // Read at send-offsets time, as before IDR-094: the
+                        // group generation in this metadata is what fences a
+                        // zombie member. Ownership is the epoch check's job.
+                        let group = consumer.group_metadata().ok_or_else(|| {
+                            KafkaTransportError::Configuration(
+                                "consumer group metadata is unavailable".into(),
+                            )
+                        })?;
+                        commit_producer.send_offsets_to_transaction(
+                            &offsets,
+                            &group,
+                            Timeout::After(request_timeout),
+                        )?;
+                        Ok(())
+                    },
+                    || {
+                        commit_producer.commit_transaction(Timeout::After(request_timeout))?;
+                        Ok(())
+                    },
+                )
             })
             .await?;
             Ok::<_, KafkaTransportError>(accepted)
@@ -878,7 +1005,11 @@ impl TransactionalKafkaBridge {
         }
         let mut consumer_config = config.client_config()?;
         config.configure_group_consumer(&mut consumer_config);
-        let consumer: StreamConsumer = consumer_config.create()?;
+        let rebalance_epoch = Arc::new(RebalanceEpoch::default());
+        let consumer: BridgeConsumer =
+            consumer_config.create_with_context(RebalanceEpochContext {
+                epoch: Arc::clone(&rebalance_epoch),
+            })?;
         let raw_topics: Vec<&str> = topics.raw_inputs.iter().map(String::as_str).collect();
         consumer.subscribe(&raw_topics)?;
 
@@ -903,6 +1034,7 @@ impl TransactionalKafkaBridge {
         Ok(Self {
             producer,
             consumer: Arc::new(consumer),
+            rebalance_epoch,
             fence: Arc::new(tokio::sync::Mutex::new(AuthorityFence::default())),
             topics,
             request_timeout: config.request_timeout,
@@ -922,6 +1054,13 @@ impl TransactionalKafkaBridge {
 
     pub fn unsubscribe(&self) {
         self.consumer.unsubscribe();
+    }
+
+    /// K3. Read before a batch's first input is polled and pass it to
+    /// [`Self::prepare_commit`]; any revocation served after this read makes
+    /// that batch's transaction abort with [`KafkaTransportError::Rebalanced`].
+    pub fn rebalance_epoch(&self) -> u64 {
+        self.rebalance_epoch.current()
     }
 
     pub async fn next(&self) -> Result<TransactionalKafkaInput, KafkaTransportError> {
@@ -1021,15 +1160,20 @@ impl TransactionalKafkaBridge {
         Ok((fence, next_offsets))
     }
 
+    /// Stop-and-wait commit. The rebalance epoch is read here, after `inputs`
+    /// were polled, so it only guards against a rebalance during the
+    /// transaction itself; pipelined callers use [`Self::prepare_commit`].
     pub async fn commit(
         &self,
         inputs: &[TransactionalKafkaInput],
         outputs: &[TransactionalKafkaOutput],
     ) -> Result<Vec<AppendResult>, KafkaTransportError> {
+        let observed = self.rebalance_epoch();
         let (_fence, next_offsets) = self.prepare(inputs, outputs).await?;
         execute_kafka_transaction(
             self.producer.clone(),
             Arc::clone(&self.consumer),
+            (Arc::clone(&self.rebalance_epoch), observed),
             self.request_timeout,
             next_offsets,
             outputs,
@@ -1043,19 +1187,33 @@ impl TransactionalKafkaBridge {
     /// The caller must not start a second prepared transaction before this one
     /// resolves: one transactional producer has at most one open transaction
     /// ([`TransactionPipeline`] enforces that).
+    ///
+    /// K3. `rebalance_epoch` is [`Self::rebalance_epoch`] as read before the
+    /// batch's first input was polled. If a revocation was served since, the
+    /// transaction aborts with the retryable
+    /// [`KafkaTransportError::Rebalanced`] instead of committing.
     pub async fn prepare_commit(
         &self,
         inputs: &[TransactionalKafkaInput],
         outputs: Vec<TransactionalKafkaOutput>,
+        rebalance_epoch: u64,
     ) -> Result<PreparedKafkaTransaction, KafkaTransportError> {
         let (fence, next_offsets) = self.prepare(inputs, &outputs).await?;
         let producer = self.producer.clone();
         let consumer = Arc::clone(&self.consumer);
+        let rebalance = (Arc::clone(&self.rebalance_epoch), rebalance_epoch);
         let request_timeout = self.request_timeout;
         Ok(Box::pin(async move {
             let _fence = fence;
-            execute_kafka_transaction(producer, consumer, request_timeout, next_offsets, &outputs)
-                .await
+            execute_kafka_transaction(
+                producer,
+                consumer,
+                rebalance,
+                request_timeout,
+                next_offsets,
+                &outputs,
+            )
+            .await
         }))
     }
 }
@@ -1083,13 +1241,27 @@ struct InFlightTransaction<T> {
 /// batches commit in submission order and a failed batch stops every later
 /// batch from beginning. The caller reads and normalizes batch N+1 while batch
 /// N commits on a separate task.
+///
+/// A pipeline belongs to one generation and is terminal after a failure: once
+/// a transaction failed, [`Self::submit`] refuses every later batch instead of
+/// starting one, so recovery always goes through a new generation (and a new
+/// pipeline) that resumes from committed offsets.
+///
+/// Dropping the pipeline does not cancel a transaction already started: its
+/// task (and any `spawn_blocking` broker call inside it) runs to completion
+/// detached, and nobody learns whether it committed. Callers must call
+/// [`Self::complete`] before dropping it.
 pub struct TransactionPipeline<T> {
     in_flight: Option<InFlightTransaction<T>>,
+    failed: Option<String>,
 }
 
 impl<T: Send + 'static> Default for TransactionPipeline<T> {
     fn default() -> Self {
-        Self { in_flight: None }
+        Self {
+            in_flight: None,
+            failed: None,
+        }
     }
 }
 
@@ -1108,7 +1280,9 @@ impl<T: Send + 'static> TransactionPipeline<T> {
     }
 
     /// Wait for the in-flight transaction, if any. Cancel-safe: dropping this
-    /// future before it resolves leaves the transaction in flight.
+    /// future before it resolves leaves the transaction in flight. A failure
+    /// is returned once and makes the pipeline terminal; with nothing in
+    /// flight this returns `Ok(None)`.
     pub async fn complete(
         &mut self,
     ) -> Result<Option<CommittedTransaction<T>>, KafkaTransportError> {
@@ -1124,13 +1298,16 @@ impl<T: Send + 'static> TransactionPipeline<T> {
             Ok(value) => value,
             Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
             Err(error) => {
-                return Err(KafkaTransportError::Configuration(format!(
+                let error = KafkaTransportError::Configuration(format!(
                     "transaction task was cancelled: {error}"
-                )))
+                ));
+                self.failed = Some(error.to_string());
+                return Err(error);
             }
         };
+        let value = result.inspect_err(|error| self.failed = Some(error.to_string()))?;
         Ok(Some(CommittedTransaction {
-            value: result?,
+            value,
             inputs,
             commit_ns,
             wait_ns: wait_ns.min(commit_ns),
@@ -1140,6 +1317,8 @@ impl<T: Send + 'static> TransactionPipeline<T> {
     /// Wait for the previous transaction, then start `transaction` on its own
     /// task. If the previous transaction failed, `transaction` is dropped
     /// without being polled - it never begins - and that failure is returned.
+    /// After any failure (returned here or by [`Self::complete`]) every later
+    /// submit is refused with a non-retryable error and never begins either.
     pub async fn submit<F>(
         &mut self,
         inputs: u64,
@@ -1149,6 +1328,11 @@ impl<T: Send + 'static> TransactionPipeline<T> {
         F: Future<Output = Result<T, KafkaTransportError>> + Send + 'static,
     {
         let previous = self.complete().await?;
+        if let Some(failure) = &self.failed {
+            return Err(KafkaTransportError::Configuration(format!(
+                "transaction pipeline is terminal after a failed transaction: {failure}"
+            )));
+        }
         let handle = tokio::spawn(async move {
             let started = tokio::time::Instant::now();
             let result = transaction.await;
@@ -1956,6 +2140,265 @@ mod transaction_pipeline_tests {
             "a failed abort replaces the original error"
         );
         assert_eq!(counts(&calls), (1, 1, 1));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn pipeline_is_terminal_after_a_failed_complete() {
+        let journal = Arc::new(Journal::default());
+        let mut pipeline = TransactionPipeline::new();
+        pipeline
+            .submit(
+                2,
+                fake_transaction(journal.clone(), 0, Duration::from_millis(5), true),
+            )
+            .await
+            .unwrap();
+        let error = pipeline.complete().await.unwrap_err();
+        assert_eq!(error.retry_class(), RetryClass::Retryable);
+        // Nothing is in flight: the failure is not reported twice ...
+        assert!(pipeline.complete().await.unwrap().is_none());
+        // ... but no later batch can begin in this generation.
+        let next_polled = Arc::new(AtomicBool::new(false));
+        let flag = next_polled.clone();
+        let refused = pipeline
+            .submit(1, async move {
+                flag.store(true, Ordering::SeqCst);
+                Ok(1_u64)
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(refused, KafkaTransportError::Configuration(_)));
+        assert_eq!(refused.retry_class(), RetryClass::NonRetryable);
+        assert!(refused.to_string().contains("terminal"));
+        assert!(!pipeline.is_in_flight());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!next_polled.load(Ordering::SeqCst));
+        assert_eq!(
+            *journal.events.lock().unwrap(),
+            vec![("begin", 0), ("end", 0)]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn pipeline_is_terminal_after_a_failed_submit() {
+        let mut pipeline = TransactionPipeline::new();
+        pipeline
+            .submit(1, async {
+                Err::<u64, _>(KafkaTransportError::SnapshotTimeout("commit".into()))
+            })
+            .await
+            .unwrap();
+        assert!(pipeline.submit(1, async { Ok(2_u64) }).await.is_err());
+        let next_polled = Arc::new(AtomicBool::new(false));
+        let flag = next_polled.clone();
+        assert!(pipeline
+            .submit(1, async move {
+                flag.store(true, Ordering::SeqCst);
+                Ok(3_u64)
+            })
+            .await
+            .is_err());
+        assert!(!pipeline.is_in_flight());
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(!next_polled.load(Ordering::SeqCst));
+    }
+
+    fn partitions(count: i32) -> TopicPartitionList {
+        let mut list = TopicPartitionList::new();
+        for partition in 0..count {
+            list.add_partition("raw", partition);
+        }
+        list
+    }
+
+    #[test]
+    fn only_revocations_and_rebalance_errors_invalidate_a_batch() {
+        let one = partitions(1);
+        let none = partitions(0);
+        assert!(rebalance_invalidates_batch(&Rebalance::Revoke(&one)));
+        assert!(rebalance_invalidates_batch(&Rebalance::Error(
+            KafkaError::Rebalance(rdkafka::error::RDKafkaErrorCode::IllegalGeneration)
+        )));
+        assert!(!rebalance_invalidates_batch(&Rebalance::Revoke(&none)));
+        assert!(!rebalance_invalidates_batch(&Rebalance::Assign(&one)));
+        assert!(!rebalance_invalidates_batch(&Rebalance::Assign(&none)));
+    }
+
+    #[test]
+    fn consumer_context_bumps_the_epoch_without_a_broker() {
+        // No bootstrap servers: librdkafka creates the client without
+        // connecting, which is enough to drive the real callbacks.
+        let epoch = Arc::new(RebalanceEpoch::default());
+        let consumer: BaseConsumer<RebalanceEpochContext> = ClientConfig::new()
+            .set("group.id", "k3-unit")
+            .set("log_level", "0")
+            .create_with_context(RebalanceEpochContext {
+                epoch: Arc::clone(&epoch),
+            })
+            .unwrap();
+        let context = consumer.context();
+        let observed = epoch.current();
+        context.pre_rebalance(&consumer, &Rebalance::Assign(&partitions(3)));
+        context.post_rebalance(&consumer, &Rebalance::Assign(&partitions(3)));
+        epoch.ensure_unchanged(observed).unwrap();
+        let revoked = partitions(2);
+        context.pre_rebalance(&consumer, &Rebalance::Revoke(&revoked));
+        assert!(matches!(
+            epoch.ensure_unchanged(observed),
+            Err(KafkaTransportError::Rebalanced { .. })
+        ));
+        context.post_rebalance(&consumer, &Rebalance::Revoke(&revoked));
+        assert_eq!(epoch.current(), observed + 2);
+    }
+
+    #[derive(Default)]
+    struct OffsetCalls {
+        send: AtomicUsize,
+        commit: AtomicUsize,
+    }
+
+    #[test]
+    fn unchanged_epoch_commits() {
+        let epoch = RebalanceEpoch::default();
+        let calls = OffsetCalls::default();
+        commit_offsets_unless_rebalanced(
+            &epoch,
+            epoch.current(),
+            || {
+                calls.send.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+            || {
+                calls.commit.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(calls.send.load(Ordering::SeqCst), 1);
+        assert_eq!(calls.commit.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn rebalance_during_collection_sends_no_offsets() {
+        let epoch = RebalanceEpoch::default();
+        let observed = epoch.current();
+        // Revocation served while the batch was still being read.
+        epoch.bump();
+        let calls = OffsetCalls::default();
+        let error = commit_offsets_unless_rebalanced(
+            &epoch,
+            observed,
+            || {
+                calls.send.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+            || {
+                calls.commit.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            KafkaTransportError::Rebalanced {
+                observed: 0,
+                current: 1
+            }
+        ));
+        assert_eq!(error.retry_class(), RetryClass::Retryable);
+        assert_eq!(calls.send.load(Ordering::SeqCst), 0);
+        assert_eq!(calls.commit.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn rebalance_during_send_offsets_never_commits() {
+        let epoch = RebalanceEpoch::default();
+        let calls = OffsetCalls::default();
+        let error = commit_offsets_unless_rebalanced(
+            &epoch,
+            epoch.current(),
+            || {
+                calls.send.fetch_add(1, Ordering::SeqCst);
+                // Revocation served while send-offsets was on the wire.
+                epoch.bump();
+                Ok(())
+            },
+            || {
+                calls.commit.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(error, KafkaTransportError::Rebalanced { .. }));
+        assert_eq!(calls.send.load(Ordering::SeqCst), 1);
+        assert_eq!(calls.commit.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn rebalance_during_in_flight_commit_aborts_and_next_batch_never_begins() {
+        let epoch = Arc::new(RebalanceEpoch::default());
+        let calls = Arc::new(Calls::default());
+        let offsets = Arc::new(OffsetCalls::default());
+        let (release, released) = tokio::sync::oneshot::channel::<()>();
+        // Batch N: epoch read before its first input, then in flight.
+        let observed = epoch.current();
+        let transaction = {
+            let (epoch, calls, offsets) = (epoch.clone(), calls.clone(), offsets.clone());
+            async move {
+                run_kafka_transaction(
+                    async {
+                        calls.begin.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    },
+                    async {
+                        calls.body.fetch_add(1, Ordering::SeqCst);
+                        // Outputs produced; broker round trip still pending.
+                        released.await.unwrap();
+                        commit_offsets_unless_rebalanced(
+                            &epoch,
+                            observed,
+                            || {
+                                offsets.send.fetch_add(1, Ordering::SeqCst);
+                                Ok(())
+                            },
+                            || {
+                                offsets.commit.fetch_add(1, Ordering::SeqCst);
+                                Ok(())
+                            },
+                        )?;
+                        Ok(7_u64)
+                    },
+                    || async {
+                        calls.abort.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    },
+                )
+                .await
+            }
+        };
+        let mut pipeline = TransactionPipeline::new();
+        pipeline.submit(3, transaction).await.unwrap();
+        // While batch N+1 is polled, the consumer serves a revocation.
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        epoch.bump();
+        release.send(()).unwrap();
+        let error = pipeline.complete().await.unwrap_err();
+        assert!(matches!(error, KafkaTransportError::Rebalanced { .. }));
+        assert_eq!(error.retry_class(), RetryClass::Retryable);
+        assert_eq!(counts(&calls), (1, 1, 1), "aborted exactly once");
+        assert_eq!(offsets.send.load(Ordering::SeqCst), 0);
+        assert_eq!(offsets.commit.load(Ordering::SeqCst), 0);
+        let next_polled = Arc::new(AtomicBool::new(false));
+        let flag = next_polled.clone();
+        assert!(pipeline
+            .submit(1, async move {
+                flag.store(true, Ordering::SeqCst);
+                Ok(8_u64)
+            })
+            .await
+            .is_err());
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(!next_polled.load(Ordering::SeqCst));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]

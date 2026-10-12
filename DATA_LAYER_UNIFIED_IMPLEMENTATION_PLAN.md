@@ -72446,3 +72446,43 @@ Change to `scripts/p184_g13_final.py`:
   - The DR01 realm loader selects manifests by `metadata.id` and checks the revision against bundle.json, so a single
     realm dir holding binance r16 and okx r15 works.
   - A DR07 connections revision that differs from the DR01 revision is refused.
+
+### P18.4 IDR-094 follow-up: stop intent (K1), rebalance epoch (K3), terminal pipeline - 2026-10-12
+
+Status: IMPLEMENTED / tested locally at unit level. The broker scenarios have not run yet.
+
+Source: Codex independent review `p184-idr094-core-review-20261012.md`, findings verified against code. Disposition:
+- K1 FIXED;
+- K3 FIXED (option B);
+- K2 ACCEPTED as a gate: the existing ignored broker test does not exercise the bridge or the pipeline.
+
+K1. A failed drain after SIGTERM could start a new generation. Fix:
+- A single process-wide stop latch (watch channel).
+- `finish_generation` returns Stopped, StopDrainFailed or Failed. StopDrainFailed is terminal: the process exits
+  non-zero after the `qdl_realtime_core_stop_drain_failed` log.
+- `supervise` checks the latch before each generation and never retries after a stop.
+- A stop during backoff exits 0.
+
+K3. The consumer uses the cooperative group protocol, and the pipeline now polls N+1 while N commits. Before this fix,
+a revocation served then let N commit its offsets with newer group metadata, which risks duplicate output from the new
+owner. Fix:
+- `RebalanceEpochContext` bumps an AtomicU64 on a non-empty Revoke (which includes lost partitions) and on
+  `Rebalance::Error`. It never waits inside the callback.
+- An Assign or an empty callback does not invalidate a batch, so one core's restart does not abort the other cores.
+- Each batch records the epoch before its first poll. `commit_offsets_unless_rebalanced` checks it before
+  send_offsets and again before commit_transaction.
+- On a mismatch, the transaction aborts with the retryable `Rebalanced` error and the generation restarts from the
+  committed offsets.
+
+Pipeline. It is terminal after a failure, and the documentation says a drop detaches started spawn_blocking work.
+
+Tests (rustc 1.82, --network none):
+- fmt and clippy -D warnings are clean;
+- qdl-kafka lib 40 passed / 2 ignored; core bin 18; ingestor 44; production-core 7; core lib 56;
+- 15 new tests for K1, K3 and the terminal pipeline.
+
+Gate before rollout: isolated broker scenarios 1-4, run on this commit:
+1. distinct offsets;
+2. commit failure with abort, resume and the SIGTERM path;
+3. rebalance during an in-flight commit, counting cascading rebalances;
+4. transactional.id fencing.
