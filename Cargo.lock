@@ -993,6 +993,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "jsonwebtoken",
+ "libc",
  "prost",
  "qdl-contracts",
  "rdkafka",

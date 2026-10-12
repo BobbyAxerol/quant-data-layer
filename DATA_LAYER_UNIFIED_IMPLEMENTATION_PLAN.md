@@ -72683,3 +72683,44 @@ no push/merge, no executable tool change, no rollout or test-resource creation. 
 T1-T5 source/tool fixes remain permitted follow-up work; only runtime application retains its exact-packet gate.
 TS N1 integration proceeds independently on the existing TS feature branch. Historical support-worktree
 recommendations are superseded by the recorded owner capacity package, not a second implementation branch.
+
+
+### N1 isolated historical replay clock boundary - 2026-10-12 (Codex)
+
+Status: IN_PROGRESS, TEST tooling only; no production defect or capacity certificate asserted.
+Owner N1 end-to-end goal and TS guide P184_NATIVE_MARKET_DATA_WORKER.md section11 permit a
+frozen TEST data clock with original provider bytes retained. TS smoke2 had no durable
+cursor. Read-only review found Stream hub admission and replay/live delivery still compare
+historical event timestamps with real wall time, unlike clocked Query/native. This is a
+concrete missing TEST boundary, not evidence that deployed real-time freshness is wrong.
+Approved implementation scope: feature-gated, default-off isolated Stream data clock for
+freshness decisions only; preserve JWT/TLS/cursor expiry, Kafka timing, queue deadlines,
+trace timestamps and durability. Require namespace-scoped frozen hash-pinned input, actual
+loopback-only network and bounded expiry; invalid clock fails closed. No config/policy,
+manifest, production role or release artifact changes. Use separate TEST build, not a
+production replacement. Tests: exact interpolation, malformed/expired/regressing clock,
+unchanged default time path, freshness rejection and preserved security clock. Independent
+review plus native/Query/Stream historical integration precede any real workload campaign.
+Canonical DL main@5bf5cd5 unchanged; active feature fix/p184-dl-closure@f9305693 aligned;
+parent owns main-plan updates, review and commit. No push/merge. Rollback is reverting only
+this TEST slice; disposable image/resources cleaned after evidence and phase closure.
+
+N1 TEST-clock cross-review checkpoint: initial feature-enabled tests61unit+42native-stream
+PASS,1manual benchmark-server ignored; default-disabled transport regression also passed.
+No broker or runtime claim. Clippy found format_collect in TEST hash formatting. Independent
+review additionally requires TEST expiry/failure fencing at transport dequeue and blocked/idle
+subscriptions, and consistent FAILED_PRECONDITION clock-fault status rather than DATA_INTEGRITY.
+These follow-ups stay in the same TEST-only slice; no production policy/time changes. Source
+journal/tests remain pending final verification before commit or TEST image packaging.
+
+N1 TEST-clock verified source checkpoint (2026-10-12): final feature-selected suite
+stream-clock-tests2=68unit+42native-stream PASS,1manual benchmark-server ignored;
+strict clippy stream-clock-clippy2 PASS. Full default-disabled stream-clock-default2:
+54unit+1hot-lookup+42native-stream PASS;3broker-dependent committed-read tests not run
+(no isolated broker in source runner),1manual benchmark server ignored. No claim those
+four cases passed; broker/full-path checks remain required. Expiry now fences enqueue,
+blocked send, idle lifecycle and final tonic dequeue; charges are released, a latched
+FAILED_PRECONDITION wins over queued controls/older terminal. Security/cursor time
+unchanged, normal default path preserved. Evidence under TS p184-n1-final-20261012.
+All test containers --rm; no runtime changes, push/merge or release. Feature-only TEST
+image and historical integration are next; this source slice cannot certify6k/9k.

@@ -10,7 +10,12 @@ description = "Kafka-native V2 stream gateway (KN-2): the public MarketDataStrea
 name = "qdl-stream-gateway"
 path = "src/main.rs"
 
+[features]
+default = []
+isolated-replay-clock = ["dep:libc"]
+
 [dependencies]
+libc = { version = "=0.2.189", optional = true }
 base64.workspace = true
 # KN-4 D29 read-view client: the workspace pin (rustls, no default features);
 # TLS is a preconfigured rustls ClientConfig built in `query_view.rs`.

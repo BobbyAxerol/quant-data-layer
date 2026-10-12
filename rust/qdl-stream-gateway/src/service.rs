@@ -373,6 +373,119 @@ impl GatewayState {
 }
 
 type SubscribeStream = Pin<Box<dyn Stream<Item = Result<query::SubscribeResponse, Status>> + Send>>;
+
+fn subscription_handoff(
+    receiver: mpsc::Receiver<Outbound<query::SubscribeResponse>>,
+    terminal: Arc<Mutex<Option<Status>>>,
+) -> SubscribeStream {
+    Box::pin(
+        ReceiverStream::new(receiver)
+            // tonic polls here when it encodes the next message, i.e.
+            // when HTTP/2 can take more: the per-record send stamp.
+            .map(|(item, _charge)| item.map(stamp_send))
+            // Drain the bounded handoff in order, then emit the terminal
+            // status even if a stalled receiver outlived the producer task.
+            .chain(tokio_stream::once(()).map(move |_| {
+                Err(terminal
+                    .lock()
+                    .ok()
+                    .and_then(|mut status| status.take())
+                    .unwrap_or_else(|| {
+                        Status::internal("subscription task ended without a terminal status")
+                    }))
+            })),
+    )
+}
+
+#[cfg(feature = "isolated-replay-clock")]
+fn test_clock_status() -> Status {
+    Status::failed_precondition(crate::replay_clock::INVALID)
+}
+
+/// Race the entire TEST subscription lifecycle, including replay, blocked send,
+/// catch-up and idle LIVE. Dropping the work cancels its replay reader as usual.
+#[cfg(feature = "isolated-replay-clock")]
+async fn test_clock_guard<F: std::future::Future>(hub: &Hub, work: F) -> Result<F::Output, Status> {
+    tokio::select! {
+        biased;
+        () = hub.test_clock_invalidated() => Err(test_clock_status()),
+        result = work => {
+            hub.check_test_clock().map_err(|_| test_clock_status())?;
+            Ok(result)
+        }
+    }
+}
+
+/// Reserve capacity first, then validate immediately before enqueue. A blocked
+/// send cannot use the clock sample taken before it started waiting.
+#[cfg(feature = "isolated-replay-clock")]
+async fn test_clock_handoff(
+    hub: &Hub,
+    sender: &mpsc::Sender<Outbound<query::SubscribeResponse>>,
+    item: Outbound<query::SubscribeResponse>,
+) -> Result<bool, Status> {
+    let permit = test_clock_guard(hub, sender.reserve()).await?;
+    let Ok(permit) = permit else { return Ok(false) };
+    hub.check_test_clock().map_err(|_| test_clock_status())?;
+    permit.send(item);
+    Ok(true)
+}
+
+/// TEST-only last boundary before tonic owns the response. A fault discards the
+/// handoff, including charged records and controls, instead of draining it.
+#[cfg(feature = "isolated-replay-clock")]
+struct TestClockStream {
+    inner: Option<SubscribeStream>,
+    hub: Arc<Hub>,
+    tick: tokio::time::Interval,
+}
+
+#[cfg(feature = "isolated-replay-clock")]
+impl TestClockStream {
+    fn new(inner: SubscribeStream, hub: Arc<Hub>) -> Self {
+        let mut tick = tokio::time::interval(Duration::from_millis(25));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        Self {
+            inner: Some(inner),
+            hub,
+            tick,
+        }
+    }
+
+    fn fault(&mut self) -> std::task::Poll<Option<Result<query::SubscribeResponse, Status>>> {
+        drop(self.inner.take());
+        std::task::Poll::Ready(Some(Err(test_clock_status())))
+    }
+}
+
+#[cfg(feature = "isolated-replay-clock")]
+impl Stream for TestClockStream {
+    type Item = Result<query::SubscribeResponse, Status>;
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        if this.inner.is_none() {
+            return std::task::Poll::Ready(None);
+        }
+        if this.hub.check_test_clock().is_err() {
+            return this.fault();
+        }
+        // Register a wake even if no producer, data, or terminal status arrives.
+        while this.tick.poll_tick(cx).is_ready() {}
+        let result = this.inner.as_mut().unwrap().as_mut().poll_next(cx);
+        if this.hub.check_test_clock().is_err() {
+            return this.fault();
+        }
+        if matches!(result, std::task::Poll::Ready(None)) {
+            drop(this.inner.take());
+        }
+        result
+    }
+}
+
 type ReplayStream = Pin<Box<dyn Stream<Item = Result<query::ReplayResponse, Status>> + Send>>;
 
 #[tonic::async_trait]
@@ -516,6 +629,8 @@ impl MarketDataStreamService for Gateway {
             body.max_records_per_response,
             &subscription.requirement.delivery.feed,
         );
+        #[cfg(feature = "isolated-replay-clock")]
+        let clock_guard = state.hub.test_clock_enabled().then(|| state.hub.clone());
         let task = SubscriptionTask {
             report: Report {
                 outcome: Mutex::new("ended"),
@@ -536,23 +651,12 @@ impl MarketDataStreamService for Gateway {
             batch_limit,
         };
         tokio::spawn(task.run(registration.barrier, ring));
-        Ok(Response::new(Box::pin(
-            ReceiverStream::new(receiver)
-                // tonic polls here when it encodes the next message, i.e.
-                // when HTTP/2 can take more: the per-record send stamp.
-                .map(|(item, _charge)| item.map(stamp_send))
-                // Drain the bounded handoff in order, then emit the terminal
-                // status even if a stalled receiver outlived the producer task.
-                .chain(tokio_stream::once(()).map(move |_| {
-                    Err(terminal
-                        .lock()
-                        .ok()
-                        .and_then(|mut status| status.take())
-                        .unwrap_or_else(|| {
-                            Status::internal("subscription task ended without a terminal status")
-                        }))
-                })),
-        )))
+        let stream = subscription_handoff(receiver, terminal);
+        #[cfg(feature = "isolated-replay-clock")]
+        if let Some(hub) = clock_guard {
+            return Ok(Response::new(Box::pin(TestClockStream::new(stream, hub))));
+        }
+        Ok(Response::new(stream))
     }
 
     async fn replay(
@@ -1088,6 +1192,11 @@ impl Batch {
     }
 }
 
+enum HandoffError {
+    Budget(Charge),
+    Clock(Status),
+}
+
 enum Sent {
     Ok,
     Closed,
@@ -1135,6 +1244,10 @@ impl SubscriptionTask {
     /// raced against the wait, so a blocked send never outlives a revoked
     /// key; a record's budget charge travels with it until tonic takes it.
     async fn send(&self, response: query::SubscribeResponse, charge: Option<Charge>) -> Sent {
+        #[cfg(feature = "isolated-replay-clock")]
+        if self.state.hub.test_clock_enabled() {
+            return self.send_test(response, charge).await;
+        }
         if let Err(status) = self.auth.check() {
             self.revoke(status).await;
             return Sent::Closed;
@@ -1162,6 +1275,36 @@ impl SubscriptionTask {
                 Ok(false) => Sent::Closed,
                 Err(()) => Sent::Slow,
             },
+        }
+    }
+
+    #[cfg(feature = "isolated-replay-clock")]
+    async fn send_test(&self, response: query::SubscribeResponse, charge: Option<Charge>) -> Sent {
+        if let Err(status) = self.auth.check() {
+            self.revoke(status).await;
+            return Sent::Closed;
+        }
+        let result = tokio::select! {
+            biased;
+            status = self.auth.revoked() => {
+                self.revoke(status).await;
+                return Sent::Closed;
+            }
+            result = tokio::time::timeout(
+                self.state.limits.slow_consumer_after,
+                test_clock_handoff(&self.state.hub, &self.sender, (Ok(response), charge)),
+            ) => result,
+        };
+        match result {
+            Ok(Ok(true)) => Sent::Ok,
+            Ok(Ok(false)) => Sent::Closed,
+            Err(_) => Sent::Slow,
+            Ok(Err(status)) => {
+                self.subscription.fail(crate::replay_clock::INVALID);
+                self.subscription.close();
+                self.fail(status).await;
+                Sent::Closed
+            }
         }
     }
 
@@ -1208,14 +1351,28 @@ impl SubscriptionTask {
         matches!(self.send(response, None).await, Sent::Ok)
     }
 
+    fn freshness_now_ns(&self) -> Result<i64, Status> {
+        self.state
+            .hub
+            .freshness_now_ns(now_ns() as i64)
+            .map_err(|error| {
+                self.subscription.fail(error);
+                self.subscription.close();
+                Status::failed_precondition(error)
+            })
+    }
+
     /// Deliver one record if it is still fresh. `Some(delivered)`, or `None`
     /// when the stream must end.
     async fn deliver(&self, record: &LiveRecord, charge: Option<Charge>) -> Option<bool> {
-        match delivery_decision(
-            &self.subscription.requirement,
-            &record.envelope,
-            now_ns() as i64,
-        ) {
+        let data_now = match self.freshness_now_ns() {
+            Ok(at) => at,
+            Err(status) => {
+                self.fail(status).await;
+                return None;
+            }
+        };
+        match delivery_decision(&self.subscription.requirement, &record.envelope, data_now) {
             Delivery::Deliver => {}
             Delivery::OtherProduct | Delivery::TooOld => return Some(false),
         }
@@ -1250,11 +1407,15 @@ impl SubscriptionTask {
     /// backpressure, bounded like a blocked send; `None` ends the stream.
     async fn handoff_charge(&self, record: &LiveRecord, mut charge: Charge) -> Option<Charge> {
         let missing = record.weight().saturating_sub(charge.bytes());
-        let fresh = delivery_decision(
-            &self.subscription.requirement,
-            &record.envelope,
-            now_ns() as i64,
-        ) == Delivery::Deliver;
+        let data_now = match self.freshness_now_ns() {
+            Ok(at) => at,
+            Err(status) => {
+                self.fail(status).await;
+                return None;
+            }
+        };
+        let fresh = delivery_decision(&self.subscription.requirement, &record.envelope, data_now)
+            == Delivery::Deliver;
         // A record that will be skipped is never copied: no top-up.
         if missing == 0 || !fresh {
             return Some(charge);
@@ -1291,13 +1452,11 @@ impl SubscriptionTask {
         &self,
         record: &LiveRecord,
         mut charge: Charge,
-    ) -> Result<Charge, Charge> {
+    ) -> Result<Charge, HandoffError> {
         let missing = record.weight().saturating_sub(charge.bytes());
-        let fresh = delivery_decision(
-            &self.subscription.requirement,
-            &record.envelope,
-            now_ns() as i64,
-        ) == Delivery::Deliver;
+        let data_now = self.freshness_now_ns().map_err(HandoffError::Clock)?;
+        let fresh = delivery_decision(&self.subscription.requirement, &record.envelope, data_now)
+            == Delivery::Deliver;
         if missing == 0 || !fresh {
             return Ok(charge);
         }
@@ -1306,7 +1465,7 @@ impl SubscriptionTask {
                 charge.absorb(extra);
                 Ok(charge)
             }
-            None => Err(charge),
+            None => Err(HandoffError::Budget(charge)),
         }
     }
 
@@ -1316,6 +1475,11 @@ impl SubscriptionTask {
     async fn flush(&self, batch: &mut Batch, last: &mut i64) -> bool {
         if batch.records.is_empty() {
             return true;
+        }
+        // Do not flush an already assembled TEST batch after clock failure/expiry.
+        if let Err(status) = self.freshness_now_ns() {
+            self.fail(status).await;
+            return false;
         }
         let (first, newest, started) = (batch.first, batch.last, batch.started);
         let (response, charge, count) = batch.take_response();
@@ -1378,7 +1542,11 @@ impl SubscriptionTask {
             } else {
                 match self.try_handoff_charge(&record, charge) {
                     Ok(charge) => charge,
-                    Err(charge) => {
+                    Err(HandoffError::Clock(status)) => {
+                        self.fail(status).await;
+                        return false;
+                    }
+                    Err(HandoffError::Budget(charge)) => {
                         // Budget is short: send what is gathered, then wait
                         // for this record's top-up holding nothing else.
                         if !self.flush(&mut batch, last).await {
@@ -1391,11 +1559,14 @@ impl SubscriptionTask {
                     }
                 }
             };
-            match delivery_decision(
-                &self.subscription.requirement,
-                &record.envelope,
-                now_ns() as i64,
-            ) {
+            let data_now = match self.freshness_now_ns() {
+                Ok(at) => at,
+                Err(status) => {
+                    self.fail(status).await;
+                    return false;
+                }
+            };
+            match delivery_decision(&self.subscription.requirement, &record.envelope, data_now) {
                 Delivery::Deliver => {
                     let token = match self.state.sign(&self.claims, record.raw.offset) {
                         Ok(token) => token,
@@ -1473,6 +1644,21 @@ impl SubscriptionTask {
     }
 
     async fn run(self, barrier: i64, ring: Option<RingReplay>) {
+        #[cfg(feature = "isolated-replay-clock")]
+        if self.state.hub.test_clock_enabled() {
+            if let Err(status) =
+                test_clock_guard(&self.state.hub, self.run_inner(barrier, ring)).await
+            {
+                self.subscription.fail(crate::replay_clock::INVALID);
+                self.subscription.close();
+                self.fail(status).await;
+            }
+            return;
+        }
+        self.run_inner(barrier, ring).await;
+    }
+
+    async fn run_inner(&self, barrier: i64, ring: Option<RingReplay>) {
         let replaying = subscribe_control(
             query::StreamControlState::Replaying,
             "REPLAYING",
@@ -1646,6 +1832,11 @@ impl SubscriptionTask {
                     return;
                 }
                 Next::Failed(reason) => {
+                    #[cfg(feature = "isolated-replay-clock")]
+                    if reason == crate::replay_clock::INVALID {
+                        self.fail(test_clock_status()).await;
+                        return;
+                    }
                     self.fail(Status::data_loss(format!("DATA_INTEGRITY:{reason}")))
                         .await;
                     return;
@@ -1662,4 +1853,200 @@ impl SubscriptionTask {
 struct RingReplay {
     records: Vec<crate::hub::SharedRecord>,
     charge: Charge,
+}
+
+#[cfg(all(test, feature = "isolated-replay-clock"))]
+mod test_clock_transport {
+    use super::*;
+    use crate::hub::HubConfig;
+    use crate::replay_clock::DataClock;
+
+    fn clocked_hub() -> (Arc<Hub>, impl Fn(bool)) {
+        let (clock, expired) = DataClock::test_fixture();
+        let hub = Hub::new(&[(0, 0)], HubConfig::default()).with_test_data_clock(clock);
+        (Arc::new(hub), expired)
+    }
+
+    fn control() -> query::SubscribeResponse {
+        subscribe_control(query::StreamControlState::Live, "LIVE", "TEST_ONLY", 0, "")
+    }
+
+    fn event() -> query::SubscribeResponse {
+        query::SubscribeResponse {
+            record: Some(query::StreamRecord {
+                payload: Some(query::stream_record::Payload::Event(Default::default())),
+                ..Default::default()
+            }),
+            records: Vec::new(),
+        }
+    }
+
+    fn assert_clock_status(status: Status) {
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(status.message(), crate::replay_clock::INVALID);
+    }
+
+    #[tokio::test]
+    async fn full_handoff_expiry_discards_events_controls_and_old_terminal() {
+        let (hub, expired) = clocked_hub();
+        let (sender, receiver) = mpsc::channel(OUTBOUND_HANDOFF);
+        let budget = ByteBudget::new(128);
+        for response in [event(), control()] {
+            sender
+                .send((Ok(response), budget.charge(16)))
+                .await
+                .unwrap();
+        }
+        assert_eq!(sender.capacity(), 0);
+        assert_eq!(budget.used(), 32);
+        let terminal = Arc::new(Mutex::new(Some(Status::data_loss("older terminal"))));
+        let mut stream = TestClockStream::new(subscription_handoff(receiver, terminal), hub);
+        drop(sender);
+        expired(true);
+        assert_clock_status(stream.next().await.unwrap().unwrap_err());
+        assert_eq!(budget.used(), 0);
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn blocked_full_handoff_is_cancelled_without_a_dequeue() {
+        let (hub, expired) = clocked_hub();
+        let (sender, mut receiver) = mpsc::channel(OUTBOUND_HANDOFF);
+        let budget = ByteBudget::new(128);
+        for _ in 0..OUTBOUND_HANDOFF {
+            sender
+                .send((Ok(control()), budget.charge(16)))
+                .await
+                .unwrap();
+        }
+        let guarded = test_clock_handoff(&hub, &sender, (Ok(event()), budget.charge(16)));
+        tokio::pin!(guarded);
+        tokio::select! {
+            _ = &mut guarded => panic!("full handoff must block"),
+            () = tokio::time::sleep(Duration::from_millis(5)) => {}
+        }
+        expired(true);
+        let result = tokio::time::timeout(Duration::from_millis(250), &mut guarded)
+            .await
+            .expect("clock watchdog did not wake");
+        assert_clock_status(result.unwrap_err());
+        assert_eq!(budget.used(), OUTBOUND_HANDOFF * 16);
+        for _ in 0..OUTBOUND_HANDOFF {
+            assert!(receiver.try_recv().is_ok());
+        }
+        assert!(receiver.try_recv().is_err());
+        assert_eq!(budget.used(), 0);
+    }
+
+    #[tokio::test]
+    async fn capacity_released_after_expiry_cannot_commit_blocked_response() {
+        let (hub, expired) = clocked_hub();
+        let (sender, mut receiver) = mpsc::channel(OUTBOUND_HANDOFF);
+        for _ in 0..OUTBOUND_HANDOFF {
+            sender.send((Ok(control()), None)).await.unwrap();
+        }
+        let blocked = test_clock_handoff(&hub, &sender, (Ok(event()), None));
+        tokio::pin!(blocked);
+        tokio::select! {
+            _ = &mut blocked => panic!("full handoff must block"),
+            () = tokio::time::sleep(Duration::from_millis(5)) => {}
+        }
+        expired(true);
+        // Wake the capacity waiter before its periodic watchdog needs to fire.
+        assert!(receiver.try_recv().is_ok());
+        let result = tokio::time::timeout(Duration::from_millis(250), &mut blocked)
+            .await
+            .expect("released capacity did not wake sender");
+        assert_clock_status(result.unwrap_err());
+        assert!(receiver.try_recv().is_ok());
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn idle_handoff_wakes_on_expiry_with_sender_still_open() {
+        let (hub, expired) = clocked_hub();
+        let (sender, receiver) = mpsc::channel(OUTBOUND_HANDOFF);
+        let terminal = Arc::new(Mutex::new(None));
+        let mut stream = TestClockStream::new(subscription_handoff(receiver, terminal), hub);
+        {
+            let next = stream.next();
+            tokio::pin!(next);
+            tokio::select! {
+                _ = &mut next => panic!("idle handoff must wait"),
+                () = tokio::time::sleep(Duration::from_millis(5)) => {}
+            }
+            expired(true);
+            let item = tokio::time::timeout(Duration::from_millis(250), &mut next)
+                .await
+                .expect("idle transport did not wake");
+            assert_clock_status(item.unwrap().unwrap_err());
+        }
+        assert!(sender.is_closed());
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn peer_latched_fault_fences_queued_control_and_idle_lifecycle() {
+        let (hub, expired) = clocked_hub();
+        let (sender, receiver) = mpsc::channel(OUTBOUND_HANDOFF);
+        sender.send((Ok(control()), None)).await.unwrap();
+        let terminal = Arc::new(Mutex::new(None));
+        let mut stream =
+            TestClockStream::new(subscription_handoff(receiver, terminal), hub.clone());
+        expired(true);
+        // Another subscription/hub admission detects the fault first.
+        assert!(hub.check_test_clock().is_err());
+        expired(false);
+        assert_clock_status(stream.next().await.unwrap().unwrap_err());
+        let result = tokio::time::timeout(
+            Duration::from_millis(250),
+            test_clock_guard(&hub, std::future::pending::<()>()),
+        )
+        .await
+        .expect("idle lifecycle ignored peer fault");
+        assert_clock_status(result.unwrap_err());
+        assert!(sender.is_closed());
+    }
+
+    #[tokio::test]
+    async fn expired_startup_never_emits_live() {
+        let (hub, expired) = clocked_hub();
+        expired(true);
+        let (sender, mut receiver) = mpsc::channel(OUTBOUND_HANDOFF);
+        let result = test_clock_handoff(&hub, &sender, (Ok(control()), None)).await;
+        assert_clock_status(result.unwrap_err());
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn valid_test_handoff_preserves_order_and_terminal_status() {
+        let (hub, _) = clocked_hub();
+        let (sender, receiver) = mpsc::channel(OUTBOUND_HANDOFF);
+        sender.send((Ok(control()), None)).await.unwrap();
+        sender.send((Ok(event()), None)).await.unwrap();
+        drop(sender);
+        let terminal = Arc::new(Mutex::new(Some(Status::unavailable("original terminal"))));
+        let mut stream = TestClockStream::new(subscription_handoff(receiver, terminal), hub);
+        assert!(matches!(
+            stream
+                .next()
+                .await
+                .unwrap()
+                .unwrap()
+                .record
+                .unwrap()
+                .payload,
+            Some(query::stream_record::Payload::Control(_))
+        ));
+        let record = stream.next().await.unwrap().unwrap().record.unwrap();
+        assert!(matches!(
+            record.payload,
+            Some(query::stream_record::Payload::Event(_))
+        ));
+        assert!(record.gateway_send_wall_ns > 11_000);
+        let status = stream.next().await.unwrap().unwrap_err();
+        assert_eq!(status.code(), tonic::Code::Unavailable);
+        assert_eq!(status.message(), "original terminal");
+        assert!(stream.next().await.is_none());
+    }
 }

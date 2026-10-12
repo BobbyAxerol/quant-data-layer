@@ -296,6 +296,7 @@ pub struct Hub {
     /// The replica live budget a dispatched record is charged to once
     /// ([`Hub::attach_live_budget`]); unset, subscribers charge in full.
     live_budget: OnceLock<Arc<ByteBudget>>,
+    data_clock: crate::replay_clock::DataClock,
 }
 
 fn now_ns() -> i64 {
@@ -307,7 +308,11 @@ fn now_ns() -> i64 {
 
 impl Hub {
     /// `starts`: the first offset the reader will deliver per partition.
+    /// Panics before serving if configured TEST data time is invalid or unsupported.
     pub fn new(starts: &[(i32, i64)], config: HubConfig) -> Self {
+        // Fail before the reader/server starts; never ignore configured TEST time.
+        let data_clock = crate::replay_clock::DataClock::from_env()
+            .unwrap_or_else(|error| panic!("stream gateway startup refused: {error}"));
         let partitions = starts
             .iter()
             .map(|&(partition, start)| {
@@ -339,6 +344,7 @@ impl Hub {
             key_home: Mutex::new(HashMap::new()),
             started_ms: now_ns() / 1_000_000,
             live_budget: OnceLock::new(),
+            data_clock,
         }
     }
 
@@ -347,6 +353,36 @@ impl Hub {
     /// whether this one was attached.
     pub fn attach_live_budget(&self, budget: Arc<ByteBudget>) -> bool {
         self.live_budget.set(budget).is_ok()
+    }
+
+    pub(crate) fn freshness_now_ns(&self, real_ns: i64) -> Result<i64, &'static str> {
+        self.data_clock.now_ns(real_ns)
+    }
+
+    #[cfg(feature = "isolated-replay-clock")]
+    pub(crate) fn test_clock_enabled(&self) -> bool {
+        self.data_clock.is_replay()
+    }
+
+    #[cfg(feature = "isolated-replay-clock")]
+    pub(crate) fn check_test_clock(&self) -> Result<(), &'static str> {
+        self.data_clock.now_ns(0).map(|_| ())
+    }
+
+    #[cfg(feature = "isolated-replay-clock")]
+    pub(crate) async fn test_clock_invalidated(&self) {
+        loop {
+            if self.check_test_clock().is_err() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    #[cfg(all(test, feature = "isolated-replay-clock"))]
+    pub(crate) fn with_test_data_clock(mut self, clock: crate::replay_clock::DataClock) -> Self {
+        self.data_clock = clock;
+        self
     }
 
     pub fn partitions(&self) -> Vec<i32> {
@@ -457,7 +493,13 @@ impl Hub {
                 }
                 for subscriber in subscribers {
                     self.metrics.offers.fetch_add(1, Ordering::Relaxed);
-                    subscriber.offer(&live, at);
+                    match self.freshness_now_ns(at) {
+                        Ok(data_at) => subscriber.offer(&live, data_at),
+                        Err(error) => {
+                            subscriber.fail(error);
+                            subscriber.close();
+                        }
+                    }
                 }
             }
             Err(error) => {
