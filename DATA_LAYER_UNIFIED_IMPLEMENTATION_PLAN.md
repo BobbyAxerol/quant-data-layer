@@ -72812,3 +72812,32 @@ Canonical/source/runtime/rollback map unchanged. Helpers --rm removed; active bu
 cache/targets and the named N1 candidate/TEST images retained for ongoing packaging.
 No broad prune, push/merge or production restart. Disk available55127191552bytes at
 this source checkpoint; this is headroom, not cleanup reclaimed space.
+
+Pinned core overlay verification/build (2026-10-12): immutablebcb02833 plus TEST
+clockb10bf9c compiled with --locked --offline in its own core-clock-target.
+core-clock-pinned-tests1:Kafka40/core26/shared-clock10PASS,2explicit Kafka ignores
+(broker fixture and microbenchmark). core-clock-release1 optimized build PASS.
+TEST image08074f537dc906b2cd5a95ac049ef7fe8b74e7cb830ff236c1ccf6c4c0d3fa04
+uses original basef41ecb66; binary5cd39dafeb8301c11894a834062c9d241d754483eed5675428303d41b0951af6.
+Base normalizer bytes unchanged; labels/receipt distinguish baseline source from
+clock overlay source. Not a production release or rollout. Integration4 native
+TRADE/QUOTE completed both venues, but new background helper failed before view
+checks (.feed str misread as enum). Failed receipt retained,16testcontainers removed,
+zero residue/errors. Helper-only fix is being verified in integration5 using exactly
+same images. Background/capacity/runtime acceptance remains unproven until receipt.
+
+
+N1 integration5 (2026-10-12) on unchanged TEST images08074f53/b610238a and TS3e526ad8:
+native checks completed both venues; background readback all_verified=true for
+MARK_INDEX_PRICE/BOOK_SNAPSHOT/BOOK_DELTA/BAR, four rows per venue. This is TEST
+clock correctness only, not provider/capacity evidence. Sixteen testcontainers
+removed,0namespace/network/volume residue and0cleanup errors. Runtime checkpoint5
+confirms40production roles unchanged. No rollout, image rebuild, push or merge.
+
+Readonly raw retention metadata refreshed (15876263offset positions), then four
+bounded5000row samples through the already-pinned bcb02833 oracle. Binance ETH hot
+counts1159/1301QUOTE and1250/289TRADE; samples are independent, not a continuous
+acceptance corpus. No canonical injection or fabricated provider clocks. Receipt
+is in TS evidence p184-n1-final-20261012/retention-yield1/receipt.json. Source-side
+canonical-weighted pacing103tests passed in TS; final6k/9k real corpus/fault/runtime
+qualification remains open. No production principal/ACL/quota/offset changes.
