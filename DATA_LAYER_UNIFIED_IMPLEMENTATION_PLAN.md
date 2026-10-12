@@ -72423,3 +72423,26 @@ Rollout, pending owner approval:
 - Ingestors, projectors and stream gateways stay on rc14 ce629061.
 - Rollback: rust_core x3 back to ce629061. Transactional ids are unchanged, so init_transactions fences the other
   producer.
+
+### P18.4 G13 runner for mixed-image deployments and per-venue revisions - 2026-10-12
+
+Status: IMPLEMENTED / tested locally (54 unit tests and the CLI dry-run). Not yet run against the live stack.
+
+Problem. Two runner assumptions block G13 v4 after the planned rollout:
+- B1: every python role must share one image, and every rust role must share one image.
+- B2: `dr01.manifest_revision` is a single value for both venues, but Binance moves to r16 while OKX stays r15.
+
+Change to `scripts/p184_g13_final.py`:
+- Per-role digest map:
+  - set it with `--role-image ROLE=digest` (repeatable) or `--role-images roles.json`;
+  - the legacy `--python-image`/`--rust-image` flags expand into the map; mixing both forms is refused;
+  - the map must list exactly the 12 roles;
+  - the inventory check fails closed on a drifted, missing or unlisted container; the 7 infra containers are
+    allow-listed;
+  - harness images are derived from the map (query/python, core, stream), and inconsistent source roles are refused;
+  - `--python-image-ref` (alias `--query-image-ref`) must resolve to the query digest;
+  - receipts record the full role map.
+- Per-venue `dr01.manifest_revision`, `wrong_revision` and `manifest_dir`: a scalar or a {BINANCE, OKX} map.
+  - The DR01 realm loader selects manifests by `metadata.id` and checks the revision against bundle.json, so a single
+    realm dir holding binance r16 and okx r15 works.
+  - A DR07 connections revision that differs from the DR01 revision is refused.

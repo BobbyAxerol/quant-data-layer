@@ -140,6 +140,207 @@ class FinalIdentityTests(unittest.TestCase):
         self.assertEqual(len(g13.deployed_mismatches(bad, FINAL)), 2)
 
 
+# The planned mixed rollout: query python rc15, bar edge python rc14, rust_core rc16, other rust roles rc14.
+Q15 = "sha256:" + "a2201057" * 8
+P14 = "sha256:" + "08f356a8" * 8
+C16 = "sha256:" + "c16c16c1" * 8
+R14 = "sha256:" + "ce629061" * 8
+MIXED = {"query_kn_1": Q15, "query_kn_2": Q15, "binance_bar_edge": P14,
+         "rust_core": C16, "rust_core_2": C16, "rust_core_3": C16,
+         "ingestor_binance_usdm": R14, "ingestor_okx_swap": R14, "market_projector_1": R14,
+         "market_projector_2": R14, "stream_kn_1": R14, "stream_kn_2": R14}
+FINAL_MIXED = {"roles": MIXED, "python_ref": "qdl-v2-python:2.2.3-rc15-x", "writer": WRITER,
+               "ts_sha": FINAL["ts_sha"], "dl_sha": FINAL["dl_sha"]}
+INFRA = {g13.STACK + r + "-1": "sha256:" + "9" * 63 + "8" for r in g13.INFRA_ROLES}
+
+
+def deployed(roles, **extra):
+    inv = {g13.STACK + r + "-1": d for r, d in roles.items()}
+    inv.update(INFRA)
+    inv[g13.WRITER] = WRITER
+    inv.update(extra)
+    return inv
+
+
+class MixedImageTests(unittest.TestCase):
+    """B1: roles run different images after a partial rollout; the expected map is per role, fail-closed."""
+
+    def test_exact_mixed_match_has_no_mismatch(self):
+        g13.validate_final(FINAL_MIXED)
+        self.assertEqual(g13.deployed_mismatches(deployed(MIXED), FINAL_MIXED), [])
+
+    def test_one_role_off_is_refused(self):
+        for role, other in (("binance_bar_edge", Q15), ("rust_core_2", R14), ("query_kn_2", P14)):
+            with self.subTest(role=role):
+                found = g13.deployed_mismatches(deployed({**MIXED, role: other}), FINAL_MIXED)
+                self.assertEqual(len(found), 1)
+                self.assertIn(g13.STACK + role + "-1", found[0])
+
+    def test_absent_role_is_refused(self):
+        inv = deployed(MIXED)
+        del inv[g13.STACK + "stream_kn_2-1"]
+        self.assertEqual(len(g13.deployed_mismatches(inv, FINAL_MIXED)), 1)
+
+    def test_unlisted_deployed_role_is_refused(self):
+        found = g13.deployed_mismatches(deployed(MIXED, **{g13.STACK + "query_kn_3-1": Q15}), FINAL_MIXED)
+        self.assertEqual(len(found), 1)
+        self.assertTrue(found[0].startswith("UNLISTED_ROLE: " + g13.STACK + "query_kn_3-1"))
+        # containers outside the stack prefix (alphas, gateway) are not the DL stack
+        self.assertEqual(g13.deployed_mismatches(deployed(MIXED, other_container=Q15), FINAL_MIXED), [])
+
+    def test_role_map_missing_or_unknown_role_is_refused(self):
+        partial = {k: v for k, v in MIXED.items() if k != "binance_bar_edge"}
+        with self.assertRaisesRegex(g13.Blocked, "ROLE_MAP_INCOMPLETE"):
+            g13.validate_final({**FINAL_MIXED, "roles": partial})
+        with self.assertRaisesRegex(g13.Blocked, "ROLE_UNKNOWN"):
+            g13.resolve_final_roles(pairs=[f"{r}={d}" for r, d in MIXED.items()] + ["query_kn_3=" + Q15])
+        with self.assertRaisesRegex(g13.Blocked, "ROLE_IMAGES_DUPLICATE"):
+            g13.resolve_final_roles(pairs=["rust_core=" + C16], file_map=MIXED)
+        with self.assertRaisesRegex(g13.Blocked, "ROLE_IMAGES_AMBIGUOUS"):
+            g13.resolve_final_roles(PY, RUST, file_map=MIXED)
+        with self.assertRaisesRegex(g13.Blocked, "FINAL_DIGEST_REQUIRED"):
+            g13.resolve_final_roles(PY, None)
+        with self.assertRaisesRegex(g13.Blocked, "FINAL_DIGEST_REQUIRED"):
+            g13.validate_final({**FINAL_MIXED, "roles": {**MIXED, "rust_core": Q15}})  # python image on a rust role
+
+    def test_harness_images_follow_their_roles(self):
+        self.assertEqual(g13.harness_images(FINAL_MIXED), {"query": Q15, "python": Q15, "core": C16, "stream": R14})
+        steps = {e["step"]: e for e in g13.plan(FINAL_MIXED, INPUTS, "all", (), Path("/ts"), Path("/state"), NOW,
+                                                 MATRIX_OK)["steps"]}
+        dr08 = steps["dr08-isolated"]["commands"][0]["argv"]
+        for pair in ("query=" + Q15, "python=" + Q15, "core=" + C16, "stream=" + R14):
+            self.assertIn(pair, dr08)
+        prepare = steps["dr01-deployed"]["commands"][0]["argv"]
+        self.assertEqual(prepare[prepare.index("--entrypoint") + 2], Q15)
+        with self.assertRaisesRegex(g13.Blocked, "HARNESS_IMAGE_AMBIGUOUS"):
+            g13.validate_final({**FINAL_MIXED, "roles": {**MIXED, "rust_core_3": R14}})
+
+    def test_receipt_records_the_exact_role_map(self):
+        result = g13.plan(FINAL_MIXED, INPUTS, "isolated", (), Path("/ts"), Path("/state"), NOW, MATRIX_OK)
+        self.assertEqual(result["final"]["roles"], MIXED)
+        self.assertEqual(result["final"]["harness_images"]["core"], C16)
+        legacy = make_plan("isolated")["final"]
+        self.assertEqual(legacy["roles"], {r: PY if k == "python" else RUST for r, k in g13.ROLE_IMAGE.items()})
+        self.assertNotIn("python", legacy)
+
+    def test_legacy_flags_expand_to_the_same_map(self):
+        self.assertEqual(g13.resolve_final_roles(PY, RUST), g13.role_images(FINAL))
+        self.assertEqual(g13.resolve_final_roles(pairs=[f"{r}={d}" for r, d in MIXED.items()]), MIXED)
+        self.assertEqual(g13.resolve_final_roles(file_map=MIXED), MIXED)
+
+    def test_query_ref_must_resolve_to_the_query_image(self):
+        self.assertIsNone(g13.image_ref_problem("qdl-v2-python:x", Q15, Q15))
+        self.assertIn("QUERY_IMAGE_REF_MISMATCH", g13.image_ref_problem("qdl-v2-python:x", Q15, P14))
+        self.assertIn("QUERY_IMAGE_REF_MISMATCH", g13.image_ref_problem("qdl-v2-python:x", Q15, None))
+
+    def test_cli_role_map_dry_run(self):
+        if not TS_MATRIX_V2.is_file():
+            self.skipTest("TS worktree not mounted")
+        with tempfile.TemporaryDirectory() as tmp:
+            roles = Path(tmp) / "roles.json"
+            roles.write_text(json.dumps(MIXED))
+            receipts = Path(tmp) / "r"
+            receipts.mkdir()
+            base = ["--python-image-ref", FINAL_MIXED["python_ref"], "--writer-image", WRITER, "--ts-source-sha",
+                    FINAL["ts_sha"], "--dl-source-sha", FINAL["dl_sha"], "--phase", "isolated", "--receipts",
+                    str(receipts), "--only", "dr08-isolated", "--dry-run", "--ts-root", str(TS_MATRIX_V2.parents[4])]
+            for flags in (["--role-images", str(roles)], [a for r, d in MIXED.items() for a in ("--role-image",
+                                                                                                f"{r}={d}")]):
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    code = g13.main(flags + base)
+                with self.subTest(flags=flags[0]):
+                    self.assertEqual(code, 0, out.getvalue())
+                    self.assertEqual(json.loads(out.getvalue())["final"]["roles"], MIXED)
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = g13.main(["--role-images", str(roles), "--python-image", PY] + base)
+            self.assertEqual(code, 2)
+            self.assertIn("ROLE_IMAGES_AMBIGUOUS", out.getvalue())
+            self.assertEqual(list(receipts.iterdir()), [])
+
+
+class PerVenueRevisionTests(unittest.TestCase):
+    """B2: Binance and OKX alphas may run different JWT manifest revisions."""
+
+    @staticmethod
+    def prepares(dr01):
+        inputs = copy_inputs()
+        inputs["dr01"].update(dr01)
+        entry = runtime_steps(inputs)["dr01-deployed"]
+        if "commands" not in entry:
+            return entry["blocked"], None
+        out = {}
+        for c in entry["commands"]:
+            argv = c["argv"]
+            if "prepare" in argv:
+                tail = argv[argv.index("prepare"):]
+                venue = tail[tail.index("--venue") + 1]
+                out[venue] = {f: tail[tail.index(f) + 1] if f in tail else None
+                              for f in ("--manifest-revision", "--wrong-revision", "--manifest-dir")}
+                out[venue]["mounts"] = [argv[i + 1] for i, a in enumerate(argv) if a == "-v"]
+        return out, entry
+
+    def test_scalar_applies_to_both_venues(self):
+        out, entry = self.prepares({"manifest_revision": 15})
+        self.assertEqual({v: o["--manifest-revision"] for v, o in out.items()}, {"BINANCE": "15", "OKX": "15"})
+        self.assertEqual({v: o["--wrong-revision"] for v, o in out.items()}, {"BINANCE": None, "OKX": None})
+        self.assertEqual(entry["manifest_revisions"]["OKX"], {"manifest_revision": 15, "wrong_revision": None})
+
+    def test_map_gives_each_venue_its_revision(self):
+        out, entry = self.prepares({"manifest_revision": {"BINANCE": 16, "OKX": 15},
+                                    "manifest_dir": "/x/reader-public-r16"})
+        self.assertEqual({v: o["--manifest-revision"] for v, o in out.items()}, {"BINANCE": "16", "OKX": "15"})
+        self.assertEqual({v: o["--manifest-dir"] for v, o in out.items()},
+                         {"BINANCE": "/x/reader-public-r16", "OKX": "/x/reader-public-r16"})
+        self.assertEqual(entry["manifest_revisions"], {"BINANCE": {"manifest_revision": 16, "wrong_revision": None},
+                                                       "OKX": {"manifest_revision": 15, "wrong_revision": None}})
+
+    def test_wrong_revision_scalar_and_map(self):
+        out, _ = self.prepares({"manifest_revision": {"BINANCE": 16, "OKX": 15}, "wrong_revision": 14})
+        self.assertEqual({v: o["--wrong-revision"] for v, o in out.items()}, {"BINANCE": "14", "OKX": "14"})
+        out, _ = self.prepares({"manifest_revision": {"BINANCE": 16, "OKX": 15},
+                                "wrong_revision": {"BINANCE": 15, "OKX": 14}})
+        self.assertEqual({v: o["--wrong-revision"] for v, o in out.items()}, {"BINANCE": "15", "OKX": "14"})
+        # a scalar wrong revision equal to one venue's revision is refused before any container
+        blocked, entry = self.prepares({"manifest_revision": {"BINANCE": 16, "OKX": 15}, "wrong_revision": 15})
+        self.assertIsNone(entry)
+        self.assertTrue(any("DR01_REVISION_INVALID" in b for b in blocked), blocked)
+
+    def test_per_venue_manifest_dir_is_mounted_per_venue(self):
+        out, _ = self.prepares({"manifest_revision": {"BINANCE": 16, "OKX": 15},
+                                "manifest_dir": {"BINANCE": "/x/realm-b", "OKX": "/x/realm-o"}})
+        self.assertEqual(out["BINANCE"]["--manifest-dir"], "/x/realm-b")
+        self.assertIn("/x/realm-b:/x/realm-b:ro", out["BINANCE"]["mounts"])
+        self.assertNotIn("/x/realm-o:/x/realm-o:ro", out["BINANCE"]["mounts"])
+        self.assertIn("/x/realm-o:/x/realm-o:ro", out["OKX"]["mounts"])
+
+    def test_bad_revision_forms_refused(self):
+        for value in ({"BINANCE": 16}, {"BINANCE": 16, "OKX": 15, "X": 1}, 0, True, "r16", {"BINANCE": 16,
+                                                                                           "OKX": None}):
+            with self.subTest(value=value):
+                blocked, entry = self.prepares({"manifest_revision": value})
+                self.assertIsNone(entry)
+                self.assertTrue(any("PER_VENUE_INVALID" in b or "DR01_REVISION_INVALID" in b for b in blocked),
+                                blocked)
+
+    def test_harness_accepts_each_venue_argv(self):
+        from scripts import p184_dr01_deployed as dr01
+        self.assertEqual(dr01.revisions(16), (16, 15))
+        self.assertEqual(dr01.revisions(15, 14), (15, 14))
+
+    def test_dr07_connections_revision_must_match_dr01_per_venue(self):
+        inputs = copy_inputs()
+        inputs["dr01"]["manifest_revision"] = {"BINANCE": 16, "OKX": 15}
+        inputs["dr07"]["_connections"]["BINANCE"]["jwt_manifest_revision"] = 16
+        inputs["dr07"]["_connections"]["OKX"]["jwt_manifest_revision"] = 15
+        self.assertIn("commands", runtime_steps(inputs)["dr07-reference"])
+        inputs["dr07"]["_connections"]["OKX"]["jwt_manifest_revision"] = 16
+        entry = runtime_steps(inputs)["dr07-reference"]
+        self.assertNotIn("commands", entry)
+        self.assertTrue(any("DR07_REVISION_MISMATCH" in b for b in entry["blocked"]), entry["blocked"])
+
+
 class PlanTests(unittest.TestCase):
     def test_full_plan_binds_final_identity_everywhere(self):
         result = make_plan()

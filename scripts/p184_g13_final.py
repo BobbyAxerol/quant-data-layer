@@ -14,7 +14,9 @@ ONLY the existing harnesses, sequentially, each under a hard timeout:
     dr08-isolated   DL scripts/p184_dr08_isolated.py --orchestrate (QUALIFICATION mode, >= 5 restart samples)
   RUNTIME phase (reads the shared stack after the final rollout; needs the owner-approved runtime packet):
     dr01-deployed   DL scripts/p184_dr01_deployed.py prepare/probe/record (7 DL cells); inputs dr01.manifest_dir
-                    (the deployed reader realm dir) + dr01.manifest_revision, optional dr01.wrong_revision.
+                    (the deployed reader realm dir) + dr01.manifest_revision, optional dr01.wrong_revision; each is
+                    a scalar (both venues) or per venue {"BINANCE": v, "OKX": v} (the venues may sit on different
+                    JWT manifest revisions; one realm dir may hold both venue manifests at their own revisions).
                     prepare runs offline in a --rm container of the final python image (network none, host uid,
                     read-only mounts of the DL checkout and the declared inputs); probe runs per venue in that
                     venue's alpha compose service, dr01.alpha_service = {"BINANCE": svc, "OKX": svc}
@@ -38,16 +40,21 @@ Receipts: a NEW directory ~/.local/state/qdl-v2/p184-g13-<YYYYMMDD>T<HHMMSS>Z/ (
 one <step>/receipt.json per step (argv, cwd, times, exit, timeout, output sha256, cleanup) and summary.json.
 
 Boundary. Never builds an image, never starts/stops/recreates a shared container, never writes shared Redis/Kafka/
-Postgres, never pushes. The DR05/DR08 harnesses get the final images as explicit arguments (--image ROLE=ID,
-DR08 also --query-image-ref; their in-container checks compare against these attested values; kafka/redis keep the
+Postgres, never pushes. Final DL images are an expected per-role digest map (ROLE_IMAGE roles; roles may run
+different images after a partial rollout): --role-image ROLE=ID (repeatable) and/or --role-images FILE.json, or the
+legacy shorthand --python-image + --rust-image (every python role one image, every rust role another). The receipts
+record the expanded map. The DR05/DR08 harnesses get images derived from it (HARNESS_SOURCE; --image ROLE=ID, DR08
+also --query-image-ref; their in-container checks compare against these attested values; kafka/redis keep the
 harness defaults). It refuses to start a step when (a) the TS case matrix v2 DR cells differ from DR_CELLS, (b) the
 DL checkout that the harness containers mount at /app is not the release commit or has tracked edits, (c) for
-the RUNTIME phase, the deployed roles do not run the final digests or no approval packet is given. Cleanup: only
+the RUNTIME phase (and DR08), a mapped role runs another digest, a stack container is in neither the map nor
+INFRA_ROLES, or no approval packet is given, (d) --python-image-ref does not resolve to the query image. Cleanup: only
 containers whose name starts with the step's own prefix AND that did not exist before the step are removed, by
 exact ID; nothing else (no prune, no image/volume/network removal). The harnesses keep their own cleanup receipts.
 A step result is the harness's own rows; this runner never writes a case row and never relabels a rehearsal.
 
-usage: p184_g13_final.py --python-image sha256:.. --rust-image sha256:.. --python-image-ref qdl-v2-python:2.2.3-<sha7>
+usage: p184_g13_final.py (--role-image ROLE=sha256:.. ... | --role-images roles.json | --python-image sha256:..
+         --rust-image sha256:..) --python-image-ref qdl-v2-python:<query image tag>
          --writer-image sha256:.. --ts-source-sha <40hex> --dl-source-sha <40hex> [--phase isolated|runtime|all]
          [--only STEP ...] [--inputs inputs.json] [--runtime-approval PACKET] [--dry-run] [--receipts DIR]
 """
@@ -84,8 +91,15 @@ ROLE_IMAGE = {
     "market_projector_1": "rust", "market_projector_2": "rust",
     "stream_kn_1": "rust", "stream_kn_2": "rust",
 }
-# Harness image roles set to the final images (scripts/p184_dr08_isolated.py IMAGES stay the defaults for the rest).
-HARNESS_ROLES = {"query": "python", "python": "python", "core": "rust", "stream": "rust"}
+# Stack containers that run no DL release image (broker, caches, one-shot init). G13 records their image IDs but
+# does not certify them; any stack container in neither ROLE_IMAGE nor this set refuses the run (UNLISTED_ROLE).
+INFRA_ROLES = ("kafka1", "kafka2", "kafka3", "market_cache", "stable_redis", "stable_tls_init", "stable_state_init")
+# Harness image role -> the deployed roles whose (single, shared) digest it takes. The roles run mixed images after
+# a partial rollout, so each harness role follows the deployed role it exercises: DR08 refuses a core image other
+# than rust_core-1's, the query harness is the reader image, and the python helper (prepare/driver/DR05 channel,
+# DR01 prepare; it mounts the release DL checkout) runs the reader's python image.
+HARNESS_SOURCE = {"query": ("query_kn_1", "query_kn_2"), "python": ("query_kn_1", "query_kn_2"),
+                  "core": ("rust_core", "rust_core_2", "rust_core_3"), "stream": ("stream_kn_1", "stream_kn_2")}
 MATRIX_V2 = "contracts/baseline/rust-first-v2/p18/p184-r2-case-matrix.v2.json"
 GATEWAY_STEPS = ("dr01-wrong-account",)
 
@@ -180,11 +194,65 @@ def coverage():
             "duplicates": duplicates + sorted(set(produced) & set(NO_PRODUCER)), "missing": missing, "extra": extra}
 
 
+def parse_role_images(pairs=(), file_map=None):
+    """--role-image ROLE=sha256:ID (repeatable) and/or --role-images FILE ({role: id}) -> {role: id}.
+    Unknown roles and a role given twice are refused; completeness is checked by validate_final."""
+    out = {}
+    if file_map is not None and not isinstance(file_map, dict):
+        raise Blocked("ROLE_IMAGES_INVALID: --role-images must hold a JSON object {role: sha256 id}")
+    items = list((file_map or {}).items())
+    for pair in pairs:
+        role, sep, image = pair.partition("=")
+        if not sep:
+            raise Blocked(f"ROLE_IMAGES_INVALID: --role-image ROLE=sha256:<64hex>, got {pair!r}")
+        items.append((role, image))
+    for role, image in items:
+        if role not in ROLE_IMAGE:
+            raise Blocked(f"ROLE_UNKNOWN: {role!r} is not a deployed DL role ({', '.join(ROLE_IMAGE)})")
+        if role in out:
+            raise Blocked(f"ROLE_IMAGES_DUPLICATE: {role}")
+        out[role] = image
+    return out
+
+
+def resolve_final_roles(python=None, rust=None, pairs=(), file_map=None):
+    """The expected {role: image ID} map. Either the legacy shorthand (--python-image + --rust-image: every python
+    role runs one image, every rust role another) or a per-role map (--role-image / --role-images), never both."""
+    per_role = bool(pairs) or file_map is not None
+    legacy = (python is not None, rust is not None)
+    if per_role and any(legacy):
+        raise Blocked("ROLE_IMAGES_AMBIGUOUS: use --python-image/--rust-image or --role-image/--role-images, not both")
+    if per_role:
+        return parse_role_images(pairs, file_map)
+    if legacy != (True, True):
+        raise Blocked("FINAL_DIGEST_REQUIRED: --python-image and --rust-image, or a complete --role-image map")
+    return {role: python if kind == "python" else rust for role, kind in ROLE_IMAGE.items()}
+
+
+def role_images(final):
+    """{role: image ID}: final['roles'] when given, else the legacy python/rust shorthand expanded."""
+    if final.get("roles") is not None:
+        return dict(final["roles"])
+    return {role: final.get(kind) for role, kind in ROLE_IMAGE.items()}
+
+
+def harness_images(final):
+    """{harness role: image ID} derived from the deployed role map; refused when the source roles disagree."""
+    roles = role_images(final)
+    out = {}
+    for harness, sources in HARNESS_SOURCE.items():
+        found = sorted({str(roles.get(r)) for r in sources})
+        if len(found) != 1:
+            raise Blocked(f"HARNESS_IMAGE_AMBIGUOUS: {harness} follows {', '.join(sources)}, which run {found}")
+        out[harness] = found[0]
+    return out
+
+
 def harness_image_args(final):
     """--image ROLE=ID for every harness role that must run a final image (both harnesses accept the flag)."""
     out = []
-    for role, kind in HARNESS_ROLES.items():
-        out += ["--image", f"{role}={final[kind]}"]
+    for role, image in harness_images(final).items():
+        out += ["--image", f"{role}={image}"]
     return out
 
 
@@ -203,31 +271,55 @@ def matrix_mismatch(matrix):
         if ours != theirs else {}
 
 
+def real_digest(value):
+    return isinstance(value, str) and bool(DIGEST.fullmatch(value)) and len(set(value[7:])) > 1
+
+
 def validate_final(final):
-    for key in ("python", "rust", "writer"):
-        value = final.get(key) or ""
-        if not DIGEST.fullmatch(value) or len(set(value[7:])) == 1:
-            raise Blocked(f"FINAL_DIGEST_REQUIRED: --{key}-image must be a real sha256 image ID")
+    roles = role_images(final)
+    if set(roles) != set(ROLE_IMAGE):
+        missing, extra = sorted(set(ROLE_IMAGE) - set(roles)), sorted(set(roles) - set(ROLE_IMAGE))
+        raise Blocked(f"ROLE_MAP_INCOMPLETE: missing {missing}, unknown {extra}")
+    for role, image in roles.items():
+        if not real_digest(image):
+            raise Blocked(f"FINAL_DIGEST_REQUIRED: role {role} must map to a real sha256 image ID, got {image!r}")
+    if not real_digest(final.get("writer")):
+        raise Blocked("FINAL_DIGEST_REQUIRED: --writer-image must be a real sha256 image ID")
     for key in ("ts_sha", "dl_sha"):
         value = final.get(key) or ""
         if not SHA.fullmatch(value) or len(set(value)) == 1:
             raise Blocked(f"FINAL_SHA_REQUIRED: {key} must be a full 40-hex commit")
-    if final["python"] == final["rust"]:
-        raise Blocked("FINAL_DIGEST_REQUIRED: python and rust images must differ")
+    python = {roles[r] for r, k in ROLE_IMAGE.items() if k == "python"}
+    rust = {roles[r] for r, k in ROLE_IMAGE.items() if k == "rust"}
+    if python & rust:
+        raise Blocked("FINAL_DIGEST_REQUIRED: a python role and a rust role cannot run the same image")
     if not re.fullmatch(r"qdl-v2-python:\S+", final.get("python_ref") or ""):
-        raise Blocked("FINAL_REF_REQUIRED: --python-image-ref qdl-v2-python:<release tag>")
+        raise Blocked("FINAL_REF_REQUIRED: --python-image-ref qdl-v2-python:<release tag> (the query image)")
+    harness_images(final)
 
 
 def deployed_mismatches(inventory, final):
-    """inventory: {container name: image ID}. Empty when every listed role and the writer run the final digests."""
+    """inventory: {container name: image ID} of every stack container (and the writer). Empty when every DL role
+    runs exactly its mapped digest, the writer runs the final writer digest, and no stack container is unlisted."""
+    roles = role_images(final)
     found = []
-    for role, kind in ROLE_IMAGE.items():
+    for role in ROLE_IMAGE:
         name = STACK + role + "-1"
-        if inventory.get(name) != final[kind]:
-            found.append(f"{name} runs {inventory.get(name)} != final {kind} {final[kind]}")
+        if inventory.get(name) != roles.get(role):
+            found.append(f"{name} runs {inventory.get(name)} != expected {roles.get(role)}")
+    known = {STACK + r + "-1" for r in (*ROLE_IMAGE, *INFRA_ROLES)}
+    for name in sorted(n for n in inventory if n.startswith(STACK) and n not in known):
+        found.append(f"UNLISTED_ROLE: {name} runs {inventory[name]} and is in neither the role map nor INFRA_ROLES")
     if inventory.get(WRITER) != final["writer"]:
         found.append(f"{WRITER} runs {inventory.get(WRITER)} != final writer {final['writer']}")
     return found
+
+
+def image_ref_problem(ref, expected, resolved):
+    """None when the --python-image-ref tag resolves locally to the query harness image (DR08 seals both)."""
+    if resolved != expected:
+        return f"QUERY_IMAGE_REF_MISMATCH: {ref} resolves to {resolved} != query image {expected}"
+    return None
 
 
 def select(phase, only=()):
@@ -327,6 +419,51 @@ def alpha_services(d):
     return services
 
 
+def per_venue(value, what):
+    """A scalar (same for both venues) or {"BINANCE": v, "OKX": v} -> {venue: v}; other venue keys refused."""
+    if isinstance(value, dict):
+        if set(value) != set(VENUES):
+            raise Blocked(f'PER_VENUE_INVALID: {what} = scalar or {{"BINANCE": .., "OKX": ..}}, got keys '
+                          f'{sorted(value)}')
+        return {v: value[v] for v in VENUES}
+    return {v: value for v in VENUES}
+
+
+def revision_int(value, what):
+    """A JWT manifest revision: positive int (a decimal string is accepted, bool is not)."""
+    if isinstance(value, str) and value.isdigit():
+        value = int(value)
+    if type(value) is not int or value < 1:
+        raise Blocked(f"DR01_REVISION_INVALID: {what} must be a positive integer, got {value!r}")
+    return value
+
+
+def dr01_revisions(d):
+    """{venue: (manifest_revision, wrong_revision or None)} from dr01.manifest_revision / dr01.wrong_revision, each a
+    scalar (both venues) or a per-venue map. The wrong revision never equals that venue's revision."""
+    declared = per_venue(d.get("manifest_revision"), "dr01.manifest_revision")
+    wrong = per_venue(d.get("wrong_revision"), "dr01.wrong_revision")
+    out = {}
+    for venue in VENUES:
+        rev = revision_int(declared[venue], f"dr01.manifest_revision[{venue}]")
+        bad = None if wrong[venue] is None else revision_int(wrong[venue], f"dr01.wrong_revision[{venue}]")
+        if bad == rev:
+            raise Blocked(f"DR01_REVISION_INVALID: dr01.wrong_revision[{venue}] equals its manifest revision {rev}")
+        out[venue] = (rev, bad)
+    return out
+
+
+def dr07_revision_problem(connections, revisions):
+    """None unless a DR07 connections entry declares a jwt_manifest_revision other than dr01's for that venue (both
+    inputs describe the same deployed alpha identities)."""
+    for venue in VENUES:
+        declared = (connections.get(venue) or {}).get("jwt_manifest_revision")
+        if declared is not None and str(declared) != str(revisions[venue][0]):
+            return (f"DR07_REVISION_MISMATCH: dr07 connections {venue}.jwt_manifest_revision {declared} != "
+                    f"dr01.manifest_revision {revisions[venue][0]}")
+    return None
+
+
 def host_path(value, what):
     """An absolute host path that is safe inside a docker -v spec."""
     if not isinstance(value, str) or not value.startswith("/") or any(c in value for c in (":", ",", "\n")):
@@ -405,22 +542,32 @@ def commands(step, final, inputs, work, ts_root):
     if step == "dr01-deployed":
         d = inputs["dr01"]
         services = alpha_services(d)
+        # Per venue: Binance and OKX alphas may sit on different JWT manifest revisions (scalar = both). The realm
+        # reader selects the manifest by consumer id inside the dir, so one realm dir serving
+        # alpha.binance.paper.stable-r16.yaml + alpha.okx.paper.stable-r15.yaml works; a per-venue dir map is
+        # accepted too.
+        revisions = dr01_revisions(d)
+        manifest_dirs = {v: host_path(p, f"dr01.manifest_dir[{v}]")
+                         for v, p in per_venue(d["manifest_dir"], "dr01.manifest_dir").items()}
+        python_image = harness_images(final)["python"]
         # prepare imports qdl (redis, pydantic, yaml): offline, in the final python image, as the host user.
-        inputs_ro = [host_path(d["inventory"], "dr01.inventory"), host_path(d["manifest_dir"], "dr01.manifest_dir")]
+        inputs_ro = [host_path(d["inventory"], "dr01.inventory")]
         if d.get("catalog"):
             inputs_ro.append(host_path(d["catalog"], "dr01.catalog"))
         out = []
         for venue in VENUES:
+            revision, wrong = revisions[venue]
             packet = work / f"dr01-{venue.lower()}-packet.json"
             prepare = ["scripts/p184_dr01_deployed.py", "prepare", "--root", DL_ROOT, "--inventory", d["inventory"],
                        "--deployment", d["deployments"][venue], "--venue", venue, "--output", packet,
-                       "--manifest-dir", d["manifest_dir"], "--manifest-revision", str(d["manifest_revision"])]
+                       "--manifest-dir", manifest_dirs[venue], "--manifest-revision", str(revision)]
             if d.get("catalog"):
                 prepare += ["--catalog", d["catalog"]]
-            if d.get("wrong_revision") is not None:
-                prepare += ["--wrong-revision", str(d["wrong_revision"])]
-            box = container_argv(final["python"], f"p184-g13-dr01-prepare-{venue.lower()}",
-                                 user=f"{os.getuid()}:{os.getgid()}", ro=[str(DL_ROOT), *inputs_ro], rw=[str(work)],
+            if wrong is not None:
+                prepare += ["--wrong-revision", str(wrong)]
+            ro = [str(DL_ROOT), inputs_ro[0], manifest_dirs[venue], *inputs_ro[1:]]
+            box = container_argv(python_image, f"p184-g13-dr01-prepare-{venue.lower()}",
+                                 user=f"{os.getuid()}:{os.getgid()}", ro=ro, rw=[str(work)],
                                  env=[f"PYTHONPATH={DL_ROOT}:{DL_ROOT}/generated/python"], workdir=DL_ROOT)
             out.append(cmd(box + prepare, cwd=DL_ROOT))
             out.append(cmd(["docker", "compose", "-f", d["compose"], "run", "--rm", "--no-deps", "-T", "--entrypoint",
@@ -473,6 +620,11 @@ def commands(step, final, inputs, work, ts_root):
         if "_connections" not in d:
             raise Blocked("DR07_CONNECTIONS_UNREADABLE: " + str(d["connections"]))
         ro, rw = dr07_mounts(d["_connections"])
+        dr01 = inputs.get("dr01")
+        if isinstance(dr01, dict) and dr01.get("manifest_revision") is not None:
+            problem = dr07_revision_problem(d["_connections"], dr01_revisions(dr01))
+            if problem:
+                raise Blocked(problem)
         networks = d.get("networks") or DR07_NETWORKS
         if not isinstance(networks, list | tuple) or not all(
                 isinstance(n, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", n) for n in networks):
@@ -517,6 +669,18 @@ def receipt_root(base, now):
     return Path(base) / ("p184-g13-" + now.strftime("%Y%m%dT%H%M%SZ"))
 
 
+def final_record(final):
+    """The final identity as receipts record it: the exact per-role digest map and the derived harness images
+    (the legacy python/rust shorthand is recorded expanded, so every receipt has the same shape)."""
+    record = {k: v for k, v in final.items() if k not in ("python", "rust", "roles")}
+    record["roles"] = dict(sorted(role_images(final).items()))
+    try:
+        record["harness_images"] = harness_images(final)
+    except Blocked as exc:
+        record["harness_images"] = {"blocked": str(exc)}
+    return record
+
+
 def plan(final, inputs, phase, only, ts_root, base, now, matrix=None):
     """matrix: the loaded TS case matrix (v2); when given, its DR cells must equal DR_CELLS for any step to run."""
     steps = select(phase, only)
@@ -542,13 +706,16 @@ def plan(final, inputs, phase, only, ts_root, base, now, matrix=None):
                 entry["commands"] = commands(step, final, inputs, root / step, ts_root)
             except Blocked as exc:
                 blocked.append(str(exc))
+        if step == "dr01-deployed" and not blocked:
+            entry["manifest_revisions"] = {v: {"manifest_revision": r, "wrong_revision": w}
+                                           for v, (r, w) in dr01_revisions(inputs["dr01"]).items()}
         if step == "dr01-wrong-account" and not blocked:
             # The Gateway compose must list exactly these in WRITER_ACCOUNT_SCOPE_JSON (checked before the probe).
             entry["writer_scope_accounts"] = writer_scope_accounts(inputs["dr01_wrong_account"]["run_id"])
         out.append(entry)
         if blocked:
             problems[step] = blocked
-    return {"schema": "p184.g13-final-plan.v1", "receipts": str(root), "final": final,
+    return {"schema": "p184.g13-final-plan.v1", "receipts": str(root), "final": final_record(final),
             "case_matrix": {"schema": (matrix or {}).get("schema"), "sha256": (matrix or {}).get("sha256")},
             "decisions": {k: {"decision": v[0], "reason": v[1]} for k, v in DECISIONS.items()},
             "coverage": coverage(), "steps": out, "blocked": problems,
@@ -568,7 +735,10 @@ def containers():
 
 
 def deployed_inventory():
-    names = [STACK + r + "-1" for r in ROLE_IMAGE] + [WRITER]
+    """{container name: image ID} of EVERY stack container (so an unlisted role is seen) plus the writer and every
+    mapped role (absent -> None)."""
+    listed = sh(["docker", "ps", "-a", "--filter", "name=^" + STACK, "--format", "{{.Names}}"]).split()
+    names = sorted({n for n in listed if n.startswith(STACK)} | {STACK + r + "-1" for r in ROLE_IMAGE} | {WRITER})
     out = {}
     for name in names:
         try:
@@ -761,9 +931,14 @@ def load_dr07_connections(inputs):
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--python-image", required=True)
-    p.add_argument("--rust-image", required=True)
-    p.add_argument("--python-image-ref", required=True)
+    p.add_argument("--python-image", help="legacy shorthand: every python role runs this image")
+    p.add_argument("--rust-image", help="legacy shorthand: every rust role runs this image")
+    p.add_argument("--role-image", action="append", default=[], metavar="ROLE=sha256:ID",
+                   help="expected image of one deployed role (repeatable); with --role-images the map must name "
+                        "every role in ROLE_IMAGE exactly once")
+    p.add_argument("--role-images", type=Path, metavar="JSON", help='file {"role": "sha256:ID", ...}')
+    p.add_argument("--python-image-ref", "--query-image-ref", dest="python_image_ref", required=True,
+                   help="qdl-v2-python:<tag> of the query role image (DR08 seals ref and digest together)")
     p.add_argument("--writer-image", required=True)
     p.add_argument("--ts-source-sha", required=True)
     p.add_argument("--dl-source-sha", required=True)
@@ -775,13 +950,22 @@ def main(argv=None):
     p.add_argument("--receipts", type=Path, default=STATE_ROOT)
     p.add_argument("--dry-run", action="store_true")
     a = p.parse_args(argv)
-    final = {"python": a.python_image, "rust": a.rust_image, "python_ref": a.python_image_ref,
-             "writer": a.writer_image, "ts_sha": a.ts_source_sha, "dl_sha": a.dl_source_sha}
     inputs = json.loads(a.inputs.read_text()) if a.inputs else {}
     if a.runtime_approval:
         inputs["_runtime_approval"] = {"path": str(a.runtime_approval), "sha256": sha256(a.runtime_approval)}
     load_dr07_connections(inputs)
     try:
+        file_map = None
+        if a.role_images:
+            try:
+                file_map = json.loads(a.role_images.read_text())
+            except (OSError, ValueError) as exc:
+                raise Blocked(f"ROLE_IMAGES_INVALID: {a.role_images}: {type(exc).__name__}")
+        roles = resolve_final_roles(a.python_image, a.rust_image, a.role_image, file_map)
+        final = {"roles": roles, "python_ref": a.python_image_ref, "writer": a.writer_image,
+                 "ts_sha": a.ts_source_sha, "dl_sha": a.dl_source_sha}
+        if a.role_images:
+            final["role_images_file"] = {"path": str(a.role_images), "sha256": sha256(a.role_images)}
         validate_final(final)
         matrix_path = a.ts_root / MATRIX_V2
         if not matrix_path.is_file():
@@ -797,7 +981,17 @@ def main(argv=None):
     extra = checkout_problems(final["dl_sha"])
     if any(e["phase"] == "runtime" for e in result["steps"]) or "dr08-isolated" in [e["step"] for e in result["steps"]]:
         # DR08 copies the deployed core config and refuses a core image other than its pin.
-        extra += deployed_mismatches(deployed_inventory(), final)
+        observed = deployed_inventory()
+        result["deployed_inventory"] = observed
+        extra += deployed_mismatches(observed, final)
+    query = harness_images(final)["query"]
+    try:
+        resolved = sh(["docker", "image", "inspect", "--format", "{{.Id}}", final["python_ref"]]).strip()
+    except subprocess.CalledProcessError:
+        resolved = None
+    problem = image_ref_problem(final["python_ref"], query, resolved)
+    if problem:
+        extra.append(problem)
     if result["blocked"] or extra:
         print(json.dumps({"blocked": result["blocked"], "preflight": extra}, indent=2))
         return 3
@@ -810,7 +1004,7 @@ def main(argv=None):
         receipts.append(run_step(entry, final, inputs, a.ts_root))
         print(json.dumps({k: receipts[-1][k] for k in ("step", "duration_s", "exit_codes", "error", "harness_ok")}),
               flush=True)
-    summary = {"schema": "p184.g13-final-summary.v1", "final": final, "steps": [
+    summary = {"schema": "p184.g13-final-summary.v1", "final": result["final"], "steps": [
         {k: r[k] for k in ("step", "cells", "duration_s", "exit_codes", "error", "harness_ok", "removed_leftovers")}
         for r in receipts], "deferred": {r["step"]: r["deferred"] for r in receipts if r.get("deferred")},
         "note": "harness_ok is the harness exit status; cells close only via the TS matrix check; deferred steps "
