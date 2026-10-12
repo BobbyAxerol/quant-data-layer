@@ -5,7 +5,12 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+isolated-replay-clock = ["qdl-test-data-clock/isolated-replay-clock"]
+
 [dependencies]
+qdl-test-data-clock.workspace = true
 futures-util.workspace = true
 hex.workspace = true
 indexmap.workspace = true
@@ -43,4 +48,5 @@ name = "qdl-phase92-primary-rehearsal"
 path = "src/bin/qdl-phase92-primary-rehearsal.rs"
 
 [dev-dependencies]
+qdl-test-data-clock = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }

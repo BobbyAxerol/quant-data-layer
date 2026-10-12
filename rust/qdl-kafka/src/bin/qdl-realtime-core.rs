@@ -17,6 +17,7 @@ use qdl_kafka::{
 use qdl_realtime_core::{
     provider_admission_server::ProviderAdmissionServer, CoreError, RealtimeCore, RealtimeCoreConfig,
 };
+use qdl_test_data_clock::DataClock;
 use qdl_venue_core::authority::{AuthorityMode, AuthorityRecord, PublicationContext, SinkTarget};
 use serde::Deserialize;
 use serde_json::json;
@@ -100,6 +101,41 @@ fn now_ns() -> Result<i64, RuntimeError> {
         .duration_since(UNIX_EPOCH)?
         .as_nanos()
         .try_into()?)
+}
+
+fn check_data_clock(clock: &DataClock) -> Result<(), RuntimeError> {
+    clock.now_ns(0).map(|_| ()).map_err(Into::into)
+}
+
+#[cfg(feature = "isolated-replay-clock")]
+async fn data_clock_failure(clock: &DataClock) -> RuntimeError {
+    loop {
+        if let Err(error) = check_data_clock(clock) {
+            return error;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+// Only cancel the consume loop, never the owner of an in-flight transaction.
+// run_generation always calls finish_generation after this guard returns.
+async fn guard_data_clock<F: Future>(
+    clock: &DataClock,
+    work: F,
+) -> Result<F::Output, RuntimeError> {
+    check_data_clock(clock)?;
+    #[cfg(feature = "isolated-replay-clock")]
+    if clock.is_replay() {
+        return tokio::select! {
+            biased;
+            error = data_clock_failure(clock) => Err(error),
+            result = work => {
+                check_data_clock(clock)?;
+                Ok(result)
+            }
+        };
+    }
+    Ok(work.await)
 }
 
 fn should_retry_transport(class: RetryClass) -> bool {
@@ -460,7 +496,9 @@ async fn run_generation(
     generation: u64,
     backoff: &BackoffPolicy,
     stop: &StopLatch,
+    data_clock: &DataClock,
 ) -> Result<GenerationEnd, RuntimeError> {
+    check_data_clock(data_clock)?;
     let mut core = RealtimeCore::new(config.core.clone())?;
     let approved_subscriptions = approved_subscription_scope(config);
     // Refuse a non-shared authority before any Kafka client exists, as before.
@@ -492,18 +530,23 @@ async fn run_generation(
 
     let mut progress = Progress::default();
     let mut pipeline = CommitPipeline::new();
-    let served = serve_generation(
-        config,
-        generation,
-        backoff,
-        &mut core,
-        &approved_subscriptions,
-        &bridge,
-        &mut pipeline,
-        &mut progress,
-        stop,
+    let served = guard_data_clock(
+        data_clock,
+        serve_generation(
+            config,
+            generation,
+            backoff,
+            &mut core,
+            &approved_subscriptions,
+            &bridge,
+            &mut pipeline,
+            &mut progress,
+            stop,
+            data_clock,
+        ),
     )
-    .await;
+    .await
+    .and_then(std::convert::identity);
     let stop_reason = match finish_generation(served, &mut pipeline).await {
         Settled::Stopped { reason, committed } => {
             progress.record_commit(committed, generation, config.metrics_every_batches)?;
@@ -579,6 +622,7 @@ async fn serve_generation(
     pipeline: &mut CommitPipeline,
     progress: &mut Progress,
     stop: &StopLatch,
+    data_clock: &DataClock,
 ) -> Result<&'static str, RuntimeError> {
     let (canonical_target, quarantine_target) = output_targets(config.authority.mode)?;
     let mut receive_failures = 0_u32;
@@ -675,6 +719,9 @@ async fn serve_generation(
         let normalized_at_ns = now_ns()?;
         let mut outputs = vec![];
         for input in &mut inputs {
+            // Data time affects normalization freshness only; all telemetry and
+            // ingress/resnapshot quarantine timestamps retain the batch wall clock.
+            let processing_at_ns = data_clock.now_ns(normalized_at_ns)?;
             let raw = RawProviderEnvelope::decode(input.record.payload.as_slice())?;
             // The commit needs only the input cursor. The raw bytes move into
             // the lineage header of this input's canonical output instead of
@@ -727,7 +774,7 @@ async fn serve_generation(
             } else {
                 match core.process_at_transport_offset(
                     raw.clone(),
-                    normalized_at_ns,
+                    processing_at_ns,
                     input.cursor.offset,
                 ) {
                     Ok(result) => result,
@@ -795,9 +842,13 @@ async fn serve_generation(
         // begun: one open transaction per producer, batches in order.
         let previous = pipeline.complete().await?;
         progress.record_commit(previous, generation, config.metrics_every_batches)?;
+        check_data_clock(data_clock)?;
         let transaction = bridge
             .prepare_commit(&inputs, outputs, rebalance_epoch)
             .await?;
+        // prepare_commit returns an unstarted future. Expiry here must not
+        // submit it; already-submitted work is settled by finish_generation.
+        check_data_clock(data_clock)?;
         let previous = pipeline.submit(inputs.len() as u64, transaction).await?;
         progress.record_commit(previous, generation, config.metrics_every_batches)?;
     };
@@ -895,6 +946,10 @@ async fn main() -> Result<(), RuntimeError> {
         .ok_or("usage: qdl-realtime-core CONFIG.json")?;
     let config: RuntimeConfig = serde_json::from_slice(&tokio::fs::read(config_path).await?)?;
     config.validate()?;
+    // Load once before any listener/client, retaining failure latches across retries.
+    // Feature-disabled binaries reject any TEST clock environment configuration.
+    let data_clock = DataClock::from_env(cfg!(feature = "isolated-replay-clock"))?;
+    check_data_clock(&data_clock)?;
     // This listener is private to the existing stable-internal network and is
     // absent unless the sealed C3.6 runtime binding enables it.  It survives
     // Kafka generation retries so all query roles share one Rust coordinator.
@@ -908,7 +963,7 @@ async fn main() -> Result<(), RuntimeError> {
     .validate()?;
     let stop = StopLatch::install();
     let result = supervise(&stop, &backoff, |generation| {
-        run_generation(&config, generation, &backoff, &stop)
+        run_generation(&config, generation, &backoff, &stop, &data_clock)
     })
     .await;
     if let Some(server) = admission_server {
@@ -1309,5 +1364,305 @@ mod tests {
             (SinkTarget::PrimaryCanonical, SinkTarget::PrimaryQuarantine),
         );
         assert!(output_targets(AuthorityMode::RustCanary).is_err());
+    }
+}
+
+#[cfg(test)]
+mod data_clock_boundary_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn default_clock_preserves_batch_wall_time_and_future_result() {
+        let clock = DataClock::Real;
+        assert_eq!(clock.now_ns(123456789), Ok(123456789));
+        assert!(check_data_clock(&clock).is_ok());
+        assert_eq!(guard_data_clock(&clock, async { 42 }).await.unwrap(), 42);
+    }
+
+    #[cfg(feature = "isolated-replay-clock")]
+    mod replay {
+        use super::*;
+        use qdl_contracts::qdl::marketdata::v2::EventEnvelope;
+        use qdl_contracts::qdl::provider::v1::{
+            CaptureBoundary, TransportCompression, TransportProtocol,
+        };
+        use sha2::{Digest, Sha256};
+        use std::cell::Cell;
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+
+        #[tokio::test]
+        async fn expired_clock_is_fatal_latched_and_does_not_poll_work() {
+            let (clock, expire) = DataClock::test_fixture();
+            expire(true);
+            let polled = Cell::new(false);
+            let error = guard_data_clock(&clock, async {
+                polled.set(true);
+            })
+            .await
+            .unwrap_err();
+            assert_eq!(error.to_string(), qdl_test_data_clock::INVALID);
+            assert!(!retryable_runtime_error(&error));
+            assert!(!polled.get());
+            expire(false);
+            assert!(check_data_clock(&clock).is_err());
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn idle_consumer_observes_expiry_within_poll_bound() {
+            let (clock, expire) = DataClock::test_fixture();
+            let started = tokio::time::Instant::now();
+            let (result, ()) = tokio::join!(
+                guard_data_clock(&clock, std::future::pending::<()>()),
+                async {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                    expire(true);
+                }
+            );
+            assert!(result.is_err());
+            assert!(started.elapsed() <= Duration::from_millis(25));
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn collection_expiry_does_not_wait_for_batch_deadline() {
+            let (clock, expire) = DataClock::test_fixture();
+            let received = Cell::new(false);
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+            let (result, ()) = tokio::join!(
+                guard_data_clock(
+                    &clock,
+                    receive_batch_input(deadline, async {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        received.set(true);
+                        42
+                    })
+                ),
+                async {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                    expire(true);
+                }
+            );
+            assert!(result.is_err());
+            assert!(!received.get());
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn expiry_settles_prior_commit_and_never_submits_next_batch() {
+            for commit_succeeds in [true, false] {
+                let (clock, expire) = DataClock::test_fixture();
+                let finished = Arc::new(AtomicBool::new(false));
+                let finished_commit = finished.clone();
+                let mut pipeline = TransactionPipeline::<u64>::new();
+                pipeline
+                    .submit(3, async move {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        finished_commit.store(true, Ordering::SeqCst);
+                        if commit_succeeds {
+                            Ok(42)
+                        } else {
+                            Err(KafkaTransportError::SnapshotTimeout(
+                                "injected commit failure".into(),
+                            ))
+                        }
+                    })
+                    .await
+                    .unwrap();
+                let submitted_next = Cell::new(false);
+                let (served, ()) = tokio::join!(
+                    guard_data_clock(&clock, async {
+                        pipeline.complete().await?;
+                        check_data_clock(&clock)?;
+                        submitted_next.set(true);
+                        Ok::<_, RuntimeError>("UNEXPECTED_SUBMIT")
+                    }),
+                    async {
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                        expire(true);
+                    }
+                );
+                assert!(pipeline.is_in_flight());
+                let settled =
+                    finish_generation(served.and_then(std::convert::identity), &mut pipeline).await;
+                match settled {
+                    Settled::Failed { error, drain_error } => {
+                        assert_eq!(error.to_string(), qdl_test_data_clock::INVALID);
+                        assert!(!retryable_runtime_error(&error));
+                        assert_eq!(drain_error.is_none(), commit_succeeds);
+                    }
+                    _ => panic!("clock expiry must remain a fatal generation failure"),
+                }
+                assert!(finished.load(Ordering::SeqCst));
+                assert!(!pipeline.is_in_flight());
+                assert!(!submitted_next.get());
+            }
+        }
+
+        #[tokio::test]
+        async fn expiry_after_preparation_drops_unstarted_transaction() {
+            let (clock, expire) = DataClock::test_fixture();
+            let began = Arc::new(AtomicBool::new(false));
+            let began_task = began.clone();
+            let transaction = async move {
+                began_task.store(true, Ordering::SeqCst);
+                Ok::<_, KafkaTransportError>(42_u64)
+            };
+            let mut pipeline = TransactionPipeline::new();
+            // Match the production boundary: prepared future exists, but has not been submitted.
+            expire(true);
+            let result = async {
+                check_data_clock(&clock)?;
+                pipeline.submit(1, transaction).await?;
+                Ok::<_, RuntimeError>(())
+            }
+            .await;
+            assert!(result.is_err());
+            assert!(!began.load(Ordering::SeqCst));
+            assert!(!pipeline.is_in_flight());
+        }
+
+        #[tokio::test]
+        async fn clock_failure_does_not_start_another_generation() {
+            let (clock, expire) = DataClock::test_fixture();
+            expire(true);
+            let (_signal, stop) = StopLatch::manual();
+            let generations = Cell::new(0);
+            let backoff = BackoffPolicy {
+                initial_ms: 1,
+                maximum_ms: 1,
+                multiplier: 2,
+                jitter_bps: 0,
+            }
+            .validate()
+            .unwrap();
+            let result = supervise(&stop, &backoff, |_| {
+                generations.set(generations.get() + 1);
+                async {
+                    check_data_clock(&clock)?;
+                    Ok(GenerationEnd::Stopped)
+                }
+            })
+            .await;
+            assert!(result.is_err());
+            assert_eq!(generations.get(), 1);
+        }
+
+        fn mark_fixture() -> (RealtimeCoreConfig, Vec<RawProviderEnvelope>) {
+            // Reuse the production core's historical OKX MARK/INDEX fixture and cadence.
+            let mark_frame = br#"{"arg":{"channel":"mark-price","instId":"DOGE-USDT-SWAP"},"data":[{"instId":"DOGE-USDT-SWAP","markPx":"0.14525","ts":"1786352400000"}]}"#;
+            let index_frame = br#"{"arg":{"channel":"index-tickers","instId":"DOGE-USDT"},"data":[{"instId":"DOGE-USDT","idxPx":"0.14510","ts":"1786352400100"}]}"#;
+            let mark = json!({
+                "provider":"OKX_DIRECT", "venue":"OKX", "market":"SWAP",
+                "product_type":"PERPETUAL", "native_symbol":"DOGE-USDT-SWAP",
+                "native_channel":"mark-price", "physical_native_symbol":"DOGE-USDT-SWAP",
+                "physical_native_channel":"mark-price", "provider_kind":"okx_mark_price",
+                "instrument_uid":"fixture-doge", "instrument_id":"OKX.SWAP.PERPETUAL.DOGE-USDT",
+                "instrument_revision":1, "instrument_catalog_revision":3,
+                "source_id":"fixture-mark-index", "source_role":"PRIMARY",
+                "normalizer_version":"qdl-rust-core/2.0.0", "sequence_policy":"NONE",
+                "mark_index":{"component":"MARK", "quiet_after_ms":250}
+            });
+            let mut index = mark.clone();
+            index["physical_native_symbol"] = json!("DOGE-USDT");
+            index["physical_native_channel"] = json!("index-tickers");
+            index["provider_kind"] = json!("okx_index_price");
+            index["mark_index"] = json!({"component":"INDEX", "quiet_after_ms":500});
+            let config: RealtimeCoreConfig = serde_json::from_value(json!({
+                "canonical_stream":"test.canonical", "quarantine_stream":"test.quarantine",
+                "allow_test_provenance":true, "dedup_capacity":16, "bindings":[mark,index]
+            }))
+            .unwrap();
+            let mut raws = Vec::new();
+            for (binding, (frame, received_at_ns)) in config.bindings.iter().zip([
+                (mark_frame.as_slice(), 1_786_352_400_000_000_000_i64),
+                (index_frame.as_slice(), 1_786_352_400_100_000_000_i64),
+            ]) {
+                raws.push(RawProviderEnvelope {
+                    raw_schema_name: "qdl.provider.raw".into(),
+                    raw_schema_major: 1,
+                    capture_id: Sha256::digest(frame)[..16].to_vec(),
+                    provider: binding.provider.clone(),
+                    venue: binding.venue.clone(),
+                    market: binding.market.clone(),
+                    product_type: binding.product_type.clone(),
+                    native_symbol: binding.physical_native_symbol.clone().unwrap(),
+                    native_channel: binding.physical_native_channel.clone().unwrap(),
+                    subscription_id: binding.source_id.clone(),
+                    source_session_id: "qdl-test-lane-001-1-1700000000000000000".into(),
+                    connection_generation: 1,
+                    lease_epoch: 7,
+                    authority_revision: 1,
+                    partition_plan_epoch: 1,
+                    received_at_ns,
+                    transport_protocol: TransportProtocol::Websocket as i32,
+                    transport_compression: TransportCompression::None as i32,
+                    capture_boundary: CaptureBoundary::PostDecompression as i32,
+                    raw_frame_bytes: frame.to_vec(),
+                    raw_frame_sha256: Sha256::digest(frame).to_vec(),
+                    adapter_version: "unit-fixture/1".into(),
+                    config_revision: 1,
+                    instrument_catalog_revision: 3,
+                    correlation_id: "unit-fixture-only".into(),
+                    test_provenance: true,
+                    ..Default::default()
+                });
+            }
+            (config, raws)
+        }
+
+        #[test]
+        fn historical_mark_uses_data_time_but_does_not_relax_quiet_cadence() {
+            let (config, raws) = mark_fixture();
+            let origin = raws[0].received_at_ns;
+            let wall_ns = origin + 86_400_000_000_000;
+            let (historical, expire) = DataClock::test_fixture_at(origin + 100_000_000);
+            let (quiet_expired, _) = DataClock::test_fixture_at(origin + 601_000_000);
+            for (clock, emits) in [
+                (&DataClock::Real, false),
+                (&historical, true),
+                (&quiet_expired, false),
+            ] {
+                let mut core = RealtimeCore::new(config.clone()).unwrap();
+                let mut result = None;
+                for (offset, raw) in raws.iter().enumerate() {
+                    result = Some(
+                        core.process_at_transport_offset(
+                            raw.clone(),
+                            clock.now_ns(wall_ns).unwrap(),
+                            offset as u64,
+                        )
+                        .unwrap(),
+                    );
+                }
+                let result = result.unwrap();
+                assert!(result.quarantines.is_empty());
+                if emits {
+                    assert_eq!(result.canonical.len(), 1);
+                    let event =
+                        EventEnvelope::decode(result.canonical[0].payload.as_slice()).unwrap();
+                    assert_eq!(event.source_event_time_ns, origin);
+                    assert_eq!(event.received_at_ns, origin);
+                    assert_eq!(event.normalized_at_ns, raws[1].received_at_ns);
+                } else {
+                    assert!(result.canonical.is_empty());
+                    assert_eq!(
+                        result.filtered_outcome,
+                        Some("MARK_INDEX_COMPONENT_EXPIRED")
+                    );
+                }
+            }
+            // Ingress quarantine uses operational wall time, not the TEST data clock.
+            let core = RealtimeCore::new(config).unwrap();
+            let evidence = core.quarantine_raw(
+                &raws[0],
+                QuarantineReason::FencingRejected,
+                "unit fixture",
+                wall_ns,
+            );
+            assert_eq!(evidence.quarantines[0].accepted_at_ns, wall_ns);
+            expire(true);
+            assert!(historical.now_ns(wall_ns).is_err());
+        }
     }
 }

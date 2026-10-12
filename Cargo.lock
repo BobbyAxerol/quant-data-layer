@@ -933,6 +933,7 @@ dependencies = [
  "qdl-contracts",
  "qdl-core",
  "qdl-realtime-core",
+ "qdl-test-data-clock",
  "qdl-venue-core",
  "rdkafka",
  "reqwest",
@@ -993,9 +994,9 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "jsonwebtoken",
- "libc",
  "prost",
  "qdl-contracts",
+ "qdl-test-data-clock",
  "rdkafka",
  "redis",
  "reqwest",
@@ -1007,6 +1008,16 @@ dependencies = [
  "tokio-rustls",
  "tokio-stream",
  "tonic",
+]
+
+[[package]]
+name = "qdl-test-data-clock"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "ring",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

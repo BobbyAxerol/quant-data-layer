@@ -72786,3 +72786,29 @@ roles. Parent owns journals and commits; agent owns disjoint shared-clock/core s
 Tests require default/feature parity, historical MARK and expiry fencing. TEST core
 image must overlay deployed bcb02833 source, not introduce HEAD normalizer changes.
 No production mutation, release or capacity claim; rollback removes only TEST overlay.
+
+Shared TEST clock implementation checkpoint (2026-10-12): mechanical shared crate
+preserves frozen namespace.stream identity, caller-local feature opt-in even when
+Cargo unifies dependency features, default real clock and TEST-support dev gating.
+Core injects only normalization processing time; idle/collect expiry is guarded,
+pre-submit expiry drops unstarted work, and finish_generation settles an existing
+transaction before returning a fatal latched clock error. Source shared-clock-tests1:
+Kafka42PASS/2ignored (one isolated broker test, one manual microbenchmark), core27PASS,
+Stream59PASS, clock10PASS. Strict clippy/default-path/transport/pinned overlay pending.
+Pinned TEST overlay prepared from immutablebcb02833: only Cargo files/core entrypoint
+and shared-clock crate differ; all base normalizer bytes verified unchanged. Patch
+SHA013e7999d357e515f533725dcb0b40c6313a6bf1ceb624b6fd01fc0eabf88074;
+no TEST image built yet. Runtime checkpoint4:40roles unchanged. No rollout/push/merge.
+
+Shared-clock source closure: strict clippy shared-clock-clippy1 PASS. Default-off
+shared-clock-default1: Kafka42/core20/Stream51/shared-clock4 PASS; same2 Kafka ignores
+(one broker fixture, one microbenchmark). Feature transport shared-clock-transport1:
+42PASS/0fail,1manual benchmark-server ignored. Counts overlap previous runs and must
+not be added into a distinct total. No feature-enabled image or full background
+acceptance yet. Parent reviewed default feature union fencing, expiration cancellation
+and transaction settlement; normalizer provider logic unchanged. Source commit follows;
+pinned bcb02833 overlay tests/build and integration continue, not a goal stopping point.
+Canonical/source/runtime/rollback map unchanged. Helpers --rm removed; active build
+cache/targets and the named N1 candidate/TEST images retained for ongoing packaging.
+No broad prune, push/merge or production restart. Disk available55127191552bytes at
+this source checkpoint; this is headroom, not cleanup reclaimed space.
