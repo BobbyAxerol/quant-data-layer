@@ -72335,3 +72335,14 @@ no build, CI or subagent job running.
     the runner checks WRITER_ACCOUNT_SCOPE_JSON first.
   - Offline: dr01 prepare compiles bindings equal to the sealed alpha bindings (B11 closed).
   - Tests: 75 OK.
+- startup:bounded root cause (2 of ~10 stage-100 runs): when the large-warmup lane is full, Query refuses at once
+  without retry_after_ms.
+  - The SDK then retries after 250/500 ms while the queue is still full, and one session uses up the frozen 10
+    driver attempts (~1,575 refusals over ~65 s for 60 large warmups; 10-11 log evidence).
+  - Fix (qdl/query/lanes.py ReadLaneAtCapacity; qdl/query/service.py): a full-queue refusal on the queued large
+    lane carries retry_after_ms 2000. The SDK honours 0..2000.
+  - Unchanged: messages and detail_sha256, REPLICA_LANE_BUSY (0), the 8 s wait expiry, the hot lane, the frozen
+    client budget.
+  - Model: 0/200 failing runs at service-time scale 0.8-1.2.
+  - Tests: 207 OK.
+  - Needs a Query image and a query_kn_1/2 roll, then stage-100 re-runs.

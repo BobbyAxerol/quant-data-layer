@@ -33,7 +33,13 @@ from qdl.query.contracts import (
 )
 from qdl.query.lifecycle import BarLifecycle
 from qdl.query.cold_work import await_in_thread, cold_yield
-from qdl.query.lanes import BoundedReadLane, ReadLaneBusy, ReadLanePolicy, ReadLaneRejected
+from qdl.query.lanes import (
+    BoundedReadLane,
+    ReadLaneAtCapacity,
+    ReadLaneBusy,
+    ReadLanePolicy,
+    ReadLaneRejected,
+)
 from qdl.query.entitlement import AccessPurpose, DataProduct, EntitlementPolicy
 from qdl.query.reference import (
     ReferenceBatchRequirement,
@@ -267,6 +273,10 @@ class _LocalBatchLaneBusy(_LocalBatchAdmissionRejected):
     """The large-warmup lane would queue a request that opted into redirect."""
 
 
+class _LocalBatchAtCapacity(_LocalBatchAdmissionRejected):
+    """A local batch lane's finite queue was full at admission; nothing queued."""
+
+
 # Typed reason for a large local warmup refused because this replica's
 # single-active large-warmup lane is busy and the client opted into redirect
 # (REST header ``X-QDL-Replica-Redirect: 1``). Replica-local admission only:
@@ -304,6 +314,18 @@ def _small_local_warmup_lane_policy() -> ReadLanePolicy:
 
 
 _QUEUED_LOCAL_BATCH_MAX_WAIT_MS = 8_000
+
+# Retry hint on an immediate capacity refusal of the queued large-warmup lane
+# (count, byte or class reserve full; never the queue-wait deadline, whose
+# request has already waited). A full queue moves only when its one active
+# warmup finishes - about 2.2 s per 2,500/5,000-row warmup at stage 100 - or a
+# waiter times out, yet a hint-less refusal made the SDK retry after 250/500
+# ms into the same full queue. Stage 100 (2026-10-11 19:53Z, s74): about 1,575
+# refusals in 65 s for 60 warmups; with immediate refusals the client's fixed
+# 10-attempt startup budget lasts about 25 s while the fleet needed about
+# 65 s (startup:bounded). 2,000 ms is the largest hint the SDK honours
+# (qdl_sdk ``_cold_read`` accepts 0..2000) and is about one warmup's service.
+_QUEUED_LOCAL_BATCH_RETRY_AFTER_MS = 2_000
 
 
 def _queued_local_batch_lane_policy() -> ReadLanePolicy:
@@ -406,6 +428,10 @@ class _LocalBatchAdmission:
             )
         except ReadLaneBusy as error:
             raise _LocalBatchLaneBusy(
+                f"local canonical-cache batch admission {error}"
+            ) from error
+        except ReadLaneAtCapacity as error:
+            raise _LocalBatchAtCapacity(
                 f"local canonical-cache batch admission {error}"
             ) from error
         except ReadLaneRejected as error:
@@ -1157,12 +1183,20 @@ class V2QueryService:
             except _LocalBatchAdmissionRejected as error:
                 # A bounded queued lane must fail typed before it can create
                 # cache work or borrow an external-provider budget.
+                retry_after_ms = (
+                    _QUEUED_LOCAL_BATCH_RETRY_AFTER_MS
+                    if isinstance(error, _LocalBatchAtCapacity)
+                    and getattr(self, "_queued_local_batch_lane", False)
+                    and admission is not getattr(self, "_small_local_warmup_admission", None)
+                    else None
+                )
                 prefetched_local_histories = {
                     requirement: QueryServiceError(
                         QueryProblem(
                             CanonicalErrorCode.RATE_LIMITED,
                             str(error),
                             True,
+                            retry_after_ms,
                         ),
                         request_id=request_id,
                         instrument_uid=requirement.instrument_uid,
