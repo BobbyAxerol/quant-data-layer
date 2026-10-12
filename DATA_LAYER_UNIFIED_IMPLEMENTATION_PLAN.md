@@ -72576,8 +72576,9 @@ Open:
 
 ### P18.4 capacity package step 1: core batch 2048, ingestor CPU, telemetry, A1, B1, raw_age split, bar edge per-binding publish - 2026-10-12
 
-Status: IMPLEMENTED / tested locally; not deployed; not committed. The bar_edge change (b) is outside the approved
-envelope.
+Status: IMPLEMENTED / tested locally (historical evidence below); committed as `98b421f`; not deployed.
+The bar_edge change (b) remains outside the approved rollout envelope. This dated status correction does not
+change the earlier test receipts. See [2026-10-12 takeover reconciliation](upgrade/evidence/p184-codex-n1-takeover-20261012.md).
 - Core batch: `STABLE_CORE_BATCH_SIZE = 2048` (qdl/runtime/stable_deployment.py); batch_wait_ms stays 25. The
   transactional producer queue is now 64 MiB / 32768 messages (`transactional_producer_config`, qdl-kafka lib.rs).
   Sizing comes from a 120 s public capture. Binance depth frames: 2.5 KiB mean, 16 KiB p99. A canonical BOOK record is
@@ -72615,3 +72616,70 @@ envelope.
   - Binance: 4.56 -> 2.43 us/frame;
   - OKX: 15.9 -> 3.2-3.5 us/frame;
   - output bytes are identical.
+
+
+### P18.4 DL-only N1 takeover documentation - 2026-10-12
+
+Status: DOCS_REVIEWED; runtime acceptance remains OPEN.
+The user approved takeover broadly; the parent delegated this slice to exactly three DL documents. The parent
+owns review/commit and TS N1. This delegated slice performs no runtime/tests/builds, tool changes or commit.
+Source/tool repair and versioned tools/tests are already authorized after this slice under the takeover; no new
+owner-approval gate is introduced. Runtime remains separately exact-packet scoped. Lock expiry alone is not
+permission to run a measurement in this task.
+
+Goal and guide: reconcile committed source with packet/receipt status and define the independent DL handoff in
+[focused takeover guide](upgrade/evidence/p184-codex-n1-takeover-20261012.md), governed by
+[architecture](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md) and
+[DR runtime runbook](upgrade/evidence/p184-dr-runtime-runbook.md). Scope is this plan, that guide and
+CERTIFICATION_LEDGER.md only. Invariants: preserve historical evidence, packet seals, source/runtime separation,
+V1 fallback, ordering/identity/durability, quotas and freshness gates. No TS, tool or deployed-config edit.
+Documentation rollback is removal of only this slice's exact diff after review, never a broad worktree reset.
+
+Reconciliation and dispositions:
+- FIXED IN DOCS: step 1 is committed at 98b421f798fca70e82188e30e8fbe4cc8bce5721, not an uncommitted draft.
+  Existing test/benchmark numbers are inherited reports, not runs by this takeover. rc17 Rust build was canceled;
+  no rc17 rollout. The packet still has RUST17, no seal sidecar and no execution receipts at the audited paths.
+- DOCUMENTED, OUTSIDE THIS DELEGATED SLICE: rc17 tool findings T1-T5 and explicit negative/control cases are in
+  the guide. Tool/packet bytes are unchanged. The parent has authorized source/tool repair and versioned tools/tests
+  after this slice under the takeover; no new owner approval is needed for that work. Tests: NOT_EXECUTED.
+  Runtime execution remains separately governed by its exact packet and rollback.
+- SUPERSEDES STALE CURRENT-STATUS WORDING ONLY: the earlier G13 runner entry's "no real G13 run yet" is historical.
+  v4.2 has 28/35 cells recorded closed; v4.3 has only the seven dr01-deployed cells pending. Even 35/35 here is not
+  the full 336-cell matrix. Source/image inheritance is not automatic after rc17 or N1; preserve failed receipts.
+- HELD: bar_edge per-binding publication is committed but excluded from rollout; baked acquisition/manifest
+  differences require separate scope and checkpoint compatibility disposition. No silent promotion via py rc17.
+- PROPOSED, NOT_EXECUTED: bounded 45-minute stall observation with a 60-minute hard deadline, transport-separated
+  clocks, explicit output/resource limits and fail-closed attribution. No assertion that mixed raw_age proves
+  a simultaneous WebSocket stall across six partitions. Observer acquisition needs its own coordinated window.
+- HELD: stage-100 acceptance needs the approved offline 6k/9k replay gate and writer trace coverage; the rc17
+  envelope excludes the writer recreate required to re-arm the expired trace. No-trace is diagnostic only.
+
+Verification boundary: only source/document reads, packet/receipt hashes, Git status/log/worktree inventory and
+scoped documentation diff/link checks. No application, integration, fault or load tests; no new PASS/FAIL/SKIP
+counts. Planned tool cases and observation checks in the guide are NOT_EXECUTED. apply_patch helper and shell variant
+were reported broken (mountinfo); owner permitted AGENTS32 exact-match Python fallback, restricted to these files.
+Verification results (documentation checks, not test acceptance):
+- `git diff --check`: exit 0, no whitespace findings.
+- `git diff -- DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md CERTIFICATION_LEDGER.md`: reviewed exact scope.
+- `git diff --no-index -- /dev/null upgrade/evidence/p184-codex-n1-takeover-20261012.md`: reviewed new guide;
+  exit 1 is the expected new-file difference, not a failed test.
+- `python3 -B` bounded documentation checker: all new relative links resolve, new text is ASCII with no trailing
+  whitespace; ledger HEAD prefix identical; plan HEAD prefix differs only by the exact status correction;
+  five protected tool/packet/seal/receipt SHA-256 values unchanged; exactly three dirty docs, empty Git index.
+
+Runtime/cleanup: zero mutations; no images, containers, caches, logs, namespaces, credentials or lock removed.
+No Docker/disk/restart probe was run. Canonical DL /home/bobby/data_layer main@5bf5cd5; active feature worktree
+/home/bobby/.worktrees/data-layer-p184-closure fix/p184-dl-closure@98b421f. Recorded role digests/config and named
+rollback artifacts are in the guide, not a fresh live inventory; release evidence stays under
+upgrade/evidence/releases/v2.2.3/. No worktree cleanup, staging, commit, push, merge or release.
+Next handoff: the parent owns review/staging/commit of this three-file diff. Source/tool repair and versioned
+tools/tests may follow under the existing takeover authorization; tests stay NOT_EXECUTED until begun. Later
+runtime/observation work remains separately exact-packet scoped. N1 source and final writer acceptance stay with main.
+
+Main review closeout (Codex, 2026-10-12): accepted the three-document handoff after scoped diff and
+`git diff --check` (exit 0). This docs slice is being committed as one transaction with BobbyAxerol identity;
+no push/merge, no executable tool change, no rollout or test-resource creation. The delegated audit's
+"no staging/commit" statements describe its handback, not a restriction on this main-reviewed commit.
+T1-T5 source/tool fixes remain permitted follow-up work; only runtime application retains its exact-packet gate.
+TS N1 integration proceeds independently on the existing TS feature branch. Historical support-worktree
+recommendations are superseded by the recorded owner capacity package, not a second implementation branch.

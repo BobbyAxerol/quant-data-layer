@@ -2172,3 +2172,31 @@ manifest/JWT11,bindingV3r23/64products; runtime10/r22. Fourinversefeeds addedonl
 topreparedartifacts, linearINDEX alreadyexists. Pairedruntimepreflight, DR01-08/
 brokerreceipts, releaseattestation/CI and approvedrollout remain gates. No new
 build/push/merge/tag or further runtime mutation. See mainplan for cleanup.
+
+
+### 2026-10-12 - DL takeover reconciliation; no new certification
+
+Status: DOCS_REVIEWED / RUNTIME_ACCEPTANCE_OPEN. This is a dated status reconciliation,
+not a replacement for historical certificates or permission to deploy. See the
+[focused takeover guide](upgrade/evidence/p184-codex-n1-takeover-20261012.md) and the main plan's
+"P18.4 DL-only N1 takeover documentation" entry. Older candidate/release statuses above remain historical.
+
+- Step-1 source is committed at 98b421f798fca70e82188e30e8fbe4cc8bce5721 on fix/p184-dl-closure. Earlier local
+  tests remain scoped to their recorded runs; none were repeated here. rc17 Rust build canceled, no rc17 rollout;
+  the incomplete packet is not execution or certification evidence. Tool repair is authorized under the takeover
+  but outside this delegated docs slice; proposed tests remain NOT_EXECUTED until testing begins.
+- G13 v4.2 receipt p184-g13-20261012T130309Z (summary sha256
+  e3663d6e1442707937fc43cb3d501257ea195599e696a2e2624e315e306082fd) records successful harness groups for
+  wrong-account, DR02/03 and DR07; the TS journal records 28/35 closed. dr01-deployed's seven cells remain pending
+  under v4.3. A successful subset rerun would yield 35/35 for those groups, not closure of the 336-cell matrix.
+- Retain all earlier failed/tainted receipts. No new final-image inheritance, release, shadow certification,
+  production readiness or production authority is asserted. Bar edge and trace-rearm scope gates remain open.
+- The bounded stall observation specification is NOT_EXECUTED. REST/non-WebSocket batching age must be separated
+  from WebSocket transit before attributing a periodic stall. No latency/capacity improvement is certified.
+
+The user approved takeover broadly; the parent delegated this slice to only the linked guide, Unified Plan and
+this ledger and owns review/commit. This slice performs no runtime/tests/builds, tool/packet changes, secrets,
+cleanup or Git staging/commit/push/merge. Authorized source/tool repair and versioned tools/tests may follow
+without a new owner-approval gate; runtime remains separately exact-packet scoped. Runtime provenance and
+rollback retention are recorded in the guide from existing packets, not re-probed; canonical DL main@5bf5cd5
+is unchanged.
