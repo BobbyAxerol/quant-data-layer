@@ -210,11 +210,16 @@ class C419FastFinalBarDeliveryTests(unittest.TestCase):
         edge._fetch_latest = fetch
         self.assertEqual(edge.run_cycle(), 4)
         self.assertEqual(peak, 2)
+        # One batch per binding, published as its read settles; each exactly once.
         published = [
-            json.loads(item.raw_frame_bytes)["binding_id"]
-            for item in edge.publisher.batches[0]
+            [json.loads(item.raw_frame_bytes)["binding_id"] for item in batch]
+            for batch in edge.publisher.batches
         ]
-        self.assertEqual(published, [item[0].binding_id for item in pairs])
+        self.assertTrue(all(len(batch) == 1 for batch in published))
+        self.assertEqual(
+            sorted(batch[0] for batch in published),
+            sorted(item[0].binding_id for item in pairs),
+        )
 
     def test_all_enabled_crypto_rest_bar_bindings_share_the_fast_policy(self):
         acquisition = yaml.safe_load(
@@ -241,6 +246,136 @@ class C419FastFinalBarDeliveryTests(unittest.TestCase):
         self.assertEqual(env["QDL_STABLE_BAR_RETRY_MAX_SECONDS"], "1.0")
         self.assertEqual(env["QDL_STABLE_BAR_MAX_CONCURRENT_REQUESTS"], "32")
 
+
+
+
+class _RecordingPublisher(_Publisher):
+    """Publisher double that logs every publish and can refuse one binding."""
+
+    def __init__(self, events: list, *, fail_binding: str | None = None,
+                 missing_ack_binding: str | None = None) -> None:
+        super().__init__()
+        self.events = events
+        self.fail_binding = fail_binding
+        self.missing_ack_binding = missing_ack_binding
+
+    def publish_many(self, values):
+        batch = tuple(values)
+        ids = [json.loads(item.raw_frame_bytes)["binding_id"] for item in batch]
+        self.events.append(("publish", tuple(ids)))
+        if self.fail_binding in ids:
+            raise RuntimeError("broker refused the record")
+        self.batches.append(batch)
+        if self.missing_ack_binding in ids:
+            return ()
+        return tuple(range(len(batch)))
+
+
+def _recording_edge(pairs, events, persisted, **publisher):
+    edge = _edge(*pairs, clock=lambda: 120.100)
+    edge.publisher = _RecordingPublisher(events, **publisher)
+
+    def persist():
+        snapshot = dict(edge._last_open_ms)
+        persisted.append(snapshot)
+        events.append(("persist", snapshot))
+
+    edge._persist_state = persist
+    return edge
+
+
+class PerBindingPublishTests(unittest.TestCase):
+    """The bar edge publishes each binding when its own read settles."""
+
+    def _pairs(self, *binding_ids):
+        return tuple(
+            (_source(binding_id), SimpleNamespace(runtime="BINANCE"))
+            for binding_id in binding_ids
+        )
+
+    def test_fast_binding_is_acked_and_persisted_before_the_slow_read_finishes(self):
+        events: list = []
+        persisted: list = []
+        pairs = self._pairs("binance-fast", "binance-slow")
+        edge = _recording_edge(pairs, events, persisted)
+        slow_may_finish = threading.Event()
+
+        def fetch(source, acquisition, *, observed_ms):
+            del observed_ms
+            if source.binding_id == "binance-slow":
+                # Settles only after the fast binding is durable.
+                self.assertTrue(slow_may_finish.wait(5))
+                events.append(("slow-read-done",))
+            return _Envelope(binding_id=source.binding_id,
+                             runtime=acquisition.runtime, open_ms=60_000)
+
+        real_persist = edge._persist_state
+
+        def persist():
+            real_persist()
+            slow_may_finish.set()
+
+        edge._persist_state = persist
+        edge._fetch_latest = fetch
+        self.assertEqual(edge.run_cycle(), 2)
+        kinds = [event[0] if event[0] != "publish" else ("publish", event[1]) for event in events]
+        self.assertEqual(kinds[0], ("publish", ("binance-fast",)))
+        self.assertEqual(kinds[1], "persist")
+        self.assertEqual(kinds[2], "slow-read-done")
+        self.assertEqual(kinds[3], ("publish", ("binance-slow",)))
+        self.assertEqual(kinds[4], "persist")
+        # ACK before persist, per binding: the first checkpoint holds only fast.
+        self.assertEqual(persisted[0]["binance-fast"], 60_000)
+        self.assertEqual(persisted[0]["binance-slow"], 0)
+        self.assertEqual(persisted[1]["binance-slow"], 60_000)
+
+    def test_publish_failure_mid_cycle_keeps_others_and_raises_after_the_cycle(self):
+        for failure in ({"fail_binding": "binance-b"}, {"missing_ack_binding": "binance-b"}):
+            with self.subTest(failure=failure):
+                events: list = []
+                persisted: list = []
+                pairs = self._pairs("binance-a", "binance-b", "binance-c")
+                edge = _recording_edge(pairs, events, persisted, **failure)
+                edge._fetch_latest = lambda source, acquisition, *, observed_ms: _Envelope(
+                    binding_id=source.binding_id, runtime=acquisition.runtime, open_ms=60_000)
+                with self.assertRaises(RuntimeError):
+                    edge.run_cycle()
+                self.assertEqual(edge._last_open_ms["binance-a"], 60_000)
+                self.assertEqual(edge._last_open_ms["binance-c"], 60_000)
+                self.assertEqual(edge._last_open_ms["binance-b"], 0)
+                self.assertEqual(persisted[-1], {"binance-a": 60_000, "binance-b": 0,
+                                                 "binance-c": 60_000})
+                self.assertTrue(all(snapshot["binance-b"] == 0 for snapshot in persisted))
+                # Every binding was offered exactly once in the cycle.
+                offered = sorted(event[1][0] for event in events if event[0] == "publish")
+                self.assertEqual(offered, ["binance-a", "binance-b", "binance-c"])
+
+    def test_restart_resumes_only_the_unacknowledged_binding_without_duplicates(self):
+        events: list = []
+        persisted: list = []
+        pairs = self._pairs("binance-a", "binance-b")
+        first = _recording_edge(pairs, events, persisted, fail_binding="binance-b")
+        fetch = lambda source, acquisition, *, observed_ms: _Envelope(
+            binding_id=source.binding_id, runtime=acquisition.runtime, open_ms=60_000)
+        first._fetch_latest = fetch
+        with self.assertRaises(RuntimeError):
+            first.run_cycle()
+        # A restarted edge loads the last persisted checkpoint.
+        events_after: list = []
+        restarted = _recording_edge(pairs, events_after, [])
+        restarted._last_open_ms = dict(persisted[-1])
+        restarted._fetch_latest = fetch
+        self.assertEqual(restarted.run_cycle(), 1)
+        self.assertEqual(
+            [event[1] for event in events_after if event[0] == "publish"],
+            [("binance-b",)],
+        )
+        self.assertEqual(restarted._last_open_ms, {"binance-a": 60_000, "binance-b": 60_000})
+        # A further cycle at the same instant publishes nothing again.
+        self.assertEqual(restarted.run_cycle(), 0)
+        self.assertEqual(
+            len([event for event in events_after if event[0] == "publish"]), 1
+        )
 
 if __name__ == "__main__":
     unittest.main()

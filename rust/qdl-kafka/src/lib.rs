@@ -42,6 +42,71 @@ const KAFKA_FETCH_MAX_BYTES: &str = "4194304";
 const KAFKA_MAX_PARTITION_FETCH_BYTES: &str = "1048576";
 const KAFKA_PRODUCER_QUEUE_MAX_MESSAGES: &str = "4096";
 
+/// Local producer queue of the realtime core's transactional producer.
+///
+/// One transaction enqueues a whole batch before it can commit, and since the
+/// core batch moved from 256 to 2048 records (P18.4 capacity step 1) the
+/// shared 8 MiB / 4096-message bound no longer holds one batch of L2 output.
+/// Sizing (2026-10-12, 120 s public capture): Binance USD-M `@depth@100ms`
+/// frames are 1.6 KiB p50, 2.5 KiB mean, 16 KiB p99, 38 KiB max; OKX `books`
+/// updates 0.9 KiB p50, 9 KiB p99. A canonical BOOK record carries the
+/// canonical payload (about the raw size again) plus the raw-envelope lineage
+/// header (the raw frame plus ~300 B), so about 2.2x raw + 0.7 KiB: 6.3 KiB at
+/// the Binance mean, 36 KiB at its p99. 2048 x 6.3 KiB = 12.6 MiB already
+/// exceeds 8 MiB, and `FutureProducer::send` then sleeps in 100 ms QueueFull
+/// retries inside the open transaction. 64 MiB holds 2048 records of 32 KiB,
+/// and the queue stays a bound, not a reservation: memory is used only by an
+/// actual batch (live core RSS 36-64 MiB under a 256 MiB limit). A batch above
+/// it still completes, by waiting, as before. Messages: 16 outputs per input
+/// bound OKX multi-row frames and materialized snapshots.
+const TRANSACTIONAL_PRODUCER_QUEUE_MAX_KBYTES: &str = "65536";
+const TRANSACTIONAL_PRODUCER_QUEUE_MAX_MESSAGES: &str = "32768";
+
+/// Explicit bounds of a producer's local librdkafka queue, for a producer that
+/// is shared by several publishers and must keep their aggregate bound.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProducerQueueBounds {
+    pub max_messages: u64,
+    pub max_kbytes: u64,
+}
+
+impl ProducerQueueBounds {
+    /// The default per-client bound (`KAFKA_PRODUCER_QUEUE_MAX_MESSAGES`,
+    /// `KAFKA_QUEUE_MAX_KBYTES`) times `publishers`: one producer serving
+    /// `publishers` lanes keeps the aggregate bound those lanes had with one
+    /// producer each. librdkafka caps both settings at i32::MAX.
+    pub fn scaled_default(publishers: usize) -> Result<Self, KafkaTransportError> {
+        let publishers = u64::try_from(publishers.max(1)).map_err(|_| {
+            KafkaTransportError::Configuration("producer publisher count overflow".into())
+        })?;
+        let messages: u64 = KAFKA_PRODUCER_QUEUE_MAX_MESSAGES
+            .parse()
+            .expect("constant producer queue messages");
+        let kbytes: u64 = KAFKA_QUEUE_MAX_KBYTES
+            .parse()
+            .expect("constant producer queue kbytes");
+        let bounds = Self {
+            max_messages: messages.saturating_mul(publishers),
+            max_kbytes: kbytes.saturating_mul(publishers),
+        };
+        if bounds.max_messages > i32::MAX as u64 || bounds.max_kbytes > i32::MAX as u64 {
+            return Err(KafkaTransportError::Configuration(
+                "producer queue bound exceeds the librdkafka maximum".into(),
+            ));
+        }
+        Ok(bounds)
+    }
+
+    fn apply(self, config: &mut ClientConfig) {
+        config
+            .set("queue.buffering.max.kbytes", self.max_kbytes.to_string())
+            .set(
+                "queue.buffering.max.messages",
+                self.max_messages.to_string(),
+            );
+    }
+}
+
 fn configure_bounded_client_memory(config: &mut ClientConfig) {
     config
         .set("queued.max.messages.kbytes", KAFKA_QUEUE_MAX_KBYTES)
@@ -272,6 +337,18 @@ impl FencedKafkaSink {
     pub fn new(config: &KafkaTransportConfig) -> Result<Self, KafkaTransportError> {
         Ok(Self {
             sink: KafkaDurableSink::new(config)?,
+            fence: std::sync::Mutex::new(AuthorityFence::default()),
+        })
+    }
+
+    /// A sink whose producer queue holds `bounds` instead of the per-client
+    /// default, for one producer shared by several publishers.
+    pub fn with_queue_bounds(
+        config: &KafkaTransportConfig,
+        bounds: ProducerQueueBounds,
+    ) -> Result<Self, KafkaTransportError> {
+        Ok(Self {
+            sink: KafkaDurableSink::with_queue_bounds(config, bounds)?,
             fence: std::sync::Mutex::new(AuthorityFence::default()),
         })
     }
@@ -608,21 +685,41 @@ pub struct KafkaDurableSink {
     producer: FutureProducer,
 }
 
+/// Idempotent, acks=all producer settings of [`KafkaDurableSink`].
+fn durable_producer_config(
+    config: &KafkaTransportConfig,
+    bounds: Option<ProducerQueueBounds>,
+) -> Result<ClientConfig, KafkaTransportError> {
+    let mut client = config.client_config()?;
+    client
+        .set("acks", "all")
+        .set("enable.idempotence", "true")
+        .set("max.in.flight.requests.per.connection", "5")
+        .set("retries", "2147483647")
+        .set("compression.type", "zstd")
+        .set(
+            "delivery.timeout.ms",
+            config.request_timeout.as_millis().to_string(),
+        );
+    if let Some(bounds) = bounds {
+        bounds.apply(&mut client);
+    }
+    Ok(client)
+}
+
 impl KafkaDurableSink {
     pub fn new(config: &KafkaTransportConfig) -> Result<Self, KafkaTransportError> {
-        let mut client = config.client_config()?;
-        client
-            .set("acks", "all")
-            .set("enable.idempotence", "true")
-            .set("max.in.flight.requests.per.connection", "5")
-            .set("retries", "2147483647")
-            .set("compression.type", "zstd")
-            .set(
-                "delivery.timeout.ms",
-                config.request_timeout.as_millis().to_string(),
-            );
         Ok(Self {
-            producer: client.create()?,
+            producer: durable_producer_config(config, None)?.create()?,
+        })
+    }
+
+    pub fn with_queue_bounds(
+        config: &KafkaTransportConfig,
+        bounds: ProducerQueueBounds,
+    ) -> Result<Self, KafkaTransportError> {
+        Ok(Self {
+            producer: durable_producer_config(config, Some(bounds))?.create()?,
         })
     }
 
@@ -991,6 +1088,40 @@ async fn execute_kafka_transaction(
     .await
 }
 
+/// Transactional producer settings of [`TransactionalKafkaBridge`]: the
+/// bounded client defaults, then the larger transactional queue bound.
+fn transactional_producer_config(
+    config: &KafkaTransportConfig,
+    transactional_id: &str,
+) -> Result<ClientConfig, KafkaTransportError> {
+    let mut producer_config = config.client_config()?;
+    producer_config
+        .set("transactional.id", transactional_id)
+        .set("enable.idempotence", "true")
+        .set("acks", "all")
+        .set("max.in.flight.requests.per.connection", "5")
+        .set("retries", "2147483647")
+        .set("compression.type", "zstd")
+        .set(
+            "transaction.timeout.ms",
+            config.request_timeout.as_millis().to_string(),
+        )
+        .set(
+            "delivery.timeout.ms",
+            config.request_timeout.as_millis().to_string(),
+        );
+    producer_config
+        .set(
+            "queue.buffering.max.kbytes",
+            TRANSACTIONAL_PRODUCER_QUEUE_MAX_KBYTES,
+        )
+        .set(
+            "queue.buffering.max.messages",
+            TRANSACTIONAL_PRODUCER_QUEUE_MAX_MESSAGES,
+        );
+    Ok(producer_config)
+}
+
 impl TransactionalKafkaBridge {
     pub fn new(
         config: &KafkaTransportConfig,
@@ -1013,22 +1144,7 @@ impl TransactionalKafkaBridge {
         let raw_topics: Vec<&str> = topics.raw_inputs.iter().map(String::as_str).collect();
         consumer.subscribe(&raw_topics)?;
 
-        let mut producer_config = config.client_config()?;
-        producer_config
-            .set("transactional.id", transactional_id)
-            .set("enable.idempotence", "true")
-            .set("acks", "all")
-            .set("max.in.flight.requests.per.connection", "5")
-            .set("retries", "2147483647")
-            .set("compression.type", "zstd")
-            .set(
-                "transaction.timeout.ms",
-                config.request_timeout.as_millis().to_string(),
-            )
-            .set(
-                "delivery.timeout.ms",
-                config.request_timeout.as_millis().to_string(),
-            );
+        let producer_config = transactional_producer_config(config, transactional_id)?;
         let producer: FutureProducer = producer_config.create()?;
         producer.init_transactions(Timeout::After(config.request_timeout))?;
         Ok(Self {
@@ -1453,6 +1569,10 @@ mod tests {
         KAFKA_MAX_PARTITION_FETCH_BYTES, KAFKA_PRODUCER_QUEUE_MAX_MESSAGES, KAFKA_QUEUE_MAX_KBYTES,
         RAW_ENVELOPE_HEADER,
     };
+    use super::{
+        durable_producer_config, transactional_producer_config, ProducerQueueBounds,
+        TRANSACTIONAL_PRODUCER_QUEUE_MAX_KBYTES, TRANSACTIONAL_PRODUCER_QUEUE_MAX_MESSAGES,
+    };
     use qdl_core::transport::RetryClass;
     use qdl_venue_core::authority::SinkTarget;
     use rdkafka::config::ClientConfig;
@@ -1508,6 +1628,93 @@ mod tests {
             client.get("queue.buffering.max.messages"),
             Some(KAFKA_PRODUCER_QUEUE_MAX_MESSAGES)
         );
+    }
+
+    fn config_with_tls_files(label: &str) -> (KafkaTransportConfig, std::path::PathBuf) {
+        let directory =
+            std::env::temp_dir().join(format!("qdl-kafka-config-{label}-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        for name in ["ca", "cert", "key"] {
+            std::fs::write(directory.join(name), b"not read by config tests").unwrap();
+        }
+        let path = |name: &str| directory.join(name).to_string_lossy().into_owned();
+        (
+            KafkaTransportConfig {
+                bootstrap_servers: "kafka:9092".into(),
+                client_id: "qdl-config-test".into(),
+                group_id: "qdl-config-test".into(),
+                request_timeout: Duration::from_secs(30),
+                tls: KafkaTlsConfig {
+                    ca_location: path("ca"),
+                    certificate_location: path("cert"),
+                    key_location: path("key"),
+                    key_password: None,
+                },
+            },
+            directory,
+        )
+    }
+
+    #[test]
+    fn transactional_producer_queue_holds_a_2048_record_l2_batch() {
+        let (config, directory) = config_with_tls_files("transactional");
+        let producer = transactional_producer_config(&config, "core-001").unwrap();
+        assert_eq!(producer.get("transactional.id"), Some("core-001"));
+        assert_eq!(producer.get("enable.idempotence"), Some("true"));
+        assert_eq!(producer.get("acks"), Some("all"));
+        assert_eq!(producer.get("compression.type"), Some("zstd"));
+        assert_eq!(producer.get("transaction.timeout.ms"), Some("30000"));
+        assert_eq!(
+            producer.get("queue.buffering.max.kbytes"),
+            Some(TRANSACTIONAL_PRODUCER_QUEUE_MAX_KBYTES)
+        );
+        assert_eq!(
+            producer.get("queue.buffering.max.messages"),
+            Some(TRANSACTIONAL_PRODUCER_QUEUE_MAX_MESSAGES)
+        );
+        // 2048 records at 32 KiB (Binance depth p99 ~36 KiB canonical) fit.
+        let kbytes: u64 = TRANSACTIONAL_PRODUCER_QUEUE_MAX_KBYTES.parse().unwrap();
+        assert!(kbytes >= 2048 * 32);
+        let messages: u64 = TRANSACTIONAL_PRODUCER_QUEUE_MAX_MESSAGES.parse().unwrap();
+        assert!(messages >= 2048 * 16);
+        // The consumer side keeps the shared bound.
+        assert_eq!(
+            producer.get("queued.max.messages.kbytes"),
+            Some(KAFKA_QUEUE_MAX_KBYTES)
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn shared_producer_queue_keeps_the_aggregate_per_lane_bound() {
+        let one = ProducerQueueBounds::scaled_default(1).unwrap();
+        assert_eq!(
+            one.max_messages,
+            KAFKA_PRODUCER_QUEUE_MAX_MESSAGES.parse::<u64>().unwrap()
+        );
+        assert_eq!(
+            one.max_kbytes,
+            KAFKA_QUEUE_MAX_KBYTES.parse::<u64>().unwrap()
+        );
+        assert_eq!(ProducerQueueBounds::scaled_default(0).unwrap(), one);
+        let twelve = ProducerQueueBounds::scaled_default(12).unwrap();
+        assert_eq!(twelve.max_messages, 12 * one.max_messages);
+        assert_eq!(twelve.max_kbytes, 12 * one.max_kbytes);
+        assert!(ProducerQueueBounds::scaled_default(1_000_000).is_err());
+
+        let (config, directory) = config_with_tls_files("durable");
+        let default = durable_producer_config(&config, None).unwrap();
+        assert_eq!(
+            default.get("queue.buffering.max.kbytes"),
+            Some(KAFKA_QUEUE_MAX_KBYTES)
+        );
+        let shared = durable_producer_config(&config, Some(twelve)).unwrap();
+        assert_eq!(shared.get("queue.buffering.max.kbytes"), Some("98304"));
+        assert_eq!(shared.get("queue.buffering.max.messages"), Some("49152"));
+        for key in ["acks", "enable.idempotence", "compression.type", "retries"] {
+            assert_eq!(shared.get(key), default.get(key), "{key}");
+        }
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

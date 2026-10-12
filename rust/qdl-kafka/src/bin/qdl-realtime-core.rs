@@ -6,7 +6,7 @@ use std::future::Future;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use prost::Message;
-use qdl_contracts::qdl::provider::v1::{QuarantineReason, RawProviderEnvelope};
+use qdl_contracts::qdl::provider::v1::{QuarantineReason, RawProviderEnvelope, TransportProtocol};
 use qdl_core::backoff::BackoffPolicy;
 use qdl_core::transport::{AppendResult, RetryClass};
 use qdl_kafka::{
@@ -264,9 +264,28 @@ struct Progress {
     collect_latency: SpanSummary,
     normalize_latency: SpanSummary,
     raw_age_by_partition: BTreeMap<(String, i32), SpanSummary>,
+    // raw_age split by how the frame was acquired. A REST bar edge stamps
+    // received_at_ns when a bar settles and then waits for its whole cycle
+    // before one publish, so its age is a batching wait, not upstream delay.
+    // Mixed into one summary it looked like a periodic stall on the partitions
+    // those bar keys hash to. WEBSOCKET is the realtime ingestor path; REST is
+    // every other transport (bar edges, REST book anchors). Additive fields:
+    // `raw_age_ms` keeps all frames.
+    raw_age_websocket: SpanSummary,
+    raw_age_rest: SpanSummary,
 }
 
 impl Progress {
+    /// Observe one frame's raw_age in the total and in its transport split.
+    fn observe_raw_age(&mut self, transport_protocol: i32, age_ns: i64) {
+        self.raw_age.observe(age_ns);
+        if transport_protocol == TransportProtocol::Websocket as i32 {
+            self.raw_age_websocket.observe(age_ns);
+        } else {
+            self.raw_age_rest.observe(age_ns);
+        }
+    }
+
     fn record_commit<T>(
         &mut self,
         committed: Option<CommittedTransaction<T>>,
@@ -298,6 +317,8 @@ impl Progress {
                     "scope_quarantines": self.scope_quarantines,
                     "batches": self.batches,
                     "raw_age_ms": self.raw_age.report(),
+                    "raw_age_websocket_ms": self.raw_age_websocket.report(),
+                    "raw_age_rest_ms": self.raw_age_rest.report(),
                     "commit_ms": self.commit_latency.report(),
                     "commit_wait_ms": self.commit_wait.report(),
                     "commit_hidden_ms": self.commit_hidden.report(),
@@ -309,6 +330,8 @@ impl Progress {
                 }))?
             );
             self.raw_age.reset();
+            self.raw_age_websocket.reset();
+            self.raw_age_rest.reset();
             self.commit_latency.reset();
             self.commit_wait.reset();
             self.commit_hidden.reset();
@@ -667,7 +690,7 @@ async fn serve_generation(
             // `received -> published = 0 ms`, which was two copies of one field
             // subtracting to zero, not a measurement.
             let age_ns = normalized_at_ns.saturating_sub(raw.received_at_ns);
-            progress.raw_age.observe(age_ns);
+            progress.observe_raw_age(raw.transport_protocol, age_ns);
             progress
                 .raw_age_by_partition
                 .entry((
@@ -975,6 +998,30 @@ mod tests {
             receive_batch_input(deadline, rx.recv()).await,
             Some(Some(42))
         );
+    }
+
+    #[test]
+    fn raw_age_is_split_by_transport_and_the_total_is_unchanged() {
+        let mut progress = Progress::default();
+        progress.observe_raw_age(TransportProtocol::Websocket as i32, 10_000_000);
+        progress.observe_raw_age(TransportProtocol::Websocket as i32, 30_000_000);
+        progress.observe_raw_age(TransportProtocol::Http as i32, 2_000_000_000);
+        progress.observe_raw_age(TransportProtocol::FileReplay as i32, 5_000_000);
+        assert_eq!(progress.raw_age.count, 4);
+        assert_eq!(progress.raw_age.max_ns, 2_000_000_000);
+        assert_eq!(progress.raw_age_websocket.count, 2);
+        assert_eq!(progress.raw_age_websocket.max_ns, 30_000_000);
+        assert_eq!(progress.raw_age_rest.count, 2);
+        assert_eq!(progress.raw_age_rest.max_ns, 2_000_000_000);
+        let committed = CommittedTransaction {
+            value: (),
+            inputs: 4,
+            commit_ns: 1,
+            wait_ns: 0,
+        };
+        progress.record_commit(Some(committed), 1, 1).unwrap();
+        assert_eq!(progress.raw_age_websocket.count, 0);
+        assert_eq!(progress.raw_age_rest.count, 0);
     }
 
     #[test]

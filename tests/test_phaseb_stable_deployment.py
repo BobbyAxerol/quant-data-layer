@@ -632,6 +632,18 @@ class StableDeploymentContractTests(unittest.TestCase):
         )
         self.assertEqual(current_native_count, previous_native_count + 2)
 
+    def test_core_transaction_batch_is_2048_records_with_unchanged_wait(self):
+        # P18.4 capacity step 1: one variable. Only the record cap moves; the
+        # 25 ms gather wait and the metrics cadence stay as before.
+        for worker_index in (1, 2, 3):
+            core = self.acquisition.core_config(
+                catalog=self.catalog, authority=self.authority,
+                worker_index=worker_index,
+            )
+            self.assertEqual(core["batch_size"], 2048)
+            self.assertEqual(core["batch_wait_ms"], 25)
+            self.assertEqual(core["metrics_every_batches"], 100)
+
     def test_core_bundle_uses_stable_identity_lineage_and_never_enables_public_writes(self):
         core = self.acquisition.core_config(
             catalog=self.catalog, authority=self.authority
@@ -881,21 +893,22 @@ class StableDeploymentContractTests(unittest.TestCase):
             binding_id: value * 3 for binding_id, value in previous_open.items()
         }
         edge._last_open_ms.update(previous_open)
-        expected_catchup = 2 * len(binding_pairs)
-        binance_history = [
-            (
-                Envelope("BINANCE", previous_open[source.binding_id] * 2),
-                Envelope("BINANCE", latest_open[source.binding_id]),
+        # Catch-up history is keyed by binding (subscription_id = source_id):
+        # bindings are now published as their reads settle, in completion order.
+        history = {
+            source.source_id: (
+                Envelope(acquisition.runtime, previous_open[source.binding_id] * 2),
+                Envelope(acquisition.runtime, latest_open[source.binding_id]),
             )
-            for source, _acquisition in edge.bindings
-        ]
-        okx_history = [
-            (
-                Envelope("OKX", previous_open[source.binding_id] * 2),
-                Envelope("OKX", latest_open[source.binding_id]),
-            )
-            for source, _acquisition in edge.okx_bindings
-        ]
+            for source, acquisition in binding_pairs
+        }
+
+        def binance_history(binding, **_kwargs):
+            return history[binding.subscription_id]
+
+        async def okx_history(binding, **_kwargs):
+            return history[binding.subscription_id]
+
         def fetch_latest(source, acquisition, *, observed_ms):
             del observed_ms
             return Envelope(
@@ -906,23 +919,28 @@ class StableDeploymentContractTests(unittest.TestCase):
         edge._fetch_latest = fetch_latest
         with patch(
             "qdl.runtime.stable_bar_edge.fetch_binance_history",
-            side_effect=binance_history * 2,
+            side_effect=binance_history,
         ), patch(
             "qdl.runtime.stable_bar_edge.fetch_okx_history",
-            new_callable=AsyncMock,
-            side_effect=okx_history * 2,
+            side_effect=okx_history,
         ), patch.object(edge, "_binding_is_due", return_value=True):
+            # The first publish fails: only that binding keeps its watermark;
+            # every other binding is ACKed and advanced in the same cycle, and
+            # the cycle still raises so the failure is counted.
             with self.assertRaisesRegex(RuntimeError, "injected Kafka ACK failure"):
                 edge.run_cycle()
-            self.assertEqual(
-                edge._last_open_ms,
-                previous_open,
-            )
-            self.assertEqual(edge.run_cycle(), expected_catchup)
+            failed = [
+                binding_id for binding_id, value in edge._last_open_ms.items()
+                if value != latest_open.get(binding_id, value)
+            ]
+            self.assertEqual(len(failed), 1)
+            self.assertEqual(edge._last_open_ms[failed[0]], previous_open[failed[0]])
+            # The next cycle publishes only the failed binding, complete.
+            self.assertEqual(edge.run_cycle(), 2)
 
         self.assertEqual(
             [len(batch) for batch in publisher.batches],
-            [expected_catchup, expected_catchup],
+            [2] * (len(binding_pairs) + 1),
         )
         self.assertEqual(
             edge._last_open_ms,

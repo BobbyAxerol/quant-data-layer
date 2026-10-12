@@ -72573,3 +72573,45 @@ Tests:
 Open:
 - the runner process itself still starts from the worktree (untracked files there are not checked);
 - arch-b's microbench window (10:40-10:50Z) overlapped two short test containers, so it is tainted. It was not a gate.
+
+### P18.4 capacity package step 1: core batch 2048, ingestor CPU, telemetry, A1, B1, raw_age split, bar edge per-binding publish - 2026-10-12
+
+Status: IMPLEMENTED / tested locally; not deployed; not committed. The bar_edge change (b) is outside the approved
+envelope.
+- Core batch: `STABLE_CORE_BATCH_SIZE = 2048` (qdl/runtime/stable_deployment.py); batch_wait_ms stays 25. The
+  transactional producer queue is now 64 MiB / 32768 messages (`transactional_producer_config`, qdl-kafka lib.rs).
+  Sizing comes from a 120 s public capture. Binance depth frames: 2.5 KiB mean, 16 KiB p99. A canonical BOOK record is
+  about 2.2x raw + 0.7 KiB, so 2048 records at the mean are about 12.6 MiB, more than the old 8 MiB bound.
+- Live configs are not regenerated. `scripts/migrate_core_batch_size.py` derives versioned copies of the three core
+  JSONs and changes only the `batch_size` token. It proves that the parsed objects are equal apart from that key.
+- Ingestor (qdl-native-raw-ingestor.rs):
+  - one producer per process, with its queue sized to the sum of the per-lane bounds;
+  - borrowed routing parses: `binance::route_subscribed` and `OkxRouting` (qdl-core json_probe.rs), proven equal to the
+    old Value parses on an edge-case corpus;
+  - shared `Arc<RawBinding>`, and frame bytes are moved instead of copied;
+  - the LIVE liveness fsync is no longer awaited on the lane task, and lineage and generation writes run on the
+    blocking pool.
+  - Both SHA-256 digests are kept: capture_id hashes (session, generation, receipt, frame), while raw_frame_sha256
+    hashes the frame only.
+- Ingestor telemetry: `qdl_native_raw_ingestor_progress` every 10 s. Per lane it reports frames/s, bytes,
+  enqueue/produce ms, inflight, read-gap max with its time, and last_frame_age.
+- Codex A1: the JSON serialization for the raw hash is lazy (canonical.rs `raw_payload_hash`). The golden test shows the
+  envelope bytes are equal to daa8841 for 19 fixtures x 2 contexts.
+- Codex B1: `set_nodelay(true)` on each accepted gateway socket before TLS (tls.rs `configure_accepted`). On error the
+  connection is dropped and logged.
+- Coordinator (a): core progress lines add `raw_age_websocket_ms` and `raw_age_rest_ms`, keyed by transport_protocol.
+  Every other field is unchanged.
+- Coordinator (b): binance_bar_edge publishes each binding as its read settles. Per binding the order stays ACK, then
+  checkpoint, then persist. A failed binding keeps its checkpoint; the others proceed; the cycle then raises.
+- Tests (rustc 1.82, --network none, --cpus 2): fmt and clippy -D warnings are clean.
+  - Passing suites: qdl-core 55, qdl-kafka lib 42 (2 ignored), ingestor 49, realtime-core bin 19, production-core 7,
+    realtime-core lib 56, projector lib 31, gateway lib 51, native_stream 42.
+  - Python: tests 72 + 60 OK; the final combined run is recorded in the handoff report.
+- Bench (isolated 3-broker mTLS cluster, core 1 vCPU, synthetic trade frames, tmpfs):
+  - 6-partition drain: b256 4352 rec/s; b2048 25916 rec/s on rc16; 27245 rec/s with the new binary.
+  - Paced, new binary: offered 12000 rec/s, committed 11377 rec/s, raw_age max 613 ms. arch-A's b256 run saturated at
+    8000 offered: 6935 rec/s committed, raw_age max 4982 ms. Exact-set verification: 780000 of 780000.
+- Ingestor CPU micro-bench on the captured frames, release build, 1 CPU:
+  - Binance: 4.56 -> 2.43 us/frame;
+  - OKX: 15.9 -> 3.2-3.5 us/frame;
+  - output bytes are identical.

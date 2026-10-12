@@ -135,6 +135,25 @@ fn canonical_json(raw: &Value) -> Result<Vec<u8>, String> {
     serde_json::to_vec(raw).map_err(|error| error.to_string())
 }
 
+/// The envelope's `raw_payload_hash`.
+///
+/// A live core supplies `raw_frame_sha256`, the SHA-256 of the exact provider
+/// bytes, already validated against the raw envelope
+/// (`qdl-provider-envelope` and `validate_shadow_context`); it is the hash.
+/// Only a context without it (fixtures, replay of pre-capture data) falls back
+/// to hashing the JSON serialization of the decoded payload. Serializing the
+/// payload is done in that fallback only: before Codex A1 every event
+/// serialized its whole raw DOM and then discarded the bytes whenever the
+/// provider hash was present. `serde_json::to_vec` of a `Value` cannot fail,
+/// so evaluating it lazily removes no error path.
+fn raw_payload_hash(fixture: &TradeFixture) -> Result<Vec<u8>, String> {
+    if fixture.context.raw_frame_sha256.is_empty() {
+        Ok(Sha256::digest(canonical_json(&fixture.raw)?).to_vec())
+    } else {
+        Ok(fixture.context.raw_frame_sha256.clone())
+    }
+}
+
 pub fn canonicalize_trade(fixture: &TradeFixture) -> Result<EventEnvelope, String> {
     match fixture.provider_kind.as_str() {
         "binance_usdm_trade" | "binance_usdm_agg_trade" | "binance_spot_trade" => {
@@ -223,7 +242,7 @@ fn base_envelope_with_discriminator(
 ) -> Result<EventEnvelope, String> {
     let context = &fixture.context;
     validate_shadow_context(context)?;
-    let raw_bytes = canonical_json(&fixture.raw)?;
+    let raw_payload_hash = raw_payload_hash(fixture)?;
     let mut event_identity = vec![
         b"2".as_slice(),
         context.venue.as_bytes(),
@@ -262,11 +281,7 @@ fn base_envelope_with_discriminator(
         normalizer_version: context.normalizer_version.clone(),
         adapter_version: context.adapter_version.clone(),
         quality_flags: vec![],
-        raw_payload_hash: if context.raw_frame_sha256.is_empty() {
-            Sha256::digest(raw_bytes).to_vec()
-        } else {
-            context.raw_frame_sha256.clone()
-        },
+        raw_payload_hash,
         correlation_id: context.correlation_id.clone(),
         config_revision: context.config_revision,
         source_session_id: context.source_session_id.clone(),
@@ -1095,7 +1110,7 @@ fn parse_positive_trade_decimal(source: &str, field: &str) -> Result<DecimalValu
 fn build_trade(fixture: &TradeFixture, trade: TradeInput) -> Result<EventEnvelope, String> {
     let context = &fixture.context;
     validate_shadow_context(context)?;
-    let raw_bytes = canonical_json(&fixture.raw)?;
+    let raw_payload_hash = raw_payload_hash(fixture)?;
     let schema_major = b"2";
     let event_id = deterministic_event_id(
         &[
@@ -1134,11 +1149,7 @@ fn build_trade(fixture: &TradeFixture, trade: TradeInput) -> Result<EventEnvelop
         normalizer_version: context.normalizer_version.clone(),
         adapter_version: context.adapter_version.clone(),
         quality_flags: vec![],
-        raw_payload_hash: if context.raw_frame_sha256.is_empty() {
-            Sha256::digest(raw_bytes).to_vec()
-        } else {
-            context.raw_frame_sha256.clone()
-        },
+        raw_payload_hash,
         correlation_id: context.correlation_id.clone(),
         config_revision: context.config_revision,
         source_session_id: context.source_session_id.clone(),
@@ -1206,6 +1217,266 @@ mod tests {
             ..Default::default()
         }
     }
+
+    /// Codex A1 golden. Envelope bytes for every phase2 fixture, with the
+    /// provider hash supplied (the live core) and without it (the JSON
+    /// fallback), equal the bytes produced before the serialization became
+    /// lazy. EXPECTED was generated from the pre-change source (daa8841).
+    fn a1_golden_digests() -> Vec<(String, String)> {
+        let names = [
+            "binance_spot_bar",
+            "binance_spot_bbo",
+            "binance_spot_rest_bar",
+            "binance_spot_trade",
+            "binance_usdm_bar",
+            "binance_usdm_bbo",
+            "binance_usdm_rest_bar",
+            "binance_usdm_trade",
+            "dnse_derivative_bar",
+            "dnse_derivative_trade",
+            "dnse_equity_bar",
+            "dnse_equity_trade",
+            "okx_bar",
+            "okx_bbo",
+            "okx_spot_bar",
+            "okx_spot_bbo",
+            "okx_spot_trade",
+            "okx_trade",
+            "vnstock_equity_bar",
+        ];
+        let mut digests = vec![];
+        for name in names {
+            let path = format!(
+                "{}/../../tests/fixtures/phase2/{name}.json",
+                env!("CARGO_MANIFEST_DIR")
+            );
+            let template: TradeFixture =
+                serde_json::from_slice(&std::fs::read(path).expect("read fixture"))
+                    .expect("decode fixture");
+            for supplied in [false, true] {
+                let mut fixture = template.clone();
+                if supplied {
+                    fixture.context.source_session_id = "a1-golden-session".into();
+                    fixture.context.raw_capture_id = vec![0xA1; 16];
+                    fixture.context.raw_frame_sha256 = vec![0x5A; 32];
+                } else {
+                    fixture.context.raw_frame_sha256.clear();
+                }
+                let outcome = match canonicalize_trade(&fixture) {
+                    Ok(envelope) => hex::encode(Sha256::digest(envelope.encode_to_vec())),
+                    Err(error) => format!("error:{error}"),
+                };
+                digests.push((
+                    format!("{name}/{}", if supplied { "supplied" } else { "fallback" }),
+                    outcome,
+                ));
+            }
+        }
+        digests
+    }
+
+    #[test]
+    fn a1_lazy_raw_hash_keeps_envelope_bytes_identical() {
+        let actual = a1_golden_digests();
+        if std::env::var_os("QDL_PRINT_A1_GOLDEN").is_some() {
+            for (name, digest) in &actual {
+                println!("A1GOLDEN (\"{name}\", \"{digest}\"),");
+            }
+        }
+        let expected: Vec<(String, String)> = A1_EXPECTED
+            .iter()
+            .map(|(name, digest)| ((*name).to_owned(), (*digest).to_owned()))
+            .collect();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn a1_supplied_hash_is_used_and_malformed_identity_is_still_refused() {
+        let path = format!(
+            "{}/../../tests/fixtures/phase2/binance_usdm_trade.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let mut fixture: TradeFixture =
+            serde_json::from_slice(&std::fs::read(path).expect("read fixture")).expect("decode");
+        fixture.context.source_session_id = "a1".into();
+        fixture.context.raw_capture_id = vec![1; 16];
+        fixture.context.raw_frame_sha256 = vec![2; 32];
+        let envelope = canonicalize_trade(&fixture).expect("valid");
+        assert_eq!(envelope.raw_payload_hash, vec![2; 32]);
+        fixture.context.raw_frame_sha256 = vec![2; 31];
+        assert_eq!(
+            canonicalize_trade(&fixture).expect_err("short hash"),
+            "exact-frame shadow context requires a 32-byte raw_frame_sha256"
+        );
+        fixture.context.raw_frame_sha256 = vec![2; 32];
+        fixture.context.raw_capture_id = vec![1; 15];
+        assert_eq!(
+            canonicalize_trade(&fixture).expect_err("short capture id"),
+            "exact-frame shadow context requires a 16-byte raw_capture_id"
+        );
+        fixture.context.source_session_id.clear();
+        fixture.context.raw_frame_sha256.clear();
+        let fallback = canonicalize_trade(&fixture).expect("fallback");
+        assert_eq!(
+            fallback.raw_payload_hash,
+            Sha256::digest(serde_json::to_vec(&fixture.raw).unwrap()).to_vec()
+        );
+    }
+
+    const A1_EXPECTED: &[(&str, &str)] = &[
+        (
+            "binance_spot_bar/fallback",
+            "da89d0f26c77dbeeeedd69697144fbb1d73c1add54c6efab1fe9c266f5eb8732",
+        ),
+        (
+            "binance_spot_bar/supplied",
+            "ef0b129ad5760d2a0e6bb0465e57108b8c2e50a8f68a812b38b6f8b104b6c0c2",
+        ),
+        (
+            "binance_spot_bbo/fallback",
+            "d62bc031c6faba2649962153c193c1de62a4e39b43413e6792f5f45407162b95",
+        ),
+        (
+            "binance_spot_bbo/supplied",
+            "d1ca95da7cf35cccfa03f46aaed4617cf252f997384d8b5b742630ed4ae1d261",
+        ),
+        (
+            "binance_spot_rest_bar/fallback",
+            "4c58305513f2f29a3210a60920f19f082289f59c54cb9050b4fdd94413117191",
+        ),
+        (
+            "binance_spot_rest_bar/supplied",
+            "48be3fdee4f91721d364000e7f601fda0ada7d1f15122919798f6995b2b244da",
+        ),
+        (
+            "binance_spot_trade/fallback",
+            "0ac78a07ad29aedbd43960be26159a4c308fae17d6becccaba52e4d14f505bf8",
+        ),
+        (
+            "binance_spot_trade/supplied",
+            "778538166e8b8a4946bb90b986f6a39376ff28e0e1d4bb4757cae91893b5b775",
+        ),
+        (
+            "binance_usdm_bar/fallback",
+            "b8651c2e4177858800431c308342d8098f3089692c9c43a7f501ae8addb49412",
+        ),
+        (
+            "binance_usdm_bar/supplied",
+            "1c72c42cad302adf674a9b7547bf90a78c3064bbf55710fe1af01eb1929190a6",
+        ),
+        (
+            "binance_usdm_bbo/fallback",
+            "13c774bb5e1f0c22bf8d729c29de055817e4785bfe23c070a2dcfea404b85ce5",
+        ),
+        (
+            "binance_usdm_bbo/supplied",
+            "ba64aac1b2f5e8443df7b39ee2eebd62a77c0bc5158b438181fa85334064a879",
+        ),
+        (
+            "binance_usdm_rest_bar/fallback",
+            "a42c335a04e6799a864859da65961f2174b5237331c871073ce072a91a223598",
+        ),
+        (
+            "binance_usdm_rest_bar/supplied",
+            "738c46f341c0ade3926b83512b14a8c8f07d6d31a399cc035d9b8baf411e78db",
+        ),
+        (
+            "binance_usdm_trade/fallback",
+            "85b6260dfcd725e64a9c25573d77daf3d6e49aef064720276f327f66f688a8fc",
+        ),
+        (
+            "binance_usdm_trade/supplied",
+            "3f8e34712a77ec121279c4b916f5f69dad9cb4a26e8d7bd0669315f887d4b2df",
+        ),
+        (
+            "dnse_derivative_bar/fallback",
+            "error:exact-frame shadow context requires a 32-byte raw_frame_sha256",
+        ),
+        (
+            "dnse_derivative_bar/supplied",
+            "0f694e3bf903f37f5717013f5a035326299862764fbe0e9c1c85059337ff1d64",
+        ),
+        (
+            "dnse_derivative_trade/fallback",
+            "error:exact-frame shadow context requires a 32-byte raw_frame_sha256",
+        ),
+        (
+            "dnse_derivative_trade/supplied",
+            "555a5fafb47cddaa603a29667e6b5a381ce4784be2c05f68e8b41d03f0d18fb4",
+        ),
+        (
+            "dnse_equity_bar/fallback",
+            "error:exact-frame shadow context requires a 32-byte raw_frame_sha256",
+        ),
+        (
+            "dnse_equity_bar/supplied",
+            "7891ec1721147e72cd72b8b861a06c67e056967318826c03b87f9a521bd35872",
+        ),
+        (
+            "dnse_equity_trade/fallback",
+            "error:exact-frame shadow context requires a 32-byte raw_frame_sha256",
+        ),
+        (
+            "dnse_equity_trade/supplied",
+            "cce7861860ab72b018d3cde05502cfc090b785d4f7e80ea1d40e07f11269015f",
+        ),
+        (
+            "okx_bar/fallback",
+            "61326a8310fb7ccd6280da65b3487bfa282c7b6948674bfe2914189f36e897de",
+        ),
+        (
+            "okx_bar/supplied",
+            "16f5ae46428b9e866a597039f025d66ddd5f96b24f37d6aed7cbdf7025d08f2f",
+        ),
+        (
+            "okx_bbo/fallback",
+            "8edea437e146185583a8cd611a834b986dd2fdc88e9c60cd5ca67826b80f56d0",
+        ),
+        (
+            "okx_bbo/supplied",
+            "2adf0d4d28b7a96f2dc79e3ffbb36309f52d97e3c0ad036c173c64fc0dbc15df",
+        ),
+        (
+            "okx_spot_bar/fallback",
+            "462500a8e41514d3e3cd134b7e6f439e750effaa698e1df46013c9e1c1e039c8",
+        ),
+        (
+            "okx_spot_bar/supplied",
+            "4889764062d42b228f95a559dd758baf0c3d71c16839e76cf8151a5c3fe7eb7a",
+        ),
+        (
+            "okx_spot_bbo/fallback",
+            "eff031027d2b8275dcb7fb839b3c6d76b0f3d00f17db95c22dd92c0813924ecd",
+        ),
+        (
+            "okx_spot_bbo/supplied",
+            "899bb6c2fcb0ac00cbecaa35ab98ee765cef52d61810d3249a70c3664fae40db",
+        ),
+        (
+            "okx_spot_trade/fallback",
+            "15b0b4ae7dcbdfecc2071611b0bc46ff2cbd24c869dcd21c28d7b68cc155c500",
+        ),
+        (
+            "okx_spot_trade/supplied",
+            "8135c578aed0efd34a99f73f030af895ed3f58771fcf899c7f9de97668b6fe3e",
+        ),
+        (
+            "okx_trade/fallback",
+            "824f114905498c82ad5dd2424e4af3a23ffe004e8a16a7f1efaecd65739cfef7",
+        ),
+        (
+            "okx_trade/supplied",
+            "deb8a5e9ce23783dd44d253169357a7ab6322c55af76378f6a3d7a8861af0aca",
+        ),
+        (
+            "vnstock_equity_bar/fallback",
+            "error:exact-frame shadow context requires a 32-byte raw_frame_sha256",
+        ),
+        (
+            "vnstock_equity_bar/supplied",
+            "1add9a1a3592bcfa61203d340f06dda42258b51f2975dfb48de8229cccac7867",
+        ),
+    ];
 
     #[test]
     fn non_positive_trade_price_and_quantity_fail_closed() {
