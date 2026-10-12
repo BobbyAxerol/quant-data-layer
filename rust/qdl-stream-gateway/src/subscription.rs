@@ -414,6 +414,7 @@ mod tests {
             }),
             envelope,
             shared_charge: None,
+            dispatched_wall_ns: 0,
         })
     }
 

@@ -3198,6 +3198,169 @@ fn b04_the_batch_limit_is_clamped_and_lossless_only() {
     }
 }
 
+fn wall_ns() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64
+}
+
+/// Every record of the next responses until `count` event records arrived,
+/// each with the test's wall clock when the response was read.
+async fn raw_records(stream: &mut Stream, count: usize) -> Vec<(query::StreamRecord, u64)> {
+    let mut out = Vec::new();
+    let events = |out: &Vec<(query::StreamRecord, u64)>| {
+        out.iter()
+            .filter(|(record, _)| {
+                matches!(
+                    record.payload,
+                    Some(query::stream_record::Payload::Event(_))
+                )
+            })
+            .count()
+    };
+    while events(&out) < count {
+        let response = tokio::time::timeout(Duration::from_secs(5), stream.0.next())
+            .await
+            .expect("a response in time")
+            .expect("stream open")
+            .expect("no status");
+        let read = wall_ns();
+        for record in response.record.into_iter().chain(response.records) {
+            out.push((record, read));
+        }
+    }
+    out
+}
+
+/// SDK 2.4.0 gateway clocks: every Subscribe event record carries its own
+/// hub dispatch, dequeue and transport send wall clocks, in that order and
+/// before the client read it; controls and Replay RPC records carry none; a
+/// replayed record has no hub dispatch. A client that stops reading shows up
+/// as dequeue -> send (the transport did not pull), queued records as
+/// dispatch -> dequeue.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn b05_subscribe_records_carry_gateway_dispatch_dequeue_and_send_clocks() {
+    let harness = Harness::new(Options::default());
+    let started = wall_ns();
+    let cursor = harness.log.append(0, TRADE_KEY, &trade(1));
+    let replayed = harness.log.append(0, TRADE_KEY, &trade(2));
+    harness.settle();
+    let mut stream = harness
+        .subscribe_batched("TRADE", None, cursor, 1_000, 64)
+        .await
+        .unwrap();
+    // REPLAYING, the replayed record, LIVE.
+    let head = raw_records(&mut stream, 1).await;
+    let mut controls = 0;
+    for (record, read) in &head {
+        match &record.payload {
+            Some(query::stream_record::Payload::Control(_)) => {
+                controls += 1;
+                assert_eq!(
+                    (
+                        record.gateway_dispatch_wall_ns,
+                        record.gateway_dequeue_wall_ns,
+                        record.gateway_send_wall_ns
+                    ),
+                    (0, 0, 0),
+                    "a control carries no gateway clock"
+                );
+            }
+            Some(query::stream_record::Payload::Event(_)) => {
+                assert_eq!(record.logical_offset, replayed as u64);
+                assert_eq!(record.gateway_dispatch_wall_ns, 0, "replay skips the hub");
+                assert!(record.gateway_dequeue_wall_ns >= started);
+                assert!(record.gateway_send_wall_ns >= record.gateway_dequeue_wall_ns);
+                assert!(*read >= record.gateway_send_wall_ns);
+            }
+            None => panic!("payload"),
+        }
+    }
+    assert_eq!(controls, 1, "REPLAYING before the replayed record");
+    assert!(stream.until_live().await.is_empty());
+    // A burst while the client does not read.
+    let burst_started = wall_ns();
+    for index in 0..300u64 {
+        harness.log.append(0, TRADE_KEY, &trade(10 + index));
+    }
+    harness.settle();
+    let pause = Duration::from_millis(300);
+    tokio::time::sleep(pause).await;
+    let resumed = wall_ns();
+    let records = raw_records(&mut stream, 300).await;
+    let mut previous_send = 0;
+    let mut previous_dequeue = 0;
+    let mut held_in_handoff = 0;
+    let mut held_in_queue = 0;
+    for (record, read) in &records {
+        let (dispatch, dequeue, send) = (
+            record.gateway_dispatch_wall_ns,
+            record.gateway_dequeue_wall_ns,
+            record.gateway_send_wall_ns,
+        );
+        assert!(
+            dispatch >= burst_started,
+            "{dispatch} live records pass the hub"
+        );
+        assert!(dequeue >= dispatch, "dequeue after dispatch");
+        assert!(send >= dequeue, "send after dequeue");
+        assert!(*read >= send, "the client reads after the send");
+        assert!(
+            send >= previous_send && dequeue >= previous_dequeue,
+            "in order"
+        );
+        previous_send = send;
+        previous_dequeue = dequeue;
+        // The transport only takes a response when the client reads.
+        assert!(
+            send >= resumed,
+            "nothing is sent while the client does not read"
+        );
+        if dequeue < resumed {
+            held_in_handoff += 1;
+        } else if dequeue - dispatch >= pause.as_nanos() as u64 / 2 {
+            held_in_queue += 1;
+        }
+    }
+    assert!(
+        held_in_handoff >= 1,
+        "a record waited in the handoff for the client"
+    );
+    assert!(
+        held_in_queue >= 1,
+        "records waited in the subscription queue"
+    );
+    // Every record once, in order, batched or not.
+    let offsets: Vec<u64> = records.iter().map(|(r, _)| r.logical_offset).collect();
+    assert_eq!(
+        offsets,
+        as_offsets(&harness.log.records_of(TRADE_KEY, replayed))
+    );
+    drop(stream);
+    harness.released().await;
+    // The Replay RPC is unchanged: no gateway clock.
+    let mut replay = harness.replay_rpc("TRADE", cursor, 10).await.unwrap();
+    let mut events = 0;
+    while let Ok(Some(item)) = tokio::time::timeout(Duration::from_secs(5), replay.next()).await {
+        let Ok(response) = item else { break };
+        let record = response.record.expect("record");
+        if let Some(query::stream_record::Payload::Event(_)) = record.payload {
+            events += 1;
+            assert_eq!(
+                (
+                    record.gateway_dispatch_wall_ns,
+                    record.gateway_dequeue_wall_ns,
+                    record.gateway_send_wall_ns
+                ),
+                (0, 0, 0)
+            );
+        }
+    }
+    assert!(events >= 1, "the replay returned records");
+    harness.baseline().await;
+}
+
 /// Process CPU (user + system) in milliseconds, from `/proc/self/stat`
 /// (clock ticks of 10 ms at the usual 100 Hz).
 fn process_cpu_ms() -> f64 {

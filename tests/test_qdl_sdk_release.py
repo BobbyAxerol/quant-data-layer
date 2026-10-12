@@ -41,11 +41,11 @@ class QdlSdkReleaseTests(unittest.TestCase):
                     expected = base64.urlsafe_b64encode(hashlib.sha256(payload).digest()).rstrip(b"=").decode()
                     self.assertEqual(encoded, "sha256=" + expected)
                     self.assertEqual(int(size), len(payload))
-                self.assertIn("qdl_sdk-2.3.0-py3-none-any.whl", archive.read("qdl_sdk/README.md").decode())
+                self.assertIn("qdl_sdk-2.4.0-py3-none-any.whl", archive.read("qdl_sdk/README.md").decode())
 
             release = json.loads(Path(first_result["manifest"]).read_text())
             self.assertFalse(release["contains_service_internals"])
-            self.assertEqual(release["version"], "2.3.0")
+            self.assertEqual(release["version"], "2.4.0")
             self.assertEqual(len(release["generated_contract_digest"]), 64)
             sbom = json.loads(Path(first_result["sbom"]).read_text())
             self.assertEqual(sbom["bomFormat"], "CycloneDX")

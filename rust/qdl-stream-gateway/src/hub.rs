@@ -73,6 +73,10 @@ pub struct LiveRecord {
     /// replay budget by their owner) and when the dispatch-time charge was
     /// refused: each subscriber then charges the full weight itself.
     pub shared_charge: Option<Charge>,
+    /// Gateway wall clock (Unix ns) when the live hub dispatched this record
+    /// to its subscriptions; 0 for replay/ring decodes (diagnostic only,
+    /// `StreamRecord.gateway_dispatch_wall_ns`, SDK 2.4.0).
+    pub dispatched_wall_ns: u64,
 }
 
 /// Empirical decoded-size allowance per payload byte: measured
@@ -96,14 +100,16 @@ impl LiveRecord {
 
     /// Decode without a shared charge (the caller accounts for it).
     pub fn decode(raw: SharedRecord) -> Result<Arc<Self>, String> {
-        Self::decode_charged(raw, None)
+        Self::decode_charged(raw, None, 0)
     }
 
     /// Decode once and charge the decoded copy to `budget` once, for every
     /// holder together. A refused charge leaves `shared_charge` empty.
+    /// `dispatched_wall_ns` is the live dispatch wall clock (0 = none).
     pub fn decode_charged(
         raw: SharedRecord,
         budget: Option<&Arc<ByteBudget>>,
+        dispatched_wall_ns: u64,
     ) -> Result<Arc<Self>, String> {
         let envelope = EventEnvelope::decode(raw.payload.as_slice())
             .map_err(|error| format!("canonical record failed to decode: {error}"))?;
@@ -112,6 +118,7 @@ impl LiveRecord {
             raw,
             envelope,
             shared_charge,
+            dispatched_wall_ns,
         }))
     }
 }
@@ -440,14 +447,14 @@ impl Hub {
             return;
         };
         let budget = self.live_budget.get();
-        match LiveRecord::decode_charged(record, budget) {
+        let at = now_ns();
+        match LiveRecord::decode_charged(record, budget, at.max(0) as u64) {
             Ok(live) => {
                 if budget.is_some() && live.shared_charge.is_none() {
                     self.metrics
                         .live_budget_refused
                         .fetch_add(1, Ordering::Relaxed);
                 }
-                let at = now_ns();
                 for subscriber in subscribers {
                     self.metrics.offers.fetch_add(1, Ordering::Relaxed);
                     subscriber.offer(&live, at);

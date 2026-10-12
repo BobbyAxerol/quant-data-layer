@@ -1,5 +1,23 @@
 # SDK Changelog
 
+## 2.4.0 (Subscribe gateway clocks)
+
+`StreamEvent` gains three optional diagnostic fields, `gateway_dispatch_wall_ns`,
+`gateway_dequeue_wall_ns` and `gateway_send_wall_ns` (int Unix ns or `None`),
+read from the additive protobuf fields `StreamRecord.gateway_dispatch_wall_ns = 3`,
+`gateway_dequeue_wall_ns = 4` and `gateway_send_wall_ns = 5`. A 2.4.0 stream
+gateway sets them on every Subscribe event record, each record of a batched
+response with its own dispatch and dequeue clocks: dispatch = the live hub
+queued the record for the subscription (0/`None` for replayed records), dequeue
+= the subscription task took it, send = the gRPC transport took the response
+from the gateway's bounded handoff to encode it. They split the Data Layer
+ingest -> SDK segment into hub backlog, subscription queue wait, transport
+pull (client flow control) and network + client buffers. Controls and Replay
+records carry none; an older gateway sends none (all `None`). The fields are
+not part of `StreamEvent` equality and are never delivery authority;
+positional construction `StreamEvent(offset, token, event)` is unchanged, and
+2.1.x-2.3.x clients ignore the new wire fields.
+
 ## 2.3.0 (batched Subscribe)
 
 `GrpcStreamTransport` asks the stream gateway for up to

@@ -72346,3 +72346,18 @@ no build, CI or subagent job running.
   - Model: 0/200 failing runs at service-time scale 0.8-1.2.
   - Tests: 207 OK.
   - Needs a Query image and a query_kn_1/2 roll, then stage-100 re-runs.
+- Phase E capacity step 1: gateway clocks on Subscribe records (additive, SDK 2.4.0). The goal is to split the G2
+  burst tail between DL backlog and writer pull backpressure.
+  - StreamRecord fields 3/4/5 (uint64 Unix ns):
+    - gateway_dispatch_wall_ns: hub to subscription queue;
+    - gateway_dequeue_wall_ns: subscription task;
+    - gateway_send_wall_ns: tonic took the response.
+  - Controls and Replay carry 0; the SDK maps 0 to None.
+  - scripts/p184_trace_feed_transit.py splits ingest_to_sdk into ingest->dispatch, dispatch->dequeue,
+    dequeue->send and send->SDK when present.
+  - Tests:
+    - buf format, lint and breaking PASS vs both frozen baselines and HEAD;
+    - Rust fmt, clippy and cargo test (lib 50, native_stream 42 incl. b05);
+    - Python 744 OK.
+  - Note: `buf generate` used the repo's remote buf.build plugins, so the proto source left the host, as it did for
+    4c779ac. Future generation should use local plugins only.

@@ -119,6 +119,37 @@ class TransitTests(unittest.TestCase):
             self.assertEqual(set(records[0]) - set(transit.FIELDS), set())
             self.assertEqual(files[0]["stop_reason"], "EXPIRY")
 
+    def test_gateway_clocks_split_ingest_to_sdk_when_present(self):
+        # ingest = event+20 ms = 20; SDK return = start-5 = 95.
+        full = dict(row("TRADE", "OKX:SWAP:BTC-USDT-SWAP", 100, 0, 120, event_id="1" * 64),
+                    gateway_dispatch_wall_ns=T0 + 30 * MS, gateway_dequeue_wall_ns=T0 + 35 * MS,
+                    gateway_send_wall_ns=T0 + 85 * MS)
+        send_only = dict(row("TRADE", "OKX:SWAP:BTC-USDT-SWAP", 200, 100, 220, event_id="2" * 64),
+                         gateway_dispatch_wall_ns="NOT_MEASURED", gateway_dequeue_wall_ns="NOT_MEASURED",
+                         gateway_send_wall_ns=T0 + 190 * MS)
+        absent = row("TRADE", "OKX:SWAP:BTC-USDT-SWAP", 300, 200, 320, event_id="3" * 64)
+        disordered = dict(row("TRADE", "OKX:SWAP:BTC-USDT-SWAP", 400, 300, 420, event_id="4" * 64),
+                          gateway_send_wall_ns=T0 + 399 * MS)  # after the SDK return (395)
+        block = transit.summarise([full, send_only, absent, disordered], skip_seconds=0)["transit"]["TRADE|OKX"]
+        self.assertEqual(block["n"], 4)
+        self.assertEqual(block["gateway_split"], {"measured": 2, "not_measured": 1, "out_of_order": 1})
+        split = block["split"]
+        self.assertEqual(split["ingest_to_sdk_ms"]["n"], 4, "the unsplit segment keeps every record")
+        self.assertEqual(split["ingest_to_gateway_send_ms"]["n"], 2)
+        self.assertEqual(split["ingest_to_gateway_send_ms"]["max"], 70.0)  # 190 - 120; the other 85 - 20 = 65
+        self.assertEqual(split["gateway_send_to_sdk_ms"]["max"], 10.0)     # 95 - 85; the other 195 - 190 = 5
+        # Only the fully stamped record splits the gateway part further.
+        self.assertEqual(split["ingest_to_gateway_dispatch_ms"]["n"], 1)
+        self.assertEqual(split["ingest_to_gateway_dispatch_ms"]["max"], 10.0)
+        self.assertEqual(split["gateway_dispatch_to_dequeue_ms"]["max"], 5.0)
+        self.assertEqual(split["gateway_dequeue_to_send_ms"]["max"], 50.0)
+
+    def test_records_without_gateway_clocks_keep_the_previous_split(self):
+        block = transit.summarise([row("TRADE", "OKX:SWAP:BTC-USDT-SWAP", 100, 0, 120, event_id="5" * 64)],
+                                  skip_seconds=0)["transit"]["TRADE|OKX"]
+        self.assertEqual(set(block["split"]), {"venue_to_ingest_ms", "ingest_to_sdk_ms", "sdk_to_reply_ms"})
+        self.assertEqual(block["gateway_split"], {"measured": 0, "not_measured": 1, "out_of_order": 0})
+
 
 if __name__ == "__main__":
     unittest.main()

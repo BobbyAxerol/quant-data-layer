@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import Annotated, Any, Literal
@@ -969,6 +969,17 @@ class StreamEvent:
     logical_offset: int
     resume_token: str
     event: Any
+    # SDK 2.4.0, diagnostics only (never delivery authority): stream gateway
+    # wall clocks in Unix ns (gateway host clock) from the record's
+    # `gateway_*_wall_ns` fields. None when the gateway did not set them (an
+    # older gateway, a Replay record, or no live hub dispatch for a replayed
+    # record). dispatch = the live hub handed the record to the subscription
+    # queue; dequeue = the subscription task took it; send = the gRPC
+    # transport took its response from the gateway handoff. Not part of
+    # equality: the same record delivered twice is the same event.
+    gateway_dispatch_wall_ns: int | None = field(default=None, compare=False)
+    gateway_dequeue_wall_ns: int | None = field(default=None, compare=False)
+    gateway_send_wall_ns: int | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         # Kafka offset 0 is a valid canonical record (cursor v3 contract,

@@ -54,6 +54,9 @@ pub const MAX_RECORDS_PER_RESPONSE: usize = 256;
 /// below the 4 MiB default receive limit of gRPC clients. A single record is
 /// always sent whatever its size, as before batching.
 pub const MAX_BATCH_BYTES: usize = 1 << 20;
+/// Encoded upper bound of the three gateway clocks a Subscribe event record
+/// carries (SDK 2.4.0): 3 x (1-byte tag + 10-byte varint).
+const TIMING_BYTES: usize = 33;
 
 /// Records one response may carry for this request: 1 (the pre-2.3.0 shape)
 /// unless the client asked for more and the feed is lossless. Latest-state
@@ -305,6 +308,7 @@ fn control(state: i32, code: &str, detail: &str, high: i64, token: &str) -> quer
                 high_watermark: high.max(0) as u64,
             },
         )),
+        ..Default::default()
     }
 }
 
@@ -534,7 +538,9 @@ impl MarketDataStreamService for Gateway {
         tokio::spawn(task.run(registration.barrier, ring));
         Ok(Response::new(Box::pin(
             ReceiverStream::new(receiver)
-                .map(|(item, _charge)| item)
+                // tonic polls here when it encodes the next message, i.e.
+                // when HTTP/2 can take more: the per-record send stamp.
+                .map(|(item, _charge)| item.map(stamp_send))
                 // Drain the bounded handoff in order, then emit the terminal
                 // status even if a stalled receiver outlived the producer task.
                 .chain(tokio_stream::once(()).map(move |_| {
@@ -808,7 +814,48 @@ fn event_record(record: &LiveRecord, token: String) -> query::StreamRecord {
         payload: Some(query::stream_record::Payload::Event(
             record.envelope.clone(),
         )),
+        ..Default::default()
     }
+}
+
+/// A Subscribe event record with the gateway clocks known when it is built
+/// (SDK 2.4.0, diagnostic only): the hub dispatch (0 for replayed records)
+/// and the moment this task took it. The send clock is set by
+/// [`stamp_send`] when the transport takes the response.
+fn subscribe_event_record(
+    record: &LiveRecord,
+    token: String,
+    dequeued_wall_ns: u64,
+) -> query::StreamRecord {
+    query::StreamRecord {
+        gateway_dispatch_wall_ns: record.dispatched_wall_ns,
+        gateway_dequeue_wall_ns: dequeued_wall_ns,
+        ..event_record(record, token)
+    }
+}
+
+/// Stamp every event record of a Subscribe response with the moment the
+/// transport takes it from the bounded handoff (`gateway_send_wall_ns`).
+/// Controls stay unstamped. One clock read per response; records of a batch
+/// leave together, so they share it.
+fn stamp_send(mut response: query::SubscribeResponse) -> query::SubscribeResponse {
+    let now = now_ns();
+    let is_event = |record: &query::StreamRecord| {
+        matches!(
+            record.payload,
+            Some(query::stream_record::Payload::Event(_))
+        )
+    };
+    for record in response
+        .record
+        .iter_mut()
+        .chain(response.records.iter_mut())
+    {
+        if is_event(record) {
+            record.gateway_send_wall_ns = now;
+        }
+    }
+    response
 }
 
 /// Typed outcome of a replay that did not simply complete.
@@ -1180,7 +1227,7 @@ impl SubscriptionTask {
             }
         };
         let response = query::SubscribeResponse {
-            record: Some(event_record(record, token)),
+            record: Some(subscribe_event_record(record, token, now_ns())),
             records: Vec::new(),
         };
         match self.send(response, charge).await {
@@ -1318,6 +1365,7 @@ impl SubscriptionTask {
         let mut item = Some(first);
         while let Some((record, enqueued, charge)) = item.take() {
             let taken = Instant::now();
+            let taken_wall = now_ns();
             self.state
                 .metrics
                 .queue_wait
@@ -1356,14 +1404,14 @@ impl SubscriptionTask {
                             return false;
                         }
                     };
-                    let bytes = record.raw.payload.len() + token.len() + 32;
+                    let bytes = record.raw.payload.len() + token.len() + 32 + TIMING_BYTES;
                     let full = !batch.records.is_empty() && batch.bytes + bytes > MAX_BATCH_BYTES;
                     if full && !self.flush(&mut batch, last).await {
                         return false;
                     }
                     batch.started.get_or_insert(taken);
                     batch.push(
-                        event_record(&record, token),
+                        subscribe_event_record(&record, token, taken_wall),
                         record.raw.offset,
                         bytes,
                         charge,

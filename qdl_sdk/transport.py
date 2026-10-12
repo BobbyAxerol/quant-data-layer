@@ -592,10 +592,14 @@ class GrpcStreamTransport:
                                 {"high_watermark": record.control.high_watermark},
                             )
                         elif payload == "event":
+                            # Gateway clocks (2.4.0): 0 means not set.
                             yield StreamEvent(
                                 record.logical_offset,
                                 record.resume_token,
                                 record.event,
+                                record.gateway_dispatch_wall_ns or None,
+                                record.gateway_dequeue_wall_ns or None,
+                                record.gateway_send_wall_ns or None,
                             )
                 return
             except grpc.aio.AioRpcError as error:

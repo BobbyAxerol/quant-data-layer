@@ -127,6 +127,25 @@ pub struct StreamRecord {
     pub logical_offset: u64,
     #[prost(string, tag="2")]
     pub resume_token: ::prost::alloc::string::String,
+    /// Additive (SDK 2.4.0): stream gateway wall clocks (Unix ns, the gateway
+    /// host clock) for one event record of a Subscribe response, diagnostics
+    /// only, never delivery authority. 0 (absent) = not measured: controls,
+    /// Replay responses, and any gateway without the fields. Each record of a
+    /// batched response carries its own values.
+    /// When the replica's live hub handed the record to this subscription's
+    /// queue. 0 for committed replay records (they never pass the live hub).
+    #[prost(uint64, tag="3")]
+    pub gateway_dispatch_wall_ns: u64,
+    /// When this subscription's task took the record from its queue (live) or
+    /// from the replay source and built the response for it.
+    #[prost(uint64, tag="4")]
+    pub gateway_dequeue_wall_ns: u64,
+    /// When the gRPC transport took the response carrying the record from the
+    /// gateway's bounded handoff, to encode it for HTTP/2. A gap from dequeue to
+    /// send is time the transport did not pull (client flow control); a gap
+    /// from send to the client's receive is the network plus client buffers.
+    #[prost(uint64, tag="5")]
+    pub gateway_send_wall_ns: u64,
     #[prost(oneof="stream_record::Payload", tags="10, 11")]
     pub payload: ::core::option::Option<stream_record::Payload>,
 }

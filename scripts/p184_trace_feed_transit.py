@@ -23,6 +23,14 @@ Definitions:
   envelope_received_at_ns - source_event_time_ns (ingestor receive; the envelope's received/normalized/published
   stamps are one ingest clock, not a Kafka commit), ingest_to_sdk = sdk_receive_wall_ns - envelope_received_at_ns
   (Data Layer pipeline + Stream + SDK), sdk_to_reply = redis_reply_wall_ns - sdk_receive_wall_ns (TS writer);
+* gateway split of ingest_to_sdk (attribution only, SDK 2.4.0 gateway clocks, records that carry them): the trace's
+  gateway_send_wall_ns (the Stream gateway's gRPC transport took the record's response) splits it into
+  ingest_to_gateway_send (Data Layer pipeline + gateway queues) and gateway_send_to_sdk (HTTP/2 + network + client
+  buffers + SDK, i.e. the TS writer not pulling); with gateway_dispatch_wall_ns and gateway_dequeue_wall_ns also
+  present, ingest_to_gateway_send splits again into ingest_to_gateway_dispatch (Kafka/projection up to the gateway
+  hub), gateway_dispatch_to_dequeue (subscription queue wait) and gateway_dequeue_to_send (handoff wait: the transport
+  did not pull). Records without the clocks (NOT_MEASURED, an older gateway or writer) are counted under
+  gateway_split.not_measured, never given a substitute; clocks out of order are counted under out_of_order;
 * G7 segments use the process monotonic clocks of the same worker: sdk_to_writer = writer_started_monotonic_ns -
   sdk_receive_monotonic_ns; writer_to_redis = redis_reply_monotonic_ns - writer_started_monotonic_ns, over every record
   with a Redis reply (any outcome). TRADE/QUOTE rows of one atomic APPLY batch share the batch start as writer entry.
@@ -58,7 +66,27 @@ STREAM_BASIS = "SDK_STREAM_RETURN"
 # Keys summarise() reads; loading only these keeps a full campaign (~250 parts x 4096 records) in memory.
 FIELDS = ("feed", "canonical_instrument_id", "outcome", "sdk_receive_basis", "sdk_receive_monotonic_ns",
           "writer_started_monotonic_ns", "redis_reply_monotonic_ns", "writer_started_wall_ns", "redis_reply_wall_ns",
-          "source_event_time_ns", "event_id_sha256", "envelope_received_at_ns", "sdk_receive_wall_ns")
+          "source_event_time_ns", "event_id_sha256", "envelope_received_at_ns", "sdk_receive_wall_ns",
+          "gateway_dispatch_wall_ns", "gateway_dequeue_wall_ns", "gateway_send_wall_ns")
+
+
+def gateway_split(r, ingest, sdk_wall):
+    """(status, {segment: ms}) for the gateway split of ingest_to_sdk; status MEASURED, NOT_MEASURED or
+    OUT_OF_ORDER. The dispatch/dequeue segments are added only when both of those clocks are present too."""
+    send = as_int(r.get("gateway_send_wall_ns"))
+    if send is None:
+        return "NOT_MEASURED", {}
+    if not ingest <= send <= sdk_wall:
+        return "OUT_OF_ORDER", {}
+    parts = {"ingest_to_gateway_send_ms": (send - ingest) / 1e6, "gateway_send_to_sdk_ms": (sdk_wall - send) / 1e6}
+    dispatch, dequeue = as_int(r.get("gateway_dispatch_wall_ns")), as_int(r.get("gateway_dequeue_wall_ns"))
+    if dispatch is not None and dequeue is not None:
+        if not ingest <= dispatch <= dequeue <= send:
+            return "OUT_OF_ORDER", {}
+        parts.update(ingest_to_gateway_dispatch_ms=(dispatch - ingest) / 1e6,
+                     gateway_dispatch_to_dequeue_ms=(dequeue - dispatch) / 1e6,
+                     gateway_dequeue_to_send_ms=(send - dequeue) / 1e6)
+    return "MEASURED", parts
 
 
 def transit_verdict(block, gate):
@@ -83,6 +111,7 @@ def summarise(records, *, skip_seconds=40.0, from_ns=None, to_ns=None):
     invalid = collections.Counter()
     transit = collections.defaultdict(list)
     split = collections.defaultdict(lambda: collections.defaultdict(list))
+    coverage = collections.defaultdict(collections.Counter)
     segments = collections.defaultdict(lambda: collections.defaultdict(list))
     seen = set()
     duplicates = collections.Counter()
@@ -139,6 +168,10 @@ def summarise(records, *, skip_seconds=40.0, from_ns=None, to_ns=None):
             parts["venue_to_ingest_ms"].append((ingest - event_time) / 1e6)
             parts["ingest_to_sdk_ms"].append((sdk_wall - ingest) / 1e6)
             parts["sdk_to_reply_ms"].append((reply_wall - sdk_wall) / 1e6)
+            status, gateway = gateway_split(r, ingest, sdk_wall)
+            coverage[f"{feed}|{venue}"][status.lower()] += 1
+            for name, value in gateway.items():
+                parts[name].append(value)
         else:
             invalid[(feed, venue, "split_unavailable")] += 1
     result = {"window": {"from_ns": lower, "to_ns": upper, "seconds": round((upper - lower) / 1e9, 1)},
@@ -148,6 +181,7 @@ def summarise(records, *, skip_seconds=40.0, from_ns=None, to_ns=None):
         block = quantiles(transit[key])
         block["verdict"] = transit_verdict(block, TRANSIT_GATES[feed])
         block["split"] = {name: quantiles(values) for name, values in sorted(split[key].items())}
+        block["gateway_split"] = {name: coverage[key][name] for name in ("measured", "not_measured", "out_of_order")}
         result["transit"][key] = block
     for key in sorted(segments):
         block = {name: quantiles(values) for name, values in sorted(segments[key].items())}
