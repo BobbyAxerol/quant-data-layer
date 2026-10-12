@@ -7,10 +7,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use prost::Message;
 use qdl_contracts::qdl::provider::v1::{QuarantineReason, RawProviderEnvelope};
 use qdl_core::backoff::BackoffPolicy;
-use qdl_core::transport::RetryClass;
+use qdl_core::transport::{AppendResult, RetryClass};
 use qdl_kafka::{
-    shutdown_signal, KafkaTlsConfig, KafkaTransportConfig, KafkaTransportError,
-    TransactionalKafkaBridge, TransactionalKafkaOutput, TransactionalShadowTopics,
+    shutdown_signal, CommittedTransaction, KafkaTlsConfig, KafkaTransportConfig,
+    KafkaTransportError, TransactionPipeline, TransactionalKafkaBridge, TransactionalKafkaOutput,
+    TransactionalShadowTopics,
 };
 use qdl_realtime_core::{
     provider_admission_server::ProviderAdmissionServer, CoreError, RealtimeCore, RealtimeCoreConfig,
@@ -227,6 +228,99 @@ async fn receive_batch_input<T>(
     tokio::time::timeout_at(deadline, next).await.ok()
 }
 
+/// Everything the progress and stopped lines report for one generation.
+///
+/// Normalization counters (canonical, quarantines, raw age, ...) advance when a
+/// batch is normalized, as before IDR-094. `processed`, `batches` and the
+/// commit spans advance only when that batch's transaction has committed, so
+/// `processed` never counts input whose offsets are not durable.
+#[derive(Default)]
+struct Progress {
+    processed: u64,
+    canonical: u64,
+    quarantines: u64,
+    duplicates: u64,
+    filtered: u64,
+    // A bare `filtered` total hid an entire feed on 2026-09-18: every Binance
+    // book frame was answered `IgnoredStaleGeneration` and the only visible
+    // symptom was this counter rising slightly. Breaking it down by outcome
+    // makes a feed that stops readable from the progress line alone.
+    filtered_by_outcome: BTreeMap<&'static str, u64>,
+    ignored_out_of_scope: u64,
+    scope_quarantines: u64,
+    batches: u64,
+    // R1.29. Two spans this loop can see and nothing else can: how old a frame
+    // is when the core first reads it, and how long its transactional commit
+    // takes. Reported on the progress line and reset with it, so each line
+    // describes its own interval rather than all of history.
+    raw_age: SpanSummary,
+    commit_latency: SpanSummary,
+    // IDR-094. How long the loop actually stalled on the previous batch's
+    // commit, and how much of that commit ran behind the next batch's
+    // read + normalize. `commit_ms ~= commit_wait_ms + commit_hidden_ms`.
+    commit_wait: SpanSummary,
+    commit_hidden: SpanSummary,
+    collect_latency: SpanSummary,
+    normalize_latency: SpanSummary,
+    raw_age_by_partition: BTreeMap<(String, i32), SpanSummary>,
+}
+
+impl Progress {
+    fn record_commit<T>(
+        &mut self,
+        committed: Option<CommittedTransaction<T>>,
+        generation: u64,
+        metrics_every_batches: u64,
+    ) -> Result<(), RuntimeError> {
+        let Some(committed) = committed else {
+            return Ok(());
+        };
+        self.commit_latency.observe(committed.commit_ns);
+        self.commit_wait.observe(committed.wait_ns);
+        self.commit_hidden
+            .observe(committed.commit_ns.saturating_sub(committed.wait_ns));
+        self.processed += committed.inputs;
+        self.batches += 1;
+        if self.batches % metrics_every_batches == 0 {
+            println!(
+                "{}",
+                serde_json::to_string(&json!({
+                    "event": "qdl_realtime_core_progress",
+                    "generation": generation,
+                    "processed": self.processed,
+                    "canonical": self.canonical,
+                    "quarantines": self.quarantines,
+                    "duplicates": self.duplicates,
+                    "filtered": self.filtered,
+                    "filtered_by_outcome": self.filtered_by_outcome,
+                    "ignored_out_of_scope": self.ignored_out_of_scope,
+                    "scope_quarantines": self.scope_quarantines,
+                    "batches": self.batches,
+                    "raw_age_ms": self.raw_age.report(),
+                    "commit_ms": self.commit_latency.report(),
+                    "commit_wait_ms": self.commit_wait.report(),
+                    "commit_hidden_ms": self.commit_hidden.report(),
+                    "collect_ms": self.collect_latency.report(),
+                    "normalize_ms": self.normalize_latency.report(),
+                    "raw_age_by_partition_ms": self.raw_age_by_partition.iter().map(|((topic, partition), age)| {
+                        json!({"topic": topic, "partition": partition, "age": age.report()})
+                    }).collect::<Vec<_>>(),
+                }))?
+            );
+            self.raw_age.reset();
+            self.commit_latency.reset();
+            self.commit_wait.reset();
+            self.commit_hidden.reset();
+            self.collect_latency.reset();
+            self.normalize_latency.reset();
+            self.raw_age_by_partition.clear();
+        }
+        Ok(())
+    }
+}
+
+type CommitPipeline = TransactionPipeline<Vec<AppendResult>>;
+
 async fn run_generation(
     config: &RuntimeConfig,
     generation: u64,
@@ -234,7 +328,8 @@ async fn run_generation(
 ) -> Result<(), RuntimeError> {
     let mut core = RealtimeCore::new(config.core.clone())?;
     let approved_subscriptions = approved_subscription_scope(config);
-    let (canonical_target, quarantine_target) = output_targets(config.authority.mode)?;
+    // Refuse a non-shared authority before any Kafka client exists, as before.
+    output_targets(config.authority.mode)?;
     let bridge = TransactionalKafkaBridge::new(
         &kafka_config()?,
         TransactionalShadowTopics {
@@ -254,44 +349,107 @@ async fn run_generation(
             "bindings": config.core.bindings.len(),
             "approved_subscriptions": approved_subscriptions.len(),
             "batch_size": config.batch_size,
+            "commit_pipeline_depth": 1,
             "public_writes": 0,
             "legacy_writes": 0,
         }))?
     );
 
-    let mut processed = 0_u64;
-    let mut canonical = 0_u64;
-    let mut quarantines = 0_u64;
-    let mut duplicates = 0_u64;
-    let mut filtered = 0_u64;
-    // A bare `filtered` total hid an entire feed on 2026-09-18: every Binance
-    // book frame was answered `IgnoredStaleGeneration` and the only visible
-    // symptom was this counter rising slightly. Breaking it down by outcome
-    // makes a feed that stops readable from the progress line alone.
-    let mut filtered_by_outcome: BTreeMap<&'static str, u64> = BTreeMap::new();
-    // R1.29. Two spans this loop can see and nothing else can: how old a frame
-    // is when the core first reads it, and how long its transactional commit
-    // takes. Reported on the progress line and reset with it, so each line
-    // describes its own interval rather than all of history.
-    let mut raw_age = SpanSummary::default();
-    let mut commit_latency = SpanSummary::default();
-    let mut collect_latency = SpanSummary::default();
-    let mut normalize_latency = SpanSummary::default();
-    let mut raw_age_by_partition: BTreeMap<(String, i32), SpanSummary> = BTreeMap::new();
-    let mut ignored_out_of_scope = 0_u64;
-    let mut scope_quarantines = 0_u64;
-    let mut batches = 0_u64;
+    let mut progress = Progress::default();
+    let mut pipeline = CommitPipeline::new();
+    let served = serve_generation(
+        config,
+        generation,
+        backoff,
+        &mut core,
+        &approved_subscriptions,
+        &bridge,
+        &mut pipeline,
+        &mut progress,
+    )
+    .await;
+    // IDR-094. Whatever ended the loop, the batch already handed to Kafka is
+    // settled here - committed or aborted - before this generation returns,
+    // so no transaction outlives its generation or races the next producer.
+    let drained = pipeline.complete().await;
+    let stop_reason = match (served, drained) {
+        (Ok(reason), Ok(committed)) => {
+            progress.record_commit(committed, generation, config.metrics_every_batches)?;
+            reason
+        }
+        (Ok(_), Err(error)) => return Err(error.into()),
+        (Err(error), drained) => {
+            if let Err(commit_error) = drained {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&json!({
+                        "event": "qdl_realtime_core_inflight_commit_failed",
+                        "generation": generation,
+                        "error": commit_error.to_string(),
+                    }))?
+                );
+            }
+            return Err(error);
+        }
+    };
+    bridge.unsubscribe();
+    println!(
+        "{}",
+        serde_json::to_string(&json!({
+            "event": "qdl_realtime_core_stopped",
+            "generation": generation,
+            "processed": progress.processed,
+            "canonical": progress.canonical,
+            "quarantines": progress.quarantines,
+            "duplicates": progress.duplicates,
+            "filtered": progress.filtered,
+            "ignored_out_of_scope": progress.ignored_out_of_scope,
+            "scope_quarantines": progress.scope_quarantines,
+            "batches": progress.batches,
+            "reason": stop_reason,
+        }))?
+    );
+    Ok(())
+}
+
+/// The consume-normalize-commit loop of one generation. Returns the stop
+/// reason; the caller settles the transaction still in `pipeline`.
+///
+/// IDR-094. Before this, each batch was read, normalized and then committed
+/// with nothing read while the commit was in flight. Now batch N's
+/// transaction runs on its own task while batch N+1 is read and normalized;
+/// N+1's transaction is prepared only after N committed and carries only
+/// N+1's own input offsets, so there is still one open transaction per
+/// producer and the exactly-once boundary is unchanged.
+#[allow(clippy::too_many_arguments)]
+async fn serve_generation(
+    config: &RuntimeConfig,
+    generation: u64,
+    backoff: &BackoffPolicy,
+    core: &mut RealtimeCore,
+    approved_subscriptions: &HashSet<String>,
+    bridge: &TransactionalKafkaBridge,
+    pipeline: &mut CommitPipeline,
+    progress: &mut Progress,
+) -> Result<&'static str, RuntimeError> {
+    let (canonical_target, quarantine_target) = output_targets(config.authority.mode)?;
     let mut receive_failures = 0_u32;
     let shutdown = shutdown_signal();
     tokio::pin!(shutdown);
     let stop_reason = 'service: loop {
-        if config.max_events > 0 && processed >= config.max_events {
+        let submitted = progress.processed + pipeline.in_flight_inputs();
+        if config.max_events > 0 && submitted >= config.max_events {
             break 'service "MAX_EVENTS";
         }
         let first = loop {
             let received = tokio::select! {
                 result = bridge.next() => result,
                 result = &mut shutdown => break 'service result?.as_str(),
+                // Idle input must not hide a finished (or failed) commit.
+                committed = pipeline.complete(), if pipeline.is_in_flight() => {
+                    progress.record_commit(committed?, generation, config.metrics_every_batches)?;
+                    continue;
+                }
             };
             match received {
                 Ok(input) => {
@@ -327,7 +485,7 @@ async fn run_generation(
         let batch_deadline = collect_started + Duration::from_millis(config.batch_wait_ms);
         let mut inputs = vec![first];
         while inputs.len() < config.batch_size
-            && (config.max_events == 0 || processed + (inputs.len() as u64) < config.max_events)
+            && (config.max_events == 0 || submitted + (inputs.len() as u64) < config.max_events)
         {
             let received = tokio::select! {
                 biased;
@@ -360,12 +518,18 @@ async fn run_generation(
             }
         }
 
-        collect_latency.observe(collect_started.elapsed().as_nanos().min(i64::MAX as u128) as i64);
+        progress
+            .collect_latency
+            .observe(collect_started.elapsed().as_nanos().min(i64::MAX as u128) as i64);
         let normalize_started = tokio::time::Instant::now();
         let normalized_at_ns = now_ns()?;
         let mut outputs = vec![];
-        for input in &inputs {
+        for input in &mut inputs {
             let raw = RawProviderEnvelope::decode(input.record.payload.as_slice())?;
+            // The commit needs only the input cursor. The raw bytes move into
+            // the lineage header of this input's canonical output instead of
+            // being copied there (IDR-094); the header itself is unchanged.
+            let mut raw_payload = Some(std::mem::take(&mut input.record.payload));
             // R1.29. How old a frame already is when this core first sees it:
             // the ingestor's produce, Kafka, and this consume. It is reported
             // rather than written into the envelope, because a canonical record
@@ -376,17 +540,18 @@ async fn run_generation(
             // `received -> published = 0 ms`, which was two copies of one field
             // subtracting to zero, not a measurement.
             let age_ns = normalized_at_ns.saturating_sub(raw.received_at_ns);
-            raw_age.observe(age_ns);
-            raw_age_by_partition
+            progress.raw_age.observe(age_ns);
+            progress
+                .raw_age_by_partition
                 .entry((
                     input.cursor.stream.clone(),
                     input.cursor.transport_partition,
                 ))
                 .or_default()
                 .observe(age_ns);
-            let mut result = if !is_approved_subscription(&raw, &approved_subscriptions) {
+            let mut result = if !is_approved_subscription(&raw, approved_subscriptions) {
                 if config.strict_subscription_scope {
-                    scope_quarantines = scope_quarantines.saturating_add(1);
+                    progress.scope_quarantines = progress.scope_quarantines.saturating_add(1);
                     core.quarantine_raw(
                         &raw,
                         QuarantineReason::FencingRejected,
@@ -394,12 +559,12 @@ async fn run_generation(
                         normalized_at_ns,
                     )
                 } else {
-                    ignored_out_of_scope = ignored_out_of_scope.saturating_add(1);
+                    progress.ignored_out_of_scope = progress.ignored_out_of_scope.saturating_add(1);
                     continue;
                 }
             } else if raw.authority_revision != config.authority.revision {
                 if config.strict_subscription_scope {
-                    scope_quarantines = scope_quarantines.saturating_add(1);
+                    progress.scope_quarantines = progress.scope_quarantines.saturating_add(1);
                     core.quarantine_raw(
                         &raw,
                         QuarantineReason::FencingRejected,
@@ -420,28 +585,29 @@ async fn run_generation(
                         let Some((reason, summary)) = strict_quarantine_reason(&error) else {
                             return Err(error.into());
                         };
-                        scope_quarantines = scope_quarantines.saturating_add(1);
+                        progress.scope_quarantines = progress.scope_quarantines.saturating_add(1);
                         core.quarantine_raw(&raw, reason, summary, normalized_at_ns)
                     }
                     Err(error) => return Err(error.into()),
                 }
             };
             if config.book_resync_quarantine
-                && is_approved_subscription(&raw, &approved_subscriptions)
+                && is_approved_subscription(&raw, approved_subscriptions)
                 && raw.authority_revision == config.authority.revision
             {
                 if let Some(request) = core.l2_resnapshot_request(&raw, normalized_at_ns) {
                     result.quarantines.push(request);
                 }
             }
-            canonical += result.canonical.len() as u64;
-            quarantines += result.quarantines.len() as u64;
-            duplicates += result.duplicates as u64;
-            filtered += result.filtered as u64;
+            progress.canonical += result.canonical.len() as u64;
+            progress.quarantines += result.quarantines.len() as u64;
+            progress.duplicates += result.duplicates as u64;
+            progress.filtered += result.filtered as u64;
             if let Some(outcome) = result.filtered_outcome {
-                *filtered_by_outcome.entry(outcome).or_insert(0) += result.filtered as u64;
+                *progress.filtered_by_outcome.entry(outcome).or_insert(0) += result.filtered as u64;
             }
-            for record in result.canonical {
+            let canonical_outputs = result.canonical.len();
+            for (index, record) in result.canonical.into_iter().enumerate() {
                 outputs.push(TransactionalKafkaOutput {
                     record,
                     publication: PublicationContext {
@@ -451,7 +617,11 @@ async fn run_generation(
                         lease_epoch: raw.lease_epoch,
                         target: canonical_target,
                     },
-                    raw_provider_envelope: Some(input.record.payload.clone()),
+                    raw_provider_envelope: if index + 1 == canonical_outputs {
+                        raw_payload.take()
+                    } else {
+                        raw_payload.clone()
+                    },
                 });
             }
             for record in result.quarantines {
@@ -468,62 +638,18 @@ async fn run_generation(
                 });
             }
         }
-        normalize_latency
+        progress
+            .normalize_latency
             .observe(normalize_started.elapsed().as_nanos().min(i64::MAX as u128) as i64);
-        let commit_started_ns = now_ns()?;
-        bridge.commit(&inputs, &outputs).await?;
-        commit_latency.observe(now_ns()?.saturating_sub(commit_started_ns));
-        processed += inputs.len() as u64;
-        batches += 1;
-        if batches % config.metrics_every_batches == 0 {
-            println!(
-                "{}",
-                serde_json::to_string(&json!({
-                    "event": "qdl_realtime_core_progress",
-                    "generation": generation,
-                    "processed": processed,
-                    "canonical": canonical,
-                    "quarantines": quarantines,
-                    "duplicates": duplicates,
-                    "filtered": filtered,
-                    "filtered_by_outcome": filtered_by_outcome,
-                    "ignored_out_of_scope": ignored_out_of_scope,
-                    "scope_quarantines": scope_quarantines,
-                    "batches": batches,
-                    "raw_age_ms": raw_age.report(),
-                    "commit_ms": commit_latency.report(),
-                    "collect_ms": collect_latency.report(),
-                    "normalize_ms": normalize_latency.report(),
-                    "raw_age_by_partition_ms": raw_age_by_partition.iter().map(|((topic, partition), age)| {
-                        json!({"topic": topic, "partition": partition, "age": age.report()})
-                    }).collect::<Vec<_>>(),
-                }))?
-            );
-            raw_age.reset();
-            commit_latency.reset();
-            collect_latency.reset();
-            normalize_latency.reset();
-            raw_age_by_partition.clear();
-        }
+        // Batch N must have committed before batch N+1 is fence-checked and
+        // begun: one open transaction per producer, batches in order.
+        let previous = pipeline.complete().await?;
+        progress.record_commit(previous, generation, config.metrics_every_batches)?;
+        let transaction = bridge.prepare_commit(&inputs, outputs).await?;
+        let previous = pipeline.submit(inputs.len() as u64, transaction).await?;
+        progress.record_commit(previous, generation, config.metrics_every_batches)?;
     };
-    bridge.unsubscribe();
-    println!(
-        "{}",
-        serde_json::to_string(&json!({
-            "event": "qdl_realtime_core_stopped",
-            "generation": generation,
-            "processed": processed,
-            "canonical": canonical,
-            "quarantines": quarantines,
-            "duplicates": duplicates,
-            "filtered": filtered,
-            "ignored_out_of_scope": ignored_out_of_scope,
-            "scope_quarantines": scope_quarantines,
-            "batches": batches,
-            "reason": stop_reason,
-        }))?
-    );
-    Ok(())
+    Ok(stop_reason)
 }
 
 #[tokio::main]
@@ -656,6 +782,36 @@ mod tests {
             receive_batch_input(deadline, rx.recv()).await,
             Some(Some(42))
         );
+    }
+
+    #[test]
+    fn processed_advances_only_when_a_transaction_commits() {
+        let mut progress = Progress::default();
+        progress.raw_age.observe(5);
+        progress
+            .record_commit::<()>(None, 1, 2)
+            .expect("no commit is a no-op");
+        assert_eq!((progress.processed, progress.batches), (0, 0));
+        let committed = |inputs| CommittedTransaction {
+            value: (),
+            inputs,
+            commit_ns: 30_000_000,
+            wait_ns: 10_000_000,
+        };
+        progress.record_commit(Some(committed(256)), 1, 2).unwrap();
+        assert_eq!((progress.processed, progress.batches), (256, 1));
+        assert_eq!(progress.commit_hidden.max_ns, 20_000_000);
+        assert_eq!(
+            progress.raw_age.count, 1,
+            "spans survive until a progress line"
+        );
+        progress.record_commit(Some(committed(10)), 1, 2).unwrap();
+        assert_eq!((progress.processed, progress.batches), (266, 2));
+        assert_eq!(
+            progress.raw_age.count, 0,
+            "progress line resets its interval"
+        );
+        assert_eq!(progress.commit_wait.count, 0);
     }
 
     #[test]

@@ -72385,3 +72385,41 @@ Status: IMPLEMENTED / tested locally; not deployed.
   - OKX, the writer (trading-system.paper r11), kafka, rust_core, projector, ingestor, stable_redis and the catalog
     are untouched;
   - rollback: the D3 reader rollback composes (realm r15, bundle bce26969, query rc14 08f356a8) and JWT rev 15.
+
+### P18.4 rust_core pipelined transaction commit (IDR-094) - 2026-10-12
+
+Status: IMPLEMENTED / tested locally; not deployed.
+
+Problem. `qdl-realtime-core` was stop-and-wait: normalize up to 256 records, then wait for the full Kafka
+transaction to commit before reading the next batch. In the stage-100 campaign p184-final-campaign-20261012T062754Z,
+core-1 owned partitions p1+p4, which hold BTCUSDT@trade and ETHUSDT@trade. During bursts its raw_age reached 1.4-1.9 s
+while it used at most 0.33/1.0 vCPU with no throttling.
+
+Change.
+- Batch N+1 is collected and normalized while batch N's transaction commits (`TransactionPipeline`, at most one
+  transaction in flight).
+- N+1 begins only after N has committed, and carries only its own input offsets, so exactly-once is unchanged.
+- Blocking rdkafka transaction calls run under spawn_blocking.
+- Error semantics are unchanged: begin failure returns without an abort; a failure in the body aborts and returns the
+  original error.
+- After a failed commit, the next batch is never started (fail closed).
+- The raw provider-envelope header is kept, because the projector reads it for lineage. Its bytes are now moved, not
+  cloned.
+- New progress fields: commit_wait_ms, commit_hidden_ms, commit_pipeline_depth.
+
+Tests (rustc 1.82, --network none):
+- fmt and clippy -D warnings are clean for qdl-kafka and qdl-realtime-core.
+- qdl-kafka lib: 32 passed, 2 ignored.
+- Core bin: 11 passed. Native-raw-ingestor: 44 passed. Production-core: 7 passed. Realtime-core lib: 56 passed.
+- 8 new tests cover ordering, overlap, fail-closed, cancel safety, panic propagation and the state-machine parity.
+- Benchmark (256-record batch, 235 us per record normalize, 85 ms commit): 1748 -> 2867 rec/s (1.64x) at both 1 and
+  2 vCPU.
+
+Not yet exercised against a real broker: abort, fencing and generation restart. Before the live rollout, run the
+ignored broker test on the isolated readiness Kafka.
+
+Rollout, pending owner approval:
+- Recreate only rust_core, rust_core_2 and rust_core_3 on a new qdl-v2-rust image.
+- Ingestors, projectors and stream gateways stay on rc14 ce629061.
+- Rollback: rust_core x3 back to ce629061. Transactional ids are unchanged, so init_transactions fences the other
+  producer.

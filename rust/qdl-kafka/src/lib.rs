@@ -4,11 +4,13 @@ pub mod phase92_bootstrap;
 pub mod phase92_runtime;
 
 use std::fmt::{Display, Formatter};
+use std::future::Future;
 use std::io;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::future::try_join_all;
+use futures_util::future::{try_join_all, BoxFuture};
 use qdl_core::transport::{AppendResult, Cursor, DurableRecord, RetryClass};
 use qdl_venue_core::authority::{
     AuthorityFence, AuthorityRecord, Phase92AcceptedHandoff, Phase92AuthorityFence,
@@ -729,10 +731,137 @@ fn transactional_output_headers(
 /// binds these private streams to either shadow or primary publication targets.
 pub struct TransactionalKafkaBridge {
     producer: FutureProducer,
-    consumer: StreamConsumer,
-    fence: tokio::sync::Mutex<AuthorityFence>,
+    consumer: Arc<StreamConsumer>,
+    fence: Arc<tokio::sync::Mutex<AuthorityFence>>,
     topics: TransactionalShadowTopics,
     request_timeout: Duration,
+}
+
+/// A transaction whose inputs and outputs passed topic and authority fencing
+/// but which has not begun. Awaiting it runs begin, send, send-offsets and
+/// commit (or abort) once; dropping it unawaited begins nothing.
+pub type PreparedKafkaTransaction =
+    BoxFuture<'static, Result<Vec<AppendResult>, KafkaTransportError>>;
+
+type NextRawOffsets = std::collections::BTreeMap<(String, i32), i64>;
+
+/// IDR-094. librdkafka's transactional calls block their calling thread for up
+/// to `request_timeout` (begin, send-offsets, commit, abort). Run them on the
+/// blocking pool so the async runtime that receives raw input and serves the
+/// admission listener is never parked behind a broker round trip.
+async fn blocking_kafka_call<T: Send + 'static>(
+    call: impl FnOnce() -> Result<T, KafkaTransportError> + Send + 'static,
+) -> Result<T, KafkaTransportError> {
+    match tokio::task::spawn_blocking(call).await {
+        Ok(result) => result,
+        Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
+        Err(error) => Err(KafkaTransportError::Configuration(format!(
+            "blocking Kafka transaction call was cancelled: {error}"
+        ))),
+    }
+}
+
+/// The one transaction state machine: a failed begin returns its error and
+/// aborts nothing; a failure after begin aborts, and an abort failure replaces
+/// the original error (the producer is then unusable and must be rebuilt).
+async fn run_kafka_transaction<T, Begin, Body, Abort>(
+    begin: Begin,
+    body: Body,
+    abort: impl FnOnce() -> Abort,
+) -> Result<T, KafkaTransportError>
+where
+    Begin: Future<Output = Result<(), KafkaTransportError>>,
+    Body: Future<Output = Result<T, KafkaTransportError>>,
+    Abort: Future<Output = Result<(), KafkaTransportError>>,
+{
+    begin.await?;
+    match body.await {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            abort().await?;
+            Err(error)
+        }
+    }
+}
+
+async fn execute_kafka_transaction(
+    producer: FutureProducer,
+    consumer: Arc<StreamConsumer>,
+    request_timeout: Duration,
+    next_offsets: NextRawOffsets,
+    outputs: &[TransactionalKafkaOutput],
+) -> Result<Vec<AppendResult>, KafkaTransportError> {
+    let begin_producer = producer.clone();
+    let abort_producer = producer.clone();
+    let body_producer = &producer;
+    run_kafka_transaction(
+        blocking_kafka_call(move || {
+            begin_producer
+                .begin_transaction()
+                .map_err(KafkaTransportError::Kafka)
+        }),
+        async move {
+            let deliveries = outputs.iter().map(|output| async move {
+                let headers = transactional_output_headers(
+                    output.record.event_id.as_slice(),
+                    output.raw_provider_envelope.as_deref(),
+                );
+                let delivery = body_producer
+                    .send(
+                        FutureRecord::to(&output.record.stream)
+                            .key(output.record.partition_key.as_bytes())
+                            .payload(output.record.payload.as_slice())
+                            .headers(headers),
+                        Timeout::After(request_timeout),
+                    )
+                    .await
+                    .map_err(|(error, _)| KafkaTransportError::Delivery(error))?;
+                let offset = u64::try_from(delivery.offset)
+                    .map_err(|_| KafkaTransportError::InvalidOffset(delivery.offset))?;
+                Ok::<_, KafkaTransportError>(AppendResult {
+                    cursor: Cursor {
+                        stream: output.record.stream.clone(),
+                        transport_partition: delivery.partition,
+                        partition_key: output.record.partition_key.clone(),
+                        offset,
+                    },
+                    duplicate: false,
+                })
+            });
+            let accepted = try_join_all(deliveries).await?;
+            let commit_producer = body_producer.clone();
+            blocking_kafka_call(move || {
+                let mut offsets = TopicPartitionList::new();
+                for ((topic, partition), offset) in next_offsets {
+                    offsets.add_partition_offset(&topic, partition, Offset::Offset(offset))?;
+                }
+                // Read at send-offsets time, as before IDR-094: the group
+                // generation in this metadata is what fences a zombie member.
+                let group = consumer.group_metadata().ok_or_else(|| {
+                    KafkaTransportError::Configuration(
+                        "consumer group metadata is unavailable".into(),
+                    )
+                })?;
+                commit_producer.send_offsets_to_transaction(
+                    &offsets,
+                    &group,
+                    Timeout::After(request_timeout),
+                )?;
+                commit_producer.commit_transaction(Timeout::After(request_timeout))?;
+                Ok(())
+            })
+            .await?;
+            Ok::<_, KafkaTransportError>(accepted)
+        },
+        move || {
+            blocking_kafka_call(move || {
+                abort_producer
+                    .abort_transaction(Timeout::After(request_timeout))
+                    .map_err(KafkaTransportError::Kafka)
+            })
+        },
+    )
+    .await
 }
 
 impl TransactionalKafkaBridge {
@@ -773,8 +902,8 @@ impl TransactionalKafkaBridge {
         producer.init_transactions(Timeout::After(config.request_timeout))?;
         Ok(Self {
             producer,
-            consumer,
-            fence: tokio::sync::Mutex::new(AuthorityFence::default()),
+            consumer: Arc::new(consumer),
+            fence: Arc::new(tokio::sync::Mutex::new(AuthorityFence::default())),
             topics,
             request_timeout: config.request_timeout,
         })
@@ -837,11 +966,15 @@ impl TransactionalKafkaBridge {
         })
     }
 
-    pub async fn commit(
+    /// Validate one batch against topics and the authority fence, and compute
+    /// the raw offsets it acknowledges. Returns the fence guard so the checked
+    /// authority cannot change before the transaction ends, as before IDR-094.
+    async fn prepare(
         &self,
         inputs: &[TransactionalKafkaInput],
         outputs: &[TransactionalKafkaOutput],
-    ) -> Result<Vec<AppendResult>, KafkaTransportError> {
+    ) -> Result<(tokio::sync::OwnedMutexGuard<AuthorityFence>, NextRawOffsets), KafkaTransportError>
+    {
         if inputs.is_empty() {
             return Err(KafkaTransportError::Configuration(
                 "transaction input batch must not be empty".into(),
@@ -855,7 +988,7 @@ impl TransactionalKafkaBridge {
                 "transaction input is outside configured raw topics".into(),
             ));
         }
-        let mut fence = self.fence.lock().await;
+        let mut fence = Arc::clone(&self.fence).lock_owned().await;
         for output in outputs {
             if !self
                 .topics
@@ -869,82 +1002,165 @@ impl TransactionalKafkaBridge {
                 .permits(&output.publication)
                 .map_err(KafkaTransportError::Fencing)?;
         }
-
-        self.producer.begin_transaction()?;
-        let transaction = async {
-            let deliveries = outputs.iter().map(|output| async move {
-                let headers = transactional_output_headers(
-                    output.record.event_id.as_slice(),
-                    output.raw_provider_envelope.as_deref(),
-                );
-                let delivery = self
-                    .producer
-                    .send(
-                        FutureRecord::to(&output.record.stream)
-                            .key(output.record.partition_key.as_bytes())
-                            .payload(output.record.payload.as_slice())
-                            .headers(headers),
-                        Timeout::After(self.request_timeout),
-                    )
-                    .await
-                    .map_err(|(error, _)| KafkaTransportError::Delivery(error))?;
-                let offset = u64::try_from(delivery.offset)
-                    .map_err(|_| KafkaTransportError::InvalidOffset(delivery.offset))?;
-                Ok::<_, KafkaTransportError>(AppendResult {
-                    cursor: Cursor {
-                        stream: output.record.stream.clone(),
-                        transport_partition: delivery.partition,
-                        partition_key: output.record.partition_key.clone(),
-                        offset,
-                    },
-                    duplicate: false,
-                })
-            });
-            let accepted = try_join_all(deliveries).await?;
-            let mut next_offsets: std::collections::BTreeMap<(String, i32), i64> =
-                std::collections::BTreeMap::new();
-            for input in inputs {
-                let next_offset = input
-                    .cursor
-                    .offset
-                    .checked_add(1)
-                    .and_then(|value| i64::try_from(value).ok())
-                    .ok_or(KafkaTransportError::InvalidOffset(i64::MAX))?;
-                next_offsets
-                    .entry((
-                        input.cursor.stream.clone(),
-                        input.cursor.transport_partition,
-                    ))
-                    .and_modify(|current| *current = (*current).max(next_offset))
-                    .or_insert(next_offset);
-            }
-            let mut offsets = TopicPartitionList::new();
-            for ((topic, partition), offset) in next_offsets {
-                offsets.add_partition_offset(&topic, partition, Offset::Offset(offset))?;
-            }
-            let group = self.consumer.group_metadata().ok_or_else(|| {
-                KafkaTransportError::Configuration("consumer group metadata is unavailable".into())
-            })?;
-            self.producer.send_offsets_to_transaction(
-                &offsets,
-                &group,
-                Timeout::After(self.request_timeout),
-            )?;
-            self.producer
-                .commit_transaction(Timeout::After(self.request_timeout))?;
-            Ok::<_, KafkaTransportError>(accepted)
+        let mut next_offsets = NextRawOffsets::new();
+        for input in inputs {
+            let next_offset = input
+                .cursor
+                .offset
+                .checked_add(1)
+                .and_then(|value| i64::try_from(value).ok())
+                .ok_or(KafkaTransportError::InvalidOffset(i64::MAX))?;
+            next_offsets
+                .entry((
+                    input.cursor.stream.clone(),
+                    input.cursor.transport_partition,
+                ))
+                .and_modify(|current| *current = (*current).max(next_offset))
+                .or_insert(next_offset);
         }
-        .await;
-        match transaction {
-            Ok(value) => Ok(value),
-            Err(error) => {
-                self.producer
-                    .abort_transaction(Timeout::After(self.request_timeout))
-                    .map_err(KafkaTransportError::Kafka)?;
-                Err(error)
-            }
-        }
+        Ok((fence, next_offsets))
     }
+
+    pub async fn commit(
+        &self,
+        inputs: &[TransactionalKafkaInput],
+        outputs: &[TransactionalKafkaOutput],
+    ) -> Result<Vec<AppendResult>, KafkaTransportError> {
+        let (_fence, next_offsets) = self.prepare(inputs, outputs).await?;
+        execute_kafka_transaction(
+            self.producer.clone(),
+            Arc::clone(&self.consumer),
+            self.request_timeout,
+            next_offsets,
+            outputs,
+        )
+        .await
+    }
+
+    /// IDR-094. Fence-check one batch now and return its transaction as an
+    /// owned future, so the caller can run it on another task while it reads
+    /// and normalizes the next batch. Only raw cursors are kept from `inputs`.
+    /// The caller must not start a second prepared transaction before this one
+    /// resolves: one transactional producer has at most one open transaction
+    /// ([`TransactionPipeline`] enforces that).
+    pub async fn prepare_commit(
+        &self,
+        inputs: &[TransactionalKafkaInput],
+        outputs: Vec<TransactionalKafkaOutput>,
+    ) -> Result<PreparedKafkaTransaction, KafkaTransportError> {
+        let (fence, next_offsets) = self.prepare(inputs, &outputs).await?;
+        let producer = self.producer.clone();
+        let consumer = Arc::clone(&self.consumer);
+        let request_timeout = self.request_timeout;
+        Ok(Box::pin(async move {
+            let _fence = fence;
+            execute_kafka_transaction(producer, consumer, request_timeout, next_offsets, &outputs)
+                .await
+        }))
+    }
+}
+
+/// One finished pipelined transaction.
+#[derive(Debug)]
+pub struct CommittedTransaction<T> {
+    pub value: T,
+    /// Raw input records the transaction acknowledged.
+    pub inputs: u64,
+    /// Wall time of the transaction itself (begin through commit).
+    pub commit_ns: i64,
+    /// How long the caller was blocked waiting for it; `commit_ns - wait_ns`
+    /// is the commit time hidden behind the caller's next batch.
+    pub wait_ns: i64,
+}
+
+struct InFlightTransaction<T> {
+    handle: tokio::task::JoinHandle<(Result<T, KafkaTransportError>, i64)>,
+    inputs: u64,
+}
+
+/// IDR-094. Depth-one commit pipeline: at most one transaction is in flight,
+/// and a transaction is started only after the previous one committed, so
+/// batches commit in submission order and a failed batch stops every later
+/// batch from beginning. The caller reads and normalizes batch N+1 while batch
+/// N commits on a separate task.
+pub struct TransactionPipeline<T> {
+    in_flight: Option<InFlightTransaction<T>>,
+}
+
+impl<T: Send + 'static> Default for TransactionPipeline<T> {
+    fn default() -> Self {
+        Self { in_flight: None }
+    }
+}
+
+impl<T: Send + 'static> TransactionPipeline<T> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn is_in_flight(&self) -> bool {
+        self.in_flight.is_some()
+    }
+
+    /// Raw inputs submitted but not yet known committed.
+    pub fn in_flight_inputs(&self) -> u64 {
+        self.in_flight.as_ref().map_or(0, |value| value.inputs)
+    }
+
+    /// Wait for the in-flight transaction, if any. Cancel-safe: dropping this
+    /// future before it resolves leaves the transaction in flight.
+    pub async fn complete(
+        &mut self,
+    ) -> Result<Option<CommittedTransaction<T>>, KafkaTransportError> {
+        let Some(in_flight) = self.in_flight.as_mut() else {
+            return Ok(None);
+        };
+        let wait_started = tokio::time::Instant::now();
+        let joined = (&mut in_flight.handle).await;
+        let wait_ns = elapsed_ns(wait_started);
+        let inputs = in_flight.inputs;
+        self.in_flight = None;
+        let (result, commit_ns) = match joined {
+            Ok(value) => value,
+            Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
+            Err(error) => {
+                return Err(KafkaTransportError::Configuration(format!(
+                    "transaction task was cancelled: {error}"
+                )))
+            }
+        };
+        Ok(Some(CommittedTransaction {
+            value: result?,
+            inputs,
+            commit_ns,
+            wait_ns: wait_ns.min(commit_ns),
+        }))
+    }
+
+    /// Wait for the previous transaction, then start `transaction` on its own
+    /// task. If the previous transaction failed, `transaction` is dropped
+    /// without being polled - it never begins - and that failure is returned.
+    pub async fn submit<F>(
+        &mut self,
+        inputs: u64,
+        transaction: F,
+    ) -> Result<Option<CommittedTransaction<T>>, KafkaTransportError>
+    where
+        F: Future<Output = Result<T, KafkaTransportError>> + Send + 'static,
+    {
+        let previous = self.complete().await?;
+        let handle = tokio::spawn(async move {
+            let started = tokio::time::Instant::now();
+            let result = transaction.await;
+            (result, elapsed_ns(started))
+        });
+        self.in_flight = Some(InFlightTransaction { handle, inputs });
+        Ok(previous)
+    }
+}
+
+fn elapsed_ns(started: tokio::time::Instant) -> i64 {
+    started.elapsed().as_nanos().min(i64::MAX as u128) as i64
 }
 
 pub struct KafkaEventSource {
@@ -1490,5 +1706,349 @@ mod persisted_delivery_tests {
             assert!(persisted_append("raw".into(), "key".into(), 2, offset).is_err());
         }
         assert!(persisted_append("raw".into(), "key".into(), -1, -1001).is_err());
+    }
+}
+
+#[cfg(test)]
+mod transaction_pipeline_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Journal {
+        events: Mutex<Vec<(&'static str, u64)>>,
+        open: AtomicUsize,
+        max_open: AtomicUsize,
+    }
+
+    impl Journal {
+        fn push(&self, event: &'static str, batch: u64) {
+            self.events.lock().unwrap().push((event, batch));
+        }
+    }
+
+    async fn fake_transaction(
+        journal: Arc<Journal>,
+        batch: u64,
+        commit: Duration,
+        fail: bool,
+    ) -> Result<u64, KafkaTransportError> {
+        let open = journal.open.fetch_add(1, Ordering::SeqCst) + 1;
+        journal.max_open.fetch_max(open, Ordering::SeqCst);
+        journal.push("begin", batch);
+        tokio::time::sleep(commit).await;
+        journal.push("end", batch);
+        journal.open.fetch_sub(1, Ordering::SeqCst);
+        if fail {
+            Err(KafkaTransportError::SnapshotTimeout(format!(
+                "batch {batch} commit"
+            )))
+        } else {
+            Ok(batch)
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn pipeline_commits_batches_in_order_one_transaction_at_a_time() {
+        let journal = Arc::new(Journal::default());
+        let mut pipeline = TransactionPipeline::new();
+        let mut committed = Vec::new();
+        for batch in 0..5_u64 {
+            if let Some(done) = pipeline
+                .submit(
+                    batch + 1,
+                    fake_transaction(journal.clone(), batch, Duration::from_millis(10), false),
+                )
+                .await
+                .unwrap()
+            {
+                committed.push((done.value, done.inputs));
+            }
+            assert_eq!(pipeline.in_flight_inputs(), batch + 1);
+        }
+        let last = pipeline.complete().await.unwrap().unwrap();
+        committed.push((last.value, last.inputs));
+        assert!(!pipeline.is_in_flight());
+        assert_eq!(pipeline.complete().await.unwrap().map(|v| v.value), None);
+        assert_eq!(committed, (0..5).map(|b| (b, b + 1)).collect::<Vec<_>>());
+        assert_eq!(journal.max_open.load(Ordering::SeqCst), 1);
+        let expected = (0..5)
+            .flat_map(|batch| [("begin", batch), ("end", batch)])
+            .collect::<Vec<_>>();
+        assert_eq!(*journal.events.lock().unwrap(), expected);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn caller_work_overlaps_the_in_flight_commit() {
+        // Five batches, 10 ms of caller work (read + normalize) and a 30 ms
+        // commit each. Stop-and-wait costs 5 * 40 = 200 ms; the pipeline
+        // hides each commit behind the next batch's work: 10 + 5 * 30 = 160.
+        let journal = Arc::new(Journal::default());
+        let mut pipeline = TransactionPipeline::new();
+        let started = tokio::time::Instant::now();
+        let mut hidden_ns = 0_i64;
+        for batch in 0..5_u64 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if let Some(done) = pipeline.complete().await.unwrap() {
+                hidden_ns += done.commit_ns - done.wait_ns;
+            }
+            pipeline
+                .submit(
+                    1,
+                    fake_transaction(journal.clone(), batch, Duration::from_millis(30), false),
+                )
+                .await
+                .unwrap();
+        }
+        pipeline.complete().await.unwrap().unwrap();
+        assert_eq!(started.elapsed(), Duration::from_millis(160));
+        assert_eq!(hidden_ns, 4 * 10_000_000);
+        assert_eq!(journal.max_open.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn failed_commit_fails_closed_and_never_begins_the_next_batch() {
+        let journal = Arc::new(Journal::default());
+        let mut pipeline = TransactionPipeline::new();
+        pipeline
+            .submit(
+                3,
+                fake_transaction(journal.clone(), 0, Duration::from_millis(5), true),
+            )
+            .await
+            .unwrap();
+        let next_polled = Arc::new(AtomicBool::new(false));
+        let flag = next_polled.clone();
+        let error = pipeline
+            .submit(4, async move {
+                flag.store(true, Ordering::SeqCst);
+                Ok(1_u64)
+            })
+            .await
+            .unwrap_err();
+        // The same typed error reaches the runtime, so its generation
+        // retry/exit classification is unchanged.
+        assert!(matches!(error, KafkaTransportError::SnapshotTimeout(_)));
+        assert_eq!(error.retry_class(), RetryClass::Retryable);
+        assert!(!pipeline.is_in_flight());
+        assert_eq!(pipeline.in_flight_inputs(), 0);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!next_polled.load(Ordering::SeqCst));
+        assert_eq!(
+            *journal.events.lock().unwrap(),
+            vec![("begin", 0), ("end", 0)]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn complete_is_cancel_safe() {
+        let journal = Arc::new(Journal::default());
+        let mut pipeline = TransactionPipeline::new();
+        pipeline
+            .submit(
+                2,
+                fake_transaction(journal, 7, Duration::from_millis(20), false),
+            )
+            .await
+            .unwrap();
+        tokio::select! {
+            biased;
+            _ = pipeline.complete() => panic!("commit cannot finish in 5 ms"),
+            _ = tokio::time::sleep(Duration::from_millis(5)) => {}
+        }
+        assert!(pipeline.is_in_flight());
+        let done = pipeline.complete().await.unwrap().unwrap();
+        assert_eq!((done.value, done.inputs), (7, 2));
+        assert_eq!(done.commit_ns, 20_000_000);
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "transaction panicked")]
+    async fn transaction_panic_is_not_swallowed() {
+        let mut pipeline = TransactionPipeline::<u64>::new();
+        pipeline
+            .submit(1, async { panic!("transaction panicked") })
+            .await
+            .unwrap();
+        let _ = pipeline.complete().await;
+    }
+
+    #[derive(Default)]
+    struct Calls {
+        begin: AtomicUsize,
+        body: AtomicUsize,
+        abort: AtomicUsize,
+    }
+
+    async fn transaction(
+        calls: &Calls,
+        begin: Result<(), KafkaTransportError>,
+        body: Result<u64, KafkaTransportError>,
+        abort: Result<(), KafkaTransportError>,
+    ) -> Result<u64, KafkaTransportError> {
+        run_kafka_transaction(
+            async {
+                calls.begin.fetch_add(1, Ordering::SeqCst);
+                begin
+            },
+            async {
+                calls.body.fetch_add(1, Ordering::SeqCst);
+                body
+            },
+            || async {
+                calls.abort.fetch_add(1, Ordering::SeqCst);
+                abort
+            },
+        )
+        .await
+    }
+
+    fn counts(calls: &Calls) -> (usize, usize, usize) {
+        (
+            calls.begin.load(Ordering::SeqCst),
+            calls.body.load(Ordering::SeqCst),
+            calls.abort.load(Ordering::SeqCst),
+        )
+    }
+
+    #[tokio::test]
+    async fn transaction_state_machine_matches_pre_pipeline_semantics() {
+        let calls = Calls::default();
+        assert_eq!(transaction(&calls, Ok(()), Ok(9), Ok(())).await.unwrap(), 9);
+        assert_eq!(counts(&calls), (1, 1, 0));
+
+        let calls = Calls::default();
+        let error = transaction(
+            &calls,
+            Err(KafkaTransportError::Fencing("begin".into())),
+            Ok(9),
+            Ok(()),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, KafkaTransportError::Fencing(_)));
+        assert_eq!(counts(&calls), (1, 0, 0), "failed begin aborts nothing");
+
+        let calls = Calls::default();
+        let error = transaction(
+            &calls,
+            Ok(()),
+            Err(KafkaTransportError::SnapshotTimeout("send".into())),
+            Ok(()),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, KafkaTransportError::SnapshotTimeout(_)));
+        assert_eq!(counts(&calls), (1, 1, 1), "failed body aborts once");
+
+        let calls = Calls::default();
+        let error = transaction(
+            &calls,
+            Ok(()),
+            Err(KafkaTransportError::SnapshotTimeout("commit".into())),
+            Err(KafkaTransportError::InvalidOffset(-1)),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(error, KafkaTransportError::InvalidOffset(-1)),
+            "a failed abort replaces the original error"
+        );
+        assert_eq!(counts(&calls), (1, 1, 1));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn blocking_kafka_calls_leave_the_runtime_free() {
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let blocked = tokio::spawn(blocking_kafka_call(move || {
+            rx.blocking_recv().unwrap();
+            Ok(1_u8)
+        }));
+        // The only worker thread must still run other tasks while the
+        // blocking call is parked.
+        let other = tokio::spawn(async { 2_u8 }).await.unwrap();
+        tx.send(()).unwrap();
+        assert_eq!((blocked.await.unwrap().unwrap(), other), (1, 2));
+    }
+}
+
+/// IDR-094 micro-benchmark, run explicitly:
+/// `cargo test -p qdl-kafka --release --lib idr094 -- --ignored --nocapture`.
+/// A fake commit sleeps 85 ms (broker round trips, no CPU) and normalization
+/// busy-spins 235 us per record on the loop thread, the fitted live costs.
+#[cfg(test)]
+mod idr094_pipeline_benchmark {
+    use super::*;
+
+    const RECORDS_PER_BATCH: u64 = 256;
+    const BATCHES: u64 = 20;
+    const NORMALIZE_PER_RECORD: Duration = Duration::from_micros(235);
+    const COMMIT: Duration = Duration::from_millis(85);
+
+    fn normalize_batch() {
+        let started = std::time::Instant::now();
+        let budget = NORMALIZE_PER_RECORD * RECORDS_PER_BATCH as u32;
+        let mut spin = 0_u64;
+        while started.elapsed() < budget {
+            spin = std::hint::black_box(spin.wrapping_add(1));
+        }
+    }
+
+    async fn fake_commit() -> Result<u64, KafkaTransportError> {
+        tokio::time::sleep(COMMIT).await;
+        Ok(RECORDS_PER_BATCH)
+    }
+
+    async fn stop_and_wait() -> f64 {
+        let started = std::time::Instant::now();
+        for _ in 0..BATCHES {
+            normalize_batch();
+            fake_commit().await.unwrap();
+        }
+        (RECORDS_PER_BATCH * BATCHES) as f64 / started.elapsed().as_secs_f64()
+    }
+
+    async fn pipelined() -> f64 {
+        let started = std::time::Instant::now();
+        let mut pipeline = TransactionPipeline::new();
+        for _ in 0..BATCHES {
+            normalize_batch();
+            pipeline.complete().await.unwrap();
+            pipeline
+                .submit(RECORDS_PER_BATCH, fake_commit())
+                .await
+                .unwrap();
+        }
+        pipeline.complete().await.unwrap();
+        (RECORDS_PER_BATCH * BATCHES) as f64 / started.elapsed().as_secs_f64()
+    }
+
+    #[test]
+    #[ignore = "micro-benchmark; run explicitly with --ignored --nocapture"]
+    fn idr094_pipelined_commit_throughput() {
+        // Same shape as the binary: the loop runs in `block_on` on the main
+        // thread, the commit task on a single worker.
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let before = runtime.block_on(stop_and_wait());
+        let after = runtime.block_on(pipelined());
+        println!(
+            "{}",
+            serde_json::json!({
+                "event": "idr094_pipeline_benchmark",
+                "records_per_batch": RECORDS_PER_BATCH,
+                "batches": BATCHES,
+                "normalize_us_per_record": NORMALIZE_PER_RECORD.as_micros() as u64,
+                "commit_ms": COMMIT.as_millis() as u64,
+                "stop_and_wait_records_per_s": before.round(),
+                "pipelined_records_per_s": after.round(),
+                "speedup": (after / before * 100.0).round() / 100.0,
+            })
+        );
+        assert!(after > before);
     }
 }
