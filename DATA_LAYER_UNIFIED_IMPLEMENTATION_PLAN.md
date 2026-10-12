@@ -72486,3 +72486,39 @@ Gate before rollout: isolated broker scenarios 1-4, run on this commit:
 2. commit failure with abort, resume and the SIGTERM path;
 3. rebalance during an in-flight commit, counting cascading rebalances;
 4. transactional.id fencing.
+
+### P18.4 IDR-094 isolated broker evidence (K2 gate) - 2026-10-12
+
+Status: tested locally on an isolated broker. Not live; rc16 release-image rerun pending.
+
+Setup: isolated KRaft broker apache/kafka@sha256:9516fb76 with mTLS, on network idr094-net, tmpfs storage, all
+containers --rm and torn down afterwards. The live stack was not touched. Harness:
+scratchpad/idr094 (setup.sh, k3-matrix.sh, bin-run.sh, teardown.sh).
+
+Results:
+- Real TransactionalKafkaBridge + TransactionPipeline (BEFORE a962a5c and AFTER bcb0283):
+  - Ordered, non-overlapping transactions; read_committed == 30 outputs and offsets advance in the same transaction.
+  - A same transactional.id producer fences the in-flight batch with Fenced (retryable). N+1 is never polled, and no
+    output or offset becomes visible.
+  - Generation 2 resumes exactly the 30 uncommitted inputs (60 unique).
+- qdl-realtime-core binary (9000 records; fence, 15 s broker pause, SIGKILL/restart, SIGTERM). rc14, rc15 and AFTER all
+  end with read_committed 9000, all unique, in order, committed offset 9000.
+- K1 SIGTERM with a pending commit whose drain fails:
+  - rc14 and rc15 lose the stop and start generation 2; the process had to be killed. K1 predates IDR-094.
+  - AFTER exits 1 with qdl_realtime_core_stop_drain_failed and starts no new generation.
+- K3 rebalance during an in-flight commit (6 partitions, cooperative group, 8 s held window):
+
+  | Members | BEFORE a962a5c | AFTER bcb0283 |
+  |---|---|---|
+  | 2 | 160-167 duplicate canonical identities | 0 duplicates and 0 missing; one Rebalanced abort and restart |
+  | 3 | 165 duplicates | 0 duplicates; one abort per member, settled after one round |
+
+  - Natural 10 ms local commits did not trigger it.
+  - The serial stop-and-wait shape never duplicates, which confirms that the window was introduced by pipelining.
+
+Conclusion: rc15 (a962a5c) must not go live. bcb0283 (image rc16 f41ecb66) closes K1/K3 in these tests.
+
+Open:
+- the release-image rerun;
+- a 3-process binary rebalance case;
+- after rollout, watch the Rebalanced-abort and restart counters for cascades.
