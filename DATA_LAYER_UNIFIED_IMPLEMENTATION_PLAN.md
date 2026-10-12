@@ -72546,3 +72546,30 @@ Image: `qdl-v2-rust:2.2.3-rc16-bcb0283` sha256:f41ecb66, label revision bcb0283,
   - Rollout recreates send SIGTERM, which makes the member leave cleanly.
   - session.timeout.ms is kept at its default (one variable at a time).
 - Teardown: broker, volumes and network removed; scratch reduced to 8 MB.
+
+### P18.4 G13 runner provenance guards: G13-R1, R2, R3 and U1 (Codex findings) - 2026-10-12
+
+Status: IMPLEMENTED / tested locally (offline, with docker and git mocked). There has been no real G13 run yet.
+
+Sources: the Codex reports p184-g13-independent-20261012.json and p184-broker-g13-followup-20261012.md. Each finding
+was verified against the code. All four are FIXED:
+- R1: `dr07.image` is bound to the writer digest. A different digest is refused with DR07_IMAGE_NOT_WRITER, because the
+  DR07 rows claim the writer digest as their provenance.
+- R2: the dirty check covers the whole tracked tree with no pathspec (DL_CHECKOUT_DIRTY). Plan-journal edits are not
+  exempt.
+- R3: the inventory reads the run state. Mapped roles, the writer and the infra must be running. A container that is
+  stopped, paused, restarting or OOM-killed is refused. The init one-shots must have exited 0.
+  RestartCount is recorded, not refused.
+- U1: every DL path the harness mounts or executes comes from a sealed `git archive <dl_sha>` export.
+  - The tree id is recomputed in pure Python and must equal `<dl_sha>^{tree}` (SOURCE_EXPORT_MISMATCH otherwise).
+  - The export is read-only and is removed after the run.
+  - The tree hash and the archive sha256 are recorded in plan.json, every step receipt and summary.json.
+  - Untracked or ignored code (sitecustomize.py, .pth, stray modules) can no longer run.
+
+Tests:
+- 66 OK in the rc14 image (--network none); the real-git U1 class runs on the host, 6 OK.
+- Reverting a single fix makes its new tests fail: R1 1F+1E, R2 1F, R3 18F, U1 21F+1E.
+
+Open:
+- the runner process itself still starts from the worktree (untracked files there are not checked);
+- arch-b's microbench window (10:40-10:50Z) overlapped two short test containers, so it is tainted. It was not a gate.

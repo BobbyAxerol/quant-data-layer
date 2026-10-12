@@ -31,13 +31,23 @@ ONLY the existing harnesses, sequentially, each under a hard timeout:
     dr04-dr06-views TS scripts/p184_dr_views.py (inside the TS writer image; binance, okx, okx_inverse) + record;
                     also DR05.QUIET_TYPED (linear only: QUIET is a TRADE state, TRADE is not granted for inverse)
     dr05-transport  TS scripts/p184_dr05_isolated.py (writer clone, transport cut at the clone only; same 3 scopes)
-    dr07-reference  TS scripts/p184_dr07_reference.py in a --rm container of the TS image (dr07.image, default
-                    the writer image: alpha_sdk, qdl_sdk, asyncpg) on the DL consumer + TS database networks; mounts
+    dr07-reference  TS scripts/p184_dr07_reference.py in a --rm container of the final writer image (alpha_sdk,
+                    qdl_sdk, asyncpg; dr07.image may only restate it: the rows carry --image-digest = the writer
+                    digest, so any other image is refused as DR07_IMAGE_NOT_WRITER) on the DL consumer + TS database
+                    networks; mounts
                     the TS checkout, the connections file and the identity file dirs read-only, the cursor dirs and
                     the step dir read-write; POSTGRES_DSN only via --env-file dr07.env_file (0600, never printed).
                     Root with CAP_DAC_OVERRIDE only: the alpha identity dirs are uid 10001 mode 0700
 Receipts: a NEW directory ~/.local/state/qdl-v2/p184-g13-<YYYYMMDD>T<HHMMSS>Z/ (exclusive create) with plan.json,
 one <step>/receipt.json per step (argv, cwd, times, exit, timeout, output sha256, cleanup) and summary.json.
+
+DL source (G13-U1). No step mounts or executes the DL worktree. Before the first step the runner exports
+`git archive <--dl-source-sha>` into <receipts>/dl-source/, verifies that the extracted directory's git tree id
+equals <sha>^{tree} (anything extra or changed -> SOURCE_EXPORT_MISMATCH), seals it read-only, and every harness
+runs from it (cwd, /app mounts, DR01 prepare mount + PYTHONPATH, --dl-root, the DR01 probe stdin). Untracked or
+ignored files of the worktree (a stray module, sitecustomize.py, a .pth) are therefore not on any import path. The
+export's tree id and archive sha256 are recorded in plan.json, every step receipt and summary.json; the export is
+removed after the last step (dl_source.removed in summary.json).
 
 Boundary. Never builds an image, never starts/stops/recreates a shared container, never writes shared Redis/Kafka/
 Postgres, never pushes. Final DL images are an expected per-role digest map (ROLE_IMAGE roles; roles may run
@@ -46,9 +56,11 @@ legacy shorthand --python-image + --rust-image (every python role one image, eve
 record the expanded map. The DR05/DR08 harnesses get images derived from it (HARNESS_SOURCE; --image ROLE=ID, DR08
 also --query-image-ref; their in-container checks compare against these attested values; kafka/redis keep the
 harness defaults). It refuses to start a step when (a) the TS case matrix v2 DR cells differ from DR_CELLS, (b) the
-DL checkout that the harness containers mount at /app is not the release commit or has tracked edits, (c) for
-the RUNTIME phase (and DR08), a mapped role runs another digest, a stack container is in neither the map nor
-INFRA_ROLES, or no approval packet is given, (d) --python-image-ref does not resolve to the query image. Cleanup: only
+DL checkout (the runner's own) is not the release commit or has tracked edits, or the git-archive export of the
+release commit does not reproduce its tree (SOURCE_EXPORT_MISMATCH), (c) for
+the RUNTIME phase (and DR08), a mapped role runs another digest or is not running, kafka1-3/market_cache/
+stable_redis do not run, an init one-shot did not exit 0, a stack container is in neither the map nor INFRA_ROLES,
+or no approval packet is given, (d) --python-image-ref does not resolve to the query image. Cleanup: only
 containers whose name starts with the step's own prefix AND that did not exist before the step are removed, by
 exact ID; nothing else (no prune, no image/volume/network removal). The harnesses keep their own cleanup receipts.
 A step result is the harness's own rows; this runner never writes a case row and never relabels a rehearsal.
@@ -94,6 +106,7 @@ ROLE_IMAGE = {
 # Stack containers that run no DL release image (broker, caches, one-shot init). G13 records their image IDs but
 # does not certify them; any stack container in neither ROLE_IMAGE nor this set refuses the run (UNLISTED_ROLE).
 INFRA_ROLES = ("kafka1", "kafka2", "kafka3", "market_cache", "stable_redis", "stable_tls_init", "stable_state_init")
+INIT_ROLES = ("stable_tls_init", "stable_state_init")  # one-shot: exited 0; every other INFRA_ROLES entry runs
 # Harness image role -> the deployed roles whose (single, shared) digest it takes. The roles run mixed images after
 # a partial rollout, so each harness role follows the deployed role it exercises: DR08 refuses a core image other
 # than rust_core-1's, the query harness is the reader image, and the python helper (prepare/driver/DR05 channel,
@@ -101,6 +114,7 @@ INFRA_ROLES = ("kafka1", "kafka2", "kafka3", "market_cache", "stable_redis", "st
 HARNESS_SOURCE = {"query": ("query_kn_1", "query_kn_2"), "python": ("query_kn_1", "query_kn_2"),
                   "core": ("rust_core", "rust_core_2", "rust_core_3"), "stream": ("stream_kn_1", "stream_kn_2")}
 MATRIX_V2 = "contracts/baseline/rust-first-v2/p18/p184-r2-case-matrix.v2.json"
+SOURCE_DIR = "dl-source"  # <receipts>/dl-source: the sealed `git archive <dl_sha>` export every harness runs from
 GATEWAY_STEPS = ("dr01-wrong-account",)
 
 
@@ -298,20 +312,53 @@ def validate_final(final):
     harness_images(final)
 
 
+def state_problem(name, record, *, one_shot=False):
+    """None when a container is in the state G13 needs: a long-running role (DL role, kafka/cache/redis, writer) is
+    `running` (not paused/restarting/exited) and not OOM-killed; a one-shot init exited 0. G13-R3: a stopped
+    container with the right image used to pass, because only .Image was inspected. RestartCount is recorded in the
+    inventory but not refused (it is cumulative since create; a later healthy restart is not a defect)."""
+    if record is None:
+        return f"CONTAINER_ABSENT: {name}"
+    status, code = record.get("status"), record.get("exit_code")
+    if one_shot:
+        if status != "exited" or code != 0:
+            return f"INIT_NOT_COMPLETED: {name} status {status} exit {code} (one-shot must have exited 0)"
+    elif status != "running" or not record.get("running"):
+        return f"CONTAINER_NOT_RUNNING: {name} status {status} exit {code}"
+    if record.get("oom_killed"):
+        return f"CONTAINER_OOM_KILLED: {name}"
+    return None
+
+
 def deployed_mismatches(inventory, final):
-    """inventory: {container name: image ID} of every stack container (and the writer). Empty when every DL role
-    runs exactly its mapped digest, the writer runs the final writer digest, and no stack container is unlisted."""
+    """inventory: {container name: container_record or None} of every stack container (and the writer). Empty when
+    every DL role runs exactly its mapped digest and is running, the writer runs the final writer digest and is
+    running, kafka1-3/market_cache/stable_redis run, the init one-shots exited 0, and no stack container is
+    unlisted."""
     roles = role_images(final)
     found = []
+
+    def image(name):
+        record = inventory.get(name)
+        return record.get("image") if isinstance(record, dict) else None
+
     for role in ROLE_IMAGE:
         name = STACK + role + "-1"
-        if inventory.get(name) != roles.get(role):
-            found.append(f"{name} runs {inventory.get(name)} != expected {roles.get(role)}")
+        if image(name) != roles.get(role):
+            found.append(f"{name} runs {image(name)} != expected {roles.get(role)}")
+        elif problem := state_problem(name, inventory.get(name)):
+            found.append(problem)
+    for role in INFRA_ROLES:
+        name = STACK + role + "-1"
+        if problem := state_problem(name, inventory.get(name), one_shot=role in INIT_ROLES):
+            found.append(problem)
     known = {STACK + r + "-1" for r in (*ROLE_IMAGE, *INFRA_ROLES)}
     for name in sorted(n for n in inventory if n.startswith(STACK) and n not in known):
-        found.append(f"UNLISTED_ROLE: {name} runs {inventory[name]} and is in neither the role map nor INFRA_ROLES")
-    if inventory.get(WRITER) != final["writer"]:
-        found.append(f"{WRITER} runs {inventory.get(WRITER)} != final writer {final['writer']}")
+        found.append(f"UNLISTED_ROLE: {name} runs {image(name)} and is in neither the role map nor INFRA_ROLES")
+    if image(WRITER) != final["writer"]:
+        found.append(f"{WRITER} runs {image(WRITER)} != final writer {final['writer']}")
+    elif problem := state_problem(WRITER, inventory.get(WRITER)):
+        found.append(problem)
     return found
 
 
@@ -464,6 +511,23 @@ def dr07_revision_problem(connections, revisions):
     return None
 
 
+def dr07_image(d, final):
+    """The image the DR07 container runs: always the final writer image. The DR07 rows record --image-digest
+    final['writer'] as their provenance and G13 closes the DR07 cells on the final writer digest, so a dr07.image
+    that names another image would make the rows claim an image that did not run them (G13-R1). An override is
+    accepted only when it restates the writer digest; recording a different image instead would yield rows that
+    cannot close a G13 cell anyway."""
+    image = d.get("image")
+    if image in (None, ""):
+        return final["writer"]
+    if not isinstance(image, str) or not DIGEST.fullmatch(image):
+        raise Blocked("DR07_IMAGE_DIGEST_REQUIRED: dr07.image must be a sha256 image ID")
+    if image != final["writer"]:
+        raise Blocked(f"DR07_IMAGE_NOT_WRITER: dr07.image {image} != final writer {final['writer']} (the DR07 rows "
+                      "record the writer digest as their image provenance)")
+    return image
+
+
 def host_path(value, what):
     """An absolute host path that is safe inside a docker -v spec."""
     if not isinstance(value, str) or not value.startswith("/") or any(c in value for c in (":", ",", "\n")):
@@ -516,8 +580,9 @@ def cmd(argv, *, cwd, stdin=None, stdout=None):
             "stdout": stdout and str(stdout)}
 
 
-def commands(step, final, inputs, work, ts_root):
-    """The exact harness invocations of one step (dr05-upstream's channel/watcher are built at run time)."""
+def commands(step, final, inputs, work, ts_root, dl_root):
+    """The exact harness invocations of one step (dr05-upstream's channel/watcher are built at run time). dl_root is
+    the sealed DL source export (never the worktree, G13-U1): every DL cwd, mount, PYTHONPATH and script path."""
     py = [sys.executable, "-B"]
     ts_ev = ["--source-sha", final["ts_sha"], "--image-digest", final["writer"]]
     alpha_record = ts_root / "scripts/p184_dr_alpha_reads.py"
@@ -525,20 +590,20 @@ def commands(step, final, inputs, work, ts_root):
         w = work / "work"
         scopes = [a for scope in DR05_SCOPES for a in ("--scope", scope)]
         return [cmd(py + ["scripts/p184_dr05_dl_fault.py", "--init", w, "--core-config", inputs["dr05_public_export"],
-                          *harness_image_args(final), *scopes, "--catalog", inputs["dr05_catalog"]], cwd=DL_ROOT),
-                cmd(py + ["scripts/p184_dr05_dl_fault.py", "--up", w], cwd=DL_ROOT),
-                cmd(py + ["scripts/p184_dr05_dl_fault.py", "--ready", w], cwd=DL_ROOT),
+                          *harness_image_args(final), *scopes, "--catalog", inputs["dr05_catalog"]], cwd=dl_root),
+                cmd(py + ["scripts/p184_dr05_dl_fault.py", "--up", w], cwd=dl_root),
+                cmd(py + ["scripts/p184_dr05_dl_fault.py", "--ready", w], cwd=dl_root),
                 cmd(py + ["scripts/p184_dr05_upstream.py", "--work", w, "--namespace", "<from handoff.json>",
                           "--dl-channel", "<built from handoff namespace>", "--image", final["writer"],
                           "--redis-image", inputs["redis_image"], "--postgres-image", inputs["postgres_image"],
-                          *ts_ev, "--output", work / "dr05-upstream-rows.jsonl", "--dl-root", DL_ROOT,
+                          *ts_ev, "--output", work / "dr05-upstream-rows.jsonl", "--dl-root", dl_root,
                           "--venues", *DR05_SCOPES], cwd=ts_root),
-                cmd(py + ["scripts/p184_dr05_dl_fault.py", "--down", w], cwd=DL_ROOT)]
+                cmd(py + ["scripts/p184_dr05_dl_fault.py", "--down", w], cwd=dl_root)]
     if step == "dr08-isolated":
         return [cmd(py + ["scripts/p184_dr08_isolated.py", "--orchestrate", work / "work", "--ts-source-sha",
                           final["ts_sha"], "--ts-image-digest", final["writer"], "--restart-samples",
                           str(inputs.get("dr08_restart_samples", 5)), *harness_image_args(final),
-                          "--query-image-ref", final["python_ref"]], cwd=DL_ROOT)]
+                          "--query-image-ref", final["python_ref"]], cwd=dl_root)]
     if step == "dr01-deployed":
         d = inputs["dr01"]
         services = alpha_services(d)
@@ -558,30 +623,30 @@ def commands(step, final, inputs, work, ts_root):
         for venue in VENUES:
             revision, wrong = revisions[venue]
             packet = work / f"dr01-{venue.lower()}-packet.json"
-            prepare = ["scripts/p184_dr01_deployed.py", "prepare", "--root", DL_ROOT, "--inventory", d["inventory"],
+            prepare = ["scripts/p184_dr01_deployed.py", "prepare", "--root", dl_root, "--inventory", d["inventory"],
                        "--deployment", d["deployments"][venue], "--venue", venue, "--output", packet,
                        "--manifest-dir", manifest_dirs[venue], "--manifest-revision", str(revision)]
             if d.get("catalog"):
                 prepare += ["--catalog", d["catalog"]]
             if wrong is not None:
                 prepare += ["--wrong-revision", str(wrong)]
-            ro = [str(DL_ROOT), inputs_ro[0], manifest_dirs[venue], *inputs_ro[1:]]
+            ro = [str(dl_root), inputs_ro[0], manifest_dirs[venue], *inputs_ro[1:]]
             box = container_argv(python_image, f"p184-g13-dr01-prepare-{venue.lower()}",
                                  user=f"{os.getuid()}:{os.getgid()}", ro=ro, rw=[str(work)],
-                                 env=[f"PYTHONPATH={DL_ROOT}:{DL_ROOT}/generated/python"], workdir=DL_ROOT)
-            out.append(cmd(box + prepare, cwd=DL_ROOT))
+                                 env=[f"PYTHONPATH={dl_root}:{dl_root}/generated/python"], workdir=dl_root)
+            out.append(cmd(box + prepare, cwd=dl_root))
             out.append(cmd(["docker", "compose", "-f", d["compose"], "run", "--rm", "--no-deps", "-T", "--entrypoint",
                             "python", "-v", f"{packet}:/run/p184/dr01-packet.json:ro", services[venue], "-B", "-",
                             "probe", "--packet", "/run/p184/dr01-packet.json"],
                            cwd=d.get("compose_cwd", "/home/bobby/execution_alpha"),
-                           stdin=DL_ROOT / "scripts/p184_dr01_deployed.py",
+                           stdin=dl_root / "scripts/p184_dr01_deployed.py",
                            stdout=work / f"dr01-{venue.lower()}-rows.jsonl"))
         record = ["scripts/p184_dr01_deployed.py", "record", "--rows", work / "dr01-binance-rows.jsonl",
                   work / "dr01-okx-rows.jsonl", "--source-sha", final["ts_sha"], "--image-digest", final["writer"],
                   "--output", work / "dr01-dl.jsonl"]
         if d.get("ci_confirmed") is True:
             record.append("--ci-confirmed")
-        out.append(cmd(py + record, cwd=DL_ROOT))
+        out.append(cmd(py + record, cwd=dl_root))
         return out
     if step == "dr01-wrong-account":
         script = ts_root / "scripts/p184_dr01_wrong_account.py"
@@ -629,9 +694,7 @@ def commands(step, final, inputs, work, ts_root):
         if not isinstance(networks, list | tuple) or not all(
                 isinstance(n, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", n) for n in networks):
             raise Blocked("DR07_NETWORKS_INVALID")
-        image = d.get("image") or final["writer"]
-        if not DIGEST.fullmatch(image):
-            raise Blocked("DR07_IMAGE_DIGEST_REQUIRED: dr07.image must be a sha256 image ID")
+        image = dr07_image(d, final)
         box = container_argv(image, "p184-g13-dr07-reference", user="0", networks=networks,
                              ro=sorted({str(ts_root), os.path.dirname(host_path(d["connections"], "dr07.connections")),
                                         *ro} - {str(work), *rw}),
@@ -703,7 +766,7 @@ def plan(final, inputs, phase, only, ts_root, base, now, matrix=None):
                  "owned_prefixes": list(prefixes), "blocked": blocked, "gateway_dependent": step in GATEWAY_STEPS}
         if not blocked:
             try:
-                entry["commands"] = commands(step, final, inputs, root / step, ts_root)
+                entry["commands"] = commands(step, final, inputs, root / step, ts_root, root / SOURCE_DIR)
             except Blocked as exc:
                 blocked.append(str(exc))
         if step == "dr01-deployed" and not blocked:
@@ -715,7 +778,8 @@ def plan(final, inputs, phase, only, ts_root, base, now, matrix=None):
         out.append(entry)
         if blocked:
             problems[step] = blocked
-    return {"schema": "p184.g13-final-plan.v1", "receipts": str(root), "final": final_record(final),
+    return {"schema": "p184.g13-final-plan.v1", "receipts": str(root), "dl_source_dir": str(root / SOURCE_DIR),
+            "final": final_record(final),
             "case_matrix": {"schema": (matrix or {}).get("schema"), "sha256": (matrix or {}).get("sha256")},
             "decisions": {k: {"decision": v[0], "reason": v[1]} for k, v in DECISIONS.items()},
             "coverage": coverage(), "steps": out, "blocked": problems,
@@ -734,16 +798,25 @@ def containers():
     return dict(r.split(" ", 1) for r in rows if " " in r)
 
 
+def container_record(row):
+    """The fields G13 reads from one `docker inspect` row: image ID and run state (G13-R3)."""
+    st = row.get("State") or {}
+    return {"image": row.get("Image"), "status": st.get("Status"), "running": bool(st.get("Running")),
+            "exit_code": st.get("ExitCode"), "oom_killed": bool(st.get("OOMKilled")),
+            "restart_count": row.get("RestartCount")}
+
+
 def deployed_inventory():
-    """{container name: image ID} of EVERY stack container (so an unlisted role is seen) plus the writer and every
-    mapped role (absent -> None)."""
+    """{container name: {image, status, running, exit_code, oom_killed, restart_count}} of EVERY stack container (so
+    an unlisted role is seen) plus the writer, every mapped role and every infra role (absent -> None)."""
     listed = sh(["docker", "ps", "-a", "--filter", "name=^" + STACK, "--format", "{{.Names}}"]).split()
-    names = sorted({n for n in listed if n.startswith(STACK)} | {STACK + r + "-1" for r in ROLE_IMAGE} | {WRITER})
+    names = sorted({n for n in listed if n.startswith(STACK)}
+                   | {STACK + r + "-1" for r in (*ROLE_IMAGE, *INFRA_ROLES)} | {WRITER})
     out = {}
     for name in names:
         try:
-            out[name] = sh(["docker", "inspect", "--format", "{{.Image}}", name]).strip()
-        except subprocess.CalledProcessError:
+            out[name] = container_record(json.loads(sh(["docker", "inspect", name]))[0])
+        except (subprocess.CalledProcessError, json.JSONDecodeError, IndexError):
             out[name] = None
     return out
 
@@ -787,15 +860,86 @@ def gateway_state(name):
 
 
 def checkout_problems(dl_sha):
+    """The DL checkout this runner itself runs from is the release commit with no tracked edit anywhere (G13-R2):
+    no pathspec, no exclusion (qdl_sdk/, app/, pyproject/poetry.lock, Dockerfile* included). Plan-journal edits are
+    not tolerated either: the receipts claim the checkout IS --dl-source-sha, and the journal entry for a G13 run is
+    written after the run, so nothing needs to be dirty at preflight. The harnesses do not run from this checkout
+    at all (they run from the sealed export, G13-U1), so untracked/ignored files here never reach an import path."""
     head = sh(["git", "-C", str(DL_ROOT), "rev-parse", "HEAD"]).strip()
-    dirty = sh(["git", "-C", str(DL_ROOT), "status", "--porcelain", "--untracked-files=no", "--", "qdl", "rust",
-                "scripts", "generated", "consumers", "config", "contracts"]).strip()
+    dirty = sh(["git", "-C", str(DL_ROOT), "status", "--porcelain", "--untracked-files=no"]).strip()
     found = []
     if head != dl_sha:
-        found.append(f"DL checkout HEAD {head} != --dl-source-sha {dl_sha} (harness containers mount it at /app)")
+        found.append(f"DL checkout HEAD {head} != --dl-source-sha {dl_sha}")
     if dirty:
-        found.append("DL checkout has tracked edits under mounted paths:\n" + dirty)
+        found.append("DL_CHECKOUT_DIRTY: tracked edits in the mounted checkout:\n" + dirty)
     return found
+
+
+def git_object_id(kind, body):
+    return hashlib.sha1(kind + b" " + str(len(body)).encode() + b"\0" + body).hexdigest()
+
+
+def git_tree_id(directory):
+    """The git tree object id of a directory, computed from its bytes (regular files 100644/100755, symlinks,
+    subdirectories; empty directories are not trees, as in git). Equal to <sha>^{tree} only when the directory
+    holds exactly the committed files with the committed contents and exec bits."""
+    entries = []
+    for entry in os.scandir(directory):
+        if entry.is_symlink():
+            mode, oid = "120000", git_object_id(b"blob", os.fsencode(os.readlink(entry.path)))
+        elif entry.is_dir():
+            oid = git_tree_id(entry.path)
+            if oid is None:
+                continue
+            mode = "40000"
+        else:
+            mode = "100755" if os.stat(entry.path).st_mode & 0o100 else "100644"
+            oid = git_object_id(b"blob", Path(entry.path).read_bytes())
+        name = os.fsencode(entry.name)
+        entries.append((name + b"/" if mode == "40000" else name, mode.encode() + b" " + name + b"\0"
+                        + bytes.fromhex(oid)))
+    if not entries:
+        return None
+    return git_object_id(b"tree", b"".join(row for _, row in sorted(entries)))
+
+
+def set_tree_writable(directory, writable):
+    """Seal (read-only) or unseal a source export; directories last when sealing, first when unsealing."""
+    for top, dirs, files in os.walk(directory, topdown=writable):
+        for name in files:
+            path = os.path.join(top, name)
+            if not os.path.islink(path):
+                mode = os.stat(path).st_mode
+                os.chmod(path, (mode | 0o200) if writable else (mode & ~0o222))
+        os.chmod(top, 0o700 if writable else 0o555)
+
+
+def export_source(dl_sha, dest):
+    """`git archive <dl_sha>` extracted into dest (new), verified against <dl_sha>^{tree}, sealed read-only (G13-U1).
+    Only committed files exist in dest, so no untracked/ignored worktree file can be imported by a harness."""
+    expected = sh(["git", "-C", str(DL_ROOT), "rev-parse", "--verify", dl_sha + "^{tree}"]).strip()
+    archive = subprocess.run(["git", "-C", str(DL_ROOT), "archive", "--format=tar", dl_sha], check=True,
+                             capture_output=True, timeout=300).stdout
+    dest.mkdir(mode=0o700)
+    subprocess.run(["tar", "-x", "--no-same-owner", "-C", str(dest)], input=archive, check=True, capture_output=True,
+                   timeout=300)
+    tree = git_tree_id(dest)
+    if tree != expected:
+        raise Blocked(f"SOURCE_EXPORT_MISMATCH: export tree {tree} != {dl_sha}^{{tree}} {expected}")
+    set_tree_writable(dest, False)
+    return {"path": str(dest), "commit": dl_sha, "tree": tree,
+            "archive_sha256": hashlib.sha256(archive).hexdigest(),
+            "files": sum(len(files) for _, _, files in os.walk(dest))}
+
+
+def remove_source(dest):
+    """Remove the sealed export after the run (it is reproducible from the recorded commit/tree)."""
+    import shutil
+    if not dest.exists():
+        return False
+    set_tree_writable(dest, True)
+    shutil.rmtree(dest)
+    return True
 
 
 def sha256(path):
@@ -835,9 +979,12 @@ def bounded(c, deadline, log):
 
 def run_dr05_upstream(entry, final, inputs, work, deadline, log, ts_root):
     """init -> up -> ready -> reset watcher -> TS adapter over the channel; --down always runs."""
-    sys.path.insert(0, str(DL_ROOT))
-    from scripts import p184_dr05_dl_fault as dr  # host-side helpers only (stdlib imports)
+    import importlib.util
     init, up, ready, adapter, down = entry["commands"]
+    dl_root = Path(init["cwd"])  # the sealed export (commands() put every DL cwd there)
+    spec = importlib.util.spec_from_file_location("g13_dr05_dl_fault", dl_root / "scripts/p184_dr05_dl_fault.py")
+    dr = importlib.util.module_from_spec(spec)  # host-side helpers only (stdlib imports)
+    spec.loader.exec_module(dr)
     watcher, codes = None, []
     try:
         for c in (init, up, ready):
@@ -847,7 +994,7 @@ def run_dr05_upstream(entry, final, inputs, work, deadline, log, ts_root):
         ns = json.loads((work / "work/handoff.json").read_text())["namespace"]
         watcher = subprocess.Popen([sys.executable, "-B", "scripts/p184_dr05_reset.py", "--serve-reset-host",
                                     str(work / "work"), "--duration", str(int(max(60, deadline - time.monotonic())))],
-                                   cwd=DL_ROOT, stdout=log, stderr=log, start_new_session=True)
+                                   cwd=dl_root, stdout=log, stderr=log, start_new_session=True)
         channel = shlex.join(dr05_channel_argv(dr.helper_command, dr.image_set(work / "work")["python"], ns,
                                                work / "work"))
         argv = [ns if a == "<from handoff.json>" else channel if a == "<built from handoff namespace>" else a
@@ -871,6 +1018,7 @@ def run_step(entry, final, inputs, ts_root):
     before = containers()
     clash = {cid: n for cid, n in before.items() if any(n.startswith(p) for p in entry["owned_prefixes"])}
     receipt = {"step": entry["step"], "cells": entry["cells"], "commands": entry["commands"],
+               "dl_source": inputs.get("_dl_source"),
                "started_utc": datetime.now(timezone.utc).isoformat(), "preexisting_owned": clash}
     t0 = time.monotonic()
     deadline = t0 + entry["timeout_s"]
@@ -998,13 +1146,24 @@ def main(argv=None):
     root = Path(result["receipts"])
     root.mkdir(mode=0o700, parents=False, exist_ok=False)
     inputs["_root"] = str(root)
+    source_dir = Path(result["dl_source_dir"])
+    try:
+        result["dl_source"] = inputs["_dl_source"] = export_source(final["dl_sha"], source_dir)
+    except (Blocked, OSError, subprocess.SubprocessError) as exc:
+        remove_source(source_dir)
+        print(json.dumps({"blocked": {}, "preflight": [f"SOURCE_EXPORT_FAILED: {type(exc).__name__}: {exc}"]}))
+        return 3
     (root / "plan.json").write_text(json.dumps(result, indent=2, default=str) + "\n")
     receipts = []
-    for entry in result["steps"]:
-        receipts.append(run_step(entry, final, inputs, a.ts_root))
-        print(json.dumps({k: receipts[-1][k] for k in ("step", "duration_s", "exit_codes", "error", "harness_ok")}),
-              flush=True)
-    summary = {"schema": "p184.g13-final-summary.v1", "final": result["final"], "steps": [
+    try:
+        for entry in result["steps"]:
+            receipts.append(run_step(entry, final, inputs, a.ts_root))
+            print(json.dumps({k: receipts[-1][k] for k in ("step", "duration_s", "exit_codes", "error",
+                                                           "harness_ok")}), flush=True)
+    finally:
+        removed = remove_source(source_dir)
+    summary = {"schema": "p184.g13-final-summary.v1", "final": result["final"],
+               "dl_source": {**result["dl_source"], "removed": removed}, "steps": [
         {k: r[k] for k in ("step", "cells", "duration_s", "exit_codes", "error", "harness_ok", "removed_leftovers")}
         for r in receipts], "deferred": {r["step"]: r["deferred"] for r in receipts if r.get("deferred")},
         "note": "harness_ok is the harness exit status; cells close only via the TS matrix check; deferred steps "

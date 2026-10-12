@@ -2,7 +2,9 @@
 from datetime import datetime, timezone
 import io
 import json
+import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -133,10 +135,9 @@ class FinalIdentityTests(unittest.TestCase):
         self.assertEqual(dr.resolve_images(r.parse_image_overrides(g13.harness_image_args(FINAL)[1::2]))["core"], RUST)
 
     def test_deployed_inventory_must_match_final(self):
-        good = {g13.STACK + r + "-1": (PY if k == "python" else RUST) for r, k in g13.ROLE_IMAGE.items()}
-        good[g13.WRITER] = WRITER
+        good = deployed({r: (PY if k == "python" else RUST) for r, k in g13.ROLE_IMAGE.items()})
         self.assertEqual(g13.deployed_mismatches(good, FINAL), [])
-        bad = {**good, g13.STACK + "rust_core_2-1": "sha256:" + "6" * 64, g13.WRITER: None}
+        bad = {**good, g13.STACK + "rust_core_2-1": running("sha256:" + "6" * 64), g13.WRITER: None}
         self.assertEqual(len(g13.deployed_mismatches(bad, FINAL)), 2)
 
 
@@ -151,14 +152,29 @@ MIXED = {"query_kn_1": Q15, "query_kn_2": Q15, "binance_bar_edge": P14,
          "market_projector_2": R14, "stream_kn_1": R14, "stream_kn_2": R14}
 FINAL_MIXED = {"roles": MIXED, "python_ref": "qdl-v2-python:2.2.3-rc15-x", "writer": WRITER,
                "ts_sha": FINAL["ts_sha"], "dl_sha": FINAL["dl_sha"]}
-INFRA = {g13.STACK + r + "-1": "sha256:" + "9" * 63 + "8" for r in g13.INFRA_ROLES}
+INFRA_IMAGE = "sha256:" + "9" * 63 + "8"
+INIT_ROLES = ("stable_tls_init", "stable_state_init")  # one-shot init containers: exited 0
+
+
+def running(image):
+    return {"image": image, "status": "running", "running": True, "exit_code": 0, "oom_killed": False,
+            "restart_count": 0}
+
+
+def exited(image, code=0):
+    return {"image": image, "status": "exited", "running": False, "exit_code": code, "oom_killed": False,
+            "restart_count": 0}
+
+
+INFRA = {g13.STACK + r + "-1": (exited if r in INIT_ROLES else running)(INFRA_IMAGE)
+         for r in g13.INFRA_ROLES}
 
 
 def deployed(roles, **extra):
-    inv = {g13.STACK + r + "-1": d for r, d in roles.items()}
+    inv = {g13.STACK + r + "-1": running(d) for r, d in roles.items()}
     inv.update(INFRA)
-    inv[g13.WRITER] = WRITER
-    inv.update(extra)
+    inv[g13.WRITER] = running(WRITER)
+    inv.update({k: running(v) if isinstance(v, str) else v for k, v in extra.items()})
     return inv
 
 
@@ -187,6 +203,66 @@ class MixedImageTests(unittest.TestCase):
         self.assertTrue(found[0].startswith("UNLISTED_ROLE: " + g13.STACK + "query_kn_3-1"))
         # containers outside the stack prefix (alphas, gateway) are not the DL stack
         self.assertEqual(g13.deployed_mismatches(deployed(MIXED, other_container=Q15), FINAL_MIXED), [])
+
+    def test_stopped_mapped_role_with_the_right_image_is_refused(self):
+        """G13-R3: the image matches but the container is stopped/paused/restarting/OOM-killed."""
+        name = g13.STACK + "rust_core_2-1"
+        for record, reason in ((exited(C16), "CONTAINER_NOT_RUNNING"), (exited(C16, 137), "CONTAINER_NOT_RUNNING"),
+                               ({**running(C16), "status": "paused"}, "CONTAINER_NOT_RUNNING"),
+                               ({**running(C16), "status": "restarting"}, "CONTAINER_NOT_RUNNING"),
+                               ({**running(C16), "oom_killed": True}, "CONTAINER_OOM_KILLED")):
+            with self.subTest(record=record):
+                found = g13.deployed_mismatches(deployed(MIXED, **{name: record}), FINAL_MIXED)
+                self.assertEqual(len(found), 1, found)
+                self.assertTrue(found[0].startswith(reason + ": " + name), found)
+        # restart count is recorded, not refused
+        self.assertEqual(g13.deployed_mismatches(
+            deployed(MIXED, **{name: {**running(C16), "restart_count": 3}}), FINAL_MIXED), [])
+
+    def test_infra_must_run_and_init_one_shots_must_have_exited_zero(self):
+        for role in ("kafka1", "kafka2", "kafka3", "market_cache", "stable_redis"):
+            name = g13.STACK + role + "-1"
+            with self.subTest(role=role):
+                found = g13.deployed_mismatches(deployed(MIXED, **{name: exited(INFRA_IMAGE)}), FINAL_MIXED)
+                self.assertEqual([f.split(":")[0] for f in found], ["CONTAINER_NOT_RUNNING"])
+                inv = deployed(MIXED)
+                del inv[name]
+                self.assertEqual([f.split(":")[0] for f in g13.deployed_mismatches(inv, FINAL_MIXED)],
+                                 ["CONTAINER_ABSENT"])
+        for role in INIT_ROLES:
+            name = g13.STACK + role + "-1"
+            for record in (exited(INFRA_IMAGE, 1), running(INFRA_IMAGE), {**exited(INFRA_IMAGE), "status": "created"}):
+                with self.subTest(role=role, record=record):
+                    found = g13.deployed_mismatches(deployed(MIXED, **{name: record}), FINAL_MIXED)
+                    self.assertEqual([f.split(":")[0] for f in found], ["INIT_NOT_COMPLETED"])
+
+    def test_stopped_writer_is_refused(self):
+        found = g13.deployed_mismatches(deployed(MIXED, **{g13.WRITER: exited(WRITER)}), FINAL_MIXED)
+        self.assertEqual(found, [f"CONTAINER_NOT_RUNNING: {g13.WRITER} status exited exit 0"])
+
+    def test_inventory_inspects_state_not_only_image(self):
+        """G13-R3: deployed_inventory reads State from docker inspect; a stopped role surfaces as a mismatch."""
+        from unittest import mock
+
+        def row(name):
+            role = name[len(g13.STACK):-2] if name.startswith(g13.STACK) else None
+            image = MIXED.get(role, INFRA_IMAGE) if role else WRITER
+            stopped = role == "query_kn_2" or role in INIT_ROLES
+            return {"Image": image, "RestartCount": 0,
+                    "State": {"Status": "exited" if stopped else "running", "Running": not stopped,
+                              "ExitCode": 0, "OOMKilled": False}}
+
+        def fake_sh(argv, timeout=60):
+            if argv[1] == "ps":
+                return "\n".join(g13.STACK + r + "-1" for r in (*MIXED, *g13.INFRA_ROLES))
+            self.assertEqual(argv[:2], ["docker", "inspect"])
+            return json.dumps([row(argv[-1])])
+
+        with mock.patch.object(g13, "sh", fake_sh):
+            inv = g13.deployed_inventory()
+        self.assertEqual(inv[g13.STACK + "query_kn_2-1"]["status"], "exited")
+        self.assertEqual(g13.deployed_mismatches(inv, FINAL_MIXED),
+                         [f"CONTAINER_NOT_RUNNING: {g13.STACK}query_kn_2-1 status exited exit 0"])
 
     def test_role_map_missing_or_unknown_role_is_refused(self):
         partial = {k: v for k, v in MIXED.items() if k != "binance_bar_edge"}
@@ -379,7 +455,9 @@ class PlanTests(unittest.TestCase):
         self.assertIn("dr01.manifest_revision", g13.missing_inputs(["dr01-deployed"], inputs)["dr01-deployed"])
         for e in result["steps"]:
             for c in e["commands"]:
-                outputs = [a for a in c["argv"] if a.startswith(result["receipts"])] + [c["stdout"] or ""]
+                # the sealed DL source export lives under the receipts root but is a read-only input (G13-U1)
+                outputs = [a for a in c["argv"] if a.startswith(result["receipts"])
+                           and not a.startswith(result["dl_source_dir"])] + [c["stdout"] or ""]
                 self.assertTrue(all(o == "" or o.startswith(result["receipts"] + "/" + e["step"]) for o in outputs))
 
     def test_runtime_requires_approval_and_inputs(self):
@@ -452,7 +530,7 @@ class ContainerStepTests(unittest.TestCase):
             self.assertEqual(argv[argv.index("--cap-drop") + 1], "ALL")
             self.assertNotIn("--cap-add", argv)
             self.assertEqual(argv[argv.index("--entrypoint") + 1:argv.index("--entrypoint") + 4], ["python", PY, "-B"])
-            dl = str(g13.DL_ROOT)
+            dl = "/state/p184-g13-20261010T090000Z/dl-source"  # the sealed export, never the worktree (G13-U1)
             self.assertEqual(self.mounts(argv), [f"{dl}:{dl}:ro", "/x/inv.json:/x/inv.json:ro",
                                                  "/x/reader-public:/x/reader-public:ro", f"{work}:{work}"])
             self.assertEqual(argv[argv.index("-w") + 1], dl)
@@ -498,11 +576,12 @@ class ContainerStepTests(unittest.TestCase):
 
     def test_dr07_image_and_networks_override_and_refusals(self):
         inputs = copy_inputs()
-        inputs["dr07"].update(image="sha256:" + "d4" * 32, networks=["netx"])
+        inputs["dr07"].update(image=WRITER, networks=["netx"])  # an override may only restate the writer image
         argv = runtime_steps(inputs)["dr07-reference"]["commands"][0]["argv"]
-        self.assertEqual(argv[argv.index("--entrypoint") + 2], "sha256:" + "d4" * 32)
+        self.assertEqual(argv[argv.index("--entrypoint") + 2], WRITER)
         self.assertEqual([argv[i + 1] for i, a in enumerate(argv) if a == "--network"], ["netx"])
         for change, reason in ((dict(image="local/ts:latest"), "DR07_IMAGE_DIGEST_REQUIRED"),
+                               (dict(image="sha256:" + "d4" * 32), "DR07_IMAGE_NOT_WRITER"),
                                (dict(networks=["bad net"]), "DR07_NETWORKS_INVALID"),
                                (dict(env_file="dsn.env"), "PATH_INVALID")):
             bad = copy_inputs()
@@ -514,6 +593,21 @@ class ContainerStepTests(unittest.TestCase):
         self.assertIn("PATH_INVALID", make_plan("runtime", inputs=bad)["blocked"]["dr07-reference"][0])
         del bad["dr07"]["_connections"]
         self.assertIn("DR07_CONNECTIONS_UNREADABLE", make_plan("runtime", inputs=bad)["blocked"]["dr07-reference"][0])
+
+    def test_dr07_image_is_the_image_its_rows_claim(self):
+        """G13-R1: the image that runs DR07 equals the --image-digest its rows record."""
+        for image in (None, "", WRITER, "sha256:" + "d4" * 32):
+            inputs = copy_inputs()
+            if image is not None:
+                inputs["dr07"]["image"] = image
+            entry = runtime_steps(inputs)["dr07-reference"]
+            with self.subTest(image=image):
+                if image not in (None, "", WRITER):
+                    self.assertNotIn("commands", entry)
+                    self.assertTrue(entry["blocked"][0].startswith("DR07_IMAGE_NOT_WRITER"), entry["blocked"])
+                    continue
+                argv = entry["commands"][0]["argv"]
+                self.assertEqual(argv[argv.index("--entrypoint") + 2], argv[argv.index("--image-digest") + 1])
 
     def test_connections_and_env_file_are_checked_on_the_host(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -681,6 +775,31 @@ class HelperTests(unittest.TestCase):
                          ["-e", "P184_DR05_ISOLATED_NAMESPACE=p184-dr05-dl-0123456789abcdef"])
         self.assertIn("container:p184-dr05-dl-0123456789abcdef-kafka", argv)
 
+    def test_checkout_dirty_anywhere_in_the_tracked_tree_is_refused(self):
+        """G13-R2: no pathspec; a tracked edit outside qdl/rust/scripts/... (qdl_sdk, app, Dockerfile) is seen."""
+        from unittest import mock
+        calls = []
+
+        def git_sh(argv, timeout=60):
+            calls.append(argv)
+            if "rev-parse" in argv:
+                return FINAL["dl_sha"] + "\n"
+            # real git semantics: a pathspec restricts the output to the listed paths
+            dirty = [" M qdl_sdk/client.py", " M Dockerfile.python", " M poetry.lock"]
+            spec = argv[argv.index("--") + 1:] if "--" in argv else None
+            return "\n".join(d for d in dirty if spec is None or d[3:].split("/")[0] in spec)
+
+        with mock.patch.object(g13, "sh", git_sh):
+            found = g13.checkout_problems(FINAL["dl_sha"])
+        status = next(c for c in calls if "status" in c)
+        self.assertNotIn("--", status)
+        self.assertEqual(len(found), 1)
+        self.assertTrue(found[0].startswith("DL_CHECKOUT_DIRTY"))
+        for path in ("qdl_sdk/client.py", "Dockerfile.python", "poetry.lock"):
+            self.assertIn(path, found[0])
+        with mock.patch.object(g13, "sh", lambda argv, timeout=60: FINAL["dl_sha"] if "rev-parse" in argv else ""):
+            self.assertEqual(g13.checkout_problems(FINAL["dl_sha"]), [])
+
     def test_cleanup_only_new_owned_containers(self):
         before = {"1": "p184-dr05-old", "2": "qdl_v2_stable_candidate-rust_core-1"}
         after = {**before, "3": "p184-dr05-writer-x", "4": "unrelated", "5": "p184-dr08-y"}
@@ -712,6 +831,197 @@ class HelperTests(unittest.TestCase):
                              FINAL["dl_sha"], "--dry-run"])
         self.assertEqual(code, 2)
         self.assertIn("FINAL_DIGEST_REQUIRED", out.getvalue())
+
+
+# G13-U1 fixture: committed files and their git tree id (computed with git 2.43 on the host: git init, these three
+# entries, git add -A, git commit, git rev-parse HEAD^{tree}).
+FIXTURE_TREE = "29fd85159e1c5e6ef02aa3892a48eff4d5390d0d"
+
+
+def write_fixture(root, extra=()):
+    root = Path(root)
+    (root / "qdl").mkdir(parents=True)
+    (root / "scripts").mkdir()
+    (root / "qdl/__init__.py").write_text("x = 1\n")
+    (root / "scripts/run.sh").write_text("#!/bin/sh\n")
+    (root / "scripts/run.sh").chmod(0o755)
+    (root / "link.py").symlink_to("qdl/__init__.py")
+    for rel, text in extra:
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text)
+    return root
+
+
+def tar_of(root):
+    import tarfile
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        for path in sorted(Path(root).rglob("*")):
+            tar.add(path, arcname=str(path.relative_to(root)), recursive=False)
+    return buf.getvalue()
+
+
+class FakeGit:
+    """sh/subprocess.run as seen by export_source: rev-parse -> FIXTURE_TREE, `git archive` -> a tar of `archived`
+    (what git would have exported); every other subprocess (tar -x) runs for real."""
+
+    def __init__(self, archived, docker_image=None):
+        import subprocess
+        self.archive, self.real_run, self.docker_image = tar_of(archived), subprocess.run, docker_image
+
+    def sh(self, argv, timeout=60):
+        if argv[:1] == ["git"] and "rev-parse" in argv and "--verify" in argv:
+            return FIXTURE_TREE + "\n"
+        if argv[:3] == ["docker", "image", "inspect"]:
+            return (self.docker_image or "") + "\n"
+        raise AssertionError(f"unexpected sh {argv}")
+
+    def run(self, argv, **kw):
+        import subprocess
+        if argv[:1] == ["git"] and "archive" in argv:
+            return subprocess.CompletedProcess(argv, 0, self.archive, b"")
+        return self.real_run(argv, **kw)
+
+    def patch(self):
+        from unittest import mock
+        from contextlib import ExitStack
+        stack = ExitStack()
+        stack.enter_context(mock.patch.object(g13, "sh", self.sh))
+        stack.enter_context(mock.patch.object(g13.subprocess, "run", self.run))
+        return stack
+
+
+class SourceExportTests(unittest.TestCase):
+    """G13-U1: harnesses run from a sealed `git archive <dl_sha>` export, never from the worktree."""
+
+    def test_no_planned_command_reaches_the_worktree(self):
+        result = make_plan("all")
+        export = "/state/p184-g13-20261010T090000Z/dl-source"
+        self.assertEqual(result["dl_source_dir"], export)
+        dl_cwds = 0
+        for entry in result["steps"]:
+            for c in entry.get("commands", ()):
+                text = json.dumps(c)
+                with self.subTest(step=entry["step"]):
+                    self.assertNotIn(str(g13.DL_ROOT), text)
+                with self.subTest(step=entry["step"], cwd=c["cwd"]):
+                    # TS harnesses run in the TS root, the DR01 probe in the alpha compose dir, all DL ones in the export
+                    self.assertIn(c["cwd"], ("/ts", "/home/bobby/execution_alpha", export))
+                dl_cwds += c["cwd"] == export
+        self.assertGreater(dl_cwds, 5)
+        dr01 = {e["step"]: e for e in result["steps"]}["dr01-deployed"]["commands"]
+        self.assertEqual(dr01[1]["stdin"], export + "/scripts/p184_dr01_deployed.py")
+        argv = dr01[0]["argv"]
+        self.assertIn(f"PYTHONPATH={export}:{export}/generated/python", argv)
+        up = {e["step"]: e for e in result["steps"]}["dr05-upstream"]["commands"][3]["argv"]
+        self.assertEqual(up[up.index("--dl-root") + 1], export)
+
+    def test_git_tree_id_equals_git(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = write_fixture(Path(tmp) / "src")
+            (root / "empty").mkdir()  # git has no empty trees
+            self.assertEqual(g13.git_tree_id(root), FIXTURE_TREE)
+            (root / "scripts/run.sh").chmod(0o644)
+            self.assertNotEqual(g13.git_tree_id(root), FIXTURE_TREE)
+
+    def test_export_is_sealed_and_holds_only_the_commit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            committed = write_fixture(Path(tmp) / "committed")
+            dest = Path(tmp) / "export"
+            with FakeGit(committed).patch():
+                record = g13.export_source(FINAL["dl_sha"], dest)
+            self.assertEqual((record["tree"], record["files"], record["commit"]), (FIXTURE_TREE, 3, FINAL["dl_sha"]))
+            self.assertFalse(os.access(dest / "qdl", os.W_OK))
+            self.assertFalse(os.access(dest / "qdl/__init__.py", os.W_OK))
+            with self.assertRaises(PermissionError):
+                (dest / "qdl/evil.py").write_text("x")
+            self.assertTrue(g13.remove_source(dest))
+            self.assertFalse(dest.exists())
+
+    def test_export_with_an_extra_module_is_refused(self):
+        """An archive (or a race) that adds sitecustomize.py / a .pth / a stray module does not match the tree."""
+        for rel in ("sitecustomize.py", "qdl/evil.py", "x.pth"):
+            with tempfile.TemporaryDirectory() as tmp, self.subTest(rel=rel):
+                archived = write_fixture(Path(tmp) / "a", extra=[(rel, "import os\n")])
+                with FakeGit(archived).patch(), self.assertRaisesRegex(g13.Blocked, "SOURCE_EXPORT_MISMATCH"):
+                    g13.export_source(FINAL["dl_sha"], Path(tmp) / "export")
+
+    def test_untracked_worktree_module_is_not_importable_from_the_export(self):
+        """Real git: untracked sitecustomize.py and qdl/evil.py, ignored x.pth in the worktree; neither runs from
+        the export (skipped where git is absent, e.g. the python image)."""
+        import shutil
+        import subprocess
+        if not shutil.which("git"):
+            self.skipTest("git not installed")
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = write_fixture(Path(tmp) / "repo")
+            env = {**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}
+            git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@invalid"]
+            for args in (["init", "-q"], ["add", "-A"], ["commit", "-qm", "t"]):
+                subprocess.run(git[:3] + args if args[0] == "init" else git + args, check=True, env=env)
+            sha = subprocess.run(git + ["rev-parse", "HEAD"], check=True, env=env, capture_output=True,
+                                 text=True).stdout.strip()
+            (repo / ".gitignore").write_text("*.pth\n")  # untracked itself, ignored rule for x.pth
+            (repo / "x.pth").write_text("import sys; print('PTH-RAN')\n")
+            (repo / "sitecustomize.py").write_text("print('SITE-RAN')\n")
+            (repo / "qdl/evil.py").write_text("print('EVIL-RAN')\n")
+            control = subprocess.run([sys.executable, "-B", "-c", "import qdl.evil"], cwd=repo, capture_output=True,
+                                     text=True, env={**env, "PYTHONPATH": str(repo)})
+            self.assertIn("SITE-RAN", control.stdout)  # control: from the worktree both would run
+            self.assertIn("EVIL-RAN", control.stdout)
+            dest = Path(tmp) / "export"
+            with mock.patch.object(g13, "DL_ROOT", repo):
+                record = g13.export_source(sha, dest)
+            self.assertEqual(record["tree"], FIXTURE_TREE)
+            self.assertEqual(sorted(p.name for p in dest.rglob("*")), ["__init__.py", "link.py", "qdl", "run.sh",
+                                                                         "scripts"])
+            run = subprocess.run([sys.executable, "-B", "-c", "import qdl.evil"], cwd=dest, capture_output=True,
+                                 text=True, env={**env, "PYTHONPATH": str(dest)})
+            self.assertNotEqual(run.returncode, 0)
+            self.assertNotIn("RAN", run.stdout)
+            g13.remove_source(dest)
+
+    def test_run_exports_before_the_first_step_and_removes_after(self):
+        if not TS_MATRIX_V2.is_file():
+            self.skipTest("TS worktree not mounted")
+        from unittest import mock
+        seen = []
+
+        def fake_step(entry, final, inputs, ts_root):
+            source = Path(inputs["_root"]) / g13.SOURCE_DIR
+            seen.append((entry["commands"][0]["cwd"] == str(source), inputs["_dl_source"]["tree"],
+                         os.access(source, os.W_OK), (source / "qdl/__init__.py").is_file()))
+            return {"step": entry["step"], "cells": entry["cells"], "duration_s": 0.0, "exit_codes": [0],
+                    "error": None, "harness_ok": True, "removed_leftovers": {}}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            committed = write_fixture(Path(tmp) / "committed")
+            receipts = Path(tmp) / "r"
+            receipts.mkdir()
+            with FakeGit(committed, docker_image=PY).patch(), \
+                    mock.patch.object(g13, "checkout_problems", return_value=[]), \
+                    mock.patch.object(g13, "run_step", side_effect=fake_step), redirect_stdout(io.StringIO()):
+                code = g13.main(["--python-image", PY, "--rust-image", RUST, "--python-image-ref",
+                                 FINAL["python_ref"], "--writer-image", WRITER, "--ts-source-sha", FINAL["ts_sha"],
+                                 "--dl-source-sha", FINAL["dl_sha"], "--phase", "isolated", "--only",
+                                 "dr05-upstream", "--inputs", self.inputs_file(tmp), "--receipts", str(receipts),
+                                 "--ts-root", str(TS_MATRIX_V2.parents[4])])
+            self.assertEqual(code, 0)
+            self.assertEqual(seen, [(True, FIXTURE_TREE, False, True)])
+            (root,) = receipts.iterdir()
+            self.assertFalse((root / g13.SOURCE_DIR).exists())
+            plan_json = json.loads((root / "plan.json").read_text())
+            summary = json.loads((root / "summary.json").read_text())
+            self.assertEqual(plan_json["dl_source"]["tree"], FIXTURE_TREE)
+            self.assertEqual((summary["dl_source"]["tree"], summary["dl_source"]["removed"]), (FIXTURE_TREE, True))
+
+    @staticmethod
+    def inputs_file(tmp):
+        path = Path(tmp) / "inputs.json"
+        path.write_text(json.dumps({k: INPUTS[k] for k in ("dr05_public_export", "dr05_catalog", "redis_image",
+                                                            "postgres_image")}))
+        return str(path)
 
 
 if __name__ == "__main__":
