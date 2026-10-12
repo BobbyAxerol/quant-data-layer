@@ -529,8 +529,8 @@ class OkxReferenceCompletionTests(unittest.IsolatedAsyncioTestCase):
                 current_catalog_document=catalog, current_acquisition_document=acquisition,
                 current_promotion_scope_document=scope,
             )
-            self.assertEqual(materialized.summary["reference_entitlement_count"], 70)
-            self.assertEqual(len(materialized.consumer_manifest["spec"]["requirements"]), 94)
+            self.assertEqual(materialized.summary["reference_entitlement_count"], 75)
+            self.assertEqual(len(materialized.consumer_manifest["spec"]["requirements"]), 99)
             self.assertEqual(materialized.summary["runtime_mutations"], 0)
             manifests, _route, _primary, summary = alpha_compiler.build_documents(
                 reference_manifest=materialized.consumer_manifest,

@@ -72361,3 +72361,27 @@ no build, CI or subagent job running.
     - Python 744 OK.
   - Note: `buf generate` used the repo's remote buf.build plugins, so the proto source left the host, as it did for
     4c779ac. Future generation should use local plugins only.
+
+### P18.4 DR07 Binance reference closure (IDR-090/091/092) - 2026-10-12
+
+Status: IMPLEMENTED / tested locally; not deployed.
+- Trigger: TS G13 DR07 receipt p184-g13-20261012T052510Z failed 3 BINANCE cells (OPEN_INTEREST, LONG_SHORT_RATIO,
+  TAKER_FLOW). FUNDING@BINANCE was a hidden false PASS (TS IDR-093).
+- IDR-090: Binance current open interest (interval null) was missing from `stable-reference-l2-demand.yaml`.
+  - Demand rev 4 -> reference-l2 rev 7 -> alpha-binance-paper rev 16 (+5 rows, quota 4950/300 kept from the deployed
+    r15) -> release routing rev 28, primary-consumer routing rev 9.
+  - Candidate realm r16 rendered in scratch only: bundle 63efd9ff; catalog byte-identical.
+- IDR-091: `_paginate` cadence and edges now use the UTC epoch grid, not the caller's window start.
+- IDR-092: `_funding_grid_coverage` infers the settlement period from provider rows and adds an internal-gap check.
+  OKX is not affected.
+- Tests, run in the rc14 image, --network none:
+  - 52 reference/consumer/release/routing modules: 773 OK (35 skipped);
+  - after IDR-092: 119 OK + 43 OK.
+  - Each new regression test fails on the old adapter.
+- Rollout (owner packet, not yet approved):
+  - query_kn_1/2 to a python rc15 image, mounting a new realm with alpha.binance r16;
+  - stream_kn_1/2 change only the realm mount;
+  - every alpha.binance caller moves to JWT manifest revision 16 in the same window;
+  - OKX, the writer (trading-system.paper r11), kafka, rust_core, projector, ingestor, stable_redis and the catalog
+    are untouched;
+  - rollback: the D3 reader rollback composes (realm r15, bundle bce26969, query rc14 08f356a8) and JWT rev 15.

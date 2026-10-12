@@ -83,7 +83,7 @@ class Phase24315ReferenceEntitlementMaterializationTests(unittest.TestCase):
         self.assertTrue(summary["manifest_changed"])
         self.assertTrue(summary["release_route_changed"])
         self.assertEqual(summary["alpha_reference_counts"], {
-            "alpha.binance.paper.stable": 35,
+            "alpha.binance.paper.stable": 40,
             "alpha.okx.paper.stable": 35,
         })
 

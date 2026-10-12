@@ -65,7 +65,7 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
             replace(self.scope, references=())
 
     def test_scope_is_exact_v2_only_reference_and_book_product_set(self):
-        self.assertEqual(len(self.scope.references), 70)
+        self.assertEqual(len(self.scope.references), 75)
         self.assertEqual(len(self.scope.books), 20)
         retired = {"f1228887-3053-5b61-9aea-11d3833f8a62",
                    "9e24d8dd-e74b-5f9b-a770-2556bbc89d37"}
@@ -102,7 +102,7 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
                     self.assertIsNotNone(request.start_time_ns)
                     self.assertIsNotNone(request.end_time_ns)
                 else:
-                    self.assertEqual(item.venue, "OKX")
+                    self.assertIn(item.venue, ("BINANCE", "OKX"))
                     self.assertIsNone(request.interval)
                     self.assertIsNone(request.start_time_ns)
                     self.assertIsNone(request.end_time_ns)
