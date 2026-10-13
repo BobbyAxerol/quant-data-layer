@@ -72948,9 +72948,10 @@ No production/push/merge/release; IN_PROGRESS, NOT_READY.
 <a id="p184-n1-opt-dl"></a>
 ### P18.4 N1-OPT - DL Companion Scope And Planning Journal (2026-10-13)
 
-Status: **PLANNED_PENDING_OWNER_EXECUTION_APPROVAL**. Owner requested one small
-optimization phase before N1 full qualification resumes; this turn writes the
-plan only. N1 remains IN_PROGRESS, cutover NOT_READY. No DL release gate waived.
+Status: **PLAN_READY_PENDING_OWNER_APPROVAL**. Latest owner instruction requests
+the complete bounded phase plan before execution approval. Preserve preliminary
+OPT-00 diagnostics; no further implementation or measurements. Production stays
+unchanged. N1 remains IN_PROGRESS, cutover NOT_READY. No DL release gate waived.
 
 Detailed guide/tracker (single source of truth):
 `/home/bobby/.worktrees/trading-system-next-upgrade/TRADING_SYSTEM_UNIFIED_IMPLEMENTATION_PLAN.md#ts-p184-n1-opt`.
@@ -73000,4 +73001,44 @@ used. Documentation verification: `git diff --check` plus read-only anchor,
 link/table/status/scope validation. Canonical worktrees and their existing edits
 were not changed; recorded runtime pins are not a new runtime-health measurement.
 TS planning commit: `eaa03f5a` (three Markdown files only), not pushed/merged.
-Next permitted action: owner plan approval, then OPT-00 with exact pins.
+Next permitted action: execute OPT-00 with exact pins under owner approval.
+
+Execution start 2026-10-13: TS eaa03f5a / DL 545ea7b aligned. Parent first
+freezes paired baseline and adds isolated profile-only measurements for Stream
+lock/dispatch/replay; TS profile harness is delegated in disjoint files. No
+algorithm changes until costs observed, no production mutation. Existing
+aa1f98f/d504648b and writer abcff9c6 remain baseline; diagnostic19 stays FAILED.
+No host measurement lock at initial read; recheck before jobs.
+
+
+**Planning checkpoint - latest owner instruction (2026-10-13)**
+The current instruction is to finish the bounded N1-OPT plan and await approval.
+This checkpoint supersedes the execution-start wording above, without deleting
+historical work or evidence. No further algorithm edits or heavy jobs in this
+planning slice. Existing uncommitted profile-only examples are preserved, not
+claimed as optimized application code or capacity acceptance. The previously
+running ts-profile-bind-a2 completed with exit 0 and 17 profiles; this is only
+a microprofile, not a 6k/9k result. Source/production algorithms unchanged.
+
+Independent read-only review recommends unregistered bounded replay catch-up,
+then atomic near-frontier registration with a small charged ring bridge. This
+is an OPT-01 option, not a chosen implementation or measured improvement.
+Across internal rounds preserve ONE absolute deadline and cumulative matched/
+scanned byte/record budgets; do not rearm overflow latches or reset allowances.
+Only complete replay proves a scanned frontier; cancellation/page exhaustion
+does not. Keep transport progress separate from consumer apply/durable cursor.
+Tests must cover ongoing input, boundary races, sparse keys/retention holes,
+cumulative budget exhaustion, and terminal/auth/cancel plus consumer isolation.
+
+Plan covers six costs with measured-change or measured-no-change dispositions,
+short paired checks before image builds, and unchanged N1 full qualification.
+No public contract, runtime, freshness, buffer or resource-cap change authorized.
+Branch alignment: TS feat/v2-rust-first-okx-demo@eaa03f5a; DL
+fix/p184-dl-closure@545ea7b. Preserve Claude SDK changes and owner's guide.
+Canonical checkouts/runtime/rollback artifacts untouched; no new image/build/
+container started in this planning checkpoint. No push/merge or certification.
+
+Planning verification: both git diff --check passed. Docker name-filter inventory
+found zero ts-n1-opt containers. Released only our measurement lock. No image/
+cache/data cleanup performed; existing profile binaries and receipts retained
+for review. Documentation-only checkpoint; no performance gate claimed.
