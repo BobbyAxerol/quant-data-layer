@@ -72948,9 +72948,9 @@ No production/push/merge/release; IN_PROGRESS, NOT_READY.
 <a id="p184-n1-opt-dl"></a>
 ### P18.4 N1-OPT - DL Companion Scope And Planning Journal (2026-10-13)
 
-Status: **PLAN_READY_PENDING_OWNER_APPROVAL**. Latest owner instruction requests
-the complete bounded phase plan before execution approval. Preserve preliminary
-OPT-00 diagnostics; no further implementation or measurements. Production stays
+Status: **IN_PROGRESS / OPT-00**. Active owner goal confirms execution
+of OPT-00 through OPT-05. Preserve preliminary OPT-00 diagnostics; follow
+the profile/correctness ladder before algorithm changes. Production stays
 unchanged. N1 remains IN_PROGRESS, cutover NOT_READY. No DL release gate waived.
 
 Detailed guide/tracker (single source of truth):
@@ -73042,3 +73042,34 @@ Planning verification: both git diff --check passed. Docker name-filter inventor
 found zero ts-n1-opt containers. Released only our measurement lock. No image/
 cache/data cleanup performed; existing profile binaries and receipts retained
 for review. Documentation-only checkpoint; no performance gate claimed.
+
+
+**N1-OPT execution continuation - 2026-10-13**
+Active owner goal confirms execution of OPT-00 through OPT-05; this supersedes
+the preceding planning-only checkpoint. No additional approval wait is needed.
+Recorded baseline microprofiles and their limitations in TS
+`upgrade/evidence/P184_N1_OPT_BASELINE_20261013.md` (shared guide reference).
+Two host-bind TS runs completed, 17 profiles each. Two Stream baseline runs
+completed; no optimization, capacity or recovery PASS inferred. OPT-00 remains
+open for observability gaps/profile review before OPT-01 algorithm changes.
+Separate lock wait/hold and trace-on contention have not been measured. No
+production mutation or new heavy job in this continuation; profile-only source
+is retained, Claude SDK changes remain untouched. Both canonical checkouts,
+runtime and qualified rollback artifacts unchanged; no push/merge.
+
+
+**OPT-00 concurrent profile slice - 2026-10-13**
+Added TEST_ONLY Hub public-API concurrent dispatch/register profile; no
+application algorithm changes. Two isolated runs pass: n=1000 each operation,
+dispatch p95 0.090846/0.089176 ms; register 0.091696/0.093286 ms. Exact
+live offsets, sparse replay ranges, final subscriptions/budget checked.
+First harness run failed before correction and was stopped exactly by name;
+retained exit137 and panic evidence. Replaced panic-stranding barrier with
+bounded/disconnect-aware rendezvous and dropped the final decoded reference
+before checking charge release. See linked TS baseline report for hashes.
+Commands: run.py dl dl-profile-build4 cargo build --offline --locked --release
+-p qdl-stream-gateway --example hot_path_profile; dl-profile-concurrent-a2/a3
+run /work/dl-target/release/examples/hot_path_profile --test-only. Builds use
+existing image, no image build. Separate lock wait/hold remains unmeasured;
+no optimization/capacity PASS. All runs serialized under own measurement lock.
+No runtime, auth, schema, cap or queue changes. Claude SDK files untouched.
