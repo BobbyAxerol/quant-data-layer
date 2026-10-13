@@ -73237,3 +73237,23 @@ OPT-02 TS-owned work started after OPT01 local boundary/fairness tests; full
 CPU/time does not yet pass. See TS baseline report and main tracker. No DL
 source/runtime change in this slice. Isolated Redis/test containers removed;
 no image builds/prune. Own measurement lock released after all jobs.
+
+
+### P18.4 N1-OPT OPT-01 DL slices after handover to Claude - 2026-10-13
+
+Owner reassigned N1-OPT to Claude at 17:10Z (handover DL c49ffd1, clean). Guide and tracker: TS Unified Plan
+`#ts-p184-n1-opt`. Tests ran serially in the toolchain image 551428d9 under the host lock, all --rm, network none.
+- c140e7e: replay sole-request slot wait yields to a ready queued peer of the same partition (2 ms slices, stalled-only
+  sets keep the 200 ms bound; metric peer_preempted). Catch-up observes a stop that began before the subscribe
+  (watch wait_for; the Ref is dropped in an async block so the future stays Send) and never announces LIVE on a
+  stopping replica (new t04 test). TEST_ONLY `lock-profile` feature (never in images). Property test 21.24 -> 1.60 s.
+- 8ddba09: pre-frozen lock rule triggered on a valid paired profile (feature-on vs off p50 within 1.05-1.15x):
+  register_near wait p99 32768-65536 ns, decode+fanout = whole dispatch hold. Subscriber lists are now copy-on-write
+  `Arc<[Arc<Subscription>]>`; dispatch keeps duplicate check, ring/by_key/boundary, eviction and the Arc clone under
+  the partition lock and runs decode/charge/offer under a per-partition dispatcher gate (order gate -> partition).
+  Registration stays atomic with the boundary. Result: register_near wait p99 128 ns, dispatch hold p50 512 ns,
+  inclusive dispatch p50 fanout1 1.64 -> 1.30 us, fanout64 11.1 -> 10.9 us.
+- Tests: lib 60/60, lib + isolated-replay-clock 68/68, native_stream 51/0/1 ignored, hot_lookup_contention 1/1,
+  committed_reads 3 ignored (broker), clippy --all-targets --features lock-profile -D warnings.
+- Not yet: full-path proof (OPT-05 on a TEST stream image built from this source), and the stream image for the
+  combined step-1 rollout must include these commits (batch 2048 only after this is live, diag13).
