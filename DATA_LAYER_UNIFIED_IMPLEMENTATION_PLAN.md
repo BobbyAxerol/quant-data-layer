@@ -72943,3 +72943,61 @@ continuation; source tests are not fullcapacity.19cleanup14roles/0residue and
 18productionrolesunchanged. Receipt12:56:38Z precedes foreignPMlock12:57:45Z;
 next20refused beforestartup. Archive/cachecleanup deferred duringforeignlock.
 No production/push/merge/release; IN_PROGRESS, NOT_READY.
+
+
+<a id="p184-n1-opt-dl"></a>
+### P18.4 N1-OPT - DL Companion Scope And Planning Journal (2026-10-13)
+
+Status: **PLANNED_PENDING_OWNER_EXECUTION_APPROVAL**. Owner requested one small
+optimization phase before N1 full qualification resumes; this turn writes the
+plan only. N1 remains IN_PROGRESS, cutover NOT_READY. No DL release gate waived.
+
+Detailed guide/tracker (single source of truth):
+`/home/bobby/.worktrees/trading-system-next-upgrade/TRADING_SYSTEM_UNIFIED_IMPLEMENTATION_PLAN.md#ts-p184-n1-opt`.
+Governing design remains KN plus TS N1/R2. Do not duplicate the full contract.
+Aligned feature pins: DL `fix/p184-dl-closure@7197358`, TS
+`feat/v2-rust-first-okx-demo@cb12c8ed`; recheck against Claude before each slice.
+
+| Work | DL ownership | Required boundary |
+| --- | --- | --- |
+| OPT-00 | Stream/replay/queue/cost profile | Same-event coordinates, bytes AND count; transport, ACK and durable cursor kept separate |
+| OPT-01 | `rust/qdl-stream-gateway/src/{hub,subscription,replay,service}.rs` | Bounded replay/live convergence; atomic register/barrier, per-key index coverage, terminal/cancel/auth/budget integrity |
+| OPT-02 | Affected Stream envelope/token assembly | Preserve wire/auth contracts; TS owns native View/payload changes |
+| OPT-03 | Consumer-boundary review only | TS owns checkpoint fsync/grouping/flush and Python return compatibility |
+| OPT-04 | Existing Stream health/queue only when attributed | No global Disruptor/spin, relaxed quota or shared slow-consumer gating |
+| OPT-05 | Existing isolated R2 apparatus and paired image/proof pins | Short correctness/latency/recovery and cleanup, not 600s or production certification |
+
+Source shows opportunities, not measured cache-miss/lock attribution. Fix bounded
+replay/live first, then measured lock/copy/allocation/diagnostic overhead. Keep
+queue1000/replay10000, byte caps, finite retry, freshness, generation, lossless
+TRADE, QUOTE semantics, TLS/auth and durability. At9k,1000undrained slots cover
+about111ms; do not hide the handoff problem with more buffers. LIVE is not proof
+of consumer usable. A missing by_key entry cannot prove history coverage after
+eviction. Ring/Kafka, aborted offset holes, dispatch/register/reset, slow-client,
+cancellation and terminal-order regressions are required.
+
+Existing aa1f98f/d504648b tests and diagnostic19 remain baseline evidence only;
+19 remains FAILED. Short paired one-instrument6k/9k and per-episode recovery,
+including beyond10000 records and catch-up while input continues, precede600s.
+Keep real-provider oracle and TEST_ONLY capacity separate. SPSC/PMU options need
+bounded evidence; measured no-change is allowed, unresolved correctness or
+missing required recovery proof is not. Preserve frozen owner G1-G14 amendments.
+
+Obey host measurement lock before jobs; no overlapping agent timing runs. Build
+only changed binaries with immutable pins. Keep active/qualified rollback and
+one paired candidate/baseline set; clean exact test resources after each attempt,
+record disk pre/post and unchanged production image/restart state. No broad
+prune, shared-state cleanup, runtime/ACL/manifest/SDK/binding change, core/Kafka
+redesign, push/merge/tag/release. Detailed dispositions belong in this journal
+and the TS tracker with cross-linked evidence, not scattered unlinked notes.
+
+Planning journal: added this entry alongside TS phase, native-guide pointer and
+cutover dependency. Independent read-only review incorporated. Documentation
+checks only, no source tests/builds/measurements/runtime operations or resources
+created. Cleanup not needed; prior deferred cleanup not silently closed. The
+apply_patch sandbox helper failed before mutation; exact-match rule32 fallback
+used. Documentation verification: `git diff --check` plus read-only anchor,
+link/table/status/scope validation. Canonical worktrees and their existing edits
+were not changed; recorded runtime pins are not a new runtime-health measurement.
+TS planning commit: `eaa03f5a` (three Markdown files only), not pushed/merged.
+Next permitted action: owner plan approval, then OPT-00 with exact pins.
