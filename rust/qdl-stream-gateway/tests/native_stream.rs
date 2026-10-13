@@ -2417,6 +2417,16 @@ async fn f3_a_joiner_is_answered_after_a_reader_open_failure() {
         );
     }
     coordinator_baseline(&coordinator, &budget).await;
+    assert!(coordinator.metrics.open_calls.load(Ordering::Relaxed) >= 1);
+    assert!(coordinator.metrics.open_elapsed_ns.load(Ordering::Relaxed) > 0);
+    assert_eq!(
+        coordinator.metrics.cursor_next_calls.load(Ordering::Relaxed),
+        0
+    );
+    assert_eq!(
+        coordinator.metrics.cursor_next_elapsed_ns.load(Ordering::Relaxed),
+        0
+    );
 }
 
 /// The coordinator back at rest, checked as one snapshot: the driver re-takes
@@ -2482,6 +2492,10 @@ async fn f3_joiners_at_the_last_record_and_empty_ranges_complete_exactly() {
     assert_eq!(empty_end.await.unwrap(), ReplayEnd::Complete);
     drop((all, tail, empty));
     coordinator_baseline(&coordinator, &budget).await;
+    assert!(coordinator.metrics.open_calls.load(Ordering::Relaxed) >= 1);
+    assert!(coordinator.metrics.open_elapsed_ns.load(Ordering::Relaxed) > 0);
+    assert!(coordinator.metrics.cursor_next_calls.load(Ordering::Relaxed) >= 40);
+    assert!(coordinator.metrics.cursor_next_elapsed_ns.load(Ordering::Relaxed) > 0);
 }
 
 // F4: bounded replay - per-request scan limits, budget-charged channels,

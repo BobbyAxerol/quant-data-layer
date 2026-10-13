@@ -633,6 +633,8 @@ impl MarketDataStreamService for Gateway {
         let clock_guard = state.hub.test_clock_enabled().then(|| state.hub.clone());
         let task = SubscriptionTask {
             report: Report {
+                started: Some(Instant::now()),
+                started_wall_ns: now_ns(),
                 outcome: Mutex::new("ended"),
                 ..Report::default()
             },
@@ -1036,6 +1038,9 @@ fn spawn_scan(
 /// view with this replica.
 #[derive(Default)]
 struct Report {
+    started: Option<Instant>,
+    started_wall_ns: u64,
+    replay_handoff_elapsed_ns: AtomicU64,
     replayed: AtomicU64,
     delivered: AtomicU64,
     aged_out: AtomicU64,
@@ -1221,6 +1226,13 @@ impl Drop for SubscriptionTask {
                 "feed": self.subscription.requirement.delivery.feed,
                 "interval": self.subscription.requirement.delivery.interval,
                 "after": self.after,
+                "started_wall_ns": self.report.started_wall_ns,
+                "ended_wall_ns": now_ns(),
+                "elapsed_ns": self.report.started.map(|at| at.elapsed().as_nanos().min(u64::MAX as u128) as u64),
+                "replay_handoff_elapsed_ns": match load(&self.report.replay_handoff_elapsed_ns) {
+                    0 => None,
+                    value => Some(value),
+                },
                 "replayed": load(&self.report.replayed),
                 "delivered": load(&self.report.delivered),
                 "aged_out_at_read": load(&self.report.aged_out),
@@ -1881,6 +1893,13 @@ impl SubscriptionTask {
         );
         if !self.control(live).await {
             return;
+        }
+        // Transport handoff only: this does not assert consumer apply or eligibility.
+        if let Some(started) = self.report.started {
+            self.report.replay_handoff_elapsed_ns.store(
+                started.elapsed().as_nanos().min(u64::MAX as u128) as u64,
+                Ordering::Relaxed,
+            );
         }
         let mut shutdown = self.state.shutdown.subscribe();
         let mut filtered_since_delivery = 0usize;

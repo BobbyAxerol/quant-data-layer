@@ -72902,3 +72902,30 @@ and3hashedarchives removed; superseded TS TESTimage d9f82eff removed, active and
 qualifiedrollback retained. Free disk262680969216->262764195840B(sharedhost),
 container image/state/restart/OOM tuples unchanged. TS evidence receipt
 p184-n1-final-20261012/r2-recovery-cleanup-20261013.json. No DL runtime mutation.
+
+N1 bounded replay wakeup investigation (2026-10-13), IN_PROGRESS. Continue approved
+R2 only: channel32 currently polls capacity with fixed2ms sleeps on the blocking
+reader. Evaluate slot notification under the existing200ms detach deadline, not
+larger buffers or replay pages. Add bounded wait counters and behavior tests for
+available/full/closed/budget-starved channels and deadline. Preserve ordered
+delivery, replay budget ownership, cancellation and slow-consumer isolation.
+Source proof is not attribution of all observed delay; compare the same short
+isolated9k pause workload before600s. No production change; rollback is removal
+of exact disposable namespace. Keep old FAIL receipts. Companion TS review must
+retain fault-specific progress/timing gaps, not relax clean-run certificate checks.
+Per-subscription existing close report gains wall start/end, monotonic elapsed and
+optional replay-to-live transport handoff elapsed. Null means no completed handoff;
+this is not Redis ACK or consumer usable. No per-event log or new endpoint.
+Source review: bounded Tokio permit notification is invoked only inside the
+existing spawn_blocking pass. Replay bytes are charged after slot acquisition;
+closed/deadline/budget failure returns the permit. Six unit tests cover these
+paths and saturating counters, existing coalesced/slow-consumer tests retained.
+Initial compile failed JSON macro recursion; fixed by grouping additive replay
+metrics, without changing runtime resource limits. Feature isolated-replay-clock:
+65unit+48native PASS,0fail;1existing ignored manual benchmark. Default feature
+verification and paired short experiment pending. No capacity claim.
+Default cargo test --offline --locked -p qdl-stream-gateway --lib --test native_stream
+also PASS:57unit+48native,0fail,1same ignored manual benchmark. Counts overlap
+feature suite; do not sum. Both --rm test containers removed. Source ready for
+TEST-only packaging and one paired9k30s writerpause against diagnostic18, only
+Stream image changed. No release or600s qualification implied.

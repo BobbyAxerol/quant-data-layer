@@ -316,6 +316,14 @@ async fn serve() -> Result<(), String> {
             let replay = &reporter.replay.metrics;
             let load = |value: &std::sync::atomic::AtomicU64| value.load(Ordering::Relaxed);
             let (rss, cpu) = process_usage();
+            let replay_timing = serde_json::json!({
+                "slot_waits": load(&replay.slot_waits),
+                "slot_wait_ns": load(&replay.slot_wait_ns),
+                "open_calls": load(&replay.open_calls),
+                "open_elapsed_ns": load(&replay.open_elapsed_ns),
+                "cursor_next_calls": load(&replay.cursor_next_calls),
+                "cursor_next_elapsed_ns": load(&replay.cursor_next_elapsed_ns),
+            });
             println!(
                 "{}",
                 serde_json::json!({
@@ -355,6 +363,7 @@ async fn serve() -> Result<(), String> {
                     "replay_readers_free": reporter.replay.available(),
                     "replay_in_flight": reporter.replay.in_flight(),
                     "replay_detached": load(&replay.detached),
+                    "replay_timing": replay_timing,
                     "queue_bytes": reporter.budget.used(),
                     "rss_bytes": rss,
                     "cpu_seconds": cpu,
