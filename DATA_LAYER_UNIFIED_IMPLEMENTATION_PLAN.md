@@ -73212,3 +73212,22 @@ Proposed gateway compatibility (owner rule: stable, additive interfaces):
 N1 findings for Codex:
 - telemetry.rs:139-145 does not count exhausted REPLAY_* in the integrity counters;
 - the protect_continuity attempt budget (session.rs:519-521/619) caps the backlog.
+
+OPT-01 fairness attribution: targeted property trace1 passed but took63.71s;
+closed-subscription reports show up to14.28s handoff for67 replay records,
+including8-record tail near14.28s. Source waits DETACH_AFTER on full sink inside
+shared replay pass. Test bounded no-wait detach when peer requests are active;
+retain wait when sole request, budgets/offsets/cancel unchanged. Do not call
+this confirmed root cause until paired result. No runtime changes.
+
+
+OPT-01 fairness slice tested: peer-aware nonblocking detach on full replay
+sink, existing bounded wait retained for sole active request. No cap/buffer
+increase. dl-fairness-unit1:8 PASS; dl-fairness-native1:50 PASS/0 FAIL/1 ignored
+(explicit benchmark server), source unchanged. Same12-seed property before/
+after63.71/21.24s; n282 handoffs each, p95 13688.708069/3815.346563ms, max
+15091.328461/4633.188981ms. Attribution only, intentionally stalled clients,
+not consumer ACK or 6k/9k acceptance. Full report in linked baseline evidence.
+Claude branch alignment: SDK bb75d06 landed on DL branch; preserved without
+changes. TS 3b4c4136. No runtime/image build; exact --rm tests only. OPT-01
+remains pending full-path OPT05 proof; do not call whole optimization complete.

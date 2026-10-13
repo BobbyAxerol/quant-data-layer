@@ -583,6 +583,7 @@ impl ReplayCoordinator {
             let weight = live.weight();
             let mut index = 0;
             while index < active.len() {
+                let allow_wait = active.len() == 1;
                 let request = &mut active[index];
                 let wanted = request.key == live.raw.key
                     && offset > request.after
@@ -601,7 +602,7 @@ impl ReplayCoordinator {
                     done.finish(ReplayEnd::Backlog);
                     continue;
                 };
-                match self.send_or_detach(&request.sink, &live, weight) {
+                match self.send_or_detach(&request.sink, &live, weight, allow_wait) {
                     Sent::Delivered => {
                         reservation.delivered();
                         *delivered = true;
@@ -651,12 +652,16 @@ impl ReplayCoordinator {
         sink: &tokio::sync::mpsc::Sender<Replayed>,
         record: &Arc<LiveRecord>,
         weight: usize,
+        allow_wait: bool,
     ) -> Sent {
         let deadline = Instant::now() + DETACH_AFTER;
         let permit = match sink.try_reserve() {
             Ok(permit) => permit,
             Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return Sent::Closed,
             Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                // A stalled subscriber must not hold the shared reader while
+                // another request in this pass can consume its next record.
+                if !allow_wait { return Sent::Detach; }
                 let started = Instant::now();
                 saturating_add(&self.metrics.slot_waits, 1);
                 // Only called by the spawn_blocking replay reader. Construct
@@ -775,7 +780,7 @@ mod tests {
         let sink = sink.clone();
         tokio::task::spawn_blocking(move || {
             let record = record(REPLAY_CHANNEL as i64);
-            coordinator.send_or_detach(&sink, &record, record.weight())
+            coordinator.send_or_detach(&sink, &record, record.weight(), true)
         })
     }
 
@@ -955,6 +960,18 @@ mod tests {
         assert_eq!(request.episode.matched(), 1);
         assert_eq!(request.ended(11, deadline + Duration::from_millis(1)),
             Some(ReplayEnd::ScanLimit("REPLAY_TIME_LIMIT")));
+    }
+
+    #[test]
+    fn full_peer_detaches_without_wait_or_byte_charge() {
+        let coordinator = coordinator(1024 * 1024);
+        let (sink, _receiver) = mpsc::channel(REPLAY_CHANNEL);
+        fill(&coordinator, &sink);
+        let before = coordinator.budget.used();
+        let row = record(900);
+        assert_eq!(coordinator.send_or_detach(&sink, &row, row.weight(), false), Sent::Detach);
+        assert_eq!(coordinator.metrics.slot_waits.load(Ordering::Relaxed), 0);
+        assert_eq!(coordinator.budget.used(), before);
     }
 
 }
