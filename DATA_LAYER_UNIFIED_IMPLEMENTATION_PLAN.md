@@ -72948,7 +72948,7 @@ No production/push/merge/release; IN_PROGRESS, NOT_READY.
 <a id="p184-n1-opt-dl"></a>
 ### P18.4 N1-OPT - DL Companion Scope And Planning Journal (2026-10-13)
 
-Status: **IN_PROGRESS / OPT-01**. Active owner goal confirms execution
+Status: **IN_PROGRESS / OPT-02**. Active owner goal confirms execution
 of OPT-00 through OPT-05. Preserve preliminary OPT-00 diagnostics; follow
 the profile/correctness ladder before algorithm changes. Production stays
 unchanged. N1 remains IN_PROGRESS, cutover NOT_READY. No DL release gate waived.
@@ -73231,3 +73231,9 @@ not consumer ACK or 6k/9k acceptance. Full report in linked baseline evidence.
 Claude branch alignment: SDK bb75d06 landed on DL branch; preserved without
 changes. TS 3b4c4136. No runtime/image build; exact --rm tests only. OPT-01
 remains pending full-path OPT05 proof; do not call whole optimization complete.
+
+OPT-02 TS-owned work started after OPT01 local boundary/fairness tests; full
+6k/9k proof remains OPT05. TS candidate reduces requested allocation but paired
+CPU/time does not yet pass. See TS baseline report and main tracker. No DL
+source/runtime change in this slice. Isolated Redis/test containers removed;
+no image builds/prune. Own measurement lock released after all jobs.
