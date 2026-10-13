@@ -73105,3 +73105,29 @@ no unmeasured optimization benefit claimed. Current status OPT-01 IN_PROGRESS.
 No new image, runtime or other consumer changes. Test containers use --rm;
 retain compiler artifacts for active N1, no broad cache/image prune. Release
 own measurement lock after jobs. Claude SDK edits remain outside staged scope.
+
+
+OPT-01 replay-accounting slice: add episode-owned absolute deadline and
+cumulative scan-record/byte/match accounting reusable by sequential catch-up
+ranges. Existing Replay RPC retains independent page accounting. Test limits
+across ranges before connecting Subscribe; no timeout reset or cap change.
+
+
+**OPT-01 episode budget implementation checkpoint - 2026-10-13**
+ReplayEpisode carries absolute deadline and cumulative scanned records/bytes
+and matched reservations across future sequential catch-up ranges. Existing
+Replay RPC keeps local page count. An undelivered reservation is released
+before requeue, preventing a transient false matched-limit on the next reader.
+No new Subscribe loop connected yet; no claim that live overflow is repaired.
+Seven replay unit tests passed initially (one new budget/deadline regression).
+First native_stream run returned 48 pass/1 benchmark-server ignore, but wrapper
+rejected it with code125 because source changed during the run: NOT acceptance.
+A fresh pinned run is required; retain the rejected receipt. No production
+mutation or new image; only isolated existing toolchain image used.
+
+Final pinned validation: dl-episode-native2 exit0, source hashes unchanged,
+48 PASS/0 FAIL/1 ignored (explicit client-driven benchmark server only).
+dl-episode-test2 exit0, source unchanged, 7 PASS/0 FAIL/0 ignored (51
+unrelated tests filtered). Container name-filter inventory empty. Own
+measurement lock released; no new image, no disk/cache deletion. Retain
+active N1 compiler cache and exact receipts; runtime/rollback untouched.

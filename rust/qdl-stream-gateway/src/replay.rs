@@ -119,6 +119,47 @@ impl Replayed {
     }
 }
 
+/// One Subscribe catch-up episode, shared only by its sequential scan ranges.
+/// Count limits and the absolute deadline never restart at a range boundary.
+#[derive(Debug)]
+pub struct ReplayEpisode {
+    pub deadline: Instant,
+    scanned: AtomicU64,
+    scanned_bytes: AtomicU64,
+    matched: AtomicU64,
+}
+impl ReplayEpisode {
+    pub fn new(deadline: Instant) -> Arc<Self> {
+        Arc::new(Self { deadline, scanned: AtomicU64::new(0),
+            scanned_bytes: AtomicU64::new(0), matched: AtomicU64::new(0) })
+    }
+    pub fn matched(&self) -> u64 { self.matched.load(Ordering::Relaxed) }
+    pub fn scan(&self, bytes: u64, limits: &ReplayLimits) -> Option<&'static str> {
+        saturating_add(&self.scanned, 1);
+        saturating_add(&self.scanned_bytes, bytes);
+        if self.scanned.load(Ordering::Relaxed) > limits.max_scanned_records {
+            Some("REPLAY_SCAN_LIMIT")
+        } else if self.scanned_bytes.load(Ordering::Relaxed) > limits.max_scanned_bytes {
+            Some("REPLAY_BYTE_LIMIT")
+        } else { None }
+    }
+    pub fn reserve_match(self: &Arc<Self>, limit: u64) -> Option<MatchReservation> {
+        self.matched.fetch_update(Ordering::Relaxed, Ordering::Relaxed,
+            |n| (n < limit).then(|| n + 1)).ok()?;
+        Some(MatchReservation { episode: self.clone(), delivered: false })
+    }
+}
+/// Undelivered/detached records do not consume a matched-record allowance.
+pub struct MatchReservation { episode: Arc<ReplayEpisode>, delivered: bool }
+impl MatchReservation {
+    pub fn delivered(mut self) { self.delivered = true; }
+}
+impl Drop for MatchReservation {
+    fn drop(&mut self) {
+        if !self.delivered { self.episode.matched.fetch_sub(1, Ordering::Relaxed); }
+    }
+}
+
 /// One replay: the committed range `(after, barrier)` of one partition for
 /// one key and product, delivered to `sink` in offset order.
 pub struct ReplayRequest {
@@ -133,8 +174,7 @@ pub struct ReplayRequest {
     pub cancel: Arc<AtomicBool>,
     pub deadline: Instant,
     matched: u64,
-    scanned: u64,
-    scanned_bytes: u64,
+    episode: Arc<ReplayEpisode>,
 }
 
 impl ReplayRequest {
@@ -162,9 +202,14 @@ impl ReplayRequest {
             cancel,
             deadline,
             matched: 0,
-            scanned: 0,
-            scanned_bytes: 0,
+            episode: ReplayEpisode::new(deadline),
         }
+    }
+
+    pub fn with_episode(mut self, episode: Arc<ReplayEpisode>) -> Self {
+        self.deadline = self.deadline.min(episode.deadline);
+        self.episode = episode;
+        self
     }
 
     fn finish(&mut self, end: ReplayEnd) {
@@ -499,15 +544,7 @@ impl ReplayCoordinator {
                     index += 1;
                     continue;
                 }
-                request.scanned += 1;
-                request.scanned_bytes += size;
-                let limit = if request.scanned > self.limits.max_scanned_records {
-                    Some("REPLAY_SCAN_LIMIT")
-                } else if request.scanned_bytes > self.limits.max_scanned_bytes {
-                    Some("REPLAY_BYTE_LIMIT")
-                } else {
-                    None
-                };
+                let limit = request.episode.scan(size, &self.limits);
                 match limit {
                     Some(reason) => {
                         self.metrics.scan_limited.fetch_add(1, Ordering::Relaxed);
@@ -559,13 +596,14 @@ impl ReplayCoordinator {
                     index += 1;
                     continue;
                 }
-                if request.matched >= self.limits.max_matched {
+                let Some(reservation) = request.episode.reserve_match(self.limits.max_matched) else {
                     let mut done = active.swap_remove(index);
                     done.finish(ReplayEnd::Backlog);
                     continue;
-                }
+                };
                 match self.send_or_detach(&request.sink, &live, weight) {
                     Sent::Delivered => {
+                        reservation.delivered();
                         *delivered = true;
                         request.after = offset;
                         request.matched += 1;
@@ -578,10 +616,12 @@ impl ReplayCoordinator {
                         index += 1;
                     }
                     Sent::Closed => {
+                        drop(reservation);
                         let mut done = active.swap_remove(index);
                         done.finish(ReplayEnd::Cancelled);
                     }
                     Sent::Detach => {
+                        drop(reservation);
                         // Too slow for the shared pass: continue from its own
                         // offset later.
                         self.metrics.detached.fetch_add(1, Ordering::Relaxed);
@@ -589,6 +629,7 @@ impl ReplayCoordinator {
                         self.requeue(partition, detached);
                     }
                     Sent::Starved => {
+                        drop(reservation);
                         *starved = true;
                         self.metrics.budget_detached.fetch_add(1, Ordering::Relaxed);
                         let detached = active.swap_remove(index);
@@ -886,4 +927,34 @@ mod tests {
         saturating_add(&counter, 1);
         assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
     }
+    #[test]
+    fn episode_allowances_survive_ranges_and_detached_matches() {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let episode = ReplayEpisode::new(deadline);
+        let limits = ReplayLimits { max_scanned_records: 2,
+            max_scanned_bytes: 10, max_matched: 1, ..ReplayLimits::default() };
+        assert_eq!(episode.scan(4, &limits), None);
+        let detached = episode.reserve_match(1).unwrap();
+        assert!(episode.reserve_match(1).is_none());
+        drop(detached);
+        assert_eq!(episode.matched(), 0);
+        episode.reserve_match(1).unwrap().delivered();
+        assert!(episode.reserve_match(1).is_none());
+        assert_eq!(episode.scan(4, &limits), None);
+        assert_eq!(episode.scan(1, &limits), Some("REPLAY_SCAN_LIMIT"));
+        let bytes = ReplayEpisode::new(deadline);
+        assert_eq!(bytes.scan(6, &limits), None);
+        assert_eq!(bytes.scan(5, &limits), Some("REPLAY_BYTE_LIMIT"));
+        let (sink, _rx) = tokio::sync::mpsc::channel(1);
+        let (done, _end) = tokio::sync::oneshot::channel();
+        let request = ReplayRequest::new(10, 20, b"key".to_vec(),
+            ("TRADE".into(), None), None, sink, done,
+            Arc::new(AtomicBool::new(false)), deadline + Duration::from_secs(10))
+            .with_episode(episode.clone());
+        assert_eq!(request.deadline, deadline);
+        assert_eq!(request.episode.matched(), 1);
+        assert_eq!(request.ended(11, deadline + Duration::from_millis(1)),
+            Some(ReplayEnd::ScanLimit("REPLAY_TIME_LIMIT")));
+    }
+
 }
