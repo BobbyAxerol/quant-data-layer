@@ -38,8 +38,8 @@ pub struct ReplayLimits {
     pub max_scanned_records: u64,
     pub max_scanned_bytes: u64,
     pub max_duration: Duration,
-    /// `max_replay_events` of the Python gateway: more matching records than
-    /// this means the backlog exceeds the bounded window (resnapshot).
+    /// Maximum matching records per bounded replay. Exhaustion is retryable
+    /// REPLAY_MATCHED_LIMIT, not retention loss; resume from the last token.
     pub max_matched: u64,
 }
 

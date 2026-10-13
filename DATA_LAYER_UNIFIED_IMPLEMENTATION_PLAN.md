@@ -72841,3 +72841,42 @@ acceptance corpus. No canonical injection or fabricated provider clocks. Receipt
 is in TS evidence p184-n1-final-20261012/retention-yield1/receipt.json. Source-side
 canonical-weighted pacing103tests passed in TS; final6k/9k real corpus/fault/runtime
 qualification remains open. No production principal/ACL/quota/offset changes.
+
+
+N1 R2 recovery closure continuation (2026-10-13), owner-approved IN_PROGRESS.
+Guide: TS upgrade/P184_N1_ACCEPTANCE_AMENDMENT_R2.md; existing KN bounded lossless
+Stream architecture unchanged. Diagnostic13 exposed retained-history replay budget
+max_matched10000 classified as CURSOR_EXPIRED/OUT_OF_RANGE. Distinguish retryable
+budget exhaustion from actual retention/token loss; never advance a lossless cursor
+via latest snapshot. Scope first: typed replay limit result and tests, preserve
+queue/depth/scan/time limits, authentic tokens, ordering and actual retention refusal.
+Inspect both ring and Kafka replay branches. Source tests and existing isolated
+runtime only before rollout; no production image/ACL/manifest changes. Broader replay
+batching and continuity convergence remain dependent on measured evidence. Rollback
+is removal of exact TEST namespace/image, not mutation of production offsets.
+Parent Codex owns journal/commit; disjoint agent may edit Stream typed-status tests.
+Status not certified; no600s rerun to hide known latency or recovery failure.
+
+N1 recovery follow-up design within same scope: Subscribe replay currently emits
+one response/event while live path honors requested batching up to64. Under load,
+replay runs before live drain and the1000record live queue fills. Reuse existing
+bounded Batch/transport charge contract for replay too, only when already requested
+by client. Ring groups bounded by count/bytes; reader drains only immediately
+available records (no wait-to-fill). Flush before terminal/control/filtered boundaries;
+keep ordered per-record tokens and correct replay counters, independent live/replay
+budget ownership. No enlarged queues/replay maxima or production rollout. Tests:
+ring+reader parity/order/expiry/revocation/terminal, same limits, clientbatch1compat.
+Classification and batching are separate reviewed source slices; parent runs tests
+only after resource measurement lock clears. Not a catch-up PASS until isolated run.
+
+2026-10-13 tested coherent Stream recovery slice: cargo test --offline --locked
+-p qdl-stream-gateway --lib --test native_stream:51lib+48native PASS,0fail,
+1ignored manual benchmark server (not an acceptance test). Same command with
+--features isolated-replay-clock:59lib+48native PASS,0fail, same1manual ignore.
+Tests include ring/reader matched-limit exact continuation, retention refusal,
+scan-budget no-progress retry, batch1/64 parity, terminal-before-control ordering,
+byte/count caps, cancellation/revocation budget release and no wait-to-fill.
+No production role/image/config/ACL changed. TEST containers --rm removed;
+shared cache/build artifacts retained only for active N1 candidate packaging.
+Actual at-rate recovery remains NOT_MEASURED; source tests do not certify it.
+Companion TS continuity/retry checks remain in review, source packaging not deployed.

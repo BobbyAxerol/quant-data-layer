@@ -970,23 +970,20 @@ fn replay_end_status(state: &GatewayState, end: &ReplayEnd) -> Option<Status> {
     };
     match end {
         ReplayEnd::Complete | ReplayEnd::PageFull | ReplayEnd::Cancelled => None,
-        ReplayEnd::Backlog => expired(
-            "replay backlog exceeds the bounded gateway window; a fresh snapshot is required"
-                .into(),
-        ),
+        ReplayEnd::Backlog => Some(Status::resource_exhausted(
+            "RATE_LIMITED:REPLAY_MATCHED_LIMIT:replay reached its matched-record bound; \
+             resume from the last token",
+        )),
         ReplayEnd::Retention => expired(
             "RETENTION:the cursor is below the retained committed log; a fresh snapshot is required"
                 .into(),
         ),
-        // Out of time under load: retryable, the resume token has advanced
-        // through everything already delivered, so a retry makes progress.
-        ReplayEnd::ScanLimit("REPLAY_TIME_LIMIT") => Some(Status::resource_exhausted(
-            "RATE_LIMITED:REPLAY_TIME_LIMIT:replay did not complete within its time bound; \
-             resume from the last token",
-        )),
-        ReplayEnd::ScanLimit(reason) => expired(format!(
-            "{reason}:replay exceeds the bounded scan; a fresh snapshot is required"
-        )),
+        // A work budget is not retention loss. A scan may stop before any
+        // token advances; callers must bound retries when there is no progress.
+        ReplayEnd::ScanLimit(reason) => Some(Status::resource_exhausted(format!(
+            "RATE_LIMITED:{reason}:replay reached its bounded scan; \
+             resume from the last token; bound retries if no progress"
+        ))),
         ReplayEnd::Corrupt { partition, offset } => {
             Some(data_integrity(*partition, *offset, "failed to decode"))
         }
@@ -1137,11 +1134,17 @@ struct SubscriptionTask {
     partition: i32,
     key: Vec<u8>,
     after: i64,
-    /// Records per live response (1 = one record per response, pre-2.3.0).
+    /// Records per response (1 = one record per response, pre-2.3.0).
     batch_limit: usize,
 }
 
-/// Live event records gathered for one response, in delivery order, with
+#[derive(Clone, Copy)]
+enum BatchPhase {
+    Live,
+    Replay,
+}
+
+/// Event records gathered for one response, in delivery order, with
 /// their budget charges merged: the charge travels with the response until
 /// tonic takes it, exactly as a single record's does.
 #[derive(Default)]
@@ -1472,7 +1475,7 @@ impl SubscriptionTask {
     /// Send the gathered records as one response. `false` ends the stream
     /// (it already failed typed); a slow client gets BACKPRESSURE with the
     /// token before the batch's first record, as for a single record.
-    async fn flush(&self, batch: &mut Batch, last: &mut i64) -> bool {
+    async fn flush(&self, batch: &mut Batch, last: &mut i64, phase: BatchPhase) -> bool {
         if batch.records.is_empty() {
             return true;
         }
@@ -1494,11 +1497,12 @@ impl SubscriptionTask {
             Sent::Ok => {
                 *last = newest;
                 let count = count as u64;
-                self.state
-                    .metrics
-                    .delivered
-                    .fetch_add(count, Ordering::Relaxed);
-                self.report.delivered.fetch_add(count, Ordering::Relaxed);
+                let (metric, report) = match phase {
+                    BatchPhase::Live => (&self.state.metrics.delivered, &self.report.delivered),
+                    BatchPhase::Replay => (&self.state.metrics.replayed, &self.report.replayed),
+                };
+                metric.fetch_add(count, Ordering::Relaxed);
+                report.fetch_add(count, Ordering::Relaxed);
                 true
             }
             Sent::Closed => false,
@@ -1549,7 +1553,7 @@ impl SubscriptionTask {
                     Err(HandoffError::Budget(charge)) => {
                         // Budget is short: send what is gathered, then wait
                         // for this record's top-up holding nothing else.
-                        if !self.flush(&mut batch, last).await {
+                        if !self.flush(&mut batch, last, BatchPhase::Live).await {
                             return false;
                         }
                         match self.handoff_charge(&record, charge).await {
@@ -1577,7 +1581,7 @@ impl SubscriptionTask {
                     };
                     let bytes = record.raw.payload.len() + token.len() + 32 + TIMING_BYTES;
                     let full = !batch.records.is_empty() && batch.bytes + bytes > MAX_BATCH_BYTES;
-                    if full && !self.flush(&mut batch, last).await {
+                    if full && !self.flush(&mut batch, last, BatchPhase::Live).await {
                         return false;
                     }
                     batch.started.get_or_insert(taken);
@@ -1593,7 +1597,7 @@ impl SubscriptionTask {
                     drop(charge);
                     // Delivered records ahead of it go first, so the cursor
                     // and the aged-out accounting match one-record delivery.
-                    if !self.flush(&mut batch, last).await {
+                    if !self.flush(&mut batch, last, BatchPhase::Live).await {
                         return false;
                     }
                     self.state
@@ -1625,7 +1629,7 @@ impl SubscriptionTask {
                 item = self.subscription.try_next();
             }
         }
-        self.flush(&mut batch, last).await
+        self.flush(&mut batch, last, BatchPhase::Live).await
     }
 
     /// Replay one record; `false` ends the stream (it already failed typed).
@@ -1641,6 +1645,70 @@ impl SubscriptionTask {
             }
             None => false,
         }
+    }
+
+    /// Gather replay records without waiting for more or borrowing live budget.
+    /// A filtered record is a boundary, not permission to skip pending delivery.
+    async fn replay_record(
+        &self,
+        record: &LiveRecord,
+        charge: Charge,
+        batch: &mut Batch,
+        last: &mut i64,
+    ) -> bool {
+        if self.batch_limit == 1 {
+            return self.replay_one(record, charge, last).await;
+        }
+        if let Err(status) = self.auth.check() {
+            self.revoke(status).await;
+            return false;
+        }
+        let data_now = match self.freshness_now_ns() {
+            Ok(at) => at,
+            Err(status) => {
+                self.fail(status).await;
+                return false;
+            }
+        };
+        match delivery_decision(&self.subscription.requirement, &record.envelope, data_now) {
+            Delivery::OtherProduct | Delivery::TooOld => {
+                drop(charge);
+                if !self.flush(batch, last, BatchPhase::Replay).await {
+                    return false;
+                }
+                *last = record.raw.offset;
+                return true;
+            }
+            Delivery::Deliver => {}
+        }
+        let token = match self.state.sign(&self.claims, record.raw.offset) {
+            Ok(token) => token,
+            Err(status) => {
+                if self.flush(batch, last, BatchPhase::Replay).await {
+                    self.fail(status).await;
+                }
+                return false;
+            }
+        };
+        let bytes = record.raw.payload.len() + token.len() + 32 + TIMING_BYTES;
+        if !batch.records.is_empty()
+            && batch.bytes + bytes > MAX_BATCH_BYTES
+            && !self.flush(batch, last, BatchPhase::Replay).await
+        {
+            return false;
+        }
+        batch.started.get_or_insert_with(Instant::now);
+        batch.push(
+            subscribe_event_record(record, token, now_ns()),
+            record.raw.offset,
+            bytes,
+            charge,
+        );
+        // Preserve the existing oversized-single-record exception, never combine it.
+        if batch.records.len() >= self.batch_limit || batch.bytes >= MAX_BATCH_BYTES {
+            return self.flush(batch, last, BatchPhase::Replay).await;
+        }
+        true
     }
 
     async fn run(self, barrier: i64, ring: Option<RingReplay>) {
@@ -1673,6 +1741,7 @@ impl SubscriptionTask {
         let mut matched: u64 = 0;
         let max_matched = self.state.limits.replay.max_matched;
         if self.after + 1 < barrier {
+            let mut batch = Batch::default();
             match ring {
                 Some(mut ring) => {
                     self.state
@@ -1687,6 +1756,9 @@ impl SubscriptionTask {
                         let (partition, offset) = (raw.partition, raw.offset);
                         let Ok(record) = LiveRecord::decode(raw) else {
                             // Same outcome as the reader path (F2 parity).
+                            if !self.flush(&mut batch, &mut last, BatchPhase::Replay).await {
+                                return;
+                            }
                             self.fail(data_integrity(partition, offset, "failed to decode"))
                                 .await;
                             return;
@@ -1694,10 +1766,16 @@ impl SubscriptionTask {
                         let feed = &self.subscription.requirement.delivery.feed;
                         let interval = self.subscription.requirement.delivery.interval.as_deref();
                         if !is_product(feed, interval, &record.envelope) {
+                            if !self.flush(&mut batch, &mut last, BatchPhase::Replay).await {
+                                return;
+                            }
                             continue;
                         }
                         matched += 1;
                         if matched > max_matched {
+                            if !self.flush(&mut batch, &mut last, BatchPhase::Replay).await {
+                                return;
+                            }
                             if let Some(status) =
                                 replay_end_status(&self.state, &ReplayEnd::Backlog)
                             {
@@ -1705,9 +1783,12 @@ impl SubscriptionTask {
                             }
                             return;
                         }
-                        if !self.replay_one(&record, charge, &mut last).await {
+                        if !self.replay_record(&record, charge, &mut batch, &mut last).await {
                             return;
                         }
+                    }
+                    if !self.flush(&mut batch, &mut last, BatchPhase::Replay).await {
+                        return;
                     }
                 }
                 None => {
@@ -1734,8 +1815,18 @@ impl SubscriptionTask {
                         let Some(replayed) = replayed else {
                             break;
                         };
-                        let (record, charge) = replayed.into_parts();
-                        if !self.replay_one(&record, charge, &mut last).await {
+                        let mut ready = Some(replayed);
+                        while let Some(replayed) = ready.take() {
+                            let (record, charge) = replayed.into_parts();
+                            if !self.replay_record(&record, charge, &mut batch, &mut last).await {
+                                return;
+                            }
+                            if self.batch_limit > 1 && !batch.records.is_empty() {
+                                ready = records.try_recv().ok();
+                            }
+                        }
+                        // Never hold a partial batch while waiting for the reader.
+                        if !self.flush(&mut batch, &mut last, BatchPhase::Replay).await {
                             return;
                         }
                     }
