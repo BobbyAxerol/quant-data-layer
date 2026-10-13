@@ -72929,3 +72929,17 @@ also PASS:57unit+48native,0fail,1same ignored manual benchmark. Counts overlap
 feature suite; do not sum. Both --rm test containers removed. Source ready for
 TEST-only packaging and one paired9k30s writerpause against diagnostic18, only
 Stream image changed. No release or600s qualification implied.
+
+N1 aa1f98f TESTbinary packaged d504648b (binarysha0f15f296); diagnostic19 changes
+Stream only vs18,9k30s/writerpause1586.643ms. Exact270000canonical/publication and
+finaldurable271074covers271073. RemainsFAILED: oneREPLAY_MATCHED_LIMIT thenOK.
+SDKACKp95upper11ms(n270056), fullactivationeventACK2048ms/max4379.568.14timedserver
+replayepisodes; lasttransporthandoff~9269ms afterunpause, ongoingload~8630ms remains.
+Not consumer usable/recovery certificate. Lastmetrics:8opens59.917ms,71473reads
+798.323ms,24587slotwaits3479.549ms;9overflow/0expiry. Remaininghandoff livequeue
+fills while replay executes, even after partialpage catch-up. Do not increasecaps.
+TS R2 diagnostic report has exact bounds, per-stage denominators and proposed
+continuation; source tests are not fullcapacity.19cleanup14roles/0residue and
+18productionrolesunchanged. Receipt12:56:38Z precedes foreignPMlock12:57:45Z;
+next20refused beforestartup. Archive/cachecleanup deferred duringforeignlock.
+No production/push/merge/release; IN_PROGRESS, NOT_READY.
