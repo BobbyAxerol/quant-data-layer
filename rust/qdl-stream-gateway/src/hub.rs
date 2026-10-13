@@ -811,6 +811,33 @@ impl Hub {
         Ok(Registration { barrier, ring })
     }
 
+    /// Retained replay without attaching a live subscriber. Coverage and the
+    /// selected references are captured under the same partition lock.
+    pub fn retained_replay(&self, partition: i32, key: &[u8], after: i64,
+        barrier: i64, max_records: usize, budget: &Arc<ByteBudget>,
+    ) -> Option<(Vec<SharedRecord>, Charge)> {
+        let mut state = self.partitions.get(&partition)?.lock().ok()?;
+        self.evict(partition, &mut state, Instant::now());
+        if barrier > state.next_offset || after.checked_add(1)? < state.ring_start {
+            return None;
+        }
+        let entries = state.by_key.get(key);
+        let begin = entries.map_or(0, |rows| rows.partition_point(|(_, r)| r.offset <= after));
+        let end = entries.map_or(0, |rows| rows.partition_point(|(_, r)| r.offset < barrier));
+        if end.saturating_sub(begin) > max_records { return None; }
+        let selected = || entries.into_iter().flat_map(|rows| rows.range(begin..end))
+            .map(|(_, record)| record);
+        let mut count = 0usize;
+        let mut bytes = 0usize;
+        for record in selected() {
+            count += 1;
+            if count > max_records { return None; }
+            bytes = bytes.checked_add(live_weight(record))?;
+        }
+        let charge = budget.charge(bytes)?;
+        Some((selected().cloned().collect(), charge))
+    }
+
     /// Capture a charged, bounded bridge and attach live atomically. The caller
     /// must retain the charge until the bridge is drained and preserve one
     /// cumulative replay deadline/budget across unsuccessful attempts.
@@ -834,8 +861,14 @@ impl Hub {
         if start > barrier || (start < barrier && start < state.ring_start) {
             return Ok(NearRegistration::NeedReplay { barrier });
         }
-        let selected = || state.by_key.get(key).into_iter().flatten()
-            .map(|(_, record)| record).filter(|record| record.offset > after);
+        let entries = state.by_key.get(key);
+        let begin = entries.map_or(0, |rows| rows.partition_point(|(_, r)| r.offset <= after));
+        let end = entries.map_or(0, VecDeque::len);
+        if end.saturating_sub(begin) > max_bridge_records {
+            return Ok(NearRegistration::NeedReplay { barrier });
+        }
+        let selected = || entries.into_iter().flat_map(|rows| rows.range(begin..end))
+            .map(|(_, record)| record);
         let mut count = 0usize;
         let mut bytes = 0usize;
         for record in selected() {

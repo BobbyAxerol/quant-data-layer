@@ -73131,3 +73131,51 @@ dl-episode-test2 exit0, source unchanged, 7 PASS/0 FAIL/0 ignored (51
 unrelated tests filtered). Container name-filter inventory empty. Own
 measurement lock released; no new image, no disk/cache deletion. Retain
 active N1 compiler cache and exact receipts; runtime/rollback untouched.
+
+
+OPT-01 Subscribe integration starts: replace eager live registration with
+near-frontier bounded bridge; sequential scan ranges share ReplayEpisode.
+Race the entire catch-up against one deadline, client close, revocation and
+shutdown. Only Complete scan advances frontier; preserve typed terminal errors,
+replay/live ordering and existing RPC page semantics. Full native_stream suite
+and targeted ongoing-input regression required before acceptance.
+
+
+**OPT-01 Subscribe integration test checkpoint - 2026-10-13**
+Subscribe now uses unregistered bulk ring/reader catch-up, then a charged
+near-frontier bridge under partition lock before live registration. Retained
+bulk replay uses by_key with partition-level coverage and expiry checks. One
+ReplayEpisode carries deadline, scan bytes/records and matched allowance;
+only Complete advances scanned frontier. Catch-up races auth/client close/
+shutdown/deadline; terminal latch is checked before LIVE.
+First native suite: 46 pass/2 fail/1 ignore. Restored indexed retained-ring
+bulk path; adjusted replica-ahead test to require exact replay plus subsequent
+LIVE rather than demanding the recovered event arrive only after LIVE.
+Pinned rerun dl-catchup-native2: 49 PASS/0 FAIL/1 ignored benchmark server.
+Added opt01 regression: 200 pending then 1200 newly offered records versus
+queue1000, assert no live registration during bulk catch-up; exact replay then
+live at batch1/64. Added continuing-producer handoff before producer stops.
+dl-catchup-ongoing1: both new tests PASS, 49 unrelated filtered. These are
+in-process TEST_ONLY correctness, NOT 6k/9k capacity or consumer ACK proof.
+Property interleaving test now takes over60s (suite69.75s); investigate before
+performance closure, do not hide by increasing limits. Independent read-only
+review active; OPT-01 remains IN_PROGRESS. No runtime changes or image build.
+
+Independent review (Lovelace, read-only) found two P2s: selected by_key ranges
+were still scanning historical prefixes under lock; immediately-ready filtered
+replay could defer cooperative deadline/cancellation. Fixed with partition_point
+offset bounds before range iteration/cloning, and explicit absolute-deadline
+checks plus yield every REPLAY_CHANNEL records/between rounds. No threshold
+or queue increase. Final full native_stream rerun pending at this checkpoint.
+Resource inventory: Docker104 images/40 active,34.25GB; BuildKit217 entries/47
+active,26.65GB with74.29MB reclaimable. Filesystem available257404563456 bytes.
+No images built during slice; no broad prune or volume deletion. Active N1
+compiler artifacts retained for subsequent checks, not claimed cleaned.
+
+Final pinned dl-catchup-native3: exit0, unchanged source hashes,50 PASS/0 FAIL/
+1 ignored benchmark server; suite66.70s. Two new tests included (burst over
+queue bound and handoff while producer continues). Review P2 fixes included.
+OPT-01 remains IN_PROGRESS: investigate interleaving test slowdown, complete
+measured dispatch lock disposition, then paired short full-path proof in OPT05.
+No owned profile/test containers remain. Own measurement lock released;
+production/canonical/rollback untouched. No push/merge/rollout.

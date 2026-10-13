@@ -348,6 +348,18 @@ impl Subscription {
         Some((item.record, item.enqueued, item.charge))
     }
 
+    /// Linearization check before announcing LIVE. A later failure remains a
+    /// normal live terminal event; an already latched failure cannot be hidden.
+    pub fn terminal(&self) -> Option<Next> {
+        let Ok(state) = self.state.lock() else {
+            return Some(Next::Failed("subscription state poisoned".into()));
+        };
+        if let Some(reason) = &state.failed { Some(Next::Failed(reason.clone())) }
+        else if state.overflowed { Some(Next::Overflow) }
+        else if state.closed { Some(Next::Closed) }
+        else { None }
+    }
+
     pub fn queued(&self) -> (usize, usize) {
         self.state
             .lock()

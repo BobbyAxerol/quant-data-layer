@@ -1397,7 +1397,9 @@ async fn t04_a_replica_behind_the_cursor_waits_bounded_then_answers_retryable() 
     let next = log.append(0, TRADE_KEY, &trade(2));
     let (controls, offsets) = stream.collect(1).await;
     assert_eq!(offsets, vec![next as u64], "{controls:?}");
-    assert!(controls.contains(&"LIVE".to_owned()));
+    if !controls.contains(&"LIVE".to_owned()) {
+        assert!(matches!(stream.next().await, Item::Control(code) if code == "LIVE"));
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -3797,4 +3799,68 @@ async fn bench_serve_live_trade_bursts_over_grpc() {
     }
     stop.send(()).unwrap();
     server.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn opt01_bulk_replay_stays_unregistered_while_new_input_exceeds_queue() {
+    for batch in [1, 64] {
+        let harness = Harness::new(Options { ring_max_bytes: 256,
+            range_delay: Duration::from_millis(1), ..Options::default() });
+        let cursor = harness.log.append(0, TRADE_KEY, &trade(0));
+        for index in 1..=200 { harness.log.append(0, TRADE_KEY, &trade(index)); }
+        harness.settle();
+        let mut stream = harness.subscribe_batched("TRADE", None, cursor, 1000, batch).await.unwrap();
+        assert!(matches!(stream.next().await, Item::Control(code) if code == "REPLAYING"));
+        assert_eq!(harness.state().hub.subscriber_count(), 0);
+        for index in 201..=1400 { harness.log.append(0, TRADE_KEY, &trade(index)); }
+        harness.settle();
+        assert_eq!(harness.state().hub.subscriber_count(), 0);
+        let replayed = stream.until_live().await;
+        assert_eq!(replayed, as_offsets(&harness.log.records_of(TRADE_KEY, cursor)));
+        let next = harness.log.append(0, TRADE_KEY, &trade(1401));
+        assert_eq!(stream.collect(1).await.1, vec![next as u64]);
+        drop(stream);
+        harness.released().await;
+        assert_eq!(harness.state().hub.subscriber_count(), 0);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn opt01_handoff_completes_before_continuing_producer_stops() {
+    let harness = Harness::new(Options { ring_max_bytes: 256,
+        range_delay: Duration::from_millis(1), ..Options::default() });
+    let cursor = harness.log.append(0, TRADE_KEY, &trade(0));
+    for index in 1..=200 { harness.log.append(0, TRADE_KEY, &trade(index)); }
+    harness.settle();
+    let mut stream = harness.subscribe_batched("TRADE", None, cursor, 1000, 64).await.unwrap();
+    assert!(matches!(stream.next().await, Item::Control(code) if code == "REPLAYING"));
+    let stop = Arc::new(AtomicBool::new(false));
+    let finished = Arc::new(AtomicBool::new(false));
+    let producer = {
+        let stop = stop.clone();
+        let finished = finished.clone();
+        let log = harness.log.clone();
+        tokio::spawn(async move {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut count = 201;
+            while !stop.load(Ordering::Relaxed) && Instant::now() < deadline {
+                log.append(0, TRADE_KEY, &trade(count));
+                count += 1;
+                tokio::time::sleep(Duration::from_millis(3)).await;
+            }
+            finished.store(true, Ordering::Relaxed);
+        })
+    };
+    let mut actual = stream.until_live().await;
+    let handed_off_while_producing = !finished.load(Ordering::Relaxed);
+    stop.store(true, Ordering::Relaxed);
+    producer.await.unwrap();
+    assert!(handed_off_while_producing, "must not rely on producer completion");
+    let expected = as_offsets(&harness.log.records_of(TRADE_KEY, cursor));
+    if actual.len() < expected.len() {
+        actual.extend(stream.collect(expected.len() - actual.len()).await.1);
+    }
+    assert_eq!(actual, expected);
+    drop(stream);
+    harness.released().await;
 }
