@@ -72880,3 +72880,25 @@ No production role/image/config/ACL changed. TEST containers --rm removed;
 shared cache/build artifacts retained only for active N1 candidate packaging.
 Actual at-rate recovery remains NOT_MEASURED; source tests do not certify it.
 Companion TS continuity/retry checks remain in review, source packaging not deployed.
+
+
+N1 R2 paired recovery runtime follow-up (2026-10-13): Stream ed1b85b packaged as
+TESTclock0003a6e3 (binarysha3e53e447, archive7531b65b), not production. TS runner
+capacity-r2-diagnostic16/17/18 under ~/.local/state/trading-system/p184-n1-final-20261012
+used same core08074f/batch1024, RF3/minISR2 and broker1 isolatedcap1.75.16 conserved
+270000 exactrecords after3overflows,0expiry but ACKp95upper564ms >500ms.17/18 pause
+hotwriter~1.58s conserved270000 each with finaldurablecursor; remain FAILED because
+intermediate sessions exhaust replay-page retry budget before finalOK. No false
+retention/OUT_OF_RANGE observed, but this is not at-rate recovery certification.
+Further work must measure replay-page/RPC/batch/catch-up timing; do not increase
+queue1000/replay10000 or weaken freshness to labelPASS. Recovery tests remain in
+scope; no catalogue rerun or production change. All temporary namespaces removed,
+0residue; source/runtime gate remains open. Foreign host measurement lock started
+12:04:30Z after18finished12:01:46Z; further heavy jobs/artifact cleanup deferred.
+See TS upgrade/evidence/P184_N1_R2_DIAGNOSTIC_20261013.md for exact n/units/pins.
+
+Cleanup after foreign lock release: exact four11:33/11:38 BuildKitcontextentries
+and3hashedarchives removed; superseded TS TESTimage d9f82eff removed, active and
+qualifiedrollback retained. Free disk262680969216->262764195840B(sharedhost),
+container image/state/restart/OOM tuples unchanged. TS evidence receipt
+p184-n1-final-20261012/r2-recovery-cleanup-20261013.json. No DL runtime mutation.
