@@ -395,7 +395,9 @@ struct PartitionState {
     ring_bytes: usize,
     /// The ring holds every dispatched record in `[ring_start, next_offset)`.
     ring_start: i64,
-    subscribers: HashMap<Vec<u8>, Vec<Arc<Subscription>>>,
+    /// Copy-on-write per key: dispatch clones the `Arc` under the partition
+    /// lock and offers outside it; register/unregister (rare) replace the list.
+    subscribers: HashMap<Vec<u8>, Arc<[Arc<Subscription>]>>,
     /// The ring's records per key, in ring (offset) order. Same entries as
     /// `ring`, so it is bounded by the ring and evicted with it.
     by_key: HashMap<Vec<u8>, VecDeque<(Instant, SharedRecord)>>,
@@ -447,6 +449,11 @@ fn lock_until<T>(mutex: &Mutex<T>, deadline: Instant) -> Result<MutexGuard<'_, T
 
 pub struct Hub {
     partitions: HashMap<i32, Mutex<PartitionState>>,
+    /// Dispatcher-only gate per partition (lock order: gate, then partition).
+    /// Held across decode/offer so every subscriber sees one partition's
+    /// records in offset order even with concurrent dispatch callers, while
+    /// the partition lock covers only ring/boundary/list-snapshot work.
+    dispatch_gates: HashMap<i32, Mutex<()>>,
     config: HubConfig,
     pub metrics: HubMetrics,
     stop: AtomicBool,
@@ -465,6 +472,18 @@ pub struct Hub {
     /// ([`Hub::attach_live_budget`]); unset, subscribers charge in full.
     live_budget: OnceLock<Arc<ByteBudget>>,
     data_clock: crate::replay_clock::DataClock,
+}
+
+/// Copy-on-write append of `subscriber` to `key`'s list (rare: registration).
+fn attach(
+    lists: &mut HashMap<Vec<u8>, Arc<[Arc<Subscription>]>>,
+    key: &[u8],
+    subscriber: Arc<Subscription>,
+) {
+    let mut next: Vec<Arc<Subscription>> =
+        lists.get(key).map(|list| list.to_vec()).unwrap_or_default();
+    next.push(subscriber);
+    lists.insert(key.to_vec(), next.into());
 }
 
 fn now_ns() -> i64 {
@@ -498,8 +517,10 @@ impl Hub {
                 )
             })
             .collect();
+        let dispatch_gates = starts.iter().map(|&(partition, _)| (partition, Mutex::new(()))).collect();
         Self {
             partitions,
+            dispatch_gates,
             config,
             metrics: HubMetrics::default(),
             stop: AtomicBool::new(false),
@@ -614,42 +635,53 @@ impl Hub {
     /// Dispatch one committed record. A record at or below an already
     /// dispatched offset is a duplicate transport delivery and is ignored.
     pub fn dispatch(&self, record: RawRecord) {
-        let Some(partition) = self.partitions.get(&record.partition) else {
+        let (Some(partition), Some(gate)) = (
+            self.partitions.get(&record.partition),
+            self.dispatch_gates.get(&record.partition),
+        ) else {
             return;
         };
+        // A poisoned gate guards no data; keep ordering, never stop dispatch.
+        let _gate = gate.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let record = Arc::new(record);
-        let (state, _hold) = profiled_lock!(Dispatch, partition.lock());
-        let Ok(mut state) = state else {
-            return;
-        };
-        if record.offset < state.next_offset {
-            self.metrics.duplicates.fetch_add(1, Ordering::Relaxed);
-            return;
-        }
-        self.metrics.records.fetch_add(1, Ordering::Relaxed);
-        self.metrics
-            .bytes
-            .fetch_add(record.payload.len() as u64, Ordering::Relaxed);
-        if record.timestamp_ms >= self.started_ms {
+        let subscribers = {
+            let (state, _hold) = profiled_lock!(Dispatch, partition.lock());
+            let Ok(mut state) = state else {
+                return;
+            };
+            if record.offset < state.next_offset {
+                self.metrics.duplicates.fetch_add(1, Ordering::Relaxed);
+                return;
+            }
+            self.metrics.records.fetch_add(1, Ordering::Relaxed);
             self.metrics
-                .dispatch_lag
-                .record(now_ns() / 1_000_000 - record.timestamp_ms);
-        }
-        let now = Instant::now();
-        state.ring_bytes += record.weight();
-        state.ring.push_back((now, record.clone()));
-        if let Some(entries) = state.by_key.get_mut(&record.key) {
-            entries.push_back((now, record.clone()));
-        } else {
-            state
-                .by_key
-                .insert(record.key.clone(), VecDeque::from([(now, record.clone())]));
-            self.enter_home(&record.key, record.partition);
-        }
-        state.next_offset = record.offset + 1;
-        self.evict(record.partition, &mut state, now);
-        let Some(subscribers) = state.subscribers.get(&record.key) else {
-            return;
+                .bytes
+                .fetch_add(record.payload.len() as u64, Ordering::Relaxed);
+            if record.timestamp_ms >= self.started_ms {
+                self.metrics
+                    .dispatch_lag
+                    .record(now_ns() / 1_000_000 - record.timestamp_ms);
+            }
+            let now = Instant::now();
+            state.ring_bytes += record.weight();
+            state.ring.push_back((now, record.clone()));
+            if let Some(entries) = state.by_key.get_mut(&record.key) {
+                entries.push_back((now, record.clone()));
+            } else {
+                state
+                    .by_key
+                    .insert(record.key.clone(), VecDeque::from([(now, record.clone())]));
+                self.enter_home(&record.key, record.partition);
+            }
+            state.next_offset = record.offset + 1;
+            self.evict(record.partition, &mut state, now);
+            // Registration is atomic with this boundary: a subscriber attached
+            // at barrier <= offset is in this snapshot, one attached later has
+            // barrier > offset and gets the record from the ring instead.
+            let Some(subscribers) = state.subscribers.get(&record.key) else {
+                return;
+            };
+            subscribers.clone()
         };
         #[cfg(feature = "lock-profile")]
         let _fanout = lock_profile::fanout();
@@ -662,7 +694,7 @@ impl Hub {
                         .live_budget_refused
                         .fetch_add(1, Ordering::Relaxed);
                 }
-                for subscriber in subscribers {
+                for subscriber in subscribers.iter() {
                     self.metrics.offers.fetch_add(1, Ordering::Relaxed);
                     match self.freshness_now_ns(at) {
                         Ok(data_at) => subscriber.offer(&live, data_at),
@@ -675,7 +707,7 @@ impl Hub {
             }
             Err(error) => {
                 self.metrics.decode_failures.fetch_add(1, Ordering::Relaxed);
-                for subscriber in subscribers {
+                for subscriber in subscribers.iter() {
                     subscriber.fail(&error);
                 }
             }
@@ -969,11 +1001,7 @@ impl Hub {
         } else {
             None
         };
-        state
-            .subscribers
-            .entry(key.to_vec())
-            .or_default()
-            .push(subscriber);
+        attach(&mut state.subscribers, key, subscriber);
         Ok(Registration { barrier, ring })
     }
 
@@ -1052,7 +1080,7 @@ impl Hub {
             return Ok(NearRegistration::NeedReplay { barrier });
         };
         let bridge = selected().cloned().collect();
-        state.subscribers.entry(key.to_vec()).or_default().push(subscriber);
+        attach(&mut state.subscribers, key, subscriber);
         Ok(NearRegistration::Registered { barrier, bridge, charge })
     }
 
@@ -1060,10 +1088,13 @@ impl Hub {
         if let Some(state) = self.partitions.get(&partition) {
             let (state, _hold) = profiled_lock!(Unregister, state.lock());
             if let Ok(mut state) = state {
-                if let Some(list) = state.subscribers.get_mut(key) {
-                    list.retain(|subscriber| subscriber.id != id);
-                    if list.is_empty() {
+                if let Some(list) = state.subscribers.get(key) {
+                    let kept: Vec<_> =
+                        list.iter().filter(|subscriber| subscriber.id != id).cloned().collect();
+                    if kept.is_empty() {
                         state.subscribers.remove(key);
+                    } else if kept.len() != list.len() {
+                        state.subscribers.insert(key.to_vec(), kept.into());
                     }
                 }
             }
@@ -1074,7 +1105,7 @@ impl Hub {
         self.partitions
             .values()
             .filter_map(|state| state.lock().ok())
-            .map(|state| state.subscribers.values().map(Vec::len).sum::<usize>())
+            .map(|state| state.subscribers.values().map(|list| list.len()).sum::<usize>())
             .sum()
     }
 
