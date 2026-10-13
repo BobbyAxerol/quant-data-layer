@@ -72948,7 +72948,7 @@ No production/push/merge/release; IN_PROGRESS, NOT_READY.
 <a id="p184-n1-opt-dl"></a>
 ### P18.4 N1-OPT - DL Companion Scope And Planning Journal (2026-10-13)
 
-Status: **IN_PROGRESS / OPT-00**. Active owner goal confirms execution
+Status: **IN_PROGRESS / OPT-01**. Active owner goal confirms execution
 of OPT-00 through OPT-05. Preserve preliminary OPT-00 diagnostics; follow
 the profile/correctness ladder before algorithm changes. Production stays
 unchanged. N1 remains IN_PROGRESS, cutover NOT_READY. No DL release gate waived.
@@ -73073,3 +73073,35 @@ run /work/dl-target/release/examples/hot_path_profile --test-only. Builds use
 existing image, no image build. Separate lock wait/hold remains unmeasured;
 no optimization/capacity PASS. All runs serialized under own measurement lock.
 No runtime, auth, schema, cap or queue changes. Claude SDK files untouched.
+
+
+**OPT-01 start - bounded near-frontier registration (2026-10-13)**
+OPT-00 baseline disposition: inclusive profiles cover all six opportunities;
+separate lock wait/hold, trace-on contention and PMU remain precise observability
+gaps, not measured benefits. OPT-01 starts with an additive Hub primitive only: bulk
+catch-up stays unregistered, registration atomically captures a small charged
+bridge. Preserve partition coverage, physical-key offsets, count/byte bounds,
+retention eviction and no queue/cap changes. Service integration and cumulative
+replay deadlines/counters remain mandatory before claiming recovery fixed.
+Tests first cover missing retention, bounded bridge and exact registration
+boundary; no rollout or capacity claim from API-only work.
+
+
+**OPT-01 primitive checkpoint - 2026-10-13**
+Implemented Hub::try_register_near: under partition lock, evict expired ring
+entries, require partition coverage, inspect by_key, enforce small bridge count
+and charge decoded-size allowance before cloning references/registering live.
+Ahead-of-replica cursor returns NeedReplay rather than a lower boundary. No
+existing Subscribe path switched yet: cumulative replay budgets/deadline and
+terminal/cancellation integration remain open. This is NOT a recovery fix PASS.
+Isolated release build passed; example checks passed; cargo test --offline
+--locked --release -p qdl-stream-gateway --example hot_path_profile: 1 PASS,
+0 fail/ignore. Checks cover over-count, insufficient bytes, retained boundary
+99/100 then live101, cursor ahead and absent retention; exact charge cleanup.
+Evidence: p184-n1-opt-20261013/dl-near-build1, dl-near-check1, dl-near-test1.
+OPT-00 baseline is recorded with explicit observability limits, not all internal
+lock/trace timings measured. Carry those costs into affected OPT-03/04 reviews;
+no unmeasured optimization benefit claimed. Current status OPT-01 IN_PROGRESS.
+No new image, runtime or other consumer changes. Test containers use --rm;
+retain compiler artifacts for active N1, no broad cache/image prune. Release
+own measurement lock after jobs. Claude SDK edits remain outside staged scope.

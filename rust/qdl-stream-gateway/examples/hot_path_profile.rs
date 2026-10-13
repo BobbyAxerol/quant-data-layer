@@ -2,7 +2,7 @@
 //! Run with --release and --offline --locked, under the host measurement lock.
 use prost::Message as _;
 use qdl_stream_gateway::generated::{marketdata_v2 as md, query_v2 as query};
-use qdl_stream_gateway::hub::{Hub, HubConfig, RawRecord};
+use qdl_stream_gateway::hub::{Hub, HubConfig, NearRegistration, RawRecord};
 use qdl_stream_gateway::requirement::StreamRequirement;
 use qdl_stream_gateway::subscription::{ByteBudget, Subscription};
 use serde_json::{json, Value};
@@ -232,8 +232,37 @@ fn concurrent_register_dispatch_profile() -> Value {
         "register_key_matches":79, "rounds":1000, "register":registration,
         "dispatch":dispatch, "scope":"inclusive operation under shared partition contention; not isolated lock wait/hold"})
 }
+fn near_registration_checks() {
+    let hub = hub();
+    let live = ByteBudget::new(1024 * 1024);
+    let replay = ByteBudget::new(1024 * 1024);
+    for offset in 1..=100 { hub.dispatch(record(offset, 0)); }
+    assert!(matches!(hub.try_register_near(0, &key(0), subscriber(1, &live, 0), 0, 32, &replay).unwrap(), NearRegistration::NeedReplay { barrier: 101 }));
+    assert_eq!(hub.subscriber_count(), 0);
+    assert_eq!(replay.used(), 0);
+    let tiny = ByteBudget::new(1);
+    assert!(matches!(hub.try_register_near(0, &key(0), subscriber(2, &live, 99), 99, 32, &tiny).unwrap(), NearRegistration::NeedReplay { .. }));
+    assert_eq!(hub.subscriber_count(), 0);
+    let sub = subscriber(3, &live, 98);
+    let NearRegistration::Registered { barrier, bridge, charge } = hub.try_register_near(0, &key(0), sub.clone(), 98, 32, &replay).unwrap() else { panic!("bridge should fit") };
+    assert_eq!(barrier, 101);
+    assert_eq!(bridge.iter().map(|r| r.offset).collect::<Vec<_>>(), vec![99,100]);
+    assert!(replay.used() > 0);
+    hub.dispatch(record(101, 0));
+    let (item, _, live_charge) = sub.try_next().unwrap();
+    assert_eq!(item.raw.offset, 101);
+    drop((bridge, charge, item, live_charge));
+    assert_eq!(replay.used(), 0);
+    hub.unregister(0, &key(0), 3);
+    assert!(matches!(hub.try_register_near(0, &key(0), subscriber(4, &live, 200), 200, 32, &replay).unwrap(), NearRegistration::NeedReplay { .. }));
+    let empty = Hub::new(&[(0,100)], HubConfig::default());
+    assert!(matches!(empty.try_register_near(0, &key(0), subscriber(5, &live, 0), 0, 32, &replay).unwrap(), NearRegistration::NeedReplay { .. }));
+    assert_eq!(empty.subscriber_count(), 0);
+    assert_eq!(hub.subscriber_count(), 0);
+}
 fn main() {
     assert!(std::env::args().skip(1).eq(["--test-only"]), "explicit --test-only required");
+    near_registration_checks();
     let mut cases = Vec::new();
     for fanout in [0, 1, 16, 64] { cases.push(dispatch_profile(fanout)); }
     for rows in [1000, 10000] {
@@ -244,4 +273,12 @@ fn main() {
         "allocator": "System with example-only allocation counters; overhead included",
         "lock_wait_hold": "NOT_MEASURED separately; inclusive dispatch/register measured",
         "cache_misses": "NOT_MEASURED", "concurrent": concurrent_register_dispatch_profile(), "cases": cases}));
+}
+
+#[cfg(test)]
+mod checks {
+    #[test]
+    fn bounded_near_registration_preserves_coverage_budget_and_boundary() {
+        super::near_registration_checks();
+    }
 }

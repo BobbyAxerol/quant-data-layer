@@ -220,6 +220,13 @@ pub struct Registration {
     pub ring: Option<Vec<SharedRecord>>,
 }
 
+/// Bulk replay remains unregistered until the retained bridge fits both budgets.
+#[derive(Debug)]
+pub enum NearRegistration {
+    NeedReplay { barrier: i64 },
+    Registered { barrier: i64, bridge: Vec<SharedRecord>, charge: Charge },
+}
+
 struct PartitionState {
     /// Every record below this offset has been dispatched.
     next_offset: i64,
@@ -802,6 +809,49 @@ impl Hub {
             .or_default()
             .push(subscriber);
         Ok(Registration { barrier, ring })
+    }
+
+    /// Capture a charged, bounded bridge and attach live atomically. The caller
+    /// must retain the charge until the bridge is drained and preserve one
+    /// cumulative replay deadline/budget across unsuccessful attempts.
+    pub fn try_register_near(
+        &self,
+        partition: i32,
+        key: &[u8],
+        subscriber: Arc<Subscription>,
+        after: i64,
+        max_bridge_records: usize,
+        replay_budget: &Arc<ByteBudget>,
+    ) -> Result<NearRegistration, String> {
+        let state = self.partitions.get(&partition)
+            .ok_or_else(|| format!("partition {partition} is not served by this replica"))?;
+        let mut state = state.lock().map_err(|_| "partition state poisoned".to_owned())?;
+        self.evict(partition, &mut state, Instant::now());
+        let barrier = state.next_offset;
+        let start = after.checked_add(1).ok_or("replay offset overflow")?;
+        // A cursor ahead of this replica requires catch-up, never registration
+        // against a lower barrier. Missing key alone cannot establish coverage.
+        if start > barrier || (start < barrier && start < state.ring_start) {
+            return Ok(NearRegistration::NeedReplay { barrier });
+        }
+        let selected = || state.by_key.get(key).into_iter().flatten()
+            .map(|(_, record)| record).filter(|record| record.offset > after);
+        let mut count = 0usize;
+        let mut bytes = 0usize;
+        for record in selected() {
+            count += 1;
+            if count > max_bridge_records {
+                return Ok(NearRegistration::NeedReplay { barrier });
+            }
+            bytes = bytes.checked_add(live_weight(record))
+                .ok_or("replay bridge size overflow")?;
+        }
+        let Some(charge) = replay_budget.charge(bytes) else {
+            return Ok(NearRegistration::NeedReplay { barrier });
+        };
+        let bridge = selected().cloned().collect();
+        state.subscribers.entry(key.to_vec()).or_default().push(subscriber);
+        Ok(NearRegistration::Registered { barrier, bridge, charge })
     }
 
     pub fn unregister(&self, partition: i32, key: &[u8], id: u64) {
