@@ -73179,3 +73179,36 @@ OPT-01 remains IN_PROGRESS: investigate interleaving test slowdown, complete
 measured dispatch lock disposition, then paired short full-path proof in OPT05.
 No owned profile/test containers remain. Own measurement lock released;
 production/canonical/rollback untouched. No push/merge/rollout.
+
+### P18.4 IDR-096 replay work-budget status change: SDK fix + compatibility proposal - 2026-10-13 (Claude)
+
+Status:
+- SDK fix: IMPLEMENTED / tested locally, not released.
+- Gateway gating: PROPOSED; the gateway is Codex's N1-OPT area.
+
+Cause. ed1b85b/aa1f98f changed the Stream gateway so that REPLAY_MATCHED/SCAN/BYTE_LIMIT now return
+RESOURCE_EXHAUSTED instead of OUT_OF_RANGE CURSOR_EXPIRED (service.rs:967-995).
+
+Audit of consumers. qdl_sdk 2.1.0-2.4.0, the TS Python writer, N1, the alpha runtime and TS alpha_sdk all treat
+RESOURCE_EXHAUSTED as retryable with bounded backoff. Two behavioural incompatibilities exist for deployed readers:
+1. The SDK reset its reconnect budget on every re-delivered event (client.py:440). A non-acknowledging session
+   therefore re-replays the same 10000-record window forever, where it used to snapshot-recover. The writer MARK
+   stream_wakes session does not acknowledge.
+2. A submit-time REPLAY_SCAN_LIMIT (replay.rs:271-277, gap > 2M records) can never progress on retry. A non-strict
+   resumed writer slice now loops instead of SNAPSHOT_REPLACED.
+
+SDK fix (this commit, additive). Only an event above the highest delivered offset renews the reconnect budget
+(`_delivered_high`); a snapshot replacement resets that mark. Tests in the rc17 python image, --network none:
+- sdk discover: 112 OK;
+- test_kn_async_cursor: 22 OK;
+- the new bounded-retry test errors on the unfixed SDK.
+It needs SDK release 2.4.1, vendored into TS and alpha.
+
+Proposed gateway compatibility (owner rule: stable, additive interfaces):
+- (A) A submit-time REPLAY_SCAN_LIMIT keeps OUT_OF_RANGE CURSOR_EXPIRED for every client.
+- (B) MATCHED/SCAN/BYTE_LIMIT during replay return RESOURCE_EXHAUSTED only to clients that send a new additive
+  SubscribeRequest capability, e.g. `replay_budget_retryable`. Other clients get the pre-ed1b85b mapping.
+
+N1 findings for Codex:
+- telemetry.rs:139-145 does not count exhausted REPLAY_* in the integrity counters;
+- the protect_continuity attempt budget (session.rs:519-521/619) caps the backlog.
