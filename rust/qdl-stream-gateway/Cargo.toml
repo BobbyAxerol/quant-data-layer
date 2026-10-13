@@ -13,6 +13,8 @@ path = "src/main.rs"
 [features]
 default = []
 isolated-replay-clock = ["qdl-test-data-clock/isolated-replay-clock"]
+# TEST_ONLY partition-lock wait/hold histograms (N1-OPT OPT-01); never in images.
+lock-profile = []
 
 [dependencies]
 qdl-test-data-clock.workspace = true

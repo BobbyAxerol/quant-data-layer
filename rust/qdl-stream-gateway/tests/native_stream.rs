@@ -1427,6 +1427,24 @@ async fn t04_a_stopping_replica_ends_streams_retryable_and_they_resume_exactly()
     assert_eq!(resumed.until_live().await, vec![next as u64]);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn t04_a_stop_before_catch_up_never_announces_live() {
+    let harness = Harness::new(Options::default());
+    let cursor = harness.log.append(0, TRADE_KEY, &trade(1));
+    harness.log.append(0, TRADE_KEY, &trade(2));
+    harness.settle();
+    harness.state().shut_down();
+    let mut stream = harness.subscribe("TRADE", None, cursor, 100).await.unwrap();
+    let mut shapes = Shapes::default();
+    read_shapes(&mut stream, usize::MAX, &mut shapes).await;
+    assert!(!shapes.controls.iter().any(|code| code == "LIVE"), "{:?}", shapes.controls);
+    let (code, message) = shapes.status.as_ref().expect("typed stop");
+    assert_eq!(*code, Code::Unavailable);
+    assert!(message.starts_with("GATEWAY_SHUTTING_DOWN"), "{message}");
+    drop(stream);
+    harness.released().await;
+}
+
 // ------------------------------------------------------------------ K2-T05
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

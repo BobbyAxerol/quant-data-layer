@@ -35,6 +35,167 @@ use std::time::{Duration, Instant};
 /// Accounting overhead per queued/ringed record beyond key and payload.
 pub const RECORD_OVERHEAD: usize = 96;
 
+/// TEST_ONLY partition-lock wait/hold histograms for the OPT-01 lock
+/// disposition. Compiled only with `--features lock-profile`; default and
+/// image builds contain no timing calls. Process-wide, fixed log2 buckets,
+/// no per-event logging. Hold is recorded when the timer drops, right after
+/// the guard (it includes the unlock).
+#[cfg(feature = "lock-profile")]
+pub mod lock_profile {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{Duration, Instant};
+
+    pub const OPS: [&str; 7] = [
+        "dispatch", "register", "register_near", "retained_replay",
+        "hot_snapshot", "advance", "unregister",
+    ];
+
+    #[derive(Clone, Copy)]
+    pub enum Op { Dispatch, Register, RegisterNear, RetainedReplay, HotSnapshot, Advance, Unregister }
+
+    /// Bucket i holds samples whose bit length is i: ns < 2^i.
+    const BUCKETS: usize = 48;
+
+    pub struct Histogram {
+        buckets: [AtomicU64; BUCKETS],
+        max_ns: AtomicU64,
+    }
+
+    impl Histogram {
+        const fn new() -> Self {
+            Self { buckets: [const { AtomicU64::new(0) }; BUCKETS], max_ns: AtomicU64::new(0) }
+        }
+
+        fn record(&self, elapsed: Duration) {
+            let ns = elapsed.as_nanos().min(u64::MAX as u128) as u64;
+            let index = ((u64::BITS - ns.leading_zeros()) as usize).min(BUCKETS - 1);
+            self.buckets[index].fetch_add(1, Ordering::Relaxed);
+            self.max_ns.fetch_max(ns, Ordering::Relaxed);
+        }
+
+        fn reset(&self) {
+            for bucket in &self.buckets {
+                bucket.store(0, Ordering::Relaxed);
+            }
+            self.max_ns.store(0, Ordering::Relaxed);
+        }
+
+        /// Quantiles are bucket upper bounds (`_le_ns`); p99 only for n >= 100.
+        fn summary(&self) -> serde_json::Value {
+            let counts: Vec<u64> = self.buckets.iter().map(|b| b.load(Ordering::Relaxed)).collect();
+            let n: u64 = counts.iter().sum();
+            let le = |q: f64| -> Option<u64> {
+                let wanted = ((n as f64) * q).ceil().max(1.0) as u64;
+                let mut seen = 0;
+                for (index, count) in counts.iter().enumerate() {
+                    seen += count;
+                    if seen >= wanted {
+                        return Some(1u64 << index);
+                    }
+                }
+                None
+            };
+            serde_json::json!({
+                "n": n,
+                "p50_le_ns": (n > 0).then(|| le(0.5)).flatten(),
+                "p95_le_ns": (n > 0).then(|| le(0.95)).flatten(),
+                "p99_le_ns": (n >= 100).then(|| le(0.99)).flatten(),
+                "max_ns": self.max_ns.load(Ordering::Relaxed),
+                "buckets": counts,
+            })
+        }
+    }
+
+    struct Profile {
+        wait: [Histogram; OPS.len()],
+        hold: [Histogram; OPS.len()],
+        dispatch_fanout: Histogram,
+    }
+
+    static PROFILE: Profile = Profile {
+        wait: [const { Histogram::new() }; OPS.len()],
+        hold: [const { Histogram::new() }; OPS.len()],
+        dispatch_fanout: Histogram::new(),
+    };
+
+    /// Started immediately before the lock call.
+    pub struct Wait(Op, Instant);
+
+    pub fn waiting(op: Op) -> Wait {
+        Wait(op, Instant::now())
+    }
+
+    impl Wait {
+        /// Record the wait; the returned timer records the hold on drop.
+        pub fn acquired(self) -> Hold {
+            let now = Instant::now();
+            PROFILE.wait[self.0 as usize].record(now.duration_since(self.1));
+            Hold(self.0, now)
+        }
+    }
+
+    pub struct Hold(Op, Instant);
+
+    impl Drop for Hold {
+        fn drop(&mut self) {
+            PROFILE.hold[self.0 as usize].record(self.1.elapsed());
+        }
+    }
+
+    /// Dispatch decode + fan-out span, a subset of the dispatch hold.
+    pub struct Fanout(Instant);
+
+    pub fn fanout() -> Fanout {
+        Fanout(Instant::now())
+    }
+
+    impl Drop for Fanout {
+        fn drop(&mut self) {
+            PROFILE.dispatch_fanout.record(self.0.elapsed());
+        }
+    }
+
+    pub fn reset() {
+        for histogram in PROFILE.wait.iter().chain(&PROFILE.hold) {
+            histogram.reset();
+        }
+        PROFILE.dispatch_fanout.reset();
+    }
+
+    pub fn summary() -> serde_json::Value {
+        let ops: serde_json::Map<String, serde_json::Value> = OPS
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                ((*name).to_owned(), serde_json::json!({
+                    "wait": PROFILE.wait[index].summary(),
+                    "hold": PROFILE.hold[index].summary(),
+                }))
+            })
+            .collect();
+        serde_json::json!({
+            "unit": "ns", "buckets": "log2; quantiles are bucket upper bounds",
+            "ops": ops, "dispatch_decode_fanout_hold": PROFILE.dispatch_fanout.summary(),
+            "overhead": "two Instant::now plus atomics per lock; compare with feature-off inclusive timings",
+        })
+    }
+}
+
+/// Acquire a partition lock, timed under `lock-profile` (no-op otherwise).
+/// Returns `(lock result, hold timer)`; bind the timer for the guard's scope.
+macro_rules! profiled_lock {
+    ($op:ident, $lock:expr) => {{
+        #[cfg(feature = "lock-profile")]
+        let wait = $crate::hub::lock_profile::waiting($crate::hub::lock_profile::Op::$op);
+        let guard = $lock;
+        #[cfg(feature = "lock-profile")]
+        let hold = wait.acquired();
+        #[cfg(not(feature = "lock-profile"))]
+        let hold = ();
+        (guard, hold)
+    }};
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RawRecord {
     pub partition: i32,
@@ -457,7 +618,8 @@ impl Hub {
             return;
         };
         let record = Arc::new(record);
-        let Ok(mut state) = partition.lock() else {
+        let (state, _hold) = profiled_lock!(Dispatch, partition.lock());
+        let Ok(mut state) = state else {
             return;
         };
         if record.offset < state.next_offset {
@@ -489,6 +651,8 @@ impl Hub {
         let Some(subscribers) = state.subscribers.get(&record.key) else {
             return;
         };
+        #[cfg(feature = "lock-profile")]
+        let _fanout = lock_profile::fanout();
         let budget = self.live_budget.get();
         let at = now_ns();
         match LiveRecord::decode_charged(record, budget, at.max(0) as u64) {
@@ -522,7 +686,8 @@ impl Hub {
     /// aborted batches): every offset below `position` is dispatched.
     pub fn advance(&self, partition: i32, position: i64) {
         if let Some(state) = self.partitions.get(&partition) {
-            if let Ok(mut state) = state.lock() {
+            let (state, _hold) = profiled_lock!(Advance, state.lock());
+            if let Ok(mut state) = state {
                 if position > state.next_offset {
                     state.next_offset = position;
                     if state.ring.is_empty() {
@@ -545,7 +710,8 @@ impl Hub {
         let Some(state) = self.partitions.get(&partition) else {
             return Ok(None);
         };
-        let state = lock_until(state, deadline)?;
+        let (state, _hold) = profiled_lock!(HotSnapshot, lock_until(state, deadline));
+        let state = state?;
         let Some(entries) = state.by_key.get(key) else {
             return Ok(None);
         };
@@ -571,7 +737,8 @@ impl Hub {
         let Some(state) = self.partitions.get(&partition) else {
             return Ok(Vec::new());
         };
-        let state = lock_until(state, deadline)?;
+        let (state, _hold) = profiled_lock!(HotSnapshot, lock_until(state, deadline));
+        let state = state?;
         let Some(entries) = state.by_key.get(key) else {
             return Ok(Vec::new());
         };
@@ -784,9 +951,8 @@ impl Hub {
             .partitions
             .get(&partition)
             .ok_or_else(|| format!("partition {partition} is not served by this replica"))?;
-        let mut state = state
-            .lock()
-            .map_err(|_| "partition state poisoned".to_owned())?;
+        let (state, _hold) = profiled_lock!(Register, state.lock());
+        let mut state = state.map_err(|_| "partition state poisoned".to_owned())?;
         let barrier = state.next_offset;
         let ring = if after + 1 >= barrier {
             Some(Vec::new())
@@ -816,7 +982,9 @@ impl Hub {
     pub fn retained_replay(&self, partition: i32, key: &[u8], after: i64,
         barrier: i64, max_records: usize, budget: &Arc<ByteBudget>,
     ) -> Option<(Vec<SharedRecord>, Charge)> {
-        let mut state = self.partitions.get(&partition)?.lock().ok()?;
+        let partition_state = self.partitions.get(&partition)?;
+        let (state, _hold) = profiled_lock!(RetainedReplay, partition_state.lock());
+        let mut state = state.ok()?;
         self.evict(partition, &mut state, Instant::now());
         if barrier > state.next_offset || after.checked_add(1)? < state.ring_start {
             return None;
@@ -852,7 +1020,8 @@ impl Hub {
     ) -> Result<NearRegistration, String> {
         let state = self.partitions.get(&partition)
             .ok_or_else(|| format!("partition {partition} is not served by this replica"))?;
-        let mut state = state.lock().map_err(|_| "partition state poisoned".to_owned())?;
+        let (state, _hold) = profiled_lock!(RegisterNear, state.lock());
+        let mut state = state.map_err(|_| "partition state poisoned".to_owned())?;
         self.evict(partition, &mut state, Instant::now());
         let barrier = state.next_offset;
         let start = after.checked_add(1).ok_or("replay offset overflow")?;
@@ -889,7 +1058,8 @@ impl Hub {
 
     pub fn unregister(&self, partition: i32, key: &[u8], id: u64) {
         if let Some(state) = self.partitions.get(&partition) {
-            if let Ok(mut state) = state.lock() {
+            let (state, _hold) = profiled_lock!(Unregister, state.lock());
+            if let Ok(mut state) = state {
                 if let Some(list) = state.subscribers.get_mut(key) {
                     list.retain(|subscriber| subscriber.id != id);
                     if list.is_empty() {

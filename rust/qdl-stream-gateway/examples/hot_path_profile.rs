@@ -175,6 +175,8 @@ fn concurrent_register_dispatch_profile() -> Value {
     assert!(hub.attach_live_budget(budget.clone()));
     let live = subscriber(100000, &budget, 10000);
     hub.register(0, &key(0), live.clone(), 10000).unwrap();
+    #[cfg(feature = "lock-profile")]
+    qdl_stream_gateway::hub::lock_profile::reset();
     let (start_tx, start_rx) = std::sync::mpsc::sync_channel(0);
     let (done_tx, done_rx) = std::sync::mpsc::sync_channel(0);
     let producer = {
@@ -232,6 +234,115 @@ fn concurrent_register_dispatch_profile() -> Value {
         "register_key_matches":79, "rounds":1000, "register":registration,
         "dispatch":dispatch, "scope":"inclusive operation under shared partition contention; not isolated lock wait/hold"})
 }
+/// Production registration path (OPT-01): try_register_near + retained_replay
+/// on a quiet key, in lockstep with dispatch of an active key with `fanout`
+/// near-registered live subscribers. Inclusive timings here; isolated
+/// partition-lock wait/hold comes from `lock_profile` when the feature is on.
+/// `heavy`: the quiet key owns all 10000 ring records (worst retained copy
+/// under the lock, max_matched); otherwise 79 of 128 interleaved keys.
+fn concurrent_near_dispatch_profile(fanout: usize, heavy: bool) -> Value {
+    let hub = Arc::new(hub());
+    for index in 0..10000 {
+        hub.dispatch(record(index + 1, if heavy { 1 } else { (index % 128) as usize }));
+    }
+    let (bridge_after, retained_rows) = if heavy { (9992, 10000) } else { (70 * 128 + 2, 79) };
+    let budget = ByteBudget::new(64 * 1024 * 1024);
+    let replay = ByteBudget::new(64 * 1024 * 1024);
+    assert!(hub.attach_live_budget(budget.clone()));
+    let lives: Vec<_> = (0..fanout).map(|i| {
+        let sub = subscriber(200000 + i as u64, &budget, 10000);
+        match hub.try_register_near(0, &key(0), sub.clone(), 10000, 32, &replay).unwrap() {
+            NearRegistration::Registered { barrier, bridge, charge } => {
+                assert_eq!(barrier, 10001);
+                assert!(bridge.is_empty());
+                drop(charge);
+            }
+            NearRegistration::NeedReplay { .. } => panic!("live subscriber must register at the frontier"),
+        }
+        sub
+    }).collect();
+    // Lock histograms cover only the contended rounds, not the fixture.
+    #[cfg(feature = "lock-profile")]
+    qdl_stream_gateway::hub::lock_profile::reset();
+    let (start_tx, start_rx) = std::sync::mpsc::sync_channel(0);
+    let (done_tx, done_rx) = std::sync::mpsc::sync_channel(0);
+    let producer = {
+        let hub = hub.clone();
+        let budget = budget.clone();
+        let lives = lives.clone();
+        std::thread::spawn(move || {
+            let mut samples = Vec::with_capacity(1000);
+            for offset in 10001..=11000 {
+                let raw = record(offset, 0);
+                start_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                let started = Instant::now();
+                hub.dispatch(raw);
+                samples.push(started.elapsed().as_nanos() as u64);
+                for live in &lives {
+                    let (item, _, charge) = live.try_next().expect("live delivery");
+                    assert_eq!(item.raw.offset, offset);
+                    drop((item, charge));
+                }
+                assert_eq!(budget.used(), 0);
+                done_tx.send(()).unwrap();
+            }
+            samples
+        })
+    };
+    // Quiet key 1: light holds offsets 128k+2 (k=0..=78), heavy 1..=10000.
+    // Either way the bridge is 8 records and retained replay is the whole key.
+    let physical = key(1);
+    let (mut near, mut retained) = (Vec::with_capacity(500), Vec::with_capacity(500));
+    for round in 0..1000u64 {
+        start_tx.send(()).unwrap();
+        let started = Instant::now();
+        if round % 2 == 0 {
+            let sub = subscriber(round, &budget, bridge_after);
+            let NearRegistration::Registered { bridge, charge, .. } =
+                hub.try_register_near(0, &physical, sub, bridge_after, 32, &replay).unwrap()
+            else { panic!("8-record bridge must fit") };
+            near.push(started.elapsed().as_nanos() as u64);
+            assert_eq!(bridge.len(), 8);
+            drop((bridge, charge));
+            hub.unregister(0, &physical, round);
+        } else {
+            let barrier = hub.next_offset(0).unwrap();
+            let (rows, charge) = hub.retained_replay(0, &physical, 0, barrier, 10001, &replay)
+                .expect("ring covers the quiet key");
+            retained.push(started.elapsed().as_nanos() as u64);
+            assert_eq!(rows.len(), retained_rows);
+            drop((rows, charge));
+        }
+        done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    }
+    let dispatch = producer.join().unwrap();
+    for live in &lives { hub.unregister(0, &key(0), live.id); }
+    assert_eq!(hub.subscriber_count(), 0);
+    assert_eq!(budget.used(), 0);
+    assert_eq!(replay.used(), 0);
+    let mut parts = [summary(near, (0, 0)), summary(retained, (0, 0)), summary(dispatch, (0, 0))];
+    for part in &mut parts {
+        part["allocated_calls"] = Value::Null;
+        part["allocated_bytes_including_realloc_request"] = Value::Null;
+        part["allocation_window"] = json!("NOT_MEASURED: global allocation counters disabled during concurrent scenario");
+    }
+    let [near, retained, dispatch] = parts;
+    json!({"scenario": "concurrent_near_retained_dispatch", "fanout": fanout,
+        "initial_ring_records": 10000, "bridge_records": 8, "retained_records": retained_rows, "rounds": 1000,
+        "register_near": near, "retained_replay": retained, "dispatch": dispatch,
+        "scope": "inclusive operation under shared partition contention; production registration path"})
+}
+/// Attach the TEST_ONLY partition-lock histograms of exactly one scenario.
+fn profiled(run: impl FnOnce() -> Value) -> Value {
+    #[cfg(feature = "lock-profile")]
+    qdl_stream_gateway::hub::lock_profile::reset();
+    let mut value = run();
+    #[cfg(feature = "lock-profile")]
+    { value["lock_profile"] = qdl_stream_gateway::hub::lock_profile::summary(); }
+    #[cfg(not(feature = "lock-profile"))]
+    { value["lock_profile"] = json!("NOT_ENABLED: build with --features lock-profile"); }
+    value
+}
 fn near_registration_checks() {
     let hub = hub();
     let live = ByteBudget::new(1024 * 1024);
@@ -264,15 +375,18 @@ fn main() {
     assert!(std::env::args().skip(1).eq(["--test-only"]), "explicit --test-only required");
     near_registration_checks();
     let mut cases = Vec::new();
-    for fanout in [0, 1, 16, 64] { cases.push(dispatch_profile(fanout)); }
+    for fanout in [0, 1, 16, 64] { cases.push(profiled(|| dispatch_profile(fanout))); }
     for rows in [1000, 10000] {
-        for keys in [1, 128] { cases.push(replay_profile(rows, keys)); }
+        for keys in [1, 128] { cases.push(profiled(|| replay_profile(rows, keys))); }
     }
+    let near: Vec<_> = [(1, false), (64, false), (1, true)].into_iter()
+        .map(|(fanout, heavy)| profiled(|| concurrent_near_dispatch_profile(fanout, heavy))).collect();
     println!("{}", json!({"schema": "p184.n1-opt.stream-profile.v1",
         "provenance": "TEST_ONLY_STRUCTURAL_MICROPROFILE_NOT_PROVIDER_NOT_CAPACITY",
         "allocator": "System with example-only allocation counters; overhead included",
-        "lock_wait_hold": "NOT_MEASURED separately; inclusive dispatch/register measured",
-        "cache_misses": "NOT_MEASURED", "concurrent": concurrent_register_dispatch_profile(), "cases": cases}));
+        "lock_wait_hold": if cfg!(feature = "lock-profile") { "per-scenario lock_profile histograms" } else { "NOT_MEASURED: build with --features lock-profile" },
+        "cache_misses": "NOT_MEASURED", "concurrent": profiled(concurrent_register_dispatch_profile),
+        "concurrent_near": near, "cases": cases}));
 }
 
 #[cfg(test)]

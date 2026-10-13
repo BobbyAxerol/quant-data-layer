@@ -1944,7 +1944,11 @@ impl SubscriptionTask {
             biased;
             status = self.auth.revoked() => { self.revoke(status).await; return; }
             () = self.sender.closed() => return,
-            _ = shutdown.changed() => {
+            // `wait_for` also sees a stop that began before this subscribe
+            // (e.g. while REPLAYING was blocked): never catch up, then LIVE,
+            // on a stopping replica.
+            // The watch::Ref is dropped inside the block (it is not Send).
+            () = async { let _ = shutdown.wait_for(|stopping| *stopping).await; } => {
                 self.fail(Status::unavailable("GATEWAY_SHUTTING_DOWN:resume from last token")).await;
                 return;
             }
