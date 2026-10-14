@@ -12,7 +12,9 @@ notifications).
 Faults: stop/start one broker, restart the projector, restart Stream. Per fault
 it records the G11 four timestamps (injected, cleared, first valid apply,
 caught up) and then, inside one fixed window, G1 (BOOK), G2 (TRADE, QUOTE and
-MARK_INDEX_PRICE new-event transit) and G3 (BAR 1m from close). A fault passes only
+MARK_INDEX_PRICE new-event transit) and G3 (BAR 1m from close). Caught up is predicate v2 (``caught_up``:
+BOOK update transit plus update cadence against the core's materialization rule), its version and parameters
+frozen in ``evidence/caught-up-predicate.json`` before any data. A fault passes only
 when caught up in time and G1, every G2 feed and G3 pass; a part with too few samples
 is NOT_MEASURED, never a pass.
 
@@ -113,6 +115,28 @@ LIMITS = {"disk_free_bytes": 20 * 10**9, "mem_available_bytes": 3 * 2**30,
           "deadline_s": 3600, "holder_s": 5400, "broker_outage_s": 60,
           "role_return_s": 120, "clone_ready_s": 300, "baseline_s": 300, "md_ready_s": 180,
           "monitor_sample_s": 5}
+# BOOK publisher cadence (frames per second per venue); the orchestrator starts --publish with it.
+PUBLISH_HZ = 4.0
+# Synthetic top of book, a deterministic function of the frame sequence (``book_top``): in each CYCLE of frames the
+# first CYCLE - QUIET frames move the top by one price step every frame (bid in [BASE, BASE + STEPS - 1], ask =
+# bid + SPREAD, never crossed), the last QUIET frames hold it. Real books move their top most frames and sit still
+# at times; the core materializes BOOK_SNAPSHOT on a top change (100 ms floor) and on the configured interval when
+# quiet (rust/qdl-realtime-core/src/lib.rs due_l2_materialized_snapshot), so both rules run every cycle (10 s at
+# 4 Hz: 32 frames moving, 2 s quiet). A fixed top (the DR05 frame default) left only the quiet rule.
+BOOK_TOP = {"base": 60000, "steps": 8, "spread": 10, "cycle": 40, "quiet": 8}
+# Caught-up predicate v2 (``caught_up``). Parameters come from the core, not from run data:
+# - L2_TOP_CHANGE_MIN_INTERVAL_MS: rust/qdl-realtime-core/src/lib.rs const of the same name.
+# - materialization interval: the run's core binding, as L2Binding::materialized_snapshot_interval_ms resolves it
+#   (l2.materialized_snapshot_interval_ms, else snapshot_refresh_seconds * 1000); the default is
+#   qdl.runtime.execution_l2.EXECUTION_L2_MATERIALIZATION_INTERVAL_MS (host modes are stdlib only: a unit test
+#   keeps the two equal).
+# - slack 1 ms: the core compares integer-ms provider time (l2_observed_at_ms: payload E / ts = stamp // 1e6), so
+#   an elapsed of I ms in ns can read as I - 1 ms and the emission moves to the next frame.
+CAUGHT_UP_VERSION = "p184.g12.caught_up.v2"
+L2_TOP_CHANGE_MIN_INTERVAL_MS = 100
+L2_DEFAULT_MATERIALIZATION_MS = 1000
+CORE_MS_FLOOR_SLACK_MS = 1
+PREDICATE_FILE = "caught-up-predicate.json"
 # A fault whose clearance / catch-up interval has no valid monitor sample for longer than this is NOT_MEASURED:
 # its fault-cleared time (the monitor's) would be uncertain by more than the gap (steady cadence: 1.0 s).
 MONITOR_MAX_GAP_S = 5
@@ -556,36 +580,174 @@ def view_series(rows):
     return series
 
 
-def caught_up(series, index, venue, cleared_ns, *, age_ms=GATE["age_ms"], hold_s=GATE["hold_s"]):
-    """First valid apply and stable caught-up for one venue after ``cleared_ns``.
+def caught_up_predicate(core_config=None, hz=PUBLISH_HZ):
+    """The caught-up predicate's version and parameters, frozen before data (``Run.prepare`` writes them to
+    ``evidence/caught-up-predicate.json`` once the core material exists; ``evaluate`` reads them back).
 
-    A row counts when the view is APPROVED, shows a frame published at/after
-    cleared_ns, and its age (row time - publish time) is <= age_ms; caught-up
-    needs every row of the following hold_s to count as well, and rows that
-    reach past the hold (otherwise: not yet decidable -> None).
+    ``core_config``: the run's ``work/core.json``; each venue's materialization interval is the one its BOOK
+    binding gives the core. None (offline analysis of a run sealed before v2): the production default.
     """
-    rows = [r for r in series.get(venue, ()) if r[0] >= cleared_ns]
+    intervals = {venue: L2_DEFAULT_MATERIALIZATION_MS for venue in VENUES}
+    source = "default:EXECUTION_L2_MATERIALIZATION_INTERVAL_MS"
+    if core_config is not None:
+        source = "core.json"
+        books = {b["venue"]: b["l2"] for b in core_config["core"]["bindings"] if b.get("l2")}
+        if set(books) != set(VENUES):
+            raise ValueError("one BOOK binding per venue required for the caught-up predicate")
+        for venue, l2 in books.items():
+            value = l2.get("materialized_snapshot_interval_ms")
+            intervals[venue] = int(value) if value is not None else int(l2["snapshot_refresh_seconds"]) * 1000
+    if not 0 < hz <= 20:
+        raise ValueError("bounded publisher rate required")
+    return {"version": CAUGHT_UP_VERSION, "transit_max_ms": GATE["age_ms"], "hold_s": GATE["hold_s"],
+            "top_change_min_interval_ms": L2_TOP_CHANGE_MIN_INTERVAL_MS,
+            "materialized_snapshot_interval_ms": intervals, "materialization_interval_source": source,
+            "publisher_tick_ms": round(1000 / hz, 3), "slack_ms": CORE_MS_FLOOR_SLACK_MS,
+            "book_top": dict(BOOK_TOP)}
+
+
+def book_frames(rows):
+    """Per venue, the publisher's BOOK frames in publish order: ``{"t", "seq", "gen", "top", "pos"}`` lists
+    (``top`` = (bid, ask) as published, None for a run published before the top was recorded = a fixed top)."""
+    frames = {}
+    for r in sorted((r for r in rows if r.get("k") == "pub"), key=lambda r: r["t"]):
+        f = frames.setdefault(r["venue"], {"t": [], "seq": [], "gen": [], "top": [], "pos": {}})
+        f["pos"][r["seq"]] = len(f["t"])
+        f["t"].append(r["t"])
+        f["seq"].append(r["seq"])
+        f["gen"].append(r.get("gen"))
+        f["top"].append(tuple(r["top"]) if r.get("top") is not None else None)
+    return frames
+
+
+def frames_from_index(index):
+    """``book_frames`` shape from a bare publish index (no generation / top recorded: a fixed top)."""
+    return book_frames({"k": "pub", "t": t, "venue": venue, "seq": seq} for (venue, seq), t in index.items())
+
+
+def regime_interval_ms(frames, venue, seq, predicate):
+    """The core's materialization interval after it emitted frame ``seq``, for the observed top-change regime.
+
+    TOP_CHANGE: some frame published within the configured interval has another top or generation than ``seq``
+    -> max(top-change floor, that frame's offset) (a generation change: its offset). QUIET otherwise -> the
+    configured interval. Mirrors due_l2_materialized_snapshot (the comparison is against the last emitted top).
+    """
+    interval = predicate["materialized_snapshot_interval_ms"][venue]
+    f = frames.get(venue)
+    pos = None if f is None else f["pos"].get(seq)
+    if pos is None:
+        return interval, "UNKNOWN"
+    t0, gen0, top0 = f["t"][pos], f["gen"][pos], f["top"][pos]
+    for k in range(pos + 1, len(f["t"])):
+        offset_ms = (f["t"][k] - t0) / 1e6
+        if offset_ms >= interval:
+            break
+        if f["gen"][k] != gen0:
+            return offset_ms, "GENERATION"
+        if f["top"][k] != top0:
+            return max(predicate["top_change_min_interval_ms"], offset_ms), "TOP_CHANGE"
+    return interval, "QUIET"
+
+
+def next_emission(frames, venue, seq, predicate):
+    """(due_ns, emission_ns, regime) after view frame ``seq``: due = publish + regime interval + slack; the
+    emission is the first logged frame at/after due (so due -> emission is at most one publisher tick), or None
+    while it is not logged yet. A frame of an unknown sequence -> (None, None, "UNKNOWN")."""
+    f = frames.get(venue)
+    pos = None if f is None else f["pos"].get(seq)
+    if pos is None:
+        return None, None, "UNKNOWN"
+    interval_ms, regime = regime_interval_ms(frames, venue, seq, predicate)
+    due = f["t"][pos] + int((interval_ms + predicate["slack_ms"]) * 1e6)
+    for k in range(pos + 1, len(f["t"])):
+        if f["t"][k] >= due:
+            return due, f["t"][k], regime
+    return due, None, regime
+
+
+def caught_up(series, index, venue, cleared_ns, *, frames=None, predicate=None, hold_s=None):
+    """First valid apply and stable caught-up for one venue after ``cleared_ns`` (predicate v2).
+
+    The core does not emit a BOOK snapshot per provider frame: it materializes one when the top changes (at
+    most every 100 ms of provider time) or, quiet, every configured interval (1000 ms in production), each on the
+    next provider frame. A view sample's age (sample time - frame time) therefore legitimately reaches interval +
+    one publisher tick + transit, and an age limit of the transit budget alone fails a timely quiet view. v2
+    separates the two things a caught-up consumer must show, per BOOK view sample (t, seq, approved):
+
+    1. APPROVED, of a frame published at/after ``cleared_ns``;
+    2. update transit: first sample showing ``seq`` (an upper bound of the view write time) - frame publish time
+       <= transit_max_ms;
+    3. update gap (closed): the view's previous update ``a`` -> this update ``seq``, on the frames' source time,
+       is within the core's cadence: publish(seq) <= the emission after ``a`` = the first frame at/after
+       publish(a) + regime interval(a) + slack, i.e. <= regime interval + one publisher tick + slack. Not checked
+       when ``a`` precedes ``cleared_ns`` (that gap spans the fault; 1 and 2 bound the first update);
+    4. update gap (open, catches a view stuck after the fault): sample time <= emission frame after ``seq`` +
+       transit_max_ms (emission not logged yet: due + nominal tick + transit_max_ms).
+
+    Caught up needs every sample of the following hold_s to satisfy 1-4, and samples past the hold (otherwise not
+    yet decidable -> None). Parameters: ``caught_up_predicate`` (frozen in the run receipt).
+    """
+    predicate = predicate or caught_up_predicate()
+    frames = frames if frames is not None else frames_from_index(index)
+    hold_ns = int((predicate["hold_s"] if hold_s is None else hold_s) * 1e9)
+    transit_ns = int(predicate["transit_max_ms"] * 1e6)
+    tick_ns = int(predicate["publisher_tick_ms"] * 1e6)
+    every = series.get(venue, ())
+    first, previous, last_seq = {}, {}, None
+    for t, seq, _ok in every:
+        if seq is None:
+            continue
+        if seq not in first:
+            first[seq] = t
+            previous[seq] = last_seq
+        last_seq = seq
+    emission = {}
+
+    def after(seq):
+        if seq not in emission:
+            emission[seq] = next_emission(frames, venue, seq, predicate)
+        return emission[seq]
+
+    def reason(row):
+        t, seq, ok = row
+        published = index.get((venue, seq))
+        if not ok:
+            return "not_approved"
+        if published is None or published < cleared_ns:
+            return "no_post_clear_frame"
+        if first[seq] - published > transit_ns:
+            return "update_transit"
+        prior = previous.get(seq)
+        prior_published = index.get((venue, prior)) if prior is not None else None
+        if prior_published is not None and prior_published >= cleared_ns:
+            _due, emitted, _regime = after(prior)
+            if emitted is not None and published > emitted:
+                return "update_gap"
+        due, emitted, _regime = after(seq)
+        if due is not None and t > (emitted if emitted is not None else due + tick_ns) + transit_ns:
+            return "open_gap"
+        return None
+
+    rows = [r for r in every if r[0] >= cleared_ns]
     first_valid = None
-    age_ns, hold_ns = age_ms * 1_000_000, int(hold_s * 1e9)
-
-    def fresh(row):
-        published = index.get((venue, row[1]))
-        return (row[2] and published is not None and published >= cleared_ns
-                and row[0] - published <= age_ns)
-
     for t, seq, ok in rows:
         published = index.get((venue, seq))
         if ok and published is not None and published >= cleared_ns:
             first_valid = t
             break
+    rejected = {}
     i = 0
     while i < len(rows):
-        if not fresh(rows[i]):
+        why = reason(rows[i])
+        if why is not None:
+            rejected[why] = rejected.get(why, 0) + 1
             i += 1
             continue
         start, j, broken = rows[i][0], i, None
         while j < len(rows) and rows[j][0] <= start + hold_ns:
-            if not fresh(rows[j]):
+            why = reason(rows[j])
+            if why is not None:
+                rejected[why] = rejected.get(why, 0) + 1
                 broken = j
                 break
             j += 1
@@ -593,9 +755,9 @@ def caught_up(series, index, venue, cleared_ns, *, age_ms=GATE["age_ms"], hold_s
             i = broken + 1
             continue
         if j >= len(rows):
-            return {"first_valid_apply_ns": first_valid, "caught_up_ns": None}
-        return {"first_valid_apply_ns": first_valid, "caught_up_ns": start}
-    return {"first_valid_apply_ns": first_valid, "caught_up_ns": None}
+            return {"first_valid_apply_ns": first_valid, "caught_up_ns": None, "rejected_samples": rejected}
+        return {"first_valid_apply_ns": first_valid, "caught_up_ns": start, "rejected_samples": rejected}
+    return {"first_valid_apply_ns": first_valid, "caught_up_ns": None, "rejected_samples": rejected}
 
 
 def first_seen(series, venue):
@@ -809,18 +971,19 @@ def first_monitor(monitor_rows, start_ns, predicate):
     return None
 
 
-def evaluate_fault(fault, publish_rows, sampler_rows, monitor_rows, *, window_s=GATE["window_s"]):
+def evaluate_fault(fault, publish_rows, sampler_rows, monitor_rows, *, window_s=GATE["window_s"], predicate=None):
     index, series = publish_index(publish_rows), view_series(sampler_rows)
+    frames, predicate = book_frames(publish_rows), predicate or caught_up_predicate()
     cleared = cleared_at(fault["kind"], monitor_rows, fault["restart_ns"], fault.get("node"))
     result = {"fault": fault["name"], "kind": fault["kind"], "node": fault.get("node"),
               "fault_injected_ns": fault["injected_ns"], "restart_issued_ns": fault["restart_ns"],
-              "fault_cleared_ns": cleared, "venues": {}, "pass": False}
+              "fault_cleared_ns": cleared, "caught_up_predicate": predicate["version"], "venues": {}, "pass": False}
     if cleared is None:
         result["reason"] = "FAULT_NOT_CLEARED"
         return result
     ends = []
     for venue in VENUES:
-        state = caught_up(series, index, venue, cleared)
+        state = caught_up(series, index, venue, cleared, frames=frames, predicate=predicate)
         state["caught_up_s"] = (None if state["caught_up_ns"] is None
                                 else round((state["caught_up_ns"] - cleared) / 1e9, 3))
         rows = [r for r in series.get(venue, ()) if fault["injected_ns"] <= r[0] <= (state["caught_up_ns"] or r[0])]
@@ -868,15 +1031,43 @@ def evaluate_fault(fault, publish_rows, sampler_rows, monitor_rows, *, window_s=
     return result
 
 
+def load_predicate(evidence):
+    """The run's frozen caught-up predicate (``evidence/caught-up-predicate.json``), else the default parameters
+    marked ``frozen: False`` (a run sealed before v2: its verdict is a re-analysis, not the frozen gate)."""
+    path = Path(evidence) / PREDICATE_FILE
+    if path.is_file():
+        predicate = json.loads(path.read_text())
+        if predicate.get("version") != CAUGHT_UP_VERSION:
+            raise ValueError(f"run predicate {predicate.get('version')!r} is not {CAUGHT_UP_VERSION}")
+        return {**predicate, "frozen": True}
+    return {**caught_up_predicate(), "frozen": False}
+
+
+def publisher_book_summary(publish_rows):
+    """Apparatus check: per venue, BOOK publish interval and schedule lateness (ms) as the publisher logged them."""
+    out = {}
+    for venue, f in book_frames(publish_rows).items():
+        gaps = sorted((b - a) / 1e6 for a, b in zip(f["t"], f["t"][1:]))
+        late = sorted(r["late_ms"] for r in publish_rows
+                      if r.get("k") == "pub" and r.get("venue") == venue and r.get("late_ms") is not None)
+        tops = {top for top in f["top"] if top is not None}
+        out[venue] = {"frames": len(f["t"]), "distinct_tops": len(tops),
+                      "interval_ms": {"p50": quantile(gaps, .5), "p99": quantile(gaps, .99),
+                                      "max": gaps[-1] if gaps else None},
+                      "late_ms": {"p99": quantile(late, .99), "max": late[-1] if late else None}}
+    return out
+
+
 def evaluate(evidence):
     evidence = Path(evidence)
+    predicate = load_predicate(evidence)
     publish_rows = load_jsonl(evidence / "publish.jsonl")
     sampler_rows = load_jsonl(evidence / "sampler.jsonl")
     monitor_rows = sorted(load_jsonl(evidence / "monitor.jsonl"), key=lambda r: r.get("t", 0))
     faults = [r for r in load_jsonl(evidence / "faults.jsonl") if r.get("k") == "fault"]
     index, series = publish_index(publish_rows), view_series(sampler_rows)
     out = {"schema": "p184.g12.verdict.v2", "provenance": "TEST_ONLY", "level": "ISOLATED_FAULT",
-           "gate": GATE, "gate_g2_g3": GATE_G2_G3, "faults": [],
+           "gate": GATE, "gate_g2_g3": GATE_G2_G3, "caught_up_predicate": predicate, "faults": [],
            "g2": "per fault: TRADE, QUOTE and MARK (MARK_INDEX_PRICE) new-event transit "
                  "(publish -> first applied notification)",
            "g3": "per fault: BAR 1m from close (open + 60 s -> first applied closed-bar notification)"}
@@ -886,12 +1077,13 @@ def evaluate(evidence):
         out["baseline_g1"] = {v: g1_stats(transit(series, index, v, *window)) for v in VENUES}
         out["baseline_g2_g3"] = md_window(publish_rows, sampler_rows, *window)
     for fault in faults:
-        out["faults"].append(evaluate_fault(fault, publish_rows, sampler_rows, monitor_rows))
+        out["faults"].append(evaluate_fault(fault, publish_rows, sampler_rows, monitor_rows, predicate=predicate))
     acks = [r for r in publish_rows if r.get("k") == "ack"]
     out["publisher"] = {"frames": sum(1 for r in publish_rows if r.get("k") == "pub"),
                         "acked": sum(1 for r in acks if "error" not in r),
                         "delivery_errors": sum(1 for r in acks if "error" in r),
                         "resyncs": sum(1 for r in publish_rows if r.get("k") == "resync"),
+                        "book": publisher_book_summary(publish_rows),
                         "market_data": publisher_md_summary(publish_rows)}
     out["exit_states"] = exit_states(load_jsonl(evidence / "container-events.jsonl"))
     errors = [r for r in monitor_rows if r.get("k") == "sample_error"]
@@ -1418,13 +1610,52 @@ def extend_material(work):
     return seal_market_feeds(work, packet["namespace"])
 
 
+def book_top(seq, shape=BOOK_TOP):
+    """Deterministic (bid, ask) price strings of BOOK frame ``seq`` (see BOOK_TOP): moving one step per frame in
+    the first cycle - quiet frames of each cycle, held for the last quiet frames; never crossed."""
+    phase = seq % shape["cycle"]
+    moving = shape["cycle"] - shape["quiet"]
+    step = (min(phase, moving - 1)) % shape["steps"]
+    bid = shape["base"] + step
+    return str(bid), str(bid + shape["spread"])
+
+
+def book_levels(seq, previous, snapshot, quantity):
+    """Levels of BOOK frame ``seq``: a snapshot is the one-level book at ``book_top(seq)``; a delta sets the new top
+    and removes the previous frame's top level (qty "0") where it moved, so the book stays one level per side.
+    The bid quantity is the publisher's per-frame quantity (as before); the ask keeps quantity 1."""
+    bid, ask = book_top(seq)
+    bids, asks = [(bid, quantity)], [(ask, "1")]
+    if not snapshot and previous:
+        old_bid, old_ask = book_top(previous)
+        if old_bid != bid:
+            bids.append((old_bid, "0"))
+        if old_ask != ask:
+            asks.append((old_ask, "0"))
+    return {"bids": bids, "asks": asks}
+
+
+def book_frame(venue, snapshot, seq, previous, gen, at_ns):
+    """The publisher's BOOK frame: the DR05 provider shape with the deterministic moving top."""
+    from scripts.p184_dr05_dl_fault import frame
+    quantity = str(seq % 1000 + 1)
+    return frame(venue, snapshot, seq, 0 if snapshot else previous, gen, quantity, at_ns,
+                 levels=book_levels(seq, previous, snapshot, quantity))
+
+
 def publish(work, out, seconds, hz):
     """Steady provider-shaped BOOK frames per venue; resync (new generation +
     snapshot) only after a failed delivery, as a venue adapter would. TRADE /
     QUOTE / closed BAR 1m / MARK-INDEX frames on their own lanes at the MD_RATE
-    cadence; their delivery errors are recorded, never a BOOK resync."""
+    cadence; their delivery errors are recorded, never a BOOK resync.
+
+    BOOK runs on the main thread on its own absolute schedule (stamped right before its produce, never behind the
+    market-data sends: since 1a161f4 the shared tick sent TRADE/QUOTE/BAR/MARK first and, at 0.25 CPU, stamped
+    BOOK late); market data runs on its own thread at the same rate and plan. The main thread alone polls the
+    producer, so every delivery callback (and the BOOK resync state) runs there. Each BOOK ``pub`` row carries
+    its top (bid, ask) and its lateness against the schedule (``late_ms``, apparatus evidence)."""
+    import threading
     from confluent_kafka import Producer
-    from scripts.p184_dr05_dl_fault import frame
     from scripts.p184_dr05_raw_publisher import raw_envelope
     packet = _packet(work)
     ns = packet["namespace"]
@@ -1439,7 +1670,12 @@ def publish(work, out, seconds, hz):
                          "linger.ms": 0, "message.timeout.ms": 30000, "queue.buffering.max.messages": 10000})
     state = {v: {"gen": 7, "seq": 1000, "snapshot": True} for v in VENUES}
     stop, end, period = _Stop(), time.monotonic() + seconds, 1.0 / hz
+    lock = threading.Lock()
     with open(out, "a", buffering=1) as log:
+        def write(row):
+            with lock:
+                log.write(json.dumps(row) + "\n")
+
         def ack(venue, seq, gen, sent_ns):
             def callback(error, message):
                 row = {"k": "ack", "venue": venue, "seq": seq, "gen": gen,
@@ -1449,11 +1685,11 @@ def publish(work, out, seconds, hz):
                     if state[venue]["gen"] == gen:
                         state[venue]["gen"] += 1
                         state[venue]["snapshot"] = True
-                        log.write(json.dumps({"k": "resync", "t": time.time_ns(), "venue": venue,
-                                              "after_seq": seq, "new_gen": gen + 1}) + "\n")
+                        write({"k": "resync", "t": time.time_ns(), "venue": venue,
+                               "after_seq": seq, "new_gen": gen + 1})
                 else:
                     row["offset"] = message.offset()
-                log.write(json.dumps(row) + "\n")
+                write(row)
             return callback
 
         def md_ack(event, sent_ns):
@@ -1464,7 +1700,7 @@ def publish(work, out, seconds, hz):
                     row["error"] = str(error.code())
                 else:
                     row["offset"] = message.offset()
-                log.write(json.dumps(row) + "\n")
+                write(row)
             return callback
 
         def send_md(event):
@@ -1477,42 +1713,55 @@ def publish(work, out, seconds, hz):
                                      value=raw.SerializeToString(), headers=[("qdl-event-id", raw.capture_id)],
                                      on_delivery=md_ack(event, at_ns))
                 except BufferError:
-                    log.write(json.dumps({"k": "ack_md", "venue": event["venue"], "feed": event["feed"],
-                                          "id": event["id"], "error": "LOCAL_QUEUE_FULL"}) + "\n")
+                    write({"k": "ack_md", "venue": event["venue"], "feed": event["feed"],
+                           "id": event["id"], "error": "LOCAL_QUEUE_FULL"})
                     return
-            log.write(json.dumps({"k": "pub_md", "t": at_ns, "venue": event["venue"], "feed": event["feed"],
-                                  "id": event["id"], **event["extra"]}) + "\n")
+            write({"k": "pub_md", "t": at_ns, "venue": event["venue"], "feed": event["feed"],
+                   "id": event["id"], **event["extra"]})
 
-        source = MarketDataSource(index_symbols={venue: lane["physical_native_symbol"]
-                                                 for (venue, feed), lane in lanes.items() if feed == "INDEX"})
-        for event in source.seed(time.time_ns()):
-            send_md(event)
-        tick = 0
+        def market_data():
+            """TRADE / QUOTE / BAR / MARK on their own thread and absolute schedule (same rate and plan)."""
+            try:
+                source = MarketDataSource(index_symbols={venue: lane["physical_native_symbol"]
+                                                         for (venue, feed), lane in lanes.items() if feed == "INDEX"})
+                for event in source.seed(time.time_ns()):
+                    send_md(event)
+                tick, next_md = 0, time.monotonic()
+                while time.monotonic() < end and not stop.requested:
+                    for event in source.tick(tick, hz):
+                        send_md(event)
+                    tick += 1
+                    next_md += period
+                    left = next_md - time.monotonic()
+                    if left > 0:
+                        time.sleep(left)
+            except BaseException as error:  # noqa: BLE001 - recorded; BOOK keeps its schedule
+                write({"k": "md_thread_error", "t": time.time_ns(), "error": f"{type(error).__name__}: {error}"})
+                raise
+
+        md_thread = threading.Thread(target=market_data, name="g12-market-data", daemon=True)
+        md_thread.start()
         next_at = time.monotonic()
         while time.monotonic() < end and not stop.requested:
-            for event in source.tick(tick, hz):
-                send_md(event)
-            tick += 1
             for venue in VENUES:
                 s = state[venue]
                 snapshot = s["snapshot"]
                 seq = s["seq"] + 1
+                late_ms = round((time.monotonic() - next_at) * 1e3, 3)
                 at_ns = time.time_ns()
-                raw = raw_envelope(bindings[venue], frame(venue, snapshot, seq, 0 if snapshot else s["seq"],
-                                                          s["gen"], str(seq % 1000 + 1), at_ns), ns)
+                raw = raw_envelope(bindings[venue], book_frame(venue, snapshot, seq, s["seq"], s["gen"], at_ns), ns)
                 try:
                     producer.produce(config["raw_topics"][0], partition=0, key=raw.subscription_id.encode(),
                                      value=raw.SerializeToString(), headers=[("qdl-event-id", raw.capture_id)],
                                      on_delivery=ack(venue, seq, s["gen"], at_ns))
                 except BufferError:
-                    log.write(json.dumps({"k": "ack", "venue": venue, "seq": seq, "gen": s["gen"],
-                                          "error": "LOCAL_QUEUE_FULL"}) + "\n")
+                    write({"k": "ack", "venue": venue, "seq": seq, "gen": s["gen"], "error": "LOCAL_QUEUE_FULL"})
                     s["gen"] += 1
                     s["snapshot"] = True
                     continue
                 s["seq"], s["snapshot"] = seq, False
-                log.write(json.dumps({"k": "pub", "t": at_ns, "venue": venue, "seq": seq, "gen": s["gen"],
-                                      "snapshot": snapshot}) + "\n")
+                write({"k": "pub", "t": at_ns, "venue": venue, "seq": seq, "gen": s["gen"],
+                       "snapshot": snapshot, "top": list(book_top(seq)), "late_ms": late_ms})
             next_at += period
             while True:
                 producer.poll(0)
@@ -1520,8 +1769,9 @@ def publish(work, out, seconds, hz):
                 if left <= 0:
                     break
                 time.sleep(min(left, .02))
+        md_thread.join(timeout=5)
         remaining = producer.flush(10)
-        log.write(json.dumps({"k": "end", "t": time.time_ns(), "unflushed": remaining}) + "\n")
+        write({"k": "end", "t": time.time_ns(), "unflushed": remaining, "md_thread_alive": md_thread.is_alive()})
     return {"stopped": True}
 
 
@@ -1896,6 +2146,7 @@ class Run:
         self.last_guard = 0.0
         self.last_stats = 0.0
         self.events_proc = None
+        self.predicate = None  # frozen in prepare()
 
     # -- container exit states
     def start_events(self):
@@ -2062,6 +2313,11 @@ class Run:
             (self.work / f"kafka-{node}").mkdir(mode=0o700)
         self.note("material_ready", namespace=self.ns, volumes_before=self.volumes0,
                   networks_before=self.networks0)
+        # Freeze the caught-up predicate (version + parameters) before any data exists.
+        self.predicate = caught_up_predicate(json.loads((self.work / "core.json").read_text()), PUBLISH_HZ)
+        with (self.evidence / PREDICATE_FILE).open("x") as handle:
+            handle.write(json.dumps(self.predicate, indent=2, sort_keys=True) + "\n")
+        self.note("caught_up_predicate_frozen", predicate=self.predicate)
 
     def up(self):
         sh(self.topology()["net"])
@@ -2094,7 +2350,8 @@ class Run:
         self.expected.add("monitor")
         self.verify_image("monitor")
         sh(self.helper(self.ns, self.work, ["--publish", "/work", "--out", "/evidence/publish.jsonl",
-                                            "--seconds", str(int(remaining)), "--hz", "4"], role="publisher",
+                                            "--seconds", str(int(remaining)), "--hz", str(PUBLISH_HZ)],
+                       role="publisher",
                        detach=True, evidence=self.evidence, cpus="0.25", memory="256m"))
         self.expected.add("publisher")
         self.verify_image("publisher")
@@ -2130,9 +2387,11 @@ class Run:
         started = time.time_ns()
 
         def ready():
-            index = publish_index(load_jsonl(self.evidence / "publish.jsonl"))
+            rows = load_jsonl(self.evidence / "publish.jsonl")
+            index, frames = publish_index(rows), book_frames(rows)
             series = view_series(load_jsonl(self.evidence / "sampler.jsonl"))
-            return all(caught_up(series, index, v, started, hold_s=10)["caught_up_ns"] for v in VENUES)
+            return all(caught_up(series, index, v, started, frames=frames, predicate=self.predicate,
+                                 hold_s=10)["caught_up_ns"] for v in VENUES)
 
         if not self.wait(LIMITS["clone_ready_s"], until=ready):
             raise RuntimeError("STOP TS clones never showed a fresh APPROVED book view")
@@ -2183,7 +2442,8 @@ class Run:
 
         def caught():
             result = evaluate_fault(row, load_jsonl(self.evidence / "publish.jsonl"),
-                                    load_jsonl(self.evidence / "sampler.jsonl"), monitor_rows(), window_s=0)
+                                    load_jsonl(self.evidence / "sampler.jsonl"), monitor_rows(), window_s=0,
+                                    predicate=self.predicate)
             return result if result.get("consumers_caught_up_ns") else None
 
         result = self.wait(GATE["caught_up_s"] + GATE["hold_s"] + 10, until=caught)
@@ -2193,7 +2453,7 @@ class Run:
         end = result["consumers_caught_up_ns"] + int(GATE["window_s"] * 1e9)
         self.wait(max(0.0, (end - time.time_ns()) / 1e9) + 2)
         verdict = evaluate_fault(row, load_jsonl(self.evidence / "publish.jsonl"),
-                                 load_jsonl(self.evidence / "sampler.jsonl"), monitor_rows())
+                                 load_jsonl(self.evidence / "sampler.jsonl"), monitor_rows(), predicate=self.predicate)
         self.note("fault_verdict", fault=name, verdict=verdict)
         if not verdict["pass"]:
             raise RuntimeError(f"STOP {name}: G12 verdict not PASS: " + json.dumps(verdict.get("parts")))
@@ -2347,7 +2607,7 @@ def main(argv=None):
     parser.add_argument("--namespace")
     parser.add_argument("--out")
     parser.add_argument("--seconds", type=float)
-    parser.add_argument("--hz", type=float, default=4.0)
+    parser.add_argument("--hz", type=float, default=PUBLISH_HZ)
     parser.add_argument("--image-set", type=Path, help="JSON object role -> sha256:<64hex> (defaults: IMAGES)")
     parser.add_argument("--image", action="append", default=[], metavar="ROLE=sha256:<64hex>")
     parser.add_argument("--query-code", choices=QUERY_CODE, default="worktree")

@@ -102,28 +102,38 @@ def pending_rows(scopes=VENUES):
             for cell in cells_for(scopes)]
 
 
-def frame(venue, snapshot, sequence, previous, generation, quantity, at_ns):
+def frame(venue, snapshot, sequence, previous, generation, quantity, at_ns, levels=None):
     """Provider-shaped test bytes, following realtime-core delayed_book_frame.
 
     Stamp at publish time, not preparation time. Same lane across generations;
     a lane rename tests a different fence and is not this case.
+
+    ``levels`` (optional): {"bids": [(price, qty), ...], "asks": [...]} replaces the
+    default one-level book (bid 60000 x ``quantity``, ask 60001 x 1); a qty of "0"
+    removes a level, as on the venue. The DR05 cells keep the default (fixed top);
+    the G12 publisher passes a deterministically moving top (p184_g12 ``book_levels``).
     """
     if venue not in SCOPES or type(at_ns) is not int or at_ns <= 0:
         raise ValueError("venue and positive integer timestamp required")
     venue, _, symbol = SCOPES[venue]  # a scope selects the instrument; the frame names the real venue
     ms = at_ns // 1_000_000
+    if levels is None:
+        levels = {"bids": [("60000", quantity)], "asks": [("60001", "1")]}
     if venue == "OKX":
+        bids = [[price, qty, "0", "1"] for price, qty in levels["bids"]]
+        asks = [[price, qty, "0", "1"] for price, qty in levels["asks"]]
         payload = {"arg": {"channel": "books", "instId": symbol},
                    "action": "snapshot" if snapshot else "update", "data": [{
                        "seqId": str(sequence), "prevSeqId": "-1" if snapshot else str(previous),
-                       "ts": str(ms), "bids": [["60000", quantity, "0", "1"]],
-                       "asks": [["60001", "1", "0", "1"]]}]}
-    elif snapshot:
-        payload = {"lastUpdateId": sequence, "E": ms,
-                   "bids": [["60000", quantity]], "asks": [["60001", "1"]]}
+                       "ts": str(ms), "bids": bids, "asks": asks}]}
     else:
-        payload = {"s": symbol, "U": previous, "u": sequence, "pu": previous,
-                   "E": ms, "b": [["60000", quantity]], "a": [["60001", "1"]]}
+        bids = [[price, qty] for price, qty in levels["bids"]]
+        asks = [[price, qty] for price, qty in levels["asks"]]
+        if snapshot:
+            payload = {"lastUpdateId": sequence, "E": ms, "bids": bids, "asks": asks}
+        else:
+            payload = {"s": symbol, "U": previous, "u": sequence, "pu": previous,
+                       "E": ms, "b": bids, "a": asks}
     return {"venue": venue, "native_symbol": symbol, "connection_generation": generation,
             "sequence": sequence, "previous": previous, "snapshot": snapshot,
             "transport": "HTTP" if snapshot and venue == "BINANCE" else "WEBSOCKET",

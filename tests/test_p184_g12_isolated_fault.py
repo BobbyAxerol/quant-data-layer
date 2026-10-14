@@ -1,4 +1,12 @@
 """Offline contracts of the G12 isolated fault harness; no Docker daemon or broker."""
+import json
+from pathlib import Path
+import re
+import sys
+import tempfile
+import threading
+import time
+import types
 import unittest
 from unittest.mock import patch
 
@@ -155,7 +163,11 @@ class AnalysisTests(unittest.TestCase):
                 newest = row["seq"]
         state = g12.caught_up(g12.view_series(views), g12.publish_index(pubs), "OKX", cleared)
         self.assertEqual(state["first_valid_apply_ns"], cleared + 1500 * MS)
-        self.assertEqual(state["caught_up_ns"], 130 * S + 100 * MS)
+        # Predicate v2: the 130.1 s sample shows frame 130.0 s right after frame 128.5 s (the late 128.75-129.75 s
+        # applies stay hidden): a 1.5 s source gap past the emission due after 128.5 s (frame 129.75 s), so the
+        # first sample proving cadence too is the next update's, 130.35 s.
+        self.assertEqual(state["caught_up_ns"], 130 * S + 350 * MS)
+        self.assertEqual(state["rejected_samples"]["update_transit"] >= 1, True)
 
     def test_not_approved_or_undecidable_is_not_caught_up(self):
         pubs, views = stream_rows("OKX", 100 * S, 200 * S, approved=False)
@@ -1159,3 +1171,330 @@ class MonitorGapRuleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------- caught-up predicate v2 and the moving top
+
+def core_emissions(frames, interval_ms=1000):
+    """The core's BOOK_SNAPSHOT materialization (due_l2_materialized_snapshot): first frame, then a frame whose
+    integer-ms provider time is >= interval after the last emission, or >= 100 ms with another top."""
+    out, last = [], None
+    for t, seq, top in frames:
+        ms = t // MS
+        if last is None or ms - last[0] >= interval_ms or (top != last[1] and ms - last[0] >= 100):
+            out.append((t, seq))
+            last = (ms, top)
+    return out
+
+
+def book_run(venue, start, end, *, moving=False, transit_ms=100, keep=lambda i: True, interval_ms=1000,
+             freeze=None, sample_ms=50, hz=4):
+    """Publisher BOOK rows (4 Hz, +0..2 ms deterministic stamp jitter; ``moving``: the publisher's book_top, else a
+    fixed top with no top recorded), the core's emissions, and sampler rows every ``sample_ms`` showing the newest
+    kept emission ``transit_ms`` after its frame. ``freeze=(from_ns, to_ns)``: no view update applies in it."""
+    period = S // hz
+    frames, pubs = [], []
+    t, seq = start, 1001
+    while t < end:
+        stamp = t + (seq * 7919 % 3) * MS
+        top = g12.book_top(seq) if moving else None
+        frames.append((stamp, seq, top))
+        row = {"k": "pub", "t": stamp, "venue": venue, "seq": seq, "gen": 7, "snapshot": seq == 1001}
+        if moving:
+            row["top"] = list(top)
+        pubs.append(row)
+        t += period
+        seq += 1
+    emitted = [e for i, e in enumerate(core_emissions(frames, interval_ms)) if keep(i)]
+    updates = [(pub + transit_ms * MS, seq) for pub, seq in emitted]
+    if freeze is not None:
+        updates = [(at, seq) for at, seq in updates if not freeze[0] <= at < freeze[1]]
+    views, k, shown = [], -1, None
+    t = start
+    while t < end:
+        while k + 1 < len(updates) and updates[k + 1][0] <= t:
+            k += 1
+            shown = updates[k][1]
+        if shown is not None:
+            views.append({"k": "view", "t": t, "venue": venue, "seq": shown, "v": "APPROVED"})
+        t += sample_ms * MS
+    return pubs, views, emitted
+
+
+def caught(pubs, views, venue, cleared, predicate=None):
+    return g12.caught_up(g12.view_series(views), g12.publish_index(pubs), venue, cleared,
+                         frames=g12.book_frames(pubs), predicate=predicate)
+
+
+class CaughtUpPredicateV2Tests(unittest.TestCase):
+    CLEARED = 100 * S
+
+    def test_parameters_come_from_the_core_not_from_data(self):
+        default = g12.caught_up_predicate()
+        self.assertEqual((default["version"], default["transit_max_ms"], default["hold_s"], default["slack_ms"],
+                          default["publisher_tick_ms"], default["top_change_min_interval_ms"]),
+                         ("p184.g12.caught_up.v2", 1000, 30, 1, 250.0, 100))
+        self.assertEqual(default["materialized_snapshot_interval_ms"], {"BINANCE": 1000, "OKX": 1000})
+        from qdl.runtime.execution_l2 import EXECUTION_L2_MATERIALIZATION_INTERVAL_MS
+        self.assertEqual(g12.L2_DEFAULT_MATERIALIZATION_MS, EXECUTION_L2_MATERIALIZATION_INTERVAL_MS)
+        core = (Path(g12.ROOT) / "rust/qdl-realtime-core/src/lib.rs").read_text()
+        self.assertEqual(int(re.search(r"const L2_TOP_CHANGE_MIN_INTERVAL_MS: i64 = (\d+);", core).group(1)),
+                         g12.L2_TOP_CHANGE_MIN_INTERVAL_MS)
+        # The core resolves the interval as L2Binding::materialized_snapshot_interval_ms does.
+        config = {"core": {"bindings": [
+            {"venue": "BINANCE", "l2": {"snapshot_refresh_seconds": 30, "materialized_snapshot_interval_ms": 1000}},
+            {"venue": "OKX", "l2": {"snapshot_refresh_seconds": 30}},
+            {"venue": "OKX", "provider_kind": "okx_trade"}]}}
+        frozen = g12.caught_up_predicate(config, 4.0)
+        self.assertEqual(frozen["materialized_snapshot_interval_ms"], {"BINANCE": 1000, "OKX": 30000})
+        self.assertEqual(frozen["materialization_interval_source"], "core.json")
+        with self.assertRaises(ValueError):
+            g12.caught_up_predicate({"core": {"bindings": [config["core"]["bindings"][0]]}})
+
+    def test_quiet_but_timely_passes(self):
+        # Fixed top: one snapshot per ~1 s (4 or 5 frames); every sample of a timely view, not an age limit.
+        pubs, views, emitted = book_run("BINANCE", 90 * S, 200 * S, transit_ms=100)
+        gaps = {round((b[0] - a[0]) / (250 * MS)) for a, b in zip(emitted, emitted[1:])}
+        self.assertTrue(gaps <= {4, 5} and 5 in gaps)  # the integer-ms rule moves some emissions a frame later
+        index = g12.publish_index(pubs)
+        ages = [(v["t"] - index[("BINANCE", v["seq"])]) / MS for v in views if v["t"] >= self.CLEARED]
+        self.assertGreater(max(ages), 1000)  # the v1 per-sample age limit failed exactly this timely view
+        state = caught(pubs, views, "BINANCE", self.CLEARED)
+        self.assertIsNotNone(state["caught_up_ns"])
+        self.assertLess(state["caught_up_ns"] - self.CLEARED, int(1.5 * S))
+        self.assertEqual(state["rejected_samples"].get("update_gap", 0), 0)
+        self.assertEqual(state["rejected_samples"].get("open_gap", 0), 0)
+
+    def test_moving_top_fires_the_top_change_rule_and_passes(self):
+        pubs, views, emitted = book_run("OKX", 90 * S, 200 * S, moving=True, transit_ms=150)
+        frames = len(pubs)
+        self.assertGreater(len(emitted), 0.8 * frames)  # 32 of 40 frames move the top, each one emitted
+        state = caught(pubs, views, "OKX", self.CLEARED)
+        self.assertIsNotNone(state["caught_up_ns"])
+        self.assertLess(state["caught_up_ns"] - self.CLEARED, S)
+
+    def test_slow_transit_fails(self):
+        for moving in (False, True):
+            with self.subTest(moving=moving):
+                pubs, views, _ = book_run("BINANCE", 90 * S, 200 * S, moving=moving, transit_ms=1100)
+                state = caught(pubs, views, "BINANCE", self.CLEARED)
+                self.assertIsNone(state["caught_up_ns"])
+                self.assertGreater(state["rejected_samples"]["update_transit"], 0)
+
+    def test_large_update_gap_fails(self):
+        # Quiet: the view applies every other snapshot (2-2.5 s source gap > 1000 + 250 + 1 ms).
+        pubs, views, _ = book_run("BINANCE", 90 * S, 200 * S, keep=lambda i: i % 2 == 0)
+        state = caught(pubs, views, "BINANCE", self.CLEARED)
+        self.assertIsNone(state["caught_up_ns"])
+        self.assertGreater(state["rejected_samples"]["update_gap"], 0)
+        # Moving top: every third frame (750 ms) > max(100, 250) + one 250 ms tick + 1 ms.
+        pubs, views, _ = book_run("OKX", 90 * S, 200 * S, moving=True, keep=lambda i: i % 3 == 0)
+        state = caught(pubs, views, "OKX", self.CLEARED)
+        self.assertIsNone(state["caught_up_ns"])
+        self.assertGreater(state["rejected_samples"]["update_gap"], 0)
+
+    def test_stale_after_fault_fails(self):
+        for moving in (False, True):
+            with self.subTest(moving=moving):
+                # Stuck on a post-clear frame for the rest of the run: never caught up (open gap).
+                pubs, views, _ = book_run("OKX", 90 * S, 200 * S, moving=moving, freeze=(101 * S, 300 * S))
+                state = caught(pubs, views, "OKX", self.CLEARED)
+                self.assertIsNone(state["caught_up_ns"])
+                self.assertGreater(state["rejected_samples"]["open_gap"], 0)
+                # Stuck for 5 s, then timely again: caught up only after the stall, not across it.
+                pubs, views, _ = book_run("OKX", 90 * S, 200 * S, moving=moving, freeze=(101 * S, 106 * S))
+                state = caught(pubs, views, "OKX", self.CLEARED)
+                self.assertGreaterEqual(state["caught_up_ns"], 106 * S)
+                self.assertLess(state["caught_up_ns"], 108 * S)
+
+    def test_frozen_predicate_is_read_back_and_used(self):
+        # Core configured with a 2 s quiet interval: the frozen run parameters pass it, the default ones do not.
+        pubs, views, _ = book_run("BINANCE", 90 * S, 200 * S, interval_ms=2000)
+        self.assertIsNone(caught(pubs, views, "BINANCE", self.CLEARED)["caught_up_ns"])
+        frozen = dict(g12.caught_up_predicate(), materialized_snapshot_interval_ms={"BINANCE": 2000, "OKX": 2000})
+        self.assertIsNotNone(caught(pubs, views, "BINANCE", self.CLEARED, frozen)["caught_up_ns"])
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = Path(tmp)
+            self.assertFalse(g12.load_predicate(evidence)["frozen"])
+            self.assertFalse(g12.evaluate(evidence)["caught_up_predicate"]["frozen"])
+            (evidence / g12.PREDICATE_FILE).write_text(json.dumps(frozen))
+            loaded = g12.load_predicate(evidence)
+            self.assertTrue(loaded["frozen"])
+            self.assertEqual(loaded["materialized_snapshot_interval_ms"]["BINANCE"], 2000)
+            self.assertEqual(g12.evaluate(evidence)["caught_up_predicate"], loaded)
+            (evidence / g12.PREDICATE_FILE).write_text(json.dumps(dict(frozen, version="p184.g12.caught_up.v1")))
+            with self.assertRaises(ValueError):
+                g12.load_predicate(evidence)
+
+    def test_prepare_freezes_the_predicate_before_data(self):
+        """Run.prepare writes evidence/caught-up-predicate.json from the run's core.json once the material exists,
+        before any role (publisher included) starts; it is never overwritten."""
+        core = {"raw_topics": [NS + ".raw"], "core": {"bindings": [
+            {"venue": "BINANCE", "l2": {"snapshot_refresh_seconds": 30, "materialized_snapshot_interval_ms": 1000}},
+            {"venue": "OKX", "l2": {"snapshot_refresh_seconds": 30, "materialized_snapshot_interval_ms": 500}}]}}
+        calls = []
+
+        def sh(argv, timeout=60, check=True):
+            calls.append(list(argv))
+            if "--material" in argv:
+                (run.work / "packet.json").write_text(json.dumps({"namespace": NS}))
+                (run.work / "core.json").write_text(json.dumps(core))
+                (run.work / "broker.properties").write_text("ssl.keystore.password=x\n")
+            return ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            export = Path(tmp) / "export.json"
+            export.write_text("{}")
+            run = g12.Run(Path(tmp) / "run", export, NS)
+            with patch.object(g12, "sh", side_effect=sh), \
+                    patch.object(g12, "host_resources", return_value={"disk_free_bytes": 10**12,
+                                                                      "mem_available_bytes": 10**12}), \
+                    patch.object(g12, "image_record", side_effect=lambda image: {"id": image}), \
+                    patch.object(g12, "owned_names", return_value=[]), \
+                    patch.object(g12, "production_guard", return_value={}), \
+                    patch.object(g12.Run, "start_events"):
+                run.prepare()
+            frozen = json.loads((run.evidence / g12.PREDICATE_FILE).read_text())
+            self.assertEqual(frozen, g12.caught_up_predicate(core, g12.PUBLISH_HZ))
+            self.assertEqual(frozen["materialized_snapshot_interval_ms"], {"BINANCE": 1000, "OKX": 500})
+            self.assertEqual(run.predicate, frozen)
+            notes = [json.loads(line) for line in (run.evidence / "orchestrator.jsonl").read_text().splitlines()]
+            self.assertEqual(notes[-1]["step"], "caught_up_predicate_frozen")
+            self.assertFalse(any("--publish" in argv for argv in calls))  # no data source started yet
+            self.assertFalse((run.evidence / "publish.jsonl").exists())
+
+
+class PublisherBookTopTests(unittest.TestCase):
+    def test_top_is_deterministic_bounded_moving_then_quiet(self):
+        shape = g12.BOOK_TOP
+        tops = [g12.book_top(seq) for seq in range(1001, 1001 + 4 * shape["cycle"])]
+        self.assertEqual(tops, [g12.book_top(seq) for seq in range(1001, 1001 + 4 * shape["cycle"])])
+        for bid, ask in tops:
+            self.assertTrue(shape["base"] <= int(bid) <= shape["base"] + shape["steps"] - 1)
+            self.assertEqual(int(ask) - int(bid), shape["spread"])
+        moving = shape["cycle"] - shape["quiet"]
+        for seq in range(1000, 1000 + 2 * shape["cycle"]):
+            changed = g12.book_top(seq + 1) != g12.book_top(seq)
+            self.assertEqual(changed, (seq + 1) % shape["cycle"] < moving, seq)
+        self.assertEqual(len(set(tops)), shape["steps"])
+
+    def test_levels_and_frames_keep_one_level_per_side(self):
+        from scripts import p184_dr05_dl_fault as dr
+        at = 1_791_696_000_123 * MS
+        for seq in range(1001, 1001 + 2 * g12.BOOK_TOP["cycle"]):
+            levels = g12.book_levels(seq, seq - 1, False, "5")
+            bid, ask = g12.book_top(seq)
+            self.assertEqual((levels["bids"][0], levels["asks"][0]), ((bid, "5"), (ask, "1")))
+            for side in ("bids", "asks"):
+                prices = [price for price, _ in levels[side]]
+                self.assertEqual(len(prices), len(set(prices)))  # the core refuses a duplicate price
+                self.assertTrue(all(qty == "0" for _, qty in levels[side][1:]))
+            self.assertLess(max(int(p) for p, q in levels["bids"] if q != "0"),
+                            min(int(p) for p, q in levels["asks"] if q != "0"))
+        self.assertEqual(g12.book_levels(1039, 0, True, "5"), {"bids": [("60007", "5")], "asks": [("60017", "1")]})
+        b = g12.book_frame("BINANCE", False, 1009, 1008, 7, at)["payload"]
+        self.assertEqual((b["U"], b["u"], b["pu"], b["b"], b["a"]),
+                         (1008, 1009, 1008, [["60001", "10"], ["60000", "0"]], [["60011", "1"], ["60010", "0"]]))
+        o = g12.book_frame("OKX", True, 1009, 1008, 8, at)["payload"]["data"][0]
+        self.assertEqual((o["prevSeqId"], o["bids"], o["asks"]), ("-1", [["60001", "10", "0", "1"]],
+                                                                  [["60011", "1", "0", "1"]]))
+        # The DR05 cells keep the fixed default book byte for byte.
+        self.assertEqual(dr.frame("BINANCE", False, 5, 4, 7, "3", at)["payload"],
+                         {"s": "ETHUSDT", "U": 4, "u": 5, "pu": 4, "E": 1_791_696_000_123,
+                          "b": [["60000", "3"]], "a": [["60001", "1"]]})
+        self.assertEqual(dr.frame("OKX", True, 5, 0, 7, "3", at)["payload"]["data"][0]["bids"],
+                         [["60000", "3", "0", "1"]])
+
+    def test_core_rule_fires_on_top_change_and_quiet_interval(self):
+        frames = [(t * 250 * MS, seq, g12.book_top(seq)) for t, seq in enumerate(range(1000, 1400))]
+        emitted = core_emissions(frames)
+        gaps = sorted({(b[0] - a[0]) // MS for a, b in zip(emitted, emitted[1:])})
+        self.assertEqual(gaps, [250, 1000])  # moving: every frame; quiet 2 s: the 1 s rule
+        fixed = core_emissions([(t, seq, None) for t, seq, _ in frames])
+        self.assertEqual({(b[0] - a[0]) // MS for a, b in zip(fixed, fixed[1:])}, {1000})
+
+    def test_market_data_is_unchanged_by_the_book_top(self):
+        def run(interleave):
+            clock = iter(range(1_791_696_000_000 * MS, 1_791_697_000_000 * MS, 7 * MS))
+            source = g12.MarketDataSource(clock=lambda: next(clock))
+            events = source.seed(1_791_696_000_000 * MS)
+            for tick in range(40):
+                if interleave:
+                    g12.book_frame("BINANCE", False, 1001 + tick, 1000 + tick, 7, 1_791_696_000_000 * MS)
+                events += source.tick(tick, 4.0)
+            return events
+        plain, interleaved = run(False), run(True)
+        self.assertEqual(plain, interleaved)
+        feeds = {e["feed"] for e in plain}
+        self.assertTrue({"TRADE", "QUOTE"} <= feeds)
+
+
+class PublisherScheduleTests(unittest.TestCase):
+    """publish(): BOOK frames keep their own schedule while market-data sends are slow."""
+
+    def test_book_is_not_delayed_by_market_data_sends(self):
+        produced, lock = [], threading.Lock()
+
+        class Producer:
+            def __init__(self, config):
+                pass
+
+            def produce(self, topic, partition, key, value, headers, on_delivery):
+                with lock:
+                    produced.append((time.monotonic(), value))
+
+            def poll(self, timeout):
+                return 0
+
+            def flush(self, timeout):
+                return 0
+
+        class Raw:
+            subscription_id, capture_id = "sub", "cap"
+
+            def __init__(self, tag):
+                self.tag = tag
+
+            def SerializeToString(self):
+                return self.tag
+
+        def slow_md(binding, frame, ns):
+            time.sleep(0.12)  # a slow (CPU-starved) market-data send
+            return Raw(b"md")
+
+        book_frames = []
+
+        def book_raw(binding, frame, ns):
+            book_frames.append(frame)
+            return Raw(b"book")
+
+        lanes = {(v, f): {"physical_native_symbol": "ETH-USDT"} for v in g12.VENUES for f in g12.MD_FEEDS}
+        lanes[("OKX", "INDEX")] = {"physical_native_symbol": "ETH-USDT"}
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            (work / "core.json").write_text(json.dumps({
+                "raw_topics": [NS + ".raw"], "core": {"allow_test_provenance": True, "bindings": [
+                    {"venue": v, "l2": {"snapshot_refresh_seconds": 30}} for v in g12.VENUES]}}))
+            out = work / "publish.jsonl"
+            fake = types.ModuleType("confluent_kafka")
+            fake.Producer = Producer
+            with patch.dict(sys.modules, {"confluent_kafka": fake}), \
+                    patch.object(g12, "_packet", return_value={"namespace": NS}), \
+                    patch.object(g12, "_security", return_value={}), \
+                    patch.object(g12, "md_bindings", return_value=lanes), \
+                    patch.object(g12, "md_envelope", side_effect=slow_md), \
+                    patch("scripts.p184_dr05_raw_publisher.raw_envelope", side_effect=book_raw):
+                g12.publish(work, out, 3.0, 4.0)
+            rows = g12.load_jsonl(out)
+        pubs = [r for r in rows if r.get("k") == "pub" and r["venue"] == "BINANCE"]
+        self.assertGreaterEqual(len(pubs), 11)
+        gaps = [(b["t"] - a["t"]) / MS for a, b in zip(pubs, pubs[1:])]
+        # Each tick sends >= 2 slow market-data events (>= 240 ms of sends at 4 Hz, seeds first): sharing the
+        # tick, BOOK would slip by those sends; on its own schedule it stays on the 250 ms grid.
+        self.assertLess(max(gaps), 300, gaps)
+        self.assertLess(max(r["late_ms"] for r in pubs), 50)
+        self.assertEqual([tuple(r["top"]) for r in pubs], [g12.book_top(r["seq"]) for r in pubs])
+        self.assertTrue(any(r.get("k") == "pub_md" for r in rows))
+        self.assertEqual(rows[-1]["k"], "end")
+        self.assertFalse(rows[-1]["md_thread_alive"])
+        self.assertEqual(book_frames[0]["payload"]["bids"], [[g12.book_top(1001)[0], "2"]])
