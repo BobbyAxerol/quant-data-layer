@@ -48,6 +48,13 @@ LABEL = "p184.dr05.dl"
 ROLES = ("kafka", "quota", "core", "stream", "query")
 CELLS = tuple(f"DR05.{fault}@{venue}" for venue in VENUES for fault in FAULTS)
 SOURCE_CATALOG = "source-catalog.yaml"
+# Catalog adapter_version of the isolated material (handoff "adapter_mode"). SYNTHETIC (default, unchanged):
+# every isolated binding declares the synthetic publisher's adapter. CAPTURE (TEST_ONLY real-capture replay
+# only): the source catalog's own adapter_version is kept so Query's lineage check runs against the true value
+# of the replayed provider raws (never relabelled); the run must seal the pinned capture sha256 and its
+# test-clock images, and the selected raws are proven equal per route (G12 ``capture_adapter_parity``).
+SYNTHETIC_ADAPTER = "p184-synthetic-test-only"
+ADAPTER_MODES = ("SYNTHETIC", "CAPTURE")
 
 
 def cells_for(scopes):
@@ -84,6 +91,26 @@ def scope_of(venue, native_symbol):
 def source_catalog_path(work):
     copied = Path(work) / SOURCE_CATALOG
     return copied if copied.is_file() else ROOT / "config/v2/stable-source-bindings.yaml"
+
+
+def adapter_mode(handoff):
+    """The material's adapter mode from the run's handoff; anything but an explicit, sealed CAPTURE run is
+    SYNTHETIC. CAPTURE requires TEST_ONLY provenance, an exact G12 namespace, a pinned capture sha256 and the
+    orchestrator's test-clock image check; SYNTHETIC refuses any capture field (no half-sealed run)."""
+    mode = handoff.get("adapter_mode", "SYNTHETIC")
+    if mode not in ADAPTER_MODES:
+        raise ValueError("adapter_mode must be one of " + ",".join(ADAPTER_MODES))
+    capture = ("capture_raw_sha256", "test_clock_images")
+    if mode == "SYNTHETIC":
+        if any(key in handoff for key in capture):
+            raise ValueError("capture fields require adapter_mode CAPTURE")
+        return mode
+    if (handoff.get("provenance") != "TEST_ONLY"
+            or not re.fullmatch(r"p184-g12-dl-[0-9a-f]{16}", str(handoff.get("namespace")))
+            or not re.fullmatch(r"[0-9a-f]{64}", str(handoff.get("capture_raw_sha256")))
+            or handoff.get("test_clock_images") is not True):
+        raise ValueError("CAPTURE adapter mode needs a TEST_ONLY G12 run, a pinned raw sha256 and test-clock images")
+    return mode
 
 
 def namespace(value):
@@ -464,8 +491,9 @@ def material(work, exported):
                            and b["feed"] in ("BOOK_SNAPSHOT", "BOOK_DELTA")]
     if len(catalog["bindings"]) != 2 * len(scopes):
         raise ValueError("every scope's BOOK snapshot/delta must match the source catalog")
-    for binding in catalog["bindings"]:
-        binding["source"]["adapter_version"] = "p184-synthetic-test-only"
+    if adapter_mode(packet) == "SYNTHETIC":
+        for binding in catalog["bindings"]:
+            binding["source"]["adapter_version"] = SYNTHETIC_ADAPTER
     save("catalog.yaml", yaml.safe_dump(catalog))
     loaded = StableSourceCatalog.load(work / "catalog.yaml")
     for b in cfg["core"]["bindings"]:

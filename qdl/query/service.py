@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import re
 import threading
 import uuid
 import time
@@ -54,6 +55,8 @@ from qdl.query.results import (
     MarketDataQueryBackend,
     QualityMetadata,
     QueryBackendError,
+    CANONICAL_LINEAGE_MISMATCH,
+    CanonicalLineageMismatch,
 )
 from qdl.warmup.executor import BoundedWarmupExecutor, RetryableWarmupError
 from qdl.reference.batch import ReferenceBatch
@@ -150,6 +153,10 @@ class BatchItemResult:
     status: str
     result: WarmupResult | None = None
     problem: QueryProblem | None = None
+    # Additive (IDR-099): one typed UPPER_SNAKE refusal reason for an item whose
+    # problem would otherwise carry none (refusal-line extra reason; REST
+    # ``X-QDL-Refusal-Reason`` on the single warmup). Never changes status/code.
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -282,6 +289,15 @@ class _LocalBatchAtCapacity(_LocalBatchAdmissionRejected):
 # (REST header ``X-QDL-Replica-Redirect: 1``). Replica-local admission only:
 # it says nothing about the data, so another replica may serve the request.
 REPLICA_LANE_BUSY_REASON = "REPLICA_LANE_BUSY"
+_UNTYPED_TOKEN = re.compile(r"[^A-Z0-9]+")
+
+
+def untyped_failure_reason(error: BaseException) -> str:
+    """``UNTYPED_<EXCEPTION CLASS>``: a bounded, payload-free token naming the class of
+    an exception that reached the generic INTERNAL_ERROR branch (never its message)."""
+
+    name = _UNTYPED_TOKEN.sub("", type(error).__name__.upper()) or "EXCEPTION"
+    return ("UNTYPED_" + name)[:64]
 
 
 _SMALL_LOCAL_WARMUP_ROWS = 2
@@ -851,6 +867,7 @@ class V2QueryService:
                 item.problem,
                 request_id=request_id,
                 instrument_uid=requirement.instrument_uid,
+                reason=item.reason,
             )
         assert item.result is not None
         return item.result
@@ -1047,6 +1064,7 @@ class V2QueryService:
                     )
                     continue
                 error = execution.error
+                reason = None
                 if isinstance(error, RetryableWarmupError) and isinstance(
                     error.cause, (QueryServiceError, QueryBackendError)
                 ):
@@ -1063,7 +1081,18 @@ class V2QueryService:
                         True,
                         error.retry_after_ms,
                     )
+                elif isinstance(error, CanonicalLineageMismatch):
+                    # IDR-099: the stable catalog refused a canonical row's
+                    # lineage (e.g. adapter_version). Same code/retryability as
+                    # the generic branch below, now with its typed reason.
+                    reason = CANONICAL_LINEAGE_MISMATCH
+                    problem = QueryProblem(
+                        CanonicalErrorCode.INTERNAL_ERROR,
+                        f"{CANONICAL_LINEAGE_MISMATCH}: {str(error)[:200]}",
+                        False,
+                    )
                 else:
+                    reason = untyped_failure_reason(error)
                     problem = QueryProblem(
                         CanonicalErrorCode.INTERNAL_ERROR,
                         "warmup batch item failed inside the bounded executor",
@@ -1074,6 +1103,7 @@ class V2QueryService:
                         requirement.instrument_uid,
                         problem.code.value,
                         problem=problem,
+                        reason=reason,
                     )
                 )
             elapsed = sorted(execution.elapsed_ms for execution in executions)

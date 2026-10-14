@@ -34,6 +34,23 @@ class QueryBackendError(RuntimeError):
         self.problem = problem
 
 
+CANONICAL_LINEAGE_MISMATCH = "CANONICAL_LINEAGE_MISMATCH"
+
+
+class CanonicalLineageMismatch(ValueError):
+    """A canonical event whose identity/lineage (instrument, provider, role, authority,
+    adapter or normalizer version) differs from its stable catalog binding.
+
+    A ``ValueError`` subclass, so every existing ``except ValueError`` keeps its
+    decision (MARK ``INTEGRITY``, ``HOT_BACKUP_LINEAGE_INVALID``); ``reason`` is the
+    typed token a Query edge may expose additively (IDR-099). Typical production
+    trigger: an ingestor adapter/normalizer/authority bump deployed before the
+    catalog baked into the python image is rebuilt.
+    """
+
+    reason = CANONICAL_LINEAGE_MISMATCH
+
+
 @dataclass(frozen=True)
 class SourceMetadata:
     venue: str

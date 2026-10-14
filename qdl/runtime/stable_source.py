@@ -39,7 +39,7 @@ from qdl.query import (
     V2QueryService,
 )
 from qdl.query.contracts import CanonicalErrorCode, QueryProblem
-from qdl.query.results import NON_REPLAYABLE_STREAM_CURSOR, QueryBackendError
+from qdl.query.results import NON_REPLAYABLE_STREAM_CURSOR, CanonicalLineageMismatch, QueryBackendError
 from qdl.replay import GapFreeHandoff
 from qdl.runtime.stable_catalog import (
     StableSourceBinding,
@@ -867,7 +867,7 @@ class StableSpoolQueryBackend:
             cold_yield()
             resolved = self.catalog.binding_for_envelope(parsed.envelope)
             if resolved.binding_id != binding.binding_id:
-                raise ValueError("canonical event resolves to a different stable binding")
+                raise CanonicalLineageMismatch("canonical event resolves to a different stable binding")
 
     def _requested_window(
         self,

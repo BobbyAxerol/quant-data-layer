@@ -164,6 +164,13 @@ BAR_INTERVAL, BAR_MS = "1m", 60_000
 MD_RATE = {"trade_per_s": 3, "burst_every_s": 15, "burst_trades": 8, "quote_per_s": 2,
            "bar_delay_ms": 200, "seed_bars": 5, "mark_per_s": 1}
 TEST_ADAPTER = "p184-synthetic-test-only"
+# CAPTURE adapter mode (TEST_ONLY real-capture replay; ``Run.use_capture_adapter``): core and stream must be the
+# isolated-replay-clock TEST builds (image label), never a release image.
+TEST_CLOCK_LABEL = ("io.qdl.test-only", "isolated-replay-clock")
+TEST_CLOCK_ROLES = ("core", "stream")
+CAPTURE_PARITY_SCHEMA = "p184.g12.capture-adapter-parity.v1"
+# Physical raw route of a core binding (the TS replay preparation's FIELDS, same physical_* precedence).
+ROUTE_FIELDS = ("provider", "venue", "market", "product_type", "native_symbol", "native_channel")
 # Requirement shape of the deployed TS paper manifest (consumers/stable/trading-system-paper.yaml r10) for these feeds;
 # event recency and session liveness stay null like the DR05 BOOK requirements (no isolated provider-session signal).
 MD_REQUIREMENTS = {"TRADE": {"max_freshness_ms": 3000, "warmup_limit": 0, "require_final_bars": True},
@@ -1470,12 +1477,13 @@ def seal_market_feeds(work, ns):
     from scripts.kn_gateway_bundle import compile_bundle
     from scripts.kn_native_slice_probe import ISSUER, AUDIENCE
     from scripts.p184_dr05_case import BOOK_FEEDS, consumer_packet
-    from scripts.p184_dr05_dl_fault import source_catalog_path
+    from scripts.p184_dr05_dl_fault import adapter_mode, source_catalog_path
 
     work = Path(work)
     handoff = json.loads((work / "handoff.json").read_text())
     if namespace(handoff["namespace"]) != namespace(ns) or handoff.get("g12_feeds") is not None:
         raise ValueError("unsealed G12 material of this namespace required")
+    mode = adapter_mode(handoff)
     config = json.loads((work / "core.json").read_text())
     books = config["core"]["bindings"]
     if any(not b.get("l2") for b in books) or sorted(b["venue"] for b in books) != sorted(VENUES):
@@ -1508,12 +1516,19 @@ def seal_market_feeds(work, ns):
                 raise ValueError("generated acquisition differs from the production plan: "
                                  + matches[0]["binding_id"])
             entry = copy.deepcopy(matches[0])
-            entry["source"]["adapter_version"] = TEST_ADAPTER
+            if mode == "SYNTHETIC":
+                entry["source"]["adapter_version"] = TEST_ADAPTER
+            elif entry["source"].get("adapter_version") in (None, "", TEST_ADAPTER):
+                raise ValueError("CAPTURE keeps the source catalog's own adapter_version: "
+                                 + matches[0]["binding_id"])
             lanes.append((book, feed, entry, md_core_bindings(book, matches[0], acquisition)))
     config["core"]["bindings"] = books + [item for lane in lanes for item in lane[3]]
     digest = hashlib.sha256(json.dumps(config["core"]["bindings"], sort_keys=True).encode()).hexdigest()
     config["authority"].update(capability_manifest_digest=digest, contract_digest=digest,
                                partition_plan_digest=digest)
+    if mode == "CAPTURE" and any(b["source"].get("adapter_version") in (None, "", TEST_ADAPTER)
+                                 for b in catalog["bindings"]):
+        raise ValueError("CAPTURE material must not carry the synthetic adapter_version")
     catalog["bindings"] = catalog["bindings"] + [lane[2] for lane in lanes]
     _rewrite(work / "core.json", config)
     _rewrite(work / "catalog.yaml", yaml.safe_dump(catalog))
@@ -1541,9 +1556,65 @@ def seal_market_feeds(work, ns):
                                                   manifest_paths=manifests))
     handoff["g12_feeds"] = {"feeds": list(BOOK_FEEDS) + [CATALOG_FEED[f] for f in MD_FEEDS],
                             "bar_interval": BAR_INTERVAL, "source_ids": [lane[2]["source"]["source_id"] for lane in lanes],
-                            "core_bindings_sha256": digest}
+                            "core_bindings_sha256": digest, "adapter_mode": mode,
+                            "adapter_versions": {b["source"]["source_id"]: b["source"]["adapter_version"]
+                                                 for b in catalog["bindings"]}}
     (work / "handoff.json").write_text(json.dumps(handoff, indent=2) + "\n")
     return handoff["g12_feeds"]
+
+
+def physical_route(binding):
+    """The raw route a core binding consumes: physical_native_symbol/channel when declared (MARK/INDEX)."""
+    return tuple(binding["physical_" + key] if key in ("native_symbol", "native_channel")
+                 and binding.get("physical_" + key) is not None else binding.get(key) for key in ROUTE_FIELDS)
+
+
+def capture_adapter_parity(work, raws, raw_sha256):
+    """CAPTURE-mode prepare-time proof (offline, read-only): every selected raw's adapter_version equals its
+    binding's catalog adapter_version, with exactly one value per route, on sealed CAPTURE material of exactly
+    this capture (``raw_sha256``: the caller's computed archive sha256, equal to the sealed pin).
+
+    ``raws``: iterable of (route tuple in ROUTE_FIELDS order, adapter_version) of the selected raws, in any
+    order. Raises ValueError on any mismatch, an unbound route or a bound route without raws; returns the
+    receipt (per route: source_id, adapter_version, raw_frames). Raws are never relabelled here."""
+    import yaml
+    from scripts.p184_dr05_dl_fault import adapter_mode
+
+    work = Path(work)
+    handoff = json.loads((work / "handoff.json").read_text())
+    feeds = handoff.get("g12_feeds") or {}
+    if (adapter_mode(handoff) != "CAPTURE" or feeds.get("adapter_mode") != "CAPTURE"
+            or handoff.get("capture_raw_sha256") != raw_sha256):
+        raise ValueError("sealed CAPTURE material of exactly this capture required")
+    catalog = yaml.safe_load((work / "catalog.yaml").read_text())
+    versions = {}
+    for item in catalog["bindings"]:
+        versions.setdefault(item["source"]["source_id"], set()).add(item["source"].get("adapter_version"))
+    routes = {}
+    for binding in json.loads((work / "core.json").read_text())["core"]["bindings"]:
+        found = versions.get(binding["source_id"], set())
+        if len(found) != 1 or next(iter(found)) in (None, "", TEST_ADAPTER):
+            raise ValueError("one real catalog adapter_version per bound source required: " + binding["source_id"])
+        route = physical_route(binding)
+        if route in routes:
+            raise ValueError("duplicate physical route")
+        routes[route] = {"source_id": binding["source_id"], "adapter_version": next(iter(found)), "raw_frames": 0}
+    selected = 0
+    for route, version in raws:
+        item = routes.get(tuple(route))
+        if item is None:
+            raise ValueError("selected raw outside the bound routes")
+        if version != item["adapter_version"]:
+            raise ValueError(f"raw adapter_version {version!r} differs from its binding "
+                             f"{item['adapter_version']!r} ({item['source_id']})")
+        item["raw_frames"] += 1
+        selected += 1
+    if not selected or any(item["raw_frames"] == 0 for item in routes.values()):
+        raise ValueError("every bound route needs selected raws")
+    return {"schema": CAPTURE_PARITY_SCHEMA, "provenance": "TEST_ONLY", "status": "PROVEN",
+            "relabelled": False, "raw_sha256": raw_sha256, "selected_raw_frames": selected,
+            "adapter_versions": sorted({item["adapter_version"] for item in routes.values()}),
+            "routes": [{"route": list(route), **item} for route, item in sorted(routes.items())]}
 
 
 def with_execution_mark_index(build):
@@ -2089,7 +2160,16 @@ def image_record(image):
     labels = (rows[0].get("Config") or {}).get("Labels") or {}
     return {"id": rows[0]["Id"], "tags": rows[0].get("RepoTags") or [],
             "revision": labels.get("org.opencontainers.image.revision"),
-            "version": labels.get("org.opencontainers.image.version")}
+            "version": labels.get("org.opencontainers.image.version"),
+            "test_only": labels.get(TEST_CLOCK_LABEL[0])}
+
+
+def require_test_clock_images(records):
+    """CAPTURE mode: core and stream image records carry the isolated-replay-clock TEST label."""
+    for role in TEST_CLOCK_ROLES:
+        if (records.get(role) or {}).get("test_only") != TEST_CLOCK_LABEL[1]:
+            raise RuntimeError(role + " image lacks the isolated TEST data clock label")
+    return True
 
 
 def events_argv(ns, since_s, until_s):
@@ -2147,6 +2227,17 @@ class Run:
         self.last_stats = 0.0
         self.events_proc = None
         self.predicate = None  # frozen in prepare()
+        self.adapter_mode = "SYNTHETIC"
+        self.capture_raw_sha256 = None
+
+    def use_capture_adapter(self, raw_sha256):
+        """TEST_ONLY real-capture replay: keep the source catalog adapter_version (CAPTURE adapter mode).
+        Before ``prepare``; ``prepare`` then requires test-clock core/stream images and seals the pin."""
+        if not isinstance(raw_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", raw_sha256):
+            raise ValueError("pinned raw capture sha256 required")
+        if self.work.exists():
+            raise ValueError("adapter mode is fixed before prepare")
+        self.adapter_mode, self.capture_raw_sha256 = "CAPTURE", raw_sha256
 
     # -- container exit states
     def start_events(self):
@@ -2279,6 +2370,11 @@ class Run:
             records[role] = image_record(image)
             if records[role]["id"] != image:
                 raise RuntimeError("local image mismatch " + image)
+        capture = {}
+        if self.adapter_mode == "CAPTURE":
+            require_test_clock_images(records)
+            capture = {"adapter_mode": "CAPTURE", "capture_raw_sha256": self.capture_raw_sha256,
+                       "test_clock_images": True}
         (self.evidence / "images.json").write_text(json.dumps(
             {"images": self.images, "local": records, "query_code": self.query_code,
              "defaults_overridden": sorted(r for r in self.images if self.images[r] != IMAGES[r])},
@@ -2295,7 +2391,7 @@ class Run:
             "namespace": self.ns, "status": "PREPARED_HANDOFF_NOT_RUN", "provenance": "TEST_ONLY",
             "level": "ISOLATED_FAULT", "acceptance": False, "material_ready": False,
             "images": dr05_images(self.images), "g12_images": self.images,
-            "query_code": self.query_code}, indent=2) + "\n")
+            "query_code": self.query_code, **capture}, indent=2) + "\n")
         sh(self.helper(self.ns, self.work, ["--material", "/work", "--core-config", "/export.json"],
                        network="none", script="scripts/p184_dr05_dl_fault.py",
                        extra=["-v", f"{self.export}:/export.json:ro"]), timeout=180)

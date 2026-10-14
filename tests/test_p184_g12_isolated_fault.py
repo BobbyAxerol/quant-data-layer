@@ -1364,6 +1364,137 @@ class CaughtUpPredicateV2Tests(unittest.TestCase):
             self.assertFalse((run.evidence / "publish.jsonl").exists())
 
 
+class CaptureAdapterModeTests(unittest.TestCase):
+    """CAPTURE adapter mode (RCA 2026-10-14): real-capture replay keeps the source catalog adapter_version;
+    SYNTHETIC (default) is unchanged. Real offline material, python image (qdl, yaml, cryptography)."""
+
+    RAW_SHA = "ab" * 32
+
+    def material(self, tmp, **handoff):
+        from scripts import p184_dr05_dl_fault as dr
+        from tests.test_p184_dr05_dl_fault import MaterialTests
+        work = Path(tmp) / "work"
+        work.mkdir()
+        (work / "handoff.json").write_text(json.dumps({"namespace": NS, "images": g12.dr05_images(g12.IMAGES),
+                                                       "g12_images": g12.IMAGES, **handoff}))
+        dr.material(work, MaterialTests.exported())
+        return work, g12.seal_market_feeds(work, NS)
+
+    def capture(self, tmp):
+        return self.material(tmp, provenance="TEST_ONLY", adapter_mode="CAPTURE",
+                             capture_raw_sha256=self.RAW_SHA, test_clock_images=True)
+
+    @staticmethod
+    def raws(work, override=None):
+        """One raw per bound route with the catalog's value (override: route index -> adapter_version)."""
+        import yaml
+        catalog = yaml.safe_load((work / "catalog.yaml").read_text())
+        versions = {b["source"]["source_id"]: b["source"]["adapter_version"] for b in catalog["bindings"]}
+        out = []
+        for index, binding in enumerate(json.loads((work / "core.json").read_text())["core"]["bindings"]):
+            version = (override or {}).get(index, versions[binding["source_id"]])
+            out.append((g12.physical_route(binding), version))
+        return out
+
+    def test_synthetic_default_is_unchanged(self):
+        import yaml
+        with tempfile.TemporaryDirectory() as tmp:
+            work, sealed = self.material(tmp)
+            catalog = yaml.safe_load((work / "catalog.yaml").read_text())
+            self.assertEqual({b["source"]["adapter_version"] for b in catalog["bindings"]}, {g12.TEST_ADAPTER})
+            self.assertEqual(sealed["adapter_mode"], "SYNTHETIC")
+            with self.assertRaises(ValueError):  # no parity proof on synthetic material
+                g12.capture_adapter_parity(work, self.raws(work), self.RAW_SHA)
+
+    def test_capture_keeps_source_adapter_and_proves_parity(self):
+        import yaml
+        from scripts.p184_dr05_dl_fault import source_catalog_path
+        from qdl.runtime.stable_catalog import StableSourceCatalog
+        with tempfile.TemporaryDirectory() as tmp:
+            work, sealed = self.capture(tmp)
+            source = {b["source"]["source_id"]: b["source"]["adapter_version"]
+                      for b in yaml.safe_load(source_catalog_path(work).read_text())["bindings"]}
+            catalog = yaml.safe_load((work / "catalog.yaml").read_text())
+            self.assertEqual(len(catalog["bindings"]), 4 + 8)
+            for binding in catalog["bindings"]:
+                self.assertEqual(binding["source"]["adapter_version"], source[binding["source"]["source_id"]])
+                self.assertNotEqual(binding["source"]["adapter_version"], g12.TEST_ADAPTER)
+            self.assertEqual(sealed["adapter_mode"], "CAPTURE")
+            self.assertEqual(set(sealed["adapter_versions"].values()), {"binance-usdm/2.0.0", "okx-v5/2.0.0"})
+            StableSourceCatalog.load(work / "catalog.yaml")  # the bundle/catalog generation still loads
+            receipt = g12.capture_adapter_parity(work, self.raws(work) * 3, self.RAW_SHA)
+            self.assertEqual((receipt["status"], receipt["relabelled"], receipt["selected_raw_frames"]),
+                             ("PROVEN", False, 3 * 11))
+            self.assertEqual(receipt["adapter_versions"], ["binance-usdm/2.0.0", "okx-v5/2.0.0"])
+            self.assertEqual(len(receipt["routes"]), 11)
+            self.assertTrue(all(r["raw_frames"] == 3 for r in receipt["routes"]))
+            with self.assertRaisesRegex(ValueError, "differs from its binding"):  # one raw off
+                g12.capture_adapter_parity(work, self.raws(work) + self.raws(work, {3: g12.TEST_ADAPTER}),
+                                           self.RAW_SHA)
+            with self.assertRaisesRegex(ValueError, "exactly this capture"):
+                g12.capture_adapter_parity(work, self.raws(work), "cd" * 32)
+            with self.assertRaisesRegex(ValueError, "outside the bound routes"):
+                g12.capture_adapter_parity(work, self.raws(work) + [(("X",) * 6, "okx-v5/2.0.0")], self.RAW_SHA)
+            with self.assertRaisesRegex(ValueError, "every bound route"):
+                g12.capture_adapter_parity(work, self.raws(work)[1:], self.RAW_SHA)
+
+    def test_capture_mode_handoff_must_be_fully_sealed(self):
+        from scripts.p184_dr05_dl_fault import adapter_mode
+        sealed = {"namespace": NS, "provenance": "TEST_ONLY", "adapter_mode": "CAPTURE",
+                  "capture_raw_sha256": self.RAW_SHA, "test_clock_images": True}
+        self.assertEqual(adapter_mode(sealed), "CAPTURE")
+        self.assertEqual(adapter_mode({"namespace": NS}), "SYNTHETIC")
+        for key, value in (("provenance", "PRODUCTION"), ("capture_raw_sha256", "short"),
+                           ("test_clock_images", False), ("namespace", "prod"), ("adapter_mode", "RELABEL")):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                adapter_mode({**sealed, key: value})
+        with self.assertRaises(ValueError):  # a capture field without the mode is never silently synthetic
+            adapter_mode({"namespace": NS, "capture_raw_sha256": self.RAW_SHA})
+
+    def test_run_requires_test_clock_images_and_seals_the_pin(self):
+        calls = []
+
+        def sh(argv, timeout=60, check=True):
+            calls.append(list(argv))
+            if "--material" in argv:
+                (run.work / "packet.json").write_text(json.dumps({"namespace": NS}))
+                (run.work / "core.json").write_text(json.dumps({"raw_topics": [NS + ".raw"], "core": {"bindings": [
+                    {"venue": v, "l2": {"snapshot_refresh_seconds": 30}} for v in g12.VENUES]}}))
+                (run.work / "broker.properties").write_text("ssl.keystore.password=x\n")
+            return ""
+
+        def record(labelled):
+            return lambda image: {"id": image, "test_only": "isolated-replay-clock" if image in labelled else None}
+
+        for labelled_roles, ok in ((("core", "stream"), True), (("core",), False)):
+            with self.subTest(labelled=labelled_roles), tempfile.TemporaryDirectory() as tmp:
+                export = Path(tmp) / "export.json"
+                export.write_text("{}")
+                run = g12.Run(Path(tmp) / "run", export, NS)
+                with self.assertRaises(ValueError):
+                    run.use_capture_adapter("not-a-sha")
+                run.use_capture_adapter(self.RAW_SHA)
+                labelled = {run.images[role] for role in labelled_roles}
+                with patch.object(g12, "sh", side_effect=sh), \
+                        patch.object(g12, "host_resources", return_value={"disk_free_bytes": 10**12,
+                                                                          "mem_available_bytes": 10**12}), \
+                        patch.object(g12, "image_record", side_effect=record(labelled)), \
+                        patch.object(g12, "owned_names", return_value=[]), \
+                        patch.object(g12, "production_guard", return_value={}), \
+                        patch.object(g12.Run, "start_events"):
+                    if not ok:
+                        with self.assertRaisesRegex(RuntimeError, "stream image lacks"):
+                            run.prepare()
+                        self.assertFalse((run.work / "handoff.json").exists())
+                        continue
+                    run.prepare()
+                handoff = json.loads((run.work / "handoff.json").read_text())
+                self.assertEqual((handoff["adapter_mode"], handoff["capture_raw_sha256"], handoff["test_clock_images"]),
+                                 ("CAPTURE", self.RAW_SHA, True))
+                with self.assertRaises(ValueError):  # fixed before prepare
+                    run.use_capture_adapter(self.RAW_SHA)
+
+
 class PublisherBookTopTests(unittest.TestCase):
     def test_top_is_deterministic_bounded_moving_then_quiet(self):
         shape = g12.BOOK_TOP

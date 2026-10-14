@@ -826,7 +826,8 @@ def _render_warmup_batch(request, access, result, requirements) -> bytes:
         if problem is not None:
             _record_batch_item_refusal("warmup_batch_item", problem,
                                        feed=getattr(requirement, "feed", None),
-                                       route=_WARMUP_BATCH_ROUTE)
+                                       route=_WARMUP_BATCH_ROUTE,
+                                       extra_reasons=(getattr(item, "reason", None),))
         item_model = BatchItemResponse(instrument_uid=item.instrument_uid,
             status=item.status, data=None, problem=problem)
         item_models.append(item_model)
@@ -1531,11 +1532,12 @@ def create_v2_app(
     async def query_error_handler(_request: Request, error: QueryServiceError):
         problem = _problem(error)
         # Astra R6: one bounded, payload-free line per Query refusal (typed reasons + detail digest).
+        reason = getattr(error, "reason", None)
         REFUSALS.record(origin="query", code=problem.code, detail=problem.detail, status=problem.status,
                         retryable=problem.retryable, request_id=problem.request_id,
-                        instrument_uid=problem.instrument_uid, route=_route_of(_request))
+                        instrument_uid=problem.instrument_uid, route=_route_of(_request),
+                        extra_reasons=(reason,))
         headers = None
-        reason = getattr(error, "reason", None)
         if reason:
             # Additive response headers for a typed refusal reason (P18.4 G5:
             # REPLICA_LANE_BUSY); the problem body schema is unchanged.
