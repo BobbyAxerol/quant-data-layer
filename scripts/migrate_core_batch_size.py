@@ -2,8 +2,9 @@
 """Derive realtime-core runtime configs whose only change is ``batch_size``.
 
 Purpose. P18.4 capacity step 1 raises the records per realtime-core
-transaction from 256 to 2048 (``STABLE_CORE_BATCH_SIZE``). The running cores
-read bind-mounted JSON files from a release directory; regenerating them with
+transaction from 256 to a chosen target (default 2048,
+``STABLE_CORE_BATCH_SIZE``). The running cores read bind-mounted JSON files
+from a release directory; regenerating them with
 ``phaseb_prepare_stable_candidate.py`` is forbidden on a running bundle (it
 mints new secrets), and the refresh tools prove other, older deltas. This tool
 writes new, versioned copies of the given core configs with exactly one value
@@ -16,6 +17,14 @@ once ``batch_size`` is removed, and the new value is the target. It never
 modifies a source file, never overwrites an output, never touches a container
 and never regenerates a bundle. Dry run by default; ``--apply`` writes the
 outputs (mode 0640) plus a receipt with both SHA-256 digests per file.
+
+Target. ``--target-batch-size`` picks the new value (default
+``STABLE_CORE_BATCH_SIZE``, 2048, the previous fixed behaviour; the owner's
+2026-10-14 production step 1 uses 1024). It must be an integer in
+``1..=CORE_BATCH_SIZE_MAX``, the bound ``RuntimeConfig::validate`` enforces in
+``rust/qdl-kafka/src/bin/qdl-realtime-core.rs`` (``batch_size == 0 ||
+batch_size > 10_000`` is rejected there), so the tool never writes a config the
+core would refuse at start. The chosen target is recorded in the receipt.
 """
 
 from __future__ import annotations
@@ -34,11 +43,14 @@ sys.path.insert(0, str(ROOT))
 from qdl.runtime.stable_deployment import STABLE_CORE_BATCH_SIZE  # noqa: E402
 
 PREVIOUS_BATCH_SIZE = 256
+# Mirrors qdl-realtime-core RuntimeConfig::validate (batch_size in 1..=10_000).
+CORE_BATCH_SIZE_MAX = 10_000
 _TOKEN = re.compile(rb'"batch_size"(\s*):(\s*)(\d+)')
 
 
 def derive(data: bytes, *, target: int = STABLE_CORE_BATCH_SIZE) -> bytes:
     """Return ``data`` with only its ``batch_size`` value set to ``target``."""
+    _check_target(target)
     matches = list(_TOKEN.finditer(data))
     if len(matches) != 1:
         raise ValueError(f"expected exactly one batch_size token, found {len(matches)}")
@@ -62,22 +74,51 @@ def derive(data: bytes, *, target: int = STABLE_CORE_BATCH_SIZE) -> bytes:
     return derived
 
 
+def _check_target(target: object) -> int:
+    if isinstance(target, bool) or not isinstance(target, int):
+        raise ValueError(f"target batch_size must be an integer, got {target!r}")
+    if not 1 <= target <= CORE_BATCH_SIZE_MAX:
+        raise ValueError(
+            f"target batch_size {target} is outside 1..={CORE_BATCH_SIZE_MAX}"
+            " (qdl-realtime-core RuntimeConfig::validate)"
+        )
+    return target
+
+
+def _target_arg(raw: str) -> int:
+    try:
+        value = int(raw, 10)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not an integer: {raw!r}") from None
+    try:
+        return _check_target(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from None
+
+
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def run(sources: list[Path], output_dir: Path, *, apply: bool) -> dict:
+def run(
+    sources: list[Path],
+    output_dir: Path,
+    *,
+    apply: bool,
+    target_batch_size: int = STABLE_CORE_BATCH_SIZE,
+) -> dict:
+    _check_target(target_batch_size)
     planned = []
     for source in sources:
         data = source.read_bytes()
-        derived = derive(data)
+        derived = derive(data, target=target_batch_size)
         target = output_dir / source.name
         if target.exists():
             raise FileExistsError(f"{target} exists; outputs are never overwritten")
         planned.append((source, target, data, derived))
     receipt = {
         "schema": "qdl.core-batch-size-migration.v1",
-        "batch_size": {"from": PREVIOUS_BATCH_SIZE, "to": STABLE_CORE_BATCH_SIZE},
+        "batch_size": {"from": PREVIOUS_BATCH_SIZE, "to": target_batch_size},
         "applied": apply,
         "files": [
             {
@@ -111,8 +152,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("sources", nargs="+", type=Path, help="live core JSON files")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument(
+        "--target-batch-size",
+        type=_target_arg,
+        default=STABLE_CORE_BATCH_SIZE,
+        help=(
+            f"new batch_size, integer 1..={CORE_BATCH_SIZE_MAX}"
+            f" (default {STABLE_CORE_BATCH_SIZE})"
+        ),
+    )
     args = parser.parse_args(argv)
-    print(json.dumps(run(args.sources, args.output_dir, apply=args.apply), indent=2))
+    receipt = run(
+        args.sources,
+        args.output_dir,
+        apply=args.apply,
+        target_batch_size=args.target_batch_size,
+    )
+    print(json.dumps(receipt, indent=2))
     return 0
 
 
