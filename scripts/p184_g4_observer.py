@@ -5,7 +5,13 @@ Origin: ~/.local/state/qdl-v2/g4-trade-mark-20261009/observer.py (sha256 66ce662
 This tracked copy takes the symbol/feed filter as arguments (default: every symbol and feed) and adds `--summarize`,
 an offline per feed/venue (BAR per interval) p50/p95/max/n of the visibility upper bound
 (observer read_committed receipt - source event time) and of venue -> DL receipt. The observer joins no group,
-commits nothing and keeps no payload values."""
+commits nothing and keeps no payload values.
+
+Sampling (OBSERVER_VERSION v2, 2026-10-14): one record per --sample-ms per (venue, symbol, feed), and for BAR per
+(venue, symbol, feed, interval), so bars of different intervals closing in the same second are all kept (v1 keyed BAR
+without the interval and kept only the first of e.g. 1m/3m/5m/15m/30m closing together). BOOK_SNAPSHOT stays
+unsampled until the global --max-records cap; reaching the cap ends the canonical reader and is reported in the
+stream (canonical_record_cap_reached) and in DONE (record_cap_reached)."""
 import argparse
 import hashlib
 import json
@@ -44,6 +50,7 @@ def top_record(event):
     return result
 
 ALL_FEEDS='trade,quote,mark_index_price,book_delta,book_snapshot,bar'
+OBSERVER_VERSION='qdl.p184.g4-observer.v2'
 
 
 def accepted(venue,symbol,feed,symbols,feeds):
@@ -77,6 +84,26 @@ def summarize(lines):
 def should_emit(feed,mono,last,interval_ms):
     return feed=='book_snapshot' or mono-last>=interval_ms*1_000_000
 
+
+def bar_interval(event):
+    return (str(getattr(event.bar,'interval','')) or None) if event.WhichOneof('payload')=='bar' else None
+
+
+def sampling_key(venue,symbol,feed,interval=None):
+    """BAR is sampled per interval; every other feed keeps the v1 key (venue, symbol, feed)."""
+    return (venue,symbol,feed,interval) if feed=='bar' else (venue,symbol,feed)
+
+
+class Sampler:
+    """Per-key rate limit of the canonical reader (pure; the worker's only sampling decision)."""
+    def __init__(self,sample_ms):
+        self.sample_ms=sample_ms;self.last={}
+
+    def admit(self,venue,symbol,feed,interval,mono):
+        key=sampling_key(venue,symbol,feed,interval)
+        if not should_emit(feed,mono,self.last.get(key,0),self.sample_ms):return False
+        self.last[key]=mono;return True
+
 def identity_record(message,event,wall,mono):
     kind,stamp=message.timestamp()
     return {'kind':'canonical_observation','topic':message.topic(),'partition':message.partition(),'offset':message.offset(),
@@ -87,7 +114,7 @@ def identity_record(message,event,wall,mono):
         'producer_timestamp_ms':stamp if kind==1 and stamp>=0 else None,'kafka_timestamp_type':kind,
         'observer_receipt_wall_ns':wall,'observer_receipt_monotonic_ns':mono,
         'boundary':'DURABLE_READ_COMMITTED_OBSERVATION_NOT_COMMIT_CLOCK',
-        'interval':(str(getattr(event.bar,'interval','')) or None) if event.WhichOneof('payload')=='bar' else None}
+        'interval':bar_interval(event)}
 
 def worker(args):
     from confluent_kafka import Consumer,ConsumerGroupTopicPartitions,TopicPartition,KafkaError,IsolationLevel
@@ -96,11 +123,11 @@ def worker(args):
     config=json.load(sys.stdin)
     def emit(value):print(json.dumps(value,separators=(',',':')),flush=True)
     clients={k:AdminClient(v) for k,v in config.items()} if args.mode in ('lag','both') else {}
-    reader=None; count=0; last_emit={}; seen={}; streak={}; begin=time.monotonic(); end=begin+args.seconds; next_lag=begin
+    reader=None; count=0; sampler=Sampler(args.sample_ms); capped=False; seen={}; streak={}; begin=time.monotonic(); end=begin+args.seconds; next_lag=begin
     symbols=set(args.symbols.split(',')) if args.symbols else None
     feeds=set(args.feeds.split(','))
     if args.include_quote:feeds.add('quote')
-    emit({'kind':'scope','mode':args.mode,'seconds':args.seconds,'max_records':args.max_records,'filter':{'symbols':sorted(symbols) if symbols else 'ALL','feeds':sorted(feeds),'venues':['BINANCE','OKX']},'sample_ms_per_venue_feed':args.sample_ms,'snapshot_sampling':'ALL_UNTIL_GLOBAL_CAP','public_top_prices':args.include_top,'kafka_commits':False,'group_joins':False,'production_writes':0,'timestamp_note':'Kafka CreateTime is producer time, never transaction commit time. Observer clocks include fetch/scheduling delay.'})
+    emit({'kind':'scope','observer_version':OBSERVER_VERSION,'mode':args.mode,'seconds':args.seconds,'max_records':args.max_records,'filter':{'symbols':sorted(symbols) if symbols else 'ALL','feeds':sorted(feeds),'venues':['BINANCE','OKX']},'sample_ms_per_venue_feed':args.sample_ms,'sampling_key':'venue,symbol,feed (+interval for bar)','snapshot_sampling':'ALL_UNTIL_GLOBAL_CAP','public_top_prices':args.include_top,'kafka_commits':False,'group_joins':False,'production_writes':0,'timestamp_note':'Kafka CreateTime is producer time, never transaction commit time. Observer clocks include fetch/scheduling delay.'})
     try:
         if args.mode in ('canonical','both'):
             c=dict(config['projector'])
@@ -152,16 +179,16 @@ def worker(args):
                     emit({'kind':'decode_error','topic':message.topic(),'partition':message.partition(),'offset':message.offset(),'error_type':type(exc).__name__});continue
                 feed=event.WhichOneof('payload')
                 if not accepted(event.venue,event.native_symbol,feed,symbols,feeds):continue
-                sampling_key=(event.venue,event.native_symbol,feed)
-                if not should_emit(feed,mono,last_emit.get(sampling_key,0),args.sample_ms):continue
+                if not sampler.admit(event.venue,event.native_symbol,feed,bar_interval(event),mono):continue
                 record=identity_record(message,event,wall,mono)
                 if args.include_top:record['top']=top_record(event)
-                emit(record);count+=1;last_emit[sampling_key]=mono
+                emit(record);count+=1
                 if count>=args.max_records:
-                    reader.close();reader=None;emit({'kind':'canonical_record_cap_reached','records':count})
+                    reader.close();reader=None;capped=True
+                    emit({'kind':'canonical_record_cap_reached','records':count,'at_ns':time.time_ns(),'after_seconds':time.monotonic()-begin})
                     if not clients:break
             else:time.sleep(min(.1,max(0,end-time.monotonic())))
-        emit({'kind':'DONE','at_ns':time.time_ns(),'records':count,'elapsed_seconds':time.monotonic()-begin,'live_semantics':'observed durable visibility, exact broker commit clock unavailable'})
+        emit({'kind':'DONE','at_ns':time.time_ns(),'records':count,'record_cap_reached':capped,'max_records':args.max_records,'elapsed_seconds':time.monotonic()-begin,'live_semantics':'observed durable visibility, exact broker commit clock unavailable'})
     finally:
         if reader is not None:reader.close()
 
@@ -190,9 +217,9 @@ def launch(args):
                 process.terminate();raise RuntimeError('Evidence byte cap exceeded; inspect observer completion before further work')
             evidence.write(line);evidence.flush()
             item=json.loads(line)
-            if item['kind'] in ('READY','DONE','lag_unknown','canonical_error'):print(line.strip(),flush=True)
+            if item['kind'] in ('READY','DONE','lag_unknown','canonical_error','canonical_record_cap_reached'):print(line.strip(),flush=True)
     code=process.wait(timeout=15)
-    (args.output/'receipt.json').write_text(json.dumps({'exit':code,'output_bytes':written,'script_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'observer_only':True,'shared_writes':0,'payloads_retained':False,'public_top_prices_retained':args.include_top},indent=2)+'\n')
+    (args.output/'receipt.json').write_text(json.dumps({'exit':code,'observer_version':OBSERVER_VERSION,'output_bytes':written,'script_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'observer_only':True,'shared_writes':0,'payloads_retained':False,'public_top_prices_retained':args.include_top},indent=2)+'\n')
     if code:raise SystemExit(code)
 
 def main():

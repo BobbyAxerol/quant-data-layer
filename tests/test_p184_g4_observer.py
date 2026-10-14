@@ -2,7 +2,7 @@
 import json
 import unittest
 
-from scripts.p184_g4_observer import ALL_FEEDS, accepted, summarize
+from scripts.p184_g4_observer import ALL_FEEDS, OBSERVER_VERSION, Sampler, accepted, sampling_key, summarize
 
 
 def obs(feed, venue, source, received, seen, interval=None):
@@ -33,6 +33,38 @@ class ObserverTests(unittest.TestCase):
         self.assertEqual(trade["missing_clock"], 1)
         self.assertEqual(out["bar|BINANCE|1m"]["venue_to_dl_ms"]["p50"], 10.0)
         self.assertIsNone(trade["visibility_ms"]["p99"])  # p99 only with n >= 100
+
+
+S = 1_000_000_000
+
+
+class SamplingKeyTests(unittest.TestCase):
+    """v2 sampling: BAR keyed per interval, every other feed unchanged."""
+
+    def test_simultaneous_closes_of_different_intervals_are_all_kept(self):
+        sampler = Sampler(1000)
+        closes = ["1m", "3m", "5m", "15m", "30m"]
+        kept = [sampler.admit("OKX", "BTC-USDT-SWAP", "bar", interval, 10 * S + i) for i, interval in enumerate(closes)]
+        self.assertEqual(kept, [True] * 5)
+        # the same interval inside the sample period is still rate limited
+        self.assertFalse(sampler.admit("OKX", "BTC-USDT-SWAP", "bar", "3m", 10 * S + 500_000_000))
+        self.assertTrue(sampler.admit("OKX", "BTC-USDT-SWAP", "bar", "3m", 11 * S + 1))
+
+    def test_v1_key_collapsed_the_same_closes_to_one(self):
+        keys = {sampling_key("BINANCE", "BTCUSDT", "bar", i) for i in ("3m", "5m", "15m", "30m")}
+        self.assertEqual(len(keys), 4)
+        self.assertEqual(len({k[:3] for k in keys}), 1)  # the v1 key (venue, symbol, feed) had one slot
+
+    def test_non_bar_feeds_keep_the_v1_key_and_rate(self):
+        for feed in ("trade", "quote", "mark_index_price", "book_delta", "book_snapshot"):
+            self.assertEqual(sampling_key("OKX", "ETH-USDT-SWAP", feed, "1m"), ("OKX", "ETH-USDT-SWAP", feed))
+        sampler = Sampler(1000)
+        self.assertTrue(sampler.admit("OKX", "ETH-USDT-SWAP", "trade", None, 5 * S))
+        self.assertFalse(sampler.admit("OKX", "ETH-USDT-SWAP", "trade", None, 5 * S + 999_999_999))
+        self.assertTrue(sampler.admit("OKX", "ETH-USDT-SWAP", "trade", None, 6 * S))
+        self.assertTrue(sampler.admit("OKX", "ETH-USDT-SWAP", "book_snapshot", None, 6 * S))
+        self.assertTrue(sampler.admit("OKX", "ETH-USDT-SWAP", "book_snapshot", None, 6 * S))  # unsampled, as before
+        self.assertTrue(OBSERVER_VERSION.endswith(".v2"))
 
 
 if __name__ == "__main__":

@@ -13,8 +13,9 @@ What `run` starts (all children of this process, tracked by PID, each with its o
   --duration-seconds 1800 with the frozen budget: BURST, SLOW_READER and RECONNECT fault windows), with the existing
   guard_v2.sh / mark_watch_v2.sh stop conditions (they SIGINT the driver PID only), and a profile derived from the base
   profile plus binance_bar_edge and stable_redis as monitored containers (G14);
-* G4 observer windows (scripts/p184_g4_observer.py), four 120 s windows plus one 180 s window around a UTC :00/:30
-  boundary when one falls inside the load, so a 30m close can be seen;
+* G4 observer windows (scripts/p184_g4_observer.py), four 120 s windows plus one 180 s window from 30 s before a UTC
+  :00/:30 close (schedule v2, see g4_schedule: always five windows, the launch is held <= 220 s when no :00/:30 close
+  would fit inside the load);
 * G3 BAR cache poller, G8 Redis sampler, G9/G10 writer counters for the whole load (stopped by SIGTERM after it);
 * G6 TS execution probe (scripts/p184_g6_ts_execution_probe.py, `docker exec -i <writer> python -B -`): the writer's own
   EXECUTION reads (QUOTE, TRADE, MARK/INDEX) classified against the frozen D3 policy for the whole load, read-only,
@@ -71,9 +72,24 @@ WRITER = "market_data_service_p184w"
 EXTRA_MONITORED = ("qdl_v2_stable_candidate-binance_bar_edge-1", "qdl_v2_stable_candidate-stable_redis-1")
 LOAD_SECONDS = 1800
 DRIVER_TIMEOUT = 2400
-G4_OFFSETS = (120, 480, 840, 1200)
 G4_SECONDS = 120
 G4_BOUNDARY_SECONDS = 180
+# G4 schedule v2 (owner 2026-10-14: fix sampling, thresholds and the frozen max rule unchanged). v1 placed the regular
+# windows at 120 + 360 k, a multiple of 180 s, so every window had the same phase against the 3m/15m/30m closes, and
+# dropped the boundary window for ~13.9 % of launch phases. v2: four regular windows 225 s apart (225 mod 60 = 45,
+# mod 180 = 45, mod 300 = 225: four distinct second-of-minute phases, evenly spread over the 3m and 5m cycles); a
+# 900 s jump (= lcm(180, 300), a multiple of 60, so every phase is kept) opens the gap for the boundary window.
+G4_SCHEDULE_VERSION = "qdl.p184.g4-schedule.v2"
+G4_FIRST_OFFSET = 120             # driver setup ends ~105 s after launch (receipts 2026-10-11/13)
+G4_LOAD_END_OFFSET = LOAD_SECONDS + 80
+G4_SPACING = 225
+G4_REGULAR_WINDOWS = 4
+G4_PHASE_JUMP = 900
+G4_BOUNDARY_PERIOD = 1800         # UTC :00/:30
+G4_BOUNDARY_PREROLL = 30
+G4_WINDOW_GAP = 15                # observer start + summary run after a window
+G4_MAX_LAUNCH_HOLD = 240
+G4_RECORD_CAP = 10000
 MIN_DISK_GB = 20
 TRACE_FEEDS_G1 = ("BOOK_DELTA", "BOOK_SNAPSHOT")
 TRACE_FEEDS_G2 = ("TRADE", "QUOTE")
@@ -102,20 +118,81 @@ G4_ADDENDUM_OWNER_ROWS = tuple(
 
 # ---------------------------------------------------------------- plan helpers (pure, unit-tested)
 
-def g4_schedule(launch_unix: float, *, offsets=G4_OFFSETS, seconds=G4_SECONDS, boundary_seconds=G4_BOUNDARY_SECONDS,
-                load_end_offset: float = LOAD_SECONDS + 80) -> list[dict]:
-    """Observer windows as (offset from launch, seconds). Adds a window from 30 s before a UTC :00/:30 boundary for
-    boundary_seconds when one fits inside the load; default windows that would overlap it are dropped."""
-    windows = [{"offset": float(o), "seconds": float(seconds), "boundary": None} for o in offsets]
-    first = launch_unix + 150 + 30
-    boundary = (int(first) // 1800 + 1) * 1800
-    if boundary - 30 - launch_unix + boundary_seconds <= load_end_offset:
-        start = boundary - 30 - launch_unix
-        extra = {"offset": round(start, 3), "seconds": float(boundary_seconds), "boundary": boundary}
-        windows = [w for w in windows if w["offset"] + w["seconds"] + 5 <= start
-                   or w["offset"] >= start + boundary_seconds + 5]
-        windows.append(extra)
+def g4_boundary(launch_unix: float, *, boundary_seconds=G4_BOUNDARY_SECONDS,
+                load_end_offset: float = G4_LOAD_END_OFFSET) -> int | None:
+    """The UTC :00/:30 close whose window [close - 30 s, close + 150 s] lies inside [launch + 120, launch + 1880].
+    The admissible closes span 1580 s < 1800 s, so for 220 of 1800 launch phases there is none (see g4_launch_unix)."""
+    close = -(-int(launch_unix + G4_FIRST_OFFSET + G4_BOUNDARY_PREROLL) // G4_BOUNDARY_PERIOD) * G4_BOUNDARY_PERIOD
+    while close - G4_BOUNDARY_PREROLL < launch_unix + G4_FIRST_OFFSET:
+        close += G4_BOUNDARY_PERIOD
+    return close if close - G4_BOUNDARY_PREROLL + boundary_seconds <= launch_unix + load_end_offset else None
+
+
+def g4_launch_unix(earliest_unix: float) -> float:
+    """Earliest launch >= earliest_unix (in whole seconds) for which a boundary window fits; holds <= 220 s."""
+    for hold in range(G4_MAX_LAUNCH_HOLD + 1):
+        if g4_boundary(earliest_unix + hold) is not None:
+            return earliest_unix + hold
+    raise AssertionError("no :00/:30 close fits within the launch hold")  # unreachable: 1800 - 1580 = 220 < 240
+
+
+def g4_schedule(launch_unix: float, *, seconds=G4_SECONDS, boundary_seconds=G4_BOUNDARY_SECONDS,
+                load_end_offset: float = G4_LOAD_END_OFFSET) -> list[dict]:
+    """Observer windows as {offset from launch, seconds, boundary}, schedule v2.
+
+    Regular windows start at 120 + 225 k (k = 0..3); the last 4 - m of them are moved 900 s later, with m the largest
+    split that leaves the boundary window (30 s before the :00/:30 close, boundary_seconds long) clear of every regular
+    window by >= 15 s. A 900 s move keeps each window's phase against the 1m/3m/5m/15m closes. A split exists for
+    every boundary offset in [120, 1700]; the regular windows end at <= 1815 s. Without a fitting close (launch not
+    chosen by g4_launch_unix) the regular windows are returned unsplit and the schedule has no boundary window."""
+    base = [G4_FIRST_OFFSET + k * G4_SPACING for k in range(G4_REGULAR_WINDOWS)]
+    close = g4_boundary(launch_unix, boundary_seconds=boundary_seconds, load_end_offset=load_end_offset)
+    windows = [{"offset": float(o), "seconds": float(seconds), "boundary": None} for o in base]
+    if close is None:
+        return windows
+    start = close - G4_BOUNDARY_PREROLL - launch_unix
+    for before in range(G4_REGULAR_WINDOWS, -1, -1):
+        offsets = [o if k < before else o + G4_PHASE_JUMP for k, o in enumerate(base)]
+        clear = all(o + seconds + G4_WINDOW_GAP <= start or o >= start + boundary_seconds + G4_WINDOW_GAP
+                    for o in offsets)
+        if clear and offsets[-1] + seconds <= load_end_offset:
+            windows = [{"offset": float(o), "seconds": float(seconds), "boundary": None} for o in offsets]
+            break
+    else:
+        raise AssertionError(f"no split clears the boundary window at offset {start}")
+    windows.append({"offset": round(start, 3), "seconds": float(boundary_seconds), "boundary": close})
     return sorted(windows, key=lambda w: w["offset"])
+
+
+def g4_apparatus(launch_hold_seconds: float | None = None) -> dict:
+    """Which G4 apparatus produced a campaign (recorded in campaign.json, echoed on the G4 scorecard row)."""
+    from scripts import p184_g4_observer as observer
+    return {"schedule_version": G4_SCHEDULE_VERSION, "observer_version": observer.OBSERVER_VERSION,
+            "observer_sha256": sha256_file(ROOT / "scripts/p184_g4_observer.py"),
+            "regular": {"windows": G4_REGULAR_WINDOWS, "seconds": G4_SECONDS, "first_offset": G4_FIRST_OFFSET,
+                        "spacing": G4_SPACING, "phase_jump": G4_PHASE_JUMP},
+            "boundary": {"seconds": G4_BOUNDARY_SECONDS, "preroll": G4_BOUNDARY_PREROLL,
+                         "period": G4_BOUNDARY_PERIOD},
+            "record_cap": G4_RECORD_CAP, "sample_ms": 1000, "bar_sampling_key": "venue,symbol,feed,interval",
+            "launch_hold_seconds": launch_hold_seconds}
+
+
+def g4_window_receipt(observations) -> dict:
+    """Records and whether the observer hit its record cap (the reader stops there; later closes are unseen)."""
+    records, cap, done, version = 0, None, None, None
+    for item in observations:
+        kind = item.get("kind")
+        if kind == "scope":
+            version = item.get("observer_version") or "v1 (unversioned)"
+        elif kind == "canonical_observation":
+            records += 1
+        elif kind == "canonical_record_cap_reached":
+            cap = item
+        elif kind == "DONE":
+            done = item
+    return {"records": records, "record_cap_reached": bool(cap or (done or {}).get("record_cap_reached")),
+            "cap_reached_after_seconds": (cap or {}).get("after_seconds"),
+            "observer_version": version}
 
 
 def derive_profile(base: dict, extra=EXTRA_MONITORED) -> dict:
@@ -549,18 +626,25 @@ def build_scorecard(campaign_dir: Path) -> dict:
     budget = load_json(campaign.get("budget_path", "")) if campaign.get("budget_path") else None
     table = ((budget or {}).get("g4_delivery_visibility") or {}).get("table") or {}
     addendum, addendum_notes, addendum_src = applicable_g4_addendum(campaign, table)
-    g4_windows = []
+    g4_windows, g4_receipts = [], []
     for item in campaign.get("g4_windows", []):
         summary = load_json(d / f"g4-{item['index']}-summary.json")
         obs = d / f"g4-{item['index']}" / "observations.jsonl"
         inverse = g4_inverse_rows(read_jsonl(obs)) if obs.exists() else {}
         g4_windows.append({"summary": summary, "inverse_rows": inverse})
+        g4_receipts.append({"index": item["index"], "offset": item.get("offset"), "seconds": item.get("seconds"),
+                            "boundary": item.get("boundary"),
+                            **(g4_window_receipt(read_jsonl(obs)) if obs.exists() else {"records": None})})
+    # Report-only provenance (never changes a verdict): which schedule/observer produced the windows, record caps.
+    g4_provenance = {"g4_apparatus": campaign.get("g4_apparatus") or {"schedule_version": "v1 (unversioned)"},
+                     "g4_window_receipts": g4_receipts}
     v, rows, why = (score_g4(g4_windows, table, addendum) if table else
                     ("NOT_MEASURED", [], ["no frozen G4 baseline table"]))
     rule = "candidate p95 <= frozen baseline p95 x 1.2 per row; missing coverage blocks the gate"
     if addendum is None and not addendum_notes:
         add("G4", "delivery lag, venue -> canonical (read_committed visibility, upper bound)", rule, v,
-            "; ".join(why) or "every row inside", measured=rows, inverse_rows=[w["inverse_rows"] for w in g4_windows])
+            "; ".join(why) or "every row inside", measured=rows, inverse_rows=[w["inverse_rows"] for w in g4_windows],
+            **g4_provenance)
     else:
         if addendum is not None:
             rule += (f"; addendum rows: candidate max <= baseline max x {G4_ADDENDUM_FACTOR} on windows with >= "
@@ -570,7 +654,7 @@ def build_scorecard(campaign_dir: Path) -> dict:
             "; ".join(why + addendum_notes) or "every row inside",
             measured=[r for r in rows if r["verdict"] != "REPORT_ONLY"],
             report_only_rows=[r for r in rows if r["verdict"] == "REPORT_ONLY"],
-            inverse_rows=[w["inverse_rows"] for w in g4_windows], g4_addendum=addendum_src)
+            inverse_rows=[w["inverse_rows"] for w in g4_windows], g4_addendum=addendum_src, **g4_provenance)
     latency = [g for g in (gates or {}).get("gates", []) if str(g.get("gate", "")).startswith(("latency:", "cold"))]
     failed_latency = [g["gate"] for g in latency if g.get("status") != "PASS"]
     v = "FAIL" if failed_latency else "PASS" if latency else "NOT_MEASURED"
@@ -841,7 +925,7 @@ def command_plan(args, plan: dict, d: Path, launch_unix: float) -> dict:
         "g4_windows": [{"index": i + 1, **w,
                         "command": [*py, "scripts/p184_g4_observer.py", "--launch", "--mode", "canonical",
                                     "--seconds", str(int(w["seconds"])), "--tail-records", "0", "--max-records",
-                                    "10000", "--sample-ms", "1000", "--max-output-bytes", "16777216",
+                                    str(G4_RECORD_CAP), "--sample-ms", "1000", "--max-output-bytes", "16777216",
                                     "--output", str(d / f"g4-{i + 1}")]}
                        for i, w in enumerate(g4_schedule(launch_unix))],
         "g11": ([*py, "scripts/p184_g11_writer_restart_probe.py", "--binding", str(plan.get("binding")),
@@ -877,7 +961,10 @@ def run(args) -> int:
     if not baseline and args.sessions != 100:
         raise SystemExit("a candidate campaign is the stage-100 workload (--sessions 100)")
     plan = preflight(args)
-    launch_unix = time.time() + 5
+    # Schedule v2: hold the launch (<= 220 s) until a UTC :00/:30 close fits inside the load with its boundary window.
+    earliest = time.time() + 5
+    launch_unix = g4_launch_unix(earliest)
+    launch_hold = round(launch_unix - earliest, 3)
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     prefix = "p184-g4-baseline" if baseline else "p184-final-campaign"
     d = Path(args.campaign_dir or STATE / f"{prefix}-{stamp}").resolve()
@@ -893,7 +980,8 @@ def run(args) -> int:
                   "G11 probe arms; COORDINATOR restarts the writer" if args.g11 else "G11 skipped",
                   "trace analysis (--rm, --network none)", "scorecard.json"])
         print(json.dumps({"campaign_dir": str(d), "role": "baseline" if baseline else "candidate", "preflight": plan,
-                          "commands": commands, "expected_wall_seconds_max": expected, "order": order},
+                          "commands": commands, "expected_wall_seconds_max": expected + launch_hold,
+                          "g4_apparatus": g4_apparatus(launch_hold), "order": order},
                          indent=1, sort_keys=True, default=str))
         return 0 if not plan["problems"] else 2
     if plan["problems"]:
@@ -911,13 +999,14 @@ def run(args) -> int:
                 "budget_path": str(Path(args.budget).resolve()), "budget_sha256": sha256_file(Path(args.budget)),
                 "monitored_containers": profile["monitored_containers"],
                 "g4_windows": [{k: v for k, v in w.items() if k != "command"} for w in commands["g4_windows"]],
+                "g4_apparatus": g4_apparatus(launch_hold), "launch_unix": launch_unix,
                 "tool_sha256": sha256_file(Path(__file__)), "source_sha": subprocess.run(
                     ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()}
     if not baseline and G4_ADDENDUM_PATH.exists():
         campaign.update(g4_addendum_path=str(G4_ADDENDUM_PATH), g4_addendum_sha256=sha256_file(G4_ADDENDUM_PATH))
     (d / "campaign.json").write_text(json.dumps(campaign, indent=1, sort_keys=True, default=str) + "\n")
     children = Children()
-    hard_deadline = time.monotonic() + expected + 600
+    hard_deadline = time.monotonic() + expected + launch_hold + 600
     watchdog_fired = threading.Event()
 
     def watchdog():
@@ -930,6 +1019,9 @@ def run(args) -> int:
     code = None
     try:
         samplers, g6_probe = {}, None
+        if launch_hold > 0:
+            log_event(d, "g4_launch_hold", seconds=launch_hold, launch_unix=launch_unix)
+            time.sleep(max(0.0, launch_unix - 5 - time.time()))  # samplers start 5 s before launch, as without a hold
         if not baseline:
             samplers = {name: children.start(name, commands[name], log=d / f"{name}.log", cwd=ROOT)
                         for name in ("g3", "g8", "g9g10")}
@@ -960,6 +1052,10 @@ def run(args) -> int:
                                    timeout=window["seconds"] + 180)
                 obs = d / f"g4-{window['index']}" / "observations.jsonl"
                 if obs.exists():
+                    cap = g4_window_receipt(read_jsonl(obs))
+                    if cap["record_cap_reached"]:
+                        log_event(d, "g4_record_cap_reached", index=window["index"], records=cap["records"],
+                                  after_seconds=cap["cap_reached_after_seconds"])
                     summary = subprocess.run([sys.executable, "-B", "scripts/p184_g4_observer.py", "--summarize",
                                               str(obs)], cwd=ROOT, capture_output=True, text=True, timeout=300)
                     (d / f"g4-{window['index']}-summary.json").write_text(summary.stdout)

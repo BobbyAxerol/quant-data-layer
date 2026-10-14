@@ -474,6 +474,120 @@ class CampaignTests(unittest.TestCase):
             self.assertEqual({g["id"] for g in card["gates"]}, {f"G{i}" for i in range(1, 15)})
 
 
+# What a window can see (G4 schedule v2): the observer is READY <= 1 s after its start (READY - g4_start in the
+# 2026-10-11/13 runs), a closed bar reaches md.canonical.v2 +1..+8 s after its close (RCA 2026-10-14), and the 180 s
+# boundary window hit the 10000-record cap after 132 s on 2026-10-13. A close counts as seen only with margins:
+# start + 5 s <= close and close + 15 s <= start + min(seconds, 120 s).
+READY_S, ARRIVAL_S, HORIZON_S = 5, 15, 120
+BAR_PERIODS = {"1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800}
+GRID = 1_791_648_000  # a UTC :00 (multiple of 1800 s)
+
+
+def closes_seen(launch, window, period):
+    lo = launch + window["offset"] + READY_S
+    hi = launch + window["offset"] + min(window["seconds"], HORIZON_S) - ARRIVAL_S
+    return int(hi // period) - int(-(-lo // period)) + 1
+
+
+class G4ScheduleV2Tests(unittest.TestCase):
+    """Every launch second of the 1800 s :00/:30 cycle (and the half seconds between), as run() launches."""
+
+    def sweep(self):
+        for tenths in range(0, 18000, 5):
+            earliest = GRID + tenths / 10
+            launch = campaign.g4_launch_unix(earliest)
+            yield earliest, launch, campaign.g4_schedule(launch)
+
+    def test_every_launch_phase_has_a_boundary_window_inside_the_load(self):
+        holds = []
+        for earliest, launch, windows in self.sweep():
+            holds.append(launch - earliest)
+            boundary = [w for w in windows if w["boundary"] is not None]
+            self.assertEqual(len(boundary), 1, earliest)
+            close = boundary[0]["boundary"]
+            self.assertEqual(close % 1800, 0)
+            self.assertAlmostEqual(boundary[0]["offset"], close - 30 - launch, places=3)
+            self.assertEqual(boundary[0]["seconds"], campaign.G4_BOUNDARY_SECONDS)
+            for name, period in BAR_PERIODS.items():
+                self.assertGreaterEqual(closes_seen(launch, boundary[0], period), 1, (earliest, name))
+        self.assertLessEqual(max(holds), 220)  # 219 s on whole seconds, 220 s with a fractional launch
+        self.assertEqual(min(holds), 0)
+
+    def test_schedule_fits_the_load_with_the_existing_count_and_lengths(self):
+        for earliest, launch, windows in self.sweep():
+            regular = [w for w in windows if w["boundary"] is None]
+            self.assertEqual([w["seconds"] for w in regular], [120.0] * 4)
+            self.assertEqual(len(windows), 5)
+            self.assertGreaterEqual(windows[0]["offset"], 120)
+            self.assertLessEqual(windows[-1]["offset"] + windows[-1]["seconds"], campaign.LOAD_SECONDS + 80)
+            for a, b in zip(windows, windows[1:]):
+                self.assertGreaterEqual(b["offset"] - a["offset"] - a["seconds"], campaign.G4_WINDOW_GAP, earliest)
+
+    def test_regular_windows_take_different_phases_of_the_closes(self):
+        for earliest, launch, windows in self.sweep():
+            starts = [w["offset"] for w in windows if w["boundary"] is None]
+            self.assertEqual(len({s % 60 for s in starts}), 4, earliest)   # four second-of-minute phases
+            self.assertEqual(len({s % 180 for s in starts}), 4, earliest)
+            for a, b in zip(starts, starts[1:]):
+                self.assertNotEqual((b - a) % 60, 0)
+                self.assertNotEqual((b - a) % 180, 0)
+
+    def test_guaranteed_close_coverage_per_bar_interval(self):
+        """Guarantee (every launch phase): every window sees a 1m close; >= 3 windows a 3m close (>= 2 regular);
+        >= 2 windows a 5m close (>= 1 regular); >= 1 window (the boundary window) a 15m and a 30m close."""
+        floor_all = {"1m": 5, "3m": 3, "5m": 2, "15m": 1, "30m": 1}
+        floor_regular = {"1m": 4, "3m": 2, "5m": 1}
+        worst_all, worst_regular = {k: 99 for k in floor_all}, {k: 99 for k in floor_regular}
+        for earliest, launch, windows in self.sweep():
+            for name, period in BAR_PERIODS.items():
+                seen = [closes_seen(launch, w, period) >= 1 for w in windows]
+                worst_all[name] = min(worst_all[name], sum(seen))
+                if name in floor_regular:
+                    worst_regular[name] = min(worst_regular[name], sum(
+                        s for s, w in zip(seen, windows) if w["boundary"] is None))
+        self.assertEqual(worst_all, floor_all)
+        self.assertEqual(worst_regular, floor_regular)
+
+    def test_v1_spacing_shared_one_3m_phase_and_the_hold_is_needed(self):
+        v1 = (120, 480, 840, 1200)
+        self.assertEqual({o % 180 for o in v1}, {120})  # the RCA: one phase against every 3m/15m/30m close
+        no_boundary = sum(1 for phase in range(1800) if campaign.g4_boundary(GRID + phase) is None)
+        self.assertEqual(no_boundary, 219)  # closes admissible at offsets [150, 1730] only: 1581 of 1800 phases
+
+    def test_apparatus_and_cap_receipt(self):
+        apparatus = campaign.g4_apparatus(12.0)
+        self.assertEqual(apparatus["schedule_version"], campaign.G4_SCHEDULE_VERSION)
+        self.assertTrue(apparatus["observer_version"].endswith(".v2"))
+        self.assertEqual(len(apparatus["observer_sha256"]), 64)
+        self.assertEqual(apparatus["launch_hold_seconds"], 12.0)
+        items = [{"kind": "scope", "observer_version": "qdl.p184.g4-observer.v2"},
+                 *[{"kind": "canonical_observation"}] * 3,
+                 {"kind": "canonical_record_cap_reached", "records": 3, "after_seconds": 132.3}]
+        self.assertEqual(campaign.g4_window_receipt(items),
+                         {"records": 3, "record_cap_reached": True, "cap_reached_after_seconds": 132.3,
+                          "observer_version": "qdl.p184.g4-observer.v2"})
+        old = campaign.g4_window_receipt([{"kind": "scope"}, {"kind": "canonical_observation"}, {"kind": "DONE"}])
+        self.assertEqual((old["record_cap_reached"], old["observer_version"]), (False, "v1 (unversioned)"))
+
+    def test_scorecard_shows_the_apparatus_and_capped_windows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "g4-1").mkdir()
+            (d / "g4-1" / "observations.jsonl").write_text("\n".join(json.dumps(x) for x in [
+                {"kind": "scope", "observer_version": "qdl.p184.g4-observer.v2"}, {"kind": "canonical_observation"},
+                {"kind": "canonical_record_cap_reached", "records": 1, "after_seconds": 1.0}]) + "\n")
+            body = {"g4_windows": [{"index": 1, "offset": 120.0, "seconds": 120.0, "boundary": None}],
+                    "g4_apparatus": campaign.g4_apparatus(0.0)}
+            (d / "campaign.json").write_text(json.dumps(body))
+            g4 = {g["id"]: g for g in campaign.build_scorecard(d)["gates"]}["G4"]
+            self.assertEqual(g4["g4_apparatus"]["schedule_version"], campaign.G4_SCHEDULE_VERSION)
+            self.assertTrue(g4["g4_window_receipts"][0]["record_cap_reached"])
+            self.assertEqual(g4["verdict"], "NOT_MEASURED")  # provenance never changes the verdict
+            (d / "campaign.json").write_text(json.dumps({"g4_windows": []}))
+            g4 = {g["id"]: g for g in campaign.build_scorecard(d)["gates"]}["G4"]
+            self.assertEqual(g4["g4_apparatus"], {"schedule_version": "v1 (unversioned)"})
+
+
 BUDGET = Path("config/v2/p184-stage100-budget.json")
 
 
