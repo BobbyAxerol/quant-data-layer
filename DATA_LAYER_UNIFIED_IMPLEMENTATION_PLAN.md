@@ -73276,3 +73276,25 @@ Owner reassigned N1-OPT to Claude at 17:10Z (handover DL c49ffd1, clean). Guide 
   REPLAYING and LIVE) fixed in execution_alpha 3f83a73.
 - Running: pre-rollout gates (isolated idr094 broker rerun on RUST18 at 1024, P1 G12 with the production Python writer,
   P2 Python-writer capacity runs). Rollout order after the gates: stream, then core (batch 1024), then ingestor.
+
+
+### P18.4 production rollout: writer 7cf232ac + DL step-1 RUST18 batch 1024 - 2026-10-14 09:56-10:56Z (Claude)
+
+Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs during the window.
+- Writer market_data_service_p184w 2beedc04 -> 7cf232ac (IDR-097 fix) via roll_writer_campaign_ra.py, same config
+  (6 pins, depth 0, 64, READ_AHEAD 256, JWT rev 11): OK, not_ready_samples 0; READY 64/64, 0 errors, RSS ~406 MiB.
+- rollout_rc17_v2 defect found and fixed: the first stream_kn_1 roll failed closed as service_mismatch['volumes'] and
+  rolled back cleanly (exit 2, writer READY): Docker reports Mounts in no fixed order and the tool compared the list
+  by position. Tool now compares volumes order-insensitively (sha a8b6e1a9..., 51 tests incl. 2 new; backups
+  *.bak-pre-volorder). A real volume change still fails.
+- Rolled to RUST18 7fba2577 one container at a time, each accepted by the tool:
+  stream_kn_1 (10 min watch), stream_kn_2 (10 min), rust_core / _2 / _3 with batch 1024 (config dir
+  releases/v2.2.3-rc18-core-batch1024, only batch_size 256 -> 1024 differs; 0 retries, 0 fenced, no budget violation;
+  5 min watches; commit mean 15-35 ms), ingestor_okx_swap and ingestor_binance_usdm (5 min each). All 7 RestartCount 0.
+- Observation: before stream_kn_2 moved, the writer (subscribed only to stream_kn_2 on rc14) showed 2 TRADE
+  snapshot_replaced after an rc14 overflow -> CURSOR_EXPIRED (the pre-existing behaviour reproduced by P2d-b). After
+  both streams were on RUST18, 0 new overflow, replay_expired, snapshot_replaced or reconnects over 40+ min.
+- Not touched: kafka, stable_redis, market_cache, projectors (rc14), query (rc16), bar_edge (rc14 08f356a8, STOP),
+  catalog/manifests, JWT. Rollback per role: stream/ingestor rc14 ce629061, core rc16 f41ecb66 + old config (saved
+  composes in rollout-rc18/), writer 2beedc04 compose.
+- Final stage-100 campaign on the new set started 10:58Z (writer trace re-armed, same image).
