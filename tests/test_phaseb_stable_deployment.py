@@ -632,7 +632,7 @@ class StableDeploymentContractTests(unittest.TestCase):
         )
         self.assertEqual(current_native_count, previous_native_count + 2)
 
-    def test_core_transaction_batch_is_2048_records_with_unchanged_wait(self):
+    def test_core_transaction_batch_is_1024_records_with_unchanged_wait(self):
         # P18.4 capacity step 1: one variable. Only the record cap moves; the
         # 25 ms gather wait and the metrics cadence stay as before.
         for worker_index in (1, 2, 3):
@@ -640,7 +640,7 @@ class StableDeploymentContractTests(unittest.TestCase):
                 catalog=self.catalog, authority=self.authority,
                 worker_index=worker_index,
             )
-            self.assertEqual(core["batch_size"], 2048)
+            self.assertEqual(core["batch_size"], 1024)
             self.assertEqual(core["batch_wait_ms"], 25)
             self.assertEqual(core["metrics_every_batches"], 100)
 

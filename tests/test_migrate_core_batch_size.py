@@ -31,7 +31,7 @@ def _core(batch_size: int = 256) -> bytes:
 class CoreBatchSizeMigrationTests(unittest.TestCase):
     def test_only_the_batch_size_bytes_change(self):
         source = _core()
-        derived = migration.derive(source)
+        derived = migration.derive(source, target=2048)
         self.assertEqual(json.loads(derived)["batch_size"], 2048)
         self.assertEqual(derived.replace(b'"batch_size": 2048', b'"batch_size": 256'), source)
         self.assertEqual(len(derived) - len(source), 1)
@@ -39,7 +39,7 @@ class CoreBatchSizeMigrationTests(unittest.TestCase):
         self.assertIn(b'"batch_size_hint": 256', derived)
 
     def test_already_migrated_is_idempotent_and_others_are_refused(self):
-        self.assertEqual(migration.derive(_core(2048)), _core(2048))
+        self.assertEqual(migration.derive(_core(2048), target=2048), _core(2048))
         with self.assertRaisesRegex(ValueError, "unexpected current batch_size 128"):
             migration.derive(_core(128))
         with self.assertRaisesRegex(ValueError, "exactly one"):
@@ -109,7 +109,7 @@ class CoreBatchSizeMigrationTests(unittest.TestCase):
             self.assertEqual(stored["files"][0]["source_sha256"], migration._sha256(source))
             self.assertEqual(source_path.read_bytes(), source)
 
-    def test_default_target_stays_2048(self):
+    def test_default_target_is_the_stable_constant_1024(self):
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
             source_path = directory / "rust_core.json"
@@ -117,7 +117,7 @@ class CoreBatchSizeMigrationTests(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()) as stdout:
                 migration.main([str(source_path), "--output-dir", str(directory / "out")])
             receipt = json.loads(stdout.getvalue())
-            self.assertEqual(receipt["batch_size"], {"from": 256, "to": 2048})
+            self.assertEqual(receipt["batch_size"], {"from": 256, "to": 1024})
             self.assertFalse(receipt["applied"])
             self.assertFalse((directory / "out").exists())
 

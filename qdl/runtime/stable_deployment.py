@@ -52,7 +52,9 @@ STABLE_CORE_DEDUP_CAPACITY = 100_000
 # saturated near 5.5-7.6k rec/s in the isolated arch-A bench, at 2048 the same
 # 6-partition drain committed 17.5k rec/s. batch_wait_ms stays 25: a calm
 # partition still leaves after 25 ms, so the larger cap only matters in bursts.
-STABLE_CORE_BATCH_SIZE = 2048
+# Owner decision 2026-10-14: 1024 (2048 overflowed the gateway live queue 7x in
+# OPT-05 W2; 1024 passed W3/W4 and is the production value since the rc18 rollout).
+STABLE_CORE_BATCH_SIZE = 1024
 V2_REALTIME_RAW_TOPIC = "md.raw.realtime.v2"
 SHARED_REALTIME_CORE_GROUP_ID = "qdl-v2-realtime-core-v2"
 SHARED_REALTIME_CORE_ID_PREFIX = "qdl-v2-realtime-core"
