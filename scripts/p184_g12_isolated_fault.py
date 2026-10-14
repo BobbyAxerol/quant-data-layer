@@ -2082,6 +2082,11 @@ def owned_names(ns):
     return names
 
 
+# N1 R2-B6: Run.sample_stats retries a docker stats sample without a role that exited during it, then
+# skips and counts the sample; a failure while every sampled role still runs raises.
+STATS_SAMPLE_RULE_VERSION = "R2B6_STATS_TOCTOU_RETRY_SKIP_AND_COUNT_V1"
+
+
 def running_names(ns):
     out = sh(["docker", "ps", "--filter", f"label={LABEL}={ns}", "--format", "{{.Names}}"])
     return set(out.split())
@@ -2225,6 +2230,7 @@ class Run:
         self.guard0 = None
         self.last_guard = 0.0
         self.last_stats = 0.0
+        self.stats_skipped = 0
         self.events_proc = None
         self.predicate = None  # frozen in prepare()
         self.adapter_mode = "SYNTHETIC"
@@ -2329,15 +2335,49 @@ class Run:
                 raise RuntimeError("STOP production guard breach: " + json.dumps(breaches))
         if now - self.last_stats >= 30:
             self.last_stats = now
-            names = sorted(running_names(self.ns))
-            if names:
-                out = sh(["docker", "stats", "--no-stream", "--format", "{{json .}}", *names], timeout=60)
+            self.sample_stats()
+        return resources
+
+    def sample_stats(self, attempts=2):
+        """One `docker stats` sample of the running roles; returns rows written, or None when skipped.
+
+        TOCTOU (N1 r2b5a-6k-1): a role that exits normally between running_names() and the
+        sample makes docker stats fail (EOF). On a failure the roles are re-listed: if every
+        sampled role is still running the failure is real and raises; otherwise the sample is
+        retried once with the survivors, and if that also fails with a role gone the sample is
+        skipped, counted (self.stats_skipped), noted in orchestrator.jsonl and marked in
+        stats.jsonl. Never a silent pass: an expected role that is gone still stops the next
+        check() with its exit state.
+        """
+        names = sorted(running_names(self.ns))
+        gone = set()
+        for _ in range(attempts):
+            if not names:
+                break
+            result = subprocess.run(["docker", "stats", "--no-stream", "--format", "{{json .}}", *names],
+                                    capture_output=True, text=True, timeout=60)
+            if result.returncode == 0:
+                rows = 0
                 with (self.evidence / "stats.jsonl").open("a") as handle:
-                    for line in out.splitlines():
+                    for line in result.stdout.splitlines():
                         item = json.loads(line)
                         handle.write(json.dumps({"t": time.time_ns(), "name": item.get("Name"),
                                                  "cpu": item.get("CPUPerc"), "mem": item.get("MemUsage")}) + "\n")
-        return resources
+                        rows += 1
+                return rows
+            still = running_names(self.ns)
+            if set(names) <= still:
+                raise RuntimeError(f"['docker', 'stats', '--no-stream', '--format'] -> {result.returncode}: "
+                                   f"{result.stderr.strip()[-400:]}")
+            gone |= set(names) - still
+            names = sorted(set(names) & still)
+        self.stats_skipped += 1
+        roles = sorted(name[len(self.ns) + 1:] for name in gone)
+        self.note("stats_skipped_role_exited", roles=roles, skipped_total=self.stats_skipped)
+        with (self.evidence / "stats.jsonl").open("a") as handle:
+            handle.write(json.dumps({"t": time.time_ns(), "skipped": "ROLE_EXITED_DURING_SAMPLE",
+                                     "roles": roles, "skipped_total": self.stats_skipped}) + "\n")
+        return None
 
     def wait(self, seconds, faulted=(), until=None, step=5.0):
         limit = time.monotonic() + seconds

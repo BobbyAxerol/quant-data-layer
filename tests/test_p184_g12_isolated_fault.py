@@ -948,6 +948,60 @@ class ExitStateTests(unittest.TestCase):
                      (Path(base) / "evidence" / "orchestrator.jsonl").read_text().splitlines()]
             self.assertEqual(notes[-1]["step"], "role_exited")
 
+    def stats_case(self, base, results, listings):
+        """Run.sample_stats with fake `docker stats` results and successive running_names listings."""
+        run = g12.Run(base, "/home/bobby/e.json", NS)
+        run.evidence.mkdir(parents=True, exist_ok=True)
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(argv)
+            code, out = results.pop(0)
+            return types.SimpleNamespace(returncode=code, stdout=out, stderr="EOF" if code else "")
+        listing = iter(listings)
+        with patch.object(g12.subprocess, "run", side_effect=fake_run), \
+                patch.object(g12, "running_names", side_effect=lambda ns: set(next(listing))):
+            value = run.sample_stats()
+        return run, value, calls
+
+    def test_stats_sample_writes_rows(self):
+        with tempfile.TemporaryDirectory() as base:
+            line = json.dumps({"Name": NS + "-core", "CPUPerc": "1%", "MemUsage": "1MiB"})
+            run, value, calls = self.stats_case(base, [(0, line + "\n")], [[NS + "-core"]])
+            self.assertEqual(value, 1)
+            self.assertEqual(calls[0][:4], ["docker", "stats", "--no-stream", "--format"])
+            self.assertEqual(run.stats_skipped, 0)
+
+    def test_stats_sample_retries_without_a_role_that_exited_during_it(self):
+        """N1 r2b5a-6k-1: capacity-observer exited 0 during the sample; docker stats returned EOF."""
+        with tempfile.TemporaryDirectory() as base:
+            line = json.dumps({"Name": NS + "-core", "CPUPerc": "1%", "MemUsage": "1MiB"})
+            names = [NS + "-capacity-observer", NS + "-core"]
+            run, value, calls = self.stats_case(base, [(1, ""), (0, line + "\n")],
+                                                [names, [NS + "-core"]])
+            self.assertEqual(value, 1)
+            self.assertEqual(calls[1][5:], [NS + "-core"])
+            self.assertEqual(run.stats_skipped, 0)
+
+    def test_stats_sample_is_skipped_and_counted_when_roles_keep_exiting(self):
+        with tempfile.TemporaryDirectory() as base:
+            names = [NS + "-a", NS + "-b", NS + "-c"]
+            run, value, _ = self.stats_case(base, [(1, ""), (1, "")], [names, names[1:], names[2:]])
+            self.assertIsNone(value)
+            self.assertEqual(run.stats_skipped, 1)
+            marker = json.loads((run.evidence / "stats.jsonl").read_text().splitlines()[-1])
+            self.assertEqual((marker["skipped"], marker["roles"]), ("ROLE_EXITED_DURING_SAMPLE", ["a", "b"]))
+            notes = [json.loads(line) for line in (run.evidence / "orchestrator.jsonl").read_text().splitlines()]
+            self.assertEqual(notes[-1]["step"], "stats_skipped_role_exited")
+
+    def test_stats_failure_with_every_role_running_still_raises(self):
+        with tempfile.TemporaryDirectory() as base:
+            names = [NS + "-a", NS + "-b"]
+            with self.assertRaises(RuntimeError):
+                self.stats_case(base, [(1, "")], [names, names])
+            with self.assertRaises(RuntimeError):  # retried survivors that still fail while all run: real failure
+                self.stats_case(base, [(1, ""), (1, "")], [names, names[1:], names[1:]])
+
     def test_stop_events_terminates_the_follower(self):
         import tempfile
 
