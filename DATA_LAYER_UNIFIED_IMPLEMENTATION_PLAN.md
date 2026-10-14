@@ -73257,3 +73257,22 @@ Owner reassigned N1-OPT to Claude at 17:10Z (handover DL c49ffd1, clean). Guide 
   committed_reads 3 ignored (broker), clippy --all-targets --features lock-profile -D warnings.
 - Not yet: full-path proof (OPT-05 on a TEST stream image built from this source), and the stream image for the
   combined step-1 rollout must include these commits (batch 2048 only after this is live, diag13).
+
+
+### P18.4 IDR-096 gateway fix, LIVE high fix, step-1 rollout preparation - 2026-10-14 (Claude)
+
+- f5cd787: IDR-096 (A)+(B): additive SubscribeRequest.replay_budget_status_v2 = 8; old clients keep the pre-ed1b85b
+  CURSOR_EXPIRED mapping; submit-time scan limit is CURSOR_EXPIRED for all; SDK sends the field. Generated code via
+  make contract-generate (owner-approved remote buf plugins); buf format/lint/breaking OK.
+- ffa382f: LIVE carries the REPLAYING high_watermark again (regression from 2743938, found by OPT-05 W1 as N1
+  STREAM_CONTROL_INVALID); every native_stream reader asserts it (4 tests fail on f5cd787); contract doc updated.
+- cdbf28b: migrate_core_batch_size --target-batch-size (owner 2026-10-14: production step-1 uses batch 1024, not 2048;
+  2048 overflowed 7x in OPT-05 W2). Tests 6; rc17 rollout tool tests 49 (incl. two new 1024 cases, outside Git).
+- RUST18 = qdl-v2-rust:2.2.3-rc18-cdbf28b sha256:7fba25779f72a3adffc88f195935a316ac94acbfcb362996fafbff89f62c9103:
+  owner-approved thin image (compile in builder 551428d9 with the existing cache, git archive of cdbf28b, COPY the 12
+  Dockerfile binaries + admission policy onto rc16 f41ecb66). Post-checks: 12 binary sums match SHA256SUMS, ldd
+  complete for core/ingestor/stream, user 10001, label revision cdbf28b. Build dir ~/.local/state/qdl-v2/build-rc18-cdbf28b.
+- TS N1-OPT reached TESTED_ISOLATED_OPTIMIZATION_PASS (TS b2075780). Alpha GA1 (BAR handoff accepts records between
+  REPLAYING and LIVE) fixed in execution_alpha 3f83a73.
+- Running: pre-rollout gates (isolated idr094 broker rerun on RUST18 at 1024, P1 G12 with the production Python writer,
+  P2 Python-writer capacity runs). Rollout order after the gates: stream, then core (batch 1024), then ingestor.
