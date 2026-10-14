@@ -224,6 +224,10 @@ away. The earlier Python stream's coalescing of BOOK_SNAPSHOT is not ported.
   offset span alone exceeds the scan budget cannot progress on retry and is
   `OUT_OF_RANGE CURSOR_EXPIRED:REPLAY_SCAN_LIMIT` for every client. The Replay
   RPC has no such field and keeps the mapping above.
+- **REPLAYING and LIVE of one subscription carry the same `high_watermark`** (the barrier
+  announced at REPLAYING, as in `qdl/stream/grpc_service.py`). Records after that barrier may
+  arrive between the two controls (bounded near-frontier bridge); the gateway never announces an
+  internally extended barrier. Consumers may reject a LIVE whose high differs.
 - **A committed record that does not decode is never skipped.** Every stream
   or Replay whose range holds it on that physical key ends
   `DATA_LOSS DATA_INTEGRITY:committed record <partition>:<offset> ...`; other

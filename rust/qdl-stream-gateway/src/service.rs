@@ -1964,11 +1964,16 @@ impl SubscriptionTask {
     }
 
     async fn run_inner(&self, barrier: i64, ring: Option<RingReplay>) {
+        // Wire contract (grpc_service.py, and this gateway through aa1f98f):
+        // REPLAYING and LIVE of one subscription carry the SAME high_watermark,
+        // the barrier announced at REPLAYING. Bounded catch-up may extend the
+        // internal barrier (near-frontier bridge); that is not a wire change.
+        let announced = barrier - 1;
         let replaying = subscribe_control(
             query::StreamControlState::Replaying,
             "REPLAYING",
             "replaying committed records after the supplied cursor",
-            barrier - 1,
+            announced,
             &self.request_token,
         );
         if !self.control(replaying).await {
@@ -1994,7 +1999,8 @@ impl SubscriptionTask {
             }
             result = self.catch_up(barrier, ring, episode.clone()) => result,
         };
-        let Some((mut last, barrier)) = result else { return; };
+        // The extended barrier is internal only; see `announced` above.
+        let Some((mut last, _extended_barrier)) = result else { return; };
         if let Some(terminal) = self.subscription.terminal() {
             match terminal {
                 Next::Overflow => self.backpressure(last, "bounded bridge overflow; resume from last token").await,
@@ -2011,7 +2017,7 @@ impl SubscriptionTask {
             query::StreamControlState::Live,
             "LIVE",
             "committed replay is complete; live delivery is active",
-            barrier - 1,
+            announced,
             &token,
         );
         if !self.control(live).await {

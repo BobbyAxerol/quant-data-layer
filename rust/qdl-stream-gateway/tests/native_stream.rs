@@ -738,7 +738,7 @@ impl Harness {
             replay_budget_status_v2: budget_v2,
         });
         let response = self.gateway.subscribe(request).await?;
-        Ok(Stream(response.into_inner()))
+        Ok(Stream(response.into_inner(), None))
     }
 
     /// Wait until every stream slot is released (tasks noticed the client left).
@@ -778,7 +778,24 @@ struct Stream(
     std::pin::Pin<
         Box<dyn tokio_stream::Stream<Item = Result<query::SubscribeResponse, Status>> + Send>,
     >,
+    /// high_watermark of this subscription's REPLAYING control, if seen.
+    Option<u64>,
 );
+
+/// Wire contract (qdl/stream/grpc_service.py; this gateway through aa1f98f): REPLAYING and
+/// LIVE of one subscription carry the same high_watermark. Every reader in this suite
+/// checks it, so a catch-up path that extends its internal barrier cannot leak it.
+fn check_control_high(replaying: &mut Option<u64>, control: &query::StreamControl) {
+    match control.code.as_str() {
+        "REPLAYING" => *replaying = Some(control.high_watermark),
+        "LIVE" => {
+            if let Some(high) = *replaying {
+                assert_eq!(control.high_watermark, high, "LIVE must carry the REPLAYING high_watermark");
+            }
+        }
+        _ => {}
+    }
+}
 
 #[derive(Debug)]
 enum Item {
@@ -797,7 +814,10 @@ impl Stream {
             Ok(Some(Ok(response))) => {
                 let record = response.record.unwrap();
                 match record.payload.unwrap() {
-                    query::stream_record::Payload::Control(control) => Item::Control(control.code),
+                    query::stream_record::Payload::Control(control) => {
+                        check_control_high(&mut self.1, &control);
+                        Item::Control(control.code)
+                    }
                     query::stream_record::Payload::Event(event) => {
                         Item::Event(record.logical_offset, Box::new(event))
                     }
@@ -947,7 +967,7 @@ async fn t01_offset_zero_is_snapshot_state_not_a_genesis_or_skipped_event() {
             }))
             .await
             .unwrap();
-        let mut stream = Stream(response.into_inner());
+        let mut stream = Stream(response.into_inner(), None);
         assert_eq!(stream.until_live().await, vec![1]);
         assert_eq!(harness.log.append(0, TRADE_KEY, &trade(102)), 2);
         harness.settle();
@@ -1262,7 +1282,7 @@ async fn t02_matched_budget_resumes_exactly_on_ring_and_reader_without_expiry() 
             }))
             .await
             .unwrap();
-        let mut resumed = Stream(response.into_inner());
+        let mut resumed = Stream(response.into_inner(), None);
         assert_eq!(resumed.until_live().await, expected[5..]);
         assert_eq!(harness.state().metrics.replayed.load(Ordering::Relaxed), 10);
         assert_eq!(harness.state().metrics.delivered.load(Ordering::Relaxed), 0);
@@ -3188,6 +3208,7 @@ async fn read_shapes_until(stream: &mut Stream, count: usize, shapes: &mut Shape
             let record = response.record.expect("a response carries a record");
             match record.payload.expect("payload") {
                 query::stream_record::Payload::Control(control) => {
+                    check_control_high(&mut stream.1, &control);
                     let reached_live = control.code == "LIVE";
                     shapes.controls.push(control.code);
                     if live && reached_live {
@@ -3520,7 +3541,7 @@ async fn b08_replay_pending_records_precede_corruption_and_filtered_boundaries()
             max_records_per_response: 64,
             replay_budget_status_v2: false,
         })).await.unwrap();
-        let mut stream = Stream(response.into_inner());
+        let mut stream = Stream(response.into_inner(), None);
         let mut shapes = Shapes::default();
         read_shapes(&mut stream, usize::MAX, &mut shapes).await;
         let (code, message) = shapes.status.as_ref().expect("corruption is terminal");
