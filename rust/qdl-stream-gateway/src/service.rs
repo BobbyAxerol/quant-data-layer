@@ -645,6 +645,7 @@ impl MarketDataStreamService for Gateway {
             key,
             after,
             batch_limit,
+            replay_budget_status_v2: body.replay_budget_status_v2,
         };
         tokio::spawn(task.run(barrier, ring));
         let stream = subscription_handoff(receiver, terminal);
@@ -817,7 +818,8 @@ impl MarketDataStreamService for Gateway {
             let end = reader
                 .await
                 .unwrap_or(ReplayEnd::Error("replay coordinator dropped".into()));
-            if let Some(status) = replay_end_status(&state, &end) {
+            // ReplayRequest has no budget-status field: pre-2.4.1 mapping.
+            if let Some(status) = replay_end_status(&state, &end, false) {
                 fail(status).await;
             }
         });
@@ -959,27 +961,59 @@ fn stamp_send(mut response: query::SubscribeResponse) -> query::SubscribeRespons
 }
 
 /// Typed outcome of a replay that did not simply complete.
-fn replay_end_status(state: &GatewayState, end: &ReplayEnd) -> Option<Status> {
+///
+/// `budget_status_v2` is the client's additive opt-in
+/// (`SubscribeRequest.replay_budget_status_v2`, SDK 2.4.1, IDR-096). Only an
+/// opted-in client, which bounds retries by progress, sees a replay work
+/// budget as retryable RESOURCE_EXHAUSTED; every other client (and the Replay
+/// RPC, which has no such field) keeps the pre-2.4.1 OUT_OF_RANGE
+/// CURSOR_EXPIRED mapping and its fresh-snapshot recovery.
+fn replay_end_status(
+    state: &GatewayState,
+    end: &ReplayEnd,
+    budget_status_v2: bool,
+) -> Option<Status> {
     let expired = |detail: String| {
         state.metrics.expired.fetch_add(1, Ordering::Relaxed);
         Some(Status::out_of_range(format!("CURSOR_EXPIRED:{detail}")))
     };
     match end {
         ReplayEnd::Complete | ReplayEnd::PageFull | ReplayEnd::Cancelled => None,
-        ReplayEnd::Backlog => Some(Status::resource_exhausted(
+        ReplayEnd::Backlog if budget_status_v2 => Some(Status::resource_exhausted(
             "RATE_LIMITED:REPLAY_MATCHED_LIMIT:replay reached its matched-record bound; \
              resume from the last token",
         )),
+        ReplayEnd::Backlog => expired(
+            "replay backlog exceeds the bounded gateway window; a fresh snapshot is required"
+                .into(),
+        ),
         ReplayEnd::Retention => expired(
             "RETENTION:the cursor is below the retained committed log; a fresh snapshot is required"
                 .into(),
         ),
+        // Refused before any scan: a retry cannot progress, so this is
+        // CURSOR_EXPIRED for every client (IDR-096 (A)).
+        ReplayEnd::SpanLimit => expired(
+            "REPLAY_SCAN_LIMIT:replay exceeds the bounded scan; a fresh snapshot is required"
+                .into(),
+        ),
         // A work budget is not retention loss. A scan may stop before any
         // token advances; callers must bound retries when there is no progress.
-        ReplayEnd::ScanLimit(reason) => Some(Status::resource_exhausted(format!(
-            "RATE_LIMITED:{reason}:replay reached its bounded scan; \
-             resume from the last token; bound retries if no progress"
-        ))),
+        ReplayEnd::ScanLimit(reason) if budget_status_v2 => Some(Status::resource_exhausted(
+            format!(
+                "RATE_LIMITED:{reason}:replay reached its bounded scan; \
+                 resume from the last token; bound retries if no progress"
+            ),
+        )),
+        // Pre-2.4.1 mapping: out of time is retryable (the token advanced
+        // through everything delivered); a scan or byte bound is expiry.
+        ReplayEnd::ScanLimit("REPLAY_TIME_LIMIT") => Some(Status::resource_exhausted(
+            "RATE_LIMITED:REPLAY_TIME_LIMIT:replay did not complete within its time bound; \
+             resume from the last token",
+        )),
+        ReplayEnd::ScanLimit(reason) => expired(format!(
+            "{reason}:replay exceeds the bounded scan; a fresh snapshot is required"
+        )),
         ReplayEnd::Corrupt { partition, offset } => {
             Some(data_integrity(*partition, *offset, "failed to decode"))
         }
@@ -1145,6 +1179,8 @@ struct SubscriptionTask {
     after: i64,
     /// Records per response (1 = one record per response, pre-2.3.0).
     batch_limit: usize,
+    /// `SubscribeRequest.replay_budget_status_v2` (SDK 2.4.1, IDR-096).
+    replay_budget_status_v2: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -1779,7 +1815,7 @@ impl SubscriptionTask {
                         }
                         if let Some(reason) = episode.scan(raw.payload.len() as u64, &self.state.limits.replay) {
                             if !self.flush(&mut batch, &mut last, BatchPhase::Replay).await { return None; }
-                            if let Some(status) = replay_end_status(&self.state, &ReplayEnd::ScanLimit(reason)) {
+                            if let Some(status) = replay_end_status(&self.state, &ReplayEnd::ScanLimit(reason), self.replay_budget_status_v2) {
                                 self.fail(status).await;
                             }
                             return None;
@@ -1810,7 +1846,7 @@ impl SubscriptionTask {
                                 return None;
                             }
                             if let Some(status) =
-                                replay_end_status(&self.state, &ReplayEnd::Backlog)
+                                replay_end_status(&self.state, &ReplayEnd::Backlog, self.replay_budget_status_v2)
                             {
                                 self.fail(status).await;
                             }
@@ -1868,7 +1904,7 @@ impl SubscriptionTask {
                     let end = reader
                         .await
                         .unwrap_or(ReplayEnd::Error("replay coordinator dropped".into()));
-                    if let Some(status) = replay_end_status(&self.state, &end) {
+                    if let Some(status) = replay_end_status(&self.state, &end, self.replay_budget_status_v2) {
                         self.fail(status).await;
                         return None;
                     }

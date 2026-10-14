@@ -100,6 +100,16 @@ pub struct SubscribeRequest {
     /// waits to fill a batch and clamps the value to its own cap.
     #[prost(uint32, tag="7")]
     pub max_records_per_response: u32,
+    /// Additive (SDK 2.4.1, IDR-096): the client retries a replay work-budget stop
+    /// with a progress-aware bound. Only when true does a Subscribe catch-up that
+    /// reaches REPLAY_MATCHED_LIMIT, REPLAY_SCAN_LIMIT (inside a scan) or
+    /// REPLAY_BYTE_LIMIT end with RESOURCE_EXHAUSTED "RATE_LIMITED:{reason}:...".
+    /// false (absent) keeps the pre-2.4.1 mapping: OUT_OF_RANGE "CURSOR_EXPIRED:...".
+    /// A range refused before any scan (it cannot fit the scan budget, so a retry
+    /// cannot progress) is OUT_OF_RANGE "CURSOR_EXPIRED:REPLAY_SCAN_LIMIT:..." for
+    /// every client. REPLAY_TIME_LIMIT and RETENTION are unchanged by this field.
+    #[prost(bool, tag="8")]
+    pub replay_budget_status_v2: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ReplayRequest {

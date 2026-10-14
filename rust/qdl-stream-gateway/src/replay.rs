@@ -61,6 +61,10 @@ pub enum ReplayEnd {
     /// `limit` matched records were emitted (Replay RPC page).
     PageFull,
     ScanLimit(&'static str),
+    /// Refused at submit, before any scan: the offset span alone exceeds the
+    /// scan budget. A retry from the same or an older token cannot progress,
+    /// so every client gets CURSOR_EXPIRED (IDR-096 (A)).
+    SpanLimit,
     Backlog,
     Retention,
     Cancelled,
@@ -323,7 +327,7 @@ impl ReplayCoordinator {
         // a range that cannot fit the scan budget is refused without a scan.
         if (request.barrier - request.after - 1) as u64 > self.limits.max_scanned_records {
             self.metrics.scan_limited.fetch_add(1, Ordering::Relaxed);
-            request.finish(ReplayEnd::ScanLimit("REPLAY_SCAN_LIMIT"));
+            request.finish(ReplayEnd::SpanLimit);
             return;
         }
         let start = {

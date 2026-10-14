@@ -216,6 +216,14 @@ away. The earlier Python stream's coalescing of BOOK_SNAPSHOT is not ported.
   (`CURSOR_EXPIRED` backlog) - all `OUT_OF_RANGE`, resnapshot; wall time is
   `RESOURCE_EXHAUSTED RATE_LIMITED:REPLAY_TIME_LIMIT` (retryable, the token
   has advanced through everything delivered).
+  Additive (SDK 2.4.1, IDR-096): a Subscribe that sets
+  `SubscribeRequest.replay_budget_status_v2 = 8` (bool) receives
+  `RESOURCE_EXHAUSTED RATE_LIMITED:{REPLAY_MATCHED_LIMIT|REPLAY_SCAN_LIMIT|REPLAY_BYTE_LIMIT}:...`
+  instead (retryable; the client bounds retries by progress). Absent/false
+  keeps the mapping above unchanged. A range refused at submit because its
+  offset span alone exceeds the scan budget cannot progress on retry and is
+  `OUT_OF_RANGE CURSOR_EXPIRED:REPLAY_SCAN_LIMIT` for every client. The Replay
+  RPC has no such field and keeps the mapping above.
 - **A committed record that does not decode is never skipped.** Every stream
   or Replay whose range holds it on that physical key ends
   `DATA_LOSS DATA_INTEGRITY:committed record <partition>:<offset> ...`; other
