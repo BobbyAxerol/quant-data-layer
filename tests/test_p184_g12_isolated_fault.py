@@ -2761,6 +2761,24 @@ ADDENDUM_S = {
         "0 production guard breaches",
         "coverage: monitor gap <= 5 s, member logs cover every window (else NOT_MEASURED, never PASS)"]}}
 
+# The frozen addendum-4 (prereg-addendum-4.json, sha256 06c561ed...) criteria, verbatim.
+ADDENDUM_4 = {
+    "schema": "p184-coregroup-prereg-addendum.v1",
+    "run_A_prime": {"mode": "rolling (--core-group)", "criterion":
+                    "control valid iff each old-image survivor of the first roll retries >= 2 times in "
+                    "after_roll_core; else harness not production-like and S cannot be credited"},
+    "run_S": {"mode": "--core-group-simultaneous", "criteria": [
+        "storm=false",
+        "group re-forms (3 members, 6 partitions owned exactly once) <= 30 s after the first new member starts and "
+        "holds stable >= 10 s; lag back within the baseline maximum <= 60 s",
+        "new-image lives: retries 0, rewind_failed 0, rewinds <= 2 per window",
+        "old-image lives: 0 retries, rewinds, rewind failures in every judged window",
+        "every window after the replace: retries 0 absolute",
+        "last 30 s of every window: 3 members, 6 partitions owned exactly once",
+        "core kill: ownership restored <= 15 s after exit confirmed, caught up <= 60 s",
+        "no inflight_commit_failed / stop_drain_failed; 0 production guard breaches",
+        "monitor/log coverage gaps -> NOT_MEASURED, never PASS"]}}
+
 
 class CoreGroupProfileTests(unittest.TestCase):
     """INCIDENT 2026-10-15 #2: production-like core profile; defaults keep the B3 harness."""
@@ -3070,3 +3088,80 @@ class CoreGroupSimultaneousAcceptanceTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(rows[reproduction], expected)
                 self.assertEqual(rows["harness: run mode is rolling"], "PASS")
+
+    def accept4(self, base, key="run_S", addendum=None):
+        path = Path(self.tmp.name) / "addendum-4.json"
+        path.write_text(json.dumps(addendum or ADDENDUM_4))
+        result = g12.core_group_accept(base, self.prereg, path)
+        run = result["acceptance"][key]
+        return result, run, {row["condition"]: row for row in run["conditions"]}
+
+    def test_addendum_4_frozen_strings_map_to_rules(self):
+        frozen = ADDENDUM_4["run_S"]["criteria"]
+        self.assertEqual(set(frozen) - {"storm=false"}, set(g12.CORE_GROUP_CRITERIA_MAP)
+                         - {ADDENDUM_4["run_A_prime"]["criterion"]})
+        result, run, rows = self.accept4(self.build("ok4", events=[("core-3", 280, "qdl_realtime_core_rebalance_rewind",
+                                                                       {})]))
+        self.assertEqual(result["acceptance"]["criteria_map"], g12.CORE_GROUP_CRITERIA_MAP_VERSION)
+        for text in frozen:
+            with self.subTest(text=text):
+                self.assertEqual(rows[text]["result"], "PASS", rows[text]["detail"])
+        self.assertEqual(run["result"], "PASS")
+        group = rows[frozen[1]]["detail"]["rules"]
+        self.assertEqual(len(group), 2)
+        # a violation still reaches the mapped rule: a retry after the replace fails three frozen strings
+        _, run, rows = self.accept4(self.build("retry4", events=[("core", 300, "qdl_realtime_core_retry",
+                                                                   {"error": "rebalanced"})]))
+        for text in (frozen[2], frozen[4]):
+            self.assertEqual(rows[text]["result"], "FAIL")
+        self.assertEqual(run["result"], "FAIL")
+        _, _, rows = self.accept4(self.build("slow4", reform_at=160))
+        self.assertEqual(rows[frozen[1]]["result"], "FAIL")
+        # old-image rewind outside the baseline (stop of the old group) fails the literal old-image rule
+        _, _, rows = self.accept4(self.build("oldrw", events=[("core-2", 120, "qdl_realtime_core_rebalance_rewind",
+                                                                {})]))
+        self.assertEqual(rows[frozen[3]]["result"], "FAIL")
+
+    def test_addendum_4_a_prime_singular_criterion_is_evaluated(self):
+        helper = CoreGroupAcceptanceTests("test_healthy_run_passes_every_frozen_condition")
+        text = ADDENDUM_4["run_A_prime"]["criterion"]
+        root = Path(self.tmp.name)
+        for name, per, expected in (("rep4", 2, "PASS"), ("norep4", 1, "FAIL")):
+            (root / name).mkdir()
+            events = [(role, 130 + 10 * n, "qdl_realtime_core_retry", {"error": "rebalanced"})
+                      for role in ("core-2", "core-3") for n in range(per)]
+            _, run, rows = self.accept4(helper.build(root / name, images=True, events=events), "run_A_prime")
+            with self.subTest(name=name):
+                self.assertEqual(rows[text]["result"], expected)
+                self.assertEqual(rows["harness: run mode is rolling"]["result"], "PASS")
+        # a frozen run block without a readable criterion fails closed
+        _, run, rows = self.accept4(self.build("nocrit"), "run_S", {"run_S": {"mode": "simultaneous"}})
+        self.assertEqual(rows["harness: frozen criteria present"]["result"], "NOT_MEASURED")
+        self.assertEqual(run["result"], "NOT_MEASURED")
+
+    def test_unknown_criterion_string_is_not_measured(self):
+        addendum = {"run_S": {"criteria": ["storm=false", "group re-forms quickly"]}}
+        _, run, rows = self.accept4(self.build("unknown4"), "run_S", addendum)
+        self.assertEqual(rows["storm=false"]["result"], "PASS")
+        self.assertEqual(rows["group re-forms quickly"]["result"], "NOT_MEASURED")
+        self.assertEqual(rows["group re-forms quickly"]["detail"], {"reason": "UNKNOWN_CONDITION"})
+        self.assertEqual(run["result"], "NOT_MEASURED")
+        # the map is not applied to the original prereg's run_B_fix rules
+        out = g12.core_group_acceptance({"windows": {}}, {"criteria": {"run_B_fix": [
+            ADDENDUM_4["run_S"]["criteria"][1]]}})
+        self.assertEqual(out["run_B_fix"]["conditions"][-1]["detail"], {"reason": "UNKNOWN_CONDITION"})
+
+    def test_replace_all_clocks_from_fixture(self):
+        base = self.build("clocks")
+        clocks = g12.core_group_verdict(base / "evidence")["replace_all"]
+        # injected 120, all gone 120.6, first die event 120.5, first start 121, re-formed 128, stable 138
+        self.assertEqual((clocks["stopped_s"], clocks["reformed_s"], clocks["stable_s"], clocks["caught_up_s"]),
+                         (0.6, 7.0, 17.0, 9.0))
+        self.assertEqual((clocks["pause_s"], clocks["injected_to_reformed_s"], clocks["first_stop_ns"]),
+                         (7.5, 8.0, self.T0 + int(120.5 * S)))
+        self.assertIsNone(clocks["reason"])
+        result, _, _ = self.accept4(base)
+        self.assertEqual(result["verdict"]["mode"], "simultaneous")
+        self.assertEqual(result["verdict"]["replace_all"]["pause_s"], 7.5)
+        never = g12.core_group_verdict(self.build("never", reform_at=600) / "evidence")["replace_all"]
+        self.assertEqual((never["reason"], never["reformed_s"], never["pause_s"]), ("NEVER_REFORMED", None, None))

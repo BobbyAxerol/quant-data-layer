@@ -3476,24 +3476,41 @@ CORE_GROUP_TAIL_S = 30
 CORE_GROUP_CAUSES = ("core_roll", "core_kill", "core_replace_all")
 
 
-def core_replace_all_recovery(row, monitor_rows, ns, partitions, members, base_lag):
+def core_replace_all_recovery(row, monitor_rows, ns, partitions, members, base_lag, event_rows=()):
     """Clocks of a replace-all from the first new member's start (``restart_ns``): ``reformed_s`` (first sample
     with the exact roster, STABLE, all partitions owned exactly once - monitor v2 detail), ``stable_s`` (held so
     for CORE_GROUP["formation_hold_s"]), ``caught_up_s`` (first sample from ``reformed`` with core lag <= the
     baseline maximum); ``stopped_s``: all old members gone after injection. A clock that never closes is null with
-    ``reason``."""
+    ``reason``.
+
+    Reported, not judged (addendum-4 ``run_S.report``): ``pause_s``, the full core pause from the first member's
+    stop - the daemon's first die event of a member container at/after injection (``first_stop_ns``), never the
+    stop call - to ``reformed``; ``injected_to_reformed_s`` from the stop call. Null without a die event /
+    re-formation (``pause_reason``)."""
     restart = row["restart_ns"]
     seconds = lambda t: round((t - restart) / 1e9, 3)  # noqa: E731
     out = {"stopped_s": round((row["stopped_ns"] - row["injected_ns"]) / 1e9, 3) if row.get("stopped_ns") else None,
-           "gap_s": row.get("gap_s"), "reformed_s": None, "stable_s": None, "caught_up_s": None, "reason": None}
+           "gap_s": row.get("gap_s"), "reformed_s": None, "stable_s": None, "caught_up_s": None, "reason": None,
+           "first_stop_ns": None, "pause_s": None, "injected_to_reformed_s": None, "pause_reason": None}
+    names = {f"{ns}-{role}" for role in row.get("roles") or CORE_MEMBERS}
+    first_die = next((r["timeNano"] for r in sorted(event_rows, key=lambda r: r.get("timeNano") or 0)
+                      if (r.get("Action") or r.get("status")) == "die"
+                      and (r.get("timeNano") or 0) >= row["injected_ns"]
+                      and ((r.get("Actor") or {}).get("Attributes") or {}).get("name") in names), None)
+    out["first_stop_ns"] = first_die
     after = [r for r in monitor_rows if r["t"] >= restart]
     reformed = next((r for r in after if (r.get("groups") or {}).get(ns, {}).get("detail") is not None
                      and group_view(r, ns, partitions)[4] == "partitions"
                      and healthy_view(group_view(r, ns, partitions), members)), None)
     if reformed is None:
-        out["reason"] = "NEVER_REFORMED"
+        out["reason"] = out["pause_reason"] = "NEVER_REFORMED"
         return out
     out["reformed_s"] = seconds(reformed["t"])
+    out["injected_to_reformed_s"] = round((reformed["t"] - row["injected_ns"]) / 1e9, 3)
+    if first_die is None:
+        out["pause_reason"] = "NO_EXIT_EVENT"
+    else:
+        out["pause_s"] = round((reformed["t"] - first_die) / 1e9, 3)
     stable = core_group_stable_at(monitor_rows, ns, partitions, members, CORE_GROUP["formation_hold_s"], restart)
     out["stable_s"] = None if stable is None else seconds(stable)
     caught = next((r for r in after if r["t"] >= reformed["t"] and base_lag is not None
@@ -3612,7 +3629,8 @@ def core_group_verdict(evidence, members=len(CORE_MEMBERS)):
     kill = next((f for f in faults if f.get("k") == "core_kill"), None)
     base = result["windows"].get("baseline", {}).get("max_lag")
     if replace_all:
-        result["replace_all"] = core_replace_all_recovery(replace_all, monitor_rows, ns, partitions, members, base)
+        result["replace_all"] = core_replace_all_recovery(replace_all, monitor_rows, ns, partitions, members, base,
+                                                          container_events)
     if kill:
         result["core_kill"] = core_kill_recovery(kill, monitor_rows, container_events, ns, partitions, members, base)
         result["core_kill_caught_up_s"] = result["core_kill"]["caught_up_s"]
@@ -3642,6 +3660,40 @@ CORE_GROUP_ACCEPTANCE_SCHEMA = "p184.coregroup.acceptance.v2"
 CORE_GROUP_LIMITS = {"rewinds_per_roll_window": 2, "caught_up_s": 60, "partitions_moved_s": 15,
                      "control_retries_per_member": 2, "new_image_rewinds_per_window": 2,
                      "old_image_survivor_retries_per_member": 1}
+
+
+# Frozen prereg addendum-4 (frozen 2026-10-15T11:21:07Z, sha256 06c561ed...) states its run_A_prime / run_S
+# criteria as free text that differs from the rule keys below. This versioned map binds each frozen string, verbatim,
+# to the existing ``rules_v2`` rule(s) that judge it (several keys: every one must PASS, ``_combine``). No threshold
+# or rule semantics live here; a string in neither the rules nor this map stays UNKNOWN_CONDITION -> NOT_MEASURED.
+CORE_GROUP_CRITERIA_MAP_VERSION = "p184.coregroup.criteria-map.addendum-4.v1"
+CORE_GROUP_CRITERIA_MAP = {
+    # run_A_prime
+    "control valid iff each old-image survivor of the first roll retries >= 2 times in after_roll_core; else "
+    "harness not production-like and S cannot be credited":
+        ("reproduction: each old-image survivor of the first roll retries >= 2 times in after_roll_core",),
+    # run_S ("storm=false" is a rule key verbatim)
+    "group re-forms (3 members, 6 partitions owned exactly once) <= 30 s after the first new member starts and "
+    "holds stable >= 10 s; lag back within the baseline maximum <= 60 s":
+        ("replace-all: group re-formed (3 members, 6 partitions owned exactly once) <= 30 s after the first new "
+         "member started, then stable >= 10 s",
+         "replace-all: core lag within the baseline maximum <= 60 s after the first new member started"),
+    "new-image lives: retries 0, rewind_failed 0, rewinds <= 2 per window":
+        ("new-image member lives: retries == 0, rewind_failed == 0, rewinds <= 2 per window, 0 in baseline",),
+    "old-image lives: 0 retries, rewinds, rewind failures in every judged window":
+        ("old-image member lives: 0 retries, rewinds and rewind failures in every judged window",),
+    "every window after the replace: retries 0 absolute":
+        ("every window after the replace (after_replace_all, after_restart_core-3, after_kill): retries == 0 "
+         "absolute",),
+    "last 30 s of every window: 3 members, 6 partitions owned exactly once":
+        ("last 30 s of every window: 3 members, all 6 partitions owned exactly once",),
+    "core kill: ownership restored <= 15 s after exit confirmed, caught up <= 60 s":
+        ("core kill (RB2 clocks): ownership restored <= 15 s after exit confirmed; caught up <= 60 s",),
+    "no inflight_commit_failed / stop_drain_failed; 0 production guard breaches":
+        ("no inflight_commit_failed / stop_drain_failed", "0 production guard breaches"),
+    "monitor/log coverage gaps -> NOT_MEASURED, never PASS":
+        ("coverage: monitor gap <= 5 s, member logs cover every window (else NOT_MEASURED, never PASS)",),
+}
 
 
 def _combine(results):
@@ -3888,6 +3940,25 @@ def core_group_acceptance(verdict, prereg, addendum=None):
         return _combine(results), {"target_image": target, "retries_per_member": per_member, "over_limit": over,
                                    "outside_survivor_window": misplaced, "windows": detail}
 
+    def old_image_zero():
+        """Literal: no old-image life logs a retry, rewind or rewind failure in any judged window."""
+        results, detail = [], {}
+        for name in names:
+            if name not in windows:
+                results.append("NOT_MEASURED")
+                detail[name] = "MISSING_WINDOW"
+                continue
+            rows, known = lives_of(name)
+            old = [r for r in rows if r.get("image") and r.get("image") != target]
+            if any(r["retries"] or r["rewinds"] or r["rewind_failed"] for r in old):
+                results.append("FAIL")
+            elif not v2 or not known or target is None:
+                results.append("NOT_MEASURED")
+            else:
+                results.append("PASS" if logged(name) else "NOT_MEASURED")
+            detail[name] = {"lives": {f"{r['role']}.life{r['life']}": r for r in old}, "images_known": known}
+        return _combine(results), {"target_image": target, "windows": detail}
+
     def all_new_retries():
         results, detail = [], {}
         for name in all_new:
@@ -4000,7 +4071,7 @@ def core_group_acceptance(verdict, prereg, addendum=None):
         # INCIDENT 2026-10-15 #2: rolling A' (reproduction) and simultaneous S (``--core-group-simultaneous``).
         "reproduction: each old-image survivor of the first roll retries >= 2 times in after_roll_core":
             first_roll_reproduced,
-        "old-image member lives: 0 retries, rewinds and rewind failures in every judged window": old_image_lives,
+        "old-image member lives: 0 retries, rewinds and rewind failures in every judged window": old_image_zero,
         "every window after the replace (after_replace_all, after_restart_core-3, after_kill): retries == 0 "
         "absolute": all_new_retries,
         "replace-all: group re-formed (3 members, 6 partitions owned exactly once) <= 30 s after the first new "
@@ -4014,7 +4085,16 @@ def core_group_acceptance(verdict, prereg, addendum=None):
         rows = [{"condition": c, "result": r, "detail": d} for c, r, d in (*harness, *more)]
         for text in texts:
             rule = extra.get(text) or known.get(text)
-            result, detail = rule() if rule else ("NOT_MEASURED", {"reason": "UNKNOWN_CONDITION"})
+            mapped = CORE_GROUP_CRITERIA_MAP.get(text) if rule is None and known is rules_v2 else None
+            if rule:
+                result, detail = rule()
+            elif mapped and all(key in known for key in mapped):
+                parts = {key: known[key]() for key in mapped}
+                result = _combine([r for r, _ in parts.values()])
+                detail = {"map": CORE_GROUP_CRITERIA_MAP_VERSION,
+                          "rules": {key: {"result": r, "detail": d} for key, (r, d) in parts.items()}}
+            else:
+                result, detail = "NOT_MEASURED", {"reason": "UNKNOWN_CONDITION"}
             rows.append({"condition": text, "result": result, "detail": detail})
         return {"result": _combine([row["result"] for row in rows]), "conditions": rows}
 
@@ -4035,10 +4115,19 @@ def core_group_acceptance(verdict, prereg, addendum=None):
                                    {"mode": verdict.get("mode")})
         # run_B2 (addendum-2/3), run_A_prime (rolling, production-like profile), run_S (simultaneous replace).
         for key, wanted in (("run_B2", None), ("run_A_prime", "rolling"), ("run_S", "simultaneous")):
-            texts = (addendum.get(key) or {}).get("criteria")
-            if texts is not None:
-                more = (image_row,) if wanted is None else (image_row, mode_row(wanted))
-                out[key] = evaluate(list(texts), {}, rules_v2, more)
+            block = addendum.get(key)
+            if block is None:
+                continue
+            # addendum-4 freezes run_A_prime's single condition as ``criterion`` (a string), run_S as ``criteria``.
+            texts = block.get("criteria")
+            if texts is None and isinstance(block.get("criterion"), str):
+                texts = [block["criterion"]]
+            more = (image_row,) if wanted is None else (image_row, mode_row(wanted))
+            if not texts:  # a frozen run without a readable criterion fails closed
+                more = (*more, ("harness: frozen criteria present", "NOT_MEASURED", {"keys": sorted(block)}))
+            out[key] = evaluate(list(texts or ()), {}, rules_v2, more)
+        if addendum.get("run_A_prime") is not None or addendum.get("run_S") is not None:
+            out["criteria_map"] = CORE_GROUP_CRITERIA_MAP_VERSION
     fix = criteria.get("run_B_fix")
     if fix is not None:
         out["run_B_fix"] = evaluate(list(fix), {})
@@ -4065,8 +4154,8 @@ def core_group_accept(base, prereg_path, addendum_path=None):
                                 if addendum_path is not None else None),
             "core_images": verdict.get("core_images"),
             "by_life": {n: w.get("by_life") for n, w in verdict["windows"].items()},
-            "verdict": {k: verdict.get(k) for k in ("schema", "status", "storm", "totals", "core_kill",
-                                                     "baseline_formation",
+            "verdict": {k: verdict.get(k) for k in ("schema", "mode", "status", "storm", "totals", "replace_all",
+                                                     "core_kill", "baseline_formation",
                                                      "core_kill_first_healthy_sample_s", "production_guard_breaches")},
             "windows": {n: {k: w.get(k) for k in ("retries", "rewinds", "rewind_failed", "monitor_max_gap_s",
                                                    "tail_samples", "tail_unhealthy_samples", "tail_coverage_basis",

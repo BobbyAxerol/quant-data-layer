@@ -73456,3 +73456,14 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   --core-hz/--core-initial-rebalance-delay-ms/--core-replace-gap-s/--core-precondition-restarts K to age old members'
   backoff unevenly) and `--core-group-simultaneous` (stop all 3, start all 3 on the new image, then a single restart and a
   SIGKILL); acceptance per run mode (run_A_prime, run_S). 140 unittest OK; B3 recomputation unchanged (run_B2 PASS 14/14).
+- A'/S (addendum-4 06c561ed, production-like profile, DL 306f42f harness; evaluator mapping fix this commit:
+  criteria-map addendum-4.v1 maps each frozen string verbatim, unknown -> NOT_MEASURED, `criterion` singular read,
+  `old_image_zero` implements its text exactly; S clocks now exported). A' PASS (control valid: old survivors 5 and 4
+  retries in after_roll_core - the production storm reproduced). S FAIL on one frozen criterion: new-image rewinds 3
+  in after_restart_core-3 (core-2.life5 2, core.life2 1; attribution span starts at the restart injection) vs limit 2;
+  all else PASS - storm false, re-formed 7.3 s after the first new start (stable 17.3 s, caught up 7.3 s, peak lag 560
+  -> 2), retries 0 in every window, old-image events 0, tails 3x6 owned once, kill ownership/caught-up 7.7 s, no drain
+  failures, 0 guard breaches. Full core pause first die -> re-formed 10.9 s (stop call -> re-formed 11.3 s). The
+  "<= 2 rewinds per window" limit was frozen from "one per survivor"; a single-member restart can legitimately cost a
+  survivor a rewind on the leave and another on the rejoin - not relaxed here; any change needs an owner-approved
+  addendum and a fresh run. rc22 rollout shape (simultaneous replace, ~11 s full core pause) awaits that decision.
