@@ -1090,6 +1090,10 @@ def evaluate(evidence):
                         "acked": sum(1 for r in acks if "error" not in r),
                         "delivery_errors": sum(1 for r in acks if "error" in r),
                         "resyncs": sum(1 for r in publish_rows if r.get("k") == "resync"),
+                        "resyncs_requested": sum(1 for r in publish_rows if r.get("k") == "resync"
+                                                 and r.get("cause") == L2_RESNAPSHOT_REQUIRED_V1),
+                        "resync_requests_refused": sum(1 for r in publish_rows
+                                                       if r.get("k") == "resync_request_refused"),
                         "book": publisher_book_summary(publish_rows),
                         "market_data": publisher_md_summary(publish_rows)}
     out["exit_states"] = exit_states(load_jsonl(evidence / "container-events.jsonl"))
@@ -1714,9 +1718,75 @@ def book_frame(venue, snapshot, seq, previous, gen, at_ns):
                  levels=book_levels(seq, previous, snapshot, quantity))
 
 
+L2_RESNAPSHOT_REQUIRED_V1 = "L2_RESNAPSHOT_REQUIRED_V1"
+
+
+def book_resync_request(wire, event_id, binding, session_id, generation, now_ns, anchor=None):
+    """Whether one ``<ns>.quarantine`` record asks THIS publisher lane for a new BOOK snapshot.
+
+    The TEST twin of the production ingestor's ``matches_book_resync`` plus ``snapshot_satisfies_resync``
+    (``rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs``). It accepts a core ``L2_RESNAPSHOT_REQUIRED_V1``
+    sequence-gap request whose raw frame is this lane's BOOK frame (binding identity, ``source_session_id``,
+    current ``connection_generation``). The raw frame must be no older than the binding's
+    ``l2.snapshot_refresh_seconds``, its frame digest, evidence digest and event id must hold, and it must not
+    predate the snapshot this lane already published for that generation (``anchor`` = ``(generation,
+    received_at_ns)``). One deliberate difference: the ingestor refuses ``test_provenance`` and this TEST lane
+    requires it. Returns ``(accepted, refusal)``. ``refusal`` is None for a record that is no resnapshot request
+    at all, and a short label for a request that was refused (apparatus evidence)."""
+    from qdl.provider.v1.raw_provider_pb2 import QuarantineRecord, QuarantineReason
+    try:
+        request = QuarantineRecord.FromString(wire)
+    except Exception:  # noqa: BLE001 - another record shape on the topic is not a request
+        return False, None
+    if request.safe_summary != L2_RESNAPSHOT_REQUIRED_V1 or not request.HasField("raw"):
+        return False, None
+    raw = request.raw
+    if raw.subscription_id != binding["source_id"]:
+        return False, None  # the other venue's lane
+    if request.reason != QuarantineReason.Value("QUARANTINE_REASON_SEQUENCE_GAP"):
+        return False, "REASON"
+    identity = ("provider", "venue", "market", "product_type", "native_symbol", "native_channel",
+                "instrument_catalog_revision")
+    if any(getattr(raw, key) != binding[key] for key in identity) or raw.test_provenance is not True:
+        return False, "IDENTITY"
+    if raw.source_session_id != session_id:
+        return False, "SESSION"
+    if raw.connection_generation != generation:
+        return False, "GENERATION"
+    max_age_ns = int(binding["l2"].get("snapshot_refresh_seconds") or 0) * 1_000_000_000
+    if (raw.received_at_ns <= 0 or request.quarantined_at_ns < raw.received_at_ns
+            or now_ns < request.quarantined_at_ns or now_ns - raw.received_at_ns > max_age_ns):
+        return False, "AGE"
+    evidence = hashlib.sha256(raw.SerializeToString()
+                              + request.reason.to_bytes(4, "big", signed=True)).digest()
+    expected_id = hashlib.sha256(raw.capture_id + L2_RESNAPSHOT_REQUIRED_V1.encode()).digest()
+    if (request.evidence_sha256 != evidence or event_id != expected_id
+            or raw.raw_frame_sha256 != hashlib.sha256(raw.raw_frame_bytes).digest()):
+        return False, "DIGEST"
+    if anchor is not None and anchor[0] == raw.connection_generation and raw.received_at_ns <= anchor[1]:
+        return False, "SATISFIED"
+    return True, None
+
+
+def assign_resync_listener(consumer, topic, offset, timeout=10.0):
+    """Assign every partition of ``topic`` from ``offset`` (read-only: no group join, no commit). The core keys a
+    quarantine record by its partition key, so a request can land on any partition (six in the capacity runs)."""
+    from confluent_kafka import TopicPartition
+    metadata = consumer.list_topics(topic, timeout=timeout).topics.get(topic)
+    if metadata is None or metadata.error is not None or not metadata.partitions:
+        raise RuntimeError("quarantine topic metadata unavailable: " + topic)
+    partitions = sorted(metadata.partitions)
+    consumer.assign([TopicPartition(topic, partition, offset) for partition in partitions])
+    return partitions
+
+
 def publish(work, out, seconds, hz):
     """Steady provider-shaped BOOK frames per venue; resync (new generation +
-    snapshot) only after a failed delivery, as a venue adapter would. TRADE /
+    snapshot) after a failed delivery, as a venue adapter would, and after the
+    core's own ``L2_RESNAPSHOT_REQUIRED_V1`` request on ``<ns>.quarantine``, as
+    the production ingestor's book-resync listener does (``book_resync_request``;
+    a restarted core has lost its in-memory book and only a new snapshot
+    rebuilds it). TRADE /
     QUOTE / closed BAR 1m / MARK-INDEX frames on their own lanes at the MD_RATE
     cadence; their delivery errors are recorded, never a BOOK resync.
 
@@ -1726,8 +1796,8 @@ def publish(work, out, seconds, hz):
     producer, so every delivery callback (and the BOOK resync state) runs there. Each BOOK ``pub`` row carries
     its top (bid, ask) and its lateness against the schedule (``late_ms``, apparatus evidence)."""
     import threading
-    from confluent_kafka import Producer
-    from scripts.p184_dr05_raw_publisher import raw_envelope
+    from confluent_kafka import Consumer, OFFSET_BEGINNING, Producer
+    from scripts.p184_dr05_raw_publisher import _session_label, raw_envelope
     packet = _packet(work)
     ns = packet["namespace"]
     config = json.loads((Path(work) / "core.json").read_text())
@@ -1740,12 +1810,48 @@ def publish(work, out, seconds, hz):
     producer = Producer({**_security(packet), "enable.idempotence": True, "acks": "all",
                          "linger.ms": 0, "message.timeout.ms": 30000, "queue.buffering.max.messages": 10000})
     state = {v: {"gen": 7, "seq": 1000, "snapshot": True} for v in VENUES}
+    sessions = {v: ns + "." + _session_label(bindings[v]) for v in VENUES}
+    anchors = {}  # venue -> (generation, received_at_ns) of the last published snapshot
+    quarantine = config["core"]["quarantine_stream"]
+    if quarantine != ns + ".quarantine":
+        raise ValueError("isolated test-only quarantine topic required")
+    # Read-only listener: assign (no group join, no commit); read_committed like the ingestor's source.
+    requests = Consumer({**_security(packet), "group.id": ns + ".publisher-book-resync",
+                         "enable.auto.commit": False, "isolation.level": "read_committed"})
+    assign_resync_listener(requests, quarantine, OFFSET_BEGINNING)
     stop, end, period = _Stop(), time.monotonic() + seconds, 1.0 / hz
     lock = threading.Lock()
     with open(out, "a", buffering=1) as log:
         def write(row):
             with lock:
                 log.write(json.dumps(row) + "\n")
+
+        def serve_resync_requests():
+            """Main thread only (it owns the BOOK state): turn a matching core request into gen+1 + snapshot."""
+            try:
+                messages = requests.consume(num_messages=64, timeout=0)
+            except Exception as error:  # noqa: BLE001 - recorded; BOOK keeps its schedule
+                write({"k": "resync_request_error", "t": time.time_ns(), "error": f"{type(error).__name__}"})
+                return
+            for message in messages:
+                if message.error() is not None:
+                    write({"k": "resync_request_error", "t": time.time_ns(), "error": str(message.error().code())})
+                    continue
+                event_id = dict(message.headers() or []).get("qdl-event-id", b"")
+                for venue in VENUES:
+                    s = state[venue]
+                    accepted, refusal = book_resync_request(message.value(), event_id, bindings[venue],
+                                                            sessions[venue], s["gen"], time.time_ns(),
+                                                            anchors.get(venue))
+                    if accepted:
+                        write({"k": "resync", "t": time.time_ns(), "venue": venue, "after_seq": s["seq"],
+                               "new_gen": s["gen"] + 1, "cause": L2_RESNAPSHOT_REQUIRED_V1,
+                               "offset": message.offset()})
+                        s["gen"] += 1
+                        s["snapshot"] = True
+                    elif refusal is not None:
+                        write({"k": "resync_request_refused", "t": time.time_ns(), "venue": venue,
+                               "reason": refusal, "offset": message.offset()})
 
         def ack(venue, seq, gen, sent_ns):
             def callback(error, message):
@@ -1831,16 +1937,20 @@ def publish(work, out, seconds, hz):
                     s["snapshot"] = True
                     continue
                 s["seq"], s["snapshot"] = seq, False
+                if snapshot:
+                    anchors[venue] = (s["gen"], at_ns)
                 write({"k": "pub", "t": at_ns, "venue": venue, "seq": seq, "gen": s["gen"],
                        "snapshot": snapshot, "top": list(book_top(seq)), "late_ms": late_ms})
             next_at += period
             while True:
                 producer.poll(0)
+                serve_resync_requests()
                 left = next_at - time.monotonic()
                 if left <= 0:
                     break
                 time.sleep(min(left, .02))
         md_thread.join(timeout=5)
+        requests.close()
         remaining = producer.flush(10)
         write({"k": "end", "t": time.time_ns(), "unflushed": remaining, "md_thread_alive": md_thread.is_alive()})
     return {"stopped": True}

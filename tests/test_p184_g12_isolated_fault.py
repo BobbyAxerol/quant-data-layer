@@ -1614,6 +1614,230 @@ class PublisherBookTopTests(unittest.TestCase):
         self.assertTrue({"TRADE", "QUOTE"} <= feeds)
 
 
+BOOK_IDENTITY = {"BINANCE": ("BINANCE_DIRECT", "USDM", "ETHUSDT", "ethusdt@depth@100ms",
+                             "binance-usdm-ethusdt-book-primary-v2"),
+                 "OKX": ("OKX_DIRECT", "SWAP", "ETH-USDT-SWAP", "books", "okx-swap-eth-usdt-swap-book-primary-v2")}
+
+
+def book_binding(venue):
+    """The sealed core.json BOOK binding shape (r2b6 run) of one venue."""
+    provider, market, symbol, channel, source = BOOK_IDENTITY[venue]
+    return {"venue": venue, "provider": provider, "market": market, "product_type": "PERPETUAL",
+            "native_symbol": symbol, "native_channel": channel, "source_id": source,
+            "instrument_catalog_revision": 11, "l2": {"snapshot_refresh_seconds": 30}}
+
+
+def resync_request(venue, generation, received_at_ns, *, session=None, summary=g12.L2_RESNAPSHOT_REQUIRED_V1,
+                   reason="QUARANTINE_REASON_SEQUENCE_GAP", test_provenance=True, quarantined_at_ns=None):
+    """(wire, event_id) of a core resnapshot request built as the Rust core builds it
+    (``l2_resnapshot_request``: the raw frame, evidence = sha256(raw || reason be32), id = sha256(capture || V1))."""
+    import hashlib
+    from qdl.provider.v1.raw_provider_pb2 import QuarantineReason, QuarantineRecord, RawProviderEnvelope
+    b = book_binding(venue)
+    payload = b'{"u":1}'
+    raw = RawProviderEnvelope(
+        capture_id=bytes(16), provider=b["provider"], venue=venue, market=b["market"],
+        product_type=b["product_type"], native_symbol=b["native_symbol"], native_channel=b["native_channel"],
+        subscription_id=b["source_id"], source_session_id=session or f"{NS}.{venue}",
+        connection_generation=generation, received_at_ns=received_at_ns, raw_frame_bytes=payload,
+        raw_frame_sha256=hashlib.sha256(payload).digest(), adapter_version="p184-synthetic-test-only",
+        instrument_catalog_revision=11, test_provenance=test_provenance)
+    code = QuarantineReason.Value(reason)
+    record = QuarantineRecord(
+        raw=raw, reason=code, safe_summary=summary,
+        quarantined_at_ns=received_at_ns + MS if quarantined_at_ns is None else quarantined_at_ns,
+        evidence_sha256=hashlib.sha256(raw.SerializeToString() + code.to_bytes(4, "big", signed=True)).digest())
+    event_id = hashlib.sha256(raw.capture_id + summary.encode()).digest()
+    return record.SerializeToString(), event_id
+
+
+def fake_kafka(producer, deliveries):
+    """A confluent_kafka stand-in: ``deliveries`` is a list of (after_consume_calls, make_record) quarantine
+    records the publisher's read-only listener receives; ``make_record()`` -> (wire, event_id) runs at delivery,
+    so a request can name a raw frame received after the lane's snapshot, as the core's requests do."""
+    class Message:
+        def __init__(self, wire, event_id, offset):
+            self.wire, self.event_id, self._offset = wire, event_id, offset
+
+        def error(self):
+            return None
+
+        def value(self):
+            return self.wire
+
+        def headers(self):
+            return [("qdl-event-id", self.event_id)]
+
+        def offset(self):
+            return self._offset
+
+    class Consumer:
+        assigned, closed = [], []
+
+        def __init__(self, config):
+            self.config, self.calls, self.pending = config, 0, list(deliveries)
+            Consumer.config_seen = config
+
+        def assign(self, partitions):
+            Consumer.assigned.extend(partitions)
+
+        def list_topics(self, topic, timeout):
+            meta = types.SimpleNamespace(error=None, partitions={5: None, 0: None, 3: None, 1: None, 2: None, 4: None})
+            return types.SimpleNamespace(topics={topic: meta})
+
+        def consume(self, num_messages, timeout):
+            self.calls += 1
+            ready = [d for d in self.pending if d[0] <= self.calls]
+            self.pending = [d for d in self.pending if d[0] > self.calls]
+            return [Message(*make(), offset) for offset, (_, make) in enumerate(ready)]
+
+        def close(self):
+            Consumer.closed.append(True)
+
+    fake = types.ModuleType("confluent_kafka")
+    fake.Producer, fake.Consumer, fake.OFFSET_BEGINNING = producer, Consumer, -2
+    fake.TopicPartition = lambda topic, partition, offset: (topic, partition, offset)
+    return fake
+
+
+class ResyncListenerAssignTests(unittest.TestCase):
+    def test_missing_or_failed_topic_metadata_is_an_error(self):
+        fake = fake_kafka(None, [])
+        for topics in ({}, {NS + ".quarantine": types.SimpleNamespace(error="UNKNOWN_TOPIC", partitions={0: None})},
+                       {NS + ".quarantine": types.SimpleNamespace(error=None, partitions={})}):
+            consumer = types.SimpleNamespace(list_topics=lambda topic, timeout, t=topics: types.SimpleNamespace(topics=t),
+                                             assign=lambda partitions: self.fail("assigned without metadata"))
+            with patch.dict(sys.modules, {"confluent_kafka": fake}), self.assertRaises(RuntimeError):
+                g12.assign_resync_listener(consumer, NS + ".quarantine", -2)
+
+
+class BookResyncRequestTests(unittest.TestCase):
+    """book_resync_request: the TEST twin of the ingestor's matches_book_resync + snapshot_satisfies_resync."""
+
+    NOW = 1_792_000_000 * S
+
+    def check(self, wire_and_id, venue="BINANCE", generation=7, anchor=None, now=None):
+        wire, event_id = wire_and_id
+        return g12.book_resync_request(wire, event_id, book_binding(venue), f"{NS}.{venue}", generation,
+                                       self.NOW if now is None else now, anchor)
+
+    def test_own_lane_current_generation_fresh_request_is_accepted(self):
+        self.assertEqual(self.check(resync_request("BINANCE", 7, self.NOW - 2 * S)), (True, None))
+        self.assertEqual(self.check(resync_request("OKX", 9, self.NOW - 2 * S), venue="OKX", generation=9),
+                         (True, None))
+
+    def test_other_records_are_ignored_without_a_refusal(self):
+        self.assertEqual(self.check((b"\xff\x00garbage", b"")), (False, None))
+        self.assertEqual(self.check(resync_request("BINANCE", 7, self.NOW - S, summary="SEQUENCE_GAP")),
+                         (False, None))
+        # The OKX lane's request is not the Binance lane's business (and vice versa).
+        self.assertEqual(self.check(resync_request("OKX", 7, self.NOW - S)), (False, None))
+
+    def test_refusals_mirror_the_ingestor(self):
+        cases = {
+            "GENERATION": self.check(resync_request("BINANCE", 6, self.NOW - S)),
+            "SESSION": self.check(resync_request("BINANCE", 7, self.NOW - S, session=NS + ".OKX")),
+            # Older than l2.snapshot_refresh_seconds (30 s): the ingestor drops it, so does the TEST lane.
+            "AGE": self.check(resync_request("BINANCE", 7, self.NOW - 31 * S)),
+            "REASON": self.check(resync_request("BINANCE", 7, self.NOW - S,
+                                                reason="QUARANTINE_REASON_UNSPECIFIED")),
+            "IDENTITY": self.check(resync_request("BINANCE", 7, self.NOW - S, test_provenance=False)),
+        }
+        for label, result in cases.items():
+            self.assertEqual(result, (False, label), label)
+        future = resync_request("BINANCE", 7, self.NOW - S, quarantined_at_ns=self.NOW + S)
+        self.assertEqual(self.check(future), (False, "AGE"))
+
+    def test_digests_are_verified(self):
+        wire, event_id = resync_request("BINANCE", 7, self.NOW - S)
+        self.assertEqual(self.check((wire, bytes(32))), (False, "DIGEST"))
+        from qdl.provider.v1.raw_provider_pb2 import QuarantineRecord
+        record = QuarantineRecord.FromString(wire)
+        record.evidence_sha256 = bytes(32)
+        self.assertEqual(self.check((record.SerializeToString(), event_id)), (False, "DIGEST"))
+        record = QuarantineRecord.FromString(wire)
+        record.raw.raw_frame_bytes = b'{"u":2}'
+        self.assertEqual(self.check((record.SerializeToString(), event_id)), (False, "DIGEST"))
+
+    def test_a_request_already_satisfied_by_the_published_snapshot_is_refused(self):
+        request = resync_request("BINANCE", 7, self.NOW - 2 * S)
+        self.assertEqual(self.check(request, anchor=(7, self.NOW - 2 * S)), (False, "SATISFIED"))
+        self.assertEqual(self.check(request, anchor=(7, self.NOW - 3 * S)), (True, None))
+        self.assertEqual(self.check(request, anchor=(6, self.NOW)), (True, None))
+
+
+class PublisherResyncTests(unittest.TestCase):
+    """publish(): a core resnapshot request on <ns>.quarantine becomes gen+1 + snapshot on that lane only."""
+
+    def test_core_request_starts_a_new_generation_with_a_snapshot(self):
+        book_frames = []
+
+        class Producer:
+            def __init__(self, config):
+                pass
+
+            def produce(self, topic, partition, key, value, headers, on_delivery):
+                pass
+
+            def poll(self, timeout):
+                return 0
+
+            def flush(self, timeout):
+                return 0
+
+        class Raw:
+            subscription_id, capture_id = "sub", "cap"
+
+            def SerializeToString(self):
+                return b"x"
+
+        def book_raw(binding, frame, ns):
+            book_frames.append((binding["venue"], frame["connection_generation"], frame["snapshot"]))
+            return Raw()
+
+        # Each request names a generation-7 raw received after the lane's snapshot (wall clock at delivery).
+        def request():
+            return resync_request("BINANCE", 7, time.time_ns() - MS)
+        lanes = {(v, f): {"physical_native_symbol": "ETH-USDT"} for v in g12.VENUES for f in g12.MD_FEEDS}
+        lanes[("OKX", "INDEX")] = {"physical_native_symbol": "ETH-USDT"}
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            (work / "core.json").write_text(json.dumps({
+                "raw_topics": [NS + ".raw"], "core": {"allow_test_provenance": True,
+                                                       "quarantine_stream": NS + ".quarantine",
+                                                       "bindings": [book_binding(v) for v in g12.VENUES]}}))
+            out = work / "publish.jsonl"
+            fake = fake_kafka(Producer, [(3, request), (8, request)])
+            with patch.dict(sys.modules, {"confluent_kafka": fake}), \
+                    patch.object(g12, "_packet", return_value={"namespace": NS}), \
+                    patch.object(g12, "_security", return_value={}), \
+                    patch.object(g12, "md_bindings", return_value=lanes), \
+                    patch.object(g12, "md_envelope", return_value=Raw()), \
+                    patch("scripts.p184_dr05_raw_publisher.raw_envelope", side_effect=book_raw):
+                g12.publish(work, out, 2.0, 4.0)
+            rows = g12.load_jsonl(out)
+        resyncs = [r for r in rows if r.get("k") == "resync"]
+        self.assertEqual([(r["venue"], r["new_gen"], r["cause"]) for r in resyncs],
+                         [("BINANCE", 8, g12.L2_RESNAPSHOT_REQUIRED_V1)])
+        # The repeated request names generation 7, which is no longer current: refused, no second resync.
+        self.assertIn({"k": "resync_request_refused", "venue": "BINANCE", "reason": "GENERATION"},
+                      [{k: r[k] for k in ("k", "venue", "reason")} for r in rows
+                       if r.get("k") == "resync_request_refused"])
+        binance = [(g, snap) for v, g, snap in book_frames if v == "BINANCE"]
+        okx = [(g, snap) for v, g, snap in book_frames if v == "OKX"]
+        self.assertEqual(binance[0], (7, True))
+        first_new = binance.index((8, True))
+        self.assertTrue(all(g == 7 and not snap for g, snap in binance[1:first_new]))
+        self.assertTrue(all(g == 8 and not snap for g, snap in binance[first_new + 1:]))
+        self.assertEqual(okx[0], (7, True))
+        self.assertTrue(all(g == 7 and not snap for g, snap in okx[1:]))
+        # Every partition of the quarantine topic (the core keys requests; six partitions in capacity runs).
+        self.assertEqual(fake.Consumer.assigned, [(NS + ".quarantine", p, -2) for p in range(6)])
+        self.assertEqual(fake.Consumer.config_seen["isolation.level"], "read_committed")
+        self.assertFalse(fake.Consumer.config_seen["enable.auto.commit"])
+        self.assertEqual(fake.Consumer.closed, [True])
+
+
 class PublisherScheduleTests(unittest.TestCase):
     """publish(): BOOK frames keep their own schedule while market-data sends are slow."""
 
@@ -1658,11 +1882,11 @@ class PublisherScheduleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)
             (work / "core.json").write_text(json.dumps({
-                "raw_topics": [NS + ".raw"], "core": {"allow_test_provenance": True, "bindings": [
-                    {"venue": v, "l2": {"snapshot_refresh_seconds": 30}} for v in g12.VENUES]}}))
+                "raw_topics": [NS + ".raw"], "core": {"allow_test_provenance": True,
+                                                       "quarantine_stream": NS + ".quarantine",
+                                                       "bindings": [book_binding(v) for v in g12.VENUES]}}))
             out = work / "publish.jsonl"
-            fake = types.ModuleType("confluent_kafka")
-            fake.Producer = Producer
+            fake = fake_kafka(Producer, [])
             with patch.dict(sys.modules, {"confluent_kafka": fake}), \
                     patch.object(g12, "_packet", return_value={"namespace": NS}), \
                     patch.object(g12, "_security", return_value={}), \

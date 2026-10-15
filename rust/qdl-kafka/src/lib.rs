@@ -35,6 +35,23 @@ const RAW_ENVELOPE_HEADER: &str = "qdl-raw-provider-envelope";
 const COOPERATIVE_ASSIGNMENT_STRATEGY: &str = "cooperative-sticky";
 const CONSUMER_GROUP_PROTOCOL: &str = "classic";
 
+/// Group session bound of every classic Rust group consumer (F1, 2026-10-15).
+///
+/// Membership stays dynamic (architecture 28.6, C40.13): a SIGTERM-stopped
+/// member sends LeaveGroup and its partitions move at once, which static
+/// membership would delay to the session timeout. What this bounds is the
+/// ungraceful death (SIGKILL, OOM, host loss): the dead member keeps its
+/// partitions until the broker expires its session, and the librdkafka default
+/// of 45 s was measured as the whole 42 s core-kill outage (N1 R2 corekill9k:
+/// the replacement joined 0.4 s after the kill and waited 41.9 s for the old
+/// member's removal). 10 s is above the broker's default
+/// `group.min.session.timeout.ms` (6 s; no deployment overrides it) and leaves
+/// ten heartbeats of margin. Heartbeats run on librdkafka's background thread,
+/// not the batch loop, so a long transaction does not expire the session;
+/// `max.poll.interval.ms` (300 s default) is unchanged.
+const CONSUMER_SESSION_TIMEOUT_MS: &str = "10000";
+const CONSUMER_HEARTBEAT_INTERVAL_MS: &str = "1000";
+
 // Keep every consumer/producer instance bounded inside its cgroup. Durable Kafka
 // offsets provide backpressure/recovery; unbounded librdkafka local queues do not.
 const KAFKA_QUEUE_MAX_KBYTES: &str = "8192";
@@ -250,6 +267,8 @@ impl KafkaTransportConfig {
                 "partition.assignment.strategy",
                 COOPERATIVE_ASSIGNMENT_STRATEGY,
             )
+            .set("session.timeout.ms", CONSUMER_SESSION_TIMEOUT_MS)
+            .set("heartbeat.interval.ms", CONSUMER_HEARTBEAT_INTERVAL_MS)
             .set("enable.auto.commit", "false")
             .set("enable.auto.offset.store", "false")
             .set("auto.offset.reset", offset_reset)
@@ -1565,6 +1584,7 @@ mod tests {
         configure_bounded_client_memory, transactional_output_headers, KafkaTlsConfig,
         KafkaTransportConfig, KafkaTransportError, Phase92SinkTopics, Phase9SinkTopics,
         ShutdownSignal, TransactionalShadowTopics, CONSUMER_GROUP_PROTOCOL,
+        CONSUMER_HEARTBEAT_INTERVAL_MS, CONSUMER_SESSION_TIMEOUT_MS,
         COOPERATIVE_ASSIGNMENT_STRATEGY, EVENT_ID_HEADER, KAFKA_FETCH_MAX_BYTES,
         KAFKA_MAX_PARTITION_FETCH_BYTES, KAFKA_PRODUCER_QUEUE_MAX_MESSAGES, KAFKA_QUEUE_MAX_KBYTES,
         RAW_ENVELOPE_HEADER,
@@ -1604,7 +1624,53 @@ mod tests {
         assert_eq!(client.get("enable.auto.commit"), Some("false"));
         assert_eq!(client.get("enable.auto.offset.store"), Some("false"));
         assert_eq!(client.get("isolation.level"), Some("read_committed"));
+        // Dynamic membership is deliberate (architecture 28.6): a gracefully
+        // stopped core must leave the group so N-1 redistribution is immediate.
         assert_eq!(client.get("group.instance.id"), None);
+        assert_eq!(client.get("session.timeout.ms"), Some("10000"));
+        assert_eq!(client.get("heartbeat.interval.ms"), Some("1000"));
+    }
+
+    #[test]
+    fn group_session_bound_is_valid_for_the_broker_and_every_consumer_mode() {
+        let session: u64 = CONSUMER_SESSION_TIMEOUT_MS.parse().unwrap();
+        let heartbeat: u64 = CONSUMER_HEARTBEAT_INTERVAL_MS.parse().unwrap();
+        // Broker defaults: group.min.session.timeout.ms 6000, max 1800000.
+        assert!((6_000..=1_800_000).contains(&session));
+        // librdkafka requires heartbeat < session; keep at least 3 missed beats.
+        assert!(heartbeat * 3 <= session);
+        // Below the default max.poll.interval.ms, which stays unchanged.
+        assert!(session < 300_000);
+        let config = KafkaTransportConfig {
+            bootstrap_servers: "kafka:9092".into(),
+            client_id: "qdl-core-002".into(),
+            group_id: "qdl-core-v1".into(),
+            request_timeout: Duration::from_secs(30),
+            tls: KafkaTlsConfig {
+                ca_location: "/not-read/ca".into(),
+                certificate_location: "/not-read/cert".into(),
+                key_location: "/not-read/key".into(),
+                key_password: None,
+            },
+        };
+        for fail_closed in [false, true] {
+            let mut client = ClientConfig::new();
+            if fail_closed {
+                config.configure_group_consumer_fail_closed(&mut client);
+            } else {
+                config.configure_group_consumer(&mut client);
+            }
+            assert_eq!(
+                client.get("session.timeout.ms"),
+                Some(CONSUMER_SESSION_TIMEOUT_MS)
+            );
+            assert_eq!(
+                client.get("heartbeat.interval.ms"),
+                Some(CONSUMER_HEARTBEAT_INTERVAL_MS)
+            );
+            assert_eq!(client.get("group.instance.id"), None);
+            assert_eq!(client.get("max.poll.interval.ms"), None);
+        }
     }
 
     #[test]
