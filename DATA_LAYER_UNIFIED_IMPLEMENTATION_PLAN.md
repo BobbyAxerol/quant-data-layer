@@ -73554,3 +73554,16 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
     networks or volumes; images built 0.
   - Status: shadow-certified (isolated A/B), not deployed. The next step is a rollout packet for stream_kn_1/2 (digest
     b095b18e, rollback 7fba2577), owner approval only.
+  - 2026-10-15 PRODUCTION (owner-approved via AskUserQuestion; classifier had blocked the first attempt):
+    - 15:59:15Z ingestor_binance_usdm cpus 0.5 -> 0.75 (T4 evidence: window 9 throttled 7.17 % > 5 %, usage peak 0.280
+      core; ingestor_okx_swap peak exactly 5.00 %, not qualified, unchanged). rollout_rc17_v2.py (8de00c46) accepted,
+      diff ["cpus"], image 7fba2577 unchanged, total raise +0.25 of +1.5 vCPU. Rollback compose
+      ~/.local/state/qdl-v2/p184-d3-capacity-20261009/rollout-rc17/ingestor_binance_usdm-rollback-20261015T155915Z.compose.json.
+    - 16:18-16:20Z stream_kn_1 then stream_kn_2 7fba2577 -> b095b18e (this isolation fix), same tool, diff ["image"],
+      bundle 63efd9ff unchanged, RestartCount 0, writer READY 64/64 after each; rollback composes in the same dir.
+      Post-roll metric line: hub_live_budget_refused 0, overflow 0, queue_isolation counters 0, replay_refused 0.
+    - Correction: the two production recreates at 15:59Z that tainted isolation run 155918Z were the coordinator's
+      (ingestor raise + writer B14), launched without re-checking the measurement lock held by the isolation run.
+      Run 160503Z is the clean evidence. Lock check is now done before every production action.
+    - 16:23:52Z final stage-100 #2 launched (apparatus f7ea809, profile r16, G11 armed, trace re-armed 3600 s, lock
+      claude-n1-opt-20261013 until 17:42:27Z): ~/.local/state/qdl-v2/p184-final-campaign-20261015T162352Z.
