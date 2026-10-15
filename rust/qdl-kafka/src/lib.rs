@@ -24,7 +24,7 @@ use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{
     BaseConsumer, CommitMode, Consumer, ConsumerContext, Rebalance, StreamConsumer,
 };
-use rdkafka::error::KafkaError;
+use rdkafka::error::{KafkaError, RDKafkaErrorCode};
 use rdkafka::message::{Header, Headers, Message, OwnedHeaders};
 use rdkafka::producer::{DeliveryFuture, FutureProducer, FutureRecord, Producer};
 use rdkafka::topic_partition_list::{Offset, TopicPartitionList};
@@ -49,8 +49,16 @@ const CONSUMER_GROUP_PROTOCOL: &str = "classic";
 /// ten heartbeats of margin. Heartbeats run on librdkafka's background thread,
 /// not the batch loop, so a long transaction does not expire the session;
 /// `max.poll.interval.ms` (300 s default) is unchanged.
+///
+/// Heartbeat stays at the librdkafka default 3 s (INCIDENT 2026-10-15): it only
+/// bounds how fast a live member learns of a rebalance, not dead-member
+/// detection. At 1 s the survivors of a rolling replace finished the leave
+/// rebalance before the replacement joined, so the join became a second
+/// rebalance that revoked partitions from them (aborting their transactions);
+/// at 3 s leave and join coalesced into one rebalance (RUST18 rolls: 0 aborts).
+/// 3 x 3 s <= 10 s keeps librdkafka's heartbeat <= session / 3 rule.
 const CONSUMER_SESSION_TIMEOUT_MS: &str = "10000";
-const CONSUMER_HEARTBEAT_INTERVAL_MS: &str = "1000";
+const CONSUMER_HEARTBEAT_INTERVAL_MS: &str = "3000";
 
 // Keep every consumer/producer instance bounded inside its cgroup. Durable Kafka
 // offsets provide backpressure/recovery; unbounded librdkafka local queues do not.
@@ -316,6 +324,31 @@ impl KafkaTransportError {
             | Self::Rebalanced { .. } => RetryClass::Retryable,
         }
     }
+}
+
+impl KafkaTransportError {
+    /// INCIDENT 2026-10-15. The transaction was aborted only because the
+    /// consumer group changed under it: a served revocation
+    /// ([`Self::Rebalanced`]) or a send-offsets rejected for a stale group
+    /// generation (`ILLEGAL_GENERATION`, which librdkafka makes an abortable,
+    /// not fatal, transaction error). Both errors are returned only after the
+    /// abort succeeded (an abort failure replaces the error), so the producer
+    /// and consumer stay usable: the caller may rewind the same consumer to its
+    /// committed offsets instead of rebuilding it, which would leave and rejoin
+    /// the group and so cause the next rebalance.
+    pub fn is_rebalance_abort(&self) -> bool {
+        match self {
+            Self::Rebalanced { .. } => true,
+            Self::Kafka(KafkaError::Transaction(error)) => {
+                stale_group_generation(error.code(), error.is_fatal())
+            }
+            _ => false,
+        }
+    }
+}
+
+fn stale_group_generation(code: RDKafkaErrorCode, fatal: bool) -> bool {
+    !fatal && code == RDKafkaErrorCode::IllegalGeneration
 }
 
 impl Display for KafkaTransportError {
@@ -954,6 +987,31 @@ fn commit_offsets_unless_rebalanced(
     commit()
 }
 
+/// The seek list of [`TransactionalKafkaBridge::rewind_to_committed`]: each
+/// partition's committed offset, or the beginning when none was committed.
+/// A per-partition fetch error or any other logical offset is refused.
+fn rewind_targets(
+    committed: &TopicPartitionList,
+) -> Result<TopicPartitionList, KafkaTransportError> {
+    let mut targets = TopicPartitionList::new();
+    for element in committed.elements() {
+        element.error().map_err(KafkaTransportError::Kafka)?;
+        let offset = match element.offset() {
+            Offset::Offset(value) if value >= 0 => Offset::Offset(value),
+            Offset::Invalid => Offset::Beginning,
+            other => {
+                return Err(KafkaTransportError::Configuration(format!(
+                    "unexpected committed offset {other:?} for {}[{}]",
+                    element.topic(),
+                    element.partition()
+                )))
+            }
+        };
+        targets.add_partition_offset(element.topic(), element.partition(), offset)?;
+    }
+    Ok(targets)
+}
+
 /// Kafka consume-transform-produce boundary. Output records and the next raw
 /// consumer offset commit atomically, so a process crash cannot acknowledge raw
 /// input without its canonical/quarantine result or duplicate committed output.
@@ -1189,6 +1247,42 @@ impl TransactionalKafkaBridge {
 
     pub fn unsubscribe(&self) {
         self.consumer.unsubscribe();
+    }
+
+    /// INCIDENT 2026-10-15. After a transaction aborted with
+    /// [`KafkaTransportError::is_rebalance_abort`], move every partition this
+    /// consumer still owns back to its committed offset, in place: no new
+    /// consumer, so no LeaveGroup/JoinGroup and no further rebalance.
+    ///
+    /// Committed offsets are read with `require_stable` (librdkafka sets it for
+    /// `isolation.level=read_committed`), so a pending transactional commit is
+    /// waited for, never skipped. The seek bumps each partition's fetch version,
+    /// so records fetched before it are discarded, never delivered. A partition
+    /// without a committed offset goes to the beginning, as
+    /// `auto.offset.reset=earliest` would. Any error (including a per-partition
+    /// one, e.g. a partition revoked meanwhile) is returned so the caller falls
+    /// back to rebuilding the generation; returns the number of partitions moved.
+    pub async fn rewind_to_committed(&self) -> Result<usize, KafkaTransportError> {
+        let consumer = Arc::clone(&self.consumer);
+        let timeout = self.request_timeout;
+        blocking_kafka_call(move || {
+            let assignment = consumer.assignment()?;
+            if assignment.count() == 0 {
+                return Ok(0);
+            }
+            let committed = consumer.committed_offsets(assignment, Timeout::After(timeout))?;
+            let targets = rewind_targets(&committed)?;
+            let count = targets.count();
+            if count == 0 {
+                return Ok(0);
+            }
+            let sought = consumer.seek_partitions(targets, Timeout::After(timeout))?;
+            for element in sought.elements() {
+                element.error().map_err(KafkaTransportError::Kafka)?;
+            }
+            Ok(count)
+        })
+        .await
     }
 
     /// K3. Read before a batch's first input is polled and pass it to
@@ -1628,7 +1722,86 @@ mod tests {
         // stopped core must leave the group so N-1 redistribution is immediate.
         assert_eq!(client.get("group.instance.id"), None);
         assert_eq!(client.get("session.timeout.ms"), Some("10000"));
-        assert_eq!(client.get("heartbeat.interval.ms"), Some("1000"));
+        assert_eq!(client.get("heartbeat.interval.ms"), Some("3000"));
+    }
+
+    #[test]
+    fn only_group_change_aborts_allow_an_in_place_rewind() {
+        use super::stale_group_generation;
+        use rdkafka::error::{KafkaError, RDKafkaErrorCode};
+        assert!(KafkaTransportError::Rebalanced {
+            observed: 0,
+            current: 2
+        }
+        .is_rebalance_abort());
+        assert!(stale_group_generation(
+            RDKafkaErrorCode::IllegalGeneration,
+            false
+        ));
+        // A fatal error fences the producer: never rewound in place.
+        assert!(!stale_group_generation(
+            RDKafkaErrorCode::IllegalGeneration,
+            true
+        ));
+        for code in [
+            RDKafkaErrorCode::UnknownMemberId,
+            RDKafkaErrorCode::InvalidProducerEpoch,
+            RDKafkaErrorCode::ProducerFenced,
+            RDKafkaErrorCode::RequestTimedOut,
+        ] {
+            assert!(!stale_group_generation(code, false), "{code:?}");
+        }
+        for error in [
+            KafkaTransportError::Kafka(KafkaError::MessageConsumption(
+                RDKafkaErrorCode::IllegalGeneration,
+            )),
+            KafkaTransportError::Delivery(KafkaError::MessageProduction(
+                RDKafkaErrorCode::RequestTimedOut,
+            )),
+            KafkaTransportError::Fencing("authority".into()),
+            KafkaTransportError::Configuration("abort failed".into()),
+        ] {
+            assert!(!error.is_rebalance_abort(), "{error}");
+        }
+    }
+
+    #[test]
+    fn rewind_targets_are_committed_offsets_or_the_beginning() {
+        use super::rewind_targets;
+        use rdkafka::topic_partition_list::{Offset, TopicPartitionList};
+        let mut committed = TopicPartitionList::new();
+        committed
+            .add_partition_offset("raw", 0, Offset::Offset(42))
+            .unwrap();
+        committed
+            .add_partition_offset("raw", 3, Offset::Invalid)
+            .unwrap();
+        let targets = rewind_targets(&committed).unwrap();
+        let mut seen: Vec<_> = targets
+            .elements()
+            .iter()
+            .map(|e| (e.topic().to_owned(), e.partition(), e.offset()))
+            .collect();
+        seen.sort_by_key(|(_, partition, _)| *partition);
+        assert_eq!(
+            seen,
+            vec![
+                ("raw".to_owned(), 0, Offset::Offset(42)),
+                ("raw".to_owned(), 3, Offset::Beginning),
+            ]
+        );
+        for offset in [Offset::End, Offset::Stored, Offset::OffsetTail(1)] {
+            let mut odd = TopicPartitionList::new();
+            odd.add_partition_offset("raw", 1, offset).unwrap();
+            assert!(matches!(
+                rewind_targets(&odd),
+                Err(KafkaTransportError::Configuration(_))
+            ));
+        }
+        assert_eq!(
+            rewind_targets(&TopicPartitionList::new()).unwrap().count(),
+            0
+        );
     }
 
     #[test]

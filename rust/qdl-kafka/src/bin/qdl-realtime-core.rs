@@ -491,6 +491,31 @@ async fn finish_generation<T: Send + 'static>(
     }
 }
 
+/// INCIDENT 2026-10-15. Consecutive in-place rewinds (no batch committed in
+/// between) before a rebalance abort falls back to rebuilding the generation.
+const MAX_CONSECUTIVE_REWINDS: u32 = 3;
+
+/// INCIDENT 2026-10-15. Whether a failed pass is rewound inside the same
+/// generation (same consumer and producer: no LeaveGroup/JoinGroup) instead of
+/// ending it. Only an abort caused by a group change qualifies, its drain must
+/// be clean or the same kind, no stop may be pending (the supervisor owns stop
+/// handling), and the consecutive-rewind budget must remain. Everything else -
+/// including an abort failure, which replaces the error - rebuilds as before.
+fn rewind_in_generation(
+    error: &RuntimeError,
+    drain_error: Option<&KafkaTransportError>,
+    stop_requested: bool,
+    consecutive_rewinds: u32,
+) -> bool {
+    let rebalance_abort = |value: &KafkaTransportError| value.is_rebalance_abort();
+    !stop_requested
+        && consecutive_rewinds < MAX_CONSECUTIVE_REWINDS
+        && error
+            .downcast_ref::<KafkaTransportError>()
+            .is_some_and(rebalance_abort)
+        && drain_error.is_none_or(rebalance_abort)
+}
+
 async fn run_generation(
     config: &RuntimeConfig,
     generation: u64,
@@ -499,6 +524,7 @@ async fn run_generation(
     data_clock: &DataClock,
 ) -> Result<GenerationEnd, RuntimeError> {
     check_data_clock(data_clock)?;
+    // Built here only to refuse an invalid core before any Kafka client exists.
     let mut core = RealtimeCore::new(config.core.clone())?;
     let approved_subscriptions = approved_subscription_scope(config);
     // Refuse a non-shared authority before any Kafka client exists, as before.
@@ -529,57 +555,107 @@ async fn run_generation(
     );
 
     let mut progress = Progress::default();
-    let mut pipeline = CommitPipeline::new();
-    let served = guard_data_clock(
-        data_clock,
-        serve_generation(
-            config,
-            generation,
-            backoff,
-            &mut core,
-            &approved_subscriptions,
-            &bridge,
-            &mut pipeline,
-            &mut progress,
-            stop,
+    let mut rewinds = 0_u64;
+    let mut consecutive_rewinds = 0_u32;
+    let stop_reason = loop {
+        let mut pipeline = CommitPipeline::new();
+        let batches_before = progress.batches;
+        let served = guard_data_clock(
             data_clock,
-        ),
-    )
-    .await
-    .and_then(std::convert::identity);
-    let stop_reason = match finish_generation(served, &mut pipeline).await {
-        Settled::Stopped { reason, committed } => {
-            progress.record_commit(committed, generation, config.metrics_every_batches)?;
-            reason
-        }
-        Settled::StopDrainFailed { reason, error } => {
-            // The stop stands; the failed commit stays visible and is never
-            // reported as a clean stop.
-            eprintln!(
-                "{}",
-                serde_json::to_string(&json!({
-                    "event": "qdl_realtime_core_stop_drain_failed",
-                    "generation": generation,
-                    "reason": reason,
-                    "processed": progress.processed,
-                    "batches": progress.batches,
-                    "error": error.to_string(),
-                }))?
-            );
-            return Ok(GenerationEnd::StopDrainFailed { reason, error });
-        }
-        Settled::Failed { error, drain_error } => {
-            if let Some(commit_error) = drain_error {
+            serve_generation(
+                config,
+                generation,
+                backoff,
+                &mut core,
+                &approved_subscriptions,
+                &bridge,
+                &mut pipeline,
+                &mut progress,
+                stop,
+                data_clock,
+            ),
+        )
+        .await
+        .and_then(std::convert::identity);
+        match finish_generation(served, &mut pipeline).await {
+            Settled::Stopped { reason, committed } => {
+                progress.record_commit(committed, generation, config.metrics_every_batches)?;
+                break reason;
+            }
+            Settled::StopDrainFailed { reason, error } => {
+                // The stop stands; the failed commit stays visible and is never
+                // reported as a clean stop.
                 eprintln!(
                     "{}",
                     serde_json::to_string(&json!({
-                        "event": "qdl_realtime_core_inflight_commit_failed",
+                        "event": "qdl_realtime_core_stop_drain_failed",
                         "generation": generation,
-                        "error": commit_error.to_string(),
+                        "reason": reason,
+                        "processed": progress.processed,
+                        "batches": progress.batches,
+                        "error": error.to_string(),
+                    }))?
+                );
+                return Ok(GenerationEnd::StopDrainFailed { reason, error });
+            }
+            Settled::Failed { error, drain_error } => {
+                if let Some(commit_error) = &drain_error {
+                    eprintln!(
+                        "{}",
+                        serde_json::to_string(&json!({
+                            "event": "qdl_realtime_core_inflight_commit_failed",
+                            "generation": generation,
+                            "error": commit_error.to_string(),
+                        }))?
+                    );
+                }
+                if progress.batches > batches_before {
+                    consecutive_rewinds = 0;
+                }
+                if !rewind_in_generation(
+                    &error,
+                    drain_error.as_ref(),
+                    stop.requested().is_some(),
+                    consecutive_rewinds,
+                ) {
+                    return Err(error);
+                }
+                // INCIDENT 2026-10-15. The aborted batch (and the one read
+                // behind it) are discarded with the core state they produced:
+                // a fresh core replays them from the committed offsets, exactly
+                // as a new generation would, but on the same group member.
+                let started = tokio::time::Instant::now();
+                let moved = match bridge.rewind_to_committed().await {
+                    Ok(moved) => moved,
+                    Err(rewind_error) => {
+                        eprintln!(
+                            "{}",
+                            serde_json::to_string(&json!({
+                                "event": "qdl_realtime_core_rewind_failed",
+                                "generation": generation,
+                                "error": error.to_string(),
+                                "rewind_error": rewind_error.to_string(),
+                            }))?
+                        );
+                        return Err(error);
+                    }
+                };
+                rewinds += 1;
+                consecutive_rewinds += 1;
+                core = RealtimeCore::new(config.core.clone())?;
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&json!({
+                        "event": "qdl_realtime_core_rebalance_rewind",
+                        "generation": generation,
+                        "rewind": rewinds,
+                        "consecutive": consecutive_rewinds,
+                        "partitions": moved,
+                        "rewind_ms": started.elapsed().as_millis() as u64,
+                        "error": error.to_string(),
                     }))?
                 );
             }
-            return Err(error);
         }
     };
     bridge.unsubscribe();
@@ -597,6 +673,7 @@ async fn run_generation(
             "scope_quarantines": progress.scope_quarantines,
             "batches": progress.batches,
             "reason": stop_reason,
+            "rebalance_rewinds": rewinds,
         }))?
     );
     Ok(GenerationEnd::Stopped)
@@ -1289,6 +1366,54 @@ mod tests {
         signal.send(Some(Err("no signal handler".into()))).unwrap();
         assert!(stop.wait().await.is_err());
         assert!(matches!(stop.requested(), Some(Err(_))));
+    }
+
+    #[test]
+    fn only_group_change_aborts_rewind_inside_the_generation() {
+        let rebalanced = || KafkaTransportError::Rebalanced {
+            observed: 0,
+            current: 2,
+        };
+        let boxed = |error: KafkaTransportError| -> RuntimeError { error.into() };
+        // The incident shape: a served revocation aborted the batch, nothing
+        // else in flight -> rewind on the same consumer, no new generation.
+        assert!(rewind_in_generation(&boxed(rebalanced()), None, false, 0));
+        // The drain may report the same abort.
+        assert!(rewind_in_generation(
+            &boxed(rebalanced()),
+            Some(&rebalanced()),
+            false,
+            MAX_CONSECUTIVE_REWINDS - 1
+        ));
+        // Budget exhausted, a pending stop, a different drain error, or any
+        // other failure keeps the old path (rebuild via the supervisor).
+        assert!(!rewind_in_generation(
+            &boxed(rebalanced()),
+            None,
+            false,
+            MAX_CONSECUTIVE_REWINDS
+        ));
+        assert!(!rewind_in_generation(&boxed(rebalanced()), None, true, 0));
+        assert!(!rewind_in_generation(
+            &boxed(rebalanced()),
+            Some(&KafkaTransportError::Configuration("abort failed".into())),
+            false,
+            0
+        ));
+        assert!(!rewind_in_generation(
+            &boxed(KafkaTransportError::Configuration("abort failed".into())),
+            None,
+            false,
+            0
+        ));
+        assert!(!rewind_in_generation(
+            &boxed(KafkaTransportError::SnapshotTimeout("x".into())),
+            Some(&rebalanced()),
+            false,
+            0
+        ));
+        let core_error: RuntimeError = "core rejected input".into();
+        assert!(!rewind_in_generation(&core_error, None, false, 0));
     }
 
     #[test]

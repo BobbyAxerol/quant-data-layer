@@ -73372,3 +73372,21 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
 - Status: F1 (core-kill recovery) NOT deployed; production = RUST18 on all 3 cores. rc19 must not be rolled again
   until a 3-core isolated reproduction shows the storm and a fix shows its absence (candidate: on `Rebalanced`, abort
   and rewind inside the same consumer instead of rebuilding the generation; and/or keep the default heartbeat).
+- RCA + fix (2026-10-15, tested locally, NOT deployed): the per-member epoch rises only on a revoke (`lib.rs:937`),
+  is read at the top of every batch loop even while idle (`qdl-realtime-core.rs:714`), and any revoke aborts the next
+  transaction; the supervisor then drops the bridge (close + LeaveGroup) and rejoins after a backoff that never resets
+  (500 ms doubling to 30 s, ~24 s from attempt 6). Join -> revoke -> abort -> leave -> rejoin is a loop present in
+  RUST18 too (production rust_core_3 on RUST18 logged attempts 1-16 every ~55 s after 07:16Z). Heartbeat 1 s
+  (inferred) splits "old member leaves" and "replacement joins" into two rebalances so the join revokes survivors;
+  rollout receipts fit (survivors on 1 s: 0 -> 1 -> 6-7 retries). Fix: on a rebalance abort (Rebalanced, or a
+  non-fatal IllegalGeneration txn error) rewind the SAME consumer to its committed offsets with a fresh RealtimeCore
+  (cap 3 consecutive rewinds without a commit; any other error keeps the rebuild path); heartbeat back to 3000 ms,
+  session stays 10000 ms (dead member's partitions move in ~13 s). EOS: rebalance error only after a successful abort;
+  committed-offset read with require_stable; seek discards pre-seek fetches; zombie fencing via group metadata kept.
+  cargo test -p qdl-kafka all pass (lib 45, realtime-core 21, ingestor 49, production-core 7), fmt clean.
+- G12 harness `--core-group BASE --new-core <img>`: 3 core members in one group on 6 raw partitions; 120 s baseline,
+  rolling SIGTERM replace of each member onto the new image (150 s hold each), then SIGKILL core-2 + restart;
+  `core-group-verdict.json`. 101 unittest OK. Acceptance to freeze before running: run A (RUST18 -> rc19) must
+  reproduce the storm or the harness is not valid evidence; run B (RUST18 -> fixed) storm=false, retries 0,
+  rewind_failed 0, <= 2 rewinds per roll window, 3 members each owning >= 1 partition at every window end,
+  core-kill caught up <= 60 s with partitions moved <= 15 s, no inflight/stop-drain failure, 0 guard breaches.

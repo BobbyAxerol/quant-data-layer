@@ -2073,3 +2073,120 @@ class SamplerCoverageTests(unittest.TestCase):
         state = g12.caught_up(g12.view_series(views), g12.publish_index(pubs), "OKX", self.CLEARED)
         self.assertIsNone(state["caught_up_ns"])
         self.assertGreater(state["rejected_samples"]["future_publish"], 0)
+
+
+class CoreGroupReproductionTests(unittest.TestCase):
+    """INCIDENT 2026-10-15: --core-group runs the production core-group shape (3 members, 6 raw partitions)."""
+
+    def test_default_shape_is_the_single_core_g12(self):
+        with tempfile.TemporaryDirectory() as work:
+            self.assertEqual(g12.core_group(work), {"members": 1, "raw_partitions": 1})
+        self.assertEqual(g12.topics(NS)[NS + ".raw"][0], 1)
+        roles = g12.topology(NS, "/home/bobby/x/work", "T", uid="1:1")
+        self.assertFalse({"core-2", "core-3"} & set(roles))
+        self.assertEqual(roles["core"][-1], "/work/core.json")
+
+    def test_three_members_share_one_group_with_own_config_and_client(self):
+        roles = g12.topology(NS, "/home/bobby/x/work", "T", uid="1:1", core_members=3)
+        for index, role in enumerate(g12.CORE_MEMBERS, start=1):
+            with self.subTest(role=role):
+                argv = roles[role]
+                suffix = "" if index == 1 else f"-{index}"
+                self.assertEqual(argv[argv.index("--name") + 1], f"{NS}-{role}")
+                self.assertIn(f"QDL_KAFKA_GROUP_ID={NS}", argv)
+                self.assertIn(f"QDL_KAFKA_CLIENT_ID={NS}{suffix}", argv)
+                self.assertEqual(argv[-1], f"/work/core{suffix}.json")
+                self.assertIn("--rm", argv)
+        for role in g12.CORE_MEMBERS[1:]:
+            self.assertIn(role, g12.TEARDOWN_ORDER)
+            self.assertIn(role, g12.FOLLOWED_ROLES)
+            self.assertEqual(g12.role_image_key(role), "core")
+
+    def test_member_configs_differ_only_in_transactional_id(self):
+        with tempfile.TemporaryDirectory() as work:
+            base = {"transactional_id": NS, "raw_topics": [NS + ".raw"], "batch_size": 1024}
+            (Path(work) / "core.json").write_text(json.dumps(base))
+            g12.write_member_configs(work, 3)
+            ids = {NS}
+            for index in (2, 3):
+                member = json.loads((Path(work) / f"core-{index}.json").read_text())
+                self.assertEqual({k: v for k, v in member.items() if k != "transactional_id"},
+                                 {k: v for k, v in base.items() if k != "transactional_id"})
+                ids.add(member["transactional_id"])
+            self.assertEqual(len(ids), 3)
+            (Path(work) / g12.CORE_GROUP_FILE).write_text(json.dumps({"members": 3, "raw_partitions": 6}))
+            self.assertEqual(g12.core_group(work)["raw_partitions"], 6)
+            (Path(work) / g12.CORE_GROUP_FILE).write_text(json.dumps({"members": 2, "raw_partitions": 6}))
+            with self.assertRaises(ValueError):
+                g12.core_group(work)
+        self.assertEqual(g12.topics(NS, 6)[NS + ".raw"][0], 6)
+
+    def test_raw_partition_is_stable_per_key_and_spreads(self):
+        keys = [f"sub-{n}".encode() for n in range(40)]
+        self.assertTrue(all(g12.raw_partition(k, 1) == 0 for k in keys))
+        spread = {g12.raw_partition(k, 6) for k in keys}
+        self.assertGreaterEqual(len(spread), 5)
+        self.assertEqual([g12.raw_partition(k, 6) for k in keys], [g12.raw_partition(k, 6) for k in keys])
+
+    def test_kill_uses_sigkill_and_stop_uses_sigterm(self):
+        row = {"Id": "abc", "Name": "/" + NS + "-core-2", "Config": {"Labels": {g12.LABEL: NS}},
+               "HostConfig": {"AutoRemove": True}}
+        for kill, expected in ((False, ["docker", "stop", "--time", "30", "abc"]),
+                               (True, ["docker", "kill", "--signal", "KILL", "abc"])):
+            calls = []
+
+            def sh(argv, timeout=60, check=True):
+                calls.append(argv)
+                return json.dumps([row]) if argv[:2] == ["docker", "inspect"] else ""
+            with self.subTest(kill=kill), patch.object(g12, "sh", sh):
+                self.assertTrue(g12.stop_role(NS, "core-2", kill=kill))
+                self.assertIn(expected, calls)
+
+    def _evidence(self, root, *, final_retries, kill_lag):
+        ev = Path(root)
+        (ev / "logs").mkdir()
+        (ev / "verdict-ns.json").write_text(json.dumps({"namespace": NS}))
+        t0 = 1_800_000_000 * S
+        windows = [("baseline", t0, t0 + 100 * S), ("after_roll_core", t0 + 100 * S, t0 + 200 * S),
+                   ("after_kill", t0 + 205 * S, t0 + 300 * S)]
+        faults = [{"k": "core_window", "name": n, "start_ns": a, "end_ns": b} for n, a, b in windows]
+        faults.insert(2, {"k": "core_kill", "role": "core-2", "injected_ns": t0 + 200 * S,
+                          "restart_ns": t0 + 200 * S + MS})
+        (ev / "faults.jsonl").write_text("".join(json.dumps(f) + "\n" for f in faults))
+
+        def stamp(t):
+            from datetime import datetime, timezone
+            return datetime.fromtimestamp(t // S, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + ".000000001Z"
+        lines = [f"{stamp(t0 + 150 * S)} " + json.dumps({"event": "qdl_realtime_core_rebalance_rewind"}),
+                 f"{stamp(t0 + 150 * S)} " + json.dumps({"event": "qdl_realtime_core_progress"})]
+        lines += [f"{stamp(t0 + (210 + 10 * n) * S)} " + json.dumps(
+            {"event": "qdl_realtime_core_retry", "error": "consumer rebalanced"}) for n in range(final_retries)]
+        (ev / "logs" / "core-2.life1.log").write_text("\n".join(lines) + "\n")
+        rows = []
+        for t in range(0, 300):
+            members, assigned, lag = 3, [2, 2, 2], 5
+            if 200 <= t < 212:
+                members, assigned, lag = 4, [0, 2, 2, 2], 400
+            elif t >= 212:
+                lag = kill_lag
+            rows.append({"t": t0 + t * S, "groups": {NS: {"members": members, "assigned": assigned}},
+                         "lag": {NS: lag}})
+        (ev / "monitor.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+        return ev
+
+    def test_verdict_counts_windows_storm_and_kill_catch_up(self):
+        with tempfile.TemporaryDirectory() as root:
+            verdict = g12.core_group_verdict(self._evidence(root, final_retries=0, kill_lag=3))
+            self.assertFalse(verdict["storm"])
+            self.assertEqual(verdict["windows"]["after_roll_core"]["rewinds"], 1)
+            self.assertEqual(verdict["windows"]["after_roll_core"]["retries"], 0)
+            self.assertEqual(verdict["windows"]["baseline"]["max_lag"], 5)
+            # The dead member (empty, until its session expires) counts as short.
+            self.assertEqual(verdict["windows"]["after_kill"]["short_member_samples"], 7)
+            self.assertEqual(verdict["core_kill_caught_up_s"], 12.0)
+            self.assertEqual(verdict["totals"]["qdl_realtime_core_rebalance_rewind"], 1)
+        with tempfile.TemporaryDirectory() as root:
+            verdict = g12.core_group_verdict(self._evidence(root, final_retries=3, kill_lag=50))
+            self.assertTrue(verdict["storm"])
+            self.assertEqual(verdict["windows"]["after_kill"]["retries"], 3)
+            self.assertIsNone(verdict["core_kill_caught_up_s"])

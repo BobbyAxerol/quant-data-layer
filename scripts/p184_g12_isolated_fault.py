@@ -170,6 +170,41 @@ BAR_INTERVAL, BAR_MS = "1m", 60_000
 MD_RATE = {"trade_per_s": 3, "burst_every_s": 15, "burst_trades": 8, "quote_per_s": 2,
            "bar_delay_ms": 200, "seed_bars": 5, "mark_per_s": 1}
 TEST_ADAPTER = "p184-synthetic-test-only"
+# INCIDENT 2026-10-15 core-group reproduction (``--core-group``): the production group shape (3 members, 6 raw
+# partitions, one transactional.id each) instead of G12's single core on a 1-partition raw topic. Absent
+# ``work/core-group.json`` every G12 mode keeps its single-core shape.
+CORE_MEMBERS = ("core", "core-2", "core-3")
+CORE_GROUP_FILE = "core-group.json"
+CORE_GROUP = {"raw_partitions": 6, "baseline_s": 120, "hold_s": 150, "kill_member": "core-2",
+              "kill_caught_up_s": 60}
+CORE_EVENTS = ("qdl_realtime_core_started", "qdl_realtime_core_retry", "qdl_realtime_core_rebalance_rewind",
+               "qdl_realtime_core_rewind_failed", "qdl_realtime_core_inflight_commit_failed",
+               "qdl_realtime_core_stop_drain_failed")
+
+
+def core_group(work):
+    """The run's core-group shape: {"members", "raw_partitions"}; G12 single core when the file is absent."""
+    path = Path(work) / CORE_GROUP_FILE
+    shape = json.loads(path.read_text()) if path.exists() else {"members": 1, "raw_partitions": 1}
+    if shape["members"] not in (1, len(CORE_MEMBERS)) or shape["raw_partitions"] not in (1, 6):
+        raise ValueError("core group is 1 member/1 partition or 3 members/6 partitions")
+    return shape
+
+
+def raw_partition(key, partitions):
+    """Raw partition of a subscription key: stable per key (per-binding order kept), spread over the topic."""
+    import zlib
+    return zlib.crc32(key) % partitions
+
+
+def write_member_configs(work, members):
+    """core-<n>.json for members 2..n: core.json with its own transactional.id (one per production member)."""
+    work = Path(work)
+    config = json.loads((work / "core.json").read_text())
+    base = config["transactional_id"]
+    for index in range(2, members + 1):
+        member = {**config, "transactional_id": f"{base}-{index}"}
+        (work / f"core-{index}.json").write_text(json.dumps(member))
 # CAPTURE adapter mode (TEST_ONLY real-capture replay; ``Run.use_capture_adapter``): core and stream must be the
 # isolated-replay-clock TEST builds (image label), never a release image.
 TEST_CLOCK_LABEL = ("io.qdl.test-only", "isolated-replay-clock")
@@ -233,6 +268,8 @@ def dr05_images(images):
 def role_image_key(role):
     """Which image-set role a container role runs."""
     base = re.sub(r"-(binance|okx)$", "", role)
+    if base in CORE_MEMBERS:  # core-group members run the core image
+        return "core"
     return {"net": "holder", "quota": "redis", "query": "python", "helper": "python", "monitor": "python",
             "publisher": "python", "sampler": "ts", "tswriter": "ts", "tsredis": "redis",
             "tspg": "postgres"}.get(base, "kafka" if base.startswith("kafka-") else base)
@@ -250,12 +287,12 @@ def broker_port(node):
     return 9092 + 100 * (node - 1)
 
 
-def topics(ns):
+def topics(ns, raw_partitions=1):
     """name -> (partitions, config). RF3 and min ISR 2 everywhere (production shape)."""
     namespace(ns)
     data = {"min.insync.replicas": "2"}
     state = {**data, "cleanup.policy": "compact", "delete.retention.ms": "604800000"}
-    return {ns + ".raw": (1, data), ns + ".canonical": (1, data), ns + ".quarantine": (1, data),
+    return {ns + ".raw": (raw_partitions, data), ns + ".canonical": (1, data), ns + ".quarantine": (1, data),
             ns + ".latest": (3, state), ns + ".bars": (3, {**state, "min.compaction.lag.ms": "3600000"})}
 
 
@@ -321,7 +358,7 @@ def _env(argv, env):
     return argv
 
 
-def topology(ns, work, topic_id="", *, uid=None, images=None, query_code="worktree"):
+def topology(ns, work, topic_id="", *, uid=None, images=None, query_code="worktree", core_members=1):
     """Docker argv per role (adapted from p184_dr05_dl_fault.topology: 3 brokers,
     a projector, one holder-owned loopback namespace). Executes nothing."""
     namespace(ns)
@@ -356,11 +393,15 @@ def topology(ns, work, topic_id="", *, uid=None, images=None, query_code="worktr
     roles["quota"] = _base(ns, "quota", network=net, memory="192m", cpus="0.1", uid=uid) + [
         "--tmpfs", "/data:rw,size=1m,mode=1777", "--entrypoint", "redis-server", images["redis"],
         "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
-    roles["core"] = _env(_base(ns, "core", network=net, memory="256m", cpus="0.5", uid=uid)
-        + ["--tmpfs", "/tmp:rw,size=64m,mode=1777"] + mount,
-        {"QDL_KAFKA_CERT_ROOT": "/work", "QDL_KAFKA_BOOTSTRAP_SERVERS": BOOTSTRAP,
-         "QDL_KAFKA_CLIENT_ID": ns, "QDL_KAFKA_GROUP_ID": ns, "QDL_PROVIDER_ADMISSION_ENABLED": "false"}) + [
-        "--entrypoint", "/usr/local/bin/qdl-realtime-core", images["core"], "/work/core.json"]
+    # One group (QDL_KAFKA_GROUP_ID ns) for every member; member n>1 reads core-<n>.json (own transactional.id).
+    for index, role in enumerate(CORE_MEMBERS[:core_members], start=1):
+        suffix = "" if index == 1 else f"-{index}"
+        roles[role] = _env(_base(ns, role, network=net, memory="256m", cpus="0.5", uid=uid)
+            + ["--tmpfs", "/tmp:rw,size=64m,mode=1777"] + mount,
+            {"QDL_KAFKA_CERT_ROOT": "/work", "QDL_KAFKA_BOOTSTRAP_SERVERS": BOOTSTRAP,
+             "QDL_KAFKA_CLIENT_ID": ns + suffix, "QDL_KAFKA_GROUP_ID": ns,
+             "QDL_PROVIDER_ADMISSION_ENABLED": "false"}) + [
+            "--entrypoint", "/usr/local/bin/qdl-realtime-core", images["core"], f"/work/core{suffix}.json"]
     roles["projector"] = _env(_base(ns, "projector", network=net, memory="256m", cpus="0.5", uid=uid)
         + ["--tmpfs", "/tmp:rw,size=64m,mode=1777"] + mount,
         {**tls, "QDL_KN_KAFKA_BOOTSTRAP": BOOTSTRAP, "QDL_KN_BUNDLE_PATH": "/work/bundle.json",
@@ -400,13 +441,14 @@ def topology(ns, work, topic_id="", *, uid=None, images=None, query_code="worktr
 
 
 SERVICE_ORDER = ("quota", "core", "projector", "stream", "query")
-TEARDOWN_ORDER = ("sampler", "publisher", "monitor", "query", "stream", "projector", "core", "quota",
+TEARDOWN_ORDER = ("sampler", "publisher", "monitor", "query", "stream", "projector", "core-3", "core-2", "core",
+                  "quota",
                   "kafka-3", "kafka-2", "kafka-1", "helper", "net")
 
 
 # IDR-107: a product role that exits unexpectedly is --rm-removed with its stderr; a per-life follower keeps the
 # tail. No restart policy: an exit stays a STOP.
-FOLLOWED_ROLES = SERVICE_ORDER + tuple(f"kafka-{node}" for node in BROKERS)
+FOLLOWED_ROLES = SERVICE_ORDER + CORE_MEMBERS[1:] + tuple(f"kafka-{node}" for node in BROKERS)
 FOLLOW_TAIL_BYTES = 1_000_000
 
 
@@ -1226,7 +1268,7 @@ def create_topics(work):
         if time.monotonic() >= deadline:
             raise TimeoutError("three-broker cluster readiness")
         time.sleep(1)
-    wanted = topics(packet["namespace"])
+    wanted = topics(packet["namespace"], core_group(work)["raw_partitions"])
     futures = admin.create_topics([NewTopic(name, parts, len(BROKERS), config=dict(config))
                                    for name, (parts, config) in wanted.items()], request_timeout=30)
     for future in futures.values():
@@ -1881,6 +1923,7 @@ def publish(work, out, seconds, hz):
     config = json.loads((Path(work) / "core.json").read_text())
     if config.get("raw_topics") != [ns + ".raw"] or config["core"].get("allow_test_provenance") is not True:
         raise ValueError("isolated test-only raw topic required")
+    raw_partitions = core_group(work)["raw_partitions"]
     bindings = {b["venue"]: b for b in config["core"]["bindings"] if b.get("l2")}
     lanes = md_bindings(config)
     if set(bindings) != set(VENUES) or not 0 < hz <= 20 or not 0 < seconds <= LIMITS["deadline_s"]:
@@ -1964,7 +2007,8 @@ def publish(work, out, seconds, hz):
             for item in frames:
                 raw = md_envelope(lanes[(event["venue"], item["feed"])], item, ns)
                 try:
-                    producer.produce(config["raw_topics"][0], partition=0, key=raw.subscription_id.encode(),
+                    producer.produce(config["raw_topics"][0], key=raw.subscription_id.encode(),
+                                     partition=raw_partition(raw.subscription_id.encode(), raw_partitions),
                                      value=raw.SerializeToString(), headers=[("qdl-event-id", raw.capture_id)],
                                      on_delivery=md_ack(event, at_ns))
                 except BufferError:
@@ -2006,7 +2050,8 @@ def publish(work, out, seconds, hz):
                 at_ns = time.time_ns()
                 raw = raw_envelope(bindings[venue], book_frame(venue, snapshot, seq, s["seq"], s["gen"], at_ns), ns)
                 try:
-                    producer.produce(config["raw_topics"][0], partition=0, key=raw.subscription_id.encode(),
+                    producer.produce(config["raw_topics"][0], key=raw.subscription_id.encode(),
+                                     partition=raw_partition(raw.subscription_id.encode(), raw_partitions),
                                      value=raw.SerializeToString(), headers=[("qdl-event-id", raw.capture_id)],
                                      on_delivery=ack(venue, seq, s["gen"], at_ns))
                 except BufferError:
@@ -2073,7 +2118,9 @@ def kafka_sample(source, admin, roster, rosters, groups, phase=lambda name: None
         for group, future in described.items():
             value = future.result(timeout=4)
             row["groups"][group] = {"state": str(getattr(value, "state", "")).split(".")[-1],
-                                    "members": len(value.members or ())}
+                                    "members": len(value.members or ()),
+                                    "assigned": sorted(len(getattr(m.assignment, "topic_partitions", None) or ())
+                                                       for m in value.members or ())}
     except Exception as error:  # noqa: BLE001
         row["groups_error"] = type(error).__name__
     phase("done")
@@ -2217,10 +2264,13 @@ def monitor(work, out, seconds, period=1.0):
     catch-up falls in a monitor gap (MONITOR_MAX_GAP_S)."""
     packet = _packet(work)
     ns = packet["namespace"]
-    roster = topics(ns)
+    shape = core_group(work)
+    roster = topics(ns, shape["raw_partitions"])
     rosters = {"kn-projector-v3-a": {ns + ".canonical": roster[ns + ".canonical"][0]},
                "kn-projector-v3-b": {ns + ".latest": roster[ns + ".latest"][0],
                                      ns + ".bars": roster[ns + ".bars"][0]}}
+    if shape["members"] > 1:  # core-group run: the core group's raw lag (committed vs log end)
+        rosters[ns] = {ns + ".raw": shape["raw_partitions"]}
     groups = (*PROJECTOR_GROUPS, "kn-" + ns, ns)
 
     def make_sampler():
@@ -2280,8 +2330,8 @@ def running_names(ns):
     return set(out.split())
 
 
-def stop_role(ns, role, timeout=30):
-    """Stop one owned --rm container and wait until it is gone (identity checked)."""
+def stop_role(ns, role, timeout=30, kill=False):
+    """Stop (``kill``: SIGKILL) one owned --rm container and wait until it is gone (identity checked)."""
     name = f"{ns}-{role}"
     rows = json.loads(sh(["docker", "inspect", name], check=False) or "[]")
     if not rows:
@@ -2291,7 +2341,8 @@ def stop_role(ns, role, timeout=30):
         raise RuntimeError("refuse to stop a container this run does not own: " + name)
     if row["HostConfig"].get("AutoRemove") is not True:
         raise RuntimeError("refuse non-disposable container: " + name)
-    sh(["docker", "stop", "--time", str(timeout), row["Id"]], timeout=timeout + 30, check=False)
+    sh(["docker", "kill", "--signal", "KILL", row["Id"]] if kill else
+       ["docker", "stop", "--time", str(timeout), row["Id"]], timeout=timeout + 30, check=False)
     limit = time.monotonic() + 30
     while sh(["docker", "ps", "-aq", "--no-trunc", "--filter", "id=" + row["Id"]]).strip():
         if time.monotonic() >= limit:
@@ -2425,6 +2476,7 @@ class Run:
         self.predicate = None  # frozen in prepare()
         self.adapter_mode = "SYNTHETIC"
         self.capture_raw_sha256 = None
+        self.core_members = 1
 
     def use_capture_adapter(self, raw_sha256):
         """TEST_ONLY real-capture replay: keep the source catalog adapter_version (CAPTURE adapter mode).
@@ -2533,7 +2585,8 @@ class Run:
             raise RuntimeError(f"STOP provenance: {name} runs {actual}, expected {expected}")
 
     def topology(self, topic_id=""):
-        return topology(self.ns, self.work, topic_id, images=self.images, query_code=self.query_code)
+        return topology(self.ns, self.work, topic_id, images=self.images, query_code=self.query_code,
+                        core_members=self.core_members)
 
     def helper(self, *args, **kwargs):
         return helper_argv(*args, images=self.images, **kwargs)
@@ -2773,6 +2826,53 @@ class Run:
                 md_missing(load_jsonl(self.evidence / "sampler.jsonl"))))
         self.note("ts_market_data_applied")
 
+    # -- INCIDENT 2026-10-15 core-group reproduction (no projector/Stream/Query/TS clones: the core group only)
+    def core_group_up(self):
+        self.core_members = len(CORE_MEMBERS)
+        sh(self.topology()["net"])
+        self.expected.add("net")
+        self.verify_image("net")
+        for node in BROKERS:
+            self.start(f"kafka-{node}", "")
+        (self.work / CORE_GROUP_FILE).write_text(json.dumps(
+            {"members": self.core_members, "raw_partitions": CORE_GROUP["raw_partitions"]}))
+        write_member_configs(self.work, self.core_members)
+        result = sh(self.helper(self.ns, self.work, ["--topics", "/work"]), timeout=180)
+        self.note("topics", result=result.strip()[-400:], core_group=core_group(self.work))
+        self.topic_id = json.loads((self.work / "packet.json").read_text())["slice"]["topic_id"]
+        for role in CORE_MEMBERS:
+            self.start(role, self.topic_id)
+        remaining = int(LIMITS["deadline_s"] - (time.monotonic() - self.started) - 60)
+        for role, mode, out in (("monitor", "--monitor", "monitor"), ("publisher", "--publish", "publish")):
+            extra = ["--hz", str(PUBLISH_HZ)] if role == "publisher" else []
+            sh(self.helper(self.ns, self.work, [mode, "/work", "--out", f"/evidence/{out}.jsonl",
+                                                "--seconds", str(remaining), *extra], role=role, detach=True,
+                           evidence=self.evidence, cpus="0.25", memory="256m"))
+            self.expected.add(role)
+            self.verify_image(role)
+        self.note("core_group_started", members=list(CORE_MEMBERS), seconds=remaining)
+
+    def core_group_window(self, name, seconds, **fields):
+        start = time.time_ns()
+        self.wait(seconds)
+        self.fault_row({"k": "core_window", "name": name, "start_ns": start, "end_ns": time.time_ns(), **fields})
+
+    def core_replace(self, role, image=None, kill=False):
+        """Rolling replace (SIGTERM, as compose recreate) or SIGKILL of one member, restarted at once."""
+        if image is not None:
+            self.images["core"] = image  # verify_image checks the replacement against the new image
+        injected = time.time_ns()
+        stop_role(self.ns, role, kill=kill)
+        restart = time.time_ns()
+        sh(self.topology(self.topic_id)[role], timeout=60)
+        self.verify_image(role)
+        self.follow_logs(role)
+        row = {"k": "core_kill" if kill else "core_roll", "role": role, "image": self.images["core"],
+               "injected_ns": injected, "restart_ns": restart}
+        self.fault_row(row)
+        self.note(row["k"], **row)
+        return row
+
     def baseline(self):
         start = time.time_ns()
         self.wait(LIMITS["baseline_s"])
@@ -2959,6 +3059,120 @@ def orchestrate(base, export, ns, images=None, query_code="worktree"):
     return 0 if status == "COMPLETED" else 1
 
 
+def core_log_events(logs):
+    """(t_ns, role, event, fields) of every core lifecycle event in ``logs/<member>.life<n>.log``."""
+    from datetime import datetime
+    rows = []
+    for path in sorted(Path(logs).glob("core*.life*.log")):
+        role = path.name.split(".life")[0]
+        for line in path.read_text(errors="replace").splitlines():
+            stamp, _, body = line.partition(" ")
+            if '"event"' not in body:
+                continue
+            try:
+                value = json.loads(body)
+                seconds, _, frac = stamp.rstrip("Z").partition(".")
+                t = int(datetime.fromisoformat(seconds + "+00:00").timestamp()) * 10**9 + int((frac + "0" * 9)[:9])
+            except ValueError:
+                continue
+            if value.get("event") in CORE_EVENTS:
+                rows.append((t, role, value["event"], value))
+    return sorted(rows, key=lambda r: r[0])
+
+
+def core_group_verdict(evidence, members=len(CORE_MEMBERS)):
+    """Storm / no-storm verdict of a ``--core-group`` run from its core logs, faults and monitor (offline).
+
+    Per window (baseline, after each roll, after the kill): retries, rebalance rewinds and group samples with
+    fewer than ``members`` members or an empty member. ``storm``: any retry in the final settle window, or a
+    member short in its last 30 s. Core-kill: seconds from the kill to the first sample with all members, every
+    member assigned and core lag <= the baseline's maximum (``kill_caught_up_s``)."""
+    evidence = Path(evidence)
+    events = core_log_events(evidence / "logs")
+    faults = load_jsonl(evidence / "faults.jsonl")
+    monitor_rows = [r for r in monitor_valid(load_jsonl(evidence / "monitor.jsonl")) if "groups" in r]
+    ns = json.loads((evidence / "verdict-ns.json").read_text())["namespace"]
+
+    def group(row):
+        value = (row.get("groups") or {}).get(ns) or {}
+        return value.get("members", 0), value.get("assigned") or [], (row.get("lag") or {}).get(ns)
+
+    windows, result = [r for r in faults if r.get("k") == "core_window"], {"windows": {}, "faults": faults}
+    for window in windows:
+        lo, hi = window["start_ns"], window["end_ns"]
+        inside = [e for e in events if lo <= e[0] <= hi]
+        samples = [group(r) for r in monitor_rows if lo <= r["t"] <= hi]
+        result["windows"][window["name"]] = {
+            "seconds": round((hi - lo) / 1e9, 1),
+            "retries": sum(1 for e in inside if e[2] == "qdl_realtime_core_retry"),
+            "rewinds": sum(1 for e in inside if e[2] == "qdl_realtime_core_rebalance_rewind"),
+            "rewind_failed": sum(1 for e in inside if e[2] == "qdl_realtime_core_rewind_failed"),
+            "short_member_samples": sum(1 for m, a, _ in samples if m < members or 0 in a),
+            "samples": len(samples), "max_lag": max((lag for *_, lag in samples if lag is not None), default=None),
+            "retry_errors": sorted({e[3].get("error", "")[:120] for e in inside
+                                    if e[2] == "qdl_realtime_core_retry"})}
+    result["totals"] = {name: sum(1 for e in events if e[2] == name) for name in CORE_EVENTS}
+    final = windows[-1] if windows else None
+    if final:
+        tail = [group(r) for r in monitor_rows if final["end_ns"] - 30 * 10**9 <= r["t"] <= final["end_ns"]]
+        result["storm"] = (result["windows"][final["name"]]["retries"] > 0
+                           or not tail or any(m < members or 0 in a for m, a, _ in tail))
+    kill = next((f for f in faults if f.get("k") == "core_kill"), None)
+    base = result["windows"].get("baseline", {}).get("max_lag")
+    if kill and base is not None:
+        caught = next((r["t"] for r in monitor_rows if r["t"] >= kill["injected_ns"]
+                       and group(r)[0] == members and 0 not in group(r)[1] and group(r)[1]
+                       and group(r)[2] is not None and group(r)[2] <= base), None)
+        result["core_kill_caught_up_s"] = None if caught is None else round((caught - kill["injected_ns"]) / 1e9, 3)
+    return result
+
+
+def orchestrate_core_group(base, export, ns, images, new_core):
+    """INCIDENT 2026-10-15 reproduction: 3 core members (one group, 6 raw partitions) on ``images["core"]``;
+    baseline; rolling replace of each member onto ``new_core`` with a hold after each; SIGKILL of one member
+    (restarted at once); teardown; ``evidence/core-group-verdict.json``. Exits 0 when it ran to the end."""
+    run = Run(base, export, ns, images)
+
+    def expire(_signum, _frame):
+        raise TimeoutError("core-group orchestrator absolute deadline")
+
+    def terminated(signum, _frame):
+        raise SystemExit(f"core-group orchestrator received signal {signum}")
+    previous = signal.signal(signal.SIGALRM, expire)
+    previous_term = {sig: signal.signal(sig, terminated) for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)}
+    signal.alarm(LIMITS["deadline_s"])
+    status, error = "FAIL", None
+    try:
+        run.prepare()
+        (run.evidence / "verdict-ns.json").write_text(json.dumps({"namespace": ns}))
+        run.core_group_up()
+        run.core_group_window("baseline", CORE_GROUP["baseline_s"])
+        for role in CORE_MEMBERS:
+            run.core_replace(role, image=new_core)
+            run.core_group_window("after_roll_" + role, CORE_GROUP["hold_s"], role=role)
+        run.core_replace(CORE_GROUP["kill_member"], kill=True)
+        run.core_group_window("after_kill", CORE_GROUP["hold_s"], role=CORE_GROUP["kill_member"])
+        status = "COMPLETED"
+    except BaseException as exc:  # noqa: BLE001 - evidence first, then teardown
+        error = f"{type(exc).__name__}: {exc}"
+        print("STOPPED", error, flush=True)
+        if run.evidence.exists():
+            run.note("stopped", error=error)
+    finally:
+        signal.alarm(0)
+        try:
+            run.down() if run.evidence.exists() else teardown(ns)
+        finally:
+            if run.evidence.exists() and (run.evidence / "verdict-ns.json").exists():
+                verdict = core_group_verdict(run.evidence)
+                verdict.update(status=status, error=error, namespace=ns, images=run.images, new_core=new_core)
+                (run.evidence / "core-group-verdict.json").write_text(json.dumps(verdict, indent=2) + "\n")
+            signal.signal(signal.SIGALRM, previous)
+            for sig, handler in previous_term.items():
+                signal.signal(sig, handler)
+    return 0 if status == "COMPLETED" else 1
+
+
 def keep_diagnostics(out):
     """Detached --rm roles lose their stderr when they exit: write it (and a native
     crash's faulthandler dump) next to the evidence file (final-image attempt 3,
@@ -2976,8 +3190,8 @@ def keep_diagnostics(out):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     mode = parser.add_mutually_exclusive_group(required=True)
-    for flag in ("run", "down", "analyze", "topics", "publish", "monitor", "feeds", "query"):
-        mode.add_argument("--" + flag, type=Path)
+    for flag in ("run", "core_group", "down", "analyze", "topics", "publish", "monitor", "feeds", "query"):
+        mode.add_argument("--" + flag.replace("_", "-"), type=Path)
     parser.add_argument("--export", type=Path)
     parser.add_argument("--namespace")
     parser.add_argument("--out")
@@ -2986,7 +3200,17 @@ def main(argv=None):
     parser.add_argument("--image-set", type=Path, help="JSON object role -> sha256:<64hex> (defaults: IMAGES)")
     parser.add_argument("--image", action="append", default=[], metavar="ROLE=sha256:<64hex>")
     parser.add_argument("--query-code", choices=QUERY_CODE, default="worktree")
+    parser.add_argument("--new-core", metavar="sha256:<64hex>",
+                        help="--core-group: the core image each member is rolled onto (old: the image set's core)")
     args = parser.parse_args(argv)
+    if args.core_group:
+        if args.export is None or args.namespace is None or not re.fullmatch(r"sha256:[0-9a-f]{64}",
+                                                                              args.new_core or ""):
+            parser.error("--core-group needs --export, --namespace and --new-core sha256:<64hex>")
+        images = resolve_image_set(args.image_set, args.image)
+        if image_record(args.new_core)["id"] != args.new_core:
+            parser.error("--new-core is not a local image id")
+        return orchestrate_core_group(args.core_group, args.export, args.namespace, images, args.new_core)
     if args.run:
         if args.export is None or args.namespace is None:
             parser.error("--run needs --export and --namespace")
