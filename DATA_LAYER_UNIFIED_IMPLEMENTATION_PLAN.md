@@ -73298,3 +73298,20 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   catalog/manifests, JWT. Rollback per role: stream/ingestor rc14 ce629061, core rc16 f41ecb66 + old config (saved
   composes in rollout-rc18/), writer 2beedc04 compose.
 - Final stage-100 campaign on the new set started 10:58Z (writer trace re-armed, same image).
+
+
+### P18.4 G12 v2 sampler coverage (Codex recovery review R3) - 2026-10-15 (Claude)
+- Finding confirmed in source (Codex 80ff089a R3): `caught_up` compared each view sample with the previously
+  *observed* sequence, so a latest-state sampler that missed an applied intermediate snapshot reported `update_gap`
+  (or an inflated `update_transit`) - an apparatus false negative; no sampler coverage check existed (only the Kafka
+  monitor had `MONITOR_MAX_GAP_S`).
+- Fix (`scripts/p184_g12_isolated_fault.py`): the sampler records `pt` (previous successful poll) on each row; a
+  rejected sample whose poll hole exceeds the top-change floor is `undersampled`, which can neither start nor break a
+  hold; per-venue `sampler_max_gap_s` over clear -> caught-up + hold; a gap above `SAMPLER_MAX_GAP_S` (=
+  MONITOR_MAX_GAP_S) or any undersampled sample in the hold makes the fault `NOT_MEASURED` (never PASS/FAIL). There is
+  no per-apply BOOK evidence, so `undersampled` never resolves to PASS. Stuck-view (`open_gap`) and genuine skipped
+  apply detection unchanged; new `future_publish` reason.
+- Tests: 4 new (omitted samples -> NOT_MEASURED; real skipped applies still `update_gap`; 35 s hole / dead sampler ->
+  NOT_MEASURED; regressed/repeated seq and future publish). `python -B -m unittest tests.test_p184_g12_isolated_fault`
+  in `qdl-v2-python:2.2.3-rc17-98b421f` (`--rm --network none`): 91 tests OK. Status: tested locally; effective
+  for the next G12 run only (`pt` needs the redeployed sampler). Earlier G12 v2 PASS/FAIL receipts are unchanged.

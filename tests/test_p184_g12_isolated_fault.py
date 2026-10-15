@@ -234,7 +234,7 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(result["parts"], {"caught_up": True, "window_complete": True, "g1": "PASS",
                                            "g2": "PASS", "g2_feeds": {"TRADE": "PASS", "QUOTE": "PASS",
                                                                       "MARK": "PASS"}, "g3": "PASS",
-                                           "monitor": "PASS"})
+                                           "monitor": "PASS", "sampler": "PASS"})
         self.assertEqual(result["g2"]["TRADE"]["BINANCE"]["n"], 1200)
         self.assertEqual(result["g3"]["BAR_1m"]["OKX"]["n"], 5)  # closes 120..360 s in [62.1, 362.1) s
         short = g12.evaluate_fault(fault, pubs, [v for v in views if v["t"] < 200 * S], monitor)
@@ -1907,3 +1907,114 @@ class PublisherScheduleTests(unittest.TestCase):
         self.assertEqual(rows[-1]["k"], "end")
         self.assertFalse(rows[-1]["md_thread_alive"])
         self.assertEqual(book_frames[0]["payload"]["bids"], [[g12.book_top(1001)[0], "2"]])
+
+
+# ---------------------------------------------------------------- BOOK sampler coverage (undersampled, holes)
+
+def dedup(views, step_ms=50):
+    """The sampler's logged rows: a row on a view change or every 500 ms, each with its previous poll ``pt``."""
+    out, last = [], {}
+    for v in views:
+        key, seen = (v["venue"], v["seq"]), last.get(v["venue"])
+        if seen is None or seen[0] != key or v["t"] - seen[1] >= 500 * MS:
+            out.append(dict(v, pt=v["t"] - step_ms * MS))
+            last[v["venue"]] = (key, v["t"])
+    return out
+
+
+def hide_emissions(views, emitted, after_ns, transit_ms, n=2):
+    """Drop every sampler row showing ``n`` consecutive moving-top emissions (250 ms apart) after ``after_ns``:
+    the core emitted and the view applied each, the sampler never saw them (one hidden 250 ms emission is still
+    within regime interval + one tick: two make the observed source gap exceed the cadence)."""
+    k = next(k for k in range(1, len(emitted) - n) if emitted[k][0] >= after_ns
+             and all(emitted[i + 1][0] - emitted[i][0] < 300 * MS for i in range(k - 1, k + n)))
+    lo, hi = emitted[k][0] + transit_ms * MS, emitted[k + n][0] + transit_ms * MS
+    return [v for v in views if not lo <= v["t"] < hi], [seq for _, seq in emitted[k:k + n]]
+
+
+class SamplerCoverageTests(unittest.TestCase):
+    CLEARED = 100 * S
+
+    def run_fault(self, hide=None, okx_views=lambda views: views):
+        pubs, views = [], []
+        for venue in g12.VENUES:
+            p, v, emitted = book_run(venue, 0, 500 * S, moving=True, transit_ms=150)
+            if venue == "OKX":
+                if hide is not None:
+                    v, _ = hide_emissions(v, emitted, hide, 150)
+                v = okx_views(v)
+            pubs += p
+            views += v
+            p, v = md_rows(venue, 0, 500 * S)
+            pubs += p
+            views += v
+        monitor = [{"t": t * S, "ports": {"8210": t >= 62}, "projector_lag": 0, "under_replicated": 0}
+                   for t in range(0, 500)]
+        fault = {"k": "fault", "name": "stream_restart", "kind": "stream", "injected_ns": 60 * S,
+                 "restart_ns": 61 * S}
+        return g12.evaluate_fault(fault, pubs, views, monitor)
+
+    def test_missed_samples_of_applied_emissions_are_undersampled_not_a_gap(self):
+        pubs, views, emitted = book_run("OKX", 90 * S, 200 * S, moving=True, transit_ms=150)
+        holed, hidden = hide_emissions(views, emitted, 110 * S, 150)
+        self.assertFalse(set(hidden) & {v["seq"] for v in holed})
+        state = caught(pubs, holed, "OKX", self.CLEARED)
+        self.assertEqual(state["rejected_samples"].get("update_gap", 0), 0)
+        self.assertEqual(state["rejected_samples"].get("update_transit", 0), 0)
+        self.assertGreater(state["rejected_samples"]["undersampled"], 0)
+        self.assertLess(state["caught_up_ns"] - self.CLEARED, S)  # the hole neither starts nor breaks the hold
+        self.assertGreater(state["undersampled_in_hold"], 0)
+        # Fault level: no per-apply BOOK evidence proves the apply, so NOT_MEASURED, never a PASS or a FAIL.
+        result = self.run_fault(hide=70 * S)
+        self.assertTrue(result["g12_caught_up_pass"])
+        self.assertEqual((result["parts"]["sampler"], result["reason"]), ("NOT_MEASURED", "SAMPLER_UNDERSAMPLED"))
+        self.assertFalse(result["pass"])
+        whole = self.run_fault()
+        self.assertEqual((whole["parts"]["sampler"], whole["pass"]), ("PASS", True))
+        self.assertEqual(whole["venues"]["OKX"]["undersampled_in_hold"], 0)
+
+    def test_a_real_skipped_apply_stays_a_gap_with_logged_polls(self):
+        # Production sampler shape (rows only on change / 500 ms, ``pt`` = previous poll 50 ms before): the view
+        # skipping two of every three emissions is a product update_gap, never excused as undersampled.
+        pubs, views, _ = book_run("OKX", 90 * S, 200 * S, moving=True, keep=lambda i: i % 3 == 0)
+        logged = dedup(views)
+        state = g12.caught_up(g12.view_series(logged), g12.publish_index(pubs), "OKX", self.CLEARED,
+                              frames=g12.book_frames(pubs), polls=g12.view_polls(logged))
+        self.assertIsNone(state["caught_up_ns"])
+        self.assertGreater(state["rejected_samples"]["update_gap"], 0)
+        self.assertEqual(state["rejected_samples"].get("undersampled", 0), 0)
+        # Rows without ``pt`` (a run logged before it): the logged-row hole is all there is, so a gap after a
+        # > 100 ms silent stretch is undersampled; either way the venue is never cleanly caught up (no PASS).
+        bare = [{k: v for k, v in row.items() if k != "pt"} for row in logged]
+        state = caught(pubs, bare, "OKX", self.CLEARED)
+        self.assertGreater(state["rejected_samples"]["undersampled"], 0)
+        self.assertTrue(state["caught_up_ns"] is None or state["undersampled_in_hold"] > 0, state)
+
+    def test_a_sampler_hole_over_the_rule_is_not_measured(self):
+        hole = (70 * S, 105 * S)  # longer than the 30 s hold, inside the caught-up hold
+        result = self.run_fault(okx_views=lambda v: [r for r in v if not hole[0] <= r["t"] < hole[1]])
+        self.assertGreater(result["venues"]["OKX"]["sampler_max_gap_s"], g12.SAMPLER_MAX_GAP_S)
+        self.assertLessEqual(result["venues"]["BINANCE"]["sampler_max_gap_s"], 1)
+        self.assertEqual((result["parts"]["sampler"], result["reason"]), ("NOT_MEASURED", "SAMPLER_GAP"))
+        self.assertFalse(result["pass"])
+        # The sampler gone for the rest of the run: not caught up is undecidable, not a product failure.
+        dead = self.run_fault(okx_views=lambda v: [r for r in v if r["t"] < 63 * S])
+        self.assertEqual((dead["sampler"], dead["reason"]), ("NOT_MEASURED", "SAMPLER_GAP"))
+        self.assertFalse(dead["pass"])
+        rows = [(1 * S, 5, True), (2 * S, None, False), (8 * S, 6, True)]
+        self.assertEqual(g12.sampler_max_gap_s({"OKX": rows}, "OKX", 0, 10 * S), 7.0)  # READ_ERROR is no view
+        self.assertEqual(g12.sampler_max_gap_s({}, "OKX", 0, 2 * S), 2.0)
+
+    def test_regressing_view_and_future_publication_are_rejected(self):
+        pubs, views, _ = book_run("OKX", 90 * S, 200 * S)
+        old = next(v["seq"] for v in views if v["t"] >= 117 * S)
+        # After 120 s the view regresses to a 3 s older post-clear frame and stays there (repeated seq).
+        regressed = [v if v["t"] < 120 * S else dict(v, seq=old) for v in views]
+        state = caught(pubs, regressed, "OKX", self.CLEARED)
+        self.assertIsNone(state["caught_up_ns"])
+        self.assertGreater(state["rejected_samples"]["open_gap"], 0)
+        # A sample showing a frame before its publish time is an impossible apply, never caught-up evidence.
+        pubs, views = stream_rows("OKX", 90 * S, 200 * S, transit_ms=-50)
+        state = g12.caught_up(g12.view_series(views), g12.publish_index(pubs), "OKX", self.CLEARED)
+        self.assertIsNone(state["caught_up_ns"])
+        self.assertGreater(state["rejected_samples"]["future_publish"], 0)

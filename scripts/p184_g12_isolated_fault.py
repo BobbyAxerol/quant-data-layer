@@ -140,6 +140,10 @@ PREDICATE_FILE = "caught-up-predicate.json"
 # A fault whose clearance / catch-up interval has no valid monitor sample for longer than this is NOT_MEASURED:
 # its fault-cleared time (the monitor's) would be uncertain by more than the gap (steady cadence: 1.0 s).
 MONITOR_MAX_GAP_S = 5
+# The BOOK sampler's coverage uses the same bound (``sampler_max_gap_s``, cleared -> caught up + hold): a longer
+# hole without an observed view leaves the caught-up time (and the hold) uncertain by more than the monitor's own
+# rule tolerates, so the fault is NOT_MEASURED. A healthy sampler logs a view row at least every 500 ms.
+SAMPLER_MAX_GAP_S = MONITOR_MAX_GAP_S
 # G2 / G3 (frozen TS gate rows; owner decision 2026-10-09). min_n: below it the part is NOT_MEASURED.
 # G2 is new-event transit (publish -> first applied notification); G3 is BAR 1m from close.
 GATE_G2_G3 = {"TRADE": {"p95_ms": 500, "max_ms": 1500, "min_n": 100},
@@ -508,7 +512,7 @@ async def main(out, seconds, interval_ms, targets):
     beats = {v: Redis.from_url(u.rsplit("/", 1)[0] + "/2", socket_timeout=1, socket_connect_timeout=1,
                                decode_responses=True) for v, u in targets.items()}
     end = time.monotonic() + seconds
-    last, last_t, last_beat = {}, {}, 0.0
+    last, last_t, last_beat, polled = {}, {}, 0.0, {}
     with open(out, "a", buffering=1) as f:
         listeners = [asyncio.create_task(listen(u, v, f, end)) for v, u in targets.items()]
         while time.monotonic() < end and not STOP:
@@ -516,7 +520,9 @@ async def main(out, seconds, interval_ms, targets):
                 t = time.time_ns()
                 try:
                     seq, verdict = await view(r, venue)
-                    row = {"k": "view", "t": t, "venue": venue, "seq": seq, "v": verdict}
+                    # pt: the previous successful poll (logged or not), so the analysis sees real sampler holes.
+                    row = {"k": "view", "t": t, "venue": venue, "seq": seq, "v": verdict, "pt": polled.get(venue)}
+                    polled[venue] = t
                 except Exception as e:
                     row = {"k": "view", "t": t, "venue": venue, "seq": None,
                            "v": "READ_ERROR:" + type(e).__name__}
@@ -585,6 +591,22 @@ def view_series(rows):
     for values in series.values():
         values.sort(key=lambda item: item[0])
     return series
+
+
+def view_polls(rows):
+    """venue -> {sample ns: previous successful poll ns} (``pt``; a row logged before the field existed: absent)."""
+    polls = {}
+    for r in rows:
+        if r.get("k") == "view" and r.get("pt") is not None:
+            polls.setdefault(r["venue"], {})[r["t"]] = r["pt"]
+    return polls
+
+
+def sampler_max_gap_s(series, venue, start_ns, end_ns):
+    """Longest interval (s) in [start, end] without an observed view of ``venue`` (a READ_ERROR row is none)."""
+    points = [start_ns, *sorted(t for t, seq, _ok in series.get(venue, ()) if seq is not None
+                                and start_ns < t < end_ns), end_ns]
+    return round(max(b - a for a, b in zip(points, points[1:])) / 1e9, 3) if end_ns > start_ns else 0.0
 
 
 def caught_up_predicate(core_config=None, hz=PUBLISH_HZ):
@@ -672,7 +694,7 @@ def next_emission(frames, venue, seq, predicate):
     return due, None, regime
 
 
-def caught_up(series, index, venue, cleared_ns, *, frames=None, predicate=None, hold_s=None):
+def caught_up(series, index, venue, cleared_ns, *, frames=None, predicate=None, hold_s=None, polls=None):
     """First valid apply and stable caught-up for one venue after ``cleared_ns`` (predicate v2).
 
     The core does not emit a BOOK snapshot per provider frame: it materializes one when the top changes (at
@@ -693,22 +715,39 @@ def caught_up(series, index, venue, cleared_ns, *, frames=None, predicate=None, 
 
     Caught up needs every sample of the following hold_s to satisfy 1-4, and samples past the hold (otherwise not
     yet decidable -> None). Parameters: ``caught_up_predicate`` (frozen in the run receipt).
+
+    Sampler coverage: 2 and 3 judge ``seq`` from its first sample. When the sampler did not observe the view for
+    longer than the top-change floor before that sample (its previous successful poll ``pt`` from ``polls``, else
+    the previous logged row), an intermediate emission may have been applied and missed, and the first sample
+    is late by up to the hole: a 3 failure, or a 2 failure whose last poll was still within the transit budget,
+    is ``undersampled``, not a product rejection. No per-apply BOOK evidence is retained (the monitor logs no
+    BOOK frames), so it is never resolved to a pass: it neither starts nor breaks a hold, and
+    ``undersampled_in_hold`` > 0 makes the fault NOT_MEASURED (``evaluate_fault``). Before the final hold it can
+    only delay the measured caught-up time. 4 (a stuck view) observes the view itself and is unaffected; a sample
+    before its frame's publish time (an impossible apply) is ``future_publish``.
     """
     predicate = predicate or caught_up_predicate()
     frames = frames if frames is not None else frames_from_index(index)
     hold_ns = int((predicate["hold_s"] if hold_s is None else hold_s) * 1e9)
     transit_ns = int(predicate["transit_max_ms"] * 1e6)
     tick_ns = int(predicate["publisher_tick_ms"] * 1e6)
+    floor_ns = int(predicate["top_change_min_interval_ms"] * 1e6)
     every = series.get(venue, ())
-    first, previous, last_seq = {}, {}, None
+    polled = (polls or {}).get(venue, {})
+    first, previous, hole, last_seq, last_t = {}, {}, {}, None, None
     for t, seq, _ok in every:
         if seq is None:
             continue
         if seq not in first:
             first[seq] = t
             previous[seq] = last_seq
-        last_seq = seq
+            seen = polled.get(t, last_t)
+            hole[seq] = None if seen is None else t - seen
+        last_seq, last_t = seq, t
     emission = {}
+
+    def undersampled(seq):
+        return hole[seq] is not None and hole[seq] > floor_ns
 
     def after(seq):
         if seq not in emission:
@@ -722,14 +761,17 @@ def caught_up(series, index, venue, cleared_ns, *, frames=None, predicate=None, 
             return "not_approved"
         if published is None or published < cleared_ns:
             return "no_post_clear_frame"
+        if first[seq] < published:
+            return "future_publish"
         if first[seq] - published > transit_ns:
-            return "update_transit"
+            within = first[seq] - hole[seq] - published <= transit_ns if undersampled(seq) else False
+            return "undersampled" if within else "update_transit"
         prior = previous.get(seq)
         prior_published = index.get((venue, prior)) if prior is not None else None
         if prior_published is not None and prior_published >= cleared_ns:
             _due, emitted, _regime = after(prior)
             if emitted is not None and published > emitted:
-                return "update_gap"
+                return "undersampled" if undersampled(seq) else "update_gap"
         due, emitted, _regime = after(seq)
         if due is not None and t > (emitted if emitted is not None else due + tick_ns) + transit_ns:
             return "open_gap"
@@ -750,10 +792,13 @@ def caught_up(series, index, venue, cleared_ns, *, frames=None, predicate=None, 
             rejected[why] = rejected.get(why, 0) + 1
             i += 1
             continue
-        start, j, broken = rows[i][0], i, None
+        start, j, broken, in_hold = rows[i][0], i, None, 0
         while j < len(rows) and rows[j][0] <= start + hold_ns:
             why = reason(rows[j])
-            if why is not None:
+            if why == "undersampled":
+                rejected[why] = rejected.get(why, 0) + 1
+                in_hold += 1
+            elif why is not None:
                 rejected[why] = rejected.get(why, 0) + 1
                 broken = j
                 break
@@ -762,9 +807,11 @@ def caught_up(series, index, venue, cleared_ns, *, frames=None, predicate=None, 
             i = broken + 1
             continue
         if j >= len(rows):
-            return {"first_valid_apply_ns": first_valid, "caught_up_ns": None, "rejected_samples": rejected}
-        return {"first_valid_apply_ns": first_valid, "caught_up_ns": start, "rejected_samples": rejected}
-    return {"first_valid_apply_ns": first_valid, "caught_up_ns": None, "rejected_samples": rejected}
+            break
+        return {"first_valid_apply_ns": first_valid, "caught_up_ns": start, "rejected_samples": rejected,
+                "undersampled_in_hold": in_hold}
+    return {"first_valid_apply_ns": first_valid, "caught_up_ns": None, "rejected_samples": rejected,
+            "undersampled_in_hold": 0}
 
 
 def first_seen(series, venue):
@@ -981,6 +1028,7 @@ def first_monitor(monitor_rows, start_ns, predicate):
 def evaluate_fault(fault, publish_rows, sampler_rows, monitor_rows, *, window_s=GATE["window_s"], predicate=None):
     index, series = publish_index(publish_rows), view_series(sampler_rows)
     frames, predicate = book_frames(publish_rows), predicate or caught_up_predicate()
+    polls, hold_ns = view_polls(sampler_rows), int(predicate["hold_s"] * 1e9)
     cleared = cleared_at(fault["kind"], monitor_rows, fault["restart_ns"], fault.get("node"))
     result = {"fault": fault["name"], "kind": fault["kind"], "node": fault.get("node"),
               "fault_injected_ns": fault["injected_ns"], "restart_issued_ns": fault["restart_ns"],
@@ -990,17 +1038,27 @@ def evaluate_fault(fault, publish_rows, sampler_rows, monitor_rows, *, window_s=
         return result
     ends = []
     for venue in VENUES:
-        state = caught_up(series, index, venue, cleared, frames=frames, predicate=predicate)
+        state = caught_up(series, index, venue, cleared, frames=frames, predicate=predicate, polls=polls)
         state["caught_up_s"] = (None if state["caught_up_ns"] is None
                                 else round((state["caught_up_ns"] - cleared) / 1e9, 3))
         rows = [r for r in series.get(venue, ()) if fault["injected_ns"] <= r[0] <= (state["caught_up_ns"] or r[0])]
         ages = [(t - index[(venue, s)]) / 1e6 for t, s, ok in rows if (venue, s) in index]
         state["max_view_age_ms_injected_to_caught_up"] = round(max(ages), 3) if ages else None
         state["not_approved_samples_injected_to_caught_up"] = sum(1 for _, _, ok in rows if not ok)
+        # Sampler coverage, cleared -> caught up + hold (not caught up: -> the last logged row of the run).
+        end = (state["caught_up_ns"] + hold_ns if state["caught_up_ns"] is not None
+               else max((r.get("t", 0) for r in (*publish_rows, *sampler_rows, *monitor_rows)), default=cleared))
+        state["sampler_max_gap_s"] = sampler_max_gap_s(series, venue, cleared, end)
         result["venues"][venue] = state
         ends.append(state["caught_up_ns"])
+    # A sampler hole over SAMPLER_MAX_GAP_S, or a caught-up hold holding an undersampled sample, leaves the
+    # caught-up evidence incomplete: NOT_MEASURED, never a PASS nor a product FAIL.
+    holes = any(s["sampler_max_gap_s"] > SAMPLER_MAX_GAP_S for s in result["venues"].values())
+    unresolved = any(s["undersampled_in_hold"] for s in result["venues"].values())
+    sampled = "NOT_MEASURED" if holes or unresolved else "PASS"
+    result["sampler"] = sampled
     if any(end is None for end in ends):
-        result["reason"] = "NOT_CAUGHT_UP"
+        result["reason"] = "SAMPLER_GAP" if holes else "NOT_CAUGHT_UP"
         return result
     caught = max(ends)
     result["consumers_caught_up_ns"] = caught
@@ -1026,13 +1084,15 @@ def evaluate_fault(fault, publish_rows, sampler_rows, monitor_rows, *, window_s=
     monitored = "PASS" if result["monitor_max_gap_s"] <= MONITOR_MAX_GAP_S else "NOT_MEASURED"
     if monitored != "PASS":
         result["reason"] = "MONITOR_GAP"
+    elif sampled != "PASS":
+        result["reason"] = "SAMPLER_GAP" if holes else "SAMPLER_UNDERSAMPLED"
     # G2/G3 over the same window as G1 (new events whose publish time / bar close lies in it).
     result.update(md_window(publish_rows, sampler_rows, *window))
     result["parts"] = {"caught_up": result["g12_caught_up_pass"], "window_complete": complete,
                        "g1": "PASS" if all(result["g1"][v]["pass"] for v in VENUES) else "FAIL",
                        "g2": result["g2_status"], "g2_feeds": result["g2_feed_status"],
-                       "g3": result["g3_status"], "monitor": monitored}
-    result["pass"] = (monitored == "PASS" and result["g12_caught_up_pass"] and complete
+                       "g3": result["g3_status"], "monitor": monitored, "sampler": sampled}
+    result["pass"] = (monitored == "PASS" and sampled == "PASS" and result["g12_caught_up_pass"] and complete
                       and all(result["g1"][v]["pass"] for v in VENUES)
                       and result["g2_status"] == "PASS" and result["g3_status"] == "PASS")
     return result
@@ -1101,6 +1161,7 @@ def evaluate(evidence):
     out["monitor"] = {"samples": len(monitor_valid(monitor_rows)), "sample_errors": len(errors),
                       "errors": sorted({(r.get("error"), r.get("phase")) for r in errors}, key=str),
                       "max_gap_rule_s": MONITOR_MAX_GAP_S}
+    out["sampler"] = {"max_gap_rule_s": SAMPLER_MAX_GAP_S}
     out["pass"] = bool(out["faults"]) and len(out["faults"]) == 3 and all(f["pass"] for f in out["faults"])
     return out
 
