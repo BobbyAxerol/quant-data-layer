@@ -73490,3 +73490,28 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   storm fix are now production. Rollback: same tool path back to RUST18 via the saved rollback composes (simultaneous).
   Not touched: projectors (ce629061), stream/ingestors (RUST18), kafka, stable_redis, market_cache, Query (rc19),
   bar_edge, writer.
+
+### P18.4 stream gateway live-budget isolation (idle readers vs deep lossless subscriptions) - 2026-10-15 (Claude)
+- Defect (read-only RCA of the stage-100 run): 2-3 deep lossless TRADE subscriptions, each under its 16 MiB fair-share
+  cap, together held 28.5 MB of the shared 32 MiB `QDL_KN_QUEUE_BYTES_TOTAL` (kn_1 `hub_live_budget_refused` 5,698);
+  `Subscription::offer` then overflowed every subscriber with nothing droppable, including idle QUOTE/BOOK/MARK
+  readers with empty queues: 358 RESOURCE_EXHAUSTED closes, against the memory.rs contract "one slow subscriber must
+  not overflow the rest".
+- Fix (no budget, quota, queue or config value changed): the live `ByteBudget` keeps a derived reserve of 1/8 of the
+  budget (4 MiB of 32 MiB; `memory::LIVE_RESERVE_DIVISOR`) that only a subscription at or under its floor may use. The
+  floor is `reserve / 16` (256 KiB), or holding at most one other record of any size. The floor counts the queue plus
+  the subscription's dequeued, unreleased charges (handoff channel, batch, transport), which are now attributed to the
+  subscription until dropped. A subscription over its floor can fill at most `limit - reserve`; once that is full its
+  own push fails and it alone ends with BACKPRESSURE + resume token (the existing lossless path), then replays from
+  its cursor. Handoff top-ups use the same rule. The total never exceeds `limit`. Replay budget unchanged (no reserve).
+  New counters in the gateway report: `queue_isolation.{reserve_admitted, over_floor_refused, reserve_exhausted}`.
+- Tests (cargo test --release -p qdl-stream-gateway in the pinned toolchain image): lib 63/63, hot_lookup 1/1,
+  native_stream 54/54 (+1 ignored), committed_reads 3 ignored. New tests: hub 3 deep + 30 idle (with the reserve 0 idle
+  overflows; with the old budget idle readers overflow), a single deep subscription over its floor alone overflows,
+  and gRPC with 2 deep stalled streams + 10 idle QUOTE readers (repeated 60x, 0 failures). Two defects in the first
+  version were found and fixed during the repeats: the floor ignored out-of-queue bytes, and it counted an idle
+  reader's own handed-off record. `cargo fmt --check`: no drift beyond HEAD (HEAD already has 92 pre-existing diffs).
+- Sizing caveat (open): the reserve holds about 2 records per idle reader at handoff (full-weight transport copy).
+  4 MiB covers thousands of QUOTE records but only about 100 BOOK_DELTA readers at about 18 KB each. If
+  `reserve_exhausted` is non-zero in the isolated proof or production, the reserve is too small. Status: implemented,
+  tested locally; not deployed.

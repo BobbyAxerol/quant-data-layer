@@ -544,6 +544,8 @@ struct Options {
     range_delay: Duration,
     /// Replay budget when it differs from the live one.
     replay_budget: Option<usize>,
+    /// Build the live budget as production does (`ByteBudget::live`).
+    live_reserve: bool,
 }
 
 impl Default for Options {
@@ -564,6 +566,7 @@ impl Default for Options {
             max_streams: 64,
             range_delay: Duration::ZERO,
             replay_budget: None,
+            live_reserve: false,
         }
     }
 }
@@ -602,7 +605,11 @@ impl Harness {
             bundle: bundle_with_streams(3, &options.permissions, &ALL_FEEDS, options.max_streams),
             expectation: expectation(),
         });
-        let budget = ByteBudget::new(options.budget);
+        let budget = if options.live_reserve {
+            ByteBudget::live(options.budget)
+        } else {
+            ByteBudget::new(options.budget)
+        };
         let state = Arc::new(GatewayState::new(
             authority,
             Arc::new(NoQuota),
@@ -1712,6 +1719,117 @@ async fn t05_the_replica_byte_budget_bounds_all_queues_together() {
         Code::ResourceExhausted,
         "over budget is typed backpressure"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn t05_deep_lossless_streams_on_two_keys_never_overflow_idle_quote_readers() {
+    // 2026-10-15 stage-100 shape over gRPC: two stalled lossless streams on
+    // different keys, each under its fair-share cap, fill the live budget;
+    // idle QUOTE readers keep flowing and only a deep stream ends typed.
+    let weight = live_weight(TRADE_KEY, &trade(1)).max(live_weight(BOOK_KEY, &delta(1, false)));
+    // Reserve 64 records (production: 4 MiB, thousands of quotes): enough
+    // for ten idle readers each holding two records at a handoff.
+    let total = 512 * weight;
+    let mut options = Options {
+        budget: total,
+        live_reserve: true,
+        replay_budget: Some(64 << 20),
+        ..Options::default()
+    };
+    options.limits.queue_bytes_per_subscription = total / 2;
+    // A stalled deep stream may also end on its blocked send; both are its own.
+    options.limits.slow_consumer_after = Duration::from_secs(2);
+    let harness = Harness::new(options);
+    let trade_cursor = harness.log.append(0, TRADE_KEY, &trade(1));
+    let book_cursor = harness.log.append(0, BOOK_KEY, &delta(1, false));
+    let quote_cursor = harness.log.append(0, QUOTE_KEY, &quote(1, vec![]));
+    harness.settle();
+    let mut deep_trade = harness
+        .subscribe("TRADE", None, trade_cursor, 1_000)
+        .await
+        .unwrap();
+    let mut deep_book = harness
+        .subscribe("BOOK_DELTA", None, book_cursor, 1_000)
+        .await
+        .unwrap();
+    deep_trade.until_live().await;
+    deep_book.until_live().await;
+    let mut idle = Vec::new();
+    for _ in 0..10 {
+        let mut stream = harness
+            .subscribe("QUOTE", None, quote_cursor, 100)
+            .await
+            .unwrap();
+        stream.until_live().await;
+        idle.push(stream);
+    }
+    // The deep clients stop reading; records arrive in bursts.
+    for burst in 0..8u64 {
+        for index in 0..40u64 {
+            harness
+                .log
+                .append(0, TRADE_KEY, &trade(100 + burst * 40 + index));
+            harness
+                .log
+                .append(0, BOOK_KEY, &delta(100 + burst * 40 + index, false));
+        }
+        let offset = harness
+            .log
+            .append(0, QUOTE_KEY, &quote(2 + burst as u32, vec![])) as u64;
+        harness.settle();
+        assert!(harness.state().budget.used() <= total);
+        for stream in &mut idle {
+            let (controls, offsets) = stream.collect(1).await;
+            let counters = &harness.state().budget.counters;
+            assert_eq!(
+                offsets,
+                vec![offset],
+                "idle reader stalled: {controls:?} (reserve admitted {}, over floor {}, \
+                 reserve exhausted {}, weights {weight}/{})",
+                counters.reserve_admitted.load(Ordering::Relaxed),
+                counters.over_floor_refused.load(Ordering::Relaxed),
+                counters.reserve_exhausted.load(Ordering::Relaxed),
+                live_weight(QUOTE_KEY, &quote(1, vec![])),
+            );
+        }
+    }
+    let counters = &harness.state().budget.counters;
+    assert!(counters.over_floor_refused.load(Ordering::Relaxed) >= 1);
+    assert_eq!(counters.reserve_exhausted.load(Ordering::Relaxed), 0);
+    // At least one deep stream ended with BACKPRESSURE (resume token) and
+    // RESOURCE_EXHAUSTED; no idle one did.
+    let mut ended = 0;
+    for stream in [&mut deep_trade, &mut deep_book] {
+        let mut saw_backpressure = false;
+        loop {
+            match stream.next().await {
+                Item::Control(code) if code == "RATE_LIMITED" => saw_backpressure = true,
+                Item::Error(code, message) => {
+                    assert!(saw_backpressure, "BACKPRESSURE control precedes the status");
+                    assert_eq!(code, Code::ResourceExhausted);
+                    assert!(message.starts_with("RATE_LIMITED:"), "{message}");
+                    ended += 1;
+                    break;
+                }
+                Item::End => break, // Still open (the other deep stream ended first).
+                _ => {}
+            }
+        }
+    }
+    assert!(ended >= 1);
+    assert_eq!(
+        harness.state().metrics.overflow.load(Ordering::Relaxed),
+        ended,
+        "only deep streams overflowed"
+    );
+    // A closed deep client resumes from its cursor as today.
+    let mut resumed = harness
+        .subscribe("TRADE", None, trade_cursor, 1_000)
+        .await
+        .unwrap();
+    assert!(!resumed.until_live().await.is_empty());
+    drop((deep_trade, deep_book, idle, resumed));
+    harness.released().await;
 }
 
 // ------------------------------------------------------------------ K2-T06

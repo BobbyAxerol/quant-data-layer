@@ -34,25 +34,69 @@ pub const LATEST_STATE_BUFFER_EVENTS: usize = 8;
 /// `Queued` slot (~200 B) plus the lifecycle signature's strings.
 pub const QUEUE_ENTRY_OVERHEAD: usize = 512;
 
+/// A subscription holding at most this many other records (queued, or
+/// dequeued and not yet released by the transport) is at its floor whatever
+/// their size: the previous record of an idle reader is often still held
+/// by the transport when the next one arrives.
+pub const LIVE_FLOOR_ENTRIES: usize = 1;
+
 /// Replica-wide byte budget shared by every subscriber queue.
+///
+/// A live budget ([`ByteBudget::live`]) keeps `reserve` bytes that only a
+/// subscription at or under its floor may use: [`ByteBudget::charge`] admits
+/// up to `limit - reserve`, [`ByteBudget::charge_within_floor`] up to
+/// `limit`. Deep subscriptions therefore cannot exhaust what an idle one
+/// needs, and the total never exceeds `limit`. [`ByteBudget::new`] has no
+/// reserve (replay, tests): both admit up to `limit`.
 #[derive(Debug)]
 pub struct ByteBudget {
     limit: usize,
+    reserve: usize,
+    floor: usize,
     used: AtomicUsize,
+    pub counters: BudgetCounters,
+}
+
+/// Which isolation branch fired (all zero without a reserve).
+#[derive(Default, Debug)]
+pub struct BudgetCounters {
+    /// Charges of a subscription at or under its floor admitted only
+    /// because of the reserve (they did not fit `limit - reserve`).
+    pub reserve_admitted: AtomicU64,
+    /// Lossless pushes of a subscription over its floor refused because the
+    /// shared part was exhausted: that subscription alone overflows.
+    pub over_floor_refused: AtomicU64,
+    /// Pushes of a subscription at or under its floor refused even with the
+    /// reserve: the reserve itself was exhausted (should stay 0).
+    pub reserve_exhausted: AtomicU64,
 }
 
 impl ByteBudget {
     pub fn new(limit: usize) -> Arc<Self> {
+        Self::with_reserve(limit, 0, 0)
+    }
+
+    /// The replica live budget: reserve and floor derived from `limit`
+    /// ([`crate::memory::live_reserve_and_floor`]).
+    pub fn live(limit: usize) -> Arc<Self> {
+        let (reserve, floor) = crate::memory::live_reserve_and_floor(limit as u64);
+        Self::with_reserve(limit, reserve as usize, floor as usize)
+    }
+
+    pub fn with_reserve(limit: usize, reserve: usize, floor: usize) -> Arc<Self> {
         Arc::new(Self {
             limit,
+            reserve: reserve.min(limit),
+            floor,
             used: AtomicUsize::new(0),
+            counters: BudgetCounters::default(),
         })
     }
 
-    fn try_charge(&self, bytes: usize) -> bool {
+    fn try_charge(&self, bytes: usize, ceiling: usize) -> bool {
         self.used
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
-                (used + bytes <= self.limit).then_some(used + bytes)
+                (used + bytes <= ceiling).then_some(used + bytes)
             })
             .is_ok()
     }
@@ -61,17 +105,64 @@ impl ByteBudget {
         self.used.fetch_sub(bytes, Ordering::AcqRel);
     }
 
-    /// Reserve `bytes` until the returned [`Charge`] is dropped; `None` when
-    /// the budget is exhausted.
-    pub fn charge(self: &Arc<Self>, bytes: usize) -> Option<Charge> {
-        self.try_charge(bytes).then(|| Charge {
+    fn charge_up_to(self: &Arc<Self>, bytes: usize, ceiling: usize) -> Option<Charge> {
+        self.try_charge(bytes, ceiling).then(|| Charge {
             budget: self.clone(),
             bytes,
+            owner: None,
         })
+    }
+
+    /// Reserve `bytes` of the shared part (`limit - reserve`) until the
+    /// returned [`Charge`] is dropped; `None` when it is exhausted.
+    pub fn charge(self: &Arc<Self>, bytes: usize) -> Option<Charge> {
+        self.charge_up_to(bytes, self.limit - self.reserve)
+    }
+
+    /// [`Self::charge`] for a holder at or under its floor: may also use the
+    /// reserve, never beyond `limit`.
+    pub fn charge_within_floor(self: &Arc<Self>, bytes: usize) -> Option<Charge> {
+        if let Some(charge) = self.charge(bytes) {
+            return Some(charge);
+        }
+        let charge = self.charge_up_to(bytes, self.limit)?;
+        self.counters
+            .reserve_admitted
+            .fetch_add(1, Ordering::Relaxed);
+        Some(charge)
+    }
+
+    /// Charge for a subscription holding `held` full-weight bytes in
+    /// `queued` entries that wants `bytes` more of `weight` full weight.
+    fn charge_for(
+        self: &Arc<Self>,
+        bytes: usize,
+        queued: usize,
+        held: usize,
+        weight: usize,
+    ) -> Option<Charge> {
+        if self.within_floor(queued, held, weight) {
+            self.charge_within_floor(bytes)
+        } else {
+            self.charge(bytes)
+        }
+    }
+
+    fn within_floor(&self, queued: usize, held: usize, weight: usize) -> bool {
+        self.reserve > 0 && (queued <= LIVE_FLOOR_ENTRIES || held + weight <= self.floor)
     }
 
     pub fn used(&self) -> usize {
         self.used.load(Ordering::Acquire)
+    }
+
+    pub fn limit(&self) -> usize {
+        self.limit
+    }
+
+    /// `(reserve, floor)` bytes; `(0, 0)` without a reserve.
+    pub fn reserve_and_floor(&self) -> (usize, usize) {
+        (self.reserve, self.floor)
     }
 }
 
@@ -79,10 +170,16 @@ impl ByteBudget {
 /// charged **once**, when it enters a queue, a replay channel or a ring
 /// replay, and the charge travels with it to the transport: nothing waits
 /// for a second charge while holding the first (no budget self-deadlock).
+///
+/// Once a live record leaves its subscription's queue, its charge is
+/// attributed to that subscription (`owner`) until the transport drops it,
+/// so the floor test sees what a stalled stream holds in its outbound
+/// handoff and transport, not only in its queue.
 #[derive(Debug)]
 pub struct Charge {
     budget: Arc<ByteBudget>,
     bytes: usize,
+    owner: Option<Arc<AtomicUsize>>,
 }
 
 impl Charge {
@@ -97,7 +194,23 @@ impl Charge {
             Arc::ptr_eq(&self.budget, &other.budget),
             "charges of different budgets cannot be merged"
         );
-        self.bytes += std::mem::take(&mut other.bytes);
+        let bytes = std::mem::take(&mut other.bytes);
+        if let Some(owner) = &other.owner {
+            owner.fetch_sub(bytes, Ordering::AcqRel);
+        }
+        if let Some(owner) = &self.owner {
+            owner.fetch_add(bytes, Ordering::AcqRel);
+        }
+        self.bytes += bytes;
+    }
+
+    /// Attribute this charge to a subscription's out-of-queue bytes until
+    /// it is dropped (or absorbed into another charge).
+    fn attribute(&mut self, owner: &Arc<AtomicUsize>) {
+        if let Some(previous) = self.owner.replace(owner.clone()) {
+            previous.fetch_sub(self.bytes, Ordering::AcqRel);
+        }
+        owner.fetch_add(self.bytes, Ordering::AcqRel);
     }
 
     /// Move up to `bytes` of this charge into a new one (no budget change).
@@ -107,12 +220,16 @@ impl Charge {
         Charge {
             budget: self.budget.clone(),
             bytes: moved,
+            owner: self.owner.clone(),
         }
     }
 }
 
 impl Drop for Charge {
     fn drop(&mut self) {
+        if let Some(owner) = &self.owner {
+            owner.fetch_sub(self.bytes, Ordering::AcqRel);
+        }
         self.budget.release(self.bytes);
     }
 }
@@ -168,6 +285,10 @@ pub struct Subscription {
     pub depth: usize,
     max_bytes: usize,
     budget: Arc<ByteBudget>,
+    /// Live budget bytes of records dequeued but not yet released by the
+    /// transport (handoff channel, batches, tonic): counted with the queue
+    /// when deciding whether this subscription is at or under its floor.
+    out_of_queue: Arc<AtomicUsize>,
     state: Mutex<State>,
     notify: Notify,
     pub counters: SubscriptionCounters,
@@ -202,6 +323,7 @@ impl Subscription {
             depth,
             max_bytes,
             budget,
+            out_of_queue: Arc::new(AtomicUsize::new(0)),
             state: Mutex::new(State {
                 queue: VecDeque::new(),
                 bytes: 0,
@@ -250,12 +372,18 @@ impl Subscription {
         } else {
             weight
         };
+        // Refused for want of replica budget (not this queue's own bounds),
+        // and whether this subscription was at or under its floor then.
+        let mut budget_refused: Option<bool>;
         let charge = loop {
             let fits = state.queue.len() < self.depth && state.bytes + weight <= self.max_bytes;
+            budget_refused = None;
             if fits {
-                if let Some(charge) = self.budget.charge(held) {
+                let (queued, bytes) = self.floor_load(&state, 0);
+                if let Some(charge) = self.budget.charge_for(held, queued, bytes, weight) {
                     break charge;
                 }
+                budget_refused = Some(self.budget.within_floor(queued, bytes, weight));
             }
             // Drop the oldest record that the record right after it
             // supersedes (Astra KN-2 R1 F5): coalescing stays inside one
@@ -278,6 +406,16 @@ impl Subscription {
                     }
                 }
                 None => {
+                    let counter = match budget_refused {
+                        Some(true) => Some(&self.budget.counters.reserve_exhausted),
+                        Some(false) if self.budget.reserve > 0 => {
+                            Some(&self.budget.counters.over_floor_refused)
+                        }
+                        _ => None,
+                    };
+                    if let Some(counter) = counter {
+                        counter.fetch_add(1, Ordering::Relaxed);
+                    }
                     state.overflowed = true;
                     drop(state);
                     self.notify.notify_one();
@@ -296,6 +434,35 @@ impl Subscription {
         });
         drop(state);
         self.notify.notify_one();
+    }
+
+    /// Charge `bytes` of the live budget for this subscription's transport
+    /// copy of a dequeued record of `weight` whose entry charge (`entry`
+    /// bytes, already out of the queue) the caller holds: a subscription at
+    /// or under its floor (queue plus other out-of-queue bytes) may use the
+    /// reserve, so an idle reader is never stalled at handoff by deep ones.
+    pub fn charge_handoff(&self, bytes: usize, weight: usize, entry: usize) -> Option<Charge> {
+        let (queued, held) = match self.state.lock() {
+            Ok(state) => self.floor_load(&state, entry),
+            Err(_) => return None,
+        };
+        let mut charge = self.budget.charge_for(bytes, queued, held, weight)?;
+        charge.attribute(&self.out_of_queue);
+        Some(charge)
+    }
+
+    /// `(entries, bytes)` the floor test sees: the queue plus everything
+    /// dequeued and not yet released except `own` bytes (the record being
+    /// handed off), counted as one entry when non-zero.
+    fn floor_load(&self, state: &State, own: usize) -> (usize, usize) {
+        let outside = self
+            .out_of_queue
+            .load(Ordering::Acquire)
+            .saturating_sub(own);
+        (
+            state.queue.len() + usize::from(outside > 0),
+            state.bytes + outside,
+        )
     }
 
     pub fn fail(&self, reason: &str) {
@@ -320,8 +487,9 @@ impl Subscription {
                 if state.overflowed {
                     return Next::Overflow;
                 }
-                if let Some(item) = state.queue.pop_front() {
+                if let Some(mut item) = state.queue.pop_front() {
                     state.bytes -= item.weight;
+                    item.charge.attribute(&self.out_of_queue);
                     self.counters.dequeued.fetch_add(1, Ordering::Relaxed);
                     return Next::Record(item.record, item.enqueued, item.charge);
                 }
@@ -342,8 +510,9 @@ impl Subscription {
         if state.failed.is_some() || state.overflowed || state.closed {
             return None;
         }
-        let item = state.queue.pop_front()?;
+        let mut item = state.queue.pop_front()?;
         state.bytes -= item.weight;
+        item.charge.attribute(&self.out_of_queue);
         self.counters.dequeued.fetch_add(1, Ordering::Relaxed);
         Some((item.record, item.enqueued, item.charge))
     }

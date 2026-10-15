@@ -1766,4 +1766,151 @@ mod tests {
         // lets the slow subscriber take it all and overflow the idle one.
         assert_eq!(run(total, total).await, (true, false));
     }
+
+    /// 2026-10-15 stage-100 shape: deep lossless subscriptions on different
+    /// keys, each under its own fair-share cap, together exhaust the live
+    /// budget; idle readers must keep flowing. Returns (idle overflows, deep
+    /// overflows, the budget after the run).
+    async fn deep_and_idle(budget: Arc<ByteBudget>) -> (usize, usize, Arc<ByteBudget>) {
+        let total = budget.limit();
+        let share = crate::memory::default_queue_bytes_per_subscription(total as u64) as usize;
+        let hub = Hub::new(&[(0, 0)], HubConfig::default());
+        hub.attach_live_budget(budget.clone());
+        let deep_keys: Vec<Vec<u8>> = (0..3).map(|i| format!("deep{i}").into_bytes()).collect();
+        let idle_keys: Vec<Vec<u8>> = (0..30).map(|i| format!("idle{i}").into_bytes()).collect();
+        let mut deep: Vec<_> = deep_keys
+            .iter()
+            .enumerate()
+            .map(|(id, key)| subscribe(&hub, key, id as u64, 2_000, share, &budget))
+            .collect();
+        let idle: Vec<_> = idle_keys
+            .iter()
+            .enumerate()
+            .map(|(id, key)| subscribe(&hub, key, 100 + id as u64, 1_000, share, &budget))
+            .collect();
+        let (mut offset, mut deep_overflows, mut idle_overflows) = (0i64, 0, 0);
+        for _round in 0..200 {
+            for key in &deep_keys {
+                hub.dispatch(big_trade(key, offset));
+                offset += 1;
+                assert!(budget.used() <= total, "{} > {total}", budget.used());
+            }
+            // A deep subscription that overflowed is ended by its stream task
+            // (BACKPRESSURE + resume token) and resubscribes empty from its
+            // cursor, as a client does.
+            for (index, subscription) in deep.iter_mut().enumerate() {
+                if matches!(subscription.terminal(), Some(Next::Overflow)) {
+                    deep_overflows += 1;
+                    subscription.close();
+                    hub.unregister(0, &deep_keys[index], subscription.id);
+                    *subscription = subscribe(
+                        &hub,
+                        &deep_keys[index],
+                        1_000 + offset as u64,
+                        2_000,
+                        share,
+                        &budget,
+                    );
+                }
+            }
+            for key in &idle_keys {
+                hub.dispatch(big_trade(key, offset));
+                offset += 1;
+            }
+            // Every idle reader takes its record to the transport at once
+            // (entry charge topped up to a private copy), then sends it.
+            let mut in_flight = Vec::new();
+            for subscription in &idle {
+                match subscription.next().await {
+                    Next::Record(record, _, mut charge) => {
+                        let (weight, entry) = (record.weight(), charge.bytes());
+                        let missing = weight.saturating_sub(entry);
+                        if missing > 0 {
+                            match subscription.charge_handoff(missing, weight, entry) {
+                                Some(extra) => charge.absorb(extra),
+                                None => idle_overflows += 1,
+                            }
+                        }
+                        in_flight.push((record, charge));
+                    }
+                    Next::Overflow => {
+                        idle_overflows += 1;
+                        subscription.close();
+                    }
+                    other => panic!("{other:?}"),
+                }
+                assert!(budget.used() <= total, "{} > {total}", budget.used());
+            }
+            drop(in_flight);
+            if idle_overflows > 0 {
+                break;
+            }
+        }
+        for subscription in deep.iter().chain(&idle) {
+            subscription.close();
+        }
+        (idle_overflows, deep_overflows, budget)
+    }
+
+    #[tokio::test]
+    async fn deep_lossless_subscriptions_cannot_overflow_thirty_idle_ones() {
+        let total = 512 * big_weight();
+        let budget = ByteBudget::live(total);
+        let (reserve, floor) = budget.reserve_and_floor();
+        assert_eq!((reserve, floor), (total / 8, total / 128));
+        let (idle, deep, budget) = deep_and_idle(budget).await;
+        assert_eq!(idle, 0, "no idle reader overflowed or stalled at handoff");
+        assert!(deep >= 1, "the deep subscription over its floor was closed");
+        let counters = &budget.counters;
+        assert!(counters.over_floor_refused.load(Ordering::Relaxed) >= 1);
+        assert!(
+            counters.reserve_admitted.load(Ordering::Relaxed) >= 1,
+            "the reserve was used"
+        );
+        assert_eq!(counters.reserve_exhausted.load(Ordering::Relaxed), 0);
+        assert_eq!(budget.used(), 0, "every byte released");
+
+        // The same run without the reserve (before this fix): the deep
+        // subscriptions exhaust the budget and idle readers overflow.
+        let (idle, _, budget) = deep_and_idle(ByteBudget::new(total)).await;
+        assert!(idle >= 1);
+        assert_eq!(
+            budget.counters.over_floor_refused.load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(budget.used(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_single_deep_subscription_over_its_floor_alone_overflows() {
+        let weight = big_weight();
+        let total = 128 * weight;
+        let budget = ByteBudget::live(total);
+        let hub = Hub::new(&[(0, 0)], HubConfig::default());
+        hub.attach_live_budget(budget.clone());
+        // Its own cap is the whole budget: only the reserve can stop it.
+        let deep = subscribe(&hub, b"deep", 0, 10_000, total, &budget);
+        let idle = subscribe(&hub, b"idle", 1, 10_000, total, &budget);
+        let mut offset = 0;
+        while deep.terminal().is_none() {
+            hub.dispatch(big_trade(b"deep", offset));
+            offset += 1;
+            assert!(offset < 1_000);
+        }
+        let (reserve, _) = budget.reserve_and_floor();
+        assert!(
+            budget.used() <= total - reserve,
+            "deep never entered the reserve"
+        );
+        assert!(deep.queued().1 > total / 2);
+        hub.dispatch(big_trade(b"idle", offset));
+        assert!(matches!(deep.next().await, Next::Overflow));
+        assert!(matches!(idle.next().await, Next::Record(..)));
+        assert_eq!(
+            budget.counters.over_floor_refused.load(Ordering::Relaxed),
+            1
+        );
+        deep.close();
+        assert!(budget.used() < weight + QUEUE_ENTRY_OVERHEAD);
+    }
 }

@@ -254,7 +254,8 @@ async fn serve() -> Result<(), String> {
         },
     ));
     let reader = hub.run(Box::new(source));
-    let budget = ByteBudget::new(memory.queue_total as usize);
+    // Deep subscriptions cannot exhaust what an idle one needs (memory.rs).
+    let budget = ByteBudget::live(memory.queue_total as usize);
     let replay = ReplayCoordinator::new(
         Arc::new(KafkaRangeSource::new(settings, readers)),
         readers,
@@ -316,6 +317,13 @@ async fn serve() -> Result<(), String> {
             let replay = &reporter.replay.metrics;
             let load = |value: &std::sync::atomic::AtomicU64| value.load(Ordering::Relaxed);
             let (rss, cpu) = process_usage();
+            // Which live-budget isolation branch fired (memory.rs reserve).
+            let isolation = &reporter.budget.counters;
+            let queue_isolation = serde_json::json!({
+                "reserve_admitted": load(&isolation.reserve_admitted),
+                "over_floor_refused": load(&isolation.over_floor_refused),
+                "reserve_exhausted": load(&isolation.reserve_exhausted),
+            });
             let replay_timing = serde_json::json!({
                 "slot_waits": load(&replay.slot_waits),
                 "slot_wait_ns": load(&replay.slot_wait_ns),
@@ -365,6 +373,7 @@ async fn serve() -> Result<(), String> {
                     "replay_detached": load(&replay.detached),
                     "replay_timing": replay_timing,
                     "queue_bytes": reporter.budget.used(),
+                    "queue_isolation": queue_isolation,
                     "rss_bytes": rss,
                     "cpu_seconds": cpu,
                 })

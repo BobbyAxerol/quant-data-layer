@@ -1476,8 +1476,12 @@ impl SubscriptionTask {
             return Some(charge);
         }
         let deadline = Instant::now() + self.state.limits.slow_consumer_after;
+        let entry = charge.bytes();
         loop {
-            if let Some(extra) = self.state.budget.charge(missing) {
+            if let Some(extra) = self
+                .subscription
+                .charge_handoff(missing, record.weight(), entry)
+            {
                 charge.absorb(extra);
                 return Some(charge);
             }
@@ -1515,7 +1519,11 @@ impl SubscriptionTask {
         if missing == 0 || !fresh {
             return Ok(charge);
         }
-        match self.state.budget.charge(missing) {
+        let entry = charge.bytes();
+        match self
+            .subscription
+            .charge_handoff(missing, record.weight(), entry)
+        {
             Some(extra) => {
                 charge.absorb(extra);
                 Ok(charge)
