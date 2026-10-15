@@ -69,7 +69,7 @@ class SamplingKeyTests(unittest.TestCase):
         self.assertTrue(sampler.admit("OKX", "ETH-USDT-SWAP", "trade", None, 6 * S))
         self.assertTrue(sampler.admit("OKX", "ETH-USDT-SWAP", "book_snapshot", None, 6 * S))
         self.assertTrue(sampler.admit("OKX", "ETH-USDT-SWAP", "book_snapshot", None, 6 * S))  # unsampled, as before
-        self.assertTrue(OBSERVER_VERSION.endswith(".v3"))  # v3 changed the launch only, not this sampling
+        self.assertTrue(OBSERVER_VERSION.endswith(".v4"))  # v3 changed the launch, v4 the cap; not this sampling
 
 
 QUERY_INSPECT = {
@@ -207,6 +207,172 @@ class ReportOnlyCoverageTests(unittest.TestCase):
         lines = [json.dumps({"kind": "launch", "launch_mode": "docker_run_isolated"}),
                  obs("trade", "OKX", 1_000_000_000, 1_030_000_000, 1_150_000_000)]
         self.assertEqual(list(summarize(lines)), ["trade|OKX|"])
+
+
+# ---- v4: fixed-memory full-window aggregates (Codex review S100-4, 2026-10-15) ----
+from scripts import p184_gate_campaign as campaign  # noqa: E402
+
+W0 = 1_792_072_000 * S
+
+
+def run_window(events, *, seconds=180, raw_cap=10000, final=True, end_ns=None, **kw):
+    """Feed (feed, venue, symbol, source_ns, seen_ns, admitted) tuples; return observation items as the worker
+    emits them (scope, READY, raw samples, final/partial aggregate)."""
+    window = observer.WindowAggregator(seconds, raw_cap=raw_cap, **kw)
+    window.begin(W0)
+    items = [{"kind": "scope", "observer_version": OBSERVER_VERSION, "seconds": seconds},
+             {"kind": "READY", "at_ns": W0, "planned_end_ns": window.planned_end_ns}]
+    for i, (feed, venue, symbol, source, seen, admitted) in enumerate(events):
+        record = window.observe(feed, venue, None, symbol, source, source + 5_000_000, None, seen, admitted,
+                                lambda i=i, source=source, seen=seen, symbol=symbol: {
+                                    "kind": "canonical_observation", "feed": feed, "offset": i,
+                                    "identity": {"venue": venue, "native_symbol": symbol}, "interval": None,
+                                    "source_event_ns": source, "received_at_ns": source + 5_000_000,
+                                    "producer_timestamp_ms": None, "observer_receipt_wall_ns": seen})
+        if record is not None:
+            items.append(record)
+    end = end_ns if end_ns is not None else window.planned_end_ns
+    items.append(json.loads(json.dumps(window.snapshot(end, end, final=final))))
+    return items, window
+
+
+def snapshots(n, *, seconds=180, symbol="BTC-USDT-SWAP"):
+    """n BOOK_SNAPSHOT events evenly over the window, visibility 100 + (i % 200) ms, one 4.5 s outlier."""
+    out = []
+    for i in range(n):
+        seen = W0 + int(i * seconds * S / n)
+        latency_ms = 4_500 if i == n // 2 else 100 + i % 200
+        out.append(("book_snapshot", "OKX", symbol, seen - latency_ms * 1_000_000, seen, True))
+    return out
+
+
+class V4AggregateTests(unittest.TestCase):
+    def test_bucket_scheme_brackets_every_value_with_bounded_width(self):
+        for ms in (0.0, 0.4, 1.0, 127.99, 128.0, 129.7, 257.6, 1586.6, 73_817.2, 2_160_788.8, 9e9):
+            lower, upper = observer.bucket_bounds(observer.bucket_index(ms))
+            self.assertTrue(lower <= ms < upper, (ms, lower, upper))
+            self.assertLessEqual(upper - lower, max(1.0, ms / observer.SUB_BUCKETS))
+        self.assertEqual(observer.bucket_index(-0.1), -1)
+        self.assertEqual(observer.bucket_bounds(-1), (None, 0.0))
+
+    def test_histogram_is_conservative_against_the_v3_exact_nearest_rank(self):
+        values = [100 + (i * 7919) % 400 + (i % 10) / 10 for i in range(5000)] + [-3.0, 6_749.2]
+        h = observer.Histogram()
+        for v in values:
+            h.add(v)
+        stats = h.stats()
+        exact = observer._quantiles(values)
+        self.assertEqual((stats["n"], stats["negative"], stats["max"], stats["min"]), (5002, 1, 6749.2, -3.0))
+        for name in ("p50", "p95"):
+            self.assertLessEqual(stats[f"{name}_bucket_lower"], exact[name] + 0.05)
+            self.assertGreaterEqual(stats[name], exact[name] - 0.05)
+            self.assertLessEqual(stats[name] - stats[f"{name}_bucket_lower"], 4.0)
+        self.assertEqual(stats["percentile_basis"], "BUCKET_UPPER_BOUND")
+        self.assertEqual(observer.Histogram.from_json(json.loads(json.dumps(h.to_json()))).stats(), stats)
+        small = observer.Histogram()
+        small.add(10.2)
+        self.assertIsNone(small.stats()["p99"])
+        self.assertEqual(small.stats()["p95"], 10.2)  # an upper bound above the exact max is clamped to it
+        with self.assertRaises(ValueError):
+            observer.Histogram.from_json({"n": 3, "buckets": [[1, 1]]})
+
+    def test_the_reader_never_stops_at_a_record_cap_and_coverage_is_the_whole_window(self):
+        # The 2026-10-15 failure: 10,000 records reached after ~90 s of a 180 s window. v4 keeps every admitted
+        # record in the aggregate; only the raw stdout sample is bounded.
+        items, window = run_window(snapshots(30_000), raw_cap=10_000)
+        aggregate = observer.last_aggregate(items)
+        self.assertEqual(aggregate["events_admitted"], 30_000)
+        raw = [i for i in items if i["kind"] == "canonical_observation"]
+        self.assertLessEqual(len(raw), observer.RAW_SLICES * observer.RAW_PER_SLICE)
+        self.assertEqual(len({(r["observer_receipt_wall_ns"] - W0) * observer.RAW_SLICES // (180 * S) for r in raw}),
+                         observer.RAW_SLICES)  # stratified over the whole window, not the first seconds
+        summary = observer.summarize([json.dumps(i) for i in items])["book_snapshot|OKX|"]
+        self.assertEqual(summary["visibility_ms"]["n"], 30_000)
+        self.assertEqual(summary["visibility_ms"]["max"], 4_500.0)  # exact, however late in the window
+        self.assertEqual(summary["outliers"][0]["visibility_ms"], 4_500.0)
+        self.assertEqual(len(summary["outliers"]), observer.OUTLIER_K)
+        self.assertEqual(summary["venue_to_dl_ms"]["max"], 5.0)
+        coverage = observer.window_coverage(items)
+        self.assertEqual((coverage["coverage_basis"], coverage["truncated_before_end"], coverage["record_cap_reached"]),
+                         ("FULL_WINDOW_AGGREGATE", False, False))
+        self.assertEqual(coverage["observed_seconds"], 180.0)
+        receipt = campaign.g4_window_receipt(items)
+        self.assertFalse(receipt["record_cap_reached"])
+        self.assertEqual(receipt["events_admitted"], 30_000)
+        self.assertIn("frozen G4 table and addendum unchanged", receipt["baseline_comparability"])
+
+    def test_raw_cap_bounds_samples_only(self):
+        items, window = run_window(snapshots(2_000), raw_cap=10)
+        self.assertEqual(sum(1 for i in items if i["kind"] == "canonical_observation"), 10)
+        self.assertTrue(window.raw_cap_reached)
+        self.assertEqual(observer.last_aggregate(items)["events_admitted"], 2_000)
+
+    def test_gated_population_is_the_v3_admission_rule(self):
+        # Same admitted events: the v4 aggregate and the v3 raw summary agree on n and the exact max.
+        events = snapshots(3_000) + [("trade", "OKX", "ETH-USDT-SWAP", W0 + i * S - 30_000_000, W0 + i * S, i % 2 == 0)
+                                     for i in range(100)]
+        items, _ = run_window(events, raw_cap=10**6, raw_per_slice=10**6)
+        v4 = observer.summarize([json.dumps(i) for i in items])
+        v3 = observer._summarize_records([json.dumps(i) for i in items if i["kind"] == "canonical_observation"])
+        for key in ("book_snapshot|OKX|", "trade|OKX|"):
+            self.assertEqual(v4[key]["visibility_ms"]["n"], v3[key]["visibility_ms"]["n"])
+            self.assertAlmostEqual(v4[key]["visibility_ms"]["max"], v3[key]["visibility_ms"]["max"], places=1)
+            self.assertGreaterEqual(v4[key]["visibility_ms"]["p95"] + 0.05, v3[key]["visibility_ms"]["p95"])
+        self.assertEqual(v4["trade|OKX|"]["visibility_ms"]["n"], 50)  # non-admitted events are not gated
+        self.assertEqual(v4["trade|OKX|"]["all_events_visibility_ms"]["n"], 100)  # report-only
+
+    def test_partial_aggregate_is_a_truncated_window(self):
+        items, _ = run_window(snapshots(100), final=False, end_ns=W0 + 120 * S)
+        coverage = observer.window_coverage(items)
+        self.assertTrue(coverage["truncated_before_end"])
+        self.assertEqual(coverage["unobserved_tail_seconds"], 60.0)
+
+    def test_inverse_rows_come_from_the_aggregate(self):
+        events = [("quote", "OKX", "BTC-USD-SWAP", W0 + i * S - 50_000_000, W0 + i * S, True) for i in range(10)]
+        items, _ = run_window(events)
+        rows = campaign.g4_inverse_rows(items)
+        self.assertEqual(rows["quote|OKX_INVERSE|"]["n"], 10)
+        self.assertEqual(rows["quote|OKX_INVERSE|"]["max"], 50.0)
+        self.assertEqual(rows["quote|OKX_INVERSE|"]["percentile_basis"], "BUCKET_UPPER_BOUND")
+
+
+def g4_window(p95, lower=None, n=500, basis="BUCKET_UPPER_BOUND"):
+    stats = {"n": n, "p95": p95, "max": p95 + 10}
+    if basis:
+        stats.update(percentile_basis=basis, p95_bucket_lower=lower)
+    return {"summary": {"trade|OKX|": {"visibility_ms": stats}}, "inverse_rows": {}}
+
+
+class V4ScoringTests(unittest.TestCase):
+    TABLE = {"trade|OKX|": {"candidate_p95_limit_ms": 257.4}}
+
+    def test_bucket_straddling_the_limit_is_unresolved_not_fail_or_pass(self):
+        v, rows, why = campaign.score_g4([g4_window(258.0, 256.0)], self.TABLE)
+        self.assertEqual(v, "NOT_MEASURED")
+        self.assertEqual(rows[0]["unresolved_windows"], [True])
+        self.assertTrue(any("straddles" in w for w in why))
+        self.assertEqual(campaign.score_g4([g4_window(260.0, 258.0)], self.TABLE)[0], "FAIL")
+        self.assertEqual(campaign.score_g4([g4_window(256.0, 254.0)], self.TABLE)[0], "PASS")
+        self.assertEqual(campaign.score_g4([g4_window(258.0, basis=None)], self.TABLE)[0], "FAIL")  # v1-v3 exact
+        mixed = campaign.score_g4([g4_window(258.0, 256.0), g4_window(300.0, 298.0)], self.TABLE)
+        self.assertEqual(mixed[0], "FAIL")  # a decisive window fails even next to an unresolved one
+
+    def test_a_truncated_window_cannot_pass_g4(self):
+        items, _ = run_window(snapshots(50), final=False, end_ns=W0 + 100 * S)
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            budget = d / "budget.json"
+            budget.write_text(json.dumps({"g4_delivery_visibility": {"table": {
+                "book_snapshot|OKX|": {"candidate_p95_limit_ms": 10_000.0}}}}))
+            (d / "campaign.json").write_text(json.dumps({"budget_path": str(budget), "g4_addendum_path":
+                                                          str(d / "absent.json"), "g4_windows": [{"index": 1}]}))
+            (d / "g4-1").mkdir()
+            (d / "g4-1" / "observations.jsonl").write_text("".join(json.dumps(i) + "\n" for i in items))
+            (d / "g4-1-summary.json").write_text(json.dumps(observer.summarize(
+                (d / "g4-1" / "observations.jsonl").read_text().splitlines())))
+            gate = next(g for g in campaign.build_scorecard(d)["gates"] if g["id"] == "G4")
+        self.assertEqual(gate["verdict"], "NOT_MEASURED")
+        self.assertIn("observed only part of their planned window", gate["reason"])
 
 
 if __name__ == "__main__":

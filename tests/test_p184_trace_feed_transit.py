@@ -161,6 +161,8 @@ FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "p184_native")
 SUMMARY = os.path.join(FIXTURES, "summary-native-fixture-43-1792024672908395216.json")
 RAW = os.path.join(FIXTURES, "delivery-native-fixture-43-1792024672908395216.json")
 STARTED, EXPIRES = 1792024466147444849, 1792024672908395216
+# The fixture summary predates observed_end_unix_ns (S100-5): its end is bounded by pinned process-end evidence.
+ENDED = [{"started_ns": STARTED - 3 * 10**9, "finished_ns": EXPIRES, "last_seen_ns": EXPIRES - 10**6}]
 
 
 class NativeWriterTests(unittest.TestCase):
@@ -191,7 +193,7 @@ class NativeWriterTests(unittest.TestCase):
         with open(SUMMARY) as handle:
             own = {(r["route"]["feed"], r["route"]["provider"]): r["stream"] for r in
                    json.load(handle)["ack_latency"]["routes"]}
-        out = transit.native_summary([SUMMARY], from_ns=STARTED + 1, to_ns=EXPIRES - 1)
+        out = transit.native_summary([SUMMARY], from_ns=STARTED + 1, to_ns=EXPIRES - 1, process_ends=ENDED)
         self.assertEqual(out["coverage_gaps"], [])
         metric = own[("TRADE", "BINANCE")]["applied"]["metrics"]["source_event_to_ack"]
         block = out["transit"]["TRADE|BINANCE"]
@@ -203,7 +205,7 @@ class NativeWriterTests(unittest.TestCase):
         self.assertEqual(g7["n"], sum(own[("TRADE", "BINANCE")][o]["metrics"]["writer_to_ack"]["n"]
                                       for o in transit.NATIVE_OUTCOMES))
         self.assertEqual(set(out["g7"]["TRADE"]["verdict"]), set(transit.G7_GATES))
-        twice = transit.native_summary([SUMMARY, SUMMARY], from_ns=STARTED + 1, to_ns=EXPIRES - 1)
+        twice = transit.native_summary([SUMMARY, SUMMARY], from_ns=STARTED + 1, to_ns=EXPIRES - 1, process_ends=ENDED)
         self.assertEqual(twice["transit"]["TRADE|BINANCE"]["n"], 2 * block["n"])
         self.assertEqual(twice["transit"]["TRADE|BINANCE"]["p95"], block["p95"])
         self.assertEqual(out["window_scope"]["pre_load_seconds"], 0.0)
@@ -217,7 +219,7 @@ class NativeWriterTests(unittest.TestCase):
             {"worker": "native-other", "pid": 7, "first_start_ns": STARTED + 5, "last_start_ns": STARTED + 9}])
         self.assertTrue(any("no final summary" in g for g in orphan["coverage_gaps"]))
         own = transit.native_summary([SUMMARY], from_ns=STARTED + 1, to_ns=EXPIRES - 1,
-                                     raw_activations=transit.native_raw_activations([RAW]))
+                                     raw_activations=transit.native_raw_activations([RAW]), process_ends=ENDED)
         self.assertEqual(own["coverage_gaps"], [])
         later = transit.native_summary([SUMMARY], from_ns=EXPIRES + 1, to_ns=EXPIRES + 10)
         self.assertEqual([a["overlaps_load"] for a in later["activations"]], [False])
@@ -236,7 +238,176 @@ class NativeWriterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()) as stdout:
             out = os.path.join(tmp, "o.json")
             transit.main([RAW, "--from-ns", str(STARTED + 1), "--to-ns", str(EXPIRES - 1),
-                          "--native-summary", os.path.join(FIXTURES, "summary-native-*.json"), "--out", out])
+                          "--native-summary", os.path.join(FIXTURES, "summary-native-*.json"), "--out", out,
+                          "--process-end", f"{STARTED - 1}:{EXPIRES}:{EXPIRES - 10**6}"])
         report = json.loads(stdout.getvalue())
         self.assertEqual(report["native_summary"]["coverage_gaps"], [])
         self.assertEqual(report["files_by_kind"]["native"]["stop_reasons"], {"CAP": 1})
+
+
+# ---- S100-5 activation end and G10 native apply-decision counters (2026-10-15) ----
+from pathlib import Path  # noqa: E402
+
+from scripts import p184_gate_campaign as campaign  # noqa: E402
+
+S = 10**9
+# p184-final-campaign-20261015T134656Z: activation start/configured expiry, load window, G11 Docker clocks.
+C_STARTED, C_EXPIRES = 1792071877331145845, 1792075472941005697
+C_FROM, C_TO = int(1792072125.1225328 * S), int(1792073925.1225328 * S)
+C_DOCKER_STARTED, C_DOCKER_FINISHED = "2026-10-15T13:44:34.835485096Z", "2026-10-15T14:19:42.261233777Z"
+C_LAST_SEEN_MS = 1792073982213
+
+
+def native_report(started, expires, *, observed_end=None, integrity=None, worker="native-w", pid=34):
+    """A minimal final native summary (no routes) of the trace.rs shape."""
+    report = {"schema": transit.NATIVE_SUMMARY_SCHEMA, "final": True, "worker": worker, "pid": pid,
+              "started_unix_ns": started, "started_monotonic_ns": 1_000 * S, "expires_unix_ns": expires,
+              "ack_latency": {"schema": transit.NATIVE_ACK_SCHEMA, "scope": transit.NATIVE_ACK_SCOPE,
+                              "cumulative": True, "bucket_upper_bounds_ms": [1.0, 2.0], "routes": [],
+                              "rejected_route_rows": 0}}
+    if observed_end is not None:
+        report["observed_end_unix_ns"] = observed_end
+    if integrity is not None:
+        report["apply_integrity"] = {"schema": transit.NATIVE_INTEGRITY_SCHEMA, "rejected_route_units": 0,
+                                     "routes": integrity}
+    return report
+
+
+def integrity_route(provider, *, duplicate=0, first_mono=None, last_mono=None, ambiguous=0, replay=0, feed="TRADE"):
+    return {"route": {"provider": provider, "symbol": "X", "feed": feed, "interval": None}, "units": 10, "rows": 20,
+            "stream_rows": 19, "unconfirmed_rows": 0, "replay_attempted": replay,
+            "replay_decisions": {"applied": duplicate, "refreshed": 0, "duplicate_ignored": replay - duplicate},
+            "decisions": {"applied": 18, "refreshed": 1, "duplicate_ignored": 1}, "duplicate_applied": duplicate,
+            "duplicate_applied_first_monotonic_ns": first_mono, "duplicate_applied_last_monotonic_ns": last_mono,
+            "ambiguous_after_unconfirmed": ambiguous, "epochs_total": 2, "epochs_dropped": 0}
+
+
+def write(tmp, report, name="summary-native-w-34-1.json"):
+    path = os.path.join(tmp, name)
+    with open(path, "w") as handle:
+        json.dump(report, handle)
+    return path
+
+
+class ActivationEndTests(unittest.TestCase):
+    def test_configured_expiry_is_never_coverage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = transit.native_summary([write(tmp, native_report(C_STARTED, C_EXPIRES))], from_ns=C_FROM, to_ns=C_TO)
+        activation = out["activations"][0]
+        self.assertEqual((activation["end_basis"], activation["end_upper_ns"]), ("NOT_MEASURED", None))
+        self.assertEqual(activation["expires_basis"], "CONFIGURED_DEADLINE_NOT_COVERAGE")
+        self.assertTrue(any("end not measured" in g for g in out["coverage_gaps"]))
+        scope = out["window_scope"]
+        self.assertIsNone(scope["activation_to_ns"])
+        self.assertIsNone(scope["post_load_seconds"])  # not the receipt's 1547.8 s
+        self.assertEqual(scope["configured_expires_unix_ns_not_coverage"], C_EXPIRES)
+        self.assertEqual(scope["pre_load_seconds"], 247.8)
+
+    def test_campaign_20261015_bound_by_the_g11_process_end(self):
+        end = {"started_ns": campaign.docker_time_ns(C_DOCKER_STARTED),
+               "finished_ns": campaign.docker_time_ns(C_DOCKER_FINISHED), "last_seen_ns": C_LAST_SEEN_MS * 10**6}
+        self.assertEqual(end["finished_ns"], 1792073982261233777)
+        with tempfile.TemporaryDirectory() as tmp:
+            out = transit.native_summary([write(tmp, native_report(C_STARTED, C_EXPIRES))], from_ns=C_FROM,
+                                         to_ns=C_TO, process_ends=[end])
+        self.assertEqual(out["coverage_gaps"], [])
+        activation = out["activations"][0]
+        self.assertEqual((activation["end_basis"], activation["end_upper_ns"], activation["end_lower_ns"]),
+                         ("PROCESS_END_EVIDENCE", end["finished_ns"], end["last_seen_ns"]))
+        scope = out["window_scope"]
+        self.assertEqual(scope["end_basis"], "PROCESS_END_EVIDENCE")
+        self.assertEqual(scope["post_load_seconds"], 57.1)
+        self.assertEqual((scope["load_seconds"], scope["load_seconds_covered"]), (1800.0, 1800.0))
+        self.assertIn("NOT_SEPARABLE", scope["distribution_scope"])
+
+    def test_process_evidence_of_another_run_does_not_apply(self):
+        later_run = {"started_ns": C_STARTED + 10 * S, "finished_ns": C_TO + 60 * S, "last_seen_ns": None}
+        earlier_run = {"started_ns": None, "finished_ns": C_STARTED - S, "last_seen_ns": None}
+        report = native_report(C_STARTED, C_EXPIRES)
+        self.assertEqual(transit.activation_end(report, [later_run, earlier_run])["basis"], "NOT_MEASURED")
+        self.assertEqual(transit.parse_process_end(":5:")["finished_ns"], 5)
+        with self.assertRaises(ValueError):
+            transit.parse_process_end("9:5")
+
+    def test_summary_observed_end_wins_is_capped_by_expiry_and_can_show_an_early_stop(self):
+        stopped = C_TO - 100 * S  # the process ended inside the load: a gap, whatever the expiry says
+        with tempfile.TemporaryDirectory() as tmp:
+            out = transit.native_summary([write(tmp, native_report(C_STARTED, C_EXPIRES, observed_end=stopped))],
+                                         from_ns=C_FROM, to_ns=C_TO)
+        self.assertEqual(out["activations"][0]["end_basis"], "SUMMARY_OBSERVED_END")
+        self.assertTrue(any("does not span the load window" in g for g in out["coverage_gaps"]))
+        self.assertEqual(out["window_scope"]["load_seconds_covered"], 1700.0)
+        late = transit.activation_end(native_report(C_STARTED, C_EXPIRES, observed_end=C_EXPIRES + S))
+        self.assertEqual(late["end_upper_ns"], C_EXPIRES)  # aggregates stop counting at the expiry
+
+    def test_g11_process_end_reads_the_probe_observations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "g11").mkdir()
+            (d / "g11" / "g11-observations.jsonl").write_text("\n".join(json.dumps(x) for x in (
+                {"kind": "armed", "writer": {"started": C_DOCKER_STARTED, "finished": "0001-01-01T00:00:00Z"}},
+                {"kind": "restart", "last_old_seen_ms": C_LAST_SEEN_MS,
+                 "new": {"finished": C_DOCKER_FINISHED, "started": "2026-10-15T14:19:42.382229525Z"}})) + "\n")
+            end = campaign.g11_process_end(d)
+            self.assertEqual(end["finished_ns"], 1792073982261233777)
+            self.assertEqual(end["started_ns"], 1792071874835485096)
+            self.assertEqual(end["last_seen_ns"], C_LAST_SEEN_MS * 10**6)
+            (d / "g11" / "g11-observations.jsonl").write_text(json.dumps({"kind": "armed", "writer": {}}) + "\n")
+            self.assertIsNone(campaign.g11_process_end(d))
+
+
+class NativeG10Tests(unittest.TestCase):
+    END = C_TO + 60 * S
+
+    def analyse(self, routes, **report):
+        with tempfile.TemporaryDirectory() as tmp:
+            return transit.native_summary([write(tmp, native_report(C_STARTED, C_EXPIRES, observed_end=self.END,
+                                                                    integrity=routes, **report))],
+                                          from_ns=C_FROM, to_ns=C_TO)
+
+    def score(self, native):
+        logs = {"trade_gap": 0, "trade_replay_expired": 0, "trade_overflow": 0, "log_polls": 10, "log_unreadable": 0}
+        return campaign.score_g10(logs, {}, [], sample_scope="native raw sample spans 30 s",
+                                  native_g10=native.get("g10"), native_gaps=native.get("coverage_gaps"))
+
+    def mono(self, unix_ns):  # inverse of the summary anchor (started_monotonic_ns = 1000 s)
+        return unix_ns - C_STARTED + 1_000 * S
+
+    def test_zero_duplicates_applied_over_a_spanning_activation_passes_and_replays_are_not_duplicates(self):
+        native = self.analyse([integrity_route("BINANCE", replay=7), integrity_route("OKX")])
+        self.assertEqual(native["coverage_gaps"], [])
+        v, counters, why = self.score(native)
+        self.assertEqual((v, why), ("PASS", []))
+        self.assertEqual(counters["duplicates_applied"], 0)
+        self.assertEqual(counters["replay_attempted"], {"TRADE|BINANCE": 7, "TRADE|OKX": 0})
+        self.assertIn("native apply-decision counters", counters["duplicates_applied_scope"])
+
+    def test_a_duplicate_applied_inside_the_load_fails_and_outside_it_does_not_count(self):
+        inside = self.analyse([integrity_route("BINANCE", duplicate=1, replay=1, first_mono=self.mono(C_FROM + S),
+                                               last_mono=self.mono(C_FROM + S)), integrity_route("OKX")])
+        v, counters, _ = self.score(inside)
+        self.assertEqual((v, counters["duplicates_applied"]), ("FAIL", 1))
+        before = self.analyse([integrity_route("BINANCE", duplicate=2, replay=2, first_mono=self.mono(C_STARTED + S),
+                                               last_mono=self.mono(C_FROM - S)), integrity_route("OKX")])
+        self.assertEqual(before["g10"]["per_feed_venue"]["TRADE|BINANCE"]["duplicate_applied_in_window"], 0)
+        self.assertEqual(self.score(before)[0], "PASS")
+        unknown = self.analyse([integrity_route("BINANCE", duplicate=1, replay=1), integrity_route("OKX")])
+        self.assertEqual(self.score(unknown)[0], "FAIL")  # no clock: counted as inside (conservative)
+
+    def test_missing_counters_ambiguous_rows_and_uncovered_activation_are_not_measured(self):
+        missing = self.analyse(None)
+        v, counters, why = self.score(missing)
+        self.assertEqual(v, "NOT_MEASURED")
+        self.assertTrue(any("sample only" in w for w in why))
+        ambiguous = self.analyse([integrity_route("BINANCE", ambiguous=2), integrity_route("OKX")])
+        v, _, why = self.score(ambiguous)
+        self.assertEqual(v, "NOT_MEASURED")
+        self.assertTrue(any("lost apply reply" in w for w in why))
+        one_venue = self.analyse([integrity_route("OKX")])
+        self.assertTrue(any("BINANCE" in w for w in self.score(one_venue)[2]))
+        with tempfile.TemporaryDirectory() as tmp:  # end unknown: the counters cannot PASS
+            native = transit.native_summary([write(tmp, native_report(C_STARTED, C_EXPIRES, integrity=[
+                integrity_route("BINANCE"), integrity_route("OKX")]))], from_ns=C_FROM, to_ns=C_TO)
+        v, _, why = self.score(native)
+        self.assertEqual(v, "NOT_MEASURED")
+        self.assertTrue(any("end not measured" in w for w in why))

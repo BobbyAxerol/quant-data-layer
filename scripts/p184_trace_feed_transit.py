@@ -53,9 +53,26 @@ n >= 100), as the writer computes them. G2 new-event transit = source_event_to_a
 sdk_to_writer and writer_to_redis (= writer_to_ack) over every outcome. Scope = the union of the activation windows,
 which must span the load window; the seconds outside the load are reported (window_scope), never subtracted.
 
+Activation end (Codex review S100-5): the configured expiry (expires_unix_ns) is a future deadline, never coverage.
+The end of an activation is, in order: the summary's own observed_end_unix_ns (TS trace.rs, export time after the
+session drain; the latency aggregates stop at min(expiry, that)), else independently pinned process-end evidence
+(--process-end STARTED_NS:FINISHED_NS[:LAST_SEEN_NS], e.g. the G11 probe's Docker State.StartedAt/FinishedAt of the
+old writer run and its last poll that saw the old writer: end bounded by [last seen, FinishedAt]), else NOT_MEASURED
+(a coverage gap). window_scope reports pre-load / load / post-load seconds separately; the cumulative histogram
+cannot be split by phase (distribution_scope says so), so the gated distribution includes pre/post-load applies.
+
+G10 native counters (TS latency.rs apply_integrity, schema ts.native-apply-integrity.v1): per route, counted at the
+atomic apply decision for every unit while the trace is configured (not window-gated, fixed memory): decisions,
+replay_attempted (a stream row at/below the highest decided offset), duplicate_applied (a stream row APPLIED at/below
+the applied high-water: an economic duplicate), ambiguous_after_unconfirmed (APPLIED at/below a lost-reply row) and
+epochs. Merged per feed|venue (native_summary.g10); a route whose duplicate first..last span lies wholly outside the
+load window is not counted in the window, otherwise its whole count is (conservative). A summary without
+apply_integrity is NOT_MEASURED for G10, never zero.
+
 Boundary: read-only over the given files; no Redis, Docker or network access; it never enables tracing. Output is JSON
 on stdout, or --out (created exclusively).
 usage: p184_trace_feed_transit.py FILE_OR_GLOB [...] [--skip-seconds 40] [--from-ns N] [--to-ns N] [--out PATH]
+       [--native-summary GLOB] [--process-end STARTED_NS:FINISHED_NS[:LAST_SEEN_NS]]
 """
 from __future__ import annotations
 
@@ -87,6 +104,9 @@ NATIVE_ACK_SCHEMA = "ts.native-ack-latency.v1"
 NATIVE_ACK_SCOPE = "apply_rows_completed_in_activation_window"
 NATIVE_OUTCOMES = ("duplicate", "applied", "refreshed", "errors")
 NATIVE_G7 = {"sdk_to_writer_ms": "sdk_to_writer", "writer_to_redis_ms": "writer_to_ack"}
+NATIVE_INTEGRITY_SCHEMA = "ts.native-apply-integrity.v1"
+INTEGRITY_COUNTERS = ("rows", "stream_rows", "units", "unconfirmed_rows", "replay_attempted", "duplicate_applied",
+                      "ambiguous_after_unconfirmed", "epochs_total", "epochs_dropped")
 # Keys summarise() reads; loading only these keeps a full campaign (~250 parts x 4096 records) in memory.
 FIELDS = ("feed", "canonical_instrument_id", "outcome", "sdk_receive_basis", "sdk_receive_monotonic_ns",
           "writer_started_monotonic_ns", "redis_reply_monotonic_ns", "writer_started_wall_ns", "redis_reply_wall_ns",
@@ -301,7 +321,111 @@ class Buckets:
                 "quantile_basis": "BUCKET_UPPER_BOUND"}
 
 
-def native_summary(paths, *, from_ns=None, to_ns=None, raw_activations=()) -> dict:
+def parse_process_end(text: str) -> dict:
+    """STARTED_NS:FINISHED_NS[:LAST_SEEN_NS] -> {'started_ns', 'finished_ns', 'last_seen_ns'} (all unix ns)."""
+    parts = [int(x) if x else None for x in str(text).split(":")]
+    if len(parts) not in (2, 3) or parts[1] is None or (parts[0] is not None and parts[0] >= parts[1]):
+        raise ValueError(f"invalid --process-end {text!r}")
+    return {"started_ns": parts[0], "finished_ns": parts[1], "last_seen_ns": parts[2] if len(parts) == 3 else None}
+
+
+def activation_end(report: dict, process_ends=()) -> dict:
+    """{'basis', 'end_lower_ns', 'end_upper_ns', 'process_end'?}: when this activation stopped observing.
+    The configured expiry only CAPS the aggregate window (aggregates stop counting there); it never proves coverage."""
+    started, expires = as_int(report.get("started_unix_ns")), as_int(report.get("expires_unix_ns"))
+
+    def capped(value):
+        return min(value, expires) if value is not None and expires is not None else value
+    observed = as_int(report.get("observed_end_unix_ns"))
+    if observed is not None:
+        end = capped(observed)
+        return {"basis": "SUMMARY_OBSERVED_END", "end_lower_ns": end, "end_upper_ns": end}
+    for evidence in process_ends:
+        if started is not None and evidence.get("started_ns") is not None and started < evidence["started_ns"]:
+            continue
+        if started is not None and started >= evidence["finished_ns"]:
+            continue
+        seen = evidence.get("last_seen_ns")
+        lower = capped(seen) if seen is not None and (started is None or seen >= started) else None
+        return {"basis": "PROCESS_END_EVIDENCE", "end_lower_ns": lower,
+                "end_upper_ns": capped(evidence["finished_ns"]), "process_end": evidence}
+    return {"basis": "NOT_MEASURED", "end_lower_ns": None, "end_upper_ns": None}
+
+
+def native_window_scope(activations, from_ns, to_ns) -> dict | None:
+    """Pre-load / load / post-load seconds of the overlapping activations, from measured ends only."""
+    overlapping = [a for a in activations if a.get("overlaps_load")]
+    if not overlapping or from_ns is None or to_ns is None:
+        return None
+    first = min(a["started_unix_ns"] or from_ns for a in overlapping)
+    ends = [a.get("end_upper_ns") for a in overlapping]
+    known = all(e is not None for e in ends)
+    last = max(ends) if known else None
+    covered_to = min(to_ns, last) if known else None
+    bases = sorted({a.get("end_basis") for a in overlapping})
+    return {"basis": "NATIVE_SUMMARY_ACTIVATION_WINDOW (cumulative; buckets cannot be cut to the load window)",
+            "end_basis": bases[0] if len(bases) == 1 else bases,
+            "activation_from_ns": first, "activation_to_ns": last,
+            "activation_to_lower_ns": (min(a["end_lower_ns"] for a in overlapping)
+                                       if known and all(a.get("end_lower_ns") is not None for a in overlapping)
+                                       else None),
+            "configured_expires_unix_ns_not_coverage":
+                max((a.get("expires_unix_ns") or 0) for a in overlapping) or None,
+            "pre_load_seconds": round(max(0, from_ns - first) / 1e9, 1),
+            "load_seconds_covered": round(max(0, covered_to - max(first, from_ns)) / 1e9, 1) if known else None,
+            "load_seconds": round((to_ns - from_ns) / 1e9, 1),
+            "post_load_seconds": round(max(0, last - to_ns) / 1e9, 1) if known else None,
+            "distribution_scope": "PRE_LOAD+LOAD+POST_LOAD_NOT_SEPARABLE (one cumulative histogram per activation)"}
+
+
+def _unix(report: dict, monotonic):
+    """Process monotonic -> unix ns through the summary's own started anchor (None when unavailable)."""
+    started_unix, started_mono = as_int(report.get("started_unix_ns")), as_int(report.get("started_monotonic_ns"))
+    monotonic = as_int(monotonic)
+    if None in (started_unix, started_mono, monotonic) or monotonic < started_mono:
+        return None
+    return started_unix + (monotonic - started_mono)
+
+
+def merge_integrity(reports, from_ns, to_ns) -> dict:
+    """native_summary.g10: per feed|venue sums of the apply-decision counters of the overlapping activations."""
+    rows, gaps, rejected = {}, [], 0
+    for path, report in reports:
+        block = report.get("apply_integrity")
+        if not isinstance(block, dict) or block.get("schema") != NATIVE_INTEGRITY_SCHEMA:
+            gaps.append(f"native summary without {NATIVE_INTEGRITY_SCHEMA} counters: {path}")
+            continue
+        rejected += int(block.get("rejected_route_units") or 0)
+        for item in block.get("routes") or []:
+            route = item.get("route") or {}
+            key = f"{route.get('feed')}|{str(route.get('provider')).upper()}"
+            row = rows.setdefault(key, {**{name: 0 for name in INTEGRITY_COUNTERS}, "routes": 0,
+                                        "decisions": {"applied": 0, "refreshed": 0, "duplicate_ignored": 0},
+                                        "replay_decisions": {"applied": 0, "refreshed": 0, "duplicate_ignored": 0},
+                                        "duplicate_applied_in_window": 0, "duplicate_spans_unix_ns": []})
+            row["routes"] += 1
+            for name in INTEGRITY_COUNTERS:
+                row[name] += int(item.get(name) or 0)
+            for name in ("decisions", "replay_decisions"):
+                for outcome in row[name]:
+                    row[name][outcome] += int((item.get(name) or {}).get(outcome) or 0)
+            count = int(item.get("duplicate_applied") or 0)
+            if count:
+                first = _unix(report, item.get("duplicate_applied_first_monotonic_ns"))
+                last = _unix(report, item.get("duplicate_applied_last_monotonic_ns"))
+                outside = (first is not None and last is not None and from_ns is not None and to_ns is not None
+                           and (last < from_ns or first > to_ns))
+                row["duplicate_applied_in_window"] += 0 if outside else count
+                row["duplicate_spans_unix_ns"].append([first, last, count])
+    if rejected:
+        gaps.append(f"{rejected} native apply units of routes beyond max_routes not counted")
+    return {"basis": "TS apply_integrity: atomic apply decision counters, whole activation (not window-gated)",
+            "in_window_rule": "a route's duplicate count is in the window unless its first..last span is wholly "
+                              "outside",
+            "per_feed_venue": dict(sorted(rows.items())), "coverage_gaps": gaps}
+
+
+def native_summary(paths, *, from_ns=None, to_ns=None, raw_activations=(), process_ends=()) -> dict:
     """G2 TRADE/QUOTE transit and G7 segments of the native writer from its final summary files (see module doc).
 
     coverage_gaps lists every reason the summaries do not cover [from_ns, to_ns] of the native routes: an unreadable
@@ -311,6 +435,7 @@ def native_summary(paths, *, from_ns=None, to_ns=None, raw_activations=()) -> di
     gaps, activations, upper = [], [], None
     transit, g7 = {}, {}
     seen = set()
+    overlapping_reports = []
     for path in paths:
         try:
             with open(path) as handle:
@@ -325,16 +450,27 @@ def native_summary(paths, *, from_ns=None, to_ns=None, raw_activations=()) -> di
             gaps.append(f"native summary not a final {NATIVE_SUMMARY_SCHEMA} with buckets: {path}")
             continue
         started, expires = as_int(report.get("started_unix_ns")), as_int(report.get("expires_unix_ns"))
+        end = activation_end(report, process_ends)
         activation = {"worker": report.get("worker"), "pid": report.get("pid"), "started_unix_ns": started,
-                      "expires_unix_ns": expires, "routes": len(ack.get("routes") or []),
+                      "expires_unix_ns": expires, "expires_basis": "CONFIGURED_DEADLINE_NOT_COVERAGE",
+                      "observed_end_unix_ns": as_int(report.get("observed_end_unix_ns")),
+                      "last_metric_unix_ns": as_int(report.get("last_metric_unix_ns")),
+                      "end_basis": end["basis"], "end_lower_ns": end["end_lower_ns"],
+                      "end_upper_ns": end["end_upper_ns"],
+                      "routes": len(ack.get("routes") or []),
                       "rejected_route_rows": ack.get("rejected_route_rows"),
                       "not_offered_after_stop": report.get("not_offered_after_stop")}
-        if from_ns is not None and to_ns is not None and started and expires and (expires <= from_ns or started >= to_ns):
+        if end.get("process_end"):
+            activation["process_end"] = end["process_end"]
+        # Exclusion needs only an upper bound of the end: the measured one, else the expiry (aggregates stop there).
+        hi = end["end_upper_ns"] if end["end_upper_ns"] is not None else expires
+        if from_ns is not None and to_ns is not None and started and hi and (hi <= from_ns or started >= to_ns):
             activation["overlaps_load"] = False
             activations.append(activation)
             continue
         activation["overlaps_load"] = True
         activations.append(activation)
+        overlapping_reports.append((path, report))
         seen.add((report.get("worker"), report.get("pid")))
         if upper is None:
             upper = list(ack["bucket_upper_bounds_ms"])
@@ -343,10 +479,14 @@ def native_summary(paths, *, from_ns=None, to_ns=None, raw_activations=()) -> di
             continue
         if ack.get("rejected_route_rows"):
             gaps.append(f"{ack['rejected_route_rows']} native rows of routes beyond max_routes not measured ({path})")
-        if from_ns is not None and to_ns is not None and not (started and expires and started <= from_ns
-                                                              and expires >= to_ns):
-            gaps.append(f"native activation {report.get('worker')}/{report.get('pid')} [{started}, {expires}] does "
-                        "not span the load window (restart or trace expiry inside the load)")
+        if end["basis"] == "NOT_MEASURED":
+            gaps.append(f"native activation {report.get('worker')}/{report.get('pid')} end not measured: no "
+                        "observed_end_unix_ns and no process-end evidence (the configured expiry is not coverage)")
+        if from_ns is not None and to_ns is not None and not (
+                started and started <= from_ns and (end["end_upper_ns"] is None or end["end_upper_ns"] >= to_ns)):
+            gaps.append(f"native activation {report.get('worker')}/{report.get('pid')} [{started}, "
+                        f"{end['end_upper_ns']}] ({end['basis']}) does not span the load window (restart or trace "
+                        "expiry inside the load)")
         for item in ack.get("routes") or []:
             route = item.get("route") or {}
             feed, venue = str(route.get("feed")), str(route.get("provider")).upper()
@@ -370,16 +510,10 @@ def native_summary(paths, *, from_ns=None, to_ns=None, raw_activations=()) -> di
     overlapping = [a for a in activations if a.get("overlaps_load")]
     if not overlapping:
         gaps.append("no native summary overlaps the load window")
-    scope = None
-    if overlapping and from_ns is not None and to_ns is not None:
-        first = min(a["started_unix_ns"] or from_ns for a in overlapping)
-        last = max(a["expires_unix_ns"] or to_ns for a in overlapping)
-        scope = {"basis": "NATIVE_SUMMARY_ACTIVATION_WINDOW (cumulative; buckets cannot be cut to the load window)",
-                 "activation_from_ns": first, "activation_to_ns": last,
-                 "pre_load_seconds": round(max(0, from_ns - first) / 1e9, 1),
-                 "post_load_seconds": round(max(0, last - to_ns) / 1e9, 1)}
+    scope = native_window_scope(activations, from_ns, to_ns)
+    g10 = merge_integrity(overlapping_reports, from_ns, to_ns) if overlapping_reports else None
     result = {"files": len(paths), "activations": activations, "coverage_gaps": gaps, "window_scope": scope,
-              "transit": {}, "g7": {}}
+              "g10": g10, "transit": {}, "g7": {}}
     for key in sorted(transit):
         feed = key.split("|", 1)[0]
         block = transit[key].block()
@@ -405,8 +539,12 @@ def main(argv=None):
     parser.add_argument("--to-ns", type=int)
     parser.add_argument("--native-summary", action="append", default=[],
                         help="native writer summary files or quoted globs (summary-native-*-<until>.json)")
+    parser.add_argument("--process-end", action="append", default=[],
+                        help="STARTED_NS:FINISHED_NS[:LAST_SEEN_NS] of a writer process run (pinned evidence, e.g. "
+                             "the G11 probe's Docker StartedAt/FinishedAt and last poll that saw it)")
     parser.add_argument("--out")
     args = parser.parse_args(argv)
+    process_ends = [parse_process_end(value) for value in args.process_end]
     paths = sorted({path for pattern in args.inputs for path in (glob.glob(pattern) or [pattern])})
     files, records = load(paths, fields=FIELDS)
     report = {"schema": "qdl.p184.trace-feed-transit.v1", "files": len(files), "records": len(records),
@@ -421,7 +559,7 @@ def main(argv=None):
         report["native_summary"] = native_summary(
             summaries, from_ns=args.from_ns if args.from_ns is not None else window.get("from_ns"),
             to_ns=args.to_ns if args.to_ns is not None else window.get("to_ns"),
-            raw_activations=native_raw_activations(native_raw))
+            raw_activations=native_raw_activations(native_raw), process_ends=process_ends)
     text = json.dumps(report, indent=1, sort_keys=True)
     if args.out:
         with open(args.out, "x") as handle:

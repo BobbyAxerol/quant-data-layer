@@ -34,8 +34,10 @@ the native raw trace is one capped file per activation (a SAMPLE), so for the na
 are read from the native final summary histograms (p95/p99 = bucket upper bounds, max exact; scope = the activation
 window spanning the load, pre/post-load seconds reported) and the raw CAP is not a coverage gap for them; the summary's
 own coverage gaps are. Python-worker feeds (BOOK_*, MARK) keep the raw-trace coverage rule. The summary is written when
-the writer process stops, i.e. at the G11 restart: score after G11. G10 duplicates for native TRADE have no full-window
-counter outside TEST cohorts: they are read from the raw sample, which can FAIL G10 but never PASS it.
+the writer process stops, i.e. at the G11 restart: score after G11. The activation end is the summary's
+observed_end_unix_ns, else the G11 probe's pinned process end (--process-end), never the configured expiry (S100-5).
+G10 duplicates for native TRADE come from the summary's apply-decision counters (TS apply_integrity, whole activation);
+without them they are read from the raw sample, which can FAIL G10 but never PASS it.
 
 G4 addendum (owner decision 2026-10-11): rows outside the frozen 17-row G4 table are scored from
 config/v2/p184-stage100-g4-addendum.json when that file exists (frozen once by scripts/p184_freeze_g4_addendum.py from
@@ -46,7 +48,7 @@ block). The original table and its p95 rule are unchanged; without the file the 
 and MARK watch) and the G4 observer windows, then writes baseline.json; it never scores.
 
 Boundary: no image builds, no container create/recreate/restart, no Redis/Kafka writes. Children: the driver's own
-disposable client container (removed by the driver), the G4 observer (observer v3: its own `docker run --rm` container
+disposable client container (removed by the driver), the G4 observer (observer v3+: its own `docker run --rm` container
 of the query_kn_1 image, read-only TLS mounts, bounded CPU/memory, removed by name after each window - no longer a
 `docker exec` inside query_kn_1) and the trace analysis container (--rm, --network none, read-only mounts).
 usage: p184_gate_campaign.py run [--dry-run] [--g11] ... | p184_gate_campaign.py score --campaign-dir DIR
@@ -218,10 +220,16 @@ def g4_window_receipt(observations) -> dict:
     launch_info = ({k: launch.get(k) for k in ("launch_mode", "container_name", "image_id", "image_repo_digests",
                                                 "cpus", "memory", "networks")}
                    if launch else {"launch_mode": "DOCKER_EXEC_IN_QUERY (pre-v3, no launch record)"})
-    return {"records": records, "record_cap_reached": bool(cap or (done or {}).get("record_cap_reached")),
-            "cap_reached_after_seconds": (cap or {}).get("after_seconds"),
-            "observer_version": version, "launch": launch_info,
-            "coverage": observer.window_coverage(observations), "produce_split": observer.produce_split(observations)}
+    coverage = observer.window_coverage(observations)
+    receipt = {"records": records, "record_cap_reached": bool(cap or (done or {}).get("record_cap_reached")),
+               "cap_reached_after_seconds": (cap or {}).get("after_seconds"),
+               "observer_version": version, "launch": launch_info,
+               "coverage": coverage, "produce_split": observer.produce_split(observations)}
+    if coverage.get("coverage_basis") == "FULL_WINDOW_AGGREGATE":
+        # v4: `records` counts the bounded raw samples only; the gated rows come from the full-window aggregate.
+        receipt.update(records_basis="RAW_STRATIFIED_SAMPLES", events_admitted=coverage.get("events_admitted"),
+                       baseline_comparability=observer.BASELINE_COMPARABILITY)
+    return receipt
 
 
 def derive_profile(base: dict, extra=EXTRA_MONITORED) -> dict:
@@ -534,18 +542,31 @@ def score_g4(windows: list[dict], table: dict, addendum: dict | None = None) -> 
     """windows: [{'summary': {row: {'visibility_ms': {...}}}, 'inverse_rows': {...}}]; table: budget rows.
     addendum (validated, optional): GATED rows score windows with >= 5 samples on max vs the frozen limit; REPORT_ONLY
     rows are returned with verdict REPORT_ONLY and never change the gate; rows in neither stay NOT_MEASURED."""
-    rows, failed, uncovered = [], [], []
+    rows, failed, uncovered, straddled = [], [], [], []
     for key, limit in sorted(table.items()):
         values = [((w.get("summary") or {}).get(key) or {}).get("visibility_ms", {}) for w in windows]
         p95 = [v.get("p95") if v.get("n") else None for v in values]
         n = [v.get("n", 0) for v in values]
-        verdict = ("NOT_MEASURED" if not any(n) else
-                   "FAIL" if any(x is not None and x > limit["candidate_p95_limit_ms"] for x in p95) else "PASS")
-        rows.append({"row": key, "p95_ms_per_window": p95, "n_per_window": n,
-                     "limit_p95_ms": limit["candidate_p95_limit_ms"], "verdict": verdict})
+        cap = limit["candidate_p95_limit_ms"]
+        # Observer v4 p95 = bucket upper bound: decisive FAIL only when the bucket's lower edge is over the limit; a
+        # bucket straddling the limit is unresolved (NOT_MEASURED), never FAIL and never PASS. v1-v3 p95 are exact.
+        lower = [(v.get("p95_bucket_lower") if v.get("percentile_basis") == "BUCKET_UPPER_BOUND" else v.get("p95"))
+                 if v.get("n") else None for v in values]
+        over = [x is not None and x > cap and (lo is not None and lo > cap) for x, lo in zip(p95, lower)]
+        unresolved = [x is not None and x > cap and not o for x, o in zip(p95, over)]
+        verdict = ("NOT_MEASURED" if not any(n) else "FAIL" if any(over) else
+                   "NOT_MEASURED" if any(unresolved) else "PASS")
+        row = {"row": key, "p95_ms_per_window": p95, "n_per_window": n, "limit_p95_ms": cap, "verdict": verdict}
+        if any(v.get("percentile_basis") for v in values):
+            row.update(p95_basis="BUCKET_UPPER_BOUND", p95_bucket_lower_ms_per_window=lower,
+                       max_ms_per_window=[v.get("max") if v.get("n") else None for v in values])
+        if any(unresolved) and verdict == "NOT_MEASURED":
+            row["unresolved_windows"] = unresolved
+            straddled.append(key)
+        rows.append(row)
         if verdict == "FAIL":
             failed.append(key)
-        elif verdict == "NOT_MEASURED":
+        elif verdict == "NOT_MEASURED" and key not in straddled:
             uncovered.append(key)
     thin = []
     for key, spec in sorted(((addendum or {}).get("rows") or {}).items()):
@@ -573,6 +594,9 @@ def score_g4(windows: list[dict], table: dict, addendum: dict | None = None) -> 
         reasons.append(f"over limit: {', '.join(failed)}")
     if uncovered:
         reasons.append(f"no sample in any window: {', '.join(uncovered)}")
+    if straddled:
+        reasons.append(f"p95 bucket straddles the limit (unresolved, not a failure): {', '.join(straddled)}")
+        uncovered = uncovered + straddled
     if thin:
         reasons.append(f"addendum rows without a window of >= {G4_ADDENDUM_MIN_SAMPLES} samples: {', '.join(thin)}")
         uncovered = uncovered + thin
@@ -586,7 +610,18 @@ def score_g4(windows: list[dict], table: dict, addendum: dict | None = None) -> 
 
 
 def g4_inverse_rows(observations) -> dict:
-    """Separate OKX inverse (native symbol *-USD-SWAP) visibility from the pooled OKX rows; same quantity."""
+    """Separate OKX inverse (native symbol *-USD-SWAP) visibility from the pooled OKX rows; same quantity.
+    Observer v4: from the full-window aggregate (p95 BUCKET_UPPER_BOUND with its bucket lower edge, exact max)."""
+    from scripts import p184_g4_observer as observer
+    observations = list(observations)
+    aggregate = observer.last_aggregate(observations)
+    if aggregate is not None:
+        out = {}
+        for key, row in sorted((aggregate.get("inverse_rows") or {}).items()):
+            stats = observer.Histogram.from_json((row.get("admitted") or {}).get("visibility_ms")).stats()
+            if stats["n"]:
+                out[key] = {k: stats[k] for k in ("n", "p95", "p95_bucket_lower", "max", "percentile_basis")}
+        return out
     groups = {}
     for item in observations:
         if item.get("kind") != "canonical_observation":
@@ -692,26 +727,60 @@ def native_raw_sample_scope(transit: dict | None, load_ns) -> str:
 
 
 def score_g10(g10: dict, duplicates: dict | None, trace_gaps: list[str], *,
-              sample_scope: str | None = None) -> tuple[str, dict, list[str]]:
-    """sample_scope set (native TRADE): duplicates come from the capped raw sample; a duplicate there FAILs, zero in
-    a sample is not a full-window zero, so that sub-row stays NOT_MEASURED (no native full-window counter exists)."""
+              sample_scope: str | None = None, native_g10: dict | None = None,
+              native_gaps: list[str] | None = None) -> tuple[str, dict, list[str]]:
+    """sample_scope set (native TRADE): the raw-trace duplicates come from the capped raw sample; a duplicate there
+    FAILs, zero in a sample is not a full-window zero. native_g10 (transit native_summary.g10, TS apply_integrity):
+    full-activation apply-decision counters; duplicates applied == 0 there over an activation proven to span the load
+    (native_gaps empty) can PASS. A replay ignored (DUPLICATE/REFRESHED) is not a duplicate; an APPLIED row after a
+    lost apply reply is unresolved (NOT_MEASURED). Missing counters -> NOT_MEASURED, never zero. The counters cannot
+    prove that no source record is missing; DL-signalled gaps stay the log-derived counter."""
     dup = {k: v for k, v in (duplicates or {}).items() if k.startswith("TRADE|")}
-    counters = {"gaps": g10.get("trade_gap"), "duplicates_applied": sum(dup.values()) if duplicates is not None else None,
+    raw_dup = sum(dup.values()) if duplicates is not None else None
+    counters = {"gaps": g10.get("trade_gap"), "duplicates_applied": raw_dup,
                 "duplicates_applied_scope": sample_scope or "full load window (raw trace)",
                 "replay_expired": g10.get("trade_replay_expired"), "overflow": g10.get("trade_overflow"),
                 "resumed_reconnects": g10.get("trade_resumed"), "log_polls": g10.get("log_polls"),
                 "log_unreadable": g10.get("log_unreadable"), "codes": g10.get("codes")}
+    native_rows = None
+    if sample_scope is not None:
+        native_rows = {k: v for k, v in ((native_g10 or {}).get("per_feed_venue") or {}).items()
+                       if k.startswith("TRADE|")}
+        if native_rows:
+            counters.update(
+                duplicates_applied=sum(r.get("duplicate_applied_in_window") or 0 for r in native_rows.values())
+                + (raw_dup or 0),
+                duplicates_applied_scope="native apply-decision counters over the whole activation (+ raw sample)",
+                duplicates_applied_native={k: r.get("duplicate_applied_in_window") for k, r in native_rows.items()},
+                duplicates_applied_raw_sample=raw_dup, raw_sample_scope=sample_scope,
+                replay_attempted={k: r.get("replay_attempted") for k, r in native_rows.items()},
+                replay_decisions={k: r.get("replay_decisions") for k, r in native_rows.items()},
+                ambiguous_after_unconfirmed={k: r.get("ambiguous_after_unconfirmed") for k, r in native_rows.items()},
+                unconfirmed_rows={k: r.get("unconfirmed_rows") for k, r in native_rows.items()},
+                epochs_total={k: r.get("epochs_total") for k, r in native_rows.items()},
+                decisions={k: r.get("decisions") for k, r in native_rows.items()})
     bad = {k: counters[k] for k in ("gaps", "duplicates_applied", "replay_expired", "overflow") if counters[k]}
     if bad:
         return "FAIL", counters, [f"non-zero: {bad}"]
     gaps = []
     if not g10.get("log_polls") or g10.get("log_unreadable"):
         gaps.append("writer logs not read for the whole window")
-    if duplicates is None or trace_gaps:
+    if sample_scope is not None and native_rows:
+        missing = [venue for venue in VENUES if f"TRADE|{venue}" not in native_rows]
+        if missing:
+            gaps.append(f"no native apply-decision counters for TRADE on {', '.join(missing)}")
+        cover = list(native_gaps or []) + list((native_g10 or {}).get("coverage_gaps") or [])
+        if cover:
+            gaps.append("native counters do not provably cover the load window: " + "; ".join(cover))
+        ambiguous = sum(r.get("ambiguous_after_unconfirmed") or 0 for r in native_rows.values())
+        if ambiguous:
+            gaps.append(f"{ambiguous} TRADE rows APPLIED after a lost apply reply: neither proven duplicate nor unique")
+    elif duplicates is None or trace_gaps:
         gaps.append("duplicates applied need the delivery trace: " + "; ".join(trace_gaps or ["no trace"]))
     elif sample_scope is not None:
         gaps.append(f"duplicates applied (native TRADE) measured on a sample only ({sample_scope}); a sample can "
-                    "fail, never pass; no native full-window duplicate counter exists outside TEST cohorts")
+                    "fail, never pass; the native summary has no apply-decision counters (TS writer without "
+                    "apply_integrity)")
     return ("NOT_MEASURED", counters, gaps) if gaps else ("PASS", counters, [])
 
 
@@ -836,6 +905,13 @@ def build_scorecard(campaign_dir: Path) -> dict:
                      "g4_window_receipts": g4_receipts}
     v, rows, why = (score_g4(g4_windows, table, addendum) if table else
                     ("NOT_MEASURED", [], ["no frozen G4 baseline table"]))
+    # Missing temporal coverage (a window whose observation ended before its planned end: a v1-v3 record cap or a
+    # v4 partial aggregate) can FAIL but never PASS.
+    truncated = [r["index"] for r in g4_receipts if (r.get("coverage") or {}).get("truncated_before_end")]
+    if truncated and v == "PASS":
+        v, why = "NOT_MEASURED", why + [f"G4 windows {truncated} observed only part of their planned window"]
+    elif truncated:
+        why = why + [f"G4 windows {truncated} observed only part of their planned window"]
     rule = "candidate p95 <= frozen baseline p95 x 1.2 per row; missing coverage blocks the gate"
     if addendum is None and not addendum_notes:
         add("G4", "delivery lag, venue -> canonical (read_committed visibility, upper bound)", rule, v,
@@ -897,11 +973,14 @@ def build_scorecard(campaign_dir: Path) -> dict:
     v, counters, why = score_g10(s10, (transit or {}).get("duplicate_applied_event_id") if transit else None,
                                  _trace_coverage(transit, load_ns, until_ns, raw_kinds=()) if trade_native
                                  else trace_gaps,
-                                 sample_scope=native_raw_sample_scope(transit, load_ns) if trade_native else None)
+                                 sample_scope=native_raw_sample_scope(transit, load_ns) if trade_native else None,
+                                 native_g10=((transit or {}).get("native_summary") or {}).get("g10") if trade_native
+                                 else None, native_gaps=native_coverage(transit) if trade_native else None)
     add("G10", "TRADE integrity", "0 gaps, 0 duplicates applied, 0 replay-expired, 0 overflow", v,
         "; ".join(why) or "all zero", measured=counters,
-        basis="writer log typed signals (DL-signalled gaps, CURSOR_EXPIRED, SlowConsumerError) + trace duplicate "
-              "event_id; a silent offset gap the DL does not signal is not observable (see proposed counter)")
+        basis="writer log typed signals (DL-signalled gaps, CURSOR_EXPIRED, SlowConsumerError) + duplicates applied: "
+              "native TRADE from the TS apply-decision counters (whole activation, fixed memory), else the trace "
+              "duplicate event_id; a silent offset gap the DL does not signal is not observable")
     g11 = load_json(d / "g11" / "g11-summary.json")
     v = (g11 or {}).get("verdict", "NOT_MEASURED")
     out.append({"id": "G11", "quantity": "writer restart recovery", "rule": "fault cleared -> first valid apply per "
@@ -1150,6 +1229,29 @@ def log_event(d: Path, kind: str, **fields):
         handle.write(json.dumps({"kind": kind, "at_ns": time.time_ns(), **fields}, sort_keys=True) + "\n")
 
 
+def g11_process_end(d: Path) -> dict | None:
+    """Pinned end of the writer run that held the load, from the G11 probe's own observations (S100-5): Docker
+    StartedAt of that run (the `armed` line), its FinishedAt (read after the restart) and the last poll that still
+    saw it. None when the probe saw no restart. Bounds the native activation end when the summary has no
+    observed_end_unix_ns; never a configured expiry."""
+    path = d / "g11" / "g11-observations.jsonl"
+    if not path.exists():
+        return None
+    armed = restart = None
+    for item in read_jsonl(path):
+        if item.get("kind") == "armed" and armed is None:
+            armed = item
+        elif item.get("kind") == "restart":
+            restart = item
+    finished = docker_time_ns(((restart or {}).get("new") or {}).get("finished"))
+    if finished is None:
+        return None
+    seen = (restart or {}).get("last_old_seen_ms")
+    return {"source": "g11 Docker StartedAt/FinishedAt of the old writer run + last poll that saw it",
+            "started_ns": docker_time_ns(((armed or {}).get("writer") or {}).get("started")),
+            "finished_ns": finished, "last_seen_ns": int(seen) * 1_000_000 if seen else None}
+
+
 def run_trace_analysis(campaign: dict, d: Path, *, image: str) -> None:
     """Trace files are root 0600 inside the writer's log mount: read them in a disposable, network-less container of
     an image already on the host, with read-only mounts; output is JSON on stdout."""
@@ -1163,6 +1265,10 @@ def run_trace_analysis(campaign: dict, d: Path, *, image: str) -> None:
     pattern = f"/trace/delivery-*-{trace['until_unix_ns']}*.json"
     native = ["--native-summary", f"/trace/summary-native-*-{trace['until_unix_ns']}.json"] if trace.get(
         "native_feeds") else []
+    end = g11_process_end(d) if native else None
+    if end:
+        native += ["--process-end", ":".join("" if end[k] is None else str(end[k])
+                                             for k in ("started_ns", "finished_ns", "last_seen_ns"))]
     window = ["--from-ns", str(int(load_s[0] * 1e9)), "--to-ns", str(int(load_s[1] * 1e9))]
     base = ["docker", "run", "--rm", "--network", "none", "--cpus", "1", "--memory", "2500m", "--user", "0:0",
             "--read-only", "--security-opt", "no-new-privileges", "-e", "PYTHONDONTWRITEBYTECODE=1",
@@ -1388,6 +1494,9 @@ def run(args) -> int:
                     if cap["record_cap_reached"]:
                         log_event(d, "g4_record_cap_reached", index=window["index"], records=cap["records"],
                                   after_seconds=cap["cap_reached_after_seconds"])
+                    if (cap.get("coverage") or {}).get("truncated_before_end"):
+                        log_event(d, "g4_window_truncated", index=window["index"],
+                                  unobserved_tail_seconds=cap["coverage"].get("unobserved_tail_seconds"))
                     summary = subprocess.run([sys.executable, "-B", "scripts/p184_g4_observer.py", "--summarize",
                                               str(obs)], cwd=ROOT, capture_output=True, text=True, timeout=300)
                     (d / f"g4-{window['index']}-summary.json").write_text(summary.stdout)
