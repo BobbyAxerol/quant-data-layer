@@ -73515,3 +73515,19 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   4 MiB covers thousands of QUOTE records but only about 100 BOOK_DELTA readers at about 18 KB each. If
   `reserve_exhausted` is non-zero in the isolated proof or production, the reserve is too small. Status: implemented,
   tested locally; not deployed.
+- Test image (overlay on the production stream image qdl-v2-rust:2.2.3-rc18-cdbf28b `7fba2577`, binary
+  sha256 606a5263...b77af from e3b5552): `local/qdl-stream:isolation-e3b5552` =
+  `sha256:b095b18e209494a87e698856a316f8d6ef75e6eae059d0540f4d5e9c28878719`. Not a release, not deployed.
+- Isolated DR08 development A/B (own host lock; images: core = deployed rc22 7c848aad, python/query rc19 b9ca6c36,
+  the default kafka/redis; only the stream image differs). Receipts are under p184-n1-final-20261012/: candidate
+  dr08-isolation-e3b5552-20261015T153911Z, baseline dr08-baseline-rc18-20261015T154126Z. Both:
+  SLOW_CONSUMER_BOUNDED_QUEUE, CONSUMER_RESTART_RECOVERY_MEASURED and ALERT_PATH_OBSERVABLE development_pass;
+  NO_CROSS_CONSUMER_STARVATION fails identically on BOTH (the fast consumer got all 10,001 events, but the slow stream's
+  `overflow` metric did not rise inside the 100-publish window, so `slow_resumed` stayed false). This is pre-existing
+  DR08 harness timing drift (the default image set is stale: its query image 77682eea is no longer on the host), not
+  this change. shared_runtime_unchanged=true, cleanup_failures=[], images_built=0.
+- Open: no existing isolated harness has several deep subscriptions on different keys plus idle readers (DR08: one
+  slow and one fast consumer on one BTCUSDT TRADE key). The cross-key proof is the in-process gRPC test above. Before
+  any rollout, an isolated multi-key run (for example G12 publisher lanes, or DR08 extended with deep TRADE/BOOK readers
+  and idle QUOTE/MARK readers) must show idle closes = 0, `queue_isolation.reserve_exhausted` = 0 and
+  `over_floor_refused` > 0 only for deep identities.
