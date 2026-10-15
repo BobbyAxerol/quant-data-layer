@@ -175,8 +175,11 @@ TEST_ADAPTER = "p184-synthetic-test-only"
 # ``work/core-group.json`` every G12 mode keeps its single-core shape.
 CORE_MEMBERS = ("core", "core-2", "core-3")
 CORE_GROUP_FILE = "core-group.json"
+# formation_*: B2 (2026-10-15) the baseline opened at member start and counted core-2's formation retry ("rebalanced
+# during the transaction" while members were still joining); the baseline now opens only after the group has been
+# stable for formation_hold_s (bounded by formation_max_s, else the run is NOT_MEASURED).
 CORE_GROUP = {"raw_partitions": 6, "baseline_s": 120, "hold_s": 150, "kill_member": "core-2",
-              "kill_caught_up_s": 60}
+              "kill_caught_up_s": 60, "formation_hold_s": 10, "formation_max_s": 120}
 CORE_EVENTS = ("qdl_realtime_core_started", "qdl_realtime_core_retry", "qdl_realtime_core_rebalance_rewind",
                "qdl_realtime_core_rewind_failed", "qdl_realtime_core_inflight_commit_failed",
                "qdl_realtime_core_stop_drain_failed")
@@ -191,10 +194,24 @@ def core_group(work):
     return shape
 
 
-def raw_partition(key, partitions):
-    """Raw partition of a subscription key: stable per key (per-binding order kept), spread over the topic."""
-    import zlib
-    return zlib.crc32(key) % partitions
+RAW_LANE_ORDER = ("BOOK", "TRADE", "QUOTE", "MARK", "INDEX", "BAR")  # by publish rate, highest first
+
+
+def raw_partition_plan(bindings, partitions):
+    """{subscription key (source_id): raw partition}: stable per key (per-binding order kept) and deterministic.
+
+    B2 (2026-10-15): ``crc32(key) % 6`` over the 10 sealed keys left raw/5 without a record for the whole run, so
+    a kill clock on a member owning it could never close. The distinct keys are ordered by lane rate (BOOK,
+    TRADE, QUOTE, MARK/INDEX, BAR; then source_id) and dealt round-robin, so with >= ``partitions`` keys every
+    raw partition gets traffic and the six highest-rate lanes land on six different partitions."""
+    ranked = {}
+    for binding in bindings:
+        lane = "BOOK" if binding.get("l2") else lane_feed(binding["provider_kind"])
+        rank = RAW_LANE_ORDER.index(lane) if lane in RAW_LANE_ORDER else len(RAW_LANE_ORDER)
+        key = binding["source_id"]
+        ranked[key] = min(rank, ranked.get(key, rank))
+    ordered = sorted(ranked, key=lambda key: (ranked[key], key))
+    return {key: index % partitions for index, key in enumerate(ordered)}
 
 
 def write_member_configs(work, members):
@@ -1927,6 +1944,8 @@ def publish(work, out, seconds, hz):
     if config.get("raw_topics") != [ns + ".raw"] or config["core"].get("allow_test_provenance") is not True:
         raise ValueError("isolated test-only raw topic required")
     raw_partitions = core_group(work)["raw_partitions"]
+    plan = raw_partition_plan(config["core"]["bindings"], raw_partitions) if raw_partitions > 1 else {}
+    partition_of = (lambda key: plan.get(key, 0)) if raw_partitions == 1 else plan.__getitem__  # noqa: E731
     bindings = {b["venue"]: b for b in config["core"]["bindings"] if b.get("l2")}
     lanes = md_bindings(config)
     if set(bindings) != set(VENUES) or not 0 < hz <= 20 or not 0 < seconds <= LIMITS["deadline_s"]:
@@ -2011,7 +2030,7 @@ def publish(work, out, seconds, hz):
                 raw = md_envelope(lanes[(event["venue"], item["feed"])], item, ns)
                 try:
                     producer.produce(config["raw_topics"][0], key=raw.subscription_id.encode(),
-                                     partition=raw_partition(raw.subscription_id.encode(), raw_partitions),
+                                     partition=partition_of(raw.subscription_id),
                                      value=raw.SerializeToString(), headers=[("qdl-event-id", raw.capture_id)],
                                      on_delivery=md_ack(event, at_ns))
                 except BufferError:
@@ -2054,7 +2073,7 @@ def publish(work, out, seconds, hz):
                 raw = raw_envelope(bindings[venue], book_frame(venue, snapshot, seq, s["seq"], s["gen"], at_ns), ns)
                 try:
                     producer.produce(config["raw_topics"][0], key=raw.subscription_id.encode(),
-                                     partition=raw_partition(raw.subscription_id.encode(), raw_partitions),
+                                     partition=partition_of(raw.subscription_id),
                                      value=raw.SerializeToString(), headers=[("qdl-event-id", raw.capture_id)],
                                      on_delivery=ack(venue, seq, s["gen"], at_ns))
                 except BufferError:
@@ -2866,6 +2885,25 @@ class Run:
             self.verify_image(role)
         self.note("core_group_started", members=list(CORE_MEMBERS), seconds=remaining)
 
+    def core_group_formation(self, start_ns):
+        """Diagnostic ``formation`` window (never judged) from member start until the group has been stable for
+        CORE_GROUP["formation_hold_s"] (``core_group_stable_at`` on the live monitor), bounded by
+        ``formation_max_s``; the baseline opens only after it. Never stable: CoreGroupNotMeasured."""
+        shape = core_group(self.work)
+        stable = self.wait(CORE_GROUP["formation_max_s"], step=1.0, until=lambda: core_group_stable_at(
+            load_jsonl(self.evidence / "monitor.jsonl"), self.ns, shape["raw_partitions"], shape["members"],
+            CORE_GROUP["formation_hold_s"], start_ns))
+        row = {"k": "core_window", "name": "formation", "start_ns": start_ns, "end_ns": time.time_ns(),
+               "diagnostic": True, "stable_at_ns": stable or None, "hold_s": CORE_GROUP["formation_hold_s"]}
+        if not stable:
+            row["reason"] = "GROUP_NEVER_STABLE"
+        self.fault_row(row)
+        self.note("core_group_formation", **row)
+        if not stable:
+            raise CoreGroupNotMeasured(f"GROUP_NEVER_STABLE within {CORE_GROUP['formation_max_s']} s "
+                                       f"(hold {CORE_GROUP['formation_hold_s']} s)")
+        return stable
+
     def core_group_window(self, name, seconds, **fields):
         start = time.time_ns()
         self.wait(seconds)
@@ -3212,6 +3250,43 @@ def healthy_view(view, members):
     return count == members and state in (None, "STABLE") and len(counts) == members and 0 not in counts and covered
 
 
+def idle_partition(pre, post):
+    """Why an affected raw partition is idle across a kill, or None when it has records to consume.
+
+    ``pre`` / ``post``: the core group's [committed, log end] in the last sample before the kill and at
+    ``ownership_restored``. Idle: at the fault its log end equals its committed position (no committed offset
+    yet - Kafka's -1001 - counts as position 0) and no record arrived since. B2 (2026-10-15): raw/5 never had a
+    record ([-1001, 0]) and its committed offset can never reach its log end, so NO_PROGRESS stood forever."""
+    committed, end = pre
+    if end > max(committed, 0) or post[1] != end:
+        return None
+    return "NO_RECORDS" if end == 0 else "COMMITTED_AT_LOG_END"
+
+
+def core_group_stable_at(monitor_rows, ns, partitions, members, hold_s, since_ns=0):
+    """The first sample time at which the core group has been continuously stable for >= ``hold_s`` since
+    ``since_ns``, else None. Stable: per-member detail (monitor v2) shows exactly ``members`` members, STABLE,
+    each owning >= 1 partition, every raw partition owned exactly once; a sample short of that, a sample without
+    group detail, or a monitor gap > MONITOR_MAX_GAP_S restarts the hold."""
+    start = previous = None
+    for row in sorted((r for r in monitor_valid(monitor_rows) if r.get("t", 0) >= since_ns), key=lambda r: r["t"]):
+        view = group_view(row, ns, partitions) if "groups" in row else None
+        healthy = view is not None and view[4] == "partitions" and healthy_view(view, members)
+        if not healthy or (previous is not None and row["t"] - previous > MONITOR_MAX_GAP_S * 10**9):
+            start = None
+        previous = row["t"]
+        if not healthy:
+            continue
+        start = row["t"] if start is None else start
+        if row["t"] - start >= hold_s * 10**9:
+            return row["t"]
+    return None
+
+
+class CoreGroupNotMeasured(RuntimeError):
+    """The core-group run cannot measure its frozen conditions (e.g. the group never formed stably)."""
+
+
 def core_kill_recovery(kill, monitor_rows, event_rows, ns, partitions, members, base_lag):
     """RB2 (review 2026-10-15). Recovery from SIGKILL of one member, as separate clocks from injection.
 
@@ -3219,8 +3294,11 @@ def core_kill_recovery(kill, monitor_rows, event_rows, ns, partitions, members, 
     * ``ownership_restored``: the first sample after that exit in which the dead member's member-id (found by its
       client.id in the last pre-kill sample) is gone, the roster is exact, every member owns >= 1 partition and
       every raw partition is owned once - a stale pre-detection 3-member view cannot close it;
-    * ``progress``: the first sample from then on in which each affected partition (the dead member's) with
-      post-fault input has a committed offset >= its log end at ``ownership_restored``;
+    * ``progress``: the first sample from then on in which each non-idle affected partition (the dead member's)
+      has a committed offset >= its log end at ``ownership_restored`` (``idle_partition``: no record to consume
+      at the fault and none arrived by ``ownership_restored`` - excluded and reported in ``idle_partitions``);
+      when every affected partition is idle, ``progress`` is ``ownership_restored`` (``progress_basis``
+      ALL_AFFECTED_IDLE);
     * ``caught_up``: the first sample from ``progress`` on with core lag <= the baseline maximum.
     A clock needs monitor v2 detail (member ids, partitions, per-partition offsets); without it it stays null with
     ``reason`` and the acceptance reports NOT_MEASURED."""
@@ -3265,19 +3343,26 @@ def core_kill_recovery(kill, monitor_rows, event_rows, ns, partitions, members, 
     out["ownership_restored_s"] = seconds(restored["t"])
     marks = {p: (restored.get("offsets") or {}).get(ns, {}).get(p) for p in affected}
     pre_offsets = pre["offsets"][ns]
-    busy = {p: mark[1] for p, mark in marks.items()
-            if mark is not None and pre_offsets.get(p) is not None and mark[1] > pre_offsets[p][0]}
-    out.update(post_fault_offsets=busy, idle_partitions=sorted(set(affected) - set(busy)))
-    if not busy:
-        out["reason"] = "NO_POST_FAULT_INPUT"
+    missing = sorted(p for p in affected if marks[p] is None or pre_offsets.get(p) is None)
+    if missing:
+        out.update(reason="NO_PARTITION_OFFSETS", unmeasured_partitions=missing)
         return out
-    progressed = next((r for r in monitor_rows if r["t"] >= restored["t"]
-                       and all(((r.get("offsets") or {}).get(ns, {}).get(p) or [-1])[0] >= mark
-                               for p, mark in busy.items())), None)
-    if progressed is None:
-        out["reason"] = "NO_PROGRESS"
-        return out
-    out["progress_s"] = seconds(progressed["t"])
+    idle = {p: reason for p in affected if (reason := idle_partition(pre_offsets[p], marks[p])) is not None}
+    busy = {p: marks[p][1] for p in affected if p not in idle}
+    out.update(post_fault_offsets=busy, idle_partitions=sorted(idle), idle_reasons=idle)
+    if not busy:  # nothing to consume on the dead member's partitions: progress is the ownership transfer
+        out["progress_s"] = out["ownership_restored_s"]
+        out["progress_basis"] = "ALL_AFFECTED_IDLE"
+        progressed = restored
+    else:
+        progressed = next((r for r in monitor_rows if r["t"] >= restored["t"]
+                           and all(((r.get("offsets") or {}).get(ns, {}).get(p) or [-1])[0] >= mark
+                                   for p, mark in busy.items())), None)
+        if progressed is None:
+            out["reason"] = "NO_PROGRESS"
+            return out
+        out["progress_s"] = seconds(progressed["t"])
+        out["progress_basis"] = "NON_IDLE_PAST_POST_FAULT_OFFSETS"
     caught = next((r for r in monitor_rows if r["t"] >= progressed["t"] and base_lag is not None
                    and (r.get("lag") or {}).get(ns) is not None and r["lag"][ns] <= base_lag), None)
     if caught is None:
@@ -3372,6 +3457,20 @@ def core_group_verdict(evidence, members=len(CORE_MEMBERS)):
                                     if e[2] == "qdl_realtime_core_retry"}),
             "span_start_ns": span_lo, "by_life": by_life}
     result["totals"] = {name: sum(1 for e in events if e[2] == name) for name in CORE_EVENTS}
+    named = {w["name"]: w for w in windows}
+    if "baseline" in named:  # diagnostic: did the baseline open on a stable group (not during formation)?
+        lo, formation = named["baseline"]["start_ns"], named.get("formation")
+        stable = core_group_stable_at(monitor_rows, ns, partitions, members, CORE_GROUP["formation_hold_s"],
+                                      formation["start_ns"] if formation else lo)
+        early = [e for e in events if lo <= e[0] < (stable if stable is not None else named["baseline"]["end_ns"])
+                 and e[2] in ("qdl_realtime_core_retry", "qdl_realtime_core_rebalance_rewind",
+                              "qdl_realtime_core_rewind_failed")]
+        result["baseline_formation"] = {
+            "formation_recorded": formation is not None, "hold_s": CORE_GROUP["formation_hold_s"],
+            "stable_at_ns": stable, "stable_after_baseline_start_s": None if stable is None else
+            round((stable - lo) / 1e9, 3), "baseline_opened_on_stable_group": stable is not None and stable <= lo,
+            "baseline_events_before_stable": [{"role": e[1], "life": e[4], "event": e[2], "t_ns": e[0]}
+                                              for e in early]}
     final = windows[-1] if windows else None
     if final:
         tail = [group(r) for r in monitor_rows if final["end_ns"] - 30 * 10**9 <= r["t"] <= final["end_ns"]]
@@ -3500,7 +3599,8 @@ def core_group_acceptance(verdict, prereg, addendum=None):
         if not clocks:
             return "NOT_MEASURED", {"reason": "NO_CORE_KILL"}
         detail = {k: clocks.get(k) for k in ("exit_confirmed_s", "ownership_restored_s", "progress_s",
-                                              "caught_up_s", "caught_up_monitor_max_gap_s", "reason")}
+                                              "caught_up_s", "caught_up_monitor_max_gap_s", "reason",
+                                              "progress_basis", "idle_partitions", "idle_reasons")}
         moved, caught = clocks.get("ownership_restored_s"), clocks.get("caught_up_s")
         if moved is not None and moved > CORE_GROUP_LIMITS["partitions_moved_s"]:
             return "FAIL", detail
@@ -3568,7 +3668,7 @@ def core_group_acceptance(verdict, prereg, addendum=None):
     }
     harness = [
         ("harness: run COMPLETED", ("PASS" if verdict.get("status") == "COMPLETED" else
-                                    "NOT_MEASURED" if verdict.get("status") is None else "FAIL"),
+                                    "NOT_MEASURED" if verdict.get("status") in (None, "NOT_MEASURED") else "FAIL"),
          {"status": verdict.get("status"), "error": verdict.get("error")}),
         ("harness: all windows present", "PASS" if not missing else "NOT_MEASURED", {"missing": missing}),
         ("harness: monitor coverage per window (gap <= %s s)" % gap_rule,
@@ -3679,7 +3779,8 @@ def core_group_acceptance(verdict, prereg, addendum=None):
                                     clocks.get("caught_up_s"))
         moved = None if exit_s is None or restored is None else round(restored - exit_s, 3)
         detail = {k: clocks.get(k) for k in ("exit_confirmed_s", "ownership_restored_s", "progress_s",
-                                              "caught_up_s", "caught_up_monitor_max_gap_s", "reason")}
+                                              "caught_up_s", "caught_up_monitor_max_gap_s", "reason",
+                                              "progress_basis", "idle_partitions", "idle_reasons")}
         detail["ownership_after_exit_s"] = moved
         if moved is not None and moved > CORE_GROUP_LIMITS["partitions_moved_s"]:
             return "FAIL", detail
@@ -3765,6 +3866,7 @@ def core_group_accept(base, prereg_path, addendum_path=None):
             "core_images": verdict.get("core_images"),
             "by_life": {n: w.get("by_life") for n, w in verdict["windows"].items()},
             "verdict": {k: verdict.get(k) for k in ("schema", "status", "storm", "totals", "core_kill",
+                                                     "baseline_formation",
                                                      "core_kill_first_healthy_sample_s", "production_guard_breaches")},
             "windows": {n: {k: w.get(k) for k in ("retries", "rewinds", "rewind_failed", "monitor_max_gap_s",
                                                    "tail_samples", "tail_unhealthy_samples", "tail_coverage_basis",
@@ -3791,7 +3893,9 @@ def orchestrate_core_group(base, export, ns, images, new_core):
     try:
         run.prepare()
         (run.evidence / "verdict-ns.json").write_text(json.dumps({"namespace": ns}))
+        formation_start = time.time_ns()
         run.core_group_up()
+        run.core_group_formation(formation_start)
         run.core_group_window("baseline", CORE_GROUP["baseline_s"])
         for role in CORE_MEMBERS:
             run.core_replace(role, image=new_core)
@@ -3801,6 +3905,8 @@ def orchestrate_core_group(base, export, ns, images, new_core):
         status = "COMPLETED"
     except BaseException as exc:  # noqa: BLE001 - evidence first, then teardown
         error = f"{type(exc).__name__}: {exc}"
+        if isinstance(exc, CoreGroupNotMeasured):
+            status = "NOT_MEASURED"
         print("STOPPED", error, flush=True)
         if run.evidence.exists():
             run.note("stopped", error=error)

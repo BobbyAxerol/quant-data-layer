@@ -2121,12 +2121,27 @@ class CoreGroupReproductionTests(unittest.TestCase):
                 g12.core_group(work)
         self.assertEqual(g12.topics(NS, 6)[NS + ".raw"][0], 6)
 
-    def test_raw_partition_is_stable_per_key_and_spreads(self):
-        keys = [f"sub-{n}".encode() for n in range(40)]
-        self.assertTrue(all(g12.raw_partition(k, 1) == 0 for k in keys))
-        spread = {g12.raw_partition(k, 6) for k in keys}
-        self.assertGreaterEqual(len(spread), 5)
-        self.assertEqual([g12.raw_partition(k, 6) for k in keys], [g12.raw_partition(k, 6) for k in keys])
+    # The sealed core roster of B2 (2026-10-15): 2 BOOK + per venue TRADE/QUOTE/BAR/MARK, OKX MARK and INDEX
+    # components sharing one source_id - 10 keys; crc32 % 6 left raw/5 without a record for the whole run.
+    SEALED = [{"source_id": f"{v}-book", "venue": v, "l2": {"depth_per_side": 100}, "provider_kind": f"{v}_book"}
+              for v in ("binance", "okx")] + [
+        {"source_id": f"{v}-{lane}", "venue": v, "provider_kind": f"{v}_{kind}"}
+        for v in ("binance", "okx") for lane, kind in (("trade", "trade"), ("quote", "bbo"), ("bar-1m", "bar"))] + [
+        {"source_id": "binance-mark_index_price", "venue": "binance", "provider_kind": "binance_usdm_mark_index"},
+        {"source_id": "okx-mark_index_price", "venue": "okx", "provider_kind": "okx_mark_price"},
+        {"source_id": "okx-mark_index_price", "venue": "okx", "provider_kind": "okx_index_price"}]
+
+    def test_raw_partition_plan_covers_every_partition_and_is_deterministic(self):
+        import zlib
+        crc = {zlib.crc32(b["source_id"].encode()) % 6 for b in self.SEALED}
+        plan = g12.raw_partition_plan(self.SEALED, 6)
+        self.assertEqual(len(plan), 10)
+        self.assertEqual(set(plan.values()), set(range(6)), crc)  # every raw partition gets traffic
+        self.assertEqual(plan, g12.raw_partition_plan(list(reversed(self.SEALED)), 6))  # order-independent
+        # the six highest-rate lanes (BOOK, TRADE, QUOTE x 2 venues) land on six different partitions
+        fast = [plan[b["source_id"]] for b in self.SEALED if b["source_id"].endswith(("book", "trade", "quote"))]
+        self.assertEqual(sorted(fast), list(range(6)))
+        self.assertEqual(set(g12.raw_partition_plan(self.SEALED, 1).values()), {0})
 
     def test_kill_uses_sigkill_and_stop_uses_sigterm(self):
         row = {"Id": "abc", "Name": "/" + NS + "-core-2", "Config": {"Labels": {g12.LABEL: NS}},
@@ -2518,6 +2533,161 @@ class CoreGroupAcceptanceTests(unittest.TestCase):
         _, b2, rows = self.accept_b2(self.build(self.root("nolog2"), images=True, drop_life=("core-3", 2)))
         self.assertEqual(rows[B2[8]], "NOT_MEASURED")
         self.assertEqual(b2["result"], "NOT_MEASURED")
+
+    # -- B2 apparatus fixes (2026-10-15): stable-group baseline and idle partitions in the kill clocks --
+    def test_formation_retry_before_stability_is_not_counted_in_baseline(self):
+        retry = [self.retry("core-2", 5)]
+        # B2 as run: the baseline opened at member start, so core-2's formation retry is a baseline retry.
+        verdict = g12.core_group_verdict(self.build(self.root("asrun"), events=retry) / "evidence")
+        self.assertEqual(verdict["windows"]["baseline"]["retries"], 1)
+        formation = verdict["baseline_formation"]
+        self.assertFalse(formation["formation_recorded"])
+        self.assertFalse(formation["baseline_opened_on_stable_group"])
+        self.assertEqual([(e["role"], e["event"]) for e in formation["baseline_events_before_stable"]],
+                         [("core-2", "qdl_realtime_core_retry")])
+        # Fixed: a diagnostic formation window up to the stable hold, the baseline after it.
+        base = self.build(self.root("fixed"), events=retry)
+        faults = g12.load_jsonl(base / "evidence" / "faults.jsonl")
+        faults[0]["start_ns"] = self.T0 + 20 * S
+        faults.insert(0, {"k": "core_window", "name": "formation", "start_ns": self.T0, "end_ns": self.T0 + 20 * S,
+                          "diagnostic": True})
+        (base / "evidence" / "faults.jsonl").write_text("".join(json.dumps(f) + "\n" for f in faults))
+        verdict = g12.core_group_verdict(base / "evidence")
+        self.assertEqual(verdict["windows"]["formation"]["retries"], 1)
+        self.assertEqual(verdict["windows"]["baseline"]["retries"], 0)
+        self.assertTrue(verdict["baseline_formation"]["baseline_opened_on_stable_group"])
+        self.assertEqual(verdict["baseline_formation"]["baseline_events_before_stable"], [])
+        _, _, rows = self.accept_b2(base)
+        self.assertNotIn("formation", g12.CORE_GROUP_WINDOWS)  # diagnostic, never judged
+        self.assertEqual(rows["once all 3 members run the new image (after_roll_core-3 and after_kill): retries == 0 "
+                              "absolute"], "PASS")
+
+    def monitor_row(self, t, members=3, state="STABLE", owners=None):
+        owners = owners or self.OWNERS
+        detail = [{"member_id": f"m-{role}", "client_id": g12.core_client_id(NS, role), "host": "/10.0.0.1",
+                   "partitions": [f"{NS}.raw/{p}" for p in owners[role]]} for role in g12.CORE_MEMBERS[:members]]
+        return {"t": self.T0 + int(t * S), "groups": {NS: {"state": state, "members": members, "detail": detail,
+                                                         "assigned": [len(m["partitions"]) for m in detail]}}}
+
+    def test_group_stability_hold(self):
+        stable_at = lambda rows: g12.core_group_stable_at(rows, NS, 6, 3, 10, self.T0)  # noqa: E731
+        joining = [self.monitor_row(t, members=2, owners={"core": (0, 1, 2), "core-2": (3, 4, 5)}) for t in range(5)]
+        rows = joining + [self.monitor_row(t) for t in range(5, 30)]
+        self.assertEqual(stable_at(rows), self.T0 + 15 * S)
+        rows[8] = self.monitor_row(8, state="PREPARING_REBALANCE")  # a rebalance restarts the hold
+        self.assertEqual(stable_at(rows), self.T0 + 19 * S)
+        del rows[10:17]  # a monitor gap > MONITOR_MAX_GAP_S restarts it too
+        self.assertEqual(stable_at(rows), self.T0 + 27 * S)
+        self.assertIsNone(stable_at(joining))
+
+    def formation_run(self, rows, name):
+        work, evidence = self.root(name + "-work"), self.root(name + "-ev")
+        (work / g12.CORE_GROUP_FILE).write_text(json.dumps({"members": 3, "raw_partitions": 6}))
+        (evidence / "monitor.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+        faults = []
+
+        def wait(seconds, faulted=(), until=None, step=5.0):
+            return until() or None  # the bound elapsed after one look
+        run = types.SimpleNamespace(work=work, evidence=evidence, ns=NS, wait=wait, fault_row=faults.append,
+                                    note=lambda *a, **k: None)
+        return run, faults
+
+    def test_never_stable_group_makes_the_run_not_measured(self):
+        run, faults = self.formation_run([self.monitor_row(t, members=2, owners={"core": (0, 1, 2),
+                                                                                "core-2": (3, 4, 5)})
+                                          for t in range(120)], "never")
+        with self.assertRaises(g12.CoreGroupNotMeasured):
+            g12.Run.core_group_formation(run, self.T0)
+        self.assertEqual((faults[0]["name"], faults[0]["reason"], faults[0]["stable_at_ns"]),
+                         ("formation", "GROUP_NEVER_STABLE", None))
+        run, faults = self.formation_run([self.monitor_row(t) for t in range(30)], "stable")
+        self.assertEqual(g12.Run.core_group_formation(run, self.T0), self.T0 + 10 * S)
+        self.assertNotIn("reason", faults[0])
+        # the orchestrator records NOT_MEASURED (not FAIL) and the harness row follows it
+        verdict = {"status": "NOT_MEASURED", "error": "CoreGroupNotMeasured: GROUP_NEVER_STABLE", "windows": {}}
+        harness = g12.core_group_acceptance(verdict, PREREG)["run_B_fix"]["conditions"][0]
+        self.assertEqual((harness["condition"], harness["result"]), ("harness: run COMPLETED", "NOT_MEASURED"))
+
+    def test_orchestrator_stops_not_measured_when_the_group_never_forms(self):
+        tmp = Path(self.tmp.name)
+
+        class FakeRun:
+            def __init__(self, base, export, ns, images):
+                self.images = images
+                self.evidence = tmp / "orch"
+                self.evidence.mkdir()
+
+            def prepare(self):
+                pass
+
+            def core_group_up(self):
+                pass
+
+            def core_group_formation(self, start_ns):
+                raise g12.CoreGroupNotMeasured("GROUP_NEVER_STABLE within 120 s")
+
+            def core_group_window(self, *a, **k):
+                raise AssertionError("no baseline after a never-stable formation")
+
+            def note(self, *a, **k):
+                pass
+
+            def down(self):
+                pass
+        with patch.object(g12, "Run", FakeRun), patch.object(g12, "core_group_verdict", return_value={}):
+            self.assertEqual(g12.orchestrate_core_group(tmp, tmp, NS, {}, NEW_CORE), 1)
+        saved = json.loads((tmp / "orch" / "core-group-verdict.json").read_text())
+        self.assertEqual(saved["status"], "NOT_MEASURED")
+        self.assertIn("GROUP_NEVER_STABLE", saved["error"])
+
+    def kill_clocks(self, pre, post_of):
+        """core-2 (owner of raw/2, raw/3) killed at t=1 s, exit at 1.2 s; ownership moves at t=3 s.
+        ``pre``: {p: [committed, end]} before the kill; ``post_of(t)``: offsets from t=3 s on."""
+        base = {p: [100, 100] for p in range(6)}
+        rows = [{**self.monitor_row(0), "offsets": {NS: {f"{NS}.raw/{p}": v for p, v in {**base, **pre}.items()}},
+                 "lag": {NS: 0}}]
+        moved = {"core": (0, 1, 2), "core-2": (5,), "core-3": (3, 4)}
+        for t in range(3, 40):
+            row = self.monitor_row(t, owners=moved)
+            row["groups"][NS]["detail"][1]["member_id"] = "m-core-2-new"
+            offsets = {**base, **post_of(t)}
+            row["offsets"] = {NS: {f"{NS}.raw/{p}": v for p, v in offsets.items()}}
+            row["lag"] = {NS: sum(max(0, e - max(c, 0)) for c, e in offsets.values())}
+            rows.append(row)
+        die = [{"Action": "die", "timeNano": self.T0 + 1200 * MS,
+                "Actor": {"Attributes": {"name": f"{NS}-core-2", "exitCode": "137"}}}]
+        return g12.core_kill_recovery({"role": "core-2", "injected_ns": self.T0 + S}, rows, die, NS, 6, 3, 5)
+
+    def test_kill_clock_excludes_a_partition_that_never_had_a_record(self):
+        # B2: raw/2 [-1001, 0] for the whole run; raw/3 has a backlog the new owner consumes by t=6 s.
+        clocks = self.kill_clocks({2: [-1001, 0], 3: [100, 120]},
+                                  lambda t: {2: [-1001, 0], 3: [100 if t < 6 else 130, 130]})
+        self.assertEqual(clocks["idle_partitions"], [f"{NS}.raw/2"])
+        self.assertEqual(clocks["idle_reasons"], {f"{NS}.raw/2": "NO_RECORDS"})
+        self.assertEqual(clocks["post_fault_offsets"], {f"{NS}.raw/3": 130})
+        self.assertEqual((clocks["ownership_restored_s"], clocks["progress_s"], clocks["caught_up_s"]),
+                         (2.0, 5.0, 5.0))
+        self.assertEqual(clocks["progress_basis"], "NON_IDLE_PAST_POST_FAULT_OFFSETS")
+        self.assertIsNone(clocks["reason"])
+
+    def test_kill_clock_idle_at_committed_log_end_and_new_input_is_not_idle(self):
+        # raw/2 fully committed and no record after the kill: idle; raw/3 fully committed but new records arrive.
+        clocks = self.kill_clocks({2: [50, 50], 3: [70, 70]},
+                                  lambda t: {2: [50, 50], 3: [70 if t < 8 else 75, 75]})
+        self.assertEqual(clocks["idle_reasons"], {f"{NS}.raw/2": "COMMITTED_AT_LOG_END"})
+        self.assertEqual(clocks["post_fault_offsets"], {f"{NS}.raw/3": 75})
+        self.assertEqual(clocks["progress_s"], 7.0)
+        # a non-idle partition that never advances is still NO_PROGRESS
+        clocks = self.kill_clocks({2: [50, 50], 3: [70, 70]}, lambda t: {2: [50, 50], 3: [70, 75]})
+        self.assertEqual((clocks["reason"], clocks["progress_s"]), ("NO_PROGRESS", None))
+
+    def test_kill_clock_all_affected_idle_progress_is_ownership(self):
+        clocks = self.kill_clocks({2: [-1001, 0], 3: [50, 50]}, lambda t: {2: [-1001, 0], 3: [50, 50]})
+        self.assertEqual(clocks["idle_partitions"], [f"{NS}.raw/2", f"{NS}.raw/3"])
+        self.assertEqual(clocks["progress_basis"], "ALL_AFFECTED_IDLE")
+        self.assertEqual(clocks["progress_s"], clocks["ownership_restored_s"])
+        self.assertEqual(clocks["caught_up_s"], 2.0)
+        self.assertIsNone(clocks["reason"])
 
     def test_cli_addendum_flag(self):
         import contextlib
