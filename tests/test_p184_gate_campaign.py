@@ -4,6 +4,7 @@ No Redis, Docker or network: the RESP client is exercised on bytes, the probes' 
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import tempfile
@@ -300,6 +301,67 @@ class G10Tests(unittest.TestCase):
             path.write_text("x\n")  # truncated/rotated
             self.assertEqual(tail.read_new(), ["x"])
 
+    def typed(self, n=8, step_s=10, **overrides):
+        rows = []
+        for i in range(n):
+            counters = {name: 0 for name in g910.NATIVE_REQUIRED}
+            counters["applied"] = 1000 + 100 * i
+            for name, fn in overrides.items():
+                counters[name] = fn(i)
+            rows.append({"kind": "heartbeat", "at_ns": i * step_s * S, "key_tail": "k", "sample": {
+                "readable": True, "age_s": 3.0, "trade_integrity": counters,
+                "trade_integrity_scope": {"counter_scope": "current_live_worker_epochs", "workers_reporting": 2,
+                                          "workers_expected": 2}, "worker_liveness": {"0": "LIVE", "1": "LIVE"}}})
+        return rows
+
+    def test_sr2_heartbeat_sample_keeps_typed_counters_without_coercion(self):
+        payload = {"last_seen_unix": 10, "details": {"trade_integrity": {"gaps": 0, "applied": 5},
+                                                     "trade_integrity_scope": {"counter_scope": "x",
+                                                                               "workers_reporting": 1,
+                                                                               "workers_expected": 1}}}
+        sample = g910.heartbeat_sample(payload, 10)
+        self.assertEqual(sample["trade_integrity"], {"gaps": 0, "applied": 5})
+        self.assertEqual(sample["trade_integrity_scope"]["workers_expected"], 1)
+        for bad in ({"gaps": -1}, {"gaps": "0"}, {"gaps": True}, ["gaps"]):
+            payload["details"]["trade_integrity"] = bad
+            self.assertTrue(g910.heartbeat_sample(payload, 10)["trade_integrity_invalid"], bad)
+
+    def test_sr2_native_typed_deltas_over_one_unbroken_stretch(self):
+        rows = self.typed(snapshot_replaced=lambda i: 1 if i >= 4 else 0, reconnects=lambda i: i)
+        out = g910.summarize_g10_native(rows, from_ns=10 * S, to_ns=60 * S)
+        self.assertTrue(out["complete"])
+        self.assertEqual((out["failures"]["gaps"], out["report_only"]["reconnects"], out["samples_in_bracket"]),
+                         (1, 5, 6))
+        clean = g910.summarize_g10_native(self.typed(), from_ns=10 * S, to_ns=60 * S)
+        self.assertTrue(clean["complete"])
+        self.assertEqual(sum(clean["failures"].values()), 0)
+
+    def test_sr2_replacement_breaks_coverage_and_is_never_subtracted(self):
+        # A worker replaced at sample 4: pooled counters restart lower. Must not be read as a negative delta.
+        rows = self.typed(applied=lambda i: 1000 + 100 * i if i < 4 else 50 * (i - 3),
+                          gaps=lambda i: 2 if i == 3 else 0)
+        out = g910.summarize_g10_native(rows, from_ns=10 * S, to_ns=60 * S)
+        self.assertFalse(out["complete"])
+        self.assertTrue(any("decreased" in b for b in out["breaks"]))
+        self.assertEqual(out["failures"]["gaps"], 2)  # seen before the break: still a failure
+        self.assertTrue(all(v >= 0 for v in out["deltas"].values()))
+        for mutate, needle in ((lambda r: r["sample"]["worker_liveness"].update({"1": "REPORT_EXPIRED"}), "not LIVE"),
+                               (lambda r: r["sample"]["trade_integrity_scope"].update(workers_reporting=1), "reporting"),
+                               (lambda r: r["sample"]["trade_integrity"].pop("snapshot_replaced"), "without"),
+                               (lambda r: r["sample"].update(age_s=99.0), "stale"),
+                               (lambda r: r.update(key_tail="other"), "key changed")):
+            rows = self.typed()
+            mutate(rows[3])
+            out = g910.summarize_g10_native(rows, from_ns=10 * S, to_ns=60 * S)
+            self.assertFalse(out["complete"], needle)
+            self.assertTrue(any(needle in b for b in out["breaks"]), (needle, out["breaks"]))
+        sparse = self.typed(step_s=60)
+        self.assertFalse(g910.summarize_g10_native(sparse, from_ns=60 * S, to_ns=240 * S)["complete"])
+        short = g910.summarize_g10_native(self.typed(), from_ns=10 * S, to_ns=200 * S)
+        self.assertIn("no heartbeat sample at or after the window end", short["breaks"])
+        absent = [{"kind": "heartbeat", "at_ns": i * S, "sample": {"readable": True, "age_s": 1.0}} for i in range(3)]
+        self.assertFalse(g910.summarize_g10_native(absent, from_ns=0, to_ns=2 * S)["present"])
+
     def test_summary_windows_by_log_stamp(self):
         samples = [{"kind": "log_poll", "unreadable": 0}]
         for line in LINES:
@@ -311,9 +373,33 @@ class G10Tests(unittest.TestCase):
                           summary["trade_resumed"]), (0, 1, 1, 1))
 
 
-def obs(event_ms, digest, pttl=100_000, offset=None, generation="g1", closed=None):
+def obs(event_ms, digest, pttl=100_000, offset=None, generation="g1", closed=None, valid=True, domain=None,
+        sequence=None, value_digest=None):
     return {"digest": digest, "pttl": pttl, "event_ms": event_ms, "offset": offset, "generation": generation,
-            "closed": closed}
+            "closed": closed, "valid": valid, "invalid_reason": None if valid else "X", "domain": domain,
+            "sequence": sequence, "value_digest": value_digest}
+
+
+ID = "OKX:SWAP:BTC-USDT-SWAP"
+
+
+def view(feed, payload, **top):
+    """A TS execution view (trading-system.execution-market-feed.v1) that passes the production at-use rules."""
+    value = {"schema_version": "trading-system.execution-market-feed.v1", "canonical_instrument_id": ID,
+             "feed": feed, "observed_at_ms": 1_000, "source": {"authoritative": True},
+             "quality": {"complete": True, "gap_open": False, "execution_eligible": True}, "payload": payload}
+    for key, item in top.items():
+        if isinstance(item, dict) and isinstance(value.get(key), dict):
+            value[key] = {**value[key], **item}
+        else:
+            value[key] = item
+    return value
+
+
+def marker(generation, sequence, body: bytes, observed_at_ms=1_000, **extra):
+    return json.dumps({"schema": "ts.execution-ordering.v1", "observed_at_ms": observed_at_ms,
+                       "proof": {"generation": generation, "sequence": sequence},
+                       "value_digest": hashlib.sha256(body).hexdigest(), **extra}).encode()
 
 
 class G11Tests(unittest.TestCase):
@@ -339,8 +425,8 @@ class G11Tests(unittest.TestCase):
         s.update(10_500, obs(10_400, "a", pttl=119_900), phase="POST")
         self.assertEqual(s.first_apply_ms, 10_500)
         t = g11.SliceRecovery("T", "TRADE", None, 500)
-        t.update(0, obs(5_000, "a", offset=100), phase="PRE")
-        t.update(1_000, obs(4_000, "b", offset=90), phase="POST")
+        t.update(6_000, obs(5_000, "a", offset=100), phase="PRE")
+        t.update(7_000, obs(4_000, "b", offset=90), phase="POST")
         self.assertEqual({r["kind"] for r in t.rewinds}, {"event_time", "applied_offset"})
         self.assertIsNone(t.first_apply_ms)  # an older event is never a valid first apply
 
@@ -369,11 +455,119 @@ class G11Tests(unittest.TestCase):
         s.update(5_000, obs(4_500, "b"), phase="POST")
         report = {"restart": {"fault_cleared_ms": 1_000}, "observe_seconds": 180,
                   "recovery": g11.recovery_summary({"T": s}, 1_000),
-                  "cursor_samples": [{"compared": 2, "ahead": []}]}
+                  "cursor_samples": [{"compared": 2, "unmatched": 0, "ahead": [], "missing_expected": []}]}
         self.assertEqual(g11.verdict(report), ("PASS", []))
-        report["cursor_samples"] = [{"compared": 2, "ahead": [{"slice": "T"}]}]
+        report["cursor_samples"] = [{"compared": 2, "unmatched": 0, "ahead": [{"slice": "T"}], "missing_expected": []}]
         self.assertEqual(g11.verdict(report)[0], "FAIL")
         self.assertEqual(g11.verdict({"restart": None})[0], "NOT_MEASURED")
+
+    # ---- Codex review SR5 counterexamples (synthetic, pure functions) ----
+    def test_sr5_post_to_post_rewind_in_one_domain_is_counted(self):
+        s = g11.SliceRecovery("T", "TRADE", None, 500)
+        s.update(0, obs(1_000, "a", offset=100), phase="PRE")
+        s.update(5_000, obs(4_000, "b", offset=200), phase="POST")
+        s.update(5_500, obs(4_100, "c", offset=150), phase="POST")
+        self.assertEqual([(r["kind"], r["before"], r["after"]) for r in s.rewinds], [("applied_offset", 200, 150)])
+        t = g11.SliceRecovery("T2", "TRADE", None, 500)  # event time going back after a newer POST is a rewind too
+        t.update(0, obs(1_000, "a", offset=1), phase="PRE")
+        t.update(5_000, obs(4_000, "b", offset=2), phase="POST")
+        t.update(5_500, obs(3_000, "c", offset=3), phase="POST")
+        self.assertEqual([r["kind"] for r in t.rewinds], ["event_time"])
+        u = g11.SliceRecovery("T3", "TRADE", None, 500)  # a new generation is a new domain
+        u.update(0, obs(1_000, "a", offset=100, generation="g1"), phase="PRE")
+        u.update(5_000, obs(4_000, "b", offset=5, generation="g2"), phase="POST")
+        self.assertEqual(u.rewinds, [])
+        b = g11.SliceRecovery("B", "BOOK_SNAPSHOT", None, 500)  # ordered view: proof sequence per generation
+        b.update(0, obs(1_000, "a", domain="7", sequence=50), phase="PRE")
+        b.update(5_000, obs(4_000, "b", domain="7", sequence=60), phase="POST")
+        b.update(5_500, obs(4_100, "c", domain="7", sequence=55), phase="POST")
+        self.assertEqual([(r["kind"], r["domain"]) for r in b.rewinds], [("ordering_sequence", "7")])
+        report = {"restart": {"fault_cleared_ms": 1_000}, "observe_seconds": 180,
+                  "recovery": g11.recovery_summary({"T": s}, 1_000),
+                  "cursor_samples": [{"compared": 1, "unmatched": 0, "ahead": [], "missing_expected": []}]}
+        self.assertEqual(g11.verdict(report)[0], "FAIL")
+
+    def test_sr5_future_clock_and_missing_view_are_never_live(self):
+        s = g11.SliceRecovery("Q", "QUOTE", None, 500)
+        s.update(0, obs(500, "a"), phase="PRE")
+        s.update(10_000, obs(60_000, "b"), phase="POST")  # event 50 s in the future
+        self.assertEqual((s.first_apply_ms, s.caught_up_ms, s.future), (None, None, 1))
+        self.assertFalse(s._live(obs(60_000, "b"), 10_000))
+        book = g11.observe("BOOK_SNAPSHOT", marker(7, 3, b"{}"), None, -2, None, ID)  # view key missing
+        self.assertEqual((book["valid"], book["invalid_reason"]), (False, "VIEW_MISSING"))
+        m = g11.SliceRecovery("M", "MARK_INDEX_PRICE", None, 500)
+        m.update(0, obs(500, "a", valid=None), phase="PRE")
+        m.update(10_000, obs(9_900, "b", valid=None), phase="POST")  # fresh marker, body not validated
+        self.assertEqual((m.first_apply_ms, m.caught_up_ms), (None, None))
+
+    def test_sr5_payload_and_quality_follow_the_production_rules(self):
+        trade = view("TRADE", {"price": "65000.1"})
+        self.assertIsNone(g11.validate_value("TRADE", trade, ID))
+        for broken, reason in ((view("TRADE", {"price": "0"}), "TRADE_INVALID"),
+                               (view("TRADE", {"price": "1"}, quality={"execution_eligible": False}),
+                                "NOT_EXECUTION_ELIGIBLE"),
+                               (view("TRADE", {"price": "1"}, quality={"gap_open": "true"}), "GAP_OPEN"),
+                               (view("TRADE", {"price": "1"}, source={"authoritative": False}), "NON_AUTHORITATIVE"),
+                               (view("TRADE", {"price": "1"}, canonical_instrument_id="OKX:SWAP:OTHER"),
+                                "IDENTITY_MISMATCH"),
+                               (view("TRADE", {"price": "1"}, schema_version="v0"), "SCHEMA_INVALID"),
+                               (view("QUOTE", {"bid_price": "2", "ask_price": "1"}), "QUOTE_CROSSED"),
+                               (view("QUOTE", {"bid_price": "1", "ask_price": "2", "bid_size": "0"}),
+                                "BBO_SIZE_INVALID"),
+                               (view("MARK_INDEX_PRICE", {"mark_price": "1"}), "MARK_INVALID"),
+                               (view("BOOK_SNAPSHOT", {"book_generation": 3, "sequence": 9, "depth": 5,
+                                                       "sequence_verified": False}), "BOOK_UNVERIFIED")):
+            self.assertEqual(g11.validate_value(broken["feed"], broken, ID), reason)
+        self.assertIsNone(g11.validate_value("QUOTE", view("QUOTE", {"bid_price": {"coefficient": 1, "scale": 0},
+                                                                     "ask_price": "1.5"}), ID))
+        raw = json.dumps(trade).encode()
+        self.assertTrue(g11.observe("TRADE", raw, None, 1000, None, ID)["valid"])
+        self.assertEqual(g11.observe("TRADE", json.dumps(view("TRADE", {"price": "x"})).encode(), None, 1000, None,
+                                     ID)["invalid_reason"], "TRADE_INVALID")
+        # Ordered view: the marker alone is not valid; the body must match the marker digest and the rules.
+        body = json.dumps(view("BOOK_SNAPSHOT", {"book_generation": 3, "sequence": 9, "depth": 5,
+                                                 "sequence_verified": True})).encode()
+        mark = g11.observe("BOOK_SNAPSHOT", marker(3, 9, body), None, 1000, None, ID)
+        self.assertEqual((mark["valid"], mark["domain"], mark["sequence"]), (None, "3", 9))
+        self.assertIsNone(g11.validate_body("BOOK_SNAPSHOT", body, mark["value_digest"], ID))
+        self.assertEqual(g11.validate_body("BOOK_SNAPSHOT", body + b" ", mark["value_digest"], ID),
+                         "VIEW_DIGEST_MISMATCH")
+        invalidated = g11.observe("BOOK_DELTA", marker(3, 9, body, invalidated="GAP_OPEN"), None, 1000, None, ID)
+        self.assertEqual(invalidated["invalid_reason"], "INVALIDATED_GAP_OPEN")
+        s = g11.SliceRecovery("B", "BOOK_SNAPSHOT", None, 500)
+        s.update(0, obs(500, "a", valid=None), phase="PRE")
+        fresh = obs(9_900, "b", valid=None, value_digest=mark["value_digest"])
+        self.assertTrue(s.needs_body(fresh))
+        s.body_checked(fresh, None)
+        s.update(10_000, fresh, phase="POST")
+        self.assertEqual((s.first_apply_ms, s.caught_up_ms), (10_000, 10_000))
+
+    def test_sr5_cursor_roster_must_be_complete(self):
+        result = g11.cursor_check({"c|uid1|TRADE||p": 10}, {"T": 12, "Q": 20}, {"uid1|TRADE": "T", "uid1|QUOTE": "Q"},
+                                  ["Q", "T"])
+        self.assertEqual((result["compared"], result["missing_expected"]), (1, ["Q"]))
+        s = g11.SliceRecovery("T", "TRADE", None, 500)
+        s.update(0, obs(0, "a"), phase="PRE")
+        s.update(5_000, obs(4_500, "b"), phase="POST")
+        base = {"restart": {"fault_cleared_ms": 1_000}, "observe_seconds": 180,
+                "recovery": g11.recovery_summary({"T": s}, 1_000)}
+        for samples, needle in (([result], "roster incomplete: Q"),
+                                ([{"compared": 1, "unmatched": 1, "ahead": [], "missing_expected": []}], "not matched"),
+                                ([{"compared": 1, "unmatched": 0, "ahead": []}], "roster not recorded")):
+            v, why = g11.verdict({**base, "cursor_samples": samples})
+            self.assertEqual(v, "NOT_MEASURED")
+            self.assertTrue(any(needle in w for w in why), why)
+        v, why = g11.verdict({**base, "unresolved_slices": ["OKX|X|TRADE"], "cursor_samples": [
+            {"compared": 1, "unmatched": 0, "ahead": [], "missing_expected": []}]})
+        self.assertEqual(v, "NOT_MEASURED")
+
+    def test_sr5_v1_summary_cannot_pass_under_the_v2_oracle(self):
+        v1 = {"schema": g11.SCHEMA_V1, "restart": {"fault_cleared_ms": 1}, "verdict": "PASS", "reasons": [],
+              "cursor_samples": [{"compared": 21, "unmatched": 0, "ahead": []}]}
+        v, why = g11.verdict(v1)
+        self.assertEqual(v, "NOT_MEASURED")
+        self.assertTrue(any("post-to-post" in w for w in why) and any("compared [21]" in w for w in why))
+        self.assertEqual(g11.verdict({**v1, "verdict": "FAIL", "reasons": ["3 rewinds"]})[0], "FAIL")
 
 
 def host_json():
@@ -1102,6 +1296,31 @@ class NativeWriterScoringTests(unittest.TestCase):
         gates = self.card(self.transit(trade_max=1600.0))
         self.assertEqual(gates["G2"]["verdict"], "FAIL")
         self.assertIn("TRADE|OKX", gates["G2"]["reason"])
+
+    def test_score_out_dir_never_writes_into_the_campaign(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp) / "campaign"
+            (d / "stage100").mkdir(parents=True)
+            (d / "trace").mkdir()
+            (d / "campaign.json").write_text(json.dumps({"trace": {"until_unix_ns": 10**19}, "g4_windows": []}))
+            (d / "trace" / "transit-load.json").write_text(json.dumps(self.transit()))
+            (d / "g11").mkdir()
+            (d / "g11" / "g11-summary.json").write_text(json.dumps({
+                "schema": g11.SCHEMA_V1, "restart": {"fault_cleared_ms": 1}, "verdict": "PASS", "reasons": [],
+                "cursor_samples": [{"compared": 21, "unmatched": 0, "ahead": []}]}))
+            before = sorted(str(p.relative_to(d)) for p in d.rglob("*"))
+            with self.assertRaises(SystemExit):
+                campaign.main(["score", "--campaign-dir", str(d), "--out-dir", str(d / "rescore")])
+            out = Path(tmp) / "rescore"
+            with unittest.mock.patch("sys.stdout", io.StringIO()):
+                self.assertEqual(campaign.main(["score", "--campaign-dir", str(d), "--out-dir", str(out)]), 0)
+            self.assertEqual(sorted(str(p.relative_to(d)) for p in d.rglob("*")), before)
+            card = json.loads((out / "scorecard.json").read_text())
+            gates = {g["id"]: g for g in card["gates"]}
+            self.assertEqual((gates["G11"]["verdict"], gates["G11"]["recorded_verdict"]), ("NOT_MEASURED", "PASS"))
+            self.assertEqual(gates["G10"]["verdict"], "NOT_MEASURED")
+            with self.assertRaises(FileExistsError):
+                campaign.main(["score", "--campaign-dir", str(d), "--out-dir", str(out)])
 
     def test_g10_native_trade_sample_can_fail_never_pass(self):
         gates = self.card(self.transit())

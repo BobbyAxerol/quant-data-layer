@@ -80,6 +80,13 @@ the applied high-water: an economic duplicate), ambiguous_after_unconfirmed (APP
 epochs. Merged per feed|venue (native_summary.g10); a route whose duplicate first..last span lies wholly outside the
 load window is not counted in the window, otherwise its whole count is (conservative). A summary without
 apply_integrity is NOT_MEASURED for G10, never zero.
+Validation and identity (Codex review SR3): every route row is validated before it is summed (route identity strings;
+every gate counter present as an int >= 0, no default to zero; decisions sum == rows; replay/duplicate/ambiguous
+bounded by their populations). An invalid row is listed in g10.invalid_routes and named in coverage_gaps, never summed.
+Route identity is kept (g10.per_route, key FEED|VENUE|SYMBOL, with its activation and integrity epochs: epoch,
+opened_by, first/last offset) so the scorer can require the frozen route roster. `duplicate_applied` is the writer's
+offset high-water check (a stream row decided APPLIED at/below the route's prior APPLIED offset, per process and
+route across its epochs), not an event-identity duplicate oracle; anchor (non-stream) rows are not checked by it.
 
 Boundary: read-only over the given files; no Redis, Docker or network access; it never enables tracing. Output is JSON
 on stdout, or --out (created exclusively).
@@ -124,6 +131,12 @@ SLICE_INTEGRITY_COUNTERS = ("rows", "stream_rows", "units", "unconfirmed_units",
                             "replay_attempted", "duplicate_applied", "ambiguous_after_unconfirmed")
 INTEGRITY_COUNTERS = ("rows", "stream_rows", "units", "unconfirmed_rows", "replay_attempted", "duplicate_applied",
                       "ambiguous_after_unconfirmed", "epochs_total", "epochs_dropped")
+# Required on every apply_integrity route row (TS latency.rs RouteIntegrity::report); unconfirmed_units is summed too.
+INTEGRITY_REQUIRED = INTEGRITY_COUNTERS + ("unconfirmed_units",)
+DECISION_NAMES = ("applied", "refreshed", "duplicate_ignored")
+DUPLICATE_APPLIED_BASIS = ("offset high-water check: a stream row decided APPLIED at or below the route's prior APPLIED "
+                           "offset high-water (per writer process and route, across its epochs); not an event-identity "
+                           "duplicate oracle; anchor (non-stream) rows are not checked")
 # Keys summarise() reads; loading only these keeps a full campaign (~250 parts x 4096 records) in memory.
 FIELDS = ("feed", "canonical_instrument_id", "outcome", "sdk_receive_basis", "sdk_receive_monotonic_ns",
           "writer_started_monotonic_ns", "redis_reply_monotonic_ns", "writer_started_wall_ns", "redis_reply_wall_ns",
@@ -404,29 +417,105 @@ def _unix(report: dict, monotonic):
     return started_unix + (monotonic - started_mono)
 
 
+def _uint(value) -> bool:
+    return type(value) is int and value >= 0
+
+
+def _decision_problems(value, name) -> list[str]:
+    if not isinstance(value, dict):
+        return [f"{name} not an object"]
+    return [f"{name}.{k} {value.get(k)!r}" for k in DECISION_NAMES if not _uint(value.get(k))]
+
+
+def validate_integrity_route(item, required=INTEGRITY_REQUIRED, *, epochs=True) -> list[str]:
+    """Problems of one apply_integrity route row (or slice cell integrity with required=SLICE_INTEGRITY_COUNTERS and
+    epochs=False); [] = valid. Absent counters are a problem, never zero."""
+    if not isinstance(item, dict):
+        return ["row not an object"]
+    problems = []
+    route = item.get("route")
+    if not isinstance(route, dict) or any(not isinstance(route.get(k), str) or not route.get(k).strip()
+                                          for k in ("provider", "symbol", "feed")):
+        problems.append("route identity (provider/symbol/feed) missing")
+    body = item.get("integrity", item) if not epochs else item
+    if not isinstance(body, dict):
+        return problems + ["integrity not an object"]
+    problems += [f"{name} {body.get(name)!r}" for name in required if not _uint(body.get(name))]
+    problems += _decision_problems(body.get("decisions"), "decisions")
+    if epochs:
+        problems += _decision_problems(body.get("replay_decisions"), "replay_decisions")
+        listed = body.get("epochs")
+        if not isinstance(listed, list) or any(
+                not isinstance(e, dict) or not _uint(e.get("epoch")) or not isinstance(e.get("opened_by"), str)
+                for e in listed):
+            problems.append("epochs not a list of {epoch, opened_by}")
+    if problems:
+        return problems
+    decided = sum(body["decisions"][k] for k in DECISION_NAMES)
+    if decided != body["rows"]:
+        problems.append(f"decisions sum {decided} != rows {body['rows']}")
+    if body["stream_rows"] > body["rows"]:
+        problems.append(f"stream_rows {body['stream_rows']} > rows {body['rows']}")
+    if body["replay_attempted"] > body["stream_rows"]:
+        problems.append(f"replay_attempted {body['replay_attempted']} > stream_rows {body['stream_rows']}")
+    if body["duplicate_applied"] + body["ambiguous_after_unconfirmed"] > body["decisions"]["applied"]:
+        problems.append("duplicate_applied + ambiguous_after_unconfirmed > applied decisions")
+    return problems
+
+
+def route_key(route: dict) -> str:
+    return f"{route.get('feed')}|{str(route.get('provider')).upper()}|{str(route.get('symbol')).upper()}"
+
+
 def merge_integrity(reports, from_ns, to_ns) -> dict:
-    """native_summary.g10: per feed|venue sums of the apply-decision counters of the overlapping activations."""
-    rows, gaps, rejected = {}, [], 0
+    """native_summary.g10: per feed|venue sums of the validated apply-decision counters of the overlapping activations,
+    plus per_route (identity, activation, epochs) and invalid_routes (never summed)."""
+    rows, gaps, rejected, per_route, invalid = {}, [], 0, {}, []
     for path, report in reports:
         block = report.get("apply_integrity")
         if not isinstance(block, dict) or block.get("schema") != NATIVE_INTEGRITY_SCHEMA:
             gaps.append(f"native summary without {NATIVE_INTEGRITY_SCHEMA} counters: {path}")
             continue
-        rejected += int(block.get("rejected_route_units") or 0)
-        for item in block.get("routes") or []:
-            route = item.get("route") or {}
+        if not _uint(block.get("rejected_route_units")) or not isinstance(block.get("routes"), list):
+            gaps.append(f"native apply_integrity without typed rejected_route_units/routes: {path}")
+            continue
+        rejected += block["rejected_route_units"]
+        for item in block["routes"]:
+            problems = validate_integrity_route(item)
+            if problems:
+                ident = route_key(item.get("route") or {}) if isinstance(item, dict) and isinstance(
+                    item.get("route"), dict) else "?"
+                invalid.append({"route": ident, "path": path, "problems": problems[:8]})
+                gaps.append(f"invalid apply_integrity route {ident} ({path}): {'; '.join(problems[:3])}")
+                continue
+            route = item["route"]
             key = f"{route.get('feed')}|{str(route.get('provider')).upper()}"
+            entry = per_route.setdefault(route_key(route), {
+                **{name: 0 for name in INTEGRITY_REQUIRED},
+                "decisions": {k: 0 for k in DECISION_NAMES}, "activations": []})
+            for name in INTEGRITY_REQUIRED:
+                entry[name] += item[name]
+            for outcome in DECISION_NAMES:
+                entry["decisions"][outcome] += item["decisions"][outcome]
+            entry["activations"].append({
+                "worker": report.get("worker"), "pid": report.get("pid"),
+                "started_unix_ns": as_int(report.get("started_unix_ns")),
+                "start_offset": item.get("start_offset"), "end_offset": item.get("end_offset"),
+                "epochs_total": item["epochs_total"], "epochs_dropped": item["epochs_dropped"],
+                "epochs": [{k: e.get(k) for k in ("epoch", "opened_by", "first_offset", "last_offset",
+                                                    "unconfirmed_rows", "duplicate_applied")}
+                           for e in item["epochs"]][:8]})
             row = rows.setdefault(key, {**{name: 0 for name in INTEGRITY_COUNTERS}, "routes": 0,
                                         "decisions": {"applied": 0, "refreshed": 0, "duplicate_ignored": 0},
                                         "replay_decisions": {"applied": 0, "refreshed": 0, "duplicate_ignored": 0},
                                         "duplicate_applied_in_window": 0, "duplicate_spans_unix_ns": []})
             row["routes"] += 1
-            for name in INTEGRITY_COUNTERS:
-                row[name] += int(item.get(name) or 0)
+            for name in INTEGRITY_REQUIRED:
+                row[name] = row.get(name, 0) + item[name]
             for name in ("decisions", "replay_decisions"):
                 for outcome in row[name]:
-                    row[name][outcome] += int((item.get(name) or {}).get(outcome) or 0)
-            count = int(item.get("duplicate_applied") or 0)
+                    row[name][outcome] += item[name][outcome]
+            count = item["duplicate_applied"]
             if count:
                 first = _unix(report, item.get("duplicate_applied_first_monotonic_ns"))
                 last = _unix(report, item.get("duplicate_applied_last_monotonic_ns"))
@@ -439,7 +528,9 @@ def merge_integrity(reports, from_ns, to_ns) -> dict:
     return {"basis": "TS apply_integrity: atomic apply decision counters, whole activation (not window-gated)",
             "in_window_rule": "a route's duplicate count is in the window unless its first..last span is wholly "
                               "outside",
-            "per_feed_venue": dict(sorted(rows.items())), "coverage_gaps": gaps}
+            "duplicate_applied_basis": DUPLICATE_APPLIED_BASIS,
+            "per_feed_venue": dict(sorted(rows.items())), "per_route": dict(sorted(per_route.items())),
+            "invalid_routes": invalid, "coverage_gaps": gaps}
 
 
 def slice_plan(valid, from_ns, to_ns):
@@ -542,16 +633,25 @@ def slice_integrity(g10, valid, plan, scope) -> dict:
     """native_summary.g10 with the decision counters re-summed over the planned slices only (superset of the load
     window). Quantities the slices do not carry (replay_decisions, epochs) stay whole-activation and are named so;
     each row keeps its whole-activation counters under whole_activation."""
-    sums = {}
+    sums, route_sums, invalid, gaps = {}, {}, [], list(g10.get("coverage_gaps") or [])
     for path, report, _ in valid:
         for _, key, cell in slice_cells(path, report, plan):
-            integrity = cell.get("integrity") or {}
-            row = sums.setdefault(key, {**{name: 0 for name in SLICE_INTEGRITY_COUNTERS},
-                                        "decisions": {"applied": 0, "refreshed": 0, "duplicate_ignored": 0}})
-            for name in SLICE_INTEGRITY_COUNTERS:
-                row[name] += int(integrity.get(name) or 0)
-            for outcome in row["decisions"]:
-                row["decisions"][outcome] += int((integrity.get("decisions") or {}).get(outcome) or 0)
+            problems = validate_integrity_route(cell, SLICE_INTEGRITY_COUNTERS, epochs=False)
+            if problems:
+                ident = route_key(cell.get("route") or {}) if isinstance(cell.get("route"), dict) else "?"
+                invalid.append({"route": ident, "path": path, "slice": True, "problems": problems[:8]})
+                gaps.append(f"invalid slice integrity cell {ident} ({path}): {'; '.join(problems[:3])}")
+                continue
+            integrity = cell["integrity"]
+            for target in (sums.setdefault(key, {**{name: 0 for name in SLICE_INTEGRITY_COUNTERS},
+                                                 "decisions": {k: 0 for k in DECISION_NAMES}}),
+                           route_sums.setdefault(route_key(cell["route"]), {
+                               **{name: 0 for name in SLICE_INTEGRITY_COUNTERS},
+                               "decisions": {k: 0 for k in DECISION_NAMES}})):
+                for name in SLICE_INTEGRITY_COUNTERS:
+                    target[name] += integrity[name]
+                for outcome in DECISION_NAMES:
+                    target["decisions"][outcome] += integrity["decisions"][outcome]
     rows = {}
     for key in sorted(set(g10.get("per_feed_venue") or {}) | set(sums)):
         whole = dict((g10.get("per_feed_venue") or {}).get(key) or {})
@@ -564,10 +664,22 @@ def slice_integrity(g10, valid, plan, scope) -> dict:
                      "whole_activation": {name: whole.get(name) for name in
                                           SLICE_INTEGRITY_COUNTERS + ("decisions", "duplicate_applied_in_window")
                                           if name in whole}}
+    per_route = {}
+    for key, whole in (g10.get("per_route") or {}).items():
+        mine = route_sums.get(key) or {**{name: 0 for name in SLICE_INTEGRITY_COUNTERS},
+                                       "decisions": {k: 0 for k in DECISION_NAMES}}
+        per_route[key] = {**whole, **mine, "counters_scope": scope,
+                          "whole_activation": {name: whole.get(name) for name in
+                                               SLICE_INTEGRITY_COUNTERS + ("decisions",) if name in whole}}
+    for key in set(route_sums) - set(per_route):  # a slice route without a whole-activation row: keep, mark
+        per_route[key] = {**route_sums[key], "counters_scope": scope, "activations": [],
+                          "whole_activation_missing": True}
+        gaps.append(f"slice route {key} has no whole-activation apply_integrity row")
     return {**g10, "basis": "TS ack_latency_slices integrity: atomic apply decision counters of the slices "
                             "intersecting the load window",
             "in_window_rule": "sum of the covered slices (edge slices in full: a superset of the load window)",
-            "scope": scope, "per_feed_venue": rows}
+            "scope": scope, "per_feed_venue": rows, "per_route": dict(sorted(per_route.items())),
+            "invalid_routes": list(g10.get("invalid_routes") or []) + invalid, "coverage_gaps": gaps}
 
 
 def native_summary(paths, *, from_ns=None, to_ns=None, raw_activations=(), process_ends=()) -> dict:

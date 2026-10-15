@@ -248,7 +248,8 @@ class NativeWriterTests(unittest.TestCase):
 # ---- S100-5 activation end and G10 native apply-decision counters (2026-10-15) ----
 from pathlib import Path  # noqa: E402
 
-from scripts import p184_gate_campaign as campaign  # noqa: E402
+from scripts import p184_gate_campaign as campaign
+from scripts import p184_g9_g10_writer_counters as g910  # noqa: E402
 
 S = 10**9
 # p184-final-campaign-20261015T134656Z: activation start/configured expiry, load window, G11 Docker clocks.
@@ -273,13 +274,45 @@ def native_report(started, expires, *, observed_end=None, integrity=None, worker
     return report
 
 
-def integrity_route(provider, *, duplicate=0, first_mono=None, last_mono=None, ambiguous=0, replay=0, feed="TRADE"):
-    return {"route": {"provider": provider, "symbol": "X", "feed": feed, "interval": None}, "units": 10, "rows": 20,
-            "stream_rows": 19, "unconfirmed_rows": 0, "replay_attempted": replay,
+def integrity_route(provider, *, duplicate=0, first_mono=None, last_mono=None, ambiguous=0, replay=0, feed="TRADE",
+                    symbol="X", unconfirmed=0):
+    """One TS latency.rs RouteIntegrity::report row (every field the writer exports)."""
+    return {"route": {"provider": provider, "symbol": symbol, "feed": feed, "interval": None}, "units": 10,
+            "rows": 20, "stream_rows": 19, "anchor_rows": 1, "unconfirmed_units": 1 if unconfirmed else 0,
+            "unconfirmed_rows": unconfirmed, "replay_attempted": replay,
             "replay_decisions": {"applied": duplicate, "refreshed": 0, "duplicate_ignored": replay - duplicate},
             "decisions": {"applied": 18, "refreshed": 1, "duplicate_ignored": 1}, "duplicate_applied": duplicate,
             "duplicate_applied_first_monotonic_ns": first_mono, "duplicate_applied_last_monotonic_ns": last_mono,
-            "ambiguous_after_unconfirmed": ambiguous, "epochs_total": 2, "epochs_dropped": 0}
+            "ambiguous_after_unconfirmed": ambiguous, "epochs_total": 2, "epochs_dropped": 0,
+            "start_offset": 1, "end_offset": 20,
+            "epochs": [{"epoch": 0, "opened_by": "ACTIVATION", "first_offset": 1, "last_offset": 10},
+                       {"epoch": 1, "opened_by": "RESET", "first_offset": 11, "last_offset": 20}]}
+
+
+ROSTER = ["TRADE|BINANCE|X", "TRADE|OKX|X"]
+
+
+def typed_samples(start_ns, end_ns, *, step_s=10, counters=None, at=None, **sample):
+    """Heartbeat samples (g9-g10-samples.jsonl shape) bracketing [start_ns, end_ns] with pooled trade_integrity."""
+    rows, t = [], start_ns - step_s * S
+    while t <= end_ns + step_s * S:
+        values = {name: 0 for name in g910.NATIVE_REQUIRED}
+        values["applied"] = (t - start_ns) // S + 10**6
+        values.update((counters or {}).get(t, {}) if counters else {})
+        if at is not None:
+            values.update(at(t))
+        rows.append({"kind": "heartbeat", "at_ns": t, "key_tail": "inst-1", "sample": {
+            "readable": True, "age_s": 5.0, "trade_integrity": values,
+            "trade_integrity_scope": {"counter_scope": "current_live_worker_epochs", "workers_reporting": 2,
+                                      "workers_expected": 2},
+            "worker_liveness": {"0": "LIVE", "1": "LIVE"}, **sample}})
+        t += step_s * S
+    return rows
+
+
+def typed_ok(start_ns=None, end_ns=None):
+    return g910.summarize_g10_native(typed_samples(start_ns or C_FROM, end_ns or C_TO),
+                                     from_ns=start_ns or C_FROM, to_ns=end_ns or C_TO)
 
 
 def write(tmp, report, name="summary-native-w-34-1.json"):
@@ -365,10 +398,11 @@ class NativeG10Tests(unittest.TestCase):
                                                                     integrity=routes, **report))],
                                           from_ns=C_FROM, to_ns=C_TO)
 
-    def score(self, native):
+    def score(self, native, *, roster=ROSTER, typed="ok"):
         logs = {"trade_gap": 0, "trade_replay_expired": 0, "trade_overflow": 0, "log_polls": 10, "log_unreadable": 0}
         return campaign.score_g10(logs, {}, [], sample_scope="native raw sample spans 30 s",
-                                  native_g10=native.get("g10"), native_gaps=native.get("coverage_gaps"))
+                                  native_g10=native.get("g10"), native_gaps=native.get("coverage_gaps"),
+                                  expected_routes=roster, native_typed=typed_ok() if typed == "ok" else typed)
 
     def mono(self, unix_ns):  # inverse of the summary anchor (started_monotonic_ns = 1000 s)
         return unix_ns - C_STARTED + 1_000 * S
@@ -411,6 +445,67 @@ class NativeG10Tests(unittest.TestCase):
         v, _, why = self.score(native)
         self.assertEqual(v, "NOT_MEASURED")
         self.assertTrue(any("end not measured" in w for w in why))
+
+
+    # ---- Codex review SR2/SR3 counterexamples (synthetic scorer inputs, not production receipts) ----
+    def test_sr3_rows_with_absent_counters_never_pass(self):
+        bare = [{"route": {"provider": v, "symbol": "X", "feed": "TRADE", "interval": None}} for v in ("BINANCE", "OKX")]
+        native = self.analyse(bare)
+        self.assertEqual(native["g10"]["per_feed_venue"], {})
+        self.assertEqual(len(native["g10"]["invalid_routes"]), 2)
+        self.assertTrue(any("invalid apply_integrity route TRADE|BINANCE|X" in g
+                            for g in native["g10"]["coverage_gaps"]))
+        v, _, why = self.score(native)
+        self.assertEqual(v, "NOT_MEASURED")
+        # One counter missing, a string, a negative or a bool is invalid too (no default to zero, no coercion).
+        for broken in ({"duplicate_applied": None}, {"unconfirmed_rows": "0"}, {"rows": -1}, {"units": True}):
+            row = {**integrity_route("BINANCE"), **broken}
+            if broken.get("duplicate_applied", 1) is None:
+                row.pop("duplicate_applied")
+            native = self.analyse([row, integrity_route("OKX")])
+            self.assertNotEqual(self.score(native)[0], "PASS", broken)
+        inconsistent = {**integrity_route("BINANCE"), "decisions": {"applied": 1, "refreshed": 0,
+                                                                   "duplicate_ignored": 0}}
+        native = self.analyse([inconsistent, integrity_route("OKX")])
+        self.assertTrue(any("decisions sum" in p for r in native["g10"]["invalid_routes"] for p in r["problems"]))
+        self.assertEqual(self.score(native)[0], "NOT_MEASURED")
+
+    def test_sr3_unconfirmed_rows_block_a_pass(self):
+        native = self.analyse([integrity_route("BINANCE", unconfirmed=1), integrity_route("OKX")])
+        v, counters, why = self.score(native)
+        self.assertEqual(v, "NOT_MEASURED")
+        self.assertTrue(any(w.startswith("INCOMPLETE: TRADE apply replies lost") for w in why))
+        self.assertEqual(counters["unconfirmed_rows"]["TRADE|BINANCE"], 1)
+
+    def test_sr3_every_frozen_route_is_required_and_identity_is_kept(self):
+        roster = ROSTER + ["TRADE|OKX|Y"]
+        native = self.analyse([integrity_route("BINANCE"), integrity_route("OKX")])
+        v, _, why = self.score(native, roster=roster)
+        self.assertEqual(v, "NOT_MEASURED")
+        self.assertTrue(any("TRADE|OKX|Y" in w for w in why))
+        self.assertEqual(self.score(native, roster=None)[0], "NOT_MEASURED")
+        quiet = {**integrity_route("OKX", symbol="Y"), "units": 0, "rows": 0, "stream_rows": 0, "anchor_rows": 0,
+                 "decisions": {"applied": 0, "refreshed": 0, "duplicate_ignored": 0}, "epochs": []}
+        native = self.analyse([integrity_route("BINANCE"), integrity_route("OKX"), quiet])
+        v, counters, why = self.score(native, roster=roster)
+        self.assertEqual((v, why), ("PASS", []))
+        self.assertEqual(counters["route_disposition"]["TRADE|OKX|Y"], "QUIET_NO_ROWS_IN_SCOPE")
+        self.assertEqual(counters["route_epochs"]["TRADE|BINANCE|X"][0]["epochs"][1]["opened_by"], "RESET")
+        self.assertIn("offset high-water", counters["duplicates_applied_oracle"])
+        self.assertIn("not an event-identity", counters["duplicates_applied_oracle"])
+
+    def test_sr2_native_typed_counters_are_required_and_can_fail(self):
+        native = self.analyse([integrity_route("BINANCE"), integrity_route("OKX")])
+        v, _, why = self.score(native, typed=None)
+        self.assertEqual(v, "NOT_MEASURED")
+        self.assertTrue(any("native typed TRADE counters" in w and "not sampled" in w for w in why))
+        replaced = g910.summarize_g10_native(
+            typed_samples(C_FROM, C_TO, at=lambda t: {"snapshot_replaced": 1} if t > C_FROM + 100 * S else {}),
+            from_ns=C_FROM, to_ns=C_TO)
+        v, counters, why = self.score(native, typed=replaced)
+        self.assertEqual(v, "FAIL")
+        self.assertIn("native typed gaps=1", why)
+        self.assertEqual(counters["native_typed"]["failures"]["gaps"], 1)
 
 
 # ---- G2 load slices (TS e35bb316 ack_latency_slices, schema_revision 1.1), stage-100 #2 shape (2026-10-15) ----
@@ -617,14 +712,16 @@ class LoadSliceTests(unittest.TestCase):
         self.assertIn("epochs_total", row["whole_activation_only"])
         logs = {"trade_gap": 0, "trade_replay_expired": 0, "trade_overflow": 0, "log_polls": 10, "log_unreadable": 0}
         v, counters, _ = campaign.score_g10(logs, {}, [], sample_scope="native raw sample spans 30 s",
-                                            native_g10=out["g10"], native_gaps=out["coverage_gaps"])
+                                            native_g10=out["g10"], native_gaps=out["coverage_gaps"],
+                                            expected_routes=ROSTER, native_typed=typed_ok(R_FROM, R_TO))
         self.assertEqual(v, "PASS")
         self.assertIn("LOAD_SLICES_SUPERSET", counters["duplicates_applied_scope"])
         cells[first + 3 * SLICE] = [scell("BINANCE", "TRADE", [100.0], duplicate_applied=1)] + cells[
             first + 3 * SLICE][1:]
         out = self.analyse(sliced_report(cells))
         v, counters, _ = campaign.score_g10(logs, {}, [], sample_scope="native raw sample spans 30 s",
-                                            native_g10=out["g10"], native_gaps=out["coverage_gaps"])
+                                            native_g10=out["g10"], native_gaps=out["coverage_gaps"],
+                                            expected_routes=ROSTER, native_typed=typed_ok(R_FROM, R_TO))
         self.assertEqual((v, counters["duplicates_applied"]), ("FAIL", 1))
 
     def test_stage100_2_replay_before_the_load_is_catch_up_not_g2(self):

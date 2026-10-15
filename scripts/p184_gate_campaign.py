@@ -37,7 +37,11 @@ own coverage gaps are. Python-worker feeds (BOOK_*, MARK) keep the raw-trace cov
 the writer process stops, i.e. at the G11 restart: score after G11. The activation end is the summary's
 observed_end_unix_ns, else the G11 probe's pinned process end (--process-end), never the configured expiry (S100-5).
 G10 duplicates for native TRADE come from the summary's apply-decision counters (TS apply_integrity, whole activation);
-without them they are read from the raw sample, which can FAIL G10 but never PASS it.
+without them they are read from the raw sample, which can FAIL G10 but never PASS it. Since Codex review SR2/SR3 a
+native G10 PASS also needs every frozen TRADE route of the binding with validated counters, no lost apply reply, and
+the native typed continuity counters (heartbeat trade_integrity) over one unbroken activation stretch bracketing the
+load. G11 is re-judged from its summary with the current oracle (SR5): a v1 summary cannot PASS.
+`score --out-dir NEW` writes the re-analysed trace and scorecard.json there, never into the campaign directory.
 
 G4 addendum (owner decision 2026-10-11): rows outside the frozen 17-row G4 table are scored from
 config/v2/p184-stage100-g4-addendum.json when that file exists (frozen once by scripts/p184_freeze_g4_addendum.py from
@@ -74,6 +78,7 @@ if str(ROOT) not in sys.path:
 
 from scripts import p184_g8_redis_sampler as g8  # noqa: E402
 from scripts import p184_g9_g10_writer_counters as g910  # noqa: E402
+from scripts import p184_g11_writer_restart_probe as g11probe  # noqa: E402
 from scripts import p184_g14_resource_table as g14  # noqa: E402
 from scripts.p184_resp_readonly import parse_redis_url, read_jsonl  # noqa: E402
 from scripts.phase3_consumer_load_acceptance import _PHASE3_CONSUMER_MANIFESTS  # noqa: E402
@@ -753,26 +758,71 @@ def native_raw_sample_scope(transit: dict | None, load_ns) -> str:
             f"({native.get('files')} capped file(s))")
 
 
+def expected_trade_routes(campaign: dict) -> list[str] | None:
+    """The frozen TRADE route roster (TRADE|VENUE|SYMBOL) of the campaign's binding (preflight.binding), or None."""
+    path = (campaign.get("preflight") or {}).get("binding") or campaign.get("binding")
+    binding = load_json(Path(path)) if path else None
+    if not isinstance(binding, dict) or not isinstance(binding.get("products"), list):
+        return None
+    try:
+        return sorted({f"TRADE|{str(p['venue']).upper()}|{str(p['native_symbol']).upper()}"
+                       for p in binding["products"] if p.get("feed") == "TRADE"})
+    except (KeyError, TypeError, AttributeError):
+        return None
+
+
+def _native_typed_verdict(native_typed: dict | None) -> tuple[dict, list[str], list[str]]:
+    """(measured, fail reasons, coverage gaps) of the heartbeat typed TRADE counters (g910.summarize_g10_native)."""
+    if not native_typed or not native_typed.get("present"):
+        return ({"present": False}, [], ["native typed TRADE counters (heartbeat details.trade_integrity: "
+                                         "snapshot_replaced, sequence_resets, gaps, continuity_errors, "
+                                         "cursor_expired_errors, slow_consumer_errors, offset_regressions, "
+                                         "duplicates_applied) not sampled: the native writer logs no typed "
+                                         "disconnect/control line, so zero log events is not zero native failures"])
+    measured = {k: native_typed.get(k) for k in ("complete", "failures", "blocking", "report_only", "breaks",
+                                                 "samples_in_bracket", "bracket_from_ns", "bracket_to_ns", "basis",
+                                                 "limits")}
+    fails = [f"native typed {cls}={n}" for cls, n in (native_typed.get("failures") or {}).items() if n]
+    gaps = []
+    if not native_typed.get("complete"):
+        breaks = native_typed.get("breaks") or ["no usable samples"]
+        gaps.append(f"native typed TRADE counters do not cover the load window as one unbroken activation "
+                    f"({len(breaks)} break(s), first: {breaks[0]})")
+    blocking = {k: v for k, v in (native_typed.get("blocking") or {}).items() if v}
+    if blocking:
+        gaps.append(f"native typed {blocking}: stream offsets went back with no reset (unexplained, not zero)")
+    return measured, fails, gaps
+
+
 def score_g10(g10: dict, duplicates: dict | None, trace_gaps: list[str], *,
               sample_scope: str | None = None, native_g10: dict | None = None,
-              native_gaps: list[str] | None = None) -> tuple[str, dict, list[str]]:
+              native_gaps: list[str] | None = None, expected_routes: list[str] | None = None,
+              native_typed: dict | None = None) -> tuple[str, dict, list[str]]:
     """sample_scope set (native TRADE): the raw-trace duplicates come from the capped raw sample; a duplicate there
     FAILs, zero in a sample is not a full-window zero. native_g10 (transit native_summary.g10, TS apply_integrity):
-    full-activation apply-decision counters; duplicates applied == 0 there over an activation proven to span the load
-    (native_gaps empty) can PASS. A replay ignored (DUPLICATE/REFRESHED) is not a duplicate; an APPLIED row after a
-    lost apply reply is unresolved (NOT_MEASURED). Missing counters -> NOT_MEASURED, never zero. The counters cannot
-    prove that no source record is missing; DL-signalled gaps stay the log-derived counter."""
+    validated per-route apply-decision counters. A PASS needs (Codex review SR2/SR3): every route of the frozen TRADE
+    roster (expected_routes, from the binding) present with valid counters (a present route with no rows in scope is
+    an explicit QUIET disposition; an absent one is not measured), an activation proven to span the load (native_gaps
+    empty), zero lost apply replies (unconfirmed rows are INCOMPLETE unless reconciled; the summary carries no
+    reconciliation, so any is blocking), zero APPLIED-after-lost-reply rows, and the native typed continuity counters
+    (native_typed, g910.summarize_g10_native over the heartbeat) covering the load window with zero failures.
+    `duplicates applied` for native rows is the offset high-water check (see DUPLICATE_APPLIED_BASIS), not an
+    event-identity oracle. Missing counters -> NOT_MEASURED, never zero. The counters cannot prove that no source
+    record is missing; DL-signalled gaps come from the typed counters and the Python log lines."""
     dup = {k: v for k, v in (duplicates or {}).items() if k.startswith("TRADE|")}
     raw_dup = sum(dup.values()) if duplicates is not None else None
     counters = {"gaps": g10.get("trade_gap"), "duplicates_applied": raw_dup,
                 "duplicates_applied_scope": sample_scope or "full load window (raw trace)",
                 "replay_expired": g10.get("trade_replay_expired"), "overflow": g10.get("trade_overflow"),
                 "resumed_reconnects": g10.get("trade_resumed"), "log_polls": g10.get("log_polls"),
-                "log_unreadable": g10.get("log_unreadable"), "codes": g10.get("codes")}
+                "log_unreadable": g10.get("log_unreadable"), "codes": g10.get("codes"),
+                "log_basis": "Python worker typed log lines (the native writer emits none)"}
     native_rows = None
+    fails, gaps = [], []
     if sample_scope is not None:
         native_rows = {k: v for k, v in ((native_g10 or {}).get("per_feed_venue") or {}).items()
                        if k.startswith("TRADE|")}
+        routes = {k: v for k, v in ((native_g10 or {}).get("per_route") or {}).items() if k.startswith("TRADE|")}
         if native_rows:
             counters.update(
                 duplicates_applied=sum(r.get("duplicate_applied_in_window") or 0 for r in native_rows.values())
@@ -780,36 +830,78 @@ def score_g10(g10: dict, duplicates: dict | None, trace_gaps: list[str], *,
                 duplicates_applied_scope=(f"native apply-decision counters, {native_g10['scope']} (+ raw sample)"
                                           if (native_g10 or {}).get("scope") else
                                           "native apply-decision counters over the whole activation (+ raw sample)"),
-                duplicates_applied_native={k: r.get("duplicate_applied_in_window") for k, r in native_rows.items()},
+                duplicates_applied_oracle=(native_g10 or {}).get("duplicate_applied_basis")
+                or "offset high-water check (TS latency.rs), not an event-identity duplicate oracle",
+                applied_at_or_below_offset_high_water={k: r.get("duplicate_applied_in_window")
+                                                       for k, r in native_rows.items()},
                 duplicates_applied_raw_sample=raw_dup, raw_sample_scope=sample_scope,
                 replay_attempted={k: r.get("replay_attempted") for k, r in native_rows.items()},
                 replay_decisions={k: r.get("replay_decisions") for k, r in native_rows.items()},
                 ambiguous_after_unconfirmed={k: r.get("ambiguous_after_unconfirmed") for k, r in native_rows.items()},
                 unconfirmed_rows={k: r.get("unconfirmed_rows") for k, r in native_rows.items()},
+                unconfirmed_units={k: r.get("unconfirmed_units") for k, r in native_rows.items()},
                 epochs_total={k: r.get("epochs_total") for k, r in native_rows.items()},
-                decisions={k: r.get("decisions") for k, r in native_rows.items()})
+                decisions={k: r.get("decisions") for k, r in native_rows.items()},
+                route_disposition={k: ("QUIET_NO_ROWS_IN_SCOPE" if r.get("rows") == 0 else "ACTIVE")
+                                   for k, r in sorted(routes.items())},
+                route_epochs={k: [{"worker": a.get("worker"), "pid": a.get("pid"), "epochs_total": a.get(
+                    "epochs_total"), "epochs": a.get("epochs")} for a in r.get("activations") or []]
+                              for k, r in sorted(routes.items())},
+                expected_routes=expected_routes)
+        typed, typed_fails, typed_gaps = _native_typed_verdict(native_typed)
+        counters["native_typed"] = typed
+        fails += typed_fails
+        if native_rows:
+            if expected_routes is None:
+                gaps.append("no frozen TRADE route roster (campaign binding unreadable): route coverage unprovable")
+            else:
+                missing = [r for r in expected_routes if r not in routes]
+                if missing:
+                    gaps.append(f"{len(missing)} frozen TRADE route(s) without apply-decision counters (quiet and "
+                                f"uninstrumented are indistinguishable): {', '.join(missing)}")
+                extra = sorted(set(routes) - set(expected_routes))
+                if extra:
+                    counters["routes_outside_roster"] = extra
+            invalid = [r for r in (native_g10 or {}).get("invalid_routes") or [] if str(r.get("route")).startswith(
+                "TRADE|") or r.get("route") == "?"]
+            if invalid:
+                gaps.append(f"{len(invalid)} invalid apply-decision counter row(s): {invalid[0]}")
+            missing_venues = [venue for venue in VENUES if f"TRADE|{venue}" not in native_rows]
+            if missing_venues:
+                gaps.append(f"no native apply-decision counters for TRADE on {', '.join(missing_venues)}")
+            cover = list(native_gaps or []) + list((native_g10 or {}).get("coverage_gaps") or [])
+            if cover:
+                gaps.append("native counters do not provably cover the load window: " + "; ".join(cover))
+            unconfirmed = sum((r.get("unconfirmed_rows") or 0) + (r.get("unconfirmed_units") or 0)
+                              for r in native_rows.values())
+            if unconfirmed:
+                gaps.append(f"INCOMPLETE: TRADE apply replies lost (unconfirmed rows/units "
+                            f"{counters['unconfirmed_rows']}/{counters['unconfirmed_units']}) with no reconciled "
+                            "publication evidence in the summary")
+            ambiguous = sum(r.get("ambiguous_after_unconfirmed") or 0 for r in native_rows.values())
+            if ambiguous:
+                gaps.append(f"{ambiguous} TRADE rows APPLIED after a lost apply reply: neither proven duplicate nor "
+                            "unique")
+        elif duplicates is None or trace_gaps:
+            gaps.append("duplicates applied need the delivery trace: " + "; ".join(trace_gaps or ["no trace"]))
+        else:
+            gaps.append(f"duplicates applied (native TRADE) measured on a sample only ({sample_scope}); a sample can "
+                        "fail, never pass; the native summary has no apply-decision counters (TS writer without "
+                        "apply_integrity)")
+        gaps += typed_gaps
+    elif native_typed is not None and native_typed.get("present"):
+        typed, typed_fails, _ = _native_typed_verdict(native_typed)  # Python-owned TRADE: typed counters can FAIL
+        counters["native_typed"] = typed
+        fails += typed_fails
     bad = {k: counters[k] for k in ("gaps", "duplicates_applied", "replay_expired", "overflow") if counters[k]}
     if bad:
-        return "FAIL", counters, [f"non-zero: {bad}"]
-    gaps = []
+        fails.insert(0, f"non-zero: {bad}")
+    if fails:
+        return "FAIL", counters, fails
     if not g10.get("log_polls") or g10.get("log_unreadable"):
-        gaps.append("writer logs not read for the whole window")
-    if sample_scope is not None and native_rows:
-        missing = [venue for venue in VENUES if f"TRADE|{venue}" not in native_rows]
-        if missing:
-            gaps.append(f"no native apply-decision counters for TRADE on {', '.join(missing)}")
-        cover = list(native_gaps or []) + list((native_g10 or {}).get("coverage_gaps") or [])
-        if cover:
-            gaps.append("native counters do not provably cover the load window: " + "; ".join(cover))
-        ambiguous = sum(r.get("ambiguous_after_unconfirmed") or 0 for r in native_rows.values())
-        if ambiguous:
-            gaps.append(f"{ambiguous} TRADE rows APPLIED after a lost apply reply: neither proven duplicate nor unique")
-    elif duplicates is None or trace_gaps:
+        gaps.insert(0, "writer logs not read for the whole window")
+    if sample_scope is None and (duplicates is None or trace_gaps):
         gaps.append("duplicates applied need the delivery trace: " + "; ".join(trace_gaps or ["no trace"]))
-    elif sample_scope is not None:
-        gaps.append(f"duplicates applied (native TRADE) measured on a sample only ({sample_scope}); a sample can "
-                    "fail, never pass; the native summary has no apply-decision counters (TS writer without "
-                    "apply_integrity)")
     return ("NOT_MEASURED", counters, gaps) if gaps else ("PASS", counters, [])
 
 
@@ -868,8 +960,11 @@ def applicable_g4_addendum(campaign: dict, table: dict) -> tuple[dict | None, li
     return addendum, [], source
 
 
-def build_scorecard(campaign_dir: Path) -> dict:
+def build_scorecard(campaign_dir: Path, *, trace_dir: Path | None = None) -> dict:
+    """trace_dir: where transit-load.json / mark-load.json are read (default <campaign>/trace; `score --out-dir`
+    re-analyses into its own directory and never writes into the campaign)."""
     d = Path(campaign_dir)
+    t = Path(trace_dir) if trace_dir is not None else d / "trace"
     campaign = load_json(d / "campaign.json") or {}
     receipt = load_json(d / "stage100" / "receipt.json")
     gates = load_json(d / "stage100" / "gates.json")
@@ -877,8 +972,8 @@ def build_scorecard(campaign_dir: Path) -> dict:
     ok, problems = _protocol(campaign, receipt, gates)
     load_s = (receipt or {}).get("load_window_unix_s")
     load_ns = [int(load_s[0] * 1e9), int(load_s[1] * 1e9)] if load_s else None
-    transit = load_json(d / "trace" / "transit-load.json")
-    mark = load_json(d / "trace" / "mark-load.json")
+    transit = load_json(t / "transit-load.json")
+    mark = load_json(t / "mark-load.json")
     until_ns = int((campaign.get("trace") or {}).get("until_unix_ns") or 0)
     native = native_feeds_of(campaign, transit)
     trace_gaps = _trace_coverage(transit, load_ns, until_ns)  # every raw file complete (no native writer)
@@ -893,8 +988,7 @@ def build_scorecard(campaign_dir: Path) -> dict:
     def add(gid, quantity, rule, verdict, reason, **extra):
         out.append(_gate(gid, quantity, rule, verdict, reason, ok, problems, **extra))
 
-    trace_src = {"transit": sha256_file(d / "trace" / "transit-load.json"),
-                 "mark": sha256_file(d / "trace" / "mark-load.json")}
+    trace_src = {"transit": sha256_file(t / "transit-load.json"), "mark": sha256_file(t / "mark-load.json")}
     v, rows, why = score_transit_rows(transit, TRACE_FEEDS_G1)
     if raw_gaps and v != "FAIL":
         v, why = "NOT_MEASURED", why + raw_gaps
@@ -1006,22 +1100,34 @@ def build_scorecard(campaign_dir: Path) -> dict:
     s10 = g910.summarize_g10(samples910, from_s=utc_stamp(load_s[0]) if load_s else None,
                              to_s=utc_stamp(load_s[1]) if load_s else None) if samples910 else {}
     trade_native = "TRADE" in native
+    typed = g910.summarize_g10_native(samples910, from_ns=load_ns[0] if load_ns else None,
+                                      to_ns=load_ns[1] if load_ns else None) if samples910 else None
     v, counters, why = score_g10(s10, (transit or {}).get("duplicate_applied_event_id") if transit else None,
                                  _trace_coverage(transit, load_ns, until_ns, raw_kinds=()) if trade_native
                                  else trace_gaps,
                                  sample_scope=native_raw_sample_scope(transit, load_ns) if trade_native else None,
                                  native_g10=((transit or {}).get("native_summary") or {}).get("g10") if trade_native
-                                 else None, native_gaps=native_coverage(transit) if trade_native else None)
+                                 else None, native_gaps=native_coverage(transit) if trade_native else None,
+                                 expected_routes=expected_trade_routes(campaign) if trade_native else None,
+                                 native_typed=typed)
     add("G10", "TRADE integrity", "0 gaps, 0 duplicates applied, 0 replay-expired, 0 overflow", v,
         "; ".join(why) or "all zero", measured=counters,
-        basis="writer log typed signals (DL-signalled gaps, CURSOR_EXPIRED, SlowConsumerError) + duplicates applied: "
-              "native TRADE from the TS apply-decision counters (whole activation, fixed memory), else the trace "
-              "duplicate event_id; a silent offset gap the DL does not signal is not observable")
+        basis="typed continuity signals: native TRADE from the heartbeat trade_integrity counters (pooled live worker "
+              "epochs, deltas over one unbroken activation stretch bracketing the load), Python workers from their "
+              "typed log lines (DL-signalled gaps, CURSOR_EXPIRED, SlowConsumerError); duplicates applied: native "
+              "TRADE from the TS apply-decision counters per frozen route (offset high-water check, not an "
+              "event-identity oracle), else the trace duplicate event_id; a silent offset gap the DL does not signal "
+              "is not observable")
     g11 = load_json(d / "g11" / "g11-summary.json")
-    v = (g11 or {}).get("verdict", "NOT_MEASURED")
+    # Re-judged with the current oracle (SR5): a v1 summary's PASS cannot stand (g11probe.amend_v1); FAIL stays.
+    try:
+        v, g11_why = g11probe.verdict(g11) if isinstance(g11, dict) else ("NOT_MEASURED", [])
+    except (KeyError, TypeError, AttributeError) as exc:
+        v, g11_why = "NOT_MEASURED", [f"G11 summary malformed ({exc.__class__.__name__}: {exc})"]
     out.append({"id": "G11", "quantity": "writer restart recovery", "rule": "fault cleared -> first valid apply per "
                 "slice <= 30 s, -> caught up <= 60 s; no rewind; cursor never ahead", "verdict": v,
-                "reason": "; ".join((g11 or {}).get("reasons", [])) or ("restart probe" if g11 else "G11 not run"),
+                "reason": "; ".join(g11_why) or ("restart probe" if g11 else "G11 not run"),
+                "summary_schema": (g11 or {}).get("schema"), "recorded_verdict": (g11 or {}).get("verdict"),
                 "measured": {k: (g11 or {}).get(k) for k in ("restart", "outage_seconds", "recovery", "cursor_samples")}
                 if g11 else None,
                 "note": "a fault window after the load (a restart of a monitored container aborts the driver); its "
@@ -1288,12 +1394,13 @@ def g11_process_end(d: Path) -> dict | None:
             "finished_ns": finished, "last_seen_ns": int(seen) * 1_000_000 if seen else None}
 
 
-def run_trace_analysis(campaign: dict, d: Path, *, image: str) -> None:
+def run_trace_analysis(campaign: dict, d: Path, *, image: str, out: Path | None = None) -> None:
     """Trace files are root 0600 inside the writer's log mount: read them in a disposable, network-less container of
-    an image already on the host, with read-only mounts; output is JSON on stdout."""
+    an image already on the host, with read-only mounts; output is JSON on stdout, written to `out`
+    (default <campaign>/trace)."""
     trace = campaign.get("trace") or {}
     load_s = (load_json(d / "stage100" / "receipt.json") or {}).get("load_window_unix_s")
-    out = d / "trace"
+    out = Path(out) if out is not None else d / "trace"
     out.mkdir(exist_ok=True)
     if not trace.get("dir_on_host") or not load_s:
         (out / "transit-load.json").write_text(json.dumps({"error": "no trace dir or load window"}) + "\n")
@@ -1601,12 +1708,32 @@ def main(argv=None) -> int:
     s.add_argument("--campaign-dir", required=True)
     s.add_argument("--analysis-image")
     s.add_argument("--rerun-trace", action="store_true")
+    s.add_argument("--out-dir", help="new directory (created exclusively, outside the campaign) for the re-analysed "
+                                     "trace and scorecard.json; the campaign directory is then never written")
     args = parser.parse_args(argv)
     if args.command == "run":
         return run(args)
     d = Path(args.campaign_dir)
     if (load_json(d / "campaign.json") or {}).get("role") == "baseline":
         raise SystemExit("a baseline campaign is not scored; freeze it with scripts/p184_freeze_g4_addendum.py")
+    if args.out_dir:
+        out = Path(args.out_dir).resolve()
+        if out == d.resolve() or d.resolve() in out.parents:
+            raise SystemExit("--out-dir must be outside the campaign directory")
+        out.mkdir(parents=True, exist_ok=False)
+        trace_dir = d / "trace"
+        if args.rerun_trace or not (d / "trace" / "transit-load.json").exists():
+            campaign = load_json(d / "campaign.json") or {}
+            image = args.analysis_image or (load_json(d / "profile.json") or {}).get("image")
+            run_trace_analysis(campaign, d, image=image, out=out / "trace")
+            trace_dir = out / "trace"
+        card = build_scorecard(d, trace_dir=trace_dir)
+        card["rescored_into"] = str(out)
+        path = out / "scorecard.json"
+        with path.open("x") as handle:
+            handle.write(json.dumps(card, indent=1, sort_keys=True, default=str) + "\n")
+        print(json.dumps({"scorecard": str(path), "summary": card["summary"]}))
+        return 0
     if args.rerun_trace or not (d / "trace" / "transit-load.json").exists():
         campaign = load_json(d / "campaign.json") or {}
         image = args.analysis_image or (load_json(d / "profile.json") or {}).get("image")
