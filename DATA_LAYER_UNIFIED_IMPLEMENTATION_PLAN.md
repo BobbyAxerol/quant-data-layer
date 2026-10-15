@@ -73531,3 +73531,26 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   any rollout, an isolated multi-key run (for example G12 publisher lanes, or DR08 extended with deep TRADE/BOOK readers
   and idle QUOTE/MARK readers) must show idle closes = 0, `queue_isolation.reserve_exhausted` = 0 and
   `over_floor_refused` > 0 only for deep identities.
+- Gate closure: isolated multi-key A/B (2026-10-15, Claude). `scripts/p184_dr08_isolated.py` has a new
+  `--isolation-campaign` mode (ISOLATION_MODE) on the existing DR08 stack, which is otherwise unchanged. Stack: one TLS broker, the
+  deployed core rc22 7c848aad, quota Redis, Query rc19 b9ca6c36, Stream = the A/B variable, 32 MiB live budget.
+  Scenario: three stalled deep TRADE readers on distinct keys (BTC/ETH/SOL, 3,000-event buffers, 3,000 trades per
+  key in 12 bursts at about 15k trades/s). 32 idle readers (8 each on BNB/DOGE QUOTE and MARK_INDEX_PRICE) receive 50 Hz per
+  route for 8 s while the deep readers hold the budget. Then deep readers resume from their last resume token.
+  Acceptance is written to `preregistration.json` (sha256) before any run and applied unchanged by `verdict.json`.
+  Receipts are under p184-n1-final-20261012/:
+  - live-budget-isolation-ab-20261015T155507Z: FAIL by prereg (D1). The baseline did not discriminate: it held 33.55 MB
+    for about 10 s, but only one idle record per route arrived in that window. This was a scenario defect, fixed by adding
+    the idle hold phase with the acceptance unchanged.
+  - live-budget-isolation-ab-20261015T155918Z: PASS but TAINTED (AGENTS 34a). During the candidate run another actor
+    recreated production `market_data_service_p184w` (created 15:59:38Z) and `ingestor_binance_usdm` (15:59:15Z).
+    This harness only reads the core config. Not used as evidence.
+  - live-budget-isolation-ab-20261015T160503Z (prereg b087db9d...): PASS, clean window (shared_runtime_unchanged both
+    runs). Candidate b095b18e: idle closures 0/32 and every idle reader received data after the bursts;
+    reserve_exhausted 0; over_floor_refused 3, and the only abnormal closures are the 3 deep ones; reserve_admitted
+    8,650; all 3 deep resumed losslessly (ids 48..3001 contiguous). Baseline 7fba2577: 32/32 idle readers closed
+    RESOURCE_EXHAUSTED, peak 33,550,757 B. Candidate peak queue 29,355,208 B. Peak reserve use is 0 B in the 1 s samples,
+    but the reserve admitted 8,650 charges, so transient use was not captured. Cleanup: 16 containers, 0 left; no
+    networks or volumes; images built 0.
+  - Status: shadow-certified (isolated A/B), not deployed. The next step is a rollout packet for stream_kn_1/2 (digest
+    b095b18e, rollback 7fba2577), owner approval only.

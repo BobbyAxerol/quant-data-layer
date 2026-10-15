@@ -635,5 +635,134 @@ class ImageParameters(unittest.TestCase):
                               image_digest="sha256:" + "0" * 64, images=OVERRIDES, query_image_ref=FINAL_REF)
 
 
+def deployed(symbol, channel, uid="u"):
+    return {"venue": "BINANCE", "market": "USDM", "native_symbol": symbol, "native_channel": channel,
+            "instrument_uid": uid + symbol, "source_id": symbol.lower() + "-" + channel}
+
+
+def deployed_set():
+    rows = []
+    for symbol in R.ISOLATION_DEEP + R.ISOLATION_IDLE:
+        lower = symbol.lower()
+        rows += [deployed(symbol, lower + "@trade"), deployed(symbol, lower + "@bookTicker"),
+                 deployed(symbol, lower + "@markPrice@1s"), deployed(symbol, lower + "@depth@100ms")]
+    rows.append({**deployed("BTC-USDT-SWAP", "trades"), "venue": "OKX", "market": "SWAP"})
+    return rows
+
+
+def outcome(**overrides):
+    base = {"observed": True, "idle_readers": 32, "idle_client_terminals": 0,
+            "idle_stream_abnormal_closures": 0, "idle_not_progressed": 0,
+            "deep_stream_abnormal_closures": 3, "other_abnormal_closures": 0,
+            "reserve_exhausted": 0, "over_floor_refused": 5, "reserve_admitted": 9,
+            "deep_resume_lossless": True, "deep_resumed": 3,
+            "peak_queue_bytes": 30 << 20, "peak_reserve_bytes_used": 1 << 20, "trade_rate_per_s": 5000.0}
+    base.update(overrides)
+    return base
+
+
+class LiveBudgetIsolation(unittest.TestCase):
+    def test_selects_one_deployed_binding_per_route_in_route_order(self):
+        rows = R.isolation_bindings(deployed_set())
+        self.assertEqual([(r["native_symbol"], R.isolation_feed(r["native_channel"])) for r in rows],
+                         R.isolation_routes())
+        self.assertEqual(len(rows), 3 + 2 * 2)
+
+    def test_refuses_missing_or_ambiguous_routes(self):
+        rows = [r for r in deployed_set() if r["native_channel"] != "dogeusdt@markPrice@1s"]
+        with self.assertRaisesRegex(ValueError, "lacks isolation routes"):
+            R.isolation_bindings(rows)
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            R.isolation_bindings(deployed_set() + [deployed("BTCUSDT", "btcusdt@trade")])
+
+    def test_frames_carry_the_fields_the_core_normalizer_requires(self):
+        trade = R.isolation_frame("TRADE", "BTCUSDT", 7, 1_000_000_000)
+        self.assertEqual((trade["e"], trade["s"], trade["t"]), ("trade", "BTCUSDT", 7))
+        quote = R.isolation_frame("QUOTE", "BNBUSDT", 8, 1_000_000_000)
+        self.assertEqual(quote["e"], "bookTicker")
+        self.assertTrue(all(field in quote for field in ("u", "b", "B", "a", "A", "T")))
+        mark = R.isolation_frame("MARK_INDEX_PRICE", "DOGEUSDT", 9, 1_000_000_000)
+        self.assertEqual((mark["e"], mark["E"]), ("markPriceUpdate", 1000))
+        self.assertNotEqual(mark["p"], R.isolation_frame("MARK_INDEX_PRICE", "DOGEUSDT", 10, 1)["p"])
+        with self.assertRaises(ValueError):
+            R.isolation_frame("BAR", "BTCUSDT", 1, 1)
+
+    def test_manifests_split_deep_trade_and_idle_quote_mark(self):
+        routes = [{"feed": feed, "instrument_uid": sym, "source_policy_id": "p"}
+                  for sym, feed in R.isolation_routes()]
+        def mapping():
+            return {"spec": {"quotas": {"max_streams": 10, "max_buffer_events": 1000},
+                             "requirements": [{"feed": "TRADE", "instrument_uid": "x", "warmup_limit": 1}]}}
+        deep = R.isolation_manifest(mapping(), "deep", routes)
+        idle = R.isolation_manifest(mapping(), "idle", routes)
+        self.assertEqual({r["feed"] for r in deep["spec"]["requirements"]}, {"TRADE"})
+        self.assertEqual(len(deep["spec"]["requirements"]), 3)
+        self.assertEqual(deep["spec"]["quotas"]["max_buffer_events"], R.DEEP_BUFFER)
+        self.assertEqual({r["feed"] for r in idle["spec"]["requirements"]}, set(R.ISOLATION_IDLE_FEEDS))
+        self.assertGreaterEqual(idle["spec"]["quotas"]["max_streams"], 4 * R.IDLE_READERS_PER_ROUTE)
+        self.assertEqual(idle["spec"]["requirements"][0]["warmup_limit"], 1)
+
+    def test_verdict_passes_only_a_discriminating_isolating_pair(self):
+        baseline = outcome(idle_stream_abnormal_closures=20, idle_client_terminals=20,
+                           reserve_exhausted=None, over_floor_refused=None)
+        self.assertEqual(R.isolation_verdict(outcome(), baseline)["verdict"], "PASS")
+        for broken in (outcome(idle_client_terminals=1), outcome(idle_stream_abnormal_closures=1),
+                       outcome(idle_not_progressed=1), outcome(reserve_exhausted=1),
+                       outcome(reserve_exhausted=None), outcome(over_floor_refused=0),
+                       outcome(other_abnormal_closures=1), outcome(deep_stream_abnormal_closures=0),
+                       outcome(deep_resume_lossless=False), {"observed": False}):
+            self.assertEqual(R.isolation_verdict(broken, baseline)["verdict"], "FAIL", broken)
+        # A baseline without idle overflow cannot discriminate.
+        self.assertEqual(R.isolation_verdict(outcome(), outcome())["verdict"], "FAIL")
+
+    def test_outcome_counts_abnormal_closures_per_identity(self):
+        facts = {"observed": True, "deep_identity": "d", "idle_identity": "i",
+                 "idle": [{"terminal": None, "progressed": True}, {"terminal": "RESOURCE_EXHAUSTED",
+                          "progressed": False}],
+                 "closures": {"d": {"ended": 1, "Some resource has been exhausted": 3},
+                              "i": {"ended": 30, "Some resource has been exhausted": 1}},
+                 "resume": {"BTCUSDT/TRADE": {"needed": True, "lossless": True}},
+                 "metrics": {"queue_isolation": {"reserve_exhausted": 0, "over_floor_refused": 4,
+                                                 "reserve_admitted": 2},
+                             "peak_queue_bytes": 33554000, "peak_reserve_bytes_used": 4193616},
+                 "burst": {"trade_rate_per_s": 1.0}}
+        result = R.isolation_outcome(facts)
+        self.assertEqual((result["idle_client_terminals"], result["idle_stream_abnormal_closures"],
+                          result["deep_stream_abnormal_closures"], result["idle_not_progressed"]), (1, 1, 3, 1))
+        self.assertEqual(R.isolation_outcome({"observed": False}), {"observed": False})
+
+    def test_metric_summary_reports_reserve_use_above_the_shared_part(self):
+        shared = R.QUEUE_BYTES - R.LIVE_RESERVE_BYTES
+        summary = R.isolation_metric_summary([{"queue_bytes": shared - 5}, {"queue_bytes": shared + 1234,
+                                               "queue_isolation": {"reserve_exhausted": 0}}])
+        self.assertEqual(summary["peak_reserve_bytes_used"], 1234)
+        self.assertEqual(R.isolation_metric_summary([{"queue_bytes": 10}])["peak_reserve_bytes_used"], 0)
+
+    def test_closures_are_parsed_from_the_stream_log(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stream.log"
+            path.write_text("text\n" + "\n".join(json.dumps(row) for row in (
+                {"event": "qdl_kn_subscription_closed", "consumer_id": "a", "outcome": "ended"},
+                {"event": "qdl_kn_subscription_closed", "consumer_id": "a", "outcome": "x"},
+                {"event": "qdl_kn_gateway_metrics", "queue_bytes": 1})) + "\n")
+            self.assertEqual(R.isolation_closures(path), {"a": {"ended": 1, "x": 1}})
+
+    def test_preregistration_fixes_the_ab_variable_and_acceptance(self):
+        a, b = "sha256:" + "a" * 64, "sha256:" + "b" * 64
+        prereg = R.isolation_prereg(candidate=a, baseline=b, images={"core": "sha256:" + "c" * 64},
+            query_image_ref="q", source_sha="1" * 40, now_utc="t")
+        self.assertEqual(prereg["acceptance"], R.ISOLATION_ACCEPTANCE)
+        self.assertEqual(prereg["scenario"]["idle_readers"], 32)
+        self.assertEqual(prereg["scenario"]["live_budget_bytes"], 32 << 20)
+        self.assertEqual((prereg["scenario"]["idle_hold_seconds"], prereg["scenario"]["idle_hold_rate_hz_per_route"]),
+                         (R.IDLE_HOLD_SECONDS, R.IDLE_HOLD_RATE_HZ))
+        for kwargs in ({"candidate": a, "baseline": a}, {"candidate": "latest", "baseline": b}):
+            with self.assertRaises(ValueError):
+                R.isolation_prereg(images={}, query_image_ref="q", source_sha="1" * 40, now_utc="t", **kwargs)
+        with self.assertRaisesRegex(ValueError, "A/B variable"):
+            R.isolation_prereg(candidate=a, baseline=b, images={"stream": a}, query_image_ref="q",
+                               source_sha="1" * 40, now_utc="t")
+
+
 if __name__ == "__main__":
     unittest.main()
