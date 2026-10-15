@@ -38,8 +38,9 @@ block). The original table and its p95 rule are unchanged; without the file the 
 and MARK watch) and the G4 observer windows, then writes baseline.json; it never scores.
 
 Boundary: no image builds, no container create/recreate/restart, no Redis/Kafka writes. Children: the driver's own
-disposable client container (removed by the driver), the G4 observer (docker exec of a read-only consumer, as before)
-and the trace analysis container (--rm, --network none, read-only mounts).
+disposable client container (removed by the driver), the G4 observer (observer v3: its own `docker run --rm` container
+of the query_kn_1 image, read-only TLS mounts, bounded CPU/memory, removed by name after each window - no longer a
+`docker exec` inside query_kn_1) and the trace analysis container (--rm, --network none, read-only mounts).
 usage: p184_gate_campaign.py run [--dry-run] [--g11] ... | p184_gate_campaign.py score --campaign-dir DIR
 """
 from __future__ import annotations
@@ -169,6 +170,8 @@ def g4_apparatus(launch_hold_seconds: float | None = None) -> dict:
     from scripts import p184_g4_observer as observer
     return {"schedule_version": G4_SCHEDULE_VERSION, "observer_version": observer.OBSERVER_VERSION,
             "observer_sha256": sha256_file(ROOT / "scripts/p184_g4_observer.py"),
+            "observer_launch_mode": observer.LAUNCH_MODE, "observer_cpus": observer.DEFAULT_CPUS,
+            "observer_memory": observer.DEFAULT_MEMORY,
             "regular": {"windows": G4_REGULAR_WINDOWS, "seconds": G4_SECONDS, "first_offset": G4_FIRST_OFFSET,
                         "spacing": G4_SPACING, "phase_jump": G4_PHASE_JUMP},
             "boundary": {"seconds": G4_BOUNDARY_SECONDS, "preroll": G4_BOUNDARY_PREROLL,
@@ -178,21 +181,32 @@ def g4_apparatus(launch_hold_seconds: float | None = None) -> dict:
 
 
 def g4_window_receipt(observations) -> dict:
-    """Records and whether the observer hit its record cap (the reader stops there; later closes are unseen)."""
-    records, cap, done, version = 0, None, None, None
+    """Records and whether the observer hit its record cap (the reader stops there; later closes are unseen).
+    Report-only additions (observer v3, never read by a verdict): how the observer was launched (v1/v2 windows have
+    no `launch` line: DOCKER_EXEC_IN_QUERY), per feed|venue|interval coverage with cap truncation, and the
+    produce-stage split."""
+    from scripts import p184_g4_observer as observer
+    observations = list(observations)
+    records, cap, done, version, launch = 0, None, None, None, None
     for item in observations:
         kind = item.get("kind")
         if kind == "scope":
             version = item.get("observer_version") or "v1 (unversioned)"
+        elif kind == "launch":
+            launch = item
         elif kind == "canonical_observation":
             records += 1
         elif kind == "canonical_record_cap_reached":
             cap = item
         elif kind == "DONE":
             done = item
+    launch_info = ({k: launch.get(k) for k in ("launch_mode", "container_name", "image_id", "image_repo_digests",
+                                                "cpus", "memory", "networks")}
+                   if launch else {"launch_mode": "DOCKER_EXEC_IN_QUERY (pre-v3, no launch record)"})
     return {"records": records, "record_cap_reached": bool(cap or (done or {}).get("record_cap_reached")),
             "cap_reached_after_seconds": (cap or {}).get("after_seconds"),
-            "observer_version": version}
+            "observer_version": version, "launch": launch_info,
+            "coverage": observer.window_coverage(observations), "produce_split": observer.produce_split(observations)}
 
 
 def derive_profile(base: dict, extra=EXTRA_MONITORED) -> dict:
@@ -559,6 +573,18 @@ def sha256_file(path: Path) -> str | None:
         return None
 
 
+def score_g5(gates: dict | None) -> tuple[str, list, list, list]:
+    """(verdict, verdict rows, failed verdict rows, display-only g5:* rows). The verdict reads latency:*/cold* rows
+    only, exactly as before; g5:COLD_* (frozen cold-shape limits) rows are displayed in `measured` but already decide
+    through the protocol (driver acceptance -> protocol_problems), so adding them here changes no verdict."""
+    rows = (gates or {}).get("gates", [])
+    latency = [g for g in rows if str(g.get("gate", "")).startswith(("latency:", "cold"))]
+    failed = [g["gate"] for g in latency if g.get("status") != "PASS"]
+    shape = [g for g in rows if str(g.get("gate", "")).startswith("g5:")]
+    verdict = "FAIL" if failed else "PASS" if latency else "NOT_MEASURED"
+    return verdict, latency, failed, shape
+
+
 def applicable_g4_addendum(campaign: dict, table: dict) -> tuple[dict | None, list[str], dict | None]:
     """(addendum or None, notes, source) for one candidate campaign. Absent file -> (None, [], None): the original
     scoring is unchanged. A present file applies only when it is valid against this frozen table, was frozen for the
@@ -655,12 +681,12 @@ def build_scorecard(campaign_dir: Path) -> dict:
             measured=[r for r in rows if r["verdict"] != "REPORT_ONLY"],
             report_only_rows=[r for r in rows if r["verdict"] == "REPORT_ONLY"],
             inverse_rows=[w["inverse_rows"] for w in g4_windows], g4_addendum=addendum_src, **g4_provenance)
-    latency = [g for g in (gates or {}).get("gates", []) if str(g.get("gate", "")).startswith(("latency:", "cold"))]
-    failed_latency = [g["gate"] for g in latency if g.get("status") != "PASS"]
-    v = "FAIL" if failed_latency else "PASS" if latency else "NOT_MEASURED"
+    v, latency, failed_latency, g5_shape = score_g5(gates)
     add("G5", "request latency", "certified stage-50 p95/p99 per class and venue; frozen cold-shape limits", v,
         f"failed: {failed_latency}" if failed_latency else f"{len(latency)} latency/cold gates" if latency else
-        "no driver gates", measured=latency)
+        "no driver gates", measured=latency + g5_shape,
+        **({"g5_shape_rows_note": "g5:* rows are displayed here; their verdict reaches G5 through the protocol "
+                                  "(driver acceptance), unchanged"} if g5_shape else {}))
     g6_ts = load_json(d / "g6-ts" / "summary.json")
     v, rows, why = score_g6({**((receipt or {}).get("g6_view_quality") or {}), **g6_ts_probe_rows(g6_ts)})
     probe_gaps = g6_ts_probe_coverage(g6_ts, load_s)
@@ -899,6 +925,11 @@ def driver_output(args, d: Path) -> Path:
     return d / f"stage{getattr(args, 'sessions', 100)}"
 
 
+def g4_observer_container(d: Path, index: int) -> str:
+    from scripts import p184_g4_observer as observer
+    return observer.container_name(d.name, d / f"g4-{index}")
+
+
 def command_plan(args, plan: dict, d: Path, launch_unix: float) -> dict:
     tools = Path(args.state_tools)
     py = [sys.executable, "-B"]
@@ -926,7 +957,8 @@ def command_plan(args, plan: dict, d: Path, launch_unix: float) -> dict:
                         "command": [*py, "scripts/p184_g4_observer.py", "--launch", "--mode", "canonical",
                                     "--seconds", str(int(w["seconds"])), "--tail-records", "0", "--max-records",
                                     str(G4_RECORD_CAP), "--sample-ms", "1000", "--max-output-bytes", "16777216",
-                                    "--output", str(d / f"g4-{i + 1}")]}
+                                    "--output", str(d / f"g4-{i + 1}"), "--campaign-id", d.name],
+                        "container_name": g4_observer_container(d, i + 1)}
                        for i, w in enumerate(g4_schedule(launch_unix))],
         "g11": ([*py, "scripts/p184_g11_writer_restart_probe.py", "--binding", str(plan.get("binding")),
                  "--writer", args.writer, "--redis-container", plan["market_redis"]["container"],
@@ -1048,8 +1080,17 @@ def run(args) -> int:
                     continue
                 log_event(d, "g4_start", index=window["index"])
                 with (d / f"g4-{window['index']}.log").open("x") as handle:
-                    subprocess.run(window["command"], cwd=ROOT, stdout=handle, stderr=subprocess.STDOUT,
-                                   timeout=window["seconds"] + 180)
+                    try:
+                        subprocess.run(window["command"], cwd=ROOT, stdout=handle, stderr=subprocess.STDOUT,
+                                       timeout=window["seconds"] + 180)
+                    except subprocess.TimeoutExpired:
+                        log_event(d, "g4_timeout", index=window["index"])
+                    finally:
+                        # The launcher removes its container on its own exit paths; a SIGKILLed launcher cannot.
+                        from scripts import p184_g4_observer as observer
+                        if not observer.remove_container(window["container_name"]):
+                            log_event(d, "g4_container_not_removed", index=window["index"],
+                                      name=window["container_name"])
                 obs = d / f"g4-{window['index']}" / "observations.jsonl"
                 if obs.exists():
                     cap = g4_window_receipt(read_jsonl(obs))

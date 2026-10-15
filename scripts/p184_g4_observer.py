@@ -11,11 +11,28 @@ Sampling (OBSERVER_VERSION v2, 2026-10-14): one record per --sample-ms per (venu
 (venue, symbol, feed, interval), so bars of different intervals closing in the same second are all kept (v1 keyed BAR
 without the interval and kept only the first of e.g. 1m/3m/5m/15m/30m closing together). BOOK_SNAPSHOT stays
 unsampled until the global --max-records cap; reaching the cap ends the canonical reader and is reported in the
-stream (canonical_record_cap_reached) and in DONE (record_cap_reached)."""
+stream (canonical_record_cap_reached) and in DONE (record_cap_reached).
+
+Launch (OBSERVER_VERSION v3, 2026-10-15): v1/v2 ran the worker by `docker exec` inside query_kn_1, so Query CFS
+throttling (0.15-0.49 s per ~12 s in the 2026-10-14 campaign) leaked into the observer receipt clock. v3 runs the same
+worker in its own `docker run --rm` container: the image query_kn_1 runs (image id resolved by docker inspect at
+launch), the same docker networks, and ONLY the query_kn_1 mounts that hold the TLS files the worker reads, each
+re-mounted read-only; explicit --cpus/--memory/--pids-limit, read-only rootfs, no capabilities, a name carrying the
+campaign id, and `docker rm -f` of that name on every exit path of the launcher (the worker also ends at its own
+--seconds deadline, so a SIGKILLed launcher still leaves a container that exits and is auto-removed). The window
+receipt (receipt.json and the leading `launch` line of observations.jsonl) records launch_mode, image id/digests,
+cpus and memory. Sampling schedule, record-cap semantics and per-interval keys are unchanged from v2.
+
+Report-only additions in v3 (no verdict uses them): window_coverage() - per venue/feed/interval record counts and
+whether the record cap ended the reader before the window end (with the time); produce_split() - per feed/venue
+(+interval) venue->ingest (received_at_ns - source), ingest->producer timestamp (Kafka CreateTime - received_at_ns,
+ms resolution) and producer timestamp->observer receipt."""
 import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
+import signal
 import subprocess
 import sys
 import time
@@ -50,7 +67,11 @@ def top_record(event):
     return result
 
 ALL_FEEDS='trade,quote,mark_index_price,book_delta,book_snapshot,bar'
-OBSERVER_VERSION='qdl.p184.g4-observer.v2'
+OBSERVER_VERSION='qdl.p184.g4-observer.v3'
+LAUNCH_MODE='docker_run_isolated'
+DEFAULT_CPUS=0.5
+DEFAULT_MEMORY='512m'
+PIDS_LIMIT=64
 
 
 def accepted(venue,symbol,feed,symbols,feeds):
@@ -78,6 +99,61 @@ def summarize(lines):
         out[key]['missing_clock']=missing.get(key,0)
     for key,count in missing.items():
         out.setdefault(key,{'missing_clock':count})
+    return out
+
+
+def _quantiles(values):
+    values=sorted(values)
+    if not values:return None
+    pick=lambda f:round(values[min(len(values)-1,int(f*len(values)))],1)  # noqa: E731
+    return {'n':len(values),'p50':pick(.5),'p95':pick(.95),'max':round(values[-1],1),'negative':sum(1 for x in values if x<0)}
+
+
+def _row_key(item):
+    return '|'.join(str(x) for x in (item.get('feed'),(item.get('identity') or {}).get('venue'),item.get('interval') or ''))
+
+
+def window_coverage(items):
+    """Report-only: records per feed|venue|interval and whether the record cap ended the reader before the window end.
+    planned end = READY at_ns + scope seconds; truncated_before_end only when the cap line is earlier than that."""
+    per_key={};scope=ready=cap=done=None
+    for item in items:
+        kind=item.get('kind')
+        if kind=='canonical_observation':
+            key=_row_key(item);per_key[key]=per_key.get(key,0)+1
+        elif kind=='scope':scope=item
+        elif kind=='READY':ready=item
+        elif kind=='canonical_record_cap_reached':cap=item
+        elif kind=='DONE':done=item
+    seconds=(scope or {}).get('seconds')
+    planned_end=ready['at_ns']+int(seconds*1e9) if ready and seconds else None
+    capped=bool(cap or (done or {}).get('record_cap_reached'))
+    truncated_at=(cap or {}).get('at_ns')
+    truncated=bool(capped and truncated_at is not None and (planned_end is None or truncated_at<planned_end))
+    return {'per_key_records':dict(sorted(per_key.items())),'window_seconds':seconds,'planned_end_ns':planned_end,
+            'record_cap_reached':capped,'truncated_before_end':truncated,'truncated_at_ns':truncated_at if truncated else None,
+            'truncated_after_seconds':(cap or {}).get('after_seconds') if truncated else None,
+            'unobserved_tail_seconds':round((planned_end-truncated_at)/1e9,1) if truncated and planned_end else None}
+
+
+def produce_split(items):
+    """Report-only produce-stage split per feed|venue|interval, ms: venue->ingest (received - source),
+    ingest->producer timestamp (Kafka CreateTime, ms resolution - received), producer timestamp->observer receipt.
+    A missing clock drops that sample from that stage only (counted in missing)."""
+    stages={};missing={}
+    for item in items:
+        if item.get('kind')!='canonical_observation':continue
+        key=_row_key(item);row=stages.setdefault(key,{'venue_to_ingest_ms':[],'ingest_to_producer_ts_ms':[],'producer_ts_to_receipt_ms':[]})
+        source,received,seen=item.get('source_event_ns'),item.get('received_at_ns'),item.get('observer_receipt_wall_ns')
+        produced=item.get('producer_timestamp_ms');produced=produced*1_000_000 if produced is not None else None
+        for name,lo,hi in (('venue_to_ingest_ms',source,received),('ingest_to_producer_ts_ms',received,produced),('producer_ts_to_receipt_ms',produced,seen)):
+            if lo and hi:row[name].append((hi-lo)/1e6)
+            else:
+                counts=missing.setdefault(key,{});counts[name]=counts.get(name,0)+1
+    out={}
+    for key,row in sorted(stages.items()):
+        out[key]={name:_quantiles(values) for name,values in row.items()}
+        out[key]['missing_clock']=missing.get(key,{})
     return out
 
 
@@ -192,6 +268,64 @@ def worker(args):
     finally:
         if reader is not None:reader.close()
 
+def container_name(campaign_id,output):
+    """Deterministic, docker-valid name of one window's observer container (campaign id + window directory)."""
+    raw=f'qdl-p184-g4obs-{campaign_id}-{Path(output).name}'
+    return re.sub(r'[^a-zA-Z0-9_.-]','-',raw).strip('-.')[:120]
+
+
+def tls_paths(config):
+    """Every file path the worker's Kafka clients read (the only container paths it needs)."""
+    return sorted({v for role in config.values() for k,v in role.items() if k.endswith('.location')})
+
+
+def isolated_run_plan(query,paths,name,cpus,memory):
+    """Pure: (docker run argv up to the image, provenance) from the query_kn_1 inspect document.
+
+    Same image id and networks as query_kn_1; of its mounts only those holding `paths` (longest destination prefix),
+    each re-mounted read-only; unmatched path -> RuntimeError (never guess a host path)."""
+    mounts=[]
+    for path in paths:
+        best=max((m for m in query.get('Mounts') or [] if path==m['Destination'] or path.startswith(m['Destination'].rstrip('/')+'/')),
+                 key=lambda m:len(m['Destination']),default=None)
+        if best is None:raise RuntimeError(f'no {QUERY} mount holds {path}')
+        if best not in mounts:mounts.append(best)
+    specs=[]
+    for m in sorted(mounts,key=lambda m:m['Destination']):
+        if m.get('Type')=='volume':specs.append(f"type=volume,src={m['Name']},dst={m['Destination']},readonly,volume-nocopy")
+        elif m.get('Type')=='bind':specs.append(f"type=bind,src={m['Source']},dst={m['Destination']},readonly")
+        else:raise RuntimeError(f"unsupported mount type {m.get('Type')} at {m['Destination']}")
+    networks=sorted((query.get('NetworkSettings') or {}).get('Networks') or {})
+    if not networks:raise RuntimeError(f'{QUERY} has no docker network')
+    image=query['Image']
+    user=(query.get('Config') or {}).get('User') or None
+    argv=['docker','run','--rm','-i','--init','--name',name,'--label','qdl.p184.role=g4-observer',
+          '--cpus',f'{cpus:g}','--memory',memory,'--memory-swap',memory,'--pids-limit',str(PIDS_LIMIT),
+          '--read-only','--tmpfs','/tmp:rw,noexec,nosuid,size=16m','--cap-drop','ALL','--security-opt','no-new-privileges']
+    for network in networks:argv+=['--network',network]
+    for spec in specs:argv+=['--mount',spec]
+    if user:argv+=['--user',user]
+    argv+=['--entrypoint','python',image]
+    provenance={'launch_mode':LAUNCH_MODE,'container_name':name,'image_id':image,
+                'image_ref':(query.get('Config') or {}).get('Image'),'image_source_container':QUERY,'cpus':cpus,
+                'memory':memory,'pids_limit':PIDS_LIMIT,'networks':networks,'user':user,
+                'mounts':[{'destination':m['Destination'],'type':m.get('Type'),'readonly':True} for m in mounts]}
+    return argv,provenance
+
+
+def remove_container(name):
+    """`docker rm -f` by exact name, then confirm absence (bounded); idempotent after --rm auto-removal."""
+    subprocess.run(['docker','rm','-f',name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=30,check=False)
+    for _ in range(20):
+        present=subprocess.run(['docker','ps','-aq','--filter',f'name=^/{name}$'],capture_output=True,text=True,timeout=10,check=False)
+        if present.returncode==0 and not present.stdout.strip():return True
+        time.sleep(.5)
+    return False
+
+
+def _terminate(signum,frame):raise SystemExit(128+signum)
+
+
 def launch(args):
     if not args.launch:raise SystemExit('STAGED ONLY: parent coordination required; add --launch explicitly.')
     args.output.mkdir(parents=True,exist_ok=False)
@@ -202,24 +336,43 @@ def launch(args):
     config={'projector':p}
     for role in ('core','producer'):
         config[role]={**p,'ssl.ca.location':f'/stable-certs/{role}/ca.crt','ssl.certificate.location':f'/stable-certs/{role}/client.crt','ssl.key.location':f'/stable-certs/{role}/client.key'}
-    command=['docker','exec','-i',QUERY,'python','-B','-c',Path(__file__).read_text(),'--worker','--mode',args.mode,'--seconds',str(args.seconds),'--partitions',','.join(map(str,args.partitions)),'--tail-records',str(args.tail_records),'--max-records',str(args.max_records),'--sample-ms',str(args.sample_ms)]
+    query=json.loads(subprocess.check_output(['docker','inspect',QUERY],text=True))[0]
+    name=container_name(args.campaign_id or args.output.resolve().parent.name,args.output)
+    run_argv,provenance=isolated_run_plan(query,tls_paths(config),name,args.cpus,args.memory)
+    image=json.loads(subprocess.check_output(['docker','image','inspect',provenance['image_id']],text=True))[0]
+    provenance['image_repo_digests']=image.get('RepoDigests') or []
+    command=[*run_argv,'-B','-c',Path(__file__).read_text(),'--worker','--mode',args.mode,'--seconds',str(args.seconds),'--partitions',','.join(map(str,args.partitions)),'--tail-records',str(args.tail_records),'--max-records',str(args.max_records),'--sample-ms',str(args.sample_ms)]
     if args.include_quote:command.append('--include-quote')
     if args.symbols:command += ['--symbols',args.symbols]
     command += ['--feeds',args.feeds]
     if args.include_top:command.append('--include-top')
-    process=subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True)
-    process.stdin.write(json.dumps(config));process.stdin.close()
-    written=0
-    with (args.output/'observations.jsonl').open('x') as evidence:
-        for line in process.stdout:
-            written+=len(line.encode())
-            if written>args.max_output_bytes:
-                process.terminate();raise RuntimeError('Evidence byte cap exceeded; inspect observer completion before further work')
-            evidence.write(line);evidence.flush()
-            item=json.loads(line)
-            if item['kind'] in ('READY','DONE','lag_unknown','canonical_error','canonical_record_cap_reached'):print(line.strip(),flush=True)
-    code=process.wait(timeout=15)
-    (args.output/'receipt.json').write_text(json.dumps({'exit':code,'observer_version':OBSERVER_VERSION,'output_bytes':written,'script_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'observer_only':True,'shared_writes':0,'payloads_retained':False,'public_top_prices_retained':args.include_top},indent=2)+'\n')
+    launch_record={'kind':'launch','observer_version':OBSERVER_VERSION,'at_ns':time.time_ns(),**provenance}
+    previous=signal.signal(signal.SIGTERM,_terminate)
+    process=None;written=0;code=None
+    try:
+        with (args.output/'observations.jsonl').open('x') as evidence:
+            line=json.dumps(launch_record,separators=(',',':'))+'\n'
+            evidence.write(line);evidence.flush();written+=len(line.encode());print(line.strip(),flush=True)
+            process=subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True)
+            process.stdin.write(json.dumps(config));process.stdin.close()
+            for line in process.stdout:
+                written+=len(line.encode())
+                if written>args.max_output_bytes:
+                    raise RuntimeError('Evidence byte cap exceeded; inspect observer completion before further work')
+                evidence.write(line);evidence.flush()
+                item=json.loads(line)
+                if item['kind'] in ('READY','DONE','lag_unknown','canonical_error','canonical_record_cap_reached'):print(line.strip(),flush=True)
+        code=process.wait(timeout=15)
+    finally:
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:process.wait(timeout=10)
+            except subprocess.TimeoutExpired:process.kill();process.wait(timeout=10)
+        removed=remove_container(name)
+        signal.signal(signal.SIGTERM,previous)
+    items=[json.loads(line) for line in (args.output/'observations.jsonl').read_text().splitlines() if line.strip()]
+    (args.output/'receipt.json').write_text(json.dumps({'exit':code,'observer_version':OBSERVER_VERSION,'output_bytes':written,'script_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'observer_only':True,'shared_writes':0,'payloads_retained':False,'public_top_prices_retained':args.include_top,
+        'launch':provenance,'container_absent_after_exit':removed,'coverage':window_coverage(items),'produce_split':produce_split(items),'report_only':['coverage','produce_split']},indent=2)+'\n')
     if code:raise SystemExit(code)
 
 def main():
@@ -239,11 +392,14 @@ def main():
     parser.add_argument('--symbols',default='',help='comma list of native symbols; empty = all')
     parser.add_argument('--feeds',default=ALL_FEEDS,help='comma list of canonical payload kinds')
     parser.add_argument('--summarize',type=Path,help='offline: summarize an observations.jsonl and exit')
+    parser.add_argument('--campaign-id',default='',help='container name tag; default: the output parent directory name')
+    parser.add_argument('--cpus',type=float,default=DEFAULT_CPUS,help='observer container CPU bound')
+    parser.add_argument('--memory',default=DEFAULT_MEMORY,help='observer container memory bound (also memory-swap)')
     args=parser.parse_args();args.partitions=[int(p) for p in args.partitions.split(',')]
     if args.summarize:
         print(json.dumps(summarize(args.summarize.read_text().splitlines()),indent=1));return
     if set(args.feeds.split(','))-set(ALL_FEEDS.split(',')):parser.error('unknown feed')
-    if not 1<=args.seconds<=1200 or not 1<=args.max_records<=10000 or not 0<=args.tail_records<=100 or not 0<=args.sample_ms<=1000 or not args.partitions or any(p not in range(6) for p in args.partitions):parser.error('Bounded observer arguments violated')
+    if not 1<=args.seconds<=1200 or not 1<=args.max_records<=10000 or not 0<=args.tail_records<=100 or not 0<=args.sample_ms<=1000 or not args.partitions or any(p not in range(6) for p in args.partitions) or not 0.1<=args.cpus<=2 or not re.fullmatch(r'[1-9][0-9]{0,4}m',args.memory):parser.error('Bounded observer arguments violated')
     if args.worker:worker(args)
     else:
         if args.output is None:parser.error('--output is required')

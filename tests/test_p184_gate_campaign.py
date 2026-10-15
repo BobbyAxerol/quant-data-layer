@@ -123,8 +123,48 @@ class G8Tests(unittest.TestCase):
         info = "# Commandstats\r\ncmdstat_evalsha:calls=10,usec=2500,usec_per_call=250.00\r\ncmdstat_ping:calls=1,usec=1\r\n"
         self.assertEqual(g8.parse_commandstats(info)["evalsha"], {"calls": 10, "usec": 2500})
         rows = g8.slowlog_rows([[7, 1000, 12000, [b"EVALSHA", b"secret-arg"], b"1.2.3.4:5", b""]])
-        self.assertEqual(rows, [{"id": 7, "start_s": 1000, "duration_us": 12000, "command": "EVALSHA"}])
+        self.assertEqual(rows, [{"id": 7, "start_s": 1000, "duration_us": 12000, "command": "EVALSHA",
+                                 "client_addr": "1.2.3.4:5", "client_name": "", "script_sha1": None,
+                                 "script_sha1_basis": "EVALSHA_ARGUMENT"}])  # not a sha -> not kept
         self.assertEqual(g8.monitor_clients("id=1 flags=N\nid=2 flags=O\n"), 1)
+
+    def test_slowlog_attribution_keeps_client_and_script_digest_never_keys_or_args(self):
+        import hashlib
+        sha = "a" * 40
+        body = b"return redis.call('GET', KEYS[1])"
+        long_body = b"x" * 128 + b"... (372 more bytes)"
+        rows = g8.slowlog_rows([
+            [1, 10, 15000, [b"EVALSHA", sha.upper().encode(), b"1", b"secret:key", b"pii-arg"], b"10.0.0.5:4242",
+             b"ts-writer"],
+            [2, 11, 16000, [b"EVAL", body, b"1", b"secret:key"], b"10.0.0.6:1", b"alpha"],
+            [3, 12, 17000, [b"EVAL", long_body, b"0"], b"10.0.0.6:2", b"alpha"],
+            [4, 13, 18000, [b"HGETALL", b"secret:key"], b"10.0.0.7:3", b"x"],
+            [5, 14, 19000, [b"GET", b"k"]]])  # Redis < 4 rows have no client fields
+        self.assertEqual((rows[0]["script_sha1"], rows[0]["script_sha1_basis"], rows[0]["client_name"],
+                          rows[0]["client_addr"]), (sha, "EVALSHA_ARGUMENT", "ts-writer", "10.0.0.5:4242"))
+        self.assertEqual((rows[1]["script_sha1"], rows[1]["script_body_truncated"]),
+                         (hashlib.sha1(body).hexdigest(), False))
+        self.assertEqual((rows[2]["script_sha1"], rows[2]["script_sha1_basis"], rows[2]["script_body_truncated"]),
+                         (hashlib.sha1(b"x" * 128).hexdigest(), "SHA1_OF_VISIBLE_PREFIX", True))
+        self.assertNotIn("script_sha1", rows[3])
+        self.assertEqual((rows[4]["client_addr"], rows[4]["client_name"]), (None, None))
+        text = json.dumps(rows)
+        for secret in ("secret", "pii", "redis.call", "xxxx"):
+            self.assertNotIn(secret, text)
+        groups = g8.slowlog_attribution(rows)
+        alpha = [g for g in groups if g["client_name"] == "alpha"]
+        self.assertEqual(sorted(g["count"] for g in alpha), [1, 1])  # two scripts -> two groups
+        self.assertEqual(alpha[0]["client_addrs"][0][:9], "10.0.0.6:")
+
+    def test_attribution_is_report_only(self):
+        new = {"id": 2, "start_s": 300, "duration_us": 15000, "command": "EVALSHA", "client_name": "w",
+               "script_sha1": "b" * 40}
+        samples = [stats(0, 0, [])] + [stats(t, t * 1000, [new] if t >= 300 else []) for t in range(10, 611, 10)]
+        samples += [{"kind": "ping", "at_ns": t * S, "rtt_ms": 0.5} for t in range(0, 600)]
+        summary = g8.summarize(samples, steady_from_ns=0, steady_to_ns=610 * S)
+        self.assertEqual(summary["slowlog_steady_attribution"][0]["count"], 1)
+        bare = {**summary, "slowlog_steady_attribution": [], "slowlog_new_attribution": []}
+        self.assertEqual(g8.verdict(summary), g8.verdict(bare))
 
     def test_window_core_fraction_and_steady_slowlog(self):
         samples = [stats(t, int(t * 0.3e6)) for t in range(0, 1201, 10)]  # 0.3 core
@@ -557,15 +597,24 @@ class G4ScheduleV2Tests(unittest.TestCase):
     def test_apparatus_and_cap_receipt(self):
         apparatus = campaign.g4_apparatus(12.0)
         self.assertEqual(apparatus["schedule_version"], campaign.G4_SCHEDULE_VERSION)
-        self.assertTrue(apparatus["observer_version"].endswith(".v2"))
+        self.assertTrue(apparatus["observer_version"].endswith(".v3"))
+        self.assertEqual(apparatus["observer_launch_mode"], "docker_run_isolated")
         self.assertEqual(len(apparatus["observer_sha256"]), 64)
         self.assertEqual(apparatus["launch_hold_seconds"], 12.0)
         items = [{"kind": "scope", "observer_version": "qdl.p184.g4-observer.v2"},
                  *[{"kind": "canonical_observation"}] * 3,
                  {"kind": "canonical_record_cap_reached", "records": 3, "after_seconds": 132.3}]
-        self.assertEqual(campaign.g4_window_receipt(items),
+        receipt = campaign.g4_window_receipt(items)
+        self.assertEqual({k: receipt[k] for k in ("records", "record_cap_reached", "cap_reached_after_seconds",
+                                                  "observer_version")},
                          {"records": 3, "record_cap_reached": True, "cap_reached_after_seconds": 132.3,
                           "observer_version": "qdl.p184.g4-observer.v2"})
+        self.assertTrue(receipt["launch"]["launch_mode"].startswith("DOCKER_EXEC_IN_QUERY"))  # pre-v3 window
+        v3 = campaign.g4_window_receipt([{"kind": "launch", "launch_mode": "docker_run_isolated", "cpus": 0.5,
+                                          "image_id": "sha256:" + "1" * 64}, *items])
+        self.assertEqual((v3["launch"]["launch_mode"], v3["launch"]["cpus"]), ("docker_run_isolated", 0.5))
+        self.assertIn("coverage", v3)
+        self.assertIn("produce_split", v3)
         old = campaign.g4_window_receipt([{"kind": "scope"}, {"kind": "canonical_observation"}, {"kind": "DONE"}])
         self.assertEqual((old["record_cap_reached"], old["observer_version"]), (False, "v1 (unversioned)"))
 
@@ -586,6 +635,68 @@ class G4ScheduleV2Tests(unittest.TestCase):
             (d / "campaign.json").write_text(json.dumps({"g4_windows": []}))
             g4 = {g["id"]: g for g in campaign.build_scorecard(d)["gates"]}["G4"]
             self.assertEqual(g4["g4_apparatus"], {"schedule_version": "v1 (unversioned)"})
+
+
+# stage100/gates.json of p184-final-campaign-20261014T150646Z (gate, status; the G5 verdict reads nothing else).
+GATES_150646Z = [
+    ("latency:BAR_LATEST:BINANCE", "PASS"), ("latency:BAR_LATEST:OKX", "PASS"), ("latency:L2_SNAPSHOT:BINANCE", "PASS"),
+    ("latency:L2_SNAPSHOT:OKX", "PASS"), ("latency:MARK_INDEX_REFERENCE:BINANCE", "PASS"),
+    ("latency:MARK_INDEX_REFERENCE:OKX", "PASS"), ("latency:QUOTE_SNAPSHOT:BINANCE", "PASS"),
+    ("latency:QUOTE_SNAPSHOT:OKX", "PASS"), ("latency:TRADE_SNAPSHOT:BINANCE", "PASS"),
+    ("latency:TRADE_SNAPSHOT:OKX", "FAIL"), ("requests:offered_equals_sent_plus_missed", "PASS"),
+    ("requests:no_missed_ticks", "PASS"), ("requests:no_failures", "FAIL"), ("requests:no_starved_session", "PASS"),
+    ("client:scheduler_lag_valid", "PASS"), ("streams:no_errors", "PASS"),
+    ("streams:every_live_stream_delivered", "PASS"), ("streams:final_bar_every_bar_stream", "PASS"),
+    ("cold:2500_5000_overlap_per_venue", "PASS"), ("g5:COLD_2500:BINANCE", "FAIL"), ("g5:COLD_2500:OKX", "FAIL"),
+    ("g5:COLD_5000:BINANCE", "PASS"), ("g5:COLD_5000:OKX", "PASS"), ("startup:bounded", "PASS"),
+    ("teardown:no_leaked_work", "PASS"), ("ts:ready_60_every_sample", "PASS"), ("ts:v2_error_not_increased", "PASS"),
+    ("ts:no_auth_or_manifest_disconnect", "PASS"), ("ts:disconnects_within_baseline", "PASS"),
+    ("final:fault_windows_ran", "PASS"), ("final:burst_window_measured", "PASS"),
+    ("final:reconnect_window_measured", "PASS")]
+
+
+def g5_before(gates):
+    """The G5 scoring expression as it was at 58fb7cd (verdict, reason, measured)."""
+    latency = [g for g in (gates or {}).get("gates", []) if str(g.get("gate", "")).startswith(("latency:", "cold"))]
+    failed = [g["gate"] for g in latency if g.get("status") != "PASS"]
+    v = "FAIL" if failed else "PASS" if latency else "NOT_MEASURED"
+    return v, (f"failed: {failed}" if failed else f"{len(latency)} latency/cold gates" if latency else
+               "no driver gates"), latency
+
+
+class G5RowsTests(unittest.TestCase):
+    def _g5(self, gates):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "stage100").mkdir()
+            (d / "campaign.json").write_text(json.dumps({"g4_windows": []}))
+            (d / "stage100" / "gates.json").write_text(json.dumps(gates))
+            return {g["id"]: g for g in campaign.build_scorecard(d)["gates"]}["G5"]
+
+    def test_150646z_verdict_identical_only_the_displayed_rows_differ(self):
+        gates = {"status": "FAIL", "gates": [{"gate": g, "status": st} for g, st in GATES_150646Z]}
+        verdict, reason, before_rows = g5_before(gates)
+        g5 = self._g5(gates)
+        self.assertEqual((g5["verdict"], g5["reason"]), (verdict, reason))
+        self.assertEqual((g5["verdict"], g5["reason"]), ("FAIL", "failed: ['latency:TRADE_SNAPSHOT:OKX']"))  # scorecard
+        shown = [m["gate"] for m in g5["measured"]]
+        self.assertEqual(shown[:len(before_rows)], [m["gate"] for m in before_rows])
+        self.assertEqual(shown[len(before_rows):], ["g5:COLD_2500:BINANCE", "g5:COLD_2500:OKX",
+                                                    "g5:COLD_5000:BINANCE", "g5:COLD_5000:OKX"])
+
+    def test_g5_shape_rows_never_change_the_verdict(self):
+        for statuses in (("PASS", "PASS"), ("FAIL", "PASS"), ("PASS", "FAIL"), ("FAIL", "FAIL")):
+            gates = {"gates": [{"gate": "latency:BAR_LATEST:OKX", "status": statuses[0]},
+                               {"gate": "g5:COLD_2500:OKX", "status": statuses[1]}]}
+            verdict, reason, _ = g5_before(gates)
+            self.assertEqual(campaign.score_g5(gates)[0], verdict)
+            # this synthetic dir has no stage-100 receipt: outside the protocol a PASS shows as NOT_MEASURED, as before
+            g5 = self._g5(gates)
+            self.assertEqual(g5["verdict"], verdict if verdict != "PASS" else "NOT_MEASURED")
+            if verdict != "PASS":
+                self.assertEqual(g5["reason"], reason)
+        self.assertEqual(campaign.score_g5({"gates": [{"gate": "g5:COLD_2500:OKX", "status": "FAIL"}]})[0],
+                         "NOT_MEASURED")  # as before: no latency/cold row -> NOT_MEASURED
 
 
 BUDGET = Path("config/v2/p184-stage100-budget.json")
