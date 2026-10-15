@@ -73427,3 +73427,18 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   member logs cover every window. With A (storm reproduced on rc19) and N1 r2e-corekill9k (exact 5.4M, caught up
   14.9 s on TEST core 32fe603) this is the multi-member evidence required before any core rollout. Status:
   shadow-certified for the rebalance/kill behaviour (isolated TEST), not production-ready until rolled under packet.
+
+
+### P18.4 INCIDENT 2 2026-10-15 10:55-11:01Z: rc22 rust_core roll -> rollback -> RUST18 group storm, restored (Claude)
+- Owner-approved rc22 rollout (core x3 then projectors). rust_core rolled 10:55:04Z to rc22 7c848aad; settle budget
+  violated (rc22 member 9 rewinds, RUST18 survivors rust_core_2/_3 4 retries each, 3 in settle) -> tool rollback to
+  RUST18 verified (10:57:31Z); chain stopped, projectors and cores 2/3 untouched by the rollout.
+- After rollback the all-RUST18 group stayed in the morning's storm ({001} vs {002,003}, retries every ~30 s).
+  11:01:05Z (owner approved after a classifier block) rust_core_2 + rust_core_3 recreated simultaneously from the saved
+  RUST18 rollback composes (same image/config). Verified 11:01:11-11:03:39Z: 3 members x 2 partitions, 0 retries.
+- Inferred (RCA running): rc22's own member behaves as designed (rewind, no leave/join), but mixed-version rolling
+  keeps RUST18 members on the rebuild path, and with production batch 1024 a revoke almost always hits an in-flight
+  transaction, so the old members ping-pong; the isolated B3 harness (batch 25, low rate) under-represented this
+  (E7: test where the product runs). Consequence: per-member rolling from RUST18 is storm-prone in production; the
+  candidate procedure is a simultaneous replace of all 3 cores (no mixed-version period, short full core pause),
+  to be proven on a production-like harness (batch 1024, sustained load) before any new packet. rc22 NOT deployed.
