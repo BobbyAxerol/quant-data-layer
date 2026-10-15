@@ -73467,3 +73467,11 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   "<= 2 rewinds per window" limit was frozen from "one per survivor"; a single-member restart can legitimately cost a
   survivor a rewind on the leave and another on the rejoin - not relaxed here; any change needs an owner-approved
   addendum and a fresh run. rc22 rollout shape (simultaneous replace, ~11 s full core pause) awaits that decision.
+- S2 (addendum-5 2fa5dffb, owner-approved per-surviving-member rewind budget; evaluator criteria-map addendum-5.v1
+  with `restarted_roles` per window, this commit; 147 unittest OK): PASS 16/16, once, no retry. Replace-all: old
+  members stopped 1.0 s, gap 3 s, re-formed 6.98 s after the first new start (stable 16.98 s, caught up 6.98 s),
+  full core pause first die -> re-formed 10.6 s; rewinds per window 0/2/0 (would also pass addendum-4); retries 0
+  everywhere; kill: exit 0.20 s, ownership + caught up 10.2 s. Rewind attribution (Codex advisory §8, report only):
+  S2's 2 rewinds both 5.6 s after the 2 -> 3 membership change (core-3 rejoin); saved S's 4 rewinds all attributed
+  to leave/join changes, 0 unattributed (S keeps its addendum-4 FAIL). Status: shadow-certified (isolated,
+  production-like profile) for a simultaneous replace RUST18 -> rc22; production rollout needs its own packet/tool.

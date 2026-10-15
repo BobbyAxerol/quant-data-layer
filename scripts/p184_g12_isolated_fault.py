@@ -3577,6 +3577,16 @@ def core_group_verdict(evidence, members=len(CORE_MEMBERS)):
                                                "image": images[e[4] - 1] if e[4] <= len(images) else None})
                 row[{"qdl_realtime_core_retry": "retries", "qdl_realtime_core_rebalance_rewind": "rewinds",
                      "qdl_realtime_core_rewind_failed": "rewind_failed"}[e[2]]] += 1
+        # Members restarted / killed within the attribution span (addendum-5 run_S2: not survivors of that window):
+        # the roles of a cause fault injected in the span (the next window's cause, injected at this window's end,
+        # is not), and any role with a daemon die event in the span.
+        restarted = {role for f in faults if f.get("k") in CORE_GROUP_CAUSES
+                     and span_lo <= (f.get("injected_ns") or 0) < hi
+                     for role in (f.get("roles") or [f.get("role")]) if role}
+        restarted |= {name[len(ns) + 1:] for r in container_events
+                      if (r.get("Action") or r.get("status")) == "die" and span_lo <= (r.get("timeNano") or 0) <= hi
+                      for name in [((r.get("Actor") or {}).get("Attributes") or {}).get("name") or ""]
+                      if name[len(ns) + 1:] in CORE_MEMBERS and name.startswith(ns + "-")}
         inside = [e for e in events if lo <= e[0] <= hi]
         samples = [group(r) for r in monitor_rows if lo <= r["t"] <= hi]
         tail_rows = [r for r in monitor_rows if hi - CORE_GROUP_TAIL_S * 10**9 <= r["t"] <= hi]
@@ -3605,7 +3615,7 @@ def core_group_verdict(evidence, members=len(CORE_MEMBERS)):
             "log_covered": {role: log_covered(lives.get(role, []), lo, hi, slack) for role in CORE_MEMBERS},
             "retry_errors": sorted({e[3].get("error", "")[:120] for e in inside
                                     if e[2] == "qdl_realtime_core_retry"}),
-            "span_start_ns": span_lo, "by_life": by_life}
+            "span_start_ns": span_lo, "by_life": by_life, "restarted_roles": sorted(restarted)}
     result["totals"] = {name: sum(1 for e in events if e[2] == name) for name in CORE_EVENTS}
     named = {w["name"]: w for w in windows}
     if "baseline" in named:  # diagnostic: did the baseline open on a stable group (not during formation)?
@@ -3659,7 +3669,7 @@ CORE_GROUP_ACCEPTANCE_SCHEMA_V1 = "p184.coregroup.acceptance.v1"
 CORE_GROUP_ACCEPTANCE_SCHEMA = "p184.coregroup.acceptance.v2"
 CORE_GROUP_LIMITS = {"rewinds_per_roll_window": 2, "caught_up_s": 60, "partitions_moved_s": 15,
                      "control_retries_per_member": 2, "new_image_rewinds_per_window": 2,
-                     "old_image_survivor_retries_per_member": 1}
+                     "old_image_survivor_retries_per_member": 1, "new_image_rewinds_per_survivor_per_window": 2}
 
 
 # Frozen prereg addendum-4 (frozen 2026-10-15T11:21:07Z, sha256 06c561ed...) states its run_A_prime / run_S
@@ -3693,6 +3703,28 @@ CORE_GROUP_CRITERIA_MAP = {
         ("no inflight_commit_failed / stop_drain_failed", "0 production guard breaches"),
     "monitor/log coverage gaps -> NOT_MEASURED, never PASS":
         ("coverage: monitor gap <= 5 s, member logs cover every window (else NOT_MEASURED, never PASS)",),
+}
+
+
+# Frozen prereg addendum-5 (frozen 2026-10-15T12:17:23Z; amends addendum-4 sha256 06c561ed...) run_S2: the
+# addendum-4 run_S strings verbatim except the new-image one, whose rewind budget is per surviving member (owner
+# decision 2026-10-15). Same contract as the addendum-4 map: no thresholds here, unknown strings NOT_MEASURED.
+CORE_GROUP_CRITERIA_MAP_ADDENDUM_5_VERSION = "p184.coregroup.criteria-map.addendum-5.v1"
+CORE_GROUP_CRITERIA_MAP_ADDENDUM_5 = {
+    **{text: keys for text, keys in CORE_GROUP_CRITERIA_MAP.items()
+       if text not in ("new-image lives: retries 0, rewind_failed 0, rewinds <= 2 per window",
+                       "control valid iff each old-image survivor of the first roll retries >= 2 times in "
+                       "after_roll_core; else harness not production-like and S cannot be credited")},
+    "new-image lives: retries 0, rewind_failed 0, rewinds <= 2 per surviving member per window (a member "
+    "restarted in that window is not a survivor)":
+        ("new-image member lives: retries == 0, rewind_failed == 0, rewinds <= 2 per surviving member per window "
+         "(members restarted / killed in the window excluded), 0 in baseline",),
+}
+# Which versioned map judges each addendum run block.
+CORE_GROUP_CRITERIA_MAPS = {
+    "run_A_prime": (CORE_GROUP_CRITERIA_MAP_VERSION, CORE_GROUP_CRITERIA_MAP),
+    "run_S": (CORE_GROUP_CRITERIA_MAP_VERSION, CORE_GROUP_CRITERIA_MAP),
+    "run_S2": (CORE_GROUP_CRITERIA_MAP_ADDENDUM_5_VERSION, CORE_GROUP_CRITERIA_MAP_ADDENDUM_5),
 }
 
 
@@ -3907,6 +3939,40 @@ def core_group_acceptance(verdict, prereg, addendum=None):
                             "images_known": known, "log_covered": windows[name].get("log_covered")}
         return _combine(results), {"target_image": target, "windows": detail}
 
+    def new_image_lives_per_survivor():
+        """addendum-5 run_S2: new-image lives log no retry and no rewind failure in any window, and every
+        surviving member's new-image lives <= 2 rewinds per window (0 in baseline). A member restarted / killed in
+        the window's attribution span (``restarted_roles``) is not a survivor: its rewinds are reported, not
+        bounded. Retries / rewind failures of any new-image life, survivor or not, still FAIL."""
+        results, detail = [], {}
+        for name in names:
+            if name not in windows:
+                results.append("NOT_MEASURED")
+                detail[name] = "MISSING_WINDOW"
+                continue
+            rows, known = lives_of(name)
+            new = [r for r in rows if r.get("image") == target]
+            restarted = windows[name].get("restarted_roles")
+            survivors = None if restarted is None else [role for role in CORE_MEMBERS if role not in restarted]
+            limit = 0 if name == "baseline" else CORE_GROUP_LIMITS["new_image_rewinds_per_survivor_per_window"]
+            per_survivor = None if survivors is None else {
+                role: sum(r["rewinds"] for r in new if r["role"] == role) for role in survivors}
+            excluded = {role: sum(r["rewinds"] for r in new if r["role"] == role) for role in (restarted or ())}
+            values = {"retries": sum(r["retries"] for r in new), "rewind_failed": sum(r["rewind_failed"] for r in new),
+                      "rewinds_per_survivor": per_survivor, "rewinds_excluded_restarted": excluded,
+                      "rewinds_limit_per_survivor": limit}
+            if values["retries"] or values["rewind_failed"] or \
+                    (per_survivor is not None and any(v > limit for v in per_survivor.values())):
+                results.append("FAIL")
+            elif not v2 or not known or survivors is None:
+                results.append("NOT_MEASURED")
+            else:
+                results.append("PASS" if logged(name) else "NOT_MEASURED")
+            detail[name] = {**values, "survivors": survivors, "restarted": restarted,
+                            "lives": {f"{r['role']}.life{r['life']}": r for r in new},
+                            "images_known": known, "log_covered": windows[name].get("log_covered")}
+        return _combine(results), {"target_image": target, "windows": detail}
+
     def old_image_lives():
         """Each member's old-image lives: <= 1 retry in total, only in a roll window where the member survives
         (another member is rolled); baseline: no retry, rewind or rewind failure from any life."""
@@ -4058,6 +4124,8 @@ def core_group_acceptance(verdict, prereg, addendum=None):
         "storm=false": storm_false,
         "new-image member lives: retries == 0, rewind_failed == 0, rewinds <= 2 per window, 0 in baseline":
             new_image_lives,
+        "new-image member lives: retries == 0, rewind_failed == 0, rewinds <= 2 per surviving member per window "
+        "(members restarted / killed in the window excluded), 0 in baseline": new_image_lives_per_survivor,
         "old-image (RUST18) member lives: <= 1 retry per member, only in the roll window in which it is a survivor "
         "of a roll; 0 in baseline": old_image_lives,
         "once all 3 members run the new image (after_roll_core-3 and after_kill): retries == 0 absolute":
@@ -4080,18 +4148,19 @@ def core_group_acceptance(verdict, prereg, addendum=None):
             replace_all_caught_up,
     }
 
-    def evaluate(texts, extra, known=None, more=()):
+    def evaluate(texts, extra, known=None, more=(), criteria_map=None):
         known = rules if known is None else known
+        map_version, text_map = criteria_map or (CORE_GROUP_CRITERIA_MAP_VERSION, CORE_GROUP_CRITERIA_MAP)
         rows = [{"condition": c, "result": r, "detail": d} for c, r, d in (*harness, *more)]
         for text in texts:
             rule = extra.get(text) or known.get(text)
-            mapped = CORE_GROUP_CRITERIA_MAP.get(text) if rule is None and known is rules_v2 else None
+            mapped = text_map.get(text) if rule is None and known is rules_v2 else None
             if rule:
                 result, detail = rule()
             elif mapped and all(key in known for key in mapped):
                 parts = {key: known[key]() for key in mapped}
                 result = _combine([r for r, _ in parts.values()])
-                detail = {"map": CORE_GROUP_CRITERIA_MAP_VERSION,
+                detail = {"map": map_version,
                           "rules": {key: {"result": r, "detail": d} for key, (r, d) in parts.items()}}
             else:
                 result, detail = "NOT_MEASURED", {"reason": "UNKNOWN_CONDITION"}
@@ -4113,8 +4182,11 @@ def core_group_acceptance(verdict, prereg, addendum=None):
         mode_row = lambda wanted: ("harness: run mode is " + wanted,  # noqa: E731
                                    "PASS" if verdict.get("mode", "rolling") == wanted else "FAIL",
                                    {"mode": verdict.get("mode")})
-        # run_B2 (addendum-2/3), run_A_prime (rolling, production-like profile), run_S (simultaneous replace).
-        for key, wanted in (("run_B2", None), ("run_A_prime", "rolling"), ("run_S", "simultaneous")):
+        # run_B2 (addendum-2/3), run_A_prime (rolling, production-like profile), run_S (simultaneous replace),
+        # run_S2 (addendum-5: run_S with the per-survivor rewind budget).
+        used_maps = []
+        for key, wanted in (("run_B2", None), ("run_A_prime", "rolling"), ("run_S", "simultaneous"),
+                            ("run_S2", "simultaneous")):
             block = addendum.get(key)
             if block is None:
                 continue
@@ -4125,9 +4197,11 @@ def core_group_acceptance(verdict, prereg, addendum=None):
             more = (image_row,) if wanted is None else (image_row, mode_row(wanted))
             if not texts:  # a frozen run without a readable criterion fails closed
                 more = (*more, ("harness: frozen criteria present", "NOT_MEASURED", {"keys": sorted(block)}))
-            out[key] = evaluate(list(texts or ()), {}, rules_v2, more)
-        if addendum.get("run_A_prime") is not None or addendum.get("run_S") is not None:
-            out["criteria_map"] = CORE_GROUP_CRITERIA_MAP_VERSION
+            out[key] = evaluate(list(texts or ()), {}, rules_v2, more, CORE_GROUP_CRITERIA_MAPS.get(key))
+            if key in CORE_GROUP_CRITERIA_MAPS and CORE_GROUP_CRITERIA_MAPS[key][0] not in used_maps:
+                used_maps.append(CORE_GROUP_CRITERIA_MAPS[key][0])
+        if used_maps:
+            out["criteria_map"] = used_maps[0] if len(used_maps) == 1 else used_maps
     fix = criteria.get("run_B_fix")
     if fix is not None:
         out["run_B_fix"] = evaluate(list(fix), {})
@@ -4159,7 +4233,7 @@ def core_group_accept(base, prereg_path, addendum_path=None):
                                                      "core_kill_first_healthy_sample_s", "production_guard_breaches")},
             "windows": {n: {k: w.get(k) for k in ("retries", "rewinds", "rewind_failed", "monitor_max_gap_s",
                                                    "tail_samples", "tail_unhealthy_samples", "tail_coverage_basis",
-                                                   "end_members", "log_covered")}
+                                                   "end_members", "log_covered", "restarted_roles")}
                         for n, w in verdict["windows"].items()},
             "acceptance": core_group_acceptance(verdict, prereg, addendum)}
 

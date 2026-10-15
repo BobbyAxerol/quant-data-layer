@@ -2780,6 +2780,15 @@ ADDENDUM_4 = {
         "monitor/log coverage gaps -> NOT_MEASURED, never PASS"]}}
 
 
+# The frozen addendum-5 (prereg-addendum-5.json, frozen 2026-10-15T12:17:23Z) run_S2 criteria, verbatim.
+ADDENDUM_5 = {
+    "schema": "p184-coregroup-prereg-addendum.v1",
+    "run_S2": {"mode": "--core-group-simultaneous", "criteria": [
+        ADDENDUM_4["run_S"]["criteria"][0], ADDENDUM_4["run_S"]["criteria"][1],
+        "new-image lives: retries 0, rewind_failed 0, rewinds <= 2 per surviving member per window (a member "
+        "restarted in that window is not a survivor)",
+        *ADDENDUM_4["run_S"]["criteria"][3:]]}}
+
 class CoreGroupProfileTests(unittest.TestCase):
     """INCIDENT 2026-10-15 #2: production-like core profile; defaults keep the B3 harness."""
 
@@ -3150,6 +3159,86 @@ class CoreGroupSimultaneousAcceptanceTests(unittest.TestCase):
         out = g12.core_group_acceptance({"windows": {}}, {"criteria": {"run_B_fix": [
             ADDENDUM_4["run_S"]["criteria"][1]]}})
         self.assertEqual(out["run_B_fix"]["conditions"][-1]["detail"], {"reason": "UNKNOWN_CONDITION"})
+
+    def accept5(self, base, addendum=None):
+        path = Path(self.tmp.name) / "addendum-5.json"
+        path.write_text(json.dumps(addendum or ADDENDUM_5))
+        result = g12.core_group_accept(base, self.prereg, path)
+        run = result["acceptance"]["run_S2"]
+        return result, run, {row["condition"]: row for row in run["conditions"]}
+
+    NEW5 = ADDENDUM_5["run_S2"]["criteria"][2]
+
+    @staticmethod
+    def rewinds(*pairs):
+        """Rebalance rewinds in after_restart_core-3 (span 272-424): (role, count) pairs."""
+        return [(role, 280 + 10 * n, "qdl_realtime_core_rebalance_rewind", {}) for role, k in pairs
+                for n in range(k)]
+
+    def test_addendum_5_strings_map_verbatim_and_pass_clean_run(self):
+        frozen = ADDENDUM_5["run_S2"]["criteria"]
+        self.assertEqual(set(frozen) - {"storm=false"}, set(g12.CORE_GROUP_CRITERIA_MAP_ADDENDUM_5))
+        result, run, rows = self.accept5(self.build("ok5", events=self.rewinds(("core", 1))))
+        self.assertEqual(result["acceptance"]["criteria_map"], "p184.coregroup.criteria-map.addendum-5.v1")
+        for text in frozen:
+            with self.subTest(text=text):
+                self.assertEqual(rows[text]["result"], "PASS", rows[text]["detail"])
+        self.assertEqual(rows["harness: run mode is simultaneous"]["result"], "PASS")
+        self.assertEqual(run["result"], "PASS")
+        self.assertEqual(rows[self.NEW5]["detail"]["map"], g12.CORE_GROUP_CRITERIA_MAP_ADDENDUM_5_VERSION)
+        restarted = {n: w["restarted_roles"] for n, w in result["windows"].items()}
+        self.assertEqual(restarted, {"baseline": [], "after_replace_all": list(g12.CORE_MEMBERS),
+                                     "after_restart_core-3": ["core-3"], "after_kill": ["core-2"]})
+
+    def test_addendum_5_rewinds_are_counted_per_surviving_member(self):
+        rule = ("new-image member lives: retries == 0, rewind_failed == 0, rewinds <= 2 per surviving member per "
+                "window (members restarted / killed in the window excluded), 0 in baseline")
+        # S-like: 3 rewinds after the restart of core-3, split 2 + 1 across the two survivors -> PASS
+        _, run, rows = self.accept5(self.build("split", events=self.rewinds(("core-2", 2), ("core", 1))))
+        self.assertEqual(rows[self.NEW5]["result"], "PASS", rows[self.NEW5]["detail"])
+        window = rows[self.NEW5]["detail"]["rules"][rule]["detail"]["windows"]["after_restart_core-3"]
+        self.assertEqual((window["survivors"], window["rewinds_per_survivor"]),
+                         (["core", "core-2"], {"core": 1, "core-2": 2}))
+        self.assertEqual(run["result"], "PASS")
+        # ... and the same evidence still FAILs under addendum-4 (rewinds 3 > 2 per window), unchanged
+        _, run4, rows4 = self.accept4(self.build("split4", events=self.rewinds(("core-2", 2), ("core", 1))))
+        self.assertEqual(rows4[ADDENDUM_4["run_S"]["criteria"][2]]["result"], "FAIL")
+        self.assertEqual(run4["result"], "FAIL")
+        # 3 rewinds on one survivor -> FAIL
+        _, run, rows = self.accept5(self.build("one", events=self.rewinds(("core-2", 3))))
+        self.assertEqual(rows[self.NEW5]["result"], "FAIL")
+        self.assertEqual(run["result"], "FAIL")
+        # the restarted member's rewinds are excluded (reported), its retries are not
+        _, run, rows = self.accept5(self.build("restarted", events=self.rewinds(("core-3", 3), ("core", 2))))
+        self.assertEqual(rows[self.NEW5]["result"], "PASS", rows[self.NEW5]["detail"])
+        window = rows[self.NEW5]["detail"]["rules"][rule]["detail"]["windows"]["after_restart_core-3"]
+        self.assertEqual(window["rewinds_excluded_restarted"], {"core-3": 3})
+        _, _, rows = self.accept5(self.build("restarted-retry", events=[
+            ("core-3", 300, "qdl_realtime_core_retry", {"error": "rebalanced"})]))
+        self.assertEqual(rows[self.NEW5]["result"], "FAIL")
+        # the killed member (core-2) is not a survivor of after_kill; core-3 is
+        _, _, rows = self.accept5(self.build("kill", events=[
+            (role, 440 + n, "qdl_realtime_core_rebalance_rewind", {}) for role, k in (("core-2", 3), ("core-3", 3))
+            for n in range(k)]))
+        self.assertEqual(rows[self.NEW5]["result"], "FAIL")
+        window = rows[self.NEW5]["detail"]["rules"][rule]["detail"]["windows"]["after_kill"]
+        self.assertEqual((window["rewinds_per_survivor"], window["rewinds_excluded_restarted"]),
+                         ({"core": 0, "core-3": 3}, {"core-2": 3}))
+
+    def test_addendum_5_without_restart_attribution_is_not_measured(self):
+        base = self.build("legacy5")
+        verdict = g12.core_group_verdict(base / "evidence")
+        verdict["status"] = "COMPLETED"
+        for window in verdict["windows"].values():
+            window.pop("restarted_roles")
+        out = g12.core_group_acceptance(verdict, PREREG, ADDENDUM_5)
+        rows = {row["condition"]: row["result"] for row in out["run_S2"]["conditions"]}
+        self.assertEqual(rows[self.NEW5], "NOT_MEASURED")
+        # an unknown string under run_S2 stays NOT_MEASURED; addendum-4's run_S map version is unchanged
+        out = g12.core_group_acceptance(verdict, PREREG, {"run_S2": {"criteria": [
+            "new-image lives: retries 0, rewind_failed 0, rewinds <= 2 per window"]}})
+        self.assertEqual(out["run_S2"]["conditions"][-1]["detail"], {"reason": "UNKNOWN_CONDITION"})
+        self.assertEqual(g12.CORE_GROUP_CRITERIA_MAP_VERSION, "p184.coregroup.criteria-map.addendum-4.v1")
 
     def test_replace_all_clocks_from_fixture(self):
         base = self.build("clocks")
