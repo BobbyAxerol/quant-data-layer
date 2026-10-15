@@ -73420,3 +73420,10 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   kill clocks, publisher round-robins lanes over every raw partition; 127 unittest OK. Re-evaluated saved B2: kill
   clocks PASS (ownership 9.2 s, raw/5 idle NO_RECORDS), old-image condition still FAIL (baseline retry 4.5 s after
   start, before the group first held stable at +16 s) -> B2 stays FAIL; B3 on rc22 under addendum-3.
+- Core-group B3 (addendum-3 ef96a1d9; RUST18 -> rc22 7c848aad = DL a4e7b3b; harness 9ba2e7b): run_B2 criteria PASS on
+  all 14 conditions - storm false; rc22 lives 0 retries / 1 rewind / 0 rewind_failed; old-image retries core-3 = 1
+  inside its survivor window; all-new windows 0 retries; every window tail 3 members x 6 partitions owned once; core
+  kill: exit 0.19 s, ownership restored = progress = caught up 9.58 s (raw/1, raw/4 non-idle); monitor gap <= 1.0 s;
+  member logs cover every window. With A (storm reproduced on rc19) and N1 r2e-corekill9k (exact 5.4M, caught up
+  14.9 s on TEST core 32fe603) this is the multi-member evidence required before any core rollout. Status:
+  shadow-certified for the rebalance/kill behaviour (isolated TEST), not production-ready until rolled under packet.
