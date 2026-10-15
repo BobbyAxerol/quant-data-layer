@@ -1107,6 +1107,11 @@ class NativeWriterScoringTests(unittest.TestCase):
         problems, _ = campaign.native_trace_checks({**env, "TS_DELIVERY_TRACE_MAX_FILES": "96"}, start_ns + 3000 * S,
                                                    start_ns, started, g11=True)
         self.assertTrue(any("MAX_FILES == 1" in p for p in problems))
+        problems, warnings = campaign.native_trace_checks({**env, "TS_DELIVERY_TRACE_MAX_FILES": "96"},
+                                                         start_ns + 3000 * S, start_ns + 60 * S, started, g11=True,
+                                                         writer_running_clean=True)
+        self.assertFalse([p for p in problems if "MAX_FILES" in p])
+        self.assertTrue(any("running native writer" in w for w in warnings))
         problems, warnings = campaign.native_trace_checks(
             {**env, "TS_DELIVERY_TRACE_MAX_FILES": "96", "TS_DELIVERY_TRACE_NATIVE_MAX_FILES": "1"},
             start_ns + 3000 * S, start_ns, started, g11=False)

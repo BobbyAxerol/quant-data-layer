@@ -984,7 +984,8 @@ def preflight(args) -> dict:
                      "writer_mode": "native" if native_feeds_env(env) else "python"}
     if not getattr(args, "baseline", False):
         problems, warnings = native_trace_checks(env, until, now_ns, inspect["State"].get("StartedAt", ""),
-                                                 g11=args.g11)
+                                                 g11=args.g11, writer_running_clean=bool(
+                                                     inspect["State"].get("Running") and inspect.get("RestartCount") == 0))
         plan["problems"].extend(problems)
         plan["warnings"].extend(warnings)
     if not plan["trace"]["covers_load"]:
@@ -1035,7 +1036,8 @@ def docker_time_ns(value: str) -> int | None:
     return int(base.timestamp()) * 10**9 + int((frac + "000000000")[:9])
 
 
-def native_trace_checks(env: dict, until_ns: int, now_ns: int, started_at: str, *, g11: bool) -> tuple[list, list]:
+def native_trace_checks(env: dict, until_ns: int, now_ns: int, started_at: str, *, g11: bool,
+                        writer_running_clean: bool = False) -> tuple[list, list]:
     """Preflight of a native-writer candidate (pure): native mode, the <= 3600 s window, the native file count."""
     problems, warnings = [], []
     feeds = native_feeds_env(env)
@@ -1063,8 +1065,14 @@ def native_trace_checks(env: dict, until_ns: int, now_ns: int, started_at: str, 
                             f"{shared_max}: needs a writer image that reads the native-only key (B12 03824833 "
                             "refuses a shared MAX_FILES != 1 in native mode)")
     elif shared_max.strip() != "1":
-        problems.append(f"native mode without TS_DELIVERY_TRACE_NATIVE_MAX_FILES needs the shared "
-                        f"TS_DELIVERY_TRACE_MAX_FILES == 1 (is {shared_max})")
+        if writer_running_clean:
+            # The native planner refuses an unsupported trace at writer start, so a native writer running with this
+            # env and RestartCount 0 proves its image reads the native-only key (default 1, B13 0b3bb49e+).
+            warnings.append(f"shared TS_DELIVERY_TRACE_MAX_FILES={shared_max} without the native-only key accepted: "
+                            "the running native writer started with this env (native default 1 file)")
+        else:
+            problems.append(f"native mode without TS_DELIVERY_TRACE_NATIVE_MAX_FILES needs the shared "
+                            f"TS_DELIVERY_TRACE_MAX_FILES == 1 (is {shared_max})")
     else:
         warnings.append("shared TS_DELIVERY_TRACE_MAX_FILES=1 also caps each Python worker (BOOK/MARK) at one "
                         "4096-record file: G1 and the MARK row of G2 will be NOT_MEASURED")
