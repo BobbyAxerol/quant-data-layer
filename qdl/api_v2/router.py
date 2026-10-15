@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import json
+import re
 from dataclasses import asdict, fields as dataclass_fields
 from functools import lru_cache
-from decimal import Decimal, InvalidOperation
-from typing import Annotated
+from decimal import Decimal, InvalidOperation, getcontext
+from typing import Annotated, get_args
 
 from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -18,6 +19,7 @@ from qdl.query.cold_work import await_in_thread, cold_yield
 from qdl.domain.decimal import PLAIN_DECIMAL_TEXT
 from qdl_sdk.models import ResponseModel
 from qdl.api_v2.models import (
+    BarPayload,
     BatchItemResponse,
     BatchRequirementModel,
     BatchResponse,
@@ -29,16 +31,19 @@ from qdl.api_v2.models import (
     MAX_REQUIREMENT_FRESHNESS_MS,
     ProblemDetails,
     QualityView,
+    QuantityUnit,
     ReadinessItemResponse,
     ReadinessResponse,
     ReferenceBatchRequest,
     ReferenceBatchResponse,
     SnapshotResponse,
+    SourceView,
     SystemReadinessSummary,
     WarmupResponse,
 )
 from qdl.query import (
     AccessPurpose,
+    BarLifecycle,
     BatchRequirement,
     BarRevisionPolicy,
     CanonicalErrorCode,
@@ -519,6 +524,176 @@ def _splice_view(layout: tuple, dynamic: dict) -> bytes:
     ) + b"}"
 
 
+class _ModelPath(Exception):
+    """A row the BAR fast render cannot prove valid; the model path decides."""
+
+
+# BAR fast render (P18.4 G5 cold): the public rules a BAR view's fields must
+# meet (same Literal sets as the models; lengths/patterns pinned by tests).
+_JSON_TEXT = json.encoder.encode_basestring
+_QUALITY_STATES = frozenset(get_args(QualityView.model_fields["state"].annotation))
+_RECENCY_STATES = frozenset(get_args(QualityView.model_fields["event_recency_state"].annotation))
+_SESSION_STATES = frozenset(get_args(QualityView.model_fields["provider_session_state"].annotation))
+_SOURCE_ROLES = frozenset(get_args(SourceView.model_fields["source_role"].annotation))
+_BAR_ORIGINS = frozenset(get_args(BarPayload.model_fields["origin"].annotation))
+_QUANTITY_UNITS = frozenset(unit.value for unit in QuantityUnit)
+_SCHEMA_DIGEST = re.compile(r"[0-9a-f]{64}")
+_EVENT_ID = re.compile(r"(?:[0-9a-f]{2}){1,64}")
+# ``_quality_fields`` keeps a BAR row's own ``execution_eligible`` only while BAR is one of these.
+_BAR_KEEPS_ELIGIBILITY = FeedType.BAR in EXECUTION_PRICE_VALIDATION_FEEDS
+
+
+def _text(value, low: int = 0, high: int | None = None) -> str:
+    if type(value) is not str or len(value) < low or (high is not None and len(value) > high):
+        raise _ModelPath
+    return _JSON_TEXT(value)
+
+
+def _integer(value, low: int) -> str:
+    if type(value) is not int or value < low:
+        raise _ModelPath
+    return str(value)
+
+
+def _flag(value) -> str:
+    if type(value) is not bool:
+        raise _ModelPath
+    return "true" if value else "false"
+
+
+def _member(value, allowed: frozenset) -> str:
+    # Literal/enum members are ASCII identifiers: no escaping applies.
+    if type(value) is not str or value not in allowed:
+        raise _ModelPath
+    return '"' + value + '"'
+
+
+def _bar_decimal(value) -> str:
+    """``DecimalValue`` JSON of a plain decimal text, or the model path for any other."""
+
+    if type(value) is not str or len(value) > 128:
+        raise _ModelPath
+    plain = PLAIN_DECIMAL_TEXT.fullmatch(value)
+    if plain is None:
+        raise _ModelPath
+    fraction = plain.group(2) or ""
+    coefficient = str(int(plain.group(1) + fraction))
+    # The model's check ``Decimal(coefficient).scaleb(-scale) == Decimal(text)``
+    # is exact (always true) while the coefficient fits the context precision.
+    if len(fraction) > 38 or len(coefficient) - (coefficient[0] == "-") > getcontext().prec:
+        raise _ModelPath
+    return f'{{"coefficient":"{coefficient}","scale":{len(fraction)},"source_text":"{value}"}}'
+
+
+def _optional_decimal(value) -> str:
+    return "null" if value is None else _bar_decimal(value)
+
+
+def _bar_quality(quality) -> str:
+    flags = quality.flags
+    if type(flags) not in (tuple, list):
+        raise _ModelPath
+    liveness = quality.provider_session_liveness_ms
+    proof = quality.proof_observed_at_ns
+    return (
+        '{"state":' + _member(quality.state, _QUALITY_STATES)
+        + ',"freshness_ms":' + _integer(quality.freshness_ms, 0)
+        + ',"event_recency_state":' + _member(quality.event_recency_state, _RECENCY_STATES)
+        + ',"provider_session_state":' + _member(quality.provider_session_state, _SESSION_STATES)
+        + ',"provider_session_liveness_ms":' + ("null" if liveness is None else _integer(liveness, 0))
+        + ',"gap_open":' + _flag(quality.gap_open)
+        + ',"complete":' + _flag(quality.complete)
+        + ',"execution_eligible":' + _flag(quality.execution_eligible)
+        + ',"policy_id":' + _text(quality.policy_id, 1, 200)
+        + ',"flags":[' + ",".join(_text(flag) for flag in flags) + "]"
+        + ("" if proof is None else ',"proof_observed_at_ns":' + _integer(proof, 1))
+        + "}"
+    )
+
+
+def _bar_view_parts(item) -> tuple[tuple, dict] | None:
+    """A BAR view's ``(layout, encoded dynamic members)`` without pydantic, or
+    ``None`` when any field is outside the shapes proven here (model path)."""
+
+    try:
+        value = item.payload
+        lifecycle = item.bar_lifecycle
+        supersedes = item.supersedes_event_id
+        if (item.feed is not FeedType.BAR or not _BAR_KEEPS_ELIGIBILITY or item.resample_lineage is not None
+                or type(lifecycle) is not BarLifecycle or lifecycle is BarLifecycle.UNSPECIFIED
+                or (lifecycle is BarLifecycle.REVISED and not supersedes)):
+            raise _ModelPath
+        interval = _text(item.interval, 1, 20)
+        revision = _integer(item.revision, 0)
+        opened, closed = value["open_time_ns"], value["close_time_ns"]
+        if type(closed) is not int or type(opened) is not int or not 0 < opened < closed:
+            raise _ModelPath
+        payload = (
+            '{"feed":"BAR","interval":' + interval
+            + ',"open_time_ns":' + str(opened) + ',"close_time_ns":' + str(closed)
+            + ',"open":' + _bar_decimal(value["open"]) + ',"high":' + _bar_decimal(value["high"])
+            + ',"low":' + _bar_decimal(value["low"]) + ',"close":' + _bar_decimal(value["close"])
+            + ',"volume":' + _bar_decimal(value["volume"])
+            + ',"volume_unit":' + _member(value["volume_unit"], _QUANTITY_UNITS)
+            + ',"base_volume":' + _optional_decimal(value.get("base_volume"))
+            + ',"quote_volume":' + _optional_decimal(value.get("quote_volume"))
+            + ',"contract_volume":' + _optional_decimal(value.get("contract_volume"))
+            + ',"trade_count":' + _integer(value.get("trade_count", 0), 0)
+            + ',"lifecycle":"' + lifecycle.value + '","revision":' + revision
+            + ',"origin":' + _member(value["origin"], _BAR_ORIGINS)
+            + ',"supersedes_event_id":' + ("null" if supersedes is None else _text(supersedes))
+            + ',"resample_lineage":null}'
+        )
+        source = item.source
+        contract = item.contract
+        received = item.received_at_ns
+        if type(contract.schema_digest) is not str or not _SCHEMA_DIGEST.fullmatch(contract.schema_digest):
+            raise _ModelPath
+        head = (
+            '"instrument_uid":' + _text(item.instrument_uid)
+            + ',"instrument_id":' + _text(item.instrument_id)
+            + ',"instrument_revision":' + _integer(item.instrument_revision, 1)
+            + ',"feed":"BAR","interval":' + interval
+            + ',"observed_at_ns":' + _integer(item.observed_at_ns, 1)
+            + ',"received_at_ns":' + ("null" if received is None else _integer(received, 1))
+            + ',"revision":' + revision + ',"payload":' + payload
+            + ',"source":{"venue":' + _text(source.venue, 1, 40)
+            + ',"provider":' + _text(source.provider, 1, 80)
+            + ',"source_id":' + _text(source.source_id, 1, 120)
+            + ',"source_role":' + _member(source.source_role, _SOURCE_ROLES)
+            + ',"authoritative":' + _flag(source.authoritative) + "}"
+        )
+        tail = (
+            '"contract":{"schema_digest":"' + contract.schema_digest
+            + '","contract_version":' + _text(contract.contract_version, 1, 40)
+            + ',"normalizer_version":' + _text(contract.normalizer_version, 1, 80)
+            + ',"adapter_version":' + _text(contract.adapter_version, 1, 80)
+            + ',"instrument_catalog_revision":' + _integer(contract.instrument_catalog_revision, 1)
+            + ',"source_policy_revision":' + _integer(contract.source_policy_revision, 1)
+            + ',"authority_revision":' + _integer(contract.authority_revision, 1)
+            + ',"config_revision":' + _integer(contract.config_revision, 1)
+            + ',"correlation_id":' + _text(contract.correlation_id, 1, 200) + "}"
+        )
+        event_id = item.event_id
+        if event_id is not None and (type(event_id) is not str or not _EVENT_ID.fullmatch(event_id)):
+            raise _ModelPath
+        cursor, snapshot_id = item.cursor, item.snapshot_id
+        dynamic = {
+            "quality": _bar_quality(item.quality).encode("utf-8"),
+            "cursor": ("null" if cursor is None else _text(cursor)).encode("utf-8"),
+            "snapshot_id": ("null" if snapshot_id is None else _text(snapshot_id)).encode("utf-8"),
+            "watermark_offset": _integer(item.watermark_offset, 0).encode("utf-8"),
+        }
+        layout = (
+            head.encode("utf-8"), "quality", tail.encode("utf-8"), "cursor", "snapshot_id", "watermark_offset",
+            ('"event_id":' + ("null" if event_id is None else '"' + event_id + '"')).encode("utf-8"),
+        )
+    except (_ModelPath, KeyError, TypeError, ValueError, AttributeError):
+        # Includes an unencodable (lone surrogate) text: the model path raises its own error.
+        return None
+    return layout, dynamic
+
+
 def _market_item_json(item) -> bytes:
     """``_encode_json(_market_item(item).model_dump(mode="json", by_alias=True))``.
 
@@ -536,6 +711,17 @@ def _market_item_json(item) -> bytes:
 
     slot = item.render_slot
     layout = slot.value if slot is not None else None
+    if (layout is None or layout is _RENDERED_ONCE) and item.feed is FeedType.BAR:
+        # G5 cold: a BAR row proven valid field by field is encoded directly,
+        # byte-identical to the model path below (tests cover every BAR shape).
+        parts = _bar_view_parts(item)
+        if parts is not None:
+            fast, dynamic = parts
+            if slot is not None:
+                slot.value = fast if layout is _RENDERED_ONCE else _RENDERED_ONCE
+            return b"{" + b",".join(
+                part if isinstance(part, bytes) else _VIEW_DYNAMIC_PREFIX[part] + dynamic[part] for part in fast
+            ) + b"}"
     if layout is None:
         # A row's first render keeps no layout: a row read once pays no
         # layout encoding. Pydantic's own JSON serializer writes exactly the

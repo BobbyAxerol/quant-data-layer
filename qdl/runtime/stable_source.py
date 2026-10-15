@@ -16,7 +16,7 @@ from qdl.data_quality.binding_decision import (
     evaluate_binding_quality,
 )
 from qdl.domain.calendar import trading_calendar_for_id
-from qdl.domain.decimal import CanonicalDecimal
+from qdl.domain.decimal import PLAIN_DECIMAL_TEXT, CanonicalDecimal
 from qdl.domain.quantity import quantity_unit_name
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.query import (
@@ -67,16 +67,25 @@ from qdl.transport.sqlite_spool import (
 
 
 def _decimal_text(value) -> str:
-    if value.source_text:
-        parsed = CanonicalDecimal.from_text(value.source_text)
+    text = value.source_text
+    if text:
+        plain = PLAIN_DECIMAL_TEXT.fullmatch(text)
+        if plain is not None:
+            # ``CanonicalDecimal.from_text``'s own plain-text reading, without
+            # building the dataclass per decimal (P18.4 G5 cold, 8 per BAR row).
+            fraction = plain.group(2) or ""
+            parsed_coefficient, parsed_scale = str(int(plain.group(1) + fraction)), len(fraction)
+        else:
+            parsed = CanonicalDecimal.from_text(text)
+            parsed_coefficient, parsed_scale = str(parsed.coefficient), parsed.scale
         coefficient = (
             value.mantissa_text
             if value.WhichOneof("coefficient") == "mantissa_text"
             else value.mantissa
         )
-        if str(parsed.coefficient) != str(coefficient) or parsed.scale != value.scale:
+        if parsed_coefficient != str(coefficient) or parsed_scale != value.scale:
             raise ValueError("canonical decimal text differs from coefficient/scale")
-        return value.source_text
+        return text
     coefficient = (
         value.mantissa_text
         if value.WhichOneof("coefficient") == "mantissa_text"

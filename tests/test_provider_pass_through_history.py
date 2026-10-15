@@ -244,6 +244,41 @@ class PassThroughHistoryResultTests(ProviderPassThroughTests):
         self.assertIn("volume_unit", item.payload)
         self.assertEqual(item.interval, "1m")
 
+    def test_decimal_text_plain_reading_equals_the_canonical_decimal_reading(self):
+        # P18.4 G5 cold: ``_decimal_text`` reads plain texts without building a
+        # ``CanonicalDecimal``; accept/refuse and the returned text are unchanged.
+        from qdl.common.v1 import common_pb2
+        from qdl.domain.decimal import CanonicalDecimal
+        from qdl.runtime import stable_source
+
+        def reference(value):
+            parsed = CanonicalDecimal.from_text(value.source_text)
+            coefficient = (value.mantissa_text if value.WhichOneof("coefficient") == "mantissa_text"
+                           else value.mantissa)
+            if str(parsed.coefficient) != str(coefficient) or parsed.scale != value.scale:
+                raise ValueError("canonical decimal text differs from coefficient/scale")
+            return value.source_text
+
+        big = "9" * 30
+        cases = []
+        for text, mantissa, scale in (
+            ("100.5", 1005, 1), ("-0.000", 0, 3), ("000.10", 10, 2), ("7", 7, 0), (" 1.5", 15, 1),
+            ("1.5 ", 15, 1), ("1E+3", 1000, 0), ("1e-5", 1, 5), ("+2", 2, 0), ("100.5", 1005, 2),
+            ("100.5", 1004, 1), ("-12.30", -1230, 2), ("x", 1, 0), ("NaN", 0, 0), ("1_0", 10, 0),
+        ):
+            cases.append(common_pb2.DecimalValue(mantissa=mantissa, scale=scale, source_text=text))
+        cases.append(common_pb2.DecimalValue(mantissa_text=big, scale=2, source_text=big[:-2] + "." + big[-2:]))
+        cases.append(common_pb2.DecimalValue(mantissa_text=big, scale=1, source_text=big[:-2] + "." + big[-2:]))
+        for value in cases:
+            with self.subTest(text=value.source_text, scale=value.scale):
+                try:
+                    expected = reference(value)
+                except ValueError:
+                    with self.assertRaises(ValueError):
+                        stable_source._decimal_text(value)
+                else:
+                    self.assertEqual(stable_source._decimal_text(value), expected)
+
     def test_a_window_older_than_the_declared_freshness_is_reported_stale(self):
         result = self._result(max_freshness_ms=1)
         self.assertEqual(result.items[0].quality.state, "STALE")

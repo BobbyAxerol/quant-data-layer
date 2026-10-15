@@ -73349,3 +73349,26 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
 - Affected proof: TS N1 `r2d2-broker9k` (TEST projector 381d6bf9 = 58fb7cd) PASS - caught up 1.31 s / durable 1.70 s
   after a 60 s broker outage, exact 5.4M, projector one life, aborts 0, errors {}; `poll_errors` 0, so the transient
   path itself was not exercised at runtime (unit-test proof only). The final projector binary (CF3/CF4) ships in rc19.
+
+
+### P18.4 INCIDENT 2026-10-15 07:14-07:28Z: rc19 core rollout -> self-sustaining core-group rebalance storm, rolled back (Claude)
+- Rollout (approved: core session timeout 10 s after a clean R2): image rc19 `d1659102` (DL ff5683c; 12 binaries, rc18
+  recipe), config `releases/v2.2.3-rc18-core-batch1024` unchanged, tool rollout_rc17_v2 (a8b6e1a9), receipts
+  `p184-d3-capacity-20261009/rollout-rc19/`. rust_core 06:59Z accepted (0 retries), rust_core_2 07:06Z accepted
+  (survivor rust_core rc19 had 1 retry: "Failed to commit offsets ... Specified group generation id"), rust_core_3
+  07:13:48Z FAILED budget_violated -> tool rollback to RUST18 verified (07:16:30Z).
+- Symptom: every rebalance aborts each member's in-flight transaction (`Rebalanced {epoch 0 -> 2}`, retryable); the
+  supervisor starts a new generation with a new consumer, whose leave/join is the next rebalance. The group alternated
+  between {core-001} and {core-002, core-003} (never 3 members; kafka-consumer-groups --describe --members sampled
+  07:25-07:26Z), one retry per core about every 55 s (attempt counters 17-18), data flowing with periodic stalls.
+  It persisted after rust_core_3 returned to RUST18, so it was self-sustaining once started.
+- Action: 07:27:53Z rust_core_2 and rust_core recreated from the tool's saved rollback composes (RUST18 7fba2577, same
+  config). Verified 07:31-07:34Z: 3 members x 2 partitions, 0 retries on all cores since 07:28:30Z, RestartCount 0.
+  Owner informed; read-only monitoring approved after a classifier block.
+- Inferred cause (not proven): heartbeat.interval 1 s (was the 3 s default) makes members observe a rebalance while a
+  batch-1024 transaction is in flight far more often; combined with abort-and-rebuild-consumer on any epoch change this
+  feeds back. The F1 TEST proof used the isolated single-core G12 harness, so multi-member group dynamics were never
+  exercised - an evidence gap (E7: test where the product runs).
+- Status: F1 (core-kill recovery) NOT deployed; production = RUST18 on all 3 cores. rc19 must not be rolled again
+  until a 3-core isolated reproduction shows the storm and a fix shows its absence (candidate: on `Rebalanced`, abort
+  and rewind inside the same consumer instead of rebuilding the generation; and/or keep the default heartbeat).

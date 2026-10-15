@@ -769,11 +769,27 @@ class V2QueryService:
             authoritative=history.items[-1].source.authoritative,
             item=history.items[-1],
         )
+        # P18.4 G5 cold: one entitlement decision per source at one instant
+        # for the whole view (rows used to read the clock and scan the grants
+        # one by one; a grant boundary inside one response mixed verdicts).
+        at_ns = self._clock_ns()
+        decisions: dict[str, object] = {}
+
         def eligible_items():
             for item in history.items:
                 cold_yield()
+                source_id = item.source.source_id
+                decision = decisions.get(source_id)
+                if decision is None:
+                    decision = decisions[source_id] = self.entitlements.authorize(
+                        source_id=source_id,
+                        purpose=AccessPurpose.INTERNAL_EXECUTION,
+                        product=DataProduct.CANONICAL_HISTORY,
+                        at_ns=at_ns,
+                    )
                 yield self._with_execution_eligibility(
-                    requirement, item, DataProduct.CANONICAL_HISTORY
+                    requirement, item, DataProduct.CANONICAL_HISTORY,
+                    execution_entitlement=decision,
                 )
 
         return WarmupResult(request_id, replace(history, items=tuple(eligible_items())))
@@ -2165,13 +2181,18 @@ class V2QueryService:
         requirement: DataRequirement,
         item: MarketDataItem,
         product: DataProduct,
+        *,
+        execution_entitlement=None,
     ) -> MarketDataItem:
-        execution_entitlement = self.entitlements.authorize(
-            source_id=item.source.source_id,
-            purpose=AccessPurpose.INTERNAL_EXECUTION,
-            product=product,
-            at_ns=self._clock_ns(),
-        )
+        """``execution_entitlement``: the caller's decision for this item's
+        source, purpose INTERNAL_EXECUTION and ``product``; read now if absent."""
+        if execution_entitlement is None:
+            execution_entitlement = self.entitlements.authorize(
+                source_id=item.source.source_id,
+                purpose=AccessPurpose.INTERNAL_EXECUTION,
+                product=product,
+                at_ns=self._clock_ns(),
+            )
         quality = item.quality
         # A source-authorized native BBO can be unchanged for longer than the
         # consumer's raw-event window.  Its immutable source timestamp remains
@@ -2217,6 +2238,9 @@ class V2QueryService:
             )
             and freshness_eligible
         )
+        if eligible == quality.execution_eligible:
+            # Frozen values: an unchanged verdict needs no copy (G5 cold).
+            return item
         return replace(
             item,
             quality=replace(quality, execution_eligible=eligible),
