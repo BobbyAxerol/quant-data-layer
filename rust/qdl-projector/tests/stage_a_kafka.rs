@@ -228,6 +228,39 @@ async fn committed_batches_publish_state_and_offsets_exactly_once() {
 
 #[tokio::test]
 #[ignore = "requires QDL_KN_TEST_KAFKA (isolated broker); run by the kn-native-integration job"]
+async fn an_unreachable_bootstrap_broker_is_a_transient_poll_error_not_a_stop() {
+    // IDR-107: librdkafka reports the refused connection to the dead
+    // bootstrap entry as a non-fatal consumer error event; stage A must keep
+    // working through the live broker instead of exiting.
+    let bootstrap = bootstrap();
+    let id = stamp();
+    let (input, output) = (format!("kn3-in-{id}"), format!("kn3-out-{id}"));
+    create_topics(&bootstrap, &[&input, &output], 2).await;
+    produce_inputs(&bootstrap, &input, 20);
+    let pipe = KafkaPipe::open(settings(
+        &format!("{bootstrap},127.0.0.1:1"),
+        &input,
+        &format!("kn-projector-test-{id}"),
+        &format!("kn-projector-test-{id}-0"),
+    ))
+    .expect("pipe");
+    let mut stage = StageA::new(
+        pipe,
+        Copy {
+            topic: output.clone(),
+        },
+        StageALimits {
+            max_batch_records: 7,
+            poll_timeout: Duration::from_millis(200),
+        },
+    );
+    drain(&mut stage, 20, Duration::from_secs(30));
+    assert_eq!(stage.metrics.inputs, 20);
+    assert_eq!(read_committed(&bootstrap, &output, 2), expected(20));
+}
+
+#[tokio::test]
+#[ignore = "requires QDL_KN_TEST_KAFKA (isolated broker); run by the kn-native-integration job"]
 async fn a_crash_inside_a_transaction_leaves_nothing_and_a_restart_is_exact() {
     let bootstrap = bootstrap();
     let id = stamp();
@@ -365,7 +398,7 @@ async fn two_members_rebalancing_publish_every_input_exactly_once() {
     while first.metrics.inputs + second.metrics.inputs < 60 && Instant::now() < until {
         for stage in [&mut first, &mut second] {
             match stage.step().expect("step") {
-                Step::Idle | Step::Committed { .. } | Step::Aborted(_) => {}
+                Step::Idle | Step::Committed { .. } | Step::Aborted(_) | Step::PollError(_) => {}
             }
         }
     }

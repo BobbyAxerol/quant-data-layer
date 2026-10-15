@@ -7,10 +7,19 @@
 //! is processed again from the same input: outputs of an aborted transaction
 //! are invisible to `read_committed` readers and a retry cannot duplicate
 //! them. A record the transform cannot interpret is never skipped: the engine
-//! stops (fail closed) and reports the partition and offset.
+//! stops (fail closed) and reports the partition and offset. A transient
+//! poll error (broker unreachable, librdkafka keeps reconnecting) opens no
+//! transaction and is retried, but only within a bounded run of errors
+//! without progress (an empty poll is not progress): a consumer that stays
+//! broken still stops the engine.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
+
+/// Consecutive source errors a stage tolerates (one wait of about a second
+/// each, paced by the caller) before it stops fail-closed. Shared by stage A
+/// (transient poll errors) and stage B (source errors).
+pub const MAX_CONSECUTIVE_SOURCE_ERRORS: u32 = 30;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InputRecord {
@@ -36,6 +45,9 @@ pub enum PipeError {
     /// The client can no longer be used (fenced by a newer instance with the
     /// same transactional id, or a fatal broker error): the engine stops.
     Fatal(String),
+    /// A consumer-side error with no transaction open (broker transport
+    /// failure, all brokers down): nothing to abort, the poll is retried.
+    Transient(String),
 }
 
 /// The consumer + transactional producer pair (Kafka in production, an
@@ -83,13 +95,19 @@ pub struct StageAMetrics {
     pub inputs: u64,
     pub outputs: u64,
     pub aborts: u64,
+    pub poll_errors: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Step {
     Idle,
-    Committed { inputs: usize, outputs: usize },
+    Committed {
+        inputs: usize,
+        outputs: usize,
+    },
     Aborted(String),
+    /// A transient poll error; nothing was consumed or published.
+    PollError(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -107,6 +125,7 @@ pub struct StageA<P: Pipe, T: Transform> {
     pub transform: T,
     pub limits: StageALimits,
     pub metrics: StageAMetrics,
+    consecutive_poll_errors: u32,
 }
 
 impl<P: Pipe, T: Transform> StageA<P, T> {
@@ -116,22 +135,37 @@ impl<P: Pipe, T: Transform> StageA<P, T> {
             transform,
             limits,
             metrics: StageAMetrics::default(),
+            consecutive_poll_errors: 0,
         }
     }
 
     /// One poll -> transaction cycle.
     pub fn step(&mut self) -> Result<Step, StageAError> {
-        let batch = self
+        let batch = match self
             .pipe
             .poll(self.limits.max_batch_records, self.limits.poll_timeout)
-            .map_err(|error| match error {
-                PipeError::Fatal(reason) | PipeError::Abortable(reason) => {
-                    StageAError::Fatal(reason)
+        {
+            Ok(batch) => batch,
+            Err(PipeError::Transient(reason)) => {
+                self.metrics.poll_errors += 1;
+                self.consecutive_poll_errors += 1;
+                if self.consecutive_poll_errors > MAX_CONSECUTIVE_SOURCE_ERRORS {
+                    return Err(StageAError::Fatal(format!(
+                        "{MAX_CONSECUTIVE_SOURCE_ERRORS} consecutive poll errors: {reason}"
+                    )));
                 }
-            })?;
+                return Ok(Step::PollError(reason));
+            }
+            Err(PipeError::Fatal(reason) | PipeError::Abortable(reason)) => {
+                return Err(StageAError::Fatal(reason))
+            }
+        };
         if batch.is_empty() {
             return Ok(Step::Idle);
         }
+        // Only records prove the consumer works again: librdkafka interleaves
+        // empty polls with its error events while it cannot reach a broker.
+        self.consecutive_poll_errors = 0;
         // Transform the whole batch before opening the transaction: an
         // integrity stop then leaves nothing half-published.
         let mut outputs = Vec::new();
@@ -160,15 +194,20 @@ impl<P: Pipe, T: Transform> StageA<P, T> {
                 })
             }
             Err(PipeError::Fatal(reason)) => Err(StageAError::Fatal(reason)),
-            Err(PipeError::Abortable(reason)) => {
+            // A transaction is open here: anything not fatal aborts it.
+            Err(PipeError::Abortable(reason) | PipeError::Transient(reason)) => {
                 self.metrics.aborts += 1;
                 self.pipe.abort().map_err(|error| match error {
-                    PipeError::Fatal(reason) | PipeError::Abortable(reason) => {
+                    PipeError::Fatal(reason)
+                    | PipeError::Abortable(reason)
+                    | PipeError::Transient(reason) => {
                         StageAError::Fatal(format!("abort failed: {reason}"))
                     }
                 })?;
                 self.pipe.rewind().map_err(|error| match error {
-                    PipeError::Fatal(reason) | PipeError::Abortable(reason) => {
+                    PipeError::Fatal(reason)
+                    | PipeError::Abortable(reason)
+                    | PipeError::Transient(reason) => {
                         StageAError::Fatal(format!("rewind failed: {reason}"))
                     }
                 })?;
@@ -206,6 +245,7 @@ mod tests {
         visible: Vec<OutputRecord>,
         fail_send_at: Option<usize>,
         fail_commit: Option<PipeError>,
+        poll_errors: std::collections::VecDeque<PipeError>,
         sends: usize,
     }
 
@@ -226,6 +266,9 @@ mod tests {
 
     impl Pipe for MemoryPipe {
         fn poll(&mut self, max: usize, _timeout: Duration) -> Result<Vec<InputRecord>, PipeError> {
+            if let Some(error) = self.poll_errors.pop_front() {
+                return Err(error);
+            }
             let mut batch = Vec::new();
             for (partition, records) in &self.log {
                 let from = *self.position.get(partition).unwrap_or(&0);
@@ -404,6 +447,80 @@ mod tests {
             stage.step().unwrap_err(),
             StageAError::Fatal("fenced by a newer instance".into())
         );
+    }
+
+    #[test]
+    fn a_transient_poll_error_is_retried_without_a_transaction() {
+        let mut pipe = MemoryPipe::with(&[(0, 0, "a")]);
+        pipe.poll_errors
+            .push_back(PipeError::Transient("all brokers down".into()));
+        let mut stage = StageA::new(pipe, Doubler, limits(10));
+        assert_eq!(
+            stage.step().unwrap(),
+            Step::PollError("all brokers down".into())
+        );
+        assert!(stage.pipe.open.is_none() && stage.pipe.committed.is_empty());
+        assert_eq!(
+            stage.step().unwrap(),
+            Step::Committed {
+                inputs: 1,
+                outputs: 2
+            }
+        );
+        assert_eq!((stage.metrics.poll_errors, stage.metrics.aborts), (1, 0));
+    }
+
+    #[test]
+    fn transient_poll_errors_beyond_the_budget_stop_the_engine() {
+        let mut pipe = MemoryPipe::with(&[(0, 0, "a")]);
+        let budget = MAX_CONSECUTIVE_SOURCE_ERRORS as usize;
+        pipe.poll_errors
+            .extend((0..=budget).map(|_| PipeError::Transient("down".into())));
+        let mut stage = StageA::new(pipe, Doubler, limits(10));
+        for _ in 0..budget {
+            assert!(matches!(stage.step().unwrap(), Step::PollError(_)));
+        }
+        assert!(matches!(stage.step(), Err(StageAError::Fatal(_))));
+        // Empty polls between the errors are not progress.
+        let mut stage = StageA::new(MemoryPipe::with(&[]), Doubler, limits(10));
+        for _ in 0..budget {
+            let error = PipeError::Transient("down".into());
+            stage.pipe.poll_errors.push_back(error);
+            assert!(matches!(stage.step().unwrap(), Step::PollError(_)));
+            assert_eq!(stage.step().unwrap(), Step::Idle);
+        }
+        let error = PipeError::Transient("down".into());
+        stage.pipe.poll_errors.push_back(error);
+        assert!(matches!(stage.step(), Err(StageAError::Fatal(_))));
+        // A committed batch resets the run.
+        let mut pipe = MemoryPipe::with(&[(0, 0, "a")]);
+        pipe.poll_errors
+            .extend((0..budget).map(|_| PipeError::Transient("down".into())));
+        let mut stage = StageA::new(pipe, Doubler, limits(10));
+        for _ in 0..budget {
+            assert!(matches!(stage.step().unwrap(), Step::PollError(_)));
+        }
+        assert!(matches!(stage.step().unwrap(), Step::Committed { .. }));
+        stage
+            .pipe
+            .poll_errors
+            .extend((0..budget).map(|_| PipeError::Transient("down".into())));
+        for _ in 0..budget {
+            assert!(matches!(stage.step().unwrap(), Step::PollError(_)));
+        }
+    }
+
+    #[test]
+    fn a_fatal_poll_error_stops_the_engine_immediately() {
+        let mut pipe = MemoryPipe::with(&[(0, 0, "a")]);
+        pipe.poll_errors
+            .push_back(PipeError::Fatal("consumer fatal".into()));
+        let mut stage = StageA::new(pipe, Doubler, limits(10));
+        assert_eq!(
+            stage.step().unwrap_err(),
+            StageAError::Fatal("consumer fatal".into())
+        );
+        assert_eq!(stage.metrics.poll_errors, 0);
     }
 
     #[test]

@@ -1022,6 +1022,61 @@ class ExitStateTests(unittest.TestCase):
             self.assertIsNone(run.events_proc)
 
 
+class LogFollowerTests(unittest.TestCase):
+    """IDR-107: the projector exited 2 during the broker fault and --rm took its stderr with it."""
+
+    def test_follow_argv_is_bounded_and_product_role_scoped(self):
+        argv = g12.follow_argv(NS, "projector", 600)
+        self.assertEqual(argv, ["timeout", "600", "docker", "logs", "--follow", "--timestamps", NS + "-projector"])
+        self.assertIn("kafka-2", g12.FOLLOWED_ROLES)
+        for bad in ((NS, "monitor", 10), (NS, "projector", 0), (NS, "projector", g12.LIMITS["deadline_s"] + 901),
+                    ("qdl_v2_stable_candidate", "projector", 10)):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                g12.follow_argv(*bad)
+
+    def test_an_exited_role_keeps_its_output_per_life_without_a_restart_policy(self):
+        def exits(ns, role, seconds):
+            return [sys.executable, "-c", f"print('{role} life'); import sys; sys.exit(2)"]
+        with tempfile.TemporaryDirectory() as base:
+            run = g12.Run(base, "/home/bobby/e.json", NS)
+            run.evidence.mkdir(parents=True)
+            with patch.object(g12, "follow_argv", side_effect=exits):
+                self.assertEqual(run.follow_logs("projector"), 1)
+                self.assertEqual(run.follow_logs("projector"), 2)  # restarted by the fault: a new file
+                self.assertIsNone(run.follow_logs("monitor"))
+            self.assertEqual(run.stop_followers(), {"followers": 2, "forced": []})
+            logs = run.evidence / "logs"
+            for life in (1, 2):
+                self.assertEqual((logs / f"projector.life{life}.log").read_text(), "projector life\n")
+            self.assertEqual(run.followers, [])
+            self.assertNotIn("--restart", " ".join(g12._base(NS, "projector", network="none", memory="1g",
+                                                               cpus="1")))
+
+    def test_the_tail_is_bounded_and_a_stuck_follower_is_ended(self):
+        with tempfile.TemporaryDirectory() as base:
+            run = g12.Run(base, "/home/bobby/e.json", NS)
+            run.evidence.mkdir(parents=True)
+            with patch.object(g12, "FOLLOW_TAIL_BYTES", 8), \
+                    patch.object(g12, "follow_argv", return_value=[sys.executable, "-c", "print('x' * 100 + 'END')"]):
+                run.follow_logs("core")
+            with patch.object(g12, "follow_argv", return_value=[sys.executable, "-c", "import time; time.sleep(60)"]):
+                run.follow_logs("query")
+            started = time.monotonic()
+            self.assertEqual(run.stop_followers(wait_s=1.0), {"followers": 2, "forced": ["query"]})
+            self.assertLess(time.monotonic() - started, 10)
+            self.assertEqual((run.evidence / "logs/core.life1.log").read_text(), "xxxxEND\n")
+
+    def test_start_follows_the_started_role(self):
+        with tempfile.TemporaryDirectory() as base:
+            run = g12.Run(base, "/home/bobby/e.json", NS)
+            run.topology = lambda topic_id="": {"stream": ["docker", "run"]}
+            with patch.object(g12, "sh"), patch.object(g12.Run, "verify_image"), \
+                    patch.object(g12.Run, "follow_logs") as follow:
+                run.start("stream", "topic")
+            follow.assert_called_once_with("stream")
+            self.assertIn("stream", run.expected)
+
+
 class QueryStateTopicTests(unittest.TestCase):
     """G12 run 2026-10-11 (p184-g12-rc10-full): BAR never reached the clones because the isolated Query read the
     BAR source boundary from the production bars checkpoint (DR08 serve_query passes a literal two-key env)."""

@@ -73315,3 +73315,27 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   NOT_MEASURED; regressed/repeated seq and future publish). `python -B -m unittest tests.test_p184_g12_isolated_fault`
   in `qdl-v2-python:2.2.3-rc17-98b421f` (`--rm --network none`): 91 tests OK. Status: tested locally; effective
   for the next G12 run only (`pt` needs the redeployed sampler). Earlier G12 v2 PASS/FAIL receipts are unchanged.
+
+
+### P18.4 IDR-107 projector stage A poll classification + G12 role log retention - 2026-10-15 (Claude)
+- Trigger: N1 R2C `r2c-broker9k` (TS evidence `p184-n1-opt-20261013/r2/r2c-broker9k`) - projector rc14 ce629061 exit 2 at
+  broker kill + 7.5 s; status file 6 s after the kill showed aborts 0, errors {}; stderr not retained (`--rm`). The
+  identical diagnostic rerun passed (same NOT_COORDINATOR on EndTxn, recovered). Root cause from code + timing,
+  inferred not proven: `KafkaPipe::poll` mapped every consumer poll error to Abortable and stage A escalated it to
+  Fatal -> `fatal()` exit 2; librdkafka reports broker transport / refused connection / all-brokers-down as non-fatal
+  consumer error events. rc14 == HEAD on this path before this change.
+- Fix (`rust/qdl-projector`): `classify_poll` - `MessageConsumption(_)` is Transient except the explicit Fatal code;
+  `MessageConsumptionFatal`, PartitionEOF and unexpected kinds stay Fatal. Records already taken are delivered and
+  the error is reported on the next poll (a dropped record would be skipped by the next commit). Stage A returns
+  `Step::PollError`, counts `poll_errors` (status JSON, additive), pauses 100 ms (healthy partitions keep flowing;
+  librdkafka backs off the failed broker) and turns the 31st consecutive error without a committed batch into Fatal
+  (`MAX_CONSECUTIVE_SOURCE_ERRORS` = 30, now shared with stage B). In a transaction a transient error is handled as
+  Abortable (abort + rewind); abort/rewind failure, ProducerFenced/InvalidProducerEpoch/auth and the ambiguous-commit
+  deadline stay Fatal. No restart policy change.
+- Harness (`scripts/p184_g12_isolated_fault.py`): bounded `docker logs --follow` follower per product role and per
+  container life into `evidence/logs/<role>.life<n>.log` (1 MB tail), stopped in teardown; roles stay `--rm`, no
+  restart policy (an exit must stay visible).
+- Tests: `cargo test --offline --locked --release -p qdl-projector` 35 passed (+4 new: classify_poll, one transient
+  retried, budget -> Fatal incl. empty polls, fatal immediate), `cargo fmt --check` clean (qdl-rust-builder r134);
+  ignored Kafka case with an unreachable bootstrap added, not run. G12 unittest 95 OK in qdl-v2-python rc17 image.
+  Status: tested locally; affected acceptance = one isolated broker9k on a TEST projector image (TS N1 R2C follow-up).

@@ -30,7 +30,9 @@ through Query reference reads woken by Stream: the Query role (``--query``) is t
 DR05 Query of the code under test with the production KN execution MARK/INDEX
 reader wired in (``qdl.runtime.stable`` kn3). Exits of every owned container
 (``--rm`` removes it, so its own inspect is gone) are recorded from the daemon's
-die/oom/kill events (``evidence/container-events.jsonl``, ``exit-states.json``).
+die/oom/kill events (``evidence/container-events.jsonl``, ``exit-states.json``);
+the product roles' output is followed while they live (``evidence/logs/<role>.life<n>.log``,
+bounded tail), so an unexpected exit keeps its stderr without a restart policy.
 
 Reuse, not a new engine: material/frames/raw envelopes come from the DR05 tools
 (``p184_dr05_dl_fault``, ``p184_dr05_raw_publisher``), the Query read view is the
@@ -400,6 +402,21 @@ def topology(ns, work, topic_id="", *, uid=None, images=None, query_code="worktr
 SERVICE_ORDER = ("quota", "core", "projector", "stream", "query")
 TEARDOWN_ORDER = ("sampler", "publisher", "monitor", "query", "stream", "projector", "core", "quota",
                   "kafka-3", "kafka-2", "kafka-1", "helper", "net")
+
+
+# IDR-107: a product role that exits unexpectedly is --rm-removed with its stderr; a per-life follower keeps the
+# tail. No restart policy: an exit stays a STOP.
+FOLLOWED_ROLES = SERVICE_ORDER + tuple(f"kafka-{node}" for node in BROKERS)
+FOLLOW_TAIL_BYTES = 1_000_000
+
+
+def follow_argv(ns, role, seconds):
+    """Bounded read-only ``docker logs --follow`` of one owned role: it ends when the container exits (or is
+    removed), and ``timeout`` ends it even if the orchestrator is killed."""
+    namespace(ns)
+    if role not in FOLLOWED_ROLES or not 0 < seconds <= LIMITS["deadline_s"] + 900:
+        raise ValueError("bounded follower of a product role required")
+    return ["timeout", str(int(seconds)), "docker", "logs", "--follow", "--timestamps", f"{ns}-{role}"]
 
 
 def helper_argv(ns, work, args, *, role="helper", detach=False, evidence=None, network=None,
@@ -2403,6 +2420,8 @@ class Run:
         self.last_stats = 0.0
         self.stats_skipped = 0
         self.events_proc = None
+        self.followers = []  # (role, docker logs process, tail process)
+        self.lives = {}
         self.predicate = None  # frozen in prepare()
         self.adapter_mode = "SYNTHETIC"
         self.capture_raw_sha256 = None
@@ -2438,6 +2457,49 @@ class Run:
             if all(role in states for role in roles) or time.monotonic() >= limit:
                 return states
             time.sleep(.2)
+
+    def follow_logs(self, role):
+        """Follow one product role's output into ``evidence/logs/<role>.life<n>.log`` (last FOLLOW_TAIL_BYTES,
+        written when the container exits or teardown ends the follower)."""
+        if role not in FOLLOWED_ROLES:
+            return None
+        logs = self.evidence / "logs"
+        logs.mkdir(exist_ok=True)
+        life = self.lives[role] = self.lives.get(role, 0) + 1
+        seconds = max(1, int(LIMITS["deadline_s"] + 900 - (time.monotonic() - self.started)))
+        with (logs / f"{role}.life{life}.log").open("xb") as out:
+            source = subprocess.Popen(follow_argv(self.ns, role, seconds), stdout=subprocess.PIPE,
+                                      stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+            try:
+                sink = subprocess.Popen(["tail", "-c", str(FOLLOW_TAIL_BYTES)], stdin=source.stdout, stdout=out,
+                                        stderr=subprocess.DEVNULL)
+            except BaseException:
+                source.kill()
+                source.wait(timeout=5)
+                raise
+            finally:
+                source.stdout.close()  # the tail owns the pipe
+        self.followers.append((role, source, sink))
+        return life
+
+    def stop_followers(self, wait_s=10.0):
+        """After teardown removed the containers: let each follower finish, then end any that did not."""
+        followers, self.followers = self.followers, []
+        limit = time.monotonic() + wait_s
+        forced = []
+        for role, source, sink in followers:
+            for proc in (source, sink):
+                try:
+                    proc.wait(timeout=max(0.1, limit - time.monotonic()))
+                except subprocess.TimeoutExpired:
+                    forced.append(role)
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=5)
+        return {"followers": len(followers), "forced": sorted(set(forced))}
 
     def stop_events(self):
         proc, self.events_proc = self.events_proc, None
@@ -2566,6 +2628,7 @@ class Run:
         sh(argv, timeout=60)
         self.expected.add(role)
         self.verify_image(role)
+        self.follow_logs(role)
 
     # -- phases
     def prepare(self):
@@ -2737,6 +2800,7 @@ class Run:
         sh(self.topology(self.topic_id)[role], timeout=60)
         self.note("restart_issued", fault=name, role=role)
         self.verify_image(role)
+        self.follow_logs(role)
         row = {"k": "fault", "name": name, "kind": kind, "node": node, "role": role,
                "injected_ns": injected, "restart_ns": restart}
         self.fault_row(row)
@@ -2791,6 +2855,10 @@ class Run:
             except Exception as error:  # noqa: BLE001 - cleanup continues
                 errors.append(type(error).__name__)
         report = teardown(self.ns)
+        try:
+            report["log_followers"] = self.stop_followers()
+        except Exception as error:  # noqa: BLE001 - evidence is best effort, teardown is not
+            report.setdefault("errors", []).append("log_followers:" + type(error).__name__)
         report["writer_clone_removed"] = removed
         report["errors"] = errors + report.get("errors", [])
         report["volumes_before"] = getattr(self, "volumes0", None)

@@ -56,6 +56,26 @@ pub struct KafkaPipe {
     consumer: BaseConsumer<HandoffContext>,
     producer: ThreadedProducer<DefaultProducerContext>,
     transaction_deadline: Option<Instant>,
+    /// A transient poll error seen after records were already taken: those
+    /// records are delivered first and the error is reported by the next poll.
+    deferred_poll_error: Option<PipeError>,
+}
+
+/// librdkafka reports broker transport failures, refused connections and
+/// "all brokers down" as non-fatal error events on the consumer queue and
+/// keeps reconnecting; only an error it marks fatal (or the explicit `Fatal`
+/// code) means the consumer can no longer be used. No transaction is open
+/// at poll time, so a transient error needs no abort.
+fn classify_poll(error: KafkaError) -> PipeError {
+    use rdkafka::types::RDKafkaErrorCode;
+    match error {
+        KafkaError::MessageConsumption(RDKafkaErrorCode::Fatal) => {
+            PipeError::Fatal(error.to_string())
+        }
+        KafkaError::MessageConsumption(_) => PipeError::Transient(error.to_string()),
+        // MessageConsumptionFatal and anything poll is not documented to return.
+        _ => PipeError::Fatal(error.to_string()),
+    }
 }
 
 fn classify(error: KafkaError) -> PipeError {
@@ -152,6 +172,7 @@ impl KafkaPipe {
             consumer,
             producer,
             transaction_deadline: None,
+            deferred_poll_error: None,
         })
     }
 
@@ -162,12 +183,24 @@ impl KafkaPipe {
 
 impl Pipe for KafkaPipe {
     fn poll(&mut self, max: usize, timeout: Duration) -> Result<Vec<InputRecord>, PipeError> {
+        if let Some(error) = self.deferred_poll_error.take() {
+            return Err(error);
+        }
         let mut batch = Vec::new();
         let mut wait = timeout;
         while batch.len() < max {
             match self.consumer.poll(wait) {
                 None => break,
-                Some(Err(error)) => return Err(PipeError::Abortable(error.to_string())),
+                Some(Err(error)) => match classify_poll(error) {
+                    // Records already taken moved the consumer position: hand
+                    // them over (a dropped record would be skipped by the
+                    // next commit) and report the error on the next poll.
+                    error @ PipeError::Transient(_) if !batch.is_empty() => {
+                        self.deferred_poll_error = Some(error);
+                        break;
+                    }
+                    error => return Err(error),
+                },
                 Some(Ok(message)) => batch.push(InputRecord {
                     partition: message.partition(),
                     offset: message.offset(),
@@ -320,6 +353,28 @@ mod recovery_tests {
     }
 
     #[test]
+    fn only_fatal_consumer_errors_stop_the_poll() {
+        use rdkafka::types::RDKafkaErrorCode;
+        for code in [
+            RDKafkaErrorCode::BrokerTransportFailure,
+            RDKafkaErrorCode::AllBrokersDown,
+            RDKafkaErrorCode::RequestTimedOut,
+        ] {
+            assert!(matches!(
+                classify_poll(KafkaError::MessageConsumption(code)),
+                PipeError::Transient(_)
+            ));
+        }
+        for error in [
+            KafkaError::MessageConsumptionFatal(RDKafkaErrorCode::BrokerTransportFailure),
+            KafkaError::MessageConsumption(RDKafkaErrorCode::Fatal),
+            KafkaError::PartitionEOF(0),
+        ] {
+            assert!(matches!(classify_poll(error), PipeError::Fatal(_)));
+        }
+    }
+
+    #[test]
     fn real_queue_full_is_bounded_by_the_transaction_deadline() {
         // No broker, one-slot native queue: exercise the real send loop, not a mock.
         let settings = KafkaPipeSettings {
@@ -347,6 +402,7 @@ mod recovery_tests {
             consumer,
             producer,
             transaction_deadline: Some(Instant::now() + Duration::from_millis(30)),
+            deferred_poll_error: None,
         };
         let record = OutputRecord {
             topic: "test-only".into(),
