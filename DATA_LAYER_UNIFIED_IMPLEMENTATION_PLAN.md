@@ -73567,3 +73567,26 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
       Run 160503Z is the clean evidence. Lock check is now done before every production action.
     - 16:23:52Z final stage-100 #2 launched (apparatus f7ea809, profile r16, G11 armed, trace re-armed 3600 s, lock
       claude-n1-opt-20261013 until 17:42:27Z): ~/.local/state/qdl-v2/p184-final-campaign-20261015T162352Z.
+  - 2026-10-15 ~19:00Z Codex review p184-stage100-second-run-review-20261016.md (ts-codex-p184-review) dispositions:
+    - SR1 (P1, live reserve used by over-floor handoffs, subscription.rs:152,443,457): ACCEPTED. Isolation/fairness
+      defect in the deployed stream b095b18e; no total-cap bypass or data loss shown. Fix: exact outstanding-record
+      count through queue/handoff/batch/release; regressions as listed; isolated A/B rerun vs b095b18e and 7fba2577
+      with a new preregistration; then stream_kn roll packet. No reserve/buffer increase.
+    - SR2 (P1, G10 misses native typed integrity counters): ACCEPTED. Sampler gains native trade_integrity pinned to
+      activation/route; missing coverage -> NOT_MEASURED.
+    - SR3 (P1/P2, G10 roster/absent fields/unconfirmed_rows can PASS): ACCEPTED. Field validation, frozen-route
+      roster, unconfirmed_rows blocks unless reconciled, duplicate_applied described as an offset high-water check.
+    - SR4 (P2, isolation C1b by time not identity; handoff refusal not counted): ACCEPTED. Identity-matched C1b and
+      attributable handoff refusal/timeout counters; claim narrowed until rerun.
+    - SR5 (P2, G11 misses post-to-post rewinds, liveness not payload/quality, roster-incomplete cursors): ACCEPTED.
+      Oracle amended; retained evidence re-scored into a new dir (original scorecard immutable).
+    - Advice G2: ACCEPTED - catch_up reclassified to source event before activation start (startup backlog only);
+      replayed in-load rows stay in G2 with a report-only replayed_live count. Advice G8: ACCEPTED - crash/lost
+      reply after each part, intermediate visibility, whole-unit latency preserved; default 64 until measured.
+      G7/G14 notes: ACKNOWLEDGED (G14 is a recording gate, not headroom/HA).
+    - Kafka cleaner (G4): delete.retention.ms on md.latest.v2 is coupled to retention.tombstone_lifetime_ms and the
+      rebuild_horizon contract; NOT changed as a free topic knob. Design (contract change vs cleaner IO cap) under
+      evaluation; no Kafka CPU raise (T4 not met outside cleaner phases).
+    - Lock overlaps recorded: short correctness jobs of subagents overlapped other agents' lock windows (fix-dl-mark
+      17:28-18:13Z, fix-py 17:50-18:10Z and 18:23Z, EPG10-01 18:24-18:27Z; B15 overlay build under the kafka dump
+      lock 18:27Z); no timing claims made from the affected runs.
