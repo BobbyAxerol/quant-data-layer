@@ -73408,3 +73408,15 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   retries), several rows NOT_MEASURED (truncation; old monitor lacks member ids). Codex question 2 (BOOK/canonical
   after a fresh core) goes to the N1 exactness core-kill run. Tests: cargo qdl-kafka 46+49+7+25 pass, fmt clean;
   113 unittest OK. RB1 changes core bytes -> rc20 superseded; rc21 built from this commit for the next B run.
+- Codex review 610b4294 DL-R1 FIXED (core binary only; shared retry_class unchanged for ingestor/production-core):
+  `kafka_action` classifies native codes - Terminal (Topic/Group/Cluster/TransactionalId/DelegationToken authorization,
+  SASL/_AUTHENTICATION, InvalidConfig, InvalidTransactionTimeout, InvalidGroupId, InconsistentGroupProtocol,
+  ClientConfig) -> `qdl_realtime_core_terminal_kafka_error` + non-zero exit after 1 generation; RebuildInstance (fatal
+  transaction error, MessageConsumptionFatal, _FATAL/_FENCED) -> new generation with a new bridge, never rewound;
+  everything else keeps the shared class. generation_failure ranks terminal > non-transport > rebuild > retryable so a
+  higher drain cause is kept. 5 new tests incl. real librdkafka MockCluster EndTxn PRODUCER_FENCED / TRANSACTIONAL_ID_
+  AUTHORIZATION_FAILED / INVALID_RECORD; qdl-kafka lib 46, ingestor 49, production-core 7, realtime-core 30 pass; fmt clean.
+- B2 apparatus fixes (9ba2e7b): baseline opens on a stable group (formation window diagnostic), idle partitions in
+  kill clocks, publisher round-robins lanes over every raw partition; 127 unittest OK. Re-evaluated saved B2: kill
+  clocks PASS (ownership 9.2 s, raw/5 idle NO_RECORDS), old-image condition still FAIL (baseline retry 4.5 s after
+  start, before the group first held stable at +16 s) -> B2 stays FAIL; B3 on rc22 under addendum-3.

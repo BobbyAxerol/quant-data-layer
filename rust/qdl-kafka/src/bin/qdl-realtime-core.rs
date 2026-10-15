@@ -19,6 +19,7 @@ use qdl_realtime_core::{
 };
 use qdl_test_data_clock::DataClock;
 use qdl_venue_core::authority::{AuthorityMode, AuthorityRecord, PublicationContext, SinkTarget};
+use rdkafka::error::{KafkaError, RDKafkaErrorCode};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -142,14 +143,114 @@ fn should_retry_transport(class: RetryClass) -> bool {
     class != RetryClass::NonRetryable
 }
 
-fn retryable_runtime_error(error: &RuntimeError) -> bool {
-    error
-        .downcast_ref::<KafkaTransportError>()
-        .is_some_and(|value| should_retry_transport(value.retry_class()))
+/// DL-R1 (review 2026-10-15). What this core's supervisor does with one
+/// transport failure. The shared [`KafkaTransportError::retry_class`] maps
+/// every native Kafka error to retryable (it also serves the ingestor and the
+/// production core, which keep that policy); this core refines it here, at its
+/// own supervisor boundary, from the native error code and the transaction
+/// error's fatal flag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KafkaAction {
+    /// A permanent authorization, authentication or configuration refusal: no
+    /// generation can succeed until ACLs, credentials or config change, so the
+    /// process exits non-zero instead of rebuilding forever. Precedes the
+    /// fatal flag (a fatal `TRANSACTIONAL_ID_AUTHORIZATION_FAILED` is terminal).
+    Terminal(Option<RDKafkaErrorCode>),
+    /// The client instance is unusable (a fatal transaction error, a fenced
+    /// producer, a fatal consumer error). Never retried on the same instance:
+    /// the generation ends and the supervisor's next generation builds new
+    /// clients, after the usual bounded backoff.
+    RebuildInstance,
+    /// Everything else - retriable and abort-required transaction errors,
+    /// timeouts, `ILLEGAL_GENERATION` - keeps the shared classification.
+    Transport(RetryClass),
 }
 
+/// Codes no retry or new client can cure. `UNKNOWN_TOPIC_OR_PART`, `_SSL` and
+/// `_TRANSPORT` stay retryable: they also occur transiently (topic creation,
+/// connection resets).
+fn terminal_kafka_code(code: RDKafkaErrorCode) -> bool {
+    matches!(
+        code,
+        RDKafkaErrorCode::TopicAuthorizationFailed
+            | RDKafkaErrorCode::GroupAuthorizationFailed
+            | RDKafkaErrorCode::ClusterAuthorizationFailed
+            | RDKafkaErrorCode::TransactionalIdAuthorizationFailed
+            | RDKafkaErrorCode::DelegationTokenAuthorizationFailed
+            | RDKafkaErrorCode::SaslAuthenticationFailed
+            | RDKafkaErrorCode::Authentication
+            | RDKafkaErrorCode::InvalidConfig
+            | RDKafkaErrorCode::InvalidTransactionTimeout
+            | RDKafkaErrorCode::InvalidGroupId
+            | RDKafkaErrorCode::InconsistentGroupProtocol
+    )
+}
+
+/// Codes that mark the producer instance itself as fenced or fatally failed
+/// even when the error carries no fatal flag (librdkafka normalizes
+/// `PRODUCER_FENCED`/`INVALID_PRODUCER_EPOCH` to `_FENCED` in transactions).
+fn instance_fatal_kafka_code(code: RDKafkaErrorCode) -> bool {
+    matches!(
+        code,
+        RDKafkaErrorCode::Fatal
+            | RDKafkaErrorCode::Fenced
+            | RDKafkaErrorCode::ProducerFenced
+            | RDKafkaErrorCode::InvalidProducerEpoch
+    )
+}
+
+fn native_kafka_action(code: RDKafkaErrorCode, fatal: bool, fallback: RetryClass) -> KafkaAction {
+    if terminal_kafka_code(code) {
+        KafkaAction::Terminal(Some(code))
+    } else if fatal || instance_fatal_kafka_code(code) {
+        KafkaAction::RebuildInstance
+    } else {
+        KafkaAction::Transport(fallback)
+    }
+}
+
+fn kafka_action(error: &KafkaTransportError) -> KafkaAction {
+    let fallback = error.retry_class();
+    let (KafkaTransportError::Kafka(native) | KafkaTransportError::Delivery(native)) = error else {
+        return KafkaAction::Transport(fallback);
+    };
+    match native {
+        KafkaError::ClientConfig(..) => KafkaAction::Terminal(None),
+        KafkaError::Transaction(error) => {
+            native_kafka_action(error.code(), error.is_fatal(), fallback)
+        }
+        KafkaError::MessageConsumptionFatal(code) => native_kafka_action(*code, true, fallback),
+        other => match other.rdkafka_error_code() {
+            Some(code) => native_kafka_action(code, false, fallback),
+            None => KafkaAction::Transport(fallback),
+        },
+    }
+}
+
+/// Whether a failure may end in a new generation (never in place).
+fn should_rebuild(action: KafkaAction) -> bool {
+    match action {
+        KafkaAction::Terminal(_) => false,
+        KafkaAction::RebuildInstance => true,
+        KafkaAction::Transport(class) => should_retry_transport(class),
+    }
+}
+
+fn runtime_kafka_action(error: &RuntimeError) -> Option<KafkaAction> {
+    error
+        .downcast_ref::<KafkaTransportError>()
+        .map(kafka_action)
+}
+
+fn retryable_runtime_error(error: &RuntimeError) -> bool {
+    runtime_kafka_action(error).is_some_and(should_rebuild)
+}
+
+/// Same-instance receive retries exclude a fatal (`RebuildInstance`) or
+/// terminal native error.
 fn should_retry_receive_in_generation(error: &KafkaTransportError, failures: u32) -> bool {
-    should_retry_transport(error.retry_class()) && failures < MAX_IN_GENERATION_RECEIVE_RETRIES
+    matches!(kafka_action(error), KafkaAction::Transport(class) if should_retry_transport(class))
+        && failures < MAX_IN_GENERATION_RECEIVE_RETRIES
 }
 
 fn approved_subscription_scope(config: &RuntimeConfig) -> HashSet<String> {
@@ -520,17 +621,36 @@ fn rewind_in_generation(
 /// A non-retryable drain failure takes precedence over a retryable served
 /// error, so settling the transaction can never downgrade a fatal outcome
 /// into a generation rebuild.
+///
+/// DL-R1. Ordered by severity: terminal, then non-retryable, then a fatal
+/// client instance, then retryable. A drain failure that is strictly more
+/// severe replaces the served error, so a native fatal transaction error from
+/// the drain is what the supervisor classifies (and logs) even though it also
+/// ends in a rebuild; an equal or lesser drain failure keeps the served error.
 fn generation_failure(
     error: RuntimeError,
     drain_error: Option<KafkaTransportError>,
 ) -> RuntimeError {
     match drain_error {
         Some(drain)
-            if retryable_runtime_error(&error) && !should_retry_transport(drain.retry_class()) =>
+            if failure_severity(Some(kafka_action(&drain)))
+                > failure_severity(runtime_kafka_action(&error)) =>
         {
             drain.into()
         }
         _ => error,
+    }
+}
+
+/// Higher is more severe. A non-transport error (core rejection, clock)
+/// is non-retryable, as the supervisor treats it.
+fn failure_severity(action: Option<KafkaAction>) -> u8 {
+    match action {
+        Some(KafkaAction::Terminal(_)) => 3,
+        None => 2,
+        Some(KafkaAction::Transport(class)) if !should_retry_transport(class) => 2,
+        Some(KafkaAction::RebuildInstance) => 1,
+        Some(KafkaAction::Transport(_)) => 0,
     }
 }
 
@@ -586,7 +706,7 @@ where
                         "generation": generation,
                         "error": error.to_string(),
                         "rewind_error": rewind_error.to_string(),
-                        "rewind_retryable": should_retry_transport(rewind_error.retry_class()),
+                        "rewind_retryable": should_rebuild(kafka_action(&rewind_error)),
                         "consecutive": *consecutive_rewinds,
                         "rewind_again": again,
                     }),
@@ -1045,6 +1165,24 @@ where
                     json!({
                         "event": "qdl_realtime_core_retry_suppressed_by_stop",
                         "generation": generation,
+                        "error": error.to_string(),
+                    }),
+                );
+                return Err(error);
+            }
+            Err(error)
+                if matches!(runtime_kafka_action(&error), Some(KafkaAction::Terminal(_))) =>
+            {
+                let code = match runtime_kafka_action(&error) {
+                    Some(KafkaAction::Terminal(Some(code))) => format!("{code:?}"),
+                    _ => "ClientConfig".to_owned(),
+                };
+                log_line(
+                    true,
+                    json!({
+                        "event": "qdl_realtime_core_terminal_kafka_error",
+                        "generation": generation,
+                        "code": code,
                         "error": error.to_string(),
                     }),
                 );
@@ -1718,6 +1856,294 @@ mod tests {
             (SinkTarget::PrimaryCanonical, SinkTarget::PrimaryQuarantine),
         );
         assert!(output_targets(AuthorityMode::RustCanary).is_err());
+    }
+    // DL-R1 (review 2026-10-15). Native Kafka error shapes through the core's
+    // supervisor boundary.
+
+    /// Supervise generations that fail with `errors` in order; once they are
+    /// used up, the next generation is stopped by SIGTERM. Returns the outcome
+    /// and how many generations (each one a new producer/consumer) were built.
+    async fn supervise_failures(
+        errors: Vec<KafkaTransportError>,
+    ) -> (Result<(), RuntimeError>, u64) {
+        let (signal, stop) = StopLatch::manual();
+        let generations = Cell::new(0_u64);
+        let errors = std::cell::RefCell::new(errors.into_iter());
+        let result = supervise(&stop, &test_backoff(), |_| {
+            generations.set(generations.get() + 1);
+            let next = errors.borrow_mut().next();
+            let signal = &signal;
+            async move {
+                match next {
+                    Some(error) => Err(error.into()),
+                    None => {
+                        signal.send(sigterm()).unwrap();
+                        Ok(GenerationEnd::Stopped)
+                    }
+                }
+            }
+        })
+        .await;
+        (result, generations.get())
+    }
+
+    fn kafka(error: KafkaError) -> KafkaTransportError {
+        KafkaTransportError::Kafka(error)
+    }
+
+    /// A real librdkafka transaction error: commit one record against an
+    /// in-process mock cluster whose EndTxn answers `end_txn`.
+    fn native_commit_error(end_txn: rdkafka::types::RDKafkaRespErr) -> KafkaError {
+        use rdkafka::mocking::MockCluster;
+        use rdkafka::producer::{BaseProducer, BaseRecord, Producer};
+        use rdkafka::types::RDKafkaApiKey;
+        use rdkafka::ClientConfig;
+        let cluster = MockCluster::new(1).expect("mock cluster");
+        cluster.create_topic("dl-r1", 1, 1).expect("mock topic");
+        let producer: BaseProducer = ClientConfig::new()
+            .set("bootstrap.servers", cluster.bootstrap_servers())
+            .set("transactional.id", "dl-r1")
+            .create()
+            .expect("producer");
+        producer
+            .init_transactions(Duration::from_secs(30))
+            .expect("init");
+        producer.begin_transaction().expect("begin");
+        producer
+            .send(BaseRecord::<(), [u8]>::to("dl-r1").payload(&b"x"[..]))
+            .map_err(|(error, _)| error)
+            .expect("send");
+        cluster.request_errors(RDKafkaApiKey::EndTxn, &[end_txn]);
+        let error = producer
+            .commit_transaction(Duration::from_secs(30))
+            .expect_err("EndTxn was answered with an error");
+        drop(producer);
+        error
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn authorization_failures_are_terminal_after_one_generation() {
+        use RDKafkaErrorCode::*;
+        let terminal = || {
+            vec![
+                kafka(KafkaError::MetadataFetch(GroupAuthorizationFailed)),
+                kafka(KafkaError::MetadataFetch(TopicAuthorizationFailed)),
+                kafka(KafkaError::MetadataFetch(ClusterAuthorizationFailed)),
+                kafka(KafkaError::MessageConsumption(GroupAuthorizationFailed)),
+                kafka(KafkaError::MessageConsumption(TopicAuthorizationFailed)),
+                kafka(KafkaError::ConsumerCommit(GroupAuthorizationFailed)),
+                kafka(KafkaError::OffsetFetch(GroupAuthorizationFailed)),
+                kafka(KafkaError::MessageConsumptionFatal(
+                    GroupAuthorizationFailed,
+                )),
+                kafka(KafkaError::Global(Authentication)),
+                kafka(KafkaError::Global(SaslAuthenticationFailed)),
+                KafkaTransportError::Delivery(KafkaError::MessageProduction(
+                    TopicAuthorizationFailed,
+                )),
+            ]
+        };
+        for error in terminal() {
+            let expected = error.to_string();
+            assert!(matches!(
+                kafka_action(&error),
+                KafkaAction::Terminal(Some(_))
+            ));
+            assert!(!should_retry_receive_in_generation(&error, 0), "{expected}");
+            let (result, generations) = supervise_failures(vec![error]).await;
+            assert_eq!(result.unwrap_err().to_string(), expected);
+            assert_eq!(generations, 1, "no rebuild after {expected}");
+        }
+        // The reviewer's path: a rebalance abort rewinds, and the committed
+        // offset fetch is refused by group ACLs. The rewind error reaches the
+        // supervisor and ends the process instead of rebuilding forever.
+        let (result, _, calls) = generation_with_rewind_attempts(vec![Err(kafka(
+            KafkaError::MetadataFetch(GroupAuthorizationFailed),
+        ))])
+        .await;
+        assert_eq!(calls, 1);
+        let error = result.unwrap_err();
+        assert!(matches!(
+            runtime_kafka_action(&error),
+            Some(KafkaAction::Terminal(Some(GroupAuthorizationFailed)))
+        ));
+        let (_signal, stop) = StopLatch::manual();
+        let generations = Cell::new(0_u64);
+        let mut error = Some(error);
+        let supervised = supervise(&stop, &test_backoff(), |_| {
+            generations.set(generations.get() + 1);
+            let next = error.take();
+            async move { Err(next.expect("only one generation")) }
+        })
+        .await;
+        assert!(supervised.is_err());
+        assert_eq!(generations.get(), 1);
+        // A terminal drain failure outranks every served error.
+        let error = generation_failure(
+            "core rejected input".into(),
+            Some(kafka(KafkaError::ConsumerCommit(GroupAuthorizationFailed))),
+        );
+        assert!(matches!(
+            runtime_kafka_action(&error),
+            Some(KafkaAction::Terminal(_))
+        ));
+        assert_eq!(
+            kafka_action(&kafka(KafkaError::ClientConfig(
+                rdkafka::types::RDKafkaConfRes::RD_KAFKA_CONF_INVALID,
+                "bad".into(),
+                "key".into(),
+                "value".into(),
+            ))),
+            KafkaAction::Terminal(None)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn native_fatal_transaction_error_rebuilds_with_a_new_instance() {
+        use rdkafka::types::RDKafkaRespErr::RD_KAFKA_RESP_ERR_PRODUCER_FENCED;
+        let native = native_commit_error(RD_KAFKA_RESP_ERR_PRODUCER_FENCED);
+        let KafkaError::Transaction(flags) = &native else {
+            panic!("not a transaction error: {native:?}");
+        };
+        assert!(flags.is_fatal(), "{native}");
+        let fatal = || kafka(native.clone());
+        assert_eq!(kafka_action(&fatal()), KafkaAction::RebuildInstance);
+        // Never retried or rewound on the same (fatal) instance.
+        assert!(!should_retry_receive_in_generation(&fatal(), 0));
+        assert!(!fatal().is_rebalance_abort());
+        assert!(!rewind_in_generation(
+            &rebalance_origin(),
+            Some(&fatal()),
+            false,
+            0
+        ));
+        // Selecting the rebuild keeps the drain's fatal cause, not the
+        // retryable served rebalance.
+        let mut consecutive = 0_u32;
+        let error = recover_in_place(
+            rebalance_origin(),
+            Some(fatal()),
+            || false,
+            &mut consecutive,
+            1,
+            || -> std::future::Ready<Result<usize, KafkaTransportError>> {
+                panic!("fatal drain: no rewind")
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(consecutive, 0);
+        assert_eq!(
+            runtime_kafka_action(&error),
+            Some(KafkaAction::RebuildInstance)
+        );
+        assert_eq!(error.to_string(), fatal().to_string());
+        // The supervisor ends the generation and builds the next one (a new
+        // TransactionalKafkaBridge, i.e. a new producer) after backoff.
+        let (result, generations) = supervise_failures(vec![fatal(), fatal()]).await;
+        result.unwrap();
+        assert_eq!(generations, 3);
+        // A fatal code without the flag is instance-fatal too.
+        assert_eq!(
+            kafka_action(&KafkaTransportError::Delivery(
+                KafkaError::MessageProduction(RDKafkaErrorCode::Fatal)
+            )),
+            KafkaAction::RebuildInstance
+        );
+        assert_eq!(
+            kafka_action(&kafka(KafkaError::MessageConsumptionFatal(
+                RDKafkaErrorCode::FencedInstanceId
+            ))),
+            KafkaAction::RebuildInstance
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn native_fatal_authorization_transaction_error_is_terminal() {
+        use rdkafka::types::RDKafkaRespErr::RD_KAFKA_RESP_ERR_TRANSACTIONAL_ID_AUTHORIZATION_FAILED;
+        let native = native_commit_error(RD_KAFKA_RESP_ERR_TRANSACTIONAL_ID_AUTHORIZATION_FAILED);
+        let KafkaError::Transaction(flags) = &native else {
+            panic!("not a transaction error: {native:?}");
+        };
+        assert!(flags.is_fatal(), "{native}");
+        let error = kafka(native.clone());
+        assert_eq!(
+            kafka_action(&error),
+            KafkaAction::Terminal(Some(RDKafkaErrorCode::TransactionalIdAuthorizationFailed))
+        );
+        let (result, generations) = supervise_failures(vec![error]).await;
+        assert!(result.is_err());
+        assert_eq!(generations, 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn native_abort_required_and_retriable_errors_keep_the_retry_path() {
+        use rdkafka::types::RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_RECORD;
+        let native = native_commit_error(RD_KAFKA_RESP_ERR_INVALID_RECORD);
+        let KafkaError::Transaction(flags) = &native else {
+            panic!("not a transaction error: {native:?}");
+        };
+        assert!(flags.txn_requires_abort() && !flags.is_fatal(), "{native}");
+        let abortable = || kafka(native.clone());
+        assert_eq!(
+            kafka_action(&abortable()),
+            KafkaAction::Transport(RetryClass::Retryable)
+        );
+        let (result, generations) = supervise_failures(vec![abortable()]).await;
+        result.unwrap();
+        assert_eq!(generations, 2);
+        // librdkafka retries retriable EndTxn answers internally, so the
+        // retriable flag is checked on the decision function itself.
+        assert_eq!(
+            native_kafka_action(
+                RDKafkaErrorCode::CoordinatorLoadInProgress,
+                false,
+                RetryClass::Retryable
+            ),
+            KafkaAction::Transport(RetryClass::Retryable)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn timeout_illegal_generation_and_capacity_controls_are_unchanged() {
+        let controls = vec![
+            KafkaTransportError::SnapshotTimeout("receive".into()),
+            kafka(KafkaError::MessageConsumption(
+                RDKafkaErrorCode::IllegalGeneration,
+            )),
+            kafka(KafkaError::ConsumerCommit(
+                RDKafkaErrorCode::IllegalGeneration,
+            )),
+            kafka(KafkaError::MessageConsumption(
+                RDKafkaErrorCode::RequestTimedOut,
+            )),
+            kafka(KafkaError::Canceled),
+            kafka(KafkaError::MessageProduction(
+                RDKafkaErrorCode::UnknownTopicOrPartition,
+            )),
+        ];
+        for error in &controls {
+            assert_eq!(
+                kafka_action(error),
+                KafkaAction::Transport(RetryClass::Retryable)
+            );
+            assert!(should_retry_receive_in_generation(error, 0));
+        }
+        let queue_full = KafkaTransportError::Delivery(KafkaError::MessageProduction(
+            RDKafkaErrorCode::QueueFull,
+        ));
+        assert_eq!(
+            kafka_action(&queue_full),
+            KafkaAction::Transport(RetryClass::Capacity)
+        );
+        assert_eq!(
+            kafka_action(&KafkaTransportError::Fencing("authority".into())),
+            KafkaAction::Transport(RetryClass::NonRetryable)
+        );
+        let count = controls.len() as u64;
+        let (result, generations) = supervise_failures(controls).await;
+        result.unwrap();
+        assert_eq!(generations, count + 1);
     }
 }
 
