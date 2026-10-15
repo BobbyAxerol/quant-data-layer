@@ -48,7 +48,15 @@ admission rule; what changes is (a) coverage: the whole planned window instead o
 (a capped baseline window measured a prefix), and (b) p95 resolution: an upper bound at most one bucket (<= 0.8 %, or
 1 ms below 128 ms) above the exact sample p95, so it can never PASS a row that the exact value fails; a p95 bucket
 that straddles a limit is NOT_MEASURED (unresolved), never FAIL or PASS (scripts/p184_gate_campaign.py score_g4).
-The addendum rows are scored on max, which stays exact."""
+The addendum rows are scored on max, which stays exact.
+
+Own-cgroup CPU evidence (OBSERVER_VERSION v5, 2026-10-15, G4 common-mode tail RCA): v3/v4 bound the observer with
+--cpus but never recorded whether that bound throttled it, so an observer-scheduling share of the receipt clock could be
+neither shown nor excluded. v5 reads its OWN container cgroup v2 files (/sys/fs/cgroup/cpu.stat and cpu.max, private
+cgroup namespace: the observer container's cgroup only) at READY, at every aggregate checkpoint and at the final
+aggregate, and emits them as `observer_cgroup` lines. cgroup_summary() folds them into the receipt (and the campaign's
+G4 window receipts) as report-only: window usage in cores, nr_throttled/nr_periods, throttled_ms, and the same per
+checkpoint interval. No verdict reads it; sampling, aggregates, percentiles and the frozen baseline are unchanged."""
 import argparse
 import hashlib
 import heapq
@@ -91,7 +99,7 @@ def top_record(event):
     return result
 
 ALL_FEEDS='trade,quote,mark_index_price,book_delta,book_snapshot,bar'
-OBSERVER_VERSION='qdl.p184.g4-observer.v4'
+OBSERVER_VERSION='qdl.p184.g4-observer.v5'
 LAUNCH_MODE='docker_run_isolated'
 DEFAULT_CPUS=0.5
 DEFAULT_MEMORY='512m'
@@ -248,6 +256,8 @@ RAW_SLICES=24            # raw samples are stratified over 24 equal slices of th
 RAW_PER_SLICE=4          # per feed|venue|interval and slice
 OUTLIER_K=5              # per feed|venue|interval, over every accepted event
 CHECKPOINT_SECONDS=30
+CGROUP_DIR=Path('/sys/fs/cgroup')  # inside the observer container: its own cgroup v2 (private cgroup namespace)
+CGROUP_FIELDS=('usage_usec','user_usec','system_usec','nr_periods','nr_throttled','throttled_usec')
 COVERAGE_TOLERANCE_NS=1_500_000_000  # last poll (<= 0.2 s) + final scheduling slack
 METRICS=('visibility_ms','venue_to_dl_ms','ingest_to_producer_ts_ms','producer_ts_to_receipt_ms')
 PERCENTILE_BASIS='BUCKET_UPPER_BOUND'
@@ -416,6 +426,60 @@ class WindowAggregator:
                 'inverse_rows':{k:self._row_json(r,False) for k,r in sorted(self.inverse.items())}}
 
 
+def read_cgroup_cpu(directory=None):
+    """The observer's own cgroup v2 cpu.stat counters (CGROUP_FIELDS) and cpu.max bound; None when unreadable."""
+    directory=Path(directory or CGROUP_DIR)
+    try:
+        stat={}
+        for line in (directory/'cpu.stat').read_text().splitlines():
+            parts=line.split()
+            if len(parts)==2 and parts[0] in CGROUP_FIELDS and parts[1].isdigit():stat[parts[0]]=int(parts[1])
+        if not {'usage_usec','nr_periods','nr_throttled','throttled_usec'}<=set(stat):return None
+        try:
+            quota,period=(directory/'cpu.max').read_text().split()[:2]
+            stat['cpu_max_cores']=None if quota=='max' else round(int(quota)/int(period),4)
+        except (OSError,ValueError):stat['cpu_max_cores']=None
+        return stat
+    except OSError:
+        return None
+
+
+def cgroup_line(at_ns,label,directory=None):
+    """One `observer_cgroup` evidence line (report-only)."""
+    return {'kind':'observer_cgroup','at_ns':at_ns,'label':label,'cpu':read_cgroup_cpu(directory),
+            'source':'OBSERVER_OWN_CGROUP_V2_CPU_STAT'}
+
+
+def _cgroup_delta(a,b):
+    elapsed=(b['at_ns']-a['at_ns'])/1e9
+    x,y=a['cpu'],b['cpu']
+    periods=y['nr_periods']-x['nr_periods'];throttled=y['nr_throttled']-x['nr_throttled']
+    return {'start_ns':a['at_ns'],'end_ns':b['at_ns'],'seconds':round(elapsed,3),
+            'usage_cores':round((y['usage_usec']-x['usage_usec'])/1e6/elapsed,4) if elapsed>0 else None,
+            'nr_periods':periods,'nr_throttled':throttled,
+            'throttled_ratio':round(throttled/periods,4) if periods>0 else 0.0,
+            'throttled_ms':round((y['throttled_usec']-x['throttled_usec'])/1e3,3)}
+
+
+def cgroup_summary(items):
+    """Report-only: the observer's own CPU use and CFS throttling over the window and per checkpoint interval.
+
+    Pure over the `observer_cgroup` lines; never read by a verdict. Pre-v5 windows (no such line) and unreadable
+    counters say so instead of guessing."""
+    lines=[i for i in items if i.get('kind')=='observer_cgroup']
+    if not lines:return {'available':False,'reason':'NO_OBSERVER_CGROUP_LINES (pre-v5 observer)','report_only':True}
+    good=sorted((i for i in lines if i.get('cpu')),key=lambda i:i['at_ns'])
+    if len(good)<2:return {'available':False,'reason':'FEWER_THAN_TWO_READABLE_SAMPLES','samples':len(lines),
+                           'unreadable':len(lines)-len(good),'report_only':True}
+    intervals=[_cgroup_delta(a,b) for a,b in zip(good,good[1:])]
+    window=_cgroup_delta(good[0],good[-1])
+    return {'available':True,'basis':'OBSERVER_OWN_CGROUP_V2_CPU_STAT','report_only':True,
+            'cpu_max_cores':good[-1]['cpu'].get('cpu_max_cores'),'samples':len(good),'unreadable':len(lines)-len(good),
+            'window':window,'intervals':intervals,
+            'max_interval_throttled_ratio':max(i['throttled_ratio'] for i in intervals),
+            'max_interval_usage_cores':max((i['usage_cores'] or 0) for i in intervals)}
+
+
 def last_aggregate(items):
     """The newest final `aggregate` line, else the newest partial one (a killed worker), else None (v1-v3 files)."""
     final=partial=None
@@ -488,6 +552,7 @@ def worker(args):
         ready_ns,ready_mono=time.time_ns(),time.monotonic()
         window.begin(ready_ns,ready_ns+int(max(0,end-ready_mono)*1e9));last_poll_ns=ready_ns;next_checkpoint=ready_mono+CHECKPOINT_SECONDS
         emit({'kind':'READY','at_ns':ready_ns,'setup_seconds':ready_mono-begin,'planned_end_ns':window.planned_end_ns})
+        emit(cgroup_line(time.time_ns(),'ready'))
         while time.monotonic()<end:
             if clients and time.monotonic()>=next_lag:
                 next_lag+=10
@@ -517,6 +582,7 @@ def worker(args):
             if reader and time.monotonic()>=next_checkpoint:
                 next_checkpoint+=CHECKPOINT_SECONDS
                 emit(window.snapshot(time.time_ns(),last_poll_ns,final=False))
+                emit(cgroup_line(time.time_ns(),'checkpoint'))
             if reader:
                 message=reader.poll(min(.2,max(0,end-time.monotonic())))
                 wall,mono=time.time_ns(),time.monotonic_ns();last_poll_ns=wall
@@ -542,10 +608,13 @@ def worker(args):
                 if raw is not None:emit(raw)
             else:time.sleep(min(.1,max(0,end-time.monotonic())))
         emit(window.snapshot(time.time_ns(),last_poll_ns,final=True));finished=True
+        emit(cgroup_line(time.time_ns(),'final'))
         emit({'kind':'DONE','at_ns':time.time_ns(),'records':window.raw_emitted,'record_cap_reached':False,'raw_sample_cap_reached':window.raw_cap_reached,'events_accepted':window.accepted,'events_admitted':window.admitted,'max_records':args.max_records,'elapsed_seconds':time.monotonic()-begin,'live_semantics':'observed durable visibility, exact broker commit clock unavailable'})
     finally:
         if reader is not None and not finished and window.start_ns is not None:
-            try:emit(window.snapshot(time.time_ns(),last_poll_ns,final=False))
+            try:
+                emit(window.snapshot(time.time_ns(),last_poll_ns,final=False))
+                emit(cgroup_line(time.time_ns(),'partial'))
             except Exception:pass
         if reader is not None:reader.close()
 
@@ -653,7 +722,8 @@ def launch(args):
         signal.signal(signal.SIGTERM,previous)
     items=[json.loads(line) for line in (args.output/'observations.jsonl').read_text().splitlines() if line.strip()]
     (args.output/'receipt.json').write_text(json.dumps({'exit':code,'observer_version':OBSERVER_VERSION,'output_bytes':written,'script_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'observer_only':True,'shared_writes':0,'payloads_retained':False,'public_top_prices_retained':args.include_top,
-        'launch':provenance,'container_absent_after_exit':removed,'coverage':window_coverage(items),'produce_split':produce_split(items),'report_only':['coverage','produce_split']},indent=2)+'\n')
+        'launch':provenance,'container_absent_after_exit':removed,'coverage':window_coverage(items),'produce_split':produce_split(items),
+        'observer_cgroup':cgroup_summary(items),'report_only':['coverage','produce_split','observer_cgroup']},indent=2)+'\n')
     if code:raise SystemExit(code)
 
 def main():

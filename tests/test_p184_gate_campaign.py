@@ -623,7 +623,7 @@ class G4ScheduleV2Tests(unittest.TestCase):
     def test_apparatus_and_cap_receipt(self):
         apparatus = campaign.g4_apparatus(12.0)
         self.assertEqual(apparatus["schedule_version"], campaign.G4_SCHEDULE_VERSION)
-        self.assertTrue(apparatus["observer_version"].endswith(".v4"))  # v4: full-window aggregates (S100-4)
+        self.assertTrue(apparatus["observer_version"].endswith(".v5"))  # v5: own-cgroup evidence (report-only)
         self.assertEqual(apparatus["observer_launch_mode"], "docker_run_isolated")
         self.assertEqual(len(apparatus["observer_sha256"]), 64)
         self.assertEqual(apparatus["launch_hold_seconds"], 12.0)
@@ -642,6 +642,7 @@ class G4ScheduleV2Tests(unittest.TestCase):
         self.assertIn("coverage", v3)
         self.assertIn("produce_split", v3)
         old = campaign.g4_window_receipt([{"kind": "scope"}, {"kind": "canonical_observation"}, {"kind": "DONE"}])
+        self.assertFalse(old["observer_cgroup"]["available"])  # pre-v5 window: said, not guessed
         self.assertEqual((old["record_cap_reached"], old["observer_version"]), (False, "v1 (unversioned)"))
 
     def test_scorecard_shows_the_apparatus_and_capped_windows(self):
@@ -1204,3 +1205,35 @@ class G11NativeCursorTests(unittest.TestCase):
         self.assertEqual(json.loads(out.getvalue()), {"c|u1|BOOK_DELTA||p": 3, "c|u2|TRADE||p": 7,
                                                       "c|u3|QUOTE||p": 9})
         self.assertNotIn("TEST-not-printed", out.getvalue())
+
+
+class G4ObserverCgroupReportOnlyTests(unittest.TestCase):
+    """Observer v5 own-cgroup CPU evidence reaches the G4 scorecard detail and never its verdict."""
+
+    @staticmethod
+    def _cg(at_s, usage_s, periods, throttled):
+        return {"kind": "observer_cgroup", "at_ns": int(at_s * 1e9), "label": "checkpoint",
+                "cpu": {"usage_usec": int(usage_s * 1e6), "nr_periods": periods, "nr_throttled": throttled,
+                        "throttled_usec": throttled * 5000, "cpu_max_cores": 0.5}}
+
+    def test_window_receipt_and_scorecard_rollup(self):
+        items = [{"kind": "scope", "observer_version": "qdl.p184.g4-observer.v5"},
+                 self._cg(0, 0.0, 0, 0), self._cg(120, 54.0, 1200, 96), {"kind": "DONE"}]
+        receipt = campaign.g4_window_receipt(items)
+        self.assertEqual((receipt["observer_cgroup"]["window"]["usage_cores"],
+                          receipt["observer_cgroup"]["window"]["throttled_ratio"]), (0.45, 0.08))
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "g4-1").mkdir()
+            (d / "g4-1" / "observations.jsonl").write_text("\n".join(json.dumps(x) for x in items) + "\n")
+            body = {"g4_windows": [{"index": 1, "offset": 120.0, "seconds": 120.0, "boundary": None},
+                                   {"index": 2, "offset": 345.0, "seconds": 120.0, "boundary": None}],
+                    "g4_apparatus": campaign.g4_apparatus(0.0)}
+            (d / "campaign.json").write_text(json.dumps(body))
+            g4 = {g["id"]: g for g in campaign.build_scorecard(d)["gates"]}["G4"]
+        roll = g4["observer_cgroup_report_only"]
+        self.assertTrue(roll["report_only"])
+        self.assertEqual(roll["windows"]["1"]["throttled_ratio"], 0.08)
+        self.assertEqual(roll["windows"]["1"]["throttled_ms"], 480.0)
+        self.assertEqual(roll["windows"]["2"], {"available": False, "reason": "NO_RECEIPT"})
+        self.assertEqual(g4["verdict"], "NOT_MEASURED")  # no baseline table here: evidence never sets a verdict

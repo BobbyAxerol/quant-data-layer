@@ -201,7 +201,8 @@ def g4_window_receipt(observations) -> dict:
     """Records and whether the observer hit its record cap (the reader stops there; later closes are unseen).
     Report-only additions (observer v3, never read by a verdict): how the observer was launched (v1/v2 windows have
     no `launch` line: DOCKER_EXEC_IN_QUERY), per feed|venue|interval coverage with cap truncation, and the
-    produce-stage split."""
+    produce-stage split. Observer v5 adds its own cgroup CPU use/throttling (`observer_cgroup`, report-only)
+    so an observer-scheduling share of the receipt clock can be shown or excluded."""
     from scripts import p184_g4_observer as observer
     observations = list(observations)
     records, cap, done, version, launch = 0, None, None, None, None
@@ -224,12 +225,30 @@ def g4_window_receipt(observations) -> dict:
     receipt = {"records": records, "record_cap_reached": bool(cap or (done or {}).get("record_cap_reached")),
                "cap_reached_after_seconds": (cap or {}).get("after_seconds"),
                "observer_version": version, "launch": launch_info,
-               "coverage": coverage, "produce_split": observer.produce_split(observations)}
+               "coverage": coverage, "produce_split": observer.produce_split(observations),
+               "observer_cgroup": observer.cgroup_summary(observations)}
     if coverage.get("coverage_basis") == "FULL_WINDOW_AGGREGATE":
         # v4: `records` counts the bounded raw samples only; the gated rows come from the full-window aggregate.
         receipt.update(records_basis="RAW_STRATIFIED_SAMPLES", events_admitted=coverage.get("events_admitted"),
                        baseline_comparability=observer.BASELINE_COMPARABILITY)
     return receipt
+
+
+def g4_observer_cgroup_rollup(receipts: list[dict]) -> dict:
+    """Report-only roll-up of the observer's own cgroup CPU evidence per G4 window (never read by a verdict)."""
+    rows = {}
+    for receipt in receipts:
+        cg = receipt.get("observer_cgroup") or {}
+        if not cg.get("available"):
+            rows[str(receipt.get("index"))] = {"available": False, "reason": cg.get("reason", "NO_RECEIPT")}
+            continue
+        window = cg.get("window") or {}
+        rows[str(receipt.get("index"))] = {
+            "available": True, "cpu_max_cores": cg.get("cpu_max_cores"), "usage_cores": window.get("usage_cores"),
+            "throttled_ratio": window.get("throttled_ratio"), "throttled_ms": window.get("throttled_ms"),
+            "max_interval_throttled_ratio": cg.get("max_interval_throttled_ratio"),
+            "max_interval_usage_cores": cg.get("max_interval_usage_cores")}
+    return {"report_only": True, "basis": "OBSERVER_OWN_CGROUP_V2_CPU_STAT", "windows": rows}
 
 
 def derive_profile(base: dict, extra=EXTRA_MONITORED) -> dict:
@@ -902,7 +921,8 @@ def build_scorecard(campaign_dir: Path) -> dict:
                             **(g4_window_receipt(read_jsonl(obs)) if obs.exists() else {"records": None})})
     # Report-only provenance (never changes a verdict): which schedule/observer produced the windows, record caps.
     g4_provenance = {"g4_apparatus": campaign.get("g4_apparatus") or {"schedule_version": "v1 (unversioned)"},
-                     "g4_window_receipts": g4_receipts}
+                     "g4_window_receipts": g4_receipts,
+                     "observer_cgroup_report_only": g4_observer_cgroup_rollup(g4_receipts)}
     v, rows, why = (score_g4(g4_windows, table, addendum) if table else
                     ("NOT_MEASURED", [], ["no frozen G4 baseline table"]))
     # Missing temporal coverage (a window whose observation ended before its planned end: a v1-v3 record cap or a

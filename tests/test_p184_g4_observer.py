@@ -69,7 +69,7 @@ class SamplingKeyTests(unittest.TestCase):
         self.assertTrue(sampler.admit("OKX", "ETH-USDT-SWAP", "trade", None, 6 * S))
         self.assertTrue(sampler.admit("OKX", "ETH-USDT-SWAP", "book_snapshot", None, 6 * S))
         self.assertTrue(sampler.admit("OKX", "ETH-USDT-SWAP", "book_snapshot", None, 6 * S))  # unsampled, as before
-        self.assertTrue(OBSERVER_VERSION.endswith(".v4"))  # v3 changed the launch, v4 the cap; not this sampling
+        self.assertTrue(OBSERVER_VERSION.endswith(".v5"))  # v3 launch, v4 cap, v5 own-cgroup evidence; not this sampling
 
 
 QUERY_INSPECT = {
@@ -377,3 +377,60 @@ class V4ScoringTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---- v5: the observer's own cgroup CPU evidence (report-only, G4 common-mode tail RCA 2026-10-15) ----
+def cg(at_s, usage_s, periods, throttled, throttled_ms):
+    return {"kind": "observer_cgroup", "at_ns": int(at_s * S), "label": "checkpoint",
+            "source": "OBSERVER_OWN_CGROUP_V2_CPU_STAT",
+            "cpu": {"usage_usec": int(usage_s * 1e6), "nr_periods": periods, "nr_throttled": throttled,
+                    "throttled_usec": int(throttled_ms * 1000), "cpu_max_cores": 0.5}}
+
+
+class ObserverCgroupTests(unittest.TestCase):
+    def test_reads_own_cpu_stat_and_bound_and_none_when_unreadable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "cpu.stat").write_text("usage_usec 39711\nuser_usec 23419\nsystem_usec 16292\nnice_usec 0\n"
+                                        "core_sched.force_idle_usec 0\nnr_periods 2\nnr_throttled 1\n"
+                                        "throttled_usec 4000\nnr_bursts 0\nburst_usec 0\n")
+            (d / "cpu.max").write_text("50000 100000\n")
+            got = observer.read_cgroup_cpu(d)
+            self.assertEqual(got, {"usage_usec": 39711, "user_usec": 23419, "system_usec": 16292, "nr_periods": 2,
+                                   "nr_throttled": 1, "throttled_usec": 4000, "cpu_max_cores": 0.5})
+            (d / "cpu.max").write_text("max 100000\n")
+            self.assertIsNone(observer.read_cgroup_cpu(d)["cpu_max_cores"])
+            line = observer.cgroup_line(7, "ready", d)
+            self.assertEqual((line["kind"], line["label"], line["cpu"]["nr_throttled"]), ("observer_cgroup", "ready", 1))
+            self.assertIsNone(observer.read_cgroup_cpu(d / "absent"))
+            (d / "cpu.stat").write_text("usage_usec 1\n")  # cgroup v1 or a partial file: not guessed
+            self.assertIsNone(observer.read_cgroup_cpu(d))
+
+    def test_summary_window_and_per_interval_throttling(self):
+        items = [{"kind": "READY", "at_ns": 0}, cg(100, 10.0, 1000, 0, 0), {"kind": "aggregate", "final": False},
+                 cg(130, 22.0, 1300, 60, 900.0), cg(160, 34.0, 1600, 60, 900.0),
+                 {"kind": "observer_cgroup", "at_ns": 170 * S, "label": "final", "cpu": None}]
+        out = observer.cgroup_summary(items)
+        self.assertTrue(out["available"] and out["report_only"])
+        self.assertEqual((out["samples"], out["unreadable"], out["cpu_max_cores"]), (3, 1, 0.5))
+        self.assertEqual(out["window"], {"start_ns": 100 * S, "end_ns": 160 * S, "seconds": 60.0, "usage_cores": 0.4,
+                                         "nr_periods": 600, "nr_throttled": 60, "throttled_ratio": 0.1,
+                                         "throttled_ms": 900.0})
+        self.assertEqual([i["throttled_ratio"] for i in out["intervals"]], [0.2, 0.0])
+        self.assertEqual((out["max_interval_throttled_ratio"], out["max_interval_usage_cores"]), (0.2, 0.4))
+
+    def test_pre_v5_and_single_sample_windows_say_so(self):
+        self.assertFalse(observer.cgroup_summary([{"kind": "READY"}])["available"])
+        one = observer.cgroup_summary([cg(1, 1.0, 10, 0, 0)])
+        self.assertEqual((one["available"], one["reason"]), (False, "FEWER_THAN_TWO_READABLE_SAMPLES"))
+
+    def test_launch_receipt_carries_the_cgroup_summary_report_only(self):
+        lines = [json.dumps({"kind": "scope", "observer_version": OBSERVER_VERSION, "seconds": 60}) + "\n",
+                 json.dumps(cg(0, 0.0, 0, 0, 0)) + "\n", json.dumps(cg(60, 30.0, 600, 120, 2400.0)) + "\n",
+                 json.dumps({"kind": "DONE", "records": 0}) + "\n"]
+        with tempfile.TemporaryDirectory() as tmp:
+            IsolatedLaunchTests._launch(self, Path(tmp) / "g4-3", lines)
+            receipt = json.loads((Path(tmp) / "g4-3" / "receipt.json").read_text())
+        self.assertIn("observer_cgroup", receipt["report_only"])
+        self.assertEqual((receipt["observer_cgroup"]["window"]["throttled_ratio"],
+                          receipt["observer_cgroup"]["window"]["usage_cores"]), (0.2, 0.5))
