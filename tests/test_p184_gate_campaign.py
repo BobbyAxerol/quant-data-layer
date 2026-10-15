@@ -992,3 +992,184 @@ class ManifestRevisionPreflightTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _block(n, p95, mx, verdict="INSIDE", **extra):
+    return {"n": n, "p50": 1.0, "p95": p95, "p99": p95, "max": mx, "verdict": verdict, **extra}
+
+
+class NativeWriterScoringTests(unittest.TestCase):
+    """The production native writer (TS N1 B12): TRADE/QUOTE scored from its summary, Python feeds unchanged."""
+
+    def transit(self, *, native_gaps=(), native_cap=1, python_cap=0, trade_max=40.0):
+        g7_ok = {"verdict": {"sdk_to_writer_ms": "INSIDE", "writer_to_redis_ms": "INSIDE"},
+                 "sdk_to_writer_ms": {"n": 5, "p95": 1.0}, "writer_to_redis_ms": {"n": 5, "p95": 1.0}}
+        summary_rows = {f"{feed}|{venue}": _block(1000, 30.0, trade_max if feed == "TRADE" else 40.0,
+                                                  "OUTSIDE" if trade_max >= 1500 and feed == "TRADE" else "INSIDE",
+                                                  basis="NATIVE_SUMMARY applied.source_event_to_ack")
+                        for feed in ("TRADE", "QUOTE") for venue in campaign.VENUES}
+        raw_rows = {f"{feed}|{venue}": _block(10, 20.0, 30.0) for feed in ("TRADE", "QUOTE", "BOOK_DELTA",
+                                                                          "BOOK_SNAPSHOT") for venue in campaign.VENUES}
+        return {"records": 100, "dropped_at_export_total": 0,
+                "stop_reasons": {"CAP": native_cap + python_cap, "EXPIRY": 2},
+                "files_by_kind": {"native": {"files": 2, "stop_reasons": {"CAP": native_cap},
+                                             "dropped_at_export_total": 0, "first_start_ns": 1000 * S,
+                                             "last_start_ns": 1100 * S},
+                                  "python": {"files": 4, "stop_reasons": {"CAP": python_cap, "EXPIRY": 2},
+                                             "dropped_at_export_total": 0}},
+                "transit": raw_rows, "duplicate_applied_event_id": {},
+                "g7": {feed: g7_ok for feed in campaign.G7_FEEDS},
+                "native_summary": {"coverage_gaps": list(native_gaps), "transit": summary_rows,
+                                   "g7": {"TRADE": g7_ok, "QUOTE": g7_ok},
+                                   "window_scope": {"pre_load_seconds": 300.0, "post_load_seconds": 60.0}}}
+
+    def card(self, transit, native_feeds=("TRADE", "QUOTE")):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "stage100").mkdir()
+            (d / "trace").mkdir()
+            trace = {"until_unix_ns": 10**19}
+            if native_feeds is not None:
+                trace["native_feeds"] = list(native_feeds)
+            (d / "campaign.json").write_text(json.dumps({"trace": trace, "g4_windows": []}))
+            (d / "stage100" / "receipt.json").write_text(json.dumps({
+                "stage": 100, "final": True, "load_window_unix_s": [1000.0, 2900.0], "fault_windows": {"BURST": [1, 2]}}))
+            (d / "stage100" / "gates.json").write_text(json.dumps({"status": "PASS", "gates": []}))
+            (d / "trace" / "transit-load.json").write_text(json.dumps(transit))
+            mark = {"venues": {v: {"new_event_transit_ms": {"n": 5, "p95": 1.0, "max": 2.0}, "g2_verdict": "INSIDE"}
+                               for v in campaign.VENUES}}
+            (d / "trace" / "mark-load.json").write_text(json.dumps(mark))
+            return {g["id"]: g for g in campaign.build_scorecard(d)["gates"]}
+
+    def test_native_raw_cap_is_a_sample_not_a_gap_and_rows_come_from_the_summary(self):
+        gates = self.card(self.transit())
+        self.assertEqual(gates["G1"]["verdict"], "PASS")
+        self.assertEqual(gates["G2"]["verdict"], "PASS")
+        self.assertEqual(gates["G7"]["verdict"], "PASS")
+        trade = [r for r in gates["G2"]["measured"] if r["feed_venue"] == "TRADE|OKX"][0]
+        self.assertEqual((trade["n"], trade["basis"]), (1000, "NATIVE_SUMMARY applied.source_event_to_ack"))
+        self.assertEqual(trade["raw_sample"]["n"], 10)
+        self.assertEqual(gates["G2"]["window_scope"]["pre_load_seconds"], 300.0)
+        # The same files without the native writer keep the old rule: a CAP stop is a coverage gap.
+        legacy = self.transit()
+        legacy.pop("native_summary")
+        gates = self.card(legacy, native_feeds=None)
+        self.assertEqual(gates["G2"]["verdict"], "NOT_MEASURED")
+        self.assertIn("file cap", gates["G2"]["reason"])
+
+    def test_python_cap_and_native_gaps_still_block(self):
+        gates = self.card(self.transit(python_cap=1))
+        self.assertEqual(gates["G1"]["verdict"], "NOT_MEASURED")
+        self.assertIn("python writer", gates["G1"]["reason"])
+        gates = self.card(self.transit(native_gaps=["native activation x/1 does not span the load window"]))
+        self.assertEqual(gates["G1"]["verdict"], "PASS")
+        self.assertEqual(gates["G2"]["verdict"], "NOT_MEASURED")
+        self.assertEqual(gates["G7"]["verdict"], "NOT_MEASURED")
+        missing = self.transit()
+        missing.pop("native_summary")
+        gates = self.card(missing)
+        self.assertEqual(gates["G2"]["verdict"], "NOT_MEASURED")
+        self.assertIn("no native writer summary", gates["G2"]["reason"])
+
+    def test_thresholds_are_unchanged_for_native_rows(self):
+        gates = self.card(self.transit(trade_max=1600.0))
+        self.assertEqual(gates["G2"]["verdict"], "FAIL")
+        self.assertIn("TRADE|OKX", gates["G2"]["reason"])
+
+    def test_g10_native_trade_sample_can_fail_never_pass(self):
+        gates = self.card(self.transit())
+        self.assertEqual(gates["G10"]["verdict"], "NOT_MEASURED")
+        self.assertIn("sample", gates["G10"]["reason"])
+        self.assertIn("native raw sample spans 100 s", gates["G10"]["measured"]["duplicates_applied_scope"])
+        g10 = {"trade_gap": 0, "trade_replay_expired": 0, "trade_overflow": 0, "log_polls": 10, "log_unreadable": 0}
+        self.assertEqual(campaign.score_g10(g10, {"TRADE|OKX": 1}, [], sample_scope="s")[0], "FAIL")
+        self.assertEqual(campaign.score_g10(g10, {}, [], sample_scope="s")[0], "NOT_MEASURED")
+        self.assertEqual(campaign.score_g10(g10, {}, [])[0], "PASS")
+
+    def test_trace_coverage_by_writer_kind(self):
+        t = self.transit()
+        self.assertTrue(campaign._trace_coverage(t, [0, 10 * S], 11 * S))
+        self.assertEqual(campaign._trace_coverage(t, [0, 10 * S], 11 * S, raw_kinds=("python",)), [])
+        self.assertEqual(campaign.native_feeds_of({}, t), ("QUOTE", "TRADE"))
+        self.assertEqual(campaign.native_feeds_of({"trace": {"native_feeds": []}}, t), ())
+
+    def test_preflight_native_checks(self):
+        now = 1_792_000_000 * S
+        env = {"MARKET_DATA_NATIVE_FEEDS": "TRADE,QUOTE", "TS_DELIVERY_TRACE_MAX_FILES": "1"}
+        started = "2026-10-15T13:00:00.5Z"
+        start_ns = campaign.docker_time_ns(started)
+        problems, warnings = campaign.native_trace_checks(env, start_ns + 3000 * S, start_ns + 60 * S, started,
+                                                          g11=True)
+        self.assertEqual(problems, [])
+        self.assertTrue(any("caps each Python worker" in w for w in warnings))
+        problems, _ = campaign.native_trace_checks({}, now, now, started, g11=True)
+        self.assertIn("not in native mode", problems[0])
+        problems, _ = campaign.native_trace_checks({**env, "TS_DELIVERY_TRACE_MAX_FILES": "96"}, start_ns + 3000 * S,
+                                                   start_ns, started, g11=True)
+        self.assertTrue(any("MAX_FILES == 1" in p for p in problems))
+        problems, warnings = campaign.native_trace_checks(
+            {**env, "TS_DELIVERY_TRACE_MAX_FILES": "96", "TS_DELIVERY_TRACE_NATIVE_MAX_FILES": "1"},
+            start_ns + 3000 * S, start_ns, started, g11=False)
+        self.assertEqual(problems, [])
+        self.assertTrue(any("native-only key" in w for w in warnings))
+        self.assertTrue(any("--g11" in w for w in warnings))
+        problems, _ = campaign.native_trace_checks(env, start_ns + 4000 * S, start_ns, started, g11=True)
+        self.assertEqual(len(problems), 2)  # > 3600 s from now and from the writer start
+        problems, _ = campaign.native_trace_checks({**env, "TS_DELIVERY_TRACE_NATIVE_MAX_FILES": "2"},
+                                                   start_ns + 3000 * S, start_ns, started, g11=True)
+        self.assertTrue(any("exactly 1 file" in p for p in problems))
+
+    def test_trace_fit_shortens_the_automatic_g11_wait(self):
+        now = 1_792_000_000 * S
+        wait, problems, detail = campaign.trace_fit(now + 3500 * S, now, launch_hold=100.0, load_timeout=2400,
+                                                    g11=True, g11_wait=None)
+        self.assertEqual(problems, [])
+        self.assertEqual(wait, 3500 - (5 + 100 + 2400 + 60 + 45))
+        self.assertLessEqual(detail["planned_seconds"], 3500)
+        wait, problems, _ = campaign.trace_fit(now + 3500 * S, now, launch_hold=100.0, load_timeout=2400,
+                                               g11=True, g11_wait=900)
+        self.assertTrue(problems)
+        wait, problems, _ = campaign.trace_fit(now + 2700 * S, now, launch_hold=100.0, load_timeout=2400,
+                                               g11=True, g11_wait=None)
+        self.assertTrue(any("G11 wait" in p for p in problems))
+        self.assertEqual(campaign.trace_fit(now - 10 * S, now, launch_hold=0.0, load_timeout=2400, g11=True,
+                                            g11_wait=None)[0], 0)
+        wait, problems, _ = campaign.trace_fit(now + 2400 * S, now, launch_hold=0.0, load_timeout=2400,
+                                               g11=False, g11_wait=None)
+        self.assertTrue(any("exceeds the trace window" in p for p in problems))
+        self.assertEqual(campaign.trace_fit(now + 3600 * S, now, launch_hold=0.0, load_timeout=2400, g11=False,
+                                            g11_wait=None)[1], [])
+
+    def test_trace_analysis_passes_the_native_summary_glob(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "stage100").mkdir()
+            (d / "stage100" / "receipt.json").write_text(json.dumps({"load_window_unix_s": [1.0, 2.0]}))
+            calls = []
+
+            def fake(cmd, **_):
+                calls.append(cmd)
+                return unittest.mock.Mock(stdout="{}", returncode=0, stderr="")
+            with unittest.mock.patch.object(campaign.subprocess, "run", fake):
+                campaign.run_trace_analysis({"trace": {"dir_on_host": "/x", "until_unix_ns": 5,
+                                                       "native_feeds": ["TRADE"]}}, d, image="img")
+        self.assertIn("/trace/summary-native-*-5.json", calls[0])
+        self.assertNotIn("--native-summary", calls[1])
+
+
+class G11NativeCursorTests(unittest.TestCase):
+    def test_cursor_dump_reads_python_and_native_cursor_directories(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "fixed-workers-v1"
+            for sub, key, offset in (("count-2-worker-0", "c|u1|BOOK_DELTA||p", 3), ("native-0", "c|u2|TRADE||p", 7),
+                                     ("native-1", "c|u3|QUOTE||p", 9), ("other", "c|u4|TRADE||p", 1)):
+                (root / sub).mkdir(parents=True)
+                (root / sub / "c.json").write_text(json.dumps({"schema": "qdl.sdk-cursors.v2", "items": {
+                    key: {"offset": offset, "token": "TEST-not-printed"}}}))
+            code = g11.CURSOR_DUMP.replace("/app/state/data-layer-v2/cursors", tmp)
+            out = io.StringIO()
+            with unittest.mock.patch("sys.stdout", out):
+                exec(compile(code, "<cursor-dump>", "exec"), {})
+        self.assertEqual(json.loads(out.getvalue()), {"c|u1|BOOK_DELTA||p": 3, "c|u2|TRADE||p": 7,
+                                                      "c|u3|QUOTE||p": 9})
+        self.assertNotIn("TEST-not-printed", out.getvalue())

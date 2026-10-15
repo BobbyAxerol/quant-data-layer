@@ -15,7 +15,8 @@ the four G11 timestamps separately (gate table rev 2, Codex review 3):
 and checks: no rewind (event time and, for TRADE/QUOTE, the applied offset of the same generation never go backwards
 across the restart) and cursor never ahead (each committed SDK cursor offset of a TRADE/QUOTE slice <= the applied
 offset in TS Redis read after it; the cursor files are read with a read-only `docker exec ... python -c` that prints
-only key -> offset, never the resume tokens).
+only key -> offset, never the resume tokens; Python
+fixed-worker and native-writer cursor directories).
 
 Keys per slice (TS services/market_data/cache_keys.py; the market Redis is TRADING_MARKET_REDIS_URL, default
 redis_marketdata DB 1): TRADE/QUOTE `execution_trade|execution_quote:<id>` (+ `applied:trade|quote:<id>` offset and
@@ -52,10 +53,14 @@ LIVE_BOUND_MS = {"TRADE": 3000, "QUOTE": 2000, "MARK_INDEX_PRICE": 2000, "BOOK_S
 KIND = {"TRADE": "execution_trade", "QUOTE": "execution_quote", "BOOK_SNAPSHOT": "execution_book_snapshot",
         "BOOK_DELTA": "execution_book_delta", "MARK_INDEX_PRICE": "execution_mark_index_price"}
 UNIT_MS = {"m": 60_000, "h": 3_600_000, "d": 86_400_000}
+# Python fixed workers: fixed-workers-v1/count-<n>-worker-<i>/; TS native writer: fixed-workers-v1/native-<slot>/
+# (TS services/market_data/native_plan.py, same qdl.sdk-cursors.v2 items/offset document, rust cursor.rs).
+CURSOR_GLOBS = ("count-*-worker-*", "native-*")
 CURSOR_DUMP = (
     "import glob,json\n"
     "out={}\n"
-    "for p in glob.glob('/app/state/data-layer-v2/cursors/fixed-workers-v1/count-*-worker-*/*.json'):\n"
+    "for p in sorted(q for d in " + repr(CURSOR_GLOBS) + " for q in "
+    "glob.glob('/app/state/data-layer-v2/cursors/fixed-workers-v1/'+d+'/*.json')):\n"
     "    try:\n"
     "        for k,v in json.load(open(p)).get('items',{}).items(): out[k]=int(v['offset'])\n"
     "    except Exception: pass\n"

@@ -153,3 +153,90 @@ class TransitTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "p184_native")
+# Trimmed from a TEST-stack N1 run (r2b6-s-redis-stall, native-trace-binance): the summary is unchanged except for
+# emptied checkpoint sessions/hot cohort; the raw file keeps 4 TRADE + 2 QUOTE records of the capped activation.
+SUMMARY = os.path.join(FIXTURES, "summary-native-fixture-43-1792024672908395216.json")
+RAW = os.path.join(FIXTURES, "delivery-native-fixture-43-1792024672908395216.json")
+STARTED, EXPIRES = 1792024466147444849, 1792024672908395216
+
+
+class NativeWriterTests(unittest.TestCase):
+    def test_native_stream_return_carries_the_venue_clock_and_the_basis_is_recorded(self):
+        rows = [row("TRADE", "OKX:SWAP:X", 50_000 + i, 49_900 + i, 50_010 + i, event_id=f"{i:064x}") for i in range(3)]
+        for r in rows[1:]:
+            r["sdk_receive_basis"] = "NATIVE_STREAM_RETURN"
+        out = transit.summarise(rows, from_ns=T0, to_ns=T0 + 60_000 * MS)
+        self.assertEqual(out["transit"]["TRADE|OKX"]["n"], 3)
+        self.assertEqual(out["transit"]["TRADE|OKX"]["stream_basis"],
+                         {"NATIVE_STREAM_RETURN": 2, "SDK_STREAM_RETURN": 1})
+        other = dict(rows[0], sdk_receive_basis="QUERY_RETURN", event_id_sha256="f" * 64)
+        self.assertIn("TRADE|OKX|no_venue_clock_QUERY_RETURN",
+                      transit.summarise([other], from_ns=T0, to_ns=T0 + 60_000 * MS)["excluded_from_transit"])
+
+    def test_real_native_raw_record_is_gated(self):
+        files, records = transit.load([RAW], fields=transit.FIELDS)
+        out = transit.summarise(records, from_ns=STARTED, to_ns=EXPIRES)
+        self.assertEqual(out["transit"]["TRADE|BINANCE"]["stream_basis"], {"NATIVE_STREAM_RETURN": 4})
+        self.assertEqual(out["transit"]["QUOTE|BINANCE"]["n"], 2)
+        kinds = transit.files_by_kind(files + [{"worker": "worker-abc", "stop_reason": "ROTATED", "dropped_at_export": 2}])
+        self.assertEqual(kinds["native"]["stop_reasons"], {"CAP": 1})
+        self.assertEqual(kinds["python"], {"files": 1, "stop_reasons": {"ROTATED": 1}, "dropped_at_export_total": 2,
+                                           "first_start_ns": None, "last_start_ns": None})
+        self.assertLessEqual(STARTED, kinds["native"]["first_start_ns"])
+
+    def test_summary_rows_reproduce_the_writer_quantiles_and_merge_by_bucket_sums(self):
+        with open(SUMMARY) as handle:
+            own = {(r["route"]["feed"], r["route"]["provider"]): r["stream"] for r in
+                   json.load(handle)["ack_latency"]["routes"]}
+        out = transit.native_summary([SUMMARY], from_ns=STARTED + 1, to_ns=EXPIRES - 1)
+        self.assertEqual(out["coverage_gaps"], [])
+        metric = own[("TRADE", "BINANCE")]["applied"]["metrics"]["source_event_to_ack"]
+        block = out["transit"]["TRADE|BINANCE"]
+        self.assertEqual((block["n"], block["p50"], block["p95"], block["p99"], block["max"]),
+                         (metric["n"], metric["p50_upper_ms"], metric["p95_upper_ms"], metric["p99_upper_ms"],
+                          metric["max_ms"]))
+        self.assertEqual(block["verdict"], "OUTSIDE")  # this TEST run stalled Redis for seconds
+        g7 = out["g7"]["TRADE"]["writer_to_redis_ms"]
+        self.assertEqual(g7["n"], sum(own[("TRADE", "BINANCE")][o]["metrics"]["writer_to_ack"]["n"]
+                                      for o in transit.NATIVE_OUTCOMES))
+        self.assertEqual(set(out["g7"]["TRADE"]["verdict"]), set(transit.G7_GATES))
+        twice = transit.native_summary([SUMMARY, SUMMARY], from_ns=STARTED + 1, to_ns=EXPIRES - 1)
+        self.assertEqual(twice["transit"]["TRADE|BINANCE"]["n"], 2 * block["n"])
+        self.assertEqual(twice["transit"]["TRADE|BINANCE"]["p95"], block["p95"])
+        self.assertEqual(out["window_scope"]["pre_load_seconds"], 0.0)
+
+    def test_summary_coverage_gaps(self):
+        late = transit.native_summary([SUMMARY], from_ns=STARTED - 10 * 10**9, to_ns=EXPIRES - 1)
+        self.assertTrue(any("does not span the load window" in g for g in late["coverage_gaps"]))
+        none = transit.native_summary([], from_ns=STARTED, to_ns=EXPIRES)
+        self.assertIn("no native summary overlaps the load window", none["coverage_gaps"])
+        orphan = transit.native_summary([SUMMARY], from_ns=STARTED + 1, to_ns=EXPIRES - 1, raw_activations=[
+            {"worker": "native-other", "pid": 7, "first_start_ns": STARTED + 5, "last_start_ns": STARTED + 9}])
+        self.assertTrue(any("no final summary" in g for g in orphan["coverage_gaps"]))
+        own = transit.native_summary([SUMMARY], from_ns=STARTED + 1, to_ns=EXPIRES - 1,
+                                     raw_activations=transit.native_raw_activations([RAW]))
+        self.assertEqual(own["coverage_gaps"], [])
+        later = transit.native_summary([SUMMARY], from_ns=EXPIRES + 1, to_ns=EXPIRES + 10)
+        self.assertEqual([a["overlaps_load"] for a in later["activations"]], [False])
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(SUMMARY) as handle:
+                broken = json.load(handle)
+            broken["ack_latency"]["routes"][0]["stream"]["applied"]["metrics"]["source_event_to_ack"][
+                "sparse_bucket_counts"] = []
+            bad = os.path.join(tmp, "summary-native-x-1-1.json")
+            with open(bad, "w") as handle:
+                json.dump(broken, handle)
+            out = transit.native_summary([bad], from_ns=STARTED + 1, to_ns=EXPIRES - 1)
+            self.assertTrue(any("bucket counts" in g for g in out["coverage_gaps"]))
+
+    def test_cli_adds_the_native_summary(self):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()) as stdout:
+            out = os.path.join(tmp, "o.json")
+            transit.main([RAW, "--from-ns", str(STARTED + 1), "--to-ns", str(EXPIRES - 1),
+                          "--native-summary", os.path.join(FIXTURES, "summary-native-*.json"), "--out", out])
+        report = json.loads(stdout.getvalue())
+        self.assertEqual(report["native_summary"]["coverage_gaps"], [])
+        self.assertEqual(report["files_by_kind"]["native"]["stop_reasons"], {"CAP": 1})

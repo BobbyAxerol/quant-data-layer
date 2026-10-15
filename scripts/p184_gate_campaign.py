@@ -29,6 +29,14 @@ Scoring rule (v2.2.3 scorecard, unchanged): verdicts PASS / FAIL / NOT_MEASURED;
 can FAIL a gate but cannot PASS it; missing coverage is NOT_MEASURED; nothing is ever upgraded. G12 and G13 are not part
 of this campaign and are reported NOT_MEASURED with that reason.
 
+Native writer (TS N1, MARKET_DATA_NATIVE_FEEDS, e.g. TRADE,QUOTE; thresholds unchanged, only the measurement source):
+the native raw trace is one capped file per activation (a SAMPLE), so for the native feeds G2 transit and G7 segments
+are read from the native final summary histograms (p95/p99 = bucket upper bounds, max exact; scope = the activation
+window spanning the load, pre/post-load seconds reported) and the raw CAP is not a coverage gap for them; the summary's
+own coverage gaps are. Python-worker feeds (BOOK_*, MARK) keep the raw-trace coverage rule. The summary is written when
+the writer process stops, i.e. at the G11 restart: score after G11. G10 duplicates for native TRADE have no full-window
+counter outside TEST cohorts: they are read from the raw sample, which can FAIL G10 but never PASS it.
+
 G4 addendum (owner decision 2026-10-11): rows outside the frozen 17-row G4 table are scored from
 config/v2/p184-stage100-g4-addendum.json when that file exists (frozen once by scripts/p184_freeze_g4_addendum.py from
 a `run --baseline` campaign, never from a candidate): candidate max <= baseline max x 1.2 on windows with >= 5 samples;
@@ -94,6 +102,11 @@ G4_WINDOW_GAP = 15                # observer start + summary run after a window
 G4_MAX_LAUNCH_HOLD = 240
 G4_RECORD_CAP = 10000
 MIN_DISK_GB = 20
+TRACE_MAX_WINDOW_SECONDS = 3600   # TS delivery_trace.MAX_WINDOW_SECONDS; the native writer refuses a longer window
+TRACE_TAIL_SECONDS = 45           # 30 s settle before the samplers stop + 15 s before G11 arms
+SAMPLER_MARGIN_SECONDS = 60       # samplers run load_timeout + 60 s
+G11_DEFAULT_WAIT = 900
+G11_MIN_WAIT = 120                # below this the coordinator has no practical restart window
 TRACE_FEEDS_G1 = ("BOOK_DELTA", "BOOK_SNAPSHOT")
 TRACE_FEEDS_G2 = ("TRADE", "QUOTE")
 G7_FEEDS = ("BOOK_DELTA", "BOOK_SNAPSHOT", "QUOTE", "TRADE", "MARK_INDEX_PRICE")
@@ -347,9 +360,11 @@ def _gate(gid, quantity, rule, verdict, reason, protocol_ok, protocol_problems, 
     return {"id": gid, "quantity": quantity, "rule": rule, "verdict": verdict, "reason": reason, **extra}
 
 
-def _trace_coverage(transit: dict | None, load_ns, until_ns: int | None) -> list[str]:
+def _trace_coverage(transit: dict | None, load_ns, until_ns: int | None, *, raw_kinds=("python", "native")) -> list[str]:
     """Trace-derived gates need the trace armed through the whole load and no worker capped (a CAP stop means the
-    last allowed part filled and later deliveries were not recorded)."""
+    last allowed part filled and later deliveries were not recorded). raw_kinds: whose raw files must be complete;
+    the native writer's raw file is a capped sample when its feeds are scored from the native summary, so callers
+    scoring those feeds pass ("python",). Without files_by_kind (older analyses) every file counts."""
     if transit is None:
         return ["no trace analysis"]
     gaps = []
@@ -357,13 +372,54 @@ def _trace_coverage(transit: dict | None, load_ns, until_ns: int | None) -> list
         gaps.append(f"trace analysis: {transit['error']}")
     if not transit.get("records"):
         gaps.append("no trace records")
-    if transit.get("dropped_at_export_total"):
-        gaps.append(f"{transit['dropped_at_export_total']} trace records dropped at export")
-    if (transit.get("stop_reasons") or {}).get("CAP"):
-        gaps.append(f"{transit['stop_reasons']['CAP']} trace activations stopped at their file cap")
+    kinds = transit.get("files_by_kind")
+    if kinds is None:
+        dropped, caps = transit.get("dropped_at_export_total"), (transit.get("stop_reasons") or {}).get("CAP")
+    else:
+        dropped = sum((kinds.get(k) or {}).get("dropped_at_export_total") or 0 for k in raw_kinds)
+        caps = sum(((kinds.get(k) or {}).get("stop_reasons") or {}).get("CAP") or 0 for k in raw_kinds)
+    label = "" if kinds is None or set(raw_kinds) == {"python", "native"} else f" ({'/'.join(raw_kinds)} writer)"
+    if dropped:
+        gaps.append(f"{dropped} trace records dropped at export{label}")
+    if caps:
+        gaps.append(f"{caps} trace activations stopped at their file cap{label}")
     if load_ns and (not until_ns or until_ns < load_ns[1]):
         gaps.append("trace expiry is before the end of the load window")
     return gaps
+
+
+def native_feeds_of(campaign: dict, transit: dict | None) -> tuple[str, ...]:
+    """TRADE/QUOTE feeds the native writer owned in this campaign: recorded at preflight (MARKET_DATA_NATIVE_FEEDS);
+    a campaign recorded before that field falls back to the feeds present in the native summary analysis."""
+    feeds = (campaign.get("trace") or {}).get("native_feeds")
+    if feeds is None:
+        feeds = {key.split("|", 1)[0] for key in (((transit or {}).get("native_summary") or {}).get("transit") or {})}
+    return tuple(sorted(f for f in feeds if f in TRACE_FEEDS_G2))
+
+
+def native_coverage(transit: dict | None) -> list[str]:
+    summary = (transit or {}).get("native_summary")
+    if summary is None:
+        return ["no native writer summary analysis (the summary is written when the writer stops: G11 restart)"]
+    return list(summary.get("coverage_gaps") or [])
+
+
+def scoring_view(transit: dict | None, native: tuple[str, ...]) -> dict | None:
+    """The transit analysis with the native feeds' transit and G7 rows taken from the native summary; the raw rows
+    of those feeds are kept apart as raw_samples (reported, never scored)."""
+    if transit is None or not native:
+        return transit
+    summary = transit.get("native_summary") or {}
+
+    def mine(key):
+        return key.split("|", 1)[0] in native
+    view = dict(transit)
+    view["raw_samples"] = {k: v for k, v in (transit.get("transit") or {}).items() if mine(k)}
+    view["transit"] = {**{k: v for k, v in (transit.get("transit") or {}).items() if not mine(k)},
+                       **{k: v for k, v in (summary.get("transit") or {}).items() if mine(k)}}
+    view["g7"] = {**{k: v for k, v in (transit.get("g7") or {}).items() if not mine(k)},
+                  **{k: v for k, v in (summary.get("g7") or {}).items() if mine(k)}}
+    return view
 
 
 def score_transit_rows(transit: dict | None, feeds) -> tuple[str, list, list[str]]:
@@ -374,9 +430,16 @@ def score_transit_rows(transit: dict | None, feeds) -> tuple[str, list, list[str
             if not block or not block.get("n"):
                 missing.append(f"{feed}|{venue}")
                 continue
-            rows.append({"feed_venue": f"{feed}|{venue}", **{k: block.get(k) for k in ("n", "p50", "p95", "p99", "max")},
-                         "observed": block.get("verdict"), "split_p95_ms": {k: v.get("p95") for k, v in
-                                                                         (block.get("split") or {}).items()}})
+            row = {"feed_venue": f"{feed}|{venue}", **{k: block.get(k) for k in ("n", "p50", "p95", "p99", "max")},
+                   "observed": block.get("verdict"), "split_p95_ms": {k: v.get("p95") for k, v in
+                                                                   (block.get("split") or {}).items()}}
+            if block.get("basis"):
+                row["basis"] = block["basis"]
+                sample = ((transit or {}).get("raw_samples") or {}).get(f"{feed}|{venue}")
+                row["raw_sample"] = {k: sample.get(k) for k in ("n", "p95", "max")} if sample else None
+            if block.get("stream_basis"):
+                row["stream_basis"] = block["stream_basis"]
+            rows.append(row)
             if block.get("verdict") == "OUTSIDE":
                 outside.append(f"{feed}|{venue}")
     if outside:
@@ -617,9 +680,24 @@ def read_probe_lines(path: Path) -> dict | None:
     return last
 
 
-def score_g10(g10: dict, duplicates: dict | None, trace_gaps: list[str]) -> tuple[str, dict, list[str]]:
+def native_raw_sample_scope(transit: dict | None, load_ns) -> str:
+    native = ((transit or {}).get("files_by_kind") or {}).get("native") or {}
+    first, last = native.get("first_start_ns"), native.get("last_start_ns")
+    if not load_ns or first is None or last is None:
+        return "native raw sample: no records"
+    lo, hi = max(first, load_ns[0]), min(last, load_ns[1])
+    covered = max(0, hi - lo) / 1e9
+    return (f"native raw sample spans {covered:.0f} s of the {(load_ns[1] - load_ns[0]) / 1e9:.0f} s load "
+            f"({native.get('files')} capped file(s))")
+
+
+def score_g10(g10: dict, duplicates: dict | None, trace_gaps: list[str], *,
+              sample_scope: str | None = None) -> tuple[str, dict, list[str]]:
+    """sample_scope set (native TRADE): duplicates come from the capped raw sample; a duplicate there FAILs, zero in
+    a sample is not a full-window zero, so that sub-row stays NOT_MEASURED (no native full-window counter exists)."""
     dup = {k: v for k, v in (duplicates or {}).items() if k.startswith("TRADE|")}
     counters = {"gaps": g10.get("trade_gap"), "duplicates_applied": sum(dup.values()) if duplicates is not None else None,
+                "duplicates_applied_scope": sample_scope or "full load window (raw trace)",
                 "replay_expired": g10.get("trade_replay_expired"), "overflow": g10.get("trade_overflow"),
                 "resumed_reconnects": g10.get("trade_resumed"), "log_polls": g10.get("log_polls"),
                 "log_unreadable": g10.get("log_unreadable"), "codes": g10.get("codes")}
@@ -631,6 +709,9 @@ def score_g10(g10: dict, duplicates: dict | None, trace_gaps: list[str]) -> tupl
         gaps.append("writer logs not read for the whole window")
     if duplicates is None or trace_gaps:
         gaps.append("duplicates applied need the delivery trace: " + "; ".join(trace_gaps or ["no trace"]))
+    elif sample_scope is not None:
+        gaps.append(f"duplicates applied (native TRADE) measured on a sample only ({sample_scope}); a sample can "
+                    "fail, never pass; no native full-window duplicate counter exists outside TEST cohorts")
     return ("NOT_MEASURED", counters, gaps) if gaps else ("PASS", counters, [])
 
 
@@ -700,7 +781,15 @@ def build_scorecard(campaign_dir: Path) -> dict:
     load_ns = [int(load_s[0] * 1e9), int(load_s[1] * 1e9)] if load_s else None
     transit = load_json(d / "trace" / "transit-load.json")
     mark = load_json(d / "trace" / "mark-load.json")
-    trace_gaps = _trace_coverage(transit, load_ns, int((campaign.get("trace") or {}).get("until_unix_ns") or 0))
+    until_ns = int((campaign.get("trace") or {}).get("until_unix_ns") or 0)
+    native = native_feeds_of(campaign, transit)
+    trace_gaps = _trace_coverage(transit, load_ns, until_ns)  # every raw file complete (no native writer)
+    python_gaps = _trace_coverage(transit, load_ns, until_ns, raw_kinds=("python",))
+    native_gaps = native_coverage(transit) if native else []
+    # G1 (BOOK) and MARK are Python-worker feeds; native feeds are read from the native summary.
+    raw_gaps = python_gaps if native else trace_gaps
+    mixed_gaps = list(dict.fromkeys(raw_gaps + native_gaps))
+    scored = scoring_view(transit, native)
     out = []
 
     def add(gid, quantity, rule, verdict, reason, **extra):
@@ -709,19 +798,21 @@ def build_scorecard(campaign_dir: Path) -> dict:
     trace_src = {"transit": sha256_file(d / "trace" / "transit-load.json"),
                  "mark": sha256_file(d / "trace" / "mark-load.json")}
     v, rows, why = score_transit_rows(transit, TRACE_FEEDS_G1)
-    if trace_gaps and v != "FAIL":
-        v, why = "NOT_MEASURED", why + trace_gaps
+    if raw_gaps and v != "FAIL":
+        v, why = "NOT_MEASURED", why + raw_gaps
     add("G1", "end-to-end to TS cache (venue event -> TS Redis APPLY reply)", "p95 <= 500 ms, p99 <= 1000 ms (n >= 100), "
         "max < 2000 ms per feed/venue", v, "; ".join(why) or "every BOOK row inside", measured=rows, sources=trace_src)
-    v1, rows1, why1 = score_transit_rows(transit, TRACE_FEEDS_G2)
+    v1, rows1, why1 = score_transit_rows(scored, TRACE_FEEDS_G2)
     v2, rows2, why2 = score_mark(mark)
     verdicts = {v1, v2}
     v = "FAIL" if "FAIL" in verdicts else "NOT_MEASURED" if "NOT_MEASURED" in verdicts else "PASS"
-    if trace_gaps and v != "FAIL":
+    if mixed_gaps and v != "FAIL":
         v = "NOT_MEASURED"
+    native_src = {"native_feeds": list(native), "native_coverage_gaps": native_gaps,
+                  "window_scope": ((transit or {}).get("native_summary") or {}).get("window_scope")} if native else {}
     add("G2", "end-to-end to TS cache, new-event transit", "TRADE p95 <= 500 ms and max < 1500 ms; QUOTE and MARK "
-        "p95 <= 500 ms and max < 1000 ms", v, "; ".join(why1 + why2 + (trace_gaps if v == "NOT_MEASURED" else []))
-        or "every row inside", measured=rows1 + rows2, sources=trace_src)
+        "p95 <= 500 ms and max < 1000 ms", v, "; ".join(why1 + why2 + (mixed_gaps if v == "NOT_MEASURED" else []))
+        or "every row inside", measured=rows1 + rows2, sources=trace_src, **native_src)
     g3 = load_json(d / "g3" / "g3-summary.json")
     add("G3", "end-to-end to TS cache, BAR from close (first visibility of the closed bar)", "p95 <= 5 s, max < 60 s",
         (g3 or {}).get("verdict", "NOT_MEASURED"), "g3 probe" if g3 else "no G3 summary",
@@ -779,11 +870,11 @@ def build_scorecard(campaign_dir: Path) -> dict:
         sources={"g6_ts": sha256_file(d / "g6-ts" / "summary.json")},
         ts_probe={k: (g6_ts or {}).get(k) for k in ("window_unix_s", "reads", "errors", "targets",
                                                      "per_binding_period_s", "stopped_by")} if g6_ts else None)
-    v, rows, why = score_g7(transit)
-    if trace_gaps and v != "FAIL":
-        v, why = "NOT_MEASURED", why + trace_gaps
+    v, rows, why = score_g7(scored)
+    if mixed_gaps and v != "FAIL":
+        v, why = "NOT_MEASURED", why + mixed_gaps
     add("G7", "TS consumer path", "SDK -> writer p95 <= 100 ms; writer -> Redis reply p95 <= 50 ms per feed", v,
-        "; ".join(why) or "every feed inside", measured=rows)
+        "; ".join(why) or "every feed inside", measured=rows, **native_src)
     samples8 = list(read_jsonl(d / "g8" / "g8-samples.jsonl")) if (d / "g8" / "g8-samples.jsonl").exists() else []
     s8 = g8.summarize(samples8, steady_from_ns=load_ns[0] if load_ns else None,
                       steady_to_ns=load_ns[1] if load_ns else None) if samples8 else None
@@ -802,7 +893,11 @@ def build_scorecard(campaign_dir: Path) -> dict:
         "; ".join(why) or "inside", measured=s9)
     s10 = g910.summarize_g10(samples910, from_s=utc_stamp(load_s[0]) if load_s else None,
                              to_s=utc_stamp(load_s[1]) if load_s else None) if samples910 else {}
-    v, counters, why = score_g10(s10, (transit or {}).get("duplicate_applied_event_id") if transit else None, trace_gaps)
+    trade_native = "TRADE" in native
+    v, counters, why = score_g10(s10, (transit or {}).get("duplicate_applied_event_id") if transit else None,
+                                 _trace_coverage(transit, load_ns, until_ns, raw_kinds=()) if trade_native
+                                 else trace_gaps,
+                                 sample_scope=native_raw_sample_scope(transit, load_ns) if trade_native else None)
     add("G10", "TRADE integrity", "0 gaps, 0 duplicates applied, 0 replay-expired, 0 overflow", v,
         "; ".join(why) or "all zero", measured=counters,
         basis="writer log typed signals (DL-signalled gaps, CURSOR_EXPIRED, SlowConsumerError) + trace duplicate "
@@ -876,13 +971,22 @@ def preflight(args) -> dict:
     plan["runtime_identity"] = {"writer_image": inspect["Image"], "writer_started": inspect["State"]["StartedAt"],
                                 "writer_restarts": inspect["RestartCount"]}
     until = int(env.get("TS_DELIVERY_TRACE_UNTIL_UNIX_NS") or 0)
-    needed = time.time_ns() + int((args.load_timeout + 60) * 1e9)
+    now_ns = time.time_ns()
+    needed = now_ns + int((args.load_timeout + 60) * 1e9)
     plan["trace"] = {"dir_in_container": env.get("TS_DELIVERY_TRACE_DIR"),
                      "dir_on_host": host_path(inspect, env.get("TS_DELIVERY_TRACE_DIR", "")) if env.get(
                          "TS_DELIVERY_TRACE_DIR") else None,
                      "until_unix_ns": until, "max_files": env.get("TS_DELIVERY_TRACE_MAX_FILES"),
                      "max_records": env.get("TS_DELIVERY_TRACE_MAX_RECORDS"),
-                     "covers_load": until >= needed}
+                     "covers_load": until >= needed,
+                     "native_feeds": sorted(native_feeds_env(env)),
+                     "native_max_files": env.get("TS_DELIVERY_TRACE_NATIVE_MAX_FILES"),
+                     "writer_mode": "native" if native_feeds_env(env) else "python"}
+    if not getattr(args, "baseline", False):
+        problems, warnings = native_trace_checks(env, until, now_ns, inspect["State"].get("StartedAt", ""),
+                                                 g11=args.g11)
+        plan["problems"].extend(problems)
+        plan["warnings"].extend(warnings)
     if not plan["trace"]["covers_load"]:
         # A baseline run collects G4 windows only; the delivery trace is not read.
         (plan["warnings"] if args.allow_no_trace or getattr(args, "baseline", False) else plan["problems"]).append(
@@ -914,6 +1018,89 @@ def preflight(args) -> dict:
         if not (Path(args.state_tools) / tool).exists():
             plan["problems"].append(f"missing {tool} in {args.state_tools}")
     return plan
+
+
+def native_feeds_env(env: dict) -> set[str]:
+    return {v.strip().upper() for v in env.get("MARKET_DATA_NATIVE_FEEDS", "").split(",") if v.strip()}
+
+
+def docker_time_ns(value: str) -> int | None:
+    if not value or value.startswith("0001-"):
+        return None
+    head, _, frac = value.rstrip("Z").partition(".")
+    try:
+        base = dt.datetime.strptime(head, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=dt.timezone.utc)
+    except ValueError:
+        return None
+    return int(base.timestamp()) * 10**9 + int((frac + "000000000")[:9])
+
+
+def native_trace_checks(env: dict, until_ns: int, now_ns: int, started_at: str, *, g11: bool) -> tuple[list, list]:
+    """Preflight of a native-writer candidate (pure): native mode, the <= 3600 s window, the native file count."""
+    problems, warnings = [], []
+    feeds = native_feeds_env(env)
+    if not feeds:
+        problems.append("writer is not in native mode (MARKET_DATA_NATIVE_FEEDS unset): the final stage-100 scores the "
+                        "production NATIVE writer")
+        return problems, warnings
+    if feeds - set(TRACE_FEEDS_G2):
+        problems.append(f"unexpected native feeds {sorted(feeds - set(TRACE_FEEDS_G2))}")
+    if until_ns and until_ns - now_ns > TRACE_MAX_WINDOW_SECONDS * 10**9:
+        problems.append(f"trace expiry is {(until_ns - now_ns) / 1e9:.0f} s away > {TRACE_MAX_WINDOW_SECONDS} s "
+                        "(the native writer refuses a longer window)")
+    started = docker_time_ns(started_at)
+    if until_ns and started and until_ns - started > (TRACE_MAX_WINDOW_SECONDS + 60) * 10**9:
+        problems.append(f"trace window from the writer start is {(until_ns - started) / 1e9:.0f} s > "
+                        f"{TRACE_MAX_WINDOW_SECONDS} s: the native trace was refused or the writer was not recreated "
+                        "with this window")
+    native_max = env.get("TS_DELIVERY_TRACE_NATIVE_MAX_FILES")
+    shared_max = env.get("TS_DELIVERY_TRACE_MAX_FILES", "1")
+    if native_max is not None:
+        if native_max.strip() != "1":
+            problems.append(f"TS_DELIVERY_TRACE_NATIVE_MAX_FILES={native_max}: the native writer exports exactly 1 file")
+        elif shared_max.strip() != "1":
+            warnings.append("TS_DELIVERY_TRACE_NATIVE_MAX_FILES=1 with shared TS_DELIVERY_TRACE_MAX_FILES="
+                            f"{shared_max}: needs a writer image that reads the native-only key (B12 03824833 "
+                            "refuses a shared MAX_FILES != 1 in native mode)")
+    elif shared_max.strip() != "1":
+        problems.append(f"native mode without TS_DELIVERY_TRACE_NATIVE_MAX_FILES needs the shared "
+                        f"TS_DELIVERY_TRACE_MAX_FILES == 1 (is {shared_max})")
+    else:
+        warnings.append("shared TS_DELIVERY_TRACE_MAX_FILES=1 also caps each Python worker (BOOK/MARK) at one "
+                        "4096-record file: G1 and the MARK row of G2 will be NOT_MEASURED")
+    warnings.append("native TRADE/QUOTE G2/G7 come from the native summary, written when the writer stops: the trace "
+                    "must cover the load and the G11 restart must happen after the load"
+                    + ("" if g11 else " (run with --g11, or restart the writer before `score --rerun-trace`)"))
+    return problems, warnings
+
+
+def trace_fit(until_ns: int, now_ns: int, *, launch_hold: float, load_timeout: int, g11: bool,
+              g11_wait: int | None) -> tuple[int | None, list[str], dict]:
+    """(g11 wait to use, problems, detail): the planned worst case from now (launch hold + driver timeout + sampler
+    margin [+ settle/arm + G11 wait]) must end before the trace expiry. An automatic G11 wait (None) is the default
+    shortened to fit; an explicit one that does not fit, or an automatic one below G11_MIN_WAIT, is a problem."""
+    budget = (until_ns - now_ns) / 1e9 if until_ns else 0.0
+    fixed = 5 + launch_hold + load_timeout + SAMPLER_MARGIN_SECONDS + (TRACE_TAIL_SECONDS if g11 else 0)
+    detail = {"trace_budget_seconds": round(budget, 1), "planned_without_g11_wait_seconds": round(fixed, 1)}
+    problems = []
+    wait = g11_wait
+    if g11:
+        room = int(budget - fixed)
+        if g11_wait is None:
+            wait = max(0, min(G11_DEFAULT_WAIT, room))
+            if wait < G11_MIN_WAIT:
+                problems.append(f"trace expiry leaves {room} s for the G11 wait (< {G11_MIN_WAIT} s): recreate the "
+                                "writer with a later TS_DELIVERY_TRACE_UNTIL_UNIX_NS (<= 3600 s) closer to the run")
+            detail["g11_wait_auto"] = wait
+        elif g11_wait > room:
+            problems.append(f"--g11-wait {g11_wait} s does not fit the trace window (room {room} s); lower it or "
+                            "omit it for the automatic fit")
+        detail["planned_seconds"] = round(fixed + max(wait or 0, 0), 1)
+    else:
+        detail["planned_seconds"] = round(fixed, 1)
+    if budget < fixed:
+        problems.append(f"planned run {fixed:.0f} s exceeds the trace window ({budget:.0f} s left)")
+    return wait, problems, detail
 
 
 class Children:
@@ -966,6 +1153,8 @@ def run_trace_analysis(campaign: dict, d: Path, *, image: str) -> None:
         (out / "transit-load.json").write_text(json.dumps({"error": "no trace dir or load window"}) + "\n")
         return
     pattern = f"/trace/delivery-*-{trace['until_unix_ns']}*.json"
+    native = ["--native-summary", f"/trace/summary-native-*-{trace['until_unix_ns']}.json"] if trace.get(
+        "native_feeds") else []
     window = ["--from-ns", str(int(load_s[0] * 1e9)), "--to-ns", str(int(load_s[1] * 1e9))]
     base = ["docker", "run", "--rm", "--network", "none", "--cpus", "1", "--memory", "2500m", "--user", "0:0",
             "--read-only", "--security-opt", "no-new-privileges", "-e", "PYTHONDONTWRITEBYTECODE=1",
@@ -973,7 +1162,8 @@ def run_trace_analysis(campaign: dict, d: Path, *, image: str) -> None:
             image, "-B"]
     for name, script in (("transit-load.json", "scripts/p184_trace_feed_transit.py"),
                          ("mark-load.json", "scripts/p184_g2_mark_trace_transit.py")):
-        result = subprocess.run([*base, script, pattern, *window], capture_output=True, text=True, timeout=1800)
+        extra = native if script.endswith("p184_trace_feed_transit.py") else []
+        result = subprocess.run([*base, script, pattern, *window, *extra], capture_output=True, text=True, timeout=1800)
         try:
             value = json.loads(result.stdout)
         except ValueError:
@@ -1083,6 +1273,13 @@ def run(args) -> int:
     earliest = time.time() + 5
     launch_unix = g4_launch_unix(earliest)
     launch_hold = round(launch_unix - earliest, 3)
+    if not baseline and not args.allow_no_trace and plan.get("trace"):
+        args.g11_wait, fit_problems, plan["trace_fit"] = trace_fit(
+            int(plan["trace"].get("until_unix_ns") or 0), time.time_ns(), launch_hold=launch_hold,
+            load_timeout=args.load_timeout, g11=args.g11, g11_wait=args.g11_wait)
+        plan["problems"].extend(fit_problems)
+    if args.g11_wait is None:
+        args.g11_wait = G11_DEFAULT_WAIT
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     prefix = "p184-g4-baseline" if baseline else "p184-final-campaign"
     d = Path(args.campaign_dir or STATE / f"{prefix}-{stamp}").resolve()
@@ -1239,7 +1436,8 @@ def main(argv=None) -> int:
     r.add_argument("--analysis-image", help="image for the trace analysis (default: the profile image)")
     r.add_argument("--load-timeout", type=int, default=DRIVER_TIMEOUT)
     r.add_argument("--g11", action="store_true", help="arm the G11 probe after the load (coordinator restarts)")
-    r.add_argument("--g11-wait", type=int, default=900)
+    r.add_argument("--g11-wait", type=int, default=None,
+                   help=f"G11 restart wait (default: {G11_DEFAULT_WAIT} s shortened so the run fits the trace window)")
     r.add_argument("--allow-no-trace", action="store_true")
     r.add_argument("--baseline", action="store_true",
                    help="G4 baseline run (role=baseline): driver + G4 windows only, no scoring; input of "

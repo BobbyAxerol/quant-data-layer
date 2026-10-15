@@ -12,8 +12,11 @@ Gates (TS upgrade/p184-phase-d-gates.md, frozen 2026-10-09):
 * G7 per feed: SDK return -> writer entry p95 <= 100 ms; writer entry -> Redis APPLY reply p95 <= 50 ms.
 
 Definitions:
-* venue clock = source_event_time_ns of the SDK stream envelope; only SDK_STREAM_RETURN records carry it. Records of
-  other bases (warmup, query, no basis) have no venue clock and are counted, never given a substitute clock;
+* venue clock = source_event_time_ns of the SDK stream envelope; only stream-return records carry it: the Python
+  worker's SDK_STREAM_RETURN and the TS native (Rust) writer's NATIVE_STREAM_RETURN (TS rust/crates/market-data-writer
+  src/trace.rs, the same tonic-return boundary). Which basis a gated row used is recorded per feed|venue
+  (transit[...].stream_basis). Records of other bases (warmup, query, no basis) have no venue clock and are counted,
+  never given a substitute clock;
 * duplicate_applied_event_id (G10) = APPLIED records whose canonical event_id digest was already APPLIED earlier in the
   window, per feed and venue (records without a digest are not counted, their fallback identity is not unique);
 * new-event transit = redis_reply_wall_ns - source_event_time_ns for the first APPLIED record of each event identity
@@ -35,6 +38,20 @@ Definitions:
   sdk_receive_monotonic_ns; writer_to_redis = redis_reply_monotonic_ns - writer_started_monotonic_ns, over every record
   with a Redis reply (any outcome). TRADE/QUOTE rows of one atomic APPLY batch share the batch start as writer entry.
 Negative durations are counted as invalid, never clamped. Quantiles are nearest-rank as in the G2 MARK script.
+
+Raw files are split by writer kind (worker name "native-*" = the native writer, else a Python worker): the native raw
+file is one bounded file per activation (<= 4096 records, no rotation), so its CAP stop is a SAMPLE boundary, not a
+coverage gap; stop reasons and export drops are reported per kind (files_by_kind) so the scorecard can keep the raw
+coverage rule for Python-worker feeds only.
+
+Native writer summary (--native-summary GLOB, files summary-native-<worker>-<pid>-<expires>.json, schema
+ts.native-writer-summary.v1, TS trace.rs export_summary + latency.rs): per route (provider, symbol, feed) cumulative
+fixed-bucket histograms over every apply completed in the activation window (1 ms buckets through 1000 ms, then powers
+of two), fed independently of the raw-trace cap. Routes are merged per feed|venue by SUMMING bucket counts (never
+percentiles); max = max of the exact per-route maxima; p50/p95/p99 are nearest-rank bucket UPPER bounds (p99 only when
+n >= 100), as the writer computes them. G2 new-event transit = source_event_to_ack of the APPLIED outcome; G7
+sdk_to_writer and writer_to_redis (= writer_to_ack) over every outcome. Scope = the union of the activation windows,
+which must span the load window; the seconds outside the load are reported (window_scope), never subtracted.
 
 Boundary: read-only over the given files; no Redis, Docker or network access; it never enables tracing. Output is JSON
 on stdout, or --out (created exclusively).
@@ -62,7 +79,14 @@ TRANSIT_GATES = {
     "QUOTE": {"gate": "G2", "p95_le_ms": 500.0, "max_lt_ms": 1000.0},
 }
 G7_GATES = {"sdk_to_writer_ms": 100.0, "writer_to_redis_ms": 50.0}
-STREAM_BASIS = "SDK_STREAM_RETURN"
+# Stream-return bases that carry the venue clock: Python SDK worker and TS native (Rust) writer (trace.rs:297-301).
+STREAM_BASES = ("SDK_STREAM_RETURN", "NATIVE_STREAM_RETURN")
+NATIVE_WORKER_PREFIX = "native-"
+NATIVE_SUMMARY_SCHEMA = "ts.native-writer-summary.v1"
+NATIVE_ACK_SCHEMA = "ts.native-ack-latency.v1"
+NATIVE_ACK_SCOPE = "apply_rows_completed_in_activation_window"
+NATIVE_OUTCOMES = ("duplicate", "applied", "refreshed", "errors")
+NATIVE_G7 = {"sdk_to_writer_ms": "sdk_to_writer", "writer_to_redis_ms": "writer_to_ack"}
 # Keys summarise() reads; loading only these keeps a full campaign (~250 parts x 4096 records) in memory.
 FIELDS = ("feed", "canonical_instrument_id", "outcome", "sdk_receive_basis", "sdk_receive_monotonic_ns",
           "writer_started_monotonic_ns", "redis_reply_monotonic_ns", "writer_started_wall_ns", "redis_reply_wall_ns",
@@ -111,6 +135,7 @@ def summarise(records, *, skip_seconds=40.0, from_ns=None, to_ns=None):
     invalid = collections.Counter()
     transit = collections.defaultdict(list)
     split = collections.defaultdict(lambda: collections.defaultdict(list))
+    bases = collections.defaultdict(collections.Counter)
     coverage = collections.defaultdict(collections.Counter)
     segments = collections.defaultdict(lambda: collections.defaultdict(list))
     seen = set()
@@ -142,7 +167,7 @@ def summarise(records, *, skip_seconds=40.0, from_ns=None, to_ns=None):
             continue
         event_time = as_int(r.get("source_event_time_ns"))
         reply_wall = as_int(r.get("redis_reply_wall_ns"))
-        if r.get("sdk_receive_basis") != STREAM_BASIS or event_time is None:
+        if r.get("sdk_receive_basis") not in STREAM_BASES or event_time is None:
             excluded[(feed, venue, f"no_venue_clock_{r.get('sdk_receive_basis')}")] += 1
             continue
         if reply_wall is None:
@@ -162,6 +187,7 @@ def summarise(records, *, skip_seconds=40.0, from_ns=None, to_ns=None):
             invalid[(feed, venue, "negative_transit")] += 1
             continue
         transit[f"{feed}|{venue}"].append(value)
+        bases[f"{feed}|{venue}"][r["sdk_receive_basis"]] += 1
         ingest, sdk_wall = as_int(r.get("envelope_received_at_ns")), as_int(r.get("sdk_receive_wall_ns"))
         if ingest is not None and sdk_wall is not None and event_time <= ingest <= sdk_wall <= reply_wall:
             parts = split[f"{feed}|{venue}"]
@@ -182,6 +208,7 @@ def summarise(records, *, skip_seconds=40.0, from_ns=None, to_ns=None):
         block["verdict"] = transit_verdict(block, TRANSIT_GATES[feed])
         block["split"] = {name: quantiles(values) for name, values in sorted(split[key].items())}
         block["gateway_split"] = {name: coverage[key][name] for name in ("measured", "not_measured", "out_of_order")}
+        block["stream_basis"] = dict(sorted(bases[key].items()))
         result["transit"][key] = block
     for key in sorted(segments):
         block = {name: quantiles(values) for name, values in sorted(segments[key].items())}
@@ -198,6 +225,177 @@ def summarise(records, *, skip_seconds=40.0, from_ns=None, to_ns=None):
     return result
 
 
+def writer_kind(worker) -> str:
+    return "native" if str(worker or "").startswith(NATIVE_WORKER_PREFIX) else "python"
+
+
+def files_by_kind(files) -> dict:
+    """Per writer kind: file count, stop reasons, export drops and the record start span of each kind."""
+    out = {}
+    for f in files:
+        kind = out.setdefault(writer_kind(f.get("worker")), {"files": 0, "stop_reasons": collections.Counter(),
+                                                              "dropped_at_export_total": 0,
+                                                              "first_start_ns": None, "last_start_ns": None})
+        kind["files"] += 1
+        kind["stop_reasons"][f.get("stop_reason")] += 1
+        kind["dropped_at_export_total"] += f.get("dropped_at_export") or 0
+        for key, pick in (("first_start_ns", min), ("last_start_ns", max)):
+            if f.get(key) is not None:
+                kind[key] = f[key] if kind.get(key) is None else pick(kind[key], f[key])
+    return {k: {**v, "stop_reasons": dict(v["stop_reasons"])} for k, v in sorted(out.items())}
+
+
+def native_raw_activations(paths) -> list[dict]:
+    """(worker, pid, first/last record start) of each native raw file, read from its header and records only."""
+    out = []
+    for path in paths:
+        with open(path) as handle:
+            report = json.load(handle)
+        if writer_kind(report.get("worker")) != "native":
+            continue
+        starts = [r.get("writer_started_wall_ns") for r in report.get("records") or []]
+        starts = [s for s in starts if as_int(s)]
+        out.append({"worker": report.get("worker"), "pid": report.get("pid"),
+                    "expires_unix_ns": report.get("expires_unix_ns"), "stop_reason": report.get("stop_reason"),
+                    "first_start_ns": min(starts) if starts else None, "last_start_ns": max(starts) if starts else None})
+    return out
+
+
+class Buckets:
+    """Merged fixed-bucket histogram: bucket counts are summed, never percentiles (latency.rs report_with_buckets)."""
+
+    def __init__(self, upper_ms):
+        self.upper_ms = list(upper_ms)
+        self.counts = [0] * len(self.upper_ms)
+        self.n = self.missing = self.negative = 0
+        self.max_ms = None
+
+    def add(self, metric: dict):
+        n = int(metric.get("n") or 0)
+        counted = 0
+        for index, count in metric.get("sparse_bucket_counts") or []:
+            self.counts[int(index)] += int(count)
+            counted += int(count)
+        if counted != n:
+            raise ValueError(f"bucket counts {counted} != n {n}")
+        self.n += n
+        self.missing += int(metric.get("missing_clocks") or 0)
+        self.negative += int(metric.get("negative_clocks") or 0)
+        if n and metric.get("max_ms") is not None:
+            self.max_ms = metric["max_ms"] if self.max_ms is None else max(self.max_ms, metric["max_ms"])
+
+    def percentile(self, percent: int):
+        if not self.n or (percent == 99 and self.n < 100):
+            return None
+        rank = -(-self.n * percent // 100)
+        cumulative = 0
+        for index, count in enumerate(self.counts):
+            cumulative += count
+            if cumulative >= rank:
+                return self.upper_ms[index]
+        return None
+
+    def block(self) -> dict:
+        return {"n": self.n, "p50": self.percentile(50), "p95": self.percentile(95), "p99": self.percentile(99),
+                "max": self.max_ms, "missing_clocks": self.missing, "negative_clocks": self.negative,
+                "quantile_basis": "BUCKET_UPPER_BOUND"}
+
+
+def native_summary(paths, *, from_ns=None, to_ns=None, raw_activations=()) -> dict:
+    """G2 TRADE/QUOTE transit and G7 segments of the native writer from its final summary files (see module doc).
+
+    coverage_gaps lists every reason the summaries do not cover [from_ns, to_ns] of the native routes: an unreadable
+    or non-final summary, a different histogram, rejected routes, an activation overlapping the load that does not
+    span it (restart or expiry inside the load), and a native raw file with records in the load window whose
+    activation (worker, pid) has no summary (the process stopped without exporting it)."""
+    gaps, activations, upper = [], [], None
+    transit, g7 = {}, {}
+    seen = set()
+    for path in paths:
+        try:
+            with open(path) as handle:
+                report = json.load(handle)
+        except (OSError, ValueError) as exc:
+            gaps.append(f"native summary unreadable: {path}: {exc.__class__.__name__}")
+            continue
+        ack = report.get("ack_latency") or {}
+        if (report.get("schema") != NATIVE_SUMMARY_SCHEMA or report.get("final") is not True
+                or ack.get("schema") != NATIVE_ACK_SCHEMA or ack.get("scope") != NATIVE_ACK_SCOPE
+                or ack.get("cumulative") is not True or not ack.get("bucket_upper_bounds_ms")):
+            gaps.append(f"native summary not a final {NATIVE_SUMMARY_SCHEMA} with buckets: {path}")
+            continue
+        started, expires = as_int(report.get("started_unix_ns")), as_int(report.get("expires_unix_ns"))
+        activation = {"worker": report.get("worker"), "pid": report.get("pid"), "started_unix_ns": started,
+                      "expires_unix_ns": expires, "routes": len(ack.get("routes") or []),
+                      "rejected_route_rows": ack.get("rejected_route_rows"),
+                      "not_offered_after_stop": report.get("not_offered_after_stop")}
+        if from_ns is not None and to_ns is not None and started and expires and (expires <= from_ns or started >= to_ns):
+            activation["overlaps_load"] = False
+            activations.append(activation)
+            continue
+        activation["overlaps_load"] = True
+        activations.append(activation)
+        seen.add((report.get("worker"), report.get("pid")))
+        if upper is None:
+            upper = list(ack["bucket_upper_bounds_ms"])
+        elif list(ack["bucket_upper_bounds_ms"]) != upper:
+            gaps.append(f"native summary with a different histogram: {path}")
+            continue
+        if ack.get("rejected_route_rows"):
+            gaps.append(f"{ack['rejected_route_rows']} native rows of routes beyond max_routes not measured ({path})")
+        if from_ns is not None and to_ns is not None and not (started and expires and started <= from_ns
+                                                              and expires >= to_ns):
+            gaps.append(f"native activation {report.get('worker')}/{report.get('pid')} [{started}, {expires}] does "
+                        "not span the load window (restart or trace expiry inside the load)")
+        for item in ack.get("routes") or []:
+            route = item.get("route") or {}
+            feed, venue = str(route.get("feed")), str(route.get("provider")).upper()
+            stream = item.get("stream") or {}
+            try:
+                block = transit.setdefault(f"{feed}|{venue}", Buckets(upper))
+                block.add(((stream.get("applied") or {}).get("metrics") or {}).get("source_event_to_ack") or {})
+                for key in (feed, f"{feed}|{venue}"):
+                    for name, metric in NATIVE_G7.items():
+                        merged = g7.setdefault(key, {}).setdefault(name, Buckets(upper))
+                        for outcome in NATIVE_OUTCOMES:
+                            merged.add(((stream.get(outcome) or {}).get("metrics") or {}).get(metric) or {})
+            except ValueError as exc:
+                gaps.append(f"native summary {path} route {feed}|{venue}: {exc}")
+    for raw in raw_activations:
+        inside = (raw.get("first_start_ns") is not None and (to_ns is None or raw["first_start_ns"] <= to_ns)
+                  and (from_ns is None or (raw.get("last_start_ns") or 0) >= from_ns))
+        if inside and (raw.get("worker"), raw.get("pid")) not in seen:
+            gaps.append(f"native activation {raw.get('worker')}/{raw.get('pid')} has records in the load window but "
+                        "no final summary")
+    overlapping = [a for a in activations if a.get("overlaps_load")]
+    if not overlapping:
+        gaps.append("no native summary overlaps the load window")
+    scope = None
+    if overlapping and from_ns is not None and to_ns is not None:
+        first = min(a["started_unix_ns"] or from_ns for a in overlapping)
+        last = max(a["expires_unix_ns"] or to_ns for a in overlapping)
+        scope = {"basis": "NATIVE_SUMMARY_ACTIVATION_WINDOW (cumulative; buckets cannot be cut to the load window)",
+                 "activation_from_ns": first, "activation_to_ns": last,
+                 "pre_load_seconds": round(max(0, from_ns - first) / 1e9, 1),
+                 "post_load_seconds": round(max(0, last - to_ns) / 1e9, 1)}
+    result = {"files": len(paths), "activations": activations, "coverage_gaps": gaps, "window_scope": scope,
+              "transit": {}, "g7": {}}
+    for key in sorted(transit):
+        feed = key.split("|", 1)[0]
+        block = transit[key].block()
+        block["verdict"] = transit_verdict(block, TRANSIT_GATES[feed]) if feed in TRANSIT_GATES else "NOT_GATED"
+        block["basis"] = "NATIVE_SUMMARY applied.source_event_to_ack"
+        result["transit"][key] = block
+    for key in sorted(g7):
+        block = {name: buckets.block() for name, buckets in sorted(g7[key].items())}
+        if "|" not in key:
+            block["verdict"] = {name: ("NO_DATA" if not block[name]["n"] else
+                                       "INSIDE" if block[name]["p95"] <= limit else "OUTSIDE")
+                                for name, limit in G7_GATES.items()}
+        result["g7"][key] = block
+    return result
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("inputs", nargs="+", help="trace files or quoted globs")
@@ -205,6 +403,8 @@ def main(argv=None):
                         help="drop the first N s after the first record (writer start-up); ignored with --from-ns")
     parser.add_argument("--from-ns", type=int)
     parser.add_argument("--to-ns", type=int)
+    parser.add_argument("--native-summary", action="append", default=[],
+                        help="native writer summary files or quoted globs (summary-native-*-<until>.json)")
     parser.add_argument("--out")
     args = parser.parse_args(argv)
     paths = sorted({path for pattern in args.inputs for path in (glob.glob(pattern) or [pattern])})
@@ -212,7 +412,16 @@ def main(argv=None):
     report = {"schema": "qdl.p184.trace-feed-transit.v1", "files": len(files), "records": len(records),
               "dropped_at_export_total": sum(f["dropped_at_export"] or 0 for f in files),
               "stop_reasons": dict(collections.Counter(f["stop_reason"] for f in files)),
+              "files_by_kind": files_by_kind(files),
               **summarise(records, skip_seconds=args.skip_seconds, from_ns=args.from_ns, to_ns=args.to_ns)}
+    if args.native_summary:
+        summaries = sorted({p for pattern in args.native_summary for p in glob.glob(pattern)})
+        native_raw = [p for p in paths if Path(p).name.startswith("delivery-" + NATIVE_WORKER_PREFIX)]
+        window = report.get("window") or {}
+        report["native_summary"] = native_summary(
+            summaries, from_ns=args.from_ns if args.from_ns is not None else window.get("from_ns"),
+            to_ns=args.to_ns if args.to_ns is not None else window.get("to_ns"),
+            raw_activations=native_raw_activations(native_raw))
     text = json.dumps(report, indent=1, sort_keys=True)
     if args.out:
         with open(args.out, "x") as handle:
