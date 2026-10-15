@@ -61,6 +61,18 @@ old writer run and its last poll that saw the old writer: end bounded by [last s
 (a coverage gap). window_scope reports pre-load / load / post-load seconds separately; the cumulative histogram
 cannot be split by phase (distribution_scope says so), so the gated distribution includes pre/post-load applies.
 
+Load slices (TS e35bb316 latency.rs slices_report, summary schema_revision 1.1, block ack_latency_slices schema
+ts.native-ack-latency-slices.v1): 60 s wall-clock slices aligned to the Unix epoch, half-open [start, end), membership
+by apply completion (latency) / decision clock (integrity). When every scored summary carries an ACTIVE bucketed slice
+export with all overflow_*/unanchored_* counters at 0 and a slice exists for every slice intersecting the load window,
+G2 is scored from applied_source_event_to_ack.live, G7 from the slices' sdk_to_writer/writer_to_ack and G10 from the
+slices' integrity counters, over EVERY slice that intersects the load window (edge slices in full: the scored
+population is a superset of the load window, never a subset); distribution_scope = LOAD_SLICES_SUPERSET [from, to).
+Catch-up (stream rows without a gateway dispatch clock: resume replay, or without a receive stamp) is never gated and
+never dropped: catch_up_report_only per feed|venue gives its rows and applied count/max in scope and over the whole
+activation. Any failed condition falls back to the cumulative block with distribution_scope marked
+CUMULATIVE_FALLBACK and the reasons listed (slice_fallback_reasons); summaries without slices read exactly as before.
+
 G10 native counters (TS latency.rs apply_integrity, schema ts.native-apply-integrity.v1): per route, counted at the
 atomic apply decision for every unit while the trace is configured (not window-gated, fixed memory): decisions,
 replay_attempted (a stream row at/below the highest decided offset), duplicate_applied (a stream row APPLIED at/below
@@ -105,6 +117,11 @@ NATIVE_ACK_SCOPE = "apply_rows_completed_in_activation_window"
 NATIVE_OUTCOMES = ("duplicate", "applied", "refreshed", "errors")
 NATIVE_G7 = {"sdk_to_writer_ms": "sdk_to_writer", "writer_to_redis_ms": "writer_to_ack"}
 NATIVE_INTEGRITY_SCHEMA = "ts.native-apply-integrity.v1"
+NATIVE_SLICES_SCHEMA = "ts.native-ack-latency-slices.v1"
+SLICE_LOSS_COUNTERS = ("overflow_latency_rows", "overflow_integrity_units", "unanchored_latency_rows",
+                       "unanchored_integrity_units")
+SLICE_INTEGRITY_COUNTERS = ("rows", "stream_rows", "units", "unconfirmed_units", "unconfirmed_rows",
+                            "replay_attempted", "duplicate_applied", "ambiguous_after_unconfirmed")
 INTEGRITY_COUNTERS = ("rows", "stream_rows", "units", "unconfirmed_rows", "replay_attempted", "duplicate_applied",
                       "ambiguous_after_unconfirmed", "epochs_total", "epochs_dropped")
 # Keys summarise() reads; loading only these keeps a full campaign (~250 parts x 4096 records) in memory.
@@ -425,6 +442,134 @@ def merge_integrity(reports, from_ns, to_ns) -> dict:
             "per_feed_venue": dict(sorted(rows.items())), "coverage_gaps": gaps}
 
 
+def slice_plan(valid, from_ns, to_ns):
+    """(plan or None, fallback reasons) for scoring from ack_latency_slices (TS latency.rs slices_report).
+
+    None with no reasons = no scored summary carries slices (an older writer): the cumulative path, unchanged. A plan
+    needs every scored summary to carry an ACTIVE, bucketed slice export with zero overflow_*/unanchored_* counters,
+    and a slice present (in some summary) for every slice that intersects [from_ns, to_ns); the covered range is
+    [first slice start, last slice end), a superset of the load window, never a subset."""
+    blocks = [(path, report.get("ack_latency_slices")) for path, report, _ in valid]
+    if not blocks or all(block is None for _, block in blocks):
+        return None, []
+    reasons, seconds, present = [], set(), set()
+    if from_ns is None or to_ns is None or to_ns <= from_ns:
+        reasons.append("no load window to select slices")
+    for path, block in blocks:
+        if not isinstance(block, dict) or block.get("schema") != NATIVE_SLICES_SCHEMA:
+            reasons.append(f"no {NATIVE_SLICES_SCHEMA} block: {path}")
+            continue
+        if block.get("status") != "ACTIVE":
+            reasons.append(f"slices status {block.get('status')!r}: {path}")
+        if block.get("buckets") is not True:
+            reasons.append(f"slices exported without buckets (summary byte cap): {path}")
+        for name in SLICE_LOSS_COUNTERS:
+            if int(block.get(name) or 0):
+                reasons.append(f"{name}={block.get(name)}: {path}")
+        seconds.add(as_int(block.get("slice_seconds")))
+        for item in block.get("slices") or []:
+            start, end = as_int(item.get("start_unix_ns")), as_int(item.get("end_unix_ns"))
+            if start is None or end is None or end - start != (as_int(block.get("slice_seconds")) or 0) * 10**9:
+                reasons.append(f"malformed slice [{start}, {end}): {path}")
+                continue
+            present.add(start)
+    if len(seconds) != 1 or not next(iter(seconds)):
+        reasons.append(f"slice_seconds not one positive value: {sorted(seconds, key=str)}")
+    if reasons:
+        return None, reasons
+    step = next(iter(seconds)) * 10**9
+    starts = list(range(from_ns - from_ns % step, to_ns, step))
+    missing = [start for start in starts if start not in present]
+    if missing:
+        return None, [f"{len(missing)} of {len(starts)} slices intersecting the load window absent "
+                      f"(first {missing[0]})"]
+    return {"slice_seconds": step // 10**9, "starts": set(starts), "covered_from_ns": starts[0],
+            "covered_to_ns": starts[-1] + step}, []
+
+
+def slice_cells(path, report, plan):
+    """(path, feed|venue, cell) of every route cell of the planned slices of one summary."""
+    for item in (report.get("ack_latency_slices") or {}).get("slices") or []:
+        if as_int(item.get("start_unix_ns")) not in plan["starts"]:
+            continue
+        for cell in item.get("routes") or []:
+            route = cell.get("route") or {}
+            yield path, f"{route.get('feed')}|{str(route.get('provider')).upper()}", cell
+
+
+class CatchUp:
+    """Report-only catch-up (resume replay: stream rows the gateway did not dispatch live). Never gated, never
+    dropped: in-scope (covered slices) and whole-activation (cumulative per-route catch_up block) kept apart."""
+
+    def __init__(self):
+        self.parts = {}
+
+    def _add(self, part, counts, metric):
+        row = self.parts.setdefault(part, {"rows": {o: 0 for o in NATIVE_OUTCOMES}, "applied_n": 0,
+                                           "applied_max_ms": None, "applied_missing_clocks": 0})
+        for outcome in NATIVE_OUTCOMES:
+            row["rows"][outcome] += int((counts or {}).get(outcome) or 0)
+        metric = metric or {}
+        row["applied_n"] += int(metric.get("n") or 0)
+        row["applied_missing_clocks"] += int(metric.get("missing_clocks") or 0)
+        if metric.get("n") and metric.get("max_ms") is not None:
+            row["applied_max_ms"] = (metric["max_ms"] if row["applied_max_ms"] is None
+                                     else max(row["applied_max_ms"], metric["max_ms"]))
+
+    def add_cumulative(self, block):
+        self._add("whole_activation", block, block.get("applied_source_event_to_ack"))
+
+    def add_slice(self, cell):
+        self._add("in_scope", (cell.get("stream") or {}).get("catch_up"),
+                  (cell.get("applied_source_event_to_ack") or {}).get("catch_up"))
+
+    def block(self, *, in_scope):
+        out = {"verdict": "REPORT_ONLY", "basis": "stream rows without gateway_dispatch_wall_ns (resume replay) or "
+                                                  "without a receive stamp; applied source_event_to_ack"}
+        if in_scope:
+            out["in_scope"] = self.parts.get("in_scope") or self._empty()
+        if "whole_activation" in self.parts:
+            out["whole_activation"] = self.parts["whole_activation"]
+        return out
+
+    @staticmethod
+    def _empty():
+        return {"rows": {o: 0 for o in NATIVE_OUTCOMES}, "applied_n": 0, "applied_max_ms": None,
+                "applied_missing_clocks": 0}
+
+
+def slice_integrity(g10, valid, plan, scope) -> dict:
+    """native_summary.g10 with the decision counters re-summed over the planned slices only (superset of the load
+    window). Quantities the slices do not carry (replay_decisions, epochs) stay whole-activation and are named so;
+    each row keeps its whole-activation counters under whole_activation."""
+    sums = {}
+    for path, report, _ in valid:
+        for _, key, cell in slice_cells(path, report, plan):
+            integrity = cell.get("integrity") or {}
+            row = sums.setdefault(key, {**{name: 0 for name in SLICE_INTEGRITY_COUNTERS},
+                                        "decisions": {"applied": 0, "refreshed": 0, "duplicate_ignored": 0}})
+            for name in SLICE_INTEGRITY_COUNTERS:
+                row[name] += int(integrity.get(name) or 0)
+            for outcome in row["decisions"]:
+                row["decisions"][outcome] += int((integrity.get("decisions") or {}).get(outcome) or 0)
+    rows = {}
+    for key in sorted(set(g10.get("per_feed_venue") or {}) | set(sums)):
+        whole = dict((g10.get("per_feed_venue") or {}).get(key) or {})
+        mine = sums.get(key) or {**{name: 0 for name in SLICE_INTEGRITY_COUNTERS},
+                                 "decisions": {"applied": 0, "refreshed": 0, "duplicate_ignored": 0}}
+        rows[key] = {**whole, **mine, "duplicate_applied_in_window": mine["duplicate_applied"],
+                     "counters_scope": scope,
+                     "whole_activation_only": ["replay_decisions", "epochs_total", "epochs_dropped",
+                                               "duplicate_spans_unix_ns"],
+                     "whole_activation": {name: whole.get(name) for name in
+                                          SLICE_INTEGRITY_COUNTERS + ("decisions", "duplicate_applied_in_window")
+                                          if name in whole}}
+    return {**g10, "basis": "TS ack_latency_slices integrity: atomic apply decision counters of the slices "
+                            "intersecting the load window",
+            "in_window_rule": "sum of the covered slices (edge slices in full: a superset of the load window)",
+            "scope": scope, "per_feed_venue": rows}
+
+
 def native_summary(paths, *, from_ns=None, to_ns=None, raw_activations=(), process_ends=()) -> dict:
     """G2 TRADE/QUOTE transit and G7 segments of the native writer from its final summary files (see module doc).
 
@@ -433,7 +578,7 @@ def native_summary(paths, *, from_ns=None, to_ns=None, raw_activations=(), proce
     span it (restart or expiry inside the load), and a native raw file with records in the load window whose
     activation (worker, pid) has no summary (the process stopped without exporting it)."""
     gaps, activations, upper = [], [], None
-    transit, g7 = {}, {}
+    transit, g7, valid = {}, {}, []
     seen = set()
     overlapping_reports = []
     for path in paths:
@@ -487,9 +632,19 @@ def native_summary(paths, *, from_ns=None, to_ns=None, raw_activations=(), proce
             gaps.append(f"native activation {report.get('worker')}/{report.get('pid')} [{started}, "
                         f"{end['end_upper_ns']}] ({end['basis']}) does not span the load window (restart or trace "
                         "expiry inside the load)")
+        valid.append((path, report, ack))
+    # Slices are used only when every scored activation carries a complete, overflow-free slice export covering
+    # every 60 s slice that intersects the load window; otherwise the cumulative block (as before), marked.
+    plan, slice_reasons = slice_plan(valid, from_ns, to_ns)
+    catch_up = {}
+    for path, report, ack in valid:
         for item in ack.get("routes") or []:
             route = item.get("route") or {}
             feed, venue = str(route.get("feed")), str(route.get("provider")).upper()
+            if isinstance(item.get("catch_up"), dict):  # schema_revision 1.1: report-only, whole activation
+                catch_up.setdefault(f"{feed}|{venue}", CatchUp()).add_cumulative(item["catch_up"])
+            if plan is not None:
+                continue
             stream = item.get("stream") or {}
             try:
                 block = transit.setdefault(f"{feed}|{venue}", Buckets(upper))
@@ -501,6 +656,19 @@ def native_summary(paths, *, from_ns=None, to_ns=None, raw_activations=(), proce
                             merged.add(((stream.get(outcome) or {}).get("metrics") or {}).get(metric) or {})
             except ValueError as exc:
                 gaps.append(f"native summary {path} route {feed}|{venue}: {exc}")
+        if plan is None:
+            continue
+        for cell_path, key, cell in slice_cells(path, report, plan):
+            feed = key.split("|", 1)[0]
+            try:
+                transit.setdefault(key, Buckets(upper)).add(
+                    (cell.get("applied_source_event_to_ack") or {}).get("live") or {})
+                catch_up.setdefault(key, CatchUp()).add_slice(cell)
+                for g7_key in (feed, key):
+                    for name, metric in NATIVE_G7.items():
+                        g7.setdefault(g7_key, {}).setdefault(name, Buckets(upper)).add(cell.get(metric) or {})
+            except ValueError as exc:
+                gaps.append(f"native summary {cell_path} route {key}: {exc}")
     for raw in raw_activations:
         inside = (raw.get("first_start_ns") is not None and (to_ns is None or raw["first_start_ns"] <= to_ns)
                   and (from_ns is None or (raw.get("last_start_ns") or 0) >= from_ns))
@@ -512,13 +680,40 @@ def native_summary(paths, *, from_ns=None, to_ns=None, raw_activations=(), proce
         gaps.append("no native summary overlaps the load window")
     scope = native_window_scope(activations, from_ns, to_ns)
     g10 = merge_integrity(overlapping_reports, from_ns, to_ns) if overlapping_reports else None
+    slice_mode = None
+    if plan is not None:
+        slice_mode = {"mode": "LOAD_SLICES_SUPERSET", "slice_seconds": plan["slice_seconds"],
+                      "covered_from_ns": plan["covered_from_ns"], "covered_to_ns": plan["covered_to_ns"],
+                      "slices": len(plan["starts"]),
+                      "distribution_scope": f"LOAD_SLICES_SUPERSET [{plan['covered_from_ns']}, "
+                                            f"{plan['covered_to_ns']}) (every {plan['slice_seconds']} s slice "
+                                            "intersecting the load window, edge slices in full)",
+                      "pre_load_seconds_in_scope": round((from_ns - plan["covered_from_ns"]) / 1e9, 3),
+                      "post_load_seconds_in_scope": round((plan["covered_to_ns"] - to_ns) / 1e9, 3)}
+        if g10 is not None:
+            g10 = slice_integrity(g10, valid, plan, slice_mode["distribution_scope"])
+    elif slice_reasons:
+        slice_mode = {"mode": "CUMULATIVE_FALLBACK", "slice_fallback_reasons": slice_reasons,
+                      "distribution_scope": "PRE_LOAD+LOAD+POST_LOAD_NOT_SEPARABLE (slices unusable: cumulative "
+                                            "fallback)"}
+    if scope is not None and slice_mode is not None:
+        scope = {**scope, **slice_mode}
+        if slice_mode["mode"] == "LOAD_SLICES_SUPERSET":
+            scope["basis"] = "NATIVE_SUMMARY ack_latency_slices (60 s epoch slices intersecting the load window)"
     result = {"files": len(paths), "activations": activations, "coverage_gaps": gaps, "window_scope": scope,
               "g10": g10, "transit": {}, "g7": {}}
+    if slice_mode is not None:
+        result["slice_scope"] = slice_mode
     for key in sorted(transit):
         feed = key.split("|", 1)[0]
         block = transit[key].block()
         block["verdict"] = transit_verdict(block, TRANSIT_GATES[feed]) if feed in TRANSIT_GATES else "NOT_GATED"
-        block["basis"] = "NATIVE_SUMMARY applied.source_event_to_ack"
+        block["basis"] = ("NATIVE_SUMMARY ack_latency_slices applied_source_event_to_ack.live" if plan is not None
+                          else "NATIVE_SUMMARY applied.source_event_to_ack")
+        if slice_mode is not None:
+            block["distribution_scope"] = slice_mode["distribution_scope"]
+        if key in catch_up:
+            block["catch_up_report_only"] = catch_up[key].block(in_scope=plan is not None)
         result["transit"][key] = block
     for key in sorted(g7):
         block = {name: buckets.block() for name, buckets in sorted(g7[key].items())}
@@ -526,6 +721,8 @@ def native_summary(paths, *, from_ns=None, to_ns=None, raw_activations=(), proce
             block["verdict"] = {name: ("NO_DATA" if not block[name]["n"] else
                                        "INSIDE" if block[name]["p95"] <= limit else "OUTSIDE")
                                 for name, limit in G7_GATES.items()}
+        if slice_mode is not None:
+            block["distribution_scope"] = slice_mode["distribution_scope"]
         result["g7"][key] = block
     return result
 

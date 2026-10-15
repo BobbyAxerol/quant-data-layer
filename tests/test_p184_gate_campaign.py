@@ -1113,6 +1113,28 @@ class NativeWriterScoringTests(unittest.TestCase):
         self.assertEqual(campaign.score_g10(g10, {}, [], sample_scope="s")[0], "NOT_MEASURED")
         self.assertEqual(campaign.score_g10(g10, {}, [])[0], "PASS")
 
+    def test_native_slice_scope_is_named_in_the_reason_never_silent(self):
+        sliced = self.transit()
+        sliced["native_summary"]["slice_scope"] = {"mode": "LOAD_SLICES_SUPERSET",
+                                                   "distribution_scope": "LOAD_SLICES_SUPERSET [960, 2940)"}
+        for row in sliced["native_summary"]["transit"].values():
+            row["catch_up_report_only"] = {"verdict": "REPORT_ONLY", "whole_activation": {"applied_n": 3,
+                                                                                         "applied_max_ms": 7496.6}}
+        gates = self.card(sliced)
+        self.assertEqual(gates["G2"]["verdict"], "PASS")
+        self.assertIn("every row inside; native scope LOAD_SLICES_SUPERSET", gates["G2"]["reason"])
+        self.assertIn("LOAD_SLICES_SUPERSET [960, 2940)", gates["G7"]["reason"])
+        trade = [r for r in gates["G2"]["measured"] if r["feed_venue"] == "TRADE|OKX"][0]
+        self.assertEqual(trade["catch_up_report_only"]["whole_activation"]["applied_max_ms"], 7496.6)
+        fallback = self.transit()
+        fallback["native_summary"]["slice_scope"] = {
+            "mode": "CUMULATIVE_FALLBACK", "distribution_scope": "PRE_LOAD+LOAD+POST_LOAD_NOT_SEPARABLE (fallback)",
+            "slice_fallback_reasons": ["overflow_latency_rows=1: x"]}
+        gates = self.card(fallback)
+        self.assertIn("CUMULATIVE_FALLBACK", gates["G2"]["reason"])
+        self.assertIn("overflow_latency_rows=1", gates["G2"]["reason"])
+        self.assertEqual(self.card(self.transit())["G2"]["reason"], "every row inside")  # no slices: as before
+
     def test_trace_coverage_by_writer_kind(self):
         t = self.transit()
         self.assertTrue(campaign._trace_coverage(t, [0, 10 * S], 11 * S))

@@ -411,3 +411,243 @@ class NativeG10Tests(unittest.TestCase):
         v, _, why = self.score(native)
         self.assertEqual(v, "NOT_MEASURED")
         self.assertTrue(any("end not measured" in w for w in why))
+
+
+# ---- G2 load slices (TS e35bb316 ack_latency_slices, schema_revision 1.1), stage-100 #2 shape (2026-10-15) ----
+# p184-final-campaign-20261015T162352Z: native activation start/observed end and the load window (transit-load.json).
+R_STARTED, R_END = 1792081356158906056, 1792083383981202864
+R_FROM, R_TO = 1792081531837364992, 1792083331837364992
+SLICE = 60 * S
+UPPER = [float(i) for i in range(1001)] + [2048.0, 4096.0, 8192.0, 16384.0]
+
+
+def metric(values_ms):
+    """A latency.rs metric report (sparse buckets) over the given millisecond values."""
+    counts = {}
+    for value in values_ms:
+        index = int(-(-value // 1)) if value <= 1000 else 1001 + [2048, 4096, 8192, 16384].index(
+            next(b for b in (2048, 4096, 8192, 16384) if value <= b))
+        counts[index] = counts.get(index, 0) + 1
+    return {"n": len(values_ms), "max_ms": max(values_ms) if values_ms else None, "missing_clocks": 0,
+            "negative_clocks": 0, "sparse_bucket_counts": [[i, n] for i, n in sorted(counts.items())]}
+
+
+def counts(applied=0, duplicate=0):
+    return {"duplicate": duplicate, "applied": applied, "refreshed": 0, "errors": 0}
+
+
+def cell(provider, feed, live, catch_up=(), *, duplicate_applied=0, g7_ms=(5.0, 3.0)):
+    rows = len(live) + len(catch_up)
+    return {"route": {"provider": provider, "symbol": "X", "feed": feed, "interval": None},
+            "stream": {"live": counts(len(live)), "catch_up": counts(len(catch_up))},
+            "applied_source_event_to_ack": {"live": metric(live), "catch_up": metric(list(catch_up))},
+            "sdk_to_writer": metric([g7_ms[0]] * rows), "writer_to_ack": metric([g7_ms[1]] * rows),
+            "integrity": {"units": rows, "unconfirmed_units": 0, "rows": rows, "stream_rows": rows,
+                          "decisions": {"applied": rows, "refreshed": 0, "duplicate_ignored": 0},
+                          "replay_attempted": len(catch_up), "duplicate_applied": duplicate_applied,
+                          "ambiguous_after_unconfirmed": 0, "unconfirmed_rows": 0}}
+
+
+def sliced_report(cells_by_start, *, started=R_STARTED, end=R_END, slices=True, **slice_fields):
+    """A final native summary with cumulative routes = the sum of the slice cells (as the writer keeps them) and,
+    with slices=True, the additive ack_latency_slices block."""
+    routes = {}
+    for cells in cells_by_start.values():
+        for c in cells:
+            key = (c["route"]["provider"], c["route"]["feed"])
+            r = routes.setdefault(key, {"route": c["route"], "live": [], "cu": [], "g7": []})
+            r["live"] += c["_live"]
+            r["cu"] += c["_cu"]
+            r["g7"] += [c["_g7"]] * (len(c["_live"]) + len(c["_cu"]))
+    cumulative = []
+    for r in routes.values():
+        both = r["live"] + r["cu"]
+        cumulative.append({"route": r["route"], "stream": {"applied": {"count": len(both), "metrics": {
+            "source_event_to_ack": metric(both), "sdk_to_writer": metric([g[0] for g in r["g7"]]),
+            "writer_to_ack": metric([g[1] for g in r["g7"]])}}},
+            "catch_up": {**counts(len(r["cu"])), "applied_source_event_to_ack": metric(r["cu"])}})
+    report = native_report(started, started + 3600 * S, observed_end=end, integrity=[
+        integrity_route(r["route"]["provider"], feed=r["route"]["feed"]) for r in routes.values()])
+    report["schema_revision"] = "1.1"
+    report["ack_latency"].update(bucket_upper_bounds_ms=UPPER, routes=cumulative)
+    if slices:
+        block = {"schema": transit.NATIVE_SLICES_SCHEMA, "status": "ACTIVE", "slice_seconds": 60, "buckets": True,
+                 "overflow_latency_rows": 0, "overflow_integrity_units": 0, "unanchored_latency_rows": 0,
+                 "unanchored_integrity_units": 0,
+                 "slices": [{"start_unix_ns": start, "end_unix_ns": start + SLICE,
+                             "routes": [{k: v for k, v in c.items() if not k.startswith("_")} for c in cells]}
+                            for start, cells in sorted(cells_by_start.items())]}
+        block.update(slice_fields)
+        report["ack_latency_slices"] = block
+    return report
+
+
+def scell(provider, feed, live, catch_up=(), **kw):
+    c = cell(provider, feed, live, catch_up, **kw)
+    c.update(_live=list(live), _cu=list(catch_up), _g7=kw.get("g7_ms", (5.0, 3.0)))
+    return c
+
+
+def floor_slice(ns):
+    return ns - ns % SLICE
+
+
+def stage100_2_cells(*, replay_ms=7496.6, live_ms=(120.0, 293.0, 309.0), extra=None):
+    """Every slice of the activation: resume replay (catch-up, 7.5 s old) in the activation's first slice, 175 s
+    before the load; live new events in every slice."""
+    cells = {}
+    for start in range(floor_slice(R_STARTED), floor_slice(R_END) + 1, SLICE):
+        replay = [replay_ms] if start == floor_slice(R_STARTED) else []
+        cells[start] = [scell(p, f, list(live_ms), replay) for p in ("BINANCE", "OKX") for f in ("TRADE", "QUOTE")]
+    for start, items in (extra or {}).items():
+        cells[start] = items
+    return cells
+
+
+class LoadSliceTests(unittest.TestCase):
+    def analyse(self, report):
+        with tempfile.TemporaryDirectory() as tmp:
+            return transit.native_summary([write(tmp, report)], from_ns=R_FROM, to_ns=R_TO)
+
+    def test_selection_is_every_intersecting_slice_a_superset_of_the_load(self):
+        first, last = floor_slice(R_FROM), floor_slice(R_TO - 1)
+        cells = stage100_2_cells()
+        # The partial edge slices count in full (their pre/post-load rows included); wholly outside slices do not.
+        cells[first] = [scell("BINANCE", "TRADE", [900.0])] + cells[first][1:]
+        cells[last] = [scell("BINANCE", "TRADE", [950.0])] + cells[last][1:]
+        cells[first - SLICE] = [scell("BINANCE", "TRADE", [1400.0])] + cells[first - SLICE][1:]
+        cells[last + SLICE] = [scell("BINANCE", "TRADE", [1450.0])] + cells[last + SLICE][1:]
+        out = self.analyse(sliced_report(cells))
+        scope = out["slice_scope"]
+        self.assertEqual(scope["mode"], "LOAD_SLICES_SUPERSET")
+        self.assertEqual((scope["covered_from_ns"], scope["covered_to_ns"]), (first, last + SLICE))
+        self.assertLessEqual(scope["covered_from_ns"], R_FROM)
+        self.assertGreaterEqual(scope["covered_to_ns"], R_TO)
+        self.assertEqual(scope["slices"], (last - first) // SLICE + 1)
+        self.assertEqual(scope["slices"], 31)  # 1800 s load not aligned to the minute: 30 + 1 slices
+        self.assertIn(f"LOAD_SLICES_SUPERSET [{first}, {last + SLICE})", out["window_scope"]["distribution_scope"])
+        self.assertEqual(out["window_scope"]["pre_load_seconds_in_scope"], round((R_FROM - first) / 1e9, 3))
+        block = out["transit"]["TRADE|BINANCE"]
+        self.assertEqual(block["max"], 950.0)
+        self.assertEqual(block["n"], 1 + 1 + 29 * 3)
+        self.assertEqual(block["basis"], "NATIVE_SUMMARY ack_latency_slices applied_source_event_to_ack.live")
+        self.assertEqual(out["coverage_gaps"], [])
+        # The exact boundary: a load ending on a slice start does not pull in that slice (half-open).
+        aligned_to = floor_slice(R_TO)
+        with tempfile.TemporaryDirectory() as tmp:
+            edge = transit.native_summary([write(tmp, sliced_report(cells))], from_ns=R_FROM, to_ns=aligned_to)
+        self.assertEqual(edge["slice_scope"]["covered_to_ns"], aligned_to)
+
+    def test_live_is_gated_and_catch_up_is_reported_never_dropped(self):
+        first = floor_slice(R_FROM)
+        cells = stage100_2_cells()
+        cells[first + 5 * SLICE] = [scell("OKX", "QUOTE", [200.0], [7602.4, 3000.0])] + [
+            c for c in cells[first + 5 * SLICE] if (c["route"]["provider"], c["route"]["feed"]) != ("OKX", "QUOTE")]
+        out = self.analyse(sliced_report(cells))
+        block = out["transit"]["QUOTE|OKX"]
+        self.assertEqual((block["max"], block["verdict"]), (309.0, "INSIDE"))
+        catch_up = block["catch_up_report_only"]
+        self.assertEqual(catch_up["verdict"], "REPORT_ONLY")
+        self.assertEqual((catch_up["in_scope"]["applied_n"], catch_up["in_scope"]["applied_max_ms"]), (2, 7602.4))
+        self.assertEqual(catch_up["in_scope"]["rows"]["applied"], 2)
+        # The whole activation (cumulative per-route catch_up block) keeps the pre-load replay too.
+        self.assertEqual((catch_up["whole_activation"]["applied_n"], catch_up["whole_activation"]["applied_max_ms"]),
+                         (3, 7602.4))
+        self.assertIn("distribution_scope", out["g7"]["QUOTE"])
+        # G7 covers every stream row of the slices, both classes: 2 venues x 31 slices x 3 rows (OKX: 1 live + 2).
+        self.assertEqual(out["g7"]["QUOTE"]["writer_to_redis_ms"]["n"], 2 * 31 * 3)
+
+    def test_overflow_unanchored_missing_slices_or_no_buckets_fall_back_to_the_cumulative_block(self):
+        cells = stage100_2_cells()
+        for fields in ({"overflow_latency_rows": 1}, {"unanchored_integrity_units": 2}, {"buckets": False},
+                       {"status": "NO_ANCHOR"}):
+            out = self.analyse(sliced_report(cells, **fields))
+            scope = out["slice_scope"]
+            self.assertEqual(scope["mode"], "CUMULATIVE_FALLBACK", fields)
+            self.assertTrue(scope["slice_fallback_reasons"], fields)
+            self.assertIn("NOT_SEPARABLE", out["window_scope"]["distribution_scope"])
+            self.assertEqual(out["window_scope"]["mode"], "CUMULATIVE_FALLBACK")
+            block = out["transit"]["TRADE|BINANCE"]
+            self.assertEqual(block["basis"], "NATIVE_SUMMARY applied.source_event_to_ack")
+            self.assertEqual((block["max"], block["verdict"]), (7496.6, "OUTSIDE"))  # replay in, as before
+            self.assertEqual(block["catch_up_report_only"]["whole_activation"]["applied_max_ms"], 7496.6)
+            self.assertNotIn("in_scope", block["catch_up_report_only"])
+        holed = dict(cells)
+        holed.pop(floor_slice(R_FROM) + 10 * SLICE)
+        out = self.analyse(sliced_report(holed))
+        self.assertEqual(out["slice_scope"]["mode"], "CUMULATIVE_FALLBACK")
+        self.assertIn("1 of 31 slices", out["slice_scope"]["slice_fallback_reasons"][0])
+        # A summary of an older writer next to a sliced one: no partial slice scoring.
+        with tempfile.TemporaryDirectory() as tmp:
+            mixed = transit.native_summary([write(tmp, sliced_report(cells)),
+                                            write(tmp, sliced_report(cells, slices=False), "summary-native-w-35-1.json")],
+                                           from_ns=R_FROM, to_ns=R_TO)
+        self.assertEqual(mixed["slice_scope"]["mode"], "CUMULATIVE_FALLBACK")
+
+    def test_old_schema_reads_exactly_as_before(self):
+        report = sliced_report(stage100_2_cells(), slices=False)
+        for route in report["ack_latency"]["routes"]:
+            route.pop("catch_up")
+        report.pop("schema_revision")
+        out = self.analyse(report)
+        self.assertNotIn("slice_scope", out)
+        self.assertEqual(out["window_scope"]["distribution_scope"],
+                         "PRE_LOAD+LOAD+POST_LOAD_NOT_SEPARABLE (one cumulative histogram per activation)")
+        block = out["transit"]["TRADE|BINANCE"]
+        self.assertEqual(set(block), {"n", "p50", "p95", "p99", "max", "missing_clocks", "negative_clocks",
+                                      "quantile_basis", "verdict", "basis"})
+        self.assertEqual((block["max"], block["verdict"]), (7496.6, "OUTSIDE"))
+        self.assertNotIn("distribution_scope", out["g7"]["TRADE"])
+        self.assertNotIn("scope", out["g10"])
+        # schema_revision 1.1 without slices: cumulative scoring, catch-up shown (report-only), no slice scope.
+        rev11 = self.analyse(sliced_report(stage100_2_cells(), slices=False))
+        self.assertNotIn("slice_scope", rev11)
+        self.assertEqual(rev11["transit"]["TRADE|BINANCE"]["max"], 7496.6)
+        self.assertEqual(rev11["transit"]["TRADE|BINANCE"]["catch_up_report_only"]["whole_activation"]["applied_n"], 1)
+
+    def test_g10_counts_only_the_covered_slices(self):
+        first = floor_slice(R_FROM)
+        cells = stage100_2_cells()
+        cells[first - 2 * SLICE] = [scell("BINANCE", "TRADE", [100.0], duplicate_applied=3)]
+        out = self.analyse(sliced_report(cells))
+        row = out["g10"]["per_feed_venue"]["TRADE|BINANCE"]
+        self.assertEqual(row["duplicate_applied_in_window"], 0)
+        self.assertEqual(row["replay_attempted"], 0)  # the resume replay was 175 s before the load
+        self.assertIn("LOAD_SLICES_SUPERSET", row["counters_scope"])
+        self.assertIn("epochs_total", row["whole_activation_only"])
+        logs = {"trade_gap": 0, "trade_replay_expired": 0, "trade_overflow": 0, "log_polls": 10, "log_unreadable": 0}
+        v, counters, _ = campaign.score_g10(logs, {}, [], sample_scope="native raw sample spans 30 s",
+                                            native_g10=out["g10"], native_gaps=out["coverage_gaps"])
+        self.assertEqual(v, "PASS")
+        self.assertIn("LOAD_SLICES_SUPERSET", counters["duplicates_applied_scope"])
+        cells[first + 3 * SLICE] = [scell("BINANCE", "TRADE", [100.0], duplicate_applied=1)] + cells[
+            first + 3 * SLICE][1:]
+        out = self.analyse(sliced_report(cells))
+        v, counters, _ = campaign.score_g10(logs, {}, [], sample_scope="native raw sample spans 30 s",
+                                            native_g10=out["g10"], native_gaps=out["coverage_gaps"])
+        self.assertEqual((v, counters["duplicates_applied"]), ("FAIL", 1))
+
+    def test_stage100_2_replay_before_the_load_is_catch_up_not_g2(self):
+        """Regression: G2 TRADE/QUOTE max ~7.5 s came from the resume replay 175 s before the load."""
+        report = sliced_report(stage100_2_cells())
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write(tmp, report)
+            old = transit.native_summary([path], from_ns=R_FROM, to_ns=R_TO)
+            report.pop("ack_latency_slices")
+            cumulative = transit.native_summary([write(tmp, report, "summary-native-w-34-2.json")],
+                                                from_ns=R_FROM, to_ns=R_TO)
+        self.assertEqual(old["window_scope"]["pre_load_seconds"], 175.7)
+        for key in ("TRADE|BINANCE", "TRADE|OKX", "QUOTE|BINANCE", "QUOTE|OKX"):
+            self.assertEqual((cumulative["transit"][key]["max"], cumulative["transit"][key]["verdict"]),
+                             (7496.6, "OUTSIDE"), key)
+            block = old["transit"][key]
+            self.assertEqual((block["max"], block["p95"], block["verdict"]), (309.0, 309.0, "INSIDE"), key)
+            catch_up = block["catch_up_report_only"]
+            self.assertEqual(catch_up["in_scope"]["applied_n"], 0)
+            self.assertEqual((catch_up["whole_activation"]["applied_n"],
+                              catch_up["whole_activation"]["applied_max_ms"]), (1, 7496.6))
+        view = campaign.scoring_view({"transit": {}, "g7": {}, "native_summary": old}, ("QUOTE", "TRADE"))
+        verdict, rows, why = campaign.score_transit_rows(view, campaign.TRACE_FEEDS_G2)
+        self.assertEqual((verdict, why), ("PASS", []))
+        self.assertTrue(all(r["catch_up_report_only"]["whole_activation"]["applied_max_ms"] == 7496.6 for r in rows))
+        self.assertTrue(all(r["distribution_scope"].startswith("LOAD_SLICES_SUPERSET") for r in rows))

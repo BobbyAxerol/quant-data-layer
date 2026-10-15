@@ -387,6 +387,11 @@ def _gate(gid, quantity, rule, verdict, reason, protocol_ok, protocol_problems, 
     return {"id": gid, "quantity": quantity, "rule": rule, "verdict": verdict, "reason": reason, **extra}
 
 
+def with_scope(why: list[str], default: str, scope_note: list[str]) -> str:
+    """Gate reason: the reasons (or the default), then the native scope note when there is one."""
+    return "; ".join((list(why) or [default]) + list(scope_note))
+
+
 def _trace_coverage(transit: dict | None, load_ns, until_ns: int | None, *, raw_kinds=("python", "native")) -> list[str]:
     """Trace-derived gates need the trace armed through the whole load and no worker capped (a CAP stop means the
     last allowed part filled and later deliveries were not recorded). raw_kinds: whose raw files must be complete;
@@ -466,6 +471,9 @@ def score_transit_rows(transit: dict | None, feeds) -> tuple[str, list, list[str
                 row["raw_sample"] = {k: sample.get(k) for k in ("n", "p95", "max")} if sample else None
             if block.get("stream_basis"):
                 row["stream_basis"] = block["stream_basis"]
+            for extra in ("distribution_scope", "catch_up_report_only"):  # native load slices (TS e35bb316)
+                if block.get(extra) is not None:
+                    row[extra] = block[extra]
             rows.append(row)
             if block.get("verdict") == "OUTSIDE":
                 outside.append(f"{feed}|{venue}")
@@ -769,7 +777,9 @@ def score_g10(g10: dict, duplicates: dict | None, trace_gaps: list[str], *,
             counters.update(
                 duplicates_applied=sum(r.get("duplicate_applied_in_window") or 0 for r in native_rows.values())
                 + (raw_dup or 0),
-                duplicates_applied_scope="native apply-decision counters over the whole activation (+ raw sample)",
+                duplicates_applied_scope=(f"native apply-decision counters, {native_g10['scope']} (+ raw sample)"
+                                          if (native_g10 or {}).get("scope") else
+                                          "native apply-decision counters over the whole activation (+ raw sample)"),
                 duplicates_applied_native={k: r.get("duplicate_applied_in_window") for k, r in native_rows.items()},
                 duplicates_applied_raw_sample=raw_dup, raw_sample_scope=sample_scope,
                 replay_attempted={k: r.get("replay_attempted") for k, r in native_rows.items()},
@@ -898,9 +908,15 @@ def build_scorecard(campaign_dir: Path) -> dict:
         v = "NOT_MEASURED"
     native_src = {"native_feeds": list(native), "native_coverage_gaps": native_gaps,
                   "window_scope": ((transit or {}).get("native_summary") or {}).get("window_scope")} if native else {}
+    # Native load-slice scope (or its cumulative fallback) is named in the reason: never a silent pass on either.
+    slice_scope = ((transit or {}).get("native_summary") or {}).get("slice_scope") if native else None
+    scope_note = ([f"native scope {slice_scope['mode']}: {slice_scope['distribution_scope']}"
+                   + (f" ({'; '.join(slice_scope['slice_fallback_reasons'])})"
+                      if slice_scope.get("slice_fallback_reasons") else "")] if slice_scope else [])
     add("G2", "end-to-end to TS cache, new-event transit", "TRADE p95 <= 500 ms and max < 1500 ms; QUOTE and MARK "
-        "p95 <= 500 ms and max < 1000 ms", v, "; ".join(why1 + why2 + (mixed_gaps if v == "NOT_MEASURED" else []))
-        or "every row inside", measured=rows1 + rows2, sources=trace_src, **native_src)
+        "p95 <= 500 ms and max < 1000 ms", v, with_scope(why1 + why2 + (mixed_gaps if v == "NOT_MEASURED" else []),
+                                                         "every row inside", scope_note),
+        measured=rows1 + rows2, sources=trace_src, **native_src)
     g3 = load_json(d / "g3" / "g3-summary.json")
     add("G3", "end-to-end to TS cache, BAR from close (first visibility of the closed bar)", "p95 <= 5 s, max < 60 s",
         (g3 or {}).get("verdict", "NOT_MEASURED"), "g3 probe" if g3 else "no G3 summary",
@@ -970,7 +986,7 @@ def build_scorecard(campaign_dir: Path) -> dict:
     if mixed_gaps and v != "FAIL":
         v, why = "NOT_MEASURED", why + mixed_gaps
     add("G7", "TS consumer path", "SDK -> writer p95 <= 100 ms; writer -> Redis reply p95 <= 50 ms per feed", v,
-        "; ".join(why) or "every feed inside", measured=rows, **native_src)
+        with_scope(why, "every feed inside", scope_note), measured=rows, **native_src)
     samples8 = list(read_jsonl(d / "g8" / "g8-samples.jsonl")) if (d / "g8" / "g8-samples.jsonl").exists() else []
     s8 = g8.summarize(samples8, steady_from_ns=load_ns[0] if load_ns else None,
                       steady_to_ns=load_ns[1] if load_ns else None) if samples8 else None
