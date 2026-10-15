@@ -895,5 +895,100 @@ class G4AddendumFreezeTests(unittest.TestCase):
             self.assertEqual(output.read_bytes(), first)
 
 
+def _manifest(directory: Path, name: str, consumer: str, revision: int) -> Path:
+    path = directory / name
+    path.write_text(f"apiVersion: qdl/v2\nkind: DataRequirement\nmetadata:\n  id: {consumer}\n  owner: t\n"
+                    f"  revision: {revision}\nspec: {{}}\n")
+    return path
+
+
+def _query_inspect(realms: Path, manifests: str) -> dict:
+    return {"Config": {"Env": [f"QDL_STABLE_CONSUMER_MANIFESTS={manifests}", "OTHER=x"]},
+            "Mounts": [{"Source": str(realms), "Destination": "/consumer-realms"},
+                       {"Source": "/elsewhere", "Destination": "/runtime"}]}
+
+
+class ManifestRevisionPreflightTests(unittest.TestCase):
+    """Driver token revision vs the live Query manifest (2026-10-15T075842Z: stale r15 override vs live r16)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.realms = self.root / "realms"
+        self.realms.mkdir()
+        _manifest(self.realms, "alpha.binance.paper.stable-r16.yaml", "alpha.binance.paper.stable", 16)
+        _manifest(self.realms, "alpha.okx.paper.stable-r15.yaml", "alpha.okx.paper.stable", 15)
+        self.live = ("/app/consumers/stable/monitoring-multivenue.yaml:/consumer-realms/alpha.binance.paper.stable-"
+                     "r16.yaml:/consumer-realms/alpha.okx.paper.stable-r15.yaml")
+        self.okx = str(_manifest(self.root, "okx-r15.yaml", "alpha.okx.paper.stable", 15))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def profile(self, binance_revision: int) -> dict:
+        binance = _manifest(self.root, f"bn-r{binance_revision}.yaml", "alpha.binance.paper.stable", binance_revision)
+        return {"identities": [{"id": "alpha.binance.paper.stable"}, {"id": "alpha.okx.paper.stable"}],
+                "manifest_overrides": {"alpha.binance.paper.stable": str(binance),
+                                       "alpha.okx.paper.stable": self.okx}}
+
+    def check(self, profile, inspects):
+        return campaign.manifest_revision_check(profile, inspects, repo_root=self.root)
+
+    def test_match_has_no_problem(self):
+        inspect = _query_inspect(self.realms, self.live)
+        rows, problems = self.check(self.profile(16), {"q1": inspect, "q2": inspect})
+        self.assertEqual(problems, [])
+        self.assertEqual({row["consumer"]: row["driver_revision"] for row in rows},
+                         {"alpha.binance.paper.stable": 16, "alpha.okx.paper.stable": 15})
+        self.assertEqual(rows[0]["live"]["q1"]["host_path"], str(self.realms / "alpha.binance.paper.stable-r16.yaml"))
+
+    def test_stale_override_is_a_problem(self):
+        _, problems = self.check(self.profile(15), {"q1": _query_inspect(self.realms, self.live)})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("alpha.binance.paper.stable driver revision 15", problems[0])
+        self.assertIn("live revision 16", problems[0])
+
+    def test_unresolvable_fails_closed(self):
+        profile = self.profile(16)
+        # Query container not inspectable.
+        self.assertTrue(any("cannot inspect" in p for p in self.check(profile, {"q1": None})[1]))
+        # No Query container at all.
+        self.assertTrue(self.check(profile, {})[1])
+        # Live manifest path not under any bind mount (image-baked copy): unresolvable.
+        baked = "/app/consumers/stable/alpha-binance-paper.yaml:/consumer-realms/alpha.okx.paper.stable-r15.yaml"
+        problems = self.check(profile, {"q1": _query_inspect(self.realms, baked)})[1]
+        self.assertEqual(len(problems), 1)
+        self.assertIn("alpha.binance.paper.stable live manifest on q1 unresolvable (lives in the image", problems[0])
+        # Consumer not loaded by Query at all.
+        only_okx = "/consumer-realms/alpha.okx.paper.stable-r15.yaml"
+        self.assertIn("(not loaded)", self.check(profile, {"q1": _query_inspect(self.realms, only_okx)})[1][0])
+        # Driver manifest unreadable.
+        profile["manifest_overrides"]["alpha.binance.paper.stable"] = str(self.root / "missing.yaml")
+        problems = self.check(profile, {"q1": _query_inspect(self.realms, self.live)})[1]
+        self.assertTrue(any("unreadable or for another consumer" in p for p in problems))
+
+    def test_identity_without_override_uses_repo_default(self):
+        (self.root / "consumers/stable").mkdir(parents=True)
+        _manifest(self.root / "consumers/stable", "alpha-binance-paper.yaml", "alpha.binance.paper.stable", 14)
+        profile = {"identities": [{"id": "alpha.binance.paper.stable"}], "manifest_overrides": {}}
+        rows, problems = self.check(profile, {"q1": _query_inspect(self.realms, self.live)})
+        self.assertEqual(rows[0]["driver_source"], "repo default (client image baked copy)")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("driver revision 14", problems[0])
+
+    def test_preflight_refuses_on_mismatch(self):
+        profile_path = self.root / "profile.json"
+        profile = self.profile(15)
+        profile["query_containers"] = ["q1"]
+        profile_path.write_text(json.dumps(profile))
+        args = unittest.mock.Mock(base_profile=str(profile_path), writer="w")
+        inspects = {"q1": _query_inspect(self.realms, self.live), "w": None}
+        with unittest.mock.patch.object(campaign, "docker_inspect", side_effect=inspects.get) as inspect:
+            plan = campaign.preflight(args)
+        self.assertIn(unittest.mock.call("q1"), inspect.call_args_list)
+        self.assertTrue(any("driver revision 15" in p for p in plan["problems"]))
+        self.assertIn("writer not running", plan["problems"])
+
+
 if __name__ == "__main__":
     unittest.main()

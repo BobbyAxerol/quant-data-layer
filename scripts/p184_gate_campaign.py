@@ -66,10 +66,12 @@ from scripts import p184_g8_redis_sampler as g8  # noqa: E402
 from scripts import p184_g9_g10_writer_counters as g910  # noqa: E402
 from scripts import p184_g14_resource_table as g14  # noqa: E402
 from scripts.p184_resp_readonly import parse_redis_url, read_jsonl  # noqa: E402
+from scripts.phase3_consumer_load_acceptance import _PHASE3_CONSUMER_MANIFESTS  # noqa: E402
 
 STATE = Path.home() / ".local/state/qdl-v2"
 TOOLS = STATE / "p184-d3-capacity-20261009"
 WRITER = "market_data_service_p184w"
+QUERY_REFERENCE = "qdl_v2_stable_candidate-query_kn_1-1"
 EXTRA_MONITORED = ("qdl_v2_stable_candidate-binance_bar_edge-1", "qdl_v2_stable_candidate-stable_redis-1")
 LOAD_SECONDS = 1800
 DRIVER_TIMEOUT = 2400
@@ -241,6 +243,83 @@ def host_path(inspect: dict, container_path: str) -> str | None:
 
 def env_of(inspect: dict) -> dict[str, str]:
     return dict(item.split("=", 1) for item in inspect.get("Config", {}).get("Env", []) if "=" in item)
+
+
+def read_manifest_identity(path) -> tuple[str, int] | None:
+    """(metadata.id, metadata.revision) of a consumer manifest yaml, or None when unreadable/malformed."""
+    import yaml
+    try:
+        meta = (yaml.safe_load(Path(path).read_text()) or {}).get("metadata") or {}
+    except (OSError, ValueError, AttributeError, yaml.YAMLError):
+        return None
+    ident, revision = meta.get("id"), meta.get("revision")
+    if not isinstance(ident, str) or not isinstance(revision, int) or isinstance(revision, bool):
+        return None
+    return ident, revision
+
+
+def live_manifests(inspect: dict) -> tuple[dict[str, dict], list[str]]:
+    """consumer id -> {revision, container_path, host_path} of a Query container, from its
+    QDL_STABLE_CONSUMER_MANIFESTS and bind mounts only (read-only `docker inspect` data, no docker exec). A path not
+    under a bind mount lives in the image: recorded as unresolved under the driver consumer whose baked path it is."""
+    live, unresolved = {}, []
+    by_baked_path = {path: consumer for consumer, path in _PHASE3_CONSUMER_MANIFESTS.items()}
+    for container_path in filter(None, env_of(inspect).get("QDL_STABLE_CONSUMER_MANIFESTS", "").split(":")):
+        source = host_path(inspect, container_path)
+        identity = read_manifest_identity(source) if source else None
+        if identity is None:
+            unresolved.append(by_baked_path.get(container_path, container_path))
+            continue
+        live[identity[0]] = {"revision": identity[1], "container_path": container_path, "host_path": source}
+    return live, unresolved
+
+
+def manifest_revision_check(profile: dict, inspects: dict[str, dict | None], *, repo_root: Path = ROOT) -> tuple[
+        list[dict], list[str]]:
+    """Every consumer the driver mints workload tokens for (profile identities + manifest_overrides) must carry the
+    same manifest revision as each live Query loads, or Query answers UNAUTHENTICATED ("workload token is not bound to
+    the active consumer manifest revision"; campaign 2026-10-15T075842Z: 1,080 errors from a stale r15 override vs a
+    live r16). Driver side: the override file, else the repo copy of the manifest the client image bakes. Fail
+    closed: anything unresolvable is a problem."""
+    overrides = profile.get("manifest_overrides") or {}
+    consumers = sorted({item.get("id") for item in profile.get("identities") or [] if isinstance(item, dict)}
+                       | set(overrides))
+    rows, problems = [], []
+    live_by_container = {}
+    for name, inspect in inspects.items():
+        if inspect is None:
+            problems.append(f"manifest check: cannot inspect Query container {name}")
+            continue
+        live_by_container[name] = live_manifests(inspect)
+    if not inspects:
+        problems.append("manifest check: no Query container to compare against")
+    for consumer in consumers:
+        if consumer in overrides:
+            driver_path, source = str(overrides[consumer]), "manifest_overrides"
+        elif consumer in _PHASE3_CONSUMER_MANIFESTS:
+            driver_path = str(repo_root / "consumers/stable" / Path(_PHASE3_CONSUMER_MANIFESTS[consumer]).name)
+            source = "repo default (client image baked copy)"
+        else:
+            problems.append(f"manifest check: {consumer} has no driver manifest")
+            continue
+        identity = read_manifest_identity(driver_path)
+        row = {"consumer": consumer, "driver_manifest": driver_path, "driver_source": source,
+               "driver_revision": identity[1] if identity else None, "live": {}}
+        rows.append(row)
+        if identity is None or identity[0] != consumer:
+            problems.append(f"manifest check: driver manifest for {consumer} unreadable or for another consumer "
+                            f"({driver_path})")
+            continue
+        for name, (live, unresolved) in live_by_container.items():
+            entry = live.get(consumer)
+            row["live"][name] = entry
+            if entry is None:
+                why = "lives in the image (no bind mount)" if consumer in unresolved else "not loaded"
+                problems.append(f"manifest check: {consumer} live manifest on {name} unresolvable ({why})")
+            elif entry["revision"] != identity[1]:
+                problems.append(f"manifest check: {consumer} driver revision {identity[1]} ({driver_path}) != live "
+                                f"revision {entry['revision']} on {name} ({entry['host_path']})")
+    return rows, problems
 
 
 # ---------------------------------------------------------------- scoring (pure, unit-tested)
@@ -782,6 +861,13 @@ def writer_market_redis(writer: str) -> str | None:
 
 def preflight(args) -> dict:
     plan = {"writer": args.writer, "problems": [], "warnings": []}
+    base = load_json(Path(args.base_profile))
+    if not isinstance(base, dict):
+        plan["problems"].append(f"base profile unreadable: {args.base_profile}")
+    else:
+        queries = list(base.get("query_containers") or [QUERY_REFERENCE])
+        plan["manifests"], problems = manifest_revision_check(base, {name: docker_inspect(name) for name in queries})
+        plan["problems"].extend(problems)
     inspect = docker_inspect(args.writer)
     if inspect is None or not inspect["State"]["Running"]:
         plan["problems"].append("writer not running")
