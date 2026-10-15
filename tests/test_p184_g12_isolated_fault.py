@@ -2740,3 +2740,333 @@ class CoreGroupAcceptanceTests(unittest.TestCase):
         self.assertNotIn("kn-projector-v3-a", row["offsets"])
         self.assertEqual(g12.core_client_id(NS, "core"), NS)
         self.assertEqual(g12.core_client_id(NS, "core-3"), NS + "-3")
+
+
+ADDENDUM_S = {
+    "schema": "p184-coregroup-prereg-addendum.v1",
+    "run_A_prime": {"criteria": [
+        "reproduction: each old-image survivor of the first roll retries >= 2 times in after_roll_core"]},
+    "run_S": {"criteria": [
+        "storm=false",
+        "replace-all: group re-formed (3 members, 6 partitions owned exactly once) <= 30 s after the first new "
+        "member started, then stable >= 10 s",
+        "replace-all: core lag within the baseline maximum <= 60 s after the first new member started",
+        "new-image member lives: retries == 0, rewind_failed == 0, rewinds <= 2 per window, 0 in baseline",
+        "old-image member lives: 0 retries, rewinds and rewind failures in every judged window",
+        "every window after the replace (after_replace_all, after_restart_core-3, after_kill): retries == 0 "
+        "absolute",
+        "last 30 s of every window: 3 members, all 6 partitions owned exactly once",
+        "core kill (RB2 clocks): ownership restored <= 15 s after exit confirmed; caught up <= 60 s",
+        "no inflight_commit_failed / stop_drain_failed",
+        "0 production guard breaches",
+        "coverage: monitor gap <= 5 s, member logs cover every window (else NOT_MEASURED, never PASS)"]}}
+
+
+class CoreGroupProfileTests(unittest.TestCase):
+    """INCIDENT 2026-10-15 #2: production-like core profile; defaults keep the B3 harness."""
+
+    def test_defaults_keep_the_b3_harness(self):
+        profile = g12.core_profile()
+        self.assertEqual(profile, {**g12.CORE_PROFILE_DEFAULTS, "core_cpus": "0.5"})
+        config = {"batch_size": 25, "batch_wait_ms": 10, "transactional_id": NS}
+        self.assertEqual(g12.apply_core_profile(config, profile), config)
+        roles = g12.topology(NS, "/home/bobby/x/work", "T", uid="1:1", core_members=3)
+        for role in g12.CORE_MEMBERS:
+            self.assertEqual(roles[role][roles[role].index("--cpus") + 1], "0.5")
+        self.assertIn("group.initial.rebalance.delay.ms=0\n", g12.broker_properties("pw", 1))
+
+    def test_production_values_reach_config_topology_and_brokers(self):
+        profile = g12.core_profile(batch_size=1024, batch_wait_ms=25, core_cpus="1.0", hz=20.0,
+                                   replace_gap_s=3.0, precondition_restarts=3, initial_rebalance_delay_ms=3000)
+        config = g12.apply_core_profile({"batch_size": 25, "batch_wait_ms": 10, "x": 1}, profile)
+        self.assertEqual(config, {"batch_size": 1024, "batch_wait_ms": 25, "x": 1})
+        roles = g12.topology(NS, "/home/bobby/x/work", "T", uid="1:1", core_members=3,
+                             core_cpus=profile["core_cpus"])
+        for role in g12.CORE_MEMBERS:
+            self.assertEqual(roles[role][roles[role].index("--cpus") + 1], "1.0")
+        self.assertIn("group.initial.rebalance.delay.ms=3000\n", g12.broker_properties("pw", 2, 3000))
+
+    def test_out_of_range_profiles_are_refused(self):
+        for bad in ({"batch_size": 0}, {"batch_size": True}, {"hz": 25}, {"hz": 0}, {"core_cpus": "3"},
+                    {"core_cpus": "x"}, {"replace_gap_s": 31}, {"precondition_restarts": 6}, {"nope": 1},
+                    {"initial_rebalance_delay_ms": -1}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                g12.core_profile(**bad)
+
+    def test_cli_profile_needs_a_core_group_mode_and_reaches_the_orchestrator(self):
+        import contextlib
+        import io
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            g12.main(["--analyze", "/x", "--core-batch-size", "1024"])
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            g12.main(["--core-group", "/x", "--export", "/e", "--namespace", NS, "--new-core", NEW_CORE,
+                      "--core-hz", "50"])
+        calls = []
+        with patch.object(g12, "image_record", return_value={"id": NEW_CORE}), \
+                patch.object(g12, "orchestrate_core_group", lambda *a, **k: calls.append((a, k)) or 0):
+            for mode in ("--core-group", "--core-group-simultaneous"):
+                g12.main([mode, "/x", "--export", "/e", "--namespace", NS, "--new-core", NEW_CORE,
+                          "--core-batch-size", "1024", "--core-replace-gap-s", "3"])
+            g12.main(["--core-group", "/x", "--export", "/e", "--namespace", NS, "--new-core", NEW_CORE])
+        (args, kwargs), (_, kwargs_s), (_, kwargs_default) = calls
+        self.assertEqual(str(args[0]), "/x")
+        self.assertFalse(kwargs["simultaneous"])
+        self.assertTrue(kwargs_s["simultaneous"])
+        self.assertEqual((kwargs["profile"]["batch_size"], kwargs["profile"]["replace_gap_s"]), (1024, 3.0))
+        self.assertEqual(kwargs_default["profile"], g12.core_profile())
+
+    def fake_run(self, steps):
+        """A Run stand-in recording each orchestration step."""
+        class FakeRun:
+            def __init__(self, base, export, ns, images):
+                self.images = images
+                self.evidence = Path(tempfile.mkdtemp(dir=self_tmp))
+
+            def prepare(self):
+                pass
+
+            def core_group_up(self):
+                steps.append(("up",))
+
+            def core_group_formation(self, start_ns):
+                steps.append(("formation",))
+
+            def core_group_window(self, name, seconds, **fields):
+                steps.append(("window", name, seconds, fields.get("diagnostic", False)))
+
+            def core_replace(self, role, image=None, kill=False, gap_s=0.0, kind=None):
+                steps.append(("replace", role, image, kill, gap_s, kind))
+
+            def core_replace_all(self, image, gap_s=0.0):
+                steps.append(("replace_all", image, gap_s))
+
+            def note(self, *a, **k):
+                pass
+
+            def down(self):
+                pass
+        self_tmp = self.tmp
+        return FakeRun
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = tmp.name
+
+    def orchestrate(self, **kwargs):
+        steps = []
+        with patch.object(g12, "Run", self.fake_run(steps)), patch.object(g12, "core_group_verdict", return_value={}):
+            self.assertEqual(g12.orchestrate_core_group(Path(self.tmp), Path(self.tmp), NS, {}, NEW_CORE, **kwargs), 0)
+        return steps
+
+    def test_default_rolling_sequence_is_unchanged(self):
+        hold = g12.CORE_GROUP["hold_s"]
+        self.assertEqual(self.orchestrate(), [
+            ("up",), ("formation",), ("window", "baseline", g12.CORE_GROUP["baseline_s"], False),
+            ("replace", "core", NEW_CORE, False, 0.0, None), ("window", "after_roll_core", hold, False),
+            ("replace", "core-2", NEW_CORE, False, 0.0, None), ("window", "after_roll_core-2", hold, False),
+            ("replace", "core-3", NEW_CORE, False, 0.0, None), ("window", "after_roll_core-3", hold, False),
+            ("replace", "core-2", None, True, 0.0, None), ("window", "after_kill", hold, False)])
+
+    def test_production_like_rolling_preconditions_then_rolls_with_the_gap(self):
+        steps = self.orchestrate(profile={"replace_gap_s": 3.0, "precondition_restarts": 2})
+        self.assertEqual(steps[2:6], [
+            ("replace", "core-2", None, False, 3.0, "core_precondition"),
+            ("window", "precondition_1", g12.CORE_GROUP["precondition_hold_s"], True),
+            ("replace", "core-2", None, False, 3.0, "core_precondition"),
+            ("window", "precondition_2", g12.CORE_GROUP["precondition_hold_s"], True)])
+        self.assertEqual(steps[6][1], "baseline")
+        self.assertEqual([s[4] for s in steps if s[0] == "replace" and s[2] == NEW_CORE], [3.0, 3.0, 3.0])
+        self.assertEqual(steps[-2], ("replace", "core-2", None, True, 0.0, None))  # the kill restarts at once
+
+    def test_simultaneous_sequence(self):
+        hold = g12.CORE_GROUP["hold_s"]
+        self.assertEqual(self.orchestrate(simultaneous=True, profile={"replace_gap_s": 2.0}), [
+            ("up",), ("formation",), ("window", "baseline", g12.CORE_GROUP["baseline_s"], False),
+            ("replace_all", NEW_CORE, 2.0), ("window", "after_replace_all", hold, False),
+            ("replace", "core-3", NEW_CORE, False, 2.0, None), ("window", "after_restart_core-3", hold, False),
+            ("replace", "core-2", None, True, 0.0, None), ("window", "after_kill", hold, False)])
+        self.assertEqual(g12.CORE_GROUP_S_WINDOWS[1:], ("after_replace_all", "after_restart_core-3", "after_kill"))
+
+    def fake_self(self, rows):
+        started, followed = [], []
+        fake = types.SimpleNamespace(
+            images={"core": OLD_CORE}, ns=NS, topic_id="T",
+            topology=lambda topic_id: {role: ["run", role] for role in g12.CORE_MEMBERS},
+            verify_image=lambda role: None, follow_logs=followed.append, fault_row=rows.append,
+            note=lambda *a, **k: None)
+        return fake, started, followed
+
+    def test_replace_waits_the_gap_after_the_exit(self):
+        rows, stops, sleeps, runs = [], [], [], []
+        fake, _, followed = self.fake_self(rows)
+        with patch.object(g12, "stop_role", lambda ns, role, kill=False: stops.append((role, kill)) or True), \
+                patch.object(g12, "sh", lambda argv, timeout=60, check=True: runs.append(argv) or ""), \
+                patch.object(g12.time, "sleep", sleeps.append):
+            g12.Run.core_replace(fake, "core", image=NEW_CORE, gap_s=3.0)
+            g12.Run.core_replace(fake, "core-2", kill=True)
+            g12.Run.core_replace(fake, "core-2", gap_s=1.0, kind="core_precondition")
+        self.assertEqual(sleeps, [3.0, 1.0])  # a kill restarts at once
+        self.assertEqual([r["k"] for r in rows], ["core_roll", "core_kill", "core_precondition"])
+        self.assertEqual([r["gap_s"] for r in rows], [3.0, 0.0, 1.0])
+        self.assertTrue(all(r["injected_ns"] <= r["stopped_ns"] <= r["restart_ns"] for r in rows))
+        self.assertEqual(stops, [("core", False), ("core-2", True), ("core-2", False)])
+
+    def test_replace_all_stops_every_member_before_any_start(self):
+        rows, order = [], []
+        fake, _, followed = self.fake_self(rows)
+        lock = threading.Lock()
+
+        def stop(ns, role, kill=False):
+            with lock:
+                order.append(("stop", role, kill))
+            return True
+        with patch.object(g12, "stop_role", stop), \
+                patch.object(g12, "sh", lambda argv, timeout=60, check=True: order.append(("start", argv[1])) or ""), \
+                patch.object(g12.time, "sleep", lambda s: order.append(("sleep", s))):
+            row = g12.Run.core_replace_all(fake, NEW_CORE, gap_s=2.0)
+        self.assertEqual(sorted(order[:3]), [("stop", r, False) for r in sorted(g12.CORE_MEMBERS)])
+        self.assertEqual(order[3:], [("sleep", 2.0)] + [("start", r) for r in g12.CORE_MEMBERS])
+        self.assertEqual(fake.images["core"], NEW_CORE)
+        self.assertEqual(followed, list(g12.CORE_MEMBERS))
+        self.assertEqual((row["k"], row["image"], rows), ("core_replace_all", NEW_CORE, [row]))
+        with patch.object(g12, "stop_role", lambda ns, role, kill=False: role != "core-3"), \
+                self.assertRaises(RuntimeError):
+            g12.Run.core_replace_all(fake, NEW_CORE)
+
+
+class CoreGroupSimultaneousAcceptanceTests(unittest.TestCase):
+    """``--core-group-simultaneous`` verdict and run_S / run_A_prime acceptance on synthetic evidence."""
+
+    T0 = 1_800_000_000 * S
+    OWNERS = {"core": (0, 1), "core-2": (2, 3), "core-3": (4, 5)}
+    stamp = staticmethod(CoreGroupAcceptanceTests.stamp)
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.prereg = Path(self.tmp.name) / "prereg.json"
+        self.prereg.write_text(json.dumps(PREREG))
+        self.addendum = Path(self.tmp.name) / "addendum.json"
+        self.addendum.write_text(json.dumps(ADDENDUM_S))
+
+    def build(self, name, *, reform_at=128, events=()):
+        """Baseline 0-120 (old image); replace-all injected 120 (all gone 120.6, first start 121); restart of
+        core-3 at 272; SIGKILL of core-2 at 424 (ownership moves at 432); end 580."""
+        T, ev = self.T0, Path(self.tmp.name) / name / "evidence"
+        (ev / "logs").mkdir(parents=True)
+        (ev / "verdict-ns.json").write_text(json.dumps({"namespace": NS}))
+        windows = [("baseline", 0, 120), ("after_replace_all", 122, 272), ("after_restart_core-3", 274, 424),
+                   ("after_kill", 426, 576)]
+        faults = [{"k": "core_window", "name": "baseline", "start_ns": T, "end_ns": T + 120 * S},
+                  {"k": "core_replace_all", "roles": list(g12.CORE_MEMBERS), "image": NEW_CORE,
+                   "injected_ns": T + 120 * S, "stopped_ns": T + 120 * S + 600 * MS, "gap_s": 0.0,
+                   "restart_ns": T + 121 * S, "started_ns": T + 121 * S + 500 * MS}]
+        faults.append({"k": "core_window", "name": "after_replace_all", "start_ns": T + 122 * S, "end_ns": T + 272 * S})
+        faults.append({"k": "core_roll", "role": "core-3", "image": NEW_CORE, "injected_ns": T + 272 * S,
+                       "restart_ns": T + 273 * S})
+        faults.append({"k": "core_window", "name": "after_restart_core-3", "start_ns": T + 274 * S,
+                       "end_ns": T + 424 * S})
+        faults.append({"k": "core_kill", "role": "core-2", "injected_ns": T + 424 * S, "restart_ns": T + 425 * S})
+        faults.append({"k": "core_window", "name": "after_kill", "start_ns": T + 426 * S, "end_ns": T + 576 * S})
+        self.assertEqual([w[0] for w in windows], list(g12.CORE_GROUP_S_WINDOWS))
+        (ev / "faults.jsonl").write_text("".join(json.dumps(f) + "\n" for f in faults))
+        lives = [("core", 1, 0.5, 120.5), ("core", 2, 121.5, 580), ("core-2", 1, 0.5, 120.5),
+                 ("core-2", 2, 121.5, 424.2), ("core-2", 3, 425.5, 581), ("core-3", 1, 0.5, 120.5),
+                 ("core-3", 2, 121.5, 272.5), ("core-3", 3, 273.5, 582)]
+        die, provenance = [], []
+        for role, life, first, end in lives:
+            image = OLD_CORE if life == 1 else NEW_CORE
+            die.append({"Action": "die", "timeNano": T + int(end * S), "Actor": {"Attributes": {
+                "name": f"{NS}-{role}", "image": image, "exitCode": "137" if (role, life) == ("core-2", 2) else "0"}}})
+            provenance.append({"t": T + int((first - 0.4) * S), "role": role, "image_role": "core",
+                               "expected": image, "actual": image, "match": True})
+            lines = [f"{self.stamp(T + int(first * S))} " + json.dumps(
+                {"event": "qdl_realtime_core_started", "generation": 1})]
+            lines += [f"{self.stamp(T + int(t * S))} " + json.dumps({"event": "qdl_realtime_core_progress"})
+                      for t in range(int(first) + 1, int(end))]
+            lines += [f"{self.stamp(T + int(t * S))} " + json.dumps(dict({"event": e}, **extra))
+                      for r, t, e, extra in events if r == role and first <= t < end]
+            (ev / "logs" / f"{role}.life{life}.log").write_text("\n".join(lines) + "\n")
+        (ev / "container-events.jsonl").write_text("".join(json.dumps(d) + "\n" for d in die))
+        (ev / "provenance.jsonl").write_text("".join(json.dumps(r) + "\n" for r in provenance))
+        rows = []
+        for t in range(0, 580):
+            gen = {"core": 1 if t < 121 else 2, "core-2": 1 if t < 121 else 2 if t < 432 else 3,
+                   "core-3": 1 if t < 121 else 2 if t < 273 else 3}
+            owners = dict(self.OWNERS) if t < 432 else {"core": (0, 1, 2), "core-2": (5,), "core-3": (3, 4)}
+            members = [{"member_id": f"m-{role}-{gen[role]}", "client_id": g12.core_client_id(NS, role),
+                        "host": "/10.0.0.1", "partitions": [f"{NS}.raw/{p}" for p in owners[role]]}
+                       for role in g12.CORE_MEMBERS]
+            if 121 <= t < reform_at:  # all members gone, then re-joining
+                members, state = members[:1 if t >= 123 else 0], "PREPARING_REBALANCE"
+            else:
+                state = "STABLE"
+            stalled = 121 <= t < max(130, reform_at + 2)
+            frozen = 424 <= t < 437
+            offsets = {f"{NS}.raw/{p}": [119 if stalled else 423 if frozen and p in (2, 3) else t - 1, t]
+                       for p in range(6)}
+            lag = 20 if t == 60 else sum(e - c for c, e in offsets.values())
+            group = {"state": state, "members": len(members), "detail": members,
+                     "assigned": sorted(len(m["partitions"]) for m in members)}
+            rows.append({"t": T + t * S, "groups": {NS: group}, "lag": {NS: lag}, "offsets": {NS: offsets}})
+        (ev / "monitor.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+        (ev / "orchestrator.jsonl").write_text(json.dumps({"step": "teardown", "production_guard_breaches": {}})
+                                               + "\n")
+        (ev / "core-group-verdict.json").write_text(json.dumps({"status": "COMPLETED", "error": None}))
+        return ev.parent
+
+    def accept(self, base, key="run_S"):
+        result = g12.core_group_accept(base, self.prereg, self.addendum)
+        run = result["acceptance"][key]
+        return result, run, {row["condition"]: row["result"] for row in run["conditions"]}
+
+    def test_clean_simultaneous_replace_passes_run_s(self):
+        base = self.build("ok", events=[("core-3", 280, "qdl_realtime_core_rebalance_rewind", {})])
+        verdict = g12.core_group_verdict(base / "evidence")
+        self.assertEqual(verdict["mode"], "simultaneous")
+        self.assertEqual(verdict["core_images"]["target"], NEW_CORE)
+        clocks = verdict["replace_all"]
+        self.assertEqual((clocks["stopped_s"], clocks["reformed_s"], clocks["stable_s"], clocks["caught_up_s"]),
+                         (0.6, 7.0, 17.0, 9.0))
+        self.assertFalse(verdict["storm"])
+        result, run, rows = self.accept(base)
+        self.assertEqual(run["result"], "PASS", rows)
+        self.assertEqual(rows["harness: run mode is simultaneous"], "PASS")
+        self.assertEqual(result["verdict"]["core_kill"]["ownership_restored_s"], 8.0)
+        # run_A_prime belongs to a rolling run: its mode row fails here
+        _, _, rows = self.accept(base, "run_A_prime")
+        self.assertEqual(rows["harness: run mode is rolling"], "FAIL")
+
+    def test_all_new_retry_and_slow_reform_fail(self):
+        base = self.build("retry", events=[("core", 300, "qdl_realtime_core_retry", {"error": "rebalanced"})])
+        _, run, rows = self.accept(base)
+        self.assertEqual(rows["every window after the replace (after_replace_all, after_restart_core-3, after_kill): "
+                              "retries == 0 absolute"], "FAIL")
+        self.assertEqual(rows["new-image member lives: retries == 0, rewind_failed == 0, rewinds <= 2 per window, "
+                              "0 in baseline"], "FAIL")
+        self.assertEqual(run["result"], "FAIL")
+        _, run, rows = self.accept(self.build("slow", reform_at=160))
+        self.assertEqual(rows["replace-all: group re-formed (3 members, 6 partitions owned exactly once) <= 30 s "
+                              "after the first new member started, then stable >= 10 s"], "FAIL")
+        self.assertEqual(run["result"], "FAIL")
+
+    def test_old_image_retry_in_the_baseline_fails(self):
+        base = self.build("old", events=[("core-2", 60, "qdl_realtime_core_retry", {"error": "rebalanced"})])
+        _, _, rows = self.accept(base)
+        self.assertEqual(rows["old-image member lives: 0 retries, rewinds and rewind failures in every judged "
+                              "window"], "FAIL")
+
+    def test_a_prime_reproduction_counts_first_roll_survivor_retries(self):
+        helper = CoreGroupAcceptanceTests("test_healthy_run_passes_every_frozen_condition")
+        root = Path(self.tmp.name)
+        reproduction = "reproduction: each old-image survivor of the first roll retries >= 2 times in after_roll_core"
+        for name, per, expected in (("rep", 2, "PASS"), ("norep", 1, "FAIL")):
+            (root / name).mkdir()
+            events = [(role, 130 + 10 * n, "qdl_realtime_core_retry", {"error": "rebalanced"})
+                      for role in ("core-2", "core-3") for n in range(per)]
+            base = helper.build(root / name, images=True, events=events)
+            _, run, rows = self.accept(base, "run_A_prime")
+            with self.subTest(name=name):
+                self.assertEqual(rows[reproduction], expected)
+                self.assertEqual(rows["harness: run mode is rolling"], "PASS")

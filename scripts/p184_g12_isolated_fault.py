@@ -52,6 +52,10 @@ not production or HA evidence.
 Host modes (stdlib only): ``--run BASE`` (orchestrate, absolute deadline, teardown
 in ``finally``), ``--down BASE`` (exact-name, label-checked teardown),
 ``--analyze BASE`` (recompute the verdict from the JSONL evidence).
+Core-group modes (INCIDENT 2026-10-15): ``--core-group BASE`` (rolling replace of 3 members onto ``--new-core``),
+``--core-group-simultaneous BASE`` (all members replaced at once, then a restart and a kill on the all-new group),
+``--core-group-accept BASE`` (read-only acceptance of saved evidence); ``--core-*`` options set a production-like
+core profile (``core_profile``), omitted they keep the B3 harness.
 
 Image set: ``IMAGES`` below are DEFAULTS only. ``--run`` accepts ``--image-set FILE``
 (a JSON object role -> sha256:<64hex>, any subset of the roles) and ``--image
@@ -179,10 +183,60 @@ CORE_GROUP_FILE = "core-group.json"
 # during the transaction" while members were still joining); the baseline now opens only after the group has been
 # stable for formation_hold_s (bounded by formation_max_s, else the run is NOT_MEASURED).
 CORE_GROUP = {"raw_partitions": 6, "baseline_s": 120, "hold_s": 150, "kill_member": "core-2",
-              "kill_caught_up_s": 60, "formation_hold_s": 10, "formation_max_s": 120}
+              "kill_caught_up_s": 60, "formation_hold_s": 10, "formation_max_s": 120,
+              "precondition_member": "core-2", "precondition_hold_s": 60, "restart_member": "core-3",
+              "reform_s": 30, "replace_caught_up_s": 60}
 CORE_EVENTS = ("qdl_realtime_core_started", "qdl_realtime_core_retry", "qdl_realtime_core_rebalance_rewind",
                "qdl_realtime_core_rewind_failed", "qdl_realtime_core_inflight_commit_failed",
                "qdl_realtime_core_stop_drain_failed")
+# INCIDENT 2026-10-15 #2 (rc22 rollout 10:55Z, storm kept on the all-RUST18 group until 11:01Z). The production
+# group differed from B3 in (kafka3 coordinator log, receipts, rust_core.json): the replacement joined 3.9 s after
+# the old member's LeaveGroup (compose recreate; harness 1.2 s), after the leave rebalance had already stabilized,
+# so its join was a second rebalance revoking both RUST18 survivors; the survivors' supervisor backoff never resets
+# (rust_core_3 entered at the 24 s cap from the morning incident, rust_core_2 at 1.6 s), so their rejoins never
+# coalesced with a leave rebalance again and each rejoin revoked the other; and batch 1024 / wait 25 ms / 1 CPU /
+# group.initial.rebalance.delay.ms 3000. ``core_profile`` makes each of these a run option; every default keeps
+# the B3 harness unchanged (batch 25 / wait 10 ms, 4 Hz, 0.5 CPU, restart at once, no precondition, delay 0).
+CORE_PROFILE_DEFAULTS = {"batch_size": None, "batch_wait_ms": None, "hz": PUBLISH_HZ, "core_cpus": "0.5",
+                         "replace_gap_s": 0.0, "precondition_restarts": 0, "initial_rebalance_delay_ms": None}
+# precondition_*: K SIGTERM restarts of one member on the OLD image (each joins after ``replace_gap_s``, so its join
+# revokes the other two) before the baseline: the never-reset backoff of the other members advances, as production's
+# survivors had (diagnostic windows ``precondition_<n>``, never judged). restart_member: the single SIGTERM restart
+# on the all-new group of ``--core-group-simultaneous``. reform_s / replace_caught_up_s: its replace-all bounds
+# (all in CORE_GROUP above).
+
+
+def core_profile(**values):
+    """The run's validated core-group profile (CORE_PROFILE_DEFAULTS <- ``values``; None means the default)."""
+    profile = dict(CORE_PROFILE_DEFAULTS)
+    unknown = set(values) - set(profile)
+    if unknown:
+        raise ValueError("unknown core profile field(s): " + ",".join(sorted(unknown)))
+    profile.update({k: v for k, v in values.items() if v is not None})
+    bounded = (("batch_size", 1, 4096, int), ("batch_wait_ms", 1, 1000, int),
+               ("initial_rebalance_delay_ms", 0, 10_000, int), ("precondition_restarts", 0, 5, int),
+               ("replace_gap_s", 0, 30, (int, float)), ("hz", 0, 20, (int, float)))
+    for key, lo, hi, kind in bounded:
+        value = profile[key]
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, kind) or not lo <= value <= hi:
+            raise ValueError(f"core profile {key} must be in [{lo}, {hi}]")
+    if profile["hz"] <= 0:
+        raise ValueError("core profile hz must be > 0")
+    cpus = profile["core_cpus"] = str(profile["core_cpus"])
+    if not re.fullmatch(r"\d+(\.\d+)?", cpus) or not 0.1 <= float(cpus) <= 2.0:
+        raise ValueError("core profile core_cpus must be in [0.1, 2.0]")
+    return profile
+
+
+def apply_core_profile(config, profile):
+    """core.json with the profile's batch_size / batch_wait_ms (unchanged where the profile keeps the default)."""
+    out = dict(config)
+    for key in ("batch_size", "batch_wait_ms"):
+        if profile.get(key) is not None:
+            out[key] = profile[key]
+    return out
 
 
 def core_group(work):
@@ -321,7 +375,7 @@ def broker_password(text):
     return found[0]
 
 
-def broker_properties(password, node):
+def broker_properties(password, node, initial_rebalance_delay_ms=0):
     port = broker_port(node)
     voters = ",".join(f"{n}@localhost:{broker_port(n) + 1}" for n in BROKERS)
     return f"""process.roles=broker,controller
@@ -353,7 +407,7 @@ transaction.state.log.replication.factor=3
 transaction.state.log.min.isr=2
 unclean.leader.election.enable=false
 auto.create.topics.enable=false
-group.initial.rebalance.delay.ms=0
+group.initial.rebalance.delay.ms={int(initial_rebalance_delay_ms)}
 """
 
 
@@ -375,7 +429,8 @@ def _env(argv, env):
     return argv
 
 
-def topology(ns, work, topic_id="", *, uid=None, images=None, query_code="worktree", core_members=1):
+def topology(ns, work, topic_id="", *, uid=None, images=None, query_code="worktree", core_members=1,
+             core_cpus="0.5"):
     """Docker argv per role (adapted from p184_dr05_dl_fault.topology: 3 brokers,
     a projector, one holder-owned loopback namespace). Executes nothing."""
     namespace(ns)
@@ -413,7 +468,7 @@ def topology(ns, work, topic_id="", *, uid=None, images=None, query_code="worktr
     # One group (QDL_KAFKA_GROUP_ID ns) for every member; member n>1 reads core-<n>.json (own transactional.id).
     for index, role in enumerate(CORE_MEMBERS[:core_members], start=1):
         suffix = "" if index == 1 else f"-{index}"
-        roles[role] = _env(_base(ns, role, network=net, memory="256m", cpus="0.5", uid=uid)
+        roles[role] = _env(_base(ns, role, network=net, memory="256m", cpus=str(core_cpus), uid=uid)
             + ["--tmpfs", "/tmp:rw,size=64m,mode=1777"] + mount,
             {"QDL_KAFKA_CERT_ROOT": "/work", "QDL_KAFKA_BOOTSTRAP_SERVERS": BOOTSTRAP,
              "QDL_KAFKA_CLIENT_ID": ns + suffix, "QDL_KAFKA_GROUP_ID": ns,
@@ -2508,6 +2563,7 @@ class Run:
         self.adapter_mode = "SYNTHETIC"
         self.capture_raw_sha256 = None
         self.core_members = 1
+        self.profile = core_profile()  # core-group runs only; the defaults are the B3 harness
 
     def use_capture_adapter(self, raw_sha256):
         """TEST_ONLY real-capture replay: keep the source catalog adapter_version (CAPTURE adapter mode).
@@ -2619,7 +2675,7 @@ class Run:
 
     def topology(self, topic_id=""):
         return topology(self.ns, self.work, topic_id, images=self.images, query_code=self.query_code,
-                        core_members=self.core_members)
+                        core_members=self.core_members, core_cpus=self.profile["core_cpus"])
 
     def helper(self, *args, **kwargs):
         return helper_argv(*args, images=self.images, **kwargs)
@@ -2765,7 +2821,8 @@ class Run:
             path = self.work / f"broker-{node}.properties"
             with path.open("x") as handle:
                 os.chmod(path, 0o600)
-                handle.write(broker_properties(password, node))
+                handle.write(broker_properties(password, node,
+                                               self.profile["initial_rebalance_delay_ms"] or 0))
             (self.work / f"kafka-{node}").mkdir(mode=0o700)
         self.note("material_ready", namespace=self.ns, volumes_before=self.volumes0,
                   networks_before=self.networks0)
@@ -2869,7 +2926,11 @@ class Run:
             self.start(f"kafka-{node}", "")
         (self.work / CORE_GROUP_FILE).write_text(json.dumps(
             {"members": self.core_members, "raw_partitions": CORE_GROUP["raw_partitions"]}))
+        config = json.loads((self.work / "core.json").read_text())
+        (self.work / "core.json").write_text(json.dumps(apply_core_profile(config, self.profile)))
         write_member_configs(self.work, self.core_members)
+        (self.evidence / "core-profile.json").write_text(json.dumps(self.profile, indent=2, sort_keys=True) + "\n")
+        self.note("core_profile", profile=self.profile)
         result = sh(self.helper(self.ns, self.work, ["--topics", "/work"]), timeout=180)
         self.note("topics", result=result.strip()[-400:], core_group=core_group(self.work))
         self.topic_id = json.loads((self.work / "packet.json").read_text())["slice"]["topic_id"]
@@ -2877,7 +2938,7 @@ class Run:
             self.start(role, self.topic_id)
         remaining = int(LIMITS["deadline_s"] - (time.monotonic() - self.started) - 60)
         for role, mode, out in (("monitor", "--monitor", "monitor"), ("publisher", "--publish", "publish")):
-            extra = ["--hz", str(PUBLISH_HZ)] if role == "publisher" else []
+            extra = ["--hz", str(self.profile["hz"])] if role == "publisher" else []
             sh(self.helper(self.ns, self.work, [mode, "/work", "--out", f"/evidence/{out}.jsonl",
                                                 "--seconds", str(remaining), *extra], role=role, detach=True,
                            evidence=self.evidence, cpus="0.25", memory="256m"))
@@ -2909,18 +2970,49 @@ class Run:
         self.wait(seconds)
         self.fault_row({"k": "core_window", "name": name, "start_ns": start, "end_ns": time.time_ns(), **fields})
 
-    def core_replace(self, role, image=None, kill=False):
-        """Rolling replace (SIGTERM, as compose recreate) or SIGKILL of one member, restarted at once."""
+    def core_replace(self, role, image=None, kill=False, gap_s=0.0, kind=None):
+        """Rolling replace (SIGTERM, as compose recreate) or SIGKILL of one member, restarted ``gap_s`` after its
+        container is gone (0: at once). ``kind`` overrides the fault kind (``core_precondition``: a restart on
+        the old image that is no roll, so it never becomes a roll target)."""
         if image is not None:
             self.images["core"] = image  # verify_image checks the replacement against the new image
         injected = time.time_ns()
         stop_role(self.ns, role, kill=kill)
+        stopped = time.time_ns()
+        if gap_s:
+            time.sleep(gap_s)
         restart = time.time_ns()
         sh(self.topology(self.topic_id)[role], timeout=60)
         self.verify_image(role)
         self.follow_logs(role)
-        row = {"k": "core_kill" if kill else "core_roll", "role": role, "image": self.images["core"],
-               "injected_ns": injected, "restart_ns": restart}
+        row = {"k": kind or ("core_kill" if kill else "core_roll"), "role": role, "image": self.images["core"],
+               "injected_ns": injected, "stopped_ns": stopped, "gap_s": gap_s, "restart_ns": restart}
+        self.fault_row(row)
+        self.note(row["k"], **row)
+        return row
+
+    def core_replace_all(self, image, gap_s=0.0):
+        """``--core-group-simultaneous``: SIGTERM every member at once (parallel stops, each drains its own
+        transaction), wait until all are gone and ``gap_s``, then start every member on ``image``."""
+        from concurrent.futures import ThreadPoolExecutor
+        self.images["core"] = image
+        injected = time.time_ns()
+        with ThreadPoolExecutor(max_workers=len(CORE_MEMBERS)) as pool:
+            stopped_roles = list(pool.map(lambda role: stop_role(self.ns, role), CORE_MEMBERS))
+        if not all(stopped_roles):
+            raise RuntimeError("replace-all: a member was not running")
+        stopped = time.time_ns()
+        if gap_s:
+            time.sleep(gap_s)
+        restart = time.time_ns()
+        for role in CORE_MEMBERS:
+            sh(self.topology(self.topic_id)[role], timeout=60)
+        started = time.time_ns()
+        for role in CORE_MEMBERS:
+            self.verify_image(role)
+            self.follow_logs(role)
+        row = {"k": "core_replace_all", "roles": list(CORE_MEMBERS), "image": image, "injected_ns": injected,
+               "stopped_ns": stopped, "gap_s": gap_s, "restart_ns": restart, "started_ns": started}
         self.fault_row(row)
         self.note(row["k"], **row)
         return row
@@ -3375,7 +3467,43 @@ def core_kill_recovery(kill, monitor_rows, event_rows, ns, partitions, members, 
 
 CORE_GROUP_VERDICT_SCHEMA = "p184.coregroup.verdict.v2"
 CORE_GROUP_WINDOWS = ("baseline", *("after_roll_" + role for role in CORE_MEMBERS), "after_kill")
+# ``--core-group-simultaneous``: every member replaced at once, then a SIGTERM restart and a SIGKILL on the all-new
+# group (the judged windows of that mode; ``formation`` / ``precondition_<n>`` stay diagnostic in both modes).
+CORE_GROUP_S_WINDOWS = ("baseline", "after_replace_all", "after_restart_" + CORE_GROUP["restart_member"],
+                        "after_kill")
 CORE_GROUP_TAIL_S = 30
+# Faults after which a window's per-image attribution span opens at the fault's injection.
+CORE_GROUP_CAUSES = ("core_roll", "core_kill", "core_replace_all")
+
+
+def core_replace_all_recovery(row, monitor_rows, ns, partitions, members, base_lag):
+    """Clocks of a replace-all from the first new member's start (``restart_ns``): ``reformed_s`` (first sample
+    with the exact roster, STABLE, all partitions owned exactly once - monitor v2 detail), ``stable_s`` (held so
+    for CORE_GROUP["formation_hold_s"]), ``caught_up_s`` (first sample from ``reformed`` with core lag <= the
+    baseline maximum); ``stopped_s``: all old members gone after injection. A clock that never closes is null with
+    ``reason``."""
+    restart = row["restart_ns"]
+    seconds = lambda t: round((t - restart) / 1e9, 3)  # noqa: E731
+    out = {"stopped_s": round((row["stopped_ns"] - row["injected_ns"]) / 1e9, 3) if row.get("stopped_ns") else None,
+           "gap_s": row.get("gap_s"), "reformed_s": None, "stable_s": None, "caught_up_s": None, "reason": None}
+    after = [r for r in monitor_rows if r["t"] >= restart]
+    reformed = next((r for r in after if (r.get("groups") or {}).get(ns, {}).get("detail") is not None
+                     and group_view(r, ns, partitions)[4] == "partitions"
+                     and healthy_view(group_view(r, ns, partitions), members)), None)
+    if reformed is None:
+        out["reason"] = "NEVER_REFORMED"
+        return out
+    out["reformed_s"] = seconds(reformed["t"])
+    stable = core_group_stable_at(monitor_rows, ns, partitions, members, CORE_GROUP["formation_hold_s"], restart)
+    out["stable_s"] = None if stable is None else seconds(stable)
+    caught = next((r for r in after if r["t"] >= reformed["t"] and base_lag is not None
+                   and (r.get("lag") or {}).get(ns) is not None and r["lag"][ns] <= base_lag), None)
+    if caught is None:
+        out["reason"] = "NOT_CAUGHT_UP"
+        return out
+    out["caught_up_s"] = seconds(caught["t"])
+    out["monitor_max_gap_s"] = monitor_max_gap_s(monitor_rows, restart, caught["t"])
+    return out
 
 
 def core_group_verdict(evidence, members=len(CORE_MEMBERS)):
@@ -3405,8 +3533,13 @@ def core_group_verdict(evidence, members=len(CORE_MEMBERS)):
 
     windows = [r for r in faults if r.get("k") == "core_window"]
     life_images = core_life_images(evidence, container_events, ns)
-    targets = sorted({f.get("image") for f in faults if f.get("k") == "core_roll" and f.get("image")})
-    result = {"schema": CORE_GROUP_VERDICT_SCHEMA, "windows": {}, "faults": faults,
+    targets = sorted({f.get("image") for f in faults if f.get("k") in ("core_roll", "core_replace_all")
+                      and f.get("image")})
+    replace_all = next((f for f in faults if f.get("k") == "core_replace_all"), None)
+    profile_path = evidence / "core-profile.json"
+    result = {"schema": CORE_GROUP_VERDICT_SCHEMA, "mode": "simultaneous" if replace_all else "rolling",
+              "profile": json.loads(profile_path.read_text()) if profile_path.exists() else None,
+              "windows": {}, "faults": faults,
               "log_lives": lives, "monitor_max_gap_rule_s": MONITOR_MAX_GAP_S,
               "core_images": {"target": targets[0] if len(targets) == 1 else None, "rolled_onto": targets,
                               "lives": life_images}}
@@ -3414,7 +3547,7 @@ def core_group_verdict(evidence, members=len(CORE_MEMBERS)):
         lo, hi = window["start_ns"], window["end_ns"]
         # Per-image attribution span: a window after a roll / kill opens at that fault's injection, so the
         # rolled member's stop and the restart gap are attributed too (the window counts keep [lo, hi]).
-        cause = [f for f in faults if f.get("k") in ("core_roll", "core_kill") and f.get("injected_ns", hi) <= lo]
+        cause = [f for f in faults if f.get("k") in CORE_GROUP_CAUSES and f.get("injected_ns", hi) <= lo]
         span_lo = cause[-1]["injected_ns"] if cause and window["name"] != "baseline" else lo
         by_life = {}
         for e in events:
@@ -3478,6 +3611,8 @@ def core_group_verdict(evidence, members=len(CORE_MEMBERS)):
                            or not tail or any(m < members or 0 in a for m, a, _ in tail))
     kill = next((f for f in faults if f.get("k") == "core_kill"), None)
     base = result["windows"].get("baseline", {}).get("max_lag")
+    if replace_all:
+        result["replace_all"] = core_replace_all_recovery(replace_all, monitor_rows, ns, partitions, members, base)
     if kill:
         result["core_kill"] = core_kill_recovery(kill, monitor_rows, container_events, ns, partitions, members, base)
         result["core_kill_caught_up_s"] = result["core_kill"]["caught_up_s"]
@@ -3527,9 +3662,11 @@ def core_group_acceptance(verdict, prereg, addendum=None):
     ``addendum`` (addendum-2, ``run_B2["criteria"]``): the per-image conditions, evaluated in ``run_B2`` with the
     same harness rows plus image attribution; the output schema is then v2 (v1 when there is no addendum)."""
     windows = verdict.get("windows") or {}
+    # The judged windows of the run's mode (``--core-group-simultaneous``: CORE_GROUP_S_WINDOWS).
+    names = CORE_GROUP_S_WINDOWS if verdict.get("mode") == "simultaneous" else CORE_GROUP_WINDOWS
     gap_rule = verdict.get("monitor_max_gap_rule_s", MONITOR_MAX_GAP_S)
-    present = [name for name in CORE_GROUP_WINDOWS if name in windows]
-    missing = [name for name in CORE_GROUP_WINDOWS if name not in windows]
+    present = [name for name in names if name in windows]
+    missing = [name for name in names if name not in windows]
     v2 = verdict.get("schema") == CORE_GROUP_VERDICT_SCHEMA
 
     def monitored(name):
@@ -3543,7 +3680,7 @@ def core_group_acceptance(verdict, prereg, addendum=None):
     def counted(fields, limit_of):
         """FAIL on an observed excess, NOT_MEASURED when a window or its log coverage is missing."""
         results, detail = [], {}
-        for name in CORE_GROUP_WINDOWS:
+        for name in names:
             if name not in windows:
                 results.append("NOT_MEASURED")
                 detail[name] = "MISSING_WINDOW"
@@ -3564,7 +3701,7 @@ def core_group_acceptance(verdict, prereg, addendum=None):
 
     def tail_health():
         results, detail = [], {}
-        for name in CORE_GROUP_WINDOWS:
+        for name in names:
             if name not in windows:
                 results.append("NOT_MEASURED")
                 detail[name] = "MISSING_WINDOW"
@@ -3583,7 +3720,7 @@ def core_group_acceptance(verdict, prereg, addendum=None):
         return _combine(results), detail
 
     def storm_false():
-        final = CORE_GROUP_WINDOWS[-1]
+        final = names[-1]
         if verdict.get("storm") is True:
             return "FAIL", {"storm": True}
         if verdict.get("storm") is None or final not in windows or not v2:
@@ -3634,7 +3771,7 @@ def core_group_acceptance(verdict, prereg, addendum=None):
         storm = verdict.get("storm")
         detail["storm"] = storm
         results.append("PASS" if storm is True else "FAIL" if storm is False else "NOT_MEASURED")
-        after = [n for n in CORE_GROUP_WINDOWS[-2:] if n in windows]
+        after = [n for n in names[-2:] if n in windows]
         per_member = {role: sum(windows[n]["by_member"][role]["retries"] for n in after)
                       for role in CORE_MEMBERS} if v2 and len(after) == 2 else None
         detail["retries_per_member_after_last_roll"] = per_member
@@ -3683,8 +3820,9 @@ def core_group_acceptance(verdict, prereg, addendum=None):
     # -- v2: per image (addendum-2 run_B2) --
     images = verdict.get("core_images") or {}
     target = images.get("target")
-    roll_windows = [n for n in CORE_GROUP_WINDOWS if n.startswith("after_roll_")]
-    all_new = (roll_windows[-1], CORE_GROUP_WINDOWS[-1])
+    roll_windows = [n for n in names if n.startswith("after_roll_")]
+    # Rolling: once the last roll is done; simultaneous: every window after the baseline.
+    all_new = (roll_windows[-1], names[-1]) if roll_windows else names[1:]
 
     def lives_of(name):
         """(per-life rows, attributable): rows of the window's span; not attributable when the target image or a
@@ -3697,7 +3835,7 @@ def core_group_acceptance(verdict, prereg, addendum=None):
 
     def new_image_lives():
         results, detail = [], {}
-        for name in CORE_GROUP_WINDOWS:
+        for name in names:
             if name not in windows:
                 results.append("NOT_MEASURED")
                 detail[name] = "MISSING_WINDOW"
@@ -3722,7 +3860,7 @@ def core_group_acceptance(verdict, prereg, addendum=None):
         (another member is rolled); baseline: no retry, rewind or rewind failure from any life."""
         results, detail, per_member = [], {}, {role: 0 for role in CORE_MEMBERS}
         misplaced = []
-        for name in CORE_GROUP_WINDOWS:
+        for name in names:
             if name not in windows:
                 results.append("NOT_MEASURED")
                 detail[name] = "MISSING_WINDOW"
@@ -3794,6 +3932,52 @@ def core_group_acceptance(verdict, prereg, addendum=None):
             return "NOT_MEASURED", detail
         return "PASS", detail
 
+    def replace_all_reformed():
+        clocks = verdict.get("replace_all")
+        if not clocks:
+            return "NOT_MEASURED", {"reason": "NO_REPLACE_ALL"}
+        detail = dict(clocks, limit_s=CORE_GROUP["reform_s"], hold_s=CORE_GROUP["formation_hold_s"])
+        reformed, stable = clocks.get("reformed_s"), clocks.get("stable_s")
+        if reformed is not None and reformed > CORE_GROUP["reform_s"]:
+            return "FAIL", detail
+        if clocks.get("reason") == "NEVER_REFORMED" and "after_replace_all" in windows and \
+                monitored("after_replace_all"):
+            return "FAIL", detail
+        if reformed is None or stable is None or "after_replace_all" not in windows \
+                or not monitored("after_replace_all"):
+            return "NOT_MEASURED", detail
+        return "PASS", detail
+
+    def replace_all_caught_up():
+        clocks = verdict.get("replace_all")
+        if not clocks:
+            return "NOT_MEASURED", {"reason": "NO_REPLACE_ALL"}
+        detail = dict(clocks, limit_s=CORE_GROUP["replace_caught_up_s"])
+        caught = clocks.get("caught_up_s")
+        if caught is not None and caught > CORE_GROUP["replace_caught_up_s"]:
+            return "FAIL", detail
+        if clocks.get("reason") in ("NEVER_REFORMED", "NOT_CAUGHT_UP") and "after_replace_all" in windows and \
+                monitored("after_replace_all"):
+            return "FAIL", detail
+        if caught is None or clocks.get("monitor_max_gap_s") is None or clocks["monitor_max_gap_s"] > gap_rule:
+            return "NOT_MEASURED", detail
+        return "PASS", detail
+
+    def first_roll_reproduced():
+        """A' (rolling, production-like): the storm reproduced at its production onset - each old-image survivor
+        of the first roll (core-2, core-3) logs >= 2 retries in ``after_roll_core`` (production: 4 each)."""
+        name = "after_roll_" + CORE_MEMBERS[0]
+        if name not in windows:
+            return "NOT_MEASURED", {"reason": "MISSING_WINDOW"}
+        rows, known = lives_of(name)
+        per = {role: sum(r["retries"] for r in rows if r["role"] == role and r.get("image")
+                         and r.get("image") != target) for role in CORE_MEMBERS[1:]}
+        detail = {"old_image_survivor_retries": per, "min": 2, "images_known": known,
+                  "log_covered": windows[name].get("log_covered")}
+        if all(v >= 2 for v in per.values()):
+            return "PASS", detail
+        return ("FAIL" if v2 and known and logged(name) else "NOT_MEASURED"), detail
+
     def coverage():
         rows = [r for r in harness if r[0].startswith(("harness: monitor coverage", "harness: every member's"))]
         result = _combine([r[1] for r in rows])
@@ -3813,6 +3997,16 @@ def core_group_acceptance(verdict, prereg, addendum=None):
         "no inflight_commit_failed / stop_drain_failed": drain_failures,
         "0 production guard breaches": guard,
         "coverage: monitor gap <= 5 s, member logs cover every window (else NOT_MEASURED, never PASS)": coverage,
+        # INCIDENT 2026-10-15 #2: rolling A' (reproduction) and simultaneous S (``--core-group-simultaneous``).
+        "reproduction: each old-image survivor of the first roll retries >= 2 times in after_roll_core":
+            first_roll_reproduced,
+        "old-image member lives: 0 retries, rewinds and rewind failures in every judged window": old_image_lives,
+        "every window after the replace (after_replace_all, after_restart_core-3, after_kill): retries == 0 "
+        "absolute": all_new_retries,
+        "replace-all: group re-formed (3 members, 6 partitions owned exactly once) <= 30 s after the first new "
+        "member started, then stable >= 10 s": replace_all_reformed,
+        "replace-all: core lag within the baseline maximum <= 60 s after the first new member started":
+            replace_all_caught_up,
     }
 
     def evaluate(texts, extra, known=None, more=()):
@@ -3830,15 +4024,21 @@ def core_group_acceptance(verdict, prereg, addendum=None):
            "limits": CORE_GROUP_LIMITS}
     if addendum is not None:
         out["addendum_schema"] = addendum.get("schema")
-        b2 = (addendum.get("run_B2") or {}).get("criteria")
-        if b2 is not None:
-            lives = images.get("lives") or {}
-            unknown = [f"{role}.life{n + 1}" for role, ims in lives.items() for n, im in enumerate(ims) if not im]
-            image_row = ("harness: every core life's image is known (provenance / die events) and one roll target",
-                         "PASS" if target and lives and not unknown else "NOT_MEASURED",
-                         {"target": target, "rolled_onto": images.get("rolled_onto"), "unknown_lives": unknown,
-                          "lives": lives})
-            out["run_B2"] = evaluate(list(b2), {}, rules_v2, (image_row,))
+        lives = images.get("lives") or {}
+        unknown = [f"{role}.life{n + 1}" for role, ims in lives.items() for n, im in enumerate(ims) if not im]
+        image_row = ("harness: every core life's image is known (provenance / die events) and one roll target",
+                     "PASS" if target and lives and not unknown else "NOT_MEASURED",
+                     {"target": target, "rolled_onto": images.get("rolled_onto"), "unknown_lives": unknown,
+                      "lives": lives})
+        mode_row = lambda wanted: ("harness: run mode is " + wanted,  # noqa: E731
+                                   "PASS" if verdict.get("mode", "rolling") == wanted else "FAIL",
+                                   {"mode": verdict.get("mode")})
+        # run_B2 (addendum-2/3), run_A_prime (rolling, production-like profile), run_S (simultaneous replace).
+        for key, wanted in (("run_B2", None), ("run_A_prime", "rolling"), ("run_S", "simultaneous")):
+            texts = (addendum.get(key) or {}).get("criteria")
+            if texts is not None:
+                more = (image_row,) if wanted is None else (image_row, mode_row(wanted))
+                out[key] = evaluate(list(texts), {}, rules_v2, more)
     fix = criteria.get("run_B_fix")
     if fix is not None:
         out["run_B_fix"] = evaluate(list(fix), {})
@@ -3875,11 +4075,20 @@ def core_group_accept(base, prereg_path, addendum_path=None):
             "acceptance": core_group_acceptance(verdict, prereg, addendum)}
 
 
-def orchestrate_core_group(base, export, ns, images, new_core):
+def orchestrate_core_group(base, export, ns, images, new_core, profile=None, simultaneous=False):
     """INCIDENT 2026-10-15 reproduction: 3 core members (one group, 6 raw partitions) on ``images["core"]``;
     baseline; rolling replace of each member onto ``new_core`` with a hold after each; SIGKILL of one member
-    (restarted at once); teardown; ``evidence/core-group-verdict.json``. Exits 0 when it ran to the end."""
+    (restarted at once); teardown; ``evidence/core-group-verdict.json``. Exits 0 when it ran to the end.
+
+    ``profile`` (``core_profile``; None = the B3 defaults): core batch/wait/CPU, publisher rate, broker initial
+    rebalance delay, the gap between a replaced member's exit and its replacement's start, and K precondition
+    restarts (old image, diagnostic windows) before the baseline. ``simultaneous`` (``--core-group-simultaneous``):
+    instead of the rolling replace, stop every member at once and start all on ``new_core`` (window
+    ``after_replace_all``), then a SIGTERM restart of CORE_GROUP["restart_member"] and the SIGKILL of
+    CORE_GROUP["kill_member"] on the all-new group."""
     run = Run(base, export, ns, images)
+    run.profile = core_profile(**(profile or {}))
+    gap = run.profile["replace_gap_s"]
 
     def expire(_signum, _frame):
         raise TimeoutError("core-group orchestrator absolute deadline")
@@ -3896,10 +4105,21 @@ def orchestrate_core_group(base, export, ns, images, new_core):
         formation_start = time.time_ns()
         run.core_group_up()
         run.core_group_formation(formation_start)
+        for index in range(run.profile["precondition_restarts"]):
+            run.core_replace(CORE_GROUP["precondition_member"], gap_s=gap, kind="core_precondition")
+            run.core_group_window(f"precondition_{index + 1}", CORE_GROUP["precondition_hold_s"],
+                                  role=CORE_GROUP["precondition_member"], diagnostic=True)
         run.core_group_window("baseline", CORE_GROUP["baseline_s"])
-        for role in CORE_MEMBERS:
-            run.core_replace(role, image=new_core)
-            run.core_group_window("after_roll_" + role, CORE_GROUP["hold_s"], role=role)
+        if simultaneous:
+            run.core_replace_all(new_core, gap_s=gap)
+            run.core_group_window("after_replace_all", CORE_GROUP["hold_s"])
+            restart = CORE_GROUP["restart_member"]
+            run.core_replace(restart, image=new_core, gap_s=gap)
+            run.core_group_window("after_restart_" + restart, CORE_GROUP["hold_s"], role=restart)
+        else:
+            for role in CORE_MEMBERS:
+                run.core_replace(role, image=new_core, gap_s=gap)
+                run.core_group_window("after_roll_" + role, CORE_GROUP["hold_s"], role=role)
         run.core_replace(CORE_GROUP["kill_member"], kill=True)
         run.core_group_window("after_kill", CORE_GROUP["hold_s"], role=CORE_GROUP["kill_member"])
         status = "COMPLETED"
@@ -3917,7 +4137,8 @@ def orchestrate_core_group(base, export, ns, images, new_core):
         finally:
             if run.evidence.exists() and (run.evidence / "verdict-ns.json").exists():
                 verdict = core_group_verdict(run.evidence)
-                verdict.update(status=status, error=error, namespace=ns, images=run.images, new_core=new_core)
+                verdict.update(status=status, error=error, namespace=ns, images=run.images, new_core=new_core,
+                               requested_mode="simultaneous" if simultaneous else "rolling")
                 (run.evidence / "core-group-verdict.json").write_text(json.dumps(verdict, indent=2) + "\n")
             signal.signal(signal.SIGALRM, previous)
             for sig, handler in previous_term.items():
@@ -3942,7 +4163,7 @@ def keep_diagnostics(out):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     mode = parser.add_mutually_exclusive_group(required=True)
-    for flag in ("run", "core_group", "core_group_accept", "down", "analyze", "topics", "publish", "monitor", "feeds",
+    for flag in ("run", "core_group", "core_group_simultaneous", "core_group_accept", "down", "analyze", "topics", "publish", "monitor", "feeds",
                  "query"):
         mode.add_argument("--" + flag.replace("_", "-"), type=Path)
     parser.add_argument("--export", type=Path)
@@ -3959,21 +4180,44 @@ def main(argv=None):
                         help="--core-group-accept: the frozen prereg JSON whose criteria are evaluated")
     parser.add_argument("--addendum", type=Path,
                         help="--core-group-accept: a frozen prereg addendum (addendum-2: per-image run_B2 criteria)")
+    # INCIDENT 2026-10-15 #2: production-like core-group profile (``core_profile``; omitted = the B3 harness).
+    profile_flags = (("--core-batch-size", "batch_size", int, "core.json batch_size (production 1024)"),
+                     ("--core-batch-wait-ms", "batch_wait_ms", int, "core.json batch_wait_ms (production 25)"),
+                     ("--core-hz", "hz", float, "publisher BOOK frames/s per venue (<= 20; default 4)"),
+                     ("--core-cpus", "core_cpus", str, "CPUs per core member (production 1.0; default 0.5)"),
+                     ("--core-replace-gap-s", "replace_gap_s", float,
+                      "seconds between a replaced member's exit and its replacement's start (default 0)"),
+                     ("--core-precondition-restarts", "precondition_restarts", int,
+                      "old-image restarts of %s before the baseline (default 0)" % CORE_GROUP["precondition_member"]),
+                     ("--core-initial-rebalance-delay-ms", "initial_rebalance_delay_ms", int,
+                      "brokers' group.initial.rebalance.delay.ms (production 3000; default 0)"))
+    for flag, dest, kind, text in profile_flags:
+        parser.add_argument(flag, dest="profile_" + dest, type=kind, help="--core-group[-simultaneous]: " + text)
     args = parser.parse_args(argv)
+    profile = {dest: getattr(args, "profile_" + dest) for _, dest, _, _ in profile_flags
+               if getattr(args, "profile_" + dest) is not None}
+    if profile and not (args.core_group or args.core_group_simultaneous):
+        parser.error("--core-* profile options need --core-group or --core-group-simultaneous")
+    try:
+        profile = core_profile(**profile)
+    except ValueError as error:
+        parser.error(str(error))
     if args.core_group_accept:
         if args.prereg is None:
             parser.error("--core-group-accept needs --prereg")
         print(json.dumps(core_group_accept(args.core_group_accept, args.prereg, args.addendum), indent=2,
                          default=str))
         return 0
-    if args.core_group:
+    if args.core_group or args.core_group_simultaneous:
         if args.export is None or args.namespace is None or not re.fullmatch(r"sha256:[0-9a-f]{64}",
                                                                               args.new_core or ""):
             parser.error("--core-group needs --export, --namespace and --new-core sha256:<64hex>")
         images = resolve_image_set(args.image_set, args.image)
         if image_record(args.new_core)["id"] != args.new_core:
             parser.error("--new-core is not a local image id")
-        return orchestrate_core_group(args.core_group, args.export, args.namespace, images, args.new_core)
+        return orchestrate_core_group(args.core_group or args.core_group_simultaneous, args.export, args.namespace,
+                                      images, args.new_core, profile=profile,
+                                      simultaneous=args.core_group_simultaneous is not None)
     if args.run:
         if args.export is None or args.namespace is None:
             parser.error("--run needs --export and --namespace")

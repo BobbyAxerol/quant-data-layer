@@ -73442,3 +73442,17 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   (E7: test where the product runs). Consequence: per-member rolling from RUST18 is storm-prone in production; the
   candidate procedure is a simultaneous replace of all 3 cores (no mixed-version period, short full core pause),
   to be proven on a production-like harness (batch 1024, sustained load) before any new packet. rc22 NOT deployed.
+- Incident 2 RCA (read-only logs, supersedes the load inference above): the loop is rejoin timing, not load. RUST18's
+  supervisor backoff counter never resets (500 ms x 2^n x 0.8 jitter, cap ~24-30 s; qdl-realtime-core.rs:1147,1192,
+  same in rc22): the 10:55 roll did not coalesce (leave 05.69, 2-member stable 07.98, rc22 join 09.59) so the join
+  revoked both RUST18 survivors; afterwards rust_core_2 rejoined after 1.8/3.3/6.5/12.9/24.2 s and rust_core_3 (never
+  recreated since the morning) always after ~24.2 s, so each late rejoin revoked the other - ping-pong. A rejoin landing
+  inside its own leave rebalance ends it (10:57:52 rust_core 0.93 s); the 11:01 recovery coalesced partly by luck (rust_core's
+  backoff expired at 11:01:06.84, recreate 06.57). Production brokers use group.initial.rebalance.delay.ms=3000 (harness 0);
+  transaction duty ~100% in production vs ~11% in B3, but RUST18 reads the epoch before waiting for input, so load is not
+  the driver. Register item: rc22 also never resets the backoff counter (no loop because rc22 rewinds, but a rebuild after
+  long uptime waits 24-30 s).
+- Harness (uncommitted->this commit): production-like core profile (--core-batch-size/--core-batch-wait-ms/--core-cpus/
+  --core-hz/--core-initial-rebalance-delay-ms/--core-replace-gap-s/--core-precondition-restarts K to age old members'
+  backoff unevenly) and `--core-group-simultaneous` (stop all 3, start all 3 on the new image, then a single restart and a
+  SIGKILL); acceptance per run mode (run_A_prime, run_S). 140 unittest OK; B3 recomputation unchanged (run_B2 PASS 14/14).
