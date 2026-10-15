@@ -3074,11 +3074,13 @@ def orchestrate(base, export, ns, images=None, query_code="worktree"):
 
 
 def core_log_events(logs):
-    """(t_ns, role, event, fields) of every core lifecycle event in ``logs/<member>.life<n>.log``."""
+    """(t_ns, role, event, fields, life) of every core lifecycle event in ``logs/<member>.life<n>.log``
+    (``life``: the n of the file, the member's n-th container)."""
     from datetime import datetime
     rows = []
     for path in sorted(Path(logs).glob("core*.life*.log")):
-        role = path.name.split(".life")[0]
+        role, _, rest = path.name.partition(".life")
+        life = int(rest[:-len(".log")])
         for line in path.read_text(errors="replace").splitlines():
             stamp, _, body = line.partition(" ")
             if '"event"' not in body:
@@ -3090,8 +3092,40 @@ def core_log_events(logs):
             except ValueError:
                 continue
             if value.get("event") in CORE_EVENTS:
-                rows.append((t, role, value["event"], value))
+                rows.append((t, role, value["event"], value, life))
     return sorted(rows, key=lambda r: r[0])
+
+
+def core_life_images(evidence, event_rows, ns):
+    """role -> [image id of life 1, life 2, ...] of every core member, or None per life where it is unknown.
+
+    Two independent records: the daemon's die events (``container-events.jsonl``: the n-th die of ``<ns>-<role>``
+    ends life n, ``Attributes.image``) and ``provenance.jsonl`` (``verify_image`` after each start; a row belongs to
+    life 1 + the number of that role's dies before it, so a missing row cannot shift later lives; ``actual`` is the
+    inspected image id). Either alone identifies a life; when both exist they must agree, and two different
+    provenance images for one life also leave it None (unknown, never guessed)."""
+    path = Path(evidence) / "provenance.jsonl"
+    provenance = load_jsonl(path) if path.exists() else []
+    out = {}
+    for role in CORE_MEMBERS:
+        dies = [row for row in sorted(event_rows, key=lambda r: r.get("timeNano") or 0)
+                if (row.get("Action") or row.get("status")) == "die"
+                and ((row.get("Actor") or {}).get("Attributes") or {}).get("name") == f"{ns}-{role}"]
+        died = [((row.get("Actor") or {}).get("Attributes") or {}).get("image") for row in dies]
+        started = {}
+        for r in provenance:
+            if r.get("role") == role and r.get("t") is not None:
+                life = 1 + sum(1 for d in dies if (d.get("timeNano") or 0) < r["t"])
+                started.setdefault(life, set()).add(r.get("actual"))
+        images = []
+        for index in range(max([len(died), *started])):
+            seen = started.get(index + 1, set())
+            a = next(iter(seen)) if len(seen) == 1 else None
+            b = died[index] if index < len(died) else None
+            conflict = len(seen) > 1 or (a and b and a != b)
+            images.append(None if conflict else (a or b))
+        out[role] = images
+    return out
 
 
 def core_client_id(ns, role):
@@ -3285,10 +3319,29 @@ def core_group_verdict(evidence, members=len(CORE_MEMBERS)):
         return value.get("members", 0), value.get("assigned") or [], (row.get("lag") or {}).get(ns)
 
     windows = [r for r in faults if r.get("k") == "core_window"]
+    life_images = core_life_images(evidence, container_events, ns)
+    targets = sorted({f.get("image") for f in faults if f.get("k") == "core_roll" and f.get("image")})
     result = {"schema": CORE_GROUP_VERDICT_SCHEMA, "windows": {}, "faults": faults,
-              "log_lives": lives, "monitor_max_gap_rule_s": MONITOR_MAX_GAP_S}
+              "log_lives": lives, "monitor_max_gap_rule_s": MONITOR_MAX_GAP_S,
+              "core_images": {"target": targets[0] if len(targets) == 1 else None, "rolled_onto": targets,
+                              "lives": life_images}}
     for window in windows:
         lo, hi = window["start_ns"], window["end_ns"]
+        # Per-image attribution span: a window after a roll / kill opens at that fault's injection, so the
+        # rolled member's stop and the restart gap are attributed too (the window counts keep [lo, hi]).
+        cause = [f for f in faults if f.get("k") in ("core_roll", "core_kill") and f.get("injected_ns", hi) <= lo]
+        span_lo = cause[-1]["injected_ns"] if cause and window["name"] != "baseline" else lo
+        by_life = {}
+        for e in events:
+            if span_lo <= e[0] <= hi and e[2] in ("qdl_realtime_core_retry", "qdl_realtime_core_rebalance_rewind",
+                                                  "qdl_realtime_core_rewind_failed"):
+                images = life_images.get(e[1]) or []
+                key = f"{e[1]}.life{e[4]}"
+                row = by_life.setdefault(key, {"role": e[1], "life": e[4], "retries": 0, "rewinds": 0,
+                                               "rewind_failed": 0,
+                                               "image": images[e[4] - 1] if e[4] <= len(images) else None})
+                row[{"qdl_realtime_core_retry": "retries", "qdl_realtime_core_rebalance_rewind": "rewinds",
+                     "qdl_realtime_core_rewind_failed": "rewind_failed"}[e[2]]] += 1
         inside = [e for e in events if lo <= e[0] <= hi]
         samples = [group(r) for r in monitor_rows if lo <= r["t"] <= hi]
         tail_rows = [r for r in monitor_rows if hi - CORE_GROUP_TAIL_S * 10**9 <= r["t"] <= hi]
@@ -3316,7 +3369,8 @@ def core_group_verdict(evidence, members=len(CORE_MEMBERS)):
             "end_members": group(last[-1])[0] if last else None,
             "log_covered": {role: log_covered(lives.get(role, []), lo, hi, slack) for role in CORE_MEMBERS},
             "retry_errors": sorted({e[3].get("error", "")[:120] for e in inside
-                                    if e[2] == "qdl_realtime_core_retry"})}
+                                    if e[2] == "qdl_realtime_core_retry"}),
+            "span_start_ns": span_lo, "by_life": by_life}
     result["totals"] = {name: sum(1 for e in events if e[2] == name) for name in CORE_EVENTS}
     final = windows[-1] if windows else None
     if final:
@@ -3346,9 +3400,14 @@ def core_group_verdict(evidence, members=len(CORE_MEMBERS)):
 # condition PASS / FAIL / NOT_MEASURED. A violation that was observed is FAIL even where coverage is incomplete;
 # PASS needs complete monitor coverage (MONITOR_MAX_GAP_S) and every member's retained log over the window. The
 # orchestrator's exit code (completion only) and the diagnostic ``storm`` are never the acceptance.
-CORE_GROUP_ACCEPTANCE_SCHEMA = "p184.coregroup.acceptance.v1"
+# v2 (owner decision 2026-10-15, prereg addendum-2 ``run_B2``): a mixed-version roll is judged per image - every
+# retry / rewind is attributed to the member life that logged it and that life's image (``core_life_images``).
+# The v1 evaluation of the original prereg (run_A_control, run_B_fix) is unchanged and still reported.
+CORE_GROUP_ACCEPTANCE_SCHEMA_V1 = "p184.coregroup.acceptance.v1"
+CORE_GROUP_ACCEPTANCE_SCHEMA = "p184.coregroup.acceptance.v2"
 CORE_GROUP_LIMITS = {"rewinds_per_roll_window": 2, "caught_up_s": 60, "partitions_moved_s": 15,
-                     "control_retries_per_member": 2}
+                     "control_retries_per_member": 2, "new_image_rewinds_per_window": 2,
+                     "old_image_survivor_retries_per_member": 1}
 
 
 def _combine(results):
@@ -3360,11 +3419,14 @@ def _combine(results):
     return "NOT_MEASURED" if "NOT_MEASURED" in results else "PASS"
 
 
-def core_group_acceptance(verdict, prereg):
+def core_group_acceptance(verdict, prereg, addendum=None):
     """PASS / FAIL / NOT_MEASURED for every frozen condition of ``prereg["criteria"]`` (both run_A_control and
     run_B_fix), plus the harness conditions both rely on: the run completed, every window is present, the monitor
     covers each window and every member's log covers each window. A criterion text this version does not know is
-    NOT_MEASURED (``UNKNOWN_CONDITION``), never guessed."""
+    NOT_MEASURED (``UNKNOWN_CONDITION``), never guessed.
+
+    ``addendum`` (addendum-2, ``run_B2["criteria"]``): the per-image conditions, evaluated in ``run_B2`` with the
+    same harness rows plus image attribution; the output schema is then v2 (v1 when there is no addendum)."""
     windows = verdict.get("windows") or {}
     gap_rule = verdict.get("monitor_max_gap_rule_s", MONITOR_MAX_GAP_S)
     present = [name for name in CORE_GROUP_WINDOWS if name in windows]
@@ -3518,17 +3580,164 @@ def core_group_acceptance(verdict, prereg):
          {n: windows[n].get("log_covered") for n in present}),
     ]
 
-    def evaluate(texts, extra):
-        rows = [{"condition": c, "result": r, "detail": d} for c, r, d in harness]
+    # -- v2: per image (addendum-2 run_B2) --
+    images = verdict.get("core_images") or {}
+    target = images.get("target")
+    roll_windows = [n for n in CORE_GROUP_WINDOWS if n.startswith("after_roll_")]
+    all_new = (roll_windows[-1], CORE_GROUP_WINDOWS[-1])
+
+    def lives_of(name):
+        """(per-life rows, attributable): rows of the window's span; not attributable when the target image or a
+        counted life's image is unknown, or the verdict predates per-life attribution."""
+        w = windows[name]
+        rows = w.get("by_life")
+        if rows is None or target is None:
+            return [], False
+        return list(rows.values()), all(r.get("image") for r in rows.values())
+
+    def new_image_lives():
+        results, detail = [], {}
+        for name in CORE_GROUP_WINDOWS:
+            if name not in windows:
+                results.append("NOT_MEASURED")
+                detail[name] = "MISSING_WINDOW"
+                continue
+            rows, known = lives_of(name)
+            new = [r for r in rows if r.get("image") == target]
+            limit = 0 if name == "baseline" else CORE_GROUP_LIMITS["new_image_rewinds_per_window"]
+            values = {"retries": sum(r["retries"] for r in new), "rewind_failed": sum(r["rewind_failed"] for r in new),
+                      "rewinds": sum(r["rewinds"] for r in new), "rewinds_limit": limit}
+            if values["retries"] or values["rewind_failed"] or values["rewinds"] > limit:
+                results.append("FAIL")
+            elif not v2 or not known:
+                results.append("NOT_MEASURED")
+            else:
+                results.append("PASS" if logged(name) else "NOT_MEASURED")
+            detail[name] = {**values, "lives": {f"{r['role']}.life{r['life']}": r for r in new},
+                            "images_known": known, "log_covered": windows[name].get("log_covered")}
+        return _combine(results), {"target_image": target, "windows": detail}
+
+    def old_image_lives():
+        """Each member's old-image lives: <= 1 retry in total, only in a roll window where the member survives
+        (another member is rolled); baseline: no retry, rewind or rewind failure from any life."""
+        results, detail, per_member = [], {}, {role: 0 for role in CORE_MEMBERS}
+        misplaced = []
+        for name in CORE_GROUP_WINDOWS:
+            if name not in windows:
+                results.append("NOT_MEASURED")
+                detail[name] = "MISSING_WINDOW"
+                continue
+            rows, known = lives_of(name)
+            old = [r for r in rows if r.get("image") and r.get("image") != target]
+            survivors = {role for role in CORE_MEMBERS if name.startswith("after_roll_")
+                         and role != name[len("after_roll_"):]}
+            for r in old:
+                per_member[r["role"]] += r["retries"]
+                if r["retries"] and r["role"] not in survivors:
+                    misplaced.append({"window": name, "life": f"{r['role']}.life{r['life']}", "retries": r["retries"]})
+            if name == "baseline" and any(r["retries"] or r["rewinds"] or r["rewind_failed"] for r in rows):
+                results.append("FAIL")
+            elif not v2 or not known:
+                results.append("NOT_MEASURED")
+            else:
+                results.append("PASS" if logged(name) else "NOT_MEASURED")
+            detail[name] = {"lives": {f"{r['role']}.life{r['life']}": r for r in old}, "survivors": sorted(survivors),
+                            "images_known": known}
+        over = {role: n for role, n in per_member.items()
+                if n > CORE_GROUP_LIMITS["old_image_survivor_retries_per_member"]}
+        if over or misplaced:
+            results.append("FAIL")
+        return _combine(results), {"target_image": target, "retries_per_member": per_member, "over_limit": over,
+                                   "outside_survivor_window": misplaced, "windows": detail}
+
+    def all_new_retries():
+        results, detail = [], {}
+        for name in all_new:
+            if name not in windows:
+                results.append("NOT_MEASURED")
+                detail[name] = "MISSING_WINDOW"
+                continue
+            retries = windows[name].get("retries")
+            results.append("FAIL" if retries else "NOT_MEASURED" if retries is None or not v2
+                           else "PASS" if logged(name) else "NOT_MEASURED")
+            detail[name] = {"retries": retries, "log_covered": windows[name].get("log_covered")}
+        return _combine(results), detail
+
+    def tail_exact():
+        """``tail_health`` read strictly: "owned exactly once" needs per-member partition detail (monitor v2)."""
+        result, detail = tail_health()
+        bases = {b for d in detail.values() if isinstance(d, dict) for b in (d.get("tail_coverage_basis") or [])}
+        if result == "PASS" and bases != {"partitions"}:
+            result = "NOT_MEASURED"
+        return result, {"bases": sorted(bases), "windows": detail}
+
+    def kill_recovery_v2():
+        clocks = verdict.get("core_kill")
+        if not clocks:
+            return "NOT_MEASURED", {"reason": "NO_CORE_KILL"}
+        exit_s, restored, caught = (clocks.get("exit_confirmed_s"), clocks.get("ownership_restored_s"),
+                                    clocks.get("caught_up_s"))
+        moved = None if exit_s is None or restored is None else round(restored - exit_s, 3)
+        detail = {k: clocks.get(k) for k in ("exit_confirmed_s", "ownership_restored_s", "progress_s",
+                                              "caught_up_s", "caught_up_monitor_max_gap_s", "reason")}
+        detail["ownership_after_exit_s"] = moved
+        if moved is not None and moved > CORE_GROUP_LIMITS["partitions_moved_s"]:
+            return "FAIL", detail
+        if caught is not None and caught > CORE_GROUP_LIMITS["caught_up_s"]:
+            return "FAIL", detail
+        if clocks.get("reason") in ("OWNERSHIP_NOT_RESTORED", "NO_PROGRESS", "NOT_CAUGHT_UP") and \
+                "after_kill" in windows and monitored("after_kill"):
+            return "FAIL", detail
+        if moved is None or caught is None or clocks.get("caught_up_monitor_max_gap_s") is None \
+                or clocks["caught_up_monitor_max_gap_s"] > gap_rule:
+            return "NOT_MEASURED", detail
+        return "PASS", detail
+
+    def coverage():
+        rows = [r for r in harness if r[0].startswith(("harness: monitor coverage", "harness: every member's"))]
+        result = _combine([r[1] for r in rows])
+        return ("NOT_MEASURED" if result == "FAIL" else result), {r[0]: r[2] for r in rows}
+
+    rules_v2 = {
+        "storm=false": storm_false,
+        "new-image member lives: retries == 0, rewind_failed == 0, rewinds <= 2 per window, 0 in baseline":
+            new_image_lives,
+        "old-image (RUST18) member lives: <= 1 retry per member, only in the roll window in which it is a survivor "
+        "of a roll; 0 in baseline": old_image_lives,
+        "once all 3 members run the new image (after_roll_core-3 and after_kill): retries == 0 absolute":
+            all_new_retries,
+        "last 30 s of every window: 3 members, all 6 partitions owned exactly once": tail_exact,
+        "core kill (RB2 clocks): ownership restored <= 15 s after exit confirmed; caught up <= 60 s":
+            kill_recovery_v2,
+        "no inflight_commit_failed / stop_drain_failed": drain_failures,
+        "0 production guard breaches": guard,
+        "coverage: monitor gap <= 5 s, member logs cover every window (else NOT_MEASURED, never PASS)": coverage,
+    }
+
+    def evaluate(texts, extra, known=None, more=()):
+        known = rules if known is None else known
+        rows = [{"condition": c, "result": r, "detail": d} for c, r, d in (*harness, *more)]
         for text in texts:
-            rule = extra.get(text) or rules.get(text)
+            rule = extra.get(text) or known.get(text)
             result, detail = rule() if rule else ("NOT_MEASURED", {"reason": "UNKNOWN_CONDITION"})
             rows.append({"condition": text, "result": result, "detail": detail})
         return {"result": _combine([row["result"] for row in rows]), "conditions": rows}
 
     criteria = prereg.get("criteria") or {}
-    out = {"schema": CORE_GROUP_ACCEPTANCE_SCHEMA, "verdict_schema": verdict.get("schema"),
-           "prereg_schema": prereg.get("schema"), "limits": CORE_GROUP_LIMITS}
+    out = {"schema": CORE_GROUP_ACCEPTANCE_SCHEMA if addendum is not None else CORE_GROUP_ACCEPTANCE_SCHEMA_V1,
+           "verdict_schema": verdict.get("schema"), "prereg_schema": prereg.get("schema"),
+           "limits": CORE_GROUP_LIMITS}
+    if addendum is not None:
+        out["addendum_schema"] = addendum.get("schema")
+        b2 = (addendum.get("run_B2") or {}).get("criteria")
+        if b2 is not None:
+            lives = images.get("lives") or {}
+            unknown = [f"{role}.life{n + 1}" for role, ims in lives.items() for n, im in enumerate(ims) if not im]
+            image_row = ("harness: every core life's image is known (provenance / die events) and one roll target",
+                         "PASS" if target and lives and not unknown else "NOT_MEASURED",
+                         {"target": target, "rolled_onto": images.get("rolled_onto"), "unknown_lives": unknown,
+                          "lives": lives})
+            out["run_B2"] = evaluate(list(b2), {}, rules_v2, (image_row,))
     fix = criteria.get("run_B_fix")
     if fix is not None:
         out["run_B_fix"] = evaluate(list(fix), {})
@@ -3538,9 +3747,10 @@ def core_group_acceptance(verdict, prereg):
     return out
 
 
-def core_group_accept(base, prereg_path):
+def core_group_accept(base, prereg_path, addendum_path=None):
     """``--core-group-accept``: re-evaluate SAVED evidence (no workload, nothing written): recompute the verdict
-    from ``<base>/evidence``, take status/error from its saved ``core-group-verdict.json``, apply the prereg."""
+    from ``<base>/evidence``, take status/error from its saved ``core-group-verdict.json``, apply the prereg (and,
+    with ``--addendum``, addendum-2's per-image run_B2 criteria)."""
     evidence = Path(base) / "evidence"
     verdict = core_group_verdict(evidence)
     saved = evidence / "core-group-verdict.json"
@@ -3548,14 +3758,19 @@ def core_group_accept(base, prereg_path):
         recorded = json.loads(saved.read_text())
         verdict.update({k: recorded.get(k) for k in ("status", "error", "namespace", "new_core")})
     prereg = json.loads(Path(prereg_path).read_text())
+    addendum = json.loads(Path(addendum_path).read_text()) if addendum_path is not None else None
     return {"base": str(base), "prereg_sha256": hashlib.sha256(Path(prereg_path).read_bytes()).hexdigest(),
+            "addendum_sha256": (hashlib.sha256(Path(addendum_path).read_bytes()).hexdigest()
+                                if addendum_path is not None else None),
+            "core_images": verdict.get("core_images"),
+            "by_life": {n: w.get("by_life") for n, w in verdict["windows"].items()},
             "verdict": {k: verdict.get(k) for k in ("schema", "status", "storm", "totals", "core_kill",
                                                      "core_kill_first_healthy_sample_s", "production_guard_breaches")},
             "windows": {n: {k: w.get(k) for k in ("retries", "rewinds", "rewind_failed", "monitor_max_gap_s",
                                                    "tail_samples", "tail_unhealthy_samples", "tail_coverage_basis",
                                                    "end_members", "log_covered")}
                         for n, w in verdict["windows"].items()},
-            "acceptance": core_group_acceptance(verdict, prereg)}
+            "acceptance": core_group_acceptance(verdict, prereg, addendum)}
 
 
 def orchestrate_core_group(base, export, ns, images, new_core):
@@ -3636,11 +3851,14 @@ def main(argv=None):
                         help="--core-group: the core image each member is rolled onto (old: the image set's core)")
     parser.add_argument("--prereg", type=Path,
                         help="--core-group-accept: the frozen prereg JSON whose criteria are evaluated")
+    parser.add_argument("--addendum", type=Path,
+                        help="--core-group-accept: a frozen prereg addendum (addendum-2: per-image run_B2 criteria)")
     args = parser.parse_args(argv)
     if args.core_group_accept:
         if args.prereg is None:
             parser.error("--core-group-accept needs --prereg")
-        print(json.dumps(core_group_accept(args.core_group_accept, args.prereg), indent=2, default=str))
+        print(json.dumps(core_group_accept(args.core_group_accept, args.prereg, args.addendum), indent=2,
+                         default=str))
         return 0
     if args.core_group:
         if args.export is None or args.namespace is None or not re.fullmatch(r"sha256:[0-9a-f]{64}",

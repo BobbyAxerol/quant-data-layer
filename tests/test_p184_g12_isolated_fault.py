@@ -2209,6 +2209,23 @@ PREREG = {
                       "no inflight_commit_failed / stop_drain_failed", "0 production guard breaches"]}}
 
 
+OLD_CORE, NEW_CORE = "sha256:" + "a" * 64, "sha256:" + "b" * 64
+ADDENDUM_2 = {
+    "schema": "p184-coregroup-prereg-addendum.v1",
+    "run_B2": {"criteria": [
+        "storm=false",
+        "new-image member lives: retries == 0, rewind_failed == 0, rewinds <= 2 per window, 0 in baseline",
+        "old-image (RUST18) member lives: <= 1 retry per member, only in the roll window in which it is a survivor "
+        "of a roll; 0 in baseline",
+        "once all 3 members run the new image (after_roll_core-3 and after_kill): retries == 0 absolute",
+        "last 30 s of every window: 3 members, all 6 partitions owned exactly once",
+        "core kill (RB2 clocks): ownership restored <= 15 s after exit confirmed; caught up <= 60 s",
+        "no inflight_commit_failed / stop_drain_failed",
+        "0 production guard breaches",
+        "coverage: monitor gap <= 5 s, member logs cover every window (else NOT_MEASURED, never PASS)"]}}
+B2 = ADDENDUM_2["run_B2"]["criteria"]
+
+
 class CoreGroupAcceptanceTests(unittest.TestCase):
     """RB2/RB3 (review 2026-10-15): recovery clocks tied to the dead member and a versioned acceptance layer."""
 
@@ -2224,8 +2241,9 @@ class CoreGroupAcceptanceTests(unittest.TestCase):
         return datetime.fromtimestamp(t // S, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + f".{t % S:09d}Z"
 
     def build(self, root, *, drop_life=None, monitor_from=0, events=(), drop_window=None, detail=True,
-              restored_at=586, truncate=None):
-        """A complete healthy 5-window run; keyword arguments break one thing at a time."""
+              restored_at=586, truncate=None, images=False, unknown_image=None):
+        """A complete healthy 5-window run; keyword arguments break one thing at a time. ``images``: record each
+        life's image (life 1 OLD, later lives NEW = the roll target) in provenance and die events."""
         T, ev = self.T0, Path(root) / "evidence"
         (ev / "logs").mkdir(parents=True)
         (ev / "verdict-ns.json").write_text(json.dumps({"namespace": NS}))
@@ -2236,18 +2254,22 @@ class CoreGroupAcceptanceTests(unittest.TestCase):
             if name.startswith("after_roll_"):
                 role = name[len("after_roll_"):]
                 faults.insert(-1, {"k": "core_roll", "role": role, "injected_ns": T + (a - 2) * S,
-                                   "restart_ns": T + (a - 1) * S})
+                                   "restart_ns": T + (a - 1) * S, **({"image": NEW_CORE} if images else {})})
         faults.insert(-1, {"k": "core_kill", "role": "core-2", "injected_ns": T + 576 * S, "restart_ns": T + 577 * S})
         (ev / "faults.jsonl").write_text("".join(json.dumps(f) + "\n" for f in faults))
         # Lives: (role, life, first s, die s); the kill's die is 0.2 s after injection.
         lives = [("core", 1, 0.5, 120.5), ("core", 2, 121.5, 730), ("core-2", 1, 0.5, 272.5),
                  ("core-2", 2, 273.5, 576.2), ("core-2", 3, 577.5, 731), ("core-3", 1, 0.5, 424.5),
                  ("core-3", 2, 425.5, 732)]
-        die = []
+        die, provenance = [], []
         for role, life, first, end in lives:
-            die.append({"Action": "die", "timeNano": T + int(end * S),
-                        "Actor": {"Attributes": {"name": f"{NS}-{role}",
-                                                 "exitCode": "137" if (role, life) == ("core-2", 2) else "0"}}})
+            image = None if (role, life) == unknown_image else OLD_CORE if life == 1 else NEW_CORE
+            attributes = {"name": f"{NS}-{role}", "exitCode": "137" if (role, life) == ("core-2", 2) else "0"}
+            if images and image:
+                attributes["image"] = image
+                provenance.append({"t": T + int((first - 0.4) * S), "role": role, "image_role": "core",
+                                   "expected": image, "actual": image, "match": True})
+            die.append({"Action": "die", "timeNano": T + int(end * S), "Actor": {"Attributes": attributes}})
             if (role, life) == drop_life:
                 continue
             lines = [f"{self.stamp(T + int(first * S))} " + json.dumps(
@@ -2261,6 +2283,8 @@ class CoreGroupAcceptanceTests(unittest.TestCase):
                 text = text[len(text) // 2:]  # the follower's tail: starts mid-line
             (ev / "logs" / f"{role}.life{life}.log").write_text(text)
         (ev / "container-events.jsonl").write_text("".join(json.dumps(d) + "\n" for d in die))
+        if images:
+            (ev / "provenance.jsonl").write_text("".join(json.dumps(r) + "\n" for r in provenance))
         rows = []
         for t in range(monitor_from, 730):
             lives_at = {"core": 1 if t < 121 else 2, "core-2": 1 if t < 273 else 2 if t < restored_at else 3,
@@ -2298,6 +2322,8 @@ class CoreGroupAcceptanceTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.prereg = Path(self.tmp.name) / "prereg.json"
         self.prereg.write_text(json.dumps(PREREG))
+        self.addendum = Path(self.tmp.name) / "addendum.json"
+        self.addendum.write_text(json.dumps(ADDENDUM_2))
 
     def root(self, name):
         path = Path(self.tmp.name) / name
@@ -2417,11 +2443,94 @@ class CoreGroupAcceptanceTests(unittest.TestCase):
             code = g12.main(["--core-group-accept", str(base), "--prereg", str(self.prereg)])
         self.assertEqual(code, 0)
         printed = json.loads(buffer.getvalue())
-        self.assertEqual(printed["acceptance"]["schema"], g12.CORE_GROUP_ACCEPTANCE_SCHEMA)
+        self.assertEqual(printed["acceptance"]["schema"], g12.CORE_GROUP_ACCEPTANCE_SCHEMA_V1)
         self.assertEqual(printed["acceptance"]["run_B_fix"]["result"], "PASS")
         self.assertEqual(before, {p: p.stat().st_mtime_ns for p in base.rglob("*")})
         with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
             g12.main(["--core-group-accept", str(base)])
+
+    # -- addendum-2 (owner decision 2026-10-15): per-image acceptance --
+    def accept_b2(self, base):
+        result = g12.core_group_accept(base, self.prereg, self.addendum)
+        b2 = result["acceptance"]["run_B2"]
+        return result, b2, {row["condition"]: row["result"] for row in b2["conditions"]}
+
+    def retry(self, role, t):
+        return (role, t, "qdl_realtime_core_retry", {"error": "consumer rebalanced"})
+
+    def test_b_like_old_image_survivor_retries_pass_only_per_image(self):
+        # Run B's shape: the two old-image survivors retry once each in the first roll window.
+        base = self.build(self.root("blike"), images=True, events=[self.retry("core-2", 150),
+                                                                   self.retry("core-3", 160)])
+        result, b2, rows = self.accept_b2(base)
+        self.assertEqual(result["acceptance"]["schema"], "p184.coregroup.acceptance.v2")
+        self.assertEqual(b2["result"], "PASS", rows)
+        self.assertEqual(len(rows), 5 + len(B2))
+        self.assertEqual(result["acceptance"]["run_B_fix"]["result"], "FAIL")  # v1 reading kept, unchanged
+        lives = result["by_life"]["after_roll_core"]
+        self.assertEqual({k: (v["image"], v["retries"]) for k, v in lives.items()},
+                         {"core-2.life1": (OLD_CORE, 1), "core-3.life1": (OLD_CORE, 1)})
+        self.assertEqual(result["core_images"]["lives"]["core-2"], [OLD_CORE, NEW_CORE, NEW_CORE])
+
+    def test_old_image_member_with_two_retries_fails(self):
+        _, b2, rows = self.accept_b2(self.build(self.root("old2"), images=True,
+                                                events=[self.retry("core-3", 150), self.retry("core-3", 300)]))
+        self.assertEqual(rows[B2[2]], "FAIL")
+        self.assertEqual(b2["result"], "FAIL")
+        self.assertEqual(rows[B2[1]], "PASS")
+
+    def test_old_image_retry_outside_a_survivor_window_fails(self):
+        # core-2's old life retries while it is itself being rolled (span opens at the roll injection, 272 s).
+        _, _, rows = self.accept_b2(self.build(self.root("ownroll"), images=True, events=[self.retry("core-2", 272)]))
+        self.assertEqual(rows[B2[2]], "FAIL")
+        _, _, rows = self.accept_b2(self.build(self.root("base"), images=True, events=[self.retry("core", 30)]))
+        self.assertEqual(rows[B2[2]], "FAIL")
+
+    def test_new_image_retry_fails(self):
+        _, b2, rows = self.accept_b2(self.build(self.root("new"), images=True, events=[self.retry("core", 200)]))
+        self.assertEqual(rows[B2[1]], "FAIL")
+        self.assertEqual(rows[B2[2]], "PASS")
+        self.assertEqual(b2["result"], "FAIL")
+        events = [("core", 200 + n, "qdl_realtime_core_rebalance_rewind", {}) for n in range(3)]
+        _, _, rows = self.accept_b2(self.build(self.root("rew"), images=True, events=events))
+        self.assertEqual(rows[B2[1]], "FAIL")
+        events = [("core", 200, "qdl_realtime_core_rewind_failed", {})]
+        _, _, rows = self.accept_b2(self.build(self.root("rwf"), images=True, events=events))
+        self.assertEqual(rows[B2[1]], "FAIL")
+
+    def test_retry_after_all_members_on_new_image_fails(self):
+        _, b2, rows = self.accept_b2(self.build(self.root("allnew"), images=True,
+                                                events=[self.retry("core-3", 600)]))
+        self.assertEqual(rows[B2[3]], "FAIL")
+        self.assertEqual(b2["result"], "FAIL")
+
+    def test_unknown_life_image_or_counts_only_monitor_is_not_measured(self):
+        base = self.build(self.root("unknown"), images=True, unknown_image=("core-2", 1),
+                          events=[self.retry("core-2", 150)])
+        _, b2, rows = self.accept_b2(base)
+        self.assertEqual(rows[B2[2]], "NOT_MEASURED")
+        self.assertEqual(b2["result"], "NOT_MEASURED")
+        _, b2, rows = self.accept_b2(self.build(self.root("noimg")))  # no provenance at all
+        self.assertEqual(rows[B2[1]], "NOT_MEASURED")
+        _, b2, rows = self.accept_b2(self.build(self.root("cnt"), images=True, detail=False))
+        self.assertEqual(rows[B2[4]], "NOT_MEASURED")
+        self.assertEqual(b2["result"], "NOT_MEASURED")
+        _, b2, rows = self.accept_b2(self.build(self.root("nolog2"), images=True, drop_life=("core-3", 2)))
+        self.assertEqual(rows[B2[8]], "NOT_MEASURED")
+        self.assertEqual(b2["result"], "NOT_MEASURED")
+
+    def test_cli_addendum_flag(self):
+        import contextlib
+        import io
+        base = self.build(self.root("cli2"), images=True)
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = g12.main(["--core-group-accept", str(base), "--prereg", str(self.prereg),
+                             "--addendum", str(self.addendum)])
+        self.assertEqual(code, 0)
+        printed = json.loads(buffer.getvalue())
+        self.assertEqual(printed["acceptance"]["schema"], g12.CORE_GROUP_ACCEPTANCE_SCHEMA)
+        self.assertEqual(printed["acceptance"]["run_B2"]["result"], "PASS")
 
     def test_monitor_records_member_ownership_and_core_offsets(self):
         tp = lambda t, p: types.SimpleNamespace(topic=t, partition=p)  # noqa: E731
