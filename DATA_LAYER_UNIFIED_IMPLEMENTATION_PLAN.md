@@ -73339,3 +73339,13 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   retried, budget -> Fatal incl. empty polls, fatal immediate), `cargo fmt --check` clean (qdl-rust-builder r134);
   ignored Kafka case with an unreachable bootstrap added, not run. G12 unittest 95 OK in qdl-v2-python rc17 image.
   Status: tested locally; affected acceptance = one isolated broker9k on a TEST projector image (TS N1 R2C follow-up).
+- Codex review 45c3704e CF3/CF4 (2026-10-15, FIXED): `classify_poll` is now an allowlist - only transport/coordinator
+  codes (BrokerTransportFailure, AllBrokersDown, Resolve, BrokerNotAvailable, NetworkException, Request/Message/
+  Operation timeouts, TimedOutQueue, LeaderNotAvailable, NotLeaderForPartition, NotCoordinator,
+  CoordinatorNotAvailable, CoordinatorLoadInProgress, WaitingForCoordinator) are Transient; authorization/auth/SSL,
+  unknown topic, config and unlisted codes are Fatal (fail closed). The consecutive poll-error budget now resets only
+  on a committed batch (an aborted batch never resets it), matching the "without a committed batch" statement above.
+  36 lib tests (alternating poll error / abortable abort loop -> Fatal at 31; commit resets), fmt clean.
+- Affected proof: TS N1 `r2d2-broker9k` (TEST projector 381d6bf9 = 58fb7cd) PASS - caught up 1.31 s / durable 1.70 s
+  after a 60 s broker outage, exact 5.4M, projector one life, aborts 0, errors {}; `poll_errors` 0, so the transient
+  path itself was not exercised at runtime (unit-test proof only). The final projector binary (CF3/CF4) ships in rc19.

@@ -10,15 +10,16 @@
 //! stops (fail closed) and reports the partition and offset. A transient
 //! poll error (broker unreachable, librdkafka keeps reconnecting) opens no
 //! transaction and is retried, but only within a bounded run of errors
-//! without progress (an empty poll is not progress): a consumer that stays
-//! broken still stops the engine.
+//! without a committed batch (an empty poll or an aborted transaction is not
+//! progress): a consumer that stays broken still stops the engine.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
 
 /// Consecutive source errors a stage tolerates (one wait of about a second
 /// each, paced by the caller) before it stops fail-closed. Shared by stage A
-/// (transient poll errors) and stage B (source errors).
+/// (transient poll errors without a committed batch in between; empty polls
+/// and aborted transactions do not reset the run) and stage B (source errors).
 pub const MAX_CONSECUTIVE_SOURCE_ERRORS: u32 = 30;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -163,9 +164,6 @@ impl<P: Pipe, T: Transform> StageA<P, T> {
         if batch.is_empty() {
             return Ok(Step::Idle);
         }
-        // Only records prove the consumer works again: librdkafka interleaves
-        // empty polls with its error events while it cannot reach a broker.
-        self.consecutive_poll_errors = 0;
         // Transform the whole batch before opening the transaction: an
         // integrity stop then leaves nothing half-published.
         let mut outputs = Vec::new();
@@ -185,6 +183,11 @@ impl<P: Pipe, T: Transform> StageA<P, T> {
         }
         match self.publish(&outputs, &next) {
             Ok(()) => {
+                // Only a committed batch is progress: librdkafka interleaves
+                // empty polls with its error events while it cannot reach a
+                // broker, and records whose transaction aborts are polled
+                // again from the same offsets.
+                self.consecutive_poll_errors = 0;
                 self.metrics.transactions += 1;
                 self.metrics.inputs += batch.len() as u64;
                 self.metrics.outputs += outputs.len() as u64;
@@ -506,6 +509,45 @@ mod tests {
             .poll_errors
             .extend((0..budget).map(|_| PipeError::Transient("down".into())));
         for _ in 0..budget {
+            assert!(matches!(stage.step().unwrap(), Step::PollError(_)));
+        }
+    }
+
+    #[test]
+    fn aborted_batches_between_poll_errors_do_not_reset_the_budget() {
+        let budget = MAX_CONSECUTIVE_SOURCE_ERRORS as usize;
+        // Poll error, then records whose transaction fails at its first send
+        // (abort + rewind), repeated: nothing ever commits.
+        let mut stage = StageA::new(MemoryPipe::with(&[(0, 0, "a")]), Doubler, limits(10));
+        for round in 0..budget {
+            let error = PipeError::Transient("down".into());
+            stage.pipe.poll_errors.push_back(error);
+            assert!(matches!(stage.step().unwrap(), Step::PollError(_)));
+            stage.pipe.sends = 0;
+            stage.pipe.fail_send_at = Some(1);
+            assert!(matches!(stage.step().unwrap(), Step::Aborted(_)));
+            assert!(stage.pipe.committed.is_empty() && stage.pipe.open.is_none());
+            assert_eq!(stage.metrics.aborts, round as u64 + 1);
+        }
+        let error = PipeError::Transient("down".into());
+        stage.pipe.poll_errors.push_back(error);
+        assert!(matches!(stage.step(), Err(StageAError::Fatal(_))));
+        assert_eq!(stage.metrics.transactions, 0);
+        // The same alternation with one committed batch: the run restarts.
+        let mut stage = StageA::new(MemoryPipe::with(&[(0, 0, "a")]), Doubler, limits(10));
+        for _ in 0..budget {
+            let error = PipeError::Transient("down".into());
+            stage.pipe.poll_errors.push_back(error);
+            assert!(matches!(stage.step().unwrap(), Step::PollError(_)));
+            stage.pipe.sends = 0;
+            stage.pipe.fail_send_at = Some(1);
+            assert!(matches!(stage.step().unwrap(), Step::Aborted(_)));
+        }
+        stage.pipe.fail_send_at = None;
+        assert!(matches!(stage.step().unwrap(), Step::Committed { .. }));
+        for _ in 0..budget {
+            let error = PipeError::Transient("down".into());
+            stage.pipe.poll_errors.push_back(error);
             assert!(matches!(stage.step().unwrap(), Step::PollError(_)));
         }
     }

@@ -63,17 +63,33 @@ pub struct KafkaPipe {
 
 /// librdkafka reports broker transport failures, refused connections and
 /// "all brokers down" as non-fatal error events on the consumer queue and
-/// keeps reconnecting; only an error it marks fatal (or the explicit `Fatal`
-/// code) means the consumer can no longer be used. No transaction is open
-/// at poll time, so a transient error needs no abort.
+/// keeps reconnecting. Only an explicit allowlist of such transport, timeout
+/// and leader/coordinator-movement codes is transient; everything else
+/// (authentication, authorization, SSL, unknown topic, any code not listed)
+/// fails closed, because retrying cannot repair a configuration error. No
+/// transaction is open at poll time, so a transient error needs no abort.
 fn classify_poll(error: KafkaError) -> PipeError {
     use rdkafka::types::RDKafkaErrorCode;
     match error {
-        KafkaError::MessageConsumption(RDKafkaErrorCode::Fatal) => {
-            PipeError::Fatal(error.to_string())
-        }
-        KafkaError::MessageConsumption(_) => PipeError::Transient(error.to_string()),
-        // MessageConsumptionFatal and anything poll is not documented to return.
+        KafkaError::MessageConsumption(
+            RDKafkaErrorCode::BrokerTransportFailure
+            | RDKafkaErrorCode::AllBrokersDown
+            | RDKafkaErrorCode::Resolve
+            | RDKafkaErrorCode::BrokerNotAvailable
+            | RDKafkaErrorCode::NetworkException
+            | RDKafkaErrorCode::RequestTimedOut
+            | RDKafkaErrorCode::MessageTimedOut
+            | RDKafkaErrorCode::OperationTimedOut
+            | RDKafkaErrorCode::TimedOutQueue
+            | RDKafkaErrorCode::LeaderNotAvailable
+            | RDKafkaErrorCode::NotLeaderForPartition
+            | RDKafkaErrorCode::NotCoordinator
+            | RDKafkaErrorCode::CoordinatorNotAvailable
+            | RDKafkaErrorCode::CoordinatorLoadInProgress
+            | RDKafkaErrorCode::WaitingForCoordinator,
+        ) => PipeError::Transient(error.to_string()),
+        // Every other consumption code, MessageConsumptionFatal and anything
+        // poll is not documented to return.
         _ => PipeError::Fatal(error.to_string()),
     }
 }
@@ -353,12 +369,16 @@ mod recovery_tests {
     }
 
     #[test]
-    fn only_fatal_consumer_errors_stop_the_poll() {
+    fn only_allowlisted_transport_errors_are_retried_by_the_poll() {
         use rdkafka::types::RDKafkaErrorCode;
         for code in [
             RDKafkaErrorCode::BrokerTransportFailure,
             RDKafkaErrorCode::AllBrokersDown,
+            RDKafkaErrorCode::Resolve,
             RDKafkaErrorCode::RequestTimedOut,
+            RDKafkaErrorCode::NotCoordinator,
+            RDKafkaErrorCode::CoordinatorLoadInProgress,
+            RDKafkaErrorCode::NotLeaderForPartition,
         ] {
             assert!(matches!(
                 classify_poll(KafkaError::MessageConsumption(code)),
@@ -369,6 +389,17 @@ mod recovery_tests {
             KafkaError::MessageConsumptionFatal(RDKafkaErrorCode::BrokerTransportFailure),
             KafkaError::MessageConsumption(RDKafkaErrorCode::Fatal),
             KafkaError::PartitionEOF(0),
+            // Authentication and authorization cannot be repaired by retrying.
+            KafkaError::MessageConsumption(RDKafkaErrorCode::TopicAuthorizationFailed),
+            KafkaError::MessageConsumption(RDKafkaErrorCode::GroupAuthorizationFailed),
+            KafkaError::MessageConsumption(RDKafkaErrorCode::ClusterAuthorizationFailed),
+            KafkaError::MessageConsumption(RDKafkaErrorCode::SaslAuthenticationFailed),
+            KafkaError::MessageConsumption(RDKafkaErrorCode::Authentication),
+            KafkaError::MessageConsumption(RDKafkaErrorCode::SSL),
+            KafkaError::MessageConsumption(RDKafkaErrorCode::UnknownTopicOrPartition),
+            // A code outside the allowlist fails closed.
+            KafkaError::MessageConsumption(RDKafkaErrorCode::Unknown),
+            KafkaError::MessageConsumption(RDKafkaErrorCode::InvalidConfig),
         ] {
             assert!(matches!(classify_poll(error), PipeError::Fatal(_)));
         }
