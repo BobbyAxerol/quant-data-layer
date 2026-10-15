@@ -73390,3 +73390,21 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   reproduce the storm or the harness is not valid evidence; run B (RUST18 -> fixed) storm=false, retries 0,
   rewind_failed 0, <= 2 rewinds per roll window, 3 members each owning >= 1 partition at every window end,
   core-kill caught up <= 60 s with partitions moved <= 15 s, no inflight/stop-drain failure, 0 guard breaches.
+- Core-group A/B (prereg 42b82e61 + addendum-1 29258445; images python b9ca6c36, projector ce629061, stream RUST18):
+  A (RUST18 -> rc19 d1659102) reproduced the storm (after_roll_core-3: 10 retries, 100/150 short-member samples,
+  1 member at window end) -> harness valid as evidence. B (RUST18 -> rc20 d83a3168, e19a9f6): no storm (rc20 lives:
+  0 retries, 1 rewind; kill window max_lag 2) but FAIL on the frozen "retries == 0 in every window": 2 retries in
+  after_roll_core, both in core-2.life1 / core-3.life1 = members still on RUST18 (old rebuild path) while only `core`
+  was rolled. Verdict kept as FAIL; how mixed-version rolls are judged is an owner decision (no relaxation by me).
+- Codex review 2440f983 DL dispositions: RB1 FIXED (typed rewind failure reaches the supervisor: Configuration/Fencing
+  non-retryable, timeout retryable; fatal drain error takes precedence; plus epoch fence around fetch+seek because
+  librdkafka only guarantees no assignment change while nobody polls - our invariant, not the library's; fence hit
+  re-rewinds within the 3-rewind budget). RB2 FIXED (core-kill clocks: exit confirmed / ownership restored = dead
+  member id gone, roster 3, STABLE, 6 partitions owned once / progress past post-fault log-end / caught up; monitor
+  records member detail and offsets). RB3 FIXED (`core_group_acceptance` p184.coregroup.acceptance.v1, per-condition
+  PASS/FAIL/NOT_MEASURED + coverage conditions; CLI `--core-group-accept BASE --prereg FILE`, read-only). Found:
+  the log follower kept only a 1 MB tail, truncating core logs in A and B (retry/rewind totals undercounted there) ->
+  32 MB for core-group members. Saved-evidence acceptance: A run_A_control PASS (storm), B run_B_fix FAIL (2 RUST18
+  retries), several rows NOT_MEASURED (truncation; old monitor lacks member ids). Codex question 2 (BOOK/canonical
+  after a fresh core) goes to the N1 exactness core-kill run. Tests: cargo qdl-kafka 46+49+7+25 pass, fmt clean;
+  113 unittest OK. RB1 changes core bytes -> rc20 superseded; rc21 built from this commit for the next B run.

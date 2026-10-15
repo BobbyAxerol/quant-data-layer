@@ -2183,10 +2183,281 @@ class CoreGroupReproductionTests(unittest.TestCase):
             self.assertEqual(verdict["windows"]["baseline"]["max_lag"], 5)
             # The dead member (empty, until its session expires) counts as short.
             self.assertEqual(verdict["windows"]["after_kill"]["short_member_samples"], 7)
-            self.assertEqual(verdict["core_kill_caught_up_s"], 12.0)
+            # RB2: the count-only monitor has no member ids, so recovery is not a clock; the old reading stays
+            # a diagnostic that closes nothing.
+            self.assertEqual(verdict["core_kill_first_healthy_sample_s"], 12.0)
+            self.assertIsNone(verdict["core_kill_caught_up_s"])
+            self.assertEqual(verdict["core_kill"]["reason"], "NO_EXIT_EVENT")
             self.assertEqual(verdict["totals"]["qdl_realtime_core_rebalance_rewind"], 1)
         with tempfile.TemporaryDirectory() as root:
             verdict = g12.core_group_verdict(self._evidence(root, final_retries=3, kill_lag=50))
             self.assertTrue(verdict["storm"])
             self.assertEqual(verdict["windows"]["after_kill"]["retries"], 3)
             self.assertIsNone(verdict["core_kill_caught_up_s"])
+
+
+PREREG = {
+    "schema": "p184-coregroup-prereg.v1",
+    "criteria": {
+        "run_A_control": "storm reproduced: storm=true OR retries >= 2 per member after the last roll OR group < 3 "
+                         "members at a window end. If not reproduced: harness NOT valid evidence; run B cannot "
+                         "certify the fix.",
+        "run_B_fix": ["storm=false", "retries == 0 and rewind_failed == 0 in every window",
+                      "rewinds <= 2 per roll window and 0 in baseline",
+                      "last 30 s of every window: 3 members, each >= 1 partition",
+                      "core_kill_caught_up_s <= 60 and dead member's partitions moved <= 15 s",
+                      "no inflight_commit_failed / stop_drain_failed", "0 production guard breaches"]}}
+
+
+class CoreGroupAcceptanceTests(unittest.TestCase):
+    """RB2/RB3 (review 2026-10-15): recovery clocks tied to the dead member and a versioned acceptance layer."""
+
+    T0 = 1_800_000_000 * S
+    # (window, start s, end s); rolls injected at 120/272/424, kill at 576 (core-2), teardown at 730.
+    WINDOWS = [("baseline", 0, 120), ("after_roll_core", 122, 272), ("after_roll_core-2", 274, 424),
+               ("after_roll_core-3", 426, 576), ("after_kill", 578, 728)]
+    OWNERS = {"core": (0, 1), "core-2": (2, 3), "core-3": (4, 5)}
+
+    @staticmethod
+    def stamp(t):
+        from datetime import datetime, timezone
+        return datetime.fromtimestamp(t // S, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + f".{t % S:09d}Z"
+
+    def build(self, root, *, drop_life=None, monitor_from=0, events=(), drop_window=None, detail=True,
+              restored_at=586, truncate=None):
+        """A complete healthy 5-window run; keyword arguments break one thing at a time."""
+        T, ev = self.T0, Path(root) / "evidence"
+        (ev / "logs").mkdir(parents=True)
+        (ev / "verdict-ns.json").write_text(json.dumps({"namespace": NS}))
+        faults = []
+        for name, a, b in self.WINDOWS:
+            if name != drop_window:
+                faults.append({"k": "core_window", "name": name, "start_ns": T + a * S, "end_ns": T + b * S})
+            if name.startswith("after_roll_"):
+                role = name[len("after_roll_"):]
+                faults.insert(-1, {"k": "core_roll", "role": role, "injected_ns": T + (a - 2) * S,
+                                   "restart_ns": T + (a - 1) * S})
+        faults.insert(-1, {"k": "core_kill", "role": "core-2", "injected_ns": T + 576 * S, "restart_ns": T + 577 * S})
+        (ev / "faults.jsonl").write_text("".join(json.dumps(f) + "\n" for f in faults))
+        # Lives: (role, life, first s, die s); the kill's die is 0.2 s after injection.
+        lives = [("core", 1, 0.5, 120.5), ("core", 2, 121.5, 730), ("core-2", 1, 0.5, 272.5),
+                 ("core-2", 2, 273.5, 576.2), ("core-2", 3, 577.5, 731), ("core-3", 1, 0.5, 424.5),
+                 ("core-3", 2, 425.5, 732)]
+        die = []
+        for role, life, first, end in lives:
+            die.append({"Action": "die", "timeNano": T + int(end * S),
+                        "Actor": {"Attributes": {"name": f"{NS}-{role}",
+                                                 "exitCode": "137" if (role, life) == ("core-2", 2) else "0"}}})
+            if (role, life) == drop_life:
+                continue
+            lines = [f"{self.stamp(T + int(first * S))} " + json.dumps(
+                {"event": "qdl_realtime_core_started", "generation": 1})]
+            lines += [f"{self.stamp(T + int(t * S))} " + json.dumps({"event": "qdl_realtime_core_progress"})
+                      for t in range(int(first) + 1, int(end))]
+            lines += [f"{self.stamp(T + int(t * S))} " + json.dumps(dict({"event": e}, **extra))
+                      for r, t, e, extra in events if r == role and first <= t < end]
+            text = "\n".join(lines) + "\n"
+            if (role, life) == truncate:
+                text = text[len(text) // 2:]  # the follower's tail: starts mid-line
+            (ev / "logs" / f"{role}.life{life}.log").write_text(text)
+        (ev / "container-events.jsonl").write_text("".join(json.dumps(d) + "\n" for d in die))
+        rows = []
+        for t in range(monitor_from, 730):
+            lives_at = {"core": 1 if t < 121 else 2, "core-2": 1 if t < 273 else 2 if t < restored_at else 3,
+                        "core-3": 1 if t < 425 else 2}
+            owners = dict(self.OWNERS)
+            if t >= restored_at:  # new owners after the dead member left
+                owners = {"core": (0, 1, 2), "core-2": (5,), "core-3": (3, 4)}
+            members = [{"member_id": f"m-{role}-{lives_at[role]}", "client_id": g12.core_client_id(NS, role),
+                        "host": "/10.0.0.1", "partitions": [f"{NS}.raw/{p}" for p in owners[role]]}
+                       for role in g12.CORE_MEMBERS]
+            frozen = 576 <= t < 589  # the dead member's partitions stand still until the new owner commits
+            offsets = {f"{NS}.raw/{p}": [575 if frozen and p in (2, 3) else t - 1, t] for p in range(6)}
+            lag = sum(e - c for c, e in offsets.values())
+            if t == 60:
+                lag = 20  # baseline maximum: the stale samples right after the kill are "within baseline"
+            group = {"state": "STABLE", "members": 3, "assigned": sorted(len(m["partitions"]) for m in members)}
+            if detail:
+                group["detail"] = members
+            row = {"t": T + t * S, "groups": {NS: group}, "lag": {NS: lag}}
+            if detail:
+                row["offsets"] = {NS: offsets}
+            rows.append(row)
+        (ev / "monitor.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+        (ev / "orchestrator.jsonl").write_text(json.dumps({"step": "teardown", "production_guard_breaches": {}})
+                                               + "\n")
+        (ev / "core-group-verdict.json").write_text(json.dumps({"status": "COMPLETED", "error": None}))
+        return Path(root)
+
+    def accept(self, base):
+        result = g12.core_group_accept(base, self.prereg)
+        return result, {row["condition"]: row["result"] for row in result["acceptance"]["run_B_fix"]["conditions"]}
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.prereg = Path(self.tmp.name) / "prereg.json"
+        self.prereg.write_text(json.dumps(PREREG))
+
+    def root(self, name):
+        path = Path(self.tmp.name) / name
+        path.mkdir()
+        return path
+
+    def test_healthy_run_passes_every_frozen_condition(self):
+        base = self.build(self.root("ok"), events=[("core-3", 150, "qdl_realtime_core_rebalance_rewind", {})])
+        result, rows = self.accept(base)
+        self.assertEqual(result["acceptance"]["run_B_fix"]["result"], "PASS", rows)
+        self.assertEqual(len(rows), 4 + len(PREREG["criteria"]["run_B_fix"]))
+        self.assertEqual(result["acceptance"]["run_A_control"]["result"], "FAIL")  # no storm to reproduce
+        self.assertEqual(result["windows"]["after_roll_core"]["tail_coverage_basis"], ["partitions"])
+
+    def test_stale_three_member_view_after_kill_does_not_close_recovery(self):
+        verdict = g12.core_group_verdict(self.build(self.root("stale")) / "evidence")
+        clocks = verdict["core_kill"]
+        # 577-585: the old 3-member assignment (dead member still listed) with lag inside the baseline range.
+        self.assertEqual(verdict["core_kill_first_healthy_sample_s"], 0.0)  # the old reading took the stale view
+        self.assertEqual(clocks["exit_confirmed_s"], 0.2)
+        self.assertEqual(clocks["dead_member_id"], "m-core-2-2")
+        self.assertEqual(clocks["affected_partitions"], [f"{NS}.raw/2", f"{NS}.raw/3"])
+        self.assertEqual(clocks["ownership_restored_s"], 10.0)  # only the ownership change closes it
+        self.assertEqual(clocks["progress_s"], 13.0)  # and progress past the post-fault offsets
+        self.assertEqual(clocks["caught_up_s"], 13.0)
+        self.assertEqual(verdict["core_kill_caught_up_s"], 13.0)
+        # The stale view never changes: recovery is not restored and, with full monitor coverage, that is a FAIL.
+        result, rows = self.accept(self.build(self.root("never"), restored_at=10_000))
+        self.assertEqual(result["verdict"]["core_kill"]["reason"], "OWNERSHIP_NOT_RESTORED")
+        self.assertEqual(rows["core_kill_caught_up_s <= 60 and dead member's partitions moved <= 15 s"], "FAIL")
+        # Moved, but after the 15 s deadline.
+        _, rows = self.accept(self.build(self.root("late"), restored_at=600))
+        self.assertEqual(rows["core_kill_caught_up_s <= 60 and dead member's partitions moved <= 15 s"], "FAIL")
+
+    def test_absent_transfer_measurement_is_not_measured(self):
+        result, rows = self.accept(self.build(self.root("counts"), detail=False))
+        self.assertEqual(result["verdict"]["core_kill"]["reason"], "NO_MEMBER_DETAIL")
+        self.assertEqual(rows["core_kill_caught_up_s <= 60 and dead member's partitions moved <= 15 s"],
+                         "NOT_MEASURED")
+        self.assertEqual(result["acceptance"]["run_B_fix"]["result"], "NOT_MEASURED")
+        self.assertEqual(result["windows"]["baseline"]["tail_coverage_basis"], ["counts"])
+
+    def test_missing_member_log_is_not_measured(self):
+        result, rows = self.accept(self.build(self.root("nolog"), drop_life=("core-3", 2)))
+        self.assertFalse(result["windows"]["after_roll_core-3"]["log_covered"]["core-3"])
+        self.assertEqual(rows["harness: every member's retained log covers every window"], "NOT_MEASURED")
+        self.assertEqual(rows["retries == 0 and rewind_failed == 0 in every window"], "NOT_MEASURED")
+        self.assertEqual(rows["no inflight_commit_failed / stop_drain_failed"], "NOT_MEASURED")
+        self.assertEqual(result["acceptance"]["run_B_fix"]["result"], "NOT_MEASURED")
+
+    def test_truncated_life_covers_only_its_retained_tail(self):
+        result, rows = self.accept(self.build(self.root("tail"), truncate=("core", 2)))
+        covered = {name: w["log_covered"]["core"] for name, w in result["windows"].items()}
+        self.assertFalse(covered["after_roll_core"])
+        self.assertTrue(covered["after_kill"])
+        self.assertEqual(result["acceptance"]["run_B_fix"]["result"], "NOT_MEASURED")
+
+    def test_one_tail_sample_only_is_not_a_pass(self):
+        base = self.build(self.root("tailonly"), monitor_from=728)
+        verdict = g12.core_group_verdict(base / "evidence")
+        self.assertFalse(verdict["storm"])  # the old diagnostic would call this healthy
+        result, rows = self.accept(base)
+        self.assertEqual(rows["harness: monitor coverage per window (gap <= 5 s)"], "NOT_MEASURED")
+        self.assertEqual(rows["storm=false"], "NOT_MEASURED")
+        self.assertEqual(rows["last 30 s of every window: 3 members, each >= 1 partition"], "NOT_MEASURED")
+        self.assertEqual(result["acceptance"]["run_B_fix"]["result"], "NOT_MEASURED")
+
+    def test_early_roll_failure_then_healthy_finish_fails(self):
+        events = [("core", 130 + n, "qdl_realtime_core_retry", {"error": "rebalanced"}) for n in range(3)]
+        base = self.build(self.root("early"), events=events)
+        self.assertFalse(g12.core_group_verdict(base / "evidence")["storm"])
+        result, rows = self.accept(base)
+        self.assertEqual(rows["storm=false"], "PASS")
+        self.assertEqual(rows["retries == 0 and rewind_failed == 0 in every window"], "FAIL")
+        self.assertEqual(result["acceptance"]["run_B_fix"]["result"], "FAIL")
+
+    def test_missing_roll_window_is_not_measured(self):
+        result, rows = self.accept(self.build(self.root("nowin"), drop_window="after_roll_core-2"))
+        self.assertEqual(rows["harness: all windows present"], "NOT_MEASURED")
+        self.assertEqual(rows["rewinds <= 2 per roll window and 0 in baseline"], "NOT_MEASURED")
+        self.assertEqual(result["acceptance"]["run_B_fix"]["result"], "NOT_MEASURED")
+
+    def test_more_than_two_rewinds_in_a_roll_window_fails(self):
+        events = [("core-3", 300 + n, "qdl_realtime_core_rebalance_rewind", {}) for n in range(3)]
+        _, rows = self.accept(self.build(self.root("rewinds"), events=events))
+        self.assertEqual(rows["rewinds <= 2 per roll window and 0 in baseline"], "FAIL")
+        events = [("core", 30, "qdl_realtime_core_rebalance_rewind", {})]
+        _, rows = self.accept(self.build(self.root("baseline"), events=events))
+        self.assertEqual(rows["rewinds <= 2 per roll window and 0 in baseline"], "FAIL")
+        events = [("core", 140, "qdl_realtime_core_rewind_failed", {}),
+                  ("core-2", 140, "qdl_realtime_core_inflight_commit_failed", {})]
+        _, rows = self.accept(self.build(self.root("failed"), events=events))
+        self.assertEqual(rows["retries == 0 and rewind_failed == 0 in every window"], "FAIL")
+        self.assertEqual(rows["no inflight_commit_failed / stop_drain_failed"], "FAIL")
+
+    def test_control_run_reproduces_on_any_sub_condition_and_unknown_text_is_not_guessed(self):
+        events = [(role, 600 + n, "qdl_realtime_core_retry", {"error": "rebalanced"})
+                  for role in g12.CORE_MEMBERS for n in range(2)]
+        result, _ = self.accept(self.build(self.root("storm"), events=events))
+        control = result["acceptance"]["run_A_control"]
+        self.assertEqual(control["conditions"][-1]["result"], "PASS")
+        self.assertEqual(control["conditions"][-1]["detail"]["storm"], True)
+        verdict = g12.core_group_verdict(self.build(self.root("plain")) / "evidence")
+        verdict["status"] = "COMPLETED"
+        out = g12.core_group_acceptance(verdict, {"criteria": {"run_B_fix": ["storm=false", "something new"]}})
+        rows = {r["condition"]: (r["result"], r["detail"]) for r in out["run_B_fix"]["conditions"]}
+        self.assertEqual(rows["something new"], ("NOT_MEASURED", {"reason": "UNKNOWN_CONDITION"}))
+        self.assertEqual(out["run_B_fix"]["result"], "NOT_MEASURED")
+
+    def test_cli_reevaluates_saved_evidence_without_writing(self):
+        import contextlib
+        import io
+        base = self.build(self.root("cli"))
+        before = {p: p.stat().st_mtime_ns for p in base.rglob("*")}
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = g12.main(["--core-group-accept", str(base), "--prereg", str(self.prereg)])
+        self.assertEqual(code, 0)
+        printed = json.loads(buffer.getvalue())
+        self.assertEqual(printed["acceptance"]["schema"], g12.CORE_GROUP_ACCEPTANCE_SCHEMA)
+        self.assertEqual(printed["acceptance"]["run_B_fix"]["result"], "PASS")
+        self.assertEqual(before, {p: p.stat().st_mtime_ns for p in base.rglob("*")})
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            g12.main(["--core-group-accept", str(base)])
+
+    def test_monitor_records_member_ownership_and_core_offsets(self):
+        tp = lambda t, p: types.SimpleNamespace(topic=t, partition=p)  # noqa: E731
+        member = types.SimpleNamespace(member_id="m-1", client_id=NS + "-2", host="/10.0.0.2",
+                                       assignment=types.SimpleNamespace(topic_partitions=[tp(NS + ".raw", 3),
+                                                                                          tp(NS + ".raw", 2)]))
+
+        class Future:
+            def result(self, timeout=None):
+                return types.SimpleNamespace(state="ConsumerGroupState.STABLE", members=[member])
+
+        class Admin:
+            def describe_consumer_groups(self, groups, request_timeout=None):
+                return {group: Future() for group in groups}
+
+        class Source:
+            def describe_cluster(self, deadline):
+                return {}
+
+            def describe_topics(self, roster, deadline):
+                return {}
+
+            def committed_offsets(self, group, roster, deadline):
+                return {(t, p): 5 for t, n in roster.items() for p in range(n)}
+
+            def log_end_offsets(self, partitions, deadline):
+                return {tp: 7 for tp in partitions}
+        rosters = {"kn-projector-v3-a": {"c": 1}, "kn-projector-v3-b": {"l": 1}, NS: {NS + ".raw": 6}}
+        stub = types.ModuleType("scripts.kn_recovery_observe")
+        stub.Deadline = lambda seconds: seconds
+        with patch.dict(sys.modules, {"scripts.kn_recovery_observe": stub}):
+            row = g12.kafka_sample(Source(), Admin(), {}, rosters, (NS,))
+        self.assertEqual(row["groups"][NS]["detail"], [{"member_id": "m-1", "client_id": NS + "-2",
+                                                        "host": "/10.0.0.2",
+                                                        "partitions": [f"{NS}.raw/2", f"{NS}.raw/3"]}])
+        self.assertEqual(row["offsets"][NS][f"{NS}.raw/4"], [5, 7])
+        self.assertNotIn("kn-projector-v3-a", row["offsets"])
+        self.assertEqual(g12.core_client_id(NS, "core"), NS)
+        self.assertEqual(g12.core_client_id(NS, "core-3"), NS + "-3")

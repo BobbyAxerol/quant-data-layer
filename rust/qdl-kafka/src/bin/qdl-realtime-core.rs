@@ -516,6 +516,89 @@ fn rewind_in_generation(
         && drain_error.is_none_or(rebalance_abort)
 }
 
+/// The error a failed generation ends with when it is not rewound in place.
+/// A non-retryable drain failure takes precedence over a retryable served
+/// error, so settling the transaction can never downgrade a fatal outcome
+/// into a generation rebuild.
+fn generation_failure(
+    error: RuntimeError,
+    drain_error: Option<KafkaTransportError>,
+) -> RuntimeError {
+    match drain_error {
+        Some(drain)
+            if retryable_runtime_error(&error) && !should_retry_transport(drain.retry_class()) =>
+        {
+            drain.into()
+        }
+        _ => error,
+    }
+}
+
+/// RB1 (review 2026-10-15). Whether a failed rewind attempt is tried again on
+/// the same consumer: only when the rewind itself was invalidated by a group
+/// change (the epoch fence of `rewind_to_committed`), no stop is pending and
+/// the consecutive-rewind budget (which counts this attempt) remains.
+fn rewind_again(rewind_error: &KafkaTransportError, stop_requested: bool, attempts: u32) -> bool {
+    rewind_error.is_rebalance_abort() && !stop_requested && attempts < MAX_CONSECUTIVE_REWINDS
+}
+
+/// INCIDENT 2026-10-15 / RB1. Settle a failed pass: either rewind the same
+/// consumer to its committed offsets (returns the number of partitions moved)
+/// or end the generation with the error the supervisor must classify.
+///
+/// A failed rewind ends the generation with the rewind's own typed error, not
+/// with the rebalance that started it (which stays in the log): a
+/// non-retryable rewind failure (`Configuration` from an unexpected committed
+/// offset, `Fencing`) must reach the supervisor as non-retryable, while a
+/// retryable one (a timeout) still rebuilds the generation. Every attempt,
+/// including one fenced by a rebalance during the rewind, counts toward
+/// [`MAX_CONSECUTIVE_REWINDS`].
+async fn recover_in_place<Rewind, Attempt>(
+    error: RuntimeError,
+    drain_error: Option<KafkaTransportError>,
+    stop_requested: impl Fn() -> bool,
+    consecutive_rewinds: &mut u32,
+    generation: u64,
+    mut rewind: Rewind,
+) -> Result<usize, RuntimeError>
+where
+    Rewind: FnMut() -> Attempt,
+    Attempt: Future<Output = Result<usize, KafkaTransportError>>,
+{
+    if !rewind_in_generation(
+        &error,
+        drain_error.as_ref(),
+        stop_requested(),
+        *consecutive_rewinds,
+    ) {
+        return Err(generation_failure(error, drain_error));
+    }
+    loop {
+        *consecutive_rewinds += 1;
+        match rewind().await {
+            Ok(moved) => return Ok(moved),
+            Err(rewind_error) => {
+                let again = rewind_again(&rewind_error, stop_requested(), *consecutive_rewinds);
+                log_line(
+                    true,
+                    json!({
+                        "event": "qdl_realtime_core_rewind_failed",
+                        "generation": generation,
+                        "error": error.to_string(),
+                        "rewind_error": rewind_error.to_string(),
+                        "rewind_retryable": should_retry_transport(rewind_error.retry_class()),
+                        "consecutive": *consecutive_rewinds,
+                        "rewind_again": again,
+                    }),
+                );
+                if !again {
+                    return Err(rewind_error.into());
+                }
+            }
+        }
+    }
+}
+
 async fn run_generation(
     config: &RuntimeConfig,
     generation: u64,
@@ -612,36 +695,22 @@ async fn run_generation(
                 if progress.batches > batches_before {
                     consecutive_rewinds = 0;
                 }
-                if !rewind_in_generation(
-                    &error,
-                    drain_error.as_ref(),
-                    stop.requested().is_some(),
-                    consecutive_rewinds,
-                ) {
-                    return Err(error);
-                }
                 // INCIDENT 2026-10-15. The aborted batch (and the one read
                 // behind it) are discarded with the core state they produced:
                 // a fresh core replays them from the committed offsets, exactly
                 // as a new generation would, but on the same group member.
                 let started = tokio::time::Instant::now();
-                let moved = match bridge.rewind_to_committed().await {
-                    Ok(moved) => moved,
-                    Err(rewind_error) => {
-                        eprintln!(
-                            "{}",
-                            serde_json::to_string(&json!({
-                                "event": "qdl_realtime_core_rewind_failed",
-                                "generation": generation,
-                                "error": error.to_string(),
-                                "rewind_error": rewind_error.to_string(),
-                            }))?
-                        );
-                        return Err(error);
-                    }
-                };
+                let origin = error.to_string();
+                let moved = recover_in_place(
+                    error,
+                    drain_error,
+                    || stop.requested().is_some(),
+                    &mut consecutive_rewinds,
+                    generation,
+                    || bridge.rewind_to_committed(),
+                )
+                .await?;
                 rewinds += 1;
-                consecutive_rewinds += 1;
                 core = RealtimeCore::new(config.core.clone())?;
                 eprintln!(
                     "{}",
@@ -652,7 +721,7 @@ async fn run_generation(
                         "consecutive": consecutive_rewinds,
                         "partitions": moved,
                         "rewind_ms": started.elapsed().as_millis() as u64,
-                        "error": error.to_string(),
+                        "error": origin,
                     }))?
                 );
             }
@@ -1414,6 +1483,166 @@ mod tests {
         ));
         let core_error: RuntimeError = "core rejected input".into();
         assert!(!rewind_in_generation(&core_error, None, false, 0));
+    }
+
+    fn rebalance_origin() -> RuntimeError {
+        KafkaTransportError::Rebalanced {
+            observed: 4,
+            current: 6,
+        }
+        .into()
+    }
+
+    /// RB1. One generation that aborts on a group change and then rewinds
+    /// with the scripted attempt results; returns the generation's outcome
+    /// and how many rewind attempts were made.
+    async fn generation_with_rewind_attempts(
+        attempts: Vec<Result<usize, KafkaTransportError>>,
+    ) -> (Result<usize, RuntimeError>, u32, usize) {
+        let attempts = std::cell::RefCell::new(attempts.into_iter());
+        let calls = Cell::new(0_usize);
+        let mut consecutive = 0_u32;
+        let result = recover_in_place(
+            rebalance_origin(),
+            None,
+            || false,
+            &mut consecutive,
+            1,
+            || {
+                calls.set(calls.get() + 1);
+                let next = attempts.borrow_mut().next().expect("scripted attempt");
+                async move { next }
+            },
+        )
+        .await;
+        (result, consecutive, calls.get())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retryable_rewind_failure_rebuilds_the_generation() {
+        let (result, _, calls) = generation_with_rewind_attempts(vec![Err(
+            KafkaTransportError::SnapshotTimeout("committed offsets".into()),
+        )])
+        .await;
+        let error = result.unwrap_err();
+        assert_eq!(calls, 1);
+        assert!(matches!(
+            error.downcast_ref::<KafkaTransportError>(),
+            Some(KafkaTransportError::SnapshotTimeout(_))
+        ));
+        // Through the supervisor: a second generation is built.
+        let (signal, stop) = StopLatch::manual();
+        let generations = Cell::new(0_u64);
+        let mut error = Some(error);
+        supervise(&stop, &test_backoff(), |_| {
+            generations.set(generations.get() + 1);
+            let first = error.take();
+            let signal = &signal;
+            async move {
+                match first {
+                    Some(error) => Err(error),
+                    None => {
+                        signal.send(sigterm()).unwrap();
+                        Ok(GenerationEnd::Stopped)
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(generations.get(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn non_retryable_rewind_failure_reaches_the_supervisor_as_non_retryable() {
+        for rewind_error in [
+            KafkaTransportError::Configuration("unexpected committed offset".into()),
+            KafkaTransportError::Fencing("authority".into()),
+        ] {
+            let (result, _, calls) = generation_with_rewind_attempts(vec![Err(rewind_error)]).await;
+            let error = result.unwrap_err();
+            assert_eq!(calls, 1);
+            assert!(
+                !retryable_runtime_error(&error),
+                "the initiating rebalance must not mask {error}"
+            );
+            let (_signal, stop) = StopLatch::manual();
+            let generations = Cell::new(0_u64);
+            let mut error = Some(error);
+            let supervised = supervise(&stop, &test_backoff(), |_| {
+                generations.set(generations.get() + 1);
+                let next = error.take();
+                async move { Err(next.expect("only one generation")) }
+            })
+            .await;
+            assert!(supervised.is_err());
+            assert_eq!(generations.get(), 1, "no rebuild after a fatal rewind");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn rewind_fenced_by_a_rebalance_rewinds_again_within_the_budget() {
+        let fenced = || KafkaTransportError::Rebalanced {
+            observed: 6,
+            current: 8,
+        };
+        let (result, consecutive, calls) =
+            generation_with_rewind_attempts(vec![Err(fenced()), Ok(4)]).await;
+        assert_eq!(result.unwrap(), 4);
+        assert_eq!((consecutive, calls), (2, 2));
+        // Every fenced attempt counts toward the cap; the last one ends the
+        // generation with a retryable rebalance (the supervisor rebuilds).
+        let (result, consecutive, calls) =
+            generation_with_rewind_attempts(vec![Err(fenced()), Err(fenced()), Err(fenced())])
+                .await;
+        let error = result.unwrap_err();
+        assert!(retryable_runtime_error(&error));
+        assert_eq!((consecutive, calls), (MAX_CONSECUTIVE_REWINDS, 3));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fatal_drain_failure_takes_precedence_over_the_served_error() {
+        let mut consecutive = 0_u32;
+        let error = recover_in_place(
+            KafkaTransportError::SnapshotTimeout("receive".into()).into(),
+            Some(KafkaTransportError::Fencing("authority".into())),
+            || false,
+            &mut consecutive,
+            1,
+            || -> std::future::Ready<Result<usize, KafkaTransportError>> {
+                panic!("not a rebalance abort: no rewind")
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<KafkaTransportError>(),
+            Some(KafkaTransportError::Fencing(_))
+        ));
+        // A rebalance abort whose drain failed fatally is not rewound either.
+        let error = recover_in_place(
+            rebalance_origin(),
+            Some(KafkaTransportError::Configuration("abort failed".into())),
+            || false,
+            &mut consecutive,
+            1,
+            || -> std::future::Ready<Result<usize, KafkaTransportError>> {
+                panic!("fatal drain: no rewind")
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(!retryable_runtime_error(&error));
+        assert_eq!(consecutive, 0);
+        // A retryable drain keeps the served error.
+        let error = generation_failure(
+            rebalance_origin(),
+            Some(KafkaTransportError::SnapshotTimeout("drain".into())),
+        );
+        assert!(matches!(
+            error.downcast_ref::<KafkaTransportError>(),
+            Some(KafkaTransportError::Rebalanced { .. })
+        ));
     }
 
     #[test]

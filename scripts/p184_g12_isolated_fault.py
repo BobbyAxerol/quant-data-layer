@@ -450,6 +450,9 @@ TEARDOWN_ORDER = ("sampler", "publisher", "monitor", "query", "stream", "project
 # tail. No restart policy: an exit stays a STOP.
 FOLLOWED_ROLES = SERVICE_ORDER + CORE_MEMBERS[1:] + tuple(f"kafka-{node}" for node in BROKERS)
 FOLLOW_TAIL_BYTES = 1_000_000
+# RB3 (review 2026-10-15): a core-group member logs ~1 MB per 5 min of progress lines, so the 1 MB tail dropped the
+# start of every long life (A/B 2026-10-15: lifecycle events lost); the acceptance needs the whole life.
+FOLLOW_TAIL_BYTES_CORE_GROUP = 32_000_000
 
 
 def follow_argv(ns, role, seconds):
@@ -2107,6 +2110,9 @@ def kafka_sample(source, admin, roster, rosters, groups, phase=lambda name: None
             phase("list_offsets:" + group)
             ends = source.log_end_offsets(sorted(committed), Deadline(3.0))
             lag[group] = sum(max(0, ends[tp] - max(committed[tp], 0)) for tp in committed)
+            if group not in PROJECTOR_GROUPS:  # RB2: the core group's [committed, log end] per partition
+                row.setdefault("offsets", {})[group] = {f"{t}/{p}": [committed[(t, p)], ends[(t, p)]]
+                                                        for t, p in sorted(committed)}
         row["lag"] = lag
         row["projector_lag"] = lag["kn-projector-v3-a"]
     except Exception as error:  # noqa: BLE001
@@ -2120,7 +2126,13 @@ def kafka_sample(source, admin, roster, rosters, groups, phase=lambda name: None
             row["groups"][group] = {"state": str(getattr(value, "state", "")).split(".")[-1],
                                     "members": len(value.members or ()),
                                     "assigned": sorted(len(getattr(m.assignment, "topic_partitions", None) or ())
-                                                       for m in value.members or ())}
+                                                       for m in value.members or ()),
+                                    # RB2: who owns what (member id, client.id, partitions), not only counts
+                                    "detail": [{"member_id": m.member_id, "client_id": m.client_id,
+                                                "host": m.host,
+                                                "partitions": sorted(f"{tp.topic}/{tp.partition}" for tp in (
+                                                    getattr(m.assignment, "topic_partitions", None) or ()))}
+                                               for m in value.members or ()]}
     except Exception as error:  # noqa: BLE001
         row["groups_error"] = type(error).__name__
     phase("done")
@@ -2518,12 +2530,14 @@ class Run:
         logs = self.evidence / "logs"
         logs.mkdir(exist_ok=True)
         life = self.lives[role] = self.lives.get(role, 0) + 1
+        keep = FOLLOW_TAIL_BYTES_CORE_GROUP if role in CORE_MEMBERS and getattr(
+            self, "core_members", 1) > 1 else FOLLOW_TAIL_BYTES
         seconds = max(1, int(LIMITS["deadline_s"] + 900 - (time.monotonic() - self.started)))
         with (logs / f"{role}.life{life}.log").open("xb") as out:
             source = subprocess.Popen(follow_argv(self.ns, role, seconds), stdout=subprocess.PIPE,
                                       stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
             try:
-                sink = subprocess.Popen(["tail", "-c", str(FOLLOW_TAIL_BYTES)], stdin=source.stdout, stdout=out,
+                sink = subprocess.Popen(["tail", "-c", str(keep)], stdin=source.stdout, stdout=out,
                                         stderr=subprocess.DEVNULL)
             except BaseException:
                 source.kill()
@@ -3080,35 +3094,227 @@ def core_log_events(logs):
     return sorted(rows, key=lambda r: r[0])
 
 
-def core_group_verdict(evidence, members=len(CORE_MEMBERS)):
-    """Storm / no-storm verdict of a ``--core-group`` run from its core logs, faults and monitor (offline).
+def core_client_id(ns, role):
+    """The Kafka client.id of a core-group member (``topology``: member 1 ``ns``, member n ``ns-n``)."""
+    index = CORE_MEMBERS.index(role) + 1
+    return ns if index == 1 else f"{ns}-{index}"
 
-    Per window (baseline, after each roll, after the kill): retries, rebalance rewinds and group samples with
-    fewer than ``members`` members or an empty member. ``storm``: any retry in the final settle window, or a
-    member short in its last 30 s. Core-kill: seconds from the kill to the first sample with all members, every
-    member assigned and core lag <= the baseline's maximum (``kill_caught_up_s``)."""
+
+def core_log_lives(logs, event_rows, ns):
+    """role -> [{file, first_ns, end_ns, truncated}] of every followed core life, in life order.
+
+    The follower keeps only the last FOLLOW_TAIL_BYTES of a life, so a long life starts mid-line: that partial
+    line is dropped and the life covers only from its first complete line (``truncated``); events before it are
+    lost and a window before it is not covered. ``end_ns``: the daemon's die event of that life (n-th die of the
+    role), else its last line."""
+    from datetime import datetime
+
+    def parse(line):
+        stamp, _, body = line.partition(" ")
+        seconds, _, frac = stamp.rstrip("Z").partition(".")
+        t = int(datetime.fromisoformat(seconds + "+00:00").timestamp()) * 10**9 + int((frac + "0" * 9)[:9])
+        return t, json.loads(body)
+    states = exit_states(event_rows)
+    lives = {}
+    for role in CORE_MEMBERS:
+        paths = sorted(Path(logs).glob(f"{role}.life*.log"), key=lambda p: int(p.name.split(".life")[1][:-4]))
+        died = [life.get("died_ns") for life in (states.get(role) or {}).get("lives", [])]
+        rows = []
+        for index, path in enumerate(paths):
+            parsed = []
+            for line in path.read_text(errors="replace").splitlines():
+                try:
+                    parsed.append(parse(line))
+                except ValueError:
+                    continue
+            if not parsed:
+                rows.append({"file": path.name, "first_ns": None, "end_ns": None, "truncated": True})
+                continue
+            first, head = parsed[0]
+            truncated = not (head.get("event") == "qdl_realtime_core_started" and head.get("generation") == 1)
+            end = died[index] if index < len(died) and died[index] else parsed[-1][0]
+            rows.append({"file": path.name, "first_ns": first, "end_ns": max(end, parsed[-1][0]),
+                         "truncated": truncated})
+        lives[role] = rows
+    return lives
+
+
+def log_covered(lives, lo, hi, slack_ns):
+    """Whether one member's retained log lines cover [lo, hi] with no hole longer than ``slack`` (a replaced
+    member's new life starts just after the window opens; a truncated life covers only its retained tail)."""
+    spans = sorted((life["first_ns"], life["end_ns"]) for life in lives if life["first_ns"] is not None)
+    cursor = lo
+    for first, end in spans:
+        if end < cursor:
+            continue
+        if first > cursor + slack_ns:
+            return False
+        cursor = max(cursor, end)
+        if cursor >= hi:
+            return True
+    return cursor >= hi
+
+
+def group_view(row, ns, partitions):
+    """(members, state, per-member partition counts, exact-coverage verdict, basis) of the core group in one sample.
+
+    With per-member detail (monitor v2) coverage is exact: the members' partition sets are disjoint and their union
+    is every raw partition. Without it (older monitor) the count list must sum to ``partitions`` in a STABLE group
+    (one generation never assigns a partition twice), recorded as basis ``counts``."""
+    value = (row.get("groups") or {}).get(ns) or {}
+    members, state, counts = value.get("members", 0), value.get("state"), value.get("assigned") or []
+    detail = value.get("detail")
+    if detail is not None:
+        owned = [p for member in detail for p in member.get("partitions", [])]
+        full = {f"{ns}.raw/{p}" for p in range(partitions)}
+        covered = len(owned) == len(set(owned)) and set(owned) == full
+        return members, state, [len(m.get("partitions", [])) for m in detail], covered, "partitions"
+    return members, state, counts, sum(counts) == partitions, "counts"
+
+
+def healthy_view(view, members):
+    """Exact roster, STABLE, every member owns >= 1 partition, all partitions covered."""
+    count, state, counts, covered, _ = view
+    return count == members and state in (None, "STABLE") and len(counts) == members and 0 not in counts and covered
+
+
+def core_kill_recovery(kill, monitor_rows, event_rows, ns, partitions, members, base_lag):
+    """RB2 (review 2026-10-15). Recovery from SIGKILL of one member, as separate clocks from injection.
+
+    * ``exit_confirmed``: the daemon's die event of the killed container (never inferred from the kill call);
+    * ``ownership_restored``: the first sample after that exit in which the dead member's member-id (found by its
+      client.id in the last pre-kill sample) is gone, the roster is exact, every member owns >= 1 partition and
+      every raw partition is owned once - a stale pre-detection 3-member view cannot close it;
+    * ``progress``: the first sample from then on in which each affected partition (the dead member's) with
+      post-fault input has a committed offset >= its log end at ``ownership_restored``;
+    * ``caught_up``: the first sample from ``progress`` on with core lag <= the baseline maximum.
+    A clock needs monitor v2 detail (member ids, partitions, per-partition offsets); without it it stays null with
+    ``reason`` and the acceptance reports NOT_MEASURED."""
+    injected = kill["injected_ns"]
+    out = {"injected_ns": injected, "role": kill["role"], "exit_confirmed_s": None, "exit_code": None,
+           "ownership_restored_s": None, "progress_s": None, "caught_up_s": None, "dead_member_id": None,
+           "affected_partitions": [], "idle_partitions": [], "post_fault_offsets": {}, "reason": None}
+    seconds = lambda t: round((t - injected) / 1e9, 3)  # noqa: E731
+    name = f"{ns}-{kill['role']}"
+    die = next((row for row in sorted(event_rows, key=lambda r: r.get("timeNano") or 0)
+                if (row.get("Action") or row.get("status")) == "die" and (row.get("timeNano") or 0) >= injected
+                and ((row.get("Actor") or {}).get("Attributes") or {}).get("name") == name), None)
+    if die is None:
+        out["reason"] = "NO_EXIT_EVENT"
+        return out
+    exit_ns = die["timeNano"]
+    out.update(exit_confirmed_s=seconds(exit_ns), exit_code=(die["Actor"]["Attributes"]).get("exitCode"))
+    group = lambda row: (row.get("groups") or {}).get(ns) or {}  # noqa: E731
+    before = [r for r in monitor_rows if r["t"] < injected]
+    pre = before[-1] if before else None
+    if pre is None or group(pre).get("detail") is None or ns not in (pre.get("offsets") or {}):
+        out["reason"] = "NO_MEMBER_DETAIL"
+        return out
+    client = core_client_id(ns, kill["role"])
+    dead = [m for m in group(pre)["detail"] if m.get("client_id") == client]
+    if len(dead) != 1:
+        out["reason"] = "DEAD_MEMBER_NOT_IDENTIFIED"
+        return out
+    dead_id, affected = dead[0]["member_id"], sorted(dead[0].get("partitions", []))
+    out.update(dead_member_id=dead_id, affected_partitions=affected)
+    restored = None
+    for row in monitor_rows:
+        if row["t"] < exit_ns or group(row).get("detail") is None:
+            continue
+        ids = {m.get("member_id") for m in group(row)["detail"]}
+        if dead_id not in ids and healthy_view(group_view(row, ns, partitions), members):
+            restored = row
+            break
+    if restored is None:
+        out["reason"] = "OWNERSHIP_NOT_RESTORED"
+        return out
+    out["ownership_restored_s"] = seconds(restored["t"])
+    marks = {p: (restored.get("offsets") or {}).get(ns, {}).get(p) for p in affected}
+    pre_offsets = pre["offsets"][ns]
+    busy = {p: mark[1] for p, mark in marks.items()
+            if mark is not None and pre_offsets.get(p) is not None and mark[1] > pre_offsets[p][0]}
+    out.update(post_fault_offsets=busy, idle_partitions=sorted(set(affected) - set(busy)))
+    if not busy:
+        out["reason"] = "NO_POST_FAULT_INPUT"
+        return out
+    progressed = next((r for r in monitor_rows if r["t"] >= restored["t"]
+                       and all(((r.get("offsets") or {}).get(ns, {}).get(p) or [-1])[0] >= mark
+                               for p, mark in busy.items())), None)
+    if progressed is None:
+        out["reason"] = "NO_PROGRESS"
+        return out
+    out["progress_s"] = seconds(progressed["t"])
+    caught = next((r for r in monitor_rows if r["t"] >= progressed["t"] and base_lag is not None
+                   and (r.get("lag") or {}).get(ns) is not None and r["lag"][ns] <= base_lag), None)
+    if caught is None:
+        out["reason"] = "NOT_CAUGHT_UP"
+        return out
+    out["caught_up_s"] = seconds(caught["t"])
+    out["caught_up_monitor_max_gap_s"] = monitor_max_gap_s(monitor_rows, injected, caught["t"])
+    return out
+
+
+CORE_GROUP_VERDICT_SCHEMA = "p184.coregroup.verdict.v2"
+CORE_GROUP_WINDOWS = ("baseline", *("after_roll_" + role for role in CORE_MEMBERS), "after_kill")
+CORE_GROUP_TAIL_S = 30
+
+
+def core_group_verdict(evidence, members=len(CORE_MEMBERS)):
+    """Storm / no-storm diagnostic of a ``--core-group`` run from its core logs, faults and monitor (offline).
+
+    Per window (baseline, after each roll, after the kill): retries, rebalance rewinds and their failures (total
+    and per member), group samples short of the roster, monitor coverage (largest gap, whole window and its last
+    30 s), the last 30 s roster/coverage health and each member's log coverage. ``storm``: any retry in the final
+    window, or a member short in its last 30 s (diagnostic only - the acceptance is ``core_group_acceptance``).
+    ``core_kill``: the RB2 recovery clocks (``core_kill_recovery``); ``core_kill_caught_up_s`` is its
+    ``caught_up_s``. ``core_kill_first_healthy_sample_s`` keeps the old count-only reading for comparison and
+    closes nothing."""
     evidence = Path(evidence)
     events = core_log_events(evidence / "logs")
     faults = load_jsonl(evidence / "faults.jsonl")
     monitor_rows = [r for r in monitor_valid(load_jsonl(evidence / "monitor.jsonl")) if "groups" in r]
+    container_events = load_jsonl(evidence / "container-events.jsonl") if (
+        evidence / "container-events.jsonl").exists() else []
     ns = json.loads((evidence / "verdict-ns.json").read_text())["namespace"]
+    partitions = CORE_GROUP["raw_partitions"]
+    lives = core_log_lives(evidence / "logs", container_events, ns)
+    slack = MONITOR_MAX_GAP_S * 10**9
 
     def group(row):
         value = (row.get("groups") or {}).get(ns) or {}
         return value.get("members", 0), value.get("assigned") or [], (row.get("lag") or {}).get(ns)
 
-    windows, result = [r for r in faults if r.get("k") == "core_window"], {"windows": {}, "faults": faults}
+    windows = [r for r in faults if r.get("k") == "core_window"]
+    result = {"schema": CORE_GROUP_VERDICT_SCHEMA, "windows": {}, "faults": faults,
+              "log_lives": lives, "monitor_max_gap_rule_s": MONITOR_MAX_GAP_S}
     for window in windows:
         lo, hi = window["start_ns"], window["end_ns"]
         inside = [e for e in events if lo <= e[0] <= hi]
         samples = [group(r) for r in monitor_rows if lo <= r["t"] <= hi]
+        tail_rows = [r for r in monitor_rows if hi - CORE_GROUP_TAIL_S * 10**9 <= r["t"] <= hi]
+        tail = [group_view(r, ns, partitions) for r in tail_rows]
+        last = [r for r in monitor_rows if lo <= r["t"] <= hi]
+        count = lambda name, rows=inside: sum(1 for e in rows if e[2] == name)  # noqa: E731
         result["windows"][window["name"]] = {
             "seconds": round((hi - lo) / 1e9, 1),
-            "retries": sum(1 for e in inside if e[2] == "qdl_realtime_core_retry"),
-            "rewinds": sum(1 for e in inside if e[2] == "qdl_realtime_core_rebalance_rewind"),
-            "rewind_failed": sum(1 for e in inside if e[2] == "qdl_realtime_core_rewind_failed"),
+            "retries": count("qdl_realtime_core_retry"),
+            "rewinds": count("qdl_realtime_core_rebalance_rewind"),
+            "rewind_failed": count("qdl_realtime_core_rewind_failed"),
+            "inflight_commit_failed": count("qdl_realtime_core_inflight_commit_failed"),
+            "stop_drain_failed": count("qdl_realtime_core_stop_drain_failed"),
+            "by_member": {role: {"retries": count("qdl_realtime_core_retry", [e for e in inside if e[1] == role]),
+                                 "rewinds": count("qdl_realtime_core_rebalance_rewind",
+                                                  [e for e in inside if e[1] == role])}
+                          for role in CORE_MEMBERS},
             "short_member_samples": sum(1 for m, a, _ in samples if m < members or 0 in a),
             "samples": len(samples), "max_lag": max((lag for *_, lag in samples if lag is not None), default=None),
+            "monitor_max_gap_s": monitor_max_gap_s(monitor_rows, lo, hi),
+            "tail_samples": len(tail),
+            "tail_monitor_max_gap_s": monitor_max_gap_s(monitor_rows, hi - CORE_GROUP_TAIL_S * 10**9, hi),
+            "tail_unhealthy_samples": sum(1 for view in tail if not healthy_view(view, members)),
+            "tail_coverage_basis": sorted({view[4] for view in tail}),
+            "end_members": group(last[-1])[0] if last else None,
+            "log_covered": {role: log_covered(lives.get(role, []), lo, hi, slack) for role in CORE_MEMBERS},
             "retry_errors": sorted({e[3].get("error", "")[:120] for e in inside
                                     if e[2] == "qdl_realtime_core_retry"})}
     result["totals"] = {name: sum(1 for e in events if e[2] == name) for name in CORE_EVENTS}
@@ -3119,12 +3325,237 @@ def core_group_verdict(evidence, members=len(CORE_MEMBERS)):
                            or not tail or any(m < members or 0 in a for m, a, _ in tail))
     kill = next((f for f in faults if f.get("k") == "core_kill"), None)
     base = result["windows"].get("baseline", {}).get("max_lag")
+    if kill:
+        result["core_kill"] = core_kill_recovery(kill, monitor_rows, container_events, ns, partitions, members, base)
+        result["core_kill_caught_up_s"] = result["core_kill"]["caught_up_s"]
     if kill and base is not None:
-        caught = next((r["t"] for r in monitor_rows if r["t"] >= kill["injected_ns"]
-                       and group(r)[0] == members and 0 not in group(r)[1] and group(r)[1]
-                       and group(r)[2] is not None and group(r)[2] <= base), None)
-        result["core_kill_caught_up_s"] = None if caught is None else round((caught - kill["injected_ns"]) / 1e9, 3)
+        first = next((r["t"] for r in monitor_rows if r["t"] >= kill["injected_ns"]
+                      and group(r)[0] == members and 0 not in group(r)[1] and group(r)[1]
+                      and group(r)[2] is not None and group(r)[2] <= base), None)
+        result["core_kill_first_healthy_sample_s"] = (None if first is None
+                                                      else round((first - kill["injected_ns"]) / 1e9, 3))
+    orchestrator = evidence / "orchestrator.jsonl"
+    teardown_rows = [r for r in load_jsonl(orchestrator) if r.get("step") == "teardown"] if orchestrator.exists() \
+        else []
+    result["production_guard_breaches"] = (teardown_rows[-1].get("production_guard_breaches")
+                                           if teardown_rows else None)
     return result
+
+
+# RB3 (review 2026-10-15). Versioned acceptance of a core-group verdict against the frozen prereg criteria: each
+# condition PASS / FAIL / NOT_MEASURED. A violation that was observed is FAIL even where coverage is incomplete;
+# PASS needs complete monitor coverage (MONITOR_MAX_GAP_S) and every member's retained log over the window. The
+# orchestrator's exit code (completion only) and the diagnostic ``storm`` are never the acceptance.
+CORE_GROUP_ACCEPTANCE_SCHEMA = "p184.coregroup.acceptance.v1"
+CORE_GROUP_LIMITS = {"rewinds_per_roll_window": 2, "caught_up_s": 60, "partitions_moved_s": 15,
+                     "control_retries_per_member": 2}
+
+
+def _combine(results):
+    """FAIL if any FAIL, else NOT_MEASURED if any NOT_MEASURED, else PASS (an empty list is NOT_MEASURED)."""
+    if not results:
+        return "NOT_MEASURED"
+    if "FAIL" in results:
+        return "FAIL"
+    return "NOT_MEASURED" if "NOT_MEASURED" in results else "PASS"
+
+
+def core_group_acceptance(verdict, prereg):
+    """PASS / FAIL / NOT_MEASURED for every frozen condition of ``prereg["criteria"]`` (both run_A_control and
+    run_B_fix), plus the harness conditions both rely on: the run completed, every window is present, the monitor
+    covers each window and every member's log covers each window. A criterion text this version does not know is
+    NOT_MEASURED (``UNKNOWN_CONDITION``), never guessed."""
+    windows = verdict.get("windows") or {}
+    gap_rule = verdict.get("monitor_max_gap_rule_s", MONITOR_MAX_GAP_S)
+    present = [name for name in CORE_GROUP_WINDOWS if name in windows]
+    missing = [name for name in CORE_GROUP_WINDOWS if name not in windows]
+    v2 = verdict.get("schema") == CORE_GROUP_VERDICT_SCHEMA
+
+    def monitored(name):
+        gap = windows[name].get("monitor_max_gap_s")
+        return gap is not None and gap <= gap_rule
+
+    def logged(name):
+        covered = windows[name].get("log_covered") or {}
+        return bool(covered) and all(covered.get(role) for role in CORE_MEMBERS)
+
+    def counted(fields, limit_of):
+        """FAIL on an observed excess, NOT_MEASURED when a window or its log coverage is missing."""
+        results, detail = [], {}
+        for name in CORE_GROUP_WINDOWS:
+            if name not in windows:
+                results.append("NOT_MEASURED")
+                detail[name] = "MISSING_WINDOW"
+                continue
+            values = {field: windows[name].get(field) for field in fields}
+            limit = limit_of(name)
+            if limit is None:
+                detail[name] = values
+                continue
+            if any(v is None for v in values.values()) or not v2:
+                results.append("NOT_MEASURED")
+            elif any(v > limit for v in values.values()):
+                results.append("FAIL")
+            else:
+                results.append("PASS" if logged(name) else "NOT_MEASURED")
+            detail[name] = {**values, "limit": limit, "log_covered": windows[name].get("log_covered")}
+        return _combine(results), detail
+
+    def tail_health():
+        results, detail = [], {}
+        for name in CORE_GROUP_WINDOWS:
+            if name not in windows:
+                results.append("NOT_MEASURED")
+                detail[name] = "MISSING_WINDOW"
+                continue
+            w = windows[name]
+            if not v2:
+                results.append("NOT_MEASURED")
+            elif w["tail_unhealthy_samples"]:
+                results.append("FAIL")
+            elif not w["tail_samples"] or w["tail_monitor_max_gap_s"] > gap_rule:
+                results.append("NOT_MEASURED")
+            else:
+                results.append("PASS")
+            detail[name] = {k: w.get(k) for k in ("tail_samples", "tail_unhealthy_samples",
+                                                   "tail_monitor_max_gap_s", "tail_coverage_basis")}
+        return _combine(results), detail
+
+    def storm_false():
+        final = CORE_GROUP_WINDOWS[-1]
+        if verdict.get("storm") is True:
+            return "FAIL", {"storm": True}
+        if verdict.get("storm") is None or final not in windows or not v2:
+            return "NOT_MEASURED", {"storm": verdict.get("storm"), "final_window": final in windows}
+        w = windows[final]
+        ok = w["tail_samples"] and w["tail_monitor_max_gap_s"] <= gap_rule and logged(final)
+        return ("PASS" if ok else "NOT_MEASURED"), {
+            "storm": False, "tail_samples": w["tail_samples"], "tail_monitor_max_gap_s": w["tail_monitor_max_gap_s"],
+            "log_covered": w["log_covered"]}
+
+    def kill_recovery():
+        clocks = verdict.get("core_kill")
+        if not clocks:
+            return "NOT_MEASURED", {"reason": "NO_CORE_KILL"}
+        detail = {k: clocks.get(k) for k in ("exit_confirmed_s", "ownership_restored_s", "progress_s",
+                                              "caught_up_s", "caught_up_monitor_max_gap_s", "reason")}
+        moved, caught = clocks.get("ownership_restored_s"), clocks.get("caught_up_s")
+        if moved is not None and moved > CORE_GROUP_LIMITS["partitions_moved_s"]:
+            return "FAIL", detail
+        if caught is not None and caught > CORE_GROUP_LIMITS["caught_up_s"]:
+            return "FAIL", detail
+        if clocks.get("reason") in ("OWNERSHIP_NOT_RESTORED", "NO_PROGRESS", "NOT_CAUGHT_UP") and \
+                "after_kill" in windows and monitored("after_kill"):
+            return "FAIL", detail
+        if moved is None or caught is None or clocks.get("caught_up_monitor_max_gap_s") is None \
+                or clocks["caught_up_monitor_max_gap_s"] > gap_rule:
+            return "NOT_MEASURED", detail
+        return "PASS", detail
+
+    def drain_failures():
+        totals = verdict.get("totals") or {}
+        values = {k: totals.get(k) for k in ("qdl_realtime_core_inflight_commit_failed",
+                                              "qdl_realtime_core_stop_drain_failed")}
+        if any(v for v in values.values()):
+            return "FAIL", values
+        complete = not missing and all(logged(name) for name in present)
+        return ("PASS" if complete and None not in values.values() else "NOT_MEASURED"), values
+
+    def guard():
+        breaches = verdict.get("production_guard_breaches")
+        if breaches or "production guard breach" in str(verdict.get("error") or ""):
+            return "FAIL", {"breaches": breaches, "error": verdict.get("error")}
+        return ("NOT_MEASURED" if breaches is None else "PASS"), {"breaches": breaches}
+
+    def control():
+        detail, results = {}, []
+        storm = verdict.get("storm")
+        detail["storm"] = storm
+        results.append("PASS" if storm is True else "FAIL" if storm is False else "NOT_MEASURED")
+        after = [n for n in CORE_GROUP_WINDOWS[-2:] if n in windows]
+        per_member = {role: sum(windows[n]["by_member"][role]["retries"] for n in after)
+                      for role in CORE_MEMBERS} if v2 and len(after) == 2 else None
+        detail["retries_per_member_after_last_roll"] = per_member
+        if per_member is None:
+            results.append("NOT_MEASURED")
+        elif all(v >= CORE_GROUP_LIMITS["control_retries_per_member"] for v in per_member.values()):
+            results.append("PASS")
+        else:
+            results.append("FAIL" if all(logged(n) for n in after) else "NOT_MEASURED")
+        ends = {n: windows[n].get("end_members") for n in present}
+        detail["members_at_window_end"] = ends
+        if any(v is not None and v < len(CORE_MEMBERS) for v in ends.values()):
+            results.append("PASS")
+        else:
+            results.append("FAIL" if not missing and all(v is not None for v in ends.values()) else "NOT_MEASURED")
+        reproduced = "PASS" if "PASS" in results else _combine(results)
+        return reproduced, {**detail, "sub_results": results, "rule": "any sub-condition reproduces the storm; "
+                            "retries rule read strictly (every member >= 2 after the last roll)"}
+
+    rules = {
+        "storm=false": storm_false,
+        "retries == 0 and rewind_failed == 0 in every window":
+            lambda: counted(("retries", "rewind_failed"), lambda name: 0),
+        "rewinds <= 2 per roll window and 0 in baseline":
+            lambda: counted(("rewinds",), lambda name: 0 if name == "baseline" else
+                            CORE_GROUP_LIMITS["rewinds_per_roll_window"] if name.startswith("after_roll_") else None),
+        "last 30 s of every window: 3 members, each >= 1 partition": tail_health,
+        "core_kill_caught_up_s <= 60 and dead member's partitions moved <= 15 s": kill_recovery,
+        "no inflight_commit_failed / stop_drain_failed": drain_failures,
+        "0 production guard breaches": guard,
+    }
+    harness = [
+        ("harness: run COMPLETED", ("PASS" if verdict.get("status") == "COMPLETED" else
+                                    "NOT_MEASURED" if verdict.get("status") is None else "FAIL"),
+         {"status": verdict.get("status"), "error": verdict.get("error")}),
+        ("harness: all windows present", "PASS" if not missing else "NOT_MEASURED", {"missing": missing}),
+        ("harness: monitor coverage per window (gap <= %s s)" % gap_rule,
+         _combine(["PASS" if monitored(n) else "NOT_MEASURED" for n in present] + ["NOT_MEASURED"] * len(missing)),
+         {n: windows[n].get("monitor_max_gap_s") for n in present}),
+        ("harness: every member's retained log covers every window",
+         _combine(["PASS" if v2 and logged(n) else "NOT_MEASURED" for n in present]
+                  + ["NOT_MEASURED"] * len(missing)),
+         {n: windows[n].get("log_covered") for n in present}),
+    ]
+
+    def evaluate(texts, extra):
+        rows = [{"condition": c, "result": r, "detail": d} for c, r, d in harness]
+        for text in texts:
+            rule = extra.get(text) or rules.get(text)
+            result, detail = rule() if rule else ("NOT_MEASURED", {"reason": "UNKNOWN_CONDITION"})
+            rows.append({"condition": text, "result": result, "detail": detail})
+        return {"result": _combine([row["result"] for row in rows]), "conditions": rows}
+
+    criteria = prereg.get("criteria") or {}
+    out = {"schema": CORE_GROUP_ACCEPTANCE_SCHEMA, "verdict_schema": verdict.get("schema"),
+           "prereg_schema": prereg.get("schema"), "limits": CORE_GROUP_LIMITS}
+    fix = criteria.get("run_B_fix")
+    if fix is not None:
+        out["run_B_fix"] = evaluate(list(fix), {})
+    control_text = criteria.get("run_A_control")
+    if control_text is not None:
+        out["run_A_control"] = evaluate([control_text], {control_text: control})
+    return out
+
+
+def core_group_accept(base, prereg_path):
+    """``--core-group-accept``: re-evaluate SAVED evidence (no workload, nothing written): recompute the verdict
+    from ``<base>/evidence``, take status/error from its saved ``core-group-verdict.json``, apply the prereg."""
+    evidence = Path(base) / "evidence"
+    verdict = core_group_verdict(evidence)
+    saved = evidence / "core-group-verdict.json"
+    if saved.exists():
+        recorded = json.loads(saved.read_text())
+        verdict.update({k: recorded.get(k) for k in ("status", "error", "namespace", "new_core")})
+    prereg = json.loads(Path(prereg_path).read_text())
+    return {"base": str(base), "prereg_sha256": hashlib.sha256(Path(prereg_path).read_bytes()).hexdigest(),
+            "verdict": {k: verdict.get(k) for k in ("schema", "status", "storm", "totals", "core_kill",
+                                                     "core_kill_first_healthy_sample_s", "production_guard_breaches")},
+            "windows": {n: {k: w.get(k) for k in ("retries", "rewinds", "rewind_failed", "monitor_max_gap_s",
+                                                   "tail_samples", "tail_unhealthy_samples", "tail_coverage_basis",
+                                                   "end_members", "log_covered")}
+                        for n, w in verdict["windows"].items()},
+            "acceptance": core_group_acceptance(verdict, prereg)}
 
 
 def orchestrate_core_group(base, export, ns, images, new_core):
@@ -3190,7 +3621,8 @@ def keep_diagnostics(out):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     mode = parser.add_mutually_exclusive_group(required=True)
-    for flag in ("run", "core_group", "down", "analyze", "topics", "publish", "monitor", "feeds", "query"):
+    for flag in ("run", "core_group", "core_group_accept", "down", "analyze", "topics", "publish", "monitor", "feeds",
+                 "query"):
         mode.add_argument("--" + flag.replace("_", "-"), type=Path)
     parser.add_argument("--export", type=Path)
     parser.add_argument("--namespace")
@@ -3202,7 +3634,14 @@ def main(argv=None):
     parser.add_argument("--query-code", choices=QUERY_CODE, default="worktree")
     parser.add_argument("--new-core", metavar="sha256:<64hex>",
                         help="--core-group: the core image each member is rolled onto (old: the image set's core)")
+    parser.add_argument("--prereg", type=Path,
+                        help="--core-group-accept: the frozen prereg JSON whose criteria are evaluated")
     args = parser.parse_args(argv)
+    if args.core_group_accept:
+        if args.prereg is None:
+            parser.error("--core-group-accept needs --prereg")
+        print(json.dumps(core_group_accept(args.core_group_accept, args.prereg), indent=2, default=str))
+        return 0
     if args.core_group:
         if args.export is None or args.namespace is None or not re.fullmatch(r"sha256:[0-9a-f]{64}",
                                                                               args.new_core or ""):

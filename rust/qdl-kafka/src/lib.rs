@@ -1012,6 +1012,43 @@ fn rewind_targets(
     Ok(targets)
 }
 
+/// RB1 question 1 (review 2026-10-15). Run one rewind (committed fetch plus
+/// seek) and refuse its result if an invalidating rebalance callback was
+/// served while it ran: ownership may then have moved between the fetch and
+/// the seek, so the caller must treat the rewind as a fresh group change.
+fn rewind_unless_rebalanced(
+    epoch: &RebalanceEpoch,
+    rewind: impl FnOnce() -> Result<usize, KafkaTransportError>,
+) -> Result<usize, KafkaTransportError> {
+    let observed = epoch.current();
+    let moved = rewind()?;
+    epoch.ensure_unchanged(observed)?;
+    Ok(moved)
+}
+
+/// The body of [`TransactionalKafkaBridge::rewind_to_committed`]: seek every
+/// assigned partition to its committed offset (see [`rewind_targets`]).
+fn rewind_assignment(
+    consumer: &BridgeConsumer,
+    timeout: Duration,
+) -> Result<usize, KafkaTransportError> {
+    let assignment = consumer.assignment()?;
+    if assignment.count() == 0 {
+        return Ok(0);
+    }
+    let committed = consumer.committed_offsets(assignment, Timeout::After(timeout))?;
+    let targets = rewind_targets(&committed)?;
+    let count = targets.count();
+    if count == 0 {
+        return Ok(0);
+    }
+    let sought = consumer.seek_partitions(targets, Timeout::After(timeout))?;
+    for element in sought.elements() {
+        element.error().map_err(KafkaTransportError::Kafka)?;
+    }
+    Ok(count)
+}
+
 /// Kafka consume-transform-produce boundary. Output records and the next raw
 /// consumer offset commit atomically, so a process crash cannot acknowledge raw
 /// input without its canonical/quarantine result or duplicate committed output.
@@ -1260,27 +1297,28 @@ impl TransactionalKafkaBridge {
     /// so records fetched before it are discarded, never delivered. A partition
     /// without a committed offset goes to the beginning, as
     /// `auto.offset.reset=earliest` would. Any error (including a per-partition
-    /// one, e.g. a partition revoked meanwhile) is returned so the caller falls
-    /// back to rebuilding the generation; returns the number of partitions moved.
+    /// one, e.g. a partition revoked meanwhile) is returned typed, so the caller
+    /// can tell a retryable failure (rebuild the generation) from a
+    /// non-retryable one (exit); returns the number of partitions moved.
+    ///
+    /// RB1 question 1 (review 2026-10-15). Ownership cannot change between the
+    /// assignment read, the committed fetch and the seek inside librdkafka:
+    /// with a rebalance callback registered (rdkafka always registers one),
+    /// `rd_kafka_cgrp_handle_assignment` only enqueues `RD_KAFKA_OP_REBALANCE`
+    /// on the consumer queue and pauses the assignment; the assign/unassign is
+    /// applied by the callback, which runs only when that queue is polled
+    /// (`recv`), and `rd_kafka_committed`/`rd_kafka_seek_partitions` pop only
+    /// their private reply queues. That relies on nothing polling the consumer
+    /// during the rewind, which holds today (one task); the epoch fence below
+    /// makes it local: a rebalance callback served anywhere during the
+    /// operation fails it with [`KafkaTransportError::Rebalanced`], which the
+    /// caller rewinds again within its budget.
     pub async fn rewind_to_committed(&self) -> Result<usize, KafkaTransportError> {
         let consumer = Arc::clone(&self.consumer);
         let timeout = self.request_timeout;
+        let epoch = Arc::clone(&self.rebalance_epoch);
         blocking_kafka_call(move || {
-            let assignment = consumer.assignment()?;
-            if assignment.count() == 0 {
-                return Ok(0);
-            }
-            let committed = consumer.committed_offsets(assignment, Timeout::After(timeout))?;
-            let targets = rewind_targets(&committed)?;
-            let count = targets.count();
-            if count == 0 {
-                return Ok(0);
-            }
-            let sought = consumer.seek_partitions(targets, Timeout::After(timeout))?;
-            for element in sought.elements() {
-                element.error().map_err(KafkaTransportError::Kafka)?;
-            }
-            Ok(count)
+            rewind_unless_rebalanced(&epoch, || rewind_assignment(&consumer, timeout))
         })
         .await
     }
@@ -2701,6 +2739,33 @@ mod transaction_pipeline_tests {
     struct OffsetCalls {
         send: AtomicUsize,
         commit: AtomicUsize,
+    }
+
+    #[test]
+    fn rewind_fenced_by_a_rebalance_during_fetch_and_seek_is_rebalanced() {
+        // RB1 question 1: an invalidating rebalance callback served between the
+        // committed fetch and the seek fails the rewind as a fresh group change.
+        let epoch = RebalanceEpoch::default();
+        let before = epoch.current();
+        let error = rewind_unless_rebalanced(&epoch, || {
+            epoch.bump(); // pre_rebalance(Revoke)
+            epoch.bump(); // post_rebalance(Revoke), then the partition returns
+            Ok(3)
+        })
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            KafkaTransportError::Rebalanced { observed, current }
+                if observed == before && current == before + 2
+        ));
+        assert!(error.is_rebalance_abort());
+        // A stable epoch keeps the result; a rewind error passes through typed.
+        assert_eq!(rewind_unless_rebalanced(&epoch, || Ok(3)).unwrap(), 3);
+        let error = rewind_unless_rebalanced(&epoch, || {
+            Err(KafkaTransportError::Configuration("offset".into()))
+        })
+        .unwrap_err();
+        assert!(matches!(error, KafkaTransportError::Configuration(_)));
     }
 
     #[test]
