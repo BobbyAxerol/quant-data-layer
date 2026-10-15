@@ -3,7 +3,9 @@
 
 G9 source: the writer heartbeat `service:heartbeat:market_data:*` on TRADING_REDIS_URL (redis_service DB 0), sampled
 every --sample-seconds. Each readable sample records demanded / session-ready / execution-ready / quiet / unhealthy
-counts, v1_fallback_count, v2_blocked/v2_error, the reported unhealthy rows (state, error_code) and, when the writer
+counts, v1_fallback_count, v2_blocked/v2_error, the reported unhealthy rows (state, error_code, and for a slot without
+a valid worker report its worker / worker_reason), the per-slot worker_liveness (LIVE, REPORT_EXPIRED,
+REPORT_INVALID_OR_MISSING, PROCESS_NOT_ALIVE, ...; diagnostic, so a slot-wide WORKER_UNAVAILABLE is attributable) and, when the writer
 image carries TS fb09a1b (purpose readiness), pricing/continuity/signal counts and the bounded `not_ready` rows with
 their reason_code. An unreadable or stale heartbeat (last_seen older than 45 s;
 the writer publishes about every 30 s, stage100m max age 30.0 s) is counted UNKNOWN, never READY.
@@ -55,6 +57,8 @@ COUNT_FIELDS = ("demanded_v2_slices", "session_ready_v2_slices", "execution_read
                 "quiet_session_v2_slices", "unhealthy_v2_slices", "v1_fallback_count", "v2_blocked_count",
                 "v2_error_count", "continuity_valid", "continuity_required", "pricing_eligible", "pricing_required",
                 "signal_data_usable", "signal_required")
+UNHEALTHY_FIELDS = ("provider", "symbol", "feed", "interval", "state", "error_code")
+WORKER_FIELDS = ("worker", "worker_reason")  # only on rows of a slot without a valid worker report
 LOG_STAMP = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),(\d{3}) ")
 DISCONNECT = re.compile(r"slice disconnected venue=(\S+) symbol=(\S+) feed=(\S+) interval=(\S+) reason=(\w+)"
                         r"(?: code=([A-Z_]+))?")
@@ -68,9 +72,12 @@ def heartbeat_sample(payload: dict | None, now_s: float) -> dict:
     sample = {"readable": True, "status": payload.get("status"),
               "age_s": round(now_s - float(payload.get("last_seen_unix") or 0), 1),
               **{key: details.get(key) for key in COUNT_FIELDS if key in details},
-              "unhealthy": [{k: row.get(k) for k in ("provider", "symbol", "feed", "interval", "state", "error_code")}
+              "unhealthy": [{**{k: row.get(k) for k in UNHEALTHY_FIELDS}, **{k: row[k] for k in WORKER_FIELDS if k in row}}
                             for row in details.get("reported_unhealthy_slices", [])[:64] if isinstance(row, dict)],
               "purpose": "purpose_readiness_schema" in details and "not_ready" in details}
+    liveness = details.get("worker_liveness")
+    if isinstance(liveness, dict):
+        sample["worker_liveness"] = {str(slot): str(state) for slot, state in list(liveness.items())[:64]}
     if sample["purpose"]:
         sample["not_ready"] = [{k: row.get(k) for k in ("provider", "symbol", "feed", "interval", "reason_code",
                                                          "component_age_ms")}
@@ -91,8 +98,11 @@ def summarize_g9(samples, *, from_ns=None, to_ns=None, stale_after_s=45.0) -> di
     unknown = [s for s in rows if not s["sample"]["readable"] or s["sample"]["age_s"] > stale_after_s]
     good = [s["sample"] for s in rows if s not in unknown]
     mismatch = [s for s in good if s.get("demanded_v2_slices") != s.get("session_ready_v2_slices")]
-    session_causes = Counter(f"{row['feed']}:{row['state']}:{row['error_code']}"
+    session_causes = Counter(":".join(str(row[k]) for k in ("feed", "state", "error_code", "worker_reason") if k in row)
                              for s in mismatch for row in s["unhealthy"])
+    # Per-slot worker report liveness (diagnostic): proves e.g. REPORT_EXPIRED behind WORKER_UNAVAILABLE rows.
+    not_live = Counter(state for s in good for state in (s.get("worker_liveness") or {}).values() if state != "LIVE")
+    not_live_samples = sum(1 for s in good if any(v != "LIVE" for v in (s.get("worker_liveness") or {}).values()))
     purpose = bool(good) and all(s["purpose"] for s in good)
     losses, legit, previous = Counter(), Counter(), None
     loss_rows = []
@@ -120,6 +130,9 @@ def summarize_g9(samples, *, from_ns=None, to_ns=None, stale_after_s=45.0) -> di
         "demanded_values": demanded,
         "demanded_ne_session_ready_samples": len(mismatch),
         "session_loss_causes": dict(session_causes),
+        "worker_liveness_present": bool(good) and all("worker_liveness" in s for s in good),
+        "worker_not_live_samples": not_live_samples,
+        "worker_not_live_causes": dict(not_live),
         "purpose_fields_present": purpose,
         "eligibility_losses_data_path": sum(losses.values()) if purpose else None,
         "eligibility_loss_causes": dict(losses) if purpose else None,

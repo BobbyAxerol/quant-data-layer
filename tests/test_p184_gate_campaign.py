@@ -237,6 +237,32 @@ class G9Tests(unittest.TestCase):
         self.assertEqual(g910.verdict_g9(g910.summarize_g9([beat(0, session=63)]), expected_demanded=64)[0], "FAIL")
         self.assertEqual(g910.verdict_g9(g910.summarize_g9([beat(0, fallback=1)]), expected_demanded=64)[0], "FAIL")
 
+    def test_worker_liveness_and_reason_make_slot_wide_report_expired_provable(self):
+        # TS production 13:59:10Z shape: one slot's report expired, every route WORKER_UNAVAILABLE.
+        unavailable = [{"provider": "OKX", "symbol": f"S{i}", "feed": "TRADE", "interval": None, "worker": 4,
+                        "state": "DISCONNECTED", "error_code": "WORKER_UNAVAILABLE", "worker_reason": "REPORT_EXPIRED"}
+                       for i in range(3)]
+        expired = beat(10, session=43)
+        expired["sample"] = g910.heartbeat_sample({"status": "DEGRADED", "last_seen_unix": 10, "details": {
+            "demanded_v2_slices": 64, "session_ready_v2_slices": 43, "reported_unhealthy_slices": unavailable,
+            "worker_liveness": {"0": "LIVE", "4": "REPORT_EXPIRED"}}}, 10)
+        self.assertEqual(expired["sample"]["unhealthy"][0]["worker_reason"], "REPORT_EXPIRED")
+        self.assertEqual(expired["sample"]["worker_liveness"], {"0": "LIVE", "4": "REPORT_EXPIRED"})
+        live = beat(0)
+        live["sample"]["worker_liveness"] = {"0": "LIVE", "4": "LIVE"}
+        summary = g910.summarize_g9([live, expired])
+        self.assertEqual(summary["session_loss_causes"], {"TRADE:DISCONNECTED:WORKER_UNAVAILABLE:REPORT_EXPIRED": 3})
+        self.assertEqual((summary["worker_not_live_samples"], summary["worker_not_live_causes"]),
+                         (1, {"REPORT_EXPIRED": 1}))
+        self.assertTrue(summary["worker_liveness_present"])
+        self.assertEqual(g910.verdict_g9(summary, expected_demanded=64)[0], "FAIL")
+        # Rows without worker fields keep the previous shape and cause key.
+        plain = g910.heartbeat_sample({"details": {"reported_unhealthy_slices": [{"feed": "QUOTE", "state": "STALE"}]},
+                                       "last_seen_unix": 0}, 0)
+        self.assertEqual(tuple(plain["unhealthy"][0]), g910.UNHEALTHY_FIELDS)
+        self.assertNotIn("worker_liveness", plain)
+        self.assertFalse(g910.summarize_g9([beat(0)])["worker_liveness_present"])
+
 
 LINES = [
     "2026-10-10 15:00:01,000 - market_data_worker-0 - services.market_data.data_layer_bridge - WARNING - Data Layer V2 "
