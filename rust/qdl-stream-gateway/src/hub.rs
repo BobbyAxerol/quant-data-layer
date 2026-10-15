@@ -1826,9 +1826,9 @@ mod tests {
                         let (weight, entry) = (record.weight(), charge.bytes());
                         let missing = weight.saturating_sub(entry);
                         if missing > 0 {
-                            match subscription.charge_handoff(missing, weight, entry) {
-                                Some(extra) => charge.absorb(extra),
-                                None => idle_overflows += 1,
+                            match subscription.charge_handoff(missing, weight, &charge) {
+                                Ok(extra) => charge.absorb(extra),
+                                Err(_) => idle_overflows += 1,
                             }
                         }
                         in_flight.push((record, charge));

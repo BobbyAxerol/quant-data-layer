@@ -1796,6 +1796,10 @@ async fn t05_deep_lossless_streams_on_two_keys_never_overflow_idle_quote_readers
     let counters = &harness.state().budget.counters;
     assert!(counters.over_floor_refused.load(Ordering::Relaxed) >= 1);
     assert_eq!(counters.reserve_exhausted.load(Ordering::Relaxed), 0);
+    // SR4: no idle reader was refused (or timed out) at its transport top-up
+    // either, which the enqueue counters above cannot see.
+    assert_eq!(counters.handoff_refused_within_floor.load(Ordering::Relaxed), 0);
+    assert_eq!(counters.handoff_timeout_within_floor.load(Ordering::Relaxed), 0);
     // At least one deep stream ended with BACKPRESSURE (resume token) and
     // RESOURCE_EXHAUSTED; no idle one did.
     let mut ended = 0;
@@ -1829,6 +1833,57 @@ async fn t05_deep_lossless_streams_on_two_keys_never_overflow_idle_quote_readers
         .unwrap();
     assert!(!resumed.until_live().await.is_empty());
     drop((deep_trade, deep_book, idle, resumed));
+    harness.released().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn t05_a_handoff_top_up_that_never_fits_is_counted_apart_from_enqueue() {
+    // SR4 (review 2026-10-16): a refused transport top-up ends the stream
+    // BACKPRESSURE without touching the enqueue-side isolation counters; it
+    // has its own refusal and timeout counters, by floor state.
+    let weight = live_weight(BOOK_KEY, &large_snapshot(1, 800));
+    // The shared decoded copy and the queue entry fit the shared part; the
+    // private transport copy would need 2 x weight in all, even with the
+    // reserve: an idle reader at its floor whose reserve is exhausted.
+    let total = 2 * weight - 1;
+    let mut options = Options {
+        budget: total,
+        live_reserve: true,
+        replay_budget: Some(64 << 20),
+        ..Options::default()
+    };
+    options.limits.queue_bytes_per_subscription = total;
+    options.limits.slow_consumer_after = Duration::from_millis(300);
+    let harness = Harness::new(options);
+    let cursor = harness.log.append(0, BOOK_KEY, &snapshot(0));
+    harness.settle();
+    let mut stream = harness
+        .subscribe("BOOK_SNAPSHOT", None, cursor, 10)
+        .await
+        .unwrap();
+    stream.until_live().await;
+    harness
+        .log
+        .append(0, BOOK_KEY, &large_snapshot(1, 800));
+    harness.settle();
+    let (code, message) = stream.error().await;
+    assert_eq!(code, Code::ResourceExhausted);
+    assert!(message.contains("at handoff"), "{message}");
+    let counters = &harness.state().budget.counters;
+    let load = |value: &std::sync::atomic::AtomicU64| value.load(Ordering::Relaxed);
+    assert_eq!(
+        (
+            load(&counters.handoff_refused_within_floor),
+            load(&counters.handoff_timeout_within_floor),
+            load(&counters.handoff_refused_over_floor),
+            load(&counters.handoff_timeout_over_floor),
+        ),
+        (1, 1, 0, 0),
+        "one record refused once (not per retry), one timeout"
+    );
+    assert_eq!(load(&counters.reserve_exhausted), 0, "enqueue side never saw it");
+    assert_eq!(load(&counters.over_floor_refused), 0);
+    drop(stream);
     harness.released().await;
 }
 

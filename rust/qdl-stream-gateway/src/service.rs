@@ -1280,6 +1280,8 @@ impl Drop for SubscriptionTask {
                 "dequeued": load(&counters.dequeued),
                 "rejected_at_push": load(&counters.rejected_at_push),
                 "coalesced": load(&counters.coalesced),
+                "handoff_refused": load(&counters.handoff_refused),
+                "handoff_timeouts": load(&counters.handoff_timeouts),
                 "queued": queued,
                 "queued_bytes": queued_bytes,
                 "outcome": self.report.outcome.lock().map(|value| *value).unwrap_or("?"),
@@ -1460,7 +1462,15 @@ impl SubscriptionTask {
     /// the record is copied for the transport: the response owns a private
     /// decoded copy until tonic takes it (F4). The wait is this stream's own
     /// backpressure, bounded like a blocked send; `None` ends the stream.
-    async fn handoff_charge(&self, record: &LiveRecord, mut charge: Charge) -> Option<Charge> {
+    /// `refused`: this record's top-up was already refused (and counted)
+    /// by [`Self::try_handoff_charge`]. A refusal and a timeout are counted
+    /// once per record, apart from the enqueue-side isolation counters.
+    async fn handoff_charge(
+        &self,
+        record: &LiveRecord,
+        mut charge: Charge,
+        mut refused: bool,
+    ) -> Option<Charge> {
         let missing = record.weight().saturating_sub(charge.bytes());
         let data_now = match self.freshness_now_ns() {
             Ok(at) => at,
@@ -1476,16 +1486,23 @@ impl SubscriptionTask {
             return Some(charge);
         }
         let deadline = Instant::now() + self.state.limits.slow_consumer_after;
-        let entry = charge.bytes();
         loop {
-            if let Some(extra) = self
+            let within_floor = match self
                 .subscription
-                .charge_handoff(missing, record.weight(), entry)
+                .charge_handoff(missing, record.weight(), &charge)
             {
-                charge.absorb(extra);
-                return Some(charge);
+                Ok(extra) => {
+                    charge.absorb(extra);
+                    return Some(charge);
+                }
+                Err(within_floor) => within_floor,
+            };
+            if !refused {
+                self.subscription.note_handoff_refused(within_floor);
+                refused = true;
             }
             if Instant::now() >= deadline {
+                self.subscription.note_handoff_timeout(within_floor);
                 self.backpressure(
                     record.raw.offset - 1,
                     "replica live memory budget exhausted at handoff; replay is required",
@@ -1519,16 +1536,18 @@ impl SubscriptionTask {
         if missing == 0 || !fresh {
             return Ok(charge);
         }
-        let entry = charge.bytes();
         match self
             .subscription
-            .charge_handoff(missing, record.weight(), entry)
+            .charge_handoff(missing, record.weight(), &charge)
         {
-            Some(extra) => {
+            Ok(extra) => {
                 charge.absorb(extra);
                 Ok(charge)
             }
-            None => Err(HandoffError::Budget(charge)),
+            Err(within_floor) => {
+                self.subscription.note_handoff_refused(within_floor);
+                Err(HandoffError::Budget(charge))
+            }
         }
     }
 
@@ -1599,7 +1618,7 @@ impl SubscriptionTask {
                 .queue_wait
                 .record(taken.duration_since(enqueued).as_millis() as i64);
             let charge = if batch.records.is_empty() {
-                match self.handoff_charge(&record, charge).await {
+                match self.handoff_charge(&record, charge, false).await {
                     Some(charge) => charge,
                     None => return false,
                 }
@@ -1616,7 +1635,7 @@ impl SubscriptionTask {
                         if !self.flush(&mut batch, last, BatchPhase::Live).await {
                             return false;
                         }
-                        match self.handoff_charge(&record, charge).await {
+                        match self.handoff_charge(&record, charge, true).await {
                             Some(charge) => charge,
                             None => return false,
                         }

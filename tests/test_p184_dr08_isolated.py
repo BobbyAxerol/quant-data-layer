@@ -655,6 +655,9 @@ def outcome(**overrides):
             "idle_stream_abnormal_closures": 0, "idle_not_progressed": 0,
             "deep_stream_abnormal_closures": 3, "other_abnormal_closures": 0,
             "reserve_exhausted": 0, "over_floor_refused": 5, "reserve_admitted": 9,
+            "idle_marker_by": {"raw_capture_id": 24, "source_sequence": 8}, "idle_subscription_reports": 32,
+            "idle_handoff_refused": 0, "idle_handoff_timeouts": 0, "handoff_refused_within_floor": 0,
+            "handoff_timeout_within_floor": 0, "handoff_refused_over_floor": 2, "handoff_timeout_over_floor": 1,
             "deep_resume_lossless": True, "deep_resumed": 3,
             "peak_queue_bytes": 30 << 20, "peak_reserve_bytes_used": 1 << 20, "trade_rate_per_s": 5000.0}
     base.update(overrides)
@@ -665,8 +668,59 @@ class LiveBudgetIsolation(unittest.TestCase):
     def test_selects_one_deployed_binding_per_route_in_route_order(self):
         rows = R.isolation_bindings(deployed_set())
         self.assertEqual([(r["native_symbol"], R.isolation_feed(r["native_channel"])) for r in rows],
-                         R.isolation_routes())
-        self.assertEqual(len(rows), 3 + 2 * 2)
+                         R.isolation_binding_keys())
+        # Trade x3; per idle symbol QUOTE, MARK and ONE book binding for BOOK_DELTA + BOOK_SNAPSHOT.
+        self.assertEqual(len(rows), 3 + 2 * 3)
+        self.assertEqual(len(R.isolation_routes()), 3 + 2 * 4)
+
+    def test_a_book_binding_gives_delta_and_snapshot_routes_with_its_depth(self):
+        from types import SimpleNamespace as NS
+        book = {**deployed("BNBUSDT", "bnbusdt@depth@100ms"), "l2": {"depth_per_side": 100}}
+        catalog = NS(bindings=[NS(instrument=NS(instrument_uid=book["instrument_uid"]), feed=NS(value=feed),
+                                  source_id=book["source_id"], source_policy_id="p-" + feed)
+                               for feed in R.ISOLATION_BOOK_FEEDS])
+        rows = R.isolation_route_rows([book], catalog)
+        self.assertEqual([(r["feed"], r["payload"], r["book_depth"], r["source_policy_id"]) for r in rows],
+                         [("BOOK_DELTA", "book_delta", 100, "p-BOOK_DELTA"),
+                          ("BOOK_SNAPSHOT", "book_snapshot", 100, "p-BOOK_SNAPSHOT")])
+        self.assertIs(rows[0]["binding"], rows[1]["binding"])
+
+    def test_book_frames_bootstrap_then_bridge_then_stay_contiguous(self):
+        snapshot, transport = R.book_frame("BNBUSDT", 1, 100, 2_000_000_000)
+        self.assertEqual((transport, snapshot["lastUpdateId"], len(snapshot["bids"]), len(snapshot["asks"])),
+                         (2, R.BOOK_BASE_UPDATE_ID, 100, 100))
+        bridge, transport = R.book_frame("BNBUSDT", 2, 100, 2_000_000_000)
+        last = snapshot["lastUpdateId"]
+        self.assertEqual(transport, 1)
+        self.assertTrue(bridge["U"] <= last + 1 <= bridge["u"])
+        previous = bridge
+        for index in range(3, 8):
+            frame, _ = R.book_frame("BNBUSDT", index, 100, 2_000_000_000)
+            self.assertEqual((frame["pu"], frame["U"], frame["u"]), (previous["u"],) + (previous["u"] + 1,) * 2)
+            self.assertEqual((frame["s"], len(frame["b"]), len(frame["a"])),
+                             ("BNBUSDT", R.BOOK_DELTA_LEVELS_PER_SIDE, R.BOOK_DELTA_LEVELS_PER_SIDE))
+            self.assertEqual((frame["b"][0][0], frame["a"][0][0]), (snapshot["bids"][0][0], snapshot["asks"][0][0]))
+            previous = frame
+
+    def test_marker_is_matched_by_identity_not_by_time(self):
+        marker = "ab" * 16
+        self.assertEqual(R.marker_match(marker, marker, "x"), "raw_capture_id")
+        self.assertEqual(R.marker_match(marker, "00" * 16, "1:2:3:4:" + marker + ":" + marker), "source_sequence")
+        self.assertIsNone(R.marker_match(marker, "00" * 16, "1:2:3:4"))
+        self.assertIsNone(R.marker_match("", "", ""))
+
+    def test_handoff_counters_are_summed_per_identity_and_absent_on_old_streams(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stream.log"
+            path.write_text("\n".join(json.dumps(row) for row in (
+                {"event": "qdl_kn_subscription_closed", "consumer_id": "i", "handoff_refused": 0,
+                 "handoff_timeouts": 0},
+                {"event": "qdl_kn_subscription_closed", "consumer_id": "i", "handoff_refused": 2,
+                 "handoff_timeouts": 1},
+                {"event": "qdl_kn_subscription_closed", "consumer_id": "old"})) + "\n")
+            self.assertEqual(R.isolation_handoff(path), {
+                "i": {"reports": 2, "handoff_refused": 2, "handoff_timeouts": 1},
+                "old": {"reports": 1, "handoff_refused": None, "handoff_timeouts": None}})
 
     def test_refuses_missing_or_ambiguous_routes(self):
         rows = [r for r in deployed_set() if r["native_channel"] != "dogeusdt@markPrice@1s"]
@@ -710,10 +764,23 @@ class LiveBudgetIsolation(unittest.TestCase):
                        outcome(idle_not_progressed=1), outcome(reserve_exhausted=1),
                        outcome(reserve_exhausted=None), outcome(over_floor_refused=0),
                        outcome(other_abnormal_closures=1), outcome(deep_stream_abnormal_closures=0),
-                       outcome(deep_resume_lossless=False), {"observed": False}):
+                       outcome(deep_resume_lossless=False), {"observed": False},
+                       # SR4: identity, handoff counters and complete reports.
+                       outcome(idle_marker_by={"raw_capture_id": 31, "None": 1}),
+                       outcome(handoff_refused_within_floor=1), outcome(handoff_timeout_within_floor=1),
+                       outcome(handoff_refused_within_floor=None), outcome(idle_handoff_refused=1),
+                       outcome(idle_handoff_timeouts=1), outcome(idle_handoff_refused=None),
+                       outcome(idle_subscription_reports=31)):
             self.assertEqual(R.isolation_verdict(broken, baseline)["verdict"], "FAIL", broken)
-        # A baseline without idle overflow cannot discriminate.
+        # A baseline without idle overflow cannot discriminate...
         self.assertEqual(R.isolation_verdict(outcome(), outcome())["verdict"], "FAIL")
+        # ...unless it is a prior candidate: D1 is then report-only.
+        prior = R.isolation_verdict(outcome(), outcome(), "prior_candidate")
+        self.assertEqual(prior["verdict"], "PASS")
+        self.assertNotIn("D1_baseline_discriminates", prior["checks"])
+        self.assertEqual(prior["report_only"]["D1_baseline_discriminates"], False)
+        with self.assertRaises(ValueError):
+            R.isolation_verdict(outcome(), baseline, "anything")
 
     def test_outcome_counts_abnormal_closures_per_identity(self):
         facts = {"observed": True, "deep_identity": "d", "idle_identity": "i",
@@ -752,7 +819,10 @@ class LiveBudgetIsolation(unittest.TestCase):
         prereg = R.isolation_prereg(candidate=a, baseline=b, images={"core": "sha256:" + "c" * 64},
             query_image_ref="q", source_sha="1" * 40, now_utc="t")
         self.assertEqual(prereg["acceptance"], R.ISOLATION_ACCEPTANCE)
-        self.assertEqual(prereg["scenario"]["idle_readers"], 32)
+        self.assertEqual((prereg["schema"], prereg["baseline_kind"]),
+                         ("p184.dl.live-budget-isolation.prereg.v2", "pre_reserve"))
+        self.assertEqual(prereg["scenario"]["idle_readers"], 64)
+        self.assertIn("BOOK_DELTA", prereg["scenario"]["idle_feeds"])
         self.assertEqual(prereg["scenario"]["live_budget_bytes"], 32 << 20)
         self.assertEqual((prereg["scenario"]["idle_hold_seconds"], prereg["scenario"]["idle_hold_rate_hz_per_route"]),
                          (R.IDLE_HOLD_SECONDS, R.IDLE_HOLD_RATE_HZ))
@@ -762,6 +832,9 @@ class LiveBudgetIsolation(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "A/B variable"):
             R.isolation_prereg(candidate=a, baseline=b, images={"stream": a}, query_image_ref="q",
                                source_sha="1" * 40, now_utc="t")
+        with self.assertRaisesRegex(ValueError, "baseline kind"):
+            R.isolation_prereg(candidate=a, baseline=b, images={}, query_image_ref="q",
+                               source_sha="1" * 40, now_utc="t", baseline_kind="x")
 
 
 if __name__ == "__main__":

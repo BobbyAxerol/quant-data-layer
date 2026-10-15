@@ -689,15 +689,32 @@ def run_faults(packet):
 # RCA): several deep lossless subscriptions on DISTINCT keys must not make
 # idle readers on other keys overflow. Same isolated stack as DR08 (one
 # broker, deployed core, Stream, Query, quota Redis), different scenario:
-# three stalled TRADE readers (BTC/ETH/SOL, deep buffers) and idle QUOTE and
-# MARK_INDEX_PRICE readers (BNB/DOGE) under the production 32 MiB live budget.
-# It writes facts only; the campaign (--isolation-campaign) preregisters the
-# acceptance before any run and applies it to both images unchanged.
+# three stalled TRADE readers (BTC/ETH/SOL, deep buffers) and idle QUOTE,
+# MARK_INDEX_PRICE, BOOK_DELTA and BOOK_SNAPSHOT readers (BNB/DOGE) under the
+# production 32 MiB live budget. It writes facts only; the campaign
+# (--isolation-campaign) preregisters the acceptance before any run and applies
+# it to both images unchanged.
+# Review SR4 (2026-10-16): idle progress is proved by the IDENTITY of the
+# marker record published after the last burst (its raw capture id), not by a
+# local receive time; the handoff refusal/timeout counters are part of C2; a
+# BOOK-weight idle cohort (the deployed depth@100ms binding: a REST snapshot,
+# then contiguous diff-depth frames) sits next to the small QUOTE/MARK records.
 ISOLATION_MODE = "live_budget_isolation"
 ISOLATION_DEEP = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
 ISOLATION_IDLE = ("BNBUSDT", "DOGEUSDT")
-ISOLATION_IDLE_FEEDS = ("QUOTE", "MARK_INDEX_PRICE")
+ISOLATION_BOOK_FEEDS = ("BOOK_DELTA", "BOOK_SNAPSHOT")
+ISOLATION_IDLE_FEEDS = ("QUOTE", "MARK_INDEX_PRICE") + ISOLATION_BOOK_FEEDS
 IDLE_READERS_PER_ROUTE = 8
+# Binance depth@100ms: 10 frames/s per book; each changes this many levels per
+# side (a delta of about 2 KB canonical payload, ~18 KB live weight).
+IDLE_BOOK_HOLD_RATE_HZ = 10
+BOOK_DELTA_LEVELS_PER_SIDE = 40
+BOOK_BASE_UPDATE_ID = 1_000_000
+# The core materializes a BOOK_SNAPSHOT at most once per 1000 ms of source time
+# (deployed l2.materialized_snapshot_interval_ms); a quiet gap before the marker
+# makes the marker delta publish one too, carrying the marker's capture id.
+BOOK_MARKER_QUIET_SECONDS = 1.5
+BASELINE_KINDS = ("pre_reserve", "prior_candidate")
 DEEP_BUFFER = 3000
 DEEP_ROUNDS = 12
 DEEP_PER_ROUND = 250
@@ -708,22 +725,35 @@ IDLE_HOLD_RATE_HZ = 50
 LIVE_RESERVE_BYTES = QUEUE_BYTES // 8  # rust/qdl-stream-gateway/src/memory.rs LIVE_RESERVE_DIVISOR
 ISOLATION_ACCEPTANCE = {
     "C1_candidate_idle_closures": "== 0 (client terminal statuses and Stream closures of the idle identity)",
-    "C1b_candidate_idle_progress": "every idle reader receives a record published after the last deep burst",
-    "C2_candidate_reserve_exhausted": "== 0 (queue_isolation.reserve_exhausted)",
+    "C1b_candidate_idle_progress": "every idle reader receives its route's marker record BY IDENTITY (the raw "
+                                   "capture id of the frame published after the last deep burst and the idle "
+                                   "hold; MARK_INDEX_PRICE by that capture id inside source_sequence), then stops",
+    "C2_candidate_reserve_exhausted": "== 0 (queue_isolation.reserve_exhausted), AND handoff_refused_within_floor "
+                                      "== 0 and handoff_timeout_within_floor == 0 (queue_isolation), AND the idle "
+                                      "identity's handoff_refused == 0 and handoff_timeouts == 0 over a "
+                                      "subscription-closed report for every idle reader",
     "C3_candidate_over_floor_refused": "> 0, and every abnormal Stream closure belongs to the deep identity",
     "C4_candidate_deep_resume": "every deep reader resumes from its last resume token and receives every later "
                                 "trade id of its key, contiguous, to the last published",
-    "D1_baseline_discriminates": "baseline idle closures >= 1",
-    "report_only": "peak queue bytes and peak reserve bytes used (1 s metric samples)",
+    "D1_baseline_discriminates": "baseline idle closures >= 1 (gating only for baseline_kind pre_reserve; "
+                                 "report-only against a prior candidate)",
+    "report_only": "peak queue bytes and peak reserve bytes used (1 s metric samples), over-floor handoff "
+                   "counters, max canonical payload bytes per idle feed",
 }
 
 
 def isolation_feed(channel):
+    """The binding kind of a deployed channel: a feed, or BOOK (one binding, two feeds)."""
     channel = channel.lower()
-    for suffix, feed in (("@trade", "TRADE"), ("@bookticker", "QUOTE"), ("@markprice@1s", "MARK_INDEX_PRICE")):
+    for suffix, feed in (("@trade", "TRADE"), ("@bookticker", "QUOTE"), ("@markprice@1s", "MARK_INDEX_PRICE"),
+                         ("@depth@100ms", "BOOK")):
         if channel.endswith(suffix):
             return feed
     return None
+
+
+def binding_kind(feed):
+    return "BOOK" if feed in ISOLATION_BOOK_FEEDS else feed
 
 
 def isolation_routes():
@@ -731,22 +761,27 @@ def isolation_routes():
             + [(symbol, feed) for symbol in ISOLATION_IDLE for feed in ISOLATION_IDLE_FEEDS])
 
 
+def isolation_binding_keys():
+    """(symbol, binding kind) in route order, each once."""
+    return list(dict.fromkeys((symbol, binding_kind(feed)) for symbol, feed in isolation_routes()))
+
+
 def isolation_bindings(bindings):
-    """The deployed BINANCE USDM core bindings of the scenario, exactly one per route."""
-    wanted = set(isolation_routes())
+    """The deployed BINANCE USDM core bindings of the scenario, exactly one per binding key."""
+    wanted = isolation_binding_keys()
     found = {}
     for row in bindings:
         if row.get("venue") != "BINANCE" or row.get("market") != "USDM":
             continue
-        route = (row.get("native_symbol"), isolation_feed(row.get("native_channel", "")))
-        if route in wanted:
-            if route in found:
-                raise ValueError("ambiguous deployed binding for " + repr(route))
-            found[route] = row
-    missing = sorted(wanted - set(found))
+        key = (row.get("native_symbol"), isolation_feed(row.get("native_channel", "")))
+        if key in wanted:
+            if key in found:
+                raise ValueError("ambiguous deployed binding for " + repr(key))
+            found[key] = row
+    missing = sorted(set(wanted) - set(found))
     if missing:
         raise ValueError("deployed core lacks isolation routes: " + repr(missing))
-    return [found[route] for route in isolation_routes()]
+    return [found[key] for key in wanted]
 
 
 def isolation_frame(feed, symbol, index, now_ns):
@@ -764,28 +799,72 @@ def isolation_frame(feed, symbol, index, now_ns):
     raise ValueError("unknown isolation feed " + str(feed))
 
 
+def book_levels(count, quantity):
+    return ([[f"{100 - i / 100:.2f}", quantity] for i in range(count)],
+            [[f"{101 + i / 100:.2f}", quantity] for i in range(count)])
+
+
+def book_frame(symbol, index, depth, now_ns):
+    """(frame, transport) of the index-th frame of a synthetic Binance diff-depth book.
+
+    1: the REST bootstrap snapshot (HTTP, lastUpdateId = BOOK_BASE_UPDATE_ID, `depth`
+    levels per side); 2: the bridging delta (U <= lastUpdateId + 1 <= u); then contiguous
+    deltas (pu = previous u) changing BOOK_DELTA_LEVELS_PER_SIDE quantities per side; the
+    top prices never move, so snapshots follow the 1 s materialization cadence."""
+    ms = now_ns // 1_000_000
+    if index == 1:
+        bids, asks = book_levels(depth, "1.000")
+        return {"lastUpdateId": BOOK_BASE_UPDATE_ID, "E": ms, "T": ms, "bids": bids, "asks": asks}, 2
+    end = BOOK_BASE_UPDATE_ID + index - 1
+    start = BOOK_BASE_UPDATE_ID if index == 2 else end
+    bids, asks = book_levels(BOOK_DELTA_LEVELS_PER_SIDE, f"{1 + index % 97 / 1000:.3f}")
+    return {"e": "depthUpdate", "E": ms, "T": ms, "s": symbol, "U": start, "u": end, "pu": end - 1 if index > 2
+            else BOOK_BASE_UPDATE_ID - 1, "b": bids, "a": asks}, 1
+
+
+def marker_match(marker, capture_hex, source_sequence):
+    """How a record is the marker frame's own record, or None.
+
+    QUOTE/TRADE/BOOK records carry the frame's capture id; a MARK_INDEX_PRICE pair carries
+    a derived id and names both component capture ids in source_sequence (rust core)."""
+    if not marker:
+        return None
+    if capture_hex == marker:
+        return "raw_capture_id"
+    if marker in source_sequence:
+        return "source_sequence"
+    return None
+
+
 class IsolationProducer:
-    """One raw template per route (sealed by --prepare-material); ids per route from 1."""
+    """One raw template per binding (sealed by --prepare-material); frame ids per binding from 1."""
+
+    @staticmethod
+    def key_of(route):
+        return (route["symbol"], binding_kind(route["feed"]))
 
     def __init__(self, packet):
         from confluent_kafka import Producer
         from qdl.provider.v1.raw_provider_pb2 import RawProviderEnvelope
         from qdl.raw.envelope import validate_raw_envelope
         self.packet = packet
-        self.templates = {}
+        self.templates, self.book_depth, self.last_capture = {}, {}, {}
         for route in packet["isolation_routes"]:
             template = RawProviderEnvelope.FromString(base64.b64decode(route["raw_template"], validate=True))
             validate_raw_envelope(template)
             if not template.test_provenance:
                 raise ValueError("isolation requires test-only raw templates")
-            self.templates[(route["symbol"], route["feed"])] = template
+            key = self.key_of(route)
+            self.templates.setdefault(key, template)
+            if key[1] == "BOOK":
+                self.book_depth[key] = int(route["book_depth"])
         self.producer = Producer({**kafka_security(packet),
             "enable.idempotence": True, "message.timeout.ms": 20000,
             "queue.buffering.max.messages": 20000, "queue.buffering.max.kbytes": 16384})
         self.next_id = {route: 1 for route in self.templates}
 
     def publish(self, plan):
-        """plan: {(symbol, feed): count}; returns once every record is acknowledged."""
+        """plan: {(symbol, binding kind): count}; returns once every record is acknowledged."""
         from qdl.provider.v1.raw_provider_pb2 import RawProviderEnvelope
         errors = []
         def delivered(error, _message):
@@ -800,7 +879,12 @@ class IsolationProducer:
                 self.next_id[route] += 1
                 raw.capture_id = uuid.uuid4().bytes
                 raw.received_at_ns = now
-                raw.raw_frame_bytes = json.dumps(isolation_frame(route[1], route[0], index, now)).encode()
+                if route[1] == "BOOK":
+                    frame, raw.transport_protocol = book_frame(route[0], index, self.book_depth[route], now)
+                else:
+                    frame = isolation_frame(route[1], route[0], index, now)
+                raw.raw_frame_bytes = json.dumps(frame).encode()
+                self.last_capture[route] = raw.capture_id
                 raw.raw_frame_sha256 = hashlib.sha256(raw.raw_frame_bytes).digest()
                 self.producer.produce(self.packet["raw_topic"], key=raw.subscription_id.encode(),
                     value=raw.SerializeToString(), headers=[("qdl-event-id", raw.capture_id)],
@@ -920,25 +1004,42 @@ def isolation_deep_main(packet, route, token, stall, until_id, pipe):
 
 
 def isolation_idle_main(packet, routes, tokens, pipe):
-    """Child: every idle reader as one task on one channel; stops on the parent's request."""
+    """Child: every idle reader as one task on one channel.
+
+    The parent sends each route's marker capture id; a reader that receives that
+    record (or already did) stops there. The rest are cancelled at the deadline."""
     async def run():
         runner = harness(packet)
         consumer = packet["fast_consumer_id"]
         channel = await channel_for(runner, consumer)
-        readers = []
+        readers, markers = [], {}
         for route in routes:
             for slot in range(IDLE_READERS_PER_ROUTE):
-                readers.append({"route": route["symbol"] + "/" + route["feed"], "slot": slot,
-                                "events": 0, "last_ns": 0, "end": None})
+                readers.append({"route": route["symbol"] + "/" + route["feed"], "feed": route["feed"],
+                                "slot": slot, "events": 0, "max_payload_bytes": 0, "end": None,
+                                "marker": None, "seen": []})
         async def read(reader, route, token):
             def on_event(record):
                 if record is None:
                     reader["live"] = True
                     return
+                event = record.event
                 reader["events"] += 1
-                reader["last_ns"] = time.monotonic_ns()
-            reader["end"] = await isolation_stream(packet, runner, channel, consumer, route, token, 100,
-                                                   on_event)
+                reader["max_payload_bytes"] = max(reader["max_payload_bytes"], event.ByteSize())
+                identity = (event.raw_capture_id.hex(), event.source_sequence, record.logical_offset)
+                marker = markers.get(reader["route"])
+                if marker is None:
+                    reader["seen"].append(identity)  # the marker may arrive before its id does
+                    return
+                by = marker_match(marker, identity[0], identity[1])
+                if by:
+                    reader["marker"] = {"by": by, "logical_offset": identity[2]}
+                    raise _Reached
+            try:
+                reader["end"] = await isolation_stream(packet, runner, channel, consumer, route, token, 100,
+                                                       on_event)
+            except _Reached:
+                pass
         tasks, index = [], 0
         for route in routes:
             for _ in range(IDLE_READERS_PER_ROUTE):
@@ -951,18 +1052,27 @@ def isolation_idle_main(packet, routes, tokens, pipe):
                    "live": sum(1 for r in readers if r.get("live"))})
         loop = asyncio.get_running_loop()
         request = await loop.run_in_executor(None, pipe.recv)
+        markers.update(request["markers"])
+        for reader, task in zip(readers, tasks):
+            marker = markers[reader["route"]]
+            for capture, sequence, offset in reader["seen"]:
+                by = marker_match(marker, capture, sequence)
+                if by and reader["marker"] is None:
+                    reader["marker"] = {"by": by + "_before_request", "logical_offset": offset}
+                    task.cancel()
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline and not all(
-                r["end"] is not None or r["last_ns"] > request["after_ns"] for r in readers):
+                r["end"] is not None or r["marker"] is not None for r in readers):
             await asyncio.sleep(.1)
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await channel.close()
         for reader in readers:
-            reader["progressed"] = reader["last_ns"] > request["after_ns"]
+            reader["progressed"] = reader["marker"] is not None
             reader["terminal"] = None if reader["end"] is None else reader["end"]["code"]
             reader.pop("end")
+            reader.pop("seen")
         pipe.send({"kind": "done", "readers": readers})
     try:
         asyncio.run(run())
@@ -1018,6 +1128,25 @@ def isolation_closures(path):
     return rows
 
 
+def isolation_handoff(path):
+    """Per consumer identity: subscription-closed reports, and the summed handoff
+    refusal/timeout counters (None when no report carries them: an older Stream)."""
+    rows = {}
+    for line in Path(path).read_text().splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict) and row.get("event") == "qdl_kn_subscription_closed":
+            per = rows.setdefault(row.get("consumer_id"), {"reports": 0, "handoff_refused": None,
+                                                           "handoff_timeouts": None})
+            per["reports"] += 1
+            for name in ("handoff_refused", "handoff_timeouts"):
+                if isinstance(row.get(name), int):
+                    per[name] = (per[name] or 0) + row[name]
+    return rows
+
+
 def isolation_metric_summary(metrics):
     peak = max((row.get("queue_bytes", 0) for row in metrics), default=0)
     isolation = metrics[-1].get("queue_isolation") if metrics else None
@@ -1039,7 +1168,9 @@ def run_isolation(packet):
         idle_routes = [r for r in routes if r["feed"] != "TRADE"]
         stage = "seed"
         producer = IsolationProducer(packet)
-        producer.publish({(r["symbol"], r["feed"]): 1 for r in routes})
+        idle_keys = list(dict.fromkeys(producer.key_of(r) for r in idle_routes))
+        # A book needs its REST bootstrap snapshot and one bridging delta.
+        producer.publish({producer.key_of(r): 2 if producer.key_of(r)[1] == "BOOK" else 1 for r in routes})
         seed = isolation_wait_seed(packet, routes)
         runner = harness(packet)
         tokens = {r["key"]: isolation_token(runner, packet["fast_consumer_id"] if r["feed"] != "TRADE"
@@ -1060,22 +1191,25 @@ def run_isolation(packet):
         stage = "bursts"
         burst_started = time.monotonic()
         for _ in range(DEEP_ROUNDS):
-            plan = {(r["symbol"], r["feed"]): DEEP_PER_ROUND for r in deep_routes}
-            plan.update({(r["symbol"], r["feed"]): 1 for r in idle_routes})
+            plan = {producer.key_of(r): DEEP_PER_ROUND for r in deep_routes}
+            plan.update({key: 1 for key in idle_keys})
             producer.publish(plan)
         burst_seconds = time.monotonic() - burst_started
         stage = "idle_under_pressure"
         hold_started, idle_published = time.monotonic(), 0
+        hold_plan = {key: (IDLE_BOOK_HOLD_RATE_HZ if key[1] == "BOOK" else IDLE_HOLD_RATE_HZ) // 10
+                     for key in idle_keys}
         while time.monotonic() - hold_started < IDLE_HOLD_SECONDS:
             step = time.monotonic()
-            producer.publish({(r["symbol"], r["feed"]): IDLE_HOLD_RATE_HZ // 10 for r in idle_routes})
-            idle_published += len(idle_routes) * (IDLE_HOLD_RATE_HZ // 10)
+            producer.publish(hold_plan)
+            idle_published += sum(hold_plan.values())
             time.sleep(max(0, .1 - (time.monotonic() - step)))
         hold_seconds = time.monotonic() - hold_started
         stage = "idle_marker"
-        after_ns = time.monotonic_ns()
-        producer.publish({(r["symbol"], r["feed"]): 1 for r in idle_routes})
-        idle.pipe.send({"after_ns": after_ns})
+        time.sleep(BOOK_MARKER_QUIET_SECONDS)
+        producer.publish({key: 1 for key in idle_keys})
+        markers = {r["key"]: producer.last_capture[producer.key_of(r)].hex() for r in idle_routes}
+        idle.pipe.send({"markers": markers})
         idle_end = idle.wait("done", 60)
         stage = "deep_terminal"
         time.sleep(6)  # with the hold: > QDL_KN_SLOW_CONSUMER_MS (10 s), a blocked send ends typed
@@ -1109,8 +1243,9 @@ def run_isolation(packet):
                       "seconds": burst_seconds,
                       "trade_rate_per_s": len(deep_routes) * deep_trades / burst_seconds if burst_seconds else None,
                       "idle_hold_seconds": hold_seconds, "idle_records_during_hold": idle_published},
-            "idle": idle_end["readers"], "deep": deep_end, "resume": resumed,
+            "idle": idle_end["readers"], "deep": deep_end, "resume": resumed, "markers": markers,
             "closures": isolation_closures(packet["metrics_path"]),
+            "handoff": isolation_handoff(packet["metrics_path"]),
             "deep_identity": packet["consumer_id"], "idle_identity": packet["fast_consumer_id"],
             "metrics": isolation_metric_summary(metrics)}
     except Exception as error:
@@ -1131,8 +1266,25 @@ def isolation_outcome(facts):
     abnormal = {cid: sum(n for outcome, n in per.items() if outcome != "ended")
                 for cid, per in closures.items()}
     isolation = facts["metrics"].get("queue_isolation") or {}
+    idle_handoff = (facts.get("handoff") or {}).get(facts["idle_identity"]) or {}
+    payloads = {}
+    for reader in idle:
+        feed = reader.get("feed")
+        payloads[feed] = max(payloads.get(feed, 0), reader.get("max_payload_bytes") or 0)
+    marker_by = {}
+    for reader in idle:
+        by = (reader.get("marker") or {}).get("by")
+        marker_by[str(by)] = marker_by.get(str(by), 0) + 1
     return {"observed": True,
         "idle_readers": len(idle),
+        "idle_marker_by": marker_by,
+        "idle_max_payload_bytes": payloads,
+        "idle_subscription_reports": idle_handoff.get("reports", 0),
+        "idle_handoff_refused": idle_handoff.get("handoff_refused"),
+        "idle_handoff_timeouts": idle_handoff.get("handoff_timeouts"),
+        **{name: isolation.get(name) for name in (
+            "handoff_refused_within_floor", "handoff_timeout_within_floor",
+            "handoff_refused_over_floor", "handoff_timeout_over_floor")},
         "idle_client_terminals": sum(1 for r in idle if r.get("terminal") is not None),
         "idle_stream_abnormal_closures": abnormal.get(facts["idle_identity"], 0),
         "idle_not_progressed": sum(1 for r in idle if not r.get("progressed")),
@@ -1149,22 +1301,35 @@ def isolation_outcome(facts):
         "trade_rate_per_s": facts["burst"]["trade_rate_per_s"]}
 
 
-def isolation_verdict(candidate, baseline):
+def isolation_verdict(candidate, baseline, baseline_kind="pre_reserve"):
     """Apply ISOLATION_ACCEPTANCE (preregistered) to the two runs' outcomes."""
+    if baseline_kind not in BASELINE_KINDS:
+        raise ValueError("unknown baseline kind " + repr(baseline_kind))
     c, b = candidate, baseline
     idle_closures = (c.get("idle_client_terminals", 1) + c.get("idle_stream_abnormal_closures", 1))
+    readers = c.get("idle_readers")
     checks = {
         "C1_candidate_idle_closures": c.get("observed") is True and idle_closures == 0,
-        "C1b_candidate_idle_progress": c.get("observed") is True and c.get("idle_not_progressed") == 0,
-        "C2_candidate_reserve_exhausted": c.get("reserve_exhausted") == 0,
+        "C1b_candidate_idle_progress": (c.get("observed") is True and c.get("idle_not_progressed") == 0
+            and isinstance(readers, int) and readers > 0
+            and sum(n for by, n in (c.get("idle_marker_by") or {}).items() if by != "None") == readers),
+        "C2_candidate_reserve_exhausted": (c.get("reserve_exhausted") == 0
+            and c.get("handoff_refused_within_floor") == 0 and c.get("handoff_timeout_within_floor") == 0
+            and c.get("idle_handoff_refused") == 0 and c.get("idle_handoff_timeouts") == 0
+            and isinstance(readers, int) and c.get("idle_subscription_reports", 0) >= readers),
         "C3_candidate_over_floor_refused": (isinstance(c.get("over_floor_refused"), int)
             and c["over_floor_refused"] > 0 and c.get("deep_stream_abnormal_closures", 0) > 0
             and c.get("other_abnormal_closures", 1) == 0),
         "C4_candidate_deep_resume": c.get("deep_resume_lossless") is True,
-        "D1_baseline_discriminates": b.get("observed") is True and (
-            b.get("idle_client_terminals", 0) + b.get("idle_stream_abnormal_closures", 0)) >= 1,
     }
-    return {"checks": checks, "verdict": "PASS" if all(checks.values()) else "FAIL",
+    discriminates = b.get("observed") is True and (
+        b.get("idle_client_terminals", 0) + b.get("idle_stream_abnormal_closures", 0)) >= 1
+    report_only = {"baseline_kind": baseline_kind}
+    if baseline_kind == "pre_reserve":
+        checks["D1_baseline_discriminates"] = discriminates
+    else:
+        report_only["D1_baseline_discriminates"] = discriminates
+    return {"checks": checks, "verdict": "PASS" if all(checks.values()) else "FAIL", "report_only": report_only,
             "peak_reserve_bytes_used": c.get("peak_reserve_bytes_used"),
             "reserve_bytes": LIVE_RESERVE_BYTES}
 
@@ -1233,16 +1398,22 @@ IMAGES = {
 
 
 def isolation_route_rows(bindings, catalog):
-    """Route rows (symbol, feed, uid, policy, payload, key) for the selected core bindings."""
-    payloads = {"TRADE": "trade", "QUOTE": "quote", "MARK_INDEX_PRICE": "mark_index_price"}
+    """Route rows (symbol, feed, uid, policy, payload, key) for the selected core bindings;
+    a book binding gives a BOOK_DELTA and a BOOK_SNAPSHOT route (with its deployed depth)."""
+    payloads = {"TRADE": "trade", "QUOTE": "quote", "MARK_INDEX_PRICE": "mark_index_price",
+                "BOOK_DELTA": "book_delta", "BOOK_SNAPSHOT": "book_snapshot"}
     rows = []
     for binding in bindings:
-        feed = isolation_feed(binding["native_channel"])
-        entry = next(x for x in catalog.bindings if x.instrument.instrument_uid == binding["instrument_uid"]
-                     and x.feed.value == feed and x.source_id == binding["source_id"])
-        rows.append({"symbol": binding["native_symbol"], "feed": feed, "instrument_uid": binding["instrument_uid"],
-                     "source_policy_id": entry.source_policy_id, "payload": payloads[feed],
-                     "key": binding["native_symbol"] + "/" + feed, "binding": binding})
+        kind = isolation_feed(binding["native_channel"])
+        for feed in (ISOLATION_BOOK_FEEDS if kind == "BOOK" else (kind,)):
+            entry = next(x for x in catalog.bindings if x.instrument.instrument_uid == binding["instrument_uid"]
+                         and x.feed.value == feed and x.source_id == binding["source_id"])
+            row = {"symbol": binding["native_symbol"], "feed": feed, "instrument_uid": binding["instrument_uid"],
+                   "source_policy_id": entry.source_policy_id, "payload": payloads[feed],
+                   "key": binding["native_symbol"] + "/" + feed, "binding": binding}
+            if kind == "BOOK":
+                row["book_depth"] = int(binding["l2"]["depth_per_side"])
+            rows.append(row)
     return rows
 
 
@@ -1404,6 +1575,7 @@ group.initial.rebalance.delay.ms=0
             "topic_id": "pending", "route_generation": namespace, "target": "localhost:8210"})
     if isolation:
         for route in routes:
+            # A book binding's two routes share one binding (and frame sequence).
             route["raw_template"] = base64.b64encode(template(route.pop("binding")).SerializeToString()).decode()
         packet.update(consumer_id=namespace + ".deep", fast_consumer_id=namespace + ".idle",
             isolation_routes=routes, isolated_manifest_paths=["/work/deep.yaml", "/work/idle.yaml"])
@@ -1701,7 +1873,8 @@ def orchestrate(work, *, development, source_sha, image_digest, restart_samples=
 
 
 
-def isolation_prereg(*, candidate, baseline, images, query_image_ref, source_sha, now_utc):
+def isolation_prereg(*, candidate, baseline, images, query_image_ref, source_sha, now_utc,
+                     baseline_kind="pre_reserve"):
     """The acceptance and scenario, fixed before any run (written exclusively, hashed)."""
     for name, value in (("candidate", candidate), ("baseline", baseline)):
         if not isinstance(value, str) or not IMAGE_ID.fullmatch(value):
@@ -1712,8 +1885,11 @@ def isolation_prereg(*, candidate, baseline, images, query_image_ref, source_sha
         raise ValueError("full DL source SHA required")
     if "stream" in (images or {}):
         raise ValueError("the Stream image is the A/B variable; pass it as candidate/baseline")
-    return {"schema": "p184.dl.live-budget-isolation.prereg.v1", "created_utc": now_utc,
+    if baseline_kind not in BASELINE_KINDS:
+        raise ValueError("baseline kind must be one of " + repr(BASELINE_KINDS))
+    return {"schema": "p184.dl.live-budget-isolation.prereg.v2", "created_utc": now_utc,
         "source_sha": source_sha, "candidate_stream": candidate, "baseline_stream": baseline,
+        "baseline_kind": baseline_kind,
         "shared_images": dict(sorted((images or {}).items())), "query_image_ref": query_image_ref,
         "order": ["candidate", "baseline"], "acceptance": ISOLATION_ACCEPTANCE,
         "scenario": {"deep_trade_symbols": list(ISOLATION_DEEP), "idle_symbols": list(ISOLATION_IDLE),
@@ -1721,15 +1897,20 @@ def isolation_prereg(*, candidate, baseline, images, query_image_ref, source_sha
             "idle_readers": len(ISOLATION_IDLE) * len(ISOLATION_IDLE_FEEDS) * IDLE_READERS_PER_ROUTE,
             "deep_buffer_events": DEEP_BUFFER, "rounds": DEEP_ROUNDS, "trades_per_round_per_deep": DEEP_PER_ROUND,
             "idle_hold_seconds": IDLE_HOLD_SECONDS, "idle_hold_rate_hz_per_route": IDLE_HOLD_RATE_HZ,
+            "idle_book_hold_rate_hz_per_book": IDLE_BOOK_HOLD_RATE_HZ,
+            "book_delta_levels_per_side": BOOK_DELTA_LEVELS_PER_SIDE,
+            "book_snapshot_depth": "deployed l2.depth_per_side", "book_marker_quiet_seconds": BOOK_MARKER_QUIET_SECONDS,
+            "idle_marker": "raw capture id of the frame published after the idle hold, per route",
             "live_budget_bytes": QUEUE_BYTES, "reserve_bytes": LIVE_RESERVE_BYTES,
             "slow_consumer_ms": 10000, "data": "SYNTHETIC_TEST_ONLY"}}
 
 
-def isolation_campaign(directory, *, candidate, baseline, images, query_image_ref, source_sha):
+def isolation_campaign(directory, *, candidate, baseline, images, query_image_ref, source_sha,
+                       baseline_kind="pre_reserve"):
     """Preregister, run candidate then baseline with everything but Stream equal, then judge."""
     from datetime import datetime, timezone
     prereg = isolation_prereg(candidate=candidate, baseline=baseline, images=images,
-        query_image_ref=query_image_ref, source_sha=source_sha,
+        query_image_ref=query_image_ref, source_sha=source_sha, baseline_kind=baseline_kind,
         now_utc=datetime.now(timezone.utc).isoformat(timespec="seconds"))
     directory = directory.resolve()
     directory.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -1750,7 +1931,7 @@ def isolation_campaign(directory, *, candidate, baseline, images, query_image_re
         except (FileNotFoundError, IndexError, KeyError, json.JSONDecodeError):
             outcomes[label] = {"observed": False}
     verdict = {"preregistration_sha256": prereg_sha, "outcomes": outcomes, "errors": errors,
-               **isolation_verdict(outcomes["candidate"], outcomes["baseline"])}
+               **isolation_verdict(outcomes["candidate"], outcomes["baseline"], baseline_kind)}
     with (directory / "verdict.json").open("x") as handle:
         handle.write(json.dumps(verdict, sort_keys=True, indent=1))
     return verdict
@@ -1779,6 +1960,9 @@ def main(argv=None):
     parser.add_argument("--candidate-stream", help="isolation campaign candidate Stream image sha256 ID")
     parser.add_argument("--baseline-stream", help="isolation campaign baseline Stream image sha256 ID")
     parser.add_argument("--source-sha", help="isolation campaign DL source SHA under test")
+    parser.add_argument("--baseline-kind", choices=BASELINE_KINDS, default="pre_reserve",
+                        help="pre_reserve: D1 gates (the baseline must overflow idle readers); "
+                             "prior_candidate: D1 is report-only")
     args = parser.parse_args(argv)
     if args.isolation_campaign:
         def campaign_deadline(_signum, _frame):
@@ -1788,7 +1972,8 @@ def main(argv=None):
         try:
             verdict = isolation_campaign(args.isolation_campaign, candidate=args.candidate_stream,
                 baseline=args.baseline_stream, images=parse_image_overrides(args.image),
-                query_image_ref=args.query_image_ref, source_sha=args.source_sha)
+                query_image_ref=args.query_image_ref, source_sha=args.source_sha,
+                baseline_kind=args.baseline_kind)
         finally:
             signal.alarm(0)
             signal.signal(signal.SIGALRM, previous)

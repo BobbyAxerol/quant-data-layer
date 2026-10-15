@@ -69,6 +69,16 @@ pub struct BudgetCounters {
     /// Pushes of a subscription at or under its floor refused even with the
     /// reserve: the reserve itself was exhausted (should stay 0).
     pub reserve_exhausted: AtomicU64,
+    /// Transport top-ups ([`Subscription::charge_handoff`]) refused at least
+    /// once, by the floor state at the first refusal (one per record, not
+    /// per retry). The enqueue counters above never see these.
+    pub handoff_refused_within_floor: AtomicU64,
+    pub handoff_refused_over_floor: AtomicU64,
+    /// Top-ups that never fitted before the slow-consumer deadline: the
+    /// stream was closed with BACKPRESSURE at handoff, by the floor state at
+    /// the last attempt.
+    pub handoff_timeout_within_floor: AtomicU64,
+    pub handoff_timeout_over_floor: AtomicU64,
 }
 
 impl ByteBudget {
@@ -109,6 +119,7 @@ impl ByteBudget {
         self.try_charge(bytes, ceiling).then(|| Charge {
             budget: self.clone(),
             bytes,
+            records: 0,
             owner: None,
         })
     }
@@ -148,7 +159,7 @@ impl ByteBudget {
         }
     }
 
-    fn within_floor(&self, queued: usize, held: usize, weight: usize) -> bool {
+    pub(crate) fn within_floor(&self, queued: usize, held: usize, weight: usize) -> bool {
         self.reserve > 0 && (queued <= LIVE_FLOOR_ENTRIES || held + weight <= self.floor)
     }
 
@@ -174,12 +185,44 @@ impl ByteBudget {
 /// Once a live record leaves its subscription's queue, its charge is
 /// attributed to that subscription (`owner`) until the transport drops it,
 /// so the floor test sees what a stalled stream holds in its outbound
-/// handoff and transport, not only in its queue.
+/// handoff and transport, not only in its queue: its bytes AND the number of
+/// records it stands for (`records`: 1 for a queue entry, 0 for a top-up or
+/// a non-record charge, the sum for a batch), so two handed-off records are
+/// two entries, never one.
 #[derive(Debug)]
 pub struct Charge {
     budget: Arc<ByteBudget>,
     bytes: usize,
-    owner: Option<Arc<AtomicUsize>>,
+    records: usize,
+    owner: Option<Arc<Outstanding>>,
+}
+
+/// A subscription's live records dequeued but not yet released by the
+/// transport (handoff channel, batch, tonic): exact record count and bytes.
+#[derive(Debug, Default)]
+pub struct Outstanding {
+    records: AtomicUsize,
+    bytes: AtomicUsize,
+}
+
+impl Outstanding {
+    fn add(&self, records: usize, bytes: usize) {
+        self.records.fetch_add(records, Ordering::AcqRel);
+        self.bytes.fetch_add(bytes, Ordering::AcqRel);
+    }
+
+    fn sub(&self, records: usize, bytes: usize) {
+        self.records.fetch_sub(records, Ordering::AcqRel);
+        self.bytes.fetch_sub(bytes, Ordering::AcqRel);
+    }
+
+    /// `(records, bytes)` now.
+    pub fn load(&self) -> (usize, usize) {
+        (
+            self.records.load(Ordering::Acquire),
+            self.bytes.load(Ordering::Acquire),
+        )
+    }
 }
 
 impl Charge {
@@ -195,31 +238,40 @@ impl Charge {
             "charges of different budgets cannot be merged"
         );
         let bytes = std::mem::take(&mut other.bytes);
+        let records = std::mem::take(&mut other.records);
         if let Some(owner) = &other.owner {
-            owner.fetch_sub(bytes, Ordering::AcqRel);
+            owner.sub(records, bytes);
         }
         if let Some(owner) = &self.owner {
-            owner.fetch_add(bytes, Ordering::AcqRel);
+            owner.add(records, bytes);
         }
         self.bytes += bytes;
+        self.records += records;
     }
 
-    /// Attribute this charge to a subscription's out-of-queue bytes until
+    /// Records this charge stands for (see [`Charge`]).
+    pub fn records(&self) -> usize {
+        self.records
+    }
+
+    /// Attribute this charge to a subscription's outstanding records until
     /// it is dropped (or absorbed into another charge).
-    fn attribute(&mut self, owner: &Arc<AtomicUsize>) {
+    fn attribute(&mut self, owner: &Arc<Outstanding>) {
         if let Some(previous) = self.owner.replace(owner.clone()) {
-            previous.fetch_sub(self.bytes, Ordering::AcqRel);
+            previous.sub(self.records, self.bytes);
         }
-        owner.fetch_add(self.bytes, Ordering::AcqRel);
+        owner.add(self.records, self.bytes);
     }
 
     /// Move up to `bytes` of this charge into a new one (no budget change).
+    /// Bytes only: the record count stays with `self`.
     pub fn split(&mut self, bytes: usize) -> Charge {
         let moved = bytes.min(self.bytes);
         self.bytes -= moved;
         Charge {
             budget: self.budget.clone(),
             bytes: moved,
+            records: 0,
             owner: self.owner.clone(),
         }
     }
@@ -228,7 +280,7 @@ impl Charge {
 impl Drop for Charge {
     fn drop(&mut self) {
         if let Some(owner) = &self.owner {
-            owner.fetch_sub(self.bytes, Ordering::AcqRel);
+            owner.sub(self.records, self.bytes);
         }
         self.budget.release(self.bytes);
     }
@@ -264,6 +316,10 @@ pub struct SubscriptionCounters {
     pub offered: AtomicU64,
     /// Live queue pops, before read-time filtering or transport handoff; not ACKs.
     pub dequeued: AtomicU64,
+    /// Records whose transport top-up was refused at least once.
+    pub handoff_refused: AtomicU64,
+    /// Top-ups that timed out: the stream ended BACKPRESSURE at handoff.
+    pub handoff_timeouts: AtomicU64,
 }
 
 #[derive(Debug)]
@@ -285,10 +341,11 @@ pub struct Subscription {
     pub depth: usize,
     max_bytes: usize,
     budget: Arc<ByteBudget>,
-    /// Live budget bytes of records dequeued but not yet released by the
-    /// transport (handoff channel, batches, tonic): counted with the queue
-    /// when deciding whether this subscription is at or under its floor.
-    out_of_queue: Arc<AtomicUsize>,
+    /// Live records (exact count) and budget bytes dequeued but not yet
+    /// released by the transport (handoff channel, batches, tonic): counted
+    /// with the queue when deciding whether this subscription is at or under
+    /// its floor.
+    out_of_queue: Arc<Outstanding>,
     state: Mutex<State>,
     notify: Notify,
     pub counters: SubscriptionCounters,
@@ -323,7 +380,7 @@ impl Subscription {
             depth,
             max_bytes,
             budget,
-            out_of_queue: Arc::new(AtomicUsize::new(0)),
+            out_of_queue: Arc::new(Outstanding::default()),
             state: Mutex::new(State {
                 queue: VecDeque::new(),
                 bytes: 0,
@@ -375,11 +432,11 @@ impl Subscription {
         // Refused for want of replica budget (not this queue's own bounds),
         // and whether this subscription was at or under its floor then.
         let mut budget_refused: Option<bool>;
-        let charge = loop {
+        let mut charge = loop {
             let fits = state.queue.len() < self.depth && state.bytes + weight <= self.max_bytes;
             budget_refused = None;
             if fits {
-                let (queued, bytes) = self.floor_load(&state, 0);
+                let (queued, bytes) = self.floor_load(&state, None);
                 if let Some(charge) = self.budget.charge_for(held, queued, bytes, weight) {
                     break charge;
                 }
@@ -423,6 +480,8 @@ impl Subscription {
                 }
             }
         };
+        // One queue entry is one record wherever its charge travels next.
+        charge.records = 1;
         state.bytes += weight;
         state.floor = record.raw.offset;
         state.queue.push_back(Queued {
@@ -437,32 +496,72 @@ impl Subscription {
     }
 
     /// Charge `bytes` of the live budget for this subscription's transport
-    /// copy of a dequeued record of `weight` whose entry charge (`entry`
-    /// bytes, already out of the queue) the caller holds: a subscription at
-    /// or under its floor (queue plus other out-of-queue bytes) may use the
-    /// reserve, so an idle reader is never stalled at handoff by deep ones.
-    pub fn charge_handoff(&self, bytes: usize, weight: usize, entry: usize) -> Option<Charge> {
+    /// copy of a dequeued record of `weight` whose entry charge (`entry`,
+    /// already out of the queue) the caller holds: a subscription at or
+    /// under its floor (queue plus its other outstanding records) may use
+    /// the reserve, so an idle reader is never stalled at handoff by deep
+    /// ones. `Err(within_floor)` when refused: whether this subscription was
+    /// at or under its floor then (attribute it with
+    /// [`Self::note_handoff_refused`] / [`Self::note_handoff_timeout`]).
+    pub fn charge_handoff(&self, bytes: usize, weight: usize, entry: &Charge) -> Result<Charge, bool> {
         let (queued, held) = match self.state.lock() {
-            Ok(state) => self.floor_load(&state, entry),
-            Err(_) => return None,
+            Ok(state) => self.floor_load(&state, Some(entry)),
+            Err(_) => return Err(false),
         };
-        let mut charge = self.budget.charge_for(bytes, queued, held, weight)?;
-        charge.attribute(&self.out_of_queue);
-        Some(charge)
+        match self.budget.charge_for(bytes, queued, held, weight) {
+            Some(mut charge) => {
+                charge.attribute(&self.out_of_queue);
+                Ok(charge)
+            }
+            None => Err(self.budget.within_floor(queued, held, weight)),
+        }
     }
 
-    /// `(entries, bytes)` the floor test sees: the queue plus everything
-    /// dequeued and not yet released except `own` bytes (the record being
-    /// handed off), counted as one entry when non-zero.
-    fn floor_load(&self, state: &State, own: usize) -> (usize, usize) {
-        let outside = self
-            .out_of_queue
-            .load(Ordering::Acquire)
-            .saturating_sub(own);
-        (
-            state.queue.len() + usize::from(outside > 0),
-            state.bytes + outside,
-        )
+    /// The first refused top-up of one record (not every retry).
+    pub fn note_handoff_refused(&self, within_floor: bool) {
+        self.counters.handoff_refused.fetch_add(1, Ordering::Relaxed);
+        let counters = &self.budget.counters;
+        let counter = if within_floor {
+            &counters.handoff_refused_within_floor
+        } else {
+            &counters.handoff_refused_over_floor
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// A top-up that timed out and ends the stream; `within_floor` at the
+    /// last attempt.
+    pub fn note_handoff_timeout(&self, within_floor: bool) {
+        self.counters.handoff_timeouts.fetch_add(1, Ordering::Relaxed);
+        let counters = &self.budget.counters;
+        let counter = if within_floor {
+            &counters.handoff_timeout_within_floor
+        } else {
+            &counters.handoff_timeout_over_floor
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// `(entries, bytes)` the floor test sees: the queue plus every record
+    /// dequeued and not yet released, each counted as one entry, except
+    /// exactly `own` (the record being topped up, when it is attributed to
+    /// this subscription).
+    fn floor_load(&self, state: &State, own: Option<&Charge>) -> (usize, usize) {
+        let (mut records, mut bytes) = self.out_of_queue.load();
+        if let Some(own) = own.filter(|own| {
+            own.owner
+                .as_ref()
+                .is_some_and(|owner| Arc::ptr_eq(owner, &self.out_of_queue))
+        }) {
+            records = records.saturating_sub(own.records);
+            bytes = bytes.saturating_sub(own.bytes);
+        }
+        (state.queue.len() + records, state.bytes + bytes)
+    }
+
+    /// `(records, bytes)` dequeued and not yet released by the transport.
+    pub fn outstanding(&self) -> (usize, usize) {
+        self.out_of_queue.load()
     }
 
     pub fn fail(&self, reason: &str) {
@@ -844,6 +943,233 @@ mod tests {
             );
         }
         assert_eq!(drain(&subscription).await, vec![6, 7]);
+    }
+
+    // ------------------------------------------- SR1 exact outstanding count
+
+    /// A lossless record of about `kib` KiB full weight, no shared charge
+    /// (its queue entry charges the full weight).
+    fn heavy(offset: i64, kib: usize) -> Arc<LiveRecord> {
+        let id = "x".repeat(kib * 1024 / (crate::hub::DECODED_FACTOR + 1));
+        record(
+            offset,
+            event_envelope::Payload::Trade(Trade {
+                native_trade_id: id,
+                ..Default::default()
+            }),
+            vec![],
+        )
+    }
+
+    /// A reserve budget (floor 256 KiB, as production) whose shared part
+    /// holds `shared` bytes, and a lossless subscription on it.
+    fn isolated(shared: usize, reserve: usize) -> (Arc<ByteBudget>, Subscription) {
+        let budget = ByteBudget::with_reserve(shared + reserve, reserve, 256 * 1024);
+        let subscription = Subscription::new(
+            11,
+            "c".into(),
+            requirement(query::FeedType::Trade),
+            100,
+            usize::MAX,
+            budget.clone(),
+            0,
+        );
+        (budget, subscription)
+    }
+
+    /// Take the rest of the shared part, as deep subscriptions do.
+    fn fill_shared(budget: &Arc<ByteBudget>) -> Charge {
+        let (reserve, _) = budget.reserve_and_floor();
+        let rest = budget.limit() - reserve - budget.used();
+        budget.charge(rest).expect("shared rest")
+    }
+
+    async fn take(subscription: &Subscription) -> Charge {
+        match subscription.next().await {
+            Next::Record(_, _, charge) => charge,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    fn admitted(budget: &ByteBudget) -> (u64, u64, u64) {
+        let counters = &budget.counters;
+        (
+            counters.reserve_admitted.load(Ordering::Relaxed),
+            counters.over_floor_refused.load(Ordering::Relaxed),
+            counters.reserve_exhausted.load(Ordering::Relaxed),
+        )
+    }
+
+    #[tokio::test]
+    async fn sr1_two_large_outbound_records_and_another_offer_stay_out_of_the_reserve() {
+        // Review SR1 counterexample: empty queue, two unreleased 200 KiB
+        // records at the transport, shared part full. The old floor saw ONE
+        // entry and let the third offer into the reserve beyond 256 KiB.
+        let weight = heavy(1, 200).weight();
+        assert!(weight > 128 * 1024 && weight < 256 * 1024, "{weight}");
+        let (budget, subscription) = isolated(8 * weight, 4 * weight);
+        subscription.offer(&heavy(1, 200), 0);
+        subscription.offer(&heavy(2, 200), 0);
+        let first = take(&subscription).await;
+        let second = take(&subscription).await;
+        assert_eq!(subscription.outstanding(), (2, 2 * weight));
+        let hog = fill_shared(&budget);
+        subscription.offer(&heavy(3, 200), 0);
+        assert!(matches!(subscription.next().await, Next::Overflow));
+        assert_eq!(admitted(&budget), (0, 1, 0), "refused over its floor");
+        drop((first, second, hog));
+        subscription.close();
+        assert_eq!(subscription.outstanding(), (0, 0));
+        assert_eq!(budget.used(), 0);
+    }
+
+    #[tokio::test]
+    async fn sr1_batched_outbound_records_count_one_entry_each() {
+        let weight = heavy(1, 200).weight();
+        let (budget, subscription) = isolated(8 * weight, 4 * weight);
+        for offset in 1..=3 {
+            subscription.offer(&heavy(offset, 200), 0);
+        }
+        // A batch merges its records' charges into one (Batch::push).
+        let mut batch = take(&subscription).await;
+        let (_, _, second) = subscription.try_next().expect("queued");
+        batch.absorb(second);
+        assert_eq!(batch.records(), 2);
+        assert_eq!(subscription.outstanding(), (2, 2 * weight));
+        // One record still queued plus two in the batch: three entries.
+        let hog = fill_shared(&budget);
+        subscription.offer(&heavy(4, 200), 0);
+        assert!(matches!(subscription.next().await, Next::Overflow));
+        assert_eq!(admitted(&budget), (0, 1, 0));
+        drop(batch);
+        assert_eq!(subscription.outstanding(), (0, 0));
+        drop(hog);
+        subscription.close();
+        assert_eq!(budget.used(), 0);
+    }
+
+    #[tokio::test]
+    async fn sr1_cancellation_releases_exactly_what_was_outstanding() {
+        let weight = heavy(1, 200).weight();
+        let (budget, subscription) = isolated(8 * weight, 4 * weight);
+        for offset in 1..=3 {
+            subscription.offer(&heavy(offset, 200), 0);
+        }
+        // Two records in the bounded handoff, one queued; the client goes.
+        let (sender, receiver) = tokio::sync::mpsc::channel(2);
+        sender.send(take(&subscription).await).await.unwrap();
+        sender.send(take(&subscription).await).await.unwrap();
+        assert_eq!(subscription.outstanding(), (2, 2 * weight));
+        drop((sender, receiver));
+        assert_eq!(subscription.outstanding(), (0, 0));
+        assert_eq!(budget.used(), weight, "only the queued entry remains");
+        subscription.close();
+        assert_eq!(budget.used(), 0);
+        assert_eq!(subscription.outstanding(), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn sr1_one_oversized_outbound_record_is_still_within_the_floor() {
+        // The policy's exception: at most one other record, of any size.
+        let weight = heavy(1, 600).weight();
+        assert!(weight > 512 * 1024);
+        let (budget, subscription) = isolated(4 * weight, 2 * weight);
+        subscription.offer(&heavy(1, 600), 0);
+        let outbound = take(&subscription).await;
+        assert_eq!(subscription.outstanding(), (1, weight));
+        let hog = fill_shared(&budget);
+        subscription.offer(&heavy(2, 600), 0);
+        assert_eq!(subscription.queued().0, 1, "admitted from the reserve");
+        assert_eq!(admitted(&budget), (1, 0, 0));
+        drop((outbound, hog));
+        subscription.close();
+        assert_eq!(budget.used(), 0);
+    }
+
+    #[tokio::test]
+    async fn sr1_a_top_up_excludes_exactly_its_own_record_and_never_double_counts() {
+        let budget = ByteBudget::with_reserve(8 << 20, 1 << 20, 256 * 1024);
+        let subscription = Subscription::new(
+            12,
+            "c".into(),
+            requirement(query::FeedType::Trade),
+            100,
+            usize::MAX,
+            budget.clone(),
+            0,
+        );
+        // Shared-charged records: the queue entry is QUEUE_ENTRY_OVERHEAD,
+        // the transport copy is topped up to the full weight.
+        let shared = |offset| {
+            let mut record = Arc::try_unwrap(heavy(offset, 200)).unwrap();
+            record.shared_charge = budget.charge(record.weight());
+            Arc::new(record)
+        };
+        let records: Vec<_> = (1..=4).map(shared).collect();
+        assert!(records.iter().all(|record| record.shared_charge.is_some()));
+        let weight = records[0].weight();
+        for record in &records[..3] {
+            subscription.offer(record, 0);
+        }
+        let mut first = take(&subscription).await;
+        assert_eq!(subscription.outstanding(), (1, QUEUE_ENTRY_OVERHEAD));
+        let hog = fill_shared(&budget);
+        // Its own entry is excluded; two queued records are its load, so
+        // the top-up of the FIRST record (count 2, bytes over the floor)
+        // stays out of the reserve.
+        assert_eq!(
+            subscription
+                .charge_handoff(weight - QUEUE_ENTRY_OVERHEAD, weight, &first)
+                .err(),
+            Some(false)
+        );
+        let second = take(&subscription).await;
+        let third = take(&subscription).await;
+        drop((second, third));
+        let hog2 = fill_shared(&budget);
+        // Now nothing else is held: it may use the reserve.
+        let extra = subscription
+            .charge_handoff(weight - QUEUE_ENTRY_OVERHEAD, weight, &first)
+            .expect("at its floor");
+        assert_eq!(subscription.outstanding(), (1, weight), "entry + top-up");
+        first.absorb(extra);
+        assert_eq!(first.records(), 1);
+        assert_eq!(subscription.outstanding(), (1, weight), "absorb moves, never adds");
+        // A second record's top-up sees exactly one other record.
+        subscription.offer(&records[3], 0);
+        let fourth = take(&subscription).await;
+        assert_eq!(subscription.outstanding(), (2, weight + QUEUE_ENTRY_OVERHEAD));
+        assert!(subscription
+            .charge_handoff(weight - QUEUE_ENTRY_OVERHEAD, weight, &fourth)
+            .is_ok());
+        // The first top-up, the fourth entry and the fourth top-up.
+        assert_eq!(budget.counters.reserve_admitted.load(Ordering::Relaxed), 3);
+        drop((first, fourth, hog, hog2, records));
+        subscription.close();
+        assert_eq!(subscription.outstanding(), (0, 0));
+        assert_eq!(budget.used(), 0);
+    }
+
+    #[test]
+    fn handoff_refusals_and_timeouts_are_counted_by_floor_state() {
+        let subscription = queue(query::FeedType::Trade, 2);
+        subscription.note_handoff_refused(true);
+        subscription.note_handoff_refused(false);
+        subscription.note_handoff_timeout(false);
+        let budget = &subscription.budget.counters;
+        let load = |value: &AtomicU64| value.load(Ordering::Relaxed);
+        assert_eq!(
+            (
+                load(&budget.handoff_refused_within_floor),
+                load(&budget.handoff_refused_over_floor),
+                load(&budget.handoff_timeout_within_floor),
+                load(&budget.handoff_timeout_over_floor),
+            ),
+            (1, 1, 0, 1)
+        );
+        let own = &subscription.counters;
+        assert_eq!((load(&own.handoff_refused), load(&own.handoff_timeouts)), (2, 1));
+        assert_eq!(load(&budget.reserve_exhausted) + load(&budget.over_floor_refused), 0);
     }
 
     fn queue(feed: query::FeedType, depth: usize) -> Subscription {

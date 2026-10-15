@@ -323,6 +323,12 @@ async fn serve() -> Result<(), String> {
                 "reserve_admitted": load(&isolation.reserve_admitted),
                 "over_floor_refused": load(&isolation.over_floor_refused),
                 "reserve_exhausted": load(&isolation.reserve_exhausted),
+                // Transport top-ups: refusals (once per record) and the
+                // streams they closed, apart from the enqueue counters.
+                "handoff_refused_within_floor": load(&isolation.handoff_refused_within_floor),
+                "handoff_refused_over_floor": load(&isolation.handoff_refused_over_floor),
+                "handoff_timeout_within_floor": load(&isolation.handoff_timeout_within_floor),
+                "handoff_timeout_over_floor": load(&isolation.handoff_timeout_over_floor),
             });
             let replay_timing = serde_json::json!({
                 "slot_waits": load(&replay.slot_waits),
