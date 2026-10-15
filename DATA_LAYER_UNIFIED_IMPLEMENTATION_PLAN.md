@@ -73475,3 +73475,18 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   S2's 2 rewinds both 5.6 s after the 2 -> 3 membership change (core-3 rejoin); saved S's 4 rewinds all attributed
   to leave/join changes, 0 unattributed (S keeps its addendum-4 FAIL). Status: shadow-certified (isolated,
   production-like profile) for a simultaneous replace RUST18 -> rc22; production rollout needs its own packet/tool.
+
+
+### P18.4 PRODUCTION: DL core rc22 by simultaneous replace - 2026-10-15 13:32:22-13:35:18Z (Claude, owner-approved)
+- Tool rollout_core_simultaneous.py (outside Git, sha b5c9ca2b; 34 tests incl. the captured production describe
+  output) RUST18 7fba2577 -> rc22 7c848aad (DL a4e7b3b) on rust_core, rust_core_2, rust_core_3, config
+  releases/v2.2.3-rc18-core-batch1024 unchanged; receipts p184-d3-capacity-20261009/rollout-rc22-simultaneous/
+  (stamp 20261015T133222Z). Preflight: group 3x2 stable, 0 retries/rewinds in the last 300 s, writer (native B12)
+  READY 64/64, lock held. All 3 stopped exit 0 (stop start 13:33:00.42Z, dead 13:33:01.03Z); compose 13:33:01.2-02.1Z;
+  group re-formed 3x2 at 13:33:12.45Z (full core pause ~12.0 s, re-form 11.2 s from compose start); settle 120 s clean;
+  writer READY 64/64 at the end. rc 0.
+- Independent check 13:35:25Z: all three on rc22, RestartCount 0, 0 retries, 0 rewinds since 13:33:00Z; group 3x2.
+- Effect: F1 (core-kill recovery ~10 s on the isolated production-like harness vs RUST18 ~101 s) and the rebalance-
+  storm fix are now production. Rollback: same tool path back to RUST18 via the saved rollback composes (simultaneous).
+  Not touched: projectors (ce629061), stream/ingestors (RUST18), kafka, stable_redis, market_cache, Query (rc19),
+  bar_edge, writer.
