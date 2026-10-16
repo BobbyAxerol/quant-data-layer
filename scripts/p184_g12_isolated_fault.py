@@ -1547,7 +1547,29 @@ def g12_receipt_creditable(verdict, current_kafka=None, current_effective=None):
     problems = production_effective_problems(config, current_effective)
     if problems:
         return False, "; ".join(problems[:4])
+    problems = writer_lifecycle_problems(verdict.get("writer_precheck"))
+    if problems:
+        return False, "; ".join(problems[:4])
     return True, "PASS"
+
+
+def writer_lifecycle_problems(precheck):
+    """Why the WriterClones did not run the deployed writer through the production lifecycle (empty = they did):
+    per venue the deployed-env precheck ok, a clean bootstrap exit with native checkpoints, the post-bootstrap strict
+    argv equal to the deployed env, and the strict-resume start VERIFIED before the baseline."""
+    problems = []
+    for venue in VENUES:
+        cell = (precheck or {}).get(venue) or {}
+        lifecycle = cell.get("lifecycle") or {}
+        if cell.get("ok") is not True:
+            problems.append(f"writer {venue} precheck not ok")
+        if (lifecycle.get("bootstrap_exit") or {}).get("exit_code") != 0 or not lifecycle.get("native_checkpoints"):
+            problems.append(f"writer {venue} bootstrap not cleanly checkpointed")
+        if (lifecycle.get("strict_precheck") or {}).get("ok") is not True:
+            problems.append(f"writer {venue} strict env not the deployed env")
+        if lifecycle.get("strict_resume") != "VERIFIED":
+            problems.append(f"writer {venue} strict-resume start {lifecycle.get('strict_resume')!r}")
+    return problems
 
 
 # ---------------------------------------------------------------- in-container modes
@@ -2922,6 +2944,127 @@ def clone_redis_cpu_parity(nano_cpus):
     return {"nano_cpus": nano, "parity": "CAPPED_GE_1" if nano >= 10**9 else "CAPPED_BELOW_1", "ok": nano >= 10**9}
 
 
+# WriterClone lifecycle (coordinator 2026-10-16, after the G12 final stop "TS clones never applied: TRADE@..,QUOTE@.."
+# of p184-g12-v224-final-20261016T143156Z): since 13ef59c the clone copies the deployed writer env, including
+# MARKET_DATA_NATIVE_REQUIRE_RESUME=1, but a fresh clone has no cursor checkpoint, so every native session refuses
+# HANDOFF_RESUME_REQUIRED (TS rust/crates/market-data-writer/src/session.rs run_inner) and TRADE/QUOTE never apply.
+# Production reached strict mode through a bootstrap: a native run that wrote verified checkpoints, then the strict
+# restart (TS scripts/p184_n1_writer_cutover.py; the same order as TS p184_n1_capacity_run.strict_restart). The clone
+# mirrors it: BOOTSTRAP (deployed env, REQUIRE_RESUME=0 only) until every MD feed applied, a clean stop that flushes the
+# checkpoints, then STRICT = the exact deployed env (precheck compares this post-bootstrap argv) and proof that the
+# strict sessions resumed (every MD feed applied again after the restart) before the baseline. The cursor root is a
+# durable host directory bound where production binds its writer state (a tmpfs /app/state lost it at the restart).
+# Also the clone Postgres gets the TS migration that holds service_heartbeats (the writer's heartbeat DB write failed
+# with UndefinedTableError in the empty clone database; the Redis heartbeat the sampler reads was unaffected).
+REQUIRE_RESUME_KEY = "MARKET_DATA_NATIVE_REQUIRE_RESUME"
+CURSOR_DIR_KEY = "DATA_LAYER_V2_CURSOR_DIR"
+CLONE_SCHEMA_MIGRATIONS = ("init-db/09-observability-security.sql",)  # TS migration owning service_heartbeats
+STRICT_RESUME_REFUSAL = "HANDOFF_RESUME_REQUIRED"
+
+
+def writer_state_destination(inspect):
+    """The deployed writer's durable bind that holds its cursor root (DATA_LAYER_V2_CURSOR_DIR), from docker inspect;
+    ValueError when the deployed cursor root is not on a bind mount (nothing to mirror)."""
+    env = dict(item.split("=", 1) for item in ((inspect or {}).get("Config") or {}).get("Env") or [] if "=" in item)
+    cursor = env.get(CURSOR_DIR_KEY)
+    if not cursor or not cursor.startswith("/"):
+        raise ValueError(f"deployed writer has no absolute {CURSOR_DIR_KEY}")
+    best = None
+    for mount in (inspect or {}).get("Mounts") or []:
+        dest = str(mount.get("Destination") or "").rstrip("/")
+        if mount.get("Type") == "bind" and dest and (cursor == dest or cursor.startswith(dest + "/")):
+            if best is None or len(dest) > len(best):
+                best = dest
+    if best is None:
+        raise ValueError(f"deployed writer cursor root {cursor} is not on a durable bind mount")
+    return best
+
+
+def lifecycle_writer_args(argv, image, state_dir, destination, phase):
+    """The clone writer ``docker run`` argv of one lifecycle phase: the WriterClone argv (deployed env) plus the
+    durable state bind; BOOTSTRAP replaces only the strict-resume flag by 0. The deployed argv must carry exactly one
+    ``MARKET_DATA_NATIVE_REQUIRE_RESUME=1`` (a non-strict deployed writer has no bootstrap to mirror)."""
+    if phase not in ("BOOTSTRAP", "STRICT"):
+        raise ValueError("phase must be BOOTSTRAP or STRICT")
+    argv = list(argv)
+    flags = [i for i, v in enumerate(argv) if v.startswith(REQUIRE_RESUME_KEY + "=") and i and argv[i - 1] == "-e"]
+    if len(flags) != 1 or argv[flags[0]] != REQUIRE_RESUME_KEY + "=1":
+        raise ValueError(f"deployed writer argv must carry exactly one {REQUIRE_RESUME_KEY}=1")
+    if argv.count(image) != 1:
+        raise ValueError("writer image must appear exactly once in the clone argv")
+    if any(v.endswith(":" + destination) or (":" + destination + ":") in v for v in argv):
+        raise ValueError(f"clone argv already mounts {destination}")
+    if phase == "BOOTSTRAP":
+        argv[flags[0]] = REQUIRE_RESUME_KEY + "=0"
+    index = argv.index(image)
+    # --entrypoint precedes the image; the bind goes before both.
+    if index >= 2 and argv[index - 2] == "--entrypoint":
+        index -= 2
+    argv[index:index] = ["-v", f"{state_dir}:{destination}:rw"]
+    return argv
+
+
+def bootstrap_env_delta(bootstrap_argv, strict_argv):
+    """Writer-view keys whose value differs between the BOOTSTRAP and STRICT argv; must be exactly the flag."""
+    a, b = writer_env_view(argv_env(bootstrap_argv)), writer_env_view(argv_env(strict_argv))
+    return {k: {"bootstrap": a.get(k), "strict": b.get(k)} for k in sorted(set(a) | set(b)) if a.get(k) != b.get(k)}
+
+
+def md_missing_since(sampler_rows, since_ns, venues=VENUES, feeds=MD_FEEDS):
+    """FEED@VENUE with no applied notification received at or after ``since_ns`` (strict-resume start proof)."""
+    seen = {(r.get("feed"), r.get("venue")) for r in sampler_rows
+            if r.get("k") == "ev" and r.get("id") is not None and isinstance(r.get("t"), int) and r["t"] >= since_ns}
+    return [f"{feed}@{venue}" for venue in venues for feed in feeds if (feed, venue) not in seen]
+
+
+def cursor_inventory(state_dir):
+    """Relative path -> {bytes, sha256} of every checkpoint file under the clone's state dir (evidence only; the
+    contents stay private and are erased at teardown). Unreadable entries are recorded, not raised."""
+    out = {}
+    root = Path(state_dir)
+    for path in sorted(root.rglob("*.json")):
+        rel = str(path.relative_to(root))
+        try:
+            data = path.read_bytes()
+            out[rel] = {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+        except OSError as error:
+            out[rel] = {"error": type(error).__name__}
+    return out
+
+
+def native_checkpoints(inventory):
+    """The native fixed-worker checkpoint files of an inventory (``fixed-workers-v1/native-<slot>/<consumer>.json``,
+    TS services/market_data/native_plan.export_native_config)."""
+    return sorted(rel for rel, row in inventory.items()
+                  if re.search(r"(^|/)fixed-workers-v1/native-\d+/[^/]+\.json$", rel) and row.get("bytes"))
+
+
+def apply_clone_schema(clone, sql, run=None):
+    """Apply the TS schema SQL to a WriterClone's disposable Postgres (after it accepts connections, before the
+    writer starts); ON_ERROR_STOP, so a failed statement stops the run."""
+    (run or sh)(["docker", "exec", "-e", "PGPASSWORD=dr05", clone.pg_name, "psql", "-v", "ON_ERROR_STOP=1", "-q",
+                 "-h", "127.0.0.1", "-p", str(clone.pg_port), "-U", "dr05", "-d", "dr05", "-c", sql], timeout=60)
+
+
+def refusal_lines(text, limit=5):
+    """(count, last ``limit`` lines truncated) of the writer log lines naming STRICT_RESUME_REFUSAL."""
+    lines = [line[:300] for line in str(text or "").splitlines() if STRICT_RESUME_REFUSAL in line]
+    return {"count": len(lines), "last": lines[-limit:]}
+
+
+def clone_schema_sql(ts_root):
+    """(sql text, provenance) of the TS migrations the clone Postgres needs (CLONE_SCHEMA_MIGRATIONS)."""
+    root, parts, files = Path(ts_root), [], []
+    for rel in CLONE_SCHEMA_MIGRATIONS:
+        data = (root / rel).read_bytes()
+        parts.append(data.decode())
+        files.append({"path": rel, "sha256": hashlib.sha256(data).hexdigest()})
+    sql = "\n".join(parts)
+    if "CREATE TABLE IF NOT EXISTS service_heartbeats" not in sql:
+        raise ValueError("clone schema migrations no longer define service_heartbeats")
+    return sql, {"migrations": files}
+
+
 # Production parity snapshot (``--production-parity``, coordinator 2026-10-16): the Kafka configuration G12 must mirror
 # and the deployed writer, both derived at run time, never hard-coded here.
 # - auto.leader.rebalance.enable: KAFKA_AUTO_LEADER_REBALANCE_ENABLE of the production kafka1-3 containers (docker
@@ -3605,8 +3748,27 @@ class Run:
             clone.redis_name = f"{self.ns}-tsredis-{label}"
             clone.pg_name = f"{self.ns}-tspg-{label}"
             clone.deadline = clone.clock() + LIMITS["clone_ready_s"]
-            check = writer_clone_precheck(clone.writer_args(), self.images["ts"], writer_reference(clone.inspect),
+            # Lifecycle (see WriterClone lifecycle above): durable state bind + BOOTSTRAP first, STRICT after.
+            destination = writer_state_destination(clone.inspect)
+            clone.state_dir = self.work / f"tsstate-{label}"
+            clone.state_dir.mkdir(mode=0o700)
+            os.chmod(clone.state_dir, 0o777)  # the writer's own uid writes the checkpoints; erased at teardown
+            deployed_args = clone.writer_args
+            clone.lifecycle = {"phase": "BOOTSTRAP"}
+            clone.writer_args = (lambda c=clone, base=deployed_args, dest=destination: lifecycle_writer_args(
+                base(), c.image, str(c.state_dir), dest, c.lifecycle["phase"]))
+            strict_argv = lifecycle_writer_args(deployed_args(), clone.image, str(clone.state_dir), destination,
+                                                "STRICT")
+            check = writer_clone_precheck(strict_argv, self.images["ts"], writer_reference(clone.inspect),
                                           (self.parity or {}).get("writer"))
+            delta = bootstrap_env_delta(clone.writer_args(), strict_argv)
+            check["lifecycle"] = {"phase": "BOOTSTRAP", "state_destination": destination,
+                                  "bootstrap_env_delta": delta, "strict_resume": "PENDING"}
+            if delta != {REQUIRE_RESUME_KEY: {"bootstrap": "0", "strict": "1"}}:
+                check["ok"] = False
+                check["problems"].append(f"bootstrap env differs from the deployed env beyond the flag: {delta}")
+            sql, check["clone_schema"] = clone_schema_sql(self.ts_root)
+            clone._wait_ready = (lambda c=clone, ready=clone._wait_ready, sql=sql: (ready(), apply_clone_schema(c, sql)))
             self.writer_precheck[venue] = check
             self.write_writer_precheck()
             self.note("writer_clone_precheck", venue=venue, **check)
@@ -3630,23 +3792,17 @@ class Run:
         self.expected.add("sampler")
         self.verify_image("sampler")
         started = time.time_ns()
-
-        def ready():
-            rows = load_jsonl(self.evidence / "publish.jsonl")
-            index, frames = publish_index(rows), book_frames(rows)
-            series = view_series(load_jsonl(self.evidence / "sampler.jsonl"))
-            return all(caught_up(series, index, v, started, frames=frames, predicate=self.predicate,
-                                 hold_s=10)["caught_up_ns"] for v in VENUES)
-
-        if not self.wait(LIMITS["clone_ready_s"], until=ready):
+        if not self.wait(LIMITS["clone_ready_s"], until=lambda: self.views_fresh(started)):
             raise RuntimeError("STOP TS clones never showed a fresh APPROVED book view")
         self.note("ts_views_fresh")
         # Fail fast instead of an hour of NOT_MEASURED: every clone applies TRADE, QUOTE and a closed BAR.
         if not self.wait(LIMITS["md_ready_s"], until=lambda: not md_missing(
                 load_jsonl(self.evidence / "sampler.jsonl"))):
-            raise RuntimeError("STOP TS clones never applied: " + ",".join(
-                md_missing(load_jsonl(self.evidence / "sampler.jsonl"))))
-        self.note("ts_market_data_applied")
+            missing = md_missing(load_jsonl(self.evidence / "sampler.jsonl"))
+            self.record_refusals("bootstrap_refusals")
+            raise RuntimeError("STOP TS clones never applied: " + ",".join(missing))
+        self.note("ts_market_data_applied", phase="BOOTSTRAP")
+        self.strict_restart()
         # Report-only: does each clone's heartbeat expose the native typed trade_integrity (integrity report)?
         exposed = self.wait(30, until=lambda: (lambda r: r if not any(r.values()) else None)(
             heartbeat_integrity_exposed(load_jsonl(self.evidence / "sampler.jsonl"))))
@@ -3656,6 +3812,95 @@ class Run:
                 "EXPOSED" if problem is None else "NOT_EXPOSED: " + problem)
         self.write_writer_precheck()
         self.note("writer_heartbeat_trade_integrity", **{v: p for v, p in exposed.items()})
+
+    def views_fresh(self, since_ns):
+        rows = load_jsonl(self.evidence / "publish.jsonl")
+        index, frames = publish_index(rows), book_frames(rows)
+        series = view_series(load_jsonl(self.evidence / "sampler.jsonl"))
+        return all(caught_up(series, index, v, since_ns, frames=frames, predicate=self.predicate,
+                             hold_s=10)["caught_up_ns"] for v in VENUES)
+
+    def record_refusals(self, field):
+        """Evidence of strict-resume refusals in each running clone's own log (its /tmp/logs dies with --rm)."""
+        for venue, clone in self.clones.items():
+            try:
+                found = refusal_lines(clone.log_tail(400))
+            except Exception as error:  # noqa: BLE001 - evidence is best effort
+                found = {"error": type(error).__name__}
+            self.writer_precheck.setdefault(venue, {}).setdefault("lifecycle", {})[field] = found
+        self.write_writer_precheck()
+
+    def strict_restart(self):
+        """BOOTSTRAP -> STRICT of every clone (WriterClone lifecycle): clean stop (exit 0) that flushed native
+        checkpoints, restart with the exact deployed env (precheck on this post-bootstrap argv), then proof that the
+        strict sessions resumed: every MD feed applied again and a fresh book view after the restart."""
+        restarted = {}
+        for venue, clone in self.clones.items():
+            role, lifecycle = f"tswriter-{venue.lower()}", self.writer_precheck[venue]["lifecycle"]
+            stop_ns = time.time_ns()
+            if not stop_role(self.ns, role, timeout=35):
+                raise RuntimeError(f"STOP bootstrap writer {venue} missing before the strict restart")
+            self.expected.discard(role)
+            life = ((self.exit_states([role], wait_s=10).get(role) or {}).get("lives") or [None])[-1]
+            lifecycle["bootstrap_exit"] = life
+            inventory = cursor_inventory(clone.state_dir)
+            lifecycle["checkpoints"], lifecycle["native_checkpoints"] = inventory, native_checkpoints(inventory)
+            self.write_writer_precheck()
+            if (not life or (life.get("died_ns") or 0) < stop_ns or life.get("exit_code") != 0
+                    or life.get("oom_killed")):
+                raise RuntimeError(f"STOP bootstrap writer {venue} did not stop cleanly: {life}")
+            if not lifecycle["native_checkpoints"]:
+                raise RuntimeError(f"STOP bootstrap writer {venue} left no native checkpoint: {sorted(inventory)}")
+            clone.lifecycle["phase"] = "STRICT"
+            argv = clone.writer_args()
+            check = writer_clone_precheck(argv, self.images["ts"], writer_reference(clone.inspect),
+                                          (self.parity or {}).get("writer"))
+            lifecycle["strict_precheck"] = {k: check[k] for k in ("ok", "problems", "clone_env", "clone_image")}
+            self.write_writer_precheck()
+            if not check["ok"] or argv_env(argv).get(REQUIRE_RESUME_KEY) != "1":
+                raise RuntimeError(f"STOP strict writer clone {venue} is not the deployed writer: "
+                                   + "; ".join(check["problems"] or ["strict flag missing"]))
+            clone.run(*argv, timeout=60)
+            self.expected.add(role)
+            self.verify_image(role)
+            restarted[venue] = time.time_ns()
+            lifecycle.update(phase="STRICT", strict_started_ns=restarted[venue])
+            self.write_writer_precheck()
+            self.note("writer_clone_strict_restart", venue=venue, bootstrap_exit=life,
+                      native_checkpoints=lifecycle["native_checkpoints"])
+
+        def missing():
+            rows = load_jsonl(self.evidence / "sampler.jsonl")
+            return [m for v, t in restarted.items() for m in md_missing_since(rows, t, venues=(v,))]
+
+        resumed = self.wait(LIMITS["md_ready_s"], until=lambda: not missing())
+        resumed = resumed and self.wait(LIMITS["clone_ready_s"], until=lambda: self.views_fresh(min(restarted.values())))
+        self.record_refusals("strict_refusals")
+        left = missing()
+        for venue in restarted:
+            lifecycle = self.writer_precheck[venue]["lifecycle"]
+            mine = [m for m in left if m.endswith("@" + venue)]
+            lifecycle["strict_resume"] = "VERIFIED" if resumed and not mine else "FAILED"
+            lifecycle["strict_missing"] = mine
+        self.write_writer_precheck()
+        if not resumed or left:
+            raise RuntimeError("STOP strict-resume start not verified: missing after restart " + ",".join(left)
+                               + ("" if left else " (no fresh APPROVED book view)"))
+        self.note("ts_market_data_applied", phase="STRICT", restarted_ns=restarted)
+
+    def erase_clone_state(self):
+        """Remove the clones' durable state dirs (written by the writer's uid) with a disposable holder container."""
+        removed, errors = [], []
+        for path in sorted(self.work.glob("tsstate-*")) if self.work.is_dir() else ():
+            try:
+                sh(["docker", "run", "--rm", "--label", f"{LABEL}={self.ns}", "--network", "none",
+                    "-v", f"{path}:/state:rw", "--entrypoint", "find", self.images["holder"], "/state",
+                    "-mindepth", "1", "-delete"], timeout=60)
+                path.rmdir()
+                removed.append(path.name)
+            except Exception as error:  # noqa: BLE001 - teardown continues and reports
+                errors.append(f"{path.name}:{type(error).__name__}")
+        return {"removed": removed, "errors": errors}
 
     # -- INCIDENT 2026-10-15 core-group reproduction (no projector/Stream/Query/TS clones: the core group only)
     def core_group_up(self):
@@ -3845,7 +4090,10 @@ class Run:
                     removed.append(item)
             except Exception as error:  # noqa: BLE001 - cleanup continues
                 errors.append(type(error).__name__)
+        clone_state = self.erase_clone_state()
         report = teardown(self.ns)
+        report["clone_state_erased"] = clone_state
+        errors += clone_state["errors"]
         try:
             report["log_followers"] = self.stop_followers()
         except Exception as error:  # noqa: BLE001 - evidence is best effort, teardown is not

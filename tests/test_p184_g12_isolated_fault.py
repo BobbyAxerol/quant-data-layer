@@ -23,6 +23,15 @@ NATIVE_ENV = {"MARKET_DATA_NATIVE_FEEDS": "TRADE,QUOTE", "MARKET_DATA_NATIVE_FLA
               "DATA_LAYER_V2_BOOK_SNAPSHOT_BATCH_MAX_WAIT_MS": "0", "DATA_LAYER_V2_STREAM_BATCH_MAX_ITEMS": "64"}
 
 
+def lifecycle_ok():
+    """A writer-precheck.json of two clones that went BOOTSTRAP -> STRICT with a verified strict-resume start."""
+    cell = {"ok": True, "problems": [],
+            "lifecycle": {"phase": "STRICT", "strict_resume": "VERIFIED", "bootstrap_exit": {"exit_code": 0},
+                          "native_checkpoints": ["cursors/fixed-workers-v1/native-0/c.json"],
+                          "strict_precheck": {"ok": True, "problems": []}}}
+    return {v: json.loads(json.dumps(cell)) for v in g12.VENUES}
+
+
 def effective(rebalance=True, topics=None, brokers=None):
     """A sealed effective production observation consistent with the C + A' profile (Codex K3)."""
     from scripts.kafka_internal_topic_compaction import FROZEN_OTHERS
@@ -3516,7 +3525,7 @@ class IntegrityOracleTests(unittest.TestCase):
                 self.assertTrue(frozen["pass"])
                 self.assertEqual(frozen["schema"], g12.VERDICT_SCHEMA)
         bound = {"parity_sha256": effective()["sha256"], "before": effective(), "after": effective()}
-        frozen.update(status="COMPLETED", broker_config={"production_parity": "MATCH",
+        frozen.update(status="COMPLETED", writer_precheck=lifecycle_ok(), broker_config={"production_parity": "MATCH",
                                                          "kafka_profile": parity_doc(True)["kafka"],
                                                          "production_effective": bound})
         self.assertEqual(g12.g12_receipt_creditable(frozen), (True, "PASS"))
@@ -3645,7 +3654,7 @@ class ProductionEffectiveBindingTests(unittest.TestCase):
     before and after the run; a missing or drifted observation refuses credit even when every constant is equal."""
 
     def verdict(self, before=None, after=None, parity=None):
-        out = {"schema": g12.VERDICT_SCHEMA, "status": "COMPLETED", "pass": True,
+        out = {"schema": g12.VERDICT_SCHEMA, "status": "COMPLETED", "pass": True, "writer_precheck": lifecycle_ok(),
                "faults": [{"name": n} for n in ("broker_stop_start", "projector_restart", "stream_restart")],
                "caught_up_predicate": {"version": g12.CAUGHT_UP_VERSION, "frozen": True},
                "broker_config": {"production_parity": "MATCH", "kafka_profile": parity_doc()["kafka"],
@@ -3927,3 +3936,201 @@ class ProductionParityTests(unittest.TestCase):
                 self.assertEqual(json.loads(out.read_text()), doc)
                 with self.assertRaises(FileExistsError):
                     g12.main(["--parity-snapshot", str(out), "--cert-dir", tmp])
+
+
+class WriterCloneLifecycleTests(unittest.TestCase):
+    """Coordinator 2026-10-16 (G12 final stop "TS clones never applied: TRADE@..,QUOTE@.."): the clone mirrors the
+    production writer lifecycle - BOOTSTRAP without REQUIRE_RESUME until native checkpoints exist, a clean stop, then
+    the exact deployed env with a verified strict-resume start - and its Postgres gets the heartbeat schema."""
+
+    IMAGE = "sha256:" + "d" * 64
+    DEST = "/app/state/data-layer-v2"
+
+    def inspect(self, mounts=None, cursor="/app/state/data-layer-v2/cursors"):
+        env = [f"{k}={v}" for k, v in NATIVE_ENV.items()] + ([f"DATA_LAYER_V2_CURSOR_DIR={cursor}"] if cursor else [])
+        return {"Image": self.IMAGE, "Config": {"Env": env, "User": "root"},
+                "Mounts": mounts if mounts is not None else [
+                    {"Type": "bind", "Source": "/h/logs", "Destination": "/app/logs"},
+                    {"Type": "bind", "Source": "/h/state", "Destination": "/app/state/data-layer-v2"},
+                    {"Type": "bind", "Source": "/h/secrets", "Destination": "/run/secrets/qdl-v2"}]}
+
+    def argv(self, **changes):
+        env = {"POSTGRES_DSN": "postgresql://x:y@h/db", "DATA_LAYER_V2_CURSOR_DIR": "/app/state/data-layer-v2/cursors",
+               **NATIVE_ENV, **changes}
+        argv = ["docker", "run", "-d", "--rm", "--name", "w", "--tmpfs", "/app/state:uid=0,mode=1777"]
+        for key, value in env.items():
+            if value is not None:
+                argv += ["-e", f"{key}={value}"]
+        return argv + ["-v", "/run/logs:/tmp/writer-stderr", "--entrypoint", "sh", self.IMAGE, "-c", "exec python"]
+
+    def test_state_destination_is_the_deployed_cursor_bind(self):
+        self.assertEqual(g12.writer_state_destination(self.inspect()), self.DEST)
+        nested = self.inspect()["Mounts"] + [{"Type": "bind", "Source": "/h/c", "Destination": self.DEST + "/cursors"}]
+        self.assertEqual(g12.writer_state_destination(self.inspect(nested)), self.DEST + "/cursors")
+        for inspect in (self.inspect(mounts=[]), self.inspect(cursor=None),
+                        self.inspect([{"Type": "volume", "Destination": self.DEST}]),
+                        self.inspect([{"Type": "bind", "Destination": "/app/state/data-layer-v2-x"}])):
+            with self.subTest(inspect=str(inspect)[-80:]), self.assertRaises(ValueError):
+                g12.writer_state_destination(inspect)
+
+    def test_bootstrap_flips_only_the_flag_and_both_phases_bind_the_state(self):
+        base = self.argv()
+        boot = g12.lifecycle_writer_args(base, self.IMAGE, "/run/tsstate-okx", self.DEST, "BOOTSTRAP")
+        strict = g12.lifecycle_writer_args(base, self.IMAGE, "/run/tsstate-okx", self.DEST, "STRICT")
+        self.assertEqual(g12.argv_env(boot)["MARKET_DATA_NATIVE_REQUIRE_RESUME"], "0")
+        self.assertEqual(g12.argv_env(strict), g12.argv_env(base))
+        for argv in (boot, strict):
+            bind = argv.index("/run/tsstate-okx:" + self.DEST + ":rw")
+            self.assertEqual((argv[bind - 1], argv[bind + 1:bind + 4]), ("-v", ["--entrypoint", "sh", self.IMAGE]))
+            self.assertEqual(len(argv), len(base) + 2)
+        self.assertEqual(g12.bootstrap_env_delta(boot, strict),
+                         {"MARKET_DATA_NATIVE_REQUIRE_RESUME": {"bootstrap": "0", "strict": "1"}})
+        deployed = g12.writer_reference(self.inspect())
+        self.assertTrue(g12.writer_clone_precheck(strict, self.IMAGE, deployed, dict(deployed))["ok"])
+        self.assertFalse(g12.writer_clone_precheck(boot, self.IMAGE, deployed, dict(deployed))["ok"])
+        self.assertEqual(base, self.argv())  # input untouched
+
+    def test_lifecycle_refusals(self):
+        cases = {"no strict flag": (self.argv(MARKET_DATA_NATIVE_REQUIRE_RESUME=None), "STRICT"),
+                 "flag 0 deployed": (self.argv(MARKET_DATA_NATIVE_REQUIRE_RESUME="0"), "BOOTSTRAP"),
+                 "flag twice": (self.argv() [:-6] + ["-e", "MARKET_DATA_NATIVE_REQUIRE_RESUME=1"] + self.argv()[-6:],
+                                "STRICT"),
+                 "state already mounted": (self.argv()[:-6] + ["-v", "/x:" + self.DEST] + self.argv()[-6:], "STRICT"),
+                 "unknown phase": (self.argv(), "LIVE")}
+        for label, (argv, phase) in cases.items():
+            with self.subTest(label), self.assertRaises(ValueError):
+                g12.lifecycle_writer_args(argv, self.IMAGE, "/s", self.DEST, phase)
+        with self.assertRaises(ValueError):
+            g12.lifecycle_writer_args(self.argv(), "sha256:" + "e" * 64, "/s", self.DEST, "STRICT")
+
+    def test_md_missing_since_needs_every_feed_after_the_restart(self):
+        rows = [{"k": "ev", "t": 5 * S, "venue": "OKX", "feed": f, "id": "1"} for f in g12.MD_FEEDS]
+        rows += [{"k": "ev", "t": 20 * S, "venue": "OKX", "feed": f, "id": "2"} for f in ("MARK", "BAR")]
+        self.assertEqual(g12.md_missing_since(rows, 0, venues=("OKX",)), [])
+        self.assertEqual(g12.md_missing_since(rows, 10 * S, venues=("OKX",)), ["TRADE@OKX", "QUOTE@OKX"])
+        rows.append({"k": "ev", "t": 21 * S, "venue": "OKX", "feed": "TRADE", "id": None})
+        self.assertIn("TRADE@OKX", g12.md_missing_since(rows, 10 * S, venues=("OKX",)))
+
+    def test_cursor_inventory_and_native_checkpoints(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            native = root / "cursors/fixed-workers-v1/native-0"
+            native.mkdir(parents=True)
+            (native / "p184-g12-dl-x.ts.json").write_text('{"offset": 3}')
+            (root / "cursors/fixed-workers-v1/native-1").mkdir()
+            (root / "cursors/fixed-workers-v1/native-1/empty.json").write_text("")
+            (root / "cursors/fixed-workers-v1/worker-2").mkdir()
+            (root / "cursors/fixed-workers-v1/worker-2/py.json").write_text("{}")
+            inventory = g12.cursor_inventory(root)
+            self.assertEqual(len(inventory), 3)
+            self.assertNotIn("offset", json.dumps(inventory))
+            self.assertEqual(g12.native_checkpoints(inventory),
+                             ["cursors/fixed-workers-v1/native-0/p184-g12-dl-x.ts.json"])
+        self.assertEqual(g12.native_checkpoints({}), [])
+
+    def test_clone_schema_comes_from_the_ts_migration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / g12.CLONE_SCHEMA_MIGRATIONS[0]
+            path.parent.mkdir(parents=True)
+            path.write_text("CREATE TABLE IF NOT EXISTS service_heartbeats (service_name TEXT PRIMARY KEY);\n")
+            sql, provenance = g12.clone_schema_sql(tmp)
+            self.assertIn("service_heartbeats", sql)
+            self.assertEqual(provenance["migrations"][0]["path"], g12.CLONE_SCHEMA_MIGRATIONS[0])
+            path.write_text("CREATE TABLE other (x int);\n")
+            with self.assertRaises(ValueError):
+                g12.clone_schema_sql(tmp)
+        calls = []
+        clone = types.SimpleNamespace(pg_name="ns-tspg-okx", pg_port=5442)
+        g12.apply_clone_schema(clone, "SELECT 1", run=lambda argv, timeout: calls.append(argv))
+        self.assertEqual(calls[0][:5], ["docker", "exec", "-e", "PGPASSWORD=dr05", "ns-tspg-okx"])
+        self.assertIn("ON_ERROR_STOP=1", calls[0])
+        self.assertEqual(calls[0][-2:], ["-c", "SELECT 1"])
+
+    def test_refusal_lines(self):
+        text = "a\n2026 native session error HANDOFF_RESUME_REQUIRED x\nb\n" + "y HANDOFF_RESUME_REQUIRED\n" * 7
+        found = g12.refusal_lines(text)
+        self.assertEqual((found["count"], len(found["last"])), (8, 5))
+        self.assertEqual(g12.refusal_lines(None), {"count": 0, "last": []})
+
+    def test_credit_requires_the_verified_lifecycle(self):
+        self.assertEqual(g12.writer_lifecycle_problems(lifecycle_ok()), [])
+        for path, value in ((("lifecycle", "strict_resume"), "FAILED"), (("lifecycle", "strict_resume"), None),
+                            (("lifecycle", "bootstrap_exit"), {"exit_code": 137}),
+                            (("lifecycle", "native_checkpoints"), []),
+                            (("lifecycle", "strict_precheck"), {"ok": False}), (("ok",), False)):
+            with self.subTest(path=path, value=value):
+                doc = lifecycle_ok()
+                cell = doc["OKX"]
+                for key in path[:-1]:
+                    cell = cell[key]
+                cell[path[-1]] = value
+                self.assertTrue(g12.writer_lifecycle_problems(doc))
+        self.assertTrue(g12.writer_lifecycle_problems(None))
+        self.assertTrue(g12.writer_lifecycle_problems({"BINANCE": lifecycle_ok()["BINANCE"]}))
+
+    # -- Run.strict_restart with fakes (no Docker)
+    def run_with(self, tmp, *, exit_code=0, checkpoint=True, applied=True):
+        run = g12.Run.__new__(g12.Run)
+        run.ns, run.images, run.parity = NS, dict(g12.IMAGES, ts=self.IMAGE), None
+        run.evidence = Path(tmp) / "evidence"
+        run.evidence.mkdir()
+        run.expected, run.clones, run.writer_precheck, run.notes = {"tswriter-okx"}, {}, {}, []
+        run.note = lambda step, **fields: run.notes.append(step)
+        run.verify_image = lambda role: None
+        run.views_fresh = lambda since: True
+        run.wait = lambda seconds, faulted=(), until=None, step=5.0: until()
+        state = Path(tmp) / "tsstate-okx"
+        (state / "cursors/fixed-workers-v1/native-0").mkdir(parents=True)
+        if checkpoint:
+            (state / "cursors/fixed-workers-v1/native-0/c.json").write_text('{"o": 1}')
+        started = []
+        clone = types.SimpleNamespace(image=self.IMAGE, state_dir=state, lifecycle={"phase": "BOOTSTRAP"},
+                                      inspect=self.inspect(), log_tail=lambda lines: "",
+                                      run=lambda *argv, timeout: started.append(list(argv)))
+        clone.writer_args = lambda: g12.lifecycle_writer_args(self.argv(), self.IMAGE, str(state), self.DEST,
+                                                              clone.lifecycle["phase"])
+        run.clones = {"OKX": clone}
+        run.writer_precheck = {"OKX": {"ok": True, "lifecycle": {"phase": "BOOTSTRAP", "strict_resume": "PENDING"}}}
+        died = {}
+        run.exit_states = lambda roles, wait_s=3.0: {"tswriter-okx": {"lives": [
+            {"exit_code": exit_code, "oom_killed": False, "died_ns": died["ns"]}]}}
+
+        def stop_role(ns, role, timeout=30, kill=False):
+            died["ns"] = time.time_ns()
+            return True
+
+        def sampler(path):
+            if not applied or not started:
+                return []
+            return [{"k": "ev", "t": time.time_ns() + S, "venue": "OKX", "feed": f, "id": "9"} for f in g12.MD_FEEDS]
+        return run, started, stop_role, sampler
+
+    def test_strict_restart_verifies_the_resumed_start(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run, started, stop_role, sampler = self.run_with(tmp)
+            with patch.object(g12, "stop_role", stop_role), patch.object(g12, "load_jsonl", sampler), \
+                    patch.object(g12, "VENUES", ("OKX",)):
+                run.strict_restart()
+            self.assertEqual(len(started), 1)
+            self.assertEqual(g12.argv_env(started[0])["MARKET_DATA_NATIVE_REQUIRE_RESUME"], "1")
+            lifecycle = run.writer_precheck["OKX"]["lifecycle"]
+            self.assertEqual((lifecycle["phase"], lifecycle["strict_resume"]), ("STRICT", "VERIFIED"))
+            self.assertEqual(lifecycle["native_checkpoints"], ["cursors/fixed-workers-v1/native-0/c.json"])
+            self.assertTrue(lifecycle["strict_precheck"]["ok"])
+            self.assertIn("tswriter-okx", run.expected)
+            saved = json.loads((run.evidence / g12.WRITER_PRECHECK_FILE).read_text())
+            self.assertEqual(saved["OKX"]["lifecycle"]["strict_resume"], "VERIFIED")
+
+    def test_strict_restart_stops_on_unclean_bootstrap_missing_checkpoint_or_no_resume(self):
+        for label, kwargs, text in (("unclean exit", {"exit_code": 137}, "did not stop cleanly"),
+                                    ("no checkpoint", {"checkpoint": False}, "left no native checkpoint"),
+                                    ("strict refused", {"applied": False}, "strict-resume start not verified")):
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                run, started, stop_role, sampler = self.run_with(tmp, **kwargs)
+                with patch.object(g12, "stop_role", stop_role), patch.object(g12, "load_jsonl", sampler), \
+                        patch.object(g12, "VENUES", ("OKX",)), self.assertRaisesRegex(RuntimeError, text):
+                    run.strict_restart()
+                if label == "strict refused":
+                    self.assertEqual(run.writer_precheck["OKX"]["lifecycle"]["strict_resume"], "FAILED")
+                else:
+                    self.assertEqual(started, [])
