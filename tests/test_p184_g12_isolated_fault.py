@@ -61,6 +61,26 @@ def md_rows(venue, start, end, *, trade_ms=100, quote_ms=100, bar_ms=800, mark_m
     return pubs, evs
 
 
+NATIVE_NAMES = ("gaps", "continuity_errors", "snapshot_replaced", "sequence_resets", "cursor_expired_errors",
+                "slow_consumer_errors", "duplicates_applied", "offset_regressions", "reconnects", "replayed_events",
+                "applied", "refreshed", "duplicates_rejected")
+
+
+def hb_rows(venue, start, end, *, step_s=2, counters=None, workers=(4, 4), liveness="LIVE", key="hb-key-0001"):
+    """Sampler heartbeat rows (k == hb) of one clone every step_s: pooled typed TRADE counters, all workers LIVE.
+    ``counters(t_ns) -> dict`` overrides the default (every failure counter 0, applied growing)."""
+    rows, t = [], start
+    while t <= end:
+        values = counters(t) if counters else {**{n: 0 for n in NATIVE_NAMES}, "applied": t // S}
+        rows.append({"k": "hb", "t": t, "venue": venue, "heartbeat": True, "status": "READY",
+                     "key_tail": key, "last_seen_unix": t / S - 0.5, "trade_integrity": values,
+                     "trade_integrity_scope": {"counter_scope": "current_live_worker_epochs",
+                                               "workers_reporting": workers[0], "workers_expected": workers[1]},
+                     "worker_liveness": {str(i): liveness for i in range(workers[1])}})
+        t += step_s * S
+    return rows
+
+
 class NamespaceAndTopologyTests(unittest.TestCase):
     def test_namespace_is_exact(self):
         self.assertEqual(g12.namespace(NS), NS)
@@ -220,6 +240,7 @@ class AnalysisTests(unittest.TestCase):
             p, v = md_rows(venue, 0, 500 * S)
             pubs += p
             views += v
+            views += hb_rows(venue, 0, 500 * S)
         monitor = [{"t": t * S, "ports": {"8210": t >= 62}, "projector_lag": 0, "under_replicated": 0}
                    for t in range(0, 500)]
         fault = {"k": "fault", "name": "stream_restart", "kind": "stream", "injected_ns": 60 * S,
@@ -234,7 +255,7 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(result["parts"], {"caught_up": True, "window_complete": True, "g1": "PASS",
                                            "g2": "PASS", "g2_feeds": {"TRADE": "PASS", "QUOTE": "PASS",
                                                                       "MARK": "PASS"}, "g3": "PASS",
-                                           "monitor": "PASS", "sampler": "PASS"})
+                                           "integrity": "PASS", "monitor": "PASS", "sampler": "PASS"})
         self.assertEqual(result["g2"]["TRADE"]["BINANCE"]["n"], 1200)
         self.assertEqual(result["g3"]["BAR_1m"]["OKX"]["n"], 5)  # closes 120..360 s in [62.1, 362.1) s
         short = g12.evaluate_fault(fault, pubs, [v for v in views if v["t"] < 200 * S], monitor)
@@ -646,7 +667,7 @@ class MarketDataWindowTests(unittest.TestCase):
         none = self.window(*self.rows(trades=False, quotes=False, bars=False, marks=False))
         self.assertEqual((none["g2_status"], none["g3_status"]), ("NOT_MEASURED", "NOT_MEASURED"))
 
-    def test_lost_trade_fails_unseen_quote_does_not_pending_excluded(self):
+    def test_lost_trade_fails_unseen_quote_does_not_pending_blocks(self):
         pubs, evs = self.rows()
         lost = next(e for e in evs if e["feed"] == "TRADE" and e["venue"] == "OKX" and e["t"] > 200 * S)
         conflated = next(e for e in evs if e["feed"] == "QUOTE" and e["venue"] == "OKX" and e["t"] > 200 * S)
@@ -655,10 +676,12 @@ class MarketDataWindowTests(unittest.TestCase):
         self.assertEqual((result["g2"]["TRADE"]["OKX"]["lost"], result["g2"]["TRADE"]["OKX"]["status"]), (1, "FAIL"))
         self.assertEqual(result["g2"]["QUOTE"]["OKX"]["unseen"], 1)
         self.assertEqual(result["g2"]["QUOTE"]["OKX"]["status"], "PASS")
-        # The sampler has not yet covered reference + 10 s: undecidable, excluded rather than lost.
+        # The sampler has not yet covered reference + 10 s: undecidable, not lost, and never a PASS (OF-G12-2).
         early = g12.md_window(pubs, [e for e in evs if e["t"] < 205 * S], 100 * S, 400 * S)
         self.assertEqual(early["g2"]["TRADE"]["OKX"]["lost"], 0)
         self.assertGreater(early["g2"]["TRADE"]["OKX"]["pending"], 0)
+        self.assertEqual(early["g2"]["TRADE"]["OKX"]["status"], "NOT_MEASURED")
+        self.assertEqual(early["g2_status"], "NOT_MEASURED")
 
     def test_mark_window_gate_and_unseen(self):
         result = self.window(*self.rows())
@@ -703,6 +726,7 @@ class MarketDataWindowTests(unittest.TestCase):
                 p, v = md_rows(venue, 0, 500 * S, **kwargs)
                 pubs += p
                 views += v
+                views += hb_rows(venue, 0, 500 * S)
             return g12.evaluate_fault(fault, pubs, views, monitor)
         self.assertTrue(run()["pass"])
         no_bars = run(bars=False)
@@ -1243,6 +1267,7 @@ class MonitorGapRuleTests(unittest.TestCase):
             p, v = md_rows(venue, 0, 500 * S)
             pubs += p
             views += v
+            views += hb_rows(venue, 0, 500 * S)
         return g12.evaluate_fault(self.FAULT, pubs, views, sorted(monitor, key=lambda r: r["t"]))
 
     @staticmethod
@@ -2003,6 +2028,7 @@ class SamplerCoverageTests(unittest.TestCase):
             p, v = md_rows(venue, 0, 500 * S)
             pubs += p
             views += v
+            views += hb_rows(venue, 0, 500 * S)
         monitor = [{"t": t * S, "ports": {"8210": t >= 62}, "projector_lag": 0, "under_replicated": 0}
                    for t in range(0, 500)]
         fault = {"k": "fault", "name": "stream_restart", "kind": "stream", "injected_ns": 60 * S,
@@ -3254,3 +3280,183 @@ class CoreGroupSimultaneousAcceptanceTests(unittest.TestCase):
         self.assertEqual(result["verdict"]["replace_all"]["pause_s"], 7.5)
         never = g12.core_group_verdict(self.build("never", reform_at=600) / "evidence")["replace_all"]
         self.assertEqual((never["reason"], never["reformed_s"], never["pause_s"]), ("NEVER_REFORMED", None, None))
+
+
+class IntegrityOracleTests(unittest.TestCase):
+    """OF-G12-2 (inheritance audit 2026-10-16): rewinds, duplicates applied and native typed counters per fault;
+    absent observations are NOT_MEASURED, never a PASS. OF-G12-1: only a frozen predicate v2 run is credited."""
+    FAULT = {"k": "fault", "name": "stream_restart", "kind": "stream", "injected_ns": 60 * S, "restart_ns": 61 * S}
+    MONITOR = [{"t": t * S, "ports": {"8210": t >= 62}, "projector_lag": 0, "under_replicated": 0}
+               for t in range(0, 500)]
+
+    def inputs(self, *, hb=None, edit=None):
+        pubs, views = [], []
+        for venue in g12.VENUES:
+            p, v = stream_rows(venue, 0, 500 * S)
+            pubs += p
+            views += v
+            p, v = md_rows(venue, 0, 500 * S)
+            pubs += p
+            views += v
+            views += (hb or {}).get(venue, hb_rows(venue, 0, 500 * S)) if hb is not None else hb_rows(venue, 0, 500 * S)
+        if edit:
+            views = edit(views)
+        return pubs, views
+
+    def fault(self, **kwargs):
+        pubs, views = self.inputs(**kwargs)
+        return g12.evaluate_fault(self.FAULT, pubs, views, self.MONITOR)
+
+    def test_clean_run_passes_with_every_check_measured(self):
+        result = self.fault()
+        self.assertEqual(result["parts"]["integrity"], "PASS")
+        okx = result["integrity"]["venues"]["OKX"]
+        self.assertEqual((okx["book_rewinds"], okx["trade_duplicates_n"], okx["native"]["status"]), ([], 0, "PASS"))
+        self.assertEqual(okx["rewinds"], {"TRADE": 0, "QUOTE": 0, "MARK": 0})
+        self.assertTrue(okx["native"]["complete"])
+        self.assertEqual(result["integrity"]["scope_ns"][0], self.FAULT["injected_ns"])
+        self.assertEqual(result["integrity"]["scope_ns"][1], result["g1_window_ns"][1])
+        self.assertTrue(result["pass"])
+
+    def test_book_rewind_is_post_to_post_against_the_high_water(self):
+        # 200 s: the OKX view goes back to an older sequence after newer ones (all inside the scope).
+        def back(views):
+            older = next(v for v in views if v.get("k") == "view" and v["venue"] == "OKX" and v["t"] >= 150 * S)
+            return views + [dict(older, t=200 * S + 1)]
+        result = self.fault(edit=back)
+        self.assertEqual(result["integrity"]["venues"]["OKX"]["status"], "FAIL")
+        self.assertIn("BOOK rewind", result["integrity"]["venues"]["OKX"]["reasons"])
+        self.assertEqual(result["integrity"]["venues"]["BINANCE"]["status"], "PASS")
+        self.assertFalse(result["pass"])
+        # Before the injection: outside the scope (the high-water still includes it).
+        def early(views):
+            older = next(v for v in views if v.get("k") == "view" and v["venue"] == "OKX" and v["t"] >= 10 * S)
+            return views + [dict(older, t=30 * S + 1)]
+        self.assertEqual(self.fault(edit=early)["parts"]["integrity"], "PASS")
+        rows = [{"k": "view", "t": 1, "venue": "OKX", "seq": 100}, {"k": "view", "t": 2, "venue": "OKX", "seq": 200},
+                {"k": "view", "t": 3, "venue": "OKX", "seq": 150}, {"k": "view", "t": 4, "venue": "OKX", "seq": None}]
+        self.assertEqual(g12.book_rewinds(rows)["OKX"], [{"t": 3, "before": 200, "after": 150}])  # PRE100->200->150
+
+    def test_trade_duplicate_applied_fails_bar_reapply_is_report_only(self):
+        def dup(feed, later_s=30):
+            def edit(views):
+                ev = next(v for v in views if v.get("k") == "ev" and v["venue"] == "OKX" and v["feed"] == feed
+                          and v["t"] >= 100 * S)
+                return views + [dict(ev, t=ev["t"] + later_s * S)]
+            return edit
+        trade = self.fault(edit=dup("TRADE"))
+        self.assertEqual(trade["integrity"]["venues"]["OKX"]["trade_duplicates_n"], 1)
+        self.assertIn("TRADE duplicate applied", trade["integrity"]["venues"]["OKX"]["reasons"])
+        self.assertEqual(trade["parts"]["integrity"], "FAIL")
+        self.assertEqual(trade["parts"]["g2"], "PASS")  # transit counts the first receipt; integrity catches it
+        self.assertFalse(trade["pass"])
+        bar = self.fault(edit=dup("BAR", 90))  # a retained closed bar re-written after a newer one
+        self.assertEqual(bar["integrity"]["venues"]["OKX"]["report_only_rewinds"]["BAR"], 1)
+        self.assertEqual(bar["parts"]["integrity"], "PASS")
+
+    def test_quote_and_mark_event_time_rewind_fails(self):
+        for feed in ("QUOTE", "MARK", "TRADE"):
+            with self.subTest(feed=feed):
+                def edit(views, feed=feed):
+                    ev = next(v for v in views if v.get("k") == "ev" and v["venue"] == "BINANCE"
+                              and v["feed"] == feed and v["t"] >= 100 * S)
+                    return views + [dict(ev, t=ev["t"] + 20 * S, id="x-" + str(ev["id"]))]
+                result = self.fault(edit=edit)
+                self.assertEqual(result["integrity"]["venues"]["BINANCE"]["rewinds"][feed], 1)
+                self.assertEqual(result["parts"]["integrity"], "FAIL")
+
+    def test_native_failure_counter_fails(self):
+        for name in ("gaps", "cursor_expired_errors", "slow_consumer_errors", "duplicates_applied",
+                     "offset_regressions", "snapshot_replaced"):
+            with self.subTest(name=name):
+                def counters(t, name=name):
+                    return {**{n: 0 for n in NATIVE_NAMES}, "applied": t // S, name: 1 if t >= 120 * S else 0}
+                result = self.fault(hb={"OKX": hb_rows("OKX", 0, 500 * S, counters=counters)})
+                self.assertEqual(result["integrity"]["venues"]["OKX"]["native"]["status"], "FAIL")
+                self.assertEqual(result["parts"]["integrity"], "FAIL")
+        # A failure counter that moved before the injection is outside the scope.
+        before = lambda t: {**{n: 0 for n in NATIVE_NAMES}, "applied": t // S, "gaps": 1 if t >= 30 * S else 0}
+        self.assertEqual(self.fault(hb={"OKX": hb_rows("OKX", 0, 500 * S, counters=before)})["parts"]["integrity"],
+                         "PASS")
+
+    def test_native_coverage_gaps_are_not_measured(self):
+        cases = {
+            "absent": [],
+            "old sampler rows": [{"k": "hb", "t": t * S, "venue": "OKX", "heartbeat": True, "status": "READY",
+                                  "demanded": 4, "session_ready": 4} for t in range(0, 500, 2)],
+            "worker not live": hb_rows("OKX", 0, 500 * S, liveness="RESTARTING"),
+            "roster incomplete": hb_rows("OKX", 0, 500 * S, workers=(3, 4)),
+            "no sample after the scope": hb_rows("OKX", 0, 300 * S),
+            "counters decreased": hb_rows("OKX", 0, 500 * S, counters=lambda t: {
+                **{n: 0 for n in NATIVE_NAMES}, "applied": (t // S) if t < 200 * S else 1}),
+            "bool is not a count": hb_rows("OKX", 0, 500 * S, counters=lambda t: {
+                **{n: 0 for n in NATIVE_NAMES}, "gaps": False}),
+        }
+        for label, rows in cases.items():
+            with self.subTest(label):
+                result = self.fault(hb={"OKX": rows})
+                okx = result["integrity"]["venues"]["OKX"]
+                self.assertEqual(okx["native"]["status"], "NOT_MEASURED", okx["native"])
+                self.assertEqual(okx["status"], "NOT_MEASURED")
+                self.assertEqual(result["parts"]["integrity"], "NOT_MEASURED")
+                self.assertFalse(result["pass"])
+        late = self.fault(hb={"OKX": hb_rows("OKX", 0, 300 * S)})
+        self.assertEqual(g12.verdict_undecided(late), ["integrity.OKX no heartbeat after the scope"])
+
+    def test_notification_coverage_gaps_are_not_measured(self):
+        listener = self.fault(edit=lambda v: v + [{"k": "ev_error", "t": 150 * S, "venue": "OKX",
+                                                   "error": "ConnectionError"}])
+        self.assertIn("notification listener errors", listener["integrity"]["venues"]["OKX"]["reasons"])
+        self.assertEqual(listener["parts"]["integrity"], "NOT_MEASURED")
+        anonymous = self.fault(edit=lambda v: v + [{"k": "ev", "t": 150 * S, "venue": "OKX", "feed": "TRADE",
+                                                    "id": None, "ev_ms": None}])
+        self.assertEqual(anonymous["parts"]["integrity"], "NOT_MEASURED")
+        no_trade = self.fault(edit=lambda v: [r for r in v if not (r.get("k") == "ev" and r.get("feed") == "TRADE")])
+        self.assertIn("no TRADE notification", no_trade["integrity"]["venues"]["OKX"]["reasons"])
+        self.assertFalse(no_trade["pass"])
+
+    def test_pending_is_undecided_until_resolved(self):
+        pubs, views = self.inputs()
+        # The sampler stops at 365 s: a TRADE published at 358 s and not yet applied is undecidable (pending).
+        views = [r for r in views if r["t"] <= 365 * S
+                 and not (r.get("feed") == "TRADE" and r["venue"] == "OKX" and 358 * S <= r["t"] < 358.2 * S)]
+        result = g12.evaluate_fault(self.FAULT, pubs, views, self.MONITOR)
+        self.assertEqual(result["g2"]["TRADE"]["OKX"]["status"], "NOT_MEASURED")
+        undecided = g12.verdict_undecided(result)
+        self.assertTrue(any("pending" in item for item in undecided), undecided)
+        self.assertFalse(result["pass"])
+        self.assertEqual(g12.verdict_undecided(self.fault()), [])
+
+    def test_sampler_keeps_the_typed_counters_raw(self):
+        for field in g12.NATIVE_HEARTBEAT_FIELDS:
+            self.assertIn(f'"{field}"', g12.SAMPLER)
+        self.assertIn('"last_seen_unix": b.get("last_seen_unix")', g12.SAMPLER)
+        self.assertIn('"key_tail"', g12.SAMPLER)
+
+    def test_unfrozen_predicate_never_passes_and_v1_receipts_are_not_credited(self):
+        faults = [dict(self.FAULT, name=n) for n in ("broker_stop_start", "projector_restart", "stream_restart")]
+        good = {"pass": True, "parts": {"integrity": "PASS"}}
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = Path(tmp)
+            (evidence / "faults.jsonl").write_text("".join(json.dumps(f) + "\n" for f in faults))
+            with patch.object(g12, "evaluate_fault", return_value=good):
+                unfrozen = g12.evaluate(evidence)
+                self.assertFalse(unfrozen["pass"])
+                self.assertTrue(unfrozen["credit"].startswith("NOT_CREDITABLE"))
+                (evidence / g12.PREDICATE_FILE).write_text(json.dumps(g12.caught_up_predicate()))
+                frozen = g12.evaluate(evidence)
+                self.assertTrue(frozen["pass"])
+                self.assertEqual(frozen["schema"], g12.VERDICT_SCHEMA)
+        frozen.update(status="COMPLETED")
+        self.assertEqual(g12.g12_receipt_creditable(frozen), (True, "PASS"))
+        stale = [dict(frozen, schema="p184.g12.verdict.v2"),  # rc10-full3 / rc12 / rc18-control2 era
+                 dict(frozen, caught_up_predicate=dict(frozen["caught_up_predicate"], version="p184.g12.caught_up.v1")),
+                 dict(frozen, caught_up_predicate=dict(frozen["caught_up_predicate"], frozen=False)),
+                 dict(frozen, status="FAIL"),
+                 dict(frozen, faults=[{"pass": True, "parts": {}}] * 3),
+                 dict(frozen, faults=frozen["faults"][:2]),
+                 dict(frozen, **{"pass": False}),
+                 None]
+        for verdict in stale:
+            with self.subTest(verdict=str(verdict)[:60]):
+                self.assertFalse(g12.g12_receipt_creditable(verdict)[0])

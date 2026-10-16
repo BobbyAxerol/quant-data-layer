@@ -15,8 +15,11 @@ caught up) and then, inside one fixed window, G1 (BOOK), G2 (TRADE, QUOTE and
 MARK_INDEX_PRICE new-event transit) and G3 (BAR 1m from close). Caught up is predicate v2 (``caught_up``:
 BOOK update transit plus update cadence against the core's materialization rule), its version and parameters
 frozen in ``evidence/caught-up-predicate.json`` before any data. A fault passes only
-when caught up in time and G1, every G2 feed and G3 pass; a part with too few samples
-is NOT_MEASURED, never a pass.
+when caught up in time and G1, every G2 feed and G3 pass and its integrity part passes
+(``integrity_window``: no BOOK / applied-notification rewind, no TRADE duplicate applied,
+native typed counters complete and zero); a part with too few samples, pending events or
+missing coverage is NOT_MEASURED, never a pass. A run without the frozen predicate v2
+never PASSes (``g12_receipt_creditable``: verdict v3 only).
 
 Feeds: the DR05 material is BOOK-only; the in-container ``--feeds`` step (network
 none) seals TRADE, QUOTE, BAR 1m and MARK_INDEX_PRICE for the same two instruments
@@ -143,6 +146,9 @@ L2_TOP_CHANGE_MIN_INTERVAL_MS = 100
 L2_DEFAULT_MATERIALIZATION_MS = 1000
 CORE_MS_FLOOR_SLACK_MS = 1
 PREDICATE_FILE = "caught-up-predicate.json"
+# v3 (inheritance audit 2026-10-16, OF-G12-1/2): pending G2/G3 events block a PASS, per-fault integrity part (no
+# rewind, no duplicate applied, native typed counters), PASS only under a frozen predicate v2.
+VERDICT_SCHEMA = "p184.g12.verdict.v3"
 # A fault whose clearance / catch-up interval has no valid monitor sample for longer than this is NOT_MEASURED:
 # its fault-cleared time (the monitor's) would be uncertain by more than the gap (steady cadence: 1.0 s).
 MONITOR_MAX_GAP_S = 5
@@ -613,8 +619,11 @@ async def beat(r):
     if not keys:
         return {"heartbeat": False}
     b = json.loads(await r.get(keys[0]) or "{}"); d = b.get("details") or {}
+    # Native typed TRADE counters kept raw (no coercion): the host analysis validates them (OF-G12-2).
     return {"heartbeat": True, "status": b.get("status"), "demanded": d.get("demanded_v2_slices"),
-            "session_ready": d.get("session_ready_v2_slices")}
+            "session_ready": d.get("session_ready_v2_slices"), "key_tail": str(keys[0])[-24:],
+            "last_seen_unix": b.get("last_seen_unix"),
+            **{k: d[k] for k in ("trade_integrity", "trade_integrity_scope", "worker_liveness") if k in d}}
 MD_PATTERNS = ("events.market.v2.execution.trade.*", "events.market.v2.execution.quote.*",
                "events.market.v2.execution.mark_index_price.*", "events.market.v2.bar.*")
 async def listen(url, venue, f, end):
@@ -1014,7 +1023,8 @@ def md_sample(index, seen, feed, venue, start_ns, end_ns, covered_ns):
     """New-event transit (ms) of every non-seed event of one feed/venue whose reference lies in [start, end).
 
     An event never applied is lost once the sampler covered reference + LOST_AFTER_S (QUOTE / MARK: unseen,
-    a latest-state feed may skip a superseded value), else pending (excluded: not yet decidable).
+    a latest-state feed may skip a superseded value), else pending: not yet decidable, so the cell cannot PASS
+    (``md_stats``: pending > 0 is NOT_MEASURED, OF-G12-2).
     """
     values, counts = [], {"lost": 0, "unseen": 0, "pending": 0}
     for key, row in index.items():
@@ -1034,7 +1044,8 @@ def md_sample(index, seen, feed, venue, start_ns, end_ns, covered_ns):
 
 
 def md_stats(feed, values, counts=None):
-    """G2/G3 verdict of one feed/venue: PASS, FAIL, or NOT_MEASURED below the minimum sample count."""
+    """G2/G3 verdict of one feed/venue: PASS, FAIL, or NOT_MEASURED below the minimum sample count or while any
+    event of the window is still pending (undecidable: absent observations never count toward a PASS, OF-G12-2)."""
     gate = GATE_G2_G3[feed]
     values = sorted(values)
     n = len(values)
@@ -1044,6 +1055,9 @@ def md_stats(feed, values, counts=None):
     if stats["lost"]:
         stats["status"] = "FAIL"
         stats["note"] = "events never applied"
+    elif stats["pending"]:
+        stats["status"] = "NOT_MEASURED"
+        stats["note"] = "events pending (sampler did not cover reference + LOST_AFTER_S)"
     elif n < gate["min_n"]:
         stats["status"] = "NOT_MEASURED"
         stats["note"] = f"n < {gate['min_n']}"
@@ -1073,6 +1087,149 @@ def md_window(publish_rows, sampler_rows, start_ns, end_ns):
             "g2_feed_status": {feed: part_status(list(cells.values())) for feed, cells in g2.items()},
             "g2_status": part_status([s for cells in g2.values() for s in cells.values()]),
             "g3_status": part_status([s for cells in g3.values() for s in cells.values()])}
+
+
+# ---- OF-G12-2 integrity oracle (inheritance audit 2026-10-16): absent observations never count toward a PASS.
+# Per fault, over [fault injected, end of its G1-G3 window] (high-water from every earlier observation of the run):
+# - BOOK rewind: a BOOK view sequence below the high-water of every earlier view of its venue (post-to-post, the
+#   G11 v2 rule). The publisher's sequence is monotonic across generations (``publish``: a resync bumps the
+#   generation, never the sequence), so one domain per venue is exact here.
+# - applied-notification rewind: a TRADE / QUOTE / MARK notification whose event time is below the high-water of
+#   earlier notifications of its venue/feed (each notification is the TS cache write of that value:
+#   services/market_data/cache_projector.py _execution_operations setex + publish), i.e. the cache went back.
+#   BAR is report-only: project_bars re-writes a retained closed bar unconditionally (latest-state projection).
+# - duplicate applied: a TRADE native id notified more than once (G10 LOSSLESS: 0 duplicates applied).
+# - native typed counters: the clone heartbeat's pooled trade_integrity, judged by the G10 v2 sampler logic
+#   (scripts/p184_g9_g10_writer_counters.summarize_g10_native: one unbroken activation stretch bracketing the
+#   scope, typed and complete, else NOT_MEASURED; gaps / replay_expired / overflow / duplicates_applied /
+#   offset_regressions > 0 FAIL).
+# Missing coverage (no view sequence, no TRADE notification, a notification without identity or clock, a listener
+# error inside the scope, native counters incomplete) is NOT_MEASURED, never a PASS.
+INTEGRITY_REWIND_FEEDS = ("TRADE", "QUOTE", "MARK")
+INTEGRITY_REPORT_ONLY_FEEDS = ("BAR",)
+NATIVE_HEARTBEAT_FIELDS = ("trade_integrity", "trade_integrity_scope", "worker_liveness")
+
+
+def book_rewinds(sampler_rows):
+    """venue -> every BOOK view whose sequence is below the high-water of all earlier views of that venue."""
+    out, high = {venue: [] for venue in VENUES}, {}
+    for r in sorted((r for r in sampler_rows if r.get("k") == "view" and type(r.get("seq")) is int),
+                    key=lambda r: r["t"]):
+        venue, top = r["venue"], high.get(r["venue"])
+        if top is not None and r["seq"] < top:
+            out.setdefault(venue, []).append({"t": r["t"], "before": top, "after": r["seq"]})
+        high[venue] = r["seq"] if top is None else max(top, r["seq"])
+    return out
+
+
+def notification_integrity(sampler_rows):
+    """(venue, feed) -> rewinds (event time below the earlier high-water), TRADE duplicates (native id notified
+    again) and rows without identity/clock, in receipt order."""
+    out, high, seen = {}, {}, set()
+    for r in sorted((r for r in sampler_rows if r.get("k") == "ev"), key=lambda r: r["t"]):
+        key = (r.get("venue"), r.get("feed"))
+        cell = out.setdefault(key, {"rewinds": [], "duplicates": [], "unidentified": [], "rows": []})
+        cell["rows"].append(r["t"])
+        clock, ident = r.get("ev_ms"), r.get("id")
+        if type(clock) is not int or ident is None:
+            cell["unidentified"].append(r["t"])
+            continue
+        top = high.get(key)
+        if top is not None and clock < top:
+            cell["rewinds"].append({"t": r["t"], "before": top, "after": clock})
+        high[key] = clock if top is None else max(top, clock)
+        if key[1] == "TRADE":
+            if (key, ident) in seen:
+                cell["duplicates"].append({"t": r["t"], "id": ident})
+            seen.add((key, ident))
+    return out
+
+
+def native_heartbeat_samples(sampler_rows, venue):
+    """The clone's heartbeat rows as G10 v2 sampler samples (``heartbeat_sample`` validates, never coerces)."""
+    from scripts.p184_g9_g10_writer_counters import heartbeat_sample
+    samples = []
+    for r in sampler_rows:
+        if r.get("k") != "hb" or r.get("venue") != venue or type(r.get("t")) is not int:
+            continue
+        payload = None
+        if r.get("heartbeat") is True:
+            payload = {"status": r.get("status"), "last_seen_unix": r.get("last_seen_unix"),
+                       "details": {k: r[k] for k in NATIVE_HEARTBEAT_FIELDS if k in r}}
+        samples.append({"kind": "heartbeat", "at_ns": r["t"], "key_tail": r.get("key_tail"),
+                        "sample": heartbeat_sample(payload, r["t"] / 1e9)})
+    return samples
+
+
+def native_integrity(sampler_rows, venue, from_ns, to_ns):
+    """G10 v2 native typed counters of one clone over [from, to]: PASS / FAIL / NOT_MEASURED (incomplete)."""
+    from scripts.p184_g9_g10_writer_counters import summarize_g10_native
+    summary = summarize_g10_native(native_heartbeat_samples(sampler_rows, venue), from_ns=from_ns, to_ns=to_ns)
+    failed = sum((summary.get("failures") or {}).values()) + sum((summary.get("blocking") or {}).values())
+    summary["status"] = "FAIL" if failed else "PASS" if summary["complete"] else "NOT_MEASURED"
+    return summary
+
+
+def integrity_window(sampler_rows, from_ns, to_ns):
+    """OF-G12-2 integrity of one fault scope (see the block comment above): per venue and overall status."""
+    in_scope = lambda t: from_ns <= t <= to_ns  # noqa: E731
+    books, notes = book_rewinds(sampler_rows), notification_integrity(sampler_rows)
+    out = {"scope_ns": [from_ns, to_ns], "venues": {}}
+    for venue in VENUES:
+        cell = {"book_rewinds": [x for x in books.get(venue, ()) if in_scope(x["t"])],
+                "book_views": sum(1 for r in sampler_rows if r.get("k") == "view" and r.get("venue") == venue
+                                  and type(r.get("seq")) is int and in_scope(r["t"])),
+                "listener_errors": sum(1 for r in sampler_rows if r.get("k") == "ev_error"
+                                       and r.get("venue") == venue and in_scope(r.get("t", -1))),
+                "rewinds": {}, "report_only_rewinds": {}, "unidentified": {}}
+        for feed in MD_FEEDS:
+            n = notes.get((venue, feed)) or {"rewinds": [], "duplicates": [], "unidentified": [], "rows": []}
+            target = "rewinds" if feed in INTEGRITY_REWIND_FEEDS else "report_only_rewinds"
+            cell[target][feed] = sum(1 for x in n["rewinds"] if in_scope(x["t"]))
+            cell["unidentified"][feed] = sum(1 for t in n["unidentified"] if in_scope(t))
+            if feed == "TRADE":
+                cell["trade_duplicates"] = [x for x in n["duplicates"] if in_scope(x["t"])][:20]
+                cell["trade_duplicates_n"] = sum(1 for x in n["duplicates"] if in_scope(x["t"]))
+                cell["trade_notifications"] = sum(1 for t in n["rows"] if in_scope(t))
+        native = native_integrity(sampler_rows, venue, from_ns, to_ns)
+        cell["native"] = {k: native.get(k) for k in ("status", "complete", "failures", "blocking", "report_only",
+                                                     "breaks", "samples_in_bracket", "present")}
+        failed = []
+        if cell["book_rewinds"]:
+            failed.append("BOOK rewind")
+        failed += [f"{feed} rewind" for feed, n in cell["rewinds"].items() if n]
+        if cell["trade_duplicates_n"]:
+            failed.append("TRADE duplicate applied")
+        if native["status"] == "FAIL":
+            failed.append("native typed counters")
+        unmeasured = []
+        if not cell["book_views"]:
+            unmeasured.append("no BOOK view sequence")
+        if not cell["trade_notifications"]:
+            unmeasured.append("no TRADE notification")
+        if cell["listener_errors"]:
+            unmeasured.append("notification listener errors")
+        if any(cell["unidentified"][feed] for feed in (*INTEGRITY_REWIND_FEEDS,)):
+            unmeasured.append("notifications without identity or clock")
+        if native["status"] == "NOT_MEASURED":
+            unmeasured.append("native typed counters incomplete")
+        cell["status"] = "FAIL" if failed else "NOT_MEASURED" if unmeasured else "PASS"
+        cell["reasons"] = failed or unmeasured
+        out["venues"][venue] = cell
+    out["status"] = part_status(list(out["venues"].values()))
+    return out
+
+
+def verdict_undecided(verdict):
+    """What keeps a fault verdict undecidable right after its window (the run waits for these to resolve):
+    G2/G3 events still pending, or no heartbeat sample yet at/after the end of the integrity scope."""
+    out = [f"{part}.{feed}.{venue} pending {cell['pending']}"
+           for part in ("g2", "g3") for feed, cells in (verdict.get(part) or {}).items()
+           for venue, cell in cells.items() if cell.get("pending")]
+    for venue, cell in ((verdict.get("integrity") or {}).get("venues") or {}).items():
+        if any("at or after the window end" in str(b) for b in (cell.get("native") or {}).get("breaks") or ()):
+            out.append(f"integrity.{venue} no heartbeat after the scope")
+    return out
 
 
 def md_missing(sampler_rows):
@@ -1222,13 +1379,17 @@ def evaluate_fault(fault, publish_rows, sampler_rows, monitor_rows, *, window_s=
         result["reason"] = "SAMPLER_GAP" if holes else "SAMPLER_UNDERSAMPLED"
     # G2/G3 over the same window as G1 (new events whose publish time / bar close lies in it).
     result.update(md_window(publish_rows, sampler_rows, *window))
+    # OF-G12-2: no rewind, no duplicate applied, native typed counters, from injection to the window end.
+    result["integrity"] = integrity_window(sampler_rows, fault["injected_ns"], window[1])
     result["parts"] = {"caught_up": result["g12_caught_up_pass"], "window_complete": complete,
                        "g1": "PASS" if all(result["g1"][v]["pass"] for v in VENUES) else "FAIL",
                        "g2": result["g2_status"], "g2_feeds": result["g2_feed_status"],
-                       "g3": result["g3_status"], "monitor": monitored, "sampler": sampled}
+                       "g3": result["g3_status"], "integrity": result["integrity"]["status"],
+                       "monitor": monitored, "sampler": sampled}
     result["pass"] = (monitored == "PASS" and sampled == "PASS" and result["g12_caught_up_pass"] and complete
                       and all(result["g1"][v]["pass"] for v in VENUES)
-                      and result["g2_status"] == "PASS" and result["g3_status"] == "PASS")
+                      and result["g2_status"] == "PASS" and result["g3_status"] == "PASS"
+                      and result["integrity"]["status"] == "PASS")
     return result
 
 
@@ -1267,7 +1428,7 @@ def evaluate(evidence):
     monitor_rows = sorted(load_jsonl(evidence / "monitor.jsonl"), key=lambda r: r.get("t", 0))
     faults = [r for r in load_jsonl(evidence / "faults.jsonl") if r.get("k") == "fault"]
     index, series = publish_index(publish_rows), view_series(sampler_rows)
-    out = {"schema": "p184.g12.verdict.v2", "provenance": "TEST_ONLY", "level": "ISOLATED_FAULT",
+    out = {"schema": VERDICT_SCHEMA, "provenance": "TEST_ONLY", "level": "ISOLATED_FAULT",
            "gate": GATE, "gate_g2_g3": GATE_G2_G3, "caught_up_predicate": predicate, "faults": [],
            "g2": "per fault: TRADE, QUOTE and MARK (MARK_INDEX_PRICE) new-event transit "
                  "(publish -> first applied notification)",
@@ -1296,8 +1457,35 @@ def evaluate(evidence):
                       "errors": sorted({(r.get("error"), r.get("phase")) for r in errors}, key=str),
                       "max_gap_rule_s": MONITOR_MAX_GAP_S}
     out["sampler"] = {"max_gap_rule_s": SAMPLER_MAX_GAP_S}
-    out["pass"] = bool(out["faults"]) and len(out["faults"]) == 3 and all(f["pass"] for f in out["faults"])
+    # OF-G12-1: only a run whose caught-up predicate v2 was frozen before its data can PASS; a re-analysis of a run
+    # sealed without it (predicate v1 era) is reported, never credited.
+    frozen = predicate.get("frozen") is True and predicate.get("version") == CAUGHT_UP_VERSION
+    out["credit"] = ("CREDITABLE_IF_COMPLETED" if frozen else
+                     "NOT_CREDITABLE: caught-up predicate v2 not frozen in this run (re-analysis only)")
+    out["pass"] = (frozen and bool(out["faults"]) and len(out["faults"]) == 3
+                   and all(f["pass"] for f in out["faults"]))
     return out
+
+
+def g12_receipt_creditable(verdict):
+    """(creditable, reason) of a saved G12 ``verdict.json`` (OF-G12-1/2): only a COMPLETED PASS of this oracle
+    (schema VERDICT_SCHEMA: pending blocks, integrity part) under a frozen caught-up predicate v2. Every earlier
+    receipt (verdict v1/v2, predicate v1, a re-analysis) is not credited, whatever its ``pass`` says."""
+    if not isinstance(verdict, dict):
+        return False, "not a verdict object"
+    if verdict.get("schema") != VERDICT_SCHEMA:
+        return False, f"verdict schema {verdict.get('schema')!r} is not {VERDICT_SCHEMA}"
+    predicate = verdict.get("caught_up_predicate") or {}
+    if predicate.get("version") != CAUGHT_UP_VERSION or predicate.get("frozen") is not True:
+        return False, f"caught-up predicate {predicate.get('version')!r} frozen={predicate.get('frozen')!r}"
+    if verdict.get("status") != "COMPLETED":
+        return False, f"run status {verdict.get('status')!r}"
+    faults = verdict.get("faults") or []
+    if len(faults) != 3 or any((f.get("parts") or {}).get("integrity") != "PASS" for f in faults):
+        return False, "three faults with an integrity PASS required"
+    if verdict.get("pass") is not True:
+        return False, "verdict not PASS"
+    return True, "PASS"
 
 
 # ---------------------------------------------------------------- in-container modes
@@ -3067,8 +3255,14 @@ class Run:
         self.note("caught_up", fault=name, caught_up_s=result["caught_up_s"])
         end = result["consumers_caught_up_ns"] + int(GATE["window_s"] * 1e9)
         self.wait(max(0.0, (end - time.time_ns()) / 1e9) + 2)
-        verdict = evaluate_fault(row, load_jsonl(self.evidence / "publish.jsonl"),
-                                 load_jsonl(self.evidence / "sampler.jsonl"), monitor_rows(), predicate=self.predicate)
+
+        def final():
+            return evaluate_fault(row, load_jsonl(self.evidence / "publish.jsonl"),
+                                  load_jsonl(self.evidence / "sampler.jsonl"), monitor_rows(), predicate=self.predicate)
+        # OF-G12-2: pending events / the heartbeat after the scope must resolve before the verdict is read (an
+        # undecided cell is NOT_MEASURED, never excluded); bounded by the longest LOST_AFTER_S.
+        self.wait(max(LOST_AFTER_S.values()) + 10, until=lambda: not verdict_undecided(final()))
+        verdict = final()
         self.note("fault_verdict", fault=name, verdict=verdict)
         if not verdict["pass"]:
             raise RuntimeError(f"STOP {name}: G12 verdict not PASS: " + json.dumps(verdict.get("parts")))
