@@ -4023,6 +4023,14 @@ class WriterCloneLifecycleTests(unittest.TestCase):
             (root / "cursors/fixed-workers-v1/worker-2/py.json").write_text("{}")
             inventory = g12.cursor_inventory(root)
             self.assertEqual(len(inventory), 3)
+            # The writer's 0600 root-owned cursor: size from stat, no digest, still a native checkpoint.
+            real_read = Path.read_bytes
+            with patch.object(Path, "read_bytes", lambda self: (_ for _ in ()).throw(PermissionError())
+                              if self.name.startswith("p184") else real_read(self)):
+                unreadable = g12.cursor_inventory(root)
+            row = unreadable["cursors/fixed-workers-v1/native-0/p184-g12-dl-x.ts.json"]
+            self.assertEqual((row["bytes"], row["sha256"], row["read"]), (13, None, "PermissionError"))
+            self.assertEqual(g12.native_checkpoints(unreadable), g12.native_checkpoints(inventory))
             self.assertNotIn("offset", json.dumps(inventory))
             self.assertEqual(g12.native_checkpoints(inventory),
                              ["cursors/fixed-workers-v1/native-0/p184-g12-dl-x.ts.json"])

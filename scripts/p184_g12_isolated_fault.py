@@ -3019,16 +3019,22 @@ def md_missing_since(sampler_rows, since_ns, venues=VENUES, feeds=MD_FEEDS):
 
 def cursor_inventory(state_dir):
     """Relative path -> {bytes, sha256} of every checkpoint file under the clone's state dir (evidence only; the
-    contents stay private and are erased at teardown). Unreadable entries are recorded, not raised."""
+    contents stay private and are erased at teardown). The writer (root) writes its cursors 0600, so the size comes
+    from stat and the digest is recorded only when the host can read the file (G12 final 20261016T151149Z)."""
     out = {}
     root = Path(state_dir)
     for path in sorted(root.rglob("*.json")):
         rel = str(path.relative_to(root))
         try:
-            data = path.read_bytes()
-            out[rel] = {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+            out[rel] = {"bytes": path.stat().st_size}
         except OSError as error:
             out[rel] = {"error": type(error).__name__}
+            continue
+        try:
+            out[rel]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError as error:
+            out[rel]["sha256"] = None
+            out[rel]["read"] = type(error).__name__
     return out
 
 
