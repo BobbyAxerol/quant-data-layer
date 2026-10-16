@@ -73772,3 +73772,65 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
     - Cleanup: 0 p184-/ts-p184 containers, networks, volumes left; run worktrees data-layer-p184-final-run-860b79ba
       and trading-system-final-run-77a6d671 kept clean (needed by the dr05-upstream rerun and the runtime window).
       A stale trading-system-final-run-68f2572f (pre-reword pin, not created here) remains.
+- 2026-10-16 19:30-19:50Z G13 dr05-upstream reset fix, TS clone strict-resume lifecycle, rerun PASS 6/6 (Claude subagent):
+  - Reset failure cause (receipt p184-g13-20261016T192640Z, control/reset-30a11fa3....json): ResetStageError
+    stage=reset_topics, KafkaException UNKNOWN_TOPIC_OR_PART raised by a concurrent future inside DL
+    scripts/p184_dr05_reset.py reset_topics. Verified only to that level: the stderr tail is cut at 240 chars, the
+    broker was removed by --down and the work dir holds no broker log, so the receipt does not show which topic or
+    which call raised it. reset_topics had two calls that can raise it: delete_topics (topic absent) and
+    describe_topics right after create_topics (KRaft metadata propagation lag). The earlier reading "a topic did
+    not exist at the first reset" stays unverified. All three topics are created at --up
+    (p184_dr08_isolated.prepare_topics).
+  - DL fix d03cd679 (apparatus only): a topic that delete reports as UNKNOWN_TOPIC_OR_PART counts as already deleted
+    (listed in already_absent). describe after create retries UNKNOWN_TOPIC_OR_PART only until the deadline. The
+    post-state is verified: all three topics present with 1 partition / 1 replica, and the canonical topic id
+    changed. Every other Kafka error still raises, and group deletion still tolerates only GROUP_ID_NOT_FOUND.
+    The harness runs the script from the sealed `git archive <dl_sha>` export, mounted at /app in the helper
+    (p184_dr05_dl_fault.helper_command), so it is not the image copy. The release images did not change.
+    Tests: in qdl-v2-python:2.2.4-c7ce7d3 (--network none), test_p184_dr05_{reset,case,channel,dl_fault} = 93 OK
+    (5 new). g13-roles-v224.json is unchanged (sha256 31e0716b...); the only files changed between 860b79ba and
+    d03cd679 are the plan and these two files.
+  - TS fix ba096818 (apparatus only): WriterClone runs a bootstrap -> strict lifecycle when the clone keeps native
+    feeds and the deployed env sets MARKET_DATA_NATIVE_REQUIRE_RESUME=1. This is the dr05-transport clone of the
+    deployed source, which keeps TRADE,QUOTE. Without the lifecycle, session.rs:545 (requires_resume &&
+    restored.is_none()) refuses HANDOFF_RESUME_REQUIRED. The lifecycle mirrors DL 968d5f2/965f080:
+    - A durable state dir is bound at the deployed cursor-root bind (/app/state/data-layer-v2). BOOTSTRAP
+      differs from the deployed env by that flag only (=0); the delta is checked.
+    - The clone stops cleanly (exit 0), and a --rm holder inventories the native fixed-worker checkpoints.
+    - The clone restarts with the exact deployed env. VERIFIED means views are fresh after the strict start and
+      there are 0 HANDOFF_RESUME_REQUIRED lines.
+    - Bootstrap is not scored; writer_lifecycle is recorded in the cell detail.
+    - dr05-upstream refuses (DR05_CLONE_STRICT_LIFECYCLE_REQUIRED) any per-case clone that would need the
+      lifecycle. Its BOOK-only binding narrows the native feeds to none.
+    No oracle, predicate, schedule or threshold changed. Tests: host overlay 71 passed, 1 known host-only failure
+    (no redis module, also failing at 77a6d671); in 7c71e3af --network none 70 passed, 2 skipped (DL repo not
+    mounted). The dr05-transport lifecycle has not run against real Docker yet; its first real run is the
+    runtime window.
+  - Prereg note (extends the 73e7bfe8 note): contracts/baseline/rust-first-v2/p18/p184-burst-b16-prereg.v1.json
+    amendment-1 pins p184_dr05_isolated.py sha256 3c9a21d8.... ba096818 changes that file again. No script
+    enforces the pin. B16 receipts stay valid at the pinned revision, and a B16 rerun needs that revision or a new
+    amendment.
+  - Rerun ONCE under lock "claude P18.4 G13 dr05-upstream rerun d03cd679 20261016T193816Z" (19:38-19:45Z,
+    released). Command shape as 192640Z, with DL run worktree data-layer-p184-final-run-d03cd679,
+    --dl-source-sha d03cd679, --ts-root trading-system-final-run-ba096818, --ts-source-sha 77a6d671, writer
+    7c71e3af, python 2.2.4-c7ce7d3, roles-v224, inputs g13v51/inputs-g13v51-ci.json, --only dr05-upstream.
+    Receipt ~/.local/state/qdl-v2/p184-g13-20261016T193828Z/: summary.json d24f476f..., plan.json 22161735...,
+    dr05-upstream/receipt.json 3413eaa4..., rows f1d288d9.... **PASS 6/6** (GAP_REFUSAL and
+    GENERATION_CHANGE_FENCED x BINANCE/OKX/OKX_INVERSE), 339.8 s, exit codes [0,0,0,0,0], harness_ok, dl_source
+    removed. Teardown: --down removed 5 DL roles. Afterwards 0 p184-/ts-p184 containers/networks and 0
+    /tmp/p184-dr05-* dirs. Production writer 7c71e3af kept RestartCount 0.
+  - G13 isolated is now complete on the release set: dr08 4/4 (190623Z) + dr05-upstream 6/6 (193828Z) = 10/10.
+  - Runtime window (packet v5.1) NOT started; it stopped at gate 0.10.
+    - Gate 0.10 needs a Codex review of the DL runner commit or an owner waiver. P184_CODEX_CONTRIBUTIONS.md
+      (last updated 15:14Z) has no review of 860b79ba, d03cd679 or ba096818, and no waiver is recorded.
+    - The window would also run from new pins: RUN_DL d03cd679 (instead of 860b79ba) and RUN_TS ba096818 (instead
+      of 77a6d671), and dr05-transport would run the new clone lifecycle.
+    - The inputs, compose and FX plan have no TS/DL pin and are unchanged (inputs-ci 0dd8fa35..., compose
+      91b96268..., fx plan 8e8494f7...).
+    - TS delta 77a6d671..ba096818: the dr05 scripts and tests, the release tool (ae2bc7fe), and the plan.
+    - Runtime dry run with the new pins: exit 0, blocked {}, 6 steps / 66 cells, coverage 76/76, est 39 min,
+      timeouts 95 min.
+    - Gates checked read-only: 0.1 (d03cd679 contains 13ef59c and 3bb6bee), 0.5 (all images present), 0.9
+      (writer 7c71e3af, 0 restarts, started 18:30:37Z), load1 14.5, 196 GB free.
+    - Next: an owner/Codex decision on gate 0.10 and the pin delta. Then run the window from the main session; a
+      subagent runtime attempt was classifier-refused before, as recorded on 2026-10-13.
