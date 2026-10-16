@@ -41,6 +41,15 @@ class Topology(unittest.TestCase):
         self.assertNotIn("-p", argv)
         self.assertIn(harness.IMAGES["kafka"], argv)
 
+    def test_load_worker_mounts_scripts_read_only(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as work:
+            argv = harness.load_argv(NS, work, 8, 60, 0, "m1")
+        self.assertIn(f"{harness.ROOT / 'scripts'}:/harness/scripts:ro", argv)
+        self.assertIn("/harness/scripts/p184_g12_coordinator_load.py", argv)
+        self.assertEqual(argv[argv.index("--network") + 1], f"container:{NS}-net")
+        self.assertIn("--rm", argv)
+
     def test_namespace_and_work_guards(self):
         with self.assertRaises(ValueError):
             harness.up("/tmp/x", "qdl_v2_stable_candidate")

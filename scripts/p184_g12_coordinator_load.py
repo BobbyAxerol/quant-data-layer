@@ -157,9 +157,11 @@ def load_argv(ns, work, workers, seconds, rate, tag):
     (Path(work) / "load" / tag).mkdir(parents=True, exist_ok=False)
     return _base(ns, f"load-{tag}", network=f"container:{ns}-net", memory="768m", cpus="2.0", uid=uid) + [
         "--tmpfs", "/tmp:rw,size=16m,mode=1777", "-v", f"{work}/load:/out",
-        "-v", f"{Path(__file__).resolve()}:/harness/coordinator_load.py:ro",
+        # the whole scripts/ directory: the module's host-side imports (scripts.p184_g12_isolated_fault, ...)
+        # run at import time in the worker too
+        "-v", f"{ROOT / 'scripts'}:/harness/scripts:ro",
         "-e", "PYTHONDONTWRITEBYTECODE=1", "--entrypoint", "python", PYTHON_IMAGE, "-B",
-        "/harness/coordinator_load.py", "--worker", out, "--workers", str(workers),
+        "/harness/scripts/p184_g12_coordinator_load.py", "--worker", out, "--workers", str(workers),
         "--seconds", str(seconds), "--rate", str(rate)]
 
 
@@ -171,8 +173,12 @@ def worker_loop(out, index, members, seconds, rate):
     from confluent_kafka import Consumer, Producer, TopicPartition  # in-container only
 
     consumer = Consumer({"bootstrap.servers": BOOTSTRAP, "group.id": GROUP, "enable.auto.commit": False})
-    producer = Producer({"bootstrap.servers": BOOTSTRAP, "transactional.id": f"g12c-core-{index}",
-                         "linger.ms": 0, "enable.idempotence": True})
+    producer = Producer({"bootstrap.servers": BOOTSTRAP, "transactional.id": f"g12c-core-{Path(out).name}-{index}",
+                         "linger.ms": 0, "enable.idempotence": True,
+                         # back-to-back transactions wait on client retries: measured 2026-10-16 ~110 ms per
+                         # transaction with librdkafka's default 100 ms backoff, ~33 ms with 5 ms - too slow to age
+                         # the internal topics otherwise. Same requests and records, shorter client-side wait.
+                         "retry.backoff.ms": 5})
     producer.init_transactions(30)
     member = index % members
     parts = [member * PARTITIONS_PER_MEMBER + k for k in range(PARTITIONS_PER_MEMBER)]
@@ -275,7 +281,9 @@ def move(ns, work, topic, to):
     plan = {"version": 1, "partitions": [{"topic": topic, "partition": 0, "replicas": order}]}
     path = Path(work) / "move.json"
     path.write_text(json.dumps(plan))
-    sh(["docker", "cp", str(path), f"{ns}-kafka-1:/tmp/move.json"])
+    # brokers run --read-only (docker cp refuses even a tmpfs target): stream the plan into the /tmp tmpfs
+    subprocess.run(["docker", "exec", "-i", f"{ns}-kafka-1", "sh", "-c", "cat > /tmp/move.json"],
+                   input=path.read_text(), text=True, capture_output=True, timeout=60, check=True)
     since = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - 1))
     before = leaders(ns)[f"{topic}-0"]
     kafka(ns, "kafka-reassign-partitions.sh", "--reassignment-json-file", "/tmp/move.json", "--execute")
