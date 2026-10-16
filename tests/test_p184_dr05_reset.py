@@ -117,3 +117,98 @@ class ResetStageDiagnosticTests(unittest.TestCase):
         self.assertIn("rc=1", message)
         self.assertLessEqual(len(message), 380)
         self.assertNotIn("\x07", message)
+
+
+class ResetTopicsIdempotenceTests(unittest.TestCase):
+    """G13 r2 (2026-10-16): UNKNOWN_TOPIC_OR_PART on delete means already deleted; the post-state is verified."""
+
+    def fake_admin(self, *, delete_errors=None, describe_misses=0, partitions=1, group_error=None):
+        from concurrent.futures import Future
+        from confluent_kafka import KafkaError, KafkaException
+        state = {"present": {NS + s for s in (".raw", ".canonical", ".quarantine")}, "misses": describe_misses}
+
+        def done(value=None, error=None):
+            future = Future()
+            future.set_exception(error) if error else future.set_result(value)
+            return future
+
+        def kafka(code):
+            return KafkaException(KafkaError(code))
+
+        admin = Mock()
+
+        def delete_topics(names, operation_timeout):
+            out = {}
+            for name in names:
+                code = (delete_errors or {}).get(name)
+                state["present"].discard(name)
+                out[name] = done(error=kafka(code)) if code is not None else done()
+            return out
+
+        def describe_topics(collection, request_timeout):
+            out = {}
+            for name in collection.topic_names:
+                if state["misses"]:
+                    state["misses"] -= 1
+                    out[name] = done(error=kafka(KafkaError.UNKNOWN_TOPIC_OR_PART))
+                    continue
+                part = Mock(replicas=[1])
+                out[name] = done(Mock(partitions=[part] * partitions, topic_id="new-" + name))
+            return out
+
+        admin.delete_topics.side_effect = delete_topics
+        admin.list_topics.side_effect = lambda timeout: Mock(topics={n: 1 for n in state["present"]})
+        admin.delete_consumer_groups.side_effect = lambda groups, request_timeout: {
+            g: done(error=kafka(group_error if group_error is not None else KafkaError.GROUP_ID_NOT_FOUND))
+            for g in groups}
+        admin.create_topics.side_effect = lambda topics, operation_timeout: {t.topic: done() for t in topics}
+        admin.describe_topics.side_effect = describe_topics
+        return admin
+
+    def run_topics(self, admin):
+        import os
+        import sys
+        import types
+        fake_dr08 = types.SimpleNamespace(kafka_security=lambda packet: {})
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            with patch.object(reset, "_packet", return_value=(work, NS, runtime_packet(), config())), \
+                 patch.dict(os.environ, {"P184_DR05_ISOLATED_NAMESPACE": NS}), \
+                 patch.dict(sys.modules, {"scripts.p184_dr08_isolated": fake_dr08}), \
+                 patch("confluent_kafka.admin.AdminClient", return_value=admin):
+                result = reset.reset_topics(work, 5)
+                packet = json.loads((work / "packet.json").read_text())
+        return result, packet
+
+    def test_absent_topic_at_delete_is_already_deleted_and_recreated(self):
+        from confluent_kafka import KafkaError
+        admin = self.fake_admin(delete_errors={NS + ".quarantine": KafkaError.UNKNOWN_TOPIC_OR_PART})
+        result, packet = self.run_topics(admin)
+        self.assertEqual(result["already_absent"], [NS + ".quarantine"])
+        self.assertEqual(result["topic_id"], "new-" + NS + ".canonical")
+        self.assertEqual(packet["slice"]["topic_id"], result["topic_id"])
+        created = [t.topic for t in admin.create_topics.call_args.args[0]]
+        self.assertEqual(sorted(created), sorted(NS + s for s in (".raw", ".canonical", ".quarantine")))
+
+    def test_other_delete_errors_are_not_swallowed(self):
+        from confluent_kafka import KafkaError, KafkaException
+        admin = self.fake_admin(delete_errors={NS + ".raw": KafkaError.TOPIC_AUTHORIZATION_FAILED})
+        with self.assertRaises(KafkaException):
+            self.run_topics(admin)
+        admin.create_topics.assert_not_called()
+
+    def test_other_group_errors_are_not_swallowed(self):
+        from confluent_kafka import KafkaError, KafkaException
+        admin = self.fake_admin(group_error=KafkaError.GROUP_AUTHORIZATION_FAILED)
+        with self.assertRaises(KafkaException):
+            self.run_topics(admin)
+        admin.create_topics.assert_not_called()
+
+    def test_describe_propagation_lag_is_retried_then_verified(self):
+        result, _ = self.run_topics(self.fake_admin(describe_misses=2))
+        self.assertEqual(result["already_absent"], [])
+        self.assertEqual(result["previous_topic_id"], "old-topic")
+
+    def test_recreated_shape_mismatch_fails_closed(self):
+        with self.assertRaisesRegex(RuntimeError, "shape mismatch"):
+            self.run_topics(self.fake_admin(partitions=2))
