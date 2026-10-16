@@ -77,8 +77,8 @@ TOPICS = ("__transaction_state", "__consumer_offsets")
 # ~540 ms loaded, ~49 h convergence from the 2026-10-16 state. ``PLAN_STATUS`` stays PROPOSED until the owner's
 # approval is recorded here (with ``PLAN_EVIDENCE``); ``--apply`` refuses a plan that is not MEASURED.
 # Values are strings, as kafka-configs prints them.
-PLAN_STATUS = "PROPOSED"
-PLAN_EVIDENCE: str | None = None
+PLAN_STATUS = "MEASURED"
+PLAN_EVIDENCE: str | None = ("owner decision 2026-10-16 via AskUserQuestion: 'B + C 10 phut'; aged-state measurement /home/bobby/.local/state/qdl-v2/p184-g12-coordinator-load-20261016/ (fit-output.txt, harness/move*.jsonl, harness/c1-dump-agg.json; DL ee2c359); projected max ~308 ms unloaded / ~540 ms loaded after ~49 h convergence")
 PLAN: dict[str, dict[str, str]] = {
     "__consumer_offsets": {"delete.retention.ms": "600000", "segment.ms": "60000"},
     "__transaction_state": {"segment.ms": "600000"},
