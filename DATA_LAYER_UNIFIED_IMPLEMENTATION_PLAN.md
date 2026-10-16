@@ -73590,3 +73590,20 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
     - Lock overlaps recorded: short correctness jobs of subagents overlapped other agents' lock windows (fix-dl-mark
       17:28-18:13Z, fix-py 17:50-18:10Z and 18:23Z, EPG10-01 18:24-18:27Z; B15 overlay build under the kafka dump
       lock 18:27Z); no timing claims made from the affected runs.
+  - 2026-10-16 01:45-01:50Z PRODUCTION (owner-approved via AskUserQuestion): (1) writer market_data_service_p184w B14
+    41b77d04 -> B16 d27db0cf (TS 5636e443: G2 slices/catch_up by source-before-activation, G7 BOOK_SNAPSHOT wait, G8
+    apply sub-units with the split-unit stamp fix) via roll_writer_campaign_native.py --set-env
+    MARKET_DATA_NATIVE_APPLY_MAX_ROWS=16 --set-env DATA_LAYER_V2_BOOK_SNAPSHOT_BATCH_MAX_WAIT_MS=0 (trace 600 s), OK,
+    1 not-ready sample, RestartCount 0; rollback compose = B14 in rc15/native-trace-roll. B16 isolated proofs 7/7 PASS
+    (~/.local/state/trading-system/p184-n1-opt-20261013/b16/proofs-receipt.json, incl. a real 64-row unit split 4x16,
+    duplicate_applied 0, all receive stamps). (2) stream_kn_1 then stream_kn_2 b095b18e -> baa72c96 (c934c1e SR1 exact
+    outstanding-record accounting, SR4 handoff counters), rollout_rc17_v2.py accepted, diff image, bundle unchanged;
+    post-roll metric lines: refused/overflow/handoff_* / reserve_exhausted all 0; writer 0 error lines; rust_core x3 0
+    retry/rebalance. Isolated A/B receipts live-budget-isolation-ab-20261015T191657Z-sr1-vs-{rc18,e3b5552}.
+  - Kafka md.latest cleaner (2eb77f8 evidence md-latest-cleaner-20261015/): markers are 100 % of surviving old
+    segments, but with min.cleanable.dirty.ratio 0.5 lowering delete.retention.ms to 24 h does NOT reduce cleaner I/O;
+    6 h ~ -37 %, 1 h ~ -46 % (inferred). md.latest.v2 never carries tombstones in production (products.rs:212-225).
+    The cleaner I/O throttle already exists at 4 MiB/s (set 10-14; v2.2.3 RELEASE_NOTES still says 8 MiB/s - stale).
+    Decision: A' - decouple md.latest marker lifetime from the bars tombstone contract (invariant "md.latest.v2 carries
+    no tombstones" in budget/golden + Rust guard test; packet allow-list), then a dynamic topic alter to ~6 h;
+    measure D21 per-product rebuild replay < 6 h first. B (3 MiB/s) not taken alone (small benefit, untested).
