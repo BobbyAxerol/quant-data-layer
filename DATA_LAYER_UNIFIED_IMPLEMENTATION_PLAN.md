@@ -73617,3 +73617,35 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
     --rollback-to 604800000 --apply. Open: kn_state_topics_packet verify not rerun (needs the projector principal
     argument; not located this session); stage-A key coalescing (29-48 % duplicate records per transaction, TRADE
     79-88 %) measured, report-only, not designed.
+  - 2026-10-16 stage-100 #3 (02:45:30Z, ~/.local/state/qdl-v2/p184-final-campaign-20261016T024530Z; writer B16,
+    stream baa72c96, A' applied; Asia-hours load): protocol_met false - driver acceptance ts:ready_60_every_sample and
+    G9 FAIL (3 samples). Every other measured gate was inside its rule (G2 TRADE max 333/348 ms vs 7.5 s in #2, QUOTE
+    p95 168/177; G7 BOOK_SNAPSHOT sdk_to_writer p95 16.8 ms vs 105.5; G8 0 slowlog; G4 inside). RCA (read-only): no
+    heartbeat stall - one 30 s heartbeat snapshot (03:10:55.7Z) caught QUOTE OKX BNB-USDT-SWAP STALE (age 2.565 s >
+    2.0) during a quiet BBO; route never stalled (native slices 323/338 rows/min, source->ack max 222 ms); pricing
+    eligible 33/33; the sampler counted that one snapshot as 3 G9 samples. Margin defect in the native QUOTE
+    liveness accounting (probe bound/2 + 1 s report validity vs a 2.0 s sealed entitlement). Fix in progress: writer
+    diagnostics + margin fix (entitlement unchanged), G9/TS sampler dedupe by heartbeat identity. Status of #3:
+    diagnostic only (not certification).
+  - G12/G13 inheritance audit badee80: INHERIT G13 21/76 cells and core-group S2; the rest rerun on final digests;
+    v1-predicate G12 PASS receipts not credited (d54264e g12_receipt_creditable). Oracle fixes d54264e (G12 v3),
+    f7d6afa (DR05 generation from schedule), 2169c26 (DR08 identity-matched starvation). Coordinator decisions: G12
+    fault-window integrity layer is REPORT-ONLY (frozen G12 row unchanged; lossless TRADE remains G10); BAR overwrite
+    report-only; G12 precheck requires a native B16 WriterClone exposing trade_integrity.
+  - G12 broker-restart blocker RCA (32d2cf6): ~300 s after a broker returns, auto.leader.rebalance moves group/txn
+    coordinators; coordinator state load (1.4 s / 0.6 s in the harness) stalls the core's transactional commit ->
+    TRADE/QUOTE max 2.47/1.97 s. Client tuning insufficient. Production __consumer_offsets-43 (core group) ~1 GB of
+    24 h internal-topic retention (load time not measured). OWNER DECISION 2026-10-16 (AskUserQuestion): "C then B" -
+    C: measure lower delete.retention.ms on __consumer_offsets/__transaction_state on an aged-state harness, apply
+    dynamically if it holds; B: auto.leader.rebalance.enable=false on kafka1-3 (sequential recreate) + preferred
+    leader election as a declared maintenance step with its stall measured and recorded; G12 rerun with the same
+    config. Both after the isolated burst campaign (lock claude-burst-b16 until ~06:15Z).
+  - Isolated burst ladder (TEST_ONLY internal capacity) running 03:30Z-~06:15Z: prereg TS 3d9582de
+    contracts/baseline/rust-first-v2/p18/p184-burst-b16-prereg.v1.json (rules verbatim from R2C), images = production
+    pins; apparatus flag fix TS 42297916. Not venue latency, does not answer G4.
+  - Release packet prepared (no builds): DL ef6e24b upgrade/evidence/releases/v2.2.4/ (83 commits since v2.2.3; SDK
+    must be bumped to 2.4.1 before builds; stream baa72c96 and query rc19 are test overlays; ingestor/projector release
+    binaries differ from production) and TS d5a13aff upgrade/evidence/P184_WRITER_RELEASE_PACKET_20261016.md (canonical
+    image via Dockerfile --target runtime-rust-shadow; deploy/Dockerfile.market-data-native is stale; 10 TS commit
+    subjects fail validate_pr_governance.py - owner decision before the PR). Final certification runs on release
+    digests after rollout.
