@@ -73709,3 +73709,26 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
       OK in the release python image --network none.
     - scripts/build_qdl_release_images.py: section-level verdicts (EQUAL_LOADED_SECTIONS, DIFFERENT_BUILD_PATH) with
       reference binary extraction for future builds; tests added.
+  - 2026-10-16 17:13-17:53Z v2.2.4 PRODUCTION ROLL (FINAL_STEPS d; lock claude-dl-roll 17:13:22-17:53:21Z; summary
+    ~/.local/state/qdl-v2/releases/v2.2.4/rollout/roll-summary-20261016.json sha256 eefb041c...): one container at a
+    time, every role diff == ['image'], RestartCount 0, label c7ce7d3, cpus unchanged:
+    - query_kn_1/2 b9ca6c36 -> c21e164a (17:14:46Z, 17:18:01Z); stream_kn_1/2 baa72c96 -> 60f83a51 (17:19:56Z,
+      17:22:59Z, bundle 63efd9ff...); market_projector_1/2 ce629061 -> 60f83a51 (17:26:03Z, 17:32:21Z; T6 settle_ok,
+      0 rebuild/abandon/refuse/ownership_lost; groups -a/-b Stable 2 members 25/25 samples); ingestor_okx_swap
+      (0.5 cpu) 17:40:55Z, ingestor_binance_usdm (0.75 cpu) 17:47:08Z 7fba2577 -> 60f83a51, 5-min watch clean.
+    - Untouched: rust_core x3 (rc22 7c848aad), kafka1-3, stable_redis, market_cache, binance_bar_edge, TS writer B17.
+    - Row-2 HOLD criterion ("gateway refused/overflow/handoff counters 0") NOT met literally; disposition (coordinator):
+      roll kept, deviation recorded, no criterion change.
+      - overflow: 4 closures RESOURCE_EXHAUSTED (queue 1000), all on the writer's TRADE BINANCE BTCUSDT
+        subscription: 17:16:13Z on the old image, 17:34:03-08Z on new stream_kn_1. Pre-existing: hold-baseline.json
+        (old image, before any roll) already shows stream_kn_1 cumulative overflow 2; same pattern seen 11:11Z and
+        15:05Z without a roll (host load ~16/16, writer 140-176% CPU). Consumer-side slowness, not a gateway
+        regression; rolling back would not remove it. Tracked as open item for the canonical writer roll; overflow
+        under load is scored by the final stage-100 on release digests (no inheritance from this roll).
+      - refused: 3 on old stream_kn_2 at 17:20:02Z (41 subscriptions failing over) and 2 on new stream_kn_1 during
+        the stream_kn_2 roll; counter = auth/quota rejections (rust/qdl-stream-gateway/src/service.rs:357); clients
+        retried, 64/64 active, hub_live_budget_refused and all queue_isolation counters 0. Shared-quota-release
+        hypothesis NOT checked. Quiet 2-min window before ingestors: overflow 0, refused 0.
+    - Not run: query warmup/batch smoke (no consumer credential used); evidence is health READY RUST_PRIMARY, writer
+      READY 64/64, 0 new error lines. Stream subscriptions now 64/0 across stream_kn_1/2 (was 41/23).
+    - Status: production-deployed, not certified. Open: G12 final on release set, G13, final stage-100.
