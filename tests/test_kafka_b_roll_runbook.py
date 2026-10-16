@@ -57,6 +57,7 @@ class FakeHost(rb.Host):
         self.roll_report = roll_report or {"ok": True, "healthy_after_s": 40, "isr_restored_after_s": 30,
                                            "broker_config": "false"}
         self.calls, self.clock, self.observes, self.procs = [], T0, 0, []
+        self.parity_refused, self.parity_argv = False, None
 
     def run(self, argv, timeout=3600):
         self.calls.append(list(argv))
@@ -74,7 +75,12 @@ class FakeHost(rb.Host):
             return 0, json.dumps({"mode": "elected", "before": {"data": 4}, "after": {"data": 0},
                                   "coordinator_moves": []}), ""
         if "--parity-snapshot" in argv:
-            Path(argv[-1]).write_text(json.dumps({"kafka": {"auto.leader.rebalance.enable": False}}))
+            self.parity_argv = list(argv)
+            if self.parity_refused:  # the snapshot refuses a described config that is not the committed plans
+                return 1, "", "ValueError: production parity: effective Kafka observation __consumer_offsets " \
+                              "temporary cleaner key(s) still present"
+            Path(argv[argv.index("--parity-snapshot") + 1]).write_text(json.dumps(
+                {"kafka": {"auto.leader.rebalance.enable": False}, "effective": {"sha256": "ab" * 32}}))
             return 0, "", ""
         if "--observe" in argv:
             return 0, json.dumps({"temp_removal": {"remove_recommended": False}, "topics": {}}), ""
@@ -235,9 +241,17 @@ class Runbook(unittest.TestCase):
         self.assertIn("--window-out", elect)
 
     def test_final_check_needs_false_everywhere(self):
-        code, out, _ = self.main(FakeHost(env={b: "false" for b in rb.BROKERS}), ["final-check"])
+        host = FakeHost(env={b: "false" for b in rb.BROKERS})
+        code, out, _ = self.main(host, ["final-check"])
         self.assertEqual(code, 0)
         self.assertIs(json.loads(out)["parity_rebalance"], False)
+        self.assertEqual(json.loads(out)["parity_effective_sha256"], "ab" * 32)
+        self.assertIn("--cert-dir", host.parity_argv)  # the snapshot describes the production topics (Codex K3)
+        refused = FakeHost(env={b: "false" for b in rb.BROKERS})
+        refused.parity_refused = True
+        code, out, _ = self.main(refused, ["final-check"])
+        self.assertEqual(code, 3)
+        self.assertIn("temporary cleaner key", json.loads(out)["parity_error"])
         code, _, _ = self.main(FakeHost(env={"kafka1": "false", "kafka2": "false", "kafka3": None}), ["final-check"])
         self.assertEqual(code, 3)
 

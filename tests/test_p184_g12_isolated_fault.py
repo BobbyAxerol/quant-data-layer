@@ -23,12 +23,28 @@ NATIVE_ENV = {"MARKET_DATA_NATIVE_FEEDS": "TRADE,QUOTE", "MARKET_DATA_NATIVE_FLA
               "DATA_LAYER_V2_BOOK_SNAPSHOT_BATCH_MAX_WAIT_MS": "0", "DATA_LAYER_V2_STREAM_BATCH_MAX_ITEMS": "64"}
 
 
+def effective(rebalance=True, topics=None, brokers=None):
+    """A sealed effective production observation consistent with the C + A' profile (Codex K3)."""
+    from scripts.kafka_internal_topic_compaction import FROZEN_OTHERS
+    base = {t: {**FROZEN_OTHERS[t], **C_PLAN[t]} for t in g12.INTERNAL_TOPICS}
+    base[g12.PRODUCTION_LATEST_TOPIC] = {"cleanup.policy": "compact", "delete.retention.ms": "21600000"}
+    for topic, values in (topics or {}).items():
+        base[topic] = {k: v for k, v in {**base[topic], **values}.items() if v is not None}
+    rows = {n: {g12.REBALANCE_ENV: str(rebalance).lower(), "image": "sha256:" + "9" * 64}
+            for n in g12.PRODUCTION_KAFKA}
+    for name, values in (brokers or {}).items():
+        rows[name] = {**rows[name], **values}
+    return g12.seal_effective({"schema": g12.EFFECTIVE_SCHEMA, "taken_utc": "2026-10-16T12:00:00Z",
+                               "topics": base, "brokers": rows})
+
+
 def parity_doc(rebalance=True, writer_image=None, env=None):
-    """A valid --production-parity document (B17-like writer view, C + A' profile)."""
-    return {"schema": "p184.g12.production-parity.v1", "taken_utc": "2026-10-16T12:00:00Z",
+    """A valid --production-parity document (B17-like writer view, C + A' profile, effective observation)."""
+    return {"schema": "p184.g12.production-parity.v2", "taken_utc": "2026-10-16T12:00:00Z",
             "kafka": g12.kafka_profile(rebalance, C_PLAN, 21600000),
             "writer": {"container": g12.TS_WRITER, "image": writer_image or g12.IMAGES["ts"],
-                       "env": dict(env or NATIVE_ENV)}}
+                       "env": dict(env or NATIVE_ENV)},
+            "effective": effective(rebalance)}
 
 
 def stream_rows(venue, start, end, *, step_ms=250, transit_ms=100, approved=True, first_seq=1001):
@@ -380,7 +396,7 @@ class ImageSetTests(unittest.TestCase):
                     g12.check_sealed_images(work, attested)
 
     def test_cli_passes_the_image_set_to_the_orchestrator(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, patch("scripts.kafka_b_roll_runbook.CERT", Path(tmp)):
             parity_true, parity_false = Path(tmp) / "p-true.json", Path(tmp) / "p-false.json"
             parity_true.write_text(json.dumps(parity_doc(True)))
             parity_false.write_text(json.dumps(parity_doc(False)))
@@ -394,6 +410,7 @@ class ImageSetTests(unittest.TestCase):
             self.assertEqual(query_code, "image")
             self.assertEqual(orchestrate.call_args.kwargs["parity"], parity_doc(True))
             self.assertEqual(orchestrate.call_args.kwargs["ts_root"], Path("/home/bobby/ts-run"))
+            self.assertTrue(callable(orchestrate.call_args.kwargs["observe_production"]))
             with patch.object(g12, "orchestrate", return_value=0) as orchestrate:
                 g12.main(["--run", "/home/bobby/x", "--export", "/home/bobby/e.json", "--namespace", NS,
                           "--auto-leader-rebalance", "false", "--production-parity", str(parity_false)])
@@ -416,6 +433,8 @@ class ImageSetTests(unittest.TestCase):
             # The rebalance flag must agree with the snapshot (production's value).
             with self.assertRaises(ValueError):
                 g12.orchestrate("/home/bobby/x", "/x", NS, auto_leader_rebalance=False, parity=parity_doc(True))
+            with self.assertRaisesRegex(ValueError, "observer"):  # a parity run binds the effective config
+                g12.orchestrate("/home/bobby/x", "/x", NS, auto_leader_rebalance=True, parity=parity_doc(True))
         with self.assertRaises(ValueError):
             g12.orchestrate("/home/bobby/x", "/x", NS)
 
@@ -3496,8 +3515,10 @@ class IntegrityOracleTests(unittest.TestCase):
                 frozen = g12.evaluate(evidence)
                 self.assertTrue(frozen["pass"])
                 self.assertEqual(frozen["schema"], g12.VERDICT_SCHEMA)
+        bound = {"parity_sha256": effective()["sha256"], "before": effective(), "after": effective()}
         frozen.update(status="COMPLETED", broker_config={"production_parity": "MATCH",
-                                                         "kafka_profile": parity_doc(True)["kafka"]})
+                                                         "kafka_profile": parity_doc(True)["kafka"],
+                                                         "production_effective": bound})
         self.assertEqual(g12.g12_receipt_creditable(frozen), (True, "PASS"))
         # Kafka parity (coordinator 2026-10-16): a run that did not mirror production is not credited, and a run on a
         # superseded profile (rebalance=true before decision B) is not the final G12.
@@ -3619,6 +3640,111 @@ class BrokerAndWriterPrecheckTests(unittest.TestCase):
             self.assertEqual(g12.evaluate(evidence)["writer_precheck"], {"OKX": {"ok": True}})
 
 
+class ProductionEffectiveBindingTests(unittest.TestCase):
+    """Codex K3 (2026-10-16): credit binds the EFFECTIVE production Kafka configuration (describe + inspect, hashed)
+    before and after the run; a missing or drifted observation refuses credit even when every constant is equal."""
+
+    def verdict(self, before=None, after=None, parity=None):
+        out = {"schema": g12.VERDICT_SCHEMA, "status": "COMPLETED", "pass": True,
+               "faults": [{"name": n} for n in ("broker_stop_start", "projector_restart", "stream_restart")],
+               "caught_up_predicate": {"version": g12.CAUGHT_UP_VERSION, "frozen": True},
+               "broker_config": {"production_parity": "MATCH", "kafka_profile": parity_doc()["kafka"],
+                                 "production_effective": {"parity_sha256": (parity or effective())["sha256"]}}}
+        bound = out["broker_config"]["production_effective"]
+        for phase, value in (("before", before), ("after", after)):
+            if value is not None:
+                bound[phase] = value
+        return out
+
+    def test_bound_and_unchanged_is_creditable(self):
+        verdict = self.verdict(effective(), effective())
+        self.assertEqual(g12.g12_receipt_creditable(verdict), (True, "PASS"))
+        self.assertEqual(g12.g12_receipt_creditable(verdict, parity_doc()["kafka"], effective()), (True, "PASS"))
+
+    def test_missing_or_failed_observation_refuses(self):
+        for before, after in ((None, effective()), (effective(), None), (effective(), {"error": "describe failed"})):
+            with self.subTest(before=bool(before), after=str(after)[:30]):
+                ok, reason = g12.g12_receipt_creditable(self.verdict(before, after))
+                self.assertFalse(ok)
+                self.assertIn("not observed", reason)
+        verdict = self.verdict(effective(), effective())
+        verdict["broker_config"].pop("production_effective")
+        self.assertFalse(g12.g12_receipt_creditable(verdict)[0])
+
+    def test_drift_while_constants_equal_refuses(self):
+        # The profile constants, MATCH and the isolated-run parity are identical in every case below; only the
+        # production observation moved.
+        drifts = {
+            "temp key back": effective(topics={"__consumer_offsets": {"min.cleanable.dirty.ratio": "0.05"}}),
+            "A' moved": effective(topics={g12.PRODUCTION_LATEST_TOPIC: {"delete.retention.ms": "604800000"}}),
+            "C key removed": effective(topics={"__consumer_offsets": {"segment.ms": None}}),
+            "cleaner setting not restored": effective(topics={"__consumer_offsets": {"segment.bytes": "1048576"}}),
+            "one broker rebalance": effective(brokers={g12.PRODUCTION_KAFKA[0]: {g12.REBALANCE_ENV: "false"}}),
+            "broker recreated on another image": effective(brokers={g12.PRODUCTION_KAFKA[1]: {"image": "sha256:" + "8" * 64}}),
+            "tampered hash": dict(effective(), topics={**effective()["topics"], g12.PRODUCTION_LATEST_TOPIC: {}}),
+        }
+        for name, after in drifts.items():
+            with self.subTest(drift=name):
+                verdict = self.verdict(effective(), after)
+                self.assertEqual(verdict["broker_config"]["kafka_profile"], parity_doc()["kafka"])
+                ok, reason = g12.g12_receipt_creditable(verdict, parity_doc()["kafka"])
+                self.assertFalse(ok)
+                self.assertTrue("drifted" in reason or "!=" in reason or "present" in reason or "sha256" in reason,
+                                reason)
+        # drift between the run and the credit-time snapshot (constants still equal)
+        moved = effective(brokers={g12.PRODUCTION_KAFKA[2]: {"image": "sha256:" + "7" * 64}})
+        ok, reason = g12.g12_receipt_creditable(self.verdict(effective(), effective()), parity_doc()["kafka"], moved)
+        self.assertFalse(ok)
+        self.assertIn("credit time", reason)
+
+    def test_run_binds_before_and_after_and_stops_on_drift_before(self):
+        run = g12.Run.__new__(g12.Run)
+        run.parity, run.auto_leader_rebalance = parity_doc(), True
+        run.bind_production("before", effective)
+        run.bind_production("after", lambda: effective(topics={"__consumer_offsets": {"min.cleanable.dirty.ratio":
+                                                                                        "0.05"}}))
+        config = run.broker_config()
+        bound = config["production_effective"]
+        self.assertEqual((bound["parity_sha256"], bound["before"]["sha256"]), (effective()["sha256"],) * 2)
+        self.assertNotEqual(bound["after"]["sha256"], bound["parity_sha256"])  # recorded, credit refuses
+        for observe in (lambda: effective(brokers={g12.PRODUCTION_KAFKA[0]: {"image": "sha256:" + "1" * 64}}),
+                        lambda: (_ for _ in ()).throw(RuntimeError("describe failed"))):
+            fresh = g12.Run.__new__(g12.Run)
+            fresh.parity, fresh.auto_leader_rebalance = parity_doc(), True
+            with self.subTest(observe=observe), self.assertRaisesRegex(RuntimeError, "STOP"):
+                fresh.bind_production("before", observe)
+
+    def test_observer_reads_describe_and_every_broker(self):
+        from scripts.kn_state_topics_packet import CommandResult
+
+        class Runner:
+            def __init__(self, fail=None):
+                self.calls, self.fail = [], fail
+
+            def run(self, command):
+                self.calls.append(list(command))
+                topic = command[command.index("--entity-name") + 1]
+                if topic == self.fail:
+                    return CommandResult(1, "", "boom")
+                lines = [f"Dynamic configs for topic {topic} are:"] + [
+                    f"  {k}={v} sensitive=false synonyms={{DYNAMIC_TOPIC_CONFIG:{k}={v}}}"
+                    for k, v in effective()["topics"][topic].items()]
+                return CommandResult(0, "\n".join(lines) + "\n", "")
+
+        def inspect(name):
+            return {"Image": "sha256:" + "9" * 64, "Config": {"Env": [f"{g12.REBALANCE_ENV}=true", "X=1"]}}
+        runner = Runner()
+        observed = g12.observe_production_kafka(runner, inspect, now="2026-10-16T12:00:00Z")
+        self.assertEqual(observed, effective())
+        self.assertEqual(sorted(c[c.index("--entity-name") + 1] for c in runner.calls),
+                         sorted([*g12.INTERNAL_TOPICS, g12.PRODUCTION_LATEST_TOPIC]))
+        self.assertFalse(any("--alter" in c for c in runner.calls))
+        with self.assertRaises(RuntimeError):
+            g12.observe_production_kafka(Runner(fail="md.latest.v2"), inspect)
+        with self.assertRaises(RuntimeError):
+            g12.observe_production_kafka(Runner(), lambda name: None)
+
+
 class InternalTopicParityTests(unittest.TestCase):
     """Codex K1 (2026-10-16): a G12 receipt carries the effective internal-topic overrides before/after the faults,
     so a B-only run is never credited as C+B proof."""
@@ -3685,7 +3811,7 @@ class ProductionParityTests(unittest.TestCase):
 
         def inspect(name):
             return writer if name == g12.TS_WRITER else self.kafka_inspect()
-        doc = g12.production_parity_snapshot(inspect, now="2026-10-16T12:00:00Z")
+        doc = g12.production_parity_snapshot(inspect, effective, now="2026-10-16T12:00:00Z")
         from scripts.kafka_internal_topic_compaction import PLAN
         self.assertEqual(doc["kafka"]["internal_topics"], PLAN)
         self.assertEqual(doc["kafka"]["state_topics"], {"latest": {"delete.retention.ms": "21600000"}})
@@ -3694,6 +3820,14 @@ class ProductionParityTests(unittest.TestCase):
                                          "env": NATIVE_ENV})
         self.assertNotIn("secret", json.dumps(doc))
         self.assertEqual(g12.validate_parity(doc), doc)
+        self.assertEqual(doc["effective"], effective())
+        # the snapshot refuses a described config that is not the committed plans, whatever the constants say
+        for drifted in (lambda: effective(topics={"__consumer_offsets": {"min.cleanable.dirty.ratio": "0.05"}}),
+                        lambda: effective(topics={g12.PRODUCTION_LATEST_TOPIC: {"delete.retention.ms": "604800000"}}),
+                        lambda: effective(topics={"__transaction_state": {"segment.ms": None}}),
+                        lambda: effective(brokers={g12.PRODUCTION_KAFKA[2]: {g12.REBALANCE_ENV: "false"}})):
+            with self.subTest(drift=str(drifted())[:80]), self.assertRaises(ValueError):
+                g12.production_parity_snapshot(inspect, drifted, now="2026-10-16T12:00:00Z")
 
     def test_profile_and_parity_validation(self):
         good = parity_doc()
@@ -3706,7 +3840,11 @@ class ProductionParityTests(unittest.TestCase):
                dict(good, kafka=dict(good["kafka"], state_topics={"latest": {"segment.ms": "1"}})),
                dict(good, writer=dict(good["writer"], image="cb5216b8")),
                dict(good, writer=dict(good["writer"], env=dict(NATIVE_ENV, POSTGRES_DSN="x"))),
-               dict(good, writer=dict(good["writer"], env={"DATA_LAYER_V2_STREAM_BATCH_MAX_ITEMS": "64"}))]
+               dict(good, writer=dict(good["writer"], env={"DATA_LAYER_V2_STREAM_BATCH_MAX_ITEMS": "64"})),
+               dict(good, schema="p184.g12.production-parity.v1"),  # pre-K3 document: constants only
+               {k: v for k, v in good.items() if k != "effective"},
+               dict(good, effective=dict(good["effective"], sha256="0" * 64)),
+               dict(good, effective=effective(topics={"__consumer_offsets": {"min.cleanable.dirty.ratio": "0.05"}}))]
         for doc in bad:
             with self.subTest(doc=json.dumps(doc)[:120]), self.assertRaises(ValueError):
                 g12.validate_parity(doc)
@@ -3778,13 +3916,14 @@ class ProductionParityTests(unittest.TestCase):
                     patch("sys.stdout"):
                 self.assertEqual(g12.main(["--credit", str(base), "--production-parity", str(snapshot)]), 0)
             self.assertEqual(credit.call_args.args[1], parity_doc(False)["kafka"])
+            self.assertEqual(credit.call_args.args[2], parity_doc(False)["effective"])
 
     def test_parity_snapshot_mode_is_exclusive_create(self):
         doc = parity_doc()
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "parity.json"
             with patch.object(g12, "production_parity_snapshot", return_value=doc), patch("sys.stdout"):
-                self.assertEqual(g12.main(["--parity-snapshot", str(out)]), 0)
+                self.assertEqual(g12.main(["--parity-snapshot", str(out), "--cert-dir", tmp]), 0)
                 self.assertEqual(json.loads(out.read_text()), doc)
                 with self.assertRaises(FileExistsError):
-                    g12.main(["--parity-snapshot", str(out)])
+                    g12.main(["--parity-snapshot", str(out), "--cert-dir", tmp])

@@ -5,6 +5,7 @@ No docker call is made: only the pure helpers and git reads of this repository a
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 from pathlib import Path
 import subprocess
@@ -52,18 +53,52 @@ class ArgumentTests(unittest.TestCase):
 
 class GuardTests(unittest.TestCase):
     def test_lock_must_be_held_by_owner(self):
+        now = dt.datetime(2026, 10, 16, 14, 0, tzinfo=dt.timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
             lock = Path(tmp) / "lock"
             with self.assertRaisesRegex(b.BuildError, "no host lock"):
-                b.check_lock(lock, "me")
-            lock.write_text(json.dumps({"owner": "other"}))
+                b.check_lock(lock, "me", now)
+            lock.write_text(json.dumps({"owner": "other", "until_utc": "2026-10-16T15:00:00Z"}))
             with self.assertRaisesRegex(b.BuildError, "held by 'other'"):
-                b.check_lock(lock, "me")
-            lock.write_text(json.dumps({"owner": "me"}))
-            self.assertEqual(b.check_lock(lock, "me")["owner"], "me")
-            with self.assertRaises(b.BuildError):
-                b.check_lock(lock, None)
+                b.check_lock(lock, "me", now)
+            lock.write_text(json.dumps({"owner": "me", "until_utc": "2026-10-16T15:00:00Z"}))
+            self.assertEqual(b.check_lock(lock, "me", now)["owner"], "me")
+            with self.assertRaisesRegex(b.BuildError, "lock-owner"):
+                b.check_lock(lock, None, now)
 
+    def test_same_owner_needs_a_live_bounded_window(self):
+        """Codex B1: an owned lock past, without or with a malformed until_utc never permits a build."""
+        now = dt.datetime(2026, 10, 16, 14, 0, tzinfo=dt.timezone.utc)
+        cases = {"expired": ({"owner": "me", "until_utc": "2026-10-16T13:59:59Z"}, "expired"),
+                 "at the deadline": ({"owner": "me", "until_utc": "2026-10-16T14:00:00+00:00"}, "expired"),
+                 "missing": ({"owner": "me"}, "until_utc"),
+                 "malformed": ({"owner": "me", "until_utc": "soon"}, "until_utc"),
+                 "naive": ({"owner": "me", "until_utc": "2026-10-16T15:00:00"}, "until_utc"),
+                 "not a string": ({"owner": "me", "until_utc": 1792170000}, "until_utc"),
+                 "beyond 3 h": ({"owner": "me", "until_utc": "2026-10-16T17:00:01Z"}, "maximum")}
+        with tempfile.TemporaryDirectory() as tmp:
+            lock = Path(tmp) / "lock"
+            for name, (doc, message) in cases.items():
+                with self.subTest(case=name):
+                    lock.write_text(json.dumps(doc))
+                    with self.assertRaisesRegex(b.BuildError, message):
+                        b.check_lock(lock, "me", now)
+            lock.write_text("{not json")
+            with self.assertRaisesRegex(b.BuildError, "unreadable"):
+                b.check_lock(lock, "me", now)
+
+    def test_build_revalidates_the_window_at_each_expensive_stage(self):
+        stages = []
+        runner = mock.Mock()
+        runner.run.side_effect = lambda argv, step, **kw: stages.append(("run", step)) or ""
+
+        def guard(stage):
+            stages.append(("guard", stage))
+            if stage == "rust-compile":
+                raise b.BuildError("host lock of 'me' expired")
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(b.BuildError, "expired"):
+            b.build_rust(runner, Path(tmp), "a" * 40, "qdl-v2-rust:x", guard)
+        self.assertEqual(stages, [("guard", "rust-compile")])  # the compile never started
     def test_disk_floor(self):
         usage = mock.Mock(free=10 * 2**30)
         with mock.patch.object(b.shutil, "disk_usage", return_value=usage):

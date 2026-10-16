@@ -38,8 +38,10 @@ Boundary:
   ``PLAN``: ``--apply-temp`` / ``--remove-temp`` (dry-run unless ``--apply``) add or delete exactly that key with the
   same refusals (frozen others, planned keys absent/target, the temp key absent/its target); while present at its
   target it is not drift for ``--apply``/``--rollback``/``--observe`` (any other value is). ``--observe`` reports it
-  with the size of ``TEMP_WATCH_PARTITION`` and ``remove_recommended`` once every replica is at or below
-  ``TEMP_REMOVE_AT_BYTES``; the removal itself is the coordinator's declared step. Rollback = ``--remove-temp``;
+  with the size of ``TEMP_WATCH_PARTITION`` and ``remove_recommended`` once every ASSIGNED replica (``kafka-topics
+  --describe``) has an error-free, non-negative size at or below ``TEMP_REMOVE_AT_BYTES`` (a missing / errored /
+  future replica is ``UNKNOWN_HOLD``, never zero; Codex K1); the removal itself is the coordinator's declared step.
+  Rollback = ``--remove-temp``;
 * ``--lock-owner`` names the caller's own host-measurement lock (it does not block ``--apply``);
 * ``--topic`` limits the run to one topic (staged apply); the order is ``__transaction_state`` first (no
   correctness coupling), then ``__consumer_offsets``;
@@ -64,6 +66,7 @@ import argparse
 import datetime as dt
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any, Mapping, Sequence
 
@@ -235,15 +238,66 @@ def apply_temp(runner, topic: str, remove: bool) -> dict[str, Any]:
             "undo": temp_alter_cmd(topic) if remove else temp_remove_cmd(topic)}
 
 
-def temp_removal(topics: Mapping[str, Any], parts: Mapping[str, Any]) -> dict[str, Any]:
-    """When the temporary key can go: present + every replica of the watched partition <= TEMP_REMOVE_AT_BYTES."""
+def temp_removal(topics: Mapping[str, Any], parts: Mapping[str, Any],
+                 assigned: Sequence[str] | None) -> dict[str, Any]:
+    """When the temporary key can go: present + a complete, error-free, non-negative size observation of EVERY
+    assigned replica of the watched partition, each <= TEMP_REMOVE_AT_BYTES (Codex K1, 2026-10-16).
+
+    ``assigned``: the partition's replica broker ids from ``kafka-topics --describe`` (None: not read). A replica that
+    is assigned but not observed, a log-dir error, a future (moving) replica or an invalid size is UNKNOWN -> HOLD,
+    never zero; ``remove_recommended`` is then false whatever the other replicas show."""
     present = any(t.get("temp_state") == "PRESENT" for t in topics.values())
-    sizes = (parts.get(TEMP_WATCH_PARTITION) or {}).get("size_bytes_by_broker") or {}
-    largest = max(sizes.values()) if sizes else None
-    return {"present": present, "watch_partition": TEMP_WATCH_PARTITION, "max_size_bytes": largest,
-            "threshold_bytes": TEMP_REMOVE_AT_BYTES,
-            "remove_recommended": present and largest is not None and largest <= TEMP_REMOVE_AT_BYTES,
+    part = parts.get(TEMP_WATCH_PARTITION) or {}
+    sizes = part.get("size_bytes_by_broker") or {}
+    problems = list(part.get("observation_problems") or [])
+    expected = sorted(str(b) for b in (assigned or ()))
+    if not expected:
+        problems.append("assigned replicas of the watched partition not read")
+    missing = [b for b in expected if b not in sizes]
+    if missing:
+        problems.append(f"assigned replicas without a size observation: {missing}")
+    unexpected = sorted(b for b in sizes if b not in expected)
+    if expected and unexpected:
+        problems.append(f"size observed on brokers outside the assignment: {unexpected}")
+    complete = not problems
+    largest = max(sizes[b] for b in expected) if complete else None
+    observed_max = max(sizes.values()) if sizes else None
+    if not present:
+        status = "TEMP_NOT_PRESENT"
+    elif not complete:
+        status = "UNKNOWN_HOLD"
+    elif largest <= TEMP_REMOVE_AT_BYTES:
+        status = "REMOVE_RECOMMENDED"
+    else:
+        status = "ABOVE_THRESHOLD_HOLD"
+    return {"present": present, "watch_partition": TEMP_WATCH_PARTITION, "assigned_replicas": expected,
+            "observed_replicas": sorted(sizes), "observation_complete": complete, "observation_problems": problems,
+            "max_size_bytes": largest, "observed_max_size_bytes": observed_max,
+            "threshold_bytes": TEMP_REMOVE_AT_BYTES, "status": status,
+            "remove_recommended": status == "REMOVE_RECOMMENDED",
             "remove_command": "kafka_internal_topic_compaction.py --remove-temp --apply --cert-dir <cert>"}
+
+
+def topic_describe_cmd(topic: str) -> list[str]:
+    _known(topic)
+    return ["kafka-topics.sh", "--describe", "--topic", topic]
+
+
+_ASSIGNMENT = re.compile(r"^\s*Topic:\s*(\S+)\s+Partition:\s*(\d+)\s+Leader:\s*\S+\s+Replicas:\s*([\d,]+)\b")
+
+
+def parse_assigned_replicas(text: str, partition: str) -> list[str]:
+    """``kafka-topics --describe`` -> the replica broker ids of ``partition`` (``topic-N``); refuses when the
+    partition row is absent or listed twice."""
+    topic, _, number = partition.rpartition("-")
+    rows = [m.group(3) for m in map(_ASSIGNMENT.match, text.splitlines())
+            if m and m.group(1) == topic and m.group(2) == number]
+    if len(rows) != 1:
+        raise RuntimeError(f"kafka-topics printed {len(rows)} assignment rows for {partition}")
+    replicas = [b for b in rows[0].split(",") if b]
+    if not replicas or len(set(replicas)) != len(replicas):
+        raise RuntimeError(f"invalid replica list for {partition}: {rows[0]!r}")
+    return replicas
 
 
 def log_dirs_cmd() -> list[str]:
@@ -261,18 +315,43 @@ def _checked(runner, command: Sequence[str]) -> str:
     return result.stdout
 
 
-def parse_log_dirs(text: str, wanted: Sequence[str]) -> dict[str, dict[str, int]]:
-    """``kafka-log-dirs --describe`` JSON line -> {partition: {broker id: size bytes}} for the wanted partitions."""
+def parse_log_dirs(text: str, wanted: Sequence[str]) -> dict[str, dict[str, Any]]:
+    """``kafka-log-dirs --describe`` JSON line -> {partition: {"size_bytes_by_broker": {broker id: bytes},
+    "observation_problems": [...]}} for the wanted partitions.
+
+    Only a current (non-future) replica in an error-free log dir with an integer size >= 0 is a size; a log-dir
+    error on a broker, a future replica, an invalid/negative size or a duplicate replica is recorded as a problem
+    (Codex K1, 2026-10-16) and the replica is not given a size."""
     line = next((row for row in text.splitlines() if row.startswith("{")), None)
     if line is None:
         raise RuntimeError("kafka-log-dirs printed no JSON")
-    sizes: dict[str, dict[str, int]] = {name: {} for name in wanted}
+    out: dict[str, dict[str, Any]] = {name: {"size_bytes_by_broker": {}, "observation_problems": []}
+                                      for name in wanted}
     for broker in json.loads(line)["brokers"]:
-        for log_dir in broker["logDirs"]:
-            for part in log_dir["partitions"]:
-                if part["partition"] in sizes:
-                    sizes[part["partition"]][str(broker["broker"])] = int(part["size"])
-    return sizes
+        node = str(broker["broker"])
+        for log_dir in broker.get("logDirs") or []:
+            if log_dir.get("error") not in (None, "", "none", "NONE"):
+                for name in wanted:
+                    out[name]["observation_problems"].append(
+                        f"broker {node} log dir {log_dir.get('logDir')!r} error {str(log_dir['error'])[:120]!r}")
+                continue
+            for part in log_dir.get("partitions") or []:
+                name = part.get("partition")
+                if name not in out:
+                    continue
+                problems = out[name]["observation_problems"]
+                if part.get("isFuture"):
+                    problems.append(f"broker {node} holds a future replica of {name}")
+                    continue
+                size = part.get("size")
+                if type(size) is not int or size < 0:
+                    problems.append(f"broker {node} invalid size {size!r} for {name}")
+                    continue
+                if node in out[name]["size_bytes_by_broker"]:
+                    problems.append(f"broker {node} reports {name} twice")
+                    continue
+                out[name]["size_bytes_by_broker"][node] = size
+    return out
 
 
 def parse_offsets(text: str) -> dict[str, int]:
@@ -307,13 +386,16 @@ def observe(runner, partitions: Sequence[str]) -> dict[str, Any]:
     sizes = parse_log_dirs(_checked(runner, log_dirs_cmd()), wanted)
     end = parse_offsets(_checked(runner, offsets_cmd(partitions, "-1")))
     start = parse_offsets(_checked(runner, offsets_cmd(partitions, "-2")))
-    parts = {name: {"size_bytes_by_broker": sizes[name], "log_start_offset": start.get(name),
+    watch_topic = TEMP_WATCH_PARTITION.rpartition("-")[0]
+    assigned = parse_assigned_replicas(_checked(runner, topic_describe_cmd(watch_topic)), TEMP_WATCH_PARTITION)
+    parts = {name: {**sizes[name], "log_start_offset": start.get(name),
                     "log_end_offset": end.get(name),
                     "offset_span": (end[name] - start[name]) if name in end and name in start else None}
              for name in wanted}
+    parts[TEMP_WATCH_PARTITION]["assigned_replicas"] = assigned
     return {"mode": "observe", "at_utc": dt.datetime.now(dt.timezone.utc).isoformat(), "runner": runner.describe(),
             "plan_status": PLAN_STATUS, "topics": topics, "partitions": parts,
-            "temp_removal": temp_removal(topics, parts),
+            "temp_removal": temp_removal(topics, parts, assigned),
             "note": "offset_span is not a record count; replayed records = broker 'Finished loading' line"}
 
 

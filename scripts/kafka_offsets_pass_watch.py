@@ -22,12 +22,26 @@ Sources (all read-only; nothing is written to Kafka, a volume or a container):
 A snapshot starts containers, so it refuses while a host-measurement lock of another owner is active
 (``--lock-owner`` names the caller's own window). ``--compare`` reads two files only.
 
-Compare verdict (exit 0 OK / 1 violation): every group and every (topic, partition) committed before is still
-committed after with an offset that did not decrease (live commits may advance it); group states and sizes are
-reported, not judged. A pass counts as observed on a replica when a ``Beginning cleaning`` line for the partition
-lies after the BEFORE snapshot; finished when its summary block (``cleaned log ... dirty section``) follows.
+Read errors (Codex K2, 2026-10-16): a required read that fails stops the snapshot (exit 5, nothing written) - the
+partition-directory script runs under ``set -e`` and must print every section marker, a listing with no segment or an
+unparseable line is an error, and a failed ``docker cp`` of the LIVE cleaner log is an error; only a rotated hourly
+file that the daemon reports as absent (``Could not find the file``) is optional, and it is recorded per replica
+(``cleaner_log_absent``). Snapshots carry ``read_contract`` (``READ_CONTRACT``); an older snapshot is not a valid
+observation.
 
-Exit codes: 0 OK, 1 compare violation, 4 refused, 5 command error.
+Compare reports three SEPARATE outcomes (none of them is permission for the next broker by itself):
+
+* ``observation_valid``: both snapshots follow ``READ_CONTRACT``, the BEFORE replica set is non-empty and every
+  replica is present after, each with at least one segment;
+* ``offsets_preserved``: the BEFORE baseline holds at least one committed (group, topic, partition) and every one of
+  them is still committed after with an offset that did not decrease (live commits may advance it; an idle group may
+  legitimately keep its offset unchanged); group states and sizes are reported, not judged. ``ok`` is this offset
+  safety on a valid observation - it does NOT mean the cleaner finished;
+* ``cleaner_completed_all_replicas``: on a valid observation, every replica shows a pass over the partition that
+  began after the BEFORE snapshot and whose summary block (``cleaned log ... dirty section`` + ``End size``) followed.
+
+Exit codes: 0 all three, 2 valid + offsets preserved but the cleaner pass not complete on every replica, 1 offset
+violation or empty baseline, 6 observation not valid, 4 refused, 5 command error.
 """
 
 from __future__ import annotations
@@ -53,6 +67,8 @@ READER_IMAGE = "alpine:3.20"
 CLEANER_LOG = "/opt/kafka/logs/log-cleaner.log"
 DATA_MOUNT = "/data"  # the broker's /var/lib/kafka/data (KAFKA_LOG_DIRS) mounted read-only
 TIMEOUT = 120.0
+READ_CONTRACT = "p184.pass-watch.read-errors.v2"
+ABSENT_FILE = "Could not find the file"  # docker cp: the path does not exist in the container (daemon message)
 
 
 class Refused(Exception):
@@ -145,33 +161,43 @@ def cleaner_files(now: dt.datetime, hours: int) -> list[str]:
     return names + [CLEANER_LOG]
 
 
-def _untar_one(blob: bytes) -> str:
+def _untar_one(blob: bytes, name: str) -> str:
     with tarfile.open(fileobj=io.BytesIO(blob)) as archive:
         member = next((m for m in archive.getmembers() if m.isfile()), None)
-        if member is None:
-            return ""
-        handle = archive.extractfile(member)
-        return handle.read().decode("utf-8", "replace") if handle else ""
+        handle = archive.extractfile(member) if member is not None else None
+        if handle is None:
+            raise RuntimeError(f"docker cp of {name} returned no regular file")
+        return handle.read().decode("utf-8", "replace")
 
 
-def read_cleaner_log(node: int, now: dt.datetime, hours: int) -> tuple[str, list[str]]:
-    texts, read = [], []
+def read_cleaner_log(node: int, now: dt.datetime, hours: int) -> tuple[str, list[str], list[str]]:
+    """(text, files read, rotated files absent). Only a rotated hourly file the daemon reports as absent is skipped
+    (an hour without a rotation: quiet cleaner or before the container started); any other failure, and any failure
+    of the live file, raises."""
+    texts, read, absent = [], [], []
     for name in cleaner_files(now, hours):
         done = subprocess.run(["docker", "cp", f"{container(node)}:{name}", "-"], capture_output=True,
                               timeout=TIMEOUT, check=False)
         if done.returncode != 0:
-            continue  # an hour without a rotated file (quiet cleaner or before the container started)
-        texts.append(_untar_one(done.stdout))
+            err = (done.stderr or b"").decode("utf-8", "replace").strip()
+            if name != CLEANER_LOG and ABSENT_FILE in err:
+                absent.append(Path(name).name)
+                continue
+            raise RuntimeError(f"docker cp {container(node)}:{name} failed rc={done.returncode}: {err[-300:]}")
+        texts.append(_untar_one(done.stdout, name))
         read.append(Path(name).name)
-    return "\n".join(texts), read
+    return "\n".join(texts), read, absent
 
 
 # ------------------------------------------------------------------------------------------------ partition dir
 
 
 def dir_script(partition: str) -> str:
-    return (f"cd {DATA_MOUNT}/{partition} && stat -c '%n %s %Y' *.log; echo '#cleaner'; "
-            f"cat {DATA_MOUNT}/cleaner-offset-checkpoint; echo '#start'; cat {DATA_MOUNT}/log-start-offset-checkpoint")
+    """``set -e``: a failed cd / stat / cat ends the script non-zero (no later command can mask it); ``#end`` proves
+    the last read completed."""
+    return (f"set -e; cd {DATA_MOUNT}/{partition}; stat -c '%n %s %Y' *.log; echo '#cleaner'; "
+            f"cat {DATA_MOUNT}/cleaner-offset-checkpoint; echo '#start'; cat {DATA_MOUNT}/log-start-offset-checkpoint; "
+            "echo '#end'")
 
 
 def dir_argv(node: int, partition: str) -> list[str]:
@@ -181,8 +207,14 @@ def dir_argv(node: int, partition: str) -> list[str]:
 
 
 def _checkpoint(lines: Iterable[str], partition: str) -> int | None:
+    """Kafka offset checkpoint: version ``0``, entry count, then ``topic partition offset`` rows; a malformed file
+    raises (a partial read is not an absent entry)."""
+    lines = [line for line in lines if line.strip()]
+    if len(lines) < 2 or lines[0].strip() != "0" or not lines[1].strip().isdigit() \
+            or int(lines[1]) != len(lines) - 2 or any(len(line.split()) != 3 for line in lines[2:]):
+        raise RuntimeError("malformed offset checkpoint file")
     topic, _, number = partition.rpartition("-")
-    for line in lines:
+    for line in lines[2:]:
         bits = line.split()
         if len(bits) == 3 and bits[0] == topic and bits[1] == number:
             return int(bits[2])
@@ -190,24 +222,33 @@ def _checkpoint(lines: Iterable[str], partition: str) -> int | None:
 
 
 def parse_partition_dir(text: str, partition: str) -> dict[str, Any]:
-    """``dir_script`` output -> segments (base offset, bytes, mtime), totals and the two checkpoints."""
+    """``dir_script`` output -> segments (base offset, bytes, mtime), totals and the two checkpoints. Every section
+    marker must appear in order, every listing line must be a segment, and at least one segment must exist (a
+    partition always has its active segment); otherwise the read failed and this raises."""
     section, segments, cleaner, start = "segments", [], [], []
+    order = {"#cleaner": ("segments", "cleaner"), "#start": ("cleaner", "start"), "#end": ("start", "end")}
     for line in text.splitlines():
-        if line == "#cleaner":
-            section = "cleaner"
-            continue
-        if line == "#start":
-            section = "start"
+        if line in order:
+            if section != order[line][0]:
+                raise RuntimeError(f"partition dir read: marker {line} out of order")
+            section = order[line][1]
             continue
         if section == "segments":
             match = re.fullmatch(r"(\d{20})\.log (\d+) (\d+)", line.strip())
-            if match:
-                segments.append({"base_offset": int(match.group(1)), "bytes": int(match.group(2)),
-                                 "mtime": int(match.group(3))})
+            if not match:
+                raise RuntimeError(f"partition dir read: unparseable listing line {line[:80]!r}")
+            segments.append({"base_offset": int(match.group(1)), "bytes": int(match.group(2)),
+                             "mtime": int(match.group(3))})
         elif section == "cleaner":
             cleaner.append(line)
-        else:
+        elif section == "start":
             start.append(line)
+        elif line.strip():
+            raise RuntimeError("partition dir read: output after #end")
+    if section != "end":
+        raise RuntimeError("partition dir read incomplete (no #end marker)")
+    if not segments:
+        raise RuntimeError(f"partition dir read: no segment of {partition}")
     segments.sort(key=lambda s: s["base_offset"])
     return {"segments": segments, "segment_count": len(segments), "size_bytes": sum(s["bytes"] for s in segments),
             "empty_segments": sum(1 for s in segments if s["bytes"] == 0),
@@ -272,10 +313,10 @@ def snapshot(admin: AdminContainerRunner, partition: str, hours: int, brokers: S
     now = now or dt.datetime.now(dt.timezone.utc)
     replicas = {}
     for node in brokers:
-        text, files = read_cleaner_log(node, now, hours)
+        text, files, absent = read_cleaner_log(node, now, hours)
         body = parse_partition_dir(_run(dir_argv(node, partition)), partition)
         body.update({"container": container(node), "volume": volume(node), "cleaner_log_files": files,
-                     "passes": parse_cleaner_passes(text, partition)})
+                     "cleaner_log_absent": absent, "passes": parse_cleaner_passes(text, partition)})
         replicas[str(node)] = body
     offsets = admin.run(OFFSETS_CMD)
     if offsets.returncode != 0:
@@ -283,7 +324,8 @@ def snapshot(admin: AdminContainerRunner, partition: str, hours: int, brokers: S
     states = admin.run(STATE_CMD)
     if states.returncode != 0:
         raise RuntimeError(f"consumer-groups --state failed rc={states.returncode}: {states.stderr[-300:]}")
-    return {"kind": "kafka_offsets_pass_watch.snapshot", "at_utc": now.isoformat(), "partition": partition,
+    return {"kind": "kafka_offsets_pass_watch.snapshot", "read_contract": READ_CONTRACT, "at_utc": now.isoformat(),
+            "partition": partition,
             "runner": admin.describe(), "reader_image": READER_IMAGE, "replicas": replicas,
             "group_offsets": parse_group_offsets(offsets.stdout), "group_states": parse_group_states(states.stdout)}
 
@@ -317,6 +359,26 @@ def _after(stamp: str | None, since: str) -> bool:
     return stamp is not None and dt.datetime.fromisoformat(stamp) > dt.datetime.fromisoformat(since)
 
 
+def _completed(item: Mapping[str, Any]) -> bool:
+    return bool(item.get("finished_utc")) and item.get("end_messages") is not None
+
+
+def observation_problems(before: Mapping[str, Any], after: Mapping[str, Any]) -> list[str]:
+    problems = []
+    for label, doc in (("before", before), ("after", after)):
+        if doc.get("read_contract") != READ_CONTRACT:
+            problems.append(f"{label} snapshot does not follow {READ_CONTRACT} (read errors may be masked)")
+        for node, replica in sorted((doc.get("replicas") or {}).items()):
+            if not replica.get("segment_count"):
+                problems.append(f"{label} replica {node} has no segment")
+    if not before.get("replicas"):
+        problems.append("before snapshot has no replica")
+    missing = sorted(set(before.get("replicas") or {}) - set(after.get("replicas") or {}))
+    if missing:
+        problems.append(f"replicas missing after: {missing}")
+    return problems
+
+
 def compare(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict[str, Any]:
     if before.get("partition") != after.get("partition"):
         raise Refused("snapshots are of different partitions")
@@ -328,7 +390,7 @@ def compare(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict[str, An
             continue
         window = [p for p in new["passes"] if _after(p["started_utc"], before["at_utc"])]
         replicas[node] = {
-            "pass_started": bool(window), "pass_finished": any(p["finished_utc"] for p in window),
+            "pass_started": bool(window), "pass_finished": any(_completed(p) for p in window),
             "passes_in_window": window,
             "size_bytes": {"before": old["size_bytes"], "after": new["size_bytes"],
                            "delta": new["size_bytes"] - old["size_bytes"]},
@@ -342,12 +404,30 @@ def compare(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict[str, An
                      if s.get("state") != after["group_states"].get(g, {}).get("state")}
     advanced = sum(1 for g, parts in before["group_offsets"].items() for k, v in parts.items()
                    if v is not None and (after["group_offsets"].get(g, {}).get(k) or -1) > v)
+    baseline = sum(1 for parts in before["group_offsets"].values() for v in parts.values() if v is not None)
+    problems = observation_problems(before, after)
+    valid = not problems
+    preserved = baseline > 0 and not violations
+    completed = valid and bool(replicas) and all(r.get("pass_finished") for r in replicas.values())
     return {"kind": "kafka_offsets_pass_watch.compare", "partition": before["partition"],
             "before_utc": before["at_utc"], "after_utc": after["at_utc"], "replicas": replicas,
             "groups_before": len(before["group_offsets"]), "groups_after": len(after["group_offsets"]),
+            "baseline_committed_offsets": baseline,
             "offsets_advanced": advanced, "offset_violations": violations, "group_state_changes": state_changes,
-            "pass_finished_on_all_replicas": all(r.get("pass_finished") for r in replicas.values()),
-            "ok": not violations and not any(r.get("missing_after") for r in replicas.values())}
+            "observation_valid": valid, "observation_problems": problems,
+            "offsets_preserved": preserved,
+            "cleaner_completed_all_replicas": completed,
+            "ok": valid and preserved,
+            "note": "ok = offset safety on a valid observation; it is NOT cleaner completion and none of the three "
+                    "outcomes alone authorizes the next broker"}
+
+
+def compare_exit(report: Mapping[str, Any]) -> int:
+    if not report["observation_valid"]:
+        return 6
+    if not report["offsets_preserved"]:
+        return 1
+    return 0 if report["cleaner_completed_all_replicas"] else 2
 
 
 # ------------------------------------------------------------------------------------------------ main
@@ -368,7 +448,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             before, after = (json.loads(p.read_text(encoding="utf-8")) for p in args.compare)
             report = compare(before, after)
             print(json.dumps(report, indent=1))
-            return 0 if report["ok"] else 1
+            return compare_exit(report)
         partition = _partition_name(args.partition)
         if not 0 <= args.hours <= 48:
             raise Refused("--hours must be 0..48")

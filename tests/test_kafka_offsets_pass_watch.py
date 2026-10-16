@@ -8,6 +8,7 @@ import datetime as dt
 import io
 import json
 from pathlib import Path
+import tarfile
 import tempfile
 import unittest
 from unittest import mock
@@ -49,6 +50,7 @@ __consumer_offsets 4 100
 0
 1
 __consumer_offsets 43 0
+#end
 """
 
 OFFSETS = """
@@ -70,11 +72,14 @@ idle            kafka1:9092  (1)          -                    Empty            
 """
 
 
-def snap(at, offsets, states=None, passes=(), size=100):
+def snap(at, offsets, states=None, passes=(), size=100, nodes=("1",)):
     replica = {"size_bytes": size, "segment_count": 2, "empty_segments": 0, "cleaner_checkpoint": 1,
                "log_start_checkpoint": 0, "passes": list(passes)}
-    return {"partition": P, "at_utc": at, "replicas": {"1": dict(replica)},
-            "group_offsets": offsets, "group_states": states or {}}
+    return {"read_contract": watch.READ_CONTRACT, "partition": P, "at_utc": at,
+            "replicas": {n: dict(replica) for n in nodes}, "group_offsets": offsets, "group_states": states or {}}
+
+
+DONE = {"started_utc": "2026-10-16T12:20:00+00:00", "finished_utc": "2026-10-16T12:40:00+00:00", "end_messages": 5}
 
 
 class CleanerLog(unittest.TestCase):
@@ -116,6 +121,22 @@ class PartitionDir(unittest.TestCase):
         self.assertEqual(body["cleaner_checkpoint"], 361115496)  # partition 4's line is ignored
         self.assertEqual(body["log_start_checkpoint"], 0)
 
+    def test_masked_or_partial_reads_raise(self):
+        script = watch.dir_script(P)
+        self.assertTrue(script.startswith("set -e; cd /data/__consumer_offsets-43; "))
+        self.assertTrue(script.endswith("echo '#end'"))
+        # a failed cd/stat whose error is followed by successful cats: no segment, so it is an error, not zero bytes
+        masked = DIR.split("#cleaner")[1]
+        bad = {"masked cd/stat": "#cleaner" + masked,
+               "no #end": DIR.replace("#end\n", ""),
+               "error line in listing": "sh: cd: can't cd to /data/x\n" + DIR,
+               "truncated checkpoint": DIR.replace("__consumer_offsets 4 100\n", ""),
+               "markers out of order": DIR.replace("#cleaner", "#tmp").replace("#start", "#cleaner").replace(
+                   "#tmp", "#start")}
+        for name, text in bad.items():
+            with self.subTest(case=name), self.assertRaises(RuntimeError):
+                watch.parse_partition_dir(text, P)
+
     def test_reader_is_read_only_and_networkless(self):
         argv = watch.dir_argv(2, P)
         self.assertEqual(argv[:3], ["docker", "run", "--rm"])
@@ -128,6 +149,63 @@ class PartitionDir(unittest.TestCase):
             watch.dir_argv(1, "__consumer_offsets-43; rm -rf /")
         with self.assertRaises(watch.Refused):
             watch.dir_argv(1, "md.latest.v2-0")
+
+
+class CleanerLogReads(unittest.TestCase):
+    """Only a rotated hourly file the daemon reports absent is optional; the live log and every other failure raise."""
+
+    NOW = dt.datetime(2026, 10, 16, 12, 30, tzinfo=dt.timezone.utc)
+
+    @staticmethod
+    def tar(text):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as archive:
+            data = text.encode()
+            info = tarfile.TarInfo("log-cleaner.log")
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+        return buf.getvalue()
+
+    def run_with(self, outcome):
+        def fake(argv, **_):
+            name = argv[2].split(":", 1)[1]
+            rc, payload, err = outcome(name)
+            return mock.Mock(returncode=rc, stdout=payload, stderr=err)
+        with mock.patch.object(watch.subprocess, "run", side_effect=fake):
+            return watch.read_cleaner_log(1, self.NOW, 2)
+
+    def test_absent_rotated_file_is_recorded_not_an_error(self):
+        def outcome(name):
+            if name.endswith("-10"):
+                return 1, b"", f"Error response from daemon: Could not find the file {name} in container x".encode()
+            return 0, self.tar(CLEANER if name == watch.CLEANER_LOG else ""), b""
+        text, read, absent = self.run_with(outcome)
+        self.assertEqual(absent, ["log-cleaner.log.2026-10-16-10"])
+        self.assertEqual(read, ["log-cleaner.log.2026-10-16-11", "log-cleaner.log"])
+        self.assertIn("Beginning cleaning", text)
+
+    def test_live_log_failure_and_other_rotated_failures_raise(self):
+        cases = {
+            "live absent": lambda n: ((1, b"", b"Could not find the file") if n == watch.CLEANER_LOG
+                                      else (0, self.tar(""), b"")),
+            "live permission": lambda n: ((1, b"", b"permission denied") if n == watch.CLEANER_LOG
+                                          else (0, self.tar(""), b"")),
+            "rotated permission": lambda n: ((1, b"", b"permission denied") if n.endswith("-11")
+                                             else (0, self.tar(""), b"")),
+            "no such container": lambda n: (1, b"", b"Error response from daemon: No such container: x"),
+            "not an archive": lambda n: (0, self.tar("") if n != watch.CLEANER_LOG else b"", b""),
+            "archive without a file": lambda n: (0, self.tar("") if n != watch.CLEANER_LOG else self.empty(), b""),
+        }
+        for name, outcome in cases.items():
+            with self.subTest(case=name), self.assertRaises((RuntimeError, tarfile.TarError)):
+                self.run_with(outcome)
+
+    @staticmethod
+    def empty():
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w"):
+            pass
+        return buf.getvalue()
 
 
 class Groups(unittest.TestCase):
@@ -159,7 +237,7 @@ class Compare(unittest.TestCase):
 
     def test_report_pass_window_sizes_and_verdict(self):
         old_pass = {"started_utc": "2026-10-16T11:02:35+00:00", "finished_utc": "2026-10-16T11:18:17+00:00"}
-        new_pass = {"started_utc": "2026-10-16T12:20:00+00:00", "finished_utc": "2026-10-16T12:40:00+00:00"}
+        new_pass = DONE
         before = snap("2026-10-16T12:15:00+00:00", self.BEFORE, {"core": {"state": "Stable"}},
                       passes=[old_pass], size=1000)
         after = snap("2026-10-16T12:45:00+00:00", {"core": {"md.raw:0": 120, "md.raw:1": 200},
@@ -167,20 +245,62 @@ class Compare(unittest.TestCase):
                      {"core": {"state": "PreparingRebalance"}}, passes=[old_pass, new_pass], size=400)
         report = watch.compare(before, after)
         self.assertTrue(report["ok"])
-        self.assertTrue(report["pass_finished_on_all_replicas"])
+        self.assertTrue(report["observation_valid"] and report["offsets_preserved"])
+        self.assertTrue(report["cleaner_completed_all_replicas"])
+        self.assertEqual(watch.compare_exit(report), 0)
         self.assertEqual(report["replicas"]["1"]["passes_in_window"], [new_pass])
         self.assertEqual(report["replicas"]["1"]["size_bytes"]["delta"], -600)
         self.assertEqual(report["offsets_advanced"], 1)
         self.assertEqual(report["group_state_changes"], {"core": {"before": "Stable", "after": "PreparingRebalance"}})
         after["group_offsets"]["idle"] = {}
         self.assertFalse(watch.compare(before, after)["ok"])
+        self.assertEqual(watch.compare_exit(watch.compare(before, after)), 1)
 
     def test_pass_before_the_snapshot_is_not_counted(self):
         old_pass = {"started_utc": "2026-10-16T11:02:35+00:00", "finished_utc": "2026-10-16T11:18:17+00:00"}
         before = snap("2026-10-16T12:15:00+00:00", {}, passes=[old_pass])
         report = watch.compare(before, snap("2026-10-16T12:45:00+00:00", {}, passes=[old_pass]))
         self.assertFalse(report["replicas"]["1"]["pass_started"])
-        self.assertFalse(report["pass_finished_on_all_replicas"])
+        self.assertFalse(report["cleaner_completed_all_replicas"])
+
+    def test_three_separate_outcomes(self):
+        offsets = {"core": {"md.raw:0": 100}}
+        before = snap("2026-10-16T12:15:00+00:00", offsets, nodes=("1", "2", "3"))
+        # unchanged offsets (idle group keeps its offset) but no completed pass: preserved, not completed -> exit 2
+        report = watch.compare(before, snap("2026-10-16T12:45:00+00:00", offsets, nodes=("1", "2", "3")))
+        self.assertEqual((report["observation_valid"], report["offsets_preserved"],
+                          report["cleaner_completed_all_replicas"]), (True, True, False))
+        self.assertEqual(watch.compare_exit(report), 2)
+        # a pass started but its summary (End size) is missing on one replica: not completed
+        after = snap("2026-10-16T12:45:00+00:00", offsets, passes=[DONE], nodes=("1", "2", "3"))
+        after["replicas"]["3"]["passes"] = [dict(DONE, end_messages=None)]
+        self.assertFalse(watch.compare(before, after)["cleaner_completed_all_replicas"])
+        after["replicas"]["3"]["passes"] = [DONE]
+        self.assertEqual(watch.compare_exit(watch.compare(before, after)), 0)
+        # empty baseline: nothing to preserve is not "preserved"
+        empty = watch.compare(snap("2026-10-16T12:15:00+00:00", {"g": {"t:0": None}}),
+                              snap("2026-10-16T12:45:00+00:00", {}, passes=[DONE]))
+        self.assertEqual((empty["offsets_preserved"], empty["baseline_committed_offsets"]), (False, 0))
+        self.assertEqual(watch.compare_exit(empty), 1)
+
+    def test_invalid_observation(self):
+        offsets = {"core": {"md.raw:0": 100}}
+        good = snap("2026-10-16T12:15:00+00:00", offsets, nodes=("1", "2"))
+        legacy = dict(good)
+        legacy.pop("read_contract")
+        missing = snap("2026-10-16T12:45:00+00:00", offsets, passes=[DONE], nodes=("1",))
+        no_segment = snap("2026-10-16T12:45:00+00:00", offsets, passes=[DONE], nodes=("1", "2"))
+        no_segment["replicas"]["2"]["segment_count"] = 0
+        for name, (b, a) in {"legacy": (legacy, snap("2026-10-16T12:45:00+00:00", offsets, nodes=("1", "2"))),
+                             "replica missing after": (good, missing), "no segment": (good, no_segment),
+                             "no replica": (snap("2026-10-16T12:15:00+00:00", offsets, nodes=()),
+                                            snap("2026-10-16T12:45:00+00:00", offsets, nodes=()))}.items():
+            with self.subTest(case=name):
+                report = watch.compare(b, a)
+                self.assertFalse(report["observation_valid"])
+                self.assertFalse(report["ok"])
+                self.assertFalse(report["cleaner_completed_all_replicas"])
+                self.assertEqual(watch.compare_exit(report), 6)
 
 
 class Main(unittest.TestCase):
@@ -211,6 +331,8 @@ class Main(unittest.TestCase):
             b, a = Path(tmp, "b.json"), Path(tmp, "a.json")
             b.write_text(json.dumps(snap("2026-10-16T12:00:00+00:00", {"g": {"t:0": 5}})))
             a.write_text(json.dumps(snap("2026-10-16T12:30:00+00:00", {"g": {"t:0": 6}})))
+            self.assertEqual(self._main(["--compare", str(b), str(a)])[0], 2)  # offsets ok, no completed pass
+            a.write_text(json.dumps(snap("2026-10-16T12:30:00+00:00", {"g": {"t:0": 6}}, passes=[DONE])))
             self.assertEqual(self._main(["--compare", str(b), str(a)])[0], 0)
             a.write_text(json.dumps(snap("2026-10-16T12:30:00+00:00", {"g": {"t:0": 4}})))
             self.assertEqual(self._main(["--compare", str(b), str(a)])[0], 1)

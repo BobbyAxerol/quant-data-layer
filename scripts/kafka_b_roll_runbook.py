@@ -33,7 +33,8 @@ Subcommands (receipt dir default ``RECEIPT``; every step writes ``<step>-<UTC>/`
   election tool has no per-partition exclusion, only these scopes).
 * ``evidence --since UTC --until UTC``: the collection alone (e.g. after a manual step).
 * ``final-check``: roll ``--check`` (env false on all three) and a parity snapshot that must read
-  ``auto.leader.rebalance.enable`` false (the G12 ``--production-parity`` input).
+  ``auto.leader.rebalance.enable`` false (the G12 ``--production-parity`` input); the snapshot describes the production
+  topics (``--cert-dir``) and refuses unless the effective config equals the committed plans (temp key absent).
 
 Boundary: no secret is read or printed (cert dir mounted ro by the tools; container logs filtered to progress/load
 lines; the writer env is never printed). Without the lock held by ``OWNER`` only ``plan``/``check``/``evidence``/
@@ -123,8 +124,8 @@ def sampler_argv(out: Path, log_dir: str, seconds: int) -> list[str]:
             "--log-dir", log_dir, "--seconds", str(seconds), "--sample-seconds", "5", "--out", str(out)]
 
 
-def parity_argv(out: Path) -> list[str]:
-    return [*tool("p184_g12_isolated_fault.py"), "--parity-snapshot", str(out)]
+def parity_argv(out: Path, cert: Path) -> list[str]:
+    return [*tool("p184_g12_isolated_fault.py"), "--parity-snapshot", str(out), "--cert-dir", str(cert)]
 
 
 class Host:
@@ -451,12 +452,18 @@ def do_final_check(host: Host, args: argparse.Namespace) -> int:
     out = step_dir(args.receipt, "final-check", host)
     check = run_check(host, args.packet, args.cert_dir)
     write(out / "roll-check.json", check)
-    code, _, stderr = host.run(parity_argv(out / "production-parity.json"), timeout=600)
-    rebalance = None
+    code, _, stderr = host.run(parity_argv(out / "production-parity.json", args.cert_dir), timeout=600)
+    rebalance = effective = None
     if code == 0:
-        rebalance = json.loads((out / "production-parity.json").read_text())["kafka"]["auto.leader.rebalance.enable"]
-    ok = check.get("ok") and set((check.get("env") or {}).values()) == {"false"} and rebalance is False
-    print(json.dumps({"ok": bool(ok), "env": check.get("env"), "parity_rebalance": rebalance, "parity_rc": code,
+        doc = json.loads((out / "production-parity.json").read_text())
+        rebalance = doc["kafka"]["auto.leader.rebalance.enable"]
+        effective = (doc.get("effective") or {}).get("sha256")
+    # The snapshot itself refuses (rc != 0) unless the DESCRIBED production config equals the committed plans: C keys,
+    # frozen other overrides, temporary cleaner key absent, md.latest A', rebalance env on every broker (Codex K3).
+    ok = check.get("ok") and set((check.get("env") or {}).values()) == {"false"} and rebalance is False \
+        and effective is not None
+    print(json.dumps({"ok": bool(ok), "env": check.get("env"), "parity_rebalance": rebalance,
+                      "parity_effective_sha256": effective, "parity_rc": code,
                       "parity_error": stderr.strip()[-300:] if code else None, "receipt": str(out)}, indent=1))
     return 0 if ok else 3
 
@@ -472,7 +479,9 @@ def plan_text(packet: Path, cert: Path, receipt: Path) -> str:
         "# 1. temporary dirty ratio (owner 2026-10-16): one cleaner pass removes the markers already past deleteHorizon",
         f"{compaction} --apply-temp --apply --cert-dir {cert} --lock-owner {OWNER}",
         "# 2. wait for the pass: the read-only pass watcher (other agent) + this observe until temp_removal."
-        "remove_recommended (every replica of 43 <= 32 MiB); expected ~10-20 min at the 4 MiB/s cleaner throttle",
+        "remove_recommended (status REMOVE_RECOMMENDED: every ASSIGNED replica of 43 observed error-free and <= 32 MiB; "
+        "UNKNOWN_HOLD = incomplete evidence, wait) AND pass-watch --compare exit 0 (observation_valid, offsets_preserved, "
+        "cleaner_completed_all_replicas); expected ~10-20 min at the 4 MiB/s cleaner throttle",
         f"{compaction} --observe --cert-dir {cert}",
         "# 3. remove the temporary key (back to the C plan only)",
         f"{compaction} --remove-temp --apply --cert-dir {cert} --lock-owner {OWNER}",

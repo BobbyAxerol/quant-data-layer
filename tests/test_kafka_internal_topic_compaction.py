@@ -235,11 +235,19 @@ class Observe(unittest.TestCase):
                         {"partition": "__consumer_offsets-0", "size": 1, "offsetLag": 0, "isFuture": False}]}]}
                     for b in (1, 2, 3)]}) + "\n")
 
+    ASSIGNMENT = ("Topic: __consumer_offsets\tTopicId: x\tPartitionCount: 50\tReplicationFactor: 3\tConfigs: "
+                  "cleanup.policy=compact\n"
+                  "\tTopic: __consumer_offsets\tPartition: 42\tLeader: 2\tReplicas: 2,3,1\tIsr: 2,3,1\n"
+                  "\tTopic: __consumer_offsets\tPartition: 43\tLeader: 3\tReplicas: 3,1,2\tIsr: 3,1,2\n")
+
     class ReadOnly(Broker):
         def run(self, command):
             if command[0] == "kafka-log-dirs.sh":
                 self.calls.append(list(command))
                 return CommandResult(0, Observe.LOG_DIRS, "")
+            if command[0] == "kafka-topics.sh":
+                self.calls.append(list(command))
+                return CommandResult(0, Observe.ASSIGNMENT, "")
             if command[0] == "kafka-get-offsets.sh":
                 self.calls.append(list(command))
                 value = 357710070 if command[-1] == "-1" else 0
@@ -378,6 +386,96 @@ class TempOverride(unittest.TestCase):
         offsets = json.loads(out.getvalue())["topics"]["__consumer_offsets"]
         self.assertEqual(offsets["temp_state"], "FOREIGN")
         self.assertFalse(offsets["other_overrides_match_frozen"])
+
+
+class TempRemovalEvidence(unittest.TestCase):
+    """Codex K1 (2026-10-16): removal needs a complete, error-free, non-negative observation of every ASSIGNED
+    replica of the watched partition; anything less is UNKNOWN_HOLD, never zero."""
+
+    PRESENT = {"__consumer_offsets": {"temp_state": "PRESENT"}, "__transaction_state": {"temp_state": "NONE"}}
+    SMALL, BIG = 1024, 1_150_000_000
+
+    @staticmethod
+    def log_dirs(entries, errors=()):
+        brokers = {}
+        for node, size, future in entries:
+            brokers.setdefault(node, []).append({"partition": tool.TEMP_WATCH_PARTITION, "size": size,
+                                                 "offsetLag": 0, "isFuture": future})
+        doc = {"version": 1, "brokers": [
+            {"broker": node, "logDirs": [{"logDir": "/var/lib/kafka/data", "error": None, "partitions": parts}]}
+            for node, parts in brokers.items()] + [
+            {"broker": node, "logDirs": [{"logDir": "/var/lib/kafka/data", "error": err, "partitions": []}]}
+            for node, err in errors]}
+        return "Querying brokers\n" + json.dumps(doc) + "\n"
+
+    def verdict(self, text, assigned=("1", "2", "3"), topics=None):
+        parts = tool.parse_log_dirs(text, [tool.TEMP_WATCH_PARTITION])
+        return tool.temp_removal(topics or self.PRESENT, parts, assigned)
+
+    def test_complete_three_replicas_below_and_above(self):
+        below = self.verdict(self.log_dirs([(1, self.SMALL, False), (2, self.SMALL, False), (3, 7, False)]))
+        self.assertEqual((below["status"], below["remove_recommended"], below["max_size_bytes"]),
+                         ("REMOVE_RECOMMENDED", True, self.SMALL))
+        above = self.verdict(self.log_dirs([(1, self.SMALL, False), (2, self.BIG, False), (3, self.SMALL, False)]))
+        self.assertEqual((above["status"], above["remove_recommended"]), ("ABOVE_THRESHOLD_HOLD", False))
+        absent = self.verdict(self.log_dirs([(n, self.SMALL, False) for n in (1, 2, 3)]),
+                              topics={"__consumer_offsets": {"temp_state": "ABSENT"}})
+        self.assertEqual((absent["status"], absent["remove_recommended"]), ("TEMP_NOT_PRESENT", False))
+
+    def test_missing_replicas_hold(self):
+        for entries in ([(1, self.SMALL, False)], [(1, self.SMALL, False), (2, self.SMALL, False)]):
+            with self.subTest(observed=len(entries)):
+                out = self.verdict(self.log_dirs(entries))
+                self.assertEqual((out["status"], out["remove_recommended"], out["max_size_bytes"]),
+                                 ("UNKNOWN_HOLD", False, None))
+                self.assertTrue(any("without a size observation" in p for p in out["observation_problems"]))
+
+    def test_log_dir_error_negative_invalid_future_and_duplicate_hold(self):
+        cases = {
+            "log-dir error": self.log_dirs([(1, self.SMALL, False), (2, self.SMALL, False)],
+                                           errors=[(3, "KafkaStorageException")]),
+            "negative": self.log_dirs([(1, self.SMALL, False), (2, -1, False), (3, self.SMALL, False)]),
+            "invalid": self.log_dirs([(1, self.SMALL, False), (2, "12", False), (3, self.SMALL, False)]),
+            "future": self.log_dirs([(1, self.SMALL, False), (2, self.SMALL, False), (3, self.SMALL, False),
+                                     (3, self.SMALL, True)]),
+            "duplicate": self.log_dirs([(1, self.SMALL, False), (2, self.SMALL, False), (3, self.SMALL, False),
+                                        (3, self.SMALL, False)]),
+        }
+        for name, text in cases.items():
+            with self.subTest(case=name):
+                out = self.verdict(text)
+                self.assertEqual((out["status"], out["remove_recommended"]), ("UNKNOWN_HOLD", False))
+                self.assertTrue(out["observation_problems"])
+
+    def test_assignment_unknown_or_outside_holds(self):
+        text = self.log_dirs([(n, self.SMALL, False) for n in (1, 2, 3)])
+        for assigned in (None, ()):
+            with self.subTest(assigned=assigned):
+                self.assertEqual(self.verdict(text, assigned=assigned)["status"], "UNKNOWN_HOLD")
+        self.assertEqual(self.verdict(text, assigned=("1", "2"))["status"], "UNKNOWN_HOLD")  # extra replica seen
+        self.assertEqual(self.verdict(text, assigned=("1", "2", "4"))["status"], "UNKNOWN_HOLD")
+
+    def test_parse_assigned_replicas(self):
+        self.assertEqual(tool.parse_assigned_replicas(Observe.ASSIGNMENT, "__consumer_offsets-43"), ["3", "1", "2"])
+        for bad in ("", Observe.ASSIGNMENT + Observe.ASSIGNMENT.splitlines()[2] + "\n"):
+            with self.subTest(bad=bad[:30]), self.assertRaises(RuntimeError):
+                tool.parse_assigned_replicas(bad, "__consumer_offsets-43")
+
+    def test_observe_reads_the_assignment_and_keeps_unrelated_overrides(self):
+        broker = Observe.ReadOnly(planned=tool.PLAN, extra={"__consumer_offsets": dict(TempOverride.TEMP)})
+        out = io.StringIO()
+        with mock.patch.object(AdminContainerRunner, "run", side_effect=broker.run), contextlib.redirect_stdout(out):
+            self.assertEqual(tool.main(["--observe", "--cert-dir", "/nonexistent"]), 0)
+        body = json.loads(out.getvalue())
+        self.assertIn(["kafka-topics.sh", "--describe", "--topic", "__consumer_offsets"], broker.calls)
+        self.assertEqual(body["temp_removal"]["assigned_replicas"], ["1", "2", "3"])
+        self.assertEqual(body["temp_removal"]["status"], "ABOVE_THRESHOLD_HOLD")
+        # removal deletes exactly the temp key; every unrelated override stays
+        broker = Broker(planned=tool.PLAN, extra={"__consumer_offsets": dict(TempOverride.TEMP)})
+        code, _, _ = Apply._main(self, broker, ["--remove-temp"])
+        self.assertEqual(code, 0)
+        self.assertEqual(broker.configs["__consumer_offsets"],
+                         {**tool.FROZEN_OTHERS["__consumer_offsets"], **tool.PLAN["__consumer_offsets"]})
 
 
 if __name__ == "__main__":

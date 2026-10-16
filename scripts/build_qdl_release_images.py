@@ -30,6 +30,7 @@ Boundary
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import hashlib
 import json
 import os
@@ -39,6 +40,9 @@ import shutil
 import subprocess
 import sys
 import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.host_measurement_lock import MAX_MINUTES as MAX_LOCK_MINUTES, lock_state  # noqa: E402
 
 
 RELEASE = "2.2.4"
@@ -161,18 +165,29 @@ def identity(rev: str, state_root: Path = STATE_ROOT) -> dict:
     }
 
 
-def check_lock(lock_path: Path, owner: str | None) -> dict:
-    """--build needs the measurement lock held by the named owner (the build is its own window)."""
+def check_lock(lock_path: Path, owner: str | None, at: dt.datetime | None = None) -> dict:
+    """--build needs the measurement lock held by the named owner AND inside its window (the build is its own
+    window). Expiry follows ``scripts/host_measurement_lock.lock_state``: an absent, malformed, naive or past
+    ``until_utc`` is refused, as is a window longer than the 34a maximum (Codex B1). Called again at every expensive
+    stage boundary (``build``), so a window that ends mid-build stops the next stage; renewing is the owner's
+    ``host_measurement_lock.py`` release + acquire, never done here."""
     if not owner:
         raise BuildError("--build requires --lock-owner (take the host measurement lock first)")
-    try:
-        lock = json.loads(lock_path.read_text())
-    except FileNotFoundError as exc:
-        raise BuildError(f"no host lock at {lock_path}: take it for the build first") from exc
-    except ValueError as exc:
-        raise BuildError(f"unreadable host lock {lock_path}") from exc
+    at = at or dt.datetime.now(dt.timezone.utc)
+    state, lock = lock_state(lock_path, at)
+    if state == "ABSENT":
+        raise BuildError(f"no host lock at {lock_path}: take it for the build first")
+    if not isinstance(lock, dict):
+        raise BuildError(f"unreadable host lock {lock_path}")
     if lock.get("owner") != owner:
         raise BuildError(f"host lock held by {lock.get('owner')!r}, not {owner!r}: do not build")
+    if state == "UNREADABLE":
+        raise BuildError(f"host lock {lock_path} has no valid timezone-aware until_utc: do not build")
+    if state == "EXPIRED":
+        raise BuildError(f"host lock of {owner!r} expired at {lock.get('until_utc')}: re-acquire before building")
+    until = dt.datetime.fromisoformat(lock["until_utc"].replace("Z", "+00:00"))
+    if until - at > dt.timedelta(minutes=MAX_LOCK_MINUTES):
+        raise BuildError(f"host lock window ends {lock['until_utc']}, beyond the {MAX_LOCK_MINUTES} min maximum")
     return lock
 
 
@@ -412,6 +427,13 @@ def build(repo: Path, rev: str, components: list[str], args) -> dict:
                "components": components, "script_sha256": sha256_file(Path(__file__)),
                "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     receipt["lock"] = check_lock(LOCK_PATH, args.lock_owner)
+    receipt["lock_checks"] = [{"stage": "start", "until_utc": receipt["lock"].get("until_utc")}]
+
+    def guard(stage: str) -> None:
+        """Re-validate the owner's window before an expensive stage (raises BuildError -> status FAIL)."""
+        lock = check_lock(LOCK_PATH, args.lock_owner)
+        receipt["lock_checks"].append({"stage": stage, "until_utc": lock.get("until_utc"),
+                                       "at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
     receipt["free_gib_before"] = check_disk(STATE_ROOT, args.min_free_gib)
     pre = source_preconditions(repo, rev)
     if not pre["ok"]:
@@ -438,8 +460,9 @@ def build(repo: Path, rev: str, components: list[str], args) -> dict:
         subprocess.run(["tar", "-x", "-C", str(build_dir / "src")], input=archive, check=True)
         receipt["source_archive_sha256"] = hashlib.sha256(archive).hexdigest()
         if "rust" in components:
-            receipt["rust"] = build_rust(runner, build_dir, rev, ident["rust_tag"])
+            receipt["rust"] = build_rust(runner, build_dir, rev, ident["rust_tag"], guard)
         if "python" in components:
+            guard("python-image")
             receipt["python"] = build_python(runner, build_dir, repo, rev, ident["python_tag"])
         ok = all(receipt[c]["ok"] for c in components)
         status = "PASS" if ok else "FAIL"
@@ -453,7 +476,8 @@ def build(repo: Path, rev: str, components: list[str], args) -> dict:
     return receipt
 
 
-def build_rust(runner: Runner, build_dir: Path, rev: str, tag: str) -> dict:
+def build_rust(runner: Runner, build_dir: Path, rev: str, tag: str, guard=lambda stage: None) -> dict:
+    guard("rust-compile")
     runner.run(rust_compile_argv(build_dir), "rust-compile")
     ctx = build_dir / "ctx"
     (ctx / "bin").mkdir(parents=True)
@@ -467,6 +491,7 @@ def build_rust(runner: Runner, build_dir: Path, rev: str, tag: str) -> dict:
     (ctx / "SHA256SUMS").write_text("".join(f"{v}  {k}\n" for k, v in sorted(ctx_sums.items())))
     markers = {n: forbidden_markers(ctx / "bin" / n) for n in RUST_BINARIES}
     (ctx / "Dockerfile").write_text(rust_dockerfile(rev))
+    guard("rust-image")
     runner.run(rust_image_argv(build_dir, tag), "rust-image")
     image = (build_dir / "rust.iid").read_text().strip()
     release = parse_sha256sum(runner.run(probe_argv(image, RUST_SHA_PROBE), "rust-postcheck-sha", capture=True))
