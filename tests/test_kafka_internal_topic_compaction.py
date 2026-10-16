@@ -77,6 +77,9 @@ class Commands(unittest.TestCase):
         self.assertGreater(int(offsets["delete.retention.ms"]), int(offsets["segment.ms"]))
 
     def test_frozen_snapshot_matches_the_2026_10_16_describe(self):
+        self.assertEqual(tool.FROZEN_OTHERS["__consumer_offsets"],
+                         {"cleanup.policy": "compact", "compression.type": "producer", "segment.bytes": "104857600"})
+        self.assertNotIn("retention.ms", tool.FROZEN_OTHERS["__transaction_state"])
         self.assertEqual(tool.FROZEN_OTHERS["__consumer_offsets"]["compression.type"], "producer")
         self.assertEqual(tool.FROZEN_OTHERS["__transaction_state"]["compression.type"], "uncompressed")
         for topic in tool.TOPICS:
@@ -222,6 +225,54 @@ class Apply(unittest.TestCase):
         code, _, err = self._main(Down(), [])
         self.assertEqual(code, 5)
         self.assertIn("TimeoutException", err)
+
+
+class Observe(unittest.TestCase):
+    LOG_DIRS = ("Querying brokers for log directories information\nReceived log directory information from brokers 1,2,3\n"
+                + json.dumps({"version": 1, "brokers": [
+                    {"broker": b, "logDirs": [{"logDir": "/var/lib/kafka/data", "error": None, "partitions": [
+                        {"partition": "__consumer_offsets-43", "size": 1650188753, "offsetLag": 0, "isFuture": False},
+                        {"partition": "__consumer_offsets-0", "size": 1, "offsetLag": 0, "isFuture": False}]}]}
+                    for b in (1, 2, 3)]}) + "\n")
+
+    class ReadOnly(Broker):
+        def run(self, command):
+            if command[0] == "kafka-log-dirs.sh":
+                self.calls.append(list(command))
+                return CommandResult(0, Observe.LOG_DIRS, "")
+            if command[0] == "kafka-get-offsets.sh":
+                self.calls.append(list(command))
+                value = 357710070 if command[-1] == "-1" else 0
+                return CommandResult(0, f"__consumer_offsets:43:{value}\n", "")
+            if "--alter" in command:
+                raise AssertionError("observe altered")
+            return super().run(command)
+
+    def test_observe_is_read_only_and_reports_partition_and_overrides(self):
+        broker = self.ReadOnly(planned={"__transaction_state": {"segment.ms": tool.PLAN["__transaction_state"]["segment.ms"]}})
+        with mock.patch.object(AdminContainerRunner, "run", side_effect=broker.run):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(tool.main(["--observe", "--cert-dir", "/nonexistent"]), 0)
+        body = json.loads(out.getvalue())
+        part = body["partitions"]["__consumer_offsets-43"]
+        self.assertEqual(part["size_bytes_by_broker"], {"1": 1650188753, "2": 1650188753, "3": 1650188753})
+        self.assertEqual((part["log_end_offset"], part["offset_span"]), (357710070, 357710070))
+        self.assertEqual(body["topics"]["__consumer_offsets"]["c_state"], "ABSENT")
+        self.assertEqual(body["topics"]["__transaction_state"]["c_state"], "APPLIED")
+        self.assertTrue(all(t["other_overrides_match_frozen"] for t in body["topics"].values()))
+        self.assertFalse(any("--alter" in c for c in broker.calls))
+
+    def test_observe_refuses_mutating_flags_and_unknown_partitions(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(tool.main(["--observe", "--apply", "--cert-dir", "/x"]), 4)
+            self.assertEqual(tool.main(["--observe", "--partition", "md.latest.v2:0", "--cert-dir", "/x"]), 4)
+            self.assertEqual(tool.main(["--observe"]), 4)
+
+    def test_measured_values_from_the_aged_state_run(self):
+        self.assertEqual(tool.PLAN["__consumer_offsets"], {"delete.retention.ms": "600000", "segment.ms": "60000"})
+        self.assertEqual(tool.PLAN["__transaction_state"], {"segment.ms": "600000"})
 
 
 if __name__ == "__main__":

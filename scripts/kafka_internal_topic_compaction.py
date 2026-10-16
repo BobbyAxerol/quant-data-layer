@@ -35,6 +35,10 @@ Boundary:
 * ``--rollback`` restores the pre-C state through the same path (``--delete-config`` of the planned keys);
 * ``--topic`` limits the run to one topic (staged apply); the order is ``__transaction_state`` first (no
   correctness coupling), then ``__consumer_offsets``;
+* ``--observe`` (read-only, no alter): the effective overrides of both topics, the per-broker size and the
+  start/end offsets of the coordinator partitions (default ``__consumer_offsets-43``, the core group's), so the
+  convergence after an apply can be tracked; offsets are an offset span, not a record count (compaction leaves
+  gaps) - the replayed record count is the broker's ``Finished loading`` line;
 * the Kafka CLI runs in a throwaway container equal to compose ``stable_admin``
   (``scripts/kn_state_topics_packet.AdminContainerRunner``, network ``stable_internal``, read-only, cert dir
   mounted ro, ``--command-config admin.properties``); ``--isolated-container`` + ``--bootstrap`` drive a
@@ -66,22 +70,30 @@ from scripts.kn_state_topics_packet import (  # noqa: E402
 )
 
 TOPICS = ("__transaction_state", "__consumer_offsets")
-# PROPOSED targets (Codex K1 2026-10-16): not measured yet. ``PLAN_STATUS`` becomes "MEASURED" (with
-# ``PLAN_EVIDENCE``) only from the aged-state comparison of scripts/p184_g12_coordinator_load.py; ``--apply`` refuses
-# a PROPOSED plan. Values are strings, as kafka-configs prints them.
+# Targets from the aged-state measurement (scripts/p184_g12_coordinator_load.py, 2026-10-16; evidence
+# /home/bobby/.local/state/qdl-v2/p184-g12-coordinator-load-20261016/: fit-output.txt, harness/move*.jsonl,
+# harness/c1-dump-agg.json). The first proposal (Codex K1: offsets delete.retention 3,600,000 / segment 600,000)
+# projected a steady-state load max ~2.2 s unloaded; these values project max ~126k records, ~308 ms unloaded /
+# ~540 ms loaded, ~49 h convergence from the 2026-10-16 state. ``PLAN_STATUS`` stays PROPOSED until the owner's
+# approval is recorded here (with ``PLAN_EVIDENCE``); ``--apply`` refuses a plan that is not MEASURED.
+# Values are strings, as kafka-configs prints them.
 PLAN_STATUS = "PROPOSED"
 PLAN_EVIDENCE: str | None = None
 PLAN: dict[str, dict[str, str]] = {
-    "__consumer_offsets": {"delete.retention.ms": "3600000", "segment.ms": "600000"},
+    "__consumer_offsets": {"delete.retention.ms": "600000", "segment.ms": "60000"},
     "__transaction_state": {"segment.ms": "600000"},
 }
-# Production overrides of the two topics on 2026-10-16 (kafka-topics --describe, leader-rebalance scratch);
-# anything else means the topic changed since this tool was reviewed.
-_COMMON = {"min.insync.replicas": "2", "cleanup.policy": "compact", "segment.bytes": "104857600",
-           "retention.ms": "86400000", "unclean.leader.election.enable": "false"}
+# Coordinator partitions --observe reports by default: the realtime core group's (production 2026-10-16).
+OBSERVE_PARTITIONS = ("__consumer_offsets:43",)
+# Production dynamic overrides of the two topics: ``kafka-configs --describe`` through the admin container,
+# 2026-10-16T07:20Z (the first snapshot, taken from a kafka-topics describe, listed retention.ms and, for
+# __consumer_offsets, min.insync.replicas / unclean.leader.election.enable, which production does not carry as
+# topic overrides). Anything else means the topic changed since this tool was reviewed.
 FROZEN_OTHERS: dict[str, dict[str, str]] = {
-    "__consumer_offsets": {"compression.type": "producer", **_COMMON},
-    "__transaction_state": {"compression.type": "uncompressed", **_COMMON},
+    "__consumer_offsets": {"cleanup.policy": "compact", "compression.type": "producer", "segment.bytes": "104857600"},
+    "__transaction_state": {"cleanup.policy": "compact", "compression.type": "uncompressed",
+                            "min.insync.replicas": "2", "segment.bytes": "104857600",
+                            "unclean.leader.election.enable": "false"},
 }
 ABSENT = None
 
@@ -157,6 +169,71 @@ def apply_topic(runner, topic: str, rollback: bool) -> dict[str, Any]:
             "undo": rollback_cmd(topic) if not rollback else alter_cmd(topic)}
 
 
+def log_dirs_cmd() -> list[str]:
+    return ["kafka-log-dirs.sh", "--describe", "--topic-list", ",".join(TOPICS)]
+
+
+def offsets_cmd(partitions: Sequence[str], time_arg: str) -> list[str]:
+    return ["kafka-get-offsets.sh", "--topic-partitions", ",".join(partitions), "--time", time_arg]
+
+
+def _checked(runner, command: Sequence[str]) -> str:
+    result = runner.run(command)
+    if result.returncode != 0:
+        raise RuntimeError(f"{command[0]} failed rc={result.returncode}: {result.stderr.strip()[-400:]}")
+    return result.stdout
+
+
+def parse_log_dirs(text: str, wanted: Sequence[str]) -> dict[str, dict[str, int]]:
+    """``kafka-log-dirs --describe`` JSON line -> {partition: {broker id: size bytes}} for the wanted partitions."""
+    line = next((row for row in text.splitlines() if row.startswith("{")), None)
+    if line is None:
+        raise RuntimeError("kafka-log-dirs printed no JSON")
+    sizes: dict[str, dict[str, int]] = {name: {} for name in wanted}
+    for broker in json.loads(line)["brokers"]:
+        for log_dir in broker["logDirs"]:
+            for part in log_dir["partitions"]:
+                if part["partition"] in sizes:
+                    sizes[part["partition"]][str(broker["broker"])] = int(part["size"])
+    return sizes
+
+
+def parse_offsets(text: str) -> dict[str, int]:
+    found = {}
+    for row in text.split():
+        bits = row.rsplit(":", 2)
+        if len(bits) == 3 and bits[1].isdigit() and bits[2].lstrip("-").isdigit():
+            found[f"{bits[0]}-{bits[1]}"] = int(bits[2])
+    return found
+
+
+def observe(runner, partitions: Sequence[str]) -> dict[str, Any]:
+    """Read-only convergence view: overrides (planned keys vs PLAN, frozen others), sizes, offset span."""
+    wanted = [p.replace(":", "-") for p in partitions]
+    topics = {}
+    for topic in TOPICS:
+        overrides = parse_topic_overrides(_checked(runner, describe_cmd(topic)), topic)
+        planned = {key: overrides.get(key) for key in PLAN[topic]}
+        others = {k: v for k, v in overrides.items() if k not in PLAN[topic]}
+        state = ("APPLIED" if planned == PLAN[topic] else
+                 "ABSENT" if all(v is None for v in planned.values()) else "PARTIAL_OR_FOREIGN")
+        frozen = FROZEN_OTHERS[topic]
+        drift = {k: {"frozen": frozen.get(k), "actual": others.get(k)}
+                 for k in sorted(set(others) | set(frozen)) if others.get(k) != frozen.get(k)}
+        topics[topic] = {"planned_keys": planned, "c_state": state,
+                         "other_overrides_match_frozen": not drift, "drift": drift}
+    sizes = parse_log_dirs(_checked(runner, log_dirs_cmd()), wanted)
+    end = parse_offsets(_checked(runner, offsets_cmd(partitions, "-1")))
+    start = parse_offsets(_checked(runner, offsets_cmd(partitions, "-2")))
+    parts = {name: {"size_bytes_by_broker": sizes[name], "log_start_offset": start.get(name),
+                    "log_end_offset": end.get(name),
+                    "offset_span": (end[name] - start[name]) if name in end and name in start else None}
+             for name in wanted}
+    return {"mode": "observe", "at_utc": dt.datetime.now(dt.timezone.utc).isoformat(), "runner": runner.describe(),
+            "plan_status": PLAN_STATUS, "topics": topics, "partitions": parts,
+            "note": "offset_span is not a record count; replayed records = broker 'Finished loading' line"}
+
+
 def selected(topic: str | None) -> tuple[str, ...]:
     if topic is None:
         return TOPICS
@@ -172,8 +249,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--isolated-container", help="disposable plaintext broker container (tests/rehearsal)")
     parser.add_argument("--bootstrap", default="localhost:9092", help="with --isolated-container")
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--observe", action="store_true", help="read-only overrides/sizes/offsets (no alter)")
+    parser.add_argument("--partition", action="append", metavar="TOPIC:N",
+                        help=f"--observe partitions (default {', '.join(OBSERVE_PARTITIONS)})")
     args = parser.parse_args(argv)
     try:
+        if args.observe:
+            if args.apply or args.rollback:
+                raise Refused("--observe is read-only: no --apply/--rollback")
+            partitions = tuple(args.partition or OBSERVE_PARTITIONS)
+            for item in partitions:
+                name, _, number = item.partition(":")
+                _known(name)
+                if not number.isdigit():
+                    raise Refused(f"--partition must be TOPIC:N, got {item!r}")
+            if args.isolated_container:
+                runner = DockerExecRunner(args.isolated_container, args.bootstrap)
+            elif args.cert_dir is None:
+                raise Refused("--observe needs --cert-dir (or --isolated-container)")
+            else:
+                runner = AdminContainerRunner(args.cert_dir)
+            print(json.dumps(observe(runner, partitions), indent=1))
+            return 0
         topics = selected(args.topic)
         if not args.apply:
             runner = AdminContainerRunner(args.cert_dir or Path("${QDL_STABLE_CERT_DIR}"))
