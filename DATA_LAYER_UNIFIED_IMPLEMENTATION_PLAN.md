@@ -73654,3 +73654,15 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
     entitlement (deployed stream bundle reader-public-r16, manifest sha 2d661d46). Parity only: the TS writer clone
     still requests its own explicit depth (default 1000); the amended rerun sets 2000. No gateway, manifest or JWT
     revision change. Tests: dr05_dl_fault/dr05_case/g12_isolated_fault 221 passed (rc16 python image, --network none).
+  - 2026-10-16 Kafka coordinator-load measurement (ee2c359; evidence ~/.local/state/qdl-v2/p184-g12-coordinator-load-20261016/):
+    production __consumer_offsets-43 (core group) = 1.65 GB, 14.31M transaction markers + 4.07M offset-commit records
+    (verified by read-only dump); markers live ~3 cleaner passes (~10-11 h apart). Harness warm-move load fit: ~8.0
+    us/offset-commit record + ~0.33 us/marker (510k records 2.1-3.5 s, 1.0M 4.9-6.2 s); 3M not measured (load blocked
+    by the classifier). Projection (inferred): a coordinator move today ~37.5 s unloaded; proposed C (1 h / 10 min)
+    ~2.2 s max. Production load lines absent (logs rotated). B readiness: roll --check ok, 0 URP, order kafka1->2->3.
+    OWNER DECISION (AskUserQuestion): "B + C 10 min" - C: __consumer_offsets delete.retention.ms=600000 +
+    segment.ms=60000, __transaction_state segment.ms=600000 (dynamic; rollback = delete overrides); projected max ~0.31
+    s unloaded / ~0.54 s loaded after ~49 h convergence (old 24 h horizons persist). Order: apply C after the current
+    isolated burst rerun; track partition-43 size; then B (sequential recreate, auto.leader.rebalance.enable=false,
+    declared preferred election with consumer stall measured) once the partition is small, bounded by convergence.
+    Watch: single cleaner thread (4 MiB/s) shared with md.latest (G4).
