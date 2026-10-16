@@ -15,11 +15,14 @@ caught up) and then, inside one fixed window, G1 (BOOK), G2 (TRADE, QUOTE and
 MARK_INDEX_PRICE new-event transit) and G3 (BAR 1m from close). Caught up is predicate v2 (``caught_up``:
 BOOK update transit plus update cadence against the core's materialization rule), its version and parameters
 frozen in ``evidence/caught-up-predicate.json`` before any data. A fault passes only
-when caught up in time and G1, every G2 feed and G3 pass and its integrity part passes
-(``integrity_window``: no BOOK / applied-notification rewind, no TRADE duplicate applied,
-native typed counters complete and zero); a part with too few samples, pending events or
-missing coverage is NOT_MEASURED, never a pass. A run without the frozen predicate v2
-never PASSes (``g12_receipt_creditable``: verdict v3 only).
+when caught up in time and G1, every G2 feed and G3 pass; a part with too few samples or
+pending events is NOT_MEASURED, never a pass. Each fault also carries a REPORT-ONLY
+integrity part (``integrity_window``: BOOK / applied-notification rewinds, TRADE
+duplicates applied, native typed counters; never gating: lossless TRADE is G10's gate).
+A run without the frozen predicate v2 never PASSes (``g12_receipt_creditable``: verdict
+v3 only). ``--run`` needs ``--auto-leader-rebalance true|false`` (the brokers'
+auto.leader.rebalance.enable, set to production's value and recorded in the receipt) and
+prechecks that each WriterClone runs the production native writer (``writer_clone_precheck``).
 
 Feeds: the DR05 material is BOOK-only; the in-container ``--feeds`` step (network
 none) seals TRADE, QUOTE, BAR 1m and MARK_INDEX_PRICE for the same two instruments
@@ -146,8 +149,8 @@ L2_TOP_CHANGE_MIN_INTERVAL_MS = 100
 L2_DEFAULT_MATERIALIZATION_MS = 1000
 CORE_MS_FLOOR_SLACK_MS = 1
 PREDICATE_FILE = "caught-up-predicate.json"
-# v3 (inheritance audit 2026-10-16, OF-G12-1/2): pending G2/G3 events block a PASS, per-fault integrity part (no
-# rewind, no duplicate applied, native typed counters), PASS only under a frozen predicate v2.
+# v3 (inheritance audit 2026-10-16, OF-G12-1/2): pending G2/G3 events block a PASS, per-fault integrity report (rewind,
+# duplicate applied, native typed counters; REPORT-ONLY, never gating), PASS only under a frozen predicate v2.
 VERDICT_SCHEMA = "p184.g12.verdict.v3"
 # A fault whose clearance / catch-up interval has no valid monitor sample for longer than this is NOT_MEASURED:
 # its fault-cleared time (the monitor's) would be uncertain by more than the gap (steady cadence: 1.0 s).
@@ -381,7 +384,11 @@ def broker_password(text):
     return found[0]
 
 
-def broker_properties(password, node, initial_rebalance_delay_ms=0):
+def broker_properties(password, node, initial_rebalance_delay_ms=0, auto_leader_rebalance=True):
+    """One KRaft broker's properties. ``auto_leader_rebalance``: auto.leader.rebalance.enable, always written
+    explicitly (``--auto-leader-rebalance``: production's value, recorded in the run receipt)."""
+    if type(auto_leader_rebalance) is not bool:
+        raise ValueError("auto_leader_rebalance must be a bool")
     port = broker_port(node)
     voters = ",".join(f"{n}@localhost:{broker_port(n) + 1}" for n in BROKERS)
     return f"""process.roles=broker,controller
@@ -414,6 +421,7 @@ transaction.state.log.min.isr=2
 unclean.leader.election.enable=false
 auto.create.topics.enable=false
 group.initial.rebalance.delay.ms={int(initial_rebalance_delay_ms)}
+auto.leader.rebalance.enable={"true" if auto_leader_rebalance else "false"}
 """
 
 
@@ -1104,7 +1112,8 @@ def md_window(publish_rows, sampler_rows, start_ns, end_ns):
 #   scope, typed and complete, else NOT_MEASURED; gaps / replay_expired / overflow / duplicates_applied /
 #   offset_regressions > 0 FAIL).
 # Missing coverage (no view sequence, no TRADE notification, a notification without identity or clock, a listener
-# error inside the scope, native counters incomplete) is NOT_MEASURED, never a PASS.
+# error inside the scope, native counters incomplete) is NOT_MEASURED. The whole part is REPORT-ONLY in the G12
+# verdict (coordinator decision 2026-10-16): it is recorded per fault and never gates G12.
 INTEGRITY_REWIND_FEEDS = ("TRADE", "QUOTE", "MARK")
 INTEGRITY_REPORT_ONLY_FEEDS = ("BAR",)
 NATIVE_HEARTBEAT_FIELDS = ("trade_integrity", "trade_integrity_scope", "worker_liveness")
@@ -1379,17 +1388,18 @@ def evaluate_fault(fault, publish_rows, sampler_rows, monitor_rows, *, window_s=
         result["reason"] = "SAMPLER_GAP" if holes else "SAMPLER_UNDERSAMPLED"
     # G2/G3 over the same window as G1 (new events whose publish time / bar close lies in it).
     result.update(md_window(publish_rows, sampler_rows, *window))
-    # OF-G12-2: no rewind, no duplicate applied, native typed counters, from injection to the window end.
-    result["integrity"] = integrity_window(sampler_rows, fault["injected_ns"], window[1])
+    # OF-G12-2: rewinds, duplicates applied, native typed counters, from injection to the window end. REPORT-ONLY
+    # (coordinator decision 2026-10-16): the frozen G12 row is caught up + G1-G3 + the four timestamps; lossless
+    # TRADE is gated by G10. Neither a finding nor missing coverage here changes the G12 verdict.
+    result["integrity"] = {**integrity_window(sampler_rows, fault["injected_ns"], window[1]), "gating": False}
     result["parts"] = {"caught_up": result["g12_caught_up_pass"], "window_complete": complete,
                        "g1": "PASS" if all(result["g1"][v]["pass"] for v in VENUES) else "FAIL",
                        "g2": result["g2_status"], "g2_feeds": result["g2_feed_status"],
-                       "g3": result["g3_status"], "integrity": result["integrity"]["status"],
+                       "g3": result["g3_status"], "integrity_report_only": result["integrity"]["status"],
                        "monitor": monitored, "sampler": sampled}
     result["pass"] = (monitored == "PASS" and sampled == "PASS" and result["g12_caught_up_pass"] and complete
                       and all(result["g1"][v]["pass"] for v in VENUES)
-                      and result["g2_status"] == "PASS" and result["g3_status"] == "PASS"
-                      and result["integrity"]["status"] == "PASS")
+                      and result["g2_status"] == "PASS" and result["g3_status"] == "PASS")
     return result
 
 
@@ -1457,6 +1467,8 @@ def evaluate(evidence):
                       "errors": sorted({(r.get("error"), r.get("phase")) for r in errors}, key=str),
                       "max_gap_rule_s": MONITOR_MAX_GAP_S}
     out["sampler"] = {"max_gap_rule_s": SAMPLER_MAX_GAP_S}
+    precheck = evidence / WRITER_PRECHECK_FILE
+    out["writer_precheck"] = json.loads(precheck.read_text()) if precheck.is_file() else None
     # OF-G12-1: only a run whose caught-up predicate v2 was frozen before its data can PASS; a re-analysis of a run
     # sealed without it (predicate v1 era) is reported, never credited.
     frozen = predicate.get("frozen") is True and predicate.get("version") == CAUGHT_UP_VERSION
@@ -1469,7 +1481,8 @@ def evaluate(evidence):
 
 def g12_receipt_creditable(verdict):
     """(creditable, reason) of a saved G12 ``verdict.json`` (OF-G12-1/2): only a COMPLETED PASS of this oracle
-    (schema VERDICT_SCHEMA: pending blocks, integrity part) under a frozen caught-up predicate v2. Every earlier
+    (schema VERDICT_SCHEMA: pending blocks; the integrity part is report-only) under a frozen caught-up predicate v2.
+    Every earlier
     receipt (verdict v1/v2, predicate v1, a re-analysis) is not credited, whatever its ``pass`` says."""
     if not isinstance(verdict, dict):
         return False, "not a verdict object"
@@ -1481,8 +1494,8 @@ def g12_receipt_creditable(verdict):
     if verdict.get("status") != "COMPLETED":
         return False, f"run status {verdict.get('status')!r}"
     faults = verdict.get("faults") or []
-    if len(faults) != 3 or any((f.get("parts") or {}).get("integrity") != "PASS" for f in faults):
-        return False, "three faults with an integrity PASS required"
+    if len(faults) != 3:
+        return False, "three faults required"
     if verdict.get("pass") is not True:
         return False, "verdict not PASS"
     return True, "PASS"
@@ -2701,6 +2714,62 @@ def events_argv(ns, since_s, until_s):
             "--filter", "event=oom", "--filter", "event=kill", "--format", "{{json .}}"]
 
 
+# WriterClone precheck (coordinator 2026-10-16): G12 judges the production writer path, i.e. the native (B16) writer.
+# The clone copies the deployed writer's env (WriterClone.writer_args, TS scripts/p184_dr05_isolated.py); the precheck
+# requires the approved native mode exactly (TS scripts/p184_n1_writer_cutover.py NATIVE_ENV @8828449b) plus the
+# production tuning (B15/B16: 16-row native apply sub-units, BOOK snapshot batch wait 0), and the clone image equal to
+# the deployed writer's image. Values here are non-secret configuration; nothing else of the env is recorded.
+WRITER_NATIVE_ENV = {
+    "MARKET_DATA_NATIVE_FEEDS": "TRADE,QUOTE",
+    "MARKET_DATA_NATIVE_FLAT_V2": "1",
+    "MARKET_DATA_NATIVE_BINARY": "/usr/local/bin/market-data-writer",
+    "MARKET_DATA_NATIVE_REQUIRE_RESUME": "1",
+    "MARKET_DATA_NATIVE_EVENTS": "1024",
+    "MARKET_DATA_NATIVE_APPLY_MAX_ROWS": "16",
+}
+WRITER_PRODUCTION_ENV = {"DATA_LAYER_V2_BOOK_SNAPSHOT_BATCH_MAX_WAIT_MS": "0"}
+WRITER_PRECHECK_FILE = "writer-precheck.json"
+
+
+def argv_env(argv):
+    """KEY -> value of every ``-e KEY=VALUE`` of a docker run argv."""
+    env = {}
+    for flag, value in zip(argv, argv[1:]):
+        if flag == "-e" and "=" in value:
+            key, _, val = value.partition("=")
+            env[key] = val
+    return env
+
+
+def writer_clone_precheck(writer_argv, clone_image, deployed_image):
+    """Does this WriterClone run the production native writer? {ok, problems, native_env, production_env, images}."""
+    env = argv_env(writer_argv)
+    native = {k: v for k, v in env.items() if k.startswith("MARKET_DATA_NATIVE_")}
+    problems = []
+    if native != WRITER_NATIVE_ENV:
+        missing = sorted(k for k in WRITER_NATIVE_ENV if native.get(k) != WRITER_NATIVE_ENV[k])
+        extra = sorted(k for k in native if k not in WRITER_NATIVE_ENV)
+        problems.append(f"native env differs from production (wrong/missing {missing}, extra {extra})")
+    production = {k: env.get(k) for k in WRITER_PRODUCTION_ENV}
+    if production != WRITER_PRODUCTION_ENV:
+        problems.append(f"production writer env differs: {production} (expected {WRITER_PRODUCTION_ENV})")
+    if not clone_image or clone_image != deployed_image:
+        problems.append(f"clone image {clone_image} is not the deployed writer image {deployed_image}")
+    return {"ok": not problems, "problems": problems, "native_env": native, "production_env": production,
+            "clone_image": clone_image, "deployed_writer_image": deployed_image}
+
+
+def heartbeat_integrity_exposed(sampler_rows):
+    """venue -> None when the clone's latest heartbeat carries complete typed trade_integrity over its full worker
+    roster, else why not (report-only: the integrity part never gates G12)."""
+    from scripts.p184_g9_g10_writer_counters import _native_sample_problem
+    out = {}
+    for venue in VENUES:
+        samples = native_heartbeat_samples(sampler_rows, venue)
+        out[venue] = (_native_sample_problem(samples[-1], 45.0) if samples else "no heartbeat sample")
+    return out
+
+
 def load_writer_clone():
     import importlib.util
     path = TS_ROOT / "scripts/p184_dr05_isolated.py"
@@ -2752,6 +2821,10 @@ class Run:
         self.capture_raw_sha256 = None
         self.core_members = 1
         self.profile = core_profile()  # core-group runs only; the defaults are the B3 harness
+        # Brokers' auto.leader.rebalance.enable (``--auto-leader-rebalance``); Kafka's default and production's
+        # value on 2026-10-16 is true. Recorded in handoff.json, the notes and verdict.json.
+        self.auto_leader_rebalance = True
+        self.writer_precheck = {}  # venue -> writer_clone_precheck + heartbeat trade_integrity (report)
 
     def use_capture_adapter(self, raw_sha256):
         """TEST_ONLY real-capture replay: keep the source catalog adapter_version (CAPTURE adapter mode).
@@ -2860,6 +2933,13 @@ class Run:
             handle.write(json.dumps(row) + "\n")
         if actual != expected:
             raise RuntimeError(f"STOP provenance: {name} runs {actual}, expected {expected}")
+
+    def write_writer_precheck(self):
+        (self.evidence / WRITER_PRECHECK_FILE).write_text(json.dumps(self.writer_precheck, indent=2,
+                                                                     sort_keys=True) + "\n")
+
+    def broker_config(self):
+        return {"auto.leader.rebalance.enable": self.auto_leader_rebalance}
 
     def topology(self, topic_id=""):
         return topology(self.ns, self.work, topic_id, images=self.images, query_code=self.query_code,
@@ -2995,7 +3075,8 @@ class Run:
             "namespace": self.ns, "status": "PREPARED_HANDOFF_NOT_RUN", "provenance": "TEST_ONLY",
             "level": "ISOLATED_FAULT", "acceptance": False, "material_ready": False,
             "images": dr05_images(self.images), "g12_images": self.images,
-            "query_code": self.query_code, **capture}, indent=2) + "\n")
+            "query_code": self.query_code, "broker_config": self.broker_config(), **capture}, indent=2) + "\n")
+        self.note("broker_config", **self.broker_config())
         sh(self.helper(self.ns, self.work, ["--material", "/work", "--core-config", "/export.json"],
                        network="none", script="scripts/p184_dr05_dl_fault.py",
                        extra=["-v", f"{self.export}:/export.json:ro"]), timeout=180)
@@ -3010,7 +3091,8 @@ class Run:
             with path.open("x") as handle:
                 os.chmod(path, 0o600)
                 handle.write(broker_properties(password, node,
-                                               self.profile["initial_rebalance_delay_ms"] or 0))
+                                               self.profile["initial_rebalance_delay_ms"] or 0,
+                                               self.auto_leader_rebalance))
             (self.work / f"kafka-{node}").mkdir(mode=0o700)
         self.note("material_ready", namespace=self.ns, volumes_before=self.volumes0,
                   networks_before=self.networks0)
@@ -3076,6 +3158,13 @@ class Run:
             clone.redis_name = f"{self.ns}-tsredis-{label}"
             clone.pg_name = f"{self.ns}-tspg-{label}"
             clone.deadline = clone.clock() + LIMITS["clone_ready_s"]
+            check = writer_clone_precheck(clone.writer_args(), self.images["ts"], (clone.inspect or {}).get("Image"))
+            self.writer_precheck[venue] = check
+            self.write_writer_precheck()
+            self.note("writer_clone_precheck", venue=venue, **check)
+            if not check["ok"]:
+                raise RuntimeError(f"STOP writer clone {venue} is not the production native writer: "
+                                   + "; ".join(check["problems"]))
             self.clones[venue] = clone
             clone.__enter__()
             self.expected |= {f"tswriter-{label}", f"tsredis-{label}", f"tspg-{label}"}
@@ -3103,6 +3192,15 @@ class Run:
             raise RuntimeError("STOP TS clones never applied: " + ",".join(
                 md_missing(load_jsonl(self.evidence / "sampler.jsonl"))))
         self.note("ts_market_data_applied")
+        # Report-only: does each clone's heartbeat expose the native typed trade_integrity (integrity report)?
+        exposed = self.wait(30, until=lambda: (lambda r: r if not any(r.values()) else None)(
+            heartbeat_integrity_exposed(load_jsonl(self.evidence / "sampler.jsonl"))))
+        exposed = exposed or heartbeat_integrity_exposed(load_jsonl(self.evidence / "sampler.jsonl"))
+        for venue, problem in exposed.items():
+            self.writer_precheck.setdefault(venue, {})["heartbeat_trade_integrity"] = (
+                "EXPOSED" if problem is None else "NOT_EXPOSED: " + problem)
+        self.write_writer_precheck()
+        self.note("writer_heartbeat_trade_integrity", **{v: p for v, p in exposed.items()})
 
     # -- INCIDENT 2026-10-15 core-group reproduction (no projector/Stream/Query/TS clones: the core group only)
     def core_group_up(self):
@@ -3355,8 +3453,11 @@ def erase_private(work):
     shutil.rmtree(work / "tslogs", ignore_errors=True)
 
 
-def orchestrate(base, export, ns, images=None, query_code="worktree"):
+def orchestrate(base, export, ns, images=None, query_code="worktree", auto_leader_rebalance=None):
+    if type(auto_leader_rebalance) is not bool:
+        raise ValueError("--run needs an explicit --auto-leader-rebalance true|false (production's value)")
     run = Run(base, export, ns, images, query_code)
+    run.auto_leader_rebalance = auto_leader_rebalance
 
     def expire(_signum, _frame):
         raise TimeoutError("G12 orchestrator absolute deadline")
@@ -3387,7 +3488,8 @@ def orchestrate(base, export, ns, images=None, query_code="worktree"):
             if run.evidence.exists():
                 verdict = evaluate(run.evidence)
                 verdict.update(status=status, error=error, namespace=ns, images=run.images,
-                               query_code=run.query_code)
+                               query_code=run.query_code,
+                               broker_config={"auto.leader.rebalance.enable": auto_leader_rebalance})
                 (run.evidence / "verdict.json").write_text(json.dumps(verdict, indent=2) + "\n")
         finally:
             run.down() if run.evidence.exists() else teardown(ns)
@@ -4531,6 +4633,8 @@ def main(argv=None):
     parser.add_argument("--image-set", type=Path, help="JSON object role -> sha256:<64hex> (defaults: IMAGES)")
     parser.add_argument("--image", action="append", default=[], metavar="ROLE=sha256:<64hex>")
     parser.add_argument("--query-code", choices=QUERY_CODE, default="worktree")
+    parser.add_argument("--auto-leader-rebalance", choices=("true", "false"),
+                        help="--run (required): brokers' auto.leader.rebalance.enable, production's value; recorded")
     parser.add_argument("--new-core", metavar="sha256:<64hex>",
                         help="--core-group: the core image each member is rolled onto (old: the image set's core)")
     parser.add_argument("--prereg", type=Path,
@@ -4576,10 +4680,11 @@ def main(argv=None):
                                       images, args.new_core, profile=profile,
                                       simultaneous=args.core_group_simultaneous is not None)
     if args.run:
-        if args.export is None or args.namespace is None:
-            parser.error("--run needs --export and --namespace")
+        if args.export is None or args.namespace is None or args.auto_leader_rebalance is None:
+            parser.error("--run needs --export, --namespace and --auto-leader-rebalance true|false")
         images = resolve_image_set(args.image_set, args.image)
-        return orchestrate(args.run, args.export, args.namespace, images, args.query_code)
+        return orchestrate(args.run, args.export, args.namespace, images, args.query_code,
+                           auto_leader_rebalance=args.auto_leader_rebalance == "true")
     if args.down:
         ns = namespace(json.loads((args.down / "work" / "handoff.json").read_text())["namespace"])
         report = teardown(ns)

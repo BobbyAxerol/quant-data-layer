@@ -255,7 +255,8 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(result["parts"], {"caught_up": True, "window_complete": True, "g1": "PASS",
                                            "g2": "PASS", "g2_feeds": {"TRADE": "PASS", "QUOTE": "PASS",
                                                                       "MARK": "PASS"}, "g3": "PASS",
-                                           "integrity": "PASS", "monitor": "PASS", "sampler": "PASS"})
+                                           "integrity_report_only": "PASS", "monitor": "PASS",
+                                           "sampler": "PASS"})
         self.assertEqual(result["g2"]["TRADE"]["BINANCE"]["n"], 1200)
         self.assertEqual(result["g3"]["BAR_1m"]["OKX"]["n"], 5)  # closes 120..360 s in [62.1, 362.1) s
         short = g12.evaluate_fault(fault, pubs, [v for v in views if v["t"] < 200 * S], monitor)
@@ -367,14 +368,23 @@ class ImageSetTests(unittest.TestCase):
     def test_cli_passes_the_image_set_to_the_orchestrator(self):
         with patch.object(g12, "orchestrate", return_value=0) as orchestrate:
             g12.main(["--run", "/home/bobby/x", "--export", "/home/bobby/e.json", "--namespace", NS,
-                      "--image", "core=" + FINAL["core"], "--query-code", "image"])
+                      "--image", "core=" + FINAL["core"], "--query-code", "image", "--auto-leader-rebalance", "true"])
         images, query_code = orchestrate.call_args.args[3:5]
         self.assertEqual(images["core"], FINAL["core"])
         self.assertEqual(images["python"], g12.IMAGES["python"])
         self.assertEqual(query_code, "image")
         with patch.object(g12, "orchestrate", return_value=0) as orchestrate:
-            g12.main(["--run", "/home/bobby/x", "--export", "/home/bobby/e.json", "--namespace", NS])
+            g12.main(["--run", "/home/bobby/x", "--export", "/home/bobby/e.json", "--namespace", NS,
+                      "--auto-leader-rebalance", "false"])
         self.assertEqual(orchestrate.call_args.args[3:5], (g12.IMAGES, "worktree"))
+        self.assertIs(orchestrate.call_args.kwargs["auto_leader_rebalance"], False)
+        # The flag is explicit: --run without it is refused, never a silent default.
+        with patch.object(g12, "orchestrate", return_value=0) as orchestrate, \
+                patch("sys.stderr"), self.assertRaises(SystemExit):
+            g12.main(["--run", "/home/bobby/x", "--export", "/home/bobby/e.json", "--namespace", NS])
+        orchestrate.assert_not_called()
+        with self.assertRaises(ValueError):
+            g12.orchestrate("/home/bobby/x", "/x", NS)
 
 
 class TopicReadinessTests(unittest.TestCase):
@@ -425,7 +435,7 @@ class OrchestratorSignalTests(unittest.TestCase):
                 calls.append("down")
         before = signal.getsignal(signal.SIGTERM)
         with tempfile.TemporaryDirectory() as base, patch.object(g12, "Run", FakeRun):
-            self.assertEqual(g12.orchestrate(base, "/x", NS), 1)
+            self.assertEqual(g12.orchestrate(base, "/x", NS, auto_leader_rebalance=True), 1)
             verdict = g12.json.loads((Path(base) / "evidence" / "verdict.json").read_text())
         self.assertIn("signal", verdict["error"])
         self.assertEqual(calls, ["stopped", "down"])
@@ -3284,7 +3294,8 @@ class CoreGroupSimultaneousAcceptanceTests(unittest.TestCase):
 
 class IntegrityOracleTests(unittest.TestCase):
     """OF-G12-2 (inheritance audit 2026-10-16): rewinds, duplicates applied and native typed counters per fault;
-    absent observations are NOT_MEASURED, never a PASS. OF-G12-1: only a frozen predicate v2 run is credited."""
+    absent observations are NOT_MEASURED. The part is REPORT-ONLY (coordinator 2026-10-16): never gates G12.
+    OF-G12-1: only a frozen predicate v2 run is credited."""
     FAULT = {"k": "fault", "name": "stream_restart", "kind": "stream", "injected_ns": 60 * S, "restart_ns": 61 * S}
     MONITOR = [{"t": t * S, "ports": {"8210": t >= 62}, "projector_lag": 0, "under_replicated": 0}
                for t in range(0, 500)]
@@ -3309,7 +3320,7 @@ class IntegrityOracleTests(unittest.TestCase):
 
     def test_clean_run_passes_with_every_check_measured(self):
         result = self.fault()
-        self.assertEqual(result["parts"]["integrity"], "PASS")
+        self.assertEqual(result["parts"]["integrity_report_only"], "PASS")
         okx = result["integrity"]["venues"]["OKX"]
         self.assertEqual((okx["book_rewinds"], okx["trade_duplicates_n"], okx["native"]["status"]), ([], 0, "PASS"))
         self.assertEqual(okx["rewinds"], {"TRADE": 0, "QUOTE": 0, "MARK": 0})
@@ -3327,12 +3338,12 @@ class IntegrityOracleTests(unittest.TestCase):
         self.assertEqual(result["integrity"]["venues"]["OKX"]["status"], "FAIL")
         self.assertIn("BOOK rewind", result["integrity"]["venues"]["OKX"]["reasons"])
         self.assertEqual(result["integrity"]["venues"]["BINANCE"]["status"], "PASS")
-        self.assertFalse(result["pass"])
+        self.assertTrue(result["pass"])  # report-only: G12 still PASSes
         # Before the injection: outside the scope (the high-water still includes it).
         def early(views):
             older = next(v for v in views if v.get("k") == "view" and v["venue"] == "OKX" and v["t"] >= 10 * S)
             return views + [dict(older, t=30 * S + 1)]
-        self.assertEqual(self.fault(edit=early)["parts"]["integrity"], "PASS")
+        self.assertEqual(self.fault(edit=early)["parts"]["integrity_report_only"], "PASS")
         rows = [{"k": "view", "t": 1, "venue": "OKX", "seq": 100}, {"k": "view", "t": 2, "venue": "OKX", "seq": 200},
                 {"k": "view", "t": 3, "venue": "OKX", "seq": 150}, {"k": "view", "t": 4, "venue": "OKX", "seq": None}]
         self.assertEqual(g12.book_rewinds(rows)["OKX"], [{"t": 3, "before": 200, "after": 150}])  # PRE100->200->150
@@ -3347,12 +3358,12 @@ class IntegrityOracleTests(unittest.TestCase):
         trade = self.fault(edit=dup("TRADE"))
         self.assertEqual(trade["integrity"]["venues"]["OKX"]["trade_duplicates_n"], 1)
         self.assertIn("TRADE duplicate applied", trade["integrity"]["venues"]["OKX"]["reasons"])
-        self.assertEqual(trade["parts"]["integrity"], "FAIL")
+        self.assertEqual(trade["parts"]["integrity_report_only"], "FAIL")
         self.assertEqual(trade["parts"]["g2"], "PASS")  # transit counts the first receipt; integrity catches it
-        self.assertFalse(trade["pass"])
+        self.assertTrue(trade["pass"])  # report-only: G12 still PASSes
         bar = self.fault(edit=dup("BAR", 90))  # a retained closed bar re-written after a newer one
         self.assertEqual(bar["integrity"]["venues"]["OKX"]["report_only_rewinds"]["BAR"], 1)
-        self.assertEqual(bar["parts"]["integrity"], "PASS")
+        self.assertEqual(bar["parts"]["integrity_report_only"], "PASS")
 
     def test_quote_and_mark_event_time_rewind_fails(self):
         for feed in ("QUOTE", "MARK", "TRADE"):
@@ -3363,7 +3374,8 @@ class IntegrityOracleTests(unittest.TestCase):
                     return views + [dict(ev, t=ev["t"] + 20 * S, id="x-" + str(ev["id"]))]
                 result = self.fault(edit=edit)
                 self.assertEqual(result["integrity"]["venues"]["BINANCE"]["rewinds"][feed], 1)
-                self.assertEqual(result["parts"]["integrity"], "FAIL")
+                self.assertEqual(result["parts"]["integrity_report_only"], "FAIL")
+                self.assertTrue(result["pass"])  # report-only
 
     def test_native_failure_counter_fails(self):
         for name in ("gaps", "cursor_expired_errors", "slow_consumer_errors", "duplicates_applied",
@@ -3373,11 +3385,13 @@ class IntegrityOracleTests(unittest.TestCase):
                     return {**{n: 0 for n in NATIVE_NAMES}, "applied": t // S, name: 1 if t >= 120 * S else 0}
                 result = self.fault(hb={"OKX": hb_rows("OKX", 0, 500 * S, counters=counters)})
                 self.assertEqual(result["integrity"]["venues"]["OKX"]["native"]["status"], "FAIL")
-                self.assertEqual(result["parts"]["integrity"], "FAIL")
+                self.assertEqual(result["parts"]["integrity_report_only"], "FAIL")
+                self.assertFalse(result["integrity"]["gating"])
+                self.assertTrue(result["pass"])  # report-only
         # A failure counter that moved before the injection is outside the scope.
         before = lambda t: {**{n: 0 for n in NATIVE_NAMES}, "applied": t // S, "gaps": 1 if t >= 30 * S else 0}
-        self.assertEqual(self.fault(hb={"OKX": hb_rows("OKX", 0, 500 * S, counters=before)})["parts"]["integrity"],
-                         "PASS")
+        early = self.fault(hb={"OKX": hb_rows("OKX", 0, 500 * S, counters=before)})
+        self.assertEqual(early["parts"]["integrity_report_only"], "PASS")
 
     def test_native_coverage_gaps_are_not_measured(self):
         cases = {
@@ -3398,8 +3412,8 @@ class IntegrityOracleTests(unittest.TestCase):
                 okx = result["integrity"]["venues"]["OKX"]
                 self.assertEqual(okx["native"]["status"], "NOT_MEASURED", okx["native"])
                 self.assertEqual(okx["status"], "NOT_MEASURED")
-                self.assertEqual(result["parts"]["integrity"], "NOT_MEASURED")
-                self.assertFalse(result["pass"])
+                self.assertEqual(result["parts"]["integrity_report_only"], "NOT_MEASURED")
+                self.assertTrue(result["pass"])  # report-only: G12 still PASSes
         late = self.fault(hb={"OKX": hb_rows("OKX", 0, 300 * S)})
         self.assertEqual(g12.verdict_undecided(late), ["integrity.OKX no heartbeat after the scope"])
 
@@ -3407,13 +3421,15 @@ class IntegrityOracleTests(unittest.TestCase):
         listener = self.fault(edit=lambda v: v + [{"k": "ev_error", "t": 150 * S, "venue": "OKX",
                                                    "error": "ConnectionError"}])
         self.assertIn("notification listener errors", listener["integrity"]["venues"]["OKX"]["reasons"])
-        self.assertEqual(listener["parts"]["integrity"], "NOT_MEASURED")
+        self.assertEqual(listener["parts"]["integrity_report_only"], "NOT_MEASURED")
         anonymous = self.fault(edit=lambda v: v + [{"k": "ev", "t": 150 * S, "venue": "OKX", "feed": "TRADE",
                                                     "id": None, "ev_ms": None}])
-        self.assertEqual(anonymous["parts"]["integrity"], "NOT_MEASURED")
+        self.assertEqual(anonymous["parts"]["integrity_report_only"], "NOT_MEASURED")
         no_trade = self.fault(edit=lambda v: [r for r in v if not (r.get("k") == "ev" and r.get("feed") == "TRADE")])
         self.assertIn("no TRADE notification", no_trade["integrity"]["venues"]["OKX"]["reasons"])
+        self.assertEqual(no_trade["parts"]["g2"], "FAIL")  # G2 (lost trades), not the integrity report, blocks it
         self.assertFalse(no_trade["pass"])
+        self.assertTrue(listener["pass"] and anonymous["pass"])  # missing integrity coverage never blocks G12
 
     def test_pending_is_undecided_until_resolved(self):
         pubs, views = self.inputs()
@@ -3453,10 +3469,78 @@ class IntegrityOracleTests(unittest.TestCase):
                  dict(frozen, caught_up_predicate=dict(frozen["caught_up_predicate"], version="p184.g12.caught_up.v1")),
                  dict(frozen, caught_up_predicate=dict(frozen["caught_up_predicate"], frozen=False)),
                  dict(frozen, status="FAIL"),
-                 dict(frozen, faults=[{"pass": True, "parts": {}}] * 3),
                  dict(frozen, faults=frozen["faults"][:2]),
                  dict(frozen, **{"pass": False}),
                  None]
         for verdict in stale:
             with self.subTest(verdict=str(verdict)[:60]):
                 self.assertFalse(g12.g12_receipt_creditable(verdict)[0])
+
+
+class BrokerAndWriterPrecheckTests(unittest.TestCase):
+    """Coordinator 2026-10-16: explicit auto.leader.rebalance.enable (production's value, recorded) and a
+    WriterClone precheck for the production native writer (B16 image, native env, BOOK batch wait 0)."""
+
+    def test_auto_leader_rebalance_is_always_explicit(self):
+        self.assertIn("auto.leader.rebalance.enable=true\n", g12.broker_properties("pw", 1))
+        self.assertIn("auto.leader.rebalance.enable=false\n", g12.broker_properties("pw", 1, 0, False))
+        self.assertNotIn("auto.leader.rebalance.enable=true", g12.broker_properties("pw", 3, 3000, False))
+        for value in ("false", 0, None):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                g12.broker_properties("pw", 1, 0, value)
+
+    @staticmethod
+    def argv(**changes):
+        env = {"TRADING_REDIS_URL": "redis://localhost:6391/2", **g12.WRITER_NATIVE_ENV,
+               **g12.WRITER_PRODUCTION_ENV, **changes}
+        argv = ["docker", "run", "-d", "--rm", "--name", "x"]
+        for key, value in env.items():
+            if value is not None:
+                argv += ["-e", f"{key}={value}"]
+        return argv + ["--entrypoint", "python", "sha256:ts", "-B", "-m", "services.market_data.main"]
+
+    def test_production_native_writer_passes(self):
+        check = g12.writer_clone_precheck(self.argv(), "sha256:" + "d" * 64, "sha256:" + "d" * 64)
+        self.assertEqual((check["ok"], check["problems"]), (True, []))
+        self.assertEqual(check["native_env"]["MARKET_DATA_NATIVE_APPLY_MAX_ROWS"], "16")
+        self.assertEqual(check["production_env"], {"DATA_LAYER_V2_BOOK_SNAPSHOT_BATCH_MAX_WAIT_MS": "0"})
+        self.assertNotIn("TRADING_REDIS_URL", json.dumps(check))  # only the native/production keys are recorded
+
+    def test_non_production_writer_is_refused(self):
+        image = "sha256:" + "d" * 64
+        cases = {
+            "python writer (no native env)": self.argv(**{k: None for k in g12.WRITER_NATIVE_ENV}),
+            "apply rows not 16": self.argv(MARKET_DATA_NATIVE_APPLY_MAX_ROWS="64"),
+            "apply rows absent": self.argv(MARKET_DATA_NATIVE_APPLY_MAX_ROWS=None),
+            "resume not required": self.argv(MARKET_DATA_NATIVE_REQUIRE_RESUME="0"),
+            "extra native key": self.argv(MARKET_DATA_NATIVE_TEST_CLOCK_FILE="/x"),
+            "book wait default": self.argv(DATA_LAYER_V2_BOOK_SNAPSHOT_BATCH_MAX_WAIT_MS=None),
+            "book wait 25": self.argv(DATA_LAYER_V2_BOOK_SNAPSHOT_BATCH_MAX_WAIT_MS="25"),
+        }
+        for label, argv in cases.items():
+            with self.subTest(label):
+                check = g12.writer_clone_precheck(argv, image, image)
+                self.assertFalse(check["ok"])
+                self.assertTrue(check["problems"])
+        for clone, deployed in ((image, "sha256:" + "e" * 64), (image, None), (None, None)):
+            with self.subTest(clone=clone, deployed=deployed):
+                self.assertFalse(g12.writer_clone_precheck(self.argv(), clone, deployed)["ok"])
+
+    def test_argv_env(self):
+        self.assertEqual(g12.argv_env(["-e", "A=1", "-e", "B=x=y", "-v", "C=2", "-e"]), {"A": "1", "B": "x=y"})
+
+    def test_heartbeat_trade_integrity_exposure_is_reported(self):
+        rows = hb_rows("OKX", 0, 10 * S) + hb_rows("BINANCE", 0, 10 * S, workers=(3, 4))
+        exposed = g12.heartbeat_integrity_exposed(rows)
+        self.assertIsNone(exposed["OKX"])
+        self.assertIn("workers reporting 3 of 4", exposed["BINANCE"])
+        old = [{"k": "hb", "t": S, "venue": "OKX", "heartbeat": True, "status": "READY"}]
+        self.assertEqual(g12.heartbeat_integrity_exposed(old)["BINANCE"], "no heartbeat sample")
+        self.assertIsNotNone(g12.heartbeat_integrity_exposed(old)["OKX"])
+
+    def test_verdict_carries_the_writer_precheck(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = Path(tmp)
+            self.assertIsNone(g12.evaluate(evidence)["writer_precheck"])
+            (evidence / g12.WRITER_PRECHECK_FILE).write_text(json.dumps({"OKX": {"ok": True}}))
+            self.assertEqual(g12.evaluate(evidence)["writer_precheck"], {"OKX": {"ok": True}})
