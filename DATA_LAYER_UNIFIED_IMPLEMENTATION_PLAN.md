@@ -73676,3 +73676,20 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
     -> G13 runtime (packet v5 draft; dr01-deployed needs CI on the final TS commit -> push after the approved governance
     reword) -> B roll -> G12 final with --credit on the post-B snapshot. Known harness deltas recorded, not changed:
     core 1 member 0.5 CPU (prod 3), kafka 0.75 CPU (prod 1.75), latest topic 3 partitions.
+  - 2026-10-16 12:53-14:28Z PRODUCTION Kafka sequence (owner-approved: "B ngay", temporary dirty ratio 0.05; lock
+    claude-kafka-b; receipts ~/.local/state/qdl-v2/p184-kafka-b-20261016/ and
+    ~/.local/state/qdl-v2/p184-g12-coordinator-load-20261016/pass-watch/):
+    - DeleteRecords force-trim was NOT possible (Kafka 4.2 ReplicaManager refuses internal topics); old markers were
+      already past their deleteHorizon, so a forced cleaner pass was used instead.
+    - 12:54:49Z min.cleanable.dirty.ratio=0.05 on __consumer_offsets; repeated passes shrank partition 43 from
+      ~1.65 GB / 18.4M records to ~230-260 MB / ~2.95-3.2M on all three replicas, plateau from ~13:50Z (above the
+      tool's self-chosen 32 MiB threshold; not pursued further). Group offsets before/after: 5/5 groups, no missing
+      or decreased offset. 14:12Z temp key removed (TEMP_NOT_PRESENT), C still APPLIED.
+    - B roll with manual HOLD gates (Codex F1): kafka1 14:14Z, kafka2 14:21Z, kafka3 (quorum leader + core group
+      coordinator) 14:25Z; each healthy ~20 s, ISR ~3.7-3.9 s, no other role restarted, writer demanded ==
+      session-ready in every sample, 0 eligibility losses, READY 64/64 between steps. Core commit stall max per roll:
+      2.5 s / 3.3 s / 5.2 s. FIRST REAL PRODUCTION coordinator load: __consumer_offsets-43 3,201,999 records /
+      267 MB in 4,783 ms (1,593 ms queued behind __consumer_offsets-24: 1.88M records in 1,592 ms) on broker 2.
+    - elect --scope data OK; final-check OK: env false x3, parity rebalance false, effective sha256 f4836dfc...
+    - Remaining: __consumer_offsets-43 and -24 still carry ~3M/1.9M records -> a coordinator move costs ~5 s today;
+      C keeps reducing it; tracked, not a gate change. G12 final launched next on the post-B config.
