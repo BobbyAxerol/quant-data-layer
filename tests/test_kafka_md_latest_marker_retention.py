@@ -160,6 +160,17 @@ class Apply(unittest.TestCase):
                 self.assertEqual(tool.main(["--apply", "--cert-dir", tmp]), 4)
             self.assertIn("lock", err.getvalue())
 
+    def test_foreign_lock_ignores_only_the_named_own_owner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lock = Path(tmp) / "lock"
+            until = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            lock.write_text(json.dumps({"owner": "claude-kafka-b", "until_utc": until}))
+            with mock.patch.object(tool, "LOCK", lock):
+                self.assertIsNone(tool.foreign_lock(own_owner="claude-kafka-b"))
+                self.assertIsNotNone(tool.foreign_lock())
+                self.assertIsNotNone(tool.foreign_lock(own_owner="other"))
+                self.assertIsNotNone(tool.foreign_lock(own_owner=""))
+
     def test_apply_needs_cert_dir(self):
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(tool.main(["--apply"]), 4)

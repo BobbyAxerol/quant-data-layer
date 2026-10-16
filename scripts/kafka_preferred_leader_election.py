@@ -235,6 +235,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--cert-dir", type=Path, help="stable cert dir (mounted ro); required to run")
     parser.add_argument("--window-out", type=Path,
                         help="--apply: append the election as a declared-interruption window (JSONL)")
+    parser.add_argument("--lock-owner", help="host-measurement lock owner of this window: a lock held by this owner does not block --apply")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--observe", action="store_true", help="read-only describe and imbalance report")
     mode.add_argument("--apply", action="store_true", help="run the preferred election once and verify")
@@ -251,7 +252,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.cert_dir is None:
             raise Refused("--observe/--apply need --cert-dir")
         if args.apply:
-            lock = foreign_lock()
+            lock = foreign_lock(own_owner=args.lock_owner)
             if lock is not None:
                 raise Refused(f"host-measurement lock active: {lock}")
         with tempfile.TemporaryDirectory(prefix="qdl-election-") as tmp:

@@ -275,5 +275,110 @@ class Observe(unittest.TestCase):
         self.assertEqual(tool.PLAN["__transaction_state"], {"segment.ms": "600000"})
 
 
+class TempOverride(unittest.TestCase):
+    """The temporary min.cleanable.dirty.ratio key: own apply/remove, not drift while at its target."""
+
+    TEMP = tool.TEMP_OVERRIDES["__consumer_offsets"]
+
+    def _main(self, broker, argv, lock=None):
+        return Apply._main(self, broker, argv, lock)  # same harness: patched lock path and runner
+
+    def test_temp_is_one_key_on_offsets_only_and_disjoint_from_plan_and_frozen(self):
+        self.assertEqual(tool.TEMP_OVERRIDES, {"__consumer_offsets": {"min.cleanable.dirty.ratio": "0.05"}})
+        for topic, keys in tool.TEMP_OVERRIDES.items():
+            self.assertFalse(set(keys) & (set(tool.PLAN[topic]) | set(tool.FROZEN_OTHERS[topic])))
+        self.assertEqual(tool.temp_alter_cmd("__consumer_offsets")[-2:],
+                         ["--add-config", "min.cleanable.dirty.ratio=0.05"])
+        self.assertEqual(tool.temp_remove_cmd("__consumer_offsets")[-2:],
+                         ["--delete-config", "min.cleanable.dirty.ratio"])
+        with self.assertRaises(tool.Refused):
+            tool.temp_alter_cmd("__transaction_state")
+
+    def test_dry_run_runs_nothing(self):
+        out = io.StringIO()
+        with mock.patch.object(AdminContainerRunner, "run", side_effect=AssertionError("ran")), \
+                contextlib.redirect_stdout(out):
+            self.assertEqual(tool.main(["--apply-temp"]), 0)
+        body = json.loads(out.getvalue())
+        self.assertEqual((body["mode"], list(body["topics"])), ("dry-run", ["__consumer_offsets"]))
+
+    def test_apply_then_remove_touches_only_the_temp_key(self):
+        broker = Broker(planned=tool.PLAN)
+        code, out, _ = self._main(broker, ["--apply-temp"])
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(out)["topics"][0]["mode"], "applied")
+        self.assertEqual(broker.configs["__consumer_offsets"]["min.cleanable.dirty.ratio"], "0.05")
+        self.assertEqual(broker.configs["__transaction_state"],
+                         {**tool.FROZEN_OTHERS["__transaction_state"], **tool.PLAN["__transaction_state"]})
+        code, out, _ = self._main(broker, ["--apply-temp"])
+        self.assertEqual(json.loads(out)["topics"][0]["mode"], "already_at_state")
+        code, out, _ = self._main(broker, ["--remove-temp"])
+        self.assertEqual(code, 0, out)
+        self.assertEqual(broker.configs["__consumer_offsets"],
+                         {**tool.FROZEN_OTHERS["__consumer_offsets"], **tool.PLAN["__consumer_offsets"]})
+
+    def test_temp_at_target_is_not_drift_for_plan_apply_and_rollback(self):
+        broker = Broker(extra={"__consumer_offsets": dict(self.TEMP)})
+        code, out, _ = self._main(broker, [])
+        self.assertEqual(code, 0, out)
+        code, out, _ = self._main(broker, ["--rollback"])
+        self.assertEqual(code, 0, out)
+        self.assertEqual(broker.configs["__consumer_offsets"]["min.cleanable.dirty.ratio"], "0.05")
+
+    def test_foreign_temp_value_is_refused_before_any_alter(self):
+        broker = Broker(extra={"__consumer_offsets": {"min.cleanable.dirty.ratio": "0.2"}})
+        for argv in (["--apply-temp"], ["--remove-temp"], []):
+            code, _, err = self._main(broker, argv)
+            self.assertEqual(code, 4, err)
+        self.assertNotIn("--alter", [v for _, v in broker.verbs()])
+
+    def test_exclusive_flags(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(tool.main(["--apply-temp", "--remove-temp"]), 4)
+            self.assertEqual(tool.main(["--apply-temp", "--rollback"]), 4)
+            self.assertEqual(tool.main(["--remove-temp", "--observe", "--cert-dir", "/x"]), 4)
+
+    def test_own_lock_does_not_block_a_foreign_one_does(self):
+        until = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=5)).isoformat()
+        broker = Broker()
+        code, _, err = self._main(broker, ["--apply-temp", "--lock-owner", "claude-kafka-b"],
+                                  lock={"owner": "claude-kafka-b", "until_utc": until})
+        self.assertEqual(code, 0, err)
+        code, _, err = self._main(Broker(), ["--apply-temp", "--lock-owner", "claude-kafka-b"],
+                                  lock={"owner": "someone-else", "until_utc": until})
+        self.assertEqual(code, 4)
+
+    def test_observe_reports_temp_and_the_removal_point(self):
+        for size, recommended in ((1650188753, False), (tool.TEMP_REMOVE_AT_BYTES, True)):
+            log_dirs = Observe.LOG_DIRS.replace("1650188753", str(size))
+
+            class ReadOnly(Observe.ReadOnly):
+                def run(self, command):
+                    if command[0] == "kafka-log-dirs.sh":
+                        return CommandResult(0, log_dirs, "")
+                    return super().run(command)
+            broker = ReadOnly(planned=tool.PLAN, extra={"__consumer_offsets": dict(self.TEMP)})
+            out = io.StringIO()
+            with mock.patch.object(AdminContainerRunner, "run", side_effect=broker.run), \
+                    contextlib.redirect_stdout(out):
+                self.assertEqual(tool.main(["--observe", "--cert-dir", "/nonexistent"]), 0)
+            body = json.loads(out.getvalue())
+            offsets = body["topics"]["__consumer_offsets"]
+            self.assertEqual((offsets["temp_state"], offsets["c_state"]), ("PRESENT", "APPLIED"))
+            self.assertTrue(offsets["other_overrides_match_frozen"])
+            self.assertEqual(body["temp_removal"]["max_size_bytes"], size)
+            self.assertIs(body["temp_removal"]["remove_recommended"], recommended)
+            self.assertEqual(body["topics"]["__transaction_state"]["temp_state"], "NONE")
+
+    def test_observe_flags_a_foreign_temp_value_as_drift(self):
+        broker = Observe.ReadOnly(extra={"__consumer_offsets": {"min.cleanable.dirty.ratio": "0.2"}})
+        out = io.StringIO()
+        with mock.patch.object(AdminContainerRunner, "run", side_effect=broker.run), contextlib.redirect_stdout(out):
+            tool.main(["--observe", "--cert-dir", "/nonexistent"])
+        offsets = json.loads(out.getvalue())["topics"]["__consumer_offsets"]
+        self.assertEqual(offsets["temp_state"], "FOREIGN")
+        self.assertFalse(offsets["other_overrides_match_frozen"])
+
+
 if __name__ == "__main__":
     unittest.main()

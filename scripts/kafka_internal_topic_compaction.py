@@ -33,6 +33,14 @@ Boundary:
   topic, all keys at once), describes again and verifies the
   planned keys and that no other override moved; already at the target -> no alter (idempotent);
 * ``--rollback`` restores the pre-C state through the same path (``--delete-config`` of the planned keys);
+* ``TEMP_OVERRIDES`` (owner decision 2026-10-16): a temporary ``min.cleanable.dirty.ratio`` 0.05 on
+  ``__consumer_offsets`` only, so the cleaner reaches the already-stamped marker backlog sooner. It is separate from
+  ``PLAN``: ``--apply-temp`` / ``--remove-temp`` (dry-run unless ``--apply``) add or delete exactly that key with the
+  same refusals (frozen others, planned keys absent/target, the temp key absent/its target); while present at its
+  target it is not drift for ``--apply``/``--rollback``/``--observe`` (any other value is). ``--observe`` reports it
+  with the size of ``TEMP_WATCH_PARTITION`` and ``remove_recommended`` once every replica is at or below
+  ``TEMP_REMOVE_AT_BYTES``; the removal itself is the coordinator's declared step. Rollback = ``--remove-temp``;
+* ``--lock-owner`` names the caller's own host-measurement lock (it does not block ``--apply``);
 * ``--topic`` limits the run to one topic (staged apply); the order is ``__transaction_state`` first (no
   correctness coupling), then ``__consumer_offsets``;
 * ``--observe`` (read-only, no alter): the effective overrides of both topics, the per-broker size and the
@@ -96,6 +104,15 @@ FROZEN_OTHERS: dict[str, dict[str, str]] = {
                             "unclean.leader.election.enable": "false"},
 }
 ABSENT = None
+# Temporary key (owner decision 2026-10-16, AskUserQuestion): dynamic, no restart; rollback = delete the override.
+# Removal point: the watched coordinator partition back near the C steady state. 32 MiB ~= 3x the projected C
+# steady-state maximum (126k records, fit-output.txt; on-disk ~80 B per marker batch and ~177 B per 2-record data
+# batch, harness/c1-dump-agg.json -> ~11 MB) and ~0.4 M markers (~0.13 s at the fitted 0.334 us/marker).
+TEMP_OVERRIDES: dict[str, dict[str, str]] = {"__consumer_offsets": {"min.cleanable.dirty.ratio": "0.05"}}
+TEMP_EVIDENCE = ("owner decision 2026-10-16 via AskUserQuestion: temporary min.cleanable.dirty.ratio=0.05 on "
+                 "__consumer_offsets only, remove once partition 43 has shrunk")
+TEMP_WATCH_PARTITION = "__consumer_offsets-43"
+TEMP_REMOVE_AT_BYTES = 32 * 1024 * 1024
 
 
 class Refused(Exception):
@@ -125,13 +142,42 @@ def _known(topic: str) -> None:
         raise Refused(f"topic must be one of {TOPICS}, got {topic!r}")
 
 
+def temp_keys(topic: str) -> dict[str, str]:
+    return TEMP_OVERRIDES.get(topic, {})
+
+
+def temp_alter_cmd(topic: str) -> list[str]:
+    _known(topic)
+    if not temp_keys(topic):
+        raise Refused(f"{topic} has no temporary override")
+    pairs = ",".join(f"{key}={value}" for key, value in sorted(temp_keys(topic).items()))
+    return ["kafka-configs.sh", "--entity-type", "topics", "--entity-name", topic, "--alter", "--add-config", pairs]
+
+
+def temp_remove_cmd(topic: str) -> list[str]:
+    _known(topic)
+    if not temp_keys(topic):
+        raise Refused(f"{topic} has no temporary override")
+    return ["kafka-configs.sh", "--entity-type", "topics", "--entity-name", topic, "--alter",
+            "--delete-config", ",".join(sorted(temp_keys(topic)))]
+
+
+def split_overrides(topic: str, overrides: Mapping[str, str]) -> tuple[dict, dict]:
+    """(others, temp): the temp key at its target (or absent) is reported apart and never counts as drift; a temp key
+    holding any other value stays in ``others`` and therefore is drift."""
+    temp = {key: overrides.get(key) for key in temp_keys(topic)}
+    others = {k: v for k, v in overrides.items()
+              if k not in PLAN[topic] and not (k in temp_keys(topic) and v == temp_keys(topic)[k])}
+    return others, temp
+
+
 def wanted_state(topic: str, rollback: bool) -> dict[str, str | None]:
     return {key: ABSENT if rollback else value for key, value in PLAN[topic].items()}
 
 
 def check_before(topic: str, overrides: Mapping[str, str]) -> dict[str, str | None]:
     """Refuse unless the non-planned overrides equal the frozen snapshot and each planned key is absent/target."""
-    others = {k: v for k, v in overrides.items() if k not in PLAN[topic]}
+    others, _ = split_overrides(topic, overrides)
     frozen = FROZEN_OTHERS[topic]
     if others != frozen:
         drift = {k: {"frozen": frozen.get(k), "actual": others.get(k)}
@@ -167,6 +213,37 @@ def apply_topic(runner, topic: str, rollback: bool) -> dict[str, Any]:
             "before": before, "after": after, "expected": wanted, "other_overrides_moved": moved,
             "ok": after == wanted and not moved,
             "undo": rollback_cmd(topic) if not rollback else alter_cmd(topic)}
+
+
+def apply_temp(runner, topic: str, remove: bool) -> dict[str, Any]:
+    """Add (or delete) exactly the temporary key(s) of ``topic``; same refusals as the PLAN path."""
+    before_all = parse_topic_overrides(run(runner, describe_cmd(topic)).stdout, topic)
+    check_before(topic, before_all)
+    before = {key: before_all.get(key) for key in temp_keys(topic)}
+    wanted = {key: ABSENT if remove else value for key, value in temp_keys(topic).items()}
+    altered = before != wanted
+    if altered:
+        run(runner, temp_remove_cmd(topic) if remove else temp_alter_cmd(topic))
+    after_all = parse_topic_overrides(run(runner, describe_cmd(topic)).stdout, topic)
+    after = {key: after_all.get(key) for key in temp_keys(topic)}
+    moved = sorted(k for k in set(before_all) | set(after_all)
+                   if k not in temp_keys(topic) and before_all.get(k) != after_all.get(k))
+    return {"topic": topic, "temp": True, "evidence": TEMP_EVIDENCE,
+            "mode": ("removed" if remove else "applied") if altered else "already_at_state",
+            "before": before, "after": after, "expected": wanted, "other_overrides_moved": moved,
+            "ok": after == wanted and not moved,
+            "undo": temp_alter_cmd(topic) if remove else temp_remove_cmd(topic)}
+
+
+def temp_removal(topics: Mapping[str, Any], parts: Mapping[str, Any]) -> dict[str, Any]:
+    """When the temporary key can go: present + every replica of the watched partition <= TEMP_REMOVE_AT_BYTES."""
+    present = any(t.get("temp_state") == "PRESENT" for t in topics.values())
+    sizes = (parts.get(TEMP_WATCH_PARTITION) or {}).get("size_bytes_by_broker") or {}
+    largest = max(sizes.values()) if sizes else None
+    return {"present": present, "watch_partition": TEMP_WATCH_PARTITION, "max_size_bytes": largest,
+            "threshold_bytes": TEMP_REMOVE_AT_BYTES,
+            "remove_recommended": present and largest is not None and largest <= TEMP_REMOVE_AT_BYTES,
+            "remove_command": "kafka_internal_topic_compaction.py --remove-temp --apply --cert-dir <cert>"}
 
 
 def log_dirs_cmd() -> list[str]:
@@ -214,14 +291,19 @@ def observe(runner, partitions: Sequence[str]) -> dict[str, Any]:
     for topic in TOPICS:
         overrides = parse_topic_overrides(_checked(runner, describe_cmd(topic)), topic)
         planned = {key: overrides.get(key) for key in PLAN[topic]}
-        others = {k: v for k, v in overrides.items() if k not in PLAN[topic]}
+        others, temp = split_overrides(topic, overrides)
         state = ("APPLIED" if planned == PLAN[topic] else
                  "ABSENT" if all(v is None for v in planned.values()) else "PARTIAL_OR_FOREIGN")
         frozen = FROZEN_OTHERS[topic]
         drift = {k: {"frozen": frozen.get(k), "actual": others.get(k)}
                  for k in sorted(set(others) | set(frozen)) if others.get(k) != frozen.get(k)}
-        topics[topic] = {"planned_keys": planned, "c_state": state,
+        temp_state = ("NONE" if not temp else "PRESENT" if temp == temp_keys(topic) else
+                      "ABSENT" if all(v is None for v in temp.values()) else "FOREIGN")
+        topics[topic] = {"planned_keys": planned, "c_state": state, "temp_keys": temp, "temp_state": temp_state,
                          "other_overrides_match_frozen": not drift, "drift": drift}
+    if TEMP_WATCH_PARTITION not in wanted:
+        wanted.append(TEMP_WATCH_PARTITION)
+        partitions = [*partitions, TEMP_WATCH_PARTITION.replace("-", ":")]
     sizes = parse_log_dirs(_checked(runner, log_dirs_cmd()), wanted)
     end = parse_offsets(_checked(runner, offsets_cmd(partitions, "-1")))
     start = parse_offsets(_checked(runner, offsets_cmd(partitions, "-2")))
@@ -231,6 +313,7 @@ def observe(runner, partitions: Sequence[str]) -> dict[str, Any]:
              for name in wanted}
     return {"mode": "observe", "at_utc": dt.datetime.now(dt.timezone.utc).isoformat(), "runner": runner.describe(),
             "plan_status": PLAN_STATUS, "topics": topics, "partitions": parts,
+            "temp_removal": temp_removal(topics, parts),
             "note": "offset_span is not a record count; replayed records = broker 'Finished loading' line"}
 
 
@@ -241,6 +324,35 @@ def selected(topic: str | None) -> tuple[str, ...]:
     return (topic,)
 
 
+def run_temp(args: argparse.Namespace, remove: bool) -> int:
+    topics = tuple(t for t in TOPICS if temp_keys(t))
+    if not args.apply:
+        runner = AdminContainerRunner(args.cert_dir or Path("${QDL_STABLE_CERT_DIR}"))
+        print(json.dumps({"mode": "dry-run", "requested": "remove-temp" if remove else "apply-temp",
+                          "evidence": TEMP_EVIDENCE, "remove_at_bytes": TEMP_REMOVE_AT_BYTES,
+                          "watch_partition": TEMP_WATCH_PARTITION,
+                          "topics": {t: {"temp": temp_keys(t), "describe": runner.argv(describe_cmd(t)),
+                                         "apply": runner.argv(temp_alter_cmd(t)),
+                                         "remove": runner.argv(temp_remove_cmd(t))} for t in topics}}, indent=1))
+        return 0
+    lock = foreign_lock(own_owner=args.lock_owner)
+    if lock is not None:
+        raise Refused(f"host-measurement lock active: {lock}")
+    if args.isolated_container:
+        runner = DockerExecRunner(args.isolated_container, args.bootstrap)
+    elif args.cert_dir is None:
+        raise Refused("--apply needs --cert-dir (or --isolated-container)")
+    else:
+        runner = AdminContainerRunner(args.cert_dir)
+    runner.preflight()
+    for topic in topics:
+        check_before(topic, parse_topic_overrides(run(runner, describe_cmd(topic)).stdout, topic))
+    reports = [apply_temp(runner, topic, remove) for topic in topics]
+    print(json.dumps({"at_utc": dt.datetime.now(dt.timezone.utc).isoformat(), "runner": runner.describe(),
+                      "topics": reports}, indent=1))
+    return 0 if all(r["ok"] for r in reports) else 1
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--topic", choices=TOPICS, help="only this topic (default: both, txn state first)")
@@ -249,11 +361,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--isolated-container", help="disposable plaintext broker container (tests/rehearsal)")
     parser.add_argument("--bootstrap", default="localhost:9092", help="with --isolated-container")
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--lock-owner", help="host-measurement lock owner of this window: a lock held by this owner does not block --apply")
     parser.add_argument("--observe", action="store_true", help="read-only overrides/sizes/offsets (no alter)")
+    parser.add_argument("--apply-temp", action="store_true",
+                        help="TEMP_OVERRIDES only: add the temporary key(s) (dry-run unless --apply)")
+    parser.add_argument("--remove-temp", action="store_true",
+                        help="TEMP_OVERRIDES only: delete the temporary key(s) (dry-run unless --apply)")
     parser.add_argument("--partition", action="append", metavar="TOPIC:N",
                         help=f"--observe partitions (default {', '.join(OBSERVE_PARTITIONS)})")
     args = parser.parse_args(argv)
     try:
+        temp_mode = "apply" if args.apply_temp else "remove" if args.remove_temp else None
+        if args.apply_temp and args.remove_temp:
+            raise Refused("--apply-temp and --remove-temp are exclusive")
+        if temp_mode and (args.observe or args.rollback or args.topic):
+            raise Refused("--apply-temp/--remove-temp take no --observe/--rollback/--topic (TEMP_OVERRIDES names "
+                          "the topic)")
         if args.observe:
             if args.apply or args.rollback:
                 raise Refused("--observe is read-only: no --apply/--rollback")
@@ -271,6 +394,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 runner = AdminContainerRunner(args.cert_dir)
             print(json.dumps(observe(runner, partitions), indent=1))
             return 0
+        if temp_mode:
+            return run_temp(args, temp_mode == "remove")
         topics = selected(args.topic)
         if not args.apply:
             runner = AdminContainerRunner(args.cert_dir or Path("${QDL_STABLE_CERT_DIR}"))
@@ -282,7 +407,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                               "requested": "rollback" if args.rollback else "apply",
                               "topics": steps}, indent=1))
             return 0
-        lock = foreign_lock()
+        lock = foreign_lock(own_owner=args.lock_owner)
         if lock is not None:
             raise Refused(f"host-measurement lock active: {lock}")
         if PLAN_STATUS != "MEASURED" and not args.isolated_container:

@@ -94,13 +94,17 @@ def alter_cmd(value: int, allowed: Sequence[int]) -> list[str]:
             "--add-config", f"{KEY}={value}"]
 
 
-def foreign_lock(now: dt.datetime | None = None) -> dict | None:
+def foreign_lock(now: dt.datetime | None = None, own_owner: str | None = None) -> dict | None:
+    """The valid host-measurement lock that blocks a mutation, or None. ``own_owner``: a lock whose owner equals it
+    is the caller's own window (taken with scripts/host_measurement_lock.py acquire) and does not block."""
     try:
         body = json.loads(LOCK.read_text())
     except FileNotFoundError:
         return None
     except (OSError, ValueError):
         return {"unparseable": True}
+    if own_owner and isinstance(body, dict) and body.get("owner") == own_owner:
+        return None
     now = now or dt.datetime.now(dt.timezone.utc)
     try:
         return body if dt.datetime.fromisoformat(body["until_utc"]) > now else None

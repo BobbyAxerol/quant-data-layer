@@ -335,6 +335,7 @@ def main(argv: Sequence[str] | None = None, live_factory: Callable[[Path], Live]
     parser.add_argument("--broker", choices=BROKERS)
     parser.add_argument("--cert-dir", type=Path, help="stable cert dir (mounted ro); needed by --check/--apply")
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--lock-owner", help="host-measurement lock owner of this window: a lock held by this owner does not block --apply")
     args = parser.parse_args(argv)
     live_factory = live_factory or (lambda cert_dir: Live(AdminContainerRunner(cert_dir)))
     try:
@@ -363,7 +364,7 @@ def main(argv: Sequence[str] | None = None, live_factory: Callable[[Path], Live]
             return 0
         if args.cert_dir is None:
             raise Refused("--apply needs --cert-dir")
-        lock = foreign_lock()
+        lock = foreign_lock(own_owner=args.lock_owner)
         if lock is not None:
             raise Refused(f"host-measurement lock active: {lock}")
         live = live_factory(args.cert_dir)
