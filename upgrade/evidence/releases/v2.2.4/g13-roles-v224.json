@@ -1,0 +1,14 @@
+{
+ "binance_bar_edge": "sha256:08f356a84151c6e865fbdc4a2efe6924df9336d15353254c2b2da684261794f5",
+ "ingestor_binance_usdm": "sha256:7fba25779f72a3adffc88f195935a316ac94acbfcb362996fafbff89f62c9103",
+ "ingestor_okx_swap": "sha256:7fba25779f72a3adffc88f195935a316ac94acbfcb362996fafbff89f62c9103",
+ "market_projector_1": "sha256:ce629061a8c180ae7e6cf88e32ebaddcf965ffe3924c88a3f1b942fc1623d4f9",
+ "market_projector_2": "sha256:ce629061a8c180ae7e6cf88e32ebaddcf965ffe3924c88a3f1b942fc1623d4f9",
+ "query_kn_1": "sha256:b9ca6c36fb0ad003b77e47bb3a777c3e565944d59cb3a2e9bc5dfb68e3448481",
+ "query_kn_2": "sha256:b9ca6c36fb0ad003b77e47bb3a777c3e565944d59cb3a2e9bc5dfb68e3448481",
+ "rust_core": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+ "rust_core_2": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+ "rust_core_3": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+ "stream_kn_1": "sha256:baa72c96d5255cbfc0e332f893c470ff293d88fde4e20ea4c7c94ba5ea09a38b",
+ "stream_kn_2": "sha256:baa72c96d5255cbfc0e332f893c470ff293d88fde4e20ea4c7c94ba5ea09a38b"
+}
