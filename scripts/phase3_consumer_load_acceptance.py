@@ -1771,11 +1771,13 @@ async def main():
     async for key in client.scan_iter(match="service:heartbeat:market_data:*", count=100):
         value = await client.get(key)
         if value:
-            rows.append(json.loads(value))
+            rows.append((key, json.loads(value)))
     await client.aclose()
-    beat = max(rows, key=lambda row: row.get("last_seen_unix", 0))
+    key, beat = max(rows, key=lambda row: row[1].get("last_seen_unix", 0))
     details = beat["details"]
+    # last_seen_unix + key_tail identify the heartbeat snapshot, so repeated reads of it count once.
     print(json.dumps({"status": beat["status"], "age_s": round(time.time() - beat["last_seen_unix"], 1),
+        "last_seen_unix": beat["last_seen_unix"], "key_tail": key[-24:],
         "ready": details.get("ready_v2_slices"), "demanded": details.get("demanded_v2_slices"),
         "fallback": details.get("v1_fallback_count"), "v2_error": details.get("v2_error_count"),
         "unhealthy": details.get("reported_unhealthy_slices") or []}))

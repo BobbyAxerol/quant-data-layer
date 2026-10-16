@@ -9,7 +9,9 @@ REPORT_INVALID_OR_MISSING, PROCESS_NOT_ALIVE, ...; diagnostic, so a slot-wide WO
 image carries TS fb09a1b (purpose readiness), pricing/continuity/signal counts and the bounded `not_ready` rows with
 their reason_code. An unreadable or stale heartbeat (last_seen older than 45 s;
 the writer publishes about every 30 s, stage100m max age 30.0 s) is counted UNKNOWN, never READY.
-A heartbeat key that changes (writer restart: new instance id) is re-scanned.
+A heartbeat key that changes (writer restart: new instance id) is re-scanned. The sampler reads faster than the
+writer publishes, so G9 scores distinct heartbeat snapshots (key_tail + publication time, equal content): one snapshot
+read three times counts once; every snapshot is still scored and an unreadable/stale read is always counted.
 
 Eligibility losses (G9): a slice that is in `not_ready` in a sample but was not in the previous readable sample is
 one loss event, classified by reason_code. TRADE_EVENT_STALE (a quiet TRADE whose provider session is live) is the
@@ -63,6 +65,7 @@ from scripts.p184_resp_readonly import (  # noqa: E402
     install_stop_signals, pause, stopped,
     BoundedJsonl, ReadOnlyRedis, container_ip, read_jsonl, write_json_exclusive,
 )
+from qdl.certification.phase3_consumer_load import distinct_heartbeat_reads, heartbeat_identity  # noqa: E402
 
 LEGIT_QUIET = frozenset({"TRADE_EVENT_STALE"})
 HEARTBEAT_PATTERN = "service:heartbeat:market_data:*"
@@ -97,6 +100,9 @@ def heartbeat_sample(payload: dict | None, now_s: float) -> dict:
     details = payload["details"]
     sample = {"readable": True, "status": payload.get("status"),
               "age_s": round(now_s - float(payload.get("last_seen_unix") or 0), 1),
+              # Publication time: with key_tail it identifies the heartbeat snapshot (one snapshot counts once).
+              **({"last_seen_unix": payload["last_seen_unix"]}
+                 if type(payload.get("last_seen_unix")) in (int, float) else {}),
               **{key: details.get(key) for key in COUNT_FIELDS if key in details},
               "unhealthy": [{**{k: row.get(k) for k in UNHEALTHY_FIELDS}, **{k: row[k] for k in WORKER_FIELDS if k in row}}
                             for row in details.get("reported_unhealthy_slices", [])[:64] if isinstance(row, dict)],
@@ -137,9 +143,26 @@ def slice_key(row: dict) -> str:
     return "|".join(str(row.get(k)) for k in ("provider", "symbol", "feed", "interval"))
 
 
+def _read_identity(row: dict, stale_after_s: float):
+    """Heartbeat snapshot identity of one read; None (always counted) for an unreadable or stale read, so a writer
+    that stopped publishing is never hidden behind its last snapshot."""
+    sample = row.get("sample") or {}
+    if not sample.get("readable") or type(sample.get("age_s")) not in (int, float) or sample["age_s"] > stale_after_s:
+        return None
+    return heartbeat_identity(at_ns=row.get("at_ns"), age_s=sample.get("age_s"),
+                              last_seen_unix=sample.get("last_seen_unix"), key=row.get("key_tail"))
+
+
+def _read_content(row: dict):
+    return {k: v for k, v in (row.get("sample") or {}).items() if k != "age_s"}
+
+
 def summarize_g9(samples, *, from_ns=None, to_ns=None, stale_after_s=45.0) -> dict:
-    rows = [s for s in samples if s.get("kind") == "heartbeat"
-            and (from_ns is None or s["at_ns"] >= from_ns) and (to_ns is None or s["at_ns"] <= to_ns)]
+    """G9 over distinct heartbeat snapshots: the sampler reads faster than the writer publishes, so repeated reads
+    of one snapshot (same key_tail and publication time, equal content) count once. Every snapshot is still scored."""
+    reads = [s for s in samples if s.get("kind") == "heartbeat"
+             and (from_ns is None or s["at_ns"] >= from_ns) and (to_ns is None or s["at_ns"] <= to_ns)]
+    rows = distinct_heartbeat_reads(reads, lambda row: _read_identity(row, stale_after_s), _read_content)
     unknown = [s for s in rows if not s["sample"]["readable"] or s["sample"]["age_s"] > stale_after_s]
     good = [s["sample"] for s in rows if s not in unknown]
     mismatch = [s for s in good if s.get("demanded_v2_slices") != s.get("session_ready_v2_slices")]
@@ -171,7 +194,8 @@ def summarize_g9(samples, *, from_ns=None, to_ns=None, stale_after_s=45.0) -> di
     demanded = sorted({s.get("demanded_v2_slices") for s in good})
     exec_ready = [s.get("execution_ready_v2_slices") for s in good if isinstance(s.get("execution_ready_v2_slices"), int)]
     return {
-        "samples": len(rows), "unknown_samples": len(unknown), "readable_samples": len(good),
+        "samples": len(rows), "sampler_reads": len(reads), "duplicate_heartbeat_reads": len(reads) - len(rows),
+        "unknown_samples": len(unknown), "readable_samples": len(good),
         "demanded_values": demanded,
         "demanded_ne_session_ready_samples": len(mismatch),
         "session_loss_causes": dict(session_causes),

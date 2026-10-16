@@ -264,6 +264,39 @@ class G9Tests(unittest.TestCase):
         self.assertNotIn("worker_liveness", plain)
         self.assertFalse(g910.summarize_g9([beat(0)])["worker_liveness_present"])
 
+    def test_one_heartbeat_snapshot_read_three_times_counts_once(self):
+        # Stage-100 #3 shape: the 30 s heartbeat caught one QUOTE STALE; the 10 s sampler read it three times.
+        stale = [beat(t, session=63, last_seen=31) for t in (32, 42, 52)]
+        reads = [beat(0), beat(30, last_seen=1), *stale, beat(62, last_seen=61)]
+        for read in reads:
+            read["key_tail"] = "writer-a"
+        summary = g910.summarize_g9(reads)
+        self.assertEqual((summary["samples"], summary["sampler_reads"], summary["duplicate_heartbeat_reads"]),
+                         (4, 6, 2))
+        self.assertEqual(summary["demanded_ne_session_ready_samples"], 1)
+        self.assertEqual(g910.verdict_g9(summary, expected_demanded=64)[0], "FAIL")  # every snapshot still scored
+
+    def test_dedup_never_merges_a_new_key_new_content_or_a_stale_read(self):
+        a, b = beat(10, last_seen=9), beat(20, last_seen=9)
+        a["key_tail"], b["key_tail"] = "writer-a", "writer-b"
+        self.assertEqual(g910.summarize_g9([a, b])["samples"], 2)
+        c, d = beat(10, last_seen=9), beat(20, session=63, last_seen=9)
+        self.assertEqual(g910.summarize_g9([c, d])["demanded_ne_session_ready_samples"], 1)
+        self.assertEqual(g910.summarize_g9([c, d])["samples"], 2)
+        # A writer that stopped publishing: later reads of its last snapshot age past 45 s and are each UNKNOWN.
+        old = [beat(t, last_seen=0) for t in (10, 50, 60)]
+        summary = g910.summarize_g9(old)
+        self.assertEqual((summary["samples"], summary["unknown_samples"]), (3, 2))
+
+    def test_legacy_reads_without_published_time_use_at_minus_age(self):
+        reads = []
+        for at_s in (32, 42, 52, 92):
+            read = beat(at_s, last_seen=31 if at_s < 90 else 91)
+            del read["sample"]["last_seen_unix"]
+            reads.append(read)
+        summary = g910.summarize_g9(reads)
+        self.assertEqual((summary["samples"], summary["duplicate_heartbeat_reads"]), (2, 2))
+
 
 LINES = [
     "2026-10-10 15:00:01,000 - market_data_worker-0 - services.market_data.data_layer_bridge - WARNING - Data Layer V2 "
