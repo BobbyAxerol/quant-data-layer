@@ -73732,3 +73732,43 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
     - Not run: query warmup/batch smoke (no consumer credential used); evidence is health READY RUST_PRIMARY, writer
       READY 64/64, 0 new error lines. Stream subscriptions now 64/0 across stream_kn_1/2 (was 41/23).
     - Status: production-deployed, not certified. Open: G12 final on release set, G13, final stage-100.
+  - 2026-10-16 18:35-19:14Z final G12 / G13 isolated on the deployed release set (FINAL_STEPS a' and e; Claude
+    subagent; run worktrees DL 860b79ba (image sets regenerated from docker inspect: g12-image-set-v224.json sha256
+    baab6eb5..., g13-roles-v224.json 31e0716b...) and TS 77a6d671 (canonical writer label; ae2bc7fe/1dde708e on top
+    change only the release tool, its test and the TS plan)):
+    - Image set: core rc22 7c848aad, projector + stream 60f83a51 (qdl-v2-rust:2.2.4-c7ce7d3), python c21e164a
+      (qdl-v2-python:2.2.4-c7ce7d3), ts canonical writer 7c71e3af, kafka 9516fb76, redis dfa18828, postgres cf78e766,
+      holder d9e853e8. Harness unit tests in the release python image (--network none): 363 OK (5 skipped).
+    - G12 FINAL: PASS and CREDITED. Lock "claude P18.4 G12 v224 final-release 20261016T183459Z" 18:35:00-19:05Z;
+      receipt ~/.local/state/qdl-v2/p184-g12-v224-final-release-20261016T183459Z/ (verdict.json sha256 000df3e8...,
+      schema p184.g12.verdict.v3, status COMPLETED, verdict images == the image set). Faults, caught_up_s
+      BINANCE/OKX: broker_stop_start (node 3) 0.241/0.242, projector_restart 0.226/0.226, stream_restart 0.932/0.934;
+      every fault G1/G2 (TRADE, QUOTE, MARK)/G3/monitor/sampler PASS; integrity layer report-only NOT_MEASURED.
+      Run profile rebalance false + C + A'; production_parity MATCH; writer precheck clone_env == deployed (canonical
+      writer, Redis UNCAPPED). Effective Kafka observation v2 (incl. cleaner keys) sha256 d3d77176... in both the
+      pre-run snapshot (production-parity.json 46a688e4...) and the credit snapshot (credit-snapshot.json 03b72e19...,
+      Codex K3); `--credit` exit 0: creditable true, reason PASS, cleaner_binding RUN (cleaner default 4 MiB/s).
+      C observed APPLIED with no drift before the run (c-observe.json). Teardown 12 removed, 0 left, clone state
+      erased. Harness deltas unchanged and not claimed (1 core member 0.5 CPU, kafka 0.75 CPU, latest 3 partitions).
+    - G13 isolated (lock "claude P18.4 G13 isolated v224 release 20261016T190612Z" 19:06:12-19:14Z; receipts
+      ~/.local/state/qdl-v2/p184-g13-20261016T190623Z/, summary.json ef2c65dd...): dr08-isolated 4/4 cells CLOSED
+      (W05 verifier in the canonical image, verify/w05-isolated.json 5be864d5..., no provenance/drift issue);
+      **dr05-upstream FAIL 0/6** - every cell aborted with RuntimeError ('docker','exec','-i') -> 137 (one -> 128):
+      the probe exec into the TS writer clone was SIGKILLed / could not start, i.e. the clone container went away
+      during the probe ~25 s into each case; no DR05 assertion was evaluated. STOPPED, no rerun (not clearly an
+      infrastructure fault). Root-cause reading (inferred, not verified: the clone's stderr dir is removed by
+      WriterClone.close() and the exec failure path does not capture stderr_tail): this is the first dr05-upstream on
+      a native-writer env (earlier PASSes were Python writers 2beedc04-era). TS scripts/p184_dr05_isolated.py
+      WriterClone copies the deployed env incl. MARKET_DATA_NATIVE_REQUIRE_RESUME=1 onto a fresh tmpfs /app/state
+      without the bootstrap -> strict-restart lifecycle that the G12 clone gained in 968d5f2 (same class as the G12
+      stop "TS clones never applied", HANDOFF_RESUME_REQUIRED). Proposed (owner/coordinator decision): apparatus fix in
+      the TS DR05 clone (bootstrap/strict lifecycle mirroring G12, keep stderr on any exec failure), tests, then one
+      dr05-upstream rerun on the same pins. Production untouched (writer/stream/core/kafka RestartCount 0).
+    - G13 runtime window NOT run: packet v5.1 drafted (p1/packet-g13-v5.1-20261016.md; g13v51/make_g13v51.py =
+      v5 with the 7 TS role images B17 -> 7c71e3af only, compose 91b96268..., inputs-ci 0dd8fa35... with CI run
+      38940466654 per coordinator - not independently verified, no gh/token on the host). Runtime dry run exit 0,
+      blocked {}, 6 steps / 66 cells, coverage 76/76. It needs owner approval (sidecar) and writes test-scoped rows
+      to live_data_executor (FX seed, runner accounts) - outside this subagent's read/observe scope.
+    - Cleanup: 0 p184-/ts-p184 containers, networks, volumes left; run worktrees data-layer-p184-final-run-860b79ba
+      and trading-system-final-run-77a6d671 kept clean (needed by the dr05-upstream rerun and the runtime window).
+      A stale trading-system-final-run-68f2572f (pre-reword pin, not created here) remains.
