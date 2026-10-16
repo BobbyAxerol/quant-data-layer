@@ -73649,3 +73649,8 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
     image via Dockerfile --target runtime-rust-shadow; deploy/Dockerfile.market-data-native is stale; 10 TS commit
     subjects fail validate_pr_governance.py - owner decision before the PR). Final certification runs on release
     digests after rollout.
+  - 2026-10-16 B16 burst amendment-1 (owner-approved via AskUserQuestion): isolated harness consumer quota
+    max_buffer_events 1000 -> 2000 (scripts/p184_dr05_dl_fault.py) = production trading-system.paper.stable rev 11
+    entitlement (deployed stream bundle reader-public-r16, manifest sha 2d661d46). Parity only: the TS writer clone
+    still requests its own explicit depth (default 1000); the amended rerun sets 2000. No gateway, manifest or JWT
+    revision change. Tests: dr05_dl_fault/dr05_case/g12_isolated_fault 221 passed (rc16 python image, --network none).

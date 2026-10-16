@@ -575,7 +575,9 @@ group.initial.rebalance.delay.ms=0
                                max_freshness_ms=2000)
             requirements.append(requirement)
         mapping["spec"]["requirements"] = requirements
-        mapping["spec"]["quotas"]["max_buffer_events"] = 1000
+        # Entitlement = production trading-system.paper.stable rev 11 (2000). Writers send their own explicit depth
+        # (DATA_LAYER_V2_MAX_BUFFER_EVENTS, default 1000), so the clone keeps 1000 unless a run sets 2000.
+        mapping["spec"]["quotas"]["max_buffer_events"] = 2000
         save(label + ".yaml", yaml.safe_dump(mapping))
         from scripts.p184_dr05_case import consumer_packet
         consumer, route = consumer_packet(work / (label + ".yaml"), loaded, scope, ISSUER, AUDIENCE)
