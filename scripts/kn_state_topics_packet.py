@@ -43,6 +43,13 @@ on ``md.canonical.v2``) from the budget, plus the fixed
 segment settings (no ``segment.*`` override) is drift: verify FAIL, apply
 HARD_STOP; the packet never alters it.
 
+A' (P18.4 G4, 2026-10-16): ``md.latest.v2`` carries no tombstones (budget
+``retention.state_topic_tombstones``), so its planned ``delete.retention.ms`` is the
+transaction-marker lifetime 21,600,000 ms, not the ``md.bars.v2`` tombstone lifetime;
+the pre-A' 604,800,000 on ``md.latest.v2`` is drift for this packet. The one documented
+alter that moves a provisioned broker there is ``scripts/kafka_md_latest_marker_retention.py``
+(dry-run default, own refusals); this packet itself still never alters.
+
 Boundary: never alters, deletes or re-partitions any topic, never touches
 ``md.canonical.v2`` beyond granting READ/DESCRIBE on it, never removes ACLs,
 never resets offsets, never uses ``kafka-configs.sh`` to mutate configuration; the exact two-topic
@@ -173,6 +180,13 @@ def load_state_topic_specs(budget_path: Path = BUDGET) -> tuple[dict[str, Any], 
     return {name: dict(specs[name]) for name in names}, hashlib.sha256(raw).hexdigest()
 
 
+def planned_topic_configs(spec: Mapping[str, Any]) -> dict[str, str]:
+    """The exact topic overrides a budget spec plans: its Kafka configs plus the fixed policy."""
+    configs = {key: str(spec[key]) for key in _BUDGET_CONFIG_KEYS if key in spec}
+    configs.update(_FIXED_TOPIC_CONFIGS)
+    return configs
+
+
 def production_target() -> dict[str, Any]:
     return {"backend": "admin-container", "bootstrap": PRODUCTION_BOOTSTRAP,
             "network": PRODUCTION_NETWORK, "image": admin_image(),
@@ -246,8 +260,7 @@ def build_plan(*, principal: str, target: Mapping[str, Any],
                                for name, spec in specs.items()}}
     topics = []
     for name, spec in specs.items():
-        configs = {key: str(spec[key]) for key in _BUDGET_CONFIG_KEYS if key in spec}
-        configs.update(_FIXED_TOPIC_CONFIGS)
+        configs = planned_topic_configs(spec)
         rf = spec["replication_factor"]
         if override is not None:
             rf = override["replication_factor"]

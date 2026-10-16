@@ -9,7 +9,8 @@ Boundary:
 
 * only that key, only ``--entity-type brokers --entity-default``; never a topic config (in particular
   never ``delete.retention.ms``, which is the KN tombstone-lifetime contract in
-  ``config/v2/kn-v220-candidate-budget.json``), never ``md.canonical.v2``;
+  ``config/v2/kn-v220-candidate-budget.json``; the md.latest.v2 marker lifetime of decision A' has its
+  own tool, ``scripts/kafka_md_latest_marker_retention.py``), never ``md.canonical.v2``;
 * dry-run by default: prints the exact describe / alter / verify / rollback argv and the keep-up
   arithmetic, runs nothing; ``--apply`` refuses while a foreign host-measurement lock is active,
   refuses a rate below the keep-up floor, then runs describe (before), alter, describe (after) and
