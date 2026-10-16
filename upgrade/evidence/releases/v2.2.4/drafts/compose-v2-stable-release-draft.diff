@@ -1,0 +1,45 @@
+--- a/docker-compose.v2-stable.yml
++++ b/docker-compose.v2-stable.yml
+@@ -181,21 +181,28 @@
+     # DL-V2 R1.5 measured allocation: 50% of its 0.75 ceiling with bursts to 69% across the quorum.
+     # R1.25: 1.00 left kafka1 at 97% of a core and 18.6% throttled while its
+     # peers ran 1.25; parity with kafka2/kafka3.
+-    cpus: 1.25
++    # P18.4 G4 RCA (2026-10-14 13:47:40Z, owner-approved after the cleaner io
++    # limit 8 -> 4 MiB/s): 1.25 -> 1.75, docker update, no restart; kafka1
++    # throttle 28.8% -> 0.17% of periods. Live value, docker inspect 2026-10-16.
++    cpus: 1.75
+     hostname: kafka1
+     environment: {<<: *kafka-env, KAFKA_NODE_ID: 1, KAFKA_ADVERTISED_LISTENERS: "SSL://kafka1:9092", KAFKA_SSL_KEYSTORE_FILENAME: kafka1.keystore.p12}
+     volumes: ["${QDL_STABLE_CERT_DIR:?set QDL_STABLE_CERT_DIR}:/etc/kafka/secrets:ro", kafka1_data:/var/lib/kafka/data]
+   kafka2:
+     <<: *kafka
+     # DL-V2 R1.5 measured allocation: 69% of its 0.75 ceiling.
+-    cpus: 1.25
++    # Live 1.75 vCPU / 2 GiB since the plan's final-ceiling record (kafka2 and
++    # kafka3 1.75); docker inspect 2026-10-16. The repo file had kept 1.25.
++    cpus: 1.75
++    mem_limit: 2g
+     hostname: kafka2
+     environment: {<<: *kafka-env, KAFKA_NODE_ID: 2, KAFKA_ADVERTISED_LISTENERS: "SSL://kafka2:9092", KAFKA_SSL_KEYSTORE_FILENAME: kafka2.keystore.p12}
+     volumes: ["${QDL_STABLE_CERT_DIR:?set QDL_STABLE_CERT_DIR}:/etc/kafka/secrets:ro", kafka2_data:/var/lib/kafka/data]
+   kafka3:
+     <<: *kafka
+     # DL-V2 R1.5 measured allocation: 66% of its 0.75 ceiling.
+-    cpus: 1.25
++    # Live 1.75 vCPU (plan final-ceiling record); docker inspect 2026-10-16.
++    cpus: 1.75
+     hostname: kafka3
+     environment: {<<: *kafka-env, KAFKA_NODE_ID: 3, KAFKA_ADVERTISED_LISTENERS: "SSL://kafka3:9092", KAFKA_SSL_KEYSTORE_FILENAME: kafka3.keystore.p12}
+     volumes: ["${QDL_STABLE_CERT_DIR:?set QDL_STABLE_CERT_DIR}:/etc/kafka/secrets:ro", kafka3_data:/var/lib/kafka/data]
+@@ -907,7 +914,9 @@
+   ingestor_binance_usdm:
+     <<: *rust
+     # DL-V2 R1.5 measured allocation: 20% of its 0.75 ceiling.
+-    cpus: 0.50
++    # P18.4 T4 (2026-10-15 15:59:15Z, owner-approved): 0.50 -> 0.75 (window 9
++    # throttled 7.17% > 5%); +0.25 of the +1.5 vCPU step-1 envelope.
++    cpus: 0.75
+     entrypoint: [/usr/local/bin/qdl-native-raw-ingestor]
+     command: [/runtime/config.json]
+     networks: [stable_internal, stable_egress]
