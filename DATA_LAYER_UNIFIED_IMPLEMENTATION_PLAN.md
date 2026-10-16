@@ -73693,3 +73693,19 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
     - elect --scope data OK; final-check OK: env false x3, parity rebalance false, effective sha256 f4836dfc...
     - Remaining: __consumer_offsets-43 and -24 still carry ~3M/1.9M records -> a coordinator move costs ~5 s today;
       C keeps reducing it; tracked, not a gate change. G12 final launched next on the post-B config.
+  - 2026-10-16 15:42-15:59Z v2.2.4 release images built at c7ce7d3 (FINAL_STEPS b; locks claude-release-build
+    15:42:10-15:48:45Z and 15:54:25-15:59:19Z; receipts ~/.local/state/qdl-v2/build-v2.2.4-c7ce7d3/):
+    - rust qdl-v2-rust:2.2.4-c7ce7d3 60f83a51..., python qdl-v2-python:2.2.4-c7ce7d3 c21e164a...; receipt.json FAIL on
+      two whole-file expectations (kept unchanged): realtime-core == rc22 2d821673, ingestor == rc22 77ceeee1, python
+      files/pip freeze == rc19 except the git-derived set, ldd/uid/markers clean.
+    - Coordinator decision (owner-delegated): keep the images, amend by postcheck-addendum.json/.md. Projector vs rc22
+      EQUAL_LOADED_SECTIONS (all SHF_ALLOC sections byte-equal; .symtab/.strtab and the linker build-id note differ; the
+      only source change is the products.rs mod tests hunk). Gateway vs baa72c96 DIFFERENT_BUILD_PATH (TEST overlay built
+      with CARGO_HOME /usr/local/cargo, 986 registry paths each; gateway crate + path deps + Cargo.lock unchanged since
+      c934c1e) with behavioural proof: DR08 live-budget isolation A/B release vs baa72c96
+      (p184-n1-final-20261012/live-budget-isolation-ab-20261016T155455Z-release-c7ce7d3-vs-baa72c96, prereg d22561fe)
+      PASS, candidate idle closures 0/64, reserve_exhausted 0, deep resume lossless 3/3.
+    - SDK 2.4.1 wheel x2 --network none byte-identical 9f79e032..., contract digest 2ee96b1e; SDK tests (3 modules, 15)
+      OK in the release python image --network none.
+    - scripts/build_qdl_release_images.py: section-level verdicts (EQUAL_LOADED_SECTIONS, DIFFERENT_BUILD_PATH) with
+      reference binary extraction for future builds; tests added.

@@ -177,6 +177,80 @@ class ParseTests(unittest.TestCase):
             self.assertEqual(b.forbidden_markers(dirty), ["p184.test-data-clock.v1", "/work/TEST_ONLY"])
 
 
+def elf(sections: list[tuple[str, int, int, bytes]]) -> bytes:
+    """Minimal ELF64 LE file: (name, type, flags, body) sections after a NULL one, plus .shstrtab."""
+    import struct
+    names = b"\0" + b"".join(n.encode() + b"\0" for n, *_ in sections) + b".shstrtab\0"
+    bodies, offset, rows, pos = b"", 64, [(0, 0, 0, 0, 0)], 1
+    for name, kind, flags, body in sections:
+        rows.append((pos, kind, flags, offset + len(bodies), len(body)))
+        pos += len(name) + 1
+        bodies += body
+    rows.append((pos, 3, 0, offset + len(bodies), len(names)))
+    bodies += names
+    shoff = offset + len(bodies)
+    header = b"\x7fELF\x02\x01\x01" + b"\0" * 9 + struct.pack("<HHIQQQIHHHHHH", 3, 62, 1, 0, 0, shoff, 0, 64, 56,
+                                                                0, 64, len(rows), len(rows) - 1)
+    table = b"".join(struct.pack("<IIQQQQIIQQ", n, k, f, 0, o, sz, 0, 0, 1, 0) for n, k, f, o, sz in rows)
+    return header + bodies + table
+
+
+class SectionTests(unittest.TestCase):
+    def base(self, text=b"code", strtab=b"_ZN3foo17h1111E", rodata=b"/work/cargo/registry/x"):
+        return elf([(".text", 1, 6, text), (".rodata", 1, 2, rodata), (".symtab", 2, 0, b"sym"),
+                    (".strtab", 3, 0, strtab)])
+
+    def test_parser_reads_names_flags_and_hashes(self):
+        secs = b.elf_sections(self.base())
+        self.assertEqual([s["name"] for s in secs], ["", ".text", ".rodata", ".symtab", ".strtab", ".shstrtab"])
+        self.assertTrue(secs[1]["loaded"])
+        self.assertFalse(secs[4]["loaded"])
+        with self.assertRaises(b.BuildError):
+            b.elf_sections(b"not elf" * 20)
+
+    def test_symbol_table_only_difference_is_equal_loaded_sections(self):
+        got = b.loaded_section_verdict(self.base(strtab=b"_ZN3foo17h2222E"), self.base())
+        self.assertEqual(got["observed"], "EQUAL_LOADED_SECTIONS")
+        self.assertEqual(got["differing_sections"], [".strtab"])
+
+    def test_build_id_and_debug_may_differ_but_rodata_may_not(self):
+        def with_note(note, rodata=b"r", debug=b"d"):
+            return elf([(".note.gnu.build-id", 7, 2, note), (".text", 1, 6, b"code"), (".rodata", 1, 2, rodata),
+                        (".debug_info", 1, 0, debug), (".strtab", 3, 0, b"s")])
+        got = b.loaded_section_verdict(with_note(b"id2", debug=b"e"), with_note(b"id1"))
+        self.assertEqual(got["observed"], "EQUAL_LOADED_SECTIONS")
+        self.assertEqual(got["differing_sections"], [".note.gnu.build-id", ".debug_info"])
+        self.assertEqual(b.loaded_section_verdict(with_note(b"id2", rodata=b"x"), with_note(b"id1"))["observed"],
+                         "DIFFERENT")
+
+    def test_loaded_section_difference_is_different(self):
+        got = b.loaded_section_verdict(self.base(text=b"cod2", strtab=b"_ZN3foo17h2222E"), self.base())
+        self.assertEqual(got["observed"], "DIFFERENT")
+        self.assertIn(".text", got["differing_sections"])
+
+    def test_build_path_classification(self):
+        release = self.base(rodata=b"/work/cargo/registry/a /work/cargo/registry/b")
+        reference = self.base(text=b"cod2", rodata=b"/usr/local/cargo/registry/a /usr/local/cargo/registry/b")
+        got = b.build_path_verdict(release, reference)
+        self.assertEqual(got["observed"], "DIFFERENT_BUILD_PATH")
+        self.assertEqual(got["reference_method"], ["dockerfile"])
+        # same path method, a different count, or a different .text size is not a build-path difference
+        self.assertEqual(b.build_path_verdict(release, self.base(text=b"cod2",
+                         rodata=b"/work/cargo/registry/a /work/cargo/registry/c"))["observed"], "DIFFERENT")
+        self.assertEqual(b.build_path_verdict(release, self.base(
+            rodata=b"/usr/local/cargo/registry/a"))["observed"], "DIFFERENT")
+        self.assertEqual(b.build_path_verdict(release, self.base(text=b"longer code",
+                         rodata=b"/usr/local/cargo/registry/a /usr/local/cargo/registry/b"))["observed"], "DIFFERENT")
+
+    def test_extract_is_isolated_and_bounded_to_known_binaries(self):
+        argv = b.extract_argv("sha256:" + "1" * 64, "qdl-projector")
+        self.assertIn("--network", argv)
+        self.assertIn("--read-only", argv)
+        self.assertEqual(argv[-1], "/usr/local/bin/qdl-projector")
+        with self.assertRaises(b.BuildError):
+            b.extract_argv("sha256:" + "1" * 64, "../etc/passwd")
+
+
 class VerdictTests(unittest.TestCase):
     def references(self, gateway_equal=True):
         rc22 = shas("1" * 64)
@@ -204,10 +278,24 @@ class VerdictTests(unittest.TestCase):
         self.assertFalse(verdict["core_equal_to_measured"])
         self.assertEqual({r["binary"] for r in verdict["unexpected"]}, {"qdl-realtime-core"})
 
-    def test_gateway_must_equal_stream_overlay(self):
+    def test_gateway_difference_needs_a_build_path_analysis(self):
         verdict = b.binary_verdicts(self.release(), self.references(gateway_equal=False))
-        self.assertEqual([(r["binary"], r["reference"]) for r in verdict["unexpected"]],
-                         [("qdl-stream-gateway", "stream_baa72c96")])
+        self.assertEqual([(r["binary"], r["reference"], r["observed"]) for r in verdict["unexpected"]],
+                         [("qdl-stream-gateway", "stream_baa72c96", "NOT_ANALYSED")])
+        ok = {("qdl-stream-gateway", "stream_baa72c96"): {"observed": "DIFFERENT_BUILD_PATH"}}
+        self.assertTrue(b.binary_verdicts(self.release(), self.references(gateway_equal=False), ok)["ok"])
+        bad = {("qdl-stream-gateway", "stream_baa72c96"): {"observed": "DIFFERENT"}}
+        self.assertFalse(b.binary_verdicts(self.release(), self.references(gateway_equal=False), bad)["ok"])
+
+    def test_projector_loaded_sections_or_whole_file(self):
+        rel = self.release()
+        rel["qdl-projector"] = "7" * 64
+        verdict = b.binary_verdicts(rel, self.references())
+        self.assertEqual([(r["binary"], r["observed"]) for r in verdict["unexpected"]],
+                         [("qdl-projector", "NOT_ANALYSED")])
+        ok = {("qdl-projector", "rc22_core"): {"observed": "EQUAL_LOADED_SECTIONS"}}
+        self.assertTrue(b.binary_verdicts(rel, self.references(), ok)["ok"])
+        self.assertTrue(b.binary_verdicts(self.release(), self.references())["ok"])  # whole-file EQUAL satisfies
 
     def test_missing_binary_or_unread_reference_fails(self):
         rel = self.release()
@@ -223,7 +311,7 @@ class VerdictTests(unittest.TestCase):
         for rows in b.BINARY_EXPECTATIONS.values():
             for ref, expected, _ in rows:
                 self.assertIn(ref, b.REFERENCES)
-                self.assertIn(expected, ("EQUAL", "DIFFERENT"))
+                self.assertIn(expected, b.EXPECTATIONS)
 
     def test_python_file_verdict(self):
         ref = {"qdl/a.py": "1", "qdl/b.py": "2", "app/c.py": "3"}

@@ -108,13 +108,28 @@ PYTHON_HASH_ROOTS = ("qdl", "app", "generated", "config", "consumers", "qdl_sdk"
 
 # Per binary: (reference, expectation, reason). The production reference of each role is listed
 # first. A result other than the expectation is UNEXPECTED and fails the build verdict.
+# Expectations:
+#   EQUAL                  whole-file sha256 equal.
+#   DIFFERENT              whole-file sha256 differs.
+#   EQUAL_LOADED_SECTIONS  every SHF_ALLOC ELF section (code, rodata, relocations, init arrays, notes) is
+#                          byte-equal except the linker build-id note, and otherwise only symbol tables or debug
+#                          sections differ (LOADED_SECTION_ALLOWED_DIFF); a whole-file
+#                          EQUAL also satisfies it. Used where a cfg(test) edit changes the crate's symbol hashes only
+#                          (build v2.2.4-c7ce7d3: projector .strtab 0x812d2 -> 0x812c1, .text/.rodata equal).
+#   DIFFERENT_BUILD_PATH   the reference was built with another CARGO_HOME: the files differ, the release uses
+#                          the method's cargo path, the reference uses a different known one, the number of
+#                          embedded registry paths is equal and the section layout (names, types, .text size)
+#                          is equal. This is a classification, not an equivalence proof: the behaviour is
+#                          proved separately (DR08 live-budget isolation A/B against the reference). A whole-file
+#                          EQUAL also satisfies it (byte identity is the stronger result).
 _RC22_SAME = "no source delta since a4e7b3b in its crates, Cargo.lock or generated/rust"
 BINARY_EXPECTATIONS = {
     "qdl-realtime-core": [("rc22_core", "EQUAL", "rust_core x3 run rc22; " + _RC22_SAME +
                            "; a difference means the release image is not the measured core: stop")],
     "qdl-stream-gateway": [
-        ("stream_baa72c96", "EQUAL", "stream_kn_1/2 run the c934c1e gateway; c934c1e..REV touches "
-         "only a cfg(test) hunk of qdl-projector"),
+        ("stream_baa72c96", "DIFFERENT_BUILD_PATH", "stream_kn_1/2 run the c934c1e gateway of the TEST overlay "
+         "baa72c96, built with CARGO_HOME /usr/local/cargo (release method: /work/cargo); c934c1e..REV leaves "
+         "rust/qdl-stream-gateway, its path deps and Cargo.lock unchanged"),
         ("rc22_core", "DIFFERENT", "rc22 gateway is a4e7b3b, before e3b5552/c934c1e"),
     ],
     "qdl-native-raw-ingestor": [
@@ -123,10 +138,19 @@ BINARY_EXPECTATIONS = {
     ],
     "qdl-projector": [
         ("rc14_projector", "DIFFERENT", "projectors run rc14 a388537 without IDR-107/CF3/CF4"),
-        ("rc22_core", "EQUAL", "only the cfg(test) hunk of products.rs changed since a4e7b3b "
-         "(assumption: a test-module edit leaves the release binary unchanged; a DIFFERENT is recorded)"),
+        ("rc22_core", "EQUAL_LOADED_SECTIONS", "only the cfg(test) hunk of products.rs (mod tests) changed since "
+         "a4e7b3b; it changes symbol hashes, not loaded code"),
     ],
 }
+EXPECTATIONS = ("EQUAL", "DIFFERENT", "EQUAL_LOADED_SECTIONS", "DIFFERENT_BUILD_PATH")
+SECTION_EXPECTATIONS = ("EQUAL_LOADED_SECTIONS", "DIFFERENT_BUILD_PATH")
+# Sections that may differ under EQUAL_LOADED_SECTIONS: the symbol tables (not loaded), debug sections, and the
+# linker build-id note, which is loaded but is only the linker's hash over the output file (symbol tables
+# included), never executed or read by the binary.
+LOADED_SECTION_ALLOWED_DIFF = (".symtab", ".strtab", ".note.gnu.build-id")
+LOADED_SECTION_ALLOWED_PREFIX = ".debug"
+# Embedded registry path prefixes of the known build methods (CARGO_HOME of the builder).
+CARGO_REGISTRY_PATHS = {"release": b"/work/cargo/registry/", "dockerfile": b"/usr/local/cargo/registry/"}
 for _name in RUST_BINARIES:
     BINARY_EXPECTATIONS.setdefault(_name, [("rc22_core", "EQUAL", _RC22_SAME)])
 
@@ -274,6 +298,14 @@ def probe_argv(image: str, script: str) -> list[str]:
             "--entrypoint", "sh", image, "-c", script]
 
 
+def extract_argv(image: str, binary: str) -> list[str]:
+    """Copy one reference binary out of an image to stdout (isolated, read-only, no shell)."""
+    if binary not in RUST_BINARIES:
+        raise BuildError(f"unknown binary {binary!r}")
+    return ["docker", "run", "--rm", "--pull=never", "--network", "none", "--read-only",
+            "--entrypoint", "cat", image, f"/usr/local/bin/{binary}"]
+
+
 RUST_SHA_PROBE = "cd /usr/local/bin && sha256sum *"
 RUST_RUNTIME_PROBE = (
     "for b in qdl-realtime-core qdl-projector qdl-stream-gateway qdl-native-raw-ingestor; do "
@@ -318,21 +350,109 @@ def forbidden_markers(path: Path) -> list[str]:
     return [m.decode() for m in FORBIDDEN_FEATURE_MARKERS if m in data]
 
 
-def binary_verdicts(release: dict[str, str], references: dict[str, dict[str, str]]) -> dict:
+SHT_NOBITS = 8
+SHF_ALLOC = 0x2
+
+
+def elf_sections(data: bytes) -> list[dict]:
+    """Section table of an ELF64 little-endian file: name, type, flags, size, loaded, sha256 of the file bytes
+    (None for NOBITS). Pure parsing, no tool dependency."""
+    import struct
+    if data[:4] != b"\x7fELF" or data[4] != 2 or data[5] != 1:
+        raise BuildError("not an ELF64 little-endian file")
+    shoff, = struct.unpack_from("<Q", data, 0x28)
+    shentsize, shnum, shstrndx = struct.unpack_from("<HHH", data, 0x3A)
+    if shentsize != 64 or not shnum or shoff + shnum * 64 > len(data):
+        raise BuildError("bad ELF section header table")
+    raw = [struct.unpack_from("<IIQQQQIIQQ", data, shoff + i * 64) for i in range(shnum)]
+    str_off, str_size = raw[shstrndx][4], raw[shstrndx][5]
+    names = data[str_off:str_off + str_size]
+    out = []
+    for name_off, kind, flags, _addr, offset, size, *_rest in raw:
+        name = names[name_off:names.index(b"\0", name_off)].decode()
+        body = None if kind == SHT_NOBITS else hashlib.sha256(data[offset:offset + size]).hexdigest()
+        out.append({"name": name, "type": kind, "flags": flags, "size": size,
+                    "loaded": bool(flags & SHF_ALLOC), "sha256": body})
+    return out
+
+
+def loaded_section_verdict(release: bytes, reference: bytes) -> dict:
+    """EQUAL_LOADED_SECTIONS when the section lists match by name/type/flags and every differing section is a
+    symbol table (LOADED_SECTION_ALLOWED_DIFF), never a loaded one; otherwise DIFFERENT."""
+    rel, ref = elf_sections(release), elf_sections(reference)
+    layout_equal = [(s["name"], s["type"], s["flags"]) for s in rel] == [(s["name"], s["type"], s["flags"]) for s in ref]
+    differing = [] if not layout_equal else [
+        a["name"] for a, b in zip(rel, ref) if (a["size"], a["sha256"]) != (b["size"], b["sha256"])]
+    compared = [{"name": a["name"], "loaded": a["loaded"], "size": a["size"], "release_sha256": a["sha256"],
+                 "reference_sha256": b["sha256"], "reference_size": b["size"]}
+                for a, b in zip(rel, ref)] if layout_equal else []
+    ok = layout_equal and all(name in LOADED_SECTION_ALLOWED_DIFF or name.startswith(LOADED_SECTION_ALLOWED_PREFIX)
+                              for name in differing)
+    return {"observed": "EQUAL_LOADED_SECTIONS" if ok else "DIFFERENT", "layout_equal": layout_equal,
+            "differing_sections": differing,
+            "allowed_to_differ": list(LOADED_SECTION_ALLOWED_DIFF) + [LOADED_SECTION_ALLOWED_PREFIX + "*"],
+            "sections": compared}
+
+
+def build_path_verdict(release: bytes, reference: bytes) -> dict:
+    """DIFFERENT_BUILD_PATH when the files differ only in a way consistent with another CARGO_HOME: the
+    release embeds only the release registry path, the reference only another known one, the counts are
+    equal, and the section layout and .text size are equal. Otherwise DIFFERENT."""
+    counts = {side: {k: data.count(p) for k, p in CARGO_REGISTRY_PATHS.items()}
+              for side, data in (("release", release), ("reference", reference))}
+    rel_methods = [k for k, n in counts["release"].items() if n]
+    ref_methods = [k for k, n in counts["reference"].items() if n]
+    rel, ref = elf_sections(release), elf_sections(reference)
+    layout_equal = [(s["name"], s["type"]) for s in rel] == [(s["name"], s["type"]) for s in ref]
+    text = {side: next((s["size"] for s in secs if s["name"] == ".text"), None)
+            for side, secs in (("release", rel), ("reference", ref))}
+    ok = (release != reference and rel_methods == ["release"] and len(ref_methods) == 1
+          and ref_methods != ["release"]
+          and counts["release"]["release"] == counts["reference"][ref_methods[0]]
+          and layout_equal and text["release"] is not None and text["release"] == text["reference"])
+    differing = [a["name"] for a, b in zip(rel, ref) if (a["size"], a["sha256"]) != (b["size"], b["sha256"])] \
+        if layout_equal else None
+    return {"observed": "DIFFERENT_BUILD_PATH" if ok else "DIFFERENT", "registry_path_counts": counts,
+            "release_method": rel_methods, "reference_method": ref_methods, "layout_equal": layout_equal,
+            "text_size": text, "differing_sections": differing}
+
+
+def section_analysis(expected: str, release: bytes, reference: bytes) -> dict:
+    if expected == "EQUAL_LOADED_SECTIONS":
+        return loaded_section_verdict(release, reference)
+    if expected == "DIFFERENT_BUILD_PATH":
+        return build_path_verdict(release, reference)
+    raise ValueError(f"no section analysis for {expected}")
+
+
+def binary_verdicts(release: dict[str, str], references: dict[str, dict[str, str]],
+                    analyses: dict[tuple[str, str], dict] | None = None) -> dict:
+    """Whole-file verdicts; for a SECTION_EXPECTATIONS row whose files differ, ``analyses[(binary, ref)]``
+    (from section_analysis on the two files) decides, and a missing analysis is NOT_ANALYSED."""
+    analyses = analyses or {}
     rows, unexpected = [], []
     missing = sorted(set(RUST_BINARIES) - set(release))
     for name in RUST_BINARIES:
         for ref, expected, reason in BINARY_EXPECTATIONS[name]:
             ref_sha = references.get(ref, {}).get(name)
             got = release.get(name)
+            analysis = None
             if got is None or ref_sha is None:
                 observed = "NOT_READ"
+            elif got == ref_sha:
+                observed = "EQUAL"
+            elif expected in SECTION_EXPECTATIONS:
+                analysis = analyses.get((name, ref))
+                observed = analysis["observed"] if analysis else "NOT_ANALYSED"
             else:
-                observed = "EQUAL" if got == ref_sha else "DIFFERENT"
+                observed = "DIFFERENT"
             row = {"binary": name, "reference": ref, "release_sha256": got, "reference_sha256": ref_sha,
                    "expected": expected, "observed": observed, "reason": reason}
+            if analysis is not None:
+                row["analysis"] = analysis
             rows.append(row)
-            if observed != expected:
+            satisfied = observed == expected or (expected in SECTION_EXPECTATIONS and observed == "EQUAL")
+            if not satisfied:
                 unexpected.append(row)
     core_ok = all(r["observed"] == "EQUAL" for r in rows
                   if r["binary"] == "qdl-realtime-core" and r["reference"] == "rc22_core")
@@ -500,7 +620,21 @@ def build_rust(runner: Runner, build_dir: Path, rev: str, tag: str, guard=lambda
     refs = {}
     for ref, (ref_tag, ref_id) in REFERENCES.items():
         refs[ref] = parse_sha256sum(runner.run(probe_argv(ref_id, RUST_SHA_PROBE), f"ref-{ref}-sha", capture=True))
-    verdicts = binary_verdicts(release, refs)
+    analyses = {}
+    refbin = build_dir / "refbin"
+    for name in RUST_BINARIES:
+        for ref, expected, _ in BINARY_EXPECTATIONS[name]:
+            ref_sha = refs.get(ref, {}).get(name)
+            if expected not in SECTION_EXPECTATIONS or ref_sha is None or release.get(name) in (None, ref_sha):
+                continue
+            refbin.mkdir(exist_ok=True)
+            out = refbin / f"{ref}-{name}"
+            runner.run(extract_argv(REFERENCES[ref][1], name), f"ref-{ref}-{name}-extract")
+            out.write_bytes((build_dir / f"ref-{ref}-{name}-extract.out").read_bytes())
+            if sha256_file(out) != ref_sha:
+                raise BuildError(f"extracted {ref}/{name} does not match its in-image sha256")
+            analyses[(name, ref)] = section_analysis(expected, (ctx / "bin" / name).read_bytes(), out.read_bytes())
+    verdicts = binary_verdicts(release, refs, analyses)
     ctx_equal = all(release.get(n) == ctx_sums[f"bin/{n}"] for n in RUST_BINARIES)
     labels = image_labels(image)
     label_ok = (labels.get("org.opencontainers.image.revision") == rev
