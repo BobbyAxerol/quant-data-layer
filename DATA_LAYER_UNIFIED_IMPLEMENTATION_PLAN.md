@@ -73607,3 +73607,13 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
     Decision: A' - decouple md.latest marker lifetime from the bars tombstone contract (invariant "md.latest.v2 carries
     no tombstones" in budget/golden + Rust guard test; packet allow-list), then a dynamic topic alter to ~6 h;
     measure D21 per-product rebuild replay < 6 h first. B (3 MiB/s) not taken alone (small benefit, untested).
+  - 2026-10-16 02:05:37Z PRODUCTION (owner-approved via AskUserQuestion): A' applied - md.latest.v2 delete.retention.ms
+    604800000 -> 21600000 via scripts/kafka_md_latest_marker_retention.py --apply (c767b91; describe before/after,
+    other overrides unchanged). Dynamic topic config, no restart. Contract: bb15890 (budget state_topic_tombstones v1:
+    tombstone lifetime / rebuild horizon apply to md.bars.v2 only; md.latest.v2 carries_tombstones false; golden
+    state_topic_invariants; Rust guard md_latest_writer_never_emits_a_tombstone). D21 upper bound ~1,290 s per
+    partition pass (inferred) vs 6 h (>= 16x). Expected effect arrives gradually up to 7 d (markers already stamped
+    with a 7 d deleteHorizonMs keep it) - stage-100 #3 G4 is NOT expected to benefit yet. Rollback:
+    --rollback-to 604800000 --apply. Open: kn_state_topics_packet verify not rerun (needs the projector principal
+    argument; not located this session); stage-A key coalescing (29-48 % duplicate records per transaction, TRADE
+    79-88 %) measured, report-only, not designed.
