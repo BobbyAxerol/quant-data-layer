@@ -156,13 +156,60 @@ cd $RUN_DL && python3 -B scripts/p184_g13_final.py --phase runtime \
   isolated and the runtime receipts> --expect-source-sha $TSSHA --expect-image-digest $B17`; target 76/76 DR cells with
   no provenance or drift issue.
 
+## 4. Partition-43 cleaner pass and decision B roll (prepared 2026-10-16, nothing run)
+
+Owner decisions 2026-10-16: B now, then G12 final; a temporary `min.cleanable.dirty.ratio=0.05` on
+`__consumer_offsets` only (dynamic, rollback = delete the override). The force-trim was dropped (DeleteRecords on an
+internal topic is refused by Kafka 4.2 `ReplicaManager`); the old markers are already past their deleteHorizon
+(`hz_max` 2026-10-16T01:01:32Z in `p184-g12-coordinator-load-20261016/prod/__consumer_offsets-43.agg.json`), so one
+cleaner pass removes them. Tools: `kafka_internal_topic_compaction.py --apply-temp/--remove-temp` (TEMP_OVERRIDES,
+not drift while at its target; `--observe` prints `temp_removal` with the partition-43 size and `remove_recommended`
+at <= 32 MiB per replica), `kafka_b_roll_runbook.py` (modular steps, receipts in
+`~/.local/state/qdl-v2/p184-kafka-b-20261016/<step>-<UTC>/`). `--lock-owner claude-kafka-b` lets the tools run inside
+the coordinator's own lock (any other valid lock still refuses).
+
+```
+DL=/home/bobby/.worktrees/data-layer-p184-closure; cd $DL
+CERT=/home/bobby/.local/state/qdl-v2/655d2106d01f/cert-material-rotate-20260822T144323Z
+C="python3 -B scripts/kafka_internal_topic_compaction.py"; B="python3 -B scripts/kafka_b_roll_runbook.py"
+python3 -B scripts/host_measurement_lock.py acquire --owner claude-kafka-b --purpose "P18.4 partition-43 cleaner pass + decision B roll" --minutes 170
+$B plan                                                            # pure: prints this sequence
+$B check                                                           # read-only: health, quorum leader, order, C state, 43 size
+$C --apply-temp --apply --cert-dir $CERT --lock-owner claude-kafka-b
+$C --observe --cert-dir $CERT     # repeat (with the read-only pass watcher) until temp_removal.remove_recommended
+$C --remove-temp --apply --cert-dir $CERT --lock-owner claude-kafka-b
+$B check                                                           # re-read recommended_order (quorum leader last)
+$B roll --broker <1st>        # each: exit 0 to continue; 1 = RESTORED_VERIFIED -> STOP; 3 = HARD STOP
+$B roll --broker <2nd>        # refuses if it is now the quorum leader while another broker is still true
+$B roll --broker <quorum leader>
+$B elect --scope data         # coordinators stay where the rolls left them (no extra load stall)
+$B final-check                # env false x3, parity snapshot auto.leader.rebalance.enable=false
+python3 -B scripts/host_measurement_lock.py release --owner claude-kafka-b
+```
+- Per roll the runbook records: the roll tool report (healthy/ISR clocks, broker config), rust_core progress
+  (`commit_wait_ms.max` / `commit_ms.max` per line, baseline 300 s before vs window, lines >= 1000 ms), every broker's
+  `Finished loading` line (partition, records, bytes, ms: the first production coordinator-load measurement), restart
+  counts of cores/projectors/stream/writer, and the writer heartbeat READY counts (`p184_g9_g10_writer_counters.py`,
+  5 s samples). For the first two rolls the not-yet-rolled controller still has rebalance true; the runbook waits up to
+  420 s for its automatic preferred election and measures that second move too.
+- Election scope: `data`. The election tool has no per-partition exclusion; `--scope data` keeps every coordinator
+  partition (43 and the core transaction partitions included) on its current leader. `elect --scope coordinators`
+  refuses unless every measured partition-43 load in the receipt dir is <= 1000 ms (`--force-coordinators` overrides).
+- Undo: a failed roll is rolled back by the tool (`RESTORED_VERIFIED`, exit 1). Already rolled brokers may stay false
+  (the key acts only on the active controller); full undo, one broker at a time with the lock held:
+  `python3 -B scripts/kafka_auto_leader_rebalance_roll.py --rollback <packet> --broker kafkaN --apply --cert-dir $CERT
+  --lock-owner claude-kafka-b`. Temp key undo: `$C --remove-temp --apply ...`.
+- G12 final follows in its own lock: section 1 with `PHASE=final`; the snapshot then yields `REB=false`, and the image
+  set already names writer B17 (`ts` = `cb5216b8`). The temp key is removed before B, so production carries only C
+  and the parity profile (C + A' + rebalance false) is complete.
+
 ## Serial schedule
 
 All three take their own lock and never overlap each other or another measurement:
 1. G12 interim, about 45 min.
 2. G13 isolated, about 10 min.
 3. G13 runtime window: after packet approval and CI, about 35 min.
-4. Decision B roll (separate packet).
+4. Partition-43 cleaner pass (temp key) and decision B roll: section 4.
 5. G12 final, about 45 min. The final G12 credit needs this run.
 
 The G13 cells need no rerun after B: G13 exercises no broker restart. B changes only the static controller config,
