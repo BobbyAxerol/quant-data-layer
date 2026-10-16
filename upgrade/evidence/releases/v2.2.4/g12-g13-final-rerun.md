@@ -71,16 +71,21 @@ UTC=$(date -u +%Y%m%dT%H%M%SZ); PHASE=interim                     # final: PHASE
 BASE=~/.local/state/qdl-v2/p184-g12-v224-$PHASE-$UTC; NS=p184-g12-dl-$(python3 -c 'import secrets;print(secrets.token_hex(8))')
 OWNER="claude P18.4 G12 v224 $PHASE $UTC"
 python3 -B scripts/host_measurement_lock.py acquire --owner "$OWNER" --purpose "G12 full 3 faults isolated ns $NS" --minutes 75
-mkdir -m 700 $BASE && python3 -B scripts/p184_g12_isolated_fault.py --parity-snapshot $BASE/production-parity.json
+mkdir -m 700 $BASE && python3 -B scripts/p184_g12_isolated_fault.py --parity-snapshot $BASE/production-parity.json \
+  --lock-owner "$OWNER"
 REB=$(python3 -c 'import json,sys;print(str(json.load(open(sys.argv[1]))["kafka"]["auto.leader.rebalance.enable"]).lower())' $BASE/production-parity.json)
 # interim: REB must print true (production today); final: false (after B). Anything else = stop.
 python3 -B scripts/p184_g12_isolated_fault.py --run $BASE --export $EXPORT --namespace $NS \
   --image-set upgrade/evidence/releases/v2.2.4/g12-image-set-v224.json --query-code image \
   --auto-leader-rebalance $REB --production-parity $BASE/production-parity.json --ts-root $RUN_TS \
-  > $BASE/run.log 2>&1
+  --lock-owner "$OWNER" > $BASE/run.log 2>&1
 python3 -B scripts/p184_g12_isolated_fault.py --credit $BASE                       # interim: oracle + MATCH only
 python3 -B scripts/host_measurement_lock.py release --owner "$OWNER"
 ```
+- Lock (D1, Codex follow-up 2026-10-16): `--parity-snapshot` and `--run` describe production Kafka through admin
+  containers; each launch checks the host-measurement lock and refuses under any valid lock other than `--lock-owner`
+  (run them inside the owner's own lock; credit-time snapshots too). `--image-set` must name every role (a release set
+  for the final run never falls back to older defaults).
 - Image set: core `7c848aad`, projector `ce629061`, stream `baa72c96`, python `b9ca6c36`, ts B17 `cb5216b8`, kafka
   `9516fb76`, redis `dfa18828`, postgres `cf78e766`, holder alpine:3.20 `d9e853e8`. `--run` refuses when the image set's
   ts role is not the snapshot's deployed writer, or `--auto-leader-rebalance` differs from the snapshot.
@@ -90,7 +95,7 @@ python3 -B scripts/host_measurement_lock.py release --owner "$OWNER"
   leader-rebalance stall that made the v2 runs fail G2 max. **It is not the final credit.**
 - Final credit, after B is rolled (all three brokers `KAFKA_AUTO_LEADER_REBALANCE_ENABLE=false`): rerun the block with
   `PHASE=final`. The snapshot then yields `REB=false`. Credit at that time against a fresh snapshot:
-  `python3 -B scripts/p184_g12_isolated_fault.py --parity-snapshot $BASE/credit-snapshot.json && python3 -B
+  `python3 -B scripts/p184_g12_isolated_fault.py --parity-snapshot $BASE/credit-snapshot.json --lock-owner "$OWNER" && python3 -B
   scripts/p184_g12_isolated_fault.py --credit $BASE --production-parity $BASE/credit-snapshot.json` (exit 0 only when
   verdict v3 PASS, three faults, `production_parity` MATCH and the run profile equals production's).
 - Receipt fields to read: `evidence/verdict.json` (`pass`, `faults[*].parts`, `broker_config.production_parity`,
@@ -232,7 +237,7 @@ and that is outside every G13 path.
    -> `[]`; `docker inspect -f '{{.RestartCount}} {{.State.StartedAt}}' market_data_service_p184w` (restarts 0, start
    2026-10-16T09:27:01Z unless a later approved roll changed it -> then regenerate the image set, role map and packet).
 5. Writer and Kafka parity:
-   `python3 -B $DL/scripts/p184_g12_isolated_fault.py --parity-snapshot <scratch>/parity.json`. Expect `writer.image` =
+   `python3 -B $DL/scripts/p184_g12_isolated_fault.py --parity-snapshot <scratch>/parity.json --lock-owner <own lock owner>`. Expect `writer.image` =
    B17 and `writer.env` with `MARKET_DATA_NATIVE_APPLY_MAX_ROWS` 16, `DATA_LAYER_V2_BOOK_SNAPSHOT_BATCH_MAX_WAIT_MS` 0
    and `MARKET_DATA_NATIVE_FEEDS` TRADE,QUOTE. Expect `kafka.auto.leader.rebalance.enable` true before B and false
    after B. A ValueError "disagree" means a B roll is in progress: stop.
