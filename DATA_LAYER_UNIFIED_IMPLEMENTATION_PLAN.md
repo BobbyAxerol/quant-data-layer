@@ -73666,3 +73666,13 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
     isolated burst rerun; track partition-43 size; then B (sequential recreate, auto.leader.rebalance.enable=false,
     declared preferred election with consumer stall measured) once the partition is small, bounded by convergence.
     Watch: single cleaner thread (4 MiB/s) shared with md.latest (G4).
+  - 2026-10-16 final G12/G13 rerun preparation (no runs yet): 13ef59c - WriterClone precheck compares against the
+    deployed writer (docker inspect at run time; B17 matches), `--parity-snapshot` (rebalance from kafka1-3 env, C
+    from kafka_internal_topic_compaction.PLAN, A' from budget), `--run` requires `--production-parity` and applies C/A'
+    in the harness before baseline (STOP unless MATCH), g12_receipt_creditable requires MATCH and `--credit` refuses
+    runs on a stale profile, writer Redis CPU parity recorded, `--ts-root` pin; G13 dr05 checks deployed inventory.
+    ea0fa3ae - upgrade/evidence/releases/v2.2.4/g12-g13-final-rerun.md (commands, 12-point read-only pre-flight),
+    image sets, scripts/host_measurement_lock.py (+ tests). Order: G12 interim (rebalance=true, C+A') -> G13 isolated
+    -> G13 runtime (packet v5 draft; dr01-deployed needs CI on the final TS commit -> push after the approved governance
+    reword) -> B roll -> G12 final with --credit on the post-B snapshot. Known harness deltas recorded, not changed:
+    core 1 member 0.5 CPU (prod 3), kafka 0.75 CPU (prod 1.75), latest topic 3 partitions.
