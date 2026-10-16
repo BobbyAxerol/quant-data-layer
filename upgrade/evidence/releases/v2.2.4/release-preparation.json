@@ -1,8 +1,8 @@
 {
   "blockers_and_unknowns": [
-    "B1 SDK version: tree says 2.4.0 while holding 2.4.1 behaviour; step-0 commit (draft patch) + tests needed BEFORE the image build so the images carry the release revision",
-    "B2 stage-100 #3 verdict pending (lock until ~04:04Z); certificate cannot be assembled before it",
-    "B3 stream_kn runs a qdl.test.only overlay; c934c1e gateway sha256 has no receipt (read it after the lock)",
+    "B1 RESOLVED aaa81a8: SDK version bump 2.4.0 -> 2.4.1 applied from the draft patch; host build of the wheel twice -> 9f79e032604bf79db5ca9070c7f8a99b242e7cf22e1659b395b307dc798c28e7 both, generated_contract_digest 2ee96b1e... unchanged, sdk_source_digest bc204f46... (host python 3.12, not the certificate build: the certificate wheel is rebuilt twice --network none as in v2.2.3). SDK unittest modules (test_qdl_sdk_release, test_phaseb_stable_release, test_qdl_sdk_gateway_clocks) NOT run: the host has no grpc; CI sdk-python310 runs them",
+    "B2 stage-100 #3 (02:45:30Z) is DIAGNOSTIC ONLY (protocol_met false: ts:ready_60_every_sample + G9 sampler triple count; DL plan 32180b5). Certification runs on release digests after the rollout; the certificate cannot be assembled before that run",
+    "B3 stream_kn runs the qdl.test.only overlay baa72c96 (gateway c934c1e); its gateway sha256 still has no receipt. The release build script reads it as reference stream_baa72c96 in its post-check (expected EQUAL to the release gateway)",
     "B4 projector and ingestor release binaries differ from what stage-100 #3 measures; roll + short post-roll check, or scope them out (owner decision)",
     "B5 core recreate risk: decide option (a) equality-inheritance vs (b) simultaneous replace",
     "B6 bar_edge HELD on rc14 (not even the published v2.2.3 python digest); certificate must scope it out unless a bar-edge packet is approved",
@@ -11,16 +11,23 @@
     "B9 no receipt for the 4 MiB/s cleaner alter; capture a read-only describe before the certificate",
     "B10 python:3.12-slim pinned digest not local: the python build needs registry access",
     "B11 A' open item: kn_state_topics_packet verify not rerun",
-    "B12 Codex index: the 2026-10-16 'no calendar wait' advisory acknowledgement is recorded on the TS side (bdf7685e); DL-side disposition still to be journaled by the coordinator"
+    "B12 Codex index: the 2026-10-16 'no calendar wait' advisory acknowledgement is recorded on the TS side (bdf7685e); DL-side disposition still to be journaled by the coordinator",
+    "B13 Kafka C (internal topics) has no receipt file under ~/.local/state (the apply output is recorded only in the TS plan fe3185ca entry: observe APPLIED, drift {}). After the lock: scripts/kafka_internal_topic_compaction.py --observe (read-only) into the release receipts dir and cite its sha256",
+    "B14 the python release image differs from Query rc19 in one qdl/ file more than at ef6e24b: qdl/certification/phase3_consumer_load.py (1e09f87, G9/TS sampler heartbeat dedupe). Imported only by scripts/ and tests/ (grep), not on the Query runtime import path; the build script derives the expected-different set from git and fails on any other difference",
+    "B15 the planned TEST clock probe 'strings | grep -c qdl_test_data_clock|TEST_DATA_CLOCK == 0' would fail by construction: every gateway build carries the guard strings QDL_TEST_DATA_CLOCK_* and TEST_DATA_CLOCK_INVALID (rust/qdl-test-data-clock/src/lib.rs:4-8 refuses those env vars without the feature). Replaced by feature-only markers 'p184.test-data-clock.v1' and '/work/TEST_ONLY' (replay module, cfg(feature = isolated-replay-clock)) in scripts/build_qdl_release_images.py",
+    "B16 burst/drain campaigns (TEST_ONLY) are still running (lock claude-burst-b16-a1parity): no release build, container probe or Kafka read until the lock is absent; the build itself takes its own lock (--lock-owner)"
   ],
   "certificate_fields_after_stage100": {
     "fields": {
+      "build_receipt": "sha256 of ~/.local/state/qdl-v2/build-v2.2.4-<sha7>/receipt.json (scripts/build_qdl_release_images.py --build: per-binary EQUAL/DIFFERENT verdicts vs rc22/baa72c96/rc18/rc14, python file verdict vs rc19, pip freeze diff, label/uid/ldd/feature-marker probes)",
       "ci": "required jobs consolidated-source-preflight, contract-tests, sdk-python310, unit-tests, kn-native-integration on the PR head; local scripts/p184_local_ci.py --sha <REV> run first",
       "classification": "fill from the scorecard (v2.2.3 used SCOPED_DATA_LAYER_STAGE100_PASS_...)",
       "endpoint_report_sha256": "sha256 of upgrade/evidence/releases/v2.2.4/endpoint-report.json (schema qdl.release-endpoint-report.v2, before_rollout.measurement_identity per role from equivalence.json)",
       "evidence_sha256": "RELEASE_NOTES.md, release-preparation.json, scorecard.json, campaign files, equivalence.json, local CI summary",
-      "gates": "G1-G14 from ~/.local/state/qdl-v2/p184-final-campaign-20261016T024530Z (stage-100 #3) + G12/G13 receipts; G12/G13 inheritance needs an explicit owner decision (G13 35/35 ran on writer 2beedc04 and the 2026-10-13 DL set; the last G12 receipt cited by a certificate is rc12; later isolated G12 runs (P1 on RUST18, TS N1 B16 DL drills) are candidates for inheritance)",
-      "limits": "single host, no HA; bar_edge not on the release revision; any role certified by equality, not by its own measurement",
+      "gates": "G1-G14 from the post-rollout certification run on release digests (stage-100 #3 at 02:45:30Z is diagnostic only); G12/G13 per the inheritance audit badee80 (INHERIT G13 21/76 cells and core-group S2, the rest rerun on final digests; v1-predicate G12 PASS receipts not credited); G12 broker-restart rerun with Kafka C + B in place (owner decision 'B + C 10 min')",
+      "harness_parity": "isolated TEST harness tsredis CPU 1.0 = production redis_marketdata unlimited (coordinator decision 2026-10-16, TS 7b1ed7c0 / 3a09fe19); any isolated capacity cell cited states its tsredis CPU",
+      "kafka_runtime_config": "receipts (read-only describes after the lock): cleaner io 4194304 B/s (cluster default), md.latest.v2 delete.retention.ms 21600000 (A'), __consumer_offsets delete.retention.ms 600000 + segment.ms 60000 and __transaction_state segment.ms 600000 (C, applied 2026-10-16 ~09:2xZ), auto.leader.rebalance.enable (B: PENDING, true until rolled), kafka CPU 1.75 x3",
+      "limits": "single host, no HA; bar_edge not on the release revision; any role certified by equality, not by its own measurement; Kafka C converging (~49 h, old 24 h horizons persist) and B pending at measurement time; TEST_ONLY burst results (rule S NOT_CLEAN cells) stated as such",
       "previous_published_release": "v2.2.3",
       "publication_status": "REQUIRES_OWNER_DECISION_FINAL_HEAD_CI_DEV_MAIN_MERGE_AND_TAG",
       "release": "v2.2.4",
@@ -30,7 +37,10 @@
       "runtime_scope_totals": "roles on release digests vs unchanged roles (bar_edge, and cores if option a)",
       "schema": "qdl.scoped-release-certificate.v2",
       "sdk": "see sdk.certificate_fields",
-      "source_code_sha": "<REV>"
+      "sdk_wheel_preliminary": "host build 9f79e032604bf79db5ca9070c7f8a99b242e7cf22e1659b395b307dc798c28e7 at aaa81a8 (to be confirmed by the two --network none builds at <REV>)",
+      "source_code_sha": "<REV>",
+      "test_only_evidence": "burst ladder / amendment-1 / drain-rate / parity rerun cells are TEST_ONLY internal capacity: listed in limits, never counted as a production gate",
+      "ts_writer_at_measurement": "writer image digest + TS pin of the run that measures the release (B17 cb5216b8 / TS 68f2572f at 2026-10-16T09:27:01Z; B16 d27db0cf measured stage-100 #3)"
     },
     "status": "PASS only if no gate FAILs under the frozen rules and the equivalence receipt holds",
     "workflow_checks": ".github/workflows/release.yml: tag v2.N.N on a commit that is an ancestor of origin/main; certificate.status == PASS; sha256(endpoint-report.json) == endpoint_report_sha256; RELEASE_NOTES.md exists; the wheel rebuilt by scripts/build_qdl_sdk_release.py has sha256 == sdk.wheel_sha256"
@@ -211,7 +221,8 @@
     "upgrade/evidence/releases/v2.2.4/release-preparation.json",
     "upgrade/evidence/releases/v2.2.4/RELEASE_NOTES.md (draft)",
     "upgrade/evidence/releases/v2.2.4/drafts/sdk-2.4.1-version-bump.patch",
-    "upgrade/evidence/releases/v2.2.4/drafts/compose-v2-stable-release-draft.diff"
+    "upgrade/evidence/releases/v2.2.4/drafts/compose-v2-stable-release-draft.diff",
+    "scripts/build_qdl_release_images.py + tests/test_build_qdl_release_images.py (build recipe, 46f4628)"
   ],
   "image_build_plan": {
     "bar_edge": "no new image role: binance_bar_edge stays on 08f356a8 (rc14) unless the owner approves a separate bar-edge packet with C.19/C.32 checkpoint disposition",
@@ -228,7 +239,7 @@
       "network": "needed: python:3.12-slim@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a is not in the local image store (docker image inspect: No such image); poetry install and apt-get upgrade fetch packages. Run only after the lock is gone",
       "postcheck": [
         "label revision == <REV>, version 2.2.4",
-        "sha256 of every /app/qdl/**/*.py and /app/app/**/*.py equals the rc19 image b9ca6c36 (expected: equal, git diff 4d3476c..<REV> -- qdl app is empty) - run in --network none --read-only containers",
+        "sha256 of every file under /app/{qdl,app,generated,config,consumers,qdl_sdk} vs rc19 b9ca6c36; the expected-different set is derived from git with the rc19 tree model (qdl/ at 4d3476c, the rest at bcb0283): at 46f4628 it is config/v2/kn-v220-candidate-budget.json, generated/python/qdl/query/v2/query_pb2.py, generated/rust/qdl/query/v2/qdl.query.v2.rs, qdl/certification/phase3_consumer_load.py, qdl_sdk/{CHANGELOG.md,README.md,__init__.py,client.py,transport.py}",
         "pip freeze of /opt/venv equals rc19 (poetry.lock unchanged since 481fd67); a difference is listed, not waived",
         "/app/generated/python/qdl/query/v2/query_pb2.py differs from rc19 by f5cd787 (field 8): expected"
       ],
@@ -239,6 +250,18 @@
     },
     "rust": {
       "alternative_not_recommended": "docker build -f Dockerfile.qdl-rust-runtime --build-arg QDL_GIT_SHA=<REV> --build-arg QDL_RELEASE=2.2.4 -t qdl-v2-rust:2.2.4-<sha7> <archive dir>: BuildKit Rust compile on the runtime disk (owner rule), needs network (debian@abd67ff... is not local; crates), and its binaries differ in embedded paths (/usr/local/cargo vs /work/cargo), so no byte equality with the running images",
+      "expected_identity": {
+        "basis": "git diff --stat a4e7b3b HEAD over qdl-kafka/qdl-core/qdl-contracts/qdl-provider-envelope/qdl-venue-core/qdl-realtime-core/Cargo.*/generated/rust: only rust/qdl-projector/src/products.rs (test module); git diff c934c1e HEAD -- rust: same single file. Byte equality assumes the same builder 551428d9, CARGO_HOME /work/cargo, CARGO_TARGET_DIR /work/dl-target and /src mount as rc22",
+        "byte_identical_to_production": [
+          "qdl-realtime-core == rc22 7c848aad 2d82167336a4... (rust_core x3)",
+          "qdl-stream-gateway == baa72c96 gateway (stream_kn_1/2; sha read in the post-check)"
+        ],
+        "byte_identical_to_rc22_but_differs_from_production": [
+          "qdl-native-raw-ingestor == rc22 77ceeee1... (production ingestors rc18 8393bb1f...)",
+          "qdl-projector == rc22 efeb4728... expected (only a cfg(test) hunk since a4e7b3b; production projectors rc14 ce629061)"
+        ],
+        "other_binaries": "expected == rc22 (no crate/lock/generated delta since a4e7b3b)"
+      },
       "image": "qdl-v2-rust:2.2.4-<sha7>",
       "method": "thin release image (same as build-rc22-a4e7b3b/build.sh): git archive <REV> -> $B/src (read-only mount); docker run --rm --pull=never --network none --cpus 2 --memory 3g --pids-limit 256 --user 1001:1001 -e HOME=/work -e CARGO_HOME=/work/cargo -e CARGO_TARGET_DIR=/work/dl-target -e CARGO_BUILD_JOBS=2 -v ~/.local/state/trading-system/p184-n1-final-20261012:/work -v $B/src:/src:ro -w /src sha256:551428d98db6b6523b3515fe040d7f9ed53abf625a78e0a1413f4e2056883817 (four cargo build --offline --locked --release commands, identical to Dockerfile.qdl-rust-runtime); copy the 12 Dockerfile binaries + config/v2/provider-admission-policy-v1.json into $B/ctx; SHA256SUMS; FROM qdl-v2-rust:2.2.3-rc16-bcb0283 (assert Id sha256:f41ecb66ecb0...); COPY --chmod=755 bin/; LABEL revision=<REV>, version=2.2.4, title 'Quant Data Layer Rust runtime', qdl.build.method=cargo-cache-551428d9+runtime-overlay-f41ecb66, NO qdl.test.only; USER 10001:10001; docker build --pull=false --network none --iidfile",
       "pinned_inputs": {
@@ -250,7 +273,7 @@
         "sha256sum of the 12 binaries in the image == $B/ctx/SHA256SUMS",
         "ldd: 0 'not found' for qdl-realtime-core, qdl-projector, qdl-stream-gateway, qdl-native-raw-ingestor",
         "id -u == 10001; env has no QDL_TEST_DATA_CLOCK",
-        "the release gateway binary has no test-data-clock symbol: strings | grep -c 'qdl_test_data_clock\\|TEST_DATA_CLOCK' == 0 (compare with baa72c96 and 7fba2577 for the same probe)"
+        "feature-only TEST clock markers absent from all 12 binaries: 'p184.test-data-clock.v1' and '/work/TEST_ONLY' (see B15; the guard strings QDL_TEST_DATA_CLOCK_* are present in every build)"
       ],
       "roles": [
         "rust_core",
@@ -263,7 +286,8 @@
         "ingestor_okx_swap",
         "ingestor_binance_usdm"
       ]
-    }
+    },
+    "script": "scripts/build_qdl_release_images.py (46f4628): dry-run default prints the plan and the expected-different python set; --build --lock-owner <owner> builds rust then python and writes ~/.local/state/qdl-v2/build-v2.2.4-<sha7>/receipt.json; tests tests/test_build_qdl_release_images.py (27, no docker)"
   },
   "interface_compatibility": {
     "contract_digest": {
@@ -311,6 +335,7 @@
   },
   "production_runtime_at_preparation": {
     "basis": "docker ps / docker inspect / docker image inspect / docker history, 2026-10-16 ~03:00Z, read-only",
+    "reread_20261016T1100Z": "docker inspect, read-only: rust_core x3 7c848aad (a4e7b3b), stream_kn_1/2 baa72c96 (c934c1e), query_kn_1/2 b9ca6c36 (4d3476c), market_projector_1/2 ce629061 (a388537), ingestor_okx_swap/binance_usdm 7fba2577 (cdbf28b), RestartCount 0 on each; unchanged since ef6e24b except the TS writer (B16 -> B17)",
     "roles": {
       "binance_bar_edge": {
         "image": "sha256:08f356a84151c6e865fbdc4a2efe6924df9336d15353254c2b2da684261794f5",
@@ -375,9 +400,14 @@
       }
     },
     "ts_writer": {
+      "b17_content": "B16 d27db0cf + market-data-writer 774e5371031ae367eb4ae280a50ea32385d17fda98cf88f09ab588a6bd2f8318 + /app/services/market_data/slice_health.py 9c3c2944... (TS 68f2572f QUOTE OBSERVE probe bound/3, f1d526bd liveness diagnostics, 471ff37c native_probe observability); SDK 2.4.0",
       "container": "market_data_service_p184w",
-      "image": "sha256:d27db0cffe157491d9b01e7a469ac7fec53d8269a1eefde4c532cc441f7740c6 (B16, TS 5636e443, binary a777655d..., SDK 2.4.0); recreated 2026-10-16T02:44:18Z for the stage-100 #3 trace re-arm",
-      "packet": "TS upgrade/evidence/P184_WRITER_RELEASE_PACKET_20261016.md"
+      "history": "B16 d27db0cf (TS 5636e443) measured stage-100 #3; recreated 02:44:18Z",
+      "image": "sha256:cb5216b877f1659f2a66d9169c4d08f91c1d0b8caee2e0dbe24546774d3d0949 (B17, label revision 68f2572fbc1c64520803cbfc1dfd22bfc5470cff, tag local/trading-system-market-data:p184-writer-cand-b17-68f2572f)",
+      "packet": "TS upgrade/evidence/P184_WRITER_RELEASE_PACKET_20261016.md",
+      "proofs": "~/.local/state/trading-system/p184-n1-opt-20261013/b17/proofs-receipt.json (TEST_ONLY isolated, all PASS)",
+      "rollback": "B16 d27db0cf compose trace-20261016T024413Z.compose.json",
+      "rolled": "2026-10-16T09:27:01Z (owner-approved plan 02:50Z), RestartCount 0 at 2026-10-16 ~11:00Z (docker inspect)"
     }
   },
   "release": "v2.2.4",
@@ -414,8 +444,13 @@
     "tool": "rollout_rc17_v2.py (~/.local/state/trading-system/p184-20261005/runtime/p1/rc17/rollout_rc17_v2.py), one container at a time, saved rollback composes, writer READY 64/64 gate"
   },
   "runtime_config": {
+    "coordinator_load_finding": "production __consumer_offsets-43 (core group) 1.65 GB: 14.31M transaction markers + 4.07M offset-commit records (read-only dump, prod/*.agg.json); harness warm-move fit ~8.0 us/offset-commit record + ~0.33 us/marker; a coordinator move today projected ~37.5 s unloaded (inferred). This is the G12 broker-restart blocker mechanism (32d2cf6): auto.leader.rebalance moves the coordinator ~300 s after a broker returns and the core's transactional commit waits for the load",
     "core_config": "~/.local/state/qdl-v2/releases/v2.2.3-rc18-core-batch1024 (rust_core*.json, batch_size 1024, receipt core-batch-size-receipt.json); unchanged by this release",
     "ingestor_configs": "releases/v2.2.3-rc7-ingestor-liveness (OKX rev 20, Binance rev 19) unless re-read differs; re-read through a --network none container before the certificate",
+    "kafka_auto_leader_rebalance_B": {
+      "packet": "~/.local/state/qdl-v2/p184-g12-coordinator-load-20261016/b-packet/ (candidate/rollback composes, receipt.json)",
+      "status": "PENDING (not applied): auto.leader.rebalance.enable=false per broker by sequential recreate (scripts/kafka_auto_leader_rebalance_roll.py, dry-run default, roll --check ok, 0 URP, order kafka1->2->3) once __consumer_offsets-43 has shrunk; preferred-leader election as a declared maintenance step (scripts/kafka_preferred_leader_election.py) with the consumer stall measured"
+    },
     "kafka_cleaner_io_throttle": {
       "correction": "v2.2.3 RELEASE_NOTES.md lines 80/427/572/623 say 8 MiB/s: true at v2.2.3 publication, stale since 2026-10-14. The published v2.2.3 notes are NOT edited (never rewrite a published release); v2.2.4 RELEASE_NOTES states 4 MiB/s and this correction",
       "current": "log.cleaner.io.max.bytes.per.second = 4 MiB/s (4194304), cluster dynamic default",
@@ -427,13 +462,36 @@
       "rollback": "--alter --add-config log.cleaner.io.max.bytes.per.second=8388608 (failure only)"
     },
     "kafka_cpu": "kafka1 1.25 -> 1.75 on 2026-10-14 13:47:40Z (docker update, owner-approved after the cleaner optimisation); kafka2/kafka3 already 1.75",
+    "kafka_internal_topics_C": {
+      "applied": "2026-10-16 ~09:2xZ via scripts/kafka_internal_topic_compaction.py --apply (TS plan fe3185ca: observe APPLIED, drift {})",
+      "convergence": "~49 h estimated (old 24 h delete horizons already stamped persist); projected coordinator move max ~0.31 s unloaded / ~0.54 s loaded after convergence vs ~37.5 s projected today (inferred from the harness fit, not measured in production)",
+      "decision": "owner 2026-10-16 (AskUserQuestion) 'B + C 10 min' after the coordinator-load measurement (89d2587, evidence ~/.local/state/qdl-v2/p184-g12-coordinator-load-20261016/); plan MEASURED 68556d4",
+      "receipt_gap": "see B13",
+      "rollback": "scripts/kafka_internal_topic_compaction.py --rollback --apply --cert-dir <stable cert dir> (--delete-config of the planned keys)",
+      "values": {
+        "__consumer_offsets": {
+          "delete.retention.ms": "600000",
+          "segment.ms": "60000"
+        },
+        "__transaction_state": {
+          "segment.ms": "600000"
+        }
+      },
+      "watch": "single cleaner thread at 4 MiB/s shared with md.latest.v2 (G4)"
+    },
     "md_latest_v2_delete_retention_ms": {
       "applied": "2026-10-16T02:05:37Z via scripts/kafka_md_latest_marker_retention.py --apply (c767b91), owner-approved; contract bb15890",
       "current": 21600000,
+      "label": "A' (md.latest 6 h)",
       "open": "kn_state_topics_packet verify not rerun (needs the projector principal argument)",
       "rollback": "--rollback-to 604800000 --apply"
     },
-    "redis_marketdata_cpu_shares": "4096 (v2.2.3 record); re-read before the certificate"
+    "redis_marketdata_cpu_shares": "4096 (v2.2.3 record); re-read before the certificate",
+    "test_harness_parity": {
+      "decision": "coordinator, owner-delegated, 2026-10-16 (TS 7b1ed7c0, addendum 3a09fe19): isolated harness tsredis CPU 1.0 (was the WriterClone default 0.5) = production redis_marketdata (NanoCpus 0); measurement configuration only, frozen rules unchanged, APPLY_MAX_ROWS stays 16",
+      "evidence": "drain-rate diagnosis ~/.local/state/trading-system/p184-drain-rate-20261016/ (rows16/Redis0.5 ~11.3k/s, rows16/Redis1.0 ~13.3k/s, rows32/64 Redis0.5 ~14.2k/s; gateway handoff_wait p99 <= 5 ms, not binding)",
+      "rerun": "the 5 amendment-1 cells, running under lock claude-burst-b16-a1parity; earlier NOT_CLEAN receipts stay as recorded"
+    }
   },
   "schema": "qdl.release-preparation.v3-draft",
   "sdk": {
@@ -462,9 +520,21 @@
     "commits_since_v2_2_3_basis": "git rev-list --count 481fd67..87db215",
     "commits_since_v2_2_3_source": 83,
     "head_at_preparation": "87db2159f411e7c4d7d49033e7573b42a75fc91d",
+    "head_at_update": "46f4628 (aaa81a8 SDK bump + 46f4628 build recipe on top of 68556d4); the release <REV> is the commit that carries this packet update (it adds no runtime path change)",
     "pushed_state": "origin/fix/p184-dl-closure = 98b421f (local ref, not fetched): 67 commits after it are unpushed (git rev-list --count @{u}..HEAD)",
     "release_source_rule": "the release source is the commit that carries the SDK 2.4.1 version bump (step 0 below) plus this packet; images are built from it, so their revision label is that commit. Later evidence-only commits are allowed if git diff <release_source> <head> -- rust qdl qdl_sdk contracts generated config consumers Cargo.toml Cargo.lock Dockerfile* app is empty (the v2.2.3 pattern)",
+    "release_source_rule_note": "git diff aaa81a8 <REV> -- rust qdl qdl_sdk contracts generated config consumers Cargo.toml Cargo.lock Dockerfile* app must be empty",
     "worktree": "/home/bobby/.worktrees/data-layer-p184-closure"
   },
-  "status": "PREPARATION_DRAFT"
+  "status": "PREPARATION_DRAFT_UPDATED",
+  "test_only_burst_results": {
+    "amendment_1": "writer Subscribe depth 2000 (TS ebc12525, DL 7e40264): 4/5 CLEAN; a1-corepause9k NOT_CLEAN rule S (overflow at queued 2000 ~0.8 s after a 780 ms core pause) with C1-C5 + F PASS",
+    "drain_rate": "binding stage at 9k backlog drain = Redis apply under the 0.5 CPU harness cap (see runtime_config.test_harness_parity)",
+    "ladder_b16": "prereg TS 3d9582de: 7/8 CLEAN (6k-1, 6k-2, 9k-1, pause9k, crash9k, stall9k, streamrs9k); b16-9k-2 NOT_CLEAN rule S (max_overflow 1) with C2 exact 5.4M, G2 p95 202 / max 822.5 ms",
+    "parity_rerun": "PENDING (lock claude-burst-b16-a1parity until 13:48:52Z)",
+    "provenance": "TEST_ONLY internal capacity on production image pins in isolated namespaces; boundary raw publish -> core -> canonical -> Stream -> writer -> Redis ACK -> cursor; not provider/ingestor, not venue latency, fresh brokers (no G4 answer). Not a release gate",
+    "side_finding": "post-overflow resubscribe replays exactly 10000 records then RESOURCE_EXHAUSTED in ~0.85 s cycles (up to 10 rounds): under investigation (rule S forbids a replay loop); relevant to the stream gateway replay budget and SDK 2.4.1 field 8"
+  },
+  "updated_at_utc": "2026-10-16T11:30Z",
+  "updated_under": "host measurement lock claude-burst-b16-a1parity (isolated burst rerun, until 2026-10-16T13:48:52Z): file edits and host python unit tests only; production facts from docker inspect / docker image inspect (read-only), the TS and DL plan journals and the receipts named below; no build, container, cargo, Kafka or network call"
 }

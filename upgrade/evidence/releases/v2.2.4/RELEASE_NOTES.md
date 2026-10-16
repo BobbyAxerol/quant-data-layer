@@ -5,6 +5,10 @@ stage-100 #3 measurement window (host lock `claude-n1-opt-20261013`, 2026-10-16)
 `<...>` placeholder is filled from receipts after stage-100 #3, the release image build and the equivalence check.
 The full inventory, build plan and open items are in [release-preparation.json](release-preparation.json).
 
+Updated 2026-10-16 ~11:30Z under host lock `claude-burst-b16-a1parity` (file edits only): SDK bump committed
+(`aaa81a8`), release image recipe committed (`46f4628`, `scripts/build_qdl_release_images.py`), production changes
+since `ef6e24b` recorded (TS writer B17, Kafka A' and C), TEST_ONLY burst results summarised.
+
 - Previous stable release: v2.2.3 (source `481fd67`, SDK 2.3.0).
 - Publication path (unchanged): required remote CI on the final head, `fix/p184-dl-closure` -> `dev` PR, release PR
   `dev` -> `main`, tag `v2.2.4` on main. `.github/workflows/release.yml` checks the certificate status, the
@@ -47,7 +51,8 @@ Every change is additive (owner rule 2026-10-07):
   mapping; when set, replay work budgets end with retryable `RESOURCE_EXHAUSTED RATE_LIMITED:REPLAY_*_LIMIT`.
 - No field number is reused or removed. Endpoint versions are unchanged.
 
-SDK **2.4.1** (`<wheel sha256>`), superseding 2.4.0 (vendored by TS, never published by a DL release): gateway
+SDK **2.4.1** (`<wheel sha256>`; preliminary host build at `aaa81a8`:
+`9f79e032604bf79db5ca9070c7f8a99b242e7cf22e1659b395b307dc798c28e7`, two identical builds), superseding 2.4.0 (vendored by TS, never published by a DL release): gateway
 clocks on `StreamEvent` (optional, not part of equality), the field-8 opt-in, and reconnect budgets renewed only on
 new progress. `generated_contract_digest` `2ee96b1edab01d3185e4fb973f7e3a0715956f8648938039108eb6156187c116` equals
 the TS candidate pin `vendor/qdl_sdk-2.4.1-candidate-f5cd787.json`. A caller that uses `GrpcStreamTransport`
@@ -55,7 +60,9 @@ directly now sees `RESOURCE_EXHAUSTED` where 2.4.0 saw `OUT_OF_RANGE` for those 
 
 ## Source And Images
 
-- Release source: `<REV>` (the SDK 2.4.1 version-bump commit on `fix/p184-dl-closure`).
+- Release source: `<REV>` (the commit carrying the SDK 2.4.1 bump `aaa81a8`, the build recipe `46f4628` and this
+  packet on `fix/p184-dl-closure`). Build: `python3 scripts/build_qdl_release_images.py --build --lock-owner <owner>`
+  (dry-run without `--build`); receipt `~/.local/state/qdl-v2/build-v2.2.4-<sha7>/receipt.json`.
 - Rust `qdl-v2-rust:2.2.4-<sha7>` `<digest>`: 12 binaries compiled at `<REV>` in builder `551428d9`, copied onto
   rc16 `f41ecb66` (the owner-approved thin method; no BuildKit Rust compile on the runtime disk).
 - Python `qdl-v2-python:2.2.4-<sha7>` `<digest>`: recipe build of `Dockerfile` at `<REV>`.
@@ -64,9 +71,9 @@ directly now sees `RESOURCE_EXHAUSTED` where 2.4.0 saw `OUT_OF_RANGE` for those 
 | --- | --- | --- | --- |
 | rust_core x3 | rc22 `7c848aad` (a4e7b3b) | `<rust digest>` or kept (owner decision) | qdl-realtime-core sha256 `2d821673...` expected equal |
 | stream_kn_1/2 | `baa72c96` (TEST overlay, gateway c934c1e) | `<rust digest>` | gateway sha256 `<...>` expected equal |
-| market_projector_1/2 | rc14 `ce629061` | `<rust digest>` | different (IDR-107, CF3/CF4): post-roll check |
-| ingestor_okx_swap / binance_usdm | rc18 `7fba2577` | `<rust digest>` | different (qdl-kafka DL-R1/RB1): post-roll check |
-| query_kn_1/2 | rc19 `b9ca6c36` (thin overlay) | `<python digest>` | qdl/ + app/ files expected equal |
+| market_projector_1/2 | rc14 `ce629061` | `<rust digest>` | different from production (IDR-107, CF3/CF4), expected equal to rc22 `efeb4728`: post-roll check |
+| ingestor_okx_swap / binance_usdm | rc18 `7fba2577` | `<rust digest>` | different from production (qdl-kafka DL-R1/RB1), expected equal to rc22 `77ceeee1`: post-roll check |
+| query_kn_1/2 | rc19 `b9ca6c36` (thin overlay) | `<python digest>` | /app files equal except the git-derived set (SDK files, query_pb2 field 8, budget config, `qdl/certification/phase3_consumer_load.py` apparatus) |
 | binance_bar_edge | rc14 `08f356a8` | unchanged (HELD) | not on the release revision |
 
 ## Runtime Config
@@ -77,18 +84,54 @@ directly now sees `RESOURCE_EXHAUSTED` where 2.4.0 saw `OUT_OF_RANGE` for those 
   rewritten. Receipt for the 4 MiB/s value: `<describe output path + sha256>` (to be captured read-only).
 - `md.latest.v2` `delete.retention.ms` 604800000 -> 21600000 (A', 2026-10-16T02:05:37Z, contract bb15890; rollback
   `--rollback-to 604800000 --apply`). Its effect arrives gradually (up to 7 d for markers already stamped).
+- Kafka internal topics (decision **C**, owner "B + C 10 min", 2026-10-16): `__consumer_offsets`
+  `delete.retention.ms=600000` + `segment.ms=60000`, `__transaction_state` `segment.ms=600000`, applied dynamically
+  ~09:2xZ with `scripts/kafka_internal_topic_compaction.py --apply` (observe: APPLIED, no drift). Convergence is
+  estimated at ~49 h because delete horizons already stamped at 24 h persist. Rollback: `--rollback --apply --cert-dir <stable cert dir>`
+  (deletes the overrides). Receipt: `<--observe output path + sha256>` (to be captured read-only).
+- Kafka `auto.leader.rebalance.enable=false` (decision **B**): pending, sequential broker recreate after
+  `__consumer_offsets-43` has shrunk; not part of this release unless applied before the certification run.
 - Kafka CPU: kafka1 1.25 -> 1.75 vCPU (2026-10-14 13:47:40Z, docker update); kafka2/3 already 1.75.
 - Core config `releases/v2.2.3-rc18-core-batch1024` (batch 1024), ingestor_binance_usdm 0.75 vCPU (2026-10-15).
 
+## Findings Since The Preparation Packet
+
+- **Coordinator load (G12 broker-restart mechanism).** Production `__consumer_offsets-43` (the core group's
+  coordinator partition) held 1.65 GB: 14.31M transaction markers and 4.07M offset-commit records (read-only dump).
+  A coordinator move replays the whole partition, and the core's transactional commit waits for it. Harness fit:
+  ~8.0 us per offset-commit record + ~0.33 us per marker, so a move today is projected at ~37.5 s unloaded
+  (inferred, not measured in production). Decision C bounds the marker lifetime; B removes the automatic moves.
+  Evidence `~/.local/state/qdl-v2/p184-g12-coordinator-load-20261016/`.
+- **TS writer.** Production writer B16 `d27db0cf` was replaced by B17 `cb5216b8` (TS `68f2572f`: QUOTE OBSERVE probe
+  at bound/3 for quota margin, liveness diagnostics, native probe observability) at 2026-10-16T09:27:01Z. Rollback B16.
+  The writer is a TS release item; it is listed here because the certification run measures the DL with it.
+- **Harness parity.** The isolated TEST harness capped its Redis at 0.5 CPU while production `redis_marketdata` is
+  unlimited. Coordinator decision: isolated harness Redis 1.0 CPU for capacity cells; frozen rules unchanged.
+
+## TEST_ONLY Burst Results (not release gates)
+
+Internal capacity on production image pins in isolated namespaces (raw publish to Redis ACK and cursor; not
+provider, not venue latency, fresh brokers):
+- Ladder on B16 (prereg TS `3d9582de`): 7/8 CLEAN; `b16-9k-2` NOT_CLEAN on rule S (one overflow).
+- Amendment-1 (writer Subscribe depth 2000): 4/5 CLEAN; `a1-corepause9k` NOT_CLEAN on rule S (overflow ~0.8 s after
+  a 780 ms core pause) while exactness and recovery passed.
+- Drain-rate diagnosis: the binding stage was the harness Redis CPU cap (rows16: ~11.3k/s at 0.5 CPU, ~13.3k/s at
+  1.0 CPU). Parity rerun of the 5 amendment-1 cells: `<result>`.
+- Open side finding: after an overflow, a resubscribe replayed exactly 10,000 records and ended
+  `RESOURCE_EXHAUSTED` in ~0.85 s cycles (up to 10 rounds). Under investigation.
+
 ## Gate Scorecard (G1-G14)
 
-`<from ~/.local/state/qdl-v2/p184-final-campaign-20261016T024530Z and the G12/G13 receipts; no frozen gate widened;
-a NOT_MEASURED is never upgraded>`
+`<from the post-rollout certification run on the release digests and the G12/G13 receipts (stage-100 #3,
+~/.local/state/qdl-v2/p184-final-campaign-20261016T024530Z, is diagnostic only: protocol_met false); no frozen gate
+widened; a NOT_MEASURED is never upgraded>`
 
 ## Limits
 
 - Single host for every run: no HA, no independent failure domains, no mainnet or funded claim.
 - binance_bar_edge is not on the release revision.
+- Kafka C converging and B pending at measurement time (state which in the certificate).
+- TEST_ONLY burst results above are not production capacity claims.
 - `<roles certified by binary/file equality rather than their own measurement>`
 - `<G12/G13 inheritance basis>`
 
@@ -96,4 +139,5 @@ a NOT_MEASURED is never upgraded>`
 
 Per role, failure only, one container at a time with the saved composes: query `b9ca6c36`, stream `baa72c96`,
 projector `ce629061`, ingestor `7fba2577`, core `7c848aad`. Kafka config: cleaner `--add-config
-log.cleaner.io.max.bytes.per.second=8388608`; marker retention `--rollback-to 604800000 --apply`.
+log.cleaner.io.max.bytes.per.second=8388608`; marker retention `--rollback-to 604800000 --apply`; internal topics
+`scripts/kafka_internal_topic_compaction.py --rollback --apply --cert-dir <stable cert dir>`.
