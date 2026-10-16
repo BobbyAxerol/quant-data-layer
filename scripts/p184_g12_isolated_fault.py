@@ -1570,6 +1570,43 @@ def describe_until_known(describe, seconds=30.0, pause=1.0):
         time.sleep(pause)
 
 
+INTERNAL_TOPICS = ("__consumer_offsets", "__transaction_state")
+# Decision C (internal-topic compaction) keys: a run is C evidence only when they are present and unchanged
+# through the run (``internal_topic_parity``); otherwise its broker_config is B-only (Codex K1, 2026-10-16).
+DECISION_C_KEYS = ("delete.retention.ms", "segment.ms")
+
+
+def internal_topic_configs(work):
+    """In-container: the effective topic-level overrides (DYNAMIC_TOPIC_CONFIG) of the two internal topics."""
+    from confluent_kafka.admin import AdminClient, ConfigResource, ConfigSource
+    admin = AdminClient(_security(_packet(work)))
+    out = {}
+    for topic in INTERNAL_TOPICS:
+        resource = ConfigResource(ConfigResource.Type.TOPIC, topic)
+        try:
+            entries = admin.describe_configs([resource], request_timeout=20)[resource].result(30)
+        except Exception as error:  # noqa: BLE001 - an absent internal topic is a recorded state
+            out[topic] = {"absent": True, "error": str(error)[:200]}
+            continue
+        overrides = {name: entry.value for name, entry in sorted(entries.items())
+                     if entry.source == ConfigSource.DYNAMIC_TOPIC_CONFIG.value}
+        out[topic] = {"overrides": overrides, "sha256": hashlib.sha256(
+            json.dumps(overrides, sort_keys=True).encode()).hexdigest()}
+    return out
+
+
+def internal_topic_parity(snapshots):
+    """``snapshots``: phase -> internal_topic_configs(). Classifies the run's decision-C state."""
+    if set(snapshots) != {"before", "after"} or any(
+            "overrides" not in snapshots[p].get(t, {}) for p in snapshots for t in INTERNAL_TOPICS):
+        return "NOT_MEASURED"
+    keys = {p: {t: {k: v for k, v in snapshots[p][t]["overrides"].items() if k in DECISION_C_KEYS}
+                for t in INTERNAL_TOPICS} for p in snapshots}
+    if keys["before"] != keys["after"]:
+        return "CHANGED_DURING_RUN"
+    return "C_PRESENT" if any(keys["before"].values()) else "C_ABSENT_B_ONLY"
+
+
 class _Stop:
     def __init__(self):
         self.requested = False
@@ -2939,7 +2976,20 @@ class Run:
                                                                      sort_keys=True) + "\n")
 
     def broker_config(self):
-        return {"auto.leader.rebalance.enable": self.auto_leader_rebalance}
+        snapshots = getattr(self, "internal_topics", {})
+        return {"auto.leader.rebalance.enable": self.auto_leader_rebalance, "internal_topics": snapshots,
+                "internal_topic_parity": internal_topic_parity(snapshots)}
+
+    def record_internal_topics(self, phase):
+        """Effective internal-topic overrides at ``phase`` (before the faults / after them); a failed read is
+        recorded and leaves the parity NOT_MEASURED, never a C claim."""
+        self.internal_topics = getattr(self, "internal_topics", {})
+        try:
+            self.internal_topics[phase] = json.loads(sh(self.helper(
+                self.ns, self.work, ["--internal-configs", "/work"]), timeout=120).strip().splitlines()[-1])
+        except Exception as error:  # noqa: BLE001 - evidence, not a stop
+            self.internal_topics[phase] = {"error": f"{type(error).__name__}: {error}"[:300]}
+        self.note("internal_topics", phase=phase, configs=self.internal_topics[phase])
 
     def topology(self, topic_id=""):
         return topology(self.ns, self.work, topic_id, images=self.images, query_code=self.query_code,
@@ -3473,9 +3523,11 @@ def orchestrate(base, export, ns, images=None, query_code="worktree", auto_leade
         run.prepare()
         run.up()
         run.baseline()
+        run.record_internal_topics("before")
         for name, kind in (("broker_stop_start", "broker"), ("projector_restart", "projector"),
                            ("stream_restart", "stream")):
             run.fault(name, kind)
+        run.record_internal_topics("after")
         status = "COMPLETED"
     except BaseException as exc:  # noqa: BLE001 - evidence first, then teardown
         error = f"{type(exc).__name__}: {exc}"
@@ -3487,9 +3539,13 @@ def orchestrate(base, export, ns, images=None, query_code="worktree", auto_leade
         try:
             if run.evidence.exists():
                 verdict = evaluate(run.evidence)
+                try:
+                    config = run.broker_config()
+                except Exception as exc:  # noqa: BLE001 - the verdict is written regardless
+                    config = {"auto.leader.rebalance.enable": auto_leader_rebalance,
+                              "internal_topic_parity": "NOT_MEASURED", "error": f"{type(exc).__name__}: {exc}"}
                 verdict.update(status=status, error=error, namespace=ns, images=run.images,
-                               query_code=run.query_code,
-                               broker_config={"auto.leader.rebalance.enable": auto_leader_rebalance})
+                               query_code=run.query_code, broker_config=config)
                 (run.evidence / "verdict.json").write_text(json.dumps(verdict, indent=2) + "\n")
         finally:
             run.down() if run.evidence.exists() else teardown(ns)
@@ -4623,7 +4679,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     mode = parser.add_mutually_exclusive_group(required=True)
     for flag in ("run", "core_group", "core_group_simultaneous", "core_group_accept", "down", "analyze", "topics", "publish", "monitor", "feeds",
-                 "query"):
+                 "query", "internal_configs"):
         mode.add_argument("--" + flag.replace("_", "-"), type=Path)
     parser.add_argument("--export", type=Path)
     parser.add_argument("--namespace")
@@ -4700,6 +4756,9 @@ def main(argv=None):
         return 0
     if args.query:
         serve_query(args.query)
+        return 0
+    if args.internal_configs:
+        print(json.dumps(internal_topic_configs(args.internal_configs), sort_keys=True))
         return 0
     if args.seconds is None and not args.topics:
         parser.error("--seconds required")

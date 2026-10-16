@@ -219,7 +219,8 @@ class Main(unittest.TestCase):
             code, text, _ = self._run(["--roll", str(out), "--broker", "kafka2", "--apply"], live)
             self.assertEqual(code, 1)
             report = json.loads(text)
-            self.assertEqual(report["auto_rollback"], "done")
+            self.assertEqual(report["auto_rollback"], "RESTORED_VERIFIED")
+            self.assertTrue(report["rollback_postconditions"]["ok"])
             self.assertEqual(Path(live.executed[-1][live.executed[-1].index("-f") + 1]).name,
                              "rollback.compose.json")
             self.assertNotIn(f"{tool.ENV_KEY}=false", live.inspects["kafka2"]["Config"]["Env"])
@@ -232,7 +233,25 @@ class Main(unittest.TestCase):
             self.assertEqual(code, 1)
             report = json.loads(text)
             self.assertIn("timeout", report["error"])
-            self.assertEqual(report["auto_rollback"], "done")
+            self.assertEqual(report["auto_rollback"], "RESTORED_VERIFIED")
+
+    def test_rollback_that_does_not_restore_is_unverified_exit_3(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = prepared(tmp)
+            # the broker ignores the key (forward check fails); after the rollback the ISR never returns
+            live = FakeLive(live_inspects(), out, config="true")
+            original = live.execute
+
+            def execute(argv):
+                original(argv)
+                if argv[:2] == ["docker", "compose"] and argv[argv.index("-f") + 1].endswith("rollback.compose.json"):
+                    live.urp = True  # ISR never restored after the rollback
+            live.execute = execute
+            code, text, _ = self._run(["--roll", str(out), "--broker", "kafka1", "--apply"], live)
+            self.assertEqual(code, 3)
+            report = json.loads(text)
+            self.assertEqual(report["auto_rollback"], "BROKER_STARTED_RESTORATION_UNVERIFIED")
+            self.assertFalse(report["rollback_postconditions"]["ok"])
 
 
 if __name__ == "__main__":

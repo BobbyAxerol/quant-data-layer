@@ -195,5 +195,55 @@ class Main(unittest.TestCase):
         self.assertEqual([c[0] for c in broker.calls], ["kafka-topics.sh"])
 
 
+class Window(unittest.TestCase):
+    """Codex K1: the election is recorded as a declared interruption with clocks and server-side loads."""
+
+    LOG = ("[2026-10-16 07:00:01,200] INFO [GroupCoordinator id=1] Finished loading of metadata from "
+           "__consumer_offsets-7 with epoch 5 in 812ms where 1ms was spent in the scheduler. Loaded 9000 records "
+           "which total to 700000 bytes. (x)\n"
+           "[2026-10-16 07:00:01,300] INFO [GroupCoordinator id=1] Finished loading of metadata from "
+           "__consumer_offsets-8 with epoch 5 in 3ms where 1ms was spent in the scheduler. Loaded 0 records "
+           "which total to 0 bytes. (x)\n")
+
+    def test_coordinator_loads_pick_the_moved_partition_on_the_new_leader(self):
+        seen = []
+
+        def logs(container, since):
+            seen.append(container)
+            return self.LOG
+        moves = [{"topic": "__consumer_offsets", "partition": 7, "leader": 3, "preferred": 1},
+                 {"topic": "__transaction_state", "partition": 4, "leader": 3, "preferred": 2}]
+        found = tool.coordinator_loads(moves, dt.datetime(2026, 10, 16, 7, tzinfo=dt.timezone.utc), logs)
+        self.assertEqual(seen, ["qdl_v2_stable_candidate-kafka1-1", "qdl_v2_stable_candidate-kafka2-1"])
+        self.assertEqual((found[0]["load"]["ms"], found[0]["load"]["records"]), ("812", "9000"))
+        self.assertIsNone(found[1]["load"])
+
+    def test_window_out_is_appended_after_an_apply(self):
+        broker = Broker(cluster())
+
+        def fake(argv, timeout):
+            entry = next(a for a in argv if a.startswith("/opt/kafka/bin/"))
+            mounts = [a for a in argv if a.endswith(f":{tool.ELECTION_FILE}:ro")]
+            if mounts:
+                broker.election_file = mounts[0].split(":")[0]
+            return broker.run([entry.rsplit("/", 1)[1]])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            window = Path(tmp) / "windows.jsonl"
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch("scripts.kafka_md_latest_marker_retention.LOCK", Path(tmp) / "lock"), \
+                    mock.patch("scripts.kn_state_topics_packet._subprocess", side_effect=fake), \
+                    mock.patch.object(tool, "_docker_logs", return_value=self.LOG), \
+                    contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = tool.main(["--apply", "--cert-dir", tmp, "--window-out", str(window)])
+            self.assertEqual(code, 0, err.getvalue())
+            record = json.loads(window.read_text().splitlines()[0])
+        self.assertEqual(record["kind"], "DECLARED_MAINTENANCE_INTERRUPTION")
+        self.assertEqual(record["coordinator_moves"], ["__consumer_offsets-7"])
+        self.assertEqual(record["coordinator_loads"][0]["load"]["ms"], "812")
+        self.assertEqual(record["consumer_clocks"], "NOT_MEASURED_BY_THIS_TOOL")
+        self.assertTrue(record["injected_utc"] <= record["election_returned_utc"] <= record["cleared_utc"])
+
+
 if __name__ == "__main__":
     unittest.main()

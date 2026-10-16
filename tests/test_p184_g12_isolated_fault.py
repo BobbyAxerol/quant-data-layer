@@ -3544,3 +3544,45 @@ class BrokerAndWriterPrecheckTests(unittest.TestCase):
             self.assertIsNone(g12.evaluate(evidence)["writer_precheck"])
             (evidence / g12.WRITER_PRECHECK_FILE).write_text(json.dumps({"OKX": {"ok": True}}))
             self.assertEqual(g12.evaluate(evidence)["writer_precheck"], {"OKX": {"ok": True}})
+
+
+class InternalTopicParityTests(unittest.TestCase):
+    """Codex K1 (2026-10-16): a G12 receipt carries the effective internal-topic overrides before/after the faults,
+    so a B-only run is never credited as C+B proof."""
+
+    @staticmethod
+    def snap(**extra):
+        base = {"cleanup.policy": "compact", "segment.bytes": "104857600"}
+        return {t: {"overrides": {**base, **extra.get(t, {})}, "sha256": "x"} for t in g12.INTERNAL_TOPICS}
+
+    def test_classification(self):
+        c = {"__consumer_offsets": {"delete.retention.ms": "3600000", "segment.ms": "600000"}}
+        self.assertEqual(g12.internal_topic_parity({}), "NOT_MEASURED")
+        self.assertEqual(g12.internal_topic_parity({"before": self.snap()}), "NOT_MEASURED")
+        self.assertEqual(g12.internal_topic_parity({"before": self.snap(), "after": {"error": "x"}}), "NOT_MEASURED")
+        self.assertEqual(g12.internal_topic_parity({"before": self.snap(), "after": self.snap()}),
+                         "C_ABSENT_B_ONLY")
+        self.assertEqual(g12.internal_topic_parity({"before": self.snap(**c), "after": self.snap(**c)}), "C_PRESENT")
+        self.assertEqual(g12.internal_topic_parity({"before": self.snap(), "after": self.snap(**c)}),
+                         "CHANGED_DURING_RUN")
+        # a non-C override changing is not a C claim either way
+        other = {"__transaction_state": {"min.insync.replicas": "1"}}
+        self.assertEqual(g12.internal_topic_parity({"before": self.snap(), "after": self.snap(**other)}),
+                         "C_ABSENT_B_ONLY")
+
+    def test_receipt_records_snapshots_and_failed_reads(self):
+        run = g12.Run.__new__(g12.Run)
+        run.auto_leader_rebalance, notes = False, []
+        run.note = lambda step, **fields: notes.append((step, fields))
+        run.ns, run.work, run.images = "p184-g12-dl-0123456789abcdef", Path("/w"), g12.IMAGES
+        before = self.snap()
+        with patch.object(g12, "sh", return_value="noise\n" + json.dumps(before) + "\n"):
+            run.record_internal_topics("before")
+        with patch.object(g12, "sh", side_effect=RuntimeError("helper failed")):
+            run.record_internal_topics("after")
+        config = run.broker_config()
+        self.assertIs(config["auto.leader.rebalance.enable"], False)
+        self.assertEqual(config["internal_topics"]["before"], before)
+        self.assertIn("helper failed", config["internal_topics"]["after"]["error"])
+        self.assertEqual(config["internal_topic_parity"], "NOT_MEASURED")
+        self.assertEqual([n[0] for n in notes], ["internal_topics", "internal_topics"])

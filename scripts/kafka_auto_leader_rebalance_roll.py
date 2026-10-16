@@ -29,7 +29,10 @@ Modes:
   compose's default stop is 10 s), ``docker compose -p qdl_v2_stable_candidate -f <file> up -d --no-deps
   --force-recreate kafkaN``, waits healthy and zero under-replicated partitions, verifies the new container differs
   from the receipt only by the key and that the broker reports ``auto.leader.rebalance.enable`` as wanted. A roll
-  that fails after the recreate rolls that broker back automatically (rollback compose) and exits 1.
+  that fails after the recreate rolls that broker back automatically (rollback compose) and checks the same
+  postconditions (healthy, zero URP, env, fingerprint, broker setting): verified -> ``RESTORED_VERIFIED``, exit 1;
+  broker up but a check failing -> ``BROKER_STARTED_RESTORATION_UNVERIFIED``, exit 3; not up -> ``ROLLBACK_FAILED``,
+  exit 3.
 
 Boundary: one broker per invocation; never two brokers down; no topic/ACL/TLS/volume/image/limit change; the admin
 CLI runs in a throwaway ``stable_admin``-equal container (``AdminContainerRunner``, cert dir mounted ro, never read).
@@ -299,19 +302,27 @@ def transition(live: Live, packet: Path, receipt: Mapping[str, Any], broker: str
                               "started_utc": dt.datetime.now(dt.timezone.utc).isoformat()}
     for argv in recreate_argv(packet, broker, which):
         live.execute(argv)
-    report["healthy_after_s"] = wait_for(live, f"{broker} healthy", lambda: healthy(live.inspect(broker)),
-                                         HEALTHY_TIMEOUT_S)
-    report["isr_restored_after_s"] = wait_for(live, "zero under-replicated partitions",
-                                              lambda: cluster_health(live.admin(describe_cmd()))["ok"], URP_TIMEOUT_S)
-    item = live.inspect(broker)
-    report["env_after"] = env_of(item).get(ENV_KEY)
-    report["fingerprint_diff"] = diff(receipt["brokers"][broker]["fingerprint"],
-                                      json.loads(json.dumps(fingerprint(item))))
-    report["broker_config"] = broker_setting(live.admin(broker_config_cmd(broker)))
-    expected_config = "false" if which == "candidate" else "true"
-    report["ok"] = (report["env_after"] == wanted and not report["fingerprint_diff"]
-                    and report["broker_config"] == expected_config)
+    report.update(postconditions(live, receipt, broker, which))
     return report
+
+
+def postconditions(live: Live, receipt: Mapping[str, Any], broker: str, which: str) -> dict[str, Any]:
+    """The same checks after a roll and after a rollback: healthy, zero under-replicated partitions, the env key
+    as wanted, no other inspect difference from the receipt, the broker's effective setting."""
+    wanted = CANDIDATE_VALUE if which == "candidate" else receipt["brokers"][broker]["env_before"]
+    out: dict[str, Any] = {}
+    out["healthy_after_s"] = wait_for(live, f"{broker} healthy", lambda: healthy(live.inspect(broker)),
+                                      HEALTHY_TIMEOUT_S)
+    out["isr_restored_after_s"] = wait_for(live, "zero under-replicated partitions",
+                                           lambda: cluster_health(live.admin(describe_cmd()))["ok"], URP_TIMEOUT_S)
+    item = live.inspect(broker)
+    out["env_after"] = env_of(item).get(ENV_KEY)
+    out["fingerprint_diff"] = diff(receipt["brokers"][broker]["fingerprint"],
+                                   json.loads(json.dumps(fingerprint(item))))
+    out["broker_config"] = broker_setting(live.admin(broker_config_cmd(broker)))
+    expected_config = "false" if which == "candidate" else "true"
+    out["ok"] = out["env_after"] == wanted and not out["fingerprint_diff"] and out["broker_config"] == expected_config
+    return out
 
 
 def main(argv: Sequence[str] | None = None, live_factory: Callable[[Path], Live] | None = None) -> int:
@@ -364,11 +375,20 @@ def main(argv: Sequence[str] | None = None, live_factory: Callable[[Path], Live]
             try:
                 for step in recreate_argv(packet, args.broker, "rollback"):
                     live.execute(step)
-                wait_for(live, f"{args.broker} healthy after rollback",
-                         lambda: healthy(live.inspect(args.broker)), HEALTHY_TIMEOUT_S)
-                report["auto_rollback"] = "done"
+                restored = postconditions(live, receipt, args.broker, "rollback")
             except (RuntimeError, subprocess.SubprocessError) as error:
-                report["auto_rollback"] = f"FAILED: {error}"
+                restored = {"ok": False, "error": str(error)}
+            report["rollback_postconditions"] = restored
+            if restored["ok"]:
+                report["auto_rollback"] = "RESTORED_VERIFIED"
+            else:
+                started = False
+                try:
+                    started = healthy(live.inspect(args.broker))
+                except (RuntimeError, subprocess.SubprocessError, OSError):
+                    pass
+                report["auto_rollback"] = ("BROKER_STARTED_RESTORATION_UNVERIFIED" if started
+                                           else "ROLLBACK_FAILED")
                 print(json.dumps(report, indent=1))
                 return 3
         print(json.dumps(report, indent=1))

@@ -25,6 +25,9 @@ Boundary:
   verify that no in-scope partition is still imbalanced; nothing to elect -> no election (idempotent);
 * ``--scope`` = ``all`` (default) | ``data`` | ``coordinators``: ``data`` restores data-partition
   balance without moving any coordinator;
+* ``--window-out`` appends the election as a DECLARED_MAINTENANCE_INTERRUPTION window (start / return /
+  verification clocks, moved coordinators and their server-side load lines from the new leaders' logs) for the
+  stage samplers' first-valid / caught-up computation; this tool proves leadership, not stall duration;
 * never an unclean election, never a broker/topic config change, never a reassignment; there is no
   rollback of an election other than another election (leadership is not data);
 * the Kafka CLI runs in a throwaway container equal to compose ``stable_admin``
@@ -51,6 +54,16 @@ from scripts.kafka_md_latest_marker_retention import foreign_lock  # noqa: E402
 from scripts.kn_state_topics_packet import AdminContainerRunner, CommandResult  # noqa: E402
 
 COORDINATOR_TOPICS = frozenset({"__consumer_offsets", "__transaction_state"})
+PRODUCTION_BROKER = "qdl_v2_stable_candidate-kafka{node}-1"
+# Kafka 4.2 coordinator load lines (CoordinatorRuntime / TransactionStateManager), server-side load duration.
+GROUP_LOAD_LINE = re.compile(
+    r"\[(?P<ts>\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3})\] INFO .*?Finished loading of metadata from "
+    r"(?P<tp>__consumer_offsets-\d+) with epoch (?P<epoch>\d+) in (?P<ms>\d+)ms where (?P<sched>\d+)ms was spent in "
+    r"the scheduler\. Loaded (?P<records>\d+) records which total to (?P<bytes>\d+) bytes")
+TXN_LOAD_LINE = re.compile(
+    r"\[(?P<ts>\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3})\] INFO \[Transaction State Manager \d+\]: Finished loading "
+    r"(?P<ids>\d+) transaction metadata from (?P<tp>__transaction_state-\d+) in (?P<ms>\d+) milliseconds, of which "
+    r"(?P<sched>\d+) milliseconds was spent in the scheduler")
 SCOPES = ("all", "data", "coordinators")
 ELECTION_FILE = "/run/qdl-election/partitions.json"
 
@@ -157,6 +170,40 @@ def _summary(report: Mapping[str, Any]) -> dict[str, Any]:
             "blocked": len(report["blocked"])}
 
 
+def coordinator_loads(moves: Sequence[Mapping[str, Any]], since_utc: dt.datetime,
+                      logs=None) -> list[dict[str, Any]]:
+    """Server-side load lines of the moved coordinator partitions, read from the new leader's container log
+    (``docker logs --since``, read-only). A move without a line is reported with ``load: None``."""
+    logs = logs or _docker_logs
+    found = []
+    for move in moves:
+        text = logs(PRODUCTION_BROKER.format(node=move["preferred"]), since_utc)
+        pattern = GROUP_LOAD_LINE if move["topic"] == "__consumer_offsets" else TXN_LOAD_LINE
+        tp = f"{move['topic']}-{move['partition']}"
+        lines = [m.groupdict() for m in pattern.finditer(text) if m.group("tp") == tp]
+        found.append({"partition": tp, "new_leader": move["preferred"], "load": lines[-1] if lines else None})
+    return found
+
+
+def _docker_logs(container: str, since_utc: dt.datetime) -> str:
+    import subprocess
+    result = subprocess.run(["docker", "logs", "--since", since_utc.strftime("%Y-%m-%dT%H:%M:%SZ"), container],
+                            capture_output=True, text=True, timeout=120)
+    return result.stdout + result.stderr
+
+
+def window_record(report: Mapping[str, Any]) -> dict[str, Any]:
+    """The declared maintenance interruption as a fault window (Codex K1): consumer-side first-valid / caught-up
+    clocks are computed by the stage samplers (G11 four timestamps) with ``injected_utc`` = election start and
+    ``cleared_utc`` = verification; this tool proves leadership only, never stall duration."""
+    return {"schema": "qdl.kafka.preferred-election-window.v1", "kind": "DECLARED_MAINTENANCE_INTERRUPTION",
+            "injected_utc": report.get("election_started_utc"), "election_returned_utc":
+            report.get("election_returned_utc"), "cleared_utc": report.get("verified_utc"),
+            "coordinator_moves": [f"{m['topic']}-{m['partition']}" for m in report.get("coordinator_moves", [])],
+            "coordinator_loads": report.get("coordinator_loads", []), "scope": report.get("scope"),
+            "consumer_clocks": "NOT_MEASURED_BY_THIS_TOOL"}
+
+
 def elect(runner, scope: str, workdir: Path) -> dict[str, Any]:
     before = observe(runner, scope)
     document = election_document(before)
@@ -171,8 +218,11 @@ def elect(runner, scope: str, workdir: Path) -> dict[str, Any]:
     runner.election_file = path
     started = dt.datetime.now(dt.timezone.utc)
     output = run(runner, election_cmd())
+    returned = dt.datetime.now(dt.timezone.utc)
     after = observe(runner, scope)
     report.update({"mode": "elected", "election_started_utc": started.isoformat(),
+                   "election_returned_utc": returned.isoformat(),
+                   "verified_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
                    "election_stdout_tail": output.stdout.strip()[-800:], "after": _summary(after),
                    "still_imbalanced": [*after["coordinator"], *after["data"]],
                    "leaders_after": after["leaders"]})
@@ -183,6 +233,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--scope", choices=SCOPES, default="all")
     parser.add_argument("--cert-dir", type=Path, help="stable cert dir (mounted ro); required to run")
+    parser.add_argument("--window-out", type=Path,
+                        help="--apply: append the election as a declared-interruption window (JSONL)")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--observe", action="store_true", help="read-only describe and imbalance report")
     mode.add_argument("--apply", action="store_true", help="run the preferred election once and verify")
@@ -211,7 +263,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                                   **report}, indent=1))
                 return 0
             report = elect(runner, args.scope, Path(tmp))
+        if report.get("mode") == "elected" and report["coordinator_moves"]:
+            try:
+                report["coordinator_loads"] = coordinator_loads(
+                    report["coordinator_moves"], dt.datetime.fromisoformat(report["election_started_utc"])
+                    - dt.timedelta(seconds=2))
+            except Exception as error:  # noqa: BLE001 - evidence only; the election already happened
+                report["coordinator_loads"] = [{"error": f"{type(error).__name__}: {error}"[:300]}]
         report["at_utc"] = dt.datetime.now(dt.timezone.utc).isoformat()
+        if args.window_out:
+            with args.window_out.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(window_record(report), sort_keys=True) + "\n")
         print(json.dumps(report, indent=1))
         return 0 if not report.get("still_imbalanced") else 1
     except Refused as error:
