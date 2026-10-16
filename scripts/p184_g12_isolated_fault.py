@@ -22,7 +22,11 @@ duplicates applied, native typed counters; never gating: lossless TRADE is G10's
 A run without the frozen predicate v2 never PASSes (``g12_receipt_creditable``: verdict
 v3 only). ``--run`` needs ``--auto-leader-rebalance true|false`` (the brokers'
 auto.leader.rebalance.enable, set to production's value and recorded in the receipt) and
-prechecks that each WriterClone runs the production native writer (``writer_clone_precheck``).
+``--production-parity FILE`` (``--parity-snapshot``: docker-inspect-derived production Kafka profile - rebalance,
+internal-topic decision C, md.latest A' - plus the deployed writer reference). The run mirrors that profile on its own
+brokers/topics (C applied before the baseline, A' at topic creation; ``production_parity`` MATCH or the run stops /
+is not credited) and prechecks that each WriterClone runs the deployed native writer (``writer_clone_precheck``:
+clone env/image == the writer's run-time inspect == the snapshot) with production Redis CPU parity.
 
 Feeds: the DR05 material is BOOK-only; the in-container ``--feeds`` step (network
 none) seals TRADE, QUOTE, BAR 1m and MARK_INDEX_PRICE for the same two instruments
@@ -367,13 +371,18 @@ def broker_port(node):
     return 9092 + 100 * (node - 1)
 
 
-def topics(ns, raw_partitions=1):
-    """name -> (partitions, config). RF3 and min ISR 2 everywhere (production shape)."""
+def topics(ns, raw_partitions=1, latest=None):
+    """name -> (partitions, config). RF3 and min ISR 2 everywhere (production shape). ``latest``: the mirrored
+    production profile's latest-topic keys (decision A': md.latest.v2 delete.retention.ms 21,600,000 since
+    2026-10-16); without a profile the latest topic keeps the bars tombstone lifetime (the pre-A' harness)."""
     namespace(ns)
     data = {"min.insync.replicas": "2"}
     state = {**data, "cleanup.policy": "compact", "delete.retention.ms": "604800000"}
+    if latest is not None and set(latest) - set(STATE_TOPIC_PROFILE_KEYS["latest"]):
+        raise ValueError("latest topic profile may only set " + ",".join(STATE_TOPIC_PROFILE_KEYS["latest"]))
     return {ns + ".raw": (raw_partitions, data), ns + ".canonical": (1, data), ns + ".quarantine": (1, data),
-            ns + ".latest": (3, state), ns + ".bars": (3, {**state, "min.compaction.lag.ms": "3600000"})}
+            ns + ".latest": (3, {**state, **(latest or {})}),
+            ns + ".bars": (3, {**state, "min.compaction.lag.ms": "3600000"})}
 
 
 def broker_password(text):
@@ -1479,11 +1488,14 @@ def evaluate(evidence):
     return out
 
 
-def g12_receipt_creditable(verdict):
+def g12_receipt_creditable(verdict, current_kafka=None):
     """(creditable, reason) of a saved G12 ``verdict.json`` (OF-G12-1/2): only a COMPLETED PASS of this oracle
-    (schema VERDICT_SCHEMA: pending blocks; the integrity part is report-only) under a frozen caught-up predicate v2.
-    Every earlier
-    receipt (verdict v1/v2, predicate v1, a re-analysis) is not credited, whatever its ``pass`` says."""
+    (schema VERDICT_SCHEMA: pending blocks; the integrity part is report-only) under a frozen caught-up predicate v2,
+    whose brokers mirrored a production Kafka profile (``production_parity`` MATCH, coordinator 2026-10-16).
+    ``current_kafka``: the production profile at credit time (a fresh ``--parity-snapshot``); when given, the run's
+    profile must equal it, so a run on a superseded config (e.g. rebalance=true before decision B) is not credited
+    as the final G12. Every earlier receipt (verdict v1/v2, predicate v1, a re-analysis) is not credited, whatever
+    its ``pass`` says."""
     if not isinstance(verdict, dict):
         return False, "not a verdict object"
     if verdict.get("schema") != VERDICT_SCHEMA:
@@ -1498,6 +1510,11 @@ def g12_receipt_creditable(verdict):
         return False, "three faults required"
     if verdict.get("pass") is not True:
         return False, "verdict not PASS"
+    config = verdict.get("broker_config") or {}
+    if config.get("production_parity") != "MATCH":
+        return False, f"production Kafka parity {config.get('production_parity')!r}, not MATCH"
+    if current_kafka is not None and config.get("kafka_profile") != validate_kafka_profile(current_kafka):
+        return False, "run Kafka profile is not the current production profile (superseded config)"
     return True, "PASS"
 
 
@@ -1544,7 +1561,9 @@ def create_topics(work):
         if time.monotonic() >= deadline:
             raise TimeoutError("three-broker cluster readiness")
         time.sleep(1)
-    wanted = topics(packet["namespace"], core_group(work)["raw_partitions"])
+    profile = handoff_kafka_profile(work)
+    wanted = topics(packet["namespace"], core_group(work)["raw_partitions"],
+                    latest=None if profile is None else profile["state_topics"]["latest"])
     futures = admin.create_topics([NewTopic(name, parts, len(BROKERS), config=dict(config))
                                    for name, (parts, config) in wanted.items()], request_timeout=30)
     for future in futures.values():
@@ -1576,32 +1595,69 @@ INTERNAL_TOPICS = ("__consumer_offsets", "__transaction_state")
 DECISION_C_KEYS = ("delete.retention.ms", "segment.ms")
 
 
-def internal_topic_configs(work):
-    """In-container: the effective topic-level overrides (DYNAMIC_TOPIC_CONFIG) of the two internal topics."""
+def internal_topic_configs(work, admin=None):
+    """In-container: the effective topic-level overrides (DYNAMIC_TOPIC_CONFIG) of the two internal topics and, under
+    the key ``latest``, of this namespace's latest state topic (decision A' parity)."""
     from confluent_kafka.admin import AdminClient, ConfigResource, ConfigSource
-    admin = AdminClient(_security(_packet(work)))
+    packet = _packet(work)
+    admin = admin or AdminClient(_security(packet))
     out = {}
-    for topic in INTERNAL_TOPICS:
+    for key, topic in (*((t, t) for t in INTERNAL_TOPICS), ("latest", packet["namespace"] + ".latest")):
         resource = ConfigResource(ConfigResource.Type.TOPIC, topic)
         try:
             entries = admin.describe_configs([resource], request_timeout=20)[resource].result(30)
         except Exception as error:  # noqa: BLE001 - an absent internal topic is a recorded state
-            out[topic] = {"absent": True, "error": str(error)[:200]}
+            out[key] = {"absent": True, "error": str(error)[:200]}
             continue
         overrides = {name: entry.value for name, entry in sorted(entries.items())
                      if entry.source == ConfigSource.DYNAMIC_TOPIC_CONFIG.value}
-        out[topic] = {"overrides": overrides, "sha256": hashlib.sha256(
+        out[key] = {"overrides": overrides, "sha256": hashlib.sha256(
             json.dumps(overrides, sort_keys=True).encode()).hexdigest()}
     return out
 
 
+def handoff_kafka_profile(work):
+    """The mirrored production Kafka profile sealed in handoff.json (None: no profile, e.g. core-group modes)."""
+    handoff = Path(work) / "handoff.json"
+    profile = json.loads(handoff.read_text()).get("kafka_profile") if handoff.is_file() else None
+    return None if profile is None else validate_kafka_profile(profile)
+
+
+def apply_internal_configs(work, seconds=180.0, pause=2.0):
+    """In-container: set the sealed profile's decision-C keys on the two internal topics (incremental SET, exactly
+    the profile keys; Kafka creates the topics lazily, so wait until both describe) and return the effective
+    overrides (internal_topic_configs). Production applied C to running topics the same way (dynamic config)."""
+    from confluent_kafka.admin import AdminClient, AlterConfigOpType, ConfigEntry, ConfigResource
+    profile = handoff_kafka_profile(work)
+    if profile is None:
+        raise ValueError("no kafka_profile sealed in handoff.json")
+    admin = AdminClient(_security(_packet(work)))
+    deadline = time.monotonic() + seconds
+    while True:
+        seen = internal_topic_configs(work, admin)
+        if all("overrides" in seen[t] for t in INTERNAL_TOPICS):
+            break
+        if time.monotonic() >= deadline:
+            raise TimeoutError("internal topics not created: " + json.dumps(seen)[:300])
+        time.sleep(pause)
+    for topic in INTERNAL_TOPICS:
+        keys = profile["internal_topics"][topic]
+        if not keys:
+            continue
+        resource = ConfigResource(ConfigResource.Type.TOPIC, topic, incremental_configs=[
+            ConfigEntry(k, v, incremental_operation=AlterConfigOpType.SET) for k, v in sorted(keys.items())])
+        admin.incremental_alter_configs([resource], request_timeout=20)[resource].result(30)
+    return internal_topic_configs(work, admin)
+
+
 def internal_topic_parity(snapshots):
     """``snapshots``: phase -> internal_topic_configs(). Classifies the run's decision-C state."""
-    if set(snapshots) != {"before", "after"} or any(
-            "overrides" not in snapshots[p].get(t, {}) for p in snapshots for t in INTERNAL_TOPICS):
+    phases = ("before", "after")  # other phases (``applied``) are recorded but do not classify
+    if not set(phases) <= set(snapshots) or any(
+            "overrides" not in (snapshots[p].get(t) or {}) for p in phases for t in INTERNAL_TOPICS):
         return "NOT_MEASURED"
     keys = {p: {t: {k: v for k, v in snapshots[p][t]["overrides"].items() if k in DECISION_C_KEYS}
-                for t in INTERNAL_TOPICS} for p in snapshots}
+                for t in INTERNAL_TOPICS} for p in phases}
     if keys["before"] != keys["after"]:
         return "CHANGED_DURING_RUN"
     return "C_PRESENT" if any(keys["before"].values()) else "C_ABSENT_B_ONLY"
@@ -2715,6 +2771,14 @@ def host_resources():
     return {"disk_free_bytes": free, "mem_available_bytes": available}
 
 
+def docker_inspect_record(name):
+    """One container's ``docker inspect`` record (read-only)."""
+    rows = json.loads(sh(["docker", "inspect", name], timeout=30) or "[]")
+    if len(rows) != 1:
+        raise RuntimeError("container not found " + name)
+    return rows[0]
+
+
 def container_image(name):
     """The image ID a container actually runs (read-only docker inspect)."""
     return sh(["docker", "inspect", "--format", "{{.Image}}", name], timeout=30).strip()
@@ -2751,21 +2815,20 @@ def events_argv(ns, since_s, until_s):
             "--filter", "event=oom", "--filter", "event=kill", "--format", "{{json .}}"]
 
 
-# WriterClone precheck (coordinator 2026-10-16): G12 judges the production writer path, i.e. the native (B16) writer.
-# The clone copies the deployed writer's env (WriterClone.writer_args, TS scripts/p184_dr05_isolated.py); the precheck
-# requires the approved native mode exactly (TS scripts/p184_n1_writer_cutover.py NATIVE_ENV @8828449b) plus the
-# production tuning (B15/B16: 16-row native apply sub-units, BOOK snapshot batch wait 0), and the clone image equal to
-# the deployed writer's image. Values here are non-secret configuration; nothing else of the env is recorded.
-WRITER_NATIVE_ENV = {
-    "MARKET_DATA_NATIVE_FEEDS": "TRADE,QUOTE",
-    "MARKET_DATA_NATIVE_FLAT_V2": "1",
-    "MARKET_DATA_NATIVE_BINARY": "/usr/local/bin/market-data-writer",
-    "MARKET_DATA_NATIVE_REQUIRE_RESUME": "1",
-    "MARKET_DATA_NATIVE_EVENTS": "1024",
-    "MARKET_DATA_NATIVE_APPLY_MAX_ROWS": "16",
-}
-WRITER_PRODUCTION_ENV = {"DATA_LAYER_V2_BOOK_SNAPSHOT_BATCH_MAX_WAIT_MS": "0"}
+# WriterClone precheck (coordinator 2026-10-16, run-time reference 2026-10-16): G12 judges the production writer
+# path, i.e. whatever native writer is DEPLOYED when the run starts (B16 then B17 ...), never a hard-coded build. The
+# clone copies the deployed writer's env (WriterClone.writer_args, TS scripts/p184_dr05_isolated.py) from its own
+# ``docker inspect`` of TS_WRITER; the precheck compares the clone's writer view (every MARKET_DATA_NATIVE_* key plus
+# the non-secret tuning keys below) and image with that run-time inspect, requires the deployed writer to run a native
+# feed, and, given the parity snapshot of ``--production-parity`` (taken from docker inspect before the run), that the
+# deployed writer did not change since the snapshot. Only these non-secret configuration keys are ever recorded.
+WRITER_ENV_PREFIXES = ("MARKET_DATA_NATIVE_",)
+WRITER_TUNING_KEYS = ("DATA_LAYER_V2_BOOK_SNAPSHOT_BATCH_MAX_WAIT_MS", "DATA_LAYER_V2_STREAM_BATCH_MAX_ITEMS",
+                      "DATA_LAYER_V2_STREAM_BATCH_MAX_WAIT_MS", "DATA_LAYER_V2_STREAM_PIPELINE_DEPTH",
+                      "DATA_LAYER_V2_STREAM_READ_AHEAD_EVENTS", "DATA_LAYER_V2_MAX_BUFFER_EVENTS",
+                      "DATA_LAYER_V2_MAX_RECORDS_PER_RESPONSE", "MARKET_DATA_FIXED_WORKERS")
 WRITER_PRECHECK_FILE = "writer-precheck.json"
+DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 def argv_env(argv):
@@ -2778,22 +2841,177 @@ def argv_env(argv):
     return env
 
 
-def writer_clone_precheck(writer_argv, clone_image, deployed_image):
-    """Does this WriterClone run the production native writer? {ok, problems, native_env, production_env, images}."""
-    env = argv_env(writer_argv)
-    native = {k: v for k, v in env.items() if k.startswith("MARKET_DATA_NATIVE_")}
+def writer_env_view(env):
+    """The non-secret writer configuration G12 compares: MARKET_DATA_NATIVE_* and WRITER_TUNING_KEYS."""
+    return {k: env[k] for k in sorted(env) if k.startswith(WRITER_ENV_PREFIXES) or k in WRITER_TUNING_KEYS}
+
+
+def writer_reference(inspect):
+    """{container, image, env view} of one ``docker inspect`` record of the deployed writer."""
+    inspect = inspect or {}
+    env = dict(item.split("=", 1) for item in (inspect.get("Config") or {}).get("Env") or [] if "=" in item)
+    return {"container": TS_WRITER, "image": inspect.get("Image"), "env": writer_env_view(env)}
+
+
+def writer_clone_precheck(writer_argv, clone_image, deployed, reference=None):
+    """Does this WriterClone run the deployed native writer? ``deployed``: writer_reference() of the WriterClone's own
+    run-time inspect; ``reference``: the parity snapshot's writer (optional). {ok, problems, envs, images}."""
+    deployed = deployed or {}
+    deployed_env, deployed_image = deployed.get("env") or {}, deployed.get("image")
+    clone_env = writer_env_view(argv_env(writer_argv))
     problems = []
-    if native != WRITER_NATIVE_ENV:
-        missing = sorted(k for k in WRITER_NATIVE_ENV if native.get(k) != WRITER_NATIVE_ENV[k])
-        extra = sorted(k for k in native if k not in WRITER_NATIVE_ENV)
-        problems.append(f"native env differs from production (wrong/missing {missing}, extra {extra})")
-    production = {k: env.get(k) for k in WRITER_PRODUCTION_ENV}
-    if production != WRITER_PRODUCTION_ENV:
-        problems.append(f"production writer env differs: {production} (expected {WRITER_PRODUCTION_ENV})")
-    if not clone_image or clone_image != deployed_image:
+    if not deployed_env.get("MARKET_DATA_NATIVE_FEEDS"):
+        problems.append("deployed writer runs no native feed (MARKET_DATA_NATIVE_FEEDS empty/absent): G12 judges the "
+                        "native writer path")
+    if clone_env != deployed_env:
+        differ = sorted(k for k in set(clone_env) | set(deployed_env) if clone_env.get(k) != deployed_env.get(k))
+        problems.append(f"clone writer env differs from the deployed writer on {differ}")
+    if not clone_image or not DIGEST_RE.fullmatch(str(deployed_image)) or clone_image != deployed_image:
         problems.append(f"clone image {clone_image} is not the deployed writer image {deployed_image}")
-    return {"ok": not problems, "problems": problems, "native_env": native, "production_env": production,
-            "clone_image": clone_image, "deployed_writer_image": deployed_image}
+    if reference is not None:
+        if reference.get("image") != deployed_image:
+            problems.append(f"deployed writer image {deployed_image} != parity snapshot {reference.get('image')}")
+        if (reference.get("env") or {}) != deployed_env:
+            differ = sorted(k for k in set(reference.get("env") or {}) | set(deployed_env)
+                            if (reference.get("env") or {}).get(k) != deployed_env.get(k))
+            problems.append(f"deployed writer env changed since the parity snapshot on {differ}")
+    return {"ok": not problems, "problems": problems, "clone_env": clone_env, "deployed_env": deployed_env,
+            "clone_image": clone_image, "deployed_writer_image": deployed_image,
+            "reference_image": None if reference is None else reference.get("image")}
+
+
+def clone_redis_cpu_parity(nano_cpus):
+    """WriterClone Redis CPU vs production ``redis_marketdata`` (no CPU quota; Redis runs commands on one thread).
+    Burst amendment-1 harness-parity (TS 3a09fe19): uncapped or >= 1.0 CPU is parity; a cap below one CPU throttled
+    the isolated Redis and is refused."""
+    nano = int(nano_cpus or 0)
+    if nano == 0:
+        return {"nano_cpus": 0, "parity": "UNCAPPED", "ok": True}
+    return {"nano_cpus": nano, "parity": "CAPPED_GE_1" if nano >= 10**9 else "CAPPED_BELOW_1", "ok": nano >= 10**9}
+
+
+# Production parity snapshot (``--production-parity``, coordinator 2026-10-16): the Kafka configuration G12 must mirror
+# and the deployed writer, both derived at run time, never hard-coded here.
+# - auto.leader.rebalance.enable: KAFKA_AUTO_LEADER_REBALANCE_ENABLE of the production kafka1-3 containers (docker
+#   inspect env; absent = the Kafka default true; brokers that disagree = a roll in progress -> refused).
+# - internal-topic decision C: scripts/kafka_internal_topic_compaction.PLAN (PLAN_STATUS MEASURED, owner "B + C 10
+#   min"); production's effective overrides are confirmed read-only with that tool's --observe before the run.
+# - A': md.latest.v2 delete.retention.ms from the budget (scripts/kafka_md_latest_marker_retention.contract()).
+PARITY_SCHEMA = "p184.g12.production-parity.v1"
+PRODUCTION_KAFKA = tuple(f"qdl_v2_stable_candidate-kafka{n}-1" for n in BROKERS)
+REBALANCE_ENV = "KAFKA_AUTO_LEADER_REBALANCE_ENABLE"
+STATE_TOPIC_PROFILE_KEYS = {"latest": ("delete.retention.ms",)}
+
+
+def production_rebalance(inspects):
+    """bool auto.leader.rebalance.enable of the production brokers from their docker inspect records."""
+    values = {}
+    for name in PRODUCTION_KAFKA:
+        record = inspects.get(name)
+        if not record:
+            raise ValueError(f"production broker {name} not inspected")
+        env = dict(item.split("=", 1) for item in (record.get("Config") or {}).get("Env") or [] if "=" in item)
+        raw = env.get(REBALANCE_ENV)
+        if raw is None:
+            values[name] = True  # Kafka's default
+        elif raw.strip().lower() in ("true", "false"):
+            values[name] = raw.strip().lower() == "true"
+        else:
+            raise ValueError(f"{name} {REBALANCE_ENV}={raw!r} is not true|false")
+    if len(set(values.values())) != 1:
+        raise ValueError(f"production brokers disagree on auto.leader.rebalance.enable {values} (roll in progress)")
+    return next(iter(values.values()))
+
+
+def kafka_profile(auto_leader_rebalance, internal_topics, latest_delete_retention_ms):
+    """The Kafka profile G12 mirrors; validated (validate_kafka_profile)."""
+    return validate_kafka_profile({
+        "auto.leader.rebalance.enable": auto_leader_rebalance,
+        "internal_topics": {t: dict(internal_topics.get(t) or {}) for t in INTERNAL_TOPICS},
+        "state_topics": {"latest": {"delete.retention.ms": str(latest_delete_retention_ms)}}})
+
+
+def validate_kafka_profile(profile):
+    if not isinstance(profile, dict) or type(profile.get("auto.leader.rebalance.enable")) is not bool:
+        raise ValueError("kafka profile: auto.leader.rebalance.enable must be a bool")
+    internal = profile.get("internal_topics")
+    if not isinstance(internal, dict) or set(internal) != set(INTERNAL_TOPICS):
+        raise ValueError(f"kafka profile: internal_topics must name exactly {INTERNAL_TOPICS}")
+    for topic, keys in internal.items():
+        if not isinstance(keys, dict) or set(keys) - set(DECISION_C_KEYS) or not all(
+                isinstance(v, str) and v.isdigit() for v in keys.values()):
+            raise ValueError(f"kafka profile: {topic} may only set {DECISION_C_KEYS} to digit strings")
+    state = profile.get("state_topics")
+    if not isinstance(state, dict) or set(state) != set(STATE_TOPIC_PROFILE_KEYS):
+        raise ValueError("kafka profile: state_topics must name exactly " + ",".join(STATE_TOPIC_PROFILE_KEYS))
+    for topic, keys in state.items():
+        if not isinstance(keys, dict) or set(keys) != set(STATE_TOPIC_PROFILE_KEYS[topic]) or not all(
+                isinstance(v, str) and v.isdigit() for v in keys.values()):
+            raise ValueError(f"kafka profile: state topic {topic} must set exactly {STATE_TOPIC_PROFILE_KEYS[topic]}")
+    return profile
+
+
+def validate_parity(doc):
+    """A ``--production-parity`` document: schema, kafka profile, writer reference (image digest, env view keys)."""
+    if not isinstance(doc, dict) or doc.get("schema") != PARITY_SCHEMA:
+        raise ValueError(f"production parity schema must be {PARITY_SCHEMA}")
+    validate_kafka_profile(doc.get("kafka"))
+    writer = doc.get("writer")
+    if not isinstance(writer, dict) or not DIGEST_RE.fullmatch(str(writer.get("image"))):
+        raise ValueError("production parity: writer.image must be a sha256 image ID")
+    env = writer.get("env")
+    if not isinstance(env, dict) or env != writer_env_view(env) or not env.get("MARKET_DATA_NATIVE_FEEDS"):
+        raise ValueError("production parity: writer.env must be a native writer env view (no other key)")
+    return doc
+
+
+def production_parity_snapshot(inspect, now=None):
+    """Read-only (docker inspect + committed repo files): the parity document of the CURRENT production."""
+    from scripts.kafka_internal_topic_compaction import PLAN, PLAN_STATUS, PLAN_EVIDENCE
+    from scripts.kafka_md_latest_marker_retention import contract
+    if PLAN_STATUS != "MEASURED":
+        raise ValueError(f"decision C plan is {PLAN_STATUS}, not MEASURED")
+    brokers = {name: inspect(name) for name in PRODUCTION_KAFKA}
+    terms = contract()
+    doc = {"schema": PARITY_SCHEMA, "taken_utc": now or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+           "kafka": kafka_profile(production_rebalance(brokers), PLAN, terms["target"]),
+           "kafka_brokers": {name: {"image": (r or {}).get("Image"),
+                                    REBALANCE_ENV: dict(item.split("=", 1) for item in
+                                                        ((r or {}).get("Config") or {}).get("Env") or []
+                                                        if "=" in item).get(REBALANCE_ENV)}
+                             for name, r in brokers.items()},
+           "writer": writer_reference(inspect(TS_WRITER)),
+           "sources": {"auto.leader.rebalance.enable": f"docker inspect {', '.join(PRODUCTION_KAFKA)} env "
+                                                       f"{REBALANCE_ENV} (absent = Kafka default true)",
+                       "internal_topics": "scripts/kafka_internal_topic_compaction.py PLAN (MEASURED): "
+                                          + str(PLAN_EVIDENCE)[:160],
+                       "state_topics.latest": "config/v2/kn-v220-candidate-budget.json retention.state_topics "
+                                              "md.latest.v2 delete.retention.ms (decision A')",
+                       "writer": f"docker inspect {TS_WRITER} (image + env view: MARKET_DATA_NATIVE_* and "
+                                 "WRITER_TUNING_KEYS only)"},
+           "not_checked_here": "production internal-topic overrides are not readable by docker inspect: confirm with "
+                               "scripts/kafka_internal_topic_compaction.py --observe (read-only) before the run"}
+    return validate_parity(doc)
+
+
+def production_parity(profile, snapshots):
+    """G12 broker_config vs the mirrored production profile: MATCH only when the effective decision-C keys of both
+    internal topics and the latest topic's A' key equal the profile before AND after the faults."""
+    if not profile:
+        return "NO_PROFILE"
+    if not {"before", "after"} <= set(snapshots) or any(
+            "overrides" not in (snapshots[p].get(t) or {}) for p in ("before", "after")
+            for t in (*INTERNAL_TOPICS, "latest")):
+        return "NOT_MEASURED"
+    want = {**{t: profile["internal_topics"][t] for t in INTERNAL_TOPICS}, **profile["state_topics"]}
+    seen = {}
+    for phase in ("before", "after"):
+        seen[phase] = {t: {k: v for k, v in snapshots[phase][t]["overrides"].items()
+                           if k in (DECISION_C_KEYS if t in INTERNAL_TOPICS else STATE_TOPIC_PROFILE_KEYS[t])}
+                       for t in want}
+    if seen["before"] != seen["after"]:
+        return "CHANGED_DURING_RUN"
+    return "MATCH" if seen["before"] == want else "MISMATCH"
 
 
 def heartbeat_integrity_exposed(sampler_rows):
@@ -2807,9 +3025,21 @@ def heartbeat_integrity_exposed(sampler_rows):
     return out
 
 
-def load_writer_clone():
+def writer_clone_source(ts_root=None):
+    """Provenance of the TS WriterClone module G12 loads: path, sha256 and the TS checkout HEAD (host git read)."""
+    root = Path(ts_root or TS_ROOT)
+    path = root / "scripts/p184_dr05_isolated.py"
+    head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=30)
+    dirty = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no", "--",
+                            "scripts/p184_dr05_isolated.py"], capture_output=True, text=True, timeout=30)
+    return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "ts_head": head.stdout.strip() if head.returncode == 0 else None,
+            "tracked_edit": bool(dirty.stdout.strip()) if dirty.returncode == 0 else None}
+
+
+def load_writer_clone(ts_root=None):
     import importlib.util
-    path = TS_ROOT / "scripts/p184_dr05_isolated.py"
+    path = Path(ts_root or TS_ROOT) / "scripts/p184_dr05_isolated.py"
     spec = importlib.util.spec_from_file_location("ts_p184_dr05_isolated", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -2862,6 +3092,10 @@ class Run:
         # value on 2026-10-16 is true. Recorded in handoff.json, the notes and verdict.json.
         self.auto_leader_rebalance = True
         self.writer_precheck = {}  # venue -> writer_clone_precheck + heartbeat trade_integrity (report)
+        # ``--production-parity`` document (validate_parity): the Kafka profile this run mirrors and the deployed
+        # writer reference; None only for the core-group modes and unit tests.
+        self.parity = None
+        self.ts_root = TS_ROOT  # ``--ts-root``: the TS checkout WriterClone is loaded from (provenance recorded)
 
     def use_capture_adapter(self, raw_sha256):
         """TEST_ONLY real-capture replay: keep the source catalog adapter_version (CAPTURE adapter mode).
@@ -2977,8 +3211,23 @@ class Run:
 
     def broker_config(self):
         snapshots = getattr(self, "internal_topics", {})
+        profile = (getattr(self, "parity", None) or {}).get("kafka")
         return {"auto.leader.rebalance.enable": self.auto_leader_rebalance, "internal_topics": snapshots,
-                "internal_topic_parity": internal_topic_parity(snapshots)}
+                "internal_topic_parity": internal_topic_parity(snapshots), "kafka_profile": profile,
+                "production_parity": production_parity(profile, snapshots)}
+
+    def apply_kafka_profile(self):
+        """Mirror production's dynamic topic configs (decision C) on this run's internal topics before the baseline;
+        STOP unless the effective decision-C keys then equal the profile (A' is set at topic creation)."""
+        profile = self.parity["kafka"]
+        self.internal_topics = getattr(self, "internal_topics", {})
+        applied = json.loads(sh(self.helper(self.ns, self.work, ["--apply-internal-configs", "/work"]),
+                                timeout=300).strip().splitlines()[-1])
+        self.internal_topics["applied"] = applied
+        self.note("internal_topics", phase="applied", configs=applied)
+        verdict = production_parity(profile, {"before": applied, "after": applied})
+        if verdict != "MATCH":
+            raise RuntimeError(f"STOP kafka profile not mirrored after apply: {verdict}")
 
     def record_internal_topics(self, phase):
         """Effective internal-topic overrides at ``phase`` (before the faults / after them); a failed read is
@@ -3125,7 +3374,8 @@ class Run:
             "namespace": self.ns, "status": "PREPARED_HANDOFF_NOT_RUN", "provenance": "TEST_ONLY",
             "level": "ISOLATED_FAULT", "acceptance": False, "material_ready": False,
             "images": dr05_images(self.images), "g12_images": self.images,
-            "query_code": self.query_code, "broker_config": self.broker_config(), **capture}, indent=2) + "\n")
+            "query_code": self.query_code, "broker_config": self.broker_config(),
+            "kafka_profile": (self.parity or {}).get("kafka"), **capture}, indent=2) + "\n")
         self.note("broker_config", **self.broker_config())
         sh(self.helper(self.ns, self.work, ["--material", "/work", "--core-config", "/export.json"],
                        network="none", script="scripts/p184_dr05_dl_fault.py",
@@ -3189,7 +3439,8 @@ class Run:
         self.expected.add("publisher")
         self.verify_image("publisher")
         self.note("publisher_monitor_started", seconds=int(remaining))
-        iso = load_writer_clone()
+        iso = load_writer_clone(self.ts_root)
+        self.writer_precheck["writer_clone_source"] = writer_clone_source(self.ts_root)
         import tempfile
         logs = self.work / "tslogs"
         logs.mkdir(mode=0o700)
@@ -3208,7 +3459,8 @@ class Run:
             clone.redis_name = f"{self.ns}-tsredis-{label}"
             clone.pg_name = f"{self.ns}-tspg-{label}"
             clone.deadline = clone.clock() + LIMITS["clone_ready_s"]
-            check = writer_clone_precheck(clone.writer_args(), self.images["ts"], (clone.inspect or {}).get("Image"))
+            check = writer_clone_precheck(clone.writer_args(), self.images["ts"], writer_reference(clone.inspect),
+                                          (self.parity or {}).get("writer"))
             self.writer_precheck[venue] = check
             self.write_writer_precheck()
             self.note("writer_clone_precheck", venue=venue, **check)
@@ -3220,6 +3472,13 @@ class Run:
             self.expected |= {f"tswriter-{label}", f"tsredis-{label}", f"tspg-{label}"}
             for kind in ("tswriter", "tsredis", "tspg"):
                 self.verify_image(f"{kind}-{label}")
+            redis_cpu = clone_redis_cpu_parity(sh(["docker", "inspect", "--format", "{{.HostConfig.NanoCpus}}",
+                                                   clone.redis_name], timeout=30).strip() or 0)
+            check["redis_cpu"] = redis_cpu
+            self.write_writer_precheck()
+            self.note("writer_clone_redis_cpu", venue=venue, **redis_cpu)
+            if not redis_cpu["ok"]:
+                raise RuntimeError(f"STOP writer clone {venue} Redis CPU below production parity: {redis_cpu}")
         self.note("ts_clones_started", names=[c.name for c in self.clones.values()])
         sh(sampler_argv(self.ns, self.evidence, remaining - 30, images=self.images))
         self.expected.add("sampler")
@@ -3503,11 +3762,20 @@ def erase_private(work):
     shutil.rmtree(work / "tslogs", ignore_errors=True)
 
 
-def orchestrate(base, export, ns, images=None, query_code="worktree", auto_leader_rebalance=None):
+def orchestrate(base, export, ns, images=None, query_code="worktree", auto_leader_rebalance=None, parity=None,
+                ts_root=None):
     if type(auto_leader_rebalance) is not bool:
         raise ValueError("--run needs an explicit --auto-leader-rebalance true|false (production's value)")
+    if parity is not None:
+        validate_parity(parity)
+        if parity["kafka"]["auto.leader.rebalance.enable"] is not auto_leader_rebalance:
+            raise ValueError("--auto-leader-rebalance differs from the production parity snapshot "
+                             f"({parity['kafka']['auto.leader.rebalance.enable']})")
     run = Run(base, export, ns, images, query_code)
     run.auto_leader_rebalance = auto_leader_rebalance
+    run.parity = parity
+    if ts_root is not None:
+        run.ts_root = Path(ts_root)
 
     def expire(_signum, _frame):
         raise TimeoutError("G12 orchestrator absolute deadline")
@@ -3522,6 +3790,8 @@ def orchestrate(base, export, ns, images=None, query_code="worktree", auto_leade
     try:
         run.prepare()
         run.up()
+        if run.parity is not None:
+            run.apply_kafka_profile()
         run.baseline()
         run.record_internal_topics("before")
         for name, kind in (("broker_stop_start", "broker"), ("projector_restart", "projector"),
@@ -3543,7 +3813,8 @@ def orchestrate(base, export, ns, images=None, query_code="worktree", auto_leade
                     config = run.broker_config()
                 except Exception as exc:  # noqa: BLE001 - the verdict is written regardless
                     config = {"auto.leader.rebalance.enable": auto_leader_rebalance,
-                              "internal_topic_parity": "NOT_MEASURED", "error": f"{type(exc).__name__}: {exc}"}
+                              "internal_topic_parity": "NOT_MEASURED", "production_parity": "NOT_MEASURED",
+                              "error": f"{type(exc).__name__}: {exc}"}
                 verdict.update(status=status, error=error, namespace=ns, images=run.images,
                                query_code=run.query_code, broker_config=config)
                 (run.evidence / "verdict.json").write_text(json.dumps(verdict, indent=2) + "\n")
@@ -4679,7 +4950,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     mode = parser.add_mutually_exclusive_group(required=True)
     for flag in ("run", "core_group", "core_group_simultaneous", "core_group_accept", "down", "analyze", "topics", "publish", "monitor", "feeds",
-                 "query", "internal_configs"):
+                 "query", "internal_configs", "apply_internal_configs", "parity_snapshot", "credit"):
         mode.add_argument("--" + flag.replace("_", "-"), type=Path)
     parser.add_argument("--export", type=Path)
     parser.add_argument("--namespace")
@@ -4690,7 +4961,13 @@ def main(argv=None):
     parser.add_argument("--image", action="append", default=[], metavar="ROLE=sha256:<64hex>")
     parser.add_argument("--query-code", choices=QUERY_CODE, default="worktree")
     parser.add_argument("--auto-leader-rebalance", choices=("true", "false"),
-                        help="--run (required): brokers' auto.leader.rebalance.enable, production's value; recorded")
+                        help="--run (required): brokers' auto.leader.rebalance.enable, production's value; recorded; "
+                             "must equal the --production-parity snapshot")
+    parser.add_argument("--production-parity", type=Path,
+                        help="--run (required) / --credit: a --parity-snapshot document (Kafka profile mirrored on the "
+                             "brokers/topics + deployed writer reference); --credit: the CURRENT production snapshot")
+    parser.add_argument("--ts-root", type=Path,
+                        help="--run: TS checkout the WriterClone module is loaded from (default %s)" % TS_ROOT)
     parser.add_argument("--new-core", metavar="sha256:<64hex>",
                         help="--core-group: the core image each member is rolled onto (old: the image set's core)")
     parser.add_argument("--prereg", type=Path,
@@ -4735,12 +5012,36 @@ def main(argv=None):
         return orchestrate_core_group(args.core_group or args.core_group_simultaneous, args.export, args.namespace,
                                       images, args.new_core, profile=profile,
                                       simultaneous=args.core_group_simultaneous is not None)
+    if args.parity_snapshot:
+        doc = production_parity_snapshot(docker_inspect_record)
+        with Path(args.parity_snapshot).open("x") as handle:  # exclusive create: a snapshot is never overwritten
+            handle.write(json.dumps(doc, indent=2, sort_keys=True) + "\n")
+        print(json.dumps({"written": str(args.parity_snapshot), "kafka": doc["kafka"],
+                          "writer_image": doc["writer"]["image"]}, sort_keys=True))
+        return 0
+    if args.credit:
+        verdict = json.loads((args.credit / "evidence" / "verdict.json").read_text())
+        current = None
+        if args.production_parity is not None:
+            current = validate_parity(json.loads(args.production_parity.read_text()))["kafka"]
+        ok, reason = g12_receipt_creditable(verdict, current)
+        print(json.dumps({"creditable": ok, "reason": reason, "final_profile_checked": current is not None,
+                          "production_parity": (verdict.get("broker_config") or {}).get("production_parity"),
+                          "kafka_profile": (verdict.get("broker_config") or {}).get("kafka_profile")}, sort_keys=True))
+        return 0 if ok else 1
     if args.run:
-        if args.export is None or args.namespace is None or args.auto_leader_rebalance is None:
-            parser.error("--run needs --export, --namespace and --auto-leader-rebalance true|false")
+        if args.export is None or args.namespace is None or args.auto_leader_rebalance is None \
+                or args.production_parity is None:
+            parser.error("--run needs --export, --namespace, --auto-leader-rebalance true|false and "
+                         "--production-parity FILE")
         images = resolve_image_set(args.image_set, args.image)
+        parity = validate_parity(json.loads(args.production_parity.read_text()))
+        if parity["writer"]["image"] != images["ts"]:
+            parser.error(f"image set ts {images['ts']} is not the deployed writer {parity['writer']['image']} "
+                         "of the parity snapshot")
         return orchestrate(args.run, args.export, args.namespace, images, args.query_code,
-                           auto_leader_rebalance=args.auto_leader_rebalance == "true")
+                           auto_leader_rebalance=args.auto_leader_rebalance == "true", parity=parity,
+                           ts_root=args.ts_root)
     if args.down:
         ns = namespace(json.loads((args.down / "work" / "handoff.json").read_text())["namespace"])
         report = teardown(ns)
@@ -4759,6 +5060,9 @@ def main(argv=None):
         return 0
     if args.internal_configs:
         print(json.dumps(internal_topic_configs(args.internal_configs), sort_keys=True))
+        return 0
+    if args.apply_internal_configs:
+        print(json.dumps(apply_internal_configs(args.apply_internal_configs), sort_keys=True))
         return 0
     if args.seconds is None and not args.topics:
         parser.error("--seconds required")

@@ -1001,6 +1001,8 @@ class SourceExportTests(unittest.TestCase):
             receipts.mkdir()
             with FakeGit(committed, docker_image=PY).patch(), \
                     mock.patch.object(g13, "checkout_problems", return_value=[]), \
+                    mock.patch.object(g13, "deployed_inventory", return_value={}) as inventory, \
+                    mock.patch.object(g13, "deployed_mismatches", return_value=[]), \
                     mock.patch.object(g13, "run_step", side_effect=fake_step), redirect_stdout(io.StringIO()):
                 code = g13.main(["--python-image", PY, "--rust-image", RUST, "--python-image-ref",
                                  FINAL["python_ref"], "--writer-image", WRITER, "--ts-source-sha", FINAL["ts_sha"],
@@ -1008,6 +1010,7 @@ class SourceExportTests(unittest.TestCase):
                                  "dr05-upstream", "--inputs", self.inputs_file(tmp), "--receipts", str(receipts),
                                  "--ts-root", str(TS_MATRIX_V2.parents[4])])
             self.assertEqual(code, 0)
+            inventory.assert_called_once()  # dr05-upstream clones the deployed writer: final-writer check first
             self.assertEqual(seen, [(True, FIXTURE_TREE, False, True)])
             (root,) = receipts.iterdir()
             self.assertFalse((root / g13.SOURCE_DIR).exists())
@@ -1026,3 +1029,29 @@ class SourceExportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DeployedInventoryScopeTests(unittest.TestCase):
+    """B17 parity (2026-10-16): a step whose WriterClone copies the deployed writer env runs only when the deployed
+    writer is the final writer, so the inventory check covers dr05-upstream alone too."""
+
+    def test_writer_clone_steps_need_the_inventory(self):
+        self.assertTrue(g13.needs_deployed_inventory(["dr05-upstream"]))
+        self.assertTrue(g13.needs_deployed_inventory(["dr05-transport"]))
+        self.assertTrue(g13.needs_deployed_inventory(["dr08-isolated"]))
+        self.assertTrue(g13.needs_deployed_inventory(["dr07-reference"]))
+        self.assertFalse(g13.needs_deployed_inventory([]))
+        self.assertEqual(set(g13.WRITER_CLONE_STEPS) - set(g13.STEPS), set())
+
+    def test_writer_mismatch_is_reported(self):
+        final = {"roles": {r: "sha256:" + ("a" if k == "python" else "b") * 64 for r, k in g13.ROLE_IMAGE.items()},
+                 "writer": "sha256:" + "c" * 64}
+        rec = lambda image: {"image": image, "status": "running", "running": True, "exit_code": 0,
+                             "oom_killed": False}
+        inv = {g13.STACK + r + "-1": rec(i) for r, i in final["roles"].items()}
+        inv.update({g13.STACK + r + "-1": dict(rec("sha256:" + "f" * 64), **(
+            {"status": "exited", "running": False} if r in g13.INIT_ROLES else {})) for r in g13.INFRA_ROLES})
+        inv[g13.WRITER] = rec(final["writer"])
+        self.assertEqual(g13.deployed_mismatches(inv, final), [])
+        inv[g13.WRITER] = rec("sha256:" + "d" * 64)  # e.g. B16 still deployed while --writer-image is B17
+        self.assertTrue(any(g13.WRITER in m for m in g13.deployed_mismatches(inv, final)))

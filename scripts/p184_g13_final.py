@@ -116,6 +116,10 @@ HARNESS_SOURCE = {"query": ("query_kn_1", "query_kn_2"), "python": ("query_kn_1"
 MATRIX_V2 = "contracts/baseline/rust-first-v2/p18/p184-r2-case-matrix.v2.json"
 SOURCE_DIR = "dl-source"  # <receipts>/dl-source: the sealed `git archive <dl_sha>` export every harness runs from
 GATEWAY_STEPS = ("dr01-wrong-account",)
+# Steps whose TS WriterClone copies the DEPLOYED writer's env (TS scripts/p184_dr05_isolated.WriterClone inspects
+# market_data_service_p184w) while running --writer-image: the deployed writer must be the final writer, or the clone
+# would pair the final image with another build's configuration (B17 parity, 2026-10-16).
+WRITER_CLONE_STEPS = ("dr05-upstream", "dr05-transport")
 
 
 def cells(case, names, venues=VENUES):
@@ -360,6 +364,14 @@ def deployed_mismatches(inventory, final):
     elif problem := state_problem(WRITER, inventory.get(WRITER)):
         found.append(problem)
     return found
+
+
+def needs_deployed_inventory(steps):
+    """True when the deployed set must be inspected and equal the final map before any step: every runtime step
+    (reads the shared stack), DR08 (copies the deployed core config) and the writer-clone steps (copy the deployed
+    writer env)."""
+    spec = {s[0]: s for s in STEP_SPEC}
+    return any(spec[s][1] == "runtime" or s == "dr08-isolated" or s in WRITER_CLONE_STEPS for s in steps)
 
 
 def image_ref_problem(ref, expected, resolved):
@@ -1127,8 +1139,9 @@ def main(argv=None):
         print(json.dumps(result, indent=2, default=str))
         return 0 if not result["blocked"] else 3
     extra = checkout_problems(final["dl_sha"])
-    if any(e["phase"] == "runtime" for e in result["steps"]) or "dr08-isolated" in [e["step"] for e in result["steps"]]:
-        # DR08 copies the deployed core config and refuses a core image other than its pin.
+    if needs_deployed_inventory([e["step"] for e in result["steps"]]):
+        # DR08 copies the deployed core config and refuses a core image other than its pin; the writer clones copy
+        # the deployed writer env (WRITER_CLONE_STEPS).
         observed = deployed_inventory()
         result["deployed_inventory"] = observed
         extra += deployed_mismatches(observed, final)

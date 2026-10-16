@@ -15,6 +15,20 @@ from scripts import p184_g12_isolated_fault as g12
 NS = "p184-g12-dl-0123456789abcdef"
 S = 1_000_000_000  # one second in ns
 MS = 1_000_000
+C_PLAN = {"__consumer_offsets": {"delete.retention.ms": "600000", "segment.ms": "60000"},
+          "__transaction_state": {"segment.ms": "600000"}}
+NATIVE_ENV = {"MARKET_DATA_NATIVE_FEEDS": "TRADE,QUOTE", "MARKET_DATA_NATIVE_FLAT_V2": "1",
+              "MARKET_DATA_NATIVE_BINARY": "/usr/local/bin/market-data-writer", "MARKET_DATA_NATIVE_REQUIRE_RESUME": "1",
+              "MARKET_DATA_NATIVE_EVENTS": "1024", "MARKET_DATA_NATIVE_APPLY_MAX_ROWS": "16",
+              "DATA_LAYER_V2_BOOK_SNAPSHOT_BATCH_MAX_WAIT_MS": "0", "DATA_LAYER_V2_STREAM_BATCH_MAX_ITEMS": "64"}
+
+
+def parity_doc(rebalance=True, writer_image=None, env=None):
+    """A valid --production-parity document (B17-like writer view, C + A' profile)."""
+    return {"schema": "p184.g12.production-parity.v1", "taken_utc": "2026-10-16T12:00:00Z",
+            "kafka": g12.kafka_profile(rebalance, C_PLAN, 21600000),
+            "writer": {"container": g12.TS_WRITER, "image": writer_image or g12.IMAGES["ts"],
+                       "env": dict(env or NATIVE_ENV)}}
 
 
 def stream_rows(venue, start, end, *, step_ms=250, transit_ms=100, approved=True, first_seq=1001):
@@ -366,23 +380,42 @@ class ImageSetTests(unittest.TestCase):
                     g12.check_sealed_images(work, attested)
 
     def test_cli_passes_the_image_set_to_the_orchestrator(self):
-        with patch.object(g12, "orchestrate", return_value=0) as orchestrate:
-            g12.main(["--run", "/home/bobby/x", "--export", "/home/bobby/e.json", "--namespace", NS,
-                      "--image", "core=" + FINAL["core"], "--query-code", "image", "--auto-leader-rebalance", "true"])
-        images, query_code = orchestrate.call_args.args[3:5]
-        self.assertEqual(images["core"], FINAL["core"])
-        self.assertEqual(images["python"], g12.IMAGES["python"])
-        self.assertEqual(query_code, "image")
-        with patch.object(g12, "orchestrate", return_value=0) as orchestrate:
-            g12.main(["--run", "/home/bobby/x", "--export", "/home/bobby/e.json", "--namespace", NS,
-                      "--auto-leader-rebalance", "false"])
-        self.assertEqual(orchestrate.call_args.args[3:5], (g12.IMAGES, "worktree"))
-        self.assertIs(orchestrate.call_args.kwargs["auto_leader_rebalance"], False)
-        # The flag is explicit: --run without it is refused, never a silent default.
-        with patch.object(g12, "orchestrate", return_value=0) as orchestrate, \
-                patch("sys.stderr"), self.assertRaises(SystemExit):
-            g12.main(["--run", "/home/bobby/x", "--export", "/home/bobby/e.json", "--namespace", NS])
-        orchestrate.assert_not_called()
+        with tempfile.TemporaryDirectory() as tmp:
+            parity_true, parity_false = Path(tmp) / "p-true.json", Path(tmp) / "p-false.json"
+            parity_true.write_text(json.dumps(parity_doc(True)))
+            parity_false.write_text(json.dumps(parity_doc(False)))
+            with patch.object(g12, "orchestrate", return_value=0) as orchestrate:
+                g12.main(["--run", "/home/bobby/x", "--export", "/home/bobby/e.json", "--namespace", NS,
+                          "--image", "core=" + FINAL["core"], "--query-code", "image", "--auto-leader-rebalance",
+                          "true", "--production-parity", str(parity_true), "--ts-root", "/home/bobby/ts-run"])
+            images, query_code = orchestrate.call_args.args[3:5]
+            self.assertEqual(images["core"], FINAL["core"])
+            self.assertEqual(images["python"], g12.IMAGES["python"])
+            self.assertEqual(query_code, "image")
+            self.assertEqual(orchestrate.call_args.kwargs["parity"], parity_doc(True))
+            self.assertEqual(orchestrate.call_args.kwargs["ts_root"], Path("/home/bobby/ts-run"))
+            with patch.object(g12, "orchestrate", return_value=0) as orchestrate:
+                g12.main(["--run", "/home/bobby/x", "--export", "/home/bobby/e.json", "--namespace", NS,
+                          "--auto-leader-rebalance", "false", "--production-parity", str(parity_false)])
+            self.assertEqual(orchestrate.call_args.args[3:5], (g12.IMAGES, "worktree"))
+            self.assertIs(orchestrate.call_args.kwargs["auto_leader_rebalance"], False)
+            # The flags are explicit: --run without the rebalance value or the parity snapshot is refused.
+            for missing in (["--production-parity", str(parity_true)], ["--auto-leader-rebalance", "true"]):
+                with self.subTest(argv=missing), patch.object(g12, "orchestrate", return_value=0) as orchestrate, \
+                        patch("sys.stderr"), self.assertRaises(SystemExit):
+                    g12.main(["--run", "/home/bobby/x", "--export", "/home/bobby/e.json", "--namespace", NS,
+                              *missing])
+                orchestrate.assert_not_called()
+            # The image set's ts role must be the deployed writer of the snapshot (B17 parity, not a stale build).
+            with patch.object(g12, "orchestrate", return_value=0) as orchestrate, \
+                    patch("sys.stderr"), self.assertRaises(SystemExit):
+                g12.main(["--run", "/home/bobby/x", "--export", "/home/bobby/e.json", "--namespace", NS,
+                          "--image", "ts=sha256:" + "e" * 64, "--auto-leader-rebalance", "true",
+                          "--production-parity", str(parity_true)])
+            orchestrate.assert_not_called()
+            # The rebalance flag must agree with the snapshot (production's value).
+            with self.assertRaises(ValueError):
+                g12.orchestrate("/home/bobby/x", "/x", NS, auto_leader_rebalance=False, parity=parity_doc(True))
         with self.assertRaises(ValueError):
             g12.orchestrate("/home/bobby/x", "/x", NS)
 
@@ -3463,8 +3496,17 @@ class IntegrityOracleTests(unittest.TestCase):
                 frozen = g12.evaluate(evidence)
                 self.assertTrue(frozen["pass"])
                 self.assertEqual(frozen["schema"], g12.VERDICT_SCHEMA)
-        frozen.update(status="COMPLETED")
+        frozen.update(status="COMPLETED", broker_config={"production_parity": "MATCH",
+                                                         "kafka_profile": parity_doc(True)["kafka"]})
         self.assertEqual(g12.g12_receipt_creditable(frozen), (True, "PASS"))
+        # Kafka parity (coordinator 2026-10-16): a run that did not mirror production is not credited, and a run on a
+        # superseded profile (rebalance=true before decision B) is not the final G12.
+        self.assertEqual(g12.g12_receipt_creditable(frozen, parity_doc(True)["kafka"]), (True, "PASS"))
+        self.assertFalse(g12.g12_receipt_creditable(frozen, parity_doc(False)["kafka"])[0])
+        for parity in ("MISMATCH", "NO_PROFILE", "NOT_MEASURED", "CHANGED_DURING_RUN", None):
+            with self.subTest(parity=parity):
+                unmirrored = dict(frozen, broker_config={"production_parity": parity})
+                self.assertFalse(g12.g12_receipt_creditable(unmirrored)[0])
         stale = [dict(frozen, schema="p184.g12.verdict.v2"),  # rc10-full3 / rc12 / rc18-control2 era
                  dict(frozen, caught_up_predicate=dict(frozen["caught_up_predicate"], version="p184.g12.caught_up.v1")),
                  dict(frozen, caught_up_predicate=dict(frozen["caught_up_predicate"], frozen=False)),
@@ -3479,7 +3521,7 @@ class IntegrityOracleTests(unittest.TestCase):
 
 class BrokerAndWriterPrecheckTests(unittest.TestCase):
     """Coordinator 2026-10-16: explicit auto.leader.rebalance.enable (production's value, recorded) and a
-    WriterClone precheck for the production native writer (B16 image, native env, BOOK batch wait 0)."""
+    WriterClone precheck against the DEPLOYED writer's run-time docker inspect (B17 and later; no hard-coded build)."""
 
     def test_auto_leader_rebalance_is_always_explicit(self):
         self.assertIn("auto.leader.rebalance.enable=true\n", g12.broker_properties("pw", 1))
@@ -3489,42 +3531,73 @@ class BrokerAndWriterPrecheckTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 g12.broker_properties("pw", 1, 0, value)
 
+    IMAGE = "sha256:" + "d" * 64
+
     @staticmethod
     def argv(**changes):
-        env = {"TRADING_REDIS_URL": "redis://localhost:6391/2", **g12.WRITER_NATIVE_ENV,
-               **g12.WRITER_PRODUCTION_ENV, **changes}
+        env = {"TRADING_REDIS_URL": "redis://localhost:6391/2", "POSTGRES_DSN": "postgresql://x:y@h/db",
+               **NATIVE_ENV, **changes}
         argv = ["docker", "run", "-d", "--rm", "--name", "x"]
         for key, value in env.items():
             if value is not None:
                 argv += ["-e", f"{key}={value}"]
         return argv + ["--entrypoint", "python", "sha256:ts", "-B", "-m", "services.market_data.main"]
 
-    def test_production_native_writer_passes(self):
-        check = g12.writer_clone_precheck(self.argv(), "sha256:" + "d" * 64, "sha256:" + "d" * 64)
-        self.assertEqual((check["ok"], check["problems"]), (True, []))
-        self.assertEqual(check["native_env"]["MARKET_DATA_NATIVE_APPLY_MAX_ROWS"], "16")
-        self.assertEqual(check["production_env"], {"DATA_LAYER_V2_BOOK_SNAPSHOT_BATCH_MAX_WAIT_MS": "0"})
-        self.assertNotIn("TRADING_REDIS_URL", json.dumps(check))  # only the native/production keys are recorded
+    @classmethod
+    def inspect(cls, image=None, **changes):
+        env = {"POSTGRES_DSN": "postgresql://secret@h/db", "REDIS_URL": "redis://r", **NATIVE_ENV, **changes}
+        return {"Image": image or cls.IMAGE, "Config": {"Env": [f"{k}={v}" for k, v in env.items() if v is not None]}}
 
-    def test_non_production_writer_is_refused(self):
-        image = "sha256:" + "d" * 64
+    def test_reference_keeps_only_the_non_secret_writer_view(self):
+        ref = g12.writer_reference(self.inspect())
+        self.assertEqual(ref, {"container": g12.TS_WRITER, "image": self.IMAGE, "env": NATIVE_ENV})
+        self.assertNotIn("secret", json.dumps(ref))
+
+    def test_deployed_writer_passes_whatever_its_build(self):
+        # B17 today (APPLY_MAX_ROWS 16, BOOK wait 0); a later build with other tuning passes when the clone equals it.
+        for changes in ({}, {"MARKET_DATA_NATIVE_APPLY_MAX_ROWS": "32", "MARKET_DATA_NATIVE_PROBE": "1"}):
+            with self.subTest(changes=changes):
+                deployed = g12.writer_reference(self.inspect(**changes))
+                check = g12.writer_clone_precheck(self.argv(**changes), self.IMAGE, deployed,
+                                                  dict(deployed))
+                self.assertEqual((check["ok"], check["problems"]), (True, []))
+                self.assertEqual(check["clone_env"], deployed["env"])
+                self.assertNotIn("TRADING_REDIS_URL", json.dumps(check))
+                self.assertNotIn("POSTGRES_DSN", json.dumps(check))
+
+    def test_clone_or_deployed_drift_is_refused(self):
+        deployed = g12.writer_reference(self.inspect())
         cases = {
-            "python writer (no native env)": self.argv(**{k: None for k in g12.WRITER_NATIVE_ENV}),
-            "apply rows not 16": self.argv(MARKET_DATA_NATIVE_APPLY_MAX_ROWS="64"),
-            "apply rows absent": self.argv(MARKET_DATA_NATIVE_APPLY_MAX_ROWS=None),
-            "resume not required": self.argv(MARKET_DATA_NATIVE_REQUIRE_RESUME="0"),
-            "extra native key": self.argv(MARKET_DATA_NATIVE_TEST_CLOCK_FILE="/x"),
-            "book wait default": self.argv(DATA_LAYER_V2_BOOK_SNAPSHOT_BATCH_MAX_WAIT_MS=None),
-            "book wait 25": self.argv(DATA_LAYER_V2_BOOK_SNAPSHOT_BATCH_MAX_WAIT_MS="25"),
+            "clone apply rows differ": (self.argv(MARKET_DATA_NATIVE_APPLY_MAX_ROWS="64"), self.IMAGE, deployed, None),
+            "clone native key extra": (self.argv(MARKET_DATA_NATIVE_TEST_CLOCK_FILE="/x"), self.IMAGE, deployed, None),
+            "clone book wait default": (self.argv(DATA_LAYER_V2_BOOK_SNAPSHOT_BATCH_MAX_WAIT_MS=None), self.IMAGE,
+                                        deployed, None),
+            "python writer deployed": (self.argv(**{k: None for k in NATIVE_ENV if k.startswith("MARKET_DATA_NATIVE")}),
+                                       self.IMAGE, g12.writer_reference(self.inspect(
+                                           **{k: None for k in NATIVE_ENV if k.startswith("MARKET_DATA_NATIVE")})),
+                                       None),
+            "clone image not deployed": (self.argv(), "sha256:" + "e" * 64, deployed, None),
+            "no clone image": (self.argv(), None, deployed, None),
+            "deployed image unknown": (self.argv(), self.IMAGE, dict(deployed, image=None), None),
+            "writer rolled since snapshot (image)": (self.argv(), self.IMAGE, deployed,
+                                                     dict(deployed, image="sha256:" + "b" * 64)),
+            "writer env changed since snapshot": (self.argv(), self.IMAGE, deployed,
+                                                  dict(deployed, env=dict(deployed["env"],
+                                                                          MARKET_DATA_NATIVE_APPLY_MAX_ROWS="8"))),
         }
-        for label, argv in cases.items():
+        for label, (argv, clone, dep, ref) in cases.items():
             with self.subTest(label):
-                check = g12.writer_clone_precheck(argv, image, image)
+                check = g12.writer_clone_precheck(argv, clone, dep, ref)
                 self.assertFalse(check["ok"])
                 self.assertTrue(check["problems"])
-        for clone, deployed in ((image, "sha256:" + "e" * 64), (image, None), (None, None)):
-            with self.subTest(clone=clone, deployed=deployed):
-                self.assertFalse(g12.writer_clone_precheck(self.argv(), clone, deployed)["ok"])
+
+    def test_clone_redis_cpu_parity(self):
+        self.assertEqual(g12.clone_redis_cpu_parity("0")["parity"], "UNCAPPED")
+        self.assertTrue(g12.clone_redis_cpu_parity(0)["ok"])
+        self.assertTrue(g12.clone_redis_cpu_parity("1000000000")["ok"])
+        self.assertEqual(g12.clone_redis_cpu_parity(2 * 10**9)["parity"], "CAPPED_GE_1")
+        low = g12.clone_redis_cpu_parity("500000000")
+        self.assertEqual((low["parity"], low["ok"]), ("CAPPED_BELOW_1", False))
 
     def test_argv_env(self):
         self.assertEqual(g12.argv_env(["-e", "A=1", "-e", "B=x=y", "-v", "C=2", "-e"]), {"A": "1", "B": "x=y"})
@@ -3586,3 +3659,132 @@ class InternalTopicParityTests(unittest.TestCase):
         self.assertIn("helper failed", config["internal_topics"]["after"]["error"])
         self.assertEqual(config["internal_topic_parity"], "NOT_MEASURED")
         self.assertEqual([n[0] for n in notes], ["internal_topics", "internal_topics"])
+
+
+class ProductionParityTests(unittest.TestCase):
+    """Coordinator 2026-10-16: G12 mirrors production Kafka exactly (internal-topic decision C, md.latest A',
+    auto.leader.rebalance as deployed) from a docker-inspect-derived snapshot, and records MATCH or refuses credit."""
+
+    @staticmethod
+    def kafka_inspect(value=None):
+        env = ["KAFKA_NODE_ID=1"] + ([] if value is None else [f"KAFKA_AUTO_LEADER_REBALANCE_ENABLE={value}"])
+        return {"Image": "sha256:" + "9" * 64, "Config": {"Env": env}}
+
+    def test_rebalance_follows_the_broker_env(self):
+        names = g12.PRODUCTION_KAFKA
+        self.assertIs(g12.production_rebalance({n: self.kafka_inspect() for n in names}), True)  # Kafka default
+        self.assertIs(g12.production_rebalance({n: self.kafka_inspect("false") for n in names}), False)  # after B
+        self.assertIs(g12.production_rebalance({n: self.kafka_inspect("TRUE") for n in names}), True)
+        mixed = {names[0]: self.kafka_inspect("false"), names[1]: self.kafka_inspect(), names[2]: self.kafka_inspect()}
+        for bad in (mixed, {n: self.kafka_inspect("maybe") for n in names}, {names[0]: self.kafka_inspect()}):
+            with self.subTest(bad=str(bad)[:60]), self.assertRaises(ValueError):
+                g12.production_rebalance(bad)
+
+    def test_snapshot_is_derived_from_inspect_and_committed_plans(self):
+        writer = BrokerAndWriterPrecheckTests.inspect(image="sha256:" + "c" * 64)
+
+        def inspect(name):
+            return writer if name == g12.TS_WRITER else self.kafka_inspect()
+        doc = g12.production_parity_snapshot(inspect, now="2026-10-16T12:00:00Z")
+        from scripts.kafka_internal_topic_compaction import PLAN
+        self.assertEqual(doc["kafka"]["internal_topics"], PLAN)
+        self.assertEqual(doc["kafka"]["state_topics"], {"latest": {"delete.retention.ms": "21600000"}})
+        self.assertIs(doc["kafka"]["auto.leader.rebalance.enable"], True)
+        self.assertEqual(doc["writer"], {"container": g12.TS_WRITER, "image": "sha256:" + "c" * 64,
+                                         "env": NATIVE_ENV})
+        self.assertNotIn("secret", json.dumps(doc))
+        self.assertEqual(g12.validate_parity(doc), doc)
+
+    def test_profile_and_parity_validation(self):
+        good = parity_doc()
+        self.assertEqual(g12.validate_parity(good), good)
+        bad = [dict(good, schema="x"),
+               dict(good, kafka=dict(good["kafka"], **{"auto.leader.rebalance.enable": "true"})),
+               dict(good, kafka=dict(good["kafka"], internal_topics={"__consumer_offsets": {}})),
+               dict(good, kafka=dict(good["kafka"], internal_topics=dict(
+                   good["kafka"]["internal_topics"], __transaction_state={"retention.ms": "1"}))),
+               dict(good, kafka=dict(good["kafka"], state_topics={"latest": {"segment.ms": "1"}})),
+               dict(good, writer=dict(good["writer"], image="cb5216b8")),
+               dict(good, writer=dict(good["writer"], env=dict(NATIVE_ENV, POSTGRES_DSN="x"))),
+               dict(good, writer=dict(good["writer"], env={"DATA_LAYER_V2_STREAM_BATCH_MAX_ITEMS": "64"}))]
+        for doc in bad:
+            with self.subTest(doc=json.dumps(doc)[:120]), self.assertRaises(ValueError):
+                g12.validate_parity(doc)
+
+    def test_latest_topic_takes_the_a_prime_value_only_from_a_profile(self):
+        self.assertEqual(g12.topics(NS)[NS + ".latest"][1]["delete.retention.ms"], "604800000")
+        latest = g12.topics(NS, latest={"delete.retention.ms": "21600000"})
+        self.assertEqual(latest[NS + ".latest"][1]["delete.retention.ms"], "21600000")
+        self.assertEqual(latest[NS + ".bars"][1]["delete.retention.ms"], "604800000")  # bars contract unchanged
+        with self.assertRaises(ValueError):
+            g12.topics(NS, latest={"segment.ms": "1"})
+        with tempfile.TemporaryDirectory() as work:
+            self.assertIsNone(g12.handoff_kafka_profile(work))
+            (Path(work) / "handoff.json").write_text(json.dumps({"kafka_profile": parity_doc()["kafka"]}))
+            self.assertEqual(g12.handoff_kafka_profile(work), parity_doc()["kafka"])
+
+    @staticmethod
+    def snap(c=None, latest="21600000"):
+        base = {"cleanup.policy": "compact", "segment.bytes": "104857600"}
+        out = {t: {"overrides": {**base, **((c or {}).get(t) or {})}, "sha256": "x"} for t in g12.INTERNAL_TOPICS}
+        out["latest"] = {"overrides": {"cleanup.policy": "compact", "delete.retention.ms": latest}, "sha256": "x"}
+        return out
+
+    def test_production_parity_classification(self):
+        profile = parity_doc()["kafka"]
+        match = self.snap(C_PLAN)
+        self.assertEqual(g12.production_parity(profile, {"before": match, "after": match}), "MATCH")
+        self.assertEqual(g12.production_parity(None, {"before": match, "after": match}), "NO_PROFILE")
+        self.assertEqual(g12.production_parity(profile, {"before": match}), "NOT_MEASURED")
+        self.assertEqual(g12.production_parity(profile, {"before": match, "after": {"error": "x"}}), "NOT_MEASURED")
+        self.assertEqual(g12.production_parity(profile, {"before": self.snap(), "after": self.snap()}), "MISMATCH")
+        self.assertEqual(g12.production_parity(profile, {"before": self.snap(C_PLAN, "604800000"),
+                                                         "after": self.snap(C_PLAN, "604800000")}), "MISMATCH")
+        self.assertEqual(g12.production_parity(profile, {"before": match, "after": self.snap()}),
+                         "CHANGED_DURING_RUN")
+        extra = {**C_PLAN, "__transaction_state": {"segment.ms": "600000", "delete.retention.ms": "1"}}
+        self.assertEqual(g12.production_parity(profile, {"before": self.snap(extra), "after": self.snap(extra)}),
+                         "MISMATCH")
+        # the C-only classification ignores the extra ``applied`` phase
+        self.assertEqual(g12.internal_topic_parity({"applied": match, "before": match, "after": match}), "C_PRESENT")
+
+    def test_apply_stops_unless_the_profile_is_mirrored(self):
+        run = g12.Run.__new__(g12.Run)
+        run.ns, run.work, run.images, notes = NS, Path("/w"), g12.IMAGES, []
+        run.note = lambda step, **fields: notes.append((step, fields))
+        run.parity, run.auto_leader_rebalance = parity_doc(), True
+        with patch.object(g12, "sh", return_value=json.dumps(self.snap(C_PLAN)) + "\n") as sh:
+            run.apply_kafka_profile()
+        self.assertIn("--apply-internal-configs", sh.call_args.args[0])
+        self.assertEqual(run.internal_topics["applied"], self.snap(C_PLAN))
+        run.internal_topics.update(before=self.snap(C_PLAN), after=self.snap(C_PLAN))
+        config = run.broker_config()
+        self.assertEqual((config["production_parity"], config["internal_topic_parity"]), ("MATCH", "C_PRESENT"))
+        self.assertEqual(config["kafka_profile"], parity_doc()["kafka"])
+        run.internal_topics = {}
+        with patch.object(g12, "sh", return_value=json.dumps(self.snap()) + "\n"), self.assertRaises(RuntimeError):
+            run.apply_kafka_profile()
+
+    def test_credit_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "evidence").mkdir()
+            (base / "evidence" / "verdict.json").write_text(json.dumps({"schema": "x"}))
+            snapshot = base / "now.json"
+            snapshot.write_text(json.dumps(parity_doc(False)))
+            with patch("sys.stdout"):
+                self.assertEqual(g12.main(["--credit", str(base), "--production-parity", str(snapshot)]), 1)
+            with patch.object(g12, "g12_receipt_creditable", return_value=(True, "PASS")) as credit, \
+                    patch("sys.stdout"):
+                self.assertEqual(g12.main(["--credit", str(base), "--production-parity", str(snapshot)]), 0)
+            self.assertEqual(credit.call_args.args[1], parity_doc(False)["kafka"])
+
+    def test_parity_snapshot_mode_is_exclusive_create(self):
+        doc = parity_doc()
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "parity.json"
+            with patch.object(g12, "production_parity_snapshot", return_value=doc), patch("sys.stdout"):
+                self.assertEqual(g12.main(["--parity-snapshot", str(out)]), 0)
+                self.assertEqual(json.loads(out.read_text()), doc)
+                with self.assertRaises(FileExistsError):
+                    g12.main(["--parity-snapshot", str(out)])
