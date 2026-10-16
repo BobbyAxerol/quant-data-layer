@@ -38,7 +38,8 @@ Compare reports three SEPARATE outcomes (none of them is permission for the next
   legitimately keep its offset unchanged); group states and sizes are reported, not judged. ``ok`` is this offset
   safety on a valid observation - it does NOT mean the cleaner finished;
 * ``cleaner_completed_all_replicas``: on a valid observation, every replica shows a pass over the partition that
-  began after the BEFORE snapshot and whose summary block (``cleaned log ... dirty section`` + ``End size``) followed.
+  began after the BEFORE snapshot's baseline completion (``baseline_completed_utc``, after its committed
+  offsets were captured; D3) and whose summary block (``cleaned log ... dirty section`` + ``End size``) followed.
 
 Exit codes: 0 all three, 2 valid + offsets preserved but the cleaner pass not complete on every replica, 1 offset
 violation or empty baseline, 6 observation not valid, 4 refused, 5 command error.
@@ -308,8 +309,12 @@ def _run(argv: Sequence[str]) -> str:
     return done.stdout
 
 
+def _utcnow() -> dt.datetime:
+    return dt.datetime.now(dt.timezone.utc)
+
+
 def snapshot(admin: AdminContainerRunner, partition: str, hours: int, brokers: Sequence[int] = BROKERS,
-             now: dt.datetime | None = None) -> dict[str, Any]:
+             now: dt.datetime | None = None, clock=None) -> dict[str, Any]:
     now = now or dt.datetime.now(dt.timezone.utc)
     replicas = {}
     for node in brokers:
@@ -321,10 +326,15 @@ def snapshot(admin: AdminContainerRunner, partition: str, hours: int, brokers: S
     offsets = admin.run(OFFSETS_CMD)
     if offsets.returncode != 0:
         raise RuntimeError(f"consumer-groups --offsets failed rc={offsets.returncode}: {offsets.stderr[-300:]}")
+    offsets_utc = (clock or _utcnow)()
     states = admin.run(STATE_CMD)
     if states.returncode != 0:
         raise RuntimeError(f"consumer-groups --state failed rc={states.returncode}: {states.stderr[-300:]}")
+    # D3 (Codex follow-up 2026-10-16): the committed offsets are captured LAST; a pass that began while the baseline
+    # was being collected must not be credited against it, so compare() counts passes after baseline_completed_utc.
     return {"kind": "kafka_offsets_pass_watch.snapshot", "read_contract": READ_CONTRACT, "at_utc": now.isoformat(),
+            "offsets_captured_utc": offsets_utc.isoformat(),
+            "baseline_completed_utc": (clock or _utcnow)().isoformat(),
             "partition": partition,
             "runner": admin.describe(), "reader_image": READER_IMAGE, "replicas": replicas,
             "group_offsets": parse_group_offsets(offsets.stdout), "group_states": parse_group_states(states.stdout)}
@@ -363,6 +373,13 @@ def _completed(item: Mapping[str, Any]) -> bool:
     return bool(item.get("finished_utc")) and item.get("end_messages") is not None
 
 
+def baseline_bound(before: Mapping[str, Any]) -> tuple[str, bool]:
+    """(the instant a pass must start after to be credited, exact?): the BEFORE snapshot's baseline completion (after
+    its committed offsets were captured); a snapshot without it (pre-D3) falls back to its start, reported inexact."""
+    done = before.get("baseline_completed_utc")
+    return (done, True) if isinstance(done, str) else (before["at_utc"], False)
+
+
 def observation_problems(before: Mapping[str, Any], after: Mapping[str, Any]) -> list[str]:
     problems = []
     for label, doc in (("before", before), ("after", after)):
@@ -382,16 +399,19 @@ def observation_problems(before: Mapping[str, Any], after: Mapping[str, Any]) ->
 def compare(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict[str, Any]:
     if before.get("partition") != after.get("partition"):
         raise Refused("snapshots are of different partitions")
+    since, exact = baseline_bound(before)
     replicas = {}
     for node, old in sorted(before["replicas"].items()):
         new = after["replicas"].get(node)
         if new is None:
             replicas[node] = {"missing_after": True}
             continue
-        window = [p for p in new["passes"] if _after(p["started_utc"], before["at_utc"])]
+        window = [p for p in new["passes"] if _after(p["started_utc"], since)]
+        during = [p for p in new["passes"] if _after(p["started_utc"], before["at_utc"])
+                  and not _after(p["started_utc"], since)]
         replicas[node] = {
             "pass_started": bool(window), "pass_finished": any(_completed(p) for p in window),
-            "passes_in_window": window,
+            "passes_in_window": window, "passes_during_baseline": during,
             "size_bytes": {"before": old["size_bytes"], "after": new["size_bytes"],
                            "delta": new["size_bytes"] - old["size_bytes"]},
             "segment_count": {"before": old["segment_count"], "after": new["segment_count"]},
@@ -411,6 +431,8 @@ def compare(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict[str, An
     completed = valid and bool(replicas) and all(r.get("pass_finished") for r in replicas.values())
     return {"kind": "kafka_offsets_pass_watch.compare", "partition": before["partition"],
             "before_utc": before["at_utc"], "after_utc": after["at_utc"], "replicas": replicas,
+            "pass_window_from_utc": since, "baseline_bound_exact": exact,
+            "offsets_captured_utc": before.get("offsets_captured_utc"),
             "groups_before": len(before["group_offsets"]), "groups_after": len(after["group_offsets"]),
             "baseline_committed_offsets": baseline,
             "offsets_advanced": advanced, "offset_violations": violations, "group_state_changes": state_changes,
@@ -459,7 +481,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise Refused(f"host-measurement lock active: {lock}")
         if args.snapshot.exists():
             raise Refused(f"{args.snapshot} exists (snapshots are never overwritten)")
-        body = snapshot(AdminContainerRunner(args.cert_dir), partition, args.hours)
+        body = snapshot(AdminContainerRunner(args.cert_dir, lock_guard=True, lock_owner=args.lock_owner),
+                        partition, args.hours)
         args.snapshot.parent.mkdir(parents=True, exist_ok=True)
         args.snapshot.write_text(json.dumps(body, indent=1) + "\n", encoding="utf-8")
         summary = {node: {k: r[k] for k in ("size_bytes", "segment_count", "empty_segments", "cleaner_checkpoint",

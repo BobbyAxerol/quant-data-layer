@@ -1509,9 +1509,27 @@ def production_effective_problems(config, current_effective=None):
         problems += [f"{phase}: {p}" for p in effective_problems(observed, profile)]
         if observed.get("sha256") != effective["parity_sha256"]:
             problems.append(f"production effective Kafka config drifted ({phase} the run != parity snapshot)")
-    if current_effective is not None and current_effective.get("sha256") != effective["parity_sha256"]:
-        problems.append("production effective Kafka config at credit time != the run's parity snapshot")
+    if current_effective is not None:
+        bound_v1 = all((effective.get(p) or {}).get("schema") == EFFECTIVE_SCHEMA_V1 for p in ("before", "after"))
+        if bound_v1 and current_effective.get("schema") == EFFECTIVE_SCHEMA:
+            # A run bound before D2 carries no cleaner settings: compare what it bound (v1 projection); the credit
+            # reports the cleaner settings as observed at credit time only (cleaner_binding).
+            if effective_v1_sha256(current_effective) != effective["parity_sha256"]:
+                problems.append("production effective Kafka config at credit time != the run's parity snapshot")
+        elif current_effective.get("sha256") != effective["parity_sha256"]:
+            problems.append("production effective Kafka config at credit time != the run's parity snapshot")
     return problems
+
+
+def cleaner_binding(config, current_effective=None):
+    """How the cleaner settings are bound to a receipt: RUN (v2 observations before/after the run), CREDIT_TIME_ONLY
+    (a pre-D2 run credited against a v2 snapshot) or NOT_BOUND."""
+    effective = (config or {}).get("production_effective") or {}
+    if all((effective.get(p) or {}).get("schema") == EFFECTIVE_SCHEMA for p in ("before", "after")):
+        return "RUN"
+    if (current_effective or {}).get("schema") == EFFECTIVE_SCHEMA:
+        return "CREDIT_TIME_ONLY"
+    return "NOT_BOUND"
 
 
 def g12_receipt_creditable(verdict, current_kafka=None, current_effective=None):
@@ -3017,6 +3035,102 @@ def md_missing_since(sampler_rows, since_ns, venues=VENUES, feeds=MD_FEEDS):
     return [f"{feed}@{venue}" for venue in venues for feed in feeds if (feed, venue) not in seen]
 
 
+def md_resumed_missing(sampler_rows, publish_rows, starts, feeds=MD_FEEDS):
+    """W1 (Codex follow-up review 2026-10-16): FEED@VENUE without an applied notification that JOINS a publisher
+    receipt (k == pub_md, same feed/venue/id) published at or after that venue's strict start and received at or after
+    it. A delayed bootstrap notification drained after the restart carries a fresh receipt time but an old publish
+    stamp, so it never counts. ``starts``: venue -> strict start ns."""
+    published = {}
+    for r in publish_rows:
+        if r.get("k") == "pub_md" and isinstance(r.get("t"), int) and r.get("id") is not None:
+            key = (r.get("feed"), r.get("venue"), str(r["id"]))
+            published[key] = max(published.get(key, r["t"]), r["t"])
+    seen = set()
+    for r in sampler_rows:
+        if r.get("k") != "ev" or r.get("id") is None or not isinstance(r.get("t"), int):
+            continue
+        start = starts.get(r.get("venue"))
+        pub = published.get((r.get("feed"), r.get("venue"), str(r["id"])))
+        if start is not None and pub is not None and pub >= start and r["t"] >= start:
+            seen.add((r.get("feed"), r.get("venue")))
+    return [f"{feed}@{venue}" for venue in starts for feed in feeds if (feed, venue) not in seen]
+
+
+CURSOR_SCHEMA = "qdl.sdk-cursors.v2"  # TS rust/crates/market-data-writer/src/cursor.rs SCHEMA
+
+
+def cursor_frontier(docs, consumer_id, native_feeds):
+    """Redacted per-route native checkpoint frontier: {feed: {offset, key_sha256, file}} from the native cursor
+    documents ``docs`` (relative path -> raw JSON text; tokens are never returned) and the problems: unreadable or
+    malformed documents, a key of another consumer, and every expected native route (one per native feed of the
+    clone's single symbol; key = consumer|instrument|FEED|interval|policy, qdl_sdk/client.py _cursor_key) without
+    exactly one checkpoint. Empty native worker slots are not required."""
+    frontier, problems = {}, []
+    for rel, text in sorted(docs.items()):
+        try:
+            doc = json.loads(text)
+            items = doc["items"]
+            if doc.get("schema") != CURSOR_SCHEMA or not isinstance(items, dict):
+                raise ValueError("schema")
+        except (ValueError, TypeError, KeyError):
+            problems.append(f"{rel}: malformed cursor document")
+            continue
+        for key, checkpoint in items.items():
+            parts = str(key).split("|")
+            offset = (checkpoint or {}).get("offset") if isinstance(checkpoint, dict) else None
+            if len(parts) != 5 or parts[0] != consumer_id:
+                problems.append(f"{rel}: checkpoint key of another consumer or shape")
+                continue
+            if type(offset) is not int or offset < 0 or not (checkpoint or {}).get("token"):
+                problems.append(f"{rel}: {parts[2]} checkpoint has no valid offset/token")
+                continue
+            if parts[2] in frontier:
+                problems.append(f"{parts[2]}: more than one native checkpoint")
+                continue
+            frontier[parts[2]] = {"offset": offset, "file": rel,
+                                  "key_sha256": hashlib.sha256(str(key).encode()).hexdigest()}
+    for feed in native_feeds:
+        if feed not in frontier:
+            problems.append(f"{feed}: no native checkpoint")
+    return frontier, problems
+
+
+def frontier_progress(before, after, native_feeds):
+    """Per native feed: did the durable checkpoint advance after the strict start (never regress, same key)?
+    (ok, rows): ok only when every expected route advanced."""
+    rows, ok = {}, True
+    for feed in native_feeds:
+        b, a = (before or {}).get(feed), (after or {}).get(feed)
+        if not b or not a:
+            rows[feed], ok = "MISSING", False
+        elif a["key_sha256"] != b["key_sha256"]:
+            rows[feed], ok = "KEY_CHANGED", False
+        elif a["offset"] < b["offset"]:
+            rows[feed], ok = "REGRESSED", False
+        elif a["offset"] == b["offset"]:
+            rows[feed], ok = "NOT_ADVANCED", False
+        else:
+            rows[feed] = "ADVANCED"
+    return ok, rows
+
+
+def read_native_cursor_docs(state_dir, holder_image, ns, run=None):
+    """Raw text of every native cursor document under ``state_dir`` (root 0600 files) read through a disposable,
+    network-less holder container; the caller reduces them with cursor_frontier and keeps no token."""
+    out = (run or sh)(["docker", "run", "--rm", "--label", f"{LABEL}={ns}", "--network", "none", "-v",
+                       f"{state_dir}:/state:ro", "--entrypoint", "sh", holder_image, "-c",
+                       "for f in /state/cursors/fixed-workers-v1/native-*/*.json; do [ -f \"$f\" ] || continue; "
+                       "printf '\\n@@FILE %s\\n' \"${f#/state/}\"; cat \"$f\"; done"], timeout=60)
+    docs, current = {}, None
+    for line in str(out).splitlines():
+        if line.startswith("@@FILE "):
+            current = line[len("@@FILE "):].strip()
+            docs[current] = ""
+        elif current is not None:
+            docs[current] += line + "\n"
+    return docs
+
+
 def cursor_inventory(state_dir):
     """Relative path -> {bytes, sha256} of every checkpoint file under the clone's state dir (evidence only; the
     contents stay private and are erased at teardown). The writer (root) writes its cursors 0600, so the size comes
@@ -3132,7 +3246,9 @@ def validate_kafka_profile(profile):
     return profile
 
 
-EFFECTIVE_SCHEMA = "p184.g12.production-kafka-effective.v1"
+EFFECTIVE_SCHEMA = "p184.g12.production-kafka-effective.v2"  # v2: + cleaner settings (D2, Codex follow-up)
+EFFECTIVE_SCHEMA_V1 = "p184.g12.production-kafka-effective.v1"
+CLEANER_KEY_RE = re.compile(r"^(log\.cleaner\.[a-z0-9.]+|min\.cleanable\.dirty\.ratio)$")
 PRODUCTION_LATEST_TOPIC = "md.latest.v2"
 
 
@@ -3159,16 +3275,53 @@ def observe_production_kafka(runner, inspect, now=None):
             raise RuntimeError(f"kafka-configs describe {topic} failed rc={result.returncode}: "
                                f"{result.stderr.strip()[-300:]}")
         topics[topic] = parse_topic_overrides(result.stdout, topic)
-    brokers = {}
+    brokers, node_ids = {}, {}
     for name in PRODUCTION_KAFKA:
         record = inspect(name)
         if not record:
             raise RuntimeError(f"production broker {name} not inspected")
         env = dict(item.split("=", 1) for item in (record.get("Config") or {}).get("Env") or [] if "=" in item)
         brokers[name] = {REBALANCE_ENV: env.get(REBALANCE_ENV), "image": record.get("Image")}
+        if not str(env.get("KAFKA_NODE_ID", "")).isdigit():
+            raise RuntimeError(f"production broker {name} has no KAFKA_NODE_ID")
+        node_ids[name] = env["KAFKA_NODE_ID"]
+    # D2: the cleaner settings (log.cleaner.* incl. log.cleaner.io.max.bytes.per.second, min.cleanable.dirty.ratio)
+    # as the cluster dynamic default and every broker's dynamic overrides; topic-level min.cleanable.dirty.ratio is in
+    # the topic overrides above. A throttle-only change now changes the hash.
+    cleaner = {"default": None, "brokers": {}}
+    for entity, key in ((["--entity-default"], "default"),
+                        *((["--entity-name", node_ids[n]], node_ids[n]) for n in PRODUCTION_KAFKA)):
+        result = runner.run(["kafka-configs.sh", "--describe", "--entity-type", "brokers", *entity])
+        if result.returncode != 0:
+            raise RuntimeError(f"kafka-configs describe brokers {entity} failed rc={result.returncode}: "
+                               f"{result.stderr.strip()[-300:]}")
+        values = parse_cleaner_configs(result.stdout)
+        if key == "default":
+            cleaner["default"] = values
+        else:
+            cleaner["brokers"][key] = values
     return seal_effective({"schema": EFFECTIVE_SCHEMA,
                            "taken_utc": now or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                           "topics": topics, "brokers": brokers})
+                           "topics": topics, "brokers": brokers, "cleaner": cleaner})
+
+
+def parse_cleaner_configs(stdout):
+    """Cleaner keys (CLEANER_KEY_RE) of a ``kafka-configs --describe --entity-type brokers`` output: the
+    ``key=value sensitive=...`` lines Kafka prints for the described entity's dynamic configs."""
+    out = {}
+    for line in str(stdout).splitlines():
+        match = re.match(r"^\s+([A-Za-z0-9._-]+)=(\S*) sensitive=", line)
+        if match and CLEANER_KEY_RE.match(match.group(1)):
+            out[match.group(1)] = match.group(2)
+    return out
+
+
+def effective_v1_sha256(observation):
+    """The v1 hash (topics + brokers, no cleaner) of a v1 or v2 observation: what a run bound before D2 can be
+    compared on."""
+    body = {k: v for k, v in observation.items() if k not in ("sha256", "taken_utc", "cleaner")}
+    body["schema"] = EFFECTIVE_SCHEMA_V1
+    return _canonical_sha256(body)
 
 
 def effective_problems(effective, profile):
@@ -3176,9 +3329,14 @@ def effective_problems(effective, profile):
     read, decision-C keys, the other internal-topic overrides exactly as frozen (cleaner settings restored), the
     temporary cleaner key absent, md.latest A', and auto.leader.rebalance on EVERY broker."""
     from scripts.kafka_internal_topic_compaction import FROZEN_OTHERS, TEMP_OVERRIDES
-    if not isinstance(effective, dict) or effective.get("schema") != EFFECTIVE_SCHEMA:
+    if not isinstance(effective, dict) or effective.get("schema") not in (EFFECTIVE_SCHEMA, EFFECTIVE_SCHEMA_V1):
         return [f"effective observation schema is not {EFFECTIVE_SCHEMA}"]
     problems = []
+    if effective.get("schema") == EFFECTIVE_SCHEMA:
+        cleaner = effective.get("cleaner") or {}
+        if not isinstance(cleaner.get("default"), dict) or not isinstance(cleaner.get("brokers"), dict) \
+                or len(cleaner["brokers"]) != len(PRODUCTION_KAFKA):
+            problems.append("cleaner settings (cluster default + every broker) not observed")
     if seal_effective(effective)["sha256"] != effective.get("sha256"):
         problems.append("effective observation sha256 does not match its content")
     topics = effective.get("topics") or {}
@@ -3819,12 +3977,14 @@ class Run:
         self.write_writer_precheck()
         self.note("writer_heartbeat_trade_integrity", **{v: p for v, p in exposed.items()})
 
-    def views_fresh(self, since_ns):
+    def views_fresh(self, since_ns, venues=VENUES):
+        """Every venue's book view caught up after ``since_ns`` (an int, or venue -> ns: venue-specific starts)."""
         rows = load_jsonl(self.evidence / "publish.jsonl")
         index, frames = publish_index(rows), book_frames(rows)
         series = view_series(load_jsonl(self.evidence / "sampler.jsonl"))
-        return all(caught_up(series, index, v, since_ns, frames=frames, predicate=self.predicate,
-                             hold_s=10)["caught_up_ns"] for v in VENUES)
+        since = since_ns if isinstance(since_ns, dict) else {v: since_ns for v in venues}
+        return all(caught_up(series, index, v, since[v], frames=frames, predicate=self.predicate,
+                             hold_s=10)["caught_up_ns"] for v in since)
 
     def record_refusals(self, field):
         """Evidence of strict-resume refusals in each running clone's own log (its /tmp/logs dies with --rm)."""
@@ -3836,13 +3996,26 @@ class Run:
             self.writer_precheck.setdefault(venue, {}).setdefault("lifecycle", {})[field] = found
         self.write_writer_precheck()
 
+    def native_frontier(self, clone, native_feeds):
+        """Redacted native checkpoint frontier of one clone's durable state (cursor_frontier) and its problems."""
+        docs = read_native_cursor_docs(clone.state_dir, self.images["holder"], self.ns)
+        consumers = {Path(rel).stem for rel in docs}
+        if len(consumers) != 1:
+            return {}, [f"native cursor files of {len(consumers)} consumers: expected exactly one"]
+        return cursor_frontier(docs, consumers.pop(), native_feeds)
+
     def strict_restart(self):
-        """BOOTSTRAP -> STRICT of every clone (WriterClone lifecycle): clean stop (exit 0) that flushed native
-        checkpoints, restart with the exact deployed env (precheck on this post-bootstrap argv), then proof that the
-        strict sessions resumed: every MD feed applied again and a fresh book view after the restart."""
-        restarted = {}
+        """BOOTSTRAP -> STRICT of every clone (WriterClone lifecycle): clean stop (exit 0) whose durable native
+        checkpoints cover every expected route (redacted frontier kept), restart with the exact deployed env
+        (precheck on this post-bootstrap argv), then the verified strict start (W1, Codex follow-up 2026-10-16):
+        per venue, every MD feed applied for events PUBLISHED after that venue's start, a fresh book view after that
+        venue's start, every native route's durable checkpoint advanced from the bootstrap frontier on the same key,
+        and no strict-resume refusal in the writer log."""
+        restarted, native_feeds = {}, {}
         for venue, clone in self.clones.items():
             role, lifecycle = f"tswriter-{venue.lower()}", self.writer_precheck[venue]["lifecycle"]
+            feeds = [f for f in argv_env(clone.writer_args()).get("MARKET_DATA_NATIVE_FEEDS", "").split(",") if f]
+            native_feeds[venue] = lifecycle["native_feeds"] = feeds
             stop_ns = time.time_ns()
             if not stop_role(self.ns, role, timeout=35):
                 raise RuntimeError(f"STOP bootstrap writer {venue} missing before the strict restart")
@@ -3857,6 +4030,11 @@ class Run:
                 raise RuntimeError(f"STOP bootstrap writer {venue} did not stop cleanly: {life}")
             if not lifecycle["native_checkpoints"]:
                 raise RuntimeError(f"STOP bootstrap writer {venue} left no native checkpoint: {sorted(inventory)}")
+            frontier, problems = self.native_frontier(clone, feeds)
+            lifecycle["bootstrap_frontier"], lifecycle["bootstrap_frontier_problems"] = frontier, problems
+            self.write_writer_precheck()
+            if problems:
+                raise RuntimeError(f"STOP bootstrap writer {venue} checkpoints incomplete: " + "; ".join(problems))
             clone.lifecycle["phase"] = "STRICT"
             argv = clone.writer_args()
             check = writer_clone_precheck(argv, self.images["ts"], writer_reference(clone.inspect),
@@ -3876,28 +4054,64 @@ class Run:
                       native_checkpoints=lifecycle["native_checkpoints"])
 
         def missing():
-            rows = load_jsonl(self.evidence / "sampler.jsonl")
-            return [m for v, t in restarted.items() for m in md_missing_since(rows, t, venues=(v,))]
+            return md_resumed_missing(load_jsonl(self.evidence / "sampler.jsonl"),
+                                      load_jsonl(self.evidence / "publish.jsonl"), restarted)
+
+        progress = {}
+
+        def advanced():
+            for venue, clone in self.clones.items():
+                lifecycle = self.writer_precheck[venue]["lifecycle"]
+                frontier, problems = self.native_frontier(clone, native_feeds[venue])
+                ok, rows = frontier_progress(lifecycle["bootstrap_frontier"], frontier, native_feeds[venue])
+                progress[venue] = {"ok": ok and not problems, "routes": rows, "problems": problems,
+                                   "frontier": frontier}
+            return all(p["ok"] for p in progress.values())
 
         resumed = self.wait(LIMITS["md_ready_s"], until=lambda: not missing())
-        resumed = resumed and self.wait(LIMITS["clone_ready_s"], until=lambda: self.views_fresh(min(restarted.values())))
+        resumed = resumed and self.wait(LIMITS["clone_ready_s"], until=lambda: self.views_fresh(restarted))
+        resumed = resumed and self.wait(LIMITS["md_ready_s"], until=advanced)
         self.record_refusals("strict_refusals")
         left = missing()
         for venue in restarted:
             lifecycle = self.writer_precheck[venue]["lifecycle"]
             mine = [m for m in left if m.endswith("@" + venue)]
-            lifecycle["strict_resume"] = "VERIFIED" if resumed and not mine else "FAILED"
+            refusals = (lifecycle.get("strict_refusals") or {}).get("count")
+            cell = progress.get(venue) or {}
             lifecycle["strict_missing"] = mine
+            lifecycle["strict_frontier"] = cell.get("frontier")
+            lifecycle["strict_progress"] = {k: cell.get(k) for k in ("routes", "problems")}
+            lifecycle["strict_resume"] = ("VERIFIED" if resumed and not mine and cell.get("ok") and refusals == 0
+                                          else "FAILED")
         self.write_writer_precheck()
-        if not resumed or left:
-            raise RuntimeError("STOP strict-resume start not verified: missing after restart " + ",".join(left)
-                               + ("" if left else " (no fresh APPROVED book view)"))
-        self.note("ts_market_data_applied", phase="STRICT", restarted_ns=restarted)
+        failed = [v for v in restarted if self.writer_precheck[v]["lifecycle"]["strict_resume"] != "VERIFIED"]
+        if failed:
+            raise RuntimeError("STOP strict-resume start not verified for " + ",".join(failed) + ": missing "
+                               + (",".join(left) or "none") + "; progress "
+                               + json.dumps({v: (progress.get(v) or {}).get("routes") for v in failed})
+                               + "; refusals " + json.dumps({v: self.writer_precheck[v]["lifecycle"].get(
+                                   "strict_refusals") for v in failed})[:300])
+        self.note("ts_market_data_applied", phase="STRICT", restarted_ns=restarted,
+                  progress={v: p["routes"] for v, p in progress.items()})
 
     def erase_clone_state(self):
-        """Remove the clones' durable state dirs (written by the writer's uid) with a disposable holder container."""
-        removed, errors = [], []
-        for path in sorted(self.work.glob("tsstate-*")) if self.work.is_dir() else ():
+        """W2 (Codex follow-up 2026-10-16): erase a clone's durable state dir (written by the writer's uid, removed
+        through a disposable holder container) only once its writer is verified absent; a writer still present or
+        of unknown liveness keeps its own dir and the cleanup is recorded incomplete. Called after teardown()."""
+        removed, kept, errors = [], [], []
+        for venue, clone in self.clones.items():
+            path = getattr(clone, "state_dir", None)
+            if path is None or not Path(path).is_dir():
+                continue
+            path = Path(path)
+            try:
+                present = sh(["docker", "ps", "-aq", "--no-trunc", "--filter", f"name=^/{clone.name}$"]).strip()
+            except Exception as error:  # noqa: BLE001 - unknown liveness: keep the dir
+                kept.append({"dir": path.name, "reason": f"writer liveness unknown: {type(error).__name__}"})
+                continue
+            if present:
+                kept.append({"dir": path.name, "reason": "writer still present"})
+                continue
             try:
                 sh(["docker", "run", "--rm", "--label", f"{LABEL}={self.ns}", "--network", "none",
                     "-v", f"{path}:/state:rw", "--entrypoint", "find", self.images["holder"], "/state",
@@ -3906,7 +4120,8 @@ class Run:
                 removed.append(path.name)
             except Exception as error:  # noqa: BLE001 - teardown continues and reports
                 errors.append(f"{path.name}:{type(error).__name__}")
-        return {"removed": removed, "errors": errors}
+        return {"removed": removed, "kept": kept, "errors": errors,
+                "complete": not kept and not errors}
 
     # -- INCIDENT 2026-10-15 core-group reproduction (no projector/Stream/Query/TS clones: the core group only)
     def core_group_up(self):
@@ -4096,10 +4311,10 @@ class Run:
                     removed.append(item)
             except Exception as error:  # noqa: BLE001 - cleanup continues
                 errors.append(type(error).__name__)
-        clone_state = self.erase_clone_state()
-        report = teardown(self.ns)
+        report = teardown(self.ns)  # label-checked stop + verify of every owned container, writers included
+        clone_state = self.erase_clone_state()  # only after that, and only for writers verified absent
         report["clone_state_erased"] = clone_state
-        errors += clone_state["errors"]
+        errors += clone_state["errors"] + [f"clone state kept: {k['dir']} ({k['reason']})" for k in clone_state["kept"]]
         try:
             report["log_followers"] = self.stop_followers()
         except Exception as error:  # noqa: BLE001 - evidence is best effort, teardown is not
@@ -5375,6 +5590,9 @@ def main(argv=None):
     parser.add_argument("--cert-dir", type=Path,
                         help="--parity-snapshot / --run: stable cert dir (mounted ro into the admin container that "
                              "describes the production topics; default: the Kafka B runbook's)")
+    parser.add_argument("--lock-owner",
+                        help="--parity-snapshot / --run: owner of the host-measurement lock this call runs in; each "
+                             "admin-container describe refuses under any other valid lock (D1)")
     parser.add_argument("--ts-root", type=Path,
                         help="--run: TS checkout the WriterClone module is loaded from (default %s)" % TS_ROOT)
     parser.add_argument("--new-core", metavar="sha256:<64hex>",
@@ -5427,7 +5645,7 @@ def main(argv=None):
         cert = args.cert_dir or CERT
         if not Path(cert).is_dir():
             parser.error(f"--cert-dir {cert} is not a directory")
-        runner = AdminContainerRunner(Path(cert))
+        runner = AdminContainerRunner(Path(cert), lock_guard=True, lock_owner=args.lock_owner)
         return lambda: observe_production_kafka(runner, docker_inspect_record)
 
     if args.parity_snapshot:
@@ -5446,6 +5664,8 @@ def main(argv=None):
             current, current_effective = current_doc["kafka"], current_doc["effective"]
         ok, reason = g12_receipt_creditable(verdict, current, current_effective)
         print(json.dumps({"creditable": ok, "reason": reason, "final_profile_checked": current is not None,
+                          "cleaner_binding": cleaner_binding(verdict.get("broker_config"), current_effective),
+                          "current_cleaner": (current_effective or {}).get("cleaner"),
                           "production_parity": (verdict.get("broker_config") or {}).get("production_parity"),
                           "kafka_profile": (verdict.get("broker_config") or {}).get("kafka_profile")}, sort_keys=True))
         return 0 if ok else 1
@@ -5454,6 +5674,13 @@ def main(argv=None):
                 or args.production_parity is None:
             parser.error("--run needs --export, --namespace, --auto-leader-rebalance true|false and "
                          "--production-parity FILE")
+        if args.image_set is not None:
+            # A release image set (e.g. the final run's release digests) must name every role: a missing role would
+            # silently fall back to the IMAGES defaults of an older build.
+            named = json.loads(args.image_set.read_text())
+            missing = sorted(set(IMAGES) - set(named if isinstance(named, dict) else ()))
+            if missing:
+                parser.error(f"--image-set {args.image_set} does not name every role (missing {missing})")
         images = resolve_image_set(args.image_set, args.image)
         parity = validate_parity(json.loads(args.production_parity.read_text()))
         if parity["writer"]["image"] != images["ts"]:

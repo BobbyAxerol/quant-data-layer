@@ -32,7 +32,10 @@ def lifecycle_ok():
     return {v: json.loads(json.dumps(cell)) for v in g12.VENUES}
 
 
-def effective(rebalance=True, topics=None, brokers=None):
+CLEANER = {"default": {"log.cleaner.io.max.bytes.per.second": "4194304"}, "brokers": {"1": {}, "2": {}, "3": {}}}
+
+
+def effective(rebalance=True, topics=None, brokers=None, cleaner=None, schema=None):
     """A sealed effective production observation consistent with the C + A' profile (Codex K3)."""
     from scripts.kafka_internal_topic_compaction import FROZEN_OTHERS
     base = {t: {**FROZEN_OTHERS[t], **C_PLAN[t]} for t in g12.INTERNAL_TOPICS}
@@ -43,8 +46,11 @@ def effective(rebalance=True, topics=None, brokers=None):
             for n in g12.PRODUCTION_KAFKA}
     for name, values in (brokers or {}).items():
         rows[name] = {**rows[name], **values}
-    return g12.seal_effective({"schema": g12.EFFECTIVE_SCHEMA, "taken_utc": "2026-10-16T12:00:00Z",
-                               "topics": base, "brokers": rows})
+    doc = {"schema": schema or g12.EFFECTIVE_SCHEMA, "taken_utc": "2026-10-16T12:00:00Z", "topics": base,
+           "brokers": rows}
+    if doc["schema"] == g12.EFFECTIVE_SCHEMA:
+        doc["cleaner"] = json.loads(json.dumps(cleaner or CLEANER))
+    return g12.seal_effective(doc)
 
 
 def parity_doc(rebalance=True, writer_image=None, env=None):
@@ -3732,6 +3738,16 @@ class ProductionEffectiveBindingTests(unittest.TestCase):
 
             def run(self, command):
                 self.calls.append(list(command))
+                if "brokers" in command:
+                    if "--entity-default" in command:
+                        if self.fail == "default":
+                            return CommandResult(1, "", "boom")
+                        return CommandResult(0, "Default configs for brokers in the cluster are:\n"
+                                             "  log.cleaner.io.max.bytes.per.second=4194304 sensitive=false synonyms="
+                                             "{DYNAMIC_DEFAULT_BROKER_CONFIG:log.cleaner.io.max.bytes.per.second="
+                                             "4194304}\n  log.retention.ms=1 sensitive=false synonyms={}\n", "")
+                    node = command[command.index("--entity-name") + 1]
+                    return CommandResult(0, f"Dynamic configs for broker {node} are:\n", "")
                 topic = command[command.index("--entity-name") + 1]
                 if topic == self.fail:
                     return CommandResult(1, "", "boom")
@@ -3741,12 +3757,21 @@ class ProductionEffectiveBindingTests(unittest.TestCase):
                 return CommandResult(0, "\n".join(lines) + "\n", "")
 
         def inspect(name):
-            return {"Image": "sha256:" + "9" * 64, "Config": {"Env": [f"{g12.REBALANCE_ENV}=true", "X=1"]}}
+            node = g12.PRODUCTION_KAFKA.index(name) + 1
+            return {"Image": "sha256:" + "9" * 64,
+                    "Config": {"Env": [f"{g12.REBALANCE_ENV}=true", "X=1", f"KAFKA_NODE_ID={node}"]}}
         runner = Runner()
         observed = g12.observe_production_kafka(runner, inspect, now="2026-10-16T12:00:00Z")
         self.assertEqual(observed, effective())
-        self.assertEqual(sorted(c[c.index("--entity-name") + 1] for c in runner.calls),
+        topic_calls = [c for c in runner.calls if "topics" in c]
+        self.assertEqual(sorted(c[c.index("--entity-name") + 1] for c in topic_calls),
                          sorted([*g12.INTERNAL_TOPICS, g12.PRODUCTION_LATEST_TOPIC]))
+        broker_calls = [c for c in runner.calls if "brokers" in c]
+        self.assertEqual(len(broker_calls), 1 + len(g12.PRODUCTION_KAFKA))
+        with self.assertRaises(RuntimeError):
+            g12.observe_production_kafka(Runner(fail="default"), inspect)
+        with self.assertRaises(RuntimeError):
+            g12.observe_production_kafka(Runner(), lambda name: {"Image": "x", "Config": {"Env": []}})
         self.assertFalse(any("--alter" in c for c in runner.calls))
         with self.assertRaises(RuntimeError):
             g12.observe_production_kafka(Runner(fail="md.latest.v2"), inspect)
@@ -4077,7 +4102,16 @@ class WriterCloneLifecycleTests(unittest.TestCase):
         self.assertTrue(g12.writer_lifecycle_problems({"BINANCE": lifecycle_ok()["BINANCE"]}))
 
     # -- Run.strict_restart with fakes (no Docker)
-    def run_with(self, tmp, *, exit_code=0, checkpoint=True, applied=True):
+    CONSUMER = NS + ".okx"
+
+    @classmethod
+    def cursor_doc(cls, offsets, consumer=None, token="tok-secret"):
+        items = {f"{consumer or cls.CONSUMER}|uid-eth|{feed}||policy": {"token": token, "offset": off}
+                 for feed, off in offsets.items()}
+        return json.dumps({"schema": g12.CURSOR_SCHEMA, "items": items})
+
+    def run_with(self, tmp, *, exit_code=0, checkpoint=True, applied=True, delayed_only=False, native_applied=True,
+                 boot=None, strict=None, refusals=""):
         run = g12.Run.__new__(g12.Run)
         run.ns, run.images, run.parity = NS, dict(g12.IMAGES, ts=self.IMAGE), None
         run.evidence = Path(tmp) / "evidence"
@@ -4089,11 +4123,12 @@ class WriterCloneLifecycleTests(unittest.TestCase):
         run.wait = lambda seconds, faulted=(), until=None, step=5.0: until()
         state = Path(tmp) / "tsstate-okx"
         (state / "cursors/fixed-workers-v1/native-0").mkdir(parents=True)
+        rel = f"cursors/fixed-workers-v1/native-0/{self.CONSUMER}.json"
         if checkpoint:
-            (state / "cursors/fixed-workers-v1/native-0/c.json").write_text('{"o": 1}')
+            (state / rel).write_text('{"o": 1}')
         started = []
         clone = types.SimpleNamespace(image=self.IMAGE, state_dir=state, lifecycle={"phase": "BOOTSTRAP"},
-                                      inspect=self.inspect(), log_tail=lambda lines: "",
+                                      inspect=self.inspect(), log_tail=lambda lines: refusals,
                                       run=lambda *argv, timeout: started.append(list(argv)))
         clone.writer_args = lambda: g12.lifecycle_writer_args(self.argv(), self.IMAGE, str(state), self.DEST,
                                                               clone.lifecycle["phase"])
@@ -4107,38 +4142,324 @@ class WriterCloneLifecycleTests(unittest.TestCase):
             died["ns"] = time.time_ns()
             return True
 
-        def sampler(path):
-            if not applied or not started:
+        boot = {"TRADE": 5, "QUOTE": 7} if boot is None else boot
+        strict = {"TRADE": 9, "QUOTE": 8} if strict is None else strict
+
+        def docs(state_dir, holder, ns, run=None):
+            return {rel: self.cursor_doc(strict if started else boot)} if checkpoint else {}
+
+        def jsonl(path):
+            if not started or not applied:
                 return []
-            return [{"k": "ev", "t": time.time_ns() + S, "venue": "OKX", "feed": f, "id": "9"} for f in g12.MD_FEEDS]
-        return run, started, stop_role, sampler
+            t0 = time.time_ns() - 60 * S if delayed_only else time.time_ns() + S
+            feeds = [f for f in g12.MD_FEEDS if native_applied or f not in ("TRADE", "QUOTE")]
+            if path.name == "publish.jsonl":
+                return [{"k": "pub_md", "t": t0, "venue": "OKX", "feed": f, "id": "9"} for f in feeds]
+            return [{"k": "ev", "t": time.time_ns() + 2 * S, "venue": "OKX", "feed": f, "id": "9"} for f in feeds]
+        return run, started, stop_role, jsonl, docs
+
+    def strict(self, tmp, **kwargs):
+        run, started, stop_role, jsonl, docs = self.run_with(tmp, **kwargs)
+        with patch.object(g12, "stop_role", stop_role), patch.object(g12, "load_jsonl", jsonl), \
+                patch.object(g12, "read_native_cursor_docs", docs), patch.object(g12, "VENUES", ("OKX",)):
+            run.strict_restart()
+        return run, started
 
     def test_strict_restart_verifies_the_resumed_start(self):
         with tempfile.TemporaryDirectory() as tmp:
-            run, started, stop_role, sampler = self.run_with(tmp)
-            with patch.object(g12, "stop_role", stop_role), patch.object(g12, "load_jsonl", sampler), \
-                    patch.object(g12, "VENUES", ("OKX",)):
-                run.strict_restart()
+            run, started = self.strict(tmp)
             self.assertEqual(len(started), 1)
             self.assertEqual(g12.argv_env(started[0])["MARKET_DATA_NATIVE_REQUIRE_RESUME"], "1")
             lifecycle = run.writer_precheck["OKX"]["lifecycle"]
             self.assertEqual((lifecycle["phase"], lifecycle["strict_resume"]), ("STRICT", "VERIFIED"))
-            self.assertEqual(lifecycle["native_checkpoints"], ["cursors/fixed-workers-v1/native-0/c.json"])
+            self.assertEqual(lifecycle["native_feeds"], ["TRADE", "QUOTE"])
+            self.assertEqual({f: r["offset"] for f, r in lifecycle["bootstrap_frontier"].items()},
+                             {"TRADE": 5, "QUOTE": 7})
+            self.assertEqual(lifecycle["strict_progress"]["routes"], {"TRADE": "ADVANCED", "QUOTE": "ADVANCED"})
             self.assertTrue(lifecycle["strict_precheck"]["ok"])
             self.assertIn("tswriter-okx", run.expected)
-            saved = json.loads((run.evidence / g12.WRITER_PRECHECK_FILE).read_text())
-            self.assertEqual(saved["OKX"]["lifecycle"]["strict_resume"], "VERIFIED")
+            saved = (run.evidence / g12.WRITER_PRECHECK_FILE).read_text()
+            self.assertEqual(json.loads(saved)["OKX"]["lifecycle"]["strict_resume"], "VERIFIED")
+            self.assertNotIn("tok-secret", saved)  # tokens are never kept
 
-    def test_strict_restart_stops_on_unclean_bootstrap_missing_checkpoint_or_no_resume(self):
-        for label, kwargs, text in (("unclean exit", {"exit_code": 137}, "did not stop cleanly"),
-                                    ("no checkpoint", {"checkpoint": False}, "left no native checkpoint"),
-                                    ("strict refused", {"applied": False}, "strict-resume start not verified")):
+    def test_strict_restart_stops_on_every_non_genuine_start(self):
+        cases = (("unclean exit", {"exit_code": 137}, "did not stop cleanly", False),
+                 ("no checkpoint", {"checkpoint": False}, "left no native checkpoint", False),
+                 ("one route without checkpoint", {"boot": {"TRADE": 5}}, "QUOTE: no native checkpoint", False),
+                 ("nothing applied", {"applied": False}, "strict-resume start not verified", True),
+                 # W1: bootstrap notifications drained after the restart (old publish stamps) never count.
+                 ("delayed bootstrap notifications", {"delayed_only": True}, "not verified", True),
+                 # W1: native sessions refused while Python BOOK/MARK/BAR keep applying.
+                 ("native refused, python healthy", {"native_applied": False}, "not verified", True),
+                 ("durable checkpoint not advanced", {"strict": {"TRADE": 5, "QUOTE": 8}}, "NOT_ADVANCED", True),
+                 ("checkpoint regressed", {"strict": {"TRADE": 9, "QUOTE": 3}}, "REGRESSED", True),
+                 ("refusal in the writer log", {"refusals": "x HANDOFF_RESUME_REQUIRED y"}, "refusals", True))
+        for label, kwargs, text, restarted in cases:
             with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
-                run, started, stop_role, sampler = self.run_with(tmp, **kwargs)
-                with patch.object(g12, "stop_role", stop_role), patch.object(g12, "load_jsonl", sampler), \
-                        patch.object(g12, "VENUES", ("OKX",)), self.assertRaisesRegex(RuntimeError, text):
-                    run.strict_restart()
-                if label == "strict refused":
-                    self.assertEqual(run.writer_precheck["OKX"]["lifecycle"]["strict_resume"], "FAILED")
-                else:
-                    self.assertEqual(started, [])
+                with self.assertRaisesRegex(RuntimeError, text):
+                    self.strict(tmp, **kwargs)
+
+    def test_genuine_resume_from_an_older_cursor_then_catch_up_passes(self):
+        # Replay from the bootstrap frontier (duplicates are safe) then new events: advanced on the same key.
+        with tempfile.TemporaryDirectory() as tmp:
+            run, _ = self.strict(tmp, boot={"TRADE": 1, "QUOTE": 1}, strict={"TRADE": 2, "QUOTE": 40})
+            self.assertEqual(run.writer_precheck["OKX"]["lifecycle"]["strict_resume"], "VERIFIED")
+
+
+class CodexFollowupReviewTests(unittest.TestCase):
+    """Codex WriterClone/guard follow-up review 2026-10-16: W1 (strict start joined to new publications + per-route
+    checkpoints), W2 (state erased only after the writer is verified absent), D1 (admin launches under the host lock),
+    D2 (cleaner settings in the effective hash), D3 (pass window after the baseline completes)."""
+
+    # W1
+    def test_md_resumed_needs_a_publication_after_that_venue_start(self):
+        starts = {"OKX": 100 * S, "BINANCE": 200 * S}
+        pubs = [{"k": "pub_md", "t": 150 * S, "venue": "OKX", "feed": "TRADE", "id": "a"},
+                {"k": "pub_md", "t": 90 * S, "venue": "OKX", "feed": "QUOTE", "id": "b"},
+                {"k": "pub_md", "t": 150 * S, "venue": "BINANCE", "feed": "TRADE", "id": "c"},
+                {"k": "pub_md", "t": 210 * S, "venue": "BINANCE", "feed": "QUOTE", "id": "d"}]
+        evs = [{"k": "ev", "t": 160 * S, "venue": "OKX", "feed": "TRADE", "id": "a"},
+               {"k": "ev", "t": 160 * S, "venue": "OKX", "feed": "QUOTE", "id": "b"},  # delayed bootstrap event
+               {"k": "ev", "t": 220 * S, "venue": "BINANCE", "feed": "TRADE", "id": "c"},  # before BINANCE start
+               {"k": "ev", "t": 220 * S, "venue": "BINANCE", "feed": "QUOTE", "id": "d"},
+               {"k": "ev", "t": 230 * S, "venue": "OKX", "feed": "MARK", "id": "zz"}]  # no publication
+        self.assertEqual(g12.md_resumed_missing(evs, pubs, starts, feeds=("TRADE", "QUOTE", "MARK")),
+                         ["QUOTE@OKX", "MARK@OKX", "TRADE@BINANCE", "MARK@BINANCE"])
+
+    def test_cursor_frontier_requires_each_route_once_for_this_consumer(self):
+        doc = WriterCloneLifecycleTests.cursor_doc
+        c = WriterCloneLifecycleTests.CONSUMER
+        frontier, problems = g12.cursor_frontier({"n0/x.json": doc({"TRADE": 3, "QUOTE": 4})}, c, ["TRADE", "QUOTE"])
+        self.assertEqual((sorted(frontier), problems), (["QUOTE", "TRADE"], []))
+        self.assertNotIn("tok-secret", json.dumps(frontier))
+        cases = {"missing route": ({"n0/x.json": doc({"TRADE": 3})}, "QUOTE: no native checkpoint"),
+                 "other consumer": ({"n0/x.json": doc({"TRADE": 3, "QUOTE": 4}, consumer="prod.ts")}, "another"),
+                 "malformed": ({"n0/x.json": "{not json"}, "malformed"),
+                 "wrong schema": ({"n0/x.json": json.dumps({"schema": "v1", "items": {}})}, "malformed"),
+                 "no token": ({"n0/x.json": doc({"TRADE": 3, "QUOTE": 4}, token="")}, "no valid offset"),
+                 "duplicate route": ({"n0/x.json": doc({"TRADE": 3, "QUOTE": 4}),
+                                      "n1/x.json": doc({"TRADE": 5})}, "more than one")}
+        for label, (docs, text) in cases.items():
+            with self.subTest(label):
+                _, problems = g12.cursor_frontier(docs, c, ["TRADE", "QUOTE"])
+                self.assertTrue(any(text in p for p in problems), problems)
+        # an empty worker slot (no document) is not required
+        self.assertEqual(g12.cursor_frontier({"n0/x.json": doc({"TRADE": 1, "QUOTE": 1})}, c, ["TRADE", "QUOTE"])[1],
+                         [])
+
+    def test_frontier_progress(self):
+        b = {"TRADE": {"offset": 5, "key_sha256": "k"}}
+        self.assertEqual(g12.frontier_progress(b, {"TRADE": {"offset": 6, "key_sha256": "k"}}, ["TRADE"]),
+                         (True, {"TRADE": "ADVANCED"}))
+        for after, row in (({"TRADE": {"offset": 5, "key_sha256": "k"}}, "NOT_ADVANCED"),
+                           ({"TRADE": {"offset": 4, "key_sha256": "k"}}, "REGRESSED"),
+                           ({"TRADE": {"offset": 9, "key_sha256": "j"}}, "KEY_CHANGED"), ({}, "MISSING")):
+            self.assertEqual(g12.frontier_progress(b, after, ["TRADE"]), (False, {"TRADE": row}))
+
+    def test_read_native_cursor_docs_parses_the_holder_output(self):
+        calls = []
+
+        def run(argv, timeout):
+            calls.append(argv)
+            return "\n@@FILE cursors/fixed-workers-v1/native-4/c.json\n{\"a\": 1}\n@@FILE x/y.json\n{}"
+        docs = g12.read_native_cursor_docs("/s", "sha256:h", NS, run=run)
+        self.assertEqual(docs, {"cursors/fixed-workers-v1/native-4/c.json": "{\"a\": 1}\n", "x/y.json": "{}\n"})
+        self.assertIn("none", calls[0])
+        self.assertIn("/s:/state:ro", calls[0])
+
+    # W2
+    def down_run(self, tmp, present):
+        run = g12.Run.__new__(g12.Run)
+        run.ns, run.images, run.evidence, run.work = NS, dict(g12.IMAGES), Path(tmp) / "e", Path(tmp) / "w"
+        run.evidence.mkdir()
+        run.work.mkdir()
+        state = run.work / "tsstate-okx"
+        state.mkdir()
+        (state / "c.json").write_text("{}")
+        clone = types.SimpleNamespace(name=f"{NS}-tswriter-okx", state_dir=state,
+                                      close=lambda: [{"kind": "container", "name": "x", "ok": False}])
+        run.clones, run.guard0, run.notes = {"OKX": clone}, None, []
+        run.note = lambda step, **fields: run.notes.append(step)
+        run.keep_logs = lambda: None
+        run.stop_followers = lambda: {}
+        run.stop_events = lambda: 0
+        order = []
+
+        def sh(argv, timeout=60, check=True):
+            if argv[:3] == ["docker", "ps", "-aq"]:
+                order.append("liveness")
+                if present == "error":
+                    raise RuntimeError("daemon")
+                return "abc\n" if present else ""
+            if argv[:2] == ["docker", "run"]:
+                order.append("erase")
+                for child in state.iterdir():
+                    child.unlink()
+            return ""
+
+        def teardown(ns):
+            order.append("teardown")
+            return {"removed_containers": [], "errors": []}
+        return run, order, sh, teardown, state
+
+    def test_down_erases_state_only_after_teardown_and_verified_absence(self):
+        for present, erased in ((False, True), (True, False), ("error", False)):
+            with self.subTest(present=present), tempfile.TemporaryDirectory() as tmp:
+                run, order, sh, teardown, state = self.down_run(tmp, present)
+                with patch.object(g12, "sh", sh), patch.object(g12, "teardown", teardown):
+                    report = run.down()
+                self.assertEqual(order[:2], ["teardown", "liveness"])
+                self.assertEqual(state.exists(), not erased)
+                erased_doc = report["clone_state_erased"]
+                self.assertEqual(erased_doc["complete"], erased)
+                if not erased:
+                    self.assertTrue(any("clone state kept" in e for e in report["errors"]))
+                # the first close() failure is preserved even when later cleanup succeeds
+                self.assertEqual(report["writer_clone_removed"][0]["ok"], False)
+
+    # D1
+    def test_admin_runner_checks_the_lock_before_every_launch(self):
+        from scripts import kn_state_topics_packet as packet
+        with tempfile.TemporaryDirectory() as tmp:
+            lock = Path(tmp) / "lock"
+            launched = []
+            runner = packet.AdminContainerRunner(Path(tmp), image="apache/kafka@sha256:x", lock_guard=True,
+                                                 lock_owner="claude-g12-final", lock_path=lock)
+
+            def write(owner, minutes=30):
+                until = (time.time() + minutes * 60)
+                import datetime as dt
+                lock.write_text(json.dumps({"owner": owner, "until_utc": dt.datetime.fromtimestamp(
+                    until, dt.timezone.utc).isoformat()}))
+            with patch.object(packet, "_subprocess", lambda argv, timeout: launched.append(argv) or
+                              packet.CommandResult(0, "", "")):
+                runner.run(["kafka-configs.sh", "--describe"])  # absent
+                write("claude-g12-final")
+                runner.run(["kafka-configs.sh", "--describe"])  # own
+                write("someone", minutes=-5)
+                runner.run(["kafka-configs.sh", "--describe"])  # expired
+                write("claude-burst-x")  # owner replaced between two describes
+                with self.assertRaises(packet.Refused):
+                    runner.run(["kafka-configs.sh", "--describe"])
+                lock.write_text("{garbage")
+                with self.assertRaises(packet.Refused):
+                    runner.run(["kafka-configs.sh", "--describe"])
+            self.assertEqual(len(launched), 3)
+            unguarded = packet.AdminContainerRunner(Path(tmp), image="apache/kafka@sha256:x")
+            unguarded.check_lock()  # default: no guard (callers opt in)
+
+    def test_parity_snapshot_paths_name_their_lock_owner(self):
+        from scripts import kafka_b_roll_runbook as runbook
+        argv = runbook.parity_argv(Path("/o.json"), Path("/c"))
+        self.assertEqual(argv[argv.index("--lock-owner") + 1], runbook.OWNER)
+        seen = {}
+
+        class Runner:
+            def __init__(self, cert, **kwargs):
+                seen.update(kwargs)
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch("scripts.kn_state_topics_packet.AdminContainerRunner", Runner), \
+                patch.object(g12, "production_parity_snapshot", return_value=parity_doc()), patch("sys.stdout"):
+            g12.main(["--parity-snapshot", str(Path(tmp) / "p.json"), "--cert-dir", tmp, "--lock-owner", "me"])
+        self.assertEqual(seen, {"lock_guard": True, "lock_owner": "me"})
+
+    # D2
+    def test_cleaner_settings_are_parsed_and_hashed(self):
+        out = ("Default configs for brokers in the cluster are:\n"
+               "  log.cleaner.io.max.bytes.per.second=4194304 sensitive=false synonyms={DYNAMIC_DEFAULT_BROKER_CONFIG:"
+               "log.cleaner.io.max.bytes.per.second=4194304}\n"
+               "  min.cleanable.dirty.ratio=0.05 sensitive=false synonyms={}\n"
+               "  log.retention.ms=5 sensitive=false synonyms={}\n")
+        self.assertEqual(g12.parse_cleaner_configs(out), {"log.cleaner.io.max.bytes.per.second": "4194304",
+                                                          "min.cleanable.dirty.ratio": "0.05"})
+        base = effective()
+        throttled = effective(cleaner={"default": {"log.cleaner.io.max.bytes.per.second": "1048576"},
+                                       "brokers": {"1": {}, "2": {}, "3": {}}})
+        self.assertNotEqual(base["sha256"], throttled["sha256"])  # throttle-only change, topics/images equal
+        self.assertEqual(g12.effective_problems(throttled, parity_doc()["kafka"]), [])
+        no_cleaner = g12.seal_effective({k: v for k, v in base.items() if k not in ("sha256", "cleaner")})
+        self.assertIn("cleaner settings (cluster default + every broker) not observed",
+                      g12.effective_problems(no_cleaner, parity_doc()["kafka"]))
+
+    def test_pre_d2_run_is_compared_on_its_v1_binding_and_reported(self):
+        v1 = effective(schema=g12.EFFECTIVE_SCHEMA_V1)
+        config = {"production_parity": "MATCH", "kafka_profile": parity_doc()["kafka"],
+                  "production_effective": {"parity_sha256": v1["sha256"], "before": v1, "after": v1}}
+        self.assertEqual(g12.effective_v1_sha256(effective()), v1["sha256"])
+        self.assertEqual(g12.production_effective_problems(config, effective()), [])
+        self.assertEqual(g12.cleaner_binding(config, effective()), "CREDIT_TIME_ONLY")
+        moved = effective(brokers={g12.PRODUCTION_KAFKA[0]: {"image": "sha256:" + "1" * 64}})
+        self.assertTrue(g12.production_effective_problems(config, moved))
+        v2 = effective()
+        bound = dict(config, production_effective={"parity_sha256": v2["sha256"], "before": v2, "after": v2})
+        self.assertEqual(g12.cleaner_binding(bound), "RUN")
+        throttled = effective(cleaner={"default": {}, "brokers": {"1": {}, "2": {}, "3": {}}})
+        self.assertTrue(g12.production_effective_problems(bound, throttled))  # v2 run: cleaner drift refuses
+
+    # D3
+    def test_pass_during_baseline_collection_is_not_credited(self):
+        from scripts import kafka_offsets_pass_watch as watch
+
+        def snap(at, done, passes, offsets):
+            doc = {"read_contract": watch.READ_CONTRACT, "at_utc": at, "partition": "__consumer_offsets-43",
+                   "replicas": {"1": {"segment_count": 1, "size_bytes": 10, "empty_segments": 0,
+                                      "cleaner_checkpoint": 1, "log_start_checkpoint": 0, "passes": passes}},
+                   "group_offsets": offsets, "group_states": {}}
+            if done:
+                doc["baseline_completed_utc"] = done
+            return doc
+        during = [{"started_utc": "2026-10-16T10:00:05+00:00", "finished_utc": "2026-10-16T10:00:06+00:00",
+                   "end_messages": 3}]
+        before = snap("2026-10-16T10:00:00+00:00", "2026-10-16T10:00:10+00:00", [], {"g": {"t-0": 5}})
+        # the offset of group h vanished during the baseline collection: absent from both maps
+        after = snap("2026-10-16T11:00:00+00:00", None, during, {"g": {"t-0": 5}})
+        report = watch.compare(before, after)
+        self.assertFalse(report["replicas"]["1"]["pass_started"])
+        self.assertEqual(report["replicas"]["1"]["passes_during_baseline"], during)
+        self.assertFalse(report["cleaner_completed_all_replicas"])
+        self.assertEqual((report["pass_window_from_utc"], report["baseline_bound_exact"]),
+                         ("2026-10-16T10:00:10+00:00", True))
+        later = [{"started_utc": "2026-10-16T10:30:00+00:00", "finished_utc": "2026-10-16T10:31:00+00:00",
+                  "end_messages": 3}]
+        self.assertTrue(watch.compare(before, snap("2026-10-16T11:00:00+00:00", None, later,
+                                                   {"g": {"t-0": 5}}))["cleaner_completed_all_replicas"])
+        legacy = {k: v for k, v in before.items() if k != "baseline_completed_utc"}
+        self.assertFalse(watch.compare(legacy, after)["baseline_bound_exact"])
+
+    def test_snapshot_records_offsets_capture_and_baseline_completion(self):
+        from scripts import kafka_offsets_pass_watch as watch
+        from scripts.kn_state_topics_packet import CommandResult
+        import datetime as dt
+        ticks = iter([dt.datetime(2026, 10, 16, 10, 0, 7, tzinfo=dt.timezone.utc),
+                      dt.datetime(2026, 10, 16, 10, 0, 9, tzinfo=dt.timezone.utc)])
+        admin = types.SimpleNamespace(run=lambda cmd: CommandResult(0, "", ""), describe=lambda: {})
+        with patch.object(watch, "read_cleaner_log", return_value=("", [], [])), \
+                patch.object(watch, "_run", return_value=""), \
+                patch.object(watch, "parse_partition_dir", return_value={}), \
+                patch.object(watch, "parse_cleaner_passes", return_value=[]):
+            doc = watch.snapshot(admin, "__consumer_offsets-43", 1, brokers=(1,),
+                                 now=dt.datetime(2026, 10, 16, 10, 0, 0, tzinfo=dt.timezone.utc),
+                                 clock=lambda: next(ticks))
+        self.assertEqual((doc["at_utc"][:19], doc["offsets_captured_utc"][:19], doc["baseline_completed_utc"][:19]),
+                         ("2026-10-16T10:00:00", "2026-10-16T10:00:07", "2026-10-16T10:00:09"))
+
+
+class ImageSetParameterTests(unittest.TestCase):
+    """Coordinator 2026-10-16: the final G12 points --image-set at the release digests; a set that does not name every
+    role is refused instead of silently mixing in the IMAGES defaults."""
+
+    def test_run_refuses_an_incomplete_image_set_and_accepts_a_complete_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parity = Path(tmp) / "parity.json"
+            parity.write_text(json.dumps(parity_doc(False, writer_image=g12.IMAGES["ts"])))
+            partial = Path(tmp) / "partial.json"
+            partial.write_text(json.dumps({"core": "sha256:" + "a" * 64}))
+            argv = ["--run", tmp, "--export", tmp, "--namespace", NS, "--auto-leader-rebalance", "false",
+                    "--production-parity", str(parity), "--cert-dir", tmp]
+            with patch("sys.stderr"), self.assertRaises(SystemExit):
+                g12.main(argv + ["--image-set", str(partial)])
+            full = Path(tmp) / "full.json"
+            full.write_text(json.dumps(dict(g12.IMAGES, core="sha256:" + "a" * 64)))
+            with patch.object(g12, "orchestrate", return_value=0) as run:
+                self.assertEqual(g12.main(argv + ["--image-set", str(full)]), 0)
+            self.assertEqual(run.call_args.args[3]["core"], "sha256:" + "a" * 64)

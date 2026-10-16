@@ -435,10 +435,15 @@ class AdminContainerRunner:
     """Production: a throwaway container equal to compose ``stable_admin``.
     The cert directory is bind-mounted read-only and never read here."""
 
-    def __init__(self, cert_dir: Path, *, image: str | None = None, timeout: float = 120.0) -> None:
+    def __init__(self, cert_dir: Path, *, image: str | None = None, timeout: float = 120.0,
+                 lock_guard: bool = False, lock_owner: str | None = None, lock_path: Path | None = None) -> None:
         self.cert_dir = cert_dir
         self.image = image or admin_image()
         self.timeout = timeout
+        # D1 (Codex follow-up review 2026-10-16): with ``lock_guard`` every launch first checks the host-measurement
+        # lock (AGENTS.md 34a): absent/expired or held by ``lock_owner`` -> allowed; a valid foreign or unreadable
+        # lock -> Refused before the container starts. Read-only for Kafka is not read-only for the host.
+        self.lock_guard, self.lock_owner, self.lock_path = lock_guard, lock_owner, lock_path
 
     def argv(self, command: Sequence[str]) -> list[str]:
         return ["docker", "run", "--rm", "--network", PRODUCTION_NETWORK, "--read-only",
@@ -448,7 +453,20 @@ class AdminContainerRunner:
                 "--bootstrap-server", PRODUCTION_BOOTSTRAP, "--command-config", ADMIN_CONFIG,
                 *command[1:]]
 
+    def check_lock(self) -> None:
+        if not self.lock_guard:
+            return
+        from scripts.host_measurement_lock import LOCK, lock_state
+        state, doc = lock_state(self.lock_path or LOCK)
+        if state in ("ABSENT", "EXPIRED"):
+            return
+        if state == "VALID" and self.lock_owner and (doc or {}).get("owner") == self.lock_owner:
+            return
+        raise Refused(f"host-measurement lock {state} held by {(doc or {}).get('owner')!r}: no admin container "
+                      f"launch outside the owner's window (own owner {self.lock_owner!r})")
+
     def run(self, command: Sequence[str]) -> CommandResult:
+        self.check_lock()
         return _subprocess(self.argv(command), self.timeout)
 
     def describe(self) -> dict[str, Any]:

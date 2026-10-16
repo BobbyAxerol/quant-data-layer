@@ -125,7 +125,8 @@ def sampler_argv(out: Path, log_dir: str, seconds: int) -> list[str]:
 
 
 def parity_argv(out: Path, cert: Path) -> list[str]:
-    return [*tool("p184_g12_isolated_fault.py"), "--parity-snapshot", str(out), "--cert-dir", str(cert)]
+    return [*tool("p184_g12_isolated_fault.py"), "--parity-snapshot", str(out), "--cert-dir", str(cert),
+            "--lock-owner", OWNER]
 
 
 class Host:
