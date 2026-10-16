@@ -839,3 +839,153 @@ class LiveBudgetIsolation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StarvationPredicateV2(unittest.TestCase):
+    """OF-G13-1 (inheritance audit 2026-10-16): NO_CROSS_CONSUMER_STARVATION failed identically on both A/B arms
+    because the slow consumer was resumed only if an overflow metrics sample landed inside the publish loop. The
+    predicate now awaits the overflow after the burst and judges an identity-matched marker."""
+
+    def simulate(self, *, overflow_after=None, marker_lands=True, slow_runs=False):
+        """run_faults over fakes. overflow_after: the overflow counter rises once this many events were published
+        after the baseline (None: never). The fast consumer reports every 100 events (the child's real cadence)."""
+        from unittest.mock import AsyncMock
+        log, state = [], {"published": 0}
+
+        class Producer:
+            next_id = 1
+
+            def __init__(self, _packet):
+                pass
+
+            def publish(self, count):
+                Producer.next_id += count
+                state["published"] += count
+                log.append(("publish", count))
+
+        baseline = {}
+
+        class Child:
+            def __init__(self, _packet, consumer, token, stop_after=0, stall=False):
+                self.consumer, self.stall, self.progress = consumer, stall, 0
+                self.process = type("P", (), {"pid": 4242 if stall else 4343})()
+                self.reported = 0
+
+            def wait(self, kind, timeout=60):
+                if kind == "live":
+                    if self.consumer == "fast":
+                        baseline["id"] = Producer.next_id - 1
+                        baseline["published"] = state["published"]
+                    return {"count": 0}
+                if kind == "progress":
+                    seen = state["published"] - baseline["published"]
+                    if not marker_lands:
+                        seen = min(seen, R.REPLAY - 1)
+                    self.reported = max(self.reported + 100, 0)
+                    if seen < self.reported:
+                        raise TimeoutError("consumer did not reach progress")
+                    return {"kind": "progress", "count": self.reported, "last": baseline["id"] + self.reported}
+                if self.stall:
+                    return {"code": "RESOURCE_EXHAUSTED", "controls": ["RATE_LIMITED"], "count": 0}
+                if self.consumer == "fast":
+                    return {"code": "OK", "count": R.REPLAY + 1, "last": baseline["id"] + R.REPLAY + 1}
+                return {"code": "OUT_OF_RANGE", "detail": "backlog expired", "controls": []}
+
+            def resume(self):
+                log.append(("resume", self.consumer))
+
+            def close(self):
+                pass
+
+        def metrics(_path, since_ns):
+            published = state["published"] - baseline.get("published", 10**9)
+            rises = overflow_after is not None and published >= overflow_after
+            return [{"overflow": 1 if rises else 0, "expired": 1, "queue_bytes": 10, "rss_bytes": 1,
+                     "cpu_seconds": 2, "subscriptions_opened": 0}]
+
+        stopped = lambda pid: slow_runs is False and ("resume", "slow") not in log  # noqa: E731
+        with patch.object(R, "RawProducer", Producer), patch.object(R, "Consumer", Child), \
+                patch.object(R, "wait_metrics", return_value=[{"overflow": 0, "expired": 0, "queue_bytes": 0,
+                                                               "rss_bytes": 1, "cpu_seconds": 1,
+                                                               "subscriptions_opened": 0}]), \
+                patch.object(R, "read_metrics", side_effect=metrics), \
+                patch.object(R, "wait_seed", return_value={}), \
+                patch.object(R, "snapshot", new_callable=AsyncMock, return_value=("token", 5)), \
+                patch.object(R, "replay_boundary", return_value={"replay_count_at_live": R.REPLAY}), \
+                patch.object(R, "measure_restarts", return_value={"restart_samples": [{"first_event_ns": 1}]}), \
+                patch.object(R, "slow_queue_observation", return_value={"queued": R.QUEUE}), \
+                patch.object(R, "process_stopped", side_effect=stopped), \
+                patch.object(R, "STARVATION_OVERFLOW_WAIT_S", 0.3), \
+                patch.object(R.time, "sleep"):
+            facts = R.run_faults(packet())
+        return facts[R.CELLS[2]], log
+
+    def test_overflow_seen_only_after_the_burst_still_measures(self):
+        # The 2026-10-15 shape: no overflow sample inside the publish loop (both arms failed on it).
+        fact, log = self.simulate(overflow_after=R.REPLAY - 1)
+        self.assertTrue(fact["observed"], fact)
+        self.assertTrue(fact["passed"], fact)
+        self.assertEqual(fact["marker"]["fast_last"], fact["expected_marker_trade_id"])
+        self.assertEqual(fact["measurement_n"], R.REPLAY // 100 - 1)
+        # The slow consumer is resumed only after the marker landed; REPLAY events in total before it.
+        resume = log.index(("resume", "slow"))
+        self.assertEqual(sum(n for kind, n in log[:resume] if kind == "publish") - 2, R.REPLAY)
+        self.assertEqual(log[resume - 1], ("publish", 1))
+
+    def test_early_overflow_is_the_same_verdict(self):
+        fact, _ = self.simulate(overflow_after=200)
+        self.assertTrue(fact["passed"], fact)
+
+    def test_no_overflow_is_not_observed_never_a_pass(self):
+        fact, log = self.simulate(overflow_after=None)
+        self.assertFalse(fact["observed"])
+        self.assertFalse(fact["passed"])
+        self.assertEqual(fact["failure_stage"], "slow_overflow_not_observed")
+        self.assertIn(("resume", "slow"), log)  # the run still terminates the slow consumer
+
+    def test_marker_not_delivered_or_slow_running_fails(self):
+        fact, _ = self.simulate(overflow_after=R.REPLAY - 1, slow_runs=True)
+        self.assertTrue(fact["observed"])
+        self.assertFalse(fact["passed"])
+        fact, _ = self.simulate(overflow_after=R.REPLAY - 1, marker_lands=False)
+        self.assertFalse(fact["passed"])
+
+    def test_fact_requires_identity_count_and_stopped_slow(self):
+        base = 10
+        fast_end = {"code": "OK", "count": R.REPLAY + 1, "last": base + R.REPLAY + 1}
+        samples = [{"count": 100 * (i + 1)} for i in range(R.REPLAY // 100 - 1)]
+        marker = {"trade_id": base + R.REPLAY, "fast_last": base + R.REPLAY, "fast_count": R.REPLAY,
+                  "slow_stopped": True}
+        overflow = {"overflow_delta": 3, "waited_ms": 900}
+        self.assertTrue(R.starvation_fact(fast_end, samples, overflow, marker, base)["passed"])
+        for change in ({"fast_last": base + R.REPLAY - 1}, {"trade_id": base + R.REPLAY + 1},
+                       {"fast_count": R.REPLAY - 100}, {"slow_stopped": None}, {"slow_stopped": False}):
+            with self.subTest(change=change):
+                self.assertFalse(R.starvation_fact(fast_end, samples, overflow, {**marker, **change}, base)["passed"])
+        self.assertFalse(R.starvation_fact(fast_end, samples[:-1], overflow, marker, base)["passed"])
+        cancelled = {**fast_end, "code": "CANCELLED"}
+        self.assertFalse(R.starvation_fact(cancelled, samples, overflow, marker, base)["passed"])
+        self.assertFalse(R.starvation_fact(fast_end, samples, None, marker, base)["observed"])
+
+    def test_wait_overflow_is_bounded(self):
+        clock = iter(range(100)).__next__
+        rows = iter([[{"overflow": 0}], ValueError("empty"), [{"overflow": 2}]])
+
+        def read(_path, since_ns):
+            row = next(rows)
+            if isinstance(row, Exception):
+                raise row
+            return row
+        with patch.object(R, "read_metrics", side_effect=read):
+            got = R.wait_overflow("/x", since_ns=1, before={"overflow": 0}, timeout=10, clock=clock, pause=lambda s: 0)
+        self.assertEqual(got["overflow_delta"], 2)
+        with patch.object(R, "read_metrics", return_value=[{"overflow": 0}]):
+            clock = iter(range(100)).__next__
+            self.assertIsNone(R.wait_overflow("/x", since_ns=1, before={"overflow": 0}, timeout=5, clock=clock,
+                                              pause=lambda s: 0))
+
+    def test_process_stopped_reads_proc_state(self):
+        self.assertFalse(R.process_stopped(os.getpid()))
+        self.assertIsNone(R.process_stopped(2**22 + 12345))
+        with patch.object(R.Path, "read_text", return_value="77 (py (x)) T 1 2 3"):
+            self.assertTrue(R.process_stopped(77))

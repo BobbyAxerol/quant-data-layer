@@ -566,6 +566,63 @@ def replay_boundary(start, consumer, token, producer, baseline_id):
         child.close()
 
 
+# OF-G13-1 (inheritance audit 2026-10-16): NO_CROSS_CONSUMER_STARVATION is judged on an identity-matched marker
+# published AFTER the stopped slow subscription is seen overflowing (gateway metrics, 1 s cadence), never on whether
+# an overflow sample happened to land inside the publish loop. Bounded wait; no overflow seen -> not observed.
+STARVATION_OVERFLOW_WAIT_S = 30
+
+
+def wait_overflow(path, *, since_ns, before, timeout=None, clock=None, pause=None):
+    """The first metrics sample whose overflow counter is above ``before`` (the stopped slow subscription's queue
+    overflowed), as {overflow_delta, waited_ms}; None if none within ``timeout`` (STARVATION_OVERFLOW_WAIT_S)."""
+    timeout = STARVATION_OVERFLOW_WAIT_S if timeout is None else timeout
+    clock, pause = clock or time.monotonic, pause or time.sleep
+    started = clock()
+    while True:
+        try:
+            samples = read_metrics(path, since_ns=since_ns)
+        except (FileNotFoundError, ValueError):
+            samples = []
+        if samples and samples[-1].get("overflow", 0) > before.get("overflow", 0):
+            return {"overflow_delta": samples[-1]["overflow"] - before.get("overflow", 0),
+                    "waited_ms": (clock() - started) * 1000}
+        if clock() - started >= timeout:
+            return None
+        pause(.2)
+
+
+def process_stopped(pid):
+    """True when the process is in the stopped state (SIGSTOP), from /proc/<pid>/stat; None if unreadable."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return None
+    return stat.rsplit(")", 1)[1].split()[0] == "T"
+
+
+def starvation_fact(fast_end, progress_samples, overflow, marker, baseline_id):
+    """DR08.NO_CROSS_CONSUMER_STARVATION: while the slow consumer is stopped and its subscription has overflowed,
+    the fast consumer still receives every event, the marker (trade id baseline + REPLAY) by identity. Without an
+    observed overflow the window is not the one judged: observed False (never a PASS)."""
+    marker = marker or {}
+    expected_marker = baseline_id + REPLAY
+    fact = {"observed": overflow is not None, "passed": False,
+            "fast_events": fast_end.get("count"), "distinct_identities": True,
+            "identity_order_checked": True, "progress_checked_every": 100,
+            "progress_while_slow_stopped": progress_samples, "measurement_n": len(progress_samples),
+            "slow_overflow_before_marker": overflow, "marker": marker, "expected_marker_trade_id": expected_marker,
+            "predicate": "v2: marker by identity after the slow overflow, slow consumer stopped throughout"}
+    if overflow is None:
+        fact["failure_stage"] = "slow_overflow_not_observed"
+        return fact
+    fact["passed"] = (fast_end.get("code") == "OK" and fast_end.get("count") == REPLAY + 1
+                      and fast_end.get("last") == baseline_id + REPLAY + 1
+                      and len(progress_samples) == REPLAY // 100 - 1
+                      and marker.get("trade_id") == expected_marker and marker.get("fast_last") == expected_marker
+                      and marker.get("fast_count") == REPLAY and marker.get("slow_stopped") is True)
+    return fact
+
+
 def run_faults(packet):
     facts, children = {}, []
     stage = "baseline_metrics"
@@ -597,22 +654,31 @@ def run_faults(packet):
         stage = "stalled_consumer_live_progress"
         progress_samples = []
         stalled_started_ns = time.monotonic_ns()
-        slow_resumed = False
-        for _ in range(REPLAY // 100):
-            producer.publish(100)
-            # Backpressure the test producer on the independent fast consumer,
-            # not the stalled one. This also bounds IPC and records progress.
-            progress = fast.wait("progress")
-            if not slow_resumed:
+        # OF-G13-1: the slow consumer stays stopped through the burst AND the marker (the old in-loop resume on the
+        # first overflow sample depended on when the 1 s metrics line landed). REPLAY - 1 burst events, then the
+        # slow subscription's overflow is awaited, then ONE marker event (REPLAY in total, so the exact replay
+        # boundary below is unchanged) must reach the fast consumer by identity while the slow one is still stopped.
+        batches = REPLAY // 100
+        for index in range(batches):
+            last_batch = index == batches - 1
+            producer.publish(99 if last_batch else 100)
+            if not last_batch:
+                # Backpressure the test producer on the independent fast consumer,
+                # not the stalled one. This also bounds IPC and records progress.
+                progress = fast.wait("progress")
                 progress_samples.append({"count": progress["count"],
                     "elapsed_ms": (time.monotonic_ns() - stalled_started_ns) / 1_000_000})
-                samples = read_metrics(packet["metrics_path"], since_ns=started)
-                if samples and samples[-1].get("overflow", 0) > before.get("overflow", 0):
-                    slow.resume()
-                    slow_resumed = True
+        stage = "slow_overflow_before_marker"
+        overflow = wait_overflow(packet["metrics_path"], since_ns=started, before=before)
+        stage = "starvation_marker"
+        producer.publish(1)
+        marker_id, marker_ns = producer.next_id - 1, time.monotonic_ns()
+        landed = fast.wait("progress")
+        marker = {"trade_id": marker_id, "fast_count": landed.get("count"), "fast_last": landed.get("last"),
+                  "latency_ms": (time.monotonic_ns() - marker_ns) / 1_000_000,
+                  "slow_stopped": process_stopped(slow.process.pid), "slow_progress_at_marker": slow.progress}
         stage = "slow_terminal"
-        if not slow_resumed:
-            slow.resume()
+        slow.resume()
         slow_end = slow.wait("done")
         slow.close()
         bounded = slow_end["code"] == "RESOURCE_EXHAUSTED" and "RATE_LIMITED" in slow_end["controls"]
@@ -650,12 +716,7 @@ def run_faults(packet):
             "fresh_snapshot_rpc": "MarketDataStreamService/GetSnapshot",
             "snapshot_path": "isolated candidate Query " + packet["query_provenance"]["image_ref"].split(":", 1)[-1]
                 + " to canonical hot read; not production v2.2.2 or projector recovery proof"}
-        facts[CELLS[2]] = {"observed": True,
-            "passed": fast_end["code"] == "OK" and fast_end["count"] == REPLAY + 1 and fast_end["last"] == baseline_id + REPLAY + 1
-                and bool(progress_samples) and slow_resumed,
-            "fast_events": fast_end["count"], "distinct_identities": True,
-            "identity_order_checked": True, "progress_checked_every": 100,
-            "progress_while_slow_stopped": progress_samples, "measurement_n": len(progress_samples)}
+        facts[CELLS[2]] = starvation_fact(fast_end, progress_samples, overflow, marker, baseline_id)
         time.sleep(2)
         stage = "final_metrics"
         metrics = read_metrics(packet["metrics_path"], since_ns=started)
