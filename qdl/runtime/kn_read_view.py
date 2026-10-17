@@ -40,6 +40,7 @@ from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 from qdl.query import AccessPurpose, ConsumerGrade
+from qdl.query.results import release_exception_frames
 from qdl.query.cold_work import await_in_thread
 from qdl.query.contracts import CanonicalErrorCode, QueryProblem
 from qdl.query.service import QueryServiceError
@@ -165,7 +166,13 @@ def install_kn_read_view(app: FastAPI, *, service, backend, issuer, secret: byte
                         None, snapshot_work, requirement, consumer_id, cold=True,
                     )
         except QueryServiceError as error:
-            return _problem(error)
+            try:
+                return _problem(error)
+            finally:
+                release_exception_frames(error)  # IDR-114: no frame cycle per refused read
         except ValueError as error:
-            return JSONResponse(status_code=400, content={"detail": f"INVALID_ARGUMENT:{error}"})
+            try:
+                return JSONResponse(status_code=400, content={"detail": f"INVALID_ARGUMENT:{error}"})
+            finally:
+                release_exception_frames(error)
         return Response(content=message.SerializeToString(), media_type="application/x-protobuf")

@@ -74752,3 +74752,98 @@ checked (one `docker ps` + `docker image inspect` ran at ~16:47Z, seconds after 
   serves). Not touched: Stream, projectors, ingestors, Kafka, Redis, TS, alpha, gates, scorer. Rollback: digest
   c21e164a. Status: RCA only; no code, config or runtime change.
   - 2026-10-17 16:46-17:06Z PRODUCTION ROLL IDR-112 + IDR-113 (owner-approved "Sửa cả hai, chạy lại gate"; lock claude-dl-roll-idr112; packet upgrade/evidence/releases/v2.2.4/drafts/IDR112_INGESTOR_ROLL_PACKET.md): ingestor_okx_swap 60f83a51 -> 5e261809 (rc17v2 accepted, diff [image], healthy, writer READY 64 64; 5-min watch: exactly one qdl_native_staleness_recycle_armed for okx-public-003 bindings 6 default config, okx-public-003 venue_lag_ms max 33 n 1114 baseline 26, 0 stale, 0 recycles, no runtime retry; HOLD violations [], stream overflow/refused delta 0); ingestor_binance_usdm 60f83a51 -> 5e261809 (accepted, 0 staleness lines as designed, HOLD [] ); TS writer a44349a1 -> 2deb90b0 (IDR-113 MARK re-read, receipt release/30f50a91 PASS; delta TS_DELIVERY_TRACE_UNTIL only; HOLD [], READY 64 64). Receipts ~/.local/state/qdl-v2/releases/v2.2.4/rollout-idr112/ and postchecks/hold-after-writer-2deb90b0.json. Rollback: 60f83a51 compose (ingestors), a44349a1 compose (writer). Query GC stall fix (RCA 507b446) in progress; G12/G13/final stage-100 rerun once on the final image set after it.
+
+### P18.4 IDR-114 - Query per-replica stall: cyclic garbage from in-process httpx MARK/INDEX reads and refusal tracebacks - 2026-10-17 (Claude)
+
+Owner direction 2026-10-17 ("Sửa cả hai, chạy lại gate" + "fix hết"); coordinator task from RCA 507b446; Codex
+review F5 (`ts-codex-p184-review/upgrade/p184-idr112-113-provider-gates-review-20261018.md`) accepted as an addendum.
+Host lock `claude-dl-query-gc-idr114` 17:05:37Z-20:05:37Z. No production container, config or Redis key changed.
+
+- Harness (`scripts/p184_query_gc_isolated.py`, new): two isolated Query replicas of the production image
+  `c21e164a` with the source under test mounted read-only over `/app/qdl`, the production Query container spec
+  (env, read-only mounts, 1.5 CPU, 1536 MiB, uid 10001) except a private quota Redis, a scratch state dir and the
+  instance id; aliases `query_v2_1/_2` on a new `--internal` network; TCP relays to the production Streams for the
+  driver's subscriptions and hot reads. Load = the unchanged stage-100 driver (`phase3_consumer_load_acceptance.py
+  --mode target --sessions 100 --budget config/v2/p184-stage100-budget.json`, 1800 s, profile of 135719Z,
+  scope shadow). Production reads only (market cache, Stream gRPC, rust_core admission). The Stream read view
+  (GetSnapshot bootstraps) and the TS writer still read the production Query, so the isolated pair carries less
+  load than production (gen0 period 104 s vs the 76 s stall period in 135719Z). Every container `--rm`, removed
+  after each run (run.json `removed`).
+  - Attempt A0 (17:10-17:41Z) is invalid as a baseline: the scratch state dir lacked the production symlink
+    `runtime/session-liveness -> /session-liveness`, so every session-checked snapshot was refused DATA_STALE
+    SESSION_STATE (~22/s per replica, driver errors 73,640). Kept only as evidence for the refusal path below.
+- Telemetry (`qdl/runtime/stall_telemetry.py`, new; installed by `configure_query_interpreter` and
+  `create_stable_query_app`), observation only, one `qdl.stall` stderr line per event:
+  `kind=gc` (gc.callbacks: generation, duration, collected, uncollectable, get_count, per-generation counts, RSS;
+  collections >= 10 ms), `kind=loop_lag` (100 ms timer late >= 50 ms) and `kind=slow_request` (outermost ASGI
+  wrapper, >= 250 ms: start, response-start, end, method, path, status). Per F5: the GC callback only appends a
+  dict to a bounded deque; formatting and the write happen on a writer thread. Stream also gets the gc hook
+  (shared `configure_query_interpreter`) when it is next rolled.
+- Measured, baseline A2 (17:42-18:13Z; source = c7ce7d3 qdl + telemetry; DEBUG_SAVEALL probe on replica 2 for
+  120 s at load +~21 min, that replica's window excluded from scoring):
+  - Every logged pause in the load window is a GENERATION 0 collection: replica 1 17 collections p50 196.5 ms,
+    max 248.8 ms, median period 104.3 s, each collecting 86-101k objects, i.e. the whole 100,000 threshold was
+    cyclic garbage; replica 2 the same (17, p50 199.1, max 264.2 ms) plus one gen2 308.5 ms (the probe's forced
+    full collection). No gen1/gen2 collection occurred naturally in 30 min.
+  - Client read stalls >= 250 ms (driver outliers, clusters 3 s gap): replica 1 12 clusters (max 352 ms), 10 of
+    them within [-2.5 s, +1.5 s] of a >= 100 ms collection; replica 2 9 clusters (max 339 ms), 7 aligned. The
+    unaligned ones are 1-3 reads of 259-271 ms with no server-side slow_request, loop_lag or gc record (one at
+    the same instant on both replicas): time spent outside the app. Loop lag records 17/15, max 240/216 ms, each
+    at a collection's wall time.
+  - SAVEALL window (120 s, replica 2): 95,305 cyclic objects, ALL from httpx: 3,531 Response / Request /
+    BoundAsyncStream / ASGIResponseStream / Headers ... = 27 per request. Source:
+    `qdl/reference/local_mark_index.py` `reader_for_view` - the alpha and execution MARK/INDEX reads run the
+    private endpoint in process through `httpx.AsyncClient(transport=httpx.ASGITransport(app))`; every httpx
+    request/response pair is a cycle (Response <-> BoundAsyncStream). Reproduced offline with httpx 0.28.1:
+    25 cyclic objects per request, unchanged by `aclose()`. Forced full collection: 117,893 objects, 308.8 ms,
+    RSS 555 -> 559 MiB (no large old garbage at that point).
+  - A0 SAVEALL (refusal storm): 493,660 cyclic objects in 120 s = ~187 per refused snapshot: QueryServiceError
+    from `V2QueryService._enforce` travelling through the hot thread future, the lane task and the ASGI stack;
+    its traceback holds every frame and the frames hold the future/task that hold the exception. Reproduced
+    in-app: 278 cyclic objects per refused request.
+- Not confirmed: the RCA's candidates `kn_query_backend.py:386-389` (HotViewUnavailable memo) and `:701-703`
+  (history_many per-item error): 0 such frames/exceptions in either SAVEALL window. Left unchanged.
+- Fix (variable (a) only, GC thresholds and `gc.freeze` unchanged; F5 (2): no threshold change, GC not disabled):
+  1. `qdl/reference/local_mark_index.py` `InProcessAsgiClient`: the same app, the same ASGI messages (scope, one
+     `http.request`, `http.disconnect` after the response) and a plain response object (status_code, httpx.Headers,
+     content, json()); app exceptions propagate as with `ASGITransport(raise_app_exceptions=True)`; timeouts stay
+     the caller's `asyncio.wait_for`. `HttpExecutionMarkIndexReader` and the endpoint are unchanged.
+  2. `qdl/query/results.py` `release_exception_frames`: after a refusal is rendered, the four app exception
+     handlers (`qdl/api_v2/router.py`) and the KN read view (`qdl/runtime/kn_read_view.py`) clear `__traceback__`
+     of the exception and its `__cause__`/`__context__` chain (bounded walk). Typed fields, args and the chain
+     links are untouched and no response changes. Deviation from F5 (3) "prefer immutable typed error data /
+     fresh exceptions": the refusal is already a per-request exception at its terminal handler; only the
+     traceback attribute is cleared, and no code on these paths reads tracebacks (grep: no exc_info,
+     logger.exception, format_exc or __traceback__ reader in qdl/query, qdl/api_v2, qdl/warmup, kn_read_view).
+     A chained cause shared by concurrent requests would only lose diagnostic frames.
+- Result, run B (18:14-18:45Z, same harness/protocol, source = A2 + fix): replica 1 0 collections >= 10 ms in
+  the load window, 1 stall cluster (1 read, 305 ms, no server-side record), loop lag records 0; replica 2 0
+  collections (outside the probe window), 0 stall clusters, loop lag 0. SAVEALL window: 0 cyclic objects in
+  120 s; forced full 9,451 objects / 123 ms (residual: 114 QueryServiceError cycles from setup-phase warmup batch
+  items, `service.py` warmup_batch_completed_async work:1035 via the executor's stored per-item errors - not
+  changed, because those exceptions can be shared by singleflight waiters (F5 (3)); ~4 per minute in setup only,
+  freed by a rare full collection). Driver: A2 and B both COMPLETE, 0 errors, 100 hot req/s, host verdict PASS
+  (scope shadow: not gate evidence).
+  | per replica, 30 min load | A2 baseline r1 / r2 | B fix r1 / r2 | 135719Z prod r1 / r2 |
+  | --- | --- | --- | --- |
+  | GC pauses >= 100 ms | 17 / 15 | 0 / 0 | not instrumented |
+  | read stall clusters >= 250 ms | 12 / 9 | 1 / 0 | 27 / 26 |
+  | max stalled read ms | 352 / 339 | 305 / - | 2486 / 694 |
+  | loop lag >= 50 ms records | 17 / 15 | 0 / 0 | - |
+- Mechanism verdict: verified in process (gen0 collections paced by cyclic garbage, GIL-holding 0.2-0.26 s,
+  aligned with 17 of 21 client stall clusters, eliminated with the two cycle sources). Inferred, not measured
+  here: production's larger pauses (0.3-0.5 s, 76 s) come from the same source at higher MARK/refusal rate
+  (production also serves the TS writer's MARK reads and the Stream read view); the 0.5-1.1 s pauses with a
+  ~500 MiB RSS drop were not reproduced in 30 min (no natural gen1/gen2 collection, RSS flat 535-560 MiB).
+  The final stage-100 with the telemetry line in production is the check.
+- Tests (in the image c21e164a, `--network none`, source mounted read-only): new
+  `tests/test_query_refusal_cycles.py` (4; no server frame in DEBUG_SAVEALL garbage after 10 refused snapshot /
+  data-plane refusals, unchanged problem body; chain clearing; negative control: the 2 app tests FAIL on the
+  unfixed router), `tests/test_local_mark_index_inprocess_client.py` (3; status/body/headers equal to
+  httpx.ASGITransport for 200/409/401, exception propagation, 0 cyclic objects per read),
+  `tests/test_query_interpreter.py` (+8 telemetry). Affected suites 131 OK (33 skipped: Redis); with a disposable
+  Redis `test_kn_mark_hot_memo`, `test_execution_mark_index_live_view`, `test_kn_query_backend`,
+  `test_kn_alpha_reference_access` 94 OK.
+- Evidence `~/.local/state/qdl-v2/p184-idr114-query-gc-20261017/` (run-A0-no-liveness, run-A2-baseline,
+  run-B-fix-cycles: receipt 86a8d878 / 47cf15d5 / 010ce791, saveall d05f74b9 / 89a09b8f / b6b87b93, analysis
+  a5059091 / f01182fc / 5d52206c). Status: implemented, tested locally, isolated-replay measured; not deployed.

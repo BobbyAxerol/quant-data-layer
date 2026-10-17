@@ -16,6 +16,7 @@ from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBea
 from pydantic import create_model
 
 from qdl.query.cold_work import await_in_thread, cold_yield
+from qdl.query.results import release_exception_frames
 from qdl.domain.decimal import PLAIN_DECIMAL_TEXT
 from qdl_sdk.models import ResponseModel
 from qdl.api_v2.models import (
@@ -1692,8 +1693,17 @@ def create_v2_app(
         route = request.scope.get("route")
         return getattr(route, "path", None)
 
+    # IDR-114: every handler below renders a refusal from its typed fields and
+    # then releases the exception's traceback chain (results.release_exception_frames),
+    # so a refused request leaves no frame cycle for the cyclic GC.
     @app.exception_handler(DataPlaneAccessError)
     async def data_access_error_handler(_request: Request, error: DataPlaneAccessError):
+        try:
+            return _data_access_problem(_request, error)
+        finally:
+            release_exception_frames(error)
+
+    def _data_access_problem(_request: Request, error: DataPlaneAccessError):
         request_id = service.request_id() if service is not None else "unavailable"
         # Astra R6: the identity/quota layer's refusal, bounded and payload-free.
         REFUSALS.record(origin="data_plane_access", code=error.code, detail=error.detail,
@@ -1716,6 +1726,12 @@ def create_v2_app(
 
     @app.exception_handler(QueryServiceError)
     async def query_error_handler(_request: Request, error: QueryServiceError):
+        try:
+            return _query_problem(_request, error)
+        finally:
+            release_exception_frames(error)
+
+    def _query_problem(_request: Request, error: QueryServiceError):
         problem = _problem(error)
         # Astra R6: one bounded, payload-free line per Query refusal (typed reasons + detail digest).
         reason = getattr(error, "reason", None)
@@ -1739,6 +1755,12 @@ def create_v2_app(
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(_request: Request, error: RequestValidationError):
+        try:
+            return _validation_problem(error)
+        finally:
+            release_exception_frames(error)
+
+    def _validation_problem(error: RequestValidationError):
         request_id = service.request_id()
         problem = ProblemDetails(
             type="urn:qdl:error:invalid-argument",
@@ -1757,6 +1779,12 @@ def create_v2_app(
 
     @app.exception_handler(ValueError)
     async def value_error_handler(_request: Request, error: ValueError):
+        try:
+            return _value_problem(error)
+        finally:
+            release_exception_frames(error)
+
+    def _value_problem(error: ValueError):
         problem = ProblemDetails(
             type="urn:qdl:error:invalid-argument",
             title="Invalid Argument",
