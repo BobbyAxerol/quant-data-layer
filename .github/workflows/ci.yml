@@ -42,7 +42,7 @@ jobs:
           assert head == sha, "Checkout differs from exact CI source"
           result = subprocess.run(
               [sys.executable, "-B", "scripts/p184_consolidated_build.py",
-               "--repo", ".", "--source-commit", sha, "--release", "v2.2.3"],
+               "--repo", ".", "--source-commit", sha, "--release", "v2.2.4"],
               capture_output=True, text=True, check=False,
           )
           assert result.returncode == 2, (result.returncode, result.stderr)
@@ -76,7 +76,7 @@ jobs:
           }
           assert len(images) == 2
           assert all(image["source_commit"] == sha for image in images)
-          assert all(image["tag"] == f'{image["name"]}:v2.2.3-{sha}' for image in images)
+          assert all(image["tag"] == f'{image["name"]}:v2.2.4-{sha}' for image in images)
           print(f"Committed-source preflight PASS: {sha}; build remains HOLD")
           PY
 
