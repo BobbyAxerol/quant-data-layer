@@ -73988,3 +73988,80 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   - Status: FINAL stage-100 = NOT certified (protocol_met false; G4 and G9 FAIL). Next (owner/coordinator): RCA of
     QUOTE OKX BTC-USD-SWAP staleness from the native summary and Query probe evidence, then a decision on the fix.
     No rerun under a changed rule.
+- 2026-10-17 03:20-04:27Z G13 DR05.QUIET_TYPED amendment-1 (owner-approved): producer built, one isolated run, STOPPED at
+  NOT_OBSERVED. G13 stays at 74/76 (Claude subagent).
+  - Owner decisions (AskUserQuestion, relayed): ~03:20Z "Amendment ISOLATED_FAULT (Recommended)", and ~03:25Z option A,
+    "map to the real view vocabulary".
+  - Why A was needed (source-verified):
+    - Since 79fd1ffb, the runtime predicate in scripts/p184_dr_views.py quiet_typed() tested
+      `"QUIET" in {event_recency_state, state}`. That can never match.
+    - The writer view has no QUIET state: rust/crates/market-data-writer/src/view.rs STATES, and its quality validation
+      admits event_recency_state LIVE/STALE/NOT_APPLICABLE only.
+    - The Data Layer emits no "QUIET" either (rust/qdl-core/src/quality.rs, qdl/data_quality/binding_decision.py).
+      QUIET_SESSION is a semantics. The view itself says state LIVE + event_recency_state STALE.
+    - QUIET exists only as a slice-health state of the writer. No test covered the matching branch. Recorded as IDR-109.
+  - TS 1401ccb1 (feat/v2-rust-first-okx-demo):
+    - Frozen contracts/baseline/rust-first-v2/p18/p184-r2-case-matrix.v2.amendment-1.quiet-typed.json, sha256 field
+      3d23eb57.... It adds ISOLATED_FAULT for DR05.QUIET_TYPED@BINANCE/@OKX only. Such a row is credited only with
+      detail.predicate_id p184.dr05-quiet-typed.view-vocabulary.v1. v2 is not edited (30dbd037...).
+    - load() applies the amendment; the effective cell digest is 61c292b8.... W05 also checks
+      CASE_MATRIX_AMENDMENT_DRIFT (the verifier changed).
+    - New predicate quiet_view_findings: STALE recency, state LIVE, provider session LIVE within the binding bound,
+      flags subset of {LAST_EVENT_STALE}, not execution eligible. Plus the cross-check quiet_health_findings: the
+      writer heartbeat shows the slice QUIET.
+    - The runtime probe now records such a view as NOT_OBSERVED (no slice identity on the shared writer).
+    - New producer scripts/p184_dr05_quiet.py.
+  - DL 6506d011 (fix/p184-dl-closure):
+    - scripts/p184_dr05_quiet.py:
+      - --seal: one TRADE lane per linear DR05 scope, with the TS paper r10 TRADE requirement (OBSERVE,
+        max_session_liveness_ms 45000).
+      - --query: the DR05 Query reading provider-session liveness from /work/session-liveness.
+      - --channel: a synthetic qdl.provider-session-liveness.v1 heartbeat every 0.5 s plus a trade publisher.
+    - p184_dr05_dl_fault picks that Query only for sealed material.
+    - p184_g13_final adds the isolated step dr05-quiet, the amended second producer of the two cells.
+  - Tests:
+    - TS in 7c71e3af (--network none, pytest-site mounted): 139 passed, 2 skipped (DL repo not mounted). This includes
+      the static W05 verifier test.
+    - DL in qdl-v2-python:2.2.4-c7ce7d3 (--network none): 376 OK, 1 skipped (dr05 quiet / g13 / dr05 / g12 modules).
+    - Host-only failures are missing modules: redis, httpx, qdl_sdk.
+  - Run worktrees (clean, detached): trading-system-final-run-1401ccb1, data-layer-p184-final-run-6506d011.
+  - Lock "claude P18.4 G13 dr05-quiet 20261017": taken 03:48:38Z after the stage-100 lock cleared, renewed at
+    04:20:00Z, released at 04:27Z (file absent).
+  - Run 1, receipt p184-g13-20261017T040244Z: INTERRUPTED, not scored.
+    - The owning session ended at ~04:05:03Z mid-BINANCE case, and the host driver and the channel died with it.
+    - The heartbeat file was last written at 04:05:02.97Z. The rows file holds only the provenance header.
+    - Afterwards the orphan clone's native TRADE worker stopped 6x with DATA_NOT_READY and its restarts were exhausted.
+      That is a consequence of the stopped heartbeat, recorded unscored.
+    - INTERRUPTED.json sha256 832f0684.... Evidence is kept in interrupted/.
+    - Teardown via the harness: --down removed 5 DL roles, plus clone writer/pg/redis 23284b12, its state/log dirs and
+      the dl-source export. 0 networks and 0 volumes from this run.
+  - Run 2, receipt p184-g13-20261017T042015Z (detached setsid run, same pins, 04:20:15-04:26:07Z):
+    - Receipt files: summary.json fa2e5f29..., plan.json bd32dc0c..., dr05-quiet/receipt.json 038de026..., rows
+      960f1102....
+    - Exit codes [0,0,0,0,1,0]: the runner exits 1 unless both cells are OBSERVED ok. harness error none.
+    - Lifecycle per scope: bootstrap exit 0, native checkpoint written, strict_resume VERIFIED, strict refusals 0.
+    - Positive control fresh. Fault: trades stopped (BINANCE 29, OKX 33 published and acked, 0 errors), with the
+      heartbeat kept LIVE.
+    - Both cells ISOLATED_FAULT NOT_OBSERVED, VIEW_NEVER_LEFT_FRESH (90/89 samples over 120 s).
+    - Verbatim last sample, BINANCE (OKX is the same shape):
+      - The view kept the last trade's quality: state LIVE, event_recency_state LIVE, execution_eligible true,
+        freshness_ms 29, provider_session_liveness_ms 29, observed_at = the last trade (116 s old).
+      - The writer slice health typed the TRADE slice STALE, not QUIET: age_seconds 116.4, session_age_seconds 116.4,
+        provider_session_liveness_ms 0, event_recency_state LIVE. quiet_session_v2_slices 0.
+    - So no Query probe renewed the session evidence within the window.
+    - Reading (inferred, not verified): either the native TRADE probe (bound/3 = 15 s cadence) was refused or skipped
+      (e.g. SkippedOffset in session.rs), or the isolated Query did not serve the quiet TRADE snapshot. The clone and
+      the Query logs of run 2 were removed by the harness cleanup, so this cannot be decided from the receipt.
+    - STOPPED as briefed. The predicate was not adjusted and the step was not rerun.
+  - W05 verifier (run-worktree 1401ccb1 code, in 7c71e3af --network none; --expect-source-sha 77a6d671,
+    --expect-image-digest 7c71e3af):
+    - Inputs: the 6 runtime jsonl (025058Z), dr08 evidence (190623Z), dr05-upstream rows (193828Z) and the run-2 quiet
+      rows.
+    - Output verify/w05-final-76-amendment1.json d853d673..., exit 1: 74/76 DR cells closed. The only DR issue is
+      CASE_BELOW_REQUIRED_LEVEL on both QUIET cells.
+  - Production untouched: market_data_service_p184w is on 7c71e3af with 0 restarts (started 03:44:40Z, the stage-100
+    campaign's own restart). Afterwards: 0 p184- containers or networks, 0 /tmp/p184-dr05-*.
+  - Status: amendment and producer implemented and tested locally; the isolated cell is NOT closed.
+  - Next: owner/coordinator decision on a diagnostic rerun that keeps the clone and the DL Query logs (native_probe
+    counters in the worker health, the Query TRADE snapshot reply) to find why no probe renewed the session. This would
+    be an apparatus change, and the predicate stays as amended.
