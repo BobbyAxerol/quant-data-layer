@@ -74928,3 +74928,25 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
 - Not done (by instruction): release image rebuild, equivalence, roll. Next: coordinator rebuilds the v2.2.4 rust
   image at this commit together with the python Query image, equivalence (ingestor DIFFERENT, other 11 EQUAL
   expected), one roll packet.
+
+### P18.4 v2.2.4 final rust rebuild 83bef59 + combined roll packet IDR-112b/IDR-114 - 2026-10-17 (Claude)
+
+- Rebuild (host lock claude-dl-idr112b-rebuild 19:40:48Z, released; free disk 210 GiB): `scripts/build_qdl_release_images.py
+  --build --component rust --rev 83bef59` -> `qdl-v2-rust:2.2.4-83bef59`
+  sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784, receipt
+  ~/.local/state/qdl-v2/build-v2.2.4-83bef59/receipt.json (7e630925..., PASS). Postcheck reference `v224_6d61710`
+  (5e261809) added in 052508d (tests 40 OK). Equivalence: `qdl-native-raw-ingestor` DIFFERENT (expected); the other
+  11 binaries whole-file EQUAL to both 5e261809 and 60f83a51 (gateway, projector, realtime core included); core
+  EQUAL rc22. Release binary config proof on both production configs (`--rm --network none --read-only`): started
+  line with defaults, bindings 103/27, clean SIGTERM stop (review-f1f3/release-binary-config-proof-83bef59.log
+  f69f632d...).
+- Python: not rebuilt, `3e9e4d3a` (31a5155) stays. `git diff 31a5155..052508d` touches no runtime python path (qdl/,
+  app/, generated/, config/, consumers/, qdl_sdk/, Dockerfile, pyproject.toml, poetry.lock).
+- Stream/projector stay `60f83a51`: binaries byte-identical to the new image; per-role digests + equivalence statement
+  in the release record (owner decision noted in the packet).
+- Packet `upgrade/evidence/releases/v2.2.4/drafts/FINAL_ROLL_PACKET_IDR112b_IDR114.md` (NOT executed): ingestor_okx_swap
+  -> ingestor_binance_usdm (rc17v2, 5e261809 -> a9679def) -> query_kn_1 -> query_kn_2 (rc15, c21e164a -> 3e9e4d3a),
+  HOLD per role, rollback per role (ingestors 5e261809 composes, Query c21e164a composes, both checked equal to live).
+  Dry runs: rc17v2 both ingestors diff [image]; rc15 candidate() both Query diff [image], env/volume diff empty.
+  Evidence ~/.local/state/qdl-v2/releases/v2.2.4/rollout-idr112b-idr114/SHA256SUMS; new read-only postchecks
+  rollout/postchecks/ingestor_lane_report.py (d46e971d...), query_stall_report.py (812ae73f...).
