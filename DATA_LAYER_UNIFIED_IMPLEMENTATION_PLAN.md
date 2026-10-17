@@ -74369,3 +74369,37 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   - Status: G13 final = 76/76 on a44349a1 (complete). FINAL stage-100 = protocol met, NOT certified (G4, G8 FAIL
     under frozen rules). Next (owner/coordinator): decide G4 (inverse-instrument addendum max rows and BINANCE bar 1m
     p95) and G8 (single 27 ms writer EVAL, steady-window attribution) before release closeout.
+- 2026-10-17 ~11:35-11:55Z RCA of the FINAL stage-100 105025Z G4/G8 FAIL (read-only, Claude subagent; criteria unchanged).
+  Reads: receipt files, Kafka log-cleaner/GC logs (docker cp), rust_core progress logs, Redis INFO/CONFIG GET via the
+  apparatus allowlisted client, Codex session logs. No production mutation.
+  - G8 FAIL stands; no scorer defect. Frozen rule (TS upgrade/p184-phase-d-gates.md:36, windows :20): "SLOWLOG (10 ms
+    threshold) count 0 in steady state". Entry 976675 start 11:00:02Z is inside the load window 10:51:57.98-11:21:57.98Z
+    and outside BURST 11:03:58-11:04:08Z / RECONNECT 11:12:58-11:13:13Z. Window 1 steady=false is the 10-min
+    commandstats window flag (p184_g8_redis_sampler.py:170-171, window wholly inside the load window), not the SLOWLOG
+    predicate (:181-184). Latent, no effect here: in_steady also counts the fault windows.
+  - The EVAL is TS 6af62a7e services/market_data/execution_state.py _CAS/_INVALIDATE (:23/:34, same 128-byte prefix
+    sha1 1875f518): the Python BOOK/MARK single-record CAS, not the 16-row APPLY. Redis has save "", total_forks 0,
+    AOF off, 6.5 MB, 0 pattern subscribers, so 27.2 ms is off-CPU time of the main thread (inferred), at the
+    top-of-hour second. Same class as the earlier 10-40 ms writer EVAL/EVALSHA/SETEX entries.
+  - G4 samples: bar|BINANCE|1m w3 270.7 ms = SOLUSDT 1m close 11:00:00Z (venue->DL 33.5, ingest->producer 147.5,
+    producer->observed 89.7 ms); with n=15 the p95 is the max. The OKX_INVERSE w2 maxima (book_delta 321.8, quote 359.5)
+    landed in checkpoint 10:56:54-10:57:24Z together with every linear row of both venues (BINANCE quote 415 ms):
+    common mode, not an inverse-lane mechanism. Inverse rows fail because they are max-gated.
+  - Mechanism (correlation verified, causation inferred): Kafka transactional commit tails. All three cores show
+    commit_ms max 154/162/176 ms at 10:57:25Z. In w3 the md.latest.v2-3 cleaner offset-map phase ran 10:59:41-11:02:21Z
+    on all three brokers, with broker cgroup throttling 0.6-3.0 s per 12.5 s exactly over w3, on top of the 11:00Z
+    boundary. w5 overlapped the md.latest.v2-2 phase without a boundary and passed. Excluded: ingestor_okx_swap
+    throttling (0 ms), venue/WS (27-36 ms), observer (0 throttle), G11 restart (11:22:52Z), trace re-arm (10:48Z), and
+    single GC pauses (max 63 ms).
+  - Earlier 032230Z: same rows and the same common-mode commit stall at its boundary window (03:32:00-03:32:23Z), with
+    no md.latest cleaner and only light foreign reads. Stage-100 #3 was inside. The margin to the frozen limits is thin
+    at boundary windows.
+  - Taint (AGENTS 34a): TAINTED. While lock claude-s100-final-a44349a1 was held, Codex PMA11 ran local work: docker
+    image ls, docker builder du and docker inspect of writer/stream (collect_inventory.py 10:57:08-10:57:24Z, the same
+    seconds as the w2 stall), again ~11:09Z, and local wheel fetch/extract 11:00:02-06Z and source tar 11:00:15Z. The
+    30 s cargo|pytest|rustc|docker-build watch missed all of it. The 11:14:34Z ssh job ran on SGP and overlaps only
+    w4/w5, which passed. This run's PASS gates are not evidence. Its FAILs stay FAIL (scoring_rule,
+    p184_gate_campaign.py:1155). The bar 1m w3 sample had no foreign activity in its second.
+  - Next (owner): a clean rerun is required anyway. Add a foreign watch (1-2 s, any non-campaign docker CLI incl.
+    builder/system du, ssh/scp/tar, per-process CPU) and report-only core commit_ms and cleaner-phase samplers. If G4
+    fails again on a clean host, a measured one-variable fix of the Kafka commit tail goes through an owner packet.
