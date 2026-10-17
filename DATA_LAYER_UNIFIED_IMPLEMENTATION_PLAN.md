@@ -74861,3 +74861,12 @@ Host lock `claude-dl-query-gc-idr114` 17:05:37Z-20:05:37Z. No production contain
   `verify_service.py`) plus a 10 min `qdl.stall` report per step; rollback digest `c21e164a` (tool auto-rollback or
   the saved compose). The TS register row for IDR-114 is in the packet (section 8): the TS register had another
   agent's uncommitted edit (IDR-113 row) at 19:00Z, so it was not edited here.
+- Tests on 31a5155 (image c21e164a, `--network none`, read-only rootfs, source mounted): the 61 test modules that
+  import the changed code (api_v2, query results/service, local_mark_index, kn_read_view, runtime.stable,
+  execution_live) 1073 OK, 34 skipped, 847 s. Full `unittest discover` stopped at 2058 tests when the lock window
+  ran short: 1830 ok, the rest skips plus 10 environment errors in modules untouched by 31a5155 (build-images 5:
+  no git in the container; ci_kafka_recovery_controller 3: no docker; crypto_history_contract import: read-only
+  `/app/logs`; migrate_core_batch_size 1 FAIL in the full run, 6/6 OK alone). Logs
+  `~/.local/state/qdl-v2/p184-idr114-query-gc-20261017/{affected-61,full-suite}-31a5155.log`. Host lock released
+  after this; isolated containers/networks 0 (`qdl.p184.gcq` label), image `qdl-v2-python:2.2.4-31a5155` kept for
+  the packet.
