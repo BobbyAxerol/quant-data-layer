@@ -72,6 +72,14 @@ class Parsers(unittest.TestCase):
                                                      "log": "md.latest.v2-1"})
         self.assertIsNone(guard.cleaner_phase("\tBuffer utilization: 0.1%"))
 
+    def test_clip_keeps_wrapped_command(self):
+        line = "bwrap --as-pid-1 " + "x" * 2000 + " -- /bin/bash -lc 'docker image ls'"
+        clipped = guard.clip_cmdline(line)
+        self.assertTrue(clipped.startswith("bwrap --as-pid-1"))
+        self.assertTrue(clipped.endswith("'docker image ls'"))
+        self.assertLessEqual(len(clipped), 605)
+        self.assertEqual(guard.clip_cmdline("short"), "short")
+
     def test_core_progress(self):
         line = json.dumps({"event": "qdl_realtime_core_progress", "batches": 5,
                            "commit_ms": {"max": 154.0, "mean": 15.0, "min": 10.0, "n": 100},

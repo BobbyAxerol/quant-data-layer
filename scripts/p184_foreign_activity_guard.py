@@ -104,8 +104,16 @@ def read_proc(pid: int) -> dict | None:
     except (OSError, ValueError, IndexError):
         return None
     match = DOCKER_SCOPE.search(cgroup)
-    return {**stat, "pid": pid, "cmdline": cmdline[:600], "uid": uid,
+    return {**stat, "pid": pid, "cmdline": clip_cmdline(cmdline), "uid": uid,
             "container_id": match.group(1) if match else None, "kernel": stat["ppid"] == 2 or pid == 2}
+
+
+def clip_cmdline(cmdline: str, limit: int = 600) -> str:
+    """Keep the head and the tail: sandbox wrappers (codex-linux-sandbox/bwrap) carry the real command after a
+    long policy argument, at the end of the command line."""
+    if len(cmdline) <= limit:
+        return cmdline
+    return cmdline[:limit // 2] + " ... " + cmdline[-(limit // 2):]
 
 
 def argv0_name(info: dict) -> str:
