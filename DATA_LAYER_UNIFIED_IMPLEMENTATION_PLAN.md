@@ -73915,3 +73915,76 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
     - Writer 7c71e3af still has 0 restarts, and every DL role has 0 restarts. Disk +58 MB (bind logs/state).
     - Run worktrees kept, clean.
   - Status: G13 = 74/76 tested in the runtime window on the release set. NOT complete: 2 QUIET_TYPED cells are open.
+- 2026-10-17 03:20-03:48Z FINAL stage-100 on the v2.2.4 release digests, G4 observer v5 (FINAL_STEPS f; Claude
+  subagent): **protocol_met false**. The guard stopped the driver at 03:43Z (QUOTE OKX BTC-USD-SWAP STALE). No rerun.
+  - Apparatus: DL run worktree data-layer-p184-final-run-d03cd679 (d03cd679). It contains aee0945 and the G9/TS sampler
+    heartbeat dedupe 1e09f87. The data-layer-p184-s100-7285868 worktree (aee0945) does NOT contain 1e09f87, so it is
+    not the FINAL_STEPS pin. Between aee0945 and d03cd679 the campaign tool, the G4 observer, the budget and the G4
+    addendum are byte-equal to #3 (sha256 cf26d6e3 / ff4f5989 v5 / ff85335b / 4ed59dca). Command shape as #3
+    (`run --g11 --base-profile .../profile-stage100-rc4-r16.json`). The dry run blocked only on the expired trace.
+  - Production identity (docker inspect at start): query x2 c21e164a, stream x2 / projector x2 / ingestor x2
+    60f83a51, core x3 rc22 7c848aad, writer 7c71e3af. Every DL role RestartCount 0 before and after.
+  - Lock "claude-s100-final-v224", 03:20:16Z to 03:48:15Z (released; wrapper exit 2 printed RELEASED and the file was
+    absent afterwards). Taint watch, 30 s: no foreign container (only the campaign's own g4obs-1/-2), 0
+    cargo/pytest/rustc/docker-build processes, load1 max 22.05 (production load; no foreign job). Run is not tainted.
+  - Production actions, all inside the protocol:
+    - Writer trace re-arm with rc15/roll_writer_campaign_native.py 7c71e3af 3600 (owner-approved 2026-10-14,
+      same image). Delta exactly TS_DELIVERY_TRACE_UNTIL_UNIX_NS; status OK; 1 not-ready sample; recreated
+      03:21:03Z. Rollback compose: rc15/native-trace-roll/rollback-*. preflight_env PASS in /home/bobby/trading_system.
+    - G11 coordinator restart `docker restart --timeout 35 market_data_service_p184w` at 03:44:36Z (watcher).
+      Writer READY 64/64 afterwards, RestartCount 0, started 03:44:40Z.
+  - Receipts in ~/.local/state/qdl-v2/p184-final-campaign-20261017T032230Z/:
+    - scorecard.json 63330fed...; campaign.json 23dcecd3...; g9g10/g9-g10-summary.json da419770...;
+      g11/g11-summary.json 32e43127...; g4-1-summary.json 67ac1158...; g4-2-summary.json 91e589ad...;
+      guard.log 6fb518b4...; timeline.jsonl aa95a64c....
+    - Next to the dir: .run.log 8f41007b... and .g11-watcher.log 5ae9261a....
+  - protocol_problems: "no driver receipt" and "driver acceptance not PASS: no gates". The guard (guard_v2.sh: 3
+    consecutive non-"READY 64 64" samples) sent SIGINT at 03:43Z. The driver exited code -2 at 03:43:00Z, 20.4 min
+    into the 30 min load. G4 windows 3-5 were skipped.
+  - Verdicts, frozen rules unchanged, nothing upgraded:
+    - G9 FAIL. 7 distinct heartbeats with demanded != session-ready (63/64), all QUOTE STALE:
+      - OKX BTC-USD-SWAP at 03:31:38, 03:36:39, 03:38:39, 03:41:09, 03:42:09 and 03:42:40Z;
+      - OKX BNB-USDT-SWAP at 03:35:38Z.
+      There are 4 data-path eligibility losses, QUOTE EXECUTION_CONTEXT_STALE on BTC-USD-SWAP, component age
+      2517/2664/4435/2546 ms. v1_fallback 0. Legit quiet TRADE refusals 29 (report-only).
+    - G4 FAIL, on two rows. The observed windows are 1 and 2, both outside the protocol, which can FAIL but not PASS.
+      - bar|BINANCE|1m: window-2 p95 258.133 ms (bucket lower bound 258.0) over limit 257.6, n=15.
+      - book_snapshot|OKX_INVERSE (addendum max rule): window-2 max 300.788 ms over limit 300.7, n=182.
+      - Every other row is inside its limit.
+    - G11 PASS (oracle v2). Outage 0.138 s. first_valid_apply / caught_up max 20.096 s, p95 4.615 s, n=64. 0
+      rewinds, 0 future events, 0 cursor-ahead.
+    - NOT_MEASURED: G1/G2/G7/G10 (no load window, so no trace analysis); G3 (inside the rule: p95 1524 ms, max 2907 ms,
+      but outside the protocol); G5 (no driver gates); G6; G8 (no steady window; slowlog 0, PING p99 1.27 ms, core
+      fraction <= 0.08); G14 (no host.json); G12/G13 (not part of this campaign).
+  - Gateway and writer overflow during the run (03:22:50Z to 03:44:35Z, before the G11 restart):
+    - stream_kn_1 cumulative overflow 3 -> 3 and refused 2 -> 2; stream_kn_2 0 -> 0 and 0 -> 0.
+    - hub_live_budget_refused 0; every queue_isolation counter 0.
+    - Every qdl_kn_subscription_closed in the window has outcome "ended".
+    - The pre-existing TRADE BINANCE BTCUSDT RESOURCE_EXHAUSTED pattern did NOT recur. Its 3 closures in the stream_kn_1
+      log are all from 17:34Z on 2026-10-16. The writer docker log had 0 RESOURCE_EXHAUSTED lines.
+    - Native trade_integrity over the bracket: overflow 0, slow_consumer 0, gaps 0, duplicates_applied 0, applied
+      158,893.
+    - Query: 103 RATE_LIMITED refusals (52 + 51). All are on /warmup, about half with REPLICA_LANE_BUSY. None is for
+      instrument 8482b54b (OKX BTC-USD-SWAP, mapped from the gateway physical_key).
+  - Root-cause reading (G9), partly verified:
+    - Verified: the deployed writer contains the QUOTE OBSERVE bound/3 probe fix (TS 1de2a694 is an ancestor of the
+      77a6d671 label).
+    - Verified: no gateway overflow, refusal or abnormal closure.
+    - Verified: no Query refusal for that instrument.
+    - Not verified: probe RTT, and whether Query served the BTC-USD-SWAP QUOTE as eligible in those seconds. The
+      root-owned native summary was not analysed per route, because another agent's lock started at 03:48:38Z.
+    - So the bound/3 margin fix did not remove the STALE in this run, and the 4.4 s component age is beyond what probe
+      cadence alone would explain (inferred).
+    - Also, guard_v2.sh counts each 30 s heartbeat snapshot up to 3 times; 1e09f87 deduped only the G9/TS samplers.
+      The stop here came from two consecutive DEGRADED heartbeats (03:42:09 and 03:42:40Z), so a deduped guard
+      would still have counted 2 bad snapshots. The guard rule is frozen; it is recorded here, not changed.
+  - Lock overlap (AGENTS 34a): at ~03:49Z this subagent ran one --rm --network none container
+    (qdl-v2-python:2.2.4-c7ce7d3, about 2 s, read-only summary key listing) inside the lock "claude P18.4 G13
+    dr05-quiet 20261017" (from 03:48:38Z), before re-reading the lock. No timing claim of that run should rely on that
+    second.
+  - Cleanup: 0 temporary containers left (the 2 g4obs containers were removed by the tool). 0 networks/volumes and
+    0 images created. 2 background watcher scripts in the session scratchpad were stopped. The run worktree was used
+    read-only and has no residue.
+  - Status: FINAL stage-100 = NOT certified (protocol_met false; G4 and G9 FAIL). Next (owner/coordinator): RCA of
+    QUOTE OKX BTC-USD-SWAP staleness from the native summary and Query probe evidence, then a decision on the fix.
+    No rerun under a changed rule.
