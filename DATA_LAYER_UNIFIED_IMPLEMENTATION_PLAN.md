@@ -74668,3 +74668,35 @@ fake venue + live read-only smoke of the production loop); NOT deployed.
   EQUAL_LOADED_SECTIONS (whole-file EQUAL satisfies) for the 11 other binaries.
 - Next: rebuild the v2.2.4 rust image at this commit under the host lock, equivalence vs 60f83a51, isolated proof,
   roll packet for ingestor_okx_swap (not executed). Register row IDR-112 in the TS INTEGRATION_DEFECT_REGISTER.
+- 2026-10-17 15:48-16:05Z IDR-112 release rebuild, equivalence, proofs, roll packet (host lock claude-dl-idr112
+  15:48:39Z, released after the proofs; df 215 GiB free):
+  - `scripts/build_qdl_release_images.py --rev 6d61710 --component rust --build`: PASS, 3 min 15 s.
+    `qdl-v2-rust:2.2.4-6d61710` sha256:5e261809b5046c4ff9de098d5b57eb049287abaabd722ed145701be47d79114b,
+    label 6d61710807d2..., receipt ~/.local/state/qdl-v2/build-v2.2.4-6d61710/receipt.json sha256 6f004ce7...;
+    image == ctx, ldd/uid/env probes ok, no TEST feature markers.
+  - Equivalence vs 60f83a51 (2.2.4-c7ce7d3): 11 of 12 binaries whole-file EQUAL (qdl-stream-gateway,
+    qdl-projector, qdl-realtime-core, qdl-production-core, qdl-kafka-smoke, qdl-parity-replay, qdl-binance-shadow,
+    qdl-venue-core-certify, qdl-authority-rehearsal, qdl-phase91/92 rehearsals); qdl-native-raw-ingestor
+    DIFFERENT (expected). The older rows hold too (core EQUAL rc22, gateway DIFFERENT_BUILD_PATH vs baa72c96,
+    projector EQUAL_LOADED_SECTIONS vs rc22).
+  - Python image not rebuilt: c7ce7d3..6d61710 changes nothing under qdl/ app/ generated/ config/ consumers/
+    qdl_sdk/ Dockerfile pyproject.toml poetry.lock, so c21e164a stays the v2.2.4 python image (its label stays
+    c7ce7d3).
+  - Release binary proof (--rm --network none --read-only, uid 10001, TEST_ONLY Kafka env with no certs): the
+    two production configs (OKX 103 bindings, Binance 27) and a synthetic config without the field start with
+    the defaults; `{"enabled": false}` and a tuned object are applied; `min_frames 1` is refused by validate; an
+    unknown field is refused by serde. Every run then stops at the missing TLS file, before any network.
+  - Release-profile tests (`cargo test --release`): 64 passed, 1 ignored. Release-profile live smoke, defaults,
+    300 s, 6 instruments 15:54-15:59Z: 38,110 frames, venue lag min 27 / mean 27.7 / max 96 ms, 0 stale,
+    0 recycles. The release binary itself cannot connect to a fake venue (wss only, webpki roots) nor run
+    without mTLS Kafka, so the behavioural proofs are the production loop in test builds (debug and release).
+  - Evidence ~/.local/state/qdl-v2/p184-idr112-okx-staleness-20261017/SHA256SUMS (release-binary-config-proof.log
+    793cd921..., cargo-test-release.log 37c74bbb..., live-smoke-release.log 87406d43...).
+  - Roll packet (NOT executed): upgrade/evidence/releases/v2.2.4/drafts/IDR112_INGESTOR_ROLL_PACKET.md, state dir
+    ~/.local/state/qdl-v2/releases/v2.2.4/rollout-idr112/ (inspects, rc17v2 dry runs: both ingestors diff
+    ['image'] 0.5/0.75 cpu, rollback reference composes 60f83a51). Step 1 ingestor_okx_swap is required; step 2
+    ingestor_binance_usdm is recommended for one ingestor binary on the release digests (owner decision);
+    stream_kn/market_projector stay on 60f83a51 (binaries EQUAL). HOLD gates as in the v2.2.4 roll plus IDR-112
+    checks (one armed line for okx-public-003, venue_lag reported, <= 2 recycles in the 5 min watch).
+  - Status: implemented, tested locally, release image built; not deployed, not certified. Open: owner approval
+    of the packet, roll, then the gate rerun (and the TS MARK fix, not in this entry).
