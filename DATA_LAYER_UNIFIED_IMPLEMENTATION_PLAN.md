@@ -74847,3 +74847,17 @@ Host lock `claude-dl-query-gc-idr114` 17:05:37Z-20:05:37Z. No production contain
 - Evidence `~/.local/state/qdl-v2/p184-idr114-query-gc-20261017/` (run-A0-no-liveness, run-A2-baseline,
   run-B-fix-cycles: receipt 86a8d878 / 47cf15d5 / 010ce791, saveall d05f74b9 / 89a09b8f / b6b87b93, analysis
   a5059091 / f01182fc / 5d52206c). Status: implemented, tested locally, isolated-replay measured; not deployed.
+- Release image (lock `claude-dl-query-gc-idr114`, `scripts/build_qdl_release_images.py --rev 31a5155 --component
+  python --build`): `qdl-v2-python:2.2.4-31a5155`
+  `sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff`, label revision 31a5155, receipt
+  `~/.local/state/qdl-v2/build-v2.2.4-31a5155/receipt.json` (e1a9bcc5...) PASS (vs rc19 model: unexpected
+  differences [], pip freeze equal). Equivalence vs production `c21e164a`
+  (`equivalence-vs-c21e164a.json`, 2ec87f34...): of 439 hashed /app files exactly the 6 changed python files
+  differ (= `git diff c7ce7d3 31a5155` on qdl/app/generated/config/consumers/qdl_sdk); pip freeze equal. The 17
+  new/changed tests pass against the image's own /app code. Rust unchanged: ingestors `5e261809`,
+  stream_kn/market_projector `60f83a51` (docker inspect 19:08Z).
+- Roll packet (draft, not executed): `upgrade/evidence/releases/v2.2.4/drafts/IDR114_QUERY_ROLL_PACKET.md` -
+  query_kn_1 then query_kn_2 with `rollout_rc15.py` (diff `['image']`), HOLD = v2.2.4 gates (`hold_check.py`,
+  `verify_service.py`) plus a 10 min `qdl.stall` report per step; rollback digest `c21e164a` (tool auto-rollback or
+  the saved compose). The TS register row for IDR-114 is in the packet (section 8): the TS register had another
+  agent's uncommitted edit (IDR-113 row) at 19:00Z, so it was not edited here.
