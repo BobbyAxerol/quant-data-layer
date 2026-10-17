@@ -74287,3 +74287,85 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
     view with strict_started_ms) and decide whether this is IDR-110b behaviour or a harness predicate that does not
     fit same-record renewal. Stage-100 final was not started because the chain stops here.
 - 2026-10-17 ~11:10Z v2.2.4 release packaging DRAFTED, nothing run, nothing pushed (Claude subagent; file edits + read-only sha256/docker inspect, no lock needed): releases/v2.2.4/{CERTIFICATE.md,SCORECARD.md,equivalence.json}, RELEASE_NOTES.md rewritten from the skeleton, drafts/{CERTIFICATION_LEDGER_ENTRIES,PR_DL_fix-p184-dl-closure_to_dev,PR_DL_dev_to_main,CLEANUP_CHECKLIST}.md. G12 final is credited; G13 runtime v5.4 and final stage-100 stay as <<PENDING:...>> markers (index at the end of SCORECARD.md / CERTIFICATE.md); every 64-hex value was checked against the files. TS-side PR drafts: TS upgrade/evidence/P184_RELEASE_PR_DRAFTS_20261017.md.
+- 2026-10-17 10:20-11:29Z FINAL chain resumed after IDR-111 (Claude subagent): CI, G13 v5.4 runtime window
+  **76/76**, trace re-arm, FINAL stage-100 on writer a44349a1 **protocol_met true, G4 + G8 FAIL**.
+  - Harness: TS fc644cd1 (IDR-111 fix) + c9ebd619 (journal/register) pushed fast-forward 1f324001..c9ebd619 (owner
+    approval for this branch). CI run 39024582832 "Quality And V1 Contract" success on c9ebd619 (GitHub API: static
+    ratchet, contract drift, full unit suite, compose contract all success).
+  - Packet p1/packet-g13-v5.4-20261017.md sha256 87226559... (= sidecar): v5.3 + run ids g13r7wa20261017 /
+    g13r7fx01 + TS run worktree trading-system-final-run-c9ebd619 + CI 39024582832; owner approval ~10:00Z recorded in
+    the delta header; gate 0.10 apparatus waiver carried over (fc644cd1 self-reviewed only). Generator
+    g13v54/make_g13v54.py 77934d59...: compose 64d4395a... (19 changed paths, run-id substitutions only, image
+    unchanged), FX plan ae88fc10..., inputs-ci 73302004....
+  - Gates: dry run exit 0, blocked {}, 66 cells, coverage 76 missing []; deployed_mismatches []; checkout_problems [];
+    DL run worktree f6db0b82 and TS run worktree c9ebd619 clean before/after; writer a44349a1 rc 0 (started 08:43:06Z,
+    unchanged since v5.3); images present.
+  - Lock "claude P18.4 G13 v5.4 window (packet-g13-v5.4-20261017)" 10:30:07-10:47:10Z (released).
+  - Step 2: B9 99/99 pending [] mismatch []; B16 {} (binding digest c095b977..., 10 accounts incl. the 4
+    g13r7wa20261017); B14 DNS 4/4; INDEX BINANCE:USD_M:BTCUSDT present=false (as v5.2/v5.3); B10 CA fc24c047... x3;
+    bind sources 55 (8 identity files checked with alpine test -s). Step 3 FX g13r7fx01 FX_PROOF_SEED_COMMITTED (4
+    writes). Step 4 preflight_env PASS x2, compose config 0 x2. Step 5 ts-p184 up 10:31:36Z, 8 containers, 0 restarts,
+    7 roles on a44349a1, health 200 + "Gateway V3 Online", Traceback/401/UNAUTHENTICATED/BINDING_MISMATCH/CANARY all 0,
+    gateway writer scope holds the 4 g13r7wa accounts. Step 6 B12 4/4. Step 7 alphas up 10:33:03Z, warmup 700 rows both
+    venues, 0 non-200, no new data-source row (last 2026-10-12). Step 7b FX snapshot 10:31:40Z validated_at_ms set, 1
+    rate.
+  - Runner p184-g13-20261017T103357Z (10:33:57-10:44:35Z, exit 0; summary.json 9d22e111..., plan.json a7e0a78f...;
+    sealed DL export tree f49811a5..., removed): dr01-deployed 7 [0x5] 27.5 s; dr01-wrong-account 2 [0,0] 4.6 s
+    (cleanup complete); dr02-dr03-alpha 14 [0,0,0] 506.1 s; dr04-dr06-views 22 [0x4] 40.8 s; **dr05-transport 9 [0]
+    52.2 s, all 9 OBSERVED ok**; dr07-reference 12 [0] 4.3 s; all harness_ok.
+    - dr05-transport lifecycle: bootstrap 10:43:41-10:43:52Z exit 0; bootstrap_checkpoint_proof complete (routes
+      QUOTE BINANCE:ETHUSDT, OKX:BTC-USD-SWAP, OKX:ETH-USDT-SWAP; items QUOTE 3, TRADE 2; checkpoint 5293 B = 5 routes);
+      strict_resume VERIFIED, strict_refusals 0, strict_heartbeat_refusals 0 over 2 post-start heartbeats; recovery
+      after reconnect 4539 ms, 3 logged control events.
+    - Residual (recorded, not changed mid-chain): at the bootstrap stop the clone heartbeat listed only the QUOTE
+      native routes (TRADE probes at liveness/3 had not reported yet), so the TRADE item count (2) was present but not
+      checked against an enumerated TRADE route set. A TRADE route without a cursor item would still fail closed at
+      the strict start through the new heartbeat refusal count (named HANDOFF_RESUME_REQUIRED), not pass.
+  - W05 verifier in a44349a1 (--network none, --expect-source-sha 6af62a7e, --expect-image-digest a44349a1) over the
+    6 runtime jsonl + dr08 091825Z + dr05-upstream 093001Z + dr05-quiet 092651Z: **G13 76/76** (DR01 9/9, DR02 8/8,
+    DR03 6/6, DR04 14/14, DR05 17/17, DR06 6/6, DR07 12/12, DR08 4/4). Exit 1 only for CASE_OPEN on 260 non-DR matrix
+    cells (BR*, outside G13), 0 DR issues. verify/w05-final-v54.json 5490c21e....
+  - Abort watch (30 s): writer rc 0, DL bad roles [], 0 QUOTA/RESOURCE_EXHAUSTED lines, load1 <= 11.7.
+  - Teardown: alpha down (2), ts-p184 down (8 + network), FX g13r7fx01 FX_PROOF_SEED_DEACTIVATED (3 x UPDATE 1),
+    wrong-account cleanup complete true (probe finally), DSN env file and p1/r2 removed; 0 ts-p184/p184-g13-/p184-dr05-
+    containers, networks, volumes, /tmp/p184-dr05-*; disk +145 MB. Run worktrees kept clean (stage-100 used DL d03cd679).
+  - Trace re-arm (owner-approved same-image re-arm, packet v5.4 approval ~10:00Z): lock "claude-s100-final-a44349a1"
+    10:48:01-11:28:50Z. preflight_env PASS in /home/bobby/trading_system; rc15/roll_writer_campaign_native.py
+    sha256:a44349a1... 3600 --dry-run -> DRY_RUN delta [TS_DELIVERY_TRACE_UNTIL_UNIX_NS]; real -> OK, same delta,
+    not_ready_samples 1, writer recreated 10:48:28Z on a44349a1, rc 0. Rollback compose: rc15/native-trace-roll/.
+  - FINAL stage-100 p184-final-campaign-20261017T105025Z (10:50:25-11:26:14Z, campaign_exit 0; scorecard.json
+    23ed2ef2..., campaign.json 4027a255..., g9-g10-summary 9931f90d..., g11-summary 1eae128d..., guard.log dbc30cfc...,
+    .run.log 5137f912..., .g11-watcher.log c28998f1...). Apparatus DL run worktree d03cd679 (aee0945 + 1e09f87; tool /
+    observer v5 / budget / addendum sha256 cf26d6e3 / ff4f5989 / ff85335b / 4ed59dca, same as 032230Z; dry run
+    problems []). Command `run --g11 --base-profile .../profile-stage100-rc4-r16.json`. Load window 10:51:58-11:21:58Z;
+    G11 coordinator restart 11:22:52Z (watcher), writer READY 64/64 after, rc 0, started 11:22:56Z.
+    - **protocol_met true**, protocol_problems []. Frozen rules, nothing upgraded:
+      PASS G1 G2 G3 G5 G6 G7 G9 G10 G11 G14; **FAIL G4, G8**; NOT_MEASURED G12, G13 (separate evidence: G12 credited
+      08:46-09:17Z, G13 76/76 above).
+    - G9 PASS: 60 samples, demanded 64 = session-ready in every sample (0 mismatches), eligibility_losses_data_path 0,
+      no session/worker-not-live causes, v1_fallback 0; legit quiet TRADE_EVENT_STALE refusals 48 (report-only). The
+      v2.2.4/7c71e3af QUOTE OKX BTC-USD-SWAP STALE of 032230Z did not recur on a44349a1 (guard READY 64 64 throughout).
+    - G4 FAIL (5 windows observed, coverage complete): bar|BINANCE|1m window-3 p95 270.7 ms over 257.6 (n=15);
+      book_delta|OKX_INVERSE (addendum max) 321.8 ms (w2) and 288.5 ms (w3) over 282.5; quote|OKX_INVERSE (addendum max)
+      359.5 ms (w2) over 322.6. Every other row inside. Observer cgroup throttling <= 0.33 % (report-only).
+    - G8 FAIL: one SLOWLOG entry (>= 10 ms) counted as steady: EVAL 27.2 ms at 11:00:02Z from 172.18.0.12 =
+      market_data_service_p184w (script sha1 prefix 1875f518...). The scorecard's window 1 (10:50:32-11:00:22Z) is
+      marked steady=false while the entry is counted in slowlog_new_steady; recorded as an open question for the
+      owner, rule not reinterpreted. PING p99 1.006 ms, core fraction <= 0.065, monitor clients 0.
+    - G11 PASS: outage 0.137 s; first_valid_apply / caught_up max 27.442 s, p95 4.439 s, n=64; 0 future events.
+      G3 pooled p95 2085 ms, max 3371 ms. G14 DL mean 5.57 vCPU, no memory at limit.
+    - Overflow / refused: stream_kn_1 overflow 3 -> 3, refused 2 -> 2; stream_kn_2 0 -> 0, 0 -> 0 (pre-load,
+      pre-G11, post-campaign); hub_live_budget_refused 0; every queue_isolation counter 0; writer log 0
+      RESOURCE_EXHAUSTED / QUOTA lines since 10:48Z.
+    - native_probe: the load epoch's counters were reset by the G11 restart and are not retained by the campaign
+      samplers (not measured for the load). Post-G11 epoch 76595252 (11:22:56-11:27:59Z): QUOTE requested 4872, renewed
+      435, renewed_same_record 992, skipped_offset 3445, failed 0, unavailable 0; TRADE requested 191, renewed 30,
+      renewed_same_record 137, skipped 24, failed 0, unavailable 0. QUOTE OKX BTC-USD-SWAP requested 443 / same-record
+      345 / renewed 25 / skipped 73 / failed 0; BNB-USDT-SWAP 442 / 269 / 27 / 146 / 0.
+    - Taint watch (30 s): only the campaign's own qdl-phase3-target and g4obs-1..5 containers; one unnamed container
+      "charming_ptolemy" seen once at 11:26:11Z (after the load window, unidentified; docker events no longer had it);
+      a foreign ssh session to 178.128.51.255 (another agent's remote python, started 11:14:34Z inside the load window)
+      matched the process pattern in 28 samples; it runs remotely, local CPU effect not measured. load1 max 22.66.
+  - Status: G13 final = 76/76 on a44349a1 (complete). FINAL stage-100 = protocol met, NOT certified (G4, G8 FAIL
+    under frozen rules). Next (owner/coordinator): decide G4 (inverse-instrument addendum max rows and BINANCE bar 1m
+    p95) and G8 (single 27 ms writer EVAL, steady-window attribution) before release closeout.
