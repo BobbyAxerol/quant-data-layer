@@ -74403,3 +74403,48 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   - Next (owner): a clean rerun is required anyway. Add a foreign watch (1-2 s, any non-campaign docker CLI incl.
     builder/system du, ssh/scp/tar, per-process CPU) and report-only core commit_ms and cleaner-phase samplers. If G4
     fails again on a clean host, a measured one-variable fix of the Kafka commit tail goes through an owner packet.
+- 2026-10-17 11:54-12:09Z FINAL stage-100 clean rerun on writer a44349a1 with a foreign-activity guard: **ABORTED,
+  TAINTED** by Codex command executions on this host during the load start (Claude subagent; owner ~12:00Z approved
+  running now while Codex local jobs were paused; frozen rules, tool/observer/budget/addendum untouched).
+  - Guard sidecar (DL, apparatus only, outside the scored metrics): scripts/p184_foreign_activity_guard.py +
+    tests/test_p184_foreign_activity_guard.py, commits 1cd69806 (guard), 323070a2 (keep the tail of long command
+    lines), 5157c8ce (bound and remove the in-container cleaner tails). 50 ms new-PID scan + 1 s per-process CPU on
+    host processes (outside docker-*.scope cgroups); foreign = new host process that is a docker CLI of any kind,
+    ssh/scp/sftp/rsync/tar/curl/wget/pip/uv/cargo/rustc/pytest/python, another agent's command wrapper
+    (codex/codex-linux-sandbox/bwrap), or > 0.2 core in a 1 s sample, outside the campaign tree and the coordinator
+    session; or a new non-campaign container. TAINTED on overlap with driver_started..driver_exit; --abort stops the
+    campaign through its own stop paths (SIGINT driver as guard_v2.sh, SIGINT campaign, SIGTERM own G6 probe by its
+    in-container PID, remove own G4 observer). Report-only followers: rust_core progress (commit_ms / commit_wait_ms /
+    commit_hidden_ms at the core's ~2.6 s progress cadence, not 1 s) and Kafka log-cleaner phase per broker. Output in
+    the sibling dir <campaign>.guard/. Unit tests 8/8 (python3 -B -m unittest). Limits (measured in smoke runs): a
+    docker CLI living < ~50 ms (e.g. `docker version`) can be missed, `docker image ls` was caught; process start
+    times carry up to 1 s error (integer btime); Docker API clients without a CLI are visible only in docker events.
+  - Pre-start: production verified (writer a44349a1 rc 0; query c21e164a x2; stream/projector/ingestors 60f83a51;
+    cores 7c848aad x3, all rc 0); docker ps = the 40 production containers of 105025Z. Smoke runs at 11:59-12:02Z
+    already showed Codex active (codex app-server pid 3348786 spawning codex-linux-sandbox/bwrap execs in
+    .worktrees/trading-system-pm-v1_1 and portal-execution-edge-upgrade-v1_2, ssh to 178.128.51.255, `python3 -B -`);
+    12:02:09-12:03:05Z looked quiet, so the run went ahead.
+  - Lock "claude-s100-final-clean" 12:03:47-12:08:55Z (released). preflight_env PASS; re-arm
+    rc15/roll_writer_campaign_native.py sha256:a44349a1... 3600 --dry-run DRY_RUN, real OK (delta
+    [TS_DELIVERY_TRACE_UNTIL_UNIX_NS], not_ready_samples 1), writer recreated 12:04:20Z on a44349a1, until
+    1792242254290160530 (13:04:14Z). Campaign dry run exit 0, problems [], launch hold 0.
+  - Campaign p184-final-campaign-20261017T120552Z from DL run worktree data-layer-p184-final-run-1cd69806 (source_sha
+    1cd69806, contains aee0945 + 1e09f87; tool/observer/budget/addendum cf26d6e3/ff4f5989/ff85335b/4ed59dca, same
+    command shape as 105025Z). g6_ts_started 12:06:13.56Z, driver_started 12:06:18.53Z. Guard: Codex exec pid 80084
+    (codex-linux-sandbox, --command-cwd .worktrees/trading-system-pm-v1_1, ppid = codex app-server) started 12:06:19.24Z
+    -> TAINTED 12:06:19.87Z -> SIGINT driver, driver_exit -2 at 12:06:20.21Z, SIGINT campaign (KeyboardInterrupt,
+    campaign_exit 130, no scorecard), G6 probe in-container pid 180 SIGTERM rc 0; the G11 watcher exited
+    GUARD_ABORTED_NO_RESTART (writer not restarted). 20 foreign records, 3 overlapping the load (all agent_exec);
+    pre-load Codex execs at 12:06:04-12:06:08Z. No gate was measured: G1-G14 NOT_MEASURED for this run.
+  - Receipts (sha256): campaign.json d1bc5547..., timeline.jsonl f69e2afe..., .run.log ff56cd24..., .guard.log
+    7245e1ae..., guard/summary.json 45d0db52..., guard/processes.jsonl 727ebd52..., guard/ABORTED 0957dda4...,
+    guard/TAINTED 6d256811....
+  - Teardown: 0 campaign containers left, docker ps = baseline 40; writer a44349a1 rc 0 READY 64/64; 9 in-container
+    `tail -F` followers left by the smoke runs and this run in kafka1-3 removed by exact command line (fixed in
+    5157c8ce, verified 0 left); run worktree 1cd69806 removed; new clean run worktree
+    data-layer-p184-final-run-5157c8ce (guard f563d5c9..., campaign hashes unchanged). Trace stays armed until
+    13:04:14Z (same image; expires on its own).
+  - Status: FINAL stage-100 still NOT run on a clean host; 105025Z remains the latest scored run (TAINTED). Next
+    (owner/coordinator): actually stop the Codex app-server sessions on this host (the VS Code ChatGPT/Codex extension
+    is still executing commands), then rerun with a fresh trace re-arm, run worktree 5157c8ce and the same run.sh shape
+    (guard --abort).
