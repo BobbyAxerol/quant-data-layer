@@ -74870,3 +74870,61 @@ Host lock `claude-dl-query-gc-idr114` 17:05:37Z-20:05:37Z. No production contain
   `~/.local/state/qdl-v2/p184-idr114-query-gc-20261017/{affected-61,full-suite}-31a5155.log`. Host lock released
   after this; isolated containers/networks 0 (`qdl.p184.gcq` label), image `qdl-v2-python:2.2.4-31a5155` kept for
   the packet.
+
+### P18.4 IDR-112 Codex review F1-F3 dispositions and ingestor follow-up - 2026-10-17 (Claude)
+
+Review: `/home/bobby/.worktrees/ts-codex-p184-review/upgrade/p184-idr112-113-provider-gates-review-20261018.md`
+(reviewed DL HEAD 7a2bf84, product change 6d61710). Coordinator dispositions, owner wants DL kept lean. Only F1-F3
+are recorded here; F4 is TS (IDR-113), F5 is the Query stall (IDR-114, separate entry above). File
+`rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs`, line numbers at this commit. Status: implemented, tested
+locally; release image NOT rebuilt (the coordinator rebuilds rust together with the python Query fix, one roll).
+- F1 (P2, standby ACK wait had no overall deadline) - ACCEPTED, FIXED. Verified the counterexample in source first:
+  `okx_establish` re-armed `timeout(10 s, reader.next())` per message; ping/pong/notice continued the loop without
+  completing pending ACKs; the three callers (primary, notice standby, staleness standby) had no outer deadline and
+  `standby.is_some()` suppressed later triggers. Fix: one absolute budget `OKX_ESTABLISH_BUDGET` = 15 s (:3024),
+  set once the connect pacer admits the attempt and never extended by progress; connect and the ACK loop both run
+  under `timeout_at(deadline)` (:3767, :3772); expiry = typed `OkxEstablishError::Deadline { phase, budget }`
+  (:3695-3735), the future and its socket are dropped (cancellation). 15 s: above the old 10 s per-read ACK timeout
+  (kept) and well under the 60 s OKX keeps a socket after 64008, so a repeated notice can retry. Standby failure
+  (:4160-4180): only the standby is dropped, the active lane keeps its own checks, `qdl_native_standby_failed`
+  gains additive `reason` STANDBY_DEADLINE / STANDBY_CONNECT_ERROR / STANDBY_SUBSCRIBE_ERROR (`cause` NOTICE /
+  STALENESS unchanged), then the normal cooldown/cap. Primary path keeps its categories (:3955-3970): subscribe
+  phase expiry fails the lane like the old ACK timeout; connect phase expiry is retried with backoff like a refused
+  connect (previously an unbounded hang). Budget is an `OkxServiceShard` field (production = the const, tests
+  shorten it); no config field added.
+- F2 (P2 coverage, ACK is not consumer-usable handover) - option A ACCEPTED (option B deferred). Comments fixed to
+  state exactly what the ACK cutover guarantees: the successor is fully ACKed while the old socket still delivers
+  and the old session stops before any successor frame is published (generation N never after N+1); it does NOT
+  prove a fresh successor frame per binding; in between consumers rely on retained state and their own
+  freshness/eligibility checks (:4115-4128 handover, `OkxSessionEnd::NoticeHandover` doc, lineage doc ~:810).
+  Measurement in the fake-venue tests, per binding, last old-generation frame -> first new-generation frame
+  (receipt time): streaming successor 38 / 28 / 48 ms (asserted < 250 ms); ACK-only successor: NO_SUCCESSOR_FRAME
+  for all 3 bindings, uncovered until stop 2049 / 2069 / 2059 ms (reported, no bound claimed; the test cannot hang:
+  the successor answers the 500/1500 ms liveness ping and the run is stopped).
+- F3 (detector is relative, not an absolute freshness check) - ACCEPTED as documented trade-offs (config doc
+  :3309): startup-already-delayed lane and a > half-horizon stale spell become the baseline; min_bindings 2 never
+  triggers on a one-instrument delay; the downstream validator still refuses unusable data; no absolute-lag recycle
+  added. Accounting fix: `decide` (:3627) is now a pure check; the cooldown/cap slot is taken by `recycle_started`
+  (:3654) only after the OKX control budget admits the attempt (:4325), so SUPPRESSED_CONTROL_BUDGET costs no
+  slot (cap and cooldown still bound attempts, a failed standby still counts). Progress fields (additive):
+  `staleness_suppressed` (window), `staleness_last_action`, `standby_failures_total`, `standby_deadline_total`
+  (:1314-1330, :1376-1379); absolute lag = existing `venue_lag_ms`, baseline validity = `staleness_baseline_ms`
+  null until armed. No Python consumer parses these fields (grep of *.py: none).
+- Tests (builder 551428d9, `--network none`, read-only source, offline cache; host lock
+  claude-dl-idr112-review-f1f3 19:29:17-19:32:00Z, taken after claude-dl-query-gc-idr114 released): rustfmt clean
+  (only new test lines reformatted), clippy -D warnings clean for the bin and for its tests, `cargo test -p
+  qdl-kafka --bin qdl-native-raw-ingestor` 70 passed (64 + 6 new), 1 ignored (live); staleness tests repeated 2x
+  more (21 passed each). New: (pure) a refused recycle takes no cooldown/cap slot; startup-delayed lane becomes its
+  own baseline (929 ms, no trigger, recovery no trigger); sustained single-instrument delay with min_bindings 2 never
+  triggers over 6 min; (production `run_okx_service` vs fake venue) a standby that gets every ACK but one plus a
+  ping and text pong every 100 ms is cancelled at a 600 ms budget (venue-observed lifetime asserted within
+  budget -100/+400 ms), the active generation never paused > 100 ms, generation +1 (cancelled) published nothing,
+  the next recycle after the cooldown succeeded (generation +2, all bindings), standby_deadline_total 1; shutdown
+  while a standby is pending under the 15 s production budget returns < run_for + 0.5 s and drops the standby
+  socket; ACK-only successor measured as above. Existing cooldown test updated for `recycle_started`. Evidence
+  `~/.local/state/qdl-v2/p184-idr112-okx-staleness-20261017/review-f1f3/` (SHA256SUMS: check.log 95986d6b...,
+  test-1.log c51da183..., test-2.log 22344c21..., test-3.log df16dd86...). No container, image or runtime left
+  (`--rm`).
+- Not done (by instruction): release image rebuild, equivalence, roll. Next: coordinator rebuilds the v2.2.4 rust
+  image at this commit together with the python Query image, equivalence (ingestor DIFFERENT, other 11 EQUAL
+  expected), one roll packet.

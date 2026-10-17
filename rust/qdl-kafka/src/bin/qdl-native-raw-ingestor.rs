@@ -807,8 +807,9 @@ struct ProviderSessionLineage<'a> {
     config_revision: u64,
 }
 
-/// Per-lane chain of sessions that succeeded each other with no uncovered
-/// window (make-before-break on an OKX service-upgrade notice).
+/// Per-lane chain of sessions that succeeded each other make-before-break
+/// (successor fully ACKed before the predecessor stopped reading) on an OKX
+/// service-upgrade notice or an IDR-112 staleness recycle.
 ///
 /// Each link was subscribed and ACKed while its predecessor was still
 /// reading, and the predecessor stopped reading only after that. So the last
@@ -1223,6 +1224,8 @@ struct LaneWindow {
     /// IDR-112 lanes only: host time at read minus venue `ts` (clamped at 0).
     venue_lag: WindowSpan,
     stale_frames: u64,
+    /// Staleness triggers that did not start a recycle (any SUPPRESSED_*).
+    staleness_suppressed: u64,
 }
 
 #[derive(Debug, Default)]
@@ -1235,6 +1238,11 @@ struct LaneState {
     inflight: usize,
     staleness_baseline_ms: Option<i64>,
     staleness_recycles_total: u64,
+    /// Outcome of the latest staleness trigger (RECYCLE or SUPPRESSED_*).
+    staleness_last_action: Option<&'static str>,
+    standby_failures_total: u64,
+    /// Standby attempts cancelled by `OKX_ESTABLISH_BUDGET` (review F1).
+    standby_deadline_total: u64,
 }
 
 /// Throughput and latency of one lane, shared by the lane task, its publish
@@ -1302,6 +1310,22 @@ impl LaneTelemetry {
         self.with(|state| state.staleness_recycles_total += 1);
     }
 
+    /// What one staleness trigger led to.
+    fn staleness_action(&self, action: &'static str) {
+        self.with(|state| {
+            state.staleness_last_action = Some(action);
+            state.window.staleness_suppressed += u64::from(action != "RECYCLE");
+        });
+    }
+
+    /// A standby session (notice or staleness) that did not become ready.
+    fn standby_failed(&self, reason: &'static str) {
+        self.with(|state| {
+            state.standby_failures_total += 1;
+            state.standby_deadline_total += u64::from(reason == "STANDBY_DEADLINE");
+        });
+    }
+
     /// A frame handed to the producer: enqueue time includes QueueFull retries.
     fn enqueued(&self, took: Duration, bytes: usize, inflight: usize) {
         let at_ns = now_ns().unwrap_or_default();
@@ -1349,6 +1373,10 @@ impl LaneTelemetry {
                 "stale_frames": window.stale_frames,
                 "staleness_baseline_ms": state.staleness_baseline_ms,
                 "staleness_recycles_total": state.staleness_recycles_total,
+                "staleness_suppressed": window.staleness_suppressed,
+                "staleness_last_action": state.staleness_last_action,
+                "standby_failures_total": state.standby_failures_total,
+                "standby_deadline_total": state.standby_deadline_total,
             })
         })
     }
@@ -2980,7 +3008,20 @@ struct OkxServiceShard {
     shard_index: usize,
     url: String,
     bindings: Vec<RawBinding>,
+    /// Absolute bound on one connect + subscribe (`OKX_ESTABLISH_BUDGET` in
+    /// production; tests shorten it).
+    establish_budget: Duration,
 }
+
+/// IDR-112 review F1: absolute bound on one OKX connect + subscribe, counted
+/// from the moment the connect pacer admits the attempt. Progress (ping, pong,
+/// notice, a partial ACK set) never extends it, so a peer that keeps a socket
+/// busy with control traffic cannot hold a standby pending. Above the 10 s
+/// per-read ACK timeout that predates it (a healthy establishment takes well
+/// under a second) and well under the 60 s OKX keeps a socket open after a
+/// 64008 notice, so a failed standby leaves room for a repeated notice to
+/// retry.
+const OKX_ESTABLISH_BUDGET: Duration = Duration::from_secs(15);
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 type OkxSocket =
@@ -3013,8 +3054,10 @@ impl OkxConnectPacer {
 /// stale window is evidence, not inference.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum OkxSessionEnd {
-    /// `event: notice` (64008: service upgrade). The standby session took over
-    /// before this one stopped reading; no frame window was left uncovered.
+    /// `event: notice` (64008: service upgrade). The standby session was
+    /// subscribed (every ACK) before this one stopped reading; that orders the
+    /// generations, it does not prove the successor already delivered a frame
+    /// for every binding (see the handover in `run_okx_service`).
     NoticeHandover {
         code: String,
     },
@@ -3261,9 +3304,17 @@ impl InboundDeadline {
 /// (an NTP step moves neither the lag nor the baseline), and staleness is the
 /// excess over the baseline, the median of per-bucket minimum lags over the
 /// horizon. A constant venue/host offset cancels out; a single frame with a
-/// bogus timestamp moves one bucket minimum, not the median. Trade-off: a
-/// session that is stale for more than half the horizon becomes its own
-/// baseline and is no longer detected (the evidence shows bursts, not that).
+/// bogus timestamp moves one bucket minimum, not the median.
+///
+/// Availability trade-offs (review F3, accepted; the detector is relative, not
+/// an absolute freshness check, and never makes data eligible): a session that
+/// is stale for more than half the horizon, or already delayed when the lane
+/// starts, becomes its own baseline and is not detected; with `min_bindings`
+/// 2 a delay confined to one instrument never triggers. Unusable data stays
+/// the downstream validator's to refuse. The progress line shows the absolute
+/// lag (`venue_lag_ms`), whether the baseline is armed
+/// (`staleness_baseline_ms` null until it is) and the last trigger outcome
+/// (`staleness_last_action`, `staleness_suppressed`).
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 struct LatestStateStalenessConfig {
@@ -3569,7 +3620,10 @@ impl StalenessDetector {
         }
     }
 
-    /// Whether a detected trigger may start a recycle now; records it if so.
+    /// Whether a detected trigger may start a recycle now. Pure check: the
+    /// slot is taken by `recycle_started`, once the connection attempt is
+    /// actually admitted (review F3), so a refusal further on (OKX control
+    /// budget) costs no cooldown or cap.
     fn decide(&mut self, host_ms: i64) -> RecycleDecision {
         while self
             .recycles
@@ -3592,8 +3646,13 @@ impl StalenessDetector {
                 recycles_last_hour: self.recycles.len(),
             };
         }
-        self.recycles.push_back(host_ms);
         RecycleDecision::Recycle
+    }
+
+    /// A recycle attempt started (standby connecting): it counts for the
+    /// cooldown and the hourly cap whether or not the standby succeeds.
+    fn recycle_started(&mut self, host_ms: i64) {
+        self.recycles.push_back(host_ms);
     }
 
     /// Rate limit for suppressed-trigger log lines: Some(count suppressed
@@ -3635,6 +3694,29 @@ struct OkxEstablished {
 enum OkxEstablishError {
     Connect(BoxError),
     Subscribe(BoxError),
+    /// `OKX_ESTABLISH_BUDGET` ran out in `phase`; the attempt was cancelled
+    /// (its socket dropped).
+    Deadline {
+        phase: OkxEstablishPhase,
+        budget: Duration,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OkxEstablishPhase {
+    Connect,
+    Subscribe,
+}
+
+impl OkxEstablishError {
+    /// Typed reason for a standby that did not become ready.
+    fn standby_reason(&self) -> &'static str {
+        match self {
+            Self::Connect(_) => "STANDBY_CONNECT_ERROR",
+            Self::Subscribe(_) => "STANDBY_SUBSCRIBE_ERROR",
+            Self::Deadline { .. } => "STANDBY_DEADLINE",
+        }
+    }
 }
 
 impl std::fmt::Display for OkxEstablishError {
@@ -3642,6 +3724,15 @@ impl std::fmt::Display for OkxEstablishError {
         match self {
             Self::Connect(error) => write!(formatter, "connect: {error}"),
             Self::Subscribe(error) => write!(formatter, "subscribe: {error}"),
+            Self::Deadline { phase, budget } => write!(
+                formatter,
+                "{} not complete within the {} ms establish budget",
+                match phase {
+                    OkxEstablishPhase::Connect => "connect",
+                    OkxEstablishPhase::Subscribe => "subscribe",
+                },
+                budget.as_millis()
+            ),
         }
     }
 }
@@ -3653,6 +3744,12 @@ impl std::fmt::Display for OkxEstablishError {
 /// publish only after the previous generation has stopped publishing. That
 /// keeps the connection-generation fences (ordering tracker and L2 book core)
 /// seeing generation N strictly before N+1 even when the two sockets overlap.
+///
+/// Connect and subscribe together must finish within `budget`, one absolute
+/// deadline set once the pacer admits the attempt (review F1). Messages that
+/// are not the missing ACKs never extend it; on expiry the attempt is
+/// cancelled and its socket dropped (`OkxEstablishError::Deadline`).
+#[allow(clippy::too_many_arguments)]
 async fn okx_establish(
     url: String,
     subscriptions: Arc<Vec<OkxSubscription>>,
@@ -3661,14 +3758,18 @@ async fn okx_establish(
     generation: u64,
     max_pre_ack_frames: usize,
     pacer: OkxConnectPacer,
+    budget: Duration,
 ) -> Result<OkxEstablished, OkxEstablishError> {
     pacer.admit().await;
+    let deadline = Instant::now() + budget;
+    let expired = |phase| OkxEstablishError::Deadline { phase, budget };
     let connect_started_ns = now_ns().map_err(OkxEstablishError::Connect)?;
-    let (socket, _) = connect_async(&url)
+    let (socket, _) = tokio::time::timeout_at(deadline, connect_async(&url))
         .await
+        .map_err(|_| expired(OkxEstablishPhase::Connect))?
         .map_err(|error| OkxEstablishError::Connect(error.into()))?;
     let (mut writer, mut reader) = socket.split();
-    let subscribed: Result<_, BoxError> = async {
+    let subscribed = tokio::time::timeout_at(deadline, async {
         let command_id = generation.to_string();
         writer
             .send(Message::Text(okx_subscription_command(
@@ -3726,10 +3827,11 @@ async fn okx_establish(
             }
         }
         Ok::<_, BoxError>((session_id, pre_ack_frames, notice_code))
-    }
+    })
     .await;
-    let (session_id, pre_ack_frames, notice_code) =
-        subscribed.map_err(OkxEstablishError::Subscribe)?;
+    let (session_id, pre_ack_frames, notice_code) = subscribed
+        .map_err(|_| expired(OkxEstablishPhase::Subscribe))?
+        .map_err(OkxEstablishError::Subscribe)?;
     Ok(OkxEstablished {
         writer,
         reader,
@@ -3758,6 +3860,7 @@ async fn run_okx_service(
         shard_index,
         url,
         bindings,
+        establish_budget,
     } = shard;
     if bindings.is_empty() {
         return Ok(());
@@ -3814,6 +3917,7 @@ async fn run_okx_service(
             generation,
             config.max_inflight_publishes,
             pacer.clone(),
+            establish_budget,
         )
     };
     // IDR-112: one detector per lane, kept across sessions (baseline,
@@ -3849,7 +3953,21 @@ async fn run_okx_service(
                 match establish(generation).await {
                     Ok(established) => established,
                     Err(OkxEstablishError::Subscribe(error)) => return Err(error),
-                    Err(OkxEstablishError::Connect(error)) => {
+                    // As before the budget: a subscription that never
+                    // completes fails the lane; a connect that never completes
+                    // is retried with backoff like a refused one.
+                    Err(
+                        error @ OkxEstablishError::Deadline {
+                            phase: OkxEstablishPhase::Subscribe,
+                            ..
+                        },
+                    ) => return Err(error.to_string().into()),
+                    Err(error @ OkxEstablishError::Deadline { .. })
+                    | Err(error @ OkxEstablishError::Connect(_)) => {
+                        let error = match error {
+                            OkxEstablishError::Connect(error) => error,
+                            other => other.to_string().into(),
+                        };
                         failures = failures.saturating_add(1);
                         eprintln!(
                             "{}",
@@ -3994,10 +4112,20 @@ async fn run_okx_service(
                     standby = None;
                     match ready {
                         Ok(next) => {
-                            // Make-before-break: the successor is subscribed
-                            // while this socket still delivers, so stopping
-                            // here leaves no uncovered window. A notice, if
-                            // any, stays the cause (it would end the socket).
+                            // Make-before-break at subscription ACK: every
+                            // subscription of the successor is ACKed while
+                            // this socket still delivers, and this session
+                            // stops before any successor frame is published,
+                            // so generation N is never published after N+1.
+                            // The ACK does NOT prove the successor already has
+                            // a fresh frame for every binding (zero pre-ACK
+                            // data is allowed): from the last frame published
+                            // here to the successor's first frame for a
+                            // binding, consumers keep the retained state and
+                            // its own freshness/eligibility checks (review F2
+                            // option A; the fake-venue tests measure that
+                            // window per binding). A notice, if any, stays the
+                            // cause (it would end the socket).
                             let successor_generation = next.generation;
                             handover = Some(next);
                             ended = Some(match (notice.as_ref(), recycle.take()) {
@@ -4028,7 +4156,12 @@ async fn run_okx_service(
                             break;
                         }
                         Err(error) => {
+                            // Only the standby is dropped: this session keeps
+                            // delivering under its own checks, and the next
+                            // trigger is governed by the cooldown and cap.
                             let failed_recycle = recycle.take();
+                            let reason = error.standby_reason();
+                            telemetry.standby_failed(reason);
                             eprintln!(
                                 "{}",
                                 serde_json::to_string(&json!({
@@ -4041,6 +4174,7 @@ async fn run_okx_service(
                                     } else {
                                         "STALENESS"
                                     },
+                                    "reason": reason,
                                     "successor_generation": failed_recycle
                                         .as_ref()
                                         .map(|pending| pending.successor_generation),
@@ -4184,11 +4318,17 @@ async fn run_okx_service(
                             None => "SUPPRESSED_STANDBY_PENDING",
                             Some(RecycleDecision::Cooldown { .. }) => "SUPPRESSED_COOLDOWN",
                             Some(RecycleDecision::Cap { .. }) => "SUPPRESSED_CAP",
+                            // The cooldown/cap slot is taken only once the
+                            // control budget admits the connection attempt.
                             Some(RecycleDecision::Recycle) => match budget.permit(now_ns()?) {
-                                Ok(()) => "RECYCLE",
+                                Ok(()) => {
+                                    detector.recycle_started(host_ms);
+                                    "RECYCLE"
+                                }
                                 Err(_) => "SUPPRESSED_CONTROL_BUDGET",
                             },
                         };
+                        telemetry.staleness_action(action);
                         let mut successor_generation = None;
                         if action == "RECYCLE" {
                             let next_generation = connection_generation(&generation_path).await?;
@@ -4418,6 +4558,7 @@ async fn run_okx(
                 shard_index: index + 1,
                 url: config.websocket_url.clone(),
                 bindings,
+                establish_budget: OKX_ESTABLISH_BUDGET,
             },
             config.clone(),
             Arc::clone(&publisher),
@@ -4435,6 +4576,7 @@ async fn run_okx(
                 shard_index: index + 1,
                 url: business_url.clone(),
                 bindings,
+                establish_budget: OKX_ESTABLISH_BUDGET,
             },
             config.clone(),
             Arc::clone(&publisher),
@@ -5946,7 +6088,7 @@ mod okx_reconnect_tests {
         okx_establish, okx_notice_code, okx_reconnect_delay_ms, BackoffPolicy, DeliveryClass,
         InboundDeadline, Keepalive, LivenessPolicy, OkxConnectPacer, OkxEstablishError,
         OkxSessionEnd, OkxSubscription, RawBinding, RawFeed, SessionLineageWriter,
-        OKX_CONNECT_SPACING,
+        OKX_CONNECT_SPACING, OKX_ESTABLISH_BUDGET,
     };
     use futures_util::{SinkExt, StreamExt};
     use serde_json::{json, Value};
@@ -6523,6 +6665,7 @@ mod okx_reconnect_tests {
             168,
             16,
             OkxConnectPacer::default(),
+            OKX_ESTABLISH_BUDGET,
         )
         .await
         .unwrap();
@@ -6550,6 +6693,7 @@ mod okx_reconnect_tests {
             169,
             16,
             OkxConnectPacer::default(),
+            OKX_ESTABLISH_BUDGET,
         )
         .await
         .err()
@@ -6567,6 +6711,7 @@ mod okx_reconnect_tests {
             170,
             16,
             OkxConnectPacer::default(),
+            OKX_ESTABLISH_BUDGET,
         )
         .await
         .err()
@@ -6937,6 +7082,7 @@ mod staleness_tests {
     fn recycles_respect_the_cooldown_and_the_hourly_cap() {
         let mut detector = detector(LatestStateStalenessConfig::default());
         assert_eq!(detector.decide(T0), RecycleDecision::Recycle);
+        detector.recycle_started(T0);
         assert_eq!(
             detector.decide(T0 + 30_000),
             RecycleDecision::Cooldown {
@@ -6948,6 +7094,7 @@ mod staleness_tests {
                 detector.decide(T0 + minute * 60_000),
                 RecycleDecision::Recycle
             );
+            detector.recycle_started(T0 + minute * 60_000);
         }
         assert_eq!(
             detector.decide(T0 + 6 * 60_000),
@@ -6964,6 +7111,63 @@ mod staleness_tests {
         assert_eq!(detector.suppressed_log_due(T0 + 10_000), Some(3));
     }
 
+    #[test]
+    fn a_recycle_refused_after_the_decision_takes_no_cooldown_or_cap_slot() {
+        // Review F3: `decide` is a pure check; a trigger refused further on
+        // (OKX control budget) never called `recycle_started`, so the next
+        // trigger may still recycle at once.
+        let mut detector = detector(LatestStateStalenessConfig::default());
+        for attempt in 0..10 {
+            assert_eq!(
+                detector.decide(T0 + attempt * 1_000),
+                RecycleDecision::Recycle
+            );
+        }
+        detector.recycle_started(T0 + 10_000);
+        assert_eq!(
+            detector.decide(T0 + 11_000),
+            RecycleDecision::Cooldown {
+                remaining_ms: 59_000
+            }
+        );
+    }
+
+    #[test]
+    fn a_lane_already_delayed_at_startup_becomes_its_own_baseline() {
+        // Documented trade-off (review F3): the detector is relative. A lane
+        // that is 0.9 s late from its first frame arms on that lag and never
+        // triggers; the absolute lag stays visible (`venue_lag_ms`) and the
+        // downstream validator still refuses unusable data.
+        let mut detector = detector(LatestStateStalenessConfig::default());
+        let bindings = quotes();
+        let triggers = feed(&mut detector, &bindings, 0, 120_000, |at, index| {
+            900 + healthy(at, index)
+        });
+        assert!(triggers.is_empty(), "{triggers:?}");
+        assert_eq!(detector.baseline_ms(), Some(929));
+        // Recovery to a healthy lag is not staleness either.
+        assert!(feed(&mut detector, &bindings, 120_000, 180_000, healthy).is_empty());
+    }
+
+    #[test]
+    fn a_sustained_delay_on_one_instrument_never_triggers_with_two_min_bindings() {
+        // Documented trade-off (review F3): with min_bindings 2 a delay
+        // confined to one instrument is not a lane-wide burst, however long
+        // it lasts; the other instruments keep the baseline healthy.
+        let mut detector = detector(LatestStateStalenessConfig::default());
+        let bindings = quotes();
+        assert!(feed(&mut detector, &bindings, 0, 40_000, healthy).is_empty());
+        let triggers = feed(&mut detector, &bindings, 40_000, 400_000, |at, index| {
+            if index % bindings.len() == 0 {
+                900
+            } else {
+                healthy(at, index)
+            }
+        });
+        assert!(triggers.is_empty(), "{triggers:?}");
+        assert_eq!(detector.baseline_ms(), Some(29));
+    }
+
     // ---- The production session loop against a fake OKX venue ----------
 
     /// Delay (ms) the venue applies to `ts` for (connection, time since the
@@ -6972,8 +7176,29 @@ mod staleness_tests {
 
     #[derive(Debug, Default)]
     struct VenueLog {
+        accepted: Vec<Option<Instant>>,
         acked: Vec<Option<Instant>>,
         closed: Vec<Option<Instant>>,
+    }
+
+    /// How the fake venue serves one connection.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum VenueMode {
+        /// ACK every subscription, then stream quotes.
+        Quotes,
+        /// ACK all subscriptions but the last, never send data, and keep the
+        /// socket busy with a WebSocket ping and a text `pong` every 100 ms
+        /// (review F1: control traffic must not extend the establishment).
+        AckAllButOne,
+        /// ACK every subscription, never send data, answer text `ping` with
+        /// `pong` (review F2: an ACK-only successor).
+        AckOnly,
+    }
+
+    type Modes = Arc<dyn Fn(usize) -> VenueMode + Send + Sync>;
+
+    fn all_quotes() -> Modes {
+        Arc::new(|_| VenueMode::Quotes)
     }
 
     fn wall_ms() -> i64 {
@@ -6983,7 +7208,7 @@ mod staleness_tests {
     /// One OKX-like public endpoint: a 10 ms bbo-tbt update stream (rotating
     /// instruments, global seqId) fanned out to every subscribed connection,
     /// each stamping `ts = now - schedule(...)`.
-    async fn fake_okx_quotes(schedule: Schedule) -> (String, Arc<Mutex<VenueLog>>) {
+    async fn fake_okx_quotes(schedule: Schedule, modes: Modes) -> (String, Arc<Mutex<VenueLog>>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let log = Arc::new(Mutex::new(VenueLog::default()));
@@ -7007,22 +7232,60 @@ mod staleness_tests {
                 index += 1;
                 {
                     let mut log = accept_log.lock().unwrap();
+                    log.accepted.push(Some(Instant::now()));
                     log.acked.push(None);
                     log.closed.push(None);
                 }
                 let log = Arc::clone(&accept_log);
                 let schedule = Arc::clone(&schedule);
+                let mode = modes(connection);
                 let mut feed = updates.subscribe();
                 tokio::spawn(async move {
                     let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
                     let command = socket.next().await.unwrap().unwrap();
                     let command: Value = serde_json::from_str(command.to_text().unwrap()).unwrap();
-                    for arg in command["args"].as_array().unwrap() {
+                    let args = command["args"].as_array().unwrap();
+                    let acked = if mode == VenueMode::AckAllButOne {
+                        &args[..args.len() - 1]
+                    } else {
+                        &args[..]
+                    };
+                    for arg in acked {
                         let ack = json!({"event": "subscribe", "arg": arg, "id": command["id"]});
                         socket.send(Message::Text(ack.to_string())).await.unwrap();
                     }
-                    log.lock().unwrap().acked[connection] = Some(Instant::now());
+                    if mode != VenueMode::AckAllButOne {
+                        log.lock().unwrap().acked[connection] = Some(Instant::now());
+                    }
+                    let mut control = tokio::time::interval(Duration::from_millis(100));
+                    // Control-only modes: until the client goes away.
                     loop {
+                        if mode == VenueMode::Quotes {
+                            break;
+                        }
+                        tokio::select! {
+                            _ = control.tick(), if mode == VenueMode::AckAllButOne => {
+                                let ping = socket.send(Message::Ping(Default::default())).await;
+                                let pong = socket.send(Message::Text("pong".into())).await;
+                                if ping.is_err() || pong.is_err() {
+                                    break;
+                                }
+                            }
+                            incoming = socket.next() => match incoming {
+                                Some(Ok(Message::Text(text))) if text.as_str() == "ping" => {
+                                    if socket.send(Message::Text("pong".into())).await.is_err() {
+                                        break;
+                                    }
+                                }
+                                Some(Ok(_)) => {}
+                                _ => break,
+                            },
+                        }
+                    }
+                    loop {
+                        if mode != VenueMode::Quotes {
+                            break;
+                        }
                         tokio::select! {
                             update = feed.recv() => {
                                 let (seq, symbol, at_ms) = match update {
@@ -7090,6 +7353,27 @@ mod staleness_tests {
         /// Published raw envelopes in publish order.
         records: Vec<RawProviderEnvelope>,
         report: Value,
+        /// From the start of the lane to `run_okx_service` returning.
+        returned_after: Duration,
+        /// Wall clock (ns) when `run_okx_service` returned.
+        returned_at_ns: i64,
+    }
+
+    /// Lane knobs that differ between scenarios.
+    #[derive(Clone, Copy)]
+    struct LaneOptions {
+        establish_budget: Duration,
+        /// `liveness_ping_ms`/`liveness_dead_ms`; (0, 0) = heartbeat rule.
+        liveness_ms: (u64, u64),
+    }
+
+    impl Default for LaneOptions {
+        fn default() -> Self {
+            Self {
+                establish_budget: OKX_ESTABLISH_BUDGET,
+                liveness_ms: (0, 0),
+            }
+        }
     }
 
     /// Runs the production `run_okx_service` (lane okx-public-001) against
@@ -7099,14 +7383,37 @@ mod staleness_tests {
         staleness: LatestStateStalenessConfig,
         run_for: Duration,
     ) -> LaneRun {
-        let (url, log) = fake_okx_quotes(schedule).await;
+        run_lane_with(
+            schedule,
+            all_quotes(),
+            staleness,
+            run_for,
+            LaneOptions::default(),
+        )
+        .await
+    }
+
+    async fn run_lane_with(
+        schedule: Schedule,
+        modes: Modes,
+        staleness: LatestStateStalenessConfig,
+        run_for: Duration,
+        options: LaneOptions,
+    ) -> LaneRun {
+        let (url, log) = fake_okx_quotes(schedule, modes).await;
         let symbols = SYMBOLS.iter().map(|symbol| symbol.to_string()).collect();
-        let (records, report) = run_quote_lane(url, symbols, staleness, run_for).await;
+        let (records, report, returned_after) =
+            run_quote_lane(url, symbols, staleness, run_for, options).await;
+        let returned_at_ns = now_ns().unwrap();
+        // Let the venue notice the last close.
+        tokio::time::sleep(Duration::from_millis(100)).await;
         let log = std::mem::take(&mut *log.lock().unwrap());
         LaneRun {
             log,
             records,
             report,
+            returned_after,
+            returned_at_ns,
         }
     }
 
@@ -7117,7 +7424,8 @@ mod staleness_tests {
         symbols: Vec<String>,
         staleness: LatestStateStalenessConfig,
         run_for: Duration,
-    ) -> (Vec<RawProviderEnvelope>, Value) {
+        options: LaneOptions,
+    ) -> (Vec<RawProviderEnvelope>, Value, Duration) {
         let bindings = symbols
             .iter()
             .map(|symbol| quote(symbol))
@@ -7144,8 +7452,8 @@ mod staleness_tests {
             max_subscriptions_per_connection: 100,
             latest_state_flush_ms: 1,
             book_liveness_proof_ms: 0,
-            liveness_ping_ms: 0,
-            liveness_dead_ms: 0,
+            liveness_ping_ms: options.liveness_ms.0,
+            liveness_dead_ms: options.liveness_ms.1,
             latest_state_staleness: staleness,
             authority: AuthorityRecord {
                 schema: "qdl.authority-record.v1".into(),
@@ -7168,6 +7476,7 @@ mod staleness_tests {
         let telemetry = Arc::new(TelemetryRegistry::default());
         let stopped = Arc::new(AtomicBool::new(false));
         let stop = Arc::clone(&stopped);
+        let started = Instant::now();
         let (result, ()) = tokio::join!(
             run_okx_service(
                 OkxServiceShard {
@@ -7175,6 +7484,7 @@ mod staleness_tests {
                     shard_index: 1,
                     url,
                     bindings,
+                    establish_budget: options.establish_budget,
                 },
                 Arc::clone(&config),
                 Arc::new(publisher),
@@ -7190,8 +7500,7 @@ mod staleness_tests {
             }
         );
         result.unwrap();
-        // Let the venue notice the last close.
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        let returned_after = started.elapsed();
         let report =
             telemetry.progress_line("OKX", run_for, now_ns().unwrap(), 0, 0)["lanes"][0].clone();
         let records = records
@@ -7201,7 +7510,7 @@ mod staleness_tests {
             .map(|record| RawProviderEnvelope::decode(record.payload.as_slice()).unwrap())
             .collect();
         let _ = fs::remove_dir_all(dir);
-        (records, report)
+        (records, report, returned_after)
     }
 
     fn generations(records: &[RawProviderEnvelope]) -> Vec<u64> {
@@ -7218,6 +7527,36 @@ mod staleness_tests {
             }
         }
         seen
+    }
+
+    /// Review F2: per binding, the last frame published by generation `old`
+    /// and the signed time (ms) from it to the first frame of `new`; None when
+    /// `new` published nothing for that binding. Receipt times: a negative
+    /// value is overlap (the successor received it before the old session's
+    /// last frame; it was still published after it).
+    fn handover_gaps(
+        records: &[RawProviderEnvelope],
+        old: u64,
+        new: u64,
+    ) -> Vec<(String, i64, Option<i64>)> {
+        SYMBOLS
+            .iter()
+            .filter_map(|symbol| {
+                let of = |generation: u64| {
+                    records.iter().filter(move |record| {
+                        record.connection_generation == generation
+                            && record.native_symbol == *symbol
+                    })
+                };
+                let last_old = of(old).map(|record| record.received_at_ns).max()?;
+                let first_new = of(new).map(|record| record.received_at_ns).min();
+                Some((
+                    symbol.to_string(),
+                    last_old,
+                    first_new.map(|first| (first - last_old) / 1_000_000),
+                ))
+            })
+            .collect()
     }
 
     fn symbols_of(records: &[RawProviderEnvelope], generation: u64) -> Vec<String> {
@@ -7278,6 +7617,26 @@ mod staleness_tests {
             "handover gap {} ms",
             (first_new - last_old) / 1_000_000
         );
+        // Review F2: what the ACK cutover gives each binding, measured, not
+        // claimed. Here the successor streams at once (10 ms venue tick, a
+        // binding every 30 ms), so each binding's window is a few ticks.
+        let gaps = handover_gaps(&run.records, generations[0], generations[1]);
+        println!(
+            "{}",
+            json!({
+                "event": "qdl_idr112_handover_gap_per_binding",
+                "scenario": "SUCCESSOR_STREAMING",
+                "gaps_ms": gaps
+                    .iter()
+                    .map(|(symbol, _, gap)| json!({"binding": symbol, "last_old_to_first_new_ms": gap}))
+                    .collect::<Vec<_>>(),
+            })
+        );
+        assert_eq!(gaps.len(), SYMBOLS.len());
+        for (symbol, _, gap) in &gaps {
+            let gap = gap.unwrap_or_else(|| panic!("{symbol}: no successor frame"));
+            assert!(gap < 250, "{symbol}: last old -> first new {gap} ms");
+        }
         assert_eq!(run.report["staleness_recycles_total"], 1);
         assert!(run.report["stale_frames"].as_u64().unwrap() >= 5);
         assert!(run.report["venue_lag_ms"]["max"].as_f64().unwrap() >= 850.0);
@@ -7342,6 +7701,209 @@ mod staleness_tests {
         assert_eq!(run.report["staleness_recycles_total"], 2);
     }
 
+    /// Connection 0 turns 0.9 s late after `after`; later connections are
+    /// healthy (their mode decides whether they ACK and stream). The stale
+    /// spell must stay under half the healthy history, or the 100 ms-bucket
+    /// median baseline adopts it (the documented F3 trade-off).
+    fn stale_first_connection(after: Duration) -> Schedule {
+        Arc::new(move |connection: usize, elapsed: Duration, _: u64| {
+            if connection == 0 && elapsed >= after {
+                900
+            } else {
+                0
+            }
+        })
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_standby_held_open_by_control_traffic_is_cancelled_at_the_budget() {
+        // Review F1 negative: the first standby gets every ACK but one and a
+        // ping plus a text pong every 100 ms, which used to keep the per-read
+        // timeout from ever firing. The absolute budget cancels it; the active
+        // lane keeps delivering; after the normal cooldown the next recycle
+        // succeeds on a healthy connection.
+        let budget = Duration::from_millis(600);
+        let cooldown = Duration::from_millis(1_500);
+        let modes: Modes = Arc::new(|connection| {
+            if connection == 1 {
+                VenueMode::AckAllButOne
+            } else {
+                VenueMode::Quotes
+            }
+        });
+        let run = run_lane_with(
+            stale_first_connection(Duration::from_millis(3_000)),
+            modes,
+            fast_staleness(cooldown.as_millis() as u64),
+            Duration::from_millis(6_000),
+            LaneOptions {
+                establish_budget: budget,
+                ..LaneOptions::default()
+            },
+        )
+        .await;
+        assert_eq!(run.log.accepted.len(), 3, "{:?}", run.log);
+        assert!(
+            run.log.acked[1].is_none(),
+            "the held standby never completed"
+        );
+        let held = run.log.closed[1].unwrap() - run.log.accepted[1].unwrap();
+        assert!(
+            held >= budget - Duration::from_millis(100)
+                && held < budget + Duration::from_millis(400),
+            "held standby lived {held:?} for a {budget:?} budget"
+        );
+        // The later attempt waited for the cooldown counted from the failed
+        // one, then completed.
+        let retried = run.log.acked[2].expect("the later attempt completed");
+        assert!(retried > run.log.closed[1].unwrap());
+        assert!(
+            retried - run.log.accepted[1].unwrap() >= cooldown - Duration::from_millis(200),
+            "{:?}",
+            run.log
+        );
+        // The active lane never paused: generation 0 streamed until the
+        // successful handover, the failed generation published nothing.
+        let generations = generations(&run.records);
+        assert_eq!(generations.len(), 2, "{generations:?}");
+        assert_eq!(
+            generations[1],
+            generations[0] + 2,
+            "generation 1 was the cancelled standby"
+        );
+        let old = run
+            .records
+            .iter()
+            .filter(|record| record.connection_generation == generations[0])
+            .map(|record| record.received_at_ns)
+            .collect::<Vec<_>>();
+        let largest_pause_ms = old
+            .windows(2)
+            .map(|pair| (pair[1] - pair[0]) / 1_000_000)
+            .max()
+            .unwrap();
+        assert!(
+            largest_pause_ms < 100,
+            "active lane paused {largest_pause_ms} ms"
+        );
+        assert_eq!(
+            symbols_of(&run.records, generations[1]).len(),
+            SYMBOLS.len()
+        );
+        assert_eq!(run.report["standby_deadline_total"], 1, "{}", run.report);
+        assert_eq!(run.report["standby_failures_total"], 1);
+        assert_eq!(run.report["staleness_recycles_total"], 1);
+        assert!(run.report["staleness_suppressed"].as_u64().unwrap() >= 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_while_a_standby_is_pending_returns_promptly() {
+        // Review F1: the production budget (15 s) is still running when the
+        // lane is stopped; the pending standby is dropped with the session.
+        let modes: Modes = Arc::new(|connection| {
+            if connection == 1 {
+                VenueMode::AckAllButOne
+            } else {
+                VenueMode::Quotes
+            }
+        });
+        let run_for = Duration::from_millis(2_500);
+        let run = run_lane_with(
+            stale_first_connection(Duration::from_millis(1_500)),
+            modes,
+            fast_staleness(10_000),
+            run_for,
+            LaneOptions::default(),
+        )
+        .await;
+        assert!(
+            run.returned_after < run_for + Duration::from_millis(500),
+            "returned after {:?}",
+            run.returned_after
+        );
+        assert_eq!(run.log.accepted.len(), 2, "{:?}", run.log);
+        assert!(run.log.acked[1].is_none());
+        assert!(
+            run.log.closed[1].is_some(),
+            "the pending standby socket was dropped"
+        );
+        assert_eq!(generations(&run.records).len(), 1);
+        assert_eq!(run.report["standby_failures_total"], 0);
+        assert_eq!(
+            run.report["staleness_last_action"],
+            "SUPPRESSED_STANDBY_PENDING"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_ack_only_successor_leaves_each_binding_uncovered_and_is_reported() {
+        // Review F2 option A: the cutover happens at subscription ACK, which
+        // does not prove successor data. A successor that ACKs and then sends
+        // nothing leaves every binding without a newer frame from the moment
+        // the old session stops; the test measures and reports that window
+        // (no bound is claimed) and must not hang: the successor answers the
+        // liveness ping, so the lane stays up until it is stopped.
+        let modes: Modes = Arc::new(|connection| {
+            if connection == 1 {
+                VenueMode::AckOnly
+            } else {
+                VenueMode::Quotes
+            }
+        });
+        let run_for = Duration::from_millis(3_500);
+        let run = run_lane_with(
+            stale_first_connection(Duration::from_millis(1_500)),
+            modes,
+            fast_staleness(10_000),
+            run_for,
+            LaneOptions {
+                liveness_ms: (500, 1_500),
+                ..LaneOptions::default()
+            },
+        )
+        .await;
+        assert!(run.returned_after < run_for + Duration::from_millis(1_000));
+        assert_eq!(run.log.acked.len(), 2, "{:?}", run.log);
+        assert!(run.log.acked[1].is_some());
+        let generations = generations(&run.records);
+        assert_eq!(generations.len(), 1, "the successor published nothing");
+        let successor = run.report["generation"].as_u64().unwrap();
+        assert!(
+            successor > generations[0],
+            "the ACK-only successor took over"
+        );
+        let gaps = handover_gaps(&run.records, generations[0], successor);
+        let report = gaps
+            .iter()
+            .map(|(symbol, last_old, gap)| {
+                json!({
+                    "binding": symbol,
+                    "last_old_to_first_new_ms": gap,
+                    "outcome": if gap.is_some() { "SUCCESSOR_FRAME" } else { "NO_SUCCESSOR_FRAME" },
+                    "uncovered_until_stop_ms": (run.returned_at_ns - last_old) / 1_000_000,
+                })
+            })
+            .collect::<Vec<_>>();
+        println!(
+            "{}",
+            json!({
+                "event": "qdl_idr112_handover_gap_per_binding",
+                "scenario": "SUCCESSOR_ACK_ONLY",
+                "gaps": report,
+            })
+        );
+        assert_eq!(gaps.len(), SYMBOLS.len());
+        for (symbol, last_old, gap) in &gaps {
+            assert!(gap.is_none(), "{symbol}");
+            // Stale from ~1.5 s, recycled within ~0.1 s, stopped at 3.5 s.
+            assert!(
+                (run.returned_at_ns - last_old) / 1_000_000 >= 1_000,
+                "{symbol}: uncovered window under 1 s"
+            );
+        }
+        assert_eq!(run.report["staleness_recycles_total"], 1);
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn disabled_detector_never_recycles_a_stale_session() {
         let schedule: Schedule = Arc::new(|_: usize, elapsed: Duration, _: u64| {
@@ -7396,11 +7958,12 @@ mod staleness_tests {
         } else {
             LatestStateStalenessConfig::default()
         };
-        let (records, report) = run_quote_lane(
+        let (records, report, _) = run_quote_lane(
             "wss://ws.okx.com/ws/v5/public".into(),
             symbols.clone(),
             staleness,
             Duration::from_secs(seconds),
+            LaneOptions::default(),
         )
         .await;
         let generations = generations(&records);
