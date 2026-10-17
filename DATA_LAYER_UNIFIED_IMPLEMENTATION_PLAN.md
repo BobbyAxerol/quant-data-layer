@@ -74490,3 +74490,45 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   - Next (owner/coordinator): no interactive logins / VS Code reconnects during the window; the new Codex app-server
     355061 is not covered by the SIGSTOP or the SIGCONT timer; then rerun with a fresh re-arm (trace until 14:17Z
     would not fit a full run plus G11 after ~13:25Z).
+- 2026-10-17 ~14:35-14:50Z RCA of the CLEAN final stage-100 run 5 p184-final-campaign-20261017T135719Z G2/G4 FAIL
+  (read-only, Claude subagent; criteria unchanged; host lock held 14:41:58-~14:46Z only for `docker logs` of
+  ingestor_okx_swap and two --rm --network none --read-only reads of the root-0600 trace files; scorecard da30687c).
+  - Verdict: neither the bafbe91 Kafka commit-tail mechanism nor a TS writer IDR-110/110b artefact. The QUOTE|OKX
+    G2 max and the G4 quote|OKX_INVERSE max are one OKX-quote-lane tail located BEFORE the DL receive stamp.
+  - Verified, G4 (observer v5 split, final aggregates): inverse quote max per window 180.8/723.5/711.8/194.7/498.8 ms;
+    its venue->DL part 39.4/669.3/627.8/35.2/446.9 ms, ingest->producer <= 184.6, producer->receipt <= 96.0 ms. The
+    outlier capsules show all six OKX quote symbols (linear and BTC-USD-SWAP) on session okx-public-003 stale together
+    (e.g. src 14:08:17.30-17.35, rcv 14:08:17.99-18.02; also 14:11:16, 14:15:16, 14:31:22), while OKX trade
+    (okx-public-002), OKX book (okx-public-001) and every BINANCE row stay at venue->DL <= 73 ms in the same windows.
+    Run 105025Z on the same images had OKX quote venue->DL max 29-33 ms in all five windows: the tail is new.
+  - Verified, G2 native (summary-native-34b3b991...-91, ack_latency_slices): the 1350.3 ms max is slice 14:16
+    BTC-USDT-SWAP QUOTE (n 846, sdk_to_ack max 39.0, writer_to_ack 8.4 ms), i.e. >= 1311 ms before the SDK receive.
+    Per slice, OKX|QUOTE max spikes (764, 912, 860, 852, 1350, 716, 740, 682, 1282, 810, 900 ms) while OKX|TRADE,
+    BINANCE|QUOTE and BINANCE|TRADE stay <= 564 ms in the same slices: not common mode. Where a G4 window overlaps,
+    G2 equals G4 + writer (ETH 764 vs 762 at 14:08, ETH 912 vs 911 at 14:11, BNB 852 vs 847 at 14:15, ETH 810 vs 807
+    at 14:31). The 14:16 max is after G4 window 4 (its all-event max is 847 ms), so it has no split.
+  - Verified, not a renewal artefact: a probe renewal is a Frame::Probe unit, stream_unit false (TS session.rs:546,
+    :809), counted only in snapshot counters (latency.rs:754); G2 reads only stream APPLIED rows (latency.rs:799).
+    The failing cells have stream.live refreshed 0 (renewals sit in snapshot.refreshed 3-53). Image a44349a1 label
+    revision 6af62a7e = HEAD for rust/crates/market-data-writer/src. The G4 observer reads md.canonical.v2
+    read_committed directly (p184_g4_observer.py): the TS writer is not in its path.
+  - Verified, not Kafka/host: rust_core commit_ms per-sample max over the load n=1315, p50 66, p95 123, max 151 ms,
+    0 samples >= 300 ms; broker cgroup throttling <= 0.19 s per 12.5 s at the tail instants; ingestor_okx_swap
+    nr_throttled unchanged 14:08-14:16; quote lane okx-public-003 inflight_max <= 10 of 512, raw produce max 85 ms,
+    read gap max 398 ms over 204 10 s intervals. The md.latest.v2-2 offset-map phase ran 14:18:29-14:21:47Z; the tail
+    slices are both outside (14:08-14:16) and inside it. Only routine per-minute ~25 ms __consumer_offsets cleans
+    coincide with some tails.
+  - Inferred, not verified: OKX-side late push of bbo-tbt on that connection (frames arriving with ts 0.7-1.3 s old,
+    no read stall in our process). OKX changelog/notices, pcap and a second OKX quote connection were not checked.
+  - MARK|BINANCE 1097.7 ms: DOGEUSDT event 14:30:25.000Z, a different instant from the QUOTE tails. Python path
+    (ADAPTER_REFERENCE_RETURN): upstream 1092.8, writer 4.9 ms. G4 w5 saw the same event read_committed-visible at
+    +265 ms (venue->DL 68 ms), so ~827 ms lies between canonical visibility and the reference-read return (projection
+    / Query / TS MARK wake+250 ms read delay+1 s poll; inferred: a read that returned the previous MARK). The same
+    slice 14:30 shows native QUOTE sdk_to_ack 476-552 ms on both venues (TS-side moment at the 14:30 boundary).
+  - Mitigation packet (G4_MITIGATION_PACKET_DRAFT.md): its own rule applies, "no cleaner phase -> return to RCA".
+    C1 (cleaner throttle 4->3 MiB/s) and C2-C4 act on Kafka commit/broker CPU and do not address this tail. No gate,
+    scorer or apparatus change is warranted: frozen G2 is "venue event -> applied in TS Redis" and G4 is
+    "venue -> canonical" (TS upgrade/p184-phase-d-gates.md:30, :32), so a venue-side delay counts.
+  - Next (owner): decide the OKX quote lane path (read OKX notices; read-only check of a parallel bbo-tbt connection
+    against okx-public-003, or a lane reconnect/rebalance as a one-variable change via packet), and the MARK read path
+    (projection lag vs wake read delay) before another final run.
