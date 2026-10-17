@@ -317,7 +317,20 @@ def sh(argv):
     return subprocess.run(argv, check=True, capture_output=True, text=True, timeout=15).stdout
 
 
-def owned(ns, role, call=sh, *, allow_disappearance=True):
+def _docker_absence(error, ident):
+    """True only for docker's exact one-line 'no such object/container: <ident>' reply."""
+    text = (error.stderr or "").strip().lower()
+    return (error.returncode == 1 and "\n" not in text and text.endswith(": " + ident.lower())
+            and ("no such object" in text or "no such container" in text))
+
+
+def owned(ns, role, call=sh, *, allow_disappearance=True, gone=None):
+    """Exact-name owned container row, or None.
+
+    ``gone`` (a list) makes a strict caller tolerate one race only: the listed
+    id is reported absent by docker and the exact name no longer lists; the
+    role is appended to ``gone``. Any other inspection error still raises.
+    """
     name = namespace(ns) + "-" + role
     if role not in (*ROLES, "helper", "tsvalidator"):
         raise ValueError("unknown owned role")
@@ -328,7 +341,12 @@ def owned(ns, role, call=sh, *, allow_disappearance=True):
         raise ValueError("ambiguous container")
     try:
         row = json.loads(call(["docker", "inspect", ids[0]]))[0]
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError as error:
+        if gone is not None and _docker_absence(error, ids[0]):
+            if call(["docker", "ps", "-aq", "--filter", "name=^/" + name + "$"]).strip():
+                raise
+            gone.append(role)
+            return None
         if not allow_disappearance:
             raise
         # --rm can finish between the exact-name listing and inspection.
@@ -359,10 +377,11 @@ def readiness(ns, call=sh, images=None):
 
 
 def cleanup(ns, call=sh):
-    removed = []
+    removed, already_gone = [], []
     # Preflight ALL ownership before stopping anything. Never remove networks,
     # images, shared volumes, files or a container selected only by a label.
-    rows = [(role, owned(ns, role, call, allow_disappearance=False))
+    # A --rm container listed then gone before inspection is already removed.
+    rows = [(role, owned(ns, role, call, allow_disappearance=False, gone=already_gone))
             for role in reversed((*ROLES, "helper", "tsvalidator"))]
     if any(row and row["HostConfig"].get("AutoRemove") is not True for _, row in rows):
         raise ValueError("refuse non-disposable container")
@@ -383,10 +402,10 @@ def cleanup(ns, call=sh):
                     if call(["docker", "ps", "-aq", "--no-trunc", "--filter",
                              "name=^/" + ns + "-" + role + "$"]).strip():
                         raise RuntimeError("container identity replaced during cleanup") from error
-                    removed.append(role)
+                    already_gone.append(role)
                     continue
                 deadline = time.monotonic() + 5
-                while (remaining := owned(ns, role, call, allow_disappearance=False)) is not None:
+                while (remaining := owned(ns, role, call, allow_disappearance=False, gone=[])) is not None:
                     if remaining["Id"] != row["Id"]:
                         raise RuntimeError("container identity replaced during cleanup")
                     if remaining.get("State", {}).get("Running") or time.monotonic() >= deadline:
@@ -399,7 +418,8 @@ def cleanup(ns, call=sh):
                 failures.append(role + ":" + type(error).__name__)
     if failures:
         raise RuntimeError("cleanup incomplete: " + ",".join(failures))
-    return {"removed": removed, "scope": ns}
+    return {"removed": removed, "already_gone": already_gone,
+            "counts": {"removed": len(removed), "already_gone": len(already_gone)}, "scope": ns}
 
 
 def prepare(work, images=None, scopes=None, catalog=None):

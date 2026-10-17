@@ -74135,7 +74135,11 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
         CalledProcessError. cleanup() calls owned(..., allow_disappearance=False). A container was listed by
         `docker ps` but had gone by the time of `docker inspect`, which is a --rm race (p184_dr05_dl_fault.py:330).
         The runner then removed the 5 DL roles as leftovers.
-      - This is an apparatus defect in teardown, recorded and not fixed here.
+      - This was an apparatus defect in teardown. It is fixed in the next commit: --down now treats a container
+        that was listed, then answered docker's exact one-line `no such object/container: <id>` and no longer lists
+        by name, as already gone. Any container that remains and any other docker error still fail. The result
+        records removed vs already_gone counts. No oracle/cell logic changed. Unit tests
+        tests/test_p184_dr05_dl_fault.py 39/39 OK in qdl-v2-python:2.2.4-c7ce7d3 --network none (tested locally).
     - W05 verifier, in 734b08f1 --network none, --expect-source-sha e21f6edd, --expect-image-digest 734b08f1, over the 3
       isolated evidence files. Output p184-g13-20261017T064022Z/verify/w05-isolated-idr110.json, b5519639....
       - DR05 8/17 closed (6 upstream + 2 QUIET) and DR08 4/4.
