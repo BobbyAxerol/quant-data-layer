@@ -102,6 +102,10 @@ REFERENCES = {
     # ingestors; the IDR-112 rebuild must equal it in every binary except the ingestor.
     "v224_c7ce7d3": ("qdl-v2-rust:2.2.4-c7ce7d3",
                      "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e"),
+    # The IDR-112 rebuild (6d61710), rolled 2026-10-17 to both ingestors; the IDR-112 review rebuild (F1-F3,
+    # 83bef59) must equal it in every binary except the ingestor.
+    "v224_6d61710": ("qdl-v2-rust:2.2.4-6d61710",
+                     "sha256:5e261809b5046c4ff9de098d5b57eb049287abaabd722ed145701be47d79114b"),
 }
 PYTHON_REFERENCE = ("qdl-v2-python:2.2.3-rc19-4d3476c",
                     "sha256:b9ca6c36fb0ad003b77e47bb3a777c3e565944d59cb3a2e9bc5dfb68e3448481")
@@ -140,6 +144,8 @@ BINARY_EXPECTATIONS = {
         ("rc18_ingestor", "DIFFERENT", "ingestors ran rc18 cdbf28b; qdl-kafka DL-R1/RB1 changed after it"),
         ("rc22_core", "DIFFERENT", "IDR-112 staleness recycle changed the ingestor after a4e7b3b"),
         ("v224_c7ce7d3", "DIFFERENT", "IDR-112 staleness recycle (the only source delta since c7ce7d3)"),
+        ("v224_6d61710", "DIFFERENT", "IDR-112 review F1-F3 (83bef59): absolute OKX establish budget, recycle "
+         "slot after control permit (the only Rust source delta since 6d61710)"),
     ],
     "qdl-projector": [
         ("rc14_projector", "DIFFERENT", "projectors run rc14 a388537 without IDR-107/CF3/CF4"),
@@ -161,8 +167,12 @@ for _name in RUST_BINARIES:
     if _name != "qdl-native-raw-ingestor":
         BINARY_EXPECTATIONS[_name].append(
             ("v224_c7ce7d3", "EQUAL_LOADED_SECTIONS", "c7ce7d3..REV changes only "
-             "rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs among Rust sources (IDR-112); whole-file EQUAL "
-             "expected, loaded sections equal at least"))
+             "rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs among Rust sources (IDR-112, F1-F3); whole-file "
+             "EQUAL expected, loaded sections equal at least"))
+        BINARY_EXPECTATIONS[_name].append(
+            ("v224_6d61710", "EQUAL_LOADED_SECTIONS", "6d61710..REV changes only "
+             "rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs among Rust sources (IDR-112 F1-F3); whole-file "
+             "EQUAL expected, loaded sections equal at least"))
 
 # Byte markers that only the isolated-replay-clock feature compiles in (qdl-test-data-clock replay
 # module). The env names QDL_TEST_DATA_CLOCK_* are present in every build (the guard that refuses
