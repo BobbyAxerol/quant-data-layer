@@ -74700,3 +74700,54 @@ fake venue + live read-only smoke of the production loop); NOT deployed.
     checks (one armed line for okx-public-003, venue_lag reported, <= 2 recycles in the 5 min watch).
   - Status: implemented, tested locally, release image built; not deployed, not certified. Open: owner approval
     of the packet, roll, then the gate rerun (and the TS MARK fix, not in this entry).
+
+### P18.4 RCA - Query instance-wide read stall in 135719Z (query_kn_2 14:30:25Z) - 2026-10-17 (Claude, read-only)
+
+Scope: the ~0.7 s instance-wide stall of query_kn_2 (python 2.2.4-c7ce7d3, c21e164a) at 14:30:25.36-26.17Z in
+the clean final stage-100 run 5, which carried the MARK|BINANCE DOGEUSDT read (upstream 1092.8 ms, G2 max 1097.7).
+File analysis only (stage100/receipt.json + host.json, .guard samplers, the receipts of 22 final campaigns
+10-10..10-17, code at HEAD 8dcbd66 = c7ce7d3 for qdl/). No container command: the host lock of the IDR-112 roll
+session (16:46:39-18:16:39Z) was held, so `docker logs`, Redis SLOWLOG/LATENCY and in-process GC stats were NOT
+checked (one `docker ps` + `docker image inspect` ran at ~16:47Z, seconds after that lock started).
+- Verified, the stall is periodic and per instance. Receipt read outliers (>= 250 ms) form clusters of 3-57 reads
+  across every read type (QUOTE, MARK_INDEX, L2, BAR_LATEST) on ONE replica at a time. In 135719Z query_v2_2 has
+  21 clusters, 17 of 20 gaps a multiple of ~76 s (median 76.5 s, drifting 79 -> 75 s), query_v2_1 22 clusters
+  (median 77.0 s), with independent phases (query_v2_1 had no outlier between 14:29:28.6 and 14:30:45.3). 105025Z
+  shows the same (76.6 / 76.2 s), and every earlier final receipt has clusters at a 71-83 s median period
+  (20261015T075842Z had <= 1 cluster). Routine clusters peak at 263-548 ms (median per run 293-414 ms).
+- Verified, the large stalls coincide with a one-step memory release on the same instance. query_kn_2 MemUsage
+  848 MiB at 14:30:19.2 -> 337 MiB at 14:30:31.7, threads (PIDs) 71 -> 104; query_kn_1 944 -> 366 MiB in
+  14:20:31.6-14:20:44.1 around its 845 ms cluster at 14:20:33.3. Both clusters fall on the regular ~76 s slot.
+  Across the final campaigns, 15 drops > 250 MiB inside load windows; 11 have a cluster in the 12.5 s sample
+  window, and in 10 of them it is that replica's largest stall of the run (536-1140 ms vs 293-378 ms medians).
+  The memory rises 200-450 MiB during the run setup (60 bar series of 2,500/5,000 rows, 127 RATE_LIMITED retries)
+  and stays flat until such a drop (base after a drop mostly 330-400 MiB).
+- Verified, not host / shared backend / harness / Query timer: guard verdict CLEAN, host 14:30:24-27 forks 21-213/s,
+  plumbing <= 0.14 core; query_kn_2 cgroup throttle 177 ms in the sample covering the stall (93-428 ms in every
+  sample 14:29-14:32); a shared backend (market_cache Redis, Kafka, Rust hot view) would stall both replicas;
+  harness polls are 1/5/60/180 s (poll_ledgers), not ~76 s per replica; grep of qdl/runtime/stable.py,
+  qdl/runtime/kn_*.py, qdl/query/*.py, qdl/security/*.py finds no periodic timer. Query logs nothing per request
+  (`access_log=False`, stable.py:967/994), so its docker logs cannot show this.
+- Inferred (strong, not measured in process): CPython 3.12 cyclic GC under the Query settings: thresholds
+  (100_000, 50, 100) (qdl/runtime/stable.py:699, set at :706) and the frozen start-up heap (:710-713). It is the
+  only process-wide, GIL-holding, allocation-paced pause in Query (the cadence drifts with load, unlike a timer),
+  and only a collection can return ~500 MiB in one step. Most likely the routine ~76 s pause is a collection
+  scanning a large young/old set and the rare large one is a full (gen2) collection that also frees the setup
+  backlog (pymalloc arenas released). Which generation each is was not measured. Those thresholds were validated
+  on ONE offline 5,000-row warmup (this plan, 2026-09-23: "2-3 collections, no full sweep, at most 31 ms"), never
+  over a 30-min run at 100 req/s. Candidate cycle sources (unverified): stored exceptions keep their traceback
+  frames alive in a cycle - qdl/runtime/kn_query_backend.py:386-389 (memoised HotViewUnavailable) and :701-703
+  (history_batch per-item `results[requirement] = error`, frames may hold decoded rows).
+- Impact: the MARK DOGEUSDT read at 14:30:26.092 matches the query_kn_2 stall end (26.02-26.17); this refines
+  27c28bd's "one reference read round trip" inference. Even with the TS MARK re-read fix, a 0.3-0.5 s pause every
+  ~76 s per replica (0.5-1.1 s at a full collection) consumes most of the 1000 ms G2 budget for any read in it.
+- Proposal (DL product, one variable at a time, packet + owner approval; nothing executed):
+  (1) Confirm, behaviour-neutral: a `gc.callbacks` hook in `configure_query_interpreter` that logs any collection
+  >= 20 ms (generation, duration, collected, uncollectable, gc.get_count(), RSS) - one log line per event.
+  (2) Fix, chosen by (1): if the large events are full collections freeing exception/frame cycles (confirm
+  offline with gc.DEBUG_SAVEALL on a 5,000-row warmup + a 30-min replay), store tracebackless per-item errors at
+  kn_query_backend.py:389/:703 (`error.with_traceback(None)`; the API renders only the typed code); otherwise tune
+  QUERY_GC_THRESHOLDS on a 30-min kn4 shadow replay with the target metric "per-replica read stall >= 250 ms".
+  Blast radius: Query image only (rebuild python, recreate query_kn_1 then query_kn_2 serially, the other replica
+  serves). Not touched: Stream, projectors, ingestors, Kafka, Redis, TS, alpha, gates, scorer. Rollback: digest
+  c21e164a. Status: RCA only; no code, config or runtime change.
