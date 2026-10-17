@@ -74532,3 +74532,70 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   - Next (owner): decide the OKX quote lane path (read OKX notices; read-only check of a parallel bbo-tbt connection
     against okx-public-003, or a lane reconnect/rebalance as a one-variable change via packet), and the MARK read path
     (projection lag vs wake read delay) before another final run.
+- 2026-10-17 ~14:50-15:20Z RCA addendum to the 135719Z entry above (read-only on production, Claude subagent; no
+  restart, no config change; host lock held 14:52:51-15:14:19Z; evidence ~/.local/state/qdl-v2/
+  p184-rca-okx-bbo-20261017T145251Z: probe.jsonl 430f74d2..., host_sampler.jsonl 3857b2e2..., observer/
+  observations.jsonl 0c048e0a..., receipt.json 036bf779...; 0 containers left).
+  - Verified, lane wiring (c7ce7d3 = HEAD for rust/): OKX public bindings split per feed class, then in chunks of
+    max_subscriptions_per_connection 100 (qdl-native-raw-ingestor.rs:289-311, :3793), so okx-public-003 is ONE
+    connection carrying only the 6 bbo-tbt subscriptions (001 books, 002 trades, 004 mark/index, business-001
+    candles). wss://ws.okx.com/ws/v5/public (port 443, no proxy in the container env; ws.okx.com resolves to
+    Cloudflare 172.64.144.82/104.18.43.174). received_at_ns is the wall clock right after the WS read returns
+    (:3551, :3624). The text "ping" goes out only after 1500 ms of inbound silence, dead at 4000 ms (config), so a
+    busy bbo-tbt lane never pings; 64008 notices get make-before-break (:3596-3616). Lane 003 session generation 206
+    has been up since 05:24:00Z (reset by OKX then); it served both the clean 105025Z run and run 5, with no notice
+    and no reconnect. OKX reset lanes 002 (14:24:05, 14:47:12), 001 (14:27:26), 004 (14:42:27) and business-001
+    (14:57:54), each "Connection reset without closing handshake" and reconnected in about 0.3 s.
+  - Verified, ingestor not the cause: stage100/host.json shows ingestor_okx_swap at 0.07-0.11 cores of its 0.5 cap,
+    13 throttle events in 14:01-14:32 (the largest 43 ms per 12.5 s), and 0 in the samples covering 14:08:17,
+    14:11:16, 14:15:16 and 14:31:22. Lane 003 read_gap maxima (186-369 ms at exactly those instants) are smaller
+    than the 0.7-1.3 s staleness, and 105025Z had the same gap distribution (max 360 ms, 10 of 240 intervals
+    > 250 ms) without staleness.
+  - Verified, parallel probe (one read-only WS from a --rm qdl-v2-python:2.2.4-c7ce7d3 container on the default
+    bridge, same host NAT, no proxy, pinned to lane 003's edge IP 172.64.144.82, same 6 instruments, 14:53:01-
+    15:14:01Z, 84,418 frames). Venue ts -> local receive: p50 29.3, p95 32.0, p99 34.2, max 60.2 ms; 0 frames
+    > 200 ms; 0 stale bursts > 500 ms; OKX "ping" RTT p50 56.2 / max 74.9 ms. Over the same window, the production
+    lane (G4 observer v5, quote OKX, sample-ms 1, 51,513 events, read_committed) had venue->DL p50 <= 29, p95 <= 31,
+    p99 <= 35 and max 1554.2 ms, with 152 events > 200 ms, 100 > 500 ms and 58 > 1000 ms. All of them fell in
+    14:54:30-14:57:30; the lane was clean for the remaining 16 minutes. At 14:55:36.27-36.33 (src) the lane's frames
+    reached DL at 14:55:37.68-37.88, after a lane-003 read gap of 1036 ms ending at 14:55:37.272. In the same
+    seconds the probe received 610 frames for all 6 instruments with max lag 40.7 ms (14:54:58-55:03: 397 frames,
+    max 40.5 ms). Kernel side: the lane 003 socket rx_queue was <= 425 B (100 ms sampler), and the ingestor netns
+    TcpExt counters moved TCPOFOQueue 0, TCPToZeroWindowAdv 0, TCPRcvQDrop 0, TCPTimeouts 0. The bytes did not
+    reach the host; the client neither stalled nor closed its window.
+  - Verdict (verified for the 14:53-15:14 window, inferred for run 5 by the identical signature): the OKX quote tail
+    is specific to the connection/session, upstream of our host (on the Cloudflare edge -> OKX gateway path of
+    session okx-public-003-206). It is not a venue-wide bbo-tbt delay (a fresh connection to the same edge IP was
+    clean at the same seconds) and not DL ingestor CPU, read loop or Kafka. OKX docs: bbo-tbt ts is the
+    matching-engine time and pushes every 10 ms on change. The SBE section says that under system overload bbo-tbt
+    data loss "can occur, varying by different connection" (https://www.okx.com/docs-v5/en/). There is no changelog
+    entry or notice for 2026-10-17 (https://www.okx.com/docs-v5/log_en/, https://www.okx.com/status: "No upgrades
+    planned"). The announced port-8443 shutdown on 2026-10-31 "to support a network infrastructure upgrade" does not
+    affect our :443 URL (https://www.okx.com/help/okx-websocket-port-8443-discontinuation-announcement).
+    wsaws.okx.com was retired on 2025-04-28, so no alternative region endpoint exists. Not checked: pcap, and
+    whether a fresh lane-003 session stays clean for an entire run.
+  - Verified, MARK|BINANCE 1097.7 ms (TS worktree feat/v2-rust-first-okx-demo). MARK is not a native feed
+    (services/market_data/native_plan.py:28 NATIVE_FEEDS = TRADE, QUOTE): the value always comes from a reference
+    read, and the stream event is only a wake (data_layer_bridge.py:992-1015). Runtime env (docker inspect
+    market_data_service_p184w, created 13:56Z): MARK_STREAM_WAKE=true, WAKE_READ_DELAY_BY_VENUE=BINANCE=100 (not
+    250), WAKE_MIN_INTERVAL_MS=500, REFRESH_SECONDS=1, batch window 20 ms (shared/config.py:217). After a wake the
+    read waits max(500 ms - time since previous read, 100 ms) (data_layer_bridge.py:964-990). The wake is cleared
+    when that read STARTS. If the read returns the previous event (projector cache ~150 ms behind canonical and the
+    hot view busy or over its 250 ms budget: qdl/runtime/kn_hot_view.py:47, kn_query_backend.py:517-537, hot lane
+    max_active 4 at qdl/query/service.py:257), the new event waits for the next 1 s poll. Design worst case: about
+    265 (visible) + 100-500 (gap) + read + 1000 (poll) = 1.4-1.8 s. So the frozen G2 "QUOTE and MARK max < 1000 ms"
+    (TS upgrade/p184-phase-d-gates.md:30) is NOT guaranteed by design for MARK; this is a product issue, not
+    timing luck. Inferred (subagent, from trace/mark-load.json): no DOGE record carries a previous-event read in
+    25.1-26.1 s, so this event most likely spent about 650-750 ms in one reference read round trip (batch waiting
+    for its slowest item, or hot-lane queueing), not in the miss path. To confirm, read the root-0600 TS delivery
+    records for 14:30:23-27 with DL Query reference_batch latency.
+  - Recommendations. (a) Rerun timing gate: do not rerun yet; a venue-wide transient is refuted. (b) OKX quote
+    lane, one variable via packet: a fresh session for okx-public-003 only. There is no per-lane admin hook, and an
+    ingestor_okx_swap restart also resets the books lane, so this needs an owner decision. The durable product fix
+    is one variable: a venue-ts staleness trigger for latest-state lanes, for example N consecutive frames older
+    than 500 ms recycles that lane through the existing 64008 make-before-break standby path. Before the next final
+    run, declare a report-only 5-min pre-check: a parallel bbo-tbt probe vs lane venue->DL, with criterion "lane
+    max <= 200 ms and probe max <= 200 ms". (c) MARK, product fix, one variable: on a wake-triggered read that
+    returns no newer event, re-arm one re-read after the 100 ms read delay instead of waiting for the 1 s poll
+    (closes the structural > 1 s miss path). If the delivery records confirm the read round trip instead, use
+    DATA_LAYER_V2_MARK_BATCH_WINDOW_MS=0 (quota check first). Criteria, gates and scorer unchanged.
