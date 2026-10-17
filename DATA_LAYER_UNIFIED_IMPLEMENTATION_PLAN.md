@@ -74456,3 +74456,13 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   no trace re-arm, no campaign, no production change. Run worktree data-layer-p184-final-run-5157c8ce stays ready.
   Next (owner): stop the Codex app-server process itself (the VS Code ChatGPT/Codex extension, or quit the session)
   rather than its threads, re-check that no codex-linux-sandbox/bwrap exec appears for 120 s, then rerun.
+- 2026-10-17 13:01-13:13Z FINAL stage-100 clean rerun NOT STARTED, second pre-start watch (Claude subagent; owner
+  ~13:00Z: "turned off the Codex extension"; rule: 180 s without a codex-linux-sandbox/bwrap exec, up to 4 attempts).
+  Watch by exact process name (ps comm, not command-line match). 13:01:52-13:05:52Z attempts were invalid (a
+  command-line pattern matched another process, pid 279227); redone 13:06:12-13:10:01Z: every attempt saw a new exec
+  from the codex app-server pid 3348786: codex-linux-sandbox 295529 (+ codex 295533) 13:06:29Z, 301314 13:07:57Z,
+  304948 13:09:01Z, 308277 13:10:01Z; 13:11:28Z pid 313343 (--command-cwd /home/bobby) ran
+  `cat /tmp/pma11-recon-pin-refresh.patch` (Codex PMA11 still working). Nothing started: no lock, no trace re-arm, no
+  campaign, no production change. Run worktree data-layer-p184-final-run-5157c8ce stays ready.
+  Next (owner): the app-server process pid 3348786 keeps executing after the extension was turned off; it has to
+  exit (reload/close the VS Code window or end that process) before a clean window exists.
