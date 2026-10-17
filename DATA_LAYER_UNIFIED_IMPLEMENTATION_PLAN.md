@@ -73834,3 +73834,84 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
       (writer 7c71e3af, 0 restarts, started 18:30:37Z), load1 14.5, 196 GB free.
     - Next: an owner/Codex decision on gate 0.10 and the pin delta. Then run the window from the main session; a
       subagent runtime attempt was classifier-refused before, as recorded on 2026-10-13.
+- 2026-10-17 02:43-03:14Z G13 runtime window, packet v5.2 (owner-approved; Claude subagent): STOPPED at 74/76, 2 DR05
+  QUIET_TYPED cells NOT_OBSERVED. No rerun, because this is not an infrastructure fault.
+  - Packet p1/packet-g13-v5.2-20261017.md sha256 3f9a318d... = sidecar (checked before start). Read with all its
+    layers: v5.1, v5 section 3, v4.2 sections 6-8, v4.3 alpha compose, and the v2 step-2 snippets.
+  - Pins: run worktrees DL d03cd679 (data-layer-p184-final-run-d03cd679) and TS ba096818
+    (trading-system-final-run-ba096818). Both are pristine before and after (status --ignored = 0 lines). Other
+    pins: --ts-source-sha 77a6d671; writer/roles/seed/DR07/verifier image W = 7c71e3af; roles g13-roles-v224.json
+    31e0716b...; python ref qdl-v2-python:2.2.4-c7ce7d3 (= c21e164a). Files: compose g13v51 91b96268..., inputs-ci
+    0dd8fa35..., alpha compose v4.3 96225365... (all re-hashed in the window).
+  - Gates:
+    - 0.1: d03cd679 contains 13ef59c and 3bb6bee.
+    - 0.3: before the lock, a foreign codex ssh/remote cargo process was seen; it was waited out by the lock tool.
+      load1 at start 10.8-14.7; 221 GB free.
+    - 0.4: deployed_mismatches = []; checkout_problems = []; dry run exit 0, blocked {}, 6 steps / 66 cells,
+      coverage 76/76 (missing []).
+    - 0.5: all images present.
+    - 0.6: CI 38940466654 per coordinator, not independently verified.
+    - 0.9: writer market_data_service_p184w on 7c71e3af, restarts 0, started 18:30:37Z. Its env view (14 keys)
+      equals the writer of the G12 release parity snapshot p184-g12-v224-final-release-20261016T183459Z. This
+      came from writer_reference() on a live docker inspect, without a new full --parity-snapshot (that would run
+      a Kafka admin container).
+    - 0.10: owner waiver, recorded in v5.2.
+  - Lock "claude P18.4 G13 v5.2 window (packet-g13-v5.2-20261017)" 02:45:39Z-05:15:39Z (150 min), taken by
+    host_measurement_lock.py acquire and released 03:14:19Z (file absent).
+  - Step 2 (read-only): B9 migrations 99/99, pending [] and mismatch []. B16 open native orders {} (expected
+    binding digest 9c6ff115..., 10 accounts). B14 DNS 4/4. INDEX BINANCE:USD_M:BTCUSDT present=false (recorded;
+    FX_PROOF still passed). B10 CA alpha-binance = alpha-okx = TS fc24c047... Bind sources 55 present (8 identity
+    files checked with alpine test -s). No residue.
+  - Step 3: FX seed g13r5fx01 FX_PROOF_SEED_COMMITTED, writes 4. Step 4: preflight_env PASS on both composes;
+    compose config exit 0.
+  - Step 5: ts-p184 up 02:48:33Z with 8 containers, 0 restarts, 7 roles on 7c71e3af. Gateway /v1/health 200 and
+    "Gateway V3 Online". Counts of Traceback, 401, UNAUTHENTICATED, WRITER_NATIVE_ACCOUNT_BINDING_MISMATCH and
+    NATIVE_ACCOUNT_NOT_IN_DURABLE_CANARY are all 0. The Gateway writer scope holds the 4 g13r5wa20261016 accounts.
+  - Step 6: B12 4/4 = 1.
+  - Step 7: alphas up 02:49:05Z, 2 running, 0 restarts. Warmup 700 rows on both venues; no new
+    data-source.jsonl/BLOCKED row; 0 non-200; 0 orders for the BB accounts.
+  - Step 7b: FX snapshot at 02:48:38Z with validated_at_ms set and 1 rate.
+  - Runner (receipts ~/.local/state/qdl-v2/p184-g13-20261017T025058Z/; summary.json 9facfac0..., plan.json
+    95ce8043...), 02:50:58-03:11:06Z, exit 0. Every step has harness_ok and exit codes all 0:
+    - dr01-deployed 7 cells, 27.0 s
+    - dr01-wrong-account 2 cells, 4.7 s (cleanup complete)
+    - dr02-dr03-alpha 14 cells, 506.1 s
+    - dr04-dr06-views 22 cells, 610.1 s
+    - dr05-transport 9 cells, 52.7 s
+    - dr07-reference 12 cells, 4.5 s
+    The sealed export tree is 263bd8ed... and was removed.
+  - W05 verifier in 7c71e3af (--network none), --expect-source-sha 77a6d671, --expect-image-digest 7c71e3af.
+    Inputs: the 6 runtime jsonl, dr08 evidence.jsonl (190623Z, cc51741a...) and dr05-upstream rows (193828Z,
+    f1d288d9...). Output verify/w05-final-76.json 2b2f365e..., exit 1: **74/76 G13 cells closed**.
+    - Per case: DR01 9/9, DR02 8/8, DR03 6/6, DR04 14/14, DR05 15/17, DR06 6/6, DR07 12/12, DR08 4/4.
+    - Per step: dr01-deployed 7/7, dr01-wrong-account 2/2, dr02-dr03 14/14, dr04-dr06 20/22, dr05-transport 9/9,
+      dr07 12/12, dr05-upstream 6/6, dr08 4/4.
+    - Open: DR05.QUIET_TYPED@BINANCE and @OKX, CASE_BELOW_REQUIRED_LEVEL. The rows are level RUNTIME, outcome
+      NOT_OBSERVED, ok true. During the 300 s window every TRADE view stayed LIVE (5 symbols per venue), so no QUIET
+      state appeared. TS scripts/p184_dr_views.py:200-231 defines this as "NOT_OBSERVED, never a pass".
+    - The same NOT_OBSERVED appears in every earlier dr04-dr06 run (20261010T134219Z, 20261011T045533Z,
+      20261011T140432Z). The matrix also notes "TRADE is not granted" for DR05.QUIET_TYPED (p184_case_matrix.py:248).
+    - Not relaxed and not rerun: a liquid live market does not go quiet in 300 s, so this is not an infra fault.
+      Deciding how these 2 cells close is an owner/coordinator matter (e.g. an isolated-fault producer for QUIET,
+      or a case-matrix decision). It is not a window operator's call.
+  - dr05-transport writer lifecycle, all 3 scopes (BINANCE/OKX/OKX_INVERSE):
+    - phase STRICT, strict_resume VERIFIED;
+    - bootstrap exit 0 (bootstrap_env_delta MARKET_DATA_NATIVE_REQUIRE_RESUME 0 -> 1 only);
+    - native_checkpoints non-empty (cursors/fixed-workers-v1/native-4/trading-system.paper.stable.json);
+    - bootstrap_refusals and strict_refusals count 0.
+    Known non-blocking review note: the HANDOFF_RESUME_REQUIRED count reads /tmp/logs (log_tail) only, while native
+    stderr goes to /tmp/writer-stderr/stderr.log. Supplementary: no stderr_tail was kept, because exit_record is
+    written only when the clone writer is no longer running, and the strict clones stayed up. HANDOFF_RESUME_REQUIRED
+    occurs 0 times in dr05-transport receipt.json and harness.log; stderr itself could not be grepped.
+  - Abort watch (30 s polling) during the runner: no writer or DL role restart, no foreign container, no 5-min
+    load1 > 16, 0 QUOTA/RESOURCE_EXHAUSTED lines in the production writer log.
+  - Teardown:
+    - alpha compose down: 2 containers removed.
+    - ts-p184 compose down: 8 containers and network ts-p184-private removed.
+    - FX g13r5fx01 FX_PROOF_SEED_DEACTIVATED (3 x UPDATE 1).
+    - The wrong-account probe's own finally deactivated its rows (4 accounts, 2 alphas, 2 strategies).
+    - DSN env file p1/r2/dr07-postgres.env and p1/r2/ removed.
+    - Afterwards: 0 ts-p184 / p184-g13- / p184-dr05- containers, networks or volumes; 0 /tmp/p184-dr05-*.
+    - Writer 7c71e3af still has 0 restarts, and every DL role has 0 restarts. Disk +58 MB (bind logs/state).
+    - Run worktrees kept, clean.
+  - Status: G13 = 74/76 tested in the runtime window on the release set. NOT complete: 2 QUIET_TYPED cells are open.
