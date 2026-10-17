@@ -74187,3 +74187,37 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   - Foreign-job overlap: no watch ran during this window; the docker daemon keeps only the last events (oldest held at
     09:16:30Z), so overlap is NOT_DETERMINABLE from the host. No lock was held by anyone else (lock tool acquired
     without waiting). Production writer and all DL roles RestartCount 0 afterwards.
+- 2026-10-17 09:18-09:36Z FINAL chain step 2, G13 isolated on writer a44349a1: **dr08 4/4, dr05-upstream 6/6 (after one
+  apparatus rerun), dr05-quiet 2/2 OBSERVED, harness_ok true on all three credited runs** (Claude subagent).
+  - Pins: DL run worktree data-layer-p184-final-run-f6db0b82 (--dl-source-sha f6db0b82, contains the 8ae4266 --down
+    race fix), TS run worktree trading-system-final-run-c385aaf6, --ts-source-sha 6af62a7e, --writer-image a44349a1,
+    roles g13-roles-v224.json 31e0716b..., python qdl-v2-python:2.2.4-c7ce7d3, inputs p1/g13v53/inputs-g13v53-ci.json
+    3a302fac.... Dry runs: blocked {} (4/6/2 cells), deployed_mismatches [], checkout_problems [].
+  - Lock "claude P18.4 G13 isolated FINAL a44349a1 20261017T091819Z" 09:18:19Z (70 min), released 09:36:22Z. Taint
+    watch (30 s): 0 foreign containers, 0 cargo/pytest/rustc/docker-build processes, load1 max 15.59.
+  - dr08-isolated p184-g13-20261017T091825Z: 4 cells, exit [0], harness_ok, 124.2 s. evidence.jsonl 5f9f7079....
+  - dr05-upstream run 1 p184-g13-20261017T092050Z: exit [0,0,0,1,0], harness_ok false, NOT SCORED. 5 cells OBSERVED
+    ok; DR05.GENERATION_CHANGE_FENCED@OKX_INVERSE failed its positive anchor (BOOK_VIEW_MISSING,
+    EXECUTION_CONTEXT_BOOK_MISSING).
+    - Verbatim timing: clone writer started 09:26:08.615Z; anchor view sampled at 09:26:12.350Z; the BOOK worker's
+      first Query subscription came after that, at 09:26:12.390Z ("slice disconnected venue=OKX symbol=BTC-USD-SWAP
+      feed=BOOK_DELTA ... code=DATA_NOT_READY retryable=True ... reconnecting in 1.0s"). Heartbeat at sampling:
+      slices STARTING, workers 1-3 REPORT_INVALID_OR_MISSING.
+    - Reading (source-checked): fresh_case() only waits for heartbeat demanded > 0 (TS scripts/p184_dr05_upstream.py
+      189-231), and observe() stops after settle_s 1.0 when the first view differs from None (260-275). So the anchor
+      was judged before the writer had subscribed, and the fence was never exercised. Classified as an apparatus
+      readiness race (harness sequencing), not fence behaviour. The Python BOOK path is unchanged between 734b08f1
+      (6/6 at 063427Z) and a44349a1 except the fixed_workers.py worker_epoch field. Recorded in
+      NOT_SCORED_RERUN.json 61fa2d05...; rows 8482dbbb... kept.
+    - Hardening candidate (not done here): readiness should wait for the target slice to be subscribed (or retry the
+      anchor until the deadline) instead of heartbeat demanded > 0.
+  - dr05-upstream rerun (once, same lock and pins) p184-g13-20261017T093001Z: 6 cells OBSERVED ok, findings [],
+    exit [0,0,0,0,0], harness_ok, 334.9 s. Rows 189de29e....
+  - dr05-quiet p184-g13-20261017T092651Z (amendment-1 predicate unchanged): both QUIET_TYPED cells ISOLATED_FAULT
+    OBSERVED ok, predicate p184.dr05-quiet-typed.view-vocabulary.v1. Exit [0,0,0,0,0,0], **harness_ok true** (the
+    8ae4266 --down fix holds), 139.7 s. Rows 11991a23....
+  - W05 verifier in a44349a1 (--network none), --expect-source-sha 6af62a7e, --expect-image-digest a44349a1, over the
+    three credited isolated files: DR05 8/17 and DR08 4/4 closed. The only issue is CASE_OPEN on the runtime cells
+    not run yet; no provenance or drift issue. Output p184-g13-20261017T092651Z/verify/w05-isolated-final-a44349a1.json.
+  - Teardown: every summary has dl_source.removed true and removed_leftovers {}. Afterwards 0 p184- containers,
+    networks or volumes, 0 /tmp/p184-dr05-*. TS run worktree clean.
