@@ -74160,3 +74160,30 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
       apparatus pin recorded as inheritance, or a DL harness fix that passes keep_exited=True. This is a coordinator
       decision.
     - Rerun G13 isolated, then the v5.3 window after CI is green.
+- 2026-10-17 08:46-09:17Z FINAL chain step 1, G12 final credit on the final writer IDR-110b a44349a1: **PASS, credited**
+  (Claude subagent). Nothing is inherited from 7c71e3af or 734b08f1.
+  - Pins: DL f6db0b82 (fix/p184-dl-closure; 8ae4266 dr05 --down race fix + g12-image-set-v224.json ts role 734b08f1
+    -> a44349a1, regenerated from docker inspect 08:46Z, sha256 4740c995...; g13-roles-v224.json unchanged 31e0716b...).
+    Clean detached run worktrees data-layer-p184-final-run-f6db0b82 and trading-system-final-run-c385aaf6 (TS head
+    c385aaf6). Production by docker inspect: writer market_data_service_p184w a44349a1 (label 6af62a7e), RestartCount 0,
+    started 08:43:06Z; query x2 c21e164a, stream x2 / projector x2 / ingestor x2 60f83a51, core x3 7c848aad, bar_edge
+    08f356a8, all RestartCount 0.
+  - Same shape as 20261017T060133Z: --ts-root trading-system-final-run-77a6d671 (apparatus pin of the credited G12,
+    coordinator decision H1), --auto-leader-rebalance false from a fresh parity snapshot, --lock-owner, --credit.
+  - Lock "claude P18.4 G12 v224 FINAL a44349a1 20261017T084728Z" 08:47:28Z (75 min), released 09:17Z (file absent).
+    df 219 GiB free; load1 12-16 (production load).
+  - Receipt ~/.local/state/qdl-v2/p184-g12-v224-final-a44349a1-20261017T084728Z/ (namespace
+    p184-g12-dl-2e2219b81a8c6dc4), run 08:48:32-09:15:32Z, exit 0.
+    - verdict v3 COMPLETED **pass true**, images.ts = a44349a1. caught_up_s BINANCE/OKX: broker_stop_start
+      0.217/0.218, projector_restart 0.174/0.174, stream_restart 0.759/0.760. Every fault: G1, G2 (TRADE/QUOTE/MARK
+      lost 0), G3 BAR, monitor and sampler PASS. Integrity layer report-only.
+    - Writer clones: precheck ok, Redis UNCAPPED, strict_resume VERIFIED on both venues.
+    - --credit exit 0: creditable true, reason PASS, production_parity MATCH, cleaner_binding RUN, final profile
+      checked. Effective describe sha256 d3d77176... before and after.
+    - sha256: verdict.json 30648759..., production-parity.json e861e762..., credit-snapshot.json 6bb2021a...,
+      writer-precheck.json 092406d9..., c-observe.json f1413c33... / c-observe-after.json 56dd1032...,
+      teardown.json b9e9fccf.... FINAL_CREDIT.json records the pins.
+    - Teardown: 12 removed, 0 left by label/name, 0 networks, 0 volumes, clone state erased (complete).
+  - Foreign-job overlap: no watch ran during this window; the docker daemon keeps only the last events (oldest held at
+    09:16:30Z), so overlap is NOT_DETERMINABLE from the host. No lock was held by anyone else (lock tool acquired
+    without waiting). Production writer and all DL roles RestartCount 0 afterwards.
