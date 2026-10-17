@@ -74076,3 +74076,83 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
     dr05-quiet runs without it.
   - Tests in qdl-v2-python:2.2.4-c7ce7d3 --network none: tests.test_p184_dr05_quiet + tests.test_p184_dr05_dl_fault,
     46 OK (2 new cases plus argv checks), tested locally.
+- 2026-10-17 05:52-06:44Z G12 and G13 isolated on the IDR-110 writer 734b08f1: SIGNAL ONLY, not final credit (Claude
+  subagent).
+  - Why signal only: the coordinator reported at ~06:35Z that CI "Quality And V1 Contract" run 39008182569 on TS
+    223c0131 failed (ruff only). The final writer image will be rebuilt from a lint-fix commit and rolled again, and
+    the final G12/G13/stage-100 credits will be taken on that image. The earlier credits on 7c71e3af are not inherited.
+  - Pins:
+    - DL b6d21c9e: the g12-image-set-v224.json ts role 7c71e3af -> 734b08f1, regenerated from docker inspect, sha256
+      8acda276.... g13-roles-v224.json is unchanged (31e0716b...).
+    - Run worktrees: data-layer-p184-final-run-b6d21c9e and trading-system-final-run-f60e7fe5. Both were clean when
+      created.
+    - --ts-source-sha e21f6edd (full sha) and writer 734b08f1.
+    - Production: deployed_mismatches == [], and the writer had restarts 0 (started 05:47:54Z).
+  - Harness unit tests in qdl-v2-python:2.2.4-c7ce7d3 (--network none), covering g12, g13, lock, dr08, dr05_verdict,
+    dr05_quiet, dr05_reset and dr05_dl_fault: 422 OK (5 skipped).
+  - G12, lock "claude P18.4 G12 v224 final-idr110 20261017T055259Z" (05:52:59-06:30Z, released):
+    - Run 1, p184-g12-v224-final-idr110-20261017T055259Z: STOPPED before any fault with `ValueError:
+      DR05_CLONE_LIFECYCLE_NEEDS_KEEP_EXITED`.
+      - This is apparatus, not behaviour. Since TS ba096818, WriterClone.__enter__ runs its own lifecycle check
+        (scripts/p184_dr05_isolated.py:385). That check refuses keep_exited=False, which is what the G12 harness
+        passes, because the harness drives its own bootstrap -> strict lifecycle (p184_g12_isolated_fault.py:3905).
+      - Teardown: 11 removed, 0 left.
+    - Rerun, once, as an apparatus fault: p184-g12-v224-final-idr110-20261017T060133Z.
+      - --ts-root was set to trading-system-final-run-77a6d671. That is the WriterClone apparatus of the credited
+        20261016T183459Z run, sha256 3c9a21d8.... The clone schema migrations are identical between 77a6d671 and
+        f60e7fe5.
+      - Result: verdict v3 COMPLETED **pass true**, images.ts = 734b08f1.
+        - caught_up_s BINANCE/OKX: broker_stop_start 0.237/0.238, projector_restart 0.220/0.220, stream_restart
+          0.893/1.155.
+        - Every fault passed G1, G2, G3, monitor and sampler. The integrity layer is report-only (NOT_MEASURED).
+        - Writer clones: precheck ok, Redis UNCAPPED, strict_resume VERIFIED on both venues.
+      - --credit exit 0: creditable true, PASS, production_parity MATCH, cleaner_binding RUN.
+      - Receipt sha256: verdict.json 3f1592a8..., production-parity.json 1a6cf8e6..., credit-snapshot.json
+        f7a2e5eb..., writer-precheck.json 9ecc3d5d..., c-observe.json 052552e8... / c-observe-after.json b27a15d2....
+      - Teardown: 12 removed, 0 left, clone state erased.
+      - SIGNAL_ONLY.json in the receipt records that this is signal only.
+    - Foreign containers (AGENTS 34a): the coordinator reported that 5 short ruff `--rm` containers ran around 06:00Z
+      under this lock. The overlap is **NOT_DETERMINABLE** from the host:
+      - docker events for 05:58-06:10Z returned 0 events, because the daemon keeps 256 events and the oldest one held
+        at query time was 06:14:45Z.
+      - The harness follower filters on its own namespace label.
+      - The docker journal is not readable by this user.
+      - The rerun started at 06:01:34Z. The verdict is not upgraded; the run is signal only anyway.
+  - G13 isolated, lock "claude P18.4 G13 isolated idr110 20261017T063055Z": the lock tool waited out 2 foreign
+    processes and the lock was taken at 06:31:55Z. It was released at 06:44Z.
+    - dr08-isolated, p184-g13-20261017T063201Z: 4 cells, exit [0], harness_ok, 124.5 s. evidence.jsonl 9a706252....
+    - dr05-upstream, p184-g13-20261017T063427Z: 6 cells, exit [0,0,0,0,0], harness_ok, 332.9 s. Rows 71e4bace....
+    - dr05-quiet, p184-g13-20261017T064022Z (amendment-1 predicate unchanged):
+      - Both cells **ISOLATED_FAULT OBSERVED ok**, predicate p184.dr05-quiet-typed.view-vocabulary.v1, health_findings
+        [].
+      - BINANCE: quiet after 15.1 s. The view had state LIVE, event_recency_state STALE, flags [LAST_EVENT_STALE],
+        execution_eligible false, provider_session_state LIVE (liveness 144 ms), freshness 14592 ms. The writer health
+        showed quiet_session_v2_slices 1.
+      - OKX: quiet after 13.6 s, the same shape (liveness 341 ms).
+      - So IDR-110 fixes the run-2 VIEW_NEVER_LEFT_FRESH (042015Z).
+      - Rows 84471c10....
+      - Exit codes [0,0,0,0,0,1], harness_ok false: the last command, `p184_dr05_dl_fault.py --down`, raised
+        CalledProcessError. cleanup() calls owned(..., allow_disappearance=False). A container was listed by
+        `docker ps` but had gone by the time of `docker inspect`, which is a --rm race (p184_dr05_dl_fault.py:330).
+        The runner then removed the 5 DL roles as leftovers.
+      - This is an apparatus defect in teardown, recorded and not fixed here.
+    - W05 verifier, in 734b08f1 --network none, --expect-source-sha e21f6edd, --expect-image-digest 734b08f1, over the 3
+      isolated evidence files. Output p184-g13-20261017T064022Z/verify/w05-isolated-idr110.json, b5519639....
+      - DR05 8/17 closed (6 upstream + 2 QUIET) and DR08 4/4.
+      - The only issue is CASE_OPEN on the runtime cells that were not run. No provenance or drift issue.
+  - G13 runtime window NOT run (coordinator), and nothing was seeded.
+    - Draft packet p1/packet-g13-v5.3-20261017.DRAFT.md is parameterised for the final image. It has no sidecar.
+    - Generator p1/g13v53/make_g13v53.py (406daa1d...) uses the new TEST run ids g13r6wa20261017 / g13r6fx01 (owner
+      approval ~06:20Z).
+    - `--check` with 734b08f1: the compose has 26 changed paths, all in allowed keys. The inputs change dr01.ci_*,
+      dr01_wrong_account.run_id, dr07.fx_account and gateway_image_digest. Nothing was written.
+  - After the runs: 0 p184-/ts-p184 containers, networks or volumes, and 0 /tmp/p184-dr05-*. Production writer
+    734b08f1 has restarts 0, and all 17 DL roles have restarts 0. No lock is held.
+  - Status: G12 PASS and G13 isolated 12/12 on 734b08f1, tested as **signal**. Final credit is open on the lint-fixed
+    image.
+  - Next:
+    - DL b6d21c9e+1: re-point the image set to the new digest.
+    - Rerun G12 with --ts-root on a WriterClone that is compatible with the harness lifecycle. Two options: a 77a6d671
+      apparatus pin recorded as inheritance, or a DL harness fix that passes keep_exited=True. This is a coordinator
+      decision.
+    - Rerun G13 isolated, then the v5.3 window after CI is green.
