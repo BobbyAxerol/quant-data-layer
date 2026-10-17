@@ -461,13 +461,37 @@ class Guard:
                     self.write(out_name, {"src": name, "rx": utc(time.time()), **parsed})
         threading.Thread(target=reader, daemon=True).start()
 
+    def cleaner_tail(self) -> list[str]:
+        return ["timeout", str(int(self.args.deadline_seconds) + 60), "tail", "-n", "0", "-F",
+                "/opt/kafka/logs/log-cleaner.log"]
+
+    def stop_followers(self) -> list[str]:
+        for process in self.followers:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+        target = " ".join(self.cleaner_tail()) + " "
+        script = ('for p in /proc/[0-9]*; do c=$(tr "\\0" " " < $p/cmdline 2>/dev/null); '
+                  f'[ "$c" = "{target}" ] && kill ${{p#/proc/}} && echo ${{p#/proc/}}; done')
+        removed = []
+        for broker in BROKERS:
+            result = subprocess.run(["docker", "exec", broker, "sh", "-c", script], capture_output=True, text=True,
+                                    timeout=30)
+            removed += [f"{broker}:{pid}" for pid in result.stdout.split()]
+        return removed
+
     def start_followers(self) -> None:
         for core in CORES:
             self.follow(core.split("-")[1], ["docker", "logs", "-f", "--since", "1s", core], core_progress,
                         "cores.jsonl")
+        # docker exec does not stop the in-container process when the client exits: bound it with timeout and
+        # remove it by its exact command line in stop_followers().
         for broker in BROKERS:
-            self.follow(broker.split("-")[1], ["docker", "exec", broker, "tail", "-n", "0", "-F",
-                                               "/opt/kafka/logs/log-cleaner.log"], cleaner_phase, "cleaner.jsonl")
+            self.follow(broker.split("-")[1], ["docker", "exec", broker, *self.cleaner_tail()], cleaner_phase,
+                        "cleaner.jsonl")
 
         def events_parse(line):
             try:
@@ -545,13 +569,9 @@ class Guard:
                     break
             time.sleep(self.args.scan_seconds)
         self.stop.set()
-        for process in self.followers:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.kill()
+        removed = self.stop_followers()
+        self.write("guard.jsonl", {"event": "followers_stopped", "in_container_removed": removed,
+                                   "at": utc(time.time())})
         now = time.time()
         summary = {"schema": "qdl.p184.foreign-guard.v1", "verdict": "TAINTED" if self.tainted else "CLEAN",
                    "aborted": self.aborted, "started": utc(started), "ended": utc(now),
