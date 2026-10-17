@@ -26,6 +26,11 @@ go quiet in a 300 s runtime window, so this module produces that state on the di
   ``status {}``: the stats.
   The fault is ``trade_stop`` while the session heartbeat continues. Nothing else changes.
 - ``--seal-host WORK``: host wrapper that runs --seal in the DR05 helper container.
+- ``--with-quote`` (opt-in, TS IDR-110 quiet-key proof, TEST_ONLY): --seal also adds one QUOTE lane per linear scope
+  with the TS paper manifest's QUOTE shape (OBSERVE, max_session_liveness_ms 2000), on the SAME provider session as
+  the TRADE lane (one heartbeat vouches for both, as one websocket session carrying both channels would), and the
+  channel gains ``quote_run {venue, hz}`` / ``quote_stop {venue}`` (p184_g12_isolated_fault.quote_frame). Without the
+  flag the material, the handoff record and the channel are unchanged (G13 dr05-quiet).
 Boundary: only the namespace's own broker and work dir. No shared Data Layer, Redis, Kafka or Postgres. No
 acceptance verdict here: the TS runner reads its writer clone and applies the amended predicate.
 """
@@ -57,6 +62,10 @@ LANE = "trade"
 # TS paper manifest TRADE requirement shape (consumers/stable/trading-system-paper.yaml r10).
 TRADE_REQUIREMENT = {"max_freshness_ms": 3000, "warmup_limit": 0, "require_final_bars": True,
                      "event_recency_policy": "OBSERVE", "max_session_liveness_ms": 45000}
+# TS paper manifest QUOTE requirement shape (consumers/stable/trading-system-paper.yaml: QUOTE OBSERVE 2000/2000).
+QUOTE_REQUIREMENT = {"max_freshness_ms": 2000, "warmup_limit": 0, "require_final_bars": True,
+                     "event_recency_policy": "OBSERVE", "max_session_liveness_ms": 2000}
+LANE_REQUIREMENTS = {"TRADE": TRADE_REQUIREMENT, "QUOTE": QUOTE_REQUIREMENT}
 MAX_HZ = 10
 
 
@@ -98,25 +107,31 @@ def write_atomic(path, document):
         temporary.unlink(missing_ok=True)
 
 
-def trade_bindings(config):
-    """venue -> the sealed TRADE core binding (exactly one per linear scope)."""
+def lane_bindings(config, feed):
+    """venue -> the sealed ``feed`` (TRADE/QUOTE) core binding (exactly one per linear scope)."""
     from scripts.p184_g12_isolated_fault import lane_feed
     out = {}
     for binding in config["core"]["bindings"]:
-        if binding.get("l2") or lane_feed(binding["provider_kind"]) != "TRADE":
+        if binding.get("l2") or lane_feed(binding["provider_kind"]) != feed:
             continue
         if binding["venue"] in out:
-            raise ValueError("duplicate TRADE lane " + binding["venue"])
+            raise ValueError(f"duplicate {feed} lane " + binding["venue"])
         out[binding["venue"]] = binding
     if set(out) != set(dr.VENUES):
-        raise ValueError("one sealed TRADE lane per linear scope required")
+        raise ValueError(f"one sealed {feed} lane per linear scope required")
     return out
+
+
+def trade_bindings(config):
+    """venue -> the sealed TRADE core binding (exactly one per linear scope)."""
+    return lane_bindings(config, "TRADE")
 
 
 # ---------------------------------------------------------------- --seal (offline, in-container)
 
-def seal(work):
-    """Add the TRADE lane of both linear scopes to the DR05 BOOK material (once; handoff "dr05_quiet")."""
+def seal(work, with_quote=False):
+    """Add the TRADE lane (and with ``with_quote`` the QUOTE lane) of both linear scopes to the DR05 BOOK material
+    (once; handoff "dr05_quiet")."""
     import yaml
     from qdl.query import ConsumerGrade, FeedType
     from qdl.runtime.production_catalog import ProductionCatalogBuilder, ProductionDemand
@@ -141,26 +156,29 @@ def seal(work):
     catalog = yaml.safe_load((work / "catalog.yaml").read_text())
     production = {item["binding_id"]: item for item in
                   yaml.safe_load((ROOT / g12.PRODUCTION_ACQUISITION).read_text())["bindings"]}
+    feeds = ("TRADE", "QUOTE") if with_quote else ("TRADE",)
     lanes = []
     for book in books:
-        matches = [b for b in source["bindings"] if b["instrument_uid"] == book["instrument_uid"]
-                   and b["feed"] == "TRADE" and b.get("interval") is None
-                   and b["source"]["source_role"] == "PRIMARY"]
-        if len(matches) != 1:
-            raise ValueError("exactly one primary TRADE source required for " + book["instrument_id"])
-        planned = production.get(matches[0]["binding_id"]) or {}
-        demand = ProductionDemand(
-            consumer_id=ns + "." + book["venue"].lower(), consumer_grade=ConsumerGrade.EXECUTION,
-            venue=book["venue"], market=book["market"], product_type=book["product_type"],
-            native_symbol=book["native_symbol"], feed=FeedType("TRADE"), interval=None,
-            source_policy_id=matches[0]["source"]["source_policy_id"])
-        acquisition = ProductionCatalogBuilder._acquisition(matches[0]["binding_id"], demand)
-        fields = ("mode", "provider_kind", "native_channel", "sequence_policy", "mark_index")
-        if {k: acquisition.get(k) for k in fields} != {k: planned.get(k) for k in fields}:
-            raise ValueError("generated acquisition differs from the production plan: " + matches[0]["binding_id"])
-        entry = copy.deepcopy(matches[0])
-        entry["source"]["adapter_version"] = g12.TEST_ADAPTER
-        lanes.append((book, entry, g12.md_core_bindings(book, matches[0], acquisition)))
+        for feed in feeds:
+            matches = [b for b in source["bindings"] if b["instrument_uid"] == book["instrument_uid"]
+                       and b["feed"] == feed and b.get("interval") is None
+                       and b["source"]["source_role"] == "PRIMARY"]
+            if len(matches) != 1:
+                raise ValueError(f"exactly one primary {feed} source required for " + book["instrument_id"])
+            planned = production.get(matches[0]["binding_id"]) or {}
+            demand = ProductionDemand(
+                consumer_id=ns + "." + book["venue"].lower(), consumer_grade=ConsumerGrade.EXECUTION,
+                venue=book["venue"], market=book["market"], product_type=book["product_type"],
+                native_symbol=book["native_symbol"], feed=FeedType(feed), interval=None,
+                source_policy_id=matches[0]["source"]["source_policy_id"])
+            acquisition = ProductionCatalogBuilder._acquisition(matches[0]["binding_id"], demand)
+            fields = ("mode", "provider_kind", "native_channel", "sequence_policy", "mark_index")
+            if {k: acquisition.get(k) for k in fields} != {k: planned.get(k) for k in fields}:
+                raise ValueError("generated acquisition differs from the production plan: " + matches[0]["binding_id"])
+            entry = copy.deepcopy(matches[0])
+            entry["source"]["adapter_version"] = g12.TEST_ADAPTER
+            lanes.append((book, entry, g12.md_core_bindings(book, matches[0], acquisition)))
+    trade_lanes = [lane for lane in lanes if lane[1]["feed"] == "TRADE"]
     config["core"]["bindings"] = books + [item for lane in lanes for item in lane[2]]
     digest = hashlib.sha256(json.dumps(config["core"]["bindings"], sort_keys=True).encode()).hexdigest()
     config["authority"].update(capability_manifest_digest=digest, contract_digest=digest,
@@ -170,19 +188,22 @@ def seal(work):
     g12._rewrite(work / "catalog.yaml", yaml.safe_dump(catalog))
     loaded = StableSourceCatalog.load(work / "catalog.yaml")
     manifests = []
-    for book, entry, _ in lanes:
+    for book in books:
         label = book["venue"].lower()
         path = work / (label + ".yaml")
         mapping = yaml.safe_load(path.read_text())
         template = next(r for r in mapping["spec"]["requirements"] if r["feed"] == "BOOK_SNAPSHOT")
-        requirement = {k: v for k, v in template.items()
-                       if k not in ("interval", "event_recency_policy", "max_session_liveness_ms")}
-        requirement.update(feed="TRADE", source_policy_id=entry["source"]["source_policy_id"],
-                           bar_revision_policy="LATEST", **TRADE_REQUIREMENT)
-        mapping["spec"]["requirements"].append(requirement)
+        for lane_book, entry, _ in lanes:
+            if lane_book is not book:
+                continue
+            requirement = {k: v for k, v in template.items()
+                           if k not in ("interval", "event_recency_policy", "max_session_liveness_ms")}
+            requirement.update(feed=entry["feed"], source_policy_id=entry["source"]["source_policy_id"],
+                               bar_revision_policy="LATEST", **LANE_REQUIREMENTS[entry["feed"]])
+            mapping["spec"]["requirements"].append(requirement)
         mapping["spec"]["quotas"]["max_streams"] = 50  # the TS paper manifest's
         g12._rewrite(path, yaml.safe_dump(mapping))
-        consumer, route = consumer_packet(path, loaded, book["venue"], ISSUER, AUDIENCE, feeds=BOOK_FEEDS + ("TRADE",))
+        consumer, route = consumer_packet(path, loaded, book["venue"], ISSUER, AUDIENCE, feeds=BOOK_FEEDS + feeds)
         g12._rewrite(work / (label + ".binding.json"), route)
         g12._rewrite(work / ("ts-consumer." + label + ".json"), consumer)
         manifests.append(path)
@@ -190,10 +211,14 @@ def seal(work):
             mode=0o755, parents=True, exist_ok=False)
     g12._rewrite(work / "bundle.json", compile_bundle(environment="paper", catalog_path=work / "catalog.yaml",
                                                       manifest_paths=manifests))
-    handoff[MARK] = {"feeds": list(BOOK_FEEDS) + ["TRADE"], "trade_requirement": dict(TRADE_REQUIREMENT),
-                     "source_ids": [lane[1]["source"]["source_id"] for lane in lanes],
+    handoff[MARK] = {"feeds": list(BOOK_FEEDS) + list(feeds), "trade_requirement": dict(TRADE_REQUIREMENT),
+                     "source_ids": [lane[1]["source"]["source_id"] for lane in trade_lanes],
                      "core_bindings_sha256": digest, "session_liveness_dir": "/work/" + LIVENESS_DIR,
-                     "sessions": {lane[0]["venue"]: session_id(ns, lane[0]["venue"]) for lane in lanes}}
+                     "sessions": {lane[0]["venue"]: session_id(ns, lane[0]["venue"]) for lane in trade_lanes}}
+    if with_quote:  # additive keys only with the opt-in lane (the TRADE-only record is unchanged)
+        handoff[MARK].update(quote_requirement=dict(QUOTE_REQUIREMENT),
+                             quote_source_ids=[lane[1]["source"]["source_id"] for lane in lanes
+                                               if lane[1]["feed"] == "QUOTE"])
     (work / "handoff.json").write_text(json.dumps(handoff, indent=2) + "\n")
     return handoff[MARK]
 
@@ -224,6 +249,12 @@ def serve_query(work):
 def trade_envelope(binding, frame, ns):
     """Raw envelope of one test trade on the lane's own session (p184_g12_isolated_fault.md_envelope with the DR05
     namespace): session ``<ns>.<VENUE>.trade``, generation 1, config revision 1, never changed."""
+    return lane_envelope(binding, frame, ns, "TRADE")
+
+
+def lane_envelope(binding, frame, ns, feed):
+    """Raw envelope of one test TRADE/QUOTE frame on its lane. Both lanes of a venue use the one provider session
+    ``<ns>.<VENUE>.trade`` (generation 1, config revision 1), so its heartbeat vouches for both."""
     from qdl.raw.envelope import build_raw_envelope
     from scripts.p184_g12_isolated_fault import TEST_ADAPTER, lane_feed
 
@@ -231,7 +262,7 @@ def trade_envelope(binding, frame, ns):
             or frame.get("adapter_version") != TEST_ADAPTER or frame.get("transport") != "WEBSOCKET":
         raise ValueError("explicit test provenance and websocket transport required")
     if (binding["venue"], binding["native_symbol"]) != (frame["venue"], frame["native_symbol"]) or \
-            lane_feed(binding["provider_kind"]) != "TRADE" or frame.get("feed") != "TRADE":
+            feed not in LANE_REQUIREMENTS or lane_feed(binding["provider_kind"]) != feed or frame.get("feed") != feed:
         raise ValueError("frame/binding identity mismatch")
     payload = json.dumps(frame["payload"], separators=(",", ":"), allow_nan=False).encode()
     return build_raw_envelope(
@@ -282,13 +313,19 @@ class QuietChannel:
         if sealed(self.work) is None:
             raise ValueError("sealed DR05 quiet material required")
         self.bindings = trade_bindings(self.config)
+        self.quote_bindings = lane_bindings(self.config, "QUOTE") if "QUOTE" in sealed(self.work)["feeds"] else {}
         self.clock = clock
         self.producer = (producer_factory or self._producer)()
-        self.sessions, self.trades = {}, {}
+        self.sessions, self.trades, self.quotes = {}, {}, {}
         self.stats = {v: {"published": 0, "acked": 0, "errors": [], "last_trade_id": 0, "last_offset": None,
                           "last_event_ns": None, "heartbeats": 0, "last_transport_at_ns": None}
                       for v in self.bindings}
+        if self.quote_bindings:  # additive stats only with the opt-in QUOTE lane
+            for v in self.bindings:
+                self.stats[v].update(quotes_published=0, quotes_acked=0, quote_errors=[], last_quote_seq=0,
+                                     last_quote_offset=None, last_quote_ns=None)
         self.next_trade_id = {v: 1 for v in self.bindings}
+        self.next_quote_seq = {v: 1 for v in self.bindings}
         self.lock = threading.Lock()
 
     def _producer(self):
@@ -340,6 +377,33 @@ class QuietChannel:
             stats["last_trade_id"] = trade_id
             stats["last_event_ns"] = at_ns
 
+    def publish_quote(self, venue):
+        from scripts.p184_g12_isolated_fault import quote_frame
+        with self.lock:
+            sequence = self.next_quote_seq[venue]
+            self.next_quote_seq[venue] += 1
+        at_ns = int(self.clock())
+        raw = lane_envelope(self.quote_bindings[venue], quote_frame(venue, sequence, at_ns), self.ns, "QUOTE")
+        stats = self.stats[venue]
+
+        def ack(error, message):
+            with self.lock:
+                if error is not None:
+                    stats["quote_errors"].append(str(error.code()))
+                    del stats["quote_errors"][:-8]
+                else:
+                    stats["quotes_acked"] += 1
+                    stats["last_quote_offset"] = message.offset()
+
+        self.producer.produce(self.config["raw_topics"][0], partition=0, key=raw.subscription_id.encode(),
+                              value=raw.SerializeToString(), headers=[("qdl-event-id", raw.capture_id)],
+                              on_delivery=ack)
+        self.producer.poll(0)
+        with self.lock:
+            stats["quotes_published"] += 1
+            stats["last_quote_seq"] = sequence
+            stats["last_quote_ns"] = at_ns
+
     def handle(self, op, args):
         if op == "session":
             venue = self._venue(args)
@@ -380,17 +444,43 @@ class QuietChannel:
             return {"venue": venue, "stopped_ns": stopped_ns, "unflushed": remaining, "loop_error": loop.error,
                     **{k: stats[k] for k in ("published", "acked", "errors", "last_trade_id", "last_offset",
                                              "last_event_ns")}}
+        if op in ("quote_run", "quote_stop"):
+            if not self.quote_bindings:
+                raise ValueError("QUOTE lane not sealed (--with-quote)")
+            venue = self._venue(args)
+            if op == "quote_run":
+                hz = args.get("hz")
+                if isinstance(hz, bool) or not isinstance(hz, (int, float)) or not 0 < hz <= MAX_HZ:
+                    raise ValueError(f"hz must be in (0, {MAX_HZ}]")
+                if venue in self.quotes:
+                    raise ValueError("quote publisher already running")
+                self.quotes[venue] = _Loop(lambda: self.publish_quote(venue), 1.0 / hz)
+                return {"venue": venue, "hz": hz, "session_id": session_id(self.ns, venue),
+                        "started_ns": int(self.clock())}
+            loop = self.quotes.pop(venue, None)
+            if loop is None or not loop.stop():
+                raise RuntimeError("no running quote publisher")
+            remaining = self.producer.flush(5)
+            stopped_ns = int(self.clock())
+            with self.lock:
+                stats = copy.deepcopy(self.stats[venue])
+            return {"venue": venue, "stopped_ns": stopped_ns, "unflushed": remaining, "loop_error": loop.error,
+                    **{k: stats[k] for k in ("quotes_published", "quotes_acked", "quote_errors", "last_quote_seq",
+                                             "last_quote_offset", "last_quote_ns")}}
         if op == "status":
             with self.lock:
                 stats = copy.deepcopy(self.stats)
-            return {"stats": stats, "sessions": sorted(self.sessions), "trades": sorted(self.trades),
-                    "loop_errors": {f"{kind}:{v}": loop.error for kind, loops in
-                                    (("session", self.sessions), ("trade", self.trades))
-                                    for v, loop in loops.items() if loop.error}}
+            result = {"stats": stats, "sessions": sorted(self.sessions), "trades": sorted(self.trades),
+                      "loop_errors": {f"{kind}:{v}": loop.error for kind, loops in
+                                      (("session", self.sessions), ("trade", self.trades), ("quote", self.quotes))
+                                      for v, loop in loops.items() if loop.error}}
+            if self.quote_bindings:
+                result["quotes"] = sorted(self.quotes)
+            return result
         raise ValueError("unknown op")
 
     def close(self):
-        for loops in (self.trades, self.sessions):
+        for loops in (self.quotes, self.trades, self.sessions):
             for loop in loops.values():
                 loop.stop()
             loops.clear()
@@ -439,8 +529,8 @@ def channel_argv(work):
     return argv
 
 
-def seal_host(work, timeout=180):
-    _, argv = helper_argv(work, ["--seal", "/work"], network="none")
+def seal_host(work, timeout=180, with_quote=False):
+    _, argv = helper_argv(work, ["--seal", "/work"] + (["--with-quote"] if with_quote else []), network="none")
     out = subprocess.run(argv, check=True, capture_output=True, text=True, timeout=timeout).stdout
     return json.loads(out.strip().splitlines()[-1])
 
@@ -450,11 +540,15 @@ def main(argv=None):
     mode = parser.add_mutually_exclusive_group(required=True)
     for flag in ("seal", "seal-host", "query", "channel"):
         mode.add_argument("--" + flag, type=Path)
+    parser.add_argument("--with-quote", action="store_true",
+                        help="--seal/--seal-host: also seal the opt-in QUOTE lane (TS IDR-110 proof, TEST_ONLY)")
     args = parser.parse_args(argv)
+    if args.with_quote and not (args.seal or args.seal_host):
+        parser.error("--with-quote applies to --seal/--seal-host only")
     if args.seal:
-        print(json.dumps(seal(args.seal)))
+        print(json.dumps(seal(args.seal, with_quote=args.with_quote)))
     elif args.seal_host:
-        print(json.dumps(seal_host(args.seal_host)))
+        print(json.dumps(seal_host(args.seal_host, with_quote=args.with_quote)))
     elif args.query:
         serve_query(args.query)
     else:

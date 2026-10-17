@@ -74065,3 +74065,14 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   - Next: owner/coordinator decision on a diagnostic rerun that keeps the clone and the DL Query logs (native_probe
     counters in the worker health, the Query TRADE snapshot reply) to find why no probe renewed the session. This would
     be an apparatus change, and the predicate stays as amended.
+- 2026-10-17 DR05 quiet producer: opt-in QUOTE lane (`scripts/p184_dr05_quiet.py --seal/--seal-host --with-quote`)
+  for the TS IDR-110 isolated quiet-key proof (TEST_ONLY; TS scripts/p184_idr110_quiet_probe_proof.py).
+  - With the flag, --seal also adds one QUOTE lane per linear scope. It uses the TS paper manifest QUOTE shape:
+    OBSERVE, max_freshness_ms 2000, max_session_liveness_ms 2000. The acquisition is checked equal to the production
+    plan, as for TRADE.
+  - The QUOTE lane uses the same provider session as the TRADE lane (`<ns>.<VENUE>.trade`), so one heartbeat vouches
+    for both. The channel gains quote_run/quote_stop (p184_g12_isolated_fault.quote_frame) and additive quote stats.
+  - Without the flag the material, the core-binding digest, the handoff record and the channel are unchanged. G13
+    dr05-quiet runs without it.
+  - Tests in qdl-v2-python:2.2.4-c7ce7d3 --network none: tests.test_p184_dr05_quiet + tests.test_p184_dr05_dl_fault,
+    46 OK (2 new cases plus argv checks), tested locally.

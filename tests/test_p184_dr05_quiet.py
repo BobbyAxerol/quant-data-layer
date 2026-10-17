@@ -17,14 +17,14 @@ from scripts import p184_dr05_quiet as quiet
 NS = "p184-dr05-dl-0123456789abcdef"
 
 
-def sealed_work(tmp):
+def sealed_work(tmp, with_quote=False):
     from tests.test_p184_dr05_dl_fault import MaterialTests
     work = Path(tmp) / "work"
     work.mkdir()
     (work / "handoff.json").write_text(json.dumps({"namespace": NS, "provenance": "TEST_ONLY",
                                                    "images": dict(dr.IMAGES)}))
     dr.material(work, MaterialTests.exported())
-    return work, quiet.seal(work)
+    return work, quiet.seal(work, with_quote=with_quote)
 
 
 class SealTests(unittest.TestCase):
@@ -68,6 +68,30 @@ class SealTests(unittest.TestCase):
             self.assertIn("scripts/p184_dr05_quiet.py", dr.topology(NS, work)["query"])
             with self.assertRaises(ValueError):  # sealed once
                 quiet.seal(work)
+
+    def test_with_quote_adds_a_quote_lane_on_the_trade_session_and_keeps_the_trade_record(self):
+        """TS IDR-110 quiet-key proof (opt-in): one QUOTE lane per scope with the TS paper QUOTE shape."""
+        from qdl.consumer.manifest import ConsumerManifestLoader
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as plain:
+            work, sealed = sealed_work(tmp, with_quote=True)
+            _, trade_only = sealed_work(plain)
+            self.assertEqual(sealed["feeds"], ["BOOK_SNAPSHOT", "BOOK_DELTA", "TRADE", "QUOTE"])
+            self.assertEqual({k: sealed[k] for k in trade_only if k not in ("feeds", "core_bindings_sha256")},
+                             {k: v for k, v in trade_only.items() if k not in ("feeds", "core_bindings_sha256")})
+            self.assertEqual(sealed["quote_requirement"], quiet.QUOTE_REQUIREMENT)
+            config = json.loads((work / "core.json").read_text())
+            quotes = quiet.lane_bindings(config, "QUOTE")
+            self.assertEqual(sorted(quotes), ["BINANCE", "OKX"])
+            self.assertEqual(len(config["core"]["bindings"]), 6)  # 2 BOOK + 2 TRADE + 2 QUOTE
+            for path in (work / "binance.yaml", work / "okx.yaml"):
+                quote = next(r for r in ConsumerManifestLoader.load(path).requirements if r.feed.value == "QUOTE")
+                value = lambda v: getattr(v, "value", v)  # noqa: E731
+                self.assertEqual((quote.max_freshness_ms, value(quote.event_recency_policy),
+                                  quote.max_session_liveness_ms), (2000, "OBSERVE", 2000))
+            for label in ("binance", "okx"):
+                route = json.loads((work / (label + ".binding.json")).read_text())
+                self.assertEqual(sorted(p["feed"] for p in route["products"]),
+                                 ["BOOK_DELTA", "BOOK_SNAPSHOT", "QUOTE", "TRADE"])
 
     def test_unsealed_material_keeps_the_dr05_query(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -190,6 +214,52 @@ class ChannelTests(unittest.TestCase):
             finally:
                 channel.close()
 
+    def test_quote_lane_publishes_on_the_trade_session_only_when_sealed(self):
+        from qdl.raw.envelope import validate_raw_envelope
+        from scripts.p184_g12_isolated_fault import quote_frame, trade_frame
+        with tempfile.TemporaryDirectory() as tmp:
+            work, producer, channel = self.channel(tmp)
+            try:
+                with self.assertRaises(ValueError):  # TRADE-only seal: no QUOTE ops, stats unchanged
+                    channel.handle("quote_run", {"venue": "OKX", "hz": 2})
+                self.assertNotIn("quotes_published", channel.stats["OKX"])
+                self.assertNotIn("quotes", channel.handle("status", {}))
+            finally:
+                channel.close()
+        with tempfile.TemporaryDirectory() as tmp:
+            work, _ = sealed_work(tmp, with_quote=True)
+            packet = json.loads((work / "packet.json").read_text())
+            packet["slice"]["topic_id"] = "t" * 22
+            (work / "packet.json").write_text(json.dumps(packet))
+            producer = FakeProducer()
+            with mock.patch.dict(os.environ, {"P184_DR05_ISOLATED_NAMESPACE": NS}):
+                channel = quiet.QuietChannel(work, producer_factory=lambda: producer)
+            try:
+                channel.handle("session", {"venue": "BINANCE", "live": True})
+                channel.handle("quote_run", {"venue": "BINANCE", "hz": 10})
+                with self.assertRaises(ValueError):
+                    channel.handle("quote_run", {"venue": "BINANCE", "hz": 10})
+                time.sleep(0.35)
+                stop = channel.handle("quote_stop", {"venue": "BINANCE"})
+                self.assertGreaterEqual(stop["quotes_published"], 2)
+                self.assertEqual((stop["quotes_acked"], stop["quote_errors"], stop["loop_error"]),
+                                 (stop["quotes_published"], [], None))
+                self.assertEqual(channel.stats["BINANCE"]["published"], 0)  # no trade was sent
+                status = channel.handle("status", {})
+                self.assertEqual((status["sessions"], status["trades"], status["quotes"]), (["BINANCE"], [], []))
+                quote = channel.quote_bindings["BINANCE"]
+                raw = quiet.lane_envelope(quote, quote_frame("BINANCE", 5, time.time_ns()), NS, "QUOTE")
+                validate_raw_envelope(raw)
+                self.assertEqual((raw.source_session_id, raw.subscription_id, raw.native_channel),
+                                 (NS + ".BINANCE.trade", quote["source_id"], quote["native_channel"]))
+                self.assertEqual(producer.sent[0][2], quote["source_id"].encode())
+                with self.assertRaises(ValueError):  # a trade frame never goes on the QUOTE lane
+                    quiet.lane_envelope(quote, trade_frame("BINANCE", 1, time.time_ns()), NS, "QUOTE")
+                with self.assertRaises(RuntimeError):
+                    channel.handle("quote_stop", {"venue": "BINANCE"})
+            finally:
+                channel.close()
+
     def test_jsonl_protocol_replies_one_line_per_request(self):
         with tempfile.TemporaryDirectory() as tmp:
             work, producer, channel = self.channel(tmp)
@@ -233,6 +303,10 @@ class ArgvTests(unittest.TestCase):
             _, seal = quiet.helper_argv(work, ["--seal", "/work"], network="none")
             self.assertEqual(seal[seal.index("--network") + 1], "none")
             self.assertEqual(seal[-2:], ["--seal", "/work"])
+            _, quoted = quiet.helper_argv(work, ["--seal", "/work", "--with-quote"], network="none")
+            self.assertEqual(quoted[-3:], ["--seal", "/work", "--with-quote"])
+            with self.assertRaises(SystemExit), mock.patch("sys.stderr", io.StringIO()):
+                quiet.main(["--channel", str(work), "--with-quote"])
 
 
 if __name__ == "__main__":
