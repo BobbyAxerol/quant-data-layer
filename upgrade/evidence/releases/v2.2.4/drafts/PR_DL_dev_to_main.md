@@ -25,8 +25,8 @@ sha256 9f79e032604bf79db5ca9070c7f8a99b242e7cf22e1659b395b307dc798c28e7 (release
 compares). Source c7ce7d3087cb8a2daf82ba941982bd296d488f45; release head <<PENDING:DL_RELEASE_HEAD_SHA>>.
 
 Gates: <<PENDING:SUMMARY_PASS>> PASS, <<PENDING:SUMMARY_FAIL>> FAIL, <<PENDING:SUMMARY_NOT_MEASURED>> NOT_MEASURED,
-<<PENDING:SUMMARY_DEFERRED>> DEFERRED (SCORECARD.md). G12 PASS credited on the final writer a44349a1; G13 isolated 12/12,
-runtime <<PENDING:G13_V54_W05_CELLS_CLOSED>>/76; stage-100 <<PENDING:S100_DIR>>.
+<<PENDING:SUMMARY_DEFERRED>> DEFERRED (SCORECARD.md). G12 PASS credited on the final writer a44349a1; G13 76/76 (isolated 12/12,
+runtime window v5.4 closes 76/76); stage-100 <<PENDING:S100_DIR>>.
 
 Limits stated in the certificate: single host (not HA); binance_bar_edge held on rc14; rust_core x3 on rc22 by binary
 equality; build receipt FAIL resolved by the postcheck addendum; Kafka C converging; IDR-108 open; G12 harness shape;

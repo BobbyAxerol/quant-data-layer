@@ -76,7 +76,8 @@ rc14. That is not "all roles on one revision": the certificate states the split 
 | G13 isolated dr05-upstream run 1 (NOT SCORED, apparatus race) | `p184-g13-20261017T092050Z` | summary `4b283255...`; kept, not credited |
 | G13 isolated dr05-quiet 2/2 (amendment-1) | `p184-g13-20261017T092651Z` | summary `c9240569...`, plan `eb45e350...`, receipt `f7ab3525...`, rows `11991a2342a55f54dfa729fa816db00d706e871b666d534aa9694525d8c0e179`, W05 `verify/w05-isolated-final-a44349a1.json` `b5519639fd0c23923322063025c566afcb1775c63adca574df067f3db46dce6f` |
 | G13 runtime v5.3 (67/76, STOPPED at dr05-transport; informational, superseded by v5.4) | `p184-g13-20261017T094028Z` | summary `2f6b9ddd84795dfff9ce3801559f95c01ada5d3910bd5297a6ab44dba071aba0`, W05 `verify/w05-final-v53.json` `23eeb0e89b8e1dd0d0f531c80739028a153bd6ee7bbe999900f9ac108a8128da` |
-| G13 runtime v5.4 (final) | `<<PENDING:G13_V54_RECEIPT_DIR>>` | summary `<<PENDING:G13_V54_SUMMARY_SHA256>>`, W05 `<<PENDING:G13_V54_W05_SHA256>>` |
+| G13 runtime v5.4 (final; 76/76) | `p184-g13-20261017T103357Z` | summary `9d22e11100e8f23ce76f4b79242ac02455ea7ad2097a7e57cd11436738c68367`, W05 `verify/w05-final-v54.json` `5490c21e66bf33bae326f2ea2051677f70cf95372b13b823d4c2912835da9895` |
+| G13 v5.4 packet (owner-approved) | `~/.local/state/trading-system/p184-20261005/runtime/p1/packet-g13-v5.4-20261017.md` | sha256 `872265593331a0cc51ef3abb0f301bfdcb45a3978c5d4f845608813a0236101d` (equals its `.sha256` sidecar); TEST run ids `g13r7wa20261017` / `g13r7fx01`; TS CI run `39024582832` "Quality And V1 Contract" success on `c9ebd619` (per the packet, via the GitHub API; not re-verified here); harness fix `fc644cd1` = IDR-111, apparatus only, not in the writer image closure |
 | Final stage-100 (on release digests, writer a44349a1) | `<<PENDING:S100_DIR>>` | scorecard `<<PENDING:S100_SCORECARD_SHA256>>`, campaign.json `<<PENDING:S100_CAMPAIGN_SHA256>>` |
 | Image sets | `g12-image-set-v224.json` / `g13-roles-v224.json` (this directory) | `4740c995550737e7d30325aaa043f07cf3656014ca5611dd97e482619504ca61` / `31e0716b04f05ee156b0527b8905cf3cb3487501a9a4566f0742b80664342991` |
 | TS writer build receipt (PASS) | `~/.local/state/trading-system/p184-n1-opt-20261013/release/6af62a7e/receipt.json` | `8f30560c115e08f8fcc2c2e02838253bcce53ba94ccc45109ff451a7c9250f2e` |
@@ -89,7 +90,7 @@ rc14. That is not "all roles on one revision": the certificate states the split 
 The G1-G14 table with PASS / credit / PENDING status is [SCORECARD.md](SCORECARD.md). Summary at drafting:
 
 - Credited: **G12** (final, writer a44349a1).
-- Isolated part credited: **G13** 12/12 isolated cells; the runtime window v5.4 is `<<PENDING:G13_V54_W05_CELLS_CLOSED>>`.
+- **G13: 76/76 cells closed** on the release set (writer a44349a1, DL `c7ce7d3` digests): isolated 12/12 plus the runtime window v5.4 (`p184-g13-20261017T103357Z`). W05 verifier `status` FAIL / exit 1 only because of 260 CASE_OPEN cells of the 336-cell matrix that are outside G13 (BR/FT/MG/OR); 0 issues on the 76 DR cells. Level: shadow-certified on the release set, 76/76 cells (isolated cells: TEST_ONLY harness; runtime cells: TS stack on the production writer image a44349a1; one host).
 - Not yet measured on the release digests: G1-G11, G14 (`<<PENDING:S100_*>>`).
 - Not credited, kept as history: the stage-100 attempt of 2026-10-17 03:20Z on writer 7c71e3af (protocol_met false, G9
   and G4 FAIL; writer changed afterwards).
@@ -177,6 +178,5 @@ consumer manifests, JWT revisions, realm dirs, offsets, Redis data.
 
 ## 10. Open PENDING markers in this file
 
-`DL_RELEASE_HEAD_SHA`, `RUNTIME_RECHECK_AT_ASSEMBLY`, `EQUIVALENCE_JSON_SHA256_AT_FINAL`, `G13_V54_RECEIPT_DIR`,
-`G13_V54_SUMMARY_SHA256`, `G13_V54_W05_SHA256`, `G13_V54_W05_CELLS_CLOSED`, `S100_DIR`, `S100_SCORECARD_SHA256`,
+`DL_RELEASE_HEAD_SHA`, `RUNTIME_RECHECK_AT_ASSEMBLY`, `EQUIVALENCE_JSON_SHA256_AT_FINAL`, `S100_DIR`, `S100_SCORECARD_SHA256`,
 `S100_CAMPAIGN_SHA256`, `S100_*`, `DL_LOCAL_CI_SUMMARY_SHA256`, `DL_CI_RUN_ID_PR_HEAD`, `LIMIT_G4_G9_FINAL`.

@@ -44,7 +44,7 @@ Evidence and drafts: upgrade/evidence/releases/v2.2.4/ (RELEASE_NOTES.md, CERTIF
 equivalence.json). Release images: qdl-v2-rust:2.2.4-c7ce7d3 sha256:60f83a51... and qdl-v2-python:2.2.4-c7ce7d3
 sha256:c21e164a...; SDK wheel sha256 9f79e032604bf79db5ca9070c7f8a99b242e7cf22e1659b395b307dc798c28e7.
 
-State at opening: <<PENDING:G13_V54_AND_STAGE100_STATE>>. This PR must not be merged as "certified" until the
+State at opening: G13 76/76 closed (runtime window v5.4 `p184-g13-20261017T103357Z`); final stage-100 <<PENDING:S100_OUTCOME>>. This PR must not be merged as "certified" until the
 certificate.json status is PASS in this branch.
 
 ## Type
@@ -71,7 +71,7 @@ certificate.json status is PASS in this branch.
   422 OK / 5 skipped (g12, g13, lock, dr08, dr05 verdict/quiet/reset/dl_fault); SDK release tests 15 OK.
 - G12 final credit PASS: ~/.local/state/qdl-v2/p184-g12-v224-final-a44349a1-20261017T084728Z (verdict.json
   sha256 30648759e5766f5e085e1ea3874efe2ab69ceca0475fcca2ab23e3016b67d1be).
-- G13 isolated 12/12; runtime window: <<PENDING:G13_V54_W05_CELLS_CLOSED>>/76 (SCORECARD.md).
+- G13 isolated 12/12; runtime window v5.4 closes 76/76 (SCORECARD.md).
 - Final stage-100: <<PENDING:S100_DIR>> protocol_met <<PENDING:S100_PROTOCOL_MET>>.
 
 Risk and rollback: roles were already rolled to the release digests on 2026-10-16 (this PR changes source and

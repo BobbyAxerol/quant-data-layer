@@ -2,7 +2,7 @@
  "schema": "qdl.release-equivalence.v1",
  "release": "2.2.4",
  "status": "DRAFT_PARTIAL",
- "status_note": "Every field below was read from a file or docker inspect on 2026-10-17 (sources listed). Fields marked <<PENDING:...>> need the final stage-100 / G13 receipts. Not a certificate.",
+ "status_note": "Every field below was read from a file or docker inspect on 2026-10-17 (sources listed). Fields marked <<PENDING:...>> need the final stage-100 receipts. Not a certificate.",
  "source_rev": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
  "images": {
   "rust": {

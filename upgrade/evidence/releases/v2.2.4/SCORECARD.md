@@ -1,7 +1,7 @@
 # Quant Data Layer v2.2.4 - gate scorecard G1-G14 (DRAFT, frozen rules)
 
-Status: **DRAFT.** Written 2026-10-17 ~11:00Z. It holds only results that exist today. Everything that needs the G13
-runtime window v5.4 or the final stage-100 is a `<<PENDING:...>>` marker. Machine form (`scorecard.json`, schema
+Status: **DRAFT.** Written 2026-10-17 ~11:00Z. It holds only results that exist today. Everything that needs the final
+stage-100 is a `<<PENDING:...>>` marker (the G13 runtime window v5.4 is filled below). Machine form (`scorecard.json`, schema
 `qdl.release-scorecard.v1`, as in [v2.2.3](../v2.2.3/scorecard.json)) is written from this file at finalisation.
 
 ## Frozen inputs (unchanged; no number is widened after measuring)
@@ -36,7 +36,7 @@ measured on the release digests; HISTORY = measured on other digests, kept, not 
 | G10 | Integrity TRADE (LOSSLESS) | 0 gaps, 0 duplicates applied, 0 replay-expired, 0 overflow | `<<PENDING:G10_VERDICT>>` | `<<PENDING:G10_NUMBERS>>` native typed counters |
 | G11 | Recovery, writer restart | fault cleared -> first valid apply <= 30 s, caught up <= 60 s; no rewind; cursor never ahead | `<<PENDING:G11_VERDICT>>` | `<<PENDING:G11_NUMBERS>>` (HISTORY: PASS on 7c71e3af, see below) |
 | G12 | Recovery, Kafka broker / projector / Stream restart | caught up <= 600 s, then G1-G3 inside; same four timestamps | **PASS - CREDIT (final)** | see "G12" below |
-| G13 | Acceptance DR01-DR08 (76 cells) | every cell closed once on the final DL + writer digests | isolated **12/12 PASS**; runtime `<<PENDING:G13_V54_VERDICT>>` | see "G13" below |
+| G13 | Acceptance DR01-DR08 (76 cells) | every cell closed once on the final DL + writer digests | isolated **12/12 PASS**; runtime window v5.4 **PASS, 76/76 closed** | see "G13" below |
 | G14 | Resources, every DL role and the TS writer | CPU/RAM at stage 100 recorded with headroom (records resources; not a headroom gate) | `<<PENDING:G14_VERDICT>>` | `<<PENDING:G14_NUMBERS>>` per role; `host.json` of the final stage-100 |
 
 Summary line for the certificate (fill from the rows above): PASS `<<PENDING:SUMMARY_PASS>>`, FAIL
@@ -92,7 +92,7 @@ dr07 12):
 | --- | --- | --- |
 | v5.2 (2026-10-17 02:43Z, writer 7c71e3af) | 74/76 (2 QUIET cells NOT_OBSERVED) | HISTORY, other writer, not credited |
 | v5.3 (09:37Z, writer a44349a1) | 67/76, STOPPED at dr05-transport `DR05_CLONE_STRICT_RESUME_NOT_VERIFIED` (IDR-111 apparatus) | informational; the 9 transport cells stayed open. summary `2f6b9ddd84795dfff9ce3801559f95c01ada5d3910bd5297a6ab44dba071aba0`, W05 `23eeb0e89b8e1dd0d0f531c80739028a153bd6ee7bbe999900f9ac108a8128da` |
-| **v5.4 (final)** | `<<PENDING:G13_V54_W05_CELLS_CLOSED>>` of 76 | `<<PENDING:G13_V54_VERDICT>>`; receipt `<<PENDING:G13_V54_RECEIPT_DIR>>`; summary `<<PENDING:G13_V54_SUMMARY_SHA256>>`; W05 `<<PENDING:G13_V54_W05_SHA256>>`; run ids `g13r7wa20261017` / `g13r7fx01` (from the TS journal); TS CI run `<<PENDING:G13_V54_TS_CI_RUN_ID>>` |
+| **v5.4 (final)** | 76 of 76 | PASS; receipt `p184-g13-20261017T103357Z`; summary `9d22e11100e8f23ce76f4b79242ac02455ea7ad2097a7e57cd11436738c68367`; W05 `verify/w05-final-v54.json` `5490c21e66bf33bae326f2ea2051677f70cf95372b13b823d4c2912835da9895` (verifier exit 1 only from 260 CASE_OPEN cells of the 336-cell matrix outside G13; 0 DR issues; DR cells per case: DR01 9, DR02 8, DR03 6, DR04 14, DR05 17, DR06 6, DR07 12, DR08 4); all 6 runtime steps `harness_ok`, exit codes 0; run ids `g13r7wa20261017` / `g13r7fx01`; packet `packet-g13-v5.4-20261017.md` `872265593331a0cc51ef3abb0f301bfdcb45a3978c5d4f845608813a0236101d`; TS CI run `39024582832` success on `c9ebd619` (per the packet; not re-verified here); harness fix `fc644cd1` = IDR-111, not in the writer image closure |
 
 Final G13 verdict rule: PASS when isolated 12/12 + runtime window together close all 76 cells with no provenance or
 drift issue on `a44349a1` / REV `c7ce7d3` digests; otherwise record the open cells as limits only by an owner decision.
@@ -132,6 +132,5 @@ Specific checks the final run must show (from the IDR-110 dispositions):
 ## PENDING index for this file
 
 `G1`-`G11`, `G14` `_VERDICT` / `_NUMBERS`; `S100_*` (DIR, SCORECARD_SHA256, DATE_UTC, PROTOCOL_MET, OUTCOME,
-LOAD_WINDOW_UTC, LOCK, APPARATUS_PINS, TRACE_REARM_RECEIPT, TAINT_WATCH, PRODUCTION_ACTIONS); `G13_V54_*` (RECEIPT_DIR,
-SUMMARY_SHA256, W05_SHA256, W05_CELLS_CLOSED, VERDICT, TS_CI_RUN_ID); `SUMMARY_PASS` / `_FAIL` / `_NOT_MEASURED` /
+LOAD_WINDOW_UTC, LOCK, APPARATUS_PINS, TRACE_REARM_RECEIPT, TAINT_WATCH, PRODUCTION_ACTIONS); `SUMMARY_PASS` / `_FAIL` / `_NOT_MEASURED` /
 `_DEFERRED`.

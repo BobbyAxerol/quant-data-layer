@@ -185,7 +185,7 @@ Full table, evidence and PENDING markers: [SCORECARD.md](SCORECARD.md). Frozen g
 upgraded.
 
 - G12: **PASS, credited** (final, writer `a44349a1`, verdict `30648759e5766f5e085e1ea3874efe2ab69ceca0475fcca2ab23e3016b67d1be`).
-- G13: isolated 12/12 PASS; runtime window v5.4 `<<PENDING:G13_V54_W05_CELLS_CLOSED>>` of 76.
+- G13: PASS, 76 of 76 cells closed (isolated 12/12 plus runtime window v5.4, receipt `p184-g13-20261017T103357Z`, W05 `5490c21e66bf33bae326f2ea2051677f70cf95372b13b823d4c2912835da9895`; verifier exit 1 only from 260 CASE_OPEN cells outside G13, 0 DR issues). Level: shadow-certified on the release set, 76/76 cells (isolated cells: TEST_ONLY harness; runtime cells: TS stack on the production writer image a44349a1; one host).
 - G1-G11, G14: `<<PENDING:S100_OUTCOME>>` (final stage-100 on the release digests).
 - Summary: PASS `<<PENDING:SUMMARY_PASS>>`; FAIL `<<PENDING:SUMMARY_FAIL>>`; NOT_MEASURED
   `<<PENDING:SUMMARY_NOT_MEASURED>>`; DEFERRED `<<PENDING:SUMMARY_DEFERRED>>`.
@@ -217,7 +217,7 @@ upgraded.
 - G12 harness shape is not production shape (core members, Kafka CPU, topic segment settings, synthetic publisher).
 - TEST_ONLY burst results above are not production capacity claims.
 - `<<PENDING:LIMIT_G4_G9_FINAL>>` (final stage-100 outcome for G4 and G9).
-- `<<PENDING:LIMIT_G13_OPEN_CELLS>>` (open G13 cells, if any, carried by an owner decision).
+- G13: no open cells (76/76 closed); nothing carried by an owner decision. The 260 other cells of the W05 matrix (BR/FT/MG/OR) are outside G13.
 
 ## Rollback
 

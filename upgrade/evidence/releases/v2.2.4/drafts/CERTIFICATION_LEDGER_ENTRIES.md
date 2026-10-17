@@ -60,7 +60,7 @@ writer `sha256:a44349a10e5284efae290ea38062dd23dea0ef015088be6cf041d3f4d0923c73`
 - Caveats: WriterClone apparatus pin `77a6d671` (H1, deferred); integrity layer report-only; harness shape differs from
   production (core members, Kafka CPU, topic segment settings).
 
-### 2026-10-17 - G13 isolated 12/12 and runtime window `<<PENDING:G13_V54_W05_CELLS_CLOSED>>`/76
+### 2026-10-17 - G13 isolated 12/12 and runtime window 76/76
 
 Pinned at: DL run worktree `f6db0b82`; TS `6af62a7e`; roles `g13-roles-v224.json` `31e0716b04f05ee156b0527b8905cf3cb3487501a9a4566f0742b80664342991`.
 
@@ -68,8 +68,10 @@ Pinned at: DL run worktree `f6db0b82`; TS `6af62a7e`; roles `g13-roles-v224.json
   rerun `T092050Z`), dr05-quiet 2/2 under amendment-1 (`T092651Z`, predicate
   `p184.dr05-quiet-typed.view-vocabulary.v1`).
 - Runtime v5.3 `T094028Z`: 67/76, STOPPED at dr05-transport (IDR-111 apparatus). Runtime v5.4:
-  `<<PENDING:G13_V54_RECEIPT_DIR>>`, W05 `<<PENDING:G13_V54_W05_SHA256>>`.
-- Level: `<<PENDING:G13_LEVEL>>` (isolated cells are shadow-certified; runtime cells run against a TS stack on the
+  `p184-g13-20261017T103357Z` (summary `9d22e11100e8f23ce76f4b79242ac02455ea7ad2097a7e57cd11436738c68367`), W05 `5490c21e66bf33bae326f2ea2051677f70cf95372b13b823d4c2912835da9895`: 76/76 DR cells closed; verifier exit 1 only from 260 CASE_OPEN cells
+  outside G13, 0 DR issues. Packet `packet-g13-v5.4-20261017.md` `872265593331a0cc51ef3abb0f301bfdcb45a3978c5d4f845608813a0236101d`; run ids `g13r7wa20261017` / `g13r7fx01`;
+  TS CI run `39024582832` success on `c9ebd619` (per the packet); harness fix `fc644cd1` = IDR-111, apparatus only.
+- Level: **shadow-certified** on the release set, 76/76 (isolated cells are shadow-certified; runtime cells run against a TS stack on the
   production writer).
 
 ### 2026-10-17 - final stage-100 on the v2.2.4 release digests
