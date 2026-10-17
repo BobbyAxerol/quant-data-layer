@@ -269,6 +269,12 @@ struct IngestorConfig {
     liveness_ping_ms: u64,
     #[serde(default)]
     liveness_dead_ms: u64,
+    /// IDR-112: venue-timestamp staleness recycle of OKX latest-state QUOTE
+    /// lanes. Absent selects the documented defaults (enabled); fields left
+    /// out of a present object keep their defaults. Old binaries reject this
+    /// field (`deny_unknown_fields`), so the binary must ship first.
+    #[serde(default)]
+    latest_state_staleness: LatestStateStalenessConfig,
     authority: AuthorityRecord,
     bindings: Vec<RawBinding>,
     #[serde(default)]
@@ -422,6 +428,7 @@ impl IngestorConfig {
             || (self.book_liveness_proof_ms != 0
                 && !(250..=5_000).contains(&self.book_liveness_proof_ms))
             || self.liveness().is_none()
+            || self.latest_state_staleness.validate().is_err()
             || self.bindings.is_empty()
         {
             return Err(
@@ -910,8 +917,46 @@ fn capture_id(session: &str, generation: u64, received_at_ns: i64, frame: &[u8])
 /// order of each partition. The producer is rebuilt on every supervisor retry,
 /// as the per-lane producers were.
 struct RawPublisher {
-    sink: FencedKafkaSink,
+    sink: RawSink,
     envelope: RawEnvelopeContext,
+}
+
+/// Where raw envelopes go. Production has exactly one variant, the fenced
+/// Kafka sink; the test-only in-memory sink lets the unit tests drive the
+/// production session loops (`run_okx_service`) against a fake venue without
+/// a broker (E7: test the loop that runs, not a copy of it).
+// Test builds only: the in-memory variant is small next to the Kafka sink.
+#[allow(clippy::large_enum_variant)]
+enum RawSink {
+    Kafka(FencedKafkaSink),
+    #[cfg(test)]
+    Memory(Arc<std::sync::Mutex<Vec<DurableRecord>>>),
+}
+
+enum RawDelivery {
+    Kafka(PendingKafkaAppend),
+    #[cfg(test)]
+    Memory,
+}
+
+impl RawSink {
+    fn enqueue(
+        &self,
+        record: &DurableRecord,
+        publication: &PublicationContext,
+    ) -> Result<RawDelivery, KafkaTransportError> {
+        match self {
+            Self::Kafka(sink) => sink.enqueue(record, publication).map(RawDelivery::Kafka),
+            #[cfg(test)]
+            Self::Memory(records) => {
+                records
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(record.clone());
+                Ok(RawDelivery::Memory)
+            }
+        }
+    }
 }
 
 /// The process configuration every raw envelope carries.
@@ -938,9 +983,21 @@ impl RawPublisher {
         )?;
         sink.apply_authority(config.authority.clone())?;
         Ok(Self {
-            sink,
+            sink: RawSink::Kafka(sink),
             envelope: RawEnvelopeContext::new(config),
         })
+    }
+
+    #[cfg(test)]
+    fn memory(config: &IngestorConfig) -> (Self, Arc<std::sync::Mutex<Vec<DurableRecord>>>) {
+        let records = Arc::new(std::sync::Mutex::new(Vec::new()));
+        (
+            Self {
+                sink: RawSink::Memory(Arc::clone(&records)),
+                envelope: RawEnvelopeContext::new(config),
+            },
+            records,
+        )
     }
 }
 
@@ -1042,7 +1099,7 @@ impl RawPublisher {
         frame: PendingRawFrame,
         stopped: &AtomicBool,
         deadline: Option<Instant>,
-    ) -> Result<PendingKafkaAppend, KafkaTransportError> {
+    ) -> Result<RawDelivery, KafkaTransportError> {
         let binding = Arc::clone(&frame.binding);
         let record = self.envelope.record(frame);
         let publication = self.envelope.publication();
@@ -1163,6 +1220,9 @@ struct LaneWindow {
     read_gap: WindowSpan,
     enqueue: WindowSpan,
     produce: WindowSpan,
+    /// IDR-112 lanes only: host time at read minus venue `ts` (clamped at 0).
+    venue_lag: WindowSpan,
+    stale_frames: u64,
 }
 
 #[derive(Debug, Default)]
@@ -1173,6 +1233,8 @@ struct LaneState {
     last_frame_at_ns: i64,
     last_read: Option<Instant>,
     inflight: usize,
+    staleness_baseline_ms: Option<i64>,
+    staleness_recycles_total: u64,
 }
 
 /// Throughput and latency of one lane, shared by the lane task, its publish
@@ -1225,6 +1287,21 @@ impl LaneTelemetry {
         self.with(|state| state.window.coalesced += 1);
     }
 
+    /// IDR-112: one frame measured by the staleness detector.
+    fn venue_lag(&self, lag_ms: i64, stale: bool, baseline_ms: Option<i64>) {
+        let at_ns = now_ns().unwrap_or_default();
+        let lag = Duration::from_millis(u64::try_from(lag_ms).unwrap_or(0));
+        self.with(|state| {
+            state.window.venue_lag.observe(lag, at_ns);
+            state.window.stale_frames += u64::from(stale);
+            state.staleness_baseline_ms = baseline_ms;
+        });
+    }
+
+    fn staleness_recycled(&self) {
+        self.with(|state| state.staleness_recycles_total += 1);
+    }
+
     /// A frame handed to the producer: enqueue time includes QueueFull retries.
     fn enqueued(&self, took: Duration, bytes: usize, inflight: usize) {
         let at_ns = now_ns().unwrap_or_default();
@@ -1268,6 +1345,10 @@ impl LaneTelemetry {
                 "read_gap_ms": window.read_gap.report(),
                 "enqueue_ms": window.enqueue.report(),
                 "produce_ms": window.produce.report(),
+                "venue_lag_ms": window.venue_lag.report(),
+                "stale_frames": window.stale_frames,
+                "staleness_baseline_ms": state.staleness_baseline_ms,
+                "staleness_recycles_total": state.staleness_recycles_total,
             })
         })
     }
@@ -1358,12 +1439,22 @@ enum BookSessionBootstrap {
 }
 
 fn raw_publish_future(
-    delivery: PendingKafkaAppend,
+    delivery: RawDelivery,
     deadline: Option<Instant>,
     telemetry: Arc<LaneTelemetry>,
 ) -> RawPublishFuture {
     let enqueued = Instant::now();
     Box::pin(async move {
+        // Production has the Kafka variant only; test builds add the memory one.
+        #[allow(clippy::infallible_destructuring_match)]
+        let delivery = match delivery {
+            RawDelivery::Kafka(delivery) => delivery,
+            #[cfg(test)]
+            RawDelivery::Memory => {
+                telemetry.acknowledged(enqueued.elapsed());
+                return Ok(());
+            }
+        };
         let persisted = if let Some(deadline) = deadline {
             tokio::time::timeout_at(deadline, delivery.wait_persisted())
                 .await
@@ -2932,6 +3023,12 @@ enum OkxSessionEnd {
     Notice {
         code: String,
     },
+    /// IDR-112: the lane was stale against its venue timestamps; a standby
+    /// session subscribed before this one stopped reading (make-before-break).
+    StalenessHandover {
+        stale_frames: usize,
+        max_excess_ms: i64,
+    },
     Closed {
         code: Option<u16>,
         reason: String,
@@ -2947,6 +3044,7 @@ impl OkxSessionEnd {
     fn cause(&self) -> &'static str {
         match self {
             Self::NoticeHandover { .. } => "NOTICE_HANDOVER",
+            Self::StalenessHandover { .. } => "STALENESS_HANDOVER",
             Self::Notice { .. } => "NOTICE",
             Self::Closed { .. } => "CLOSE_FRAME",
             Self::Eof => "EOF",
@@ -2960,6 +3058,10 @@ impl OkxSessionEnd {
     fn detail(&self) -> Value {
         match self {
             Self::NoticeHandover { code } | Self::Notice { code } => json!({"code": code}),
+            Self::StalenessHandover {
+                stale_frames,
+                max_excess_ms,
+            } => json!({"stale_frames": stale_frames, "max_excess_ms": max_excess_ms}),
             Self::Closed { code, reason } => json!({"code": code, "reason": reason}),
             Self::ReadError(error) | Self::WriteError(error) => json!({"error": error}),
             Self::Eof | Self::HeartbeatTimeout | Self::BookResync => Value::Null,
@@ -2967,7 +3069,10 @@ impl OkxSessionEnd {
     }
 
     fn handed_over(&self) -> bool {
-        matches!(self, Self::NoticeHandover { .. })
+        matches!(
+            self,
+            Self::NoticeHandover { .. } | Self::StalenessHandover { .. }
+        )
     }
 }
 
@@ -3128,6 +3233,389 @@ impl InboundDeadline {
             Keepalive::SendPing
         }
     }
+}
+
+/// IDR-112: venue-timestamp staleness recycle of an OKX latest-state QUOTE lane.
+///
+/// Evidence (stage-100 135719Z RCA, DL plan 62a67ee/27c28bd): one OKX public
+/// session (okx-public-003, bbo-tbt) delivered bursts of frames whose venue
+/// `ts` was 0.45-1.5 s old while a fresh connection to the same edge IP saw a
+/// maximum of 60 ms (healthy lag p50 29, p99 35 ms). The socket stayed busy,
+/// so the silence-based liveness never pinged, and the session served for
+/// hours. The detector measures `lag = host time at read - venue ts` per
+/// frame, compares it with the lane's own recent baseline, and when the lane
+/// is stale in a sustained way recycles the session through the 64008
+/// make-before-break standby path (successor subscribed before the old socket
+/// stops being read).
+///
+/// Scope: only lanes whose every binding is a QUOTE feed with LATEST_STATE
+/// delivery. A bbo-tbt frame is the current top of book, superseded by the
+/// next one, and is pushed on change with the matching-engine time, so an old
+/// `ts` means a late frame. Not TRADE / BAR (lossless: every event matters),
+/// not BOOK (stateful: a session change forces a re-snapshot), not MARK_INDEX
+/// (OKX re-pushes an unchanged mark/index every 10 s, so its `ts` age is not a
+/// delivery delay). Binance lanes have no make-before-break path and are not
+/// covered.
+///
+/// Clock skew: host time is a monotonic clock anchored once to the wall clock
+/// (an NTP step moves neither the lag nor the baseline), and staleness is the
+/// excess over the baseline, the median of per-bucket minimum lags over the
+/// horizon. A constant venue/host offset cancels out; a single frame with a
+/// bogus timestamp moves one bucket minimum, not the median. Trade-off: a
+/// session that is stale for more than half the horizon becomes its own
+/// baseline and is no longer detected (the evidence shows bursts, not that).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+struct LatestStateStalenessConfig {
+    /// Off keeps the pre-IDR-112 behaviour exactly (no parse, no recycle).
+    enabled: bool,
+    /// A frame is stale when its lag exceeds the baseline by at least this.
+    excess_ms: u64,
+    /// Stale frames are counted over this sliding host-time window.
+    window_ms: u64,
+    /// Stale frames needed inside the window (>= 2: one late frame never triggers).
+    min_frames: usize,
+    /// Distinct bindings among them (clamped to the lane's binding count).
+    min_bindings: usize,
+    /// Baseline bucket length; each bucket keeps its minimum lag.
+    baseline_bucket_ms: u64,
+    /// Buckets kept (horizon = buckets * bucket length).
+    baseline_buckets: usize,
+    /// Completed buckets needed before the detector arms.
+    min_baseline_buckets: usize,
+    /// No new recycle within this time after the previous one started.
+    cooldown_ms: u64,
+    /// Recycles started in any rolling hour, per lane.
+    max_recycles_per_hour: usize,
+}
+
+impl Default for LatestStateStalenessConfig {
+    /// Conservative defaults from the 135719Z evidence: healthy lag p99 35 ms
+    /// (max 60 ms on the parallel probe), bad bursts 0.45-1.5 s. The 250 ms
+    /// excess is > 4x the healthy maximum and below the smallest bad-window
+    /// maximum (446.9 ms); 5 frames from >= 2 instruments inside 2 s is a
+    /// lane-wide burst (the bad bursts hit all six quote symbols together),
+    /// not one late frame. Baseline: 10 s buckets over 10 min, armed after
+    /// 30 s. At most one recycle per minute and six per hour per lane, far
+    /// under OKX's 3 connects/s per IP and 480 subscribe requests/h.
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            excess_ms: 250,
+            window_ms: 2_000,
+            min_frames: 5,
+            min_bindings: 2,
+            baseline_bucket_ms: 10_000,
+            baseline_buckets: 60,
+            min_baseline_buckets: 3,
+            cooldown_ms: 60_000,
+            max_recycles_per_hour: 6,
+        }
+    }
+}
+
+impl LatestStateStalenessConfig {
+    fn validate(&self) -> Result<(), String> {
+        if (100..=10_000).contains(&self.excess_ms)
+            && (100..=60_000).contains(&self.window_ms)
+            && (2..=10_000).contains(&self.min_frames)
+            && (1..=1_024).contains(&self.min_bindings)
+            && (1_000..=600_000).contains(&self.baseline_bucket_ms)
+            && (3..=1_440).contains(&self.baseline_buckets)
+            && (1..=self.baseline_buckets).contains(&self.min_baseline_buckets)
+            && (10_000..=3_600_000).contains(&self.cooldown_ms)
+            && (1..=60).contains(&self.max_recycles_per_hour)
+        {
+            Ok(())
+        } else {
+            Err("latest_state_staleness bounds are invalid".into())
+        }
+    }
+}
+
+/// True when the staleness recycle may act on this lane (see the config).
+fn staleness_applies(bindings: &BindingMap) -> bool {
+    !bindings.is_empty()
+        && bindings.values().all(|binding| {
+            binding.feed == RawFeed::Quote && binding.delivery_class == DeliveryClass::LatestState
+        })
+}
+
+/// The newest venue timestamp (ms) of an OKX data frame: `data[*].ts`.
+/// None when absent or not a positive integer string; such a frame is not
+/// measured (it can never trigger a recycle).
+fn okx_venue_ts_ms(raw: &str) -> Option<i64> {
+    #[derive(Deserialize)]
+    struct Frame<'a> {
+        #[serde(borrow, default)]
+        data: Vec<Item<'a>>,
+    }
+    #[derive(Deserialize)]
+    struct Item<'a> {
+        #[serde(borrow, default)]
+        ts: Option<std::borrow::Cow<'a, str>>,
+    }
+    let frame: Frame<'_> = serde_json::from_str(raw).ok()?;
+    frame
+        .data
+        .iter()
+        .filter_map(|item| item.ts.as_deref()?.parse::<i64>().ok())
+        .filter(|value| *value > 0)
+        .max()
+}
+
+/// What one sustained-staleness detection saw.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StalenessTrigger {
+    stale_frames: usize,
+    distinct_bindings: usize,
+    /// Host-time span from the first to the last stale frame counted.
+    span_ms: i64,
+    max_lag_ms: i64,
+    max_excess_ms: i64,
+    baseline_ms: i64,
+}
+
+impl StalenessTrigger {
+    fn report(&self) -> Value {
+        json!({
+            "stale_frames": self.stale_frames,
+            "distinct_bindings": self.distinct_bindings,
+            "span_ms": self.span_ms,
+            "max_lag_ms": self.max_lag_ms,
+            "max_excess_ms": self.max_excess_ms,
+            "baseline_ms": self.baseline_ms,
+        })
+    }
+}
+
+/// One measured frame.
+#[derive(Debug)]
+struct StalenessObservation {
+    lag_ms: i64,
+    stale: bool,
+    trigger: Option<StalenessTrigger>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum RecycleDecision {
+    Recycle,
+    Cooldown { remaining_ms: i64 },
+    Cap { recycles_last_hour: usize },
+}
+
+const STALENESS_CAP_WINDOW_MS: i64 = 3_600_000;
+/// Suppressed triggers are logged at most once per this interval.
+const STALENESS_SUPPRESSED_LOG_MS: i64 = 10_000;
+
+/// Per-lane detector; lives across sessions so the baseline, cooldown and cap
+/// survive a recycle. Pure: all times are passed in (host ms).
+#[derive(Debug)]
+struct StalenessDetector {
+    config: LatestStateStalenessConfig,
+    min_bindings: usize,
+    anchor_ns: i64,
+    anchor: Instant,
+    /// (bucket index, minimum lag) of the bucket being filled.
+    current: Option<(i64, i64)>,
+    completed: VecDeque<(i64, i64)>,
+    baseline_ms: Option<i64>,
+    /// (host ms, binding key, lag, excess) of stale frames inside the window.
+    stale: VecDeque<(i64, String, i64, i64)>,
+    recycles: VecDeque<i64>,
+    suppressed: u64,
+    suppressed_logged_ms: Option<i64>,
+}
+
+impl StalenessDetector {
+    fn new(
+        config: LatestStateStalenessConfig,
+        lane_bindings: usize,
+        anchor_ns: i64,
+        anchor: Instant,
+    ) -> Self {
+        Self {
+            config,
+            min_bindings: config.min_bindings.min(lane_bindings.max(1)),
+            anchor_ns,
+            anchor,
+            current: None,
+            completed: VecDeque::new(),
+            baseline_ms: None,
+            stale: VecDeque::new(),
+            recycles: VecDeque::new(),
+            suppressed: 0,
+            suppressed_logged_ms: None,
+        }
+    }
+
+    /// Host time (ms) of a monotonic instant, anchored once to the wall clock.
+    fn host_ms(&self, at: Instant) -> i64 {
+        let elapsed =
+            i64::try_from(at.saturating_duration_since(self.anchor).as_nanos()).unwrap_or(i64::MAX);
+        self.anchor_ns.saturating_add(elapsed) / 1_000_000
+    }
+
+    fn baseline_ms(&self) -> Option<i64> {
+        self.baseline_ms
+    }
+
+    /// A new session: stale frames of the previous one never count for it.
+    fn session_started(&mut self) {
+        self.stale.clear();
+    }
+
+    fn observe_at(
+        &mut self,
+        at: Instant,
+        venue_ms: i64,
+        binding: &RawBinding,
+    ) -> StalenessObservation {
+        let host_ms = self.host_ms(at);
+        self.observe(host_ms, venue_ms, binding)
+    }
+
+    fn observe(
+        &mut self,
+        host_ms: i64,
+        venue_ms: i64,
+        binding: &RawBinding,
+    ) -> StalenessObservation {
+        let lag_ms = host_ms.saturating_sub(venue_ms);
+        let bucket_ms = i64::try_from(self.config.baseline_bucket_ms).unwrap_or(i64::MAX);
+        let bucket = host_ms.div_euclid(bucket_ms);
+        match self.current.as_mut() {
+            Some((index, minimum)) if *index == bucket => *minimum = (*minimum).min(lag_ms),
+            Some(_) | None => {
+                if let Some(done) = self.current.replace((bucket, lag_ms)) {
+                    self.completed.push_back(done);
+                }
+                let horizon = i64::try_from(self.config.baseline_buckets).unwrap_or(i64::MAX);
+                while self
+                    .completed
+                    .front()
+                    .is_some_and(|(index, _)| *index <= bucket.saturating_sub(horizon))
+                {
+                    self.completed.pop_front();
+                }
+                self.baseline_ms =
+                    (self.completed.len() >= self.config.min_baseline_buckets).then(|| {
+                        let mut minima = self
+                            .completed
+                            .iter()
+                            .map(|(_, minimum)| *minimum)
+                            .collect::<Vec<_>>();
+                        minima.sort_unstable();
+                        minima[(minima.len() - 1) / 2]
+                    });
+            }
+        }
+        let Some(baseline_ms) = self.baseline_ms else {
+            return StalenessObservation {
+                lag_ms,
+                stale: false,
+                trigger: None,
+            };
+        };
+        let window_ms = i64::try_from(self.config.window_ms).unwrap_or(i64::MAX);
+        while self
+            .stale
+            .front()
+            .is_some_and(|(at, ..)| *at < host_ms.saturating_sub(window_ms))
+        {
+            self.stale.pop_front();
+        }
+        let excess_ms = lag_ms.saturating_sub(baseline_ms);
+        let stale = excess_ms >= i64::try_from(self.config.excess_ms).unwrap_or(i64::MAX);
+        if stale {
+            self.stale
+                .push_back((host_ms, binding.key(), lag_ms, excess_ms));
+        }
+        let mut trigger = None;
+        if stale && self.stale.len() >= self.config.min_frames {
+            let mut keys = self
+                .stale
+                .iter()
+                .map(|(_, key, ..)| key.as_str())
+                .collect::<Vec<_>>();
+            keys.sort_unstable();
+            keys.dedup();
+            if keys.len() >= self.min_bindings {
+                trigger = Some(StalenessTrigger {
+                    stale_frames: self.stale.len(),
+                    distinct_bindings: keys.len(),
+                    span_ms: host_ms - self.stale.front().map(|(at, ..)| *at).unwrap_or(host_ms),
+                    max_lag_ms: self
+                        .stale
+                        .iter()
+                        .map(|(_, _, lag, _)| *lag)
+                        .max()
+                        .unwrap_or(0),
+                    max_excess_ms: self
+                        .stale
+                        .iter()
+                        .map(|(.., excess)| *excess)
+                        .max()
+                        .unwrap_or(0),
+                    baseline_ms,
+                });
+                self.stale.clear();
+            }
+        }
+        StalenessObservation {
+            lag_ms,
+            stale,
+            trigger,
+        }
+    }
+
+    /// Whether a detected trigger may start a recycle now; records it if so.
+    fn decide(&mut self, host_ms: i64) -> RecycleDecision {
+        while self
+            .recycles
+            .front()
+            .is_some_and(|at| *at <= host_ms.saturating_sub(STALENESS_CAP_WINDOW_MS))
+        {
+            self.recycles.pop_front();
+        }
+        let cooldown_ms = i64::try_from(self.config.cooldown_ms).unwrap_or(i64::MAX);
+        if let Some(last) = self.recycles.back() {
+            let since = host_ms.saturating_sub(*last);
+            if since < cooldown_ms {
+                return RecycleDecision::Cooldown {
+                    remaining_ms: cooldown_ms - since,
+                };
+            }
+        }
+        if self.recycles.len() >= self.config.max_recycles_per_hour {
+            return RecycleDecision::Cap {
+                recycles_last_hour: self.recycles.len(),
+            };
+        }
+        self.recycles.push_back(host_ms);
+        RecycleDecision::Recycle
+    }
+
+    /// Rate limit for suppressed-trigger log lines: Some(count suppressed
+    /// since the previous line) when one is due.
+    fn suppressed_log_due(&mut self, host_ms: i64) -> Option<u64> {
+        self.suppressed += 1;
+        let due = self
+            .suppressed_logged_ms
+            .is_none_or(|at| host_ms.saturating_sub(at) >= STALENESS_SUPPRESSED_LOG_MS);
+        due.then(|| {
+            self.suppressed_logged_ms = Some(host_ms);
+            std::mem::take(&mut self.suppressed)
+        })
+    }
+}
+
+/// A staleness recycle whose standby session is being established.
+#[derive(Debug)]
+struct PendingRecycle {
+    trigger: StalenessTrigger,
+    started: Instant,
+    successor_generation: u64,
 }
 
 struct OkxEstablished {
@@ -3328,6 +3816,29 @@ async fn run_okx_service(
             pacer.clone(),
         )
     };
+    // IDR-112: one detector per lane, kept across sessions (baseline,
+    // cooldown and cap survive a recycle).
+    let staleness_config = config.latest_state_staleness;
+    let mut staleness = (staleness_config.enabled && staleness_applies(&binding_map)).then(|| {
+        StalenessDetector::new(
+            staleness_config,
+            binding_map.len(),
+            now_ns().unwrap_or_default(),
+            Instant::now(),
+        )
+    });
+    if staleness.is_some() {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&json!({
+                "event": "qdl_native_staleness_recycle_armed",
+                "runtime": "OKX",
+                "lane": lane,
+                "bindings": binding_map.len(),
+                "config": staleness_config,
+            }))?
+        );
+    }
     while !should_stop(&stopped, &accepted, config.max_events, expires) {
         let continued = handover.is_some();
         let established = match handover.take() {
@@ -3416,6 +3927,10 @@ async fn run_okx_service(
         let mut inbound = InboundDeadline::new(liveness_policy, Instant::now());
         let mut standby: Option<OkxStandby> = None;
         let mut notice: Option<String> = None;
+        let mut recycle: Option<PendingRecycle> = None;
+        if let Some(detector) = staleness.as_mut() {
+            detector.session_started();
+        }
         if let Some(code) = early_notice {
             let generation = connection_generation(&generation_path).await?;
             budget.permit(now_ns()?)?;
@@ -3481,14 +3996,39 @@ async fn run_okx_service(
                         Ok(next) => {
                             // Make-before-break: the successor is subscribed
                             // while this socket still delivers, so stopping
-                            // here leaves no uncovered window.
+                            // here leaves no uncovered window. A notice, if
+                            // any, stays the cause (it would end the socket).
+                            let successor_generation = next.generation;
                             handover = Some(next);
-                            ended = Some(OkxSessionEnd::NoticeHandover {
-                                code: notice.clone().unwrap_or_default(),
+                            ended = Some(match (notice.as_ref(), recycle.take()) {
+                                (None, Some(pending)) => {
+                                    eprintln!(
+                                        "{}",
+                                        serde_json::to_string(&json!({
+                                            "event": "qdl_native_staleness_recycled",
+                                            "runtime": "OKX",
+                                            "lane": lane,
+                                            "generation": generation,
+                                            "session": session_id,
+                                            "successor_generation": successor_generation,
+                                            "standby_ready_ms": pending.started.elapsed().as_millis() as u64,
+                                            "trigger": pending.trigger.report(),
+                                        }))?
+                                    );
+                                    telemetry.staleness_recycled();
+                                    OkxSessionEnd::StalenessHandover {
+                                        stale_frames: pending.trigger.stale_frames,
+                                        max_excess_ms: pending.trigger.max_excess_ms,
+                                    }
+                                }
+                                _ => OkxSessionEnd::NoticeHandover {
+                                    code: notice.clone().unwrap_or_default(),
+                                },
                             });
                             break;
                         }
                         Err(error) => {
+                            let failed_recycle = recycle.take();
                             eprintln!(
                                 "{}",
                                 serde_json::to_string(&json!({
@@ -3496,6 +4036,14 @@ async fn run_okx_service(
                                     "runtime": "OKX",
                                     "lane": lane,
                                     "generation": generation,
+                                    "cause": if notice.is_some() || failed_recycle.is_none() {
+                                        "NOTICE"
+                                    } else {
+                                        "STALENESS"
+                                    },
+                                    "successor_generation": failed_recycle
+                                        .as_ref()
+                                        .map(|pending| pending.successor_generation),
                                     "error": error.to_string(),
                                 }))?
                             );
@@ -3536,7 +4084,7 @@ async fn run_okx_service(
                     }
                 }
             };
-            let message = match outcome {
+            let (message, read_at) = match outcome {
                 Ok(Some(Ok(message))) => {
                     if let Message::Close(frame) = &message {
                         ended = Some(OkxSessionEnd::Closed {
@@ -3554,7 +4102,7 @@ async fn run_okx_service(
                     inbound.inbound(read_at);
                     telemetry.read(read_at, read_at_ns);
                     liveness.live(&session_id, generation, read_at_ns)?;
-                    message
+                    (message, read_at)
                 }
                 Ok(Some(Err(error))) => {
                     ended = Some(OkxSessionEnd::ReadError(error.to_string()));
@@ -3621,6 +4169,70 @@ async fn run_okx_service(
             }
             let binding = routing.data_binding(&binding_map)?;
             drop(routing);
+            if let Some(detector) = staleness.as_mut() {
+                if let Some(venue_ms) = okx_venue_ts_ms(&raw_text) {
+                    let observed = detector.observe_at(read_at, venue_ms, &binding);
+                    telemetry.venue_lag(observed.lag_ms, observed.stale, detector.baseline_ms());
+                    if let Some(trigger) = observed.trigger {
+                        let host_ms = detector.host_ms(read_at);
+                        let decision = if standby.is_some() {
+                            None
+                        } else {
+                            Some(detector.decide(host_ms))
+                        };
+                        let action = match decision {
+                            None => "SUPPRESSED_STANDBY_PENDING",
+                            Some(RecycleDecision::Cooldown { .. }) => "SUPPRESSED_COOLDOWN",
+                            Some(RecycleDecision::Cap { .. }) => "SUPPRESSED_CAP",
+                            Some(RecycleDecision::Recycle) => match budget.permit(now_ns()?) {
+                                Ok(()) => "RECYCLE",
+                                Err(_) => "SUPPRESSED_CONTROL_BUDGET",
+                            },
+                        };
+                        let mut successor_generation = None;
+                        if action == "RECYCLE" {
+                            let next_generation = connection_generation(&generation_path).await?;
+                            standby = Some(Box::pin(establish(next_generation)));
+                            successor_generation = Some(next_generation);
+                            recycle = Some(PendingRecycle {
+                                trigger: trigger.clone(),
+                                started: Instant::now(),
+                                successor_generation: next_generation,
+                            });
+                        }
+                        let suppressed = if action == "RECYCLE" {
+                            Some(0)
+                        } else {
+                            detector.suppressed_log_due(host_ms)
+                        };
+                        if let Some(suppressed_since_last_line) = suppressed {
+                            eprintln!(
+                                "{}",
+                                serde_json::to_string(&json!({
+                                    "event": "qdl_native_staleness_triggered",
+                                    "runtime": "OKX",
+                                    "lane": lane,
+                                    "generation": generation,
+                                    "session": session_id,
+                                    "action": action,
+                                    "successor_generation": successor_generation,
+                                    "decision": match decision {
+                                        Some(RecycleDecision::Cooldown { remaining_ms }) => {
+                                            json!({"cooldown_remaining_ms": remaining_ms})
+                                        }
+                                        Some(RecycleDecision::Cap { recycles_last_hour }) => {
+                                            json!({"recycles_last_hour": recycles_last_hour})
+                                        }
+                                        _ => Value::Null,
+                                    },
+                                    "suppressed_since_last_line": suppressed_since_last_line,
+                                    "trigger": trigger.report(),
+                                }))?
+                            );
+                        }
+                    }
+                }
+            }
             let frame =
                 okx_data_frame(binding, &session_id, generation, raw_text, last_frame_at_ns);
             telemetry.frame(frame.received_at_ns);
@@ -3889,6 +4501,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "authority": authority_mode_name(&config.authority.mode),
             "bindings": config.bindings.len(),
             "latest_state_flush_ms": config.latest_state_flush_ms,
+            "latest_state_staleness": config.latest_state_staleness,
             "production_public_writes": 0,
             "production_legacy_writes": 0,
         }))?
@@ -4831,6 +5444,7 @@ mod resync_tests {
             book_liveness_proof_ms: 0,
             liveness_ping_ms: 0,
             liveness_dead_ms: 0,
+            latest_state_staleness: LatestStateStalenessConfig::default(),
             authority: AuthorityRecord {
                 schema: "qdl.authority-record.v1".into(),
                 slice_id: "unit".into(),
@@ -5958,5 +6572,863 @@ mod okx_reconnect_tests {
         .err()
         .unwrap();
         assert!(matches!(error, OkxEstablishError::Connect(_)), "{error}");
+    }
+}
+
+/// IDR-112: venue-timestamp staleness recycle of OKX latest-state QUOTE lanes.
+#[cfg(test)]
+mod staleness_tests {
+    use super::*;
+    use std::sync::Mutex;
+    use tokio::net::TcpListener;
+
+    const T0: i64 = 1_792_000_000_000;
+    const SYMBOLS: [&str; 3] = ["BTC-USDT-SWAP", "ETH-USDT-SWAP", "BTC-USD-SWAP"];
+
+    fn quote(symbol: &str) -> RawBinding {
+        RawBinding {
+            provider: "OKX_DIRECT".into(),
+            venue: "OKX".into(),
+            market: "SWAP".into(),
+            product_type: "PERPETUAL".into(),
+            native_symbol: symbol.into(),
+            native_channel: "bbo-tbt".into(),
+            subscription_id: format!("quote-{symbol}"),
+            adapter_version: "test/2.0.0".into(),
+            instrument_catalog_revision: 1,
+            feed: RawFeed::Quote,
+            delivery_class: DeliveryClass::LatestState,
+            l2: None,
+            mark_index_target: None,
+        }
+    }
+
+    fn quotes() -> Vec<RawBinding> {
+        SYMBOLS.iter().map(|symbol| quote(symbol)).collect()
+    }
+
+    fn map(bindings: Vec<RawBinding>) -> BindingMap {
+        bindings
+            .into_iter()
+            .map(|binding| (binding.key(), Arc::new(binding)))
+            .collect()
+    }
+
+    fn detector(config: LatestStateStalenessConfig) -> StalenessDetector {
+        StalenessDetector::new(config, SYMBOLS.len(), T0 * 1_000_000, Instant::now())
+    }
+
+    /// Healthy traffic like the parallel probe: one frame every 25 ms,
+    /// rotating instruments, lag 29-35 ms. Returns the triggers seen.
+    fn feed(
+        detector: &mut StalenessDetector,
+        bindings: &[RawBinding],
+        from_ms: i64,
+        to_ms: i64,
+        lag: impl Fn(i64, usize) -> i64,
+    ) -> Vec<(i64, StalenessTrigger)> {
+        let mut triggers = Vec::new();
+        let mut at = from_ms;
+        let mut index = 0_usize;
+        while at < to_ms {
+            let host_ms = T0 + at;
+            let binding = &bindings[index % bindings.len()];
+            let observed = detector.observe(host_ms, host_ms - lag(at, index), binding);
+            if let Some(trigger) = observed.trigger {
+                triggers.push((at, trigger));
+            }
+            at += 25;
+            index += 1;
+        }
+        triggers
+    }
+
+    fn healthy(_: i64, index: usize) -> i64 {
+        29 + (index as i64 * 3) % 7
+    }
+
+    #[test]
+    fn defaults_are_the_documented_conservative_values_and_validate() {
+        let config = LatestStateStalenessConfig::default();
+        assert!(config.enabled);
+        assert_eq!(
+            (
+                config.excess_ms,
+                config.window_ms,
+                config.min_frames,
+                config.min_bindings
+            ),
+            (250, 2_000, 5, 2)
+        );
+        assert_eq!(
+            (
+                config.baseline_bucket_ms,
+                config.baseline_buckets,
+                config.min_baseline_buckets
+            ),
+            (10_000, 60, 3)
+        );
+        assert_eq!(
+            (config.cooldown_ms, config.max_recycles_per_hour),
+            (60_000, 6)
+        );
+        config.validate().unwrap();
+        // A single frame can never be a burst; sub-100 ms excess is jitter.
+        for broken in [
+            LatestStateStalenessConfig {
+                min_frames: 1,
+                ..config
+            },
+            LatestStateStalenessConfig {
+                excess_ms: 50,
+                ..config
+            },
+            LatestStateStalenessConfig {
+                cooldown_ms: 1_000,
+                ..config
+            },
+            LatestStateStalenessConfig {
+                min_baseline_buckets: 61,
+                ..config
+            },
+            LatestStateStalenessConfig {
+                max_recycles_per_hour: 0,
+                ..config
+            },
+        ] {
+            assert!(broken.validate().is_err(), "{broken:?}");
+        }
+    }
+
+    #[test]
+    fn config_field_is_optional_partial_and_strict() {
+        let parsed: LatestStateStalenessConfig = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(parsed, LatestStateStalenessConfig::default());
+        let off: LatestStateStalenessConfig =
+            serde_json::from_value(json!({"enabled": false})).unwrap();
+        assert!(!off.enabled);
+        assert_eq!(off.excess_ms, 250);
+        let tuned: LatestStateStalenessConfig =
+            serde_json::from_value(json!({"excess_ms": 400, "cooldown_ms": 120000})).unwrap();
+        assert_eq!(
+            (tuned.excess_ms, tuned.cooldown_ms, tuned.min_frames),
+            (400, 120_000, 5)
+        );
+        assert!(
+            serde_json::from_value::<LatestStateStalenessConfig>(json!({"excess": 1})).is_err()
+        );
+        // A rendered production config without the field keeps working.
+        let mut document = json!({
+            "runtime": "OKX",
+            "websocket_url": "wss://ws.okx.com/ws/v5/public",
+            "business_websocket_url": "wss://ws.okx.com/ws/v5/business",
+            "market_websocket_url": null,
+            "raw_stream": "md.raw.v2",
+            "shard_id": "qdl-v2-stable-okx-swap",
+            "lease_epoch": 1,
+            "partition_plan_epoch": 1,
+            "config_revision": 20,
+            "heartbeat_seconds": 15,
+            "liveness_ping_ms": 1500,
+            "liveness_dead_ms": 4000,
+            "max_events": 0,
+            "max_runtime_seconds": 0,
+            "metrics_every_events": 1000,
+            "generation_state_path": "/var/lib/qdl-stable/runtime/generations/okx-swap",
+            "session_liveness_dir": "/var/lib/qdl-stable/runtime/session-liveness/okx-swap",
+            "session_liveness_write_interval_ms": 1000,
+            "max_inflight_publishes": 512,
+            "max_subscriptions_per_connection": 100,
+            "latest_state_flush_ms": 50,
+            "authority": {
+                "schema": "qdl.authority-record.v1",
+                "slice_id": "unit",
+                "revision": 2,
+                "mode": "RUST_PRIMARY",
+                "candidate_image_digest": format!("sha256:{}", "0".repeat(64)),
+                "capability_manifest_digest": "0".repeat(64),
+                "contract_digest": "0".repeat(64),
+                "partition_plan_digest": "0".repeat(64),
+                "public_write_allowed": false,
+                "legacy_write_allowed": false,
+                "approved_by": "unit-test",
+                "effective_at_ns": 1
+            },
+            "bindings": [{
+                "provider": "OKX_DIRECT", "venue": "OKX", "market": "SWAP",
+                "product_type": "PERPETUAL", "native_symbol": "BTC-USDT-SWAP",
+                "native_channel": "bbo-tbt", "subscription_id": "s",
+                "adapter_version": "2.0.0", "instrument_catalog_revision": 1,
+                "feed": "QUOTE", "delivery_class": "LATEST_STATE"
+            }]
+        });
+        let config: IngestorConfig = serde_json::from_value(document.clone()).unwrap();
+        assert_eq!(
+            config.latest_state_staleness,
+            LatestStateStalenessConfig::default()
+        );
+        config.validate().unwrap();
+        document["latest_state_staleness"] = json!({"enabled": false});
+        let config: IngestorConfig = serde_json::from_value(document.clone()).unwrap();
+        assert!(!config.latest_state_staleness.enabled);
+        config.validate().unwrap();
+        document["latest_state_staleness"] = json!({"min_frames": 1});
+        let config: IngestorConfig = serde_json::from_value(document).unwrap();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn only_lanes_of_latest_state_quotes_qualify() {
+        assert!(staleness_applies(&map(quotes())));
+        assert!(!staleness_applies(&BindingMap::new()));
+        let mut trade = quote("BTC-USDT-SWAP");
+        trade.native_channel = "trades".into();
+        trade.feed = RawFeed::Trade;
+        trade.delivery_class = DeliveryClass::Lossless;
+        assert!(!staleness_applies(&map(vec![trade.clone()])));
+        assert!(!staleness_applies(&map(vec![
+            quote("ETH-USDT-SWAP"),
+            trade
+        ])));
+        let mut mark = quote("BTC-USDT-SWAP");
+        mark.native_channel = "mark-price".into();
+        mark.feed = RawFeed::MarkIndex;
+        mark.mark_index_target = Some("x".into());
+        assert!(!staleness_applies(&map(vec![mark])));
+        let mut book = quote("BTC-USDT-SWAP");
+        book.native_channel = "books".into();
+        book.feed = RawFeed::Book;
+        book.delivery_class = DeliveryClass::Lossless;
+        assert!(!staleness_applies(&map(vec![book])));
+    }
+
+    #[test]
+    fn venue_timestamp_is_the_newest_data_ts_or_none() {
+        let frame = r#"{"arg":{"channel":"bbo-tbt","instId":"BTC-USDT-SWAP"},"data":[{"asks":[["1","2","0","1"]],"bids":[["1","2","0","1"]],"ts":"1792000000123","seqId":7}]}"#;
+        assert_eq!(okx_venue_ts_ms(frame), Some(1_792_000_000_123));
+        assert_eq!(
+            okx_venue_ts_ms(r#"{"data":[{"ts":"5"},{"ts":"9"},{"ts":"x"}]}"#),
+            Some(9)
+        );
+        for frame in [
+            r#"{"data":[{"ts":5}]}"#,
+            r#"{"data":[{"px":"1"}]}"#,
+            r#"{"data":[{"ts":"0"}]}"#,
+            r#"{"event":"subscribe","arg":{"channel":"bbo-tbt"}}"#,
+            r#"[1,2]"#,
+            "pong",
+        ] {
+            assert_eq!(okx_venue_ts_ms(frame), None, "{frame}");
+        }
+    }
+
+    #[test]
+    fn healthy_lane_with_single_and_paired_late_frames_never_triggers() {
+        let mut detector = detector(LatestStateStalenessConfig::default());
+        let bindings = quotes();
+        // 10 minutes. Every 20 s one frame is 1.5 s late; every 60 s two
+        // frames (two instruments) are 1.2 s late: below min_frames.
+        let triggers = feed(&mut detector, &bindings, 0, 600_000, |at, index| {
+            if at % 20_000 == 0 && at > 0 {
+                1_500
+            } else if at % 60_000 == 25 || at % 60_000 == 50 {
+                1_200
+            } else {
+                healthy(at, index)
+            }
+        });
+        assert!(triggers.is_empty(), "{triggers:?}");
+        assert_eq!(detector.baseline_ms(), Some(29));
+    }
+
+    #[test]
+    fn a_lane_wide_late_burst_triggers_once_per_min_frames_with_its_stats() {
+        let mut detector = detector(LatestStateStalenessConfig::default());
+        let bindings = quotes();
+        assert!(feed(&mut detector, &bindings, 0, 40_000, healthy).is_empty());
+        // The 14:08:17 signature: every instrument 0.65-0.7 s late together.
+        let triggers = feed(&mut detector, &bindings, 40_000, 40_300, |at, _| {
+            650 + (at % 50)
+        });
+        assert_eq!(triggers.len(), 2, "12 stale frames = two bursts of 5");
+        let (at, trigger) = &triggers[0];
+        assert_eq!(*at, 40_100, "the fifth stale frame triggers");
+        assert_eq!(trigger.stale_frames, 5);
+        assert_eq!(trigger.distinct_bindings, 3);
+        assert_eq!(trigger.baseline_ms, 29);
+        assert_eq!(trigger.span_ms, 100);
+        assert!(trigger.max_lag_ms >= 650 && trigger.max_excess_ms >= 621);
+    }
+
+    #[test]
+    fn a_skewed_clock_never_triggers_and_a_burst_on_it_still_does() {
+        for skew_ms in [5_000_i64, -3_000] {
+            let mut detector = detector(LatestStateStalenessConfig::default());
+            let bindings = quotes();
+            let triggers = feed(&mut detector, &bindings, 0, 300_000, |at, index| {
+                skew_ms + healthy(at, index)
+            });
+            assert!(triggers.is_empty(), "skew {skew_ms}: {triggers:?}");
+            assert_eq!(detector.baseline_ms(), Some(skew_ms + 29));
+            let triggers = feed(&mut detector, &bindings, 300_000, 300_200, |_, _| {
+                skew_ms + 900
+            });
+            assert_eq!(triggers.len(), 1, "skew {skew_ms}");
+            assert_eq!(triggers[0].1.max_excess_ms, 871);
+        }
+    }
+
+    #[test]
+    fn a_burst_on_one_instrument_or_before_the_baseline_arms_does_not_trigger() {
+        let config = LatestStateStalenessConfig::default();
+        let bindings = quotes();
+        let mut detector = detector(config);
+        // 20 s < 3 completed 10 s buckets: not armed.
+        let triggers = feed(&mut detector, &bindings, 0, 20_000, |at, index| {
+            if at >= 19_000 {
+                900
+            } else {
+                healthy(at, index)
+            }
+        });
+        assert!(triggers.is_empty());
+        assert_eq!(detector.baseline_ms(), None);
+        let mut detector = StalenessDetector::new(config, 3, T0 * 1_000_000, Instant::now());
+        assert!(feed(&mut detector, &bindings, 0, 40_000, healthy).is_empty());
+        let one = [bindings[0].clone()];
+        assert!(feed(&mut detector, &one, 40_000, 41_000, |_, _| 900).is_empty());
+        // A one-binding lane only needs its one binding.
+        let mut single = StalenessDetector::new(config, 1, T0 * 1_000_000, Instant::now());
+        assert!(feed(&mut single, &one, 0, 40_000, healthy).is_empty());
+        assert_eq!(feed(&mut single, &one, 40_000, 40_125, |_, _| 900).len(), 1);
+    }
+
+    #[test]
+    fn the_baseline_resists_a_bogus_future_timestamp() {
+        let mut detector = detector(LatestStateStalenessConfig::default());
+        let bindings = quotes();
+        // One frame per minute claims to be 10 s in the future.
+        let triggers = feed(&mut detector, &bindings, 0, 300_000, |at, index| {
+            if at % 60_000 == 0 {
+                -10_000
+            } else {
+                healthy(at, index)
+            }
+        });
+        assert!(triggers.is_empty(), "{triggers:?}");
+        assert_eq!(detector.baseline_ms(), Some(29));
+    }
+
+    #[test]
+    fn a_session_change_drops_the_previous_sessions_stale_frames() {
+        let mut detector = detector(LatestStateStalenessConfig::default());
+        let bindings = quotes();
+        assert!(feed(&mut detector, &bindings, 0, 40_000, healthy).is_empty());
+        assert!(feed(&mut detector, &bindings, 40_000, 40_100, |_, _| 900).is_empty());
+        detector.session_started();
+        assert!(feed(&mut detector, &bindings, 40_100, 40_200, |_, _| 900).is_empty());
+        assert_eq!(
+            feed(&mut detector, &bindings, 40_200, 40_225, |_, _| 900).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn recycles_respect_the_cooldown_and_the_hourly_cap() {
+        let mut detector = detector(LatestStateStalenessConfig::default());
+        assert_eq!(detector.decide(T0), RecycleDecision::Recycle);
+        assert_eq!(
+            detector.decide(T0 + 30_000),
+            RecycleDecision::Cooldown {
+                remaining_ms: 30_000
+            }
+        );
+        for minute in 1..6 {
+            assert_eq!(
+                detector.decide(T0 + minute * 60_000),
+                RecycleDecision::Recycle
+            );
+        }
+        assert_eq!(
+            detector.decide(T0 + 6 * 60_000),
+            RecycleDecision::Cap {
+                recycles_last_hour: 6
+            }
+        );
+        // The first recycle leaves the rolling hour.
+        assert_eq!(detector.decide(T0 + 3_600_000), RecycleDecision::Recycle);
+        // Suppressed lines: the first at once, then at most one per 10 s.
+        assert_eq!(detector.suppressed_log_due(T0), Some(1));
+        assert_eq!(detector.suppressed_log_due(T0 + 1_000), None);
+        assert_eq!(detector.suppressed_log_due(T0 + 2_000), None);
+        assert_eq!(detector.suppressed_log_due(T0 + 10_000), Some(3));
+    }
+
+    // ---- The production session loop against a fake OKX venue ----------
+
+    /// Delay (ms) the venue applies to `ts` for (connection, time since the
+    /// venue started, sequence number).
+    type Schedule = Arc<dyn Fn(usize, Duration, u64) -> i64 + Send + Sync>;
+
+    #[derive(Debug, Default)]
+    struct VenueLog {
+        acked: Vec<Option<Instant>>,
+        closed: Vec<Option<Instant>>,
+    }
+
+    fn wall_ms() -> i64 {
+        now_ns().unwrap() / 1_000_000
+    }
+
+    /// One OKX-like public endpoint: a 10 ms bbo-tbt update stream (rotating
+    /// instruments, global seqId) fanned out to every subscribed connection,
+    /// each stamping `ts = now - schedule(...)`.
+    async fn fake_okx_quotes(schedule: Schedule) -> (String, Arc<Mutex<VenueLog>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let log = Arc::new(Mutex::new(VenueLog::default()));
+        let (updates, _) = tokio::sync::broadcast::channel::<(u64, usize, i64)>(4_096);
+        let start = Instant::now();
+        let generator = updates.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_millis(10));
+            let mut seq = 0_u64;
+            loop {
+                tick.tick().await;
+                seq += 1;
+                let _ = generator.send((seq, seq as usize % SYMBOLS.len(), wall_ms()));
+            }
+        });
+        let accept_log = Arc::clone(&log);
+        tokio::spawn(async move {
+            let mut index = 0_usize;
+            while let Ok((stream, _)) = listener.accept().await {
+                let connection = index;
+                index += 1;
+                {
+                    let mut log = accept_log.lock().unwrap();
+                    log.acked.push(None);
+                    log.closed.push(None);
+                }
+                let log = Arc::clone(&accept_log);
+                let schedule = Arc::clone(&schedule);
+                let mut feed = updates.subscribe();
+                tokio::spawn(async move {
+                    let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    let command = socket.next().await.unwrap().unwrap();
+                    let command: Value = serde_json::from_str(command.to_text().unwrap()).unwrap();
+                    for arg in command["args"].as_array().unwrap() {
+                        let ack = json!({"event": "subscribe", "arg": arg, "id": command["id"]});
+                        socket.send(Message::Text(ack.to_string())).await.unwrap();
+                    }
+                    log.lock().unwrap().acked[connection] = Some(Instant::now());
+                    loop {
+                        tokio::select! {
+                            update = feed.recv() => {
+                                let (seq, symbol, at_ms) = match update {
+                                    Ok(update) => update,
+                                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                                    Err(_) => break,
+                                };
+                                let delay = schedule(connection, start.elapsed(), seq);
+                                let frame = json!({
+                                    "arg": {"channel": "bbo-tbt", "instId": SYMBOLS[symbol]},
+                                    "data": [{
+                                        "asks": [["2", "1", "0", "1"]],
+                                        "bids": [["1", "1", "0", "1"]],
+                                        "ts": (at_ms - delay).to_string(),
+                                        "seqId": seq,
+                                    }],
+                                });
+                                if socket.send(Message::Text(frame.to_string())).await.is_err() {
+                                    break;
+                                }
+                            }
+                            incoming = socket.next() => {
+                                if !matches!(incoming, Some(Ok(_))) {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    log.lock().unwrap().closed[connection] = Some(Instant::now());
+                });
+            }
+        });
+        (format!("ws://{address}/ws/v5/public"), log)
+    }
+
+    fn scratch(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "qdl-idr112-{label}-{}-{}",
+            std::process::id(),
+            now_ns().unwrap()
+        ));
+        fs::create_dir_all(path.join("liveness")).unwrap();
+        path
+    }
+
+    /// Small timings so a run takes seconds: 100 ms buckets over 20 s, armed
+    /// after 300 ms, 5 stale frames from 2 instruments inside 500 ms.
+    fn fast_staleness(cooldown_ms: u64) -> LatestStateStalenessConfig {
+        LatestStateStalenessConfig {
+            enabled: true,
+            excess_ms: 250,
+            window_ms: 500,
+            min_frames: 5,
+            min_bindings: 2,
+            baseline_bucket_ms: 100,
+            baseline_buckets: 200,
+            min_baseline_buckets: 3,
+            cooldown_ms,
+            max_recycles_per_hour: 6,
+        }
+    }
+
+    struct LaneRun {
+        log: VenueLog,
+        /// Published raw envelopes in publish order.
+        records: Vec<RawProviderEnvelope>,
+        report: Value,
+    }
+
+    /// Runs the production `run_okx_service` (lane okx-public-001) against
+    /// the fake venue for `run_for`, publishing into the in-memory sink.
+    async fn run_lane(
+        schedule: Schedule,
+        staleness: LatestStateStalenessConfig,
+        run_for: Duration,
+    ) -> LaneRun {
+        let (url, log) = fake_okx_quotes(schedule).await;
+        let symbols = SYMBOLS.iter().map(|symbol| symbol.to_string()).collect();
+        let (records, report) = run_quote_lane(url, symbols, staleness, run_for).await;
+        let log = std::mem::take(&mut *log.lock().unwrap());
+        LaneRun {
+            log,
+            records,
+            report,
+        }
+    }
+
+    /// The production `run_okx_service` on one QUOTE lane (okx-public-001)
+    /// for `run_for`, publishing into the in-memory sink.
+    async fn run_quote_lane(
+        url: String,
+        symbols: Vec<String>,
+        staleness: LatestStateStalenessConfig,
+        run_for: Duration,
+    ) -> (Vec<RawProviderEnvelope>, Value) {
+        let bindings = symbols
+            .iter()
+            .map(|symbol| quote(symbol))
+            .collect::<Vec<_>>();
+        let dir = scratch("lane");
+        let config = Arc::new(IngestorConfig {
+            runtime: ProviderRuntime::Okx,
+            websocket_url: "wss://unit.test/ws/v5/public".into(),
+            business_websocket_url: Some("wss://unit.test/ws/v5/business".into()),
+            market_websocket_url: None,
+            raw_stream: "unit.raw".into(),
+            shard_id: "unit".into(),
+            lease_epoch: 1,
+            partition_plan_epoch: 1,
+            config_revision: 9,
+            heartbeat_seconds: 10,
+            max_events: 0,
+            max_runtime_seconds: 0,
+            metrics_every_events: 100,
+            generation_state_path: dir.join("generation").display().to_string(),
+            session_liveness_dir: dir.join("liveness").display().to_string(),
+            session_liveness_write_interval_ms: 1000,
+            max_inflight_publishes: 64,
+            max_subscriptions_per_connection: 100,
+            latest_state_flush_ms: 1,
+            book_liveness_proof_ms: 0,
+            liveness_ping_ms: 0,
+            liveness_dead_ms: 0,
+            latest_state_staleness: staleness,
+            authority: AuthorityRecord {
+                schema: "qdl.authority-record.v1".into(),
+                slice_id: "unit".into(),
+                revision: 2,
+                mode: AuthorityMode::RustShadow,
+                candidate_image_digest: format!("sha256:{}", "0".repeat(64)),
+                capability_manifest_digest: "0".repeat(64),
+                contract_digest: "0".repeat(64),
+                partition_plan_digest: "0".repeat(64),
+                public_write_allowed: false,
+                legacy_write_allowed: false,
+                approved_by: "unit-test".into(),
+                effective_at_ns: 1,
+            },
+            bindings: bindings.clone(),
+            book_resync: None,
+        });
+        let (publisher, records) = RawPublisher::memory(&config);
+        let telemetry = Arc::new(TelemetryRegistry::default());
+        let stopped = Arc::new(AtomicBool::new(false));
+        let stop = Arc::clone(&stopped);
+        let (result, ()) = tokio::join!(
+            run_okx_service(
+                OkxServiceShard {
+                    service: OkxService::Public,
+                    shard_index: 1,
+                    url,
+                    bindings,
+                },
+                Arc::clone(&config),
+                Arc::new(publisher),
+                Arc::clone(&telemetry),
+                Arc::new(AtomicU64::new(0)),
+                Arc::new(AtomicU64::new(0)),
+                stopped,
+                OkxConnectPacer::default(),
+            ),
+            async move {
+                tokio::time::sleep(run_for).await;
+                stop.store(true, Ordering::Release);
+            }
+        );
+        result.unwrap();
+        // Let the venue notice the last close.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let report =
+            telemetry.progress_line("OKX", run_for, now_ns().unwrap(), 0, 0)["lanes"][0].clone();
+        let records = records
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|record| RawProviderEnvelope::decode(record.payload.as_slice()).unwrap())
+            .collect();
+        let _ = fs::remove_dir_all(dir);
+        (records, report)
+    }
+
+    fn generations(records: &[RawProviderEnvelope]) -> Vec<u64> {
+        let mut seen: Vec<u64> = Vec::new();
+        for record in records {
+            if seen.last() != Some(&record.connection_generation) {
+                // Generation N is published strictly before N+1, never again after.
+                assert!(
+                    !seen.contains(&record.connection_generation),
+                    "generation {} published again after its successor",
+                    record.connection_generation
+                );
+                seen.push(record.connection_generation);
+            }
+        }
+        seen
+    }
+
+    fn symbols_of(records: &[RawProviderEnvelope], generation: u64) -> Vec<String> {
+        let mut symbols = records
+            .iter()
+            .filter(|record| record.connection_generation == generation)
+            .map(|record| record.native_symbol.clone())
+            .collect::<Vec<_>>();
+        symbols.sort();
+        symbols.dedup();
+        symbols
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_stale_session_is_recycled_make_before_break_and_keeps_every_quote() {
+        // Connection 0 turns 0.9 s late after 1.5 s; its successor is healthy.
+        let schedule: Schedule = Arc::new(|connection: usize, elapsed: Duration, _: u64| {
+            if connection == 0 && elapsed >= Duration::from_millis(1_500) {
+                900
+            } else {
+                0
+            }
+        });
+        let run = run_lane(
+            schedule,
+            fast_staleness(3_000),
+            Duration::from_millis(3_000),
+        )
+        .await;
+        assert_eq!(run.log.acked.len(), 2, "exactly one recycle: {:?}", run.log);
+        let successor_ready = run.log.acked[1].unwrap();
+        let old_closed = run.log.closed[0].unwrap();
+        // Make-before-break: the successor was subscribed while the stale
+        // socket was still open.
+        assert!(successor_ready < old_closed, "{:?}", run.log);
+        let generations = generations(&run.records);
+        assert_eq!(generations.len(), 2, "{generations:?}");
+        for generation in &generations {
+            assert_eq!(symbols_of(&run.records, *generation).len(), SYMBOLS.len());
+        }
+        // Continuity: the handover leaves no reception gap beyond a few ticks.
+        let last_old = run
+            .records
+            .iter()
+            .filter(|record| record.connection_generation == generations[0])
+            .map(|record| record.received_at_ns)
+            .max()
+            .unwrap();
+        let first_new = run
+            .records
+            .iter()
+            .filter(|record| record.connection_generation == generations[1])
+            .map(|record| record.received_at_ns)
+            .min()
+            .unwrap();
+        assert!(
+            first_new - last_old < 100_000_000,
+            "handover gap {} ms",
+            (first_new - last_old) / 1_000_000
+        );
+        assert_eq!(run.report["staleness_recycles_total"], 1);
+        assert!(run.report["stale_frames"].as_u64().unwrap() >= 5);
+        assert!(run.report["venue_lag_ms"]["max"].as_f64().unwrap() >= 850.0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn healthy_skewed_and_single_outlier_sessions_are_never_recycled() {
+        for skew in [5_000_i64, -3_000] {
+            // Constant skew; every 50th update (one frame per 500 ms window)
+            // is 2 s late.
+            let schedule: Schedule = Arc::new(
+                move |_: usize, _: Duration, seq: u64| {
+                    if seq % 50 == 0 {
+                        skew + 2_000
+                    } else {
+                        skew
+                    }
+                },
+            );
+            let run = run_lane(
+                schedule,
+                fast_staleness(3_000),
+                Duration::from_millis(2_500),
+            )
+            .await;
+            assert_eq!(run.log.acked.len(), 1, "skew {skew}: {:?}", run.log);
+            assert_eq!(generations(&run.records).len(), 1);
+            assert_eq!(run.report["staleness_recycles_total"], 0);
+            assert!(
+                run.report["stale_frames"].as_u64().unwrap() >= 1,
+                "the outliers were measured as stale, alone: {}",
+                run.report
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_lane_that_stays_stale_is_recycled_again_only_after_the_cooldown() {
+        // Healthy for 3 s, then every connection is 0.9 s late.
+        let schedule: Schedule = Arc::new(|connection: usize, elapsed: Duration, _: u64| {
+            if connection > 0 || elapsed >= Duration::from_millis(3_000) {
+                900
+            } else {
+                0
+            }
+        });
+        let run = run_lane(
+            schedule,
+            fast_staleness(1_200),
+            Duration::from_millis(5_000),
+        )
+        .await;
+        assert_eq!(run.log.acked.len(), 3, "{:?}", run.log);
+        let first = run.log.acked[1].unwrap();
+        let second = run.log.acked[2].unwrap();
+        assert!(
+            second.duration_since(first) >= Duration::from_millis(1_000),
+            "second recycle {:?} after the first",
+            second.duration_since(first)
+        );
+        assert_eq!(generations(&run.records).len(), 3);
+        assert_eq!(run.report["staleness_recycles_total"], 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn disabled_detector_never_recycles_a_stale_session() {
+        let schedule: Schedule = Arc::new(|_: usize, elapsed: Duration, _: u64| {
+            if elapsed >= Duration::from_millis(1_000) {
+                900
+            } else {
+                0
+            }
+        });
+        let off = LatestStateStalenessConfig {
+            enabled: false,
+            ..fast_staleness(1_200)
+        };
+        let run = run_lane(schedule, off, Duration::from_millis(2_000)).await;
+        assert_eq!(run.log.acked.len(), 1);
+        assert!(run.report["venue_lag_ms"].is_null());
+        assert_eq!(run.report["staleness_recycles_total"], 0);
+    }
+
+    /// TEST_ONLY live smoke (read-only, OKX public, no Kafka): the production
+    /// lane loop on real bbo-tbt with the in-memory sink. Run explicitly:
+    /// `cargo test ... live_okx_bbo_tbt -- --ignored --nocapture` with
+    /// QDL_IDR112_LIVE_SECONDS (default 120), QDL_IDR112_LIVE_SYMBOLS
+    /// (comma list) and QDL_IDR112_LIVE_MODE=defaults|forced. `forced` sets a
+    /// 5 ms excess so live jitter triggers recycles and the make-before-break
+    /// handover is exercised against the real venue.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "live network: OKX public WebSocket"]
+    async fn live_okx_bbo_tbt_smoke() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let seconds = std::env::var("QDL_IDR112_LIVE_SECONDS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(120_u64);
+        let symbols = std::env::var("QDL_IDR112_LIVE_SYMBOLS")
+            .unwrap_or_else(|_| SYMBOLS.join(","))
+            .split(',')
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let forced = std::env::var("QDL_IDR112_LIVE_MODE").as_deref() == Ok("forced");
+        let staleness = if forced {
+            LatestStateStalenessConfig {
+                excess_ms: 5,
+                window_ms: 2_000,
+                min_frames: 3,
+                baseline_bucket_ms: 2_000,
+                min_baseline_buckets: 3,
+                cooldown_ms: 15_000,
+                max_recycles_per_hour: 60,
+                ..LatestStateStalenessConfig::default()
+            }
+        } else {
+            LatestStateStalenessConfig::default()
+        };
+        let (records, report) = run_quote_lane(
+            "wss://ws.okx.com/ws/v5/public".into(),
+            symbols.clone(),
+            staleness,
+            Duration::from_secs(seconds),
+        )
+        .await;
+        let generations = generations(&records);
+        let summary = json!({
+            "event": "qdl_idr112_live_smoke_summary",
+            "mode": if forced { "forced" } else { "defaults" },
+            "seconds": seconds,
+            "symbols": symbols,
+            "records": records.len(),
+            "generations": generations,
+            "symbols_per_generation": generations
+                .iter()
+                .map(|generation| symbols_of(&records, *generation).len())
+                .collect::<Vec<_>>(),
+            "lane_report": report,
+        });
+        println!("{summary}");
+        assert!(!records.is_empty());
+        let last = *generations.last().unwrap();
+        assert_eq!(symbols_of(&records, last).len(), symbols.len());
+        if forced {
+            assert!(generations.len() >= 2, "{summary}");
+            assert_eq!(
+                report["staleness_recycles_total"].as_u64(),
+                Some(generations.len() as u64 - 1)
+            );
+        } else {
+            assert_eq!(report["staleness_recycles_total"], 0, "{summary}");
+        }
     }
 }

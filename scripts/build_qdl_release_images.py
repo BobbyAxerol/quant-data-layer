@@ -98,6 +98,10 @@ REFERENCES = {
                       "sha256:7fba25779f72a3adffc88f195935a316ac94acbfcb362996fafbff89f62c9103"),
     "rc14_projector": ("qdl-v2-rust:2.2.3-rc14-a388537",
                        "sha256:ce629061a8c180ae7e6cf88e32ebaddcf965ffe3924c88a3f1b942fc1623d4f9"),
+    # The first v2.2.4 rust build (c7ce7d3), rolled 2026-10-16 to stream_kn_1/2, market_projector_1/2 and both
+    # ingestors; the IDR-112 rebuild must equal it in every binary except the ingestor.
+    "v224_c7ce7d3": ("qdl-v2-rust:2.2.4-c7ce7d3",
+                     "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e"),
 }
 PYTHON_REFERENCE = ("qdl-v2-python:2.2.3-rc19-4d3476c",
                     "sha256:b9ca6c36fb0ad003b77e47bb3a777c3e565944d59cb3a2e9bc5dfb68e3448481")
@@ -133,8 +137,9 @@ BINARY_EXPECTATIONS = {
         ("rc22_core", "DIFFERENT", "rc22 gateway is a4e7b3b, before e3b5552/c934c1e"),
     ],
     "qdl-native-raw-ingestor": [
-        ("rc18_ingestor", "DIFFERENT", "ingestors run rc18 cdbf28b; qdl-kafka DL-R1/RB1 changed after it"),
-        ("rc22_core", "EQUAL", _RC22_SAME),
+        ("rc18_ingestor", "DIFFERENT", "ingestors ran rc18 cdbf28b; qdl-kafka DL-R1/RB1 changed after it"),
+        ("rc22_core", "DIFFERENT", "IDR-112 staleness recycle changed the ingestor after a4e7b3b"),
+        ("v224_c7ce7d3", "DIFFERENT", "IDR-112 staleness recycle (the only source delta since c7ce7d3)"),
     ],
     "qdl-projector": [
         ("rc14_projector", "DIFFERENT", "projectors run rc14 a388537 without IDR-107/CF3/CF4"),
@@ -153,6 +158,11 @@ LOADED_SECTION_ALLOWED_PREFIX = ".debug"
 CARGO_REGISTRY_PATHS = {"release": b"/work/cargo/registry/", "dockerfile": b"/usr/local/cargo/registry/"}
 for _name in RUST_BINARIES:
     BINARY_EXPECTATIONS.setdefault(_name, [("rc22_core", "EQUAL", _RC22_SAME)])
+    if _name != "qdl-native-raw-ingestor":
+        BINARY_EXPECTATIONS[_name].append(
+            ("v224_c7ce7d3", "EQUAL_LOADED_SECTIONS", "c7ce7d3..REV changes only "
+             "rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs among Rust sources (IDR-112); whole-file EQUAL "
+             "expected, loaded sections equal at least"))
 
 # Byte markers that only the isolated-replay-clock feature compiles in (qdl-test-data-clock replay
 # module). The env names QDL_TEST_DATA_CLOCK_* are present in every build (the guard that refuses

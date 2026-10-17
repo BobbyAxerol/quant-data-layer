@@ -74599,3 +74599,72 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
     returns no newer event, re-arm one re-read after the 100 ms read delay instead of waiting for the 1 s poll
     (closes the structural > 1 s miss path). If the delivery records confirm the read round trip instead, use
     DATA_LAYER_V2_MARK_BATCH_WINDOW_MS=0 (quota check first). Criteria, gates and scorer unchanged.
+
+### P18.4 IDR-112 OKX quote-lane venue-timestamp staleness recycle - 2026-10-17 (Claude, owner-approved fix)
+
+Owner approved ~15:20Z ("Sua ca hai, chay lai gate"): the DL product fix for the 135719Z G2/G4 FAIL root cause
+(entries 62a67ee / 27c28bd above: one OKX public session, okx-public-003 bbo-tbt, delivered bursts 0.45-1.5 s late
+while a fresh connection to the same edge saw max 60 ms; the busy socket never pinged). The MARK half of the
+approval is TS-side and not in this entry. Status: implemented, tested locally (unit + production loop against a
+fake venue + live read-only smoke of the production loop); NOT deployed.
+- Design (`rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs`, line numbers at this commit):
+  - Config `latest_state_staleness` (:277, struct :3269, defaults :3292, bounds `validate`): optional object,
+    `#[serde(default, deny_unknown_fields)]`; absent = defaults, enabled. Old binaries reject the field, so the
+    binary ships first and the rendered config needs no change (renderer `qdl/runtime/stable_deployment.py` NOT
+    touched; the kill switch is `{"enabled": false}`).
+  - Scope `staleness_applies` (:3337): only lanes whose every binding is QUOTE + LATEST_STATE (OKX bbo-tbt).
+    Excluded: TRADE/BAR (lossless, every event counts), BOOK (a session change forces a re-snapshot), MARK_INDEX
+    (OKX re-pushes an unchanged mark/index every 10 s, so its ts age is not a delivery delay), Binance (no
+    make-before-break path; no evidence of the defect there).
+  - Measurement: `okx_venue_ts_ms` (:3347) reads the newest `data[*].ts`; lag = host time at the socket read -
+    venue ts. Host time is a monotonic clock anchored once to the wall clock (an NTP step moves nothing).
+  - Detector `StalenessDetector` (:3414, `observe` :3478): baseline = lower median of per-bucket minimum lags over
+    the horizon (constant skew cancels; one bogus future ts moves one bucket, not the median). A frame is stale
+    when lag - baseline >= excess_ms. Trigger = >= min_frames stale frames inside window_ms from >= min_bindings
+    distinct bindings (clamped to the lane size). A trigger clears the window; a new session clears it too.
+  - Decision `decide` (:3573): cooldown since the last recycle start, rolling-hour cap; then the OKX control
+    budget (480/h) is asked without failing the lane on refusal.
+  - Recycle: the 64008 make-before-break path (`run_okx_service` :3822 detector per lane, :4174 measure + start
+    standby, :3997 handover). The standby subscribes while the stale socket keeps publishing; on ready the old
+    session ends `STALENESS_HANDOVER` (handed_over: liveness stays LIVE until the successor's record, lineage
+    `continued: true`, pre-ACK frames of N+1 published after N stops, generation fences unchanged). A standby
+    failure leaves the old session running (`qdl_native_standby_failed` with `cause`). A notice wins over a
+    pending staleness standby.
+  - Evidence lines: `qdl_native_staleness_recycle_armed` (lane start, config), `qdl_native_staleness_triggered`
+    (action RECYCLE / SUPPRESSED_COOLDOWN / SUPPRESSED_CAP / SUPPRESSED_STANDBY_PENDING /
+    SUPPRESSED_CONTROL_BUDGET with trigger stats; suppressed lines at most one per 10 s with a count),
+    `qdl_native_staleness_recycled` (successor generation, standby_ready_ms), `qdl_native_session_disconnected`
+    cause STALENESS_HANDOVER. Progress line per lane adds `venue_lag_ms`, `stale_frames`,
+    `staleness_baseline_ms`, `staleness_recycles_total`.
+- Parameters (defaults) and why, from the 135719Z evidence: healthy lag p50 29 / p99 35 / max 60 ms (parallel
+  probe), production clean windows max 29-39 ms; bad windows' venue->DL max 446.9-1554 ms.
+  excess_ms 250 (> 4x the healthy max, below the smallest bad-window max 446.9); window_ms 2000, min_frames 5,
+  min_bindings 2 (the bad bursts hit all six quote symbols together; one late frame or two never trigger);
+  baseline 10 s buckets x 60 (10 min), armed after 3 buckets (30 s); cooldown 60 s; at most 6 recycles per lane
+  per rolling hour (OKX: 3 connects/s per IP via the shared pacer, 480 subscribe requests/h). Bounds refused by
+  validate: min_frames < 2, excess < 100 ms, cooldown < 10 s, cap 0 or > 60. Known trade-off: a session stale for
+  more than half the horizon (5 min) becomes its own baseline; the evidence shows bursts minutes apart.
+- Test seam: `RawSink` / `RawDelivery` (:930) have one production variant (Kafka); a `#[cfg(test)]` in-memory
+  variant lets the tests drive the production `run_okx_service` against a fake venue without a broker (E7).
+- Tests (builder 551428d9, offline cache, `--network none`; host lock claude-dl-idr112 15:35Z): rustfmt clean
+  (file formatted with rustfmt 1.7.1; HEAD was clean), clippy -D warnings clean for the bin and its tests,
+  `cargo test -p qdl-kafka --bin qdl-native-raw-ingestor` 64 passed (49 existing + 15 new), 1 ignored (live),
+  staleness tests repeated 3x green. New: defaults/bounds, optional/partial/strict config incl. a rendered
+  config without the field, lane scope, ts parse, single + paired late frames never trigger (10 min), lane-wide
+  burst triggers at the 5th stale frame with stats, skew +5 s / -3 s never triggers and a burst on skew still
+  does, one-instrument burst and pre-arm burst do not, bogus future ts, session change, cooldown + hourly cap +
+  log rate limit; production loop vs fake venue: stale session recycled make-before-break (venue log: successor
+  ACK before the old socket closed; generations strictly ordered; all instruments in both; handover gap
+  < 100 ms), skewed + single-outlier sessions never recycled, a lane stale on every connection recycled again
+  only after the cooldown, disabled = no recycle and no measurement. Build-script expectations: 38 unittest OK.
+- Live smoke (TEST_ONLY, read-only OKX public, in-memory sink, no Kafka; the production loop in the test build,
+  not the release binary; 6 instruments of lane okx-public-003; 15:42-15:46Z): defaults 180 s, 17,461 frames,
+  venue lag min 26 / mean 27.0 / max 34 ms, 0 stale, 0 recycles. Forced (excess 5 ms, min_frames 3, cooldown
+  15 s) 90 s: 3 recycles against the real venue, standby ready 268-276 ms, previous last frame -> successor
+  ready 1-15 ms, drain 0 ms, all 6 instruments in all 4 generations, cooldown suppressions logged. Evidence
+  ~/.local/state/qdl-v2/p184-idr112-okx-staleness-20261017/ (cargo-test-1.log 8f1cd556..., cargo-3.log 13e239c8...,
+  live-smoke.log 774e77b2...).
+- Release build script: reference `v224_c7ce7d3` (60f83a51) added; expected DIFFERENT for the ingestor only and
+  EQUAL_LOADED_SECTIONS (whole-file EQUAL satisfies) for the 11 other binaries.
+- Next: rebuild the v2.2.4 rust image at this commit under the host lock, equivalence vs 60f83a51, isolated proof,
+  roll packet for ingestor_okx_swap (not executed). Register row IDR-112 in the TS INTEGRATION_DEFECT_REGISTER.

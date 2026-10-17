@@ -256,13 +256,18 @@ class VerdictTests(unittest.TestCase):
         rc22 = shas("1" * 64)
         rc22["qdl-stream-gateway"] = "2" * 64
         stream = {"qdl-stream-gateway": "3" * 64 if gateway_equal else "4" * 64}
+        v224 = shas("1" * 64)
+        v224["qdl-stream-gateway"] = "3" * 64
+        v224["qdl-native-raw-ingestor"] = "8" * 64
         return {"rc22_core": rc22, "stream_baa72c96": stream,
                 "rc18_ingestor": {"qdl-native-raw-ingestor": "5" * 64},
-                "rc14_projector": {"qdl-projector": "6" * 64}}
+                "rc14_projector": {"qdl-projector": "6" * 64},
+                "v224_c7ce7d3": v224}
 
     def release(self):
         rel = shas("1" * 64)
         rel["qdl-stream-gateway"] = "3" * 64
+        rel["qdl-native-raw-ingestor"] = "a" * 64  # IDR-112: differs from every reference
         return rel
 
     def test_expected_mix_passes(self):
@@ -291,9 +296,10 @@ class VerdictTests(unittest.TestCase):
         rel = self.release()
         rel["qdl-projector"] = "7" * 64
         verdict = b.binary_verdicts(rel, self.references())
-        self.assertEqual([(r["binary"], r["observed"]) for r in verdict["unexpected"]],
-                         [("qdl-projector", "NOT_ANALYSED")])
-        ok = {("qdl-projector", "rc22_core"): {"observed": "EQUAL_LOADED_SECTIONS"}}
+        self.assertEqual([(r["binary"], r["reference"], r["observed"]) for r in verdict["unexpected"]],
+                         [("qdl-projector", "rc22_core", "NOT_ANALYSED"),
+                          ("qdl-projector", "v224_c7ce7d3", "NOT_ANALYSED")])
+        ok = {("qdl-projector", ref): {"observed": "EQUAL_LOADED_SECTIONS"} for ref in ("rc22_core", "v224_c7ce7d3")}
         self.assertTrue(b.binary_verdicts(rel, self.references(), ok)["ok"])
         self.assertTrue(b.binary_verdicts(self.release(), self.references())["ok"])  # whole-file EQUAL satisfies
 
@@ -369,3 +375,22 @@ class SourceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Idr112RebuildExpectationTests(unittest.TestCase):
+    def test_only_the_ingestor_may_differ_from_the_first_v224_build(self):
+        for name in b.RUST_BINARIES:
+            rows = {ref: expected for ref, expected, _ in b.BINARY_EXPECTATIONS[name]}
+            if name == "qdl-native-raw-ingestor":
+                self.assertEqual(rows["v224_c7ce7d3"], "DIFFERENT")
+                self.assertEqual(rows["rc22_core"], "DIFFERENT")
+            else:
+                self.assertEqual(rows["v224_c7ce7d3"], "EQUAL_LOADED_SECTIONS", name)
+
+    def test_an_unchanged_binary_that_differs_from_the_first_v224_build_is_unexpected(self):
+        refs = VerdictTests().references()
+        rel = VerdictTests().release()
+        rel["qdl-kafka-smoke"] = "c" * 64
+        unexpected = b.binary_verdicts(rel, refs)["unexpected"]
+        self.assertIn(("qdl-kafka-smoke", "v224_c7ce7d3", "NOT_ANALYSED"),
+                      [(r["binary"], r["reference"], r["observed"]) for r in unexpected])
