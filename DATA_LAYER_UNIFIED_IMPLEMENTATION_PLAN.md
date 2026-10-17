@@ -74448,3 +74448,11 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
     (owner/coordinator): actually stop the Codex app-server sessions on this host (the VS Code ChatGPT/Codex extension
     is still executing commands), then rerun with a fresh trace re-arm, run worktree 5157c8ce and the same run.sh shape
     (guard --abort).
+- 2026-10-17 12:22:48-12:24:48Z FINAL stage-100 clean rerun NOT STARTED (Claude subagent): the coordinator's 120 s
+  pre-start watch (owner ~12:22Z said all Codex threads were stopped; start only if no new codex/bwrap/sandbox exec)
+  saw new Codex command executions from the codex app-server (pid 3348786): codex-linux-sandbox pid 137466 at
+  ~12:22:54Z (--command-cwd /home/bobby), pid 138858 + bwrap 138865 at ~12:23:11Z (--command-cwd /), pid 144838 +
+  bwrap 144841 at ~12:24:11Z (--command-cwd /home/bobby/.worktrees). Per the instruction nothing was started: no lock,
+  no trace re-arm, no campaign, no production change. Run worktree data-layer-p184-final-run-5157c8ce stays ready.
+  Next (owner): stop the Codex app-server process itself (the VS Code ChatGPT/Codex extension, or quit the session)
+  rather than its threads, re-check that no codex-linux-sandbox/bwrap exec appears for 120 s, then rerun.
