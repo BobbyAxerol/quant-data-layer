@@ -122,6 +122,16 @@ def argv0_name(info: dict) -> str:
     return os.path.basename(first) if first else info.get("comm", "")
 
 
+IDE_CODEX_PREFIX = "/.vscode-server/extensions/openai.chatgpt-"
+
+
+def is_ide_codex_server(cmdline: str) -> bool:
+    """The VS Code extension's own Codex app-server / code-mode host binary (not a command execution)."""
+    argv0 = cmdline.split(" ", 1)[0]
+    return IDE_CODEX_PREFIX in argv0 and "/bin/" in argv0 and (" app-server" in cmdline or argv0.endswith(
+        "codex-code-mode-host"))
+
+
 def classify_tool(info: dict) -> str | None:
     """Pattern class of a host process, or None. Docker CLI first: any docker invocation counts."""
     names = {info.get("comm", ""), argv0_name(info)}
@@ -219,9 +229,12 @@ class Guard:
         targets agent jobs): the login MOTD of an SSH session, and processes whose ancestry is the owner's VS Code
         server WITHOUT any agent-exec ancestor. Docker CLI and agent execs (codex/codex-linux-sandbox/bwrap) always
         stay foreign, whoever spawned them."""
+        argv = info.get("cmdline", "")
+        if cls == "agent_exec:codex" and is_ide_codex_server(argv):
+            return "owner_ide"  # extension app-server/host restarted by a VS Code reload (amendment 2); paused by
+            # p184_codex_pause_watch.py; its command executions (codex-linux-sandbox/bwrap) remain foreign
         if cls == "docker_cli" or (cls or "").startswith("agent_exec"):
             return None
-        argv = info.get("cmdline", "")
         if "landscape-sysinfo" in argv or "/etc/update-motd.d" in argv:
             return "login_motd"
         current, seen, ide = info["ppid"], 0, False

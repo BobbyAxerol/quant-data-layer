@@ -133,6 +133,16 @@ class ReportOnly(unittest.TestCase):
         other = self.proc(21, 1, "python3", "python3 job.py")
         self.assertIsNone(self.run_label([], other, guard.classify_tool(other)))
 
+    def test_ide_codex_app_server_restart_is_owner_ide_but_its_exec_is_not(self):
+        node = self.proc(10, 1, "node", "/home/bobby/.vscode-server/cli/servers/Stable-x/server/node bootstrap")
+        app = self.proc(12, 10, "codex", "/home/bobby/.vscode-server/extensions/openai.chatgpt-26.1/bin/"
+                        "linux-x86_64/codex -c features.code_mode_host=true app-server --analytics-default-enabled")
+        sandbox = self.proc(13, 12, "codex-linux-san", "/x/codex-linux-sandbox --command-cwd /")
+        self.assertEqual(self.run_label([node], app, guard.classify_tool(app)), "owner_ide")
+        self.assertIsNone(self.run_label([node, app], sandbox, guard.classify_tool(sandbox)))
+        other = self.proc(14, 10, "codex", "/usr/local/bin/codex exec do-something")
+        self.assertIsNone(self.run_label([node], other, guard.classify_tool(other)))
+
 
 if __name__ == "__main__":
     unittest.main()
