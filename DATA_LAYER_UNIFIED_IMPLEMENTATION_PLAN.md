@@ -74466,3 +74466,27 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
   campaign, no production change. Run worktree data-layer-p184-final-run-5157c8ce stays ready.
   Next (owner): the app-server process pid 3348786 keeps executing after the extension was turned off; it has to
   exit (reload/close the VS Code window or end that process) before a clean window exists.
+- 2026-10-17 13:15-13:22Z FINAL stage-100 clean rerun p184-final-campaign-20261017T131831Z: **ABORTED, TAINTED**
+  by an interactive login during the load (Claude subagent; owner ~13:14Z approved pausing Codex, the coordinator
+  SIGSTOPped app-server 3348786 and 3351236 at 13:14:52Z with a SIGCONT timer for ~15:14Z).
+  - Pre-start: codex_watch 60 s CLEAN (13:15:48-13:16:48Z); lock "claude-s100-final-clean" 13:16:54-13:21:44Z
+    (released); docker ps = baseline 40; preflight_env PASS; re-arm rc15/roll_writer_campaign_native.py
+    sha256:a44349a1... 3600 dry run DRY_RUN, real OK (delta [TS_DELIVERY_TRACE_UNTIL_UNIX_NS], not_ready_samples 0),
+    writer recreated 13:17:14Z on a44349a1, trace until 1792246629297860905 (14:17:09Z); campaign dry run problems [].
+  - Campaign from DL run worktree data-layer-p184-final-run-5157c8ce (tool/observer/budget/addendum cf26d6e3/
+    ff4f5989/ff85335b/4ed59dca, same command shape as 105025Z), guard --abort. g6_ts_started 13:18:49.56Z,
+    driver_started 13:18:54.54Z, G4 window 1 started 13:20:54.54Z. At 13:21:05.4Z an SSM session worker (owner) and
+    sshd login started; the login MOTD ran `/usr/bin/python3 /usr/bin/landscape-sysinfo` (root, pid 354157, 0.32 core)
+    -> TAINTED 13:21:06.30Z -> SIGINT driver (driver_exit -2 at 13:21:07.00Z), SIGINT campaign (exit 130, no
+    scorecard), G6 probe pid 179 SIGTERM rc 0, G4 observer g4-1 removed rc 0 -> ABORTED 13:21:08.995Z; run DONE
+    13:21:29Z; G11 watcher GUARD_ABORTED_NO_RESTART. The login then started a new VS Code extension host
+    (pid 354551) and a NEW Codex app-server pid 355061 (running, not stopped) plus claude processes (post-load).
+    G1-G14 NOT_MEASURED for this run.
+  - Receipts (sha256): campaign.json b4fc5510..., timeline.jsonl f0ecbe2d..., .run.log 788605a1..., .guard.log
+    fd5c3546..., guard/summary.json a8116833..., guard/processes.jsonl de984845..., guard/ABORTED e5f6131f...,
+    guard/TAINTED 527acd09....
+  - Teardown: 0 campaign containers (docker ps = baseline), cleaner tails removed by the guard (0 left), writer
+    a44349a1 rc 0. Not rerun: an operator login is not an infrastructure fault.
+  - Next (owner/coordinator): no interactive logins / VS Code reconnects during the window; the new Codex app-server
+    355061 is not covered by the SIGSTOP or the SIGCONT timer; then rerun with a fresh re-arm (trace until 14:17Z
+    would not fit a full run plus G11 after ~13:25Z).
