@@ -74221,3 +74221,68 @@ Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs
     not run yet; no provenance or drift issue. Output p184-g13-20261017T092651Z/verify/w05-isolated-final-a44349a1.json.
   - Teardown: every summary has dl_source.removed true and removed_leftovers {}. Afterwards 0 p184- containers,
     networks or volumes, 0 /tmp/p184-dr05-*. TS run worktree clean.
+- 2026-10-17 09:37-09:58Z FINAL chain step 3, G13 runtime window packet v5.3 on writer a44349a1: **STOPPED at 67/76**.
+  dr05-transport failed (DR05_CLONE_STRICT_RESUME_NOT_VERIFIED on its first scope), 9 cells open. Not rerun: not a
+  clear infrastructure fault. Stage-100 final (step 4) NOT run (Claude subagent).
+  - Packet p1/packet-g13-v5.3-20261017.md sha256 270c0cfc... (sidecar written 08:50Z, checked OK at the window
+    start). Generated from the DRAFT with make_g13v53.py 406daa1d... (`--image a44349a1 --ci-run 39016064886
+    --out-suffix=-ci`): compose 2a51fd39... (26 changed paths, allowed keys only), FX plan g13r6fx01 21bf3f78...,
+    inputs-ci 3a302fac..., alpha compose v4.3 96225365... unchanged. Records the approvals (~05:45Z, ~06:20Z
+    "Duyệt cả hai", ~08:40Z "Chạy roll"), the gate 0.10 waiver carry-over and the CI delta 6af62a7e..1f324001
+    (e04d66df proof harness + plan/register) and 1f324001..c385aaf6 (plan). CI not independently verified (no gh);
+    the runner passes only the boolean --ci-confirmed (DL scripts/p184_g13_final.py:683).
+  - Gates: dry run exit 0, blocked {}, 6 steps / 66 cells, coverage 76/76 (missing []); deployed_mismatches [];
+    checkout_problems []; writer env view (14 keys) and image equal the G12 credit-snapshot writer; all images present.
+  - Lock "claude P18.4 G13 v5.3 window (packet-g13-v5.3-20261017)" 09:37:15Z (150 min), released 09:58:06Z.
+  - Step 2: B9 migrations 99/99 pending [] mismatch []; B16 open native orders {} (binding digest 037a689d..., 10
+    accounts incl. the 4 g13r6wa20261017); B14 DNS 4/4; INDEX BINANCE:USD_M:BTCUSDT present=false (as v5.2); B10 CA
+    fc24c047... x3; bind sources 55 (8 identity files checked with alpine test -s).
+  - Step 3: FX seed g13r6fx01 FX_PROOF_SEED_COMMITTED, writes 4. Step 4: preflight_env PASS x2, compose config 0 x2.
+  - Step 5: ts-p184 up 09:38:24Z, 8 containers, 0 restarts, 7 roles on a44349a1, Gateway health 200 + "Gateway V3
+    Online", Traceback/401/UNAUTHENTICATED/BINDING_MISMATCH/NOT_IN_DURABLE_CANARY all 0; Gateway writer scope holds the
+    4 g13r6wa20261017 accounts. Step 6: B12 4/4 = 1. Step 7: alphas up 09:39:33Z, 2 running, 0 restarts, warmup 700
+    rows both venues, no new data-source row (last rows 2026-10-12), 0 non-200. Step 7b: FX snapshot 09:38:29Z,
+    validated_at_ms set, 1 rate; 0 BB orders.
+  - Runner p184-g13-20261017T094028Z (09:40:28-09:54:58Z, exit 1; summary.json 2f6b9ddd..., plan.json 625b2cb1...;
+    sealed DL export tree f49811a5..., removed):
+    - dr01-deployed 7 cells, exit [0,0,0,0,0], harness_ok, 25.7 s
+    - dr01-wrong-account 2 cells, [0,0], harness_ok, 4.7 s (cleanup complete true)
+    - dr02-dr03-alpha 14 cells, [0,0,0], harness_ok, 506.9 s
+    - dr04-dr06-views 22 cells, [0,0,0,0], harness_ok, 129.0 s
+    - **dr05-transport 9 cells, exit [1], harness_ok false, 197.3 s, 0 rows** (receipt 8487388f..., harness.log
+      6419efd0...)
+    - dr07-reference 12 cells, [0], harness_ok, 4.2 s
+  - dr05-transport failure, verbatim (harness.log):
+    `RuntimeError: DR05_CLONE_STRICT_RESUME_NOT_VERIFIED:{"alive": true, "ready": false, "refusals": {"count": 0,
+    "last": []}}` from TS scripts/p184_dr05_isolated.py:468 (strict_restart, called at :706). Lifecycle record: phase
+    STRICT, bootstrap exit 0 (09:51:39-09:51:48Z, not OOM), bootstrap_refusals 0, native checkpoint
+    cursors/fixed-workers-v1/native-4/trading-system.paper.stable.json present (4245 B), env delta
+    MARKET_DATA_NATIVE_REQUIRE_RESUME 0 -> 1 only, strict_started_ms 1792230709670 (09:51:49.67Z), strict_refusals 0,
+    strict_resume FAILED. First scope of --venues BINANCE OKX OKX_INVERSE, so no scope produced rows. The clone was
+    removed by the harness cleanup (writer, state, dir, pg, redis, network: all ok); no view, heartbeat or stderr
+    snapshot was kept.
+    - The ready predicate (:698-702) needs every clone view APPROVED **and** observed_at_ms > strict_started_ms within
+      --ready-seconds 180. The writer was alive with zero HANDOFF_RESUME refusals, so it resumed but at least one view
+      did not show a post-restart observed_at in 180 s.
+    - Reading (inferred, NOT verified): IDR-110b R1 renews a restored quiet key by same-record identity after a strict
+      restart, which keeps the old record's observed_at; a quiet route would then never satisfy "observed_at >
+      strict start". On 7c71e3af (v5.2 window 025058Z) the same step was VERIFIED on all 3 scopes. Load1 reached
+      16.85-16.88 at 09:54Z (production load); no writer/DL restart and 0 QUOTA/RESOURCE_EXHAUSTED lines in the
+      production writer log during the window (30 s abort watch).
+  - W05 verifier in a44349a1 (--network none, --expect-source-sha 6af62a7e, --expect-image-digest a44349a1) over the 6
+    runtime jsonl + the 3 final isolated files: **67/76**, exit 1. DR01 9/9, DR02 8/8, DR03 6/6, DR04 14/14, DR05
+    8/17, DR06 6/6, DR07 12/12, DR08 4/4. Only issue CASE_OPEN on the 9 dr05-transport cells
+    (APPROVED_FALLBACK_AND_RETURN_NO_FORBIDDEN_V1, DISCONNECT_RECONNECT, STALE_TYPED x BINANCE/OKX/OKX_INVERSE). No
+    provenance or drift issue. Output verify/w05-final-v53.json 23eeb0e8....
+  - Teardown: alpha compose down (2 removed); ts-p184 down (8 containers + network ts-p184-private removed); FX
+    g13r6fx01 FX_PROOF_SEED_DEACTIVATED (3 x UPDATE 1); wrong-account rows deactivated by the probe (complete true);
+    DSN env file p1/r2/dr07-postgres.env and p1/r2/ removed. Afterwards 0 ts-p184 / p184-g13- / p184-dr05-
+    containers, networks, volumes; 0 /tmp/p184-dr05-*. Writer a44349a1 RestartCount 0 (started 08:43:06Z); all DL
+    roles RestartCount 0. Disk +186 MB. Run worktrees clean (one ignored scripts/__pycache__ pyc in the DL run worktree,
+    from an in-session import, removed).
+  - Taint watch: one foreign container name "priceless_cannon" at 09:55:56Z, after the runner had exited
+    (09:54:58Z) and during teardown; gone at the next poll. Otherwise 0 foreign containers/jobs.
+  - Status: G13 final = 67/76 on a44349a1, NOT complete. Open: the 9 dr05-transport cells. Coordinator decision
+    needed: diagnose the strict-ready miss (keep the clone views/heartbeat before cleanup, compare observed_at of each
+    view with strict_started_ms) and decide whether this is IDR-110b behaviour or a harness predicate that does not
+    fit same-record renewal. Stage-100 final was not started because the chain stops here.
