@@ -23,6 +23,7 @@ campaign by container):
   labelled campaign / apparatus), docker/containerd plumbing (dockerd, containerd, shims, runc, docker-proxy/init),
   kernel threads;
 * own_session: descendants of --own-session-pid (the coordinating agent's session); recorded, report-only;
+* owner_ide / login_motd: the owner's VS Code server tree (no agent-exec ancestor) and SSH login MOTD; report-only;
 * resident: host processes alive when the guard started; recorded only when one uses > --cpu-core core in a 1 s
   sample (report-only);
 * foreign (TAINT when it overlaps the load): a new host process that is a docker CLI of any kind, or one of
@@ -213,6 +214,29 @@ class Guard:
             seen += 1
         return None
 
+    def report_only_label(self, pid: int, info: dict, cls: str | None) -> str | None:
+        """Owner interactive activity recorded but not tainting (coordinator amendment 2026-10-17, AGENTS.md 34a
+        targets agent jobs): the login MOTD of an SSH session, and processes whose ancestry is the owner's VS Code
+        server WITHOUT any agent-exec ancestor. Docker CLI and agent execs (codex/codex-linux-sandbox/bwrap) always
+        stay foreign, whoever spawned them."""
+        if cls == "docker_cli" or (cls or "").startswith("agent_exec"):
+            return None
+        argv = info.get("cmdline", "")
+        if "landscape-sysinfo" in argv or "/etc/update-motd.d" in argv:
+            return "login_motd"
+        current, seen, ide = info["ppid"], 0, False
+        while current > 1 and seen < 64:
+            parent = read_proc(current)
+            if parent is None:
+                break
+            names = {parent["comm"], argv0_name(parent)}
+            if names & AGENT_EXEC:
+                return None
+            if "/.vscode-server/" in parent["cmdline"]:
+                ide = True
+            current, seen = parent["ppid"], seen + 1
+        return "owner_ide" if ide else None
+
     def start_ts(self, info: dict) -> float:
         return self.btime + info["start_ticks"] / CLK_TCK
 
@@ -246,12 +270,21 @@ class Guard:
                 elif baseline:
                     record["label"] = "resident"
                 else:
-                    record["label"] = "new"
-                    record["class"] = classify_tool(info)
+                    cls = classify_tool(info)
+                    report_only = self.report_only_label(pid, info, cls)
+                    if report_only:
+                        record["label"] = report_only
+                    else:
+                        record["label"] = "new"
+                        record["class"] = cls
             self.known[pid] = record
             if record["label"] == "own_session" and not baseline:
                 self.write("own_session.jsonl", {"pid": pid, "ppid": info["ppid"], "cmdline": info["cmdline"],
                                                  "start": utc(record["start"]), "seen": utc(now)})
+            if record["label"] in ("owner_ide", "login_motd") and not baseline:
+                self.write("report_only.jsonl", {"pid": pid, "ppid": info["ppid"], "label": record["label"],
+                                                 "cmdline": info["cmdline"][:300], "start": utc(record["start"]),
+                                                 "seen": utc(now)})
             if record["label"] == "new":
                 kind = "foreign" if record["class"] else "other_new"
                 self.flag(record, kind, record["class"] or "other", now)

@@ -91,5 +91,48 @@ class Parsers(unittest.TestCase):
         self.assertIsNone(guard.core_progress("not json"))
 
 
+class ReportOnly(unittest.TestCase):
+    """Owner interactive activity (VS Code server tree, SSH login MOTD) is report-only; agent execs never are."""
+
+    def run_label(self, chain, me, cls):
+        procs = {p["pid"]: p for p in chain}
+        orig = guard.read_proc
+        guard.read_proc = lambda pid: procs.get(pid)
+        try:
+            g = guard.Guard.__new__(guard.Guard)
+            return guard.Guard.report_only_label(g, me["pid"], me, cls)
+        finally:
+            guard.read_proc = orig
+
+    @staticmethod
+    def proc(pid, ppid, comm, cmdline):
+        return {"pid": pid, "ppid": ppid, "comm": comm, "cmdline": cmdline}
+
+    def test_vscode_tree_without_agent_is_owner_ide(self):
+        node = self.proc(10, 1, "node", "/home/bobby/.vscode-server/cli/servers/Stable-x/server/node bootstrap")
+        git = self.proc(11, 10, "git", "git blame --root x")
+        self.assertEqual(self.run_label([node], git, guard.classify_tool(git)), "owner_ide")
+
+    def test_codex_exec_under_vscode_stays_foreign(self):
+        node = self.proc(10, 1, "node", "/home/bobby/.vscode-server/cli/servers/Stable-x/server/node bootstrap")
+        app = self.proc(12, 10, "codex", "/home/bobby/.vscode-server/extensions/openai/codex app-server")
+        sandbox = self.proc(13, 12, "codex-linux-san", "codex-linux-sandbox --command-cwd /")
+        child = self.proc(14, 13, "python3", "python3 -B -")
+        self.assertIsNone(self.run_label([node], app, guard.classify_tool(app)))
+        self.assertIsNone(self.run_label([node, app], sandbox, guard.classify_tool(sandbox)))
+        self.assertIsNone(self.run_label([node, app, sandbox], child, guard.classify_tool(child)))
+
+    def test_docker_cli_under_vscode_stays_foreign(self):
+        node = self.proc(10, 1, "node", "/home/bobby/.vscode-server/cli/servers/Stable-x/server/node bootstrap")
+        dock = self.proc(15, 10, "docker", "docker image ls")
+        self.assertIsNone(self.run_label([node], dock, guard.classify_tool(dock)))
+
+    def test_login_motd_and_unrelated_process(self):
+        motd = self.proc(20, 1, "landscape-sysin", "/usr/bin/python3 /usr/bin/landscape-sysinfo")
+        self.assertEqual(self.run_label([], motd, guard.classify_tool(motd)), "login_motd")
+        other = self.proc(21, 1, "python3", "python3 job.py")
+        self.assertIsNone(self.run_label([], other, guard.classify_tool(other)))
+
+
 if __name__ == "__main__":
     unittest.main()
