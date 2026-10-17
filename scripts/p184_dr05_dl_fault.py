@@ -240,6 +240,14 @@ def image_set(work=None):
     return dict(IMAGES)
 
 
+def query_entry(work):
+    """The query role's script: the DR05 diagnostic Query, or, once scripts/p184_dr05_quiet.py --seal added the
+    quiet TRADE lane (handoff "dr05_quiet"), the same Query reading provider-session liveness from the work dir."""
+    handoff = Path(work) / "handoff.json"
+    quiet = handoff.is_file() and json.loads(handoff.read_text()).get("dr05_quiet") is not None
+    return "scripts/p184_dr05_quiet.py" if quiet else "scripts/p184_dr05_observer.py"
+
+
 def topology(ns, work, topic_id="", *, core_binary=None, images=None):
     """Generate executable Docker argv, but do not execute or discover config.
 
@@ -278,7 +286,7 @@ def topology(ns, work, topic_id="", *, core_binary=None, images=None):
             ["/usr/local/bin/qdl-stream-gateway", "serve"]),
         "query": ("query", "512m", "0.5", {**common, "PYTHONPATH": "/app:/app/generated/python",
             "PYTHONDONTWRITEBYTECODE": "1"},
-            ["python", "-B", "scripts/p184_dr05_observer.py", "--query", "/work"]),
+            ["python", "-B", query_entry(work), "--query", "/work"]),
     }
     result = {}
     for role, (image, memory, cpus, env, command) in spec.items():

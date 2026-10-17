@@ -84,8 +84,10 @@ class CoverageTests(unittest.TestCase):
 
 class SelectionTests(unittest.TestCase):
     def test_isolated_runs_before_runtime_in_matrix_order(self):
-        self.assertEqual(g13.select("all"), list(g13.STEPS))
-        self.assertEqual(g13.select("isolated"), ["dr05-upstream", "dr08-isolated"])
+        phase = {s[0]: s[1] for s in g13.STEP_SPEC}
+        self.assertEqual(g13.select("all"), [s for s in g13.STEPS if phase[s] == "isolated"]
+                         + [s for s in g13.STEPS if phase[s] == "runtime"])
+        self.assertEqual(g13.select("isolated"), ["dr05-upstream", "dr08-isolated", "dr05-quiet"])
         self.assertIn("dr01-wrong-account", g13.select("runtime"))
         self.assertEqual(g13.select("all", ("dr07-reference", "dr08-isolated")), ["dr08-isolated", "dr07-reference"])
 
@@ -686,6 +688,80 @@ class WrongAccountRunIdTests(unittest.TestCase):
         bounded.assert_not_called()
         self.assertNotIn("deferred", receipt)
         self.assertIn("WRITER_SCOPE_DENIES_RUNNER_ACCOUNTS", receipt["error"])
+
+
+class QuietDr05Tests(unittest.TestCase):
+    """dr05-quiet (TS case matrix v2 amendment-1): a second, isolated producer of the two QUIET cells only."""
+
+    def test_quiet_cells_have_exactly_the_amended_second_producer(self):
+        producers = {}
+        for step, _, step_cells, *_ in g13.STEP_SPEC:
+            for cell in step_cells:
+                producers.setdefault(cell, []).append(step)
+        self.assertEqual({c: p for c, p in producers.items() if len(p) > 1},
+                         {c: ["dr04-dr06-views", "dr05-quiet"] for c in sorted(g13.AMENDED_SECOND_PRODUCER)})
+        self.assertEqual(g13.AMENDED_SECOND_PRODUCER, frozenset(g13.cells("DR05", ("QUIET_TYPED",))))
+        original = g13.STEP_SPEC
+        try:  # a third producer, or a second one for another cell, is still a duplicate
+            g13.STEP_SPEC = original + (("x", "isolated", ("DR05.QUIET_TYPED@OKX", "DR04.QUOTE_BBO@OKX"), 1, 1, ()),)
+            self.assertEqual(g13.coverage()["duplicates"], ["DR04.QUOTE_BBO@OKX", "DR05.QUIET_TYPED@OKX"])
+        finally:
+            g13.STEP_SPEC = original
+
+    def test_quiet_step_commands(self):
+        result = make_plan("isolated")
+        self.assertEqual(result["blocked"], {})
+        steps = {e["step"]: e for e in result["steps"]}
+        commands = steps["dr05-quiet"]["commands"]
+        self.assertEqual([c["argv"][2:4] for c in commands],
+                         [["scripts/p184_dr05_dl_fault.py", "--init"], ["scripts/p184_dr05_quiet.py", "--seal-host"],
+                          ["scripts/p184_dr05_dl_fault.py", "--up"], ["scripts/p184_dr05_dl_fault.py", "--ready"],
+                          ["scripts/p184_dr05_quiet.py", "--work"], ["scripts/p184_dr05_dl_fault.py", "--down"]])
+        init = commands[0]["argv"]
+        self.assertEqual([init[i + 1] for i, a in enumerate(init) if a == "--scope"], ["BINANCE", "OKX"])
+        self.assertIn("python=" + PY, init)
+        adapter = commands[4]["argv"]
+        self.assertEqual(commands[4]["cwd"], "/ts")
+        self.assertEqual(adapter[adapter.index("--image") + 1], WRITER)
+        self.assertEqual(adapter[adapter.index("--image-digest") + 1], WRITER)
+        self.assertEqual(adapter[adapter.index("--source-sha") + 1], FINAL["ts_sha"])
+        self.assertEqual(adapter[adapter.index("--venues") + 1:], ["BINANCE", "OKX"])
+        self.assertEqual(steps["dr05-quiet"]["owned_prefixes"], ["p184-dr05-"])
+        self.assertIn("dr05-quiet", g13.WRITER_CLONE_STEPS)
+        self.assertTrue(g13.needs_deployed_inventory(["dr05-quiet"]))
+        inputs = {k: v for k, v in INPUTS.items() if k != "dr05_catalog"}
+        self.assertIn("MISSING_INPUTS: dr05_catalog", make_plan("isolated", inputs=inputs)["blocked"]["dr05-quiet"])
+
+    def test_quiet_runner_down_always_runs_and_channel_is_built_from_the_handoff(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp) / "dr05-quiet"
+            (work / "work").mkdir(parents=True)
+            (work / "work/handoff.json").write_text(json.dumps({"namespace": "p184-dr05-dl-0123456789abcdef"}))
+            entry = {e["step"]: e for e in make_plan("isolated")["steps"]}["dr05-quiet"]
+            for c in entry["commands"]:
+                if c["cwd"] != "/ts":
+                    c["cwd"] = str(g13.DL_ROOT)
+            calls = []
+
+            def bounded(c, deadline, log):
+                calls.append(c["argv"])
+                return 0
+            with mock.patch.object(g13, "bounded", bounded):
+                codes = g13.run_dr05_quiet(entry, FINAL, INPUTS, work, 1e12, None, Path("/ts"))
+            self.assertEqual(codes, [0] * 6)
+            adapter = calls[4]
+            self.assertEqual(adapter[adapter.index("--namespace") + 1], "p184-dr05-dl-0123456789abcdef")
+            self.assertIn("--channel /work", adapter[adapter.index("--dl-channel") + 1])
+            self.assertEqual(calls[-1][3], "--down")
+            calls.clear()
+
+            def failing(c, deadline, log):
+                calls.append(c["argv"])
+                return 1 if c["argv"][3] == "--up" else 0
+            with mock.patch.object(g13, "bounded", failing), self.assertRaises(RuntimeError):
+                g13.run_dr05_quiet(entry, FINAL, INPUTS, work, 1e12, None, Path("/ts"))
+            self.assertEqual([a[3] for a in calls], ["--init", "--seal-host", "--up", "--down"])
 
 
 class InverseDr05Tests(unittest.TestCase):

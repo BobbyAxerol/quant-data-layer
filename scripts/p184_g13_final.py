@@ -12,6 +12,10 @@ ONLY the existing harnesses, sequentially, each under a hard timeout:
                     scripts/p184_dr05_upstream.py (GAP_REFUSAL / GENERATION_CHANGE_FENCED; scopes BINANCE, OKX and
                     OKX_INVERSE = BTC-USD-SWAP BOOK, defined by the --catalog input `dr05_catalog`)
     dr08-isolated   DL scripts/p184_dr08_isolated.py --orchestrate (QUALIFICATION mode, >= 5 restart samples)
+    dr05-quiet      DL scripts/p184_dr05_dl_fault.py (linear scopes) + p184_dr05_quiet.py (--seal-host: one TRADE lane
+                    per scope, TS paper TRADE requirement; --channel: session heartbeat + trades), TS
+                    scripts/p184_dr05_quiet.py (DR05.QUIET_TYPED at ISOLATED_FAULT, TS case matrix v2 amendment-1,
+                    owner 2026-10-17; a second producer of the two QUIET cells next to dr04-dr06-views)
   RUNTIME phase (reads the shared stack after the final rollout; needs the owner-approved runtime packet):
     dr01-deployed   DL scripts/p184_dr01_deployed.py prepare/probe/record (7 DL cells); inputs dr01.manifest_dir
                     (the deployed reader realm dir) + dr01.manifest_revision, optional dr01.wrong_revision; each is
@@ -119,7 +123,7 @@ GATEWAY_STEPS = ("dr01-wrong-account",)
 # Steps whose TS WriterClone copies the DEPLOYED writer's env (TS scripts/p184_dr05_isolated.WriterClone inspects
 # market_data_service_p184w) while running --writer-image: the deployed writer must be the final writer, or the clone
 # would pair the final image with another build's configuration (B17 parity, 2026-10-16).
-WRITER_CLONE_STEPS = ("dr05-upstream", "dr05-transport")
+WRITER_CLONE_STEPS = ("dr05-upstream", "dr05-transport", "dr05-quiet")
 
 
 def cells(case, names, venues=VENUES):
@@ -156,6 +160,9 @@ DR_CELLS = {
 # Every DR cell has a producer: the inverse DR05 faults run in the DL fault harness (--scope OKX_INVERSE with a
 # source catalog defining BTC-USD-SWAP) and the TS writer clone (--venues ... OKX_INVERSE). Kept for listing open cells.
 NO_PRODUCER = ()
+# Cells with two producers by an owner-approved method amendment (TS case matrix v2 amendment-1, 2026-10-17): the
+# runtime dr04-dr06-views probe (RUNTIME) and the isolated dr05-quiet step (ISOLATED_FAULT). Not a duplicate.
+AMENDED_SECOND_PRODUCER = frozenset({"DR05.QUIET_TYPED@BINANCE", "DR05.QUIET_TYPED@OKX"})
 DR05_SCOPES = VENUES + INVERSE  # p184_dr05_dl_fault.py --scope / TS p184_dr05_upstream.py, p184_dr05_isolated.py --venues
 
 # DR -> (decision, reason). Same table as upgrade/evidence/p184-g13-inherit-rerun-matrix.md.
@@ -191,6 +198,8 @@ STEP_SPEC = (
                                                  "APPROVED_FALLBACK_AND_RETURN_NO_FORBIDDEN_V1"), DR05_SCOPES), 1500, 8,
      ("p184-dr05-",)),
     ("dr07-reference", "runtime", DR_CELLS["DR07"], 600, 2, ("p184-g13-dr07-",)),
+    # isolated, appended (select() orders by phase): TS case matrix v2 amendment-1, the second QUIET producer
+    ("dr05-quiet", "isolated", cells("DR05", ("QUIET_TYPED",)), 1500, 12, ("p184-dr05-",)),
 )
 STEPS = tuple(s[0] for s in STEP_SPEC)
 
@@ -205,7 +214,8 @@ def coverage():
     """Every DR cell is either produced by exactly one step or listed in NO_PRODUCER."""
     produced = [c for s in STEP_SPEC for c in s[2]]
     every = [c for case in sorted(DR_CELLS) for c in DR_CELLS[case]]
-    duplicates = sorted({c for c in produced if produced.count(c) > 1})
+    duplicates = sorted({c for c in produced if produced.count(c) > 1 and not (
+        c in AMENDED_SECOND_PRODUCER and produced.count(c) == 2)})
     missing = sorted(set(every) - set(produced) - set(NO_PRODUCER))
     extra = sorted(set(produced) - set(every))
     return {"cells": len(every), "produced": len(set(produced)), "no_producer": list(NO_PRODUCER),
@@ -398,6 +408,7 @@ def required_inputs(step):
     return {
         "dr05-upstream": ("dr05_public_export", "dr05_catalog", "redis_image", "postgres_image"),
         "dr08-isolated": (),
+        "dr05-quiet": ("dr05_public_export", "dr05_catalog", "redis_image", "postgres_image"),
         "dr01-deployed": ("dr01.inventory", "dr01.deployments.BINANCE", "dr01.deployments.OKX", "dr01.compose",
                           "dr01.alpha_service.BINANCE", "dr01.alpha_service.OKX", "dr01.manifest_dir",
                           "dr01.manifest_revision"),
@@ -610,6 +621,19 @@ def commands(step, final, inputs, work, ts_root, dl_root):
                           "--redis-image", inputs["redis_image"], "--postgres-image", inputs["postgres_image"],
                           *ts_ev, "--output", work / "dr05-upstream-rows.jsonl", "--dl-root", dl_root,
                           "--venues", *DR05_SCOPES], cwd=ts_root),
+                cmd(py + ["scripts/p184_dr05_dl_fault.py", "--down", w], cwd=dl_root)]
+    if step == "dr05-quiet":
+        w = work / "work"
+        scopes = [a for scope in VENUES for a in ("--scope", scope)]
+        return [cmd(py + ["scripts/p184_dr05_dl_fault.py", "--init", w, "--core-config", inputs["dr05_public_export"],
+                          *harness_image_args(final), *scopes, "--catalog", inputs["dr05_catalog"]], cwd=dl_root),
+                cmd(py + ["scripts/p184_dr05_quiet.py", "--seal-host", w], cwd=dl_root),
+                cmd(py + ["scripts/p184_dr05_dl_fault.py", "--up", w], cwd=dl_root),
+                cmd(py + ["scripts/p184_dr05_dl_fault.py", "--ready", w], cwd=dl_root),
+                cmd(py + ["scripts/p184_dr05_quiet.py", "--work", w, "--namespace", "<from handoff.json>",
+                          "--dl-channel", "<built from handoff namespace>", "--image", final["writer"],
+                          "--redis-image", inputs["redis_image"], "--postgres-image", inputs["postgres_image"],
+                          *ts_ev, "--output", work / "dr05-quiet-rows.jsonl", "--venues", *VENUES], cwd=ts_root),
                 cmd(py + ["scripts/p184_dr05_dl_fault.py", "--down", w], cwd=dl_root)]
     if step == "dr08-isolated":
         return [cmd(py + ["scripts/p184_dr08_isolated.py", "--orchestrate", work / "work", "--ts-source-sha",
@@ -1024,6 +1048,31 @@ def run_dr05_upstream(entry, final, inputs, work, deadline, log, ts_root):
     return codes
 
 
+def run_dr05_quiet(entry, final, inputs, work, deadline, log, ts_root):
+    """init -> seal -> up -> ready -> TS quiet runner over the quiet channel; --down always runs."""
+    import importlib.util
+    init, seal, up, ready, adapter, down = entry["commands"]
+    dl_root = Path(init["cwd"])  # the sealed export
+    spec = importlib.util.spec_from_file_location("g13_dr05_quiet", dl_root / "scripts/p184_dr05_quiet.py")
+    quiet = importlib.util.module_from_spec(spec)  # host-side argv helpers only (stdlib + the DR05 module)
+    spec.loader.exec_module(quiet)
+    codes = []
+    try:
+        for c in (init, seal, up, ready):
+            codes.append(bounded(c, deadline, log))
+            if codes[-1]:
+                raise RuntimeError("DR05 quiet DL stack step failed: " + c["argv"][3])
+        ns = json.loads((work / "work/handoff.json").read_text())["namespace"]
+        channel = shlex.join(quiet.channel_argv(work / "work"))
+        argv = [ns if a == "<from handoff.json>" else channel if a == "<built from handoff namespace>" else a
+                for a in adapter["argv"]]
+        codes.append(bounded({**adapter, "argv": argv}, deadline, log))
+    finally:
+        if (work / "work/handoff.json").exists():
+            codes.append(bounded(down, time.monotonic() + 600, log))
+    return codes
+
+
 def run_step(entry, final, inputs, ts_root):
     work = Path(inputs["_root"]) / entry["step"]
     work.mkdir(mode=0o700)
@@ -1054,6 +1103,8 @@ def run_step(entry, final, inputs, ts_root):
                     raise Blocked(problem)
             if entry["step"] == "dr05-upstream":
                 codes = run_dr05_upstream(entry, final, inputs, work, deadline, log, ts_root)
+            elif entry["step"] == "dr05-quiet":
+                codes = run_dr05_quiet(entry, final, inputs, work, deadline, log, ts_root)
             else:
                 for c in entry["commands"]:
                     if c["argv"][2:3] == [str(ts_root / "scripts/p184_dr_alpha_reads.py")] and entry["step"] in CONCAT:
