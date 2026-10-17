@@ -1,0 +1,361 @@
+{
+ "schema": "qdl.release-equivalence.v1",
+ "release": "2.2.4",
+ "status": "DRAFT_PARTIAL",
+ "status_note": "Every field below was read from a file or docker inspect on 2026-10-17 (sources listed). Fields marked <<PENDING:...>> need the final stage-100 / G13 receipts. Not a certificate.",
+ "source_rev": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
+ "images": {
+  "rust": {
+   "tag": "qdl-v2-rust:2.2.4-c7ce7d3",
+   "digest": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e"
+  },
+  "python": {
+   "tag": "qdl-v2-python:2.2.4-c7ce7d3",
+   "digest": "sha256:c21e164ac4db14af498b73104e344f003fa7117fdae2e465f50df8668cdca252"
+  }
+ },
+ "build_receipt": {
+  "path": "~/.local/state/qdl-v2/build-v2.2.4-c7ce7d3/receipt.json",
+  "sha256": "40d727b28a3a581eb9c5911e150a39ae0dac68d8d0a9afbb5cceee47b4cb4f7f",
+  "status": "FAIL",
+  "note": "status stays FAIL (two whole-file expectations, qdl-projector vs rc22 and qdl-stream-gateway vs baa72c96); resolved by the addendum, not by editing the receipt",
+  "script_sha256": "52df319ee9b294cdc16821156ff80ed29cdd4adf29afa14cb63347c995ee28f7",
+  "source_archive_sha256": "6614de10c031a1f101d33be6cd2dea71a83b840498cd9c6e40b00f4d04d8ce1b"
+ },
+ "postcheck_addendum": {
+  "path": "~/.local/state/qdl-v2/build-v2.2.4-c7ce7d3/postcheck-addendum.json",
+  "sha256": "dad31fe8dc7f768de72e7577951af61d726689d8b32fcf5153046fd9bb190260",
+  "md_sha256": "1506aa4e597f4e2d667f34df4ad9f62ca691c2f16a4b190aefe76983c502f1be",
+  "decision": "coordinator (owner-delegated) 2026-10-16: keep both images, no rebuild; replace two whole-file expectations by section-level/build-path verdicts with a behavioural proof"
+ },
+ "production_roll": {
+  "summary_path": "~/.local/state/qdl-v2/releases/v2.2.4/rollout/roll-summary-20261016.json",
+  "summary_sha256": "eefb041c5ece53c17d28148eb3fa1c2e6be64f84b79ab20e6442f1bd44c0b271",
+  "written_utc": "2026-10-16T17:53:15Z",
+  "lock": {
+   "owner": "claude-dl-roll",
+   "started_utc": "2026-10-16T17:13:22Z",
+   "until_utc": "2026-10-16T19:13:22Z"
+  }
+ },
+ "measured_in_final_stage100": "<<PENDING:S100_DIR + scorecard sha256 (the final stage-100 measures the release digests directly)>>",
+ "roles": [
+  {
+   "role": "query_kn_1",
+   "measured_digest_pre_release": "sha256:b9ca6c36fb0ad003b77e47bb3a777c3e565944d59cb3a2e9bc5dfb68e3448481 (qdl-v2-python:2.2.3-rc19-4d3476c)",
+   "release_digest": "sha256:c21e164ac4db14af498b73104e344f003fa7117fdae2e465f50df8668cdca252",
+   "verdict": "FILES_EQUAL_EXCEPT_GIT_DERIVED_SET",
+   "basis": "Python files compared with rc19 (438 vs 438): only the 9 git-derived files differ; pip freeze equal; no unexpected difference",
+   "python_files": {
+    "files_reference": 438,
+    "files_release": 438,
+    "observed_different": [
+     "config/v2/kn-v220-candidate-budget.json",
+     "generated/python/qdl/query/v2/query_pb2.py",
+     "generated/rust/qdl/query/v2/qdl.query.v2.rs",
+     "qdl/certification/phase3_consumer_load.py",
+     "qdl_sdk/CHANGELOG.md",
+     "qdl_sdk/README.md",
+     "qdl_sdk/__init__.py",
+     "qdl_sdk/client.py",
+     "qdl_sdk/transport.py"
+    ],
+    "unexpected_different": [],
+    "pip_freeze_equal": true
+   },
+   "roll_receipt": "/home/bobby/.local/state/qdl-v2/p184-d3-capacity-20261009/rollout-rc15/query_kn_1-receipt-20261016T171446Z.json",
+   "roll_receipt_sha256": "500fc392226da709ed3ab4caa52d164928fef30b66fe43c69e38120cf8c1d021",
+   "rollback_compose_sha256": "a3c313dbb8181a268a18650d6d63cb6e895997c9514d5a36dcf999fda5198583",
+   "old_image": "sha256:b9ca6c36fb0ad003b77e47bb3a777c3e565944d59cb3a2e9bc5dfb68e3448481",
+   "restart_count_at_roll": 0
+  },
+  {
+   "role": "query_kn_2",
+   "measured_digest_pre_release": "sha256:b9ca6c36fb0ad003b77e47bb3a777c3e565944d59cb3a2e9bc5dfb68e3448481 (qdl-v2-python:2.2.3-rc19-4d3476c)",
+   "release_digest": "sha256:c21e164ac4db14af498b73104e344f003fa7117fdae2e465f50df8668cdca252",
+   "verdict": "FILES_EQUAL_EXCEPT_GIT_DERIVED_SET",
+   "basis": "Python files compared with rc19 (438 vs 438): only the 9 git-derived files differ; pip freeze equal; no unexpected difference",
+   "python_files": {
+    "files_reference": 438,
+    "files_release": 438,
+    "observed_different": [
+     "config/v2/kn-v220-candidate-budget.json",
+     "generated/python/qdl/query/v2/query_pb2.py",
+     "generated/rust/qdl/query/v2/qdl.query.v2.rs",
+     "qdl/certification/phase3_consumer_load.py",
+     "qdl_sdk/CHANGELOG.md",
+     "qdl_sdk/README.md",
+     "qdl_sdk/__init__.py",
+     "qdl_sdk/client.py",
+     "qdl_sdk/transport.py"
+    ],
+    "unexpected_different": [],
+    "pip_freeze_equal": true
+   },
+   "roll_receipt": "/home/bobby/.local/state/qdl-v2/p184-d3-capacity-20261009/rollout-rc15/query_kn_2-receipt-20261016T171801Z.json",
+   "roll_receipt_sha256": "8036c25c3a4a11c562e1f032196ff0acaf724c0b43b2da13b5f1f78a157724f6",
+   "rollback_compose_sha256": "02dfb791b807c8ad66875a8a5d8564c35b854261096d32f2369d0614ef3d84b6",
+   "old_image": "sha256:b9ca6c36fb0ad003b77e47bb3a777c3e565944d59cb3a2e9bc5dfb68e3448481",
+   "restart_count_at_roll": 0
+  },
+  {
+   "role": "stream_kn_1",
+   "measured_digest_pre_release": "sha256:baa72c96d5255cbfc0e332f893c470ff293d88fde4e20ea4c7c94ba5ea09a38b (TEST overlay, qdl.test.only, gateway c934c1e)",
+   "release_digest": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+   "verdict": "DIFFERENT_BUILD_PATH_WITH_BEHAVIOURAL_PROOF",
+   "basis": "qdl-stream-gateway whole-file hash differs from baa72c96 (CARGO_HOME path strings, 986 registry paths each, same .text size 8202831); source diff c934c1e..REV over the gateway tree is empty; DR08 live-budget isolation A/B PASS (prereg d22561fe..., verdict sha256 137ab779...)",
+   "binaries": [
+    {
+     "binary": "qdl-stream-gateway",
+     "reference": "stream_baa72c96",
+     "reference_sha256": "6f0139adade0ef2befca9b60a89cd0e628fb944b18dccd7d1da8a0bff9c314bd",
+     "release_sha256": "c07bfdefb505be64cc1f4fab4e32180d7835e6b83c0ffa77e39238aabf9a76f9",
+     "observed": "DIFFERENT"
+    }
+   ],
+   "behavioural_proof": {
+    "campaign": "/home/bobby/.local/state/trading-system/p184-n1-final-20261012/live-budget-isolation-ab-20261016T155455Z-release-c7ce7d3-vs-baa72c96",
+    "preregistration_sha256": "d22561fe7e4b1a0b215f7283b3981c3d458adb04e2455b02f4f3d9ffd3105231",
+    "verdict_sha256": "137ab7795845abad8e2d13e3f7bb181090e71093e97c361bd9091ab6cf9cc3d3",
+    "verdict": "PASS"
+   },
+   "roll_receipt": "/home/bobby/.local/state/qdl-v2/releases/v2.2.4/rollout/stream_kn_1-receipt-20261016T171956Z.json",
+   "roll_receipt_sha256": "d5ed0dbae0fe943eb0d764103cd0286dc0fab6b487133e313b213206897f00fe",
+   "rollback_compose_sha256": "c8300d58dc9510f637b13beb1f85a57adc1312ebc8a187bbadd2e89326f4d0c9",
+   "old_image": "sha256:baa72c96d5255cbfc0e332f893c470ff293d88fde4e20ea4c7c94ba5ea09a38b",
+   "restart_count_at_roll": 0
+  },
+  {
+   "role": "stream_kn_2",
+   "measured_digest_pre_release": "sha256:baa72c96d5255cbfc0e332f893c470ff293d88fde4e20ea4c7c94ba5ea09a38b (TEST overlay, qdl.test.only, gateway c934c1e)",
+   "release_digest": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+   "verdict": "DIFFERENT_BUILD_PATH_WITH_BEHAVIOURAL_PROOF",
+   "basis": "qdl-stream-gateway whole-file hash differs from baa72c96 (CARGO_HOME path strings, 986 registry paths each, same .text size 8202831); source diff c934c1e..REV over the gateway tree is empty; DR08 live-budget isolation A/B PASS (prereg d22561fe..., verdict sha256 137ab779...)",
+   "binaries": [
+    {
+     "binary": "qdl-stream-gateway",
+     "reference": "stream_baa72c96",
+     "reference_sha256": "6f0139adade0ef2befca9b60a89cd0e628fb944b18dccd7d1da8a0bff9c314bd",
+     "release_sha256": "c07bfdefb505be64cc1f4fab4e32180d7835e6b83c0ffa77e39238aabf9a76f9",
+     "observed": "DIFFERENT"
+    }
+   ],
+   "behavioural_proof": {
+    "campaign": "/home/bobby/.local/state/trading-system/p184-n1-final-20261012/live-budget-isolation-ab-20261016T155455Z-release-c7ce7d3-vs-baa72c96",
+    "preregistration_sha256": "d22561fe7e4b1a0b215f7283b3981c3d458adb04e2455b02f4f3d9ffd3105231",
+    "verdict_sha256": "137ab7795845abad8e2d13e3f7bb181090e71093e97c361bd9091ab6cf9cc3d3",
+    "verdict": "PASS"
+   },
+   "roll_receipt": "/home/bobby/.local/state/qdl-v2/releases/v2.2.4/rollout/stream_kn_2-receipt-20261016T172259Z.json",
+   "roll_receipt_sha256": "bc6a234a508045dd296c6c9e6a9e0ca19249c11ea31f3c475f741bd0231bcacc",
+   "rollback_compose_sha256": "27ac83a284243f24caec7f94338ead66aed5c17188d38ec69a5bb8517bab5d4a",
+   "old_image": "sha256:baa72c96d5255cbfc0e332f893c470ff293d88fde4e20ea4c7c94ba5ea09a38b",
+   "restart_count_at_roll": 0
+  },
+  {
+   "role": "market_projector_1",
+   "measured_digest_pre_release": "sha256:ce629061a8c180ae7e6cf88e32ebaddcf965ffe3924c88a3f1b942fc1623d4f9 (rc14, no IDR-107)",
+   "release_digest": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+   "verdict": "DIFFERENT_FROM_PRODUCTION_EQUAL_LOADED_SECTIONS_TO_RC22",
+   "basis": "Release projector differs from rc14 (IDR-107 / CF3 / CF4 are in it, by design). Against rc22 all loaded ELF sections are byte-equal; only .symtab, .strtab and .note.gnu.build-id differ (postcheck addendum)",
+   "binaries": [
+    {
+     "binary": "qdl-projector",
+     "reference": "rc14_projector",
+     "reference_sha256": "1f2fcbbc54cc585e3fe1f84b3718e97cbb9b99bf1abc2a805502c02a7092c2ea",
+     "release_sha256": "52ad5e33628e3ba4bf3d0c04d27147bff16b86afe576c4333c9a2845e00020d9",
+     "observed": "DIFFERENT"
+    },
+    {
+     "binary": "qdl-projector",
+     "reference": "rc22_core",
+     "reference_sha256": "efeb472861396f1d31a99d9fc616931311d4aa97d43da215519d9ea474138076",
+     "release_sha256": "52ad5e33628e3ba4bf3d0c04d27147bff16b86afe576c4333c9a2845e00020d9",
+     "observed": "DIFFERENT"
+    }
+   ],
+   "roll_receipt": "/home/bobby/.local/state/qdl-v2/releases/v2.2.4/rollout/market_projector_1-receipt-20261016T172603Z.json",
+   "roll_receipt_sha256": "dfe23b427f357b9aba52ccd0670ca2739b38a65eaad89cf1770fb1f591ba2225",
+   "rollback_compose_sha256": "85e97c32ee26115d915fe5746fb3ec9b68bcd8553b19041d9016e1523c4c7185",
+   "old_image": "sha256:ce629061a8c180ae7e6cf88e32ebaddcf965ffe3924c88a3f1b942fc1623d4f9",
+   "restart_count_at_roll": 0
+  },
+  {
+   "role": "market_projector_2",
+   "measured_digest_pre_release": "sha256:ce629061a8c180ae7e6cf88e32ebaddcf965ffe3924c88a3f1b942fc1623d4f9 (rc14, no IDR-107)",
+   "release_digest": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+   "verdict": "DIFFERENT_FROM_PRODUCTION_EQUAL_LOADED_SECTIONS_TO_RC22",
+   "basis": "Release projector differs from rc14 (IDR-107 / CF3 / CF4 are in it, by design). Against rc22 all loaded ELF sections are byte-equal; only .symtab, .strtab and .note.gnu.build-id differ (postcheck addendum)",
+   "binaries": [
+    {
+     "binary": "qdl-projector",
+     "reference": "rc14_projector",
+     "reference_sha256": "1f2fcbbc54cc585e3fe1f84b3718e97cbb9b99bf1abc2a805502c02a7092c2ea",
+     "release_sha256": "52ad5e33628e3ba4bf3d0c04d27147bff16b86afe576c4333c9a2845e00020d9",
+     "observed": "DIFFERENT"
+    },
+    {
+     "binary": "qdl-projector",
+     "reference": "rc22_core",
+     "reference_sha256": "efeb472861396f1d31a99d9fc616931311d4aa97d43da215519d9ea474138076",
+     "release_sha256": "52ad5e33628e3ba4bf3d0c04d27147bff16b86afe576c4333c9a2845e00020d9",
+     "observed": "DIFFERENT"
+    }
+   ],
+   "roll_receipt": "/home/bobby/.local/state/qdl-v2/releases/v2.2.4/rollout/market_projector_2-receipt-20261016T173221Z.json",
+   "roll_receipt_sha256": "35393d2b012a23a92ddc10fc009529801adb23a7f3ea2ec1e48d79dec55e76f6",
+   "rollback_compose_sha256": "cd308049ebb17ac5ef51c8201bd4e140d039b360eb033df5473c3279016c5ea8",
+   "old_image": "sha256:ce629061a8c180ae7e6cf88e32ebaddcf965ffe3924c88a3f1b942fc1623d4f9",
+   "restart_count_at_roll": 0
+  },
+  {
+   "role": "ingestor_okx_swap",
+   "measured_digest_pre_release": "sha256:7fba25779f72a3adffc88f195935a316ac94acbfcb362996fafbff89f62c9103 (rc18)",
+   "release_digest": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+   "verdict": "DIFFERENT_FROM_PRODUCTION_EQUAL_TO_RC22",
+   "basis": "qdl-native-raw-ingestor differs from rc18 8393bb1f (qdl-kafka DL-R1/RB1 landed after it, by design) and equals rc22 77ceeee1",
+   "binaries": [
+    {
+     "binary": "qdl-native-raw-ingestor",
+     "reference": "rc18_ingestor",
+     "reference_sha256": "8393bb1f801e3df4bcff22e53aaa55d649f9f7443cd1c8e4ad9bd5c5f1e53775",
+     "release_sha256": "77ceeee1c2484db3f40f237040441878969dc3558709de282dfc4fe2ecb1ddbb",
+     "observed": "DIFFERENT"
+    },
+    {
+     "binary": "qdl-native-raw-ingestor",
+     "reference": "rc22_core",
+     "reference_sha256": "77ceeee1c2484db3f40f237040441878969dc3558709de282dfc4fe2ecb1ddbb",
+     "release_sha256": "77ceeee1c2484db3f40f237040441878969dc3558709de282dfc4fe2ecb1ddbb",
+     "observed": "EQUAL"
+    }
+   ],
+   "roll_receipt": "/home/bobby/.local/state/qdl-v2/releases/v2.2.4/rollout/ingestor_okx_swap-receipt-20261016T174055Z.json",
+   "roll_receipt_sha256": "5ca5d1462821ef85fac35d48c49bc9e1deb45bc181a2d994b03d52a41b130461",
+   "rollback_compose_sha256": "51b21d86dafe7022095eff1093fac80852454fa2c5951129fc9490e5d940ab60",
+   "old_image": "sha256:7fba25779f72a3adffc88f195935a316ac94acbfcb362996fafbff89f62c9103",
+   "restart_count_at_roll": 0
+  },
+  {
+   "role": "ingestor_binance_usdm",
+   "measured_digest_pre_release": "sha256:7fba25779f72a3adffc88f195935a316ac94acbfcb362996fafbff89f62c9103 (rc18)",
+   "release_digest": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+   "verdict": "DIFFERENT_FROM_PRODUCTION_EQUAL_TO_RC22",
+   "basis": "qdl-native-raw-ingestor differs from rc18 8393bb1f (qdl-kafka DL-R1/RB1 landed after it, by design) and equals rc22 77ceeee1",
+   "binaries": [
+    {
+     "binary": "qdl-native-raw-ingestor",
+     "reference": "rc18_ingestor",
+     "reference_sha256": "8393bb1f801e3df4bcff22e53aaa55d649f9f7443cd1c8e4ad9bd5c5f1e53775",
+     "release_sha256": "77ceeee1c2484db3f40f237040441878969dc3558709de282dfc4fe2ecb1ddbb",
+     "observed": "DIFFERENT"
+    },
+    {
+     "binary": "qdl-native-raw-ingestor",
+     "reference": "rc22_core",
+     "reference_sha256": "77ceeee1c2484db3f40f237040441878969dc3558709de282dfc4fe2ecb1ddbb",
+     "release_sha256": "77ceeee1c2484db3f40f237040441878969dc3558709de282dfc4fe2ecb1ddbb",
+     "observed": "EQUAL"
+    }
+   ],
+   "roll_receipt": "/home/bobby/.local/state/qdl-v2/releases/v2.2.4/rollout/ingestor_binance_usdm-receipt-20261016T174708Z.json",
+   "roll_receipt_sha256": "1732ad711eb80181089f00c24b4c3bcfa7eb209a3986df209ecaf1ebdcb3c30d",
+   "rollback_compose_sha256": "df0770b1010228c95dd16a90fc5690769ae6b3a0702d4f9bcd69eec3b7cc3039",
+   "old_image": "sha256:7fba25779f72a3adffc88f195935a316ac94acbfcb362996fafbff89f62c9103",
+   "restart_count_at_roll": 0
+  },
+  {
+   "role": "rust_core",
+   "measured_digest_pre_release": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb (rc22, source a4e7b3b)",
+   "release_digest": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb (kept, not recreated)",
+   "verdict": "KEPT_RC22_BINARY_EQUAL",
+   "basis": "Owner option B5(a): cores stay on rc22. qdl-realtime-core in the release image equals the rc22 binary; no source delta in its crates since a4e7b3b",
+   "binaries": [
+    {
+     "binary": "qdl-realtime-core",
+     "reference": "rc22_core",
+     "reference_sha256": "2d82167336a4268a9407d565325f656f2315632b26bdd18bd4527e73dd15e475",
+     "release_sha256": "2d82167336a4268a9407d565325f656f2315632b26bdd18bd4527e73dd15e475",
+     "observed": "EQUAL"
+    },
+    {
+     "binary": "qdl-production-core",
+     "reference": "rc22_core",
+     "reference_sha256": "3e4580eb168566de1f9e58f4c799303dc8bfad38d1124538545a9aadba67b81d",
+     "release_sha256": "3e4580eb168566de1f9e58f4c799303dc8bfad38d1124538545a9aadba67b81d",
+     "observed": "EQUAL"
+    }
+   ],
+   "running_revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e (docker inspect 2026-10-17)"
+  },
+  {
+   "role": "rust_core_2",
+   "measured_digest_pre_release": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb (rc22, source a4e7b3b)",
+   "release_digest": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb (kept, not recreated)",
+   "verdict": "KEPT_RC22_BINARY_EQUAL",
+   "basis": "Owner option B5(a): cores stay on rc22. qdl-realtime-core in the release image equals the rc22 binary; no source delta in its crates since a4e7b3b",
+   "binaries": [
+    {
+     "binary": "qdl-realtime-core",
+     "reference": "rc22_core",
+     "reference_sha256": "2d82167336a4268a9407d565325f656f2315632b26bdd18bd4527e73dd15e475",
+     "release_sha256": "2d82167336a4268a9407d565325f656f2315632b26bdd18bd4527e73dd15e475",
+     "observed": "EQUAL"
+    },
+    {
+     "binary": "qdl-production-core",
+     "reference": "rc22_core",
+     "reference_sha256": "3e4580eb168566de1f9e58f4c799303dc8bfad38d1124538545a9aadba67b81d",
+     "release_sha256": "3e4580eb168566de1f9e58f4c799303dc8bfad38d1124538545a9aadba67b81d",
+     "observed": "EQUAL"
+    }
+   ],
+   "running_revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e (docker inspect 2026-10-17)"
+  },
+  {
+   "role": "rust_core_3",
+   "measured_digest_pre_release": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb (rc22, source a4e7b3b)",
+   "release_digest": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb (kept, not recreated)",
+   "verdict": "KEPT_RC22_BINARY_EQUAL",
+   "basis": "Owner option B5(a): cores stay on rc22. qdl-realtime-core in the release image equals the rc22 binary; no source delta in its crates since a4e7b3b",
+   "binaries": [
+    {
+     "binary": "qdl-realtime-core",
+     "reference": "rc22_core",
+     "reference_sha256": "2d82167336a4268a9407d565325f656f2315632b26bdd18bd4527e73dd15e475",
+     "release_sha256": "2d82167336a4268a9407d565325f656f2315632b26bdd18bd4527e73dd15e475",
+     "observed": "EQUAL"
+    },
+    {
+     "binary": "qdl-production-core",
+     "reference": "rc22_core",
+     "reference_sha256": "3e4580eb168566de1f9e58f4c799303dc8bfad38d1124538545a9aadba67b81d",
+     "release_sha256": "3e4580eb168566de1f9e58f4c799303dc8bfad38d1124538545a9aadba67b81d",
+     "observed": "EQUAL"
+    }
+   ],
+   "running_revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e (docker inspect 2026-10-17)"
+  },
+  {
+   "role": "binance_bar_edge",
+   "measured_digest_pre_release": "sha256:08f356a84151c6e865fbdc4a2efe6924df9336d15353254c2b2da684261794f5 (rc14)",
+   "release_digest": "unchanged",
+   "verdict": "SCOPED_OUT_NOT_ON_RELEASE_REVISION",
+   "basis": "HELD; stated as a limit in the certificate; running revision label a388537c897de909257c7f45db44c9ac44a62ccc (docker inspect 2026-10-17)"
+  },
+  {
+   "role": "kafka1-3",
+   "measured_digest_pre_release": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+   "release_digest": "unchanged image",
+   "verdict": "CONFIG_ONLY",
+   "basis": "No image change. Runtime config: cleaner 4194304 B/s, auto.leader.rebalance.enable=false x3 (B), internal topics C, md.latest.v2 A'; effective describe sha256 d3d77176c3dfca46e7f44cba465d271afe2709a1fc9d97f75e808808fa959094 (credit-snapshot.json 6bb2021a..., taken 2026-10-17T09:16:16Z)"
+  },
+  {
+   "role": "market_data_service_p184w (TS writer)",
+   "measured_digest_pre_release": "sha256:7c71e3af5628eb3905c1c9c9055efb241df1c1145182d5ab6676a6a3faa95710 (R1 77a6d671), then sha256:734b08f1fefab51e765dbaed2a24080010eb5427dc930ba2e5da7e1aaf354f12 (IDR-110)",
+   "release_digest": "sha256:a44349a10e5284efae290ea38062dd23dea0ef015088be6cf041d3f4d0923c73",
+   "verdict": "TS_RELEASE_ITEM_BUILD_RECEIPT_PASS",
+   "basis": "IDR-110b writer built from TS 6af62a7ed3d2770ac468d4b5dffe3bd3a0a29e8e (label); build receipt PASS: ~/.local/state/trading-system/p184-n1-opt-20261013/release/6af62a7e/receipt.json sha256 8f30560c115e08f8fcc2c2e02838253bcce53ba94ccc45109ff451a7c9250f2e; only services/market_data/fixed_workers.py differs from B17 inside the image (reviewed delta)"
+  }
+ ]
+}
