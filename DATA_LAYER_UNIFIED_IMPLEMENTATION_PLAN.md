@@ -75231,3 +75231,57 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
     0 volumes, 0 /tmp/p184-dr05-*; docker ps = 40 before and after; lock absent.
   - Status: G13 on 2deb90b0 = 70/76; DR05 GAP_REFUSAL x3 / GENERATION_CHANGE_FENCED x3 open on the readiness
     predicate (apparatus).
+- 2026-10-18 07:44-08:25Z FINAL stage-100 under G4 amendment 1 (G4-A1, 5a70bdf; owner-approved one run; Claude subagent):
+  **protocol_met false** (driver acceptance FAIL `requests:no_failures`, 1 request); **FAIL G4** (addendum row
+  book_delta|OKX_INVERSE| max 388.8 / 412.4 ms > 282.5 ms in windows 2-3; plus bar|BINANCE|8h observed without a frozen
+  baseline); **PASS G11**; G1-G3, G5-G10, G14 inside their rules but NOT_MEASURED (outside the protocol); G12/G13 not part of
+  the campaign. Frozen rules + G4-A1 only; nothing reinterpreted; NOT rerun (guard CLEAN, no infrastructure taint: the
+  failures are behavioural, see below).
+  - Apparatus: started after the other agent's G13 dr05 rerun (DONE 07:20:51Z) and an absent lock; lock
+    claude-s100-final-g4a1-5a70bdf4 07:44:21-08:24:22Z (released); Codex pause watcher SIGSTOP 3410356 + 3413926
+    07:44:41Z, SIGCONT 08:22:30Z; production verified by docker inspect: query 3e9e4d3a x2, ingestors a9679def x2,
+    stream/projector 60f83a51, cores 7c848aad x3, writer 2deb90b0, all RestartCount 0; preflight_env PASS; trace re-arm
+    rc15/roll_writer_campaign_native.py sha256:2deb90b0... 3600 (dry run DRY_RUN, real OK, delta
+    [TS_DELIVERY_TRACE_UNTIL_UNIX_NS], not_ready_samples 0, writer recreated 07:45:02Z, until 08:44:56Z); DL run worktree
+    data-layer-p184-final-run-5a70bdf4 (tool 69c26d72, observer 5d90cc60, probe ee835d9c, budget ff85335b, addendum
+    4ed59dca, amendment 1c8a276f recorded in campaign.json; guard 75b3067c, pause watcher 64b50287); same command shape as
+    053803Z (`run --g11 --base-profile .../profile-stage100-rc4-r16.json`, guard --abort); campaign dry run problems [];
+    docker ps 40 before and after.
+  - Campaign p184-final-campaign-20261018T074624Z: driver 07:46:39-08:18:01Z (exit 1), load window 07:47:57-08:17:57Z,
+    G4 windows at 120/345/570/788.6/1695 s, each with its venue probe (5/5 exit 0, containers removed), G11 restart
+    08:18:48Z, g11_exit 0, campaign_exit 0, guard CLEAN aborted false. sha256: scorecard.json e0a786cb...,
+    campaign.json 7f5f3f65..., timeline.jsonl efb3e11c..., stage100/receipt.json 80eb0b48..., gates.json 31368915...,
+    .run.log afb81111..., .guard.log 12356b39..., guard/summary.json afc62d20..., .g11-watcher.log bf4fa94c...; extras in
+    p184-final-campaign-20261018T074624Z.extra/ (SHA256SUMS 400eb42d...).
+  - The one driver failure (verified from the receipt and the client code): REFERENCE_BATCH FUNDING_RATE OKX
+    SOL-USDT-SWAP at 08:00:13.96Z (served_by query_v2_1, 119 ms), ValueError detail sha256 6397f661... = "reference
+    response exceeds its governed freshness bound" (qdl/certification/reference_l2_acceptance.py 518). 13.96 s after the
+    08:00:00Z OKX funding settlement: the request window is [00:00, 08:01] (_history_bounds 142-146) while the newest
+    observation served was older than max_freshness_ms. Inferred, not proven: the 08:00 settlement was not yet
+    observable from the provider ~14 s after the boundary. A funding-settlement boundary inside the load; 053803Z /
+    135719Z did not cross 00/08/16 UTC. Same boundary also brought bar|BINANCE|8h into the G4 windows (no baseline row).
+  - G4-A1 row mark_index_price|OKX| = **PASS** (internal split, CreateTime - newest receipt): p95 85 / 86 / 86 / 104 / 87 ms
+    (limit 200.9), max 165.2 / 173.3 / 135.4 / 208.2 / 138.4 ms (limit 993.4), n 664/661/662/990/660, paired_missing 0,
+    published_mismatch 0, attribution EXTERNAL_VENUE_COMPONENT_CADENCE in 5/5 windows (probe covered). Report-only:
+    composite p95 1384 / 1536 / 1504 / 1336 / 1328 ms, max 2079-2191 ms (p95 all under the frozen 1586.6 this run); component ts
+    gap p95 1288 / 1432 / 1384 / 1200 / 1200, max 1936-2073 ms; index older in 79-83 %; per-component venue -> DL p95 mark
+    47-49, index 132-134 ms. Probe: mark ts interval p50 201 / max 210-217 ms, index p50 453-583 / p95 1273-1665 / max
+    2021-2107 ms, recv - venue ts p95 mark 44-47, index 130-132 ms, venue-only pair gap at push p95 1106-1266 / max
+    2065-2146 ms, host clock bound <= 0.38 ms. Report-only display defect: the scorecard's paired_split_per_window shows
+    older_component as an empty stats block (the counts are correct in g4-N-summary.json); no verdict reads it.
+  - Every other frozen G4 row PASS (e.g. quote|OKX| 143-180 / 283.3, trade|OKX| 122-158 / 257.4, bar|BINANCE|1m 128-254 /
+    257.6, mark_index_price|BINANCE| 186-216 / 370.9); addendum: book_snapshot / quote / mark_index OKX_INVERSE PASS,
+    book_delta|OKX_INVERSE| FAIL (max 209 / 389 / 412 / 228 / 181 ms vs 282.5).
+  - qdl.stall (load window): query_kn_1 gc 0, loop_lag >= 50 ms 1 (65 ms), slow_request >= 250 ms 71 (cluster 07:56:58Z
+    snapshots, warmups); query_kn_2 gc 0, loop_lag 0, slow_request 3 (warmup 2.1 / 4.5 s at 07:57:0x, reference:batch 307
+    ms 08:12:59Z). native_probe slot 4 (epoch e20d36ec, pre-load -> pre-g11): QUOTE requested 31,506 / renewed 2,885 /
+    same_record 4,586 / skipped 24,035 / failed 0 / unavailable 0; TRADE 1,310 / 318 / 773 / 219 / 0 / 0; unreported_routes
+    0; post-G11 epoch 6d115fc3 failed 0 unavailable 0. IDR-112 lanes (180 intervals): okx-public-003 venue_lag max 76 ms,
+    stale_frames 0, read_gap max 234 ms, generation 211, recycles_total 1 unchanged (0 in load), standby failures /
+    deadlines 0; no non-progress ingestor line. Overflow / refused unchanged pre/post (stream_kn_1 4/2, stream_kn_2 1/0),
+    hub_live_budget_refused 0, queue_isolation 0. G9: demanded 64 = session-ready in 61/61 samples, data-path losses 0,
+    v1_fallback 0; G8 slowlog_new_total 0; G14 DL mean 5.41 vCPU.
+  - Status: final stage-100 NOT certified. G4-A1 row qualified on this run; open (coordinator/owner): (1) the protocol
+    failure at the OKX funding-settlement boundary (harness freshness window vs venue publication; or schedule the load
+    away from 00/08/16 UTC, an apparatus decision), (2) book_delta|OKX_INVERSE| max over the addendum limit in two windows
+    (RCA not done), (3) bar|BINANCE|8h has no baseline row. No rerun made (hard rule: only for infrastructure taint).
