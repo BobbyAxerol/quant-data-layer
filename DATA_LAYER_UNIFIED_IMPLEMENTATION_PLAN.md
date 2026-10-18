@@ -74981,3 +74981,43 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
       (complete), production_guard_breaches {}, production_external_recreates {}.
   - Foreign-job overlap: none started inside the lock by the lock tool's check; docker events no longer hold the window
     (oldest 04:53:18Z), so container overlap is NOT_DETERMINABLE from the host.
+- 2026-10-18 04:53-05:05Z FINAL chain (v5.5) step 2, G13 isolated on the final image set (writer 2deb90b0): **dr08 4/4
+  PASS; dr05-upstream 0/6 and dr05-quiet 0/2 FAIL, harness_ok false - apparatus defects of the TS harness fc644cd1
+  (IDR-111 fix), first exercised live in these two steps; no fault or oracle was reached** (Claude subagent). Not rerun:
+  not an infrastructure fault, and both failures are deterministic for the current harness.
+  - Pins: DL run worktree data-layer-p184-final-run-bb054498 (--dl-source-sha bb054498), TS run worktree
+    trading-system-final-run-aa126794 (TS head; contains fc644cd1), --ts-source-sha 30f50a91, --writer-image 2deb90b0,
+    roles g13-roles-v224.json 984c4566..., --python-image-ref qdl-v2-python:2.2.4-31a5155, inputs
+    p1/g13v55/inputs-g13v55-ci.json b86a92e5.... Dry runs: blocked {} (4/6/2 cells), deployed_mismatches [],
+    checkout_problems [].
+  - Lock "claude P18.4 G13 isolated FINAL 2deb90b0 20261018T045322Z": waited 04:53-04:55Z on a foreign process (a Codex
+    app-server ssh job to the remote portal host), taken ~04:55:5xZ (70 min), released 05:04:43Z. Taint watch (30 s,
+    18 samples): 0 foreign containers, load1 max 16.13.
+  - dr08-isolated p184-g13-20261018T045558Z: 4 cells OBSERVED ok, exit [0], harness_ok, 125.4 s. evidence.jsonl
+    7eb4119b....
+  - dr05-upstream p184-g13-20261018T045826Z: exit [0,0,0,1,0], 236.7 s, all 6 cells failed in fresh_case before the
+    anchor, verbatim e.g. `ChannelError:DR05_DEADLINE_EXCEEDED:{"budget_s": 30, "cache_readable_s": 24.05,
+    "clone_started_s": 23.27, "dl_reset_s": 20.423}` (the other 5: dl_reset 19.4-20.4 s, cache_readable 23.0-24.1 s).
+    Rows 3d250ec2....
+    - Reading (source-checked): since fc644cd1, fresh_case waits after cache_readable for `subscription_attempted`
+      (TS scripts/p184_dr05_upstream.py:129, :210-224: every worker LIVE, unreported 0, no slice STARTING) inside the
+      unchanged 30 s per-case budget; ~6 s were left and the wait exhausted it (`_remaining` :201-204). The credited
+      run 093001Z (a44349a1) used the pre-fix readiness (heartbeat demanded > 0). The writer delta a44349a1 -> 2deb90b0
+      in services/rust/domain/adapters is only services/market_data/data_layer_bridge.py (IDR-113 MARK re-read);
+      fixed_workers.py (worker liveness) is identical. The last heartbeat sample is not in the row (not measured).
+  - dr05-quiet p184-g13-20261018T050244Z: exit [0,0,0,0,1,0], 97.4 s, both cells
+    `RuntimeError:DR05_CLONE_BOOTSTRAP_ROUTE_UNCHECKPOINTED:NO_NATIVE_ROUTE_EVIDENCE`. Rows 92f29e27....
+    - Reading (source-checked): the quiet harness calls strict_restart right after the first fresh TRADE view
+      (TS scripts/p184_dr05_quiet.py:192-197); strict_restart (p184_dr05_isolated.py:600-630, fc644cd1) checks the
+      bootstrap heartbeat's native routes ONCE, without the wait loop the dr05-transport path has (:870-886). The clone
+      ran 7.2 s (05:03:54.93-05:04:02.17Z, exit 0); its only native feed is TRADE (native narrowing clone [TRADE]),
+      whose probe reports at max_session_liveness_ms / 3 = 15 s (TS rust/.../session.rs:305), so the heartbeat had no
+      native route yet. Same residual as recorded for the v5.4 dr05-transport bootstrap (TRADE probes not yet
+      reported).
+  - Teardown: every summary has dl_source.removed true and removed_leftovers {}; afterwards 0 p184- containers,
+    networks or volumes, 0 /tmp/p184-dr05-*. summary.json 17e731d6... / 519e09f8... / c12ea80b....
+  - Status: G13 isolated on 2deb90b0 = DR08 4/4 closed, DR05 upstream 6 + quiet 2 OPEN. Proposed apparatus fix (needs
+    coordinator/owner approval; not done here): quiet path waits for checkpoint_proof like the transport path (bounded
+    by ready_s), and dr05-upstream readiness either starts the case budget after clone readiness or keeps the
+    demanded > 0 gate plus an anchor retry until the deadline; then rerun only dr05-upstream + dr05-quiet on the same
+    image set. Chain continues with the runtime window (independent of these 8 cells).
