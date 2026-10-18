@@ -75391,3 +75391,30 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
     lands. Not applicable: G4 mitigation draft C1 (cleaner throttle) and C2-C4 (commit), since the failing samples' internal
     segments were normal. Items (1) funding boundary and (3) bar|BINANCE|8h remain independent: with no FAIL row the 8h
     row alone makes G4 NOT_MEASURED (scripts/p184_gate_campaign.py:814-818), so schedule away from 00/08/16 UTC.
+- 2026-10-18 07:25-09:00Z FINAL chain (v5.5) step 2 dr05-upstream rerun after the readiness predicate fix e9ae5484
+  (Claude subagent, coordinator-approved): **dr05-upstream 6/6 PASS, harness_ok; G13 on writer 2deb90b0 = W05 76/76**.
+  Same image set (writer 2deb90b0 / TS 30f50a91; query 3e9e4d3a; ingestors a9679def; stream/projector 60f83a51; core
+  7c848aad); production untouched.
+  - Fix e9ae5484 pushed fast-forward (8d9d84f1..e9ae5484); CI "Quality And V1 Contract" run 39107700887 on e9ae5484:
+    completed success (job quality-contract, GitHub API).
+  - Shape: as 070444Z (`p184_g13_final.py ... --phase isolated --only dr05-upstream`, inputs b86a92e5..., roles
+    984c4566...), DL run worktree data-layer-p184-final-run-bb054498 (clean), NEW clean TS run worktree
+    trading-system-final-run-e9ae5484. Dry run blocked {}, 6 cells.
+  - Lock "claude P18.4 G13 dr05 upstream rerun FINAL 2deb90b0 e9ae5484": waited 07:35-08:53Z (Codex remote ssh jobs and
+    the other agent's lock claude-s100-final-g4a1-5a70bdf4, never overlapped), taken 08:53:11Z, released 08:59:2xZ.
+  - p184-g13-20261018T085316Z: exit [0,0,0,0,0], 363.6 s, harness_ok true, rows 4593442c...; all 6 cells ISOLATED_FAULT
+    OBSERVED ok, findings []. Setup (prepare, outside the budget): dl_reset 19.5-20.4 s, readiness (writer_heartbeat_s)
+    27.9-29.3 s; measured fresh_case re-check 1.01-1.09 s of the 30 s budget; writer_env_overrides
+    MARKET_DATA_HEARTBEAT_INTERVAL_SECONDS=1. OKX / OKX_INVERSE: anchors and controls APPROVED with their quantities,
+    gap / unanchored steps refused EXECUTION_CONTEXT_*, old generation not visible (quantity stays 6), post-fence 7
+    APPROVED; Binance: bootstrap anchors observed, controls 2 / 6 / 7 APPROVED.
+  - W05 verifier in image 2deb90b0 (--network none, TS run worktree e9ae5484 read-only, --expect-source-sha 30f50a91...,
+    --expect-image-digest sha256:2deb90b0...) over 051237Z runtime x6 + dr08 045558Z + dr05-quiet 071750Z + dr05-upstream
+    085316Z: **DR 76/76** (DR01 9/9, DR02 8/8, DR03 6/6, DR04 14/14, DR05 17/17, DR06 6/6, DR07 12/12, DR08 4/4); 0 DR
+    issues, 0 provenance/drift issues; status FAIL only from CASE_OPEN on the 260 non-DR matrix cells outside G13.
+    Output p184-g13-20261018T085316Z/verify/w05-final-v55-76.json 5490c21e....
+  - Teardown: dl_source.removed true, removed_leftovers {}, DL --down removed 5, clone cleanup 24/24 ok (writer_exits 0);
+    afterwards 0 p184-/ts-p184 containers, networks, volumes, /tmp/p184-dr05-*; docker ps 40 before = after; lock
+    absent.
+  - Status: G13 CLOSED on the final image set (76/76). TS run worktrees trading-system-final-run-a9cf1b41 and -e9ae5484
+    are clean detached checkouts (removable).
