@@ -75285,3 +75285,108 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
     failure at the OKX funding-settlement boundary (harness freshness window vs venue publication; or schedule the load
     away from 00/08/16 UTC, an apparatus decision), (2) book_delta|OKX_INVERSE| max over the addendum limit in two windows
     (RCA not done), (3) bar|BINANCE|8h has no baseline row. No rerun made (hard rule: only for infrastructure taint).
+- 2026-10-18 08:26-08:36Z RCA (read-only; lock absent throughout; no container/runtime mutation) of the two time-of-day
+  findings of p184-final-campaign-20261018T074624Z (first campaign since rc8 whose load crossed 00/08/16 UTC: 24 receipts
+  listed, only this one crosses):
+  - A. `requests:no_failures` (frozen: budget requests.max_failed_steady 0, frozen_before_candidate, gate
+    qdl/certification/phase3_consumer_load.py 913). Verified:
+    - Bound: alpha.okx.paper.stable FUNDING_RATE max_freshness_ms 28,800,000 (= the 8 h cadence, zero publication
+      grace; consumers/stable/alpha-okx-paper.yaml 4503 and 4 more rows; reference-l2-stable.yaml OKX rows the same).
+      Binance has 32,400,000 since acf2660 (2026-08-31) because an exact-8 h bound was already found invalid at the
+      Binance boundary; OKX was left at 8 h (pinned by tests/test_phase24315_reference_entitlement_materialization.py 137).
+    - Served: OKX REST /api/v5/public/funding-rate-history only (qdl/adapters/okx/history.py 163-204), on demand per
+      request (FRESH_SNAPSHOT pass-through, per-replica 30 s history cache qdl/reference/batch.py 55); no WS/durable funding
+      ingest (no acquisition binding; rust/qdl-venue-core demand.rs refuses FundingRate subscriptions). observed_at_ns =
+      fundingTime of a settled row (qdl/adapters/okx/reference.py 258) = OKX "Settlement time" (OKX v5 docs, Get funding
+      rate history; settState processing/settled and fundingTime/nextFundingTime of Get funding rate describe the
+      upcoming period, ts = data return time). The anchor is semantically right; it necessarily ages 0 -> 8 h + publication
+      lag every cycle.
+    - At 08:00:13.96Z the newest row served was the 00:00Z settlement (g6 unsafe example age 28,813,838 ms = 8 h + 13.8 s);
+      the request window was [00:00, 08:01] (reference_l2_acceptance.py 139-146). OKX now lists the 08:00 row
+      (fundingTime 1792310400000, interval still 8 h).
+    - Query applied its funding settlement publication allowance (+60 s, qdl/query/service.py 89 and 1841-1857, 2e0de95,
+      the stage-100g fix of 2026-10-10) and returned OK; the driver's verifier reference_quality
+      (reference_l2_acceptance.py 477-518) compares against max_freshness_ms with no allowance and raised. Two
+      implementations of one bound disagree; the 10-10 fix was tested at Query only and never crossed a settlement
+      through the driver until now (E7).
+    - Prior evidence funding-publication-20261010/: SOL-USDT-SWAP history row appeared between +5.4 and +10.0 s
+      (settState processing at +5.4 s); Binance rows flapped until +28.5 s.
+    - Inferred, not proven: at +13.8 s either OKX was slower than on 10-10 or a pre-publication fetch was still in the
+      30 s history cache (within the 60 s allowance the server cannot tell). The driver error record keeps only a detail
+      digest; the response carries cache_hit and received_at_ns (qdl/api_v2/router.py 1051/1072) but they were not saved.
+    - Verdict: not genuinely stale data and not an anchor defect; an apparatus/contract parity defect (verifier stricter than
+      the governed Query rule), rooted in the OKX manifest bound equal to the cadence. G6 does not gate FUNDING_RATE
+      (p184_gate_campaign.py G6_GATED_FEEDS) and defines no settlement handling. Latent (not this failure): OKX documents
+      that funding frequency may change to 6/4/2/1 h; _FUNDING_NS and the 8 h bound are fixed.
+    - Fix options, ranked: (1) apparatus, zero runtime: one shared effective-bound function (max_freshness_ms + the 60 s
+      allowance for FUNDING_RATE history) used by Query and reference_quality; unit tests (8 h + 14 s accepted, 8 h + 61 s
+      refused on both sides, client/server parity) plus a driver-shaped read-only probe across one real settlement
+      recording cache_hit/received_at/newest fundingTime; owner must approve it before any rerun, because it changes
+      the per-request acceptance after a result. (2) contract: OKX FUNDING_RATE max_freshness_ms to 28,860,000 or
+      32,400,000 (Binance parity) and remove the hidden allowance; blast radius manifest revisions (alpha-okx 14,
+      reference-l2) + consumer DATA_LAYER_V2_JWT_MANIFEST_REVISION in the same batch, python image rebuild and recreate of
+      query/stream/projector/bar_edge, test pin 137; release-bundle work, not a closure-run change. (3) scheduling away
+      from 00/08/16: gaming unless declared as a protocol constraint before the run with owner approval; it also hides a
+      behaviour alpha consumers meet every 8 h.
+  - B. bar|BINANCE|8h without a baseline. Verified:
+    - The observer keys rows by feed|venue|interval of whatever closed in the window (scripts/p184_g4_observer.py 199-200);
+      only window 4 (boundary 08:00Z) had 8h (n 5, max 11,698 ms, same as 4h 11,717 ms).
+    - Frozen rule (scripts/p184_gate_campaign.py 796, 813-818): rows observed outside the frozen table and the addendum
+      give the reason "observed rows without a frozen baseline" and verdict NOT_MEASURED (never FAIL); G4 FAIL in this run
+      comes only from book_delta|OKX_INVERSE|.
+    - Baselines never crossed an 8 h close: p184-d3-baseline-20261009 windows 18:25-18:34Z, addendum baseline
+      p184-g4-baseline-20261011T175720Z 17:59-18:19Z. The owner's closed addendum set (G4_ADDENDUM_OWNER_ROWS, line 155)
+      covers bar 5m..6h only; source bindings also hold 8h (Binance), 12h, 1d, 2d, 3d, 1w, so any boundary window at
+      00/08/12/16Z shows unbaselinable rows by construction.
+    - Verdict: apparatus coverage gap (schedule chooses the :00/:30 close from launch time; the row set has no long
+      intervals); not a product defect.
+    - Fix options, ranked: (1) owner rule before the next run: bar intervals >= 8h REPORT_ONLY, same class as 1h-6h
+      (G4_REPORT_ONLY_INTERVALS, line 144); no threshold changes. (2) a new baseline crossing 00/08/16Z plus an owner
+      row-set extension (new frozen addendum). (3) declared schedule constraint (boundary close not at 00/08/12/16Z),
+      allowed only if declared before the run with owner approval.
+  - Files: this plan only. Nothing rerun; nothing rolled.
+- 2026-10-18 ~08:25-08:40Z RCA (read-only; Claude subagent) of open item (2), G4 book_delta|OKX_INVERSE| max 388.8 / 412.4
+  ms (windows 2 / 3) in p184-final-campaign-20261018T074624Z. No production mutation (receipts, source, docker
+  inspect/logs and /proc netns counters only; lock absent).
+  - Verified (observer v6 split of the exact max samples, g4-2/g4-3 final aggregate outliers): both maxima are BTC-USD-SWAP
+    on lane okx-public-001 (OKX `books`, session gen 67018) and the whole tail is venue -> DL: 355.4 ms (src 07:53:11.408Z)
+    and 363.9 ms (src 07:58:09.208Z) vs the row's healthy 28-31 ms; ingest -> producer 11.6 / 34.1 ms, producer -> observed
+    21.8 / 14.4 ms (normal). Every OKX book binding on that lane shows the same ~340-365 ms at the same source instant
+    (BTC/ETH/SOL/DOGE-USDT-SWAP, BTC-USD-270326, ETH-USD-261225 book_snapshot 288 ms). Ingestor progress: okx-public-001
+    read_gap 409.1 ms ending 07:53:11.748Z and 428.5 ms ending 07:58:09.567Z (median per-10 s max 97 ms; inflight_max 9 / 26).
+  - Verified not common mode / not internal: other lanes in the same ingestor process had no gap then (okx-public-003
+    read_gap max 90 / 163 ms, venue_lag max 33 ms; okx-public-004 138 / 114 ms); the window's fresh OKX probe connection
+    received mark-price continuously through both seconds (lag 32-45 ms); no other row has a tail at those seconds (the
+    internal common-mode tails of this run are at 07:54:07Z / 07:57:32Z, OKX book_snapshot max 282 ms, cores commit max
+    87-113 ms there); cores.jsonl at the burst seconds commit_max 40-118 ms (no stall class) and the segments that a commit
+    stall inflates were normal; cleaner: none within +-15 s of 07:58:09Z, nearest 6.6 s before 07:53:11Z (kafka3
+    __consumer_offsets-24); ingestor_okx_swap throttled 0.0 % of wall, cpu max 14.8 % (G13 sampler).
+  - Verified session-specific: okx-public-001 gen 67017 (03:36-07:11:20Z, ~3.6 h) had 1 read gap >= 250 ms (253 ms); venue
+    reset 07:11:28Z (READ_ERROR ECONNRESET) -> gen 67018; gen 67018 (07:11:33-08:32Z, ~1.35 h) had 6 (272, 390, 402, 409,
+    428, 376 ms), 2 of them inside G4 windows. 053803Z (gen 67017) okx-public-001 read_gap_max 130.8 ms over the whole
+    load; there and in 135719Z the OKX book maxima were internal (i2p 100-230 + p2o 80-170 ms, venue -> DL 27-38 ms), so
+    this row's failure mechanism is new in this run, not the bafbe91 commit/cleaner tail.
+  - Code read: the OKX lane loop has no inline blocking await on the read path (publish window cap 512 in
+    qdl/runtime/stable_deployment.py:1121 - deployed file not readable, inferred; book resync hint checkpoint is
+    CommitMode::Async, rust/qdl-kafka/src/lib.rs:1707); the read timestamp is taken on socket return, so a lane-task stall
+    would also look like venue -> DL - excluded only indirectly (other lanes and probe healthy, CPU 0 % throttled).
+  - Inferred, not proven: the delay is upstream of the host TCP receive for this one session (OKX push side or its path):
+    ingestor netns since 03:35Z has TCPOFOQueue 3, TCPRcvQDrop / TCPBacklogDrop / PruneCalled / TCPTimeouts 0 (RetransSegs
+    38,295 = spurious send-side loss probes, TCPDSACKRecv 38,295), which does not fit 7 receive-side loss events. No books
+    probe exists, so under the A1 attribution rule this is UNKNOWN (venue-session suspected), not EXTERNAL.
+  - Ranked follow-ups (no threshold change; owner decides): (1) apparatus, read-only: add a fresh-connection `books`
+    subscription (BTC-USD-SWAP + 2 USDT swaps) to the per-window OKX probe and a 1 Hz ingestor-netns TcpExt sampler, so a
+    book-row tail is attributable (EXTERNAL vs INTERNAL vs TCP path); (2) operational: gen 67018 is still degraded (6
+    bursts / 1.35 h, still serving at 08:32Z); a rerun on it is likely to fail again; a lane reconnect before a rerun
+    (blast radius: ingestor_okx_swap restart = all 5 OKX lanes reconnect + book resnapshot ~0.3 s; core/kafka/writer
+    untouched) re-rolls the session but is not a product fix and must be journaled as such; (3) product: BOOK-lane
+    session-degradation recycle. Not allowed as an IDR-112 scope extension; it needs re-snapshot semantics: detector on
+    books `ts` (valid: 100 ms push with generation time) triggered by repeated lane-wide bursts, make-before-break with the
+    successor's per-instrument snapshot received before the old socket stops, successor snapshot published as the new
+    anchor only after the last gen-N frame, the core L2 book fence (not lane-aware) advancing per binding without
+    SequenceGap / L2_RESNAPSHOT_REQUIRED quarantine, checksum / liveness-proof / resync anchors reset per session; fake-venue
+    BOOK handover + core fence tests + live smoke; blast radius ingestor_okx_swap (all OKX lanes) and possibly rust_core x3;
+    rollback config enabled:false / digests a9679def, 7c848aad. Even then the first burst of a degraded session still
+    lands. Not applicable: G4 mitigation draft C1 (cleaner throttle) and C2-C4 (commit), since the failing samples' internal
+    segments were normal. Items (1) funding boundary and (3) bar|BINANCE|8h remain independent: with no FAIL row the 8h
+    row alone makes G4 NOT_MEASURED (scripts/p184_gate_campaign.py:814-818), so schedule away from 00/08/16 UTC.
