@@ -76021,3 +76021,17 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   judging raw_age p99 / commit_ms instead of a single max); then Q, I, R; (2) G12 final, G13 (dr08 / dr05-upstream /
   dr05-quiet + runtime window, run ids g13r9wa20261018 / g13r9fx01; generator p1/g13v56/make_g13v56.py prepared, check
   mode only, compose 5051892c..., nothing written) and the final stage-100 on the rolled images, none started.
+- 2026-10-18 ~19:56Z coordinator decision (owner rule one-variable-target-metric-tuning; package approved, "Cứ tiếp tục
+  làm cho xong"): the K HOLD criterion "max <= 1.2 x one 10-min baseline" is replaced, for K/Q/I, by (a) the step's
+  target metric (K: broker throttled-period share must drop), (b) rust_core raw_age p99 and commit_ms p99 not worse
+  than the baseline by > 20 % over the same window length, (c) READY 64 64, RestartCount 0, no new error lines, no NEW
+  overflow class (the known writer TRADE overflow reported, not gating); max values report-only. Evidence: burst
+  window 25,920 vs ~12,000 records, the 437 ms spike recurring at 1.75 after the rollback, throttle 1.88/1.00/0.43 % ->
+  0.53/0.33/0 %. Push of TS f2229d7a approved.
+  - Applied to the first K attempt (read-only evaluator, p99 = nearest rank over the per-progress-line maxima of the 3
+    cores): target PASS, commit_ms p99 124.7 vs 116.7 (<= 1.2x) PASS, (c) PASS (overflow +2 reported), raw_age p99
+    229.4 vs 1.2 x 139.6 = 167.5 FAIL. At cap 1.75 with nothing changed, 19:43-19:53Z: raw_age p99 171.7, commit p99
+    129.4, i.e. the 19:13Z baseline's raw_age limit is already exceeded without any step (market regime drift).
+  - K NOT re-applied: whether the baseline for the re-applied K (and Q/I) may be re-taken immediately before the step
+    is a criterion choice not covered by the decision; edits implementing a per-step baseline in the scratch evaluator
+    were refused by the tool permission classifier -> STOP, question to the coordinator.
