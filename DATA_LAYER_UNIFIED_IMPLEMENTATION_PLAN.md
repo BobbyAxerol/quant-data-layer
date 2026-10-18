@@ -75927,3 +75927,29 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
       qdl-v2-python:2.2.4-31a5155 (--network none, receipts absent): a4_preregistered + a4_post_hoc + gate_campaign
       123 OK, 10 skipped.
   - Docs: `upgrade/evidence/releases/v2.2.4/a4-v2-preregistered.md`.
+
+### P18.4 rustls 0.23.46 slice: local CI, push and PR #33 CI - 2026-10-18 (Claude)
+
+- Local CI (owner ~16:00Z rule) `scripts/p184_local_ci.py --sha 97c9ecb --allow-pull --allow-download --trivy-image
+  aquasec/trivy:0.58.1` under host lock `claude-dl-rustls-0.23.46` (16:35-17:47Z, then released): 41 PASS, 3 SKIPPED
+  (the two `pull_request`-only steps and the sudo bind-mount preparation), 0 FAIL; overall `INCOMPLETE` only because
+  of those skips. Includes `cargo fmt --check`, `clippy -D warnings`, `cargo test --workspace --locked --
+  --test-threads=1` (506 passed, 0 failed) in rust:1.82-slim, cargo-deny 0.20.2 in a fresh container (advisory db
+  fetched fresh): `advisories ok, bans ok, licenses ok, sources ok`. Receipt
+  ~/.local/state/qdl-v2/p184-local-ci-97c9ecb/summary.json (49b8d869...). Cleanup: 2 CI images removed by id, 21 build
+  cache records pruned, 6 anonymous CI volumes (17:39-17:41Z) removed afterwards.
+- Push: `97c9ecb` fast-forward to origin/fix/p184-dl-closure (5e90eb7..97c9ecb, includes e6559e4 of the OPT packet).
+  `f2094a2` (A4 v2 pre-registration, another agent) was NOT pushed: it was committed after the local CI and is not
+  covered by it.
+- PR #33 CI run 39151228675 on 97c9ecb: attempt 1 `contract-tests` FAIL in `Test Rust generated contracts`, one test:
+  `staleness_tests::a_lane_that_stays_stale_is_recycled_again_only_after_the_cooldown` ("second recycle 899.39 ms
+  after the first", needs >= 1000 ms; cargo-deny step therefore skipped); every other job success. Passed in the local
+  CI and on every earlier PR run. Attempt 2 (rerun of the failed job): **all 5 jobs success**, cargo-deny
+  `advisories ok, bans ok, licenses ok, sources ok`; PR mergeable_state clean.
+  - Reading (source-checked, not fixed here): the detector takes the cooldown slot at `host_ms(read_at)` of the
+    triggering frame (`qdl-native-raw-ingestor.rs` recycle_started at the RECYCLE decision, host_ms from read_at),
+    while the test measures the gap between the two standby ACKs at the mock venue. Session ids in the failing log
+    put the two standby establishes 0.899 s apart with standby_ready 42 / 41 ms, so the first trigger frame was read
+    ~0.3 s before it was processed on the shared runner (inferred). Product effect: under a processing backlog the gap
+    between standby starts can be shorter than cooldown_ms by that backlog (production cooldown 60 s). Proposed: take
+    the slot at decision time (Instant::now) or assert on the slot times; a code change, needs its own local CI.
