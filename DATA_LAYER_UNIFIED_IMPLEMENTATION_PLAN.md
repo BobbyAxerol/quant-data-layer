@@ -75059,3 +75059,70 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
     networks, volumes, /tmp/p184-dr05-*; docker ps = baseline 40; disk +48 MiB. Writer 2deb90b0 rc 0 unchanged.
   - Status: G13 on 2deb90b0 = 68/76; DR05 GAP_REFUSAL x3 / GENERATION_CHANGE_FENCED x3 / QUIET_TYPED x2 open until the
     harness fix and an isolated rerun on the same image set.
+- 2026-10-18 05:30-06:20Z FINAL chain (v5.5) steps 4-5 (Claude subagent): OKX lane pre-check (report-only) and the
+  FINAL stage-100 on the final image set: **protocol_met true; PASS G1 G2 G3 G5 G6 G7 G8 G9 G10 G11 G14; FAIL G4 (one
+  row: mark_index_price|OKX| window 1 p95 1632 > 1586.6 ms); NOT_MEASURED G12, G13 (separate evidence)**. Frozen rules,
+  nothing reinterpreted, not rerun (a behavioural gate result, not an infrastructure fault).
+  - OKX lane pre-check, declared before the run (DECLARATION.json a8f4ae11..., REPORT_ONLY_NOT_A_GATE, not used to pick
+    the start time); lock claude-okx-lane-precheck 05:30-05:35Z; evidence
+    ~/.local/state/qdl-v2/p184-okx-lane-precheck-20261018T053002Z/ (SHA256SUMS). 300 s, 05:30:18-05:35:18Z:
+    - parallel read-only bbo-tbt probes (--rm qdl-v2-python:2.2.4-31a5155, the 6 lane-003 instruments, one per OKX edge
+      IP seen on the ingestor's sockets): 172.64.144.82 24,218 frames venue->local p50 27.9 / p99 30.7 / max 113.4 ms;
+      104.18.43.174 24,224 frames p50 28.5 / p99 31.5 / max 42.5 ms; 0 frames > 200 ms, 0 stale bursts.
+    - production lane (G4 observer v5 canonical, quote OKX, sample-ms 1): 15,170 events venue->DL p50 <= 29, p99 <= 31,
+      max 43.5 ms; 0 > 200 ms.
+    - IDR-112 counters (ingestor_okx_swap progress, 31 intervals): okx-public-003 venue_lag max 43 ms, stale_frames 0,
+      generation 211, staleness_recycles_total 1 (the only recycle since the roll: 03:48:06Z, trigger max_lag 884 ms,
+      standby ready 274 ms, gen 210 -> 211), standby failures/deadlines 0.
+  - Stage-100 apparatus: DL run worktree data-layer-p184-final-run-bb054498 (tool/observer/budget/addendum sha256
+    cf26d6e3/ff4f5989/ff85335b/4ed59dca, unchanged; guard 75b3067c = aa78df7d + amendments 1+2; Codex pause watcher
+    64b50287), command shape of run 5 135719Z (`run --g11 --base-profile .../profile-stage100-rc4-r16.json`), guard
+    --abort with --own-session-pid = this session's claude process. Read-only additions outside the scored metrics:
+    native_probe heartbeat snapshots pre-load / pre-g11 (after the load window) / post-campaign.
+  - Sequence: Codex pause watcher 05:36:09Z (SIGSTOP app-server 3410356 + code-mode host 3413926; SIGCONT 06:14:09Z on
+    DONE); lock claude-s100-final-2deb90b0 05:36:1xZ-06:19:31Z; preflight_env PASS; trace re-arm
+    rc15/roll_writer_campaign_native.py sha256:2deb90b0... 3600 dry run DRY_RUN, real OK (delta
+    [TS_DELIVERY_TRACE_UNTIL_UNIX_NS], not_ready_samples 1), writer recreated 05:36:35Z on 2deb90b0, rc 0, trace until
+    1792305390760279193 (06:36:30Z); campaign dry run problems []; docker ps baseline 40.
+  - Campaign p184-final-campaign-20261018T053803Z (05:38:06-06:14:09Z, campaign_exit 0): g6_ts_started 05:38:13.8Z,
+    driver_started 05:38:18.8Z, G4 windows 05:40:18 / 05:44:03 / 05:47:48 / 05:51:33 / 05:59:29Z, driver_exit 0
+    06:09:39.9Z, G11 watcher restart 06:10:28Z, g11_exit 0 06:13:33Z. Guard verdict **CLEAN**, aborted false, 0 foreign
+    records, 0 overlapping the load (report-only: VS Code git polling, label owner_ide).
+    - sha256: scorecard.json 8da1c190..., campaign.json 6bb6ff91..., timeline.jsonl 5bd38c5e..., .run.log 241cd012...,
+      .guard.log 174b99c2..., guard/summary.json b6142862..., .g11-watcher.log 70f61f8e...; extras in
+      p184-final-campaign-20261018T053803Z.extra/ (SHA256SUMS).
+    - G4 FAIL (frozen rule: candidate p95 <= baseline p95 x 1.2 per row): mark_index_price|OKX| limit 1586.6 ms, p95 per
+      window 1632 / 1232 / 1504 / 1272 / 1432 ms (bucket upper bound; window 1 bucket lower 1624), max 2177 / 2052 / 2098
+      / 2145 / 2171 ms, n 657-990. Observer split (verified): venue->DL p95 <= 132 ms (max 144) in every window,
+      producer->receipt p95 <= 69 ms; the time is in ingest->producer_ts (p95 1136-1480 ms, max 1923-2043 ms). Same row
+      in 105025Z (a44349a1 / ingestors 60f83a51) p95 1288-1440, in 135719Z 1184-1360: inside but near the limit in every
+      run; cause of the window-1 excess not determined here. Every other row PASS, incl. quote|OKX| p95 159-189 (limit
+      283.3), book_delta|OKX| 138-172, bar|BINANCE|1m 142-157 (limit 257.6), and the inverse addendum rows
+      book_delta / quote OKX_INVERSE PASS (the 105025Z/135719Z G4 failures did not recur).
+    - G2 PASS (native, LOAD_SLICES_SUPERSET): TRADE BINANCE p95 223 / max 406; TRADE OKX 216 / 396; QUOTE BINANCE 159 /
+      471; QUOTE OKX 167 / 432; MARK BINANCE 376 / 911; MARK OKX 339 / 782 ms (the 135719Z QUOTE OKX 1350 ms and MARK
+      DOGEUSDT 1098 ms did not recur).
+    - G3 pooled p95 1565, max 3354 ms; G8 slowlog_new_total 0, PING p99 1.014 ms, monitor clients 0; G9 60 samples,
+      demanded 64 = session-ready in every sample, eligibility_losses_data_path 0, v1_fallback 0, legit quiet
+      TRADE_EVENT_STALE 25; G10 all zero; G11 outage 0.143 s, caught_up max 6.214 s / p95 4.214 s (n 64), 0 future
+      events; G14 DL mean 5.44 vCPU, no memory at limit.
+    - qdl.stall (IDR-114 telemetry, docker logs 05:38:18-06:09:40Z): query_kn_1 / query_kn_2 kind=gc in the load window
+      (>= 05:39:00Z) **0 / 0** (setup only: 1 / 2 gen0 collections, max 141 / 79 ms); loop_lag >= 50 ms in load 3 / 3
+      (max 71 / 76 ms, all at 05:39:0x-05:39:2x warmup tail); slow_request >= 250 ms in load 40 / 57, all warmup /
+      snapshot / reference:batch at 05:39:00-05:39:20Z and in one cluster 05:48:38-05:48:45Z (warmup 2.7-4.5 s), plus
+      reference:batch 252-669 ms at 05:45:08 / 05:50:39 / 06:00:53Z.
+    - native_probe (slot 4, epoch 3abf70e4, pre-load -> pre-g11): QUOTE requested 31,550, renewed 2,660,
+      renewed_same_record 4,241, skipped_offset 24,649, failed 0, unavailable 0; TRADE requested 1,310, renewed 302,
+      same_record 726, skipped 282, failed 0, unavailable 0; unreported_routes 0; OKX BTC-USD-SWAP QUOTE requested 2,867 /
+      renewed 193 / same_record 941 / skipped 1,733 / failed 0. Post-G11 epoch b2e0ab74: failed 0, unavailable 0.
+    - IDR-112 lanes in the load (188 intervals): okx-public-003 venue_lag max 64 ms, stale_frames 0, read_gap max 330 ms,
+      generation 211 unchanged, recycles_total 1 unchanged (0 recycles in the load), standby failures/deadlines 0; no
+      non-progress ingestor line on either ingestor.
+    - Overflow / refused (pre-load / pre-g11 / post-campaign): stream_kn_1 overflow 4/4/4, refused 2/2/2; stream_kn_2
+      overflow 1/1/1, refused 0/0/0; hub_live_budget_refused 0; every queue_isolation counter 0.
+  - Teardown: 0 campaign containers (docker ps = baseline 40), 0 in-container `tail -F` followers in kafka1-3, writer
+    2deb90b0 rc 0 READY 64/64 (started 06:10:32Z by the G11 restart), all DL roles RestartCount 0; Codex servers
+    resumed (SIGCONT x2); lock released 06:19:31Z. Trace expires on its own at 06:36:30Z (same image).
+  - Status: final stage-100 = protocol met, NOT certified (G4 mark_index_price|OKX| window 1). G12 credited, G13 68/76
+    (8 DR05 cells open on the harness defect). Open for the coordinator/owner: (1) the G4 OKX mark/index row
+    (ingest->producer stage), (2) the TS harness fix for dr05-upstream/dr05-quiet + isolated rerun.
