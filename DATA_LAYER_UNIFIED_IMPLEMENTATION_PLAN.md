@@ -75713,3 +75713,52 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   - Next: push fix/p184-dl-closure, PR -> dev, required CI on the PR head; owner decision on CERTIFICATE.md section 7;
     optimisation package one variable at a time (IDR-116 first per the G4 draft ranking, then 117, 118; IDR-119 starts
     with the clock).
+- 2026-10-18 14:50-15:30Z amendment A4 FROZEN (POST_HOC_OWNER_DECISION) + post-hoc rescore of 123222Z (owner
+  AskUserQuestion ~14:45Z: G4 OKX_INVERSE "M1: chấm theo p95 pooled (Recommended)", G2 MARK_INDEX_PRICE|BINANCE "Nới
+  max lên 1200 ms (Recommended)"; draft 54caaa0; Claude subagent). Status: implemented, tested locally, applied to the
+  counted receipt only.
+  - `config/v2/p184-stage100-a4-ts-eligibility.json` (schema qdl.p184.stage100-a4.v1, version 1, frozen
+    2026-10-18T15:18:14Z) sha256 14958a681848192c8b9e93feaf0ee3137a1851c38fe6d6763f3bcf6ce0c81312:
+    - post_hoc true, label POST_HOC_OWNER_DECISION, applies only to p184-final-campaign-20261018T123222Z with its
+      scorecard b9e76a83... and the frozen scorer e179ec78...;
+    - G2 MARK BINANCE max <= 1200 ms (0.6 x the TS 2000 ms budget), p95 <= 500 unchanged;
+    - G4 book_delta / book_snapshot / quote |OKX_INVERSE| on the pooled OKX p95 limits 289.1 / 270.1 / 283.3 (the
+      frozen-table bucket rule, n >= 20 per window), max REPORT_ONLY, every event above the replaced addendum limits
+      282.5 / 300.7 / 322.6 retained by observer v7 or the row is FAIL;
+    - TS acceptance bounds with file:line from the draft (TS bc713113: execution_market_context.py:188-211, 216-231,
+      244-249, 270-281, 322-331, 432-446; execution_recovery.py:21, 96-100, 235, 250-262; data_layer_v2.py:440-460,
+      781-782; risk_pool/ordinary.py:65-67; market_data/runtime.py:55-60); stated limits.
+  - Why not an edit of the scorer: A3 pins the sha256 of the scoring code it runs with (A3_CODE includes
+    scripts/p184_gate_campaign.py) and re-pins G4-A1/G4-A2 to it, so an edited scorer would drop A1-A3 on any rescore.
+    `scripts/p184_a4_post_hoc.py` (sha256 23b78e4a...) instead runs the unchanged build_scorecard twice:
+    - first as is; it must reproduce the stored scorecard.json byte for byte (it does);
+    - then with score_mark and score_g4 wrapped so that only the four rows are re-judged and the gate verdict comes
+      from the same causes; any drift in another gate raises and nothing is written.
+  - Receipt (new file next to the untouched scorecard.json): `~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/
+    scorecard.a4-post-hoc.json` 7a821d2d60c45ae290023e9434af7b320c06b906a4185dc299eee467a71fab7e, `.sha256` (sha256sum -c
+    OK). Verdicts:
+    - G2 FAIL -> PASS (MARK BINANCE max 1082.9 <= 1200, p95 418.6);
+    - G4 FAIL -> PASS (inverse p95 per window book_delta 143-198, book_snapshot 160-193, quote 178-231; n 102-183;
+      maxima 387.1 / 406.7 / 531.9 report-only; 8 outliers retained, overflow 0, admitted_seen == n);
+    - every other gate byte-identical; campaign summary PASS 12 + NOT_MEASURED G12/G13 (credited separately).
+  - Report-only comparison (tests' mirrored receipts): 053803Z G4 still FAIL (mark_index_price|OKX|, out of scope);
+    135719Z quote / 074624Z book_delta / 092255Z book_snapshot inverse rows FAIL under A4 only because those windows
+    predate observer v7 (no retention = UNKNOWN = FAIL); every inverse p95 there is inside the pooled limit.
+  - Tests `tests/test_p184_a4_post_hoc.py` 18 OK on the host:
+    - negatives: inverse p95 over the pooled limit -> FAIL; MARK BINANCE max 1200.1 / p95 500.1 -> FAIL; a straddled
+      bucket, thin windows and a changed pooled limit -> NOT_MEASURED; missing / overflowing / incomplete retention ->
+      FAIL; another failing or unbaselined row keeps the gate blocked; a wrong run or scorecard is not applied;
+    - parity without A4: the frozen scorer reproduces the stored gates of 053803Z / 135719Z / 074624Z / 092255Z /
+      123222Z (mirrored campaign.json paths to this repo's sha-equal config, because the run worktrees of the older
+      receipts were removed in the 13:3x cleanup), and 123222Z byte for byte in place; A4 changes nothing outside its
+      rows on every receipt;
+    - also: tests.test_p184_gate_campaign + g4_observer 116 OK; in-image (qdl-v2-python:2.2.4-31a5155, receipts
+      absent) 18 OK, 5 skipped.
+  - Pre-existing, not changed here: tests.test_p184_a3_attribution / g4_amendment / g4_amendment_2 receipt-parity tests
+    give 4 failures + 2 errors. The cause is that the run worktrees aa78df7d / 5a70bdf4 / 1ab4a638 named in those
+    receipts' campaign.json were removed in the 13:3x cleanup. It is an environment drift, not a scorer change; the
+    mirror helper in the A4 test is the fix pattern.
+  - Codex release-closure review (p184-release-closure-options-20261018.md, "OKX BOOK max" option A: retain the max
+    event and every threshold exceedance): ACCEPTED in A4's retention condition.
+  - Resources: no image built, no container created other than `--rm` test/render runs, no runtime action; lock not
+    needed (no measurement).
