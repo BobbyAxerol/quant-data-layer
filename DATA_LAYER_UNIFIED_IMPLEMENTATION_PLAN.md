@@ -75470,3 +75470,71 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
     bound (test_reference_quality_uses_provider_observation_not_local_receive_time) and now uses the effective bound.
   - Next: lock, operational reconnect of ingestor_okx_swap (owner-approved, journaled as an operational session
     change), HOLD, final stage-100 at this commit.
+- 2026-10-18 09:11-10:00Z operational reconnect + FINAL stage-100 under G4-A1 + G4-A2 at DL 1ab4a638 (Claude subagent):
+  **NOT certified; the counted run is INVALID by an apparatus defect of 1ab4a638 (A1), no further rerun made.**
+  - Lock claude-s100-final-a1b1-1ab4a638 09:11:23-09:59:19Z (taken with the lock absent, released). Operational
+    session change (owner-approved ~08:50Z "Reconnect + probe", declared before the run, NOT a product fix):
+    `docker restart --timeout 30 qdl_v2_stable_candidate-ingestor_okx_swap-1` 09:12:22.8Z (rc 0, image a9679def
+    unchanged, same container 34c93a82, RestartCount 0). After: 5 lanes session_ready (okx-public-001 67018 -> 67019,
+    -002 209, -003 212, -004 179, business 160), progress flowing on all 5, IDR-112 armed line okx-public-003 (6
+    bindings, config unchanged), standby failures 0; HOLD check (postchecks/hold_check.py, baseline hold-baseline.json)
+    violations [], writer READY 64 64, stream refusal/overflow deltas 0, cores 0 retry/rebalance; OKX l2_frame_refused 0
+    (Binance REST_AHEAD_OF_STREAM refusals at the usual background rate, unchanged ingestor).
+  - Attempt 1 p184-final-campaign-20261018T091556Z: guard TAINTED + aborted at 09:16:31Z (driver +19 s, before the load
+    window): foreign `ssh ... bobby@178.128.51.255` spawned every 30 s by
+    ~/.local/state/trading-system/pma11-retained-backfill-final-sgp-20261018/launch_sgp.py (pid 612199, child of the
+    Codex IDE app-server 3410356, started 09:09Z, i.e. before the lock; SIGSTOP of the app-server does not stop its
+    children). Clear infrastructure taint -> the one allowed rerun. The launcher was not touched (another agent's job);
+    it ended by itself 09:20:44Z (TERMINAL_REMOTE_JOB_RESULT). Cleanup by the campaign: driver/campaign SIGINT, G6
+    probe SIGTERM, no G11 restart, docker ps 40.
+  - Rerun p184-final-campaign-20261018T092255Z (same shape as 074624Z: new run worktree data-layer-p184-final-run-1ab4a638
+    clean, Codex pause watcher SIGSTOP 09:21:12Z / SIGCONT 09:59:03Z, preflight_env PASS, trace re-arm
+    rc15/roll_writer_campaign_native.py sha256:2deb90b0... 3600 dry DRY_RUN + real OK not_ready_samples 0 (writer
+    recreated 09:21:23Z; first re-arm 09:14:32Z expired with attempt 1), production otherwise unchanged by docker inspect
+    (query 3e9e4d3a x2, ingestors a9679def x2, stream/projector 60f83a51, cores 7c848aad x3, writer 2deb90b0, RestartCount
+    0 everywhere), dry run problems [], campaign.json records A1 1c8a276f + A2 99961c41, tool 8f67a861): driver
+    09:23:10-09:54:32Z exit 1, load 09:24:29-09:54:29Z, 5 G4 windows (boundary 09:30Z), G11 restart 09:55:20Z,
+    campaign_exit 0, guard CLEAN aborted false. Summary: PASS G11; FAIL G2, G4, G9; NOT_MEASURED G1/G3/G5-G8/G10/G14
+    (protocol: driver acceptance requests:no_failures, no_starved_session, streams:no_errors, startup:bounded,
+    ts:ready_60_every_sample, final:burst/reconnect_window_measured); G12/G13 not part of the campaign.
+  - Root cause of the protocol failure (verified): error_count 146,701, every typed error ImportError (SETUP x5,
+    REFERENCE_BATCH, SNAPSHOT, PROBE). The driver's client container runs the PROFILE image qdl-v2-python:2.2.2-d6d2637
+    (phase3_consumer_load_acceptance.py docker_command image_id = profile["image"]), not the deployed 2.2.4 Query image.
+    In 2.2.2 qdl/query/service.py has no _FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS (added 2e0de95, first in v2.2.3;
+    `hasattr` False in that image), so the mounted 1ab4a638 reference_l2_acceptance.py fails to import, and
+    _target_read imports it for every operation -> every client read failed in ~7 ms. My tests ran in
+    qdl-v2-python:2.2.4-31a5155, not in the image the driver runs (E7). Not a product finding, not an infra taint;
+    the rule allows no second rerun. Fix options (not done, coordinator/owner): (a) the bound's allowance is the
+    DEPLOYED Query's, so resolve it host-side from the deployed query image (or the run worktree's service.py, which
+    equals it: `git diff 31a5155 HEAD -- qdl/` empty) and pass it to the client in the inner config, failing closed
+    when absent; (b) run the client on the deployed query image (changes the client environment of every earlier
+    receipt). Both need a new commit + a test executed in the profile image.
+  - Measured anyway (venue -> canonical and writer paths ran with near-zero client load; report-only, not a
+    certification): G4 FAIL addendum book_snapshot|OKX_INVERSE| max 185.8 / 254.5 / 205.0 / 316.2 / 182.1 ms vs 300.7
+    (window 4); book_delta|OKX_INVERSE| PASS 120-213 vs 282.5; G4-A1 mark_index_price|OKX| PASS p95 83-113 (200.9), max
+    170-220 (993.4), EXTERNAL_VENUE_COMPONENT_CADENCE 5/5; G4-A2 applied (no bar >= 8h closed in these windows, no B1 row).
+    Books probe 5/5 covered, fresh connection recv - ts p95 29-33 ms, max 33-185 ms, seq_breaks 0; TCP netns: OFO /
+    RcvQDrop / BacklogDrop / Prune / Timeouts 0, RetransSegs = TCPLossProbes = DSACKRecv (send-side loss probes),
+    RX_QUEUED seconds 1 in windows 2 and 3, ingestor pid stable 5/5. OKX book tails (> 150 ms) on okx-public-001 gen
+    67019 in windows 1-2 (206-212 ms at 09:25:19.40Z, 169-173 ms at 09:32:11.40Z, every binding of the lane at the same
+    source instant): attribution EXTERNAL_SESSION_UPSTREAM (fresh connection HEALTHY, recv - ts max 33.9 / 35.9 ms in
+    those seconds, host receive queue CLEAN). Window-4 max book_snapshot OKX_INVERSE sample not in the top-5 capsule:
+    not attributed. okx-public-001 read_gap max 392 ms in the load (gen 67018 had 409-428 ms).
+  - G2 FAIL TRADE|BINANCE max 5,515 ms, QUOTE / MARK|BINANCE outside; G9 FAIL: 1 sample demanded != session-ready, 10
+    eligibility losses all BINANCE (TRADE_SESSION_UNVERIFIED x5, QUOTE EXECUTION_CONTEXT_NOT_EXECUTION_ELIGIBLE x5,
+    component ages 9.2-12.8 s). Source (verified in ingestor logs): Binance venue session resets 09:32:55-09:33:32Z
+    (trade heartbeat_failed gen 56, 57; quote disconnects gen 64 ECONNRESET, 65 / 66 reset without close handshake;
+    read gaps 1.9-2.0 s, 3.2 s on bar/markindex). Not caused by the driver defect; not re-measured.
+  - Report-only extras: qdl.stall load query_kn_1 slow_request 2 (warmup 1.7 / 2.3 s 09:33:31-34Z), query_kn_2
+    loop_lag 1 (61 ms), slow 2 (warmup); IDR-112 okx-public-003 one staleness recycle in the load (trigger max_lag 305
+    ms, excess 279, 4 bindings, gen 212 -> 213 continued, handover 0 ms), standby failures/deadlines 0; native_probe
+    slot 4 same epoch pre-load -> pre-g11: QUOTE requested 31,258 / failed 0 / unavailable 39, TRADE 1,290 / 0 / 5,
+    unreported_routes 0; post-G11 epoch cfff211e failed 0 unavailable 0; gateway overflow/refused unchanged pre/post
+    (stream_kn_1 4/2, stream_kn_2 1/0), hub_live_budget_refused 0, queue_isolation 0; A1 reference_timing empty (no
+    reference read reached it; no settlement boundary in 09:24-09:54Z anyway).
+  - sha256: 092255Z scorecard.json ffb5b98e..., campaign.json 65ee6a87..., timeline.jsonl 7fcd97d2...,
+    stage100/receipt.json 374f7d12..., gates.json d8972f1d..., .run.log edfca0c3..., .guard.log d1b19a42...,
+    guard/summary.json 8720d7d2..., .g11-watcher.log a1181396..., extras .extra/SHA256SUMS 753d4ddc...; attempt 1
+    .guard/TAINTED 86340a8c..., .extra/SHA256SUMS d241d225....
+  - After: docker ps 40, no qdl-p184-* / qdl-phase3-* leftovers, lock absent, production = before except the
+    owner-approved ingestor_okx_swap restart and the writer recreates (trace re-arm x2, G11 restart 09:55:25Z).
