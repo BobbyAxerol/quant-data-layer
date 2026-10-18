@@ -178,8 +178,9 @@ for _name in RUST_BINARIES:
              "rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs among Rust sources (IDR-112 F1-F3); whole-file "
              "EQUAL expected, loaded sections equal at least"))
 
-# rustls 0.23.45 -> 0.23.46 (RUSTSEC-2026-0346..0349, owner decision 2026-10-18 "Nang rustls ngay"): the only change
-# since 83bef59 is Cargo.toml/Cargo.lock for rustls. Binaries whose crate graph contains rustls (cargo tree -i rustls
+# rustls 0.23.45 -> 0.23.46 (RUSTSEC-2026-0346..0349, owner decision 2026-10-18 "Nang rustls ngay"): since 83bef59
+# the Rust delta is Cargo.toml/Cargo.lock for rustls, plus the whitespace-only cargo fmt f6ce816 of qdl-stream-gateway
+# (fmt-equivalence-addendum.md). Binaries whose crate graph contains rustls (cargo tree -i rustls
 # --target x86_64-unknown-linux-gnu: qdl-core, qdl-kafka, qdl-stream-gateway) get new crate metadata hashes, so their
 # files differ from every earlier build; whether anything outside rustls code changed is decided by
 # scripts/p184_rust_symbol_diff.py, not here. qdl-projector and qdl-venue-core-certify have no rustls in their graph.
@@ -192,8 +193,8 @@ _RUSTLS_REASON = "rustls 0.23.46 (RUSTSEC-2026-0346..0349) is in this binary's c
 for _name in RUST_BINARIES:
     if _name in RUSTLS_LINKED:
         BINARY_EXPECTATIONS[_name] = [(ref, "DIFFERENT", _RUSTLS_REASON) for ref, _, _ in BINARY_EXPECTATIONS[_name]]
-        BINARY_EXPECTATIONS[_name].append(("v224_83bef59", "DIFFERENT", _RUSTLS_REASON + "; the only delta since "
-                                           "83bef59"))
+        BINARY_EXPECTATIONS[_name].append(("v224_83bef59", "DIFFERENT", _RUSTLS_REASON + "; the only functional "
+                                           "delta since 83bef59"))
     else:
         BINARY_EXPECTATIONS[_name].append(("v224_83bef59", "EQUAL", "no rustls in its crate graph and no other "
                                            "source delta since 83bef59"))

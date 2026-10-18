@@ -75852,3 +75852,33 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
     an owner-approved `docker update` outside T4. The cumulative T4 budget is kept (+0.75 of +1.5).
   - A4 is bound to 123222Z. The final run needs any relaxation pre-registered before launch.
   - Next: owner approval of the exact values, then apply after the rust-image roll (packet section 11).
+- rustls slice (continued after the OPT bullet above): build (host lock `claude-dl-rustls-0.23.46` 16:06:06Z, taken after the locks of epg10-08 and codex-pma11 expired;
+  free disk 204 GiB): `scripts/build_qdl_release_images.py --build --component rust --rev 9dab224` ->
+  `qdl-v2-rust:2.2.4-9dab224` `sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92`, receipt
+  ~/.local/state/qdl-v2/build-v2.2.4-9dab224/receipt.json (e38fd275..., PASS, `unexpected []`, `missing []`,
+  `core_equal_to_measured` false: the core file differs from rc22). Incremental offline compile 1m22s.
+- Equivalence vs the live `a9679def` (whose gateway = 60f83a51, core = rc22 7c848aad), new read-only tool
+  `scripts/p184_rust_symbol_diff.py` (normalized per-function disassembly, GOT resolved, data references masked,
+  padding / duplicate instances ignored; tests.test_p184_rust_symbol_diff 9 OK). Summary 49f2164e...:
+  - projector, venue-core-certify: whole-file EQUAL.
+  - ingestor: 101 rustls functions changed (+6/-10), OTHER 5 TypeId constants + 16 CODEGEN (tungstenite, rdkafka
+    drop, LaneTelemetry::report, run_okx_service closure); gateway: 81 rustls (+8/-7), OTHER 4 + 5 calling rustls +
+    68 CODEGEN (h2/hyper/tonic/prost/tokio monomorphizations).
+  - realtime core: **0 rustls functions and 0 rustls source paths in both builds** (the advisories are not in the
+    deployed core binary); 4 TypeId constants + 5 CODEGEN prost encoders (e.g. Coefficient::encode inlined in rc22,
+    out of line now).
+  - Verdict: NOT confined to rustls at machine-code level in any binary built from a crate that depends on rustls;
+    the non-rustls differences are same-source codegen (CGU partition / inlining with new crate hashes, inferred) and
+    crate-hash constants. Not proven behaviour-equivalent; reported, not hidden.
+- Python image: keep `3e9e4d3a` (31a5155); 9dab224 changes no python runtime file (the 31a5155..9dab224 python delta
+  is qdl/certification/reference_l2_acceptance.py and frozen config/v2 amendments, scripts/tests only, as recorded at
+  the v2.2.4 packaging).
+- Roll packet (draft, NOT executed): upgrade/evidence/releases/v2.2.4/drafts/RUSTLS_0.23.46_ROLL_PACKET.md, modules M1
+  ingestor_okx_swap, M2 ingestor_binance_usdm, M3 stream_kn_1, M4 stream_kn_2 (rc17v2, `['image']`, HOLD + rollback
+  per module, merge rule with the resource package); M5 rust_core x3 recommended NOT to roll (no rustls code, would
+  only add unmeasured codegen; simultaneous-replace commands included as an owner option). Dry runs all `["image"]`;
+  evidence ~/.local/state/qdl-v2/releases/v2.2.4/rollout-rustls-0.23.46/SHA256SUMS.
+- Local CI (owner ~16:00Z: full CI contract locally before every push): `scripts/p184_local_ci.py` replays every job
+  of .github/workflows/ci.yml on the pushed head; result recorded in the next journal entry and in the handback.
+- PR #33 head 5e90eb7 failed only `contract-tests` / cargo-deny (`advisories FAILED, bans ok, licenses ok, sources
+  ok`, RUSTSEC-2026-0346..0349); every other job success (run 39141057196).
