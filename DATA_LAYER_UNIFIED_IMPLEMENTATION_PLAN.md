@@ -75538,3 +75538,69 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
     .guard/TAINTED 86340a8c..., .extra/SHA256SUMS d241d225....
   - After: docker ps 40, no qdl-p184-* / qdl-phase3-* leftovers, lock absent, production = before except the
     owner-approved ingestor_okx_swap restart and the writer recreates (trace re-arm x2, G11 restart 09:55:25Z).
+- 2026-10-18 10:15-12:20Z A1 apparatus fix + Codex tree pause + amendment A3 FROZEN (owner AskUserQuestion ~10:10Z
+  "Amendment A3 quy nguyen nhan (Recommended)"; Claude subagent). implemented + tested locally; no runtime action.
+  - A1 (option a, Codex release-closure review section 1 accepted): the verifier
+    (qdl/certification/reference_l2_acceptance.py) no longer imports Query's private constant; the allowance is
+    configured from the inner config and fails closed while unconfigured. The driver resolves it in the DEPLOYED Query
+    image (`docker run --rm --network none`, name qdl-phase3-target-allowance-*, constant + _reference_problem applies
+    it, replicas must agree) and the campaign preflight writes it as versioned input query-funding-allowance.json
+    (schema qdl.p184.query-funding-allowance.v1, digest, int type, Query image ids re-verified by the driver). Exact-client
+    smoke: driver `--mode target-matrix` (every read once per replica, BAR warmups, NEW one stream subscribe/close per
+    venue) before any sampler or load, failure -> CLIENT_SMOKE_FAILED, exit 3, no load; launch re-planned after it.
+    Fail-fast: ImportError/NameError/SyntaxError in a target worker -> exit 70, coordinator aborts at once.
+    Tests: host tests.test_p184_a1_client_image 4 OK (mounted verifier inside qdl-v2-python:2.2.2-d6d2637 --network
+    none with the driver's own mounts/inner config: unconfigured fail closed, history before/8h+14s/8h+60s accepted,
+    8h+61s refused, latest 8h+14s refused; deployed-image probe 60000, 2.2.2 None -> RuntimeError; campaign input
+    tamper/redeploy refused); in qdl-v2-python:2.2.4-31a5155 (--network none, source ro) 14 modules 226 OK.
+  - Codex pause (scripts/p184_codex_pause_watch.py): roots = IDE Codex argv0 + --also-pid, every descendant by ppid
+    (no session/pgid widening, own ancestors excluded), parents-before-children with rescans to a fixpoint, SIGCONT
+    reverse order with starttime guard, resume on SIGTERM/INT; never kills. tests 18 OK (real process tree test).
+  - A3 apparatus: scripts/p184_a3_attribution.py (pure), scripts/p184_a3_evidence.py (whole-load host sampler:
+    ingestor cgroup throttle, thread run-queue wait, netns socket queues ~10 Hz, chrony every 30 s; post-load lane
+    timeline from docker logs, whitelisted fields incl. OKX cause), observer v7 (every ADMITTED event above the row
+    threshold retained with exact clocks, cap 256, overflow counted, max_event kept), scripts/p184_g4_binance_probe.py
+    (fresh /public bookTicker+trade+depth@100ms and /market markPrice@1s, per-event ids + per-second aggregates, Binance
+    ingestor netns TCP; smoke 25 s lags 27-85 ms, container removed), gate campaign application (G4 a3_rescue hook,
+    G9 rescore, G2 report), scripts/p184_freeze_a3_amendment.py, rationale
+    upgrade/evidence/releases/v2.2.4/a3-external-attribution.md.
+  - Independent review BEFORE the run (read-only general-purpose subagent, 2026-10-18 ~11:55-12:05Z): 4 BLOCKING, all
+    fixed: (1) a late fresh probe made an internal tail EXTERNAL_VENUE_WIDE -> class not assigned in v1 (no probe-side
+    scheduler evidence); (2) every OKX disconnect incl. DL-initiated STALENESS_HANDOVER/BOOK_RESYNC/WRITE_ERROR counted
+    as venue fault -> venue causes only (OKX EOF/CLOSE_FRAME/READ_ERROR/HEARTBEAT_TIMEOUT/NOTICE*, Binance peer
+    reset/close, heartbeat_failed), a non-venue end in the span makes the episode incomplete; (3) G9 episode did not
+    have to explain the onset, checks skipped the onset seconds, recovery from the fault -> onset between last good
+    frame and fault, local/DL-path/writer-liveness checks from the outage start to restoration, recovery from the
+    outage start (G4 too); (4) A3 code sha not verified -> run-time and score-time code pinned. Non-blocking fixed: exact
+    clocks instead of rounded visibility, socket sampler gaps/errors, missing fields fail, rx_persist_samples 1, per-core
+    and per-gateway coverage, zero-dispatch/reset intervals fail, per-window cap (a p95 failure is never rescued), G9
+    loss multiset == G9 causes, session-type reasons only, writer workers LIVE, bounded recovery search, workload /
+    profile / ingestor-pid-stability checks, preflight refuses image/code drift, probe venue ts must equal DL source ts.
+    Accepted as stated limits: TCP samples ~100 ms apart cannot exclude shorter stalls or user-space buffering; Binance
+    fault-to-lane join by generation (ambiguous -> UNKNOWN); a campaign with this tool where A3 does not apply also loses
+    A1/A2 (strict).
+  - Dispositions of Codex p184-release-closure-options-20261018.md: section 1 ACCEPTED (option A, campaign input +
+    exact-client smoke + fail-fast; 092255Z stays invalid and preserved; the corrected run is a NEW declared run);
+    section 2 ACCEPTED for G9 losses via the joined lane timeline with recovery budget, ALTERNATIVE for the per-event
+    canonical coordinate / consumer ACK (not recorded: replaced by core raw_age + gateway dispatch-lag checks over the
+    recovery seconds and the writer restoration sample); section 3 ACCEPTED (observer v7 exceedances, same-event join
+    on seqId/u/t/E + venue ts, a different event is supporting only, TCP blind spot stated); section 4 ACCEPTED (G12 /
+    G13 inherited 76/76, not rerun; hashes, workload, external-incident and stop rules frozen in A3). Stated v1 limits
+    (owner-accepted via coordinator): G2 tails are UNKNOWN by construction (native slices carry no per-sample DL receipt
+    clock; Python MARK records envelope_received_at NOT_MEASURED); G9 demanded == session-ready and v1 fallback stay
+    strict; no per-event canonical coordinate / consumer ACK.
+  - FROZEN config/v2/p184-stage100-a3-external-attribution.json sha256 cc5fc7dcf07e30b1b52cbc51b78c4a5485a63be84d5b814dcf89452007e57326,
+    frozen_at 2026-10-18T12:17:51Z, base ref 6ff401e; per-row G4 internal limits = baseline max x 1.2 from
+    p184-g4-baseline-20261011T175720Z (9 non-bar rows; paired mark_index_price|OKX| excluded); runtime images pinned
+    (query 3e9e4d3a x2, ingestors a9679def x2, stream/projector 60f83a51, cores 7c848aad x3, writer 2deb90b0); client
+    profile qdl-v2-python:2.2.2-d6d2637 (profile-stage100-rc4-r16.json 12a8b578). Old -> new sha256: gate tool
+    8f67a861 -> e179ec78, driver 91b4423c -> 293e1b1b, verifier 1b0bf756 -> 11ed0ae2, observer 5d90cc60 -> 1d33ca4a,
+    pause watch 64b50287 -> f38a7c1b, new a3_attribution dcf3a17c, a3_evidence 3fec490b, binance_probe b2218ca2, freeze
+    tool 71d73b5c; unchanged budget ff85335b, addendum 4ed59dca, A1 1c8a276f, A2 99961c41, guard 75b3067c, okx probes,
+    g9 sampler, trace analyses, lock.
+  - Tests (host python3 -B -m unittest): a3_attribution 37 (incl. negatives probe missing / different event / internal
+    segment over limit / overflow / unretained max / incomplete timeline / recovery over budget / cap / pin drift, and
+    ReceiptParity: 053803Z / 135719Z / 074624Z / 092255Z stored scorecards byte-identical without A3) + a1_client_image
+    + binance_probe + codex_pause_watch + g4_amendment_2 + g4_amendment + gate_campaign + g4_observer +
+    foreign_activity_guard: 246 OK; in-image 226 OK. Dry run: preflight problems only the expected trace window (re-arm
+    pending), allowance 60000, no A3 drift.

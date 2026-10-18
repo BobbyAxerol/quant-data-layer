@@ -850,7 +850,7 @@ class G4ScheduleV2Tests(unittest.TestCase):
     def test_apparatus_and_cap_receipt(self):
         apparatus = campaign.g4_apparatus(12.0)
         self.assertEqual(apparatus["schedule_version"], campaign.G4_SCHEDULE_VERSION)
-        self.assertTrue(apparatus["observer_version"].endswith(".v6"))  # v5 own cgroup, v6 paired split (amendment 1)
+        self.assertTrue(apparatus["observer_version"].endswith(".v7"))  # v5 own cgroup, v6 paired split (amendment 1), v7 A3 exceedances
         self.assertEqual(apparatus["observer_launch_mode"], "docker_run_isolated")
         self.assertEqual(len(apparatus["observer_sha256"]), 64)
         self.assertEqual(apparatus["launch_hold_seconds"], 12.0)

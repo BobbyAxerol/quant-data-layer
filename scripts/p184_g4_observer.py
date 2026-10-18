@@ -68,7 +68,16 @@ receipt (the amendment's verdict quantity), component_ts_gap_ms = |mark.ts - ind
 and the per-component venue -> DL receipt; plus a top-OUTLIER_K capsule on the internal split, the count of events
 whose source_sequence does not parse (paired_missing) and of events whose published_at_ns differs from the newest
 component receipt (published_mismatch). Every other row, the visibility histograms, the sampler, percentiles and
-the summary of every other row are byte-identical to v5."""
+the summary of every other row are byte-identical to v5.
+
+Exceedance retention (OBSERVER_VERSION v7, 2026-10-18, amendment A3, config/v2/p184-stage100-a3-external-attribution.json;
+Codex review p184-release-closure-options-20261018.md section 3): the top-5 all-event capsule missed the failing
+book_snapshot|OKX_INVERSE| maximum of 092255Z. With --exceedance-ms JSON ({row key: threshold ms}, keys of the row and
+of the OKX inverse split), every ADMITTED event of such a key (the gated population) whose visibility is above the
+key's threshold is retained with its exact clocks and identity (session id, generation, source_sequence, offsets),
+bounded to EXCEEDANCE_CAP per key and window; beyond the cap only `overflow` is counted (the row is then INCOMPLETE
+for A3, never attributable), and the admitted maximum event of the key is always retained (`max_event`). Without
+--exceedance-ms nothing is retained and every output is byte-identical to v6 except the version string."""
 import argparse
 import hashlib
 import heapq
@@ -111,11 +120,24 @@ def top_record(event):
     return result
 
 ALL_FEEDS='trade,quote,mark_index_price,book_delta,book_snapshot,bar'
-OBSERVER_VERSION='qdl.p184.g4-observer.v6'
+OBSERVER_VERSION='qdl.p184.g4-observer.v7'
 LAUNCH_MODE='docker_run_isolated'
 DEFAULT_CPUS=0.5
 DEFAULT_MEMORY='512m'
 PIDS_LIMIT=64
+
+
+def exceedance_thresholds(text):
+    """--exceedance-ms JSON -> {key: float ms} (validated: str keys 'feed|VENUE|interval', finite ms >= 0)."""
+    if not text:return {}
+    value=json.loads(text)
+    if not isinstance(value,dict):raise ValueError('--exceedance-ms must be a JSON object')
+    out={}
+    for key,ms in value.items():
+        if not isinstance(key,str) or key.count('|')!=2 or type(ms) not in (int,float) or not math.isfinite(ms) or ms<0:
+            raise ValueError(f'invalid exceedance threshold {key!r}')
+        out[key]=float(ms)
+    return out
 
 
 def accepted(venue,symbol,feed,symbols,feeds):
@@ -283,6 +305,7 @@ SUB_BUCKETS=128          # per power of two at and above LINEAR_MS (relative wid
 RAW_SLICES=24            # raw samples are stratified over 24 equal slices of the window
 RAW_PER_SLICE=4          # per feed|venue|interval and slice
 OUTLIER_K=5              # per feed|venue|interval, over every accepted event
+EXCEEDANCE_CAP=256       # v7: retained admitted events above a key's threshold per window (then overflow only)
 CHECKPOINT_SECONDS=30
 CGROUP_DIR=Path('/sys/fs/cgroup')  # inside the observer container: its own cgroup v2 (private cgroup namespace)
 CGROUP_FIELDS=('usage_usec','user_usec','system_usec','nr_periods','nr_throttled','throttled_usec')
@@ -410,11 +433,14 @@ def clock_values(source,received,produced_ms,seen):
 
 
 class _Row:
-    __slots__=('admitted','missing','all_events','all_missing','strata','outliers','paired')
+    __slots__=('admitted','missing','all_events','all_missing','strata','outliers','paired','exceed')
 
-    def __init__(self,paired=False):
+    def __init__(self,paired=False,threshold=None):
         self.admitted={m:Histogram() for m in METRICS};self.missing={m:0 for m in METRICS}
         self.all_events=Histogram();self.all_missing=0;self.strata={};self.outliers=[]
+        # v7 (A3): admitted events above the key's threshold, exact clocks; None = no retention (v6 shape).
+        self.exceed=({'threshold_ms':float(threshold),'cap':EXCEEDANCE_CAP,'events':[],'overflow':0,
+                      'admitted_seen':0,'max_ms':None,'max_event':None} if threshold is not None else None)
         # v6: only PAIRED_ROW carries the same-event split; every other row keeps the v5 shape.
         self.paired=({'histograms':{m:Histogram() for m in PAIRED_METRICS},'missing':{m:0 for m in PAIRED_METRICS},
                       'paired_missing':0,'published_mismatch':0,'older_component':{},'outliers':[]}
@@ -425,7 +451,9 @@ class WindowAggregator:
     """Pure fixed-memory state of one observer window: per row key aggregates, raw-sample strata, outlier capsule.
 
     observe() returns the raw record to emit (bounded stratified sample) or None; the caller never caps the reader."""
-    def __init__(self,seconds,*,raw_cap=10000,raw_slices=RAW_SLICES,raw_per_slice=RAW_PER_SLICE,outlier_k=OUTLIER_K):
+    def __init__(self,seconds,*,raw_cap=10000,raw_slices=RAW_SLICES,raw_per_slice=RAW_PER_SLICE,outlier_k=OUTLIER_K,
+                 exceedance_ms=None):
+        self.exceedance_ms=dict(exceedance_ms or {})
         self.seconds=seconds;self.raw_cap=raw_cap;self.raw_slices=raw_slices;self.raw_per_slice=raw_per_slice
         self.outlier_k=outlier_k;self.rows={};self.inverse={};self.seq=0
         self.start_ns=self.planned_end_ns=self.last_receipt_ns=None
@@ -443,7 +471,8 @@ class WindowAggregator:
     def observe(self,feed,venue,interval,symbol,source,received,produced_ms,seen,admitted,make_record,
                 source_sequence=None,published_ns=None):
         key='|'.join(str(x) for x in (feed,venue,interval or ''))
-        row=self.rows.get(key) or self.rows.setdefault(key,_Row(paired=key==PAIRED_ROW))
+        row=self.rows.get(key) or self.rows.setdefault(key,_Row(paired=key==PAIRED_ROW,
+                                                               threshold=self.exceedance_ms.get(key)))
         values=clock_values(source,received,produced_ms,seen)
         visibility=values['visibility_ms']
         self.accepted+=1;self.last_receipt_ns=seen
@@ -459,11 +488,13 @@ class WindowAggregator:
         targets=[row]
         if symbol.endswith('-USD-SWAP'):  # OKX inverse split of the same quantity (g4_inverse_rows)
             ikey=f'{feed}|OKX_INVERSE|{interval or ""}'
-            targets.append(self.inverse.get(ikey) or self.inverse.setdefault(ikey,_Row()))
+            targets.append(self.inverse.get(ikey) or self.inverse.setdefault(
+                ikey,_Row(threshold=self.exceedance_ms.get(ikey))))
         for target in targets:
             for name,value in values.items():
                 if value is None:target.missing[name]+=1
                 else:target.admitted[name].add(value)
+            if target.exceed is not None and visibility is not None:self._exceed(target.exceed,visibility,make_record)
         if row.paired is not None:self._observe_paired(row.paired,source_sequence,produced_ms,published_ns,make_record)
         stratum=self._slice(seen)
         if row.strata.get(stratum,0)>=self.raw_per_slice:return None
@@ -471,6 +502,16 @@ class WindowAggregator:
             self.raw_cap_reached=True;return None
         row.strata[stratum]=row.strata.get(stratum,0)+1;self.raw_emitted+=1
         return make_record()
+
+    @staticmethod
+    def _exceed(exceed,visibility,make_record):
+        """v7: one admitted event into the key's exceedance retention (A3)."""
+        exceed['admitted_seen']+=1
+        if exceed['max_ms'] is None or visibility>exceed['max_ms']:
+            exceed['max_ms']=visibility;exceed['max_event']={**make_record(),'visibility_ms':round(visibility,3)}
+        if visibility>exceed['threshold_ms']:
+            if len(exceed['events'])<exceed['cap']:exceed['events'].append({**make_record(),'visibility_ms':round(visibility,3)})
+            else:exceed['overflow']+=1
 
     def _observe_paired(self,paired,source_sequence,produced_ms,published_ns,make_record):
         """v6: one admitted event of PAIRED_ROW into its same-event split (G4 amendment 1)."""
@@ -500,6 +541,9 @@ class WindowAggregator:
     @staticmethod
     def _row_json(row,outliers):
         out={'admitted':{m:h.to_json() for m,h in row.admitted.items()},'missing_clock':dict(row.missing)}
+        if row.exceed is not None:
+            out['exceedances']={**{k:v for k,v in row.exceed.items() if k!='events'},
+                                'events':sorted(row.exceed['events'],key=lambda e:-e['visibility_ms'])}
         if outliers and row.paired is not None:out['paired_split']=WindowAggregator._paired_json(row.paired)
         if outliers:
             out.update(all_events_visibility_ms=row.all_events.to_json(),all_events_missing_clock=row.all_missing,
@@ -628,7 +672,7 @@ def worker(args):
     def emit(value):print(json.dumps(value,separators=(',',':')),flush=True)
     clients={k:AdminClient(v) for k,v in config.items()} if args.mode in ('lag','both') else {}
     reader=None; sampler=Sampler(args.sample_ms); streak={}; begin=time.monotonic(); end=begin+args.seconds; next_lag=begin
-    window=WindowAggregator(args.seconds,raw_cap=args.max_records); last_poll_ns=None; next_checkpoint=None; finished=False
+    window=WindowAggregator(args.seconds,raw_cap=args.max_records,exceedance_ms=exceedance_thresholds(getattr(args,'exceedance_ms',''))); last_poll_ns=None; next_checkpoint=None; finished=False
     symbols=set(args.symbols.split(',')) if args.symbols else None
     feeds=set(args.feeds.split(','))
     if args.include_quote:feeds.add('quote')
@@ -792,6 +836,7 @@ def launch(args):
     if args.symbols:command += ['--symbols',args.symbols]
     command += ['--feeds',args.feeds]
     if args.include_top:command.append('--include-top')
+    if getattr(args,'exceedance_ms',''):command += ['--exceedance-ms',args.exceedance_ms]
     launch_record={'kind':'launch','observer_version':OBSERVER_VERSION,'at_ns':time.time_ns(),**provenance}
     previous=signal.signal(signal.SIGTERM,_terminate)
     process=None;written=0;code=None
@@ -839,6 +884,7 @@ def main():
     parser.add_argument('--symbols',default='',help='comma list of native symbols; empty = all')
     parser.add_argument('--feeds',default=ALL_FEEDS,help='comma list of canonical payload kinds')
     parser.add_argument('--summarize',type=Path,help='offline: summarize an observations.jsonl and exit')
+    parser.add_argument('--exceedance-ms',default='',help='v7 (A3): JSON {row key: threshold ms}; retain admitted events above it')
     parser.add_argument('--campaign-id',default='',help='container name tag; default: the output parent directory name')
     parser.add_argument('--cpus',type=float,default=DEFAULT_CPUS,help='observer container CPU bound')
     parser.add_argument('--memory',default=DEFAULT_MEMORY,help='observer container memory bound (also memory-swap)')

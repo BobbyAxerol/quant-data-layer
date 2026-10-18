@@ -69,7 +69,7 @@ class SamplingKeyTests(unittest.TestCase):
         self.assertTrue(sampler.admit("OKX", "ETH-USDT-SWAP", "trade", None, 6 * S))
         self.assertTrue(sampler.admit("OKX", "ETH-USDT-SWAP", "book_snapshot", None, 6 * S))
         self.assertTrue(sampler.admit("OKX", "ETH-USDT-SWAP", "book_snapshot", None, 6 * S))  # unsampled, as before
-        self.assertTrue(OBSERVER_VERSION.endswith(".v6"))  # v3 launch, v4 cap, v5 own cgroup, v6 paired split; not this sampling
+        self.assertTrue(OBSERVER_VERSION.endswith(".v7"))  # v3 launch, v4 cap, v5 own cgroup, v6 paired split, v7 A3 exceedances; not this sampling
 
 
 QUERY_INSPECT = {

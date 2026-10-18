@@ -66,6 +66,18 @@ Report-only per G4 window of a candidate campaign: a fresh-connection OKX `books
 socket-queue sampler of the ingestor_okx_swap netns (scripts/p184_g4_okx_books_probe.py); it attributes OKX book
 tails (EXTERNAL only with the fresh connection healthy while the lane is late, and an empty host receive queue) and
 never changes a verdict.
+A3 (owner 2026-10-18 ~10:10Z, config/v2/p184-stage100-a3-external-attribution.json, frozen before the run; scripts/
+p184_a3_attribution.py): a G4 row-window over its limit is re-scored on the remaining samples when EVERY admitted event
+above the limit is retained (observer v7 exceedances, no overflow) and classified EXTERNAL from same-event fresh-probe
+evidence (OKX books, Binance depth/bookTicker/trade/markPrice) or a complete ingestor session-fault episode on the
+event's lane, with its own internal split, host-local checks (scripts/p184_a3_evidence.py sample) and clock bound inside
+the frozen limits and the row's EXTERNAL count within the frozen cap; a G9 eligibility loss is EXTERNAL only on a
+complete lane episode with local/DL-path checks and recovery within the frozen budget. G2 tails are UNKNOWN by
+construction (no per-sample DL receipt clock). UNKNOWN counts as FAIL. A3 re-pins amendments 1 and 2 to this tool and
+applies only to a campaign that recorded it (and the pinned runtime images) at run time. Apparatus also added for
+candidate runs: the A1 allowance as campaign input (query-funding-allowance.json, from the deployed Query image), an
+exact-client target-matrix smoke before any sampler or load (refused campaign on failure), the Binance fresh-connection
+probe per G4 window, the A3 local sampler for the load and the post-load lane timeline (docker logs, whitelisted fields).
 `run --baseline [--sessions 50|100]` records role=baseline in campaign.json and runs only the driver workload (+ guard
 and MARK watch) and the G4 observer windows, then writes baseline.json; it never scores.
 
@@ -165,6 +177,29 @@ G4_AMENDMENT_2_PATH = ROOT / "config/v2/p184-stage100-g4-amendment-2.json"
 G4_AMENDMENT_2_SCHEMA = "qdl.p184.stage100-g4-amendment-2.v1"
 G4_AMENDMENT_2_ID = "G4-A2"
 G4_B1_MIN_INTERVAL_MS = 8 * 3_600_000
+# A3 (owner 2026-10-18 ~10:10Z): external attribution of G2 tails, G4 samples and G9 losses (scripts/p184_a3_*.py).
+A3_PATH = ROOT / "config/v2/p184-stage100-a3-external-attribution.json"
+A3_SCHEMA = "qdl.p184.stage100-a3.v1"
+A3_ID = "A3"
+A3_RUNTIME_ROLES = ("query_kn_1", "query_kn_2", "stream_kn_1", "stream_kn_2", "market_projector_1",
+                    "market_projector_2", "rust_core", "rust_core_2", "rust_core_3", "ingestor_binance_usdm",
+                    "ingestor_okx_swap")
+CLIENT_SMOKE_TIMEOUT = 900
+# Review finding 4: the A3 code that runs (at run time and at score time) must be the frozen code.
+A3_CODE = ("gate_campaign_tool", "a3_attribution", "a3_evidence", "g4_observer", "okx_books_probe", "binance_probe",
+           "g9_g10_sampler", "driver")
+
+
+def a3_code_sha256(amendment: dict | None = None) -> dict:
+    """{name: sha256 of the working file} for A3_CODE (paths from the amendment's pins, else the repository's)."""
+    pins = (amendment or {}).get("pinned") or {}
+    defaults = {"gate_campaign_tool": "scripts/p184_gate_campaign.py", "a3_attribution": "scripts/p184_a3_attribution.py",
+                "a3_evidence": "scripts/p184_a3_evidence.py", "g4_observer": "scripts/p184_g4_observer.py",
+                "okx_books_probe": "scripts/p184_g4_okx_books_probe.py",
+                "binance_probe": "scripts/p184_g4_binance_probe.py",
+                "g9_g10_sampler": "scripts/p184_g9_g10_writer_counters.py",
+                "driver": "scripts/phase3_consumer_load_acceptance.py"}
+    return {name: sha256_file(ROOT / ((pins.get(name) or {}).get("path") or defaults[name])) for name in A3_CODE}
 # The owner's closed row set; keys already in the frozen table are excluded when the addendum is frozen.
 G4_ADDENDUM_OWNER_ROWS = tuple(
     [f"bar|{venue}|{interval}" for venue in VENUES for interval in ("5m", "15m", "30m", "1h", "2h", "4h", "6h")]
@@ -673,7 +708,12 @@ def applicable_g4_amendment_2(campaign: dict) -> tuple[dict | None, list[str], d
             problems.append("amendment-2 frozen for a different addendum")
         if (amendment.get("inherits") or {}).get("g4_amendment_1_sha256") != campaign.get("g4_amendment_sha256"):
             problems.append("amendment-2 frozen for a different amendment 1")
-        if (pins.get("gate_campaign_tool") or {}).get("new_sha256") != campaign.get("tool_sha256"):
+        tool_pins = {(pins.get("gate_campaign_tool") or {}).get("new_sha256")}
+        if campaign.get("a3_path"):  # A3 re-pins amendment 2 (unchanged file) to its own tool, as A2 did for A1
+            repin = applicable_a3(campaign)[0]
+            if repin is not None:
+                tool_pins.add(((repin.get("pinned") or {}).get("gate_campaign_tool") or {}).get("new_sha256"))
+        if campaign.get("tool_sha256") not in tool_pins:
             problems.append("campaign tool differs from the one amendment-2 pins")
         frozen = amendment.get("frozen_at_unix")
         if not isinstance(frozen, (int, float)) or not frozen < float(campaign.get("started_unix") or 0):
@@ -681,6 +721,98 @@ def applicable_g4_amendment_2(campaign: dict) -> tuple[dict | None, list[str], d
     if problems:
         return None, ["G4 amendment 2 not applied: " + "; ".join(problems)], source
     return amendment, [], source
+
+
+def validate_a3(amendment: dict) -> list[str]:
+    """Problems that keep A3 from being applied (empty list = valid)."""
+    if not isinstance(amendment, dict) or amendment.get("schema") != A3_SCHEMA:
+        return ["unknown A3 schema"]
+    problems = []
+    if amendment.get("amendment_id") != A3_ID or sorted((amendment.get("scope") or {}).get("gates") or []) != \
+            ["G2", "G4", "G9"]:
+        problems.append("A3 id or scope differs from the owner decision")
+    limits = amendment.get("limits") or {}
+    from scripts import p184_a3_attribution as a3
+    needed = ("g4_internal_segment_ms_by_row", "episode_merge_s", "probe_healthy_ms", "lane_late_margin_ms",
+              "reset_pad_s", "recovery_budget_s", "max_external_fraction", "max_external_episodes_per_venue",
+              "ingestor_runq_wait_ms_max_thread", "rx_persist_samples", "clock_bracket_s", "host_clock_bound_ms",
+              "core_raw_age_ms_max", "gateway_dispatch_lag_ms_max", "gateway_lag_bounds_ms")
+    if any(limits.get(k) is None for k in needed):
+        problems.append("A3 without its numeric limits")
+    if not amendment.get("frozen_before_candidate") or not amendment.get("decision_owner"):
+        problems.append("A3 is not frozen with a decision owner")
+    if (amendment.get("attribution_module") or {}).get("schema") != a3.A3_SCHEMA:
+        problems.append("A3 frozen for a different attribution schema")
+    return problems
+
+
+def applicable_a3(campaign: dict) -> tuple[dict | None, list[str], dict | None]:
+    """(A3 or None, notes, source). Only for a campaign that recorded A3 at run time: unchanged file, valid, frozen
+    before the campaign started, pinned to this campaign's tool, budget, addendum, amendments 1 and 2 and to the
+    runtime images the campaign recorded at preflight. An older campaign (nothing recorded) scores byte-identically."""
+    recorded = campaign.get("a3_path")
+    if not recorded:
+        return None, [], None
+    path = Path(recorded)
+    if not path.exists():
+        return None, [f"A3 not applied: {path} recorded at run time is missing"], None
+    source = {"path": str(path), "sha256": sha256_file(path)}
+    amendment = load_json(path)
+    problems = validate_a3(amendment) if amendment is not None else ["unreadable A3"]
+    if not problems:
+        pins = amendment.get("pinned") or {}
+        checks = (("a3_sha256", source["sha256"], "A3 changed after the campaign recorded it"),
+                  ("tool_sha256", (pins.get("gate_campaign_tool") or {}).get("new_sha256"),
+                   "campaign tool differs from the one A3 pins"),
+                  ("budget_sha256", (pins.get("budget") or {}).get("new_sha256"), "A3 frozen for a different budget"),
+                  ("g4_addendum_sha256", (pins.get("g4_addendum") or {}).get("new_sha256"),
+                   "A3 frozen for a different addendum"),
+                  ("g4_amendment_sha256", (pins.get("g4_amendment_1") or {}).get("new_sha256"),
+                   "A3 frozen for a different amendment 1"),
+                  ("g4_amendment_2_sha256", (pins.get("g4_amendment_2") or {}).get("new_sha256"),
+                   "A3 frozen for a different amendment 2"))
+        for field, expected, message in checks:
+            if campaign.get(field) != expected:
+                problems.append(message)
+        if campaign.get("a3_runtime_images") != (amendment.get("runtime_images") or {}).get("images"):
+            problems.append("runtime images differ from the ones A3 pins")
+        if campaign.get("profile_image") != (amendment.get("profile") or {}).get("image"):
+            problems.append("client profile image differs from the one A3 pins")
+        workload = amendment.get("workload") or {}
+        if campaign.get("sessions") != workload.get("sessions") or campaign.get("role") != "candidate":
+            problems.append("campaign workload differs from the one A3 freezes")
+        expected = {name: (pins.get(name) or {}).get("new_sha256") for name in A3_CODE}
+        if campaign.get("a3_apparatus_sha256") != expected:
+            problems.append("run-time A3 apparatus differs from the frozen code")
+        if a3_code_sha256(amendment) != expected:
+            problems.append("scoring A3 code differs from the frozen code")
+        frozen = amendment.get("frozen_at_unix")
+        if not isinstance(frozen, (int, float)) or not frozen < float(campaign.get("started_unix") or 0):
+            problems.append("A3 not frozen before this campaign started")
+    if problems:
+        return None, ["A3 not applied: " + "; ".join(problems)], source
+    return amendment, [], source
+
+
+def a3_exceedance_thresholds(table: dict, addendum: dict | None) -> dict:
+    """Observer v7 retention thresholds: each frozen-table row at its p95 limit, each GATED addendum row at its max
+    limit (rows in both: the smaller). Report-only rows and amendment 1's row are not A3-scored and get none."""
+    out = {key: float(limit["candidate_p95_limit_ms"]) for key, limit in table.items() if key != G4_AMENDMENT_ROW}
+    for key, spec in ((addendum or {}).get("rows") or {}).items():
+        if spec.get("status") == "GATED" and key != G4_AMENDMENT_ROW:
+            out[key] = min(out.get(key, float("inf")), float(spec["candidate_max_limit_ms"]))
+    return dict(sorted(out.items()))
+
+
+def a3_runtime_images() -> dict:
+    """Image id per A3-pinned runtime role (docker inspect, read-only); a missing container maps to None."""
+    out = {}
+    for role in A3_RUNTIME_ROLES:
+        state = docker_inspect(f"qdl_v2_stable_candidate-{role}-1")
+        out[role] = state.get("Image") if state else None
+    writer = docker_inspect(WRITER)
+    out["writer"] = writer.get("Image") if writer else None
+    return out
 
 
 def applicable_g4_amendment(campaign: dict, table: dict) -> tuple[dict | None, list[str], dict | None]:
@@ -710,6 +842,10 @@ def applicable_g4_amendment(campaign: dict, table: dict) -> tuple[dict | None, l
             repin = applicable_g4_amendment_2(campaign)[0]
             if repin is not None:
                 tool_pins.add(((repin.get("pinned") or {}).get("gate_campaign_tool") or {}).get("new_sha256"))
+        if campaign.get("a3_path"):  # A3 re-pins amendment 1 too (it inherits A1's sha256 through A2)
+            repin3 = applicable_a3(campaign)[0]
+            if repin3 is not None:
+                tool_pins.add(((repin3.get("pinned") or {}).get("gate_campaign_tool") or {}).get("new_sha256"))
         if campaign.get("tool_sha256") not in tool_pins:
             problems.append("campaign tool differs from the one the amendment pins")
         frozen = amendment.get("frozen_at_unix")
@@ -816,7 +952,8 @@ def score_g4_amended_row(windows: list[dict], key: str, frozen_limit: dict, amen
 
 
 def score_g4(windows: list[dict], table: dict, addendum: dict | None = None,
-             amendment: dict | None = None, amendment2: dict | None = None) -> tuple[str, list, list[str]]:
+             amendment: dict | None = None, amendment2: dict | None = None,
+             a3_rescue=None) -> tuple[str, list, list[str]]:
     """windows: [{'summary': {row: {'visibility_ms': {...}}}, 'inverse_rows': {...}}]; table: budget rows.
     addendum (validated, optional): GATED rows score windows with >= 5 samples on max vs the frozen limit; REPORT_ONLY
     rows are returned with verdict REPORT_ONLY and never change the gate; rows in neither stay NOT_MEASURED.
@@ -841,9 +978,13 @@ def score_g4(windows: list[dict], table: dict, addendum: dict | None = None,
                  if v.get("n") else None for v in values]
         over = [x is not None and x > cap and (lo is not None and lo > cap) for x, lo in zip(p95, lower)]
         unresolved = [x is not None and x > cap and not o for x, o in zip(p95, over)]
+        a3 = a3_rescue(key, [i for i, o in enumerate(over) if o], cap, n) if a3_rescue and any(over) else None
+        if a3 and a3["rescued"]:
+            over = [False] * len(over)  # every failing window's admitted samples above the limit are EXTERNAL
         verdict = ("NOT_MEASURED" if not any(n) else "FAIL" if any(over) else
                    "NOT_MEASURED" if any(unresolved) else "PASS")
-        row = {"row": key, "p95_ms_per_window": p95, "n_per_window": n, "limit_p95_ms": cap, "verdict": verdict}
+        row = {"row": key, "p95_ms_per_window": p95, "n_per_window": n, "limit_p95_ms": cap, "verdict": verdict,
+               **({"a3": a3} if a3 else {})}
         if any(v.get("percentile_basis") for v in values):
             row.update(p95_basis="BUCKET_UPPER_BOUND", p95_bucket_lower_ms_per_window=lower,
                        max_ms_per_window=[v.get("max") if v.get("n") else None for v in values])
@@ -867,8 +1008,13 @@ def score_g4(windows: list[dict], table: dict, addendum: dict | None = None,
         limit = spec["candidate_max_limit_ms"]
         gated = [m for m, k in zip(maxes, n) if k >= G4_ADDENDUM_MIN_SAMPLES and m is not None]
         verdict = "NOT_MEASURED" if not gated else "FAIL" if any(m > limit for m in gated) else "PASS"
+        failing = [i for i, (m, k) in enumerate(zip(maxes, n))
+                   if k >= G4_ADDENDUM_MIN_SAMPLES and m is not None and m > limit]
+        a3 = a3_rescue(key, failing, limit, n) if a3_rescue and failing else None
+        if a3 and a3["rescued"]:
+            verdict = "PASS"  # every gated sample above the limit is EXTERNAL: the remaining maxima are <= limit
         rows.append({**row, "limit_max_ms": limit, "verdict": verdict,
-                     "gated_windows": [k >= G4_ADDENDUM_MIN_SAMPLES for k in n]})
+                     "gated_windows": [k >= G4_ADDENDUM_MIN_SAMPLES for k in n], **({"a3": a3} if a3 else {})})
         if verdict == "FAIL":
             failed.append(key)
         elif verdict == "NOT_MEASURED":
@@ -1229,6 +1375,83 @@ def applicable_g4_addendum(campaign: dict, table: dict) -> tuple[dict | None, li
     return addendum, [], source
 
 
+class A3Context:
+    """The campaign's A3 evidence, loaded once: lane timeline + episodes, host-local samples, per-window fresh-probe
+    indices and observer aggregates, and the (venue, feed, symbol) -> lane map from every observed canonical identity."""
+
+    def __init__(self, d: Path, campaign: dict, amendment: dict):
+        from scripts import p184_a3_attribution as a3
+        from scripts import p184_a3_evidence as evidence
+        from scripts import p184_g4_observer as observer
+        self.a3, self.amendment, self.limits = a3, amendment, amendment["limits"]
+        self.timeline = a3.read_jsonl(d / "a3-timeline" / "timeline.jsonl")
+        self.episodes = a3.episodes(self.timeline, merge_s=float(self.limits["episode_merge_s"]),
+                                    recovery_budget_s=float(self.limits["recovery_budget_s"]))
+        self.local = evidence.read_local(d / "a3-local")
+        self.aggregates, self.probes, records = {}, {}, []
+        for i, item in enumerate(campaign.get("g4_windows", [])):
+            obs = d / f"g4-{item['index']}" / "observations.jsonl"
+            lines = list(read_jsonl(obs)) if obs.exists() else []
+            aggregate = observer.last_aggregate(lines) or {}
+            self.aggregates[i] = aggregate
+            records.extend(x for x in lines if x.get("kind") == "canonical_observation")
+            for block in list((aggregate.get("rows") or {}).values()) + list((aggregate.get("inverse_rows") or {}).values()):
+                ex = block.get("exceedances") or {}
+                records.extend(ex.get("events") or [])
+                if ex.get("max_event"):
+                    records.append(ex["max_event"])
+            self.probes[i] = {**a3.okx_books_probe_index(d / f"g4-{item['index']}-okx-books"),
+                              **a3.binance_probe_index(d / f"g4-{item['index']}-binance-probe")}
+        self.lanes = a3.lane_map(records)
+        stable = (self.local.get("receipt") or {}).get("ingestor_pid_stable") or {}
+        self.missing = [name for name, ok in (("a3-timeline", bool(self.timeline)),
+                                              ("a3-local", bool(self.local.get("local"))),
+                                              ("a3-local ingestor pid stable", bool(stable) and all(stable.values())))
+                        if not ok]
+
+    def rescue(self, key: str, failing: list[int], limit: float, n: list[int]) -> dict:
+        windows = {}
+        for i in failing:
+            aggregate = self.aggregates.get(i) or {}
+            block = (aggregate.get("rows") or {}).get(key) or (aggregate.get("inverse_rows") or {}).get(key) or {}
+            windows[i + 1] = self.a3.rescue_g4_window(block.get("exceedances"), row_limit_ms=limit,
+                                                      n_admitted=n[i], probes=self.probes.get(i) or {},
+                                                      episodes_=self.episodes, local=self.local, limits=self.limits,
+                                                      segments=self.a3.segment_limits_for(
+                                                          key, self.limits["g4_internal_segment_ms_by_row"]))
+        external = sum(w.get("external", 0) for w in windows.values())
+        cap = self.limits["max_external_fraction"] * sum(n)
+        rescued = bool(windows) and all(w["rescued"] for w in windows.values()) and external <= cap \
+            and not self.missing
+        return {"amendment_id": A3_ID, "rescued": rescued, "limit_ms": limit, "failing_windows": sorted(windows),
+                "external_units": external, "row_samples": sum(n), "cap_units": round(cap, 3),
+                "cap_ok": external <= cap, "evidence_missing": self.missing, "windows": windows}
+
+    def g9(self, samples, s9: dict, load_ns, demanded) -> dict:
+        losses = self.a3.g9_loss_events(samples, from_ns=load_ns[0] if load_ns else None,
+                                        to_ns=load_ns[1] if load_ns else None)
+        classified = [self.a3.classify_g9_loss(x, lanes=self.lanes, episodes_=self.episodes, local=self.local,
+                                               timeline=self.timeline, limits=self.limits, samples=samples)
+                      for x in losses]
+        score = self.a3.rescore_g9(classified, demanded=demanded, readable_samples=s9.get("readable_samples") or 0,
+                                   limits=self.limits, episodes_=self.episodes)
+        from collections import Counter
+        mine = Counter(f"{x.get('feed')}:{x.get('reason_code')}" for x in losses)
+        consistent = mine == Counter(s9.get("eligibility_loss_causes") or {})  # review finding 11: same loss set
+        return {"amendment_id": A3_ID, "losses": classified, **score, "loss_count_matches_g9": consistent,
+                "evidence_missing": self.missing,
+                "applied": consistent and not self.missing and score["cap_ok"]}
+
+    def g2(self, rows: list[dict]) -> dict:
+        failing = [r["feed_venue"] for r in rows if r.get("observed") == "OUTSIDE"]
+        return {"amendment_id": A3_ID, "applied": False, "attributable_units": 0,
+                "outside_rows": {key: "UNKNOWN: no per-sample DL receipt clock on this trace basis (native writer "
+                                      "slices / Query-read MARK records); counts as FAIL" for key in failing},
+                "episodes_in_load_report_only": [{k: e.get(k) for k in ("lane", "runtime", "first_fault_ns",
+                                                                        "outage_upper_s", "complete", "missing")}
+                                                 for e in self.episodes]}
+
+
 def build_scorecard(campaign_dir: Path, *, trace_dir: Path | None = None) -> dict:
     """trace_dir: where transit-load.json / mark-load.json are read (default <campaign>/trace; `score --out-dir`
     re-analyses into its own directory and never writes into the campaign)."""
@@ -1239,6 +1462,8 @@ def build_scorecard(campaign_dir: Path, *, trace_dir: Path | None = None) -> dic
     gates = load_json(d / "stage100" / "gates.json")
     host = load_json(d / "stage100" / "host.json")
     ok, problems = _protocol(campaign, receipt, gates)
+    a3_amendment, a3_notes, a3_src = applicable_a3(campaign)
+    a3ctx = A3Context(d, campaign, a3_amendment) if a3_amendment is not None else None
     load_s = (receipt or {}).get("load_window_unix_s")
     load_ns = [int(load_s[0] * 1e9), int(load_s[1] * 1e9)] if load_s else None
     transit = load_json(t / "transit-load.json")
@@ -1279,7 +1504,8 @@ def build_scorecard(campaign_dir: Path, *, trace_dir: Path | None = None) -> dic
     add("G2", "end-to-end to TS cache, new-event transit", "TRADE p95 <= 500 ms and max < 1500 ms; QUOTE and MARK "
         "p95 <= 500 ms and max < 1000 ms", v, with_scope(why1 + why2 + (mixed_gaps if v == "NOT_MEASURED" else []),
                                                          "every row inside", scope_note),
-        measured=rows1 + rows2, sources=trace_src, **native_src)
+        measured=rows1 + rows2, sources=trace_src, **native_src,
+        **({"a3": a3ctx.g2(rows1 + rows2)} if a3ctx else {}))
     g3 = load_json(d / "g3" / "g3-summary.json")
     add("G3", "end-to-end to TS cache, BAR from close (first visibility of the closed bar)", "p95 <= 5 s, max < 60 s",
         (g3 or {}).get("verdict", "NOT_MEASURED"), "g3 probe" if g3 else "no G3 summary",
@@ -1312,14 +1538,19 @@ def build_scorecard(campaign_dir: Path, *, trace_dir: Path | None = None) -> dic
     g4_provenance = {"g4_apparatus": campaign.get("g4_apparatus") or {"schedule_version": "v1 (unversioned)"},
                      "g4_window_receipts": g4_receipts,
                      "observer_cgroup_report_only": g4_observer_cgroup_rollup(g4_receipts)}
-    v, rows, why = (score_g4(g4_windows, table, addendum, amendment, amendment2) if table else
+    v, rows, why = (score_g4(g4_windows, table, addendum, amendment, amendment2,
+                             a3_rescue=a3ctx.rescue if a3ctx else None) if table else
                     ("NOT_MEASURED", [], ["no frozen G4 baseline table"]))
-    why = why + amendment_notes + amendment2_notes
+    why = why + amendment_notes + amendment2_notes + a3_notes
     amendment_extra = {"g4_amendment": amendment_src} if amendment_src else {}
     if amendment2_src:
         amendment_extra["g4_amendment_2"] = amendment2_src
     if books_probes:
         amendment_extra["okx_books_probe_per_window_report_only"] = books_probes
+    if a3_src:
+        amendment_extra["a3"] = {**a3_src, "applied": a3_amendment is not None,
+                                 "rescued_rows": [r["row"] for r in rows if (r.get("a3") or {}).get("rescued")],
+                                 "attempted_rows": [r["row"] for r in rows if r.get("a3")]}
     # Missing temporal coverage (a window whose observation ended before its planned end: a v1-v3 record cap or a
     # v4 partial aggregate) can FAIL but never PASS.
     truncated = [r["index"] for r in g4_receipts if (r.get("coverage") or {}).get("truncated_before_end")]
@@ -1389,9 +1620,22 @@ def build_scorecard(campaign_dir: Path, *, trace_dir: Path | None = None) -> dic
                            to_ns=load_ns[1] if load_ns else None) if samples910 else None
     v, why = g910.verdict_g9(s9, expected_demanded=campaign.get("demanded_slices")) if s9 else (
         "NOT_MEASURED", ["no heartbeat samples"])
+    g9_a3 = a3ctx.g9(samples910, s9, load_ns, campaign.get("demanded_slices")) if (a3ctx and s9) else None
+    if g9_a3 is not None:
+        if g9_a3["applied"] and s9.get("eligibility_losses_data_path"):
+            # A3: EXTERNAL losses stay in the evidence; the verdict counts the remaining ones (other G9 rules strict).
+            v, why = g910.verdict_g9({**s9, "eligibility_losses_data_path": g9_a3["losses_after_a3"]},
+                                     expected_demanded=campaign.get("demanded_slices"))
+            why = why + [f"A3: {g9_a3['external']} eligibility losses EXTERNAL_SESSION_INTERRUPTION (reported, not "
+                         f"counted), {g9_a3['remaining']} remaining"]
+        elif not g9_a3["applied"] and s9.get("eligibility_losses_data_path"):
+            why = why + ["A3 not applied to G9 losses: " + "; ".join(
+                (["loss count differs from G9"] if not g9_a3["loss_count_matches_g9"] else [])
+                + ([f"evidence missing: {g9_a3['evidence_missing']}"] if g9_a3["evidence_missing"] else [])
+                + (["EXTERNAL cap exceeded"] if not g9_a3["cap_ok"] else []))]
     add("G9", "readiness: demanded, session-ready, intent-eligible kept separate", "demanded == session-ready; 0 "
         "data-path eligibility losses (legitimate quiet TRADE refusals counted, excluded); v1 fallback 0", v,
-        "; ".join(why) or "inside", measured=s9)
+        "; ".join(why) or "inside", measured=s9, **({"a3": g9_a3} if g9_a3 is not None else {}))
     s10 = g910.summarize_g10(samples910, from_s=utc_stamp(load_s[0]) if load_s else None,
                              to_s=utc_stamp(load_s[1]) if load_s else None) if samples910 else {}
     trade_native = "TRADE" in native
@@ -1451,6 +1695,9 @@ def build_scorecard(campaign_dir: Path, *, trace_dir: Path | None = None) -> dic
                             "outside the protocol can FAIL a gate but cannot PASS it; NOT_MEASURED is never upgraded",
             "protocol_met": ok, "protocol_problems": problems, "load_window_unix_s": load_s,
             "runtime_identity": campaign.get("runtime_identity"), "summary": summary, "gates": out,
+            **({"a3": {**(a3_src or {}), "applied": a3_amendment is not None, "notes": a3_notes,
+                       "episodes": a3ctx.episodes if a3ctx else None,
+                       "evidence_missing": a3ctx.missing if a3ctx else None}} if a3_src or a3_notes else {}),
             "sources": {"receipt": sha256_file(d / "stage100" / "receipt.json"),
                         "gates": sha256_file(d / "stage100" / "gates.json"),
                         "host": sha256_file(d / "stage100" / "host.json")}}
@@ -1534,6 +1781,23 @@ def preflight(args) -> dict:
     for tool in ("guard_v2.sh", "mark_watch_v2.sh"):
         if not (Path(args.state_tools) / tool).exists():
             plan["problems"].append(f"missing {tool} in {args.state_tools}")
+    if not getattr(args, "baseline", False) and isinstance(base, dict):
+        # A1 campaign input (Codex review 2026-10-18 section 1): the deployed Query's funding allowance, resolved from
+        # its image before anything starts; unresolvable or inconsistent -> the campaign is refused (no load).
+        from scripts import phase3_consumer_load_acceptance as driver
+        try:
+            plan["query_allowance"] = driver.query_allowance_document(
+                driver.resolve_query_funding_allowance(base.get("query_containers") or []))
+        except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as exc:
+            plan["problems"].append(f"A1 query funding allowance unresolved: {exc}")
+        plan["a3_runtime_images"] = a3_runtime_images()
+        frozen = load_json(A3_PATH) if A3_PATH.exists() else None
+        if frozen is not None:
+            if plan["a3_runtime_images"] != (frozen.get("runtime_images") or {}).get("images"):
+                plan["problems"].append("A3: runtime images differ from the frozen ones (refused, review finding 14)")
+            pins = frozen.get("pinned") or {}
+            if a3_code_sha256(frozen) != {name: (pins.get(name) or {}).get("new_sha256") for name in A3_CODE}:
+                plan["problems"].append("A3: working apparatus differs from the frozen code")
     return plan
 
 
@@ -1782,11 +2046,30 @@ def command_plan(args, plan: dict, d: Path, launch_unix: float) -> dict:
     baseline = getattr(args, "baseline", False)
     # G4 amendment 1: one venue-direct OKX probe per G4 window of a candidate campaign (report-only attribution).
     okx_probe = not baseline and getattr(args, "okx_probe", G4_AMENDMENT_PATH.exists())
+    a3 = not baseline and A3_PATH.exists()
+    allowance = ["--query-allowance", str(d / "query-funding-allowance.json")] if not baseline else []
+    exceed = []
+    if a3:
+        budget = load_json(Path(args.budget)) or {}
+        table = (budget.get("g4_delivery_visibility") or {}).get("table") or {}
+        addendum = load_json(G4_ADDENDUM_PATH) if G4_ADDENDUM_PATH.exists() else None
+        exceed = ["--exceedance-ms", json.dumps(a3_exceedance_thresholds(table, addendum), separators=(",", ":"))]
     commands = {
         "driver": ["timeout", str(args.load_timeout), *py, "scripts/phase3_consumer_load_acceptance.py",
                    "--profile", str(d / "profile.json"), "--budget", str(Path(args.budget).resolve()),
                    "--output", str(driver_output(args, d)), "--mode", "target",
-                   "--sessions", str(getattr(args, "sessions", 100)), "--duration-seconds", str(LOAD_SECONDS)],
+                   "--sessions", str(getattr(args, "sessions", 100)), "--duration-seconds", str(LOAD_SECONDS),
+                   *allowance],
+        # Exact-client smoke (Codex review 2026-10-18 section 1): the same driver, profile image, mounts, user and
+        # bootstrap in target-matrix mode (every read operation once per replica, warmups, one stream subscribe/close
+        # per venue) before any sampler or load; a failure refuses the campaign.
+        "client_smoke": (None if baseline else
+                         [*py, "scripts/phase3_consumer_load_acceptance.py", "--profile", str(d / "profile.json"),
+                          "--budget", str(Path(args.budget).resolve()), "--output", str(d / "client-smoke"),
+                          "--mode", "target-matrix", "--sessions", str(getattr(args, "sessions", 100)),
+                          "--duration-seconds", "0", *allowance]),
+        "a3_local": ([*py, "scripts/p184_a3_evidence.py", "sample", "--out", str(d / "a3-local"),
+                      "--seconds", sampler_seconds] if a3 else None),
         "guard": [str(tools / "guard_v2.sh"), str(args.load_timeout), "<driver-pid>"],
         "mark_watch": [str(tools / "mark_watch_v2.sh"), str(args.load_timeout), "<driver-pid>"],
         "g3": [*py, "scripts/p184_g3_bar_cache_probe.py", "--binding", str(plan.get("binding")),
@@ -1804,7 +2087,7 @@ def command_plan(args, plan: dict, d: Path, launch_unix: float) -> dict:
                         "command": [*py, "scripts/p184_g4_observer.py", "--launch", "--mode", "canonical",
                                     "--seconds", str(int(w["seconds"])), "--tail-records", "0", "--max-records",
                                     str(G4_RECORD_CAP), "--sample-ms", "1000", "--max-output-bytes", "16777216",
-                                    "--output", str(d / f"g4-{i + 1}"), "--campaign-id", d.name],
+                                    "--output", str(d / f"g4-{i + 1}"), "--campaign-id", d.name, *exceed],
                         "container_name": g4_observer_container(d, i + 1),
                         **({"okx_probe": [*py, "scripts/p184_g4_okx_mark_index_probe.py", "--launch", "--seconds",
                                           str(int(w["seconds"]) + G4_OKX_PROBE_LEAD_SECONDS + G4_OKX_PROBE_TAIL_SECONDS),
@@ -1817,7 +2100,15 @@ def command_plan(args, plan: dict, d: Path, launch_unix: float) -> dict:
                                                     + G4_OKX_PROBE_TAIL_SECONDS),
                                                 "--output", str(d / f"g4-{i + 1}-okx-books"),
                                                 "--name", g4_observer_container(d, i + 1) + "-okxbooks"],
-                            "okx_books_probe_container": g4_observer_container(d, i + 1) + "-okxbooks"}
+                            "okx_books_probe_container": g4_observer_container(d, i + 1) + "-okxbooks",
+                            # A3 (report-only evidence): Binance fresh connections + Binance ingestor netns TCP.
+                            **({"binance_probe": [*py, "scripts/p184_g4_binance_probe.py", "--launch", "--seconds",
+                                                  str(int(w["seconds"]) + G4_OKX_PROBE_LEAD_SECONDS
+                                                      + G4_OKX_PROBE_TAIL_SECONDS),
+                                                  "--output", str(d / f"g4-{i + 1}-binance-probe"),
+                                                  "--name", g4_observer_container(d, i + 1) + "-bnprobe"],
+                                "binance_probe_container": g4_observer_container(d, i + 1) + "-bnprobe"}
+                               if a3 else {})}
                            if okx_probe else {})}
                        for i, w in enumerate(g4_schedule(launch_unix))],
         "g11": ([*py, "scripts/p184_g11_writer_restart_probe.py", "--binding", str(plan.get("binding")),
@@ -1831,7 +2122,7 @@ def command_plan(args, plan: dict, d: Path, launch_unix: float) -> dict:
     return commands
 
 
-BASELINE_SKIPPED = ("g3", "g8", "g6_ts", "g6_ts_stdin", "g9g10", "g11")
+BASELINE_SKIPPED = ("g3", "g8", "g6_ts", "g6_ts_stdin", "g9g10", "g11", "client_smoke", "a3_local")
 
 
 def baseline_receipt(d: Path, commands: dict, driver_code: int | None) -> dict:
@@ -1908,6 +2199,16 @@ def run(args) -> int:
     if not baseline and G4_AMENDMENT_2_PATH.exists():
         campaign.update(g4_amendment_2_path=str(G4_AMENDMENT_2_PATH),
                         g4_amendment_2_sha256=sha256_file(G4_AMENDMENT_2_PATH))
+    if not baseline:
+        allowance_path = d / "query-funding-allowance.json"
+        with allowance_path.open("x") as handle:
+            handle.write(json.dumps(plan["query_allowance"], indent=1, sort_keys=True) + "\n")
+        campaign.update(query_allowance_path=str(allowance_path), query_allowance_sha256=sha256_file(allowance_path),
+                        query_allowance_ms=plan["query_allowance"]["allowance_ms"],
+                        a3_runtime_images=plan.get("a3_runtime_images"), profile_image=profile.get("image"))
+    if not baseline and A3_PATH.exists():
+        campaign.update(a3_path=str(A3_PATH), a3_sha256=sha256_file(A3_PATH),
+                        a3_apparatus_sha256=a3_code_sha256(load_json(A3_PATH)))
     (d / "campaign.json").write_text(json.dumps(campaign, indent=1, sort_keys=True, default=str) + "\n")
     children = Children()
     hard_deadline = time.monotonic() + expected + launch_hold + 600
@@ -1923,12 +2224,37 @@ def run(args) -> int:
     code = None
     try:
         samplers, g6_probe = {}, None
+        if not baseline and commands.get("client_smoke"):
+            log_event(d, "client_smoke_start")
+            with (d / "client-smoke.log").open("x") as handle:
+                try:
+                    smoke = subprocess.run(commands["client_smoke"], cwd=ROOT, stdout=handle,
+                                           stderr=subprocess.STDOUT, timeout=CLIENT_SMOKE_TIMEOUT).returncode
+                except subprocess.TimeoutExpired:
+                    smoke = "timeout"
+            log_event(d, "client_smoke_end", code=smoke)
+            if smoke != 0:
+                (d / "CLIENT_SMOKE_FAILED").write_text(f"exact-client smoke exit {smoke}: campaign refused, no load\n")
+                print(json.dumps({"refused": "exact-client smoke failed", "code": smoke, "campaign_dir": str(d)}),
+                      file=sys.stderr)
+                return 3
+            # The smoke took wall time: re-plan the launch (schedule v2 rule, same hold bound) so every G4 window and
+            # sampler stays inside the load, and record the new plan before anything else starts.
+            launch_unix = g4_launch_unix(time.time() + 5)
+            launch_hold = round(launch_unix - time.time(), 3)
+            commands = command_plan(args, plan, d, launch_unix)
+            campaign.update(launch_unix=launch_unix, g4_apparatus=g4_apparatus(launch_hold),
+                            g4_windows=[{k: v for k, v in w.items() if k != "command"} for w in commands["g4_windows"]],
+                            launch_replanned_after_client_smoke=True)
+            (d / "campaign.json").write_text(json.dumps(campaign, indent=1, sort_keys=True, default=str) + "\n")
+            hard_deadline = time.monotonic() + expected + launch_hold + 600
+            log_event(d, "launch_replanned", launch_unix=launch_unix, hold=launch_hold)
         if launch_hold > 0:
             log_event(d, "g4_launch_hold", seconds=launch_hold, launch_unix=launch_unix)
             time.sleep(max(0.0, launch_unix - 5 - time.time()))  # samplers start 5 s before launch, as without a hold
         if not baseline:
             samplers = {name: children.start(name, commands[name], log=d / f"{name}.log", cwd=ROOT)
-                        for name in ("g3", "g8", "g9g10")}
+                        for name in ("g3", "g8", "g9g10") + (("a3_local",) if commands.get("a3_local") else ())}
             (d / "g6-ts").mkdir()
             g6_probe = children.start("g6_ts", commands["g6_ts"], log=d / "g6-ts" / "probe.log", cwd=ROOT,
                                       stdin_path=Path(commands["g6_ts_stdin"]),
@@ -1952,7 +2278,7 @@ def run(args) -> int:
 
         def g4_runner():
             for window in commands["g4_windows"]:
-                probe = books_probe = None
+                probe = books_probe = binance_probe = None
                 if window.get("okx_probe"):
                     delay = launch_unix + window["offset"] - G4_OKX_PROBE_LEAD_SECONDS - time.time()
                     if delay > 0 and driver.poll() is None:
@@ -1967,6 +2293,11 @@ def run(args) -> int:
                                 books_probe = subprocess.Popen(window["okx_books_probe"], cwd=ROOT,
                                                                stdout=subprocess.DEVNULL, stderr=books_log)
                             log_event(d, "g4_okx_books_probe_start", index=window["index"], pid=books_probe.pid)
+                        if window.get("binance_probe"):
+                            with (d / f"g4-{window['index']}-binance-probe.log").open("x") as bn_log:
+                                binance_probe = subprocess.Popen(window["binance_probe"], cwd=ROOT,
+                                                                 stdout=subprocess.DEVNULL, stderr=bn_log)
+                            log_event(d, "g4_binance_probe_start", index=window["index"], pid=binance_probe.pid)
                 delay = launch_unix + window["offset"] - time.time()
                 if delay > 0 and driver.poll() is None:
                     time.sleep(delay)
@@ -1976,6 +2307,8 @@ def run(args) -> int:
                         stop_probe_async(window, probe)
                     if books_probe is not None:
                         stop_probe_async(window, books_probe, "okx_books_probe")
+                    if binance_probe is not None:
+                        stop_probe_async(window, binance_probe, "binance_probe")
                     continue
                 log_event(d, "g4_start", index=window["index"])
                 with (d / f"g4-{window['index']}.log").open("x") as handle:
@@ -1994,6 +2327,8 @@ def run(args) -> int:
                             stop_probe_async(window, probe)
                         if books_probe is not None:
                             stop_probe_async(window, books_probe, "okx_books_probe")
+                        if binance_probe is not None:
+                            stop_probe_async(window, binance_probe, "binance_probe")
                 obs = d / f"g4-{window['index']}" / "observations.jsonl"
                 if obs.exists():
                     cap = g4_window_receipt(read_jsonl(obs))
@@ -2020,6 +2355,13 @@ def run(args) -> int:
         if g6_probe is not None:
             stop_g6_ts_probe(args.writer, g6_probe, d / "g6-ts")
             log_event(d, "samplers_stopped")
+        if commands.get("a3_local"):
+            from scripts import p184_a3_evidence as a3evidence
+            try:
+                receipt = a3evidence.collect(d / "a3-timeline", launch_unix - 120, time.time())
+                log_event(d, "a3_timeline_collected", problems=receipt.get("problems"))
+            except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+                log_event(d, "a3_timeline_failed", error_type=type(exc).__name__)
         if commands["g11"]:
             probe = children.start("g11", commands["g11"], log=d / "g11.log", cwd=ROOT)
             time.sleep(15)

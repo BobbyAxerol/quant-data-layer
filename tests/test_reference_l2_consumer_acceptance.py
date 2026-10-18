@@ -43,6 +43,11 @@ NOW_NS = 1_787_000_000_000_000_000
 
 class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
     def setUp(self) -> None:
+        # A1: the driver configures the DEPLOYED Query's funding allowance; in-process that is this Query's constant.
+        from qdl.certification.reference_l2_acceptance import configure_query_funding_allowance_ms
+        from qdl.query import service as query_service
+        configure_query_funding_allowance_ms(query_service._FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS)
+        self.addCleanup(configure_query_funding_allowance_ms, None)
         self.catalog = StableSourceCatalog.load(CATALOG)
         self.acquisition = StableAcquisitionPlan.load(ACQUISITION, catalog=self.catalog)
         self.scope = build_reference_l2_acceptance_scope(

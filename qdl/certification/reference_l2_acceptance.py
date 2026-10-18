@@ -23,12 +23,6 @@ from qdl.data_quality.execution_mark_index import (
     validate_quiet_execution_mark_index_evidence,
 )
 from qdl.query import ConsumerGrade, DataRequirement, FeedType, RecoveryPolicy, StalePolicy
-# The funding settlement publication allowance is Query's own constant (stage 100g, 2026-10-10), imported, never
-# copied: the verifier and the server must apply one bound (final stage-100 074624Z, 2026-10-18: Query served an OKX
-# funding series 8 h + 13.8 s old under its allowance and this verifier, which had none, refused it).
-from qdl.query.service import (
-    _FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS as _QUERY_FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS,
-)
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 from qdl_sdk import Grade
@@ -480,16 +474,40 @@ def reference_evidence(
     ).hexdigest()
 
 
+# A1 (owner 2026-10-18): the verifier and the DEPLOYED Query apply one freshness bound. Query's FUNDING_RATE history
+# publication allowance (qdl/query/service.py _FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS, stage 100g) is NOT imported
+# here: this module is mounted into the driver's client container, whose image may predate the constant (final
+# stage-100 092255Z: the profile image 2.2.2 has no such symbol, the import failed and every client read with it).
+# The driver resolves the allowance host-side from the deployed Query image and configures it in the client; until
+# it is configured a FUNDING_RATE history bound fails closed (the read is refused, never silently allowed or denied).
+_query_funding_allowance_ms: int | None = None
+
+
+def configure_query_funding_allowance_ms(value: int | None) -> None:
+    """Set (or, with None, clear) the deployed Query's FUNDING_RATE history publication allowance in milliseconds."""
+    global _query_funding_allowance_ms
+    if value is not None and (type(value) is not int or not 0 <= value <= 3_600_000):
+        raise ValueError("Query funding settlement allowance must be an int in 0..3600000 ms")
+    _query_funding_allowance_ms = value
+
+
+def configured_query_funding_allowance_ms() -> int | None:
+    return _query_funding_allowance_ms
+
+
 def reference_freshness_allowance_ms(request) -> int:
     """Query's publication allowance for one reference request (qdl/query/service.py _reference_problem).
 
     The predicate is Query's, on the SDK request shape: FUNDING_RATE history (a request with a time range, Query's
-    ReferenceRequest.is_history = start_ms is not None) gets _FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS; everything else
-    0. The constant is imported from Query, so a change there moves both sides together.
+    ReferenceRequest.is_history = start_ms is not None) gets the deployed Query's allowance (configured by
+    configure_query_funding_allowance_ms, resolved by the driver from the deployed image); everything else 0. An
+    unconfigured allowance for a FUNDING_RATE history request raises ValueError (fail closed).
     """
     product = getattr(getattr(request, "product", None), "value", getattr(request, "product", None))
     if product == "FUNDING_RATE" and getattr(request, "start_time_ns", None) is not None:
-        return _QUERY_FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS
+        if _query_funding_allowance_ms is None:
+            raise ValueError("Query funding settlement allowance is not configured (fail closed)")
+        return _query_funding_allowance_ms
     return 0
 
 
