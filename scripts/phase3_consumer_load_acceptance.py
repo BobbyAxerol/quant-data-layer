@@ -570,6 +570,10 @@ def docker_command(
            "--mount", f"type=bind,src={ROOT / 'generated/python/qdl'},dst=/app/generated/python/qdl,readonly")
           if profile.get("sdk_from_source") else ()),
         "--mount", f"type=bind,src={ROOT / 'qdl/certification/phase3_consumer_load.py'},dst=/app/qdl/certification/phase3_consumer_load.py,readonly",
+        # A1 (owner 2026-10-18): the per-request reference verifier is apparatus (no runtime role imports it), so it
+        # comes from the same source as this driver; Query's allowance it applies is imported from the image's own
+        # qdl/query/service.py, i.e. the deployed server's constant.
+        "--mount", f"type=bind,src={ROOT / 'qdl/certification/reference_l2_acceptance.py'},dst=/app/qdl/certification/reference_l2_acceptance.py,readonly",
         "--mount", f"type=bind,src={Path(__file__).resolve()},dst=/driver/phase3_consumer_load_acceptance.py,readonly",
         "--mount", f"type=bind,src={ROOT / 'scripts/phase3_consumer_load_bootstrap.sh'},dst=/driver/phase3_consumer_load_bootstrap.sh,readonly",
         # The KN-2 oracle/judge the kn4-matrix handoff reuses, from the same source as this driver.
@@ -2025,6 +2029,126 @@ class _G6Recorder:
                 for key, row in self.rows.items()}
 
 
+# A1 (owner 2026-10-18), additive receipt evidence: the server timing of every reference read the verifier judged
+# (the 074624Z refusal at an OKX funding settlement kept only a detail digest). No payload values are kept.
+_REFERENCE_TIMING: ContextVar[list | None] = ContextVar("qdl_phase3_reference_timing", default=None)
+_REFERENCE_EXAMPLE_CAP = 64
+_FUNDING_SETTLEMENT_PERIOD_NS = 8 * 3_600_000_000_000
+_FUNDING_SETTLEMENT_TOLERANCE_NS = 60_000_000_000  # the acceptance window's settlement jitter (60 s)
+
+
+def reference_timing(references, response, *, sent_ns: int, now_ns: int) -> list[dict[str, object]]:
+    """Per result of one reference batch: status, cache_hit, coalesced, received_at_ns, newest_observed_at_ns (for
+    FUNDING_RATE the fundingTime of the newest settled row), source_age_ms at receipt, the declared max_freshness_ms,
+    the effective bound (reference_freshness_bound_ms, Query's rule) and whether the read needed the allowance, and
+    settlement_crossing: a FUNDING_RATE read sent after an 8 h boundary whose newest row predates that boundary by
+    more than 60 s (the settlement was due but not in the served series). Pure; report-only."""
+    from qdl.certification.reference_l2_acceptance import reference_freshness_bound_ms
+
+    out = []
+    for reference, item in zip(references, getattr(response, "results", None) or []):
+        request = reference.sdk_requirement
+        product = str(getattr(request.product, "value", request.product))
+        data = getattr(item, "data", None)
+        observations = getattr(data, "observations", None) or []
+        newest = max((int(o.observed_at_ns) for o in observations), default=None)
+        received = getattr(data, "received_at_ns", None)
+        bound = reference_freshness_bound_ms(request)
+        age = None if newest is None else max(0, (now_ns - newest) // 1_000_000)
+        boundary = (sent_ns // _FUNDING_SETTLEMENT_PERIOD_NS) * _FUNDING_SETTLEMENT_PERIOD_NS
+        problem = getattr(item, "problem", None)
+        out.append({
+            "key": f"{product}|{reference.venue}|{reference.native_symbol}",
+            "status": getattr(item, "status", None),
+            "problem_code": getattr(problem, "code", None) if problem is not None else None,
+            "cache_hit": getattr(data, "cache_hit", None), "coalesced": getattr(data, "coalesced", None),
+            "sent_ns": sent_ns, "receipt_ns": now_ns, "received_at_ns": received,
+            "newest_observed_at_ns": newest, "observations": len(observations),
+            "source_age_ms": age, "receive_age_ms": (None if not received else max(0, (now_ns - int(received)) // 1_000_000)),
+            "max_freshness_ms": request.max_freshness_ms, "effective_bound_ms": bound,
+            "allowance_used": bool(age is not None and request.max_freshness_ms is not None
+                                   and age > request.max_freshness_ms),
+            "settlement_crossing": bool(product == "FUNDING_RATE" and newest is not None
+                                        and newest < boundary - _FUNDING_SETTLEMENT_TOLERANCE_NS),
+            "settlement_boundary_ns": boundary if product == "FUNDING_RATE" else None,
+        })
+    return out
+
+
+class _ReferenceTimingRecorder:
+    def __init__(self, cap: int = _REFERENCE_EXAMPLE_CAP) -> None:
+        self.cap = cap
+        self.rows: dict[str, dict[str, object]] = {}
+        self.examples: list[dict[str, object]] = []
+        self.examples_seen = 0
+
+    def view(self, entry: dict[str, object], *, window: str, accepted: bool, error_code: str | None,
+             served_by: str | None) -> None:
+        row = self.rows.setdefault(entry["key"], {"n": 0, "accepted": 0, "refused": 0, "cache_hits": 0,
+                                                  "coalesced": 0, "max_source_age_ms": None,
+                                                  "max_receive_age_ms": None, "allowance_used": 0,
+                                                  "settlement_crossings": 0, "max_freshness_ms": None,
+                                                  "effective_bound_ms": None})
+        row["n"] += 1
+        row["accepted" if accepted else "refused"] += 1
+        row["cache_hits"] += bool(entry.get("cache_hit"))
+        row["coalesced"] += bool(entry.get("coalesced"))
+        row["allowance_used"] += bool(entry.get("allowance_used"))
+        row["settlement_crossings"] += bool(entry.get("settlement_crossing"))
+        row["max_freshness_ms"], row["effective_bound_ms"] = entry.get("max_freshness_ms"), entry.get("effective_bound_ms")
+        for name, field in (("max_source_age_ms", "source_age_ms"), ("max_receive_age_ms", "receive_age_ms")):
+            value = entry.get(field)
+            if isinstance(value, int):
+                row[name] = value if row[name] is None else max(row[name], value)
+        if not accepted or entry.get("allowance_used") or entry.get("settlement_crossing"):
+            self.examples_seen += 1
+            if len(self.examples) < self.cap:
+                self.examples.append({**entry, "window": window, "accepted": accepted, "error_code": error_code,
+                                      "served_by": served_by})
+
+    def evidence(self) -> dict[str, object]:
+        return {"rows": self.rows, "examples": self.examples, "examples_seen": self.examples_seen}
+
+
+def _reference_timing_record(recorder, window: str, *, accepted: bool, error_code: str | None) -> list | None:
+    """Fold the read's reference timing into the recorder; returns it (for the error record). Never raises."""
+    try:
+        timing = _REFERENCE_TIMING.get()
+        if timing:
+            for entry in timing:
+                recorder.reference.view(entry, window=window, accepted=accepted, error_code=error_code,
+                                        served_by=_SERVED_BY.get())
+        return timing
+    except Exception:
+        return None
+
+
+def merge_reference_timing(blocks: list[dict[str, object] | None]) -> dict[str, object]:
+    """Merge per-worker reference timing: exact counts and maxima, examples bounded."""
+    rows: dict[str, dict[str, object]] = {}
+    examples, seen = [], 0
+    for block in blocks:
+        block = block or {}
+        seen += int(block.get("examples_seen") or 0)
+        examples.extend(block.get("examples") or [])
+        for key, row in (block.get("rows") or {}).items():
+            out = rows.setdefault(key, {})
+            for name, value in row.items():
+                if name in ("max_freshness_ms", "effective_bound_ms"):  # declared, identical per key
+                    out[name] = value
+                elif name in ("max_source_age_ms", "max_receive_age_ms"):
+                    if isinstance(value, int):
+                        out[name] = value if out.get(name) is None else max(out[name], value)
+                    else:
+                        out.setdefault(name, None)
+                else:
+                    out[name] = int(out.get(name) or 0) + int(value or 0)
+    examples.sort(key=lambda item: (item.get("sent_ns") or 0))
+    return {"schema": "qdl.phase3.reference-timing.v1", "report_only": True,
+            "rows": dict(sorted(rows.items())), "examples": examples[:_REFERENCE_EXAMPLE_CAP],
+            "examples_seen": seen}
+
+
 def merge_g6(blocks: list[dict[str, object]]) -> dict[str, object]:
     """Merge per-worker G6 evidence: exact counts/max, pooled bounded reservoirs for p50/p95."""
     merged: dict[str, dict[str, object]] = {}
@@ -2140,6 +2264,10 @@ async def _target_read(client, operation: str, products) -> object:
             _G6_VIEW.set(_g6_reference_observations(references, response, sent_ns=sent_ns, now_ns=time.time_ns()))
         except Exception:
             _G6_VIEW.set(None)  # diagnostics never change the read result
+        try:
+            _REFERENCE_TIMING.set(reference_timing(references, response, sent_ns=sent_ns, now_ns=time.time_ns()))
+        except Exception:
+            _REFERENCE_TIMING.set(None)  # diagnostics never change the read result
         if response.partial or len(response.results) != len(references):
             raise ValueError("PARTIAL_RESULT")
         for reference, result in zip(references, response.results, strict=True):
@@ -2211,6 +2339,7 @@ class _TargetRecorder:
         # milliseconds, so a tail can be matched to server-side samples.
         self.outliers: list[list[object]] = []
         self.g6 = _G6Recorder()
+        self.reference = _ReferenceTimingRecorder()
 
     def outlier(self, kind: str, value_ms: float, label: str) -> None:
         if len(self.outliers) < 400:
@@ -2281,6 +2410,7 @@ async def _target_poll_loop(*, client, label, operation, products, period, phase
             window = recorder.window(sent)
             _SERVED_BY.set(None)
             _G6_VIEW.set(None)
+            _REFERENCE_TIMING.set(None)
             sent_ns = time.time_ns()
             try:
                 await _target_read(client, operation, products)
@@ -2290,13 +2420,16 @@ async def _target_poll_loop(*, client, label, operation, products, period, phase
                 failed_ns = time.time_ns()
                 ledger.record_failure(_error_code(error))
                 _g6_record(recorder, products, window, _error_code(error))
+                timing = _reference_timing_record(recorder, window, accepted=False, error_code=_error_code(error))
                 recorder.error(operation=operation, poll=label, window=window,
                                product=_product_evidence(products[0]), error=_safe_error(error),
                                served_by=_SERVED_BY.get(), sent_ns=sent_ns, failed_ns=failed_ns,
-                               elapsed_ms=round((failed_ns - sent_ns) / 1e6, 3))
+                               elapsed_ms=round((failed_ns - sent_ns) / 1e6, 3),
+                               **({"reference_timing": timing[:16]} if timing else {}))
                 continue
             done = time.monotonic()
             _g6_record(recorder, products, window, None)
+            _reference_timing_record(recorder, window, accepted=True, error_code=None)
             ledger.completed += 1
             if done > due + period:
                 ledger.late += 1
@@ -2808,6 +2941,7 @@ async def _target_worker(config: dict[str, object], worker: int, workers: int) -
         "cold": recorder.cold,
         "outliers": recorder.outliers,
         "g6_view_quality": recorder.g6.evidence(),
+        "reference_timing": recorder.reference.evidence(),
         "counters": dict(recorder.counters),
         "errors": recorder.errors,
         "error_count": recorder.error_count,
@@ -2903,6 +3037,7 @@ def _merge_target(results: list[dict[str, object]], *, plan, final: bool) -> dic
         "cold": [item for result in results for item in result["cold"]],
         "outliers": sorted(entry for result in results for entry in result.get("outliers", [])),
         "g6_view_quality": merge_g6([result.get("g6_view_quality") for result in results]),
+        "reference_timing": merge_reference_timing([result.get("reference_timing") for result in results]),
         "load_window_unix_s": next((item.get("load_window_unix_s") for item in results if item["worker"] == 0), None),
         "counters": dict(sum((Counter(item["counters"]) for item in results), Counter())),
         "errors": [item for result in results for item in result["errors"]][:40],

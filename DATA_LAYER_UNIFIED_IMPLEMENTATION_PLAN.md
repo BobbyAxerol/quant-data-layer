@@ -75418,3 +75418,55 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
     absent.
   - Status: G13 CLOSED on the final image set (76/76). TS run worktrees trading-system-final-run-a9cf1b41 and -e9ae5484
     are clean detached checkouts (removable).
+- 2026-10-18 08:55-09:12Z apparatus slice for the owner decisions of ~08:50Z (one AskUserQuestion, three answers: A1
+  "dung chung bound", B1 "bar >= 8h REPORT_ONLY", OKX books "Reconnect + probe; tai dien thi limit"); Claude subagent;
+  no runtime / python image / container change (images stay query 3e9e4d3a = qdl-v2-python:2.2.4-31a5155, whose qdl/
+  equals HEAD's: `git diff 31a5155 HEAD -- qdl/` empty before this change).
+  - A1 (RCA 53eb546 item A): qdl/certification/reference_l2_acceptance.py gains reference_freshness_bound_ms /
+    reference_freshness_allowance_ms; reference_quality refuses only above max_freshness_ms + Query's own
+    _FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS (imported from qdl/query/service.py, not copied; FUNDING_RATE history =
+    a request with a time range, Query's is_history). qdl/query/service.py is NOT edited (Query byte-identical). The
+    module is apparatus (no runtime role imports it; importers are scripts/ and tests/ only), but it is baked into the
+    image the driver's client container runs, so scripts/phase3_consumer_load_acceptance.py now bind-mounts the
+    worktree copy read-only over /app/qdl/certification/reference_l2_acceptance.py (same pattern as
+    phase3_consumer_load.py); the allowance it imports comes from the image's own service.py = the deployed Query's.
+    Driver receipt (additive, report-only): `reference_timing` (schema qdl.phase3.reference-timing.v1) per
+    PRODUCT|VENUE|symbol: n / accepted / refused / cache_hits / coalesced / max source and receive age / allowance_used /
+    settlement_crossings, plus <= 64 examples (refused, allowance-used or crossing reads) with cache_hit,
+    received_at_ns, newest_observed_at_ns (= fundingTime of the newest settled row), sent/receipt ns, served_by; a
+    refused read's error record carries the same timing. settlement_crossing = FUNDING_RATE read sent after an 8 h
+    boundary whose newest row predates it by > 60 s. Residual (not fixed, stated): the verifier ages at client receipt,
+    Query at serve time, so a series within the transport time of the +60 s edge can still split (ms-wide).
+  - B1 (RCA 53eb546 item B): new frozen config/v2/p184-stage100-g4-amendment-2.json (G4-A2, schema
+    qdl.p184.stage100-g4-amendment-2.v1, frozen 09:09:24Z by scripts/p184_freeze_g4_amendment_2.py, base ref e80e575):
+    a bar row with a fixed interval >= 8h and no frozen baseline (not in the table, not in the addendum) is REPORT_ONLY;
+    threshold_changes []. Because amendment 1 applies only to the campaign tool it pins and this slice edits the tool,
+    A2 re-pins A1 (file unchanged): applicable_g4_amendment accepts the tool pin of an applicable, recorded A2 that
+    names A1's sha256. Hashes old -> new: gate tool 69c26d72... -> 8f67a861...; amendment 1 1c8a276f... (unchanged);
+    addendum 4ed59dca... and budget ff85335b... unchanged; observer 5d90cc60... and mark/index probe ee835d9c...
+    unchanged; driver 6296505f... -> 91b4423c...; reference verifier 7c0c9054... -> 1b0bf756...; new books probe
+    9670d219...; new freeze tool fcbf9984...; amendment 2 99961c41e08993944d158ae812ca61514271862a2d03e011f5d01ce71a0f9997.
+  - Books probe + TCP sampler (report-only, RCA ccea671 follow-up 1): scripts/p184_g4_okx_books_probe.py, one per G4
+    window of a candidate campaign (started with the mark/index probe, name prefix of the G4 observer so the guard
+    classes it as campaign, --rm, 0.5 CPU / 192m, bridge, read-only rootfs): fresh public WS to the ingestor's URL
+    wss://ws.okx.com/ws/v5/public, channel books, BTC-USD-SWAP + BTC-USDT-SWAP + ETH-USDT-SWAP; per push recv wall clock,
+    action, venue ts, seqId / prevSeqId, frame bytes (frames never JSON-decoded, no price/size kept). TCP sampler in the
+    host launcher (no docker exec, no nsenter): /proc/<ingestor_okx_swap pid>/net/{netstat,snmp} at 1 Hz (deltas of
+    moved TcpExt/Tcp/IpExt counters) and net/tcp{,6} at 10 Hz (ESTABLISHED to :443: per-second max rx/tx queue and the
+    longest run of consecutive samples with unread bytes; RX_QUEUED needs >= 2 consecutive samples). Scorecard G4
+    gets okx_books_probe_per_window_report_only (books / tcp stats and, for every OKX book outlier of the final
+    aggregate with venue -> DL > 150 ms, tail_attribution: EXTERNAL_SESSION_UPSTREAM only with the fresh connection
+    HEALTHY (recv - ts <= 150 ms for venue ts within +-1 s) while the lane is late and a CLEAN host receive queue;
+    COMMON_VENUE_DELAY if the fresh connection is late too; INTERNAL_RECEIVE_QUEUE on RX_QUEUED; else UNKNOWN). Never a
+    verdict input. Smoke (2 x 20-30 s, lock absent, containers removed): recv - ts max 29-32 ms, seq_breaks 0, 5
+    sockets to :443 in the ingestor netns, rx non-empty in 3/28 seconds as single samples only (no RX_QUEUED).
+  - Tests: python3 -B -m unittest (host) test_p184_g4_amendment_2 (14, incl. stored scorecards of 053803Z / 135719Z /
+    074624Z reproduced byte-identically for every gate, and with A2 forced every non-B1 row byte-identical and only
+    074624Z gains bar|BINANCE|8h) + g4_amendment + gate_campaign + g4_observer + foreign_activity_guard + stage100:
+    175 OK; in qdl-v2-python:2.2.4-31a5155 (--network none, source ro, --rm) test_p184_a1_reference_bound (real
+    V2QueryService and the verifier: 8 h + 14 s and + 60 s accepted, + 61 s refused on both sides, 074624Z age 8 h +
+    13.838 s now accepted; driver timing / merge / mount) + reference_l2 / phase113 / g6 / phase105 / phase115 /
+    phase3 driver, target driver, target workload, consumer load: 206 OK. One existing test pinned the old exact
+    bound (test_reference_quality_uses_provider_observation_not_local_receive_time) and now uses the effective bound.
+  - Next: lock, operational reconnect of ingestor_okx_swap (owner-approved, journaled as an operational session
+    change), HOLD, final stage-100 at this commit.

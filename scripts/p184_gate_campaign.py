@@ -57,6 +57,15 @@ probe (scripts/p184_g4_okx_mark_index_probe.py, one per G4 window) are reported,
 probe coverage has attribution UNKNOWN, which is not EXTERNAL (the row cannot PASS). The amendment applies only to a
 campaign that recorded its sha256 at run time, frozen before the campaign started, for the same budget, addendum and
 campaign tool; every other row and gate is unchanged, and an older campaign (none recorded) scores byte-identically.
+G4 amendment 2 (owner decision 2026-10-18 ~08:50Z, "B1", config/v2/p184-stage100-g4-amendment-2.json, frozen before the
+run): bar rows with an interval >= 8h that have no frozen baseline (frozen table and addendum hold none) are REPORT_ONLY,
+the same class as the addendum's bar 1h-6h; no threshold changes. It also re-pins amendment 1 (unchanged file, same
+sha256) to this campaign tool, because amendment 1 applies only to the tool sha256 it pins. Like amendment 1 it applies
+only to a campaign that recorded its sha256 at run time; an older campaign scores byte-identically.
+Report-only per G4 window of a candidate campaign: a fresh-connection OKX `books` probe plus a 1 Hz TcpExt / 10 Hz
+socket-queue sampler of the ingestor_okx_swap netns (scripts/p184_g4_okx_books_probe.py); it attributes OKX book
+tails (EXTERNAL only with the fresh connection healthy while the lane is late, and an empty host receive queue) and
+never changes a verdict.
 `run --baseline [--sessions 50|100]` records role=baseline in campaign.json and runs only the driver workload (+ guard
 and MARK watch) and the G4 observer windows, then writes baseline.json; it never scores.
 
@@ -151,6 +160,11 @@ G4_AMENDMENT_FACTOR = 1.2
 G4_AMENDMENT_MIN_SAMPLES = 5      # max rule: windows with >= 5 samples (addendum shape)
 G4_OKX_PROBE_LEAD_SECONDS = 8     # the venue probe starts before the observer window ...
 G4_OKX_PROBE_TAIL_SECONDS = 10    # ... and ends after it (stopped off the window path: never delays a window)
+# G4 amendment 2 (owner B1, 2026-10-18 ~08:50Z): unbaselined bar rows with interval >= 8h are REPORT_ONLY.
+G4_AMENDMENT_2_PATH = ROOT / "config/v2/p184-stage100-g4-amendment-2.json"
+G4_AMENDMENT_2_SCHEMA = "qdl.p184.stage100-g4-amendment-2.v1"
+G4_AMENDMENT_2_ID = "G4-A2"
+G4_B1_MIN_INTERVAL_MS = 8 * 3_600_000
 # The owner's closed row set; keys already in the frozen table are excluded when the addendum is frozen.
 G4_ADDENDUM_OWNER_ROWS = tuple(
     [f"bar|{venue}|{interval}" for venue in VENUES for interval in ("5m", "15m", "30m", "1h", "2h", "4h", "6h")]
@@ -607,10 +621,73 @@ def validate_g4_amendment(amendment: dict, table: dict) -> list[str]:
     return problems
 
 
+def g4_long_bar_row(key: str) -> bool:
+    """bar|VENUE|INTERVAL with a fixed interval >= 8h (G4 amendment 2). Unparsable intervals are not long. Pure."""
+    parts = key.split("|")
+    if len(parts) != 3 or parts[0] != "bar":
+        return False
+    from qdl.adapters.intervals import canonical_interval_ms
+    try:
+        return canonical_interval_ms(parts[2]) >= G4_B1_MIN_INTERVAL_MS
+    except ValueError:
+        return False
+
+
+def validate_g4_amendment_2(amendment: dict) -> list[str]:
+    """Problems that keep G4 amendment 2 (B1) from being applied (empty list = valid)."""
+    if not isinstance(amendment, dict) or amendment.get("schema") != G4_AMENDMENT_2_SCHEMA:
+        return ["unknown amendment-2 schema"]
+    problems = []
+    rule = amendment.get("rule") or {}
+    if (amendment.get("amendment_id") != G4_AMENDMENT_2_ID or rule.get("feed") != "bar"
+            or rule.get("report_only_min_interval_ms") != G4_B1_MIN_INTERVAL_MS
+            or rule.get("applies_to") != "rows observed without a frozen baseline (not in the table, not in the addendum)"
+            or rule.get("threshold_changes") != []):
+        problems.append("amendment-2 rule differs from the owner decision")
+    if not amendment.get("frozen_before_candidate") or not amendment.get("decision_owner"):
+        problems.append("amendment-2 is not frozen with a decision owner")
+    if not ((amendment.get("inherits") or {}).get("g4_amendment_1_sha256")):
+        problems.append("amendment-2 does not name the amendment 1 it re-pins")
+    return problems
+
+
+def applicable_g4_amendment_2(campaign: dict) -> tuple[dict | None, list[str], dict | None]:
+    """(amendment 2 or None, notes, source). Same rules as amendment 1: only when recorded at run time, unchanged,
+    valid, frozen before the campaign started and pinned to the campaign's budget, addendum, amendment 1 and tool."""
+    recorded = campaign.get("g4_amendment_2_path")
+    if not recorded:
+        return None, [], None
+    path = Path(recorded)
+    if not path.exists():
+        return None, [f"G4 amendment 2 not applied: {path} recorded at run time is missing"], None
+    source = {"path": str(path), "sha256": sha256_file(path)}
+    amendment = load_json(path)
+    problems = validate_g4_amendment_2(amendment) if amendment is not None else ["unreadable amendment-2"]
+    if not problems:
+        pins = amendment.get("pinned") or {}
+        if campaign.get("g4_amendment_2_sha256") != source["sha256"]:
+            problems.append("amendment-2 changed after the campaign recorded it")
+        if amendment.get("base_budget_sha256") != campaign.get("budget_sha256"):
+            problems.append("amendment-2 frozen for a different budget")
+        if amendment.get("base_addendum_sha256") != campaign.get("g4_addendum_sha256"):
+            problems.append("amendment-2 frozen for a different addendum")
+        if (amendment.get("inherits") or {}).get("g4_amendment_1_sha256") != campaign.get("g4_amendment_sha256"):
+            problems.append("amendment-2 frozen for a different amendment 1")
+        if (pins.get("gate_campaign_tool") or {}).get("new_sha256") != campaign.get("tool_sha256"):
+            problems.append("campaign tool differs from the one amendment-2 pins")
+        frozen = amendment.get("frozen_at_unix")
+        if not isinstance(frozen, (int, float)) or not frozen < float(campaign.get("started_unix") or 0):
+            problems.append("amendment-2 not frozen before this campaign started")
+    if problems:
+        return None, ["G4 amendment 2 not applied: " + "; ".join(problems)], source
+    return amendment, [], source
+
+
 def applicable_g4_amendment(campaign: dict, table: dict) -> tuple[dict | None, list[str], dict | None]:
     """(amendment or None, notes, source). Applies ONLY to a campaign that recorded the amendment at run time: older
     campaigns (nothing recorded) score exactly as before. A recorded amendment applies when the file is unchanged,
-    valid, frozen before the campaign started, and pinned to the campaign's budget, addendum and tool sha256."""
+    valid, frozen before the campaign started, and pinned to the campaign's budget, addendum and tool sha256 (the tool
+    pin is amendment 1's own or, when the campaign recorded an applicable amendment 2, the one amendment 2 re-pins)."""
     recorded = campaign.get("g4_amendment_path")
     if not recorded:
         return None, [], None
@@ -628,7 +705,12 @@ def applicable_g4_amendment(campaign: dict, table: dict) -> tuple[dict | None, l
             problems.append("amendment frozen for a different budget")
         if amendment.get("base_addendum_sha256") != campaign.get("g4_addendum_sha256"):
             problems.append("amendment frozen for a different addendum")
-        if (pins.get("gate_campaign_tool") or {}).get("new_sha256") != campaign.get("tool_sha256"):
+        tool_pins = {(pins.get("gate_campaign_tool") or {}).get("new_sha256")}
+        if campaign.get("g4_amendment_2_path"):
+            repin = applicable_g4_amendment_2(campaign)[0]
+            if repin is not None:
+                tool_pins.add(((repin.get("pinned") or {}).get("gate_campaign_tool") or {}).get("new_sha256"))
+        if campaign.get("tool_sha256") not in tool_pins:
             problems.append("campaign tool differs from the one the amendment pins")
         frozen = amendment.get("frozen_at_unix")
         if not isinstance(frozen, (int, float)) or not frozen < float(campaign.get("started_unix") or 0):
@@ -734,7 +816,7 @@ def score_g4_amended_row(windows: list[dict], key: str, frozen_limit: dict, amen
 
 
 def score_g4(windows: list[dict], table: dict, addendum: dict | None = None,
-             amendment: dict | None = None) -> tuple[str, list, list[str]]:
+             amendment: dict | None = None, amendment2: dict | None = None) -> tuple[str, list, list[str]]:
     """windows: [{'summary': {row: {'visibility_ms': {...}}}, 'inverse_rows': {...}}]; table: budget rows.
     addendum (validated, optional): GATED rows score windows with >= 5 samples on max vs the frozen limit; REPORT_ONLY
     rows are returned with verdict REPORT_ONLY and never change the gate; rows in neither stay NOT_MEASURED.
@@ -794,6 +876,15 @@ def score_g4(windows: list[dict], table: dict, addendum: dict | None = None,
     observed = {key for w in windows for key in (w.get("summary") or {})}
     inverse = {key for w in windows for key in (w.get("inverse_rows") or {})}
     unbaselined = sorted((observed | inverse) - set(table) - set(((addendum or {}).get("rows") or {})))
+    if amendment2 is not None:
+        # G4 amendment 2 (B1): unbaselined bar rows >= 8h are reported, never scored; every other row is unchanged.
+        for key in [k for k in unbaselined if g4_long_bar_row(k)]:
+            stats = [g4_window_stats(w, key) for w in windows]
+            rows.append({"row": key, "basis": "amendment_2", "amendment_id": amendment2.get("amendment_id"),
+                         "max_ms_per_window": [v.get("max") if v.get("n") else None for v in stats],
+                         "n_per_window": [v.get("n", 0) for v in stats], "verdict": "REPORT_ONLY",
+                         "reason": "bar interval >= 8h without a frozen baseline (G4 amendment 2, owner B1)"})
+        unbaselined = [k for k in unbaselined if not g4_long_bar_row(k)]
     reasons = []
     if failed:
         reasons.append(f"over limit: {', '.join(failed)}")
@@ -1199,7 +1290,8 @@ def build_scorecard(campaign_dir: Path, *, trace_dir: Path | None = None) -> dic
     table = ((budget or {}).get("g4_delivery_visibility") or {}).get("table") or {}
     addendum, addendum_notes, addendum_src = applicable_g4_addendum(campaign, table)
     amendment, amendment_notes, amendment_src = applicable_g4_amendment(campaign, table)
-    g4_windows, g4_receipts = [], []
+    amendment2, amendment2_notes, amendment2_src = applicable_g4_amendment_2(campaign)
+    g4_windows, g4_receipts, books_probes = [], [], []
     for item in campaign.get("g4_windows", []):
         summary = load_json(d / f"g4-{item['index']}-summary.json")
         obs = d / f"g4-{item['index']}" / "observations.jsonl"
@@ -1208,6 +1300,11 @@ def build_scorecard(campaign_dir: Path, *, trace_dir: Path | None = None) -> dic
         if amendment is not None:
             g4_windows[-1]["okx_probe"] = (okx_probe_window(d / f"g4-{item['index']}-okx-probe", read_jsonl(obs))
                                            if obs.exists() else None)
+        if item.get("okx_books_probe_container"):
+            from scripts import p184_g4_observer as observer
+            from scripts import p184_g4_okx_books_probe as books
+            books_probes.append(books.window_report(d / f"g4-{item['index']}-okx-books",
+                                                    observer.last_aggregate(read_jsonl(obs)) if obs.exists() else None))
         g4_receipts.append({"index": item["index"], "offset": item.get("offset"), "seconds": item.get("seconds"),
                             "boundary": item.get("boundary"),
                             **(g4_window_receipt(read_jsonl(obs)) if obs.exists() else {"records": None})})
@@ -1215,10 +1312,14 @@ def build_scorecard(campaign_dir: Path, *, trace_dir: Path | None = None) -> dic
     g4_provenance = {"g4_apparatus": campaign.get("g4_apparatus") or {"schedule_version": "v1 (unversioned)"},
                      "g4_window_receipts": g4_receipts,
                      "observer_cgroup_report_only": g4_observer_cgroup_rollup(g4_receipts)}
-    v, rows, why = (score_g4(g4_windows, table, addendum, amendment) if table else
+    v, rows, why = (score_g4(g4_windows, table, addendum, amendment, amendment2) if table else
                     ("NOT_MEASURED", [], ["no frozen G4 baseline table"]))
-    why = why + amendment_notes
+    why = why + amendment_notes + amendment2_notes
     amendment_extra = {"g4_amendment": amendment_src} if amendment_src else {}
+    if amendment2_src:
+        amendment_extra["g4_amendment_2"] = amendment2_src
+    if books_probes:
+        amendment_extra["okx_books_probe_per_window_report_only"] = books_probes
     # Missing temporal coverage (a window whose observation ended before its planned end: a v1-v3 record cap or a
     # v4 partial aggregate) can FAIL but never PASS.
     truncated = [r["index"] for r in g4_receipts if (r.get("coverage") or {}).get("truncated_before_end")]
@@ -1233,6 +1334,9 @@ def build_scorecard(campaign_dir: Path, *, trace_dir: Path | None = None) -> dic
                  f"and max <= {amendment['limits']['candidate_max_limit_ms']} ms on windows with >= "
                  f"{G4_AMENDMENT_MIN_SAMPLES} samples (recomputed baseline x {G4_AMENDMENT_FACTOR}); composite, "
                  "component gap and venue probe report-only; a window without probe coverage is UNKNOWN, not EXTERNAL")
+    if amendment2 is not None:
+        rule += (f"; amendment {amendment2.get('amendment_id')}: bar rows with interval >= 8h and no frozen baseline "
+                 "report-only (owner B1), no threshold changes")
     if addendum is None and not addendum_notes:
         add("G4", "delivery lag, venue -> canonical (read_committed visibility, upper bound)", rule, v,
             "; ".join(why) or "every row inside", measured=rows, inverse_rows=[w["inverse_rows"] for w in g4_windows],
@@ -1649,7 +1753,7 @@ def driver_output(args, d: Path) -> Path:
     return d / f"stage{getattr(args, 'sessions', 100)}"
 
 
-def stop_okx_probe(d: Path, window: dict, probe) -> None:
+def stop_okx_probe(d: Path, window: dict, probe, kind: str = "okx_probe") -> None:
     """Wait for one window's venue probe (self-bounded), else SIGTERM; then remove its container by name."""
     from scripts import p184_g4_okx_mark_index_probe as okxprobe
     try:
@@ -1661,9 +1765,9 @@ def stop_okx_probe(d: Path, window: dict, probe) -> None:
         except subprocess.TimeoutExpired:
             probe.kill()
             probe.wait(timeout=10)
-    if not okxprobe.remove_container(window["okx_probe_container"]):
-        log_event(d, "g4_okx_probe_container_not_removed", index=window["index"], name=window["okx_probe_container"])
-    log_event(d, "g4_okx_probe_end", index=window["index"], code=probe.returncode)
+    if not okxprobe.remove_container(window[f"{kind}_container"]):
+        log_event(d, f"g4_{kind}_container_not_removed", index=window["index"], name=window[f"{kind}_container"])
+    log_event(d, f"g4_{kind}_end", index=window["index"], code=probe.returncode)
 
 
 def g4_observer_container(d: Path, index: int) -> str:
@@ -1706,7 +1810,14 @@ def command_plan(args, plan: dict, d: Path, launch_unix: float) -> dict:
                                           str(int(w["seconds"]) + G4_OKX_PROBE_LEAD_SECONDS + G4_OKX_PROBE_TAIL_SECONDS),
                                           "--output", str(d / f"g4-{i + 1}-okx-probe"),
                                           "--name", g4_observer_container(d, i + 1) + "-okxprobe"],
-                            "okx_probe_container": g4_observer_container(d, i + 1) + "-okxprobe"}
+                            "okx_probe_container": g4_observer_container(d, i + 1) + "-okxprobe",
+                            # Report-only (owner 2026-10-18): fresh-connection OKX books probe + ingestor netns TCP.
+                            "okx_books_probe": [*py, "scripts/p184_g4_okx_books_probe.py", "--launch", "--seconds",
+                                                str(int(w["seconds"]) + G4_OKX_PROBE_LEAD_SECONDS
+                                                    + G4_OKX_PROBE_TAIL_SECONDS),
+                                                "--output", str(d / f"g4-{i + 1}-okx-books"),
+                                                "--name", g4_observer_container(d, i + 1) + "-okxbooks"],
+                            "okx_books_probe_container": g4_observer_container(d, i + 1) + "-okxbooks"}
                            if okx_probe else {})}
                        for i, w in enumerate(g4_schedule(launch_unix))],
         "g11": ([*py, "scripts/p184_g11_writer_restart_probe.py", "--binding", str(plan.get("binding")),
@@ -1794,6 +1905,9 @@ def run(args) -> int:
         campaign.update(g4_addendum_path=str(G4_ADDENDUM_PATH), g4_addendum_sha256=sha256_file(G4_ADDENDUM_PATH))
     if not baseline and G4_AMENDMENT_PATH.exists():
         campaign.update(g4_amendment_path=str(G4_AMENDMENT_PATH), g4_amendment_sha256=sha256_file(G4_AMENDMENT_PATH))
+    if not baseline and G4_AMENDMENT_2_PATH.exists():
+        campaign.update(g4_amendment_2_path=str(G4_AMENDMENT_2_PATH),
+                        g4_amendment_2_sha256=sha256_file(G4_AMENDMENT_2_PATH))
     (d / "campaign.json").write_text(json.dumps(campaign, indent=1, sort_keys=True, default=str) + "\n")
     children = Children()
     hard_deadline = time.monotonic() + expected + launch_hold + 600
@@ -1830,15 +1944,15 @@ def run(args) -> int:
 
         probe_stoppers = []
 
-        def stop_probe_async(window, probe):
+        def stop_probe_async(window, probe, kind="okx_probe"):
             # Waiting for the venue probe never delays the next window (windows may be only 15 s apart).
-            stopper = threading.Thread(target=stop_okx_probe, args=(d, window, probe), daemon=True)
+            stopper = threading.Thread(target=stop_okx_probe, args=(d, window, probe, kind), daemon=True)
             stopper.start()
             probe_stoppers.append(stopper)
 
         def g4_runner():
             for window in commands["g4_windows"]:
-                probe = None
+                probe = books_probe = None
                 if window.get("okx_probe"):
                     delay = launch_unix + window["offset"] - G4_OKX_PROBE_LEAD_SECONDS - time.time()
                     if delay > 0 and driver.poll() is None:
@@ -1848,6 +1962,11 @@ def run(args) -> int:
                             probe = subprocess.Popen(window["okx_probe"], cwd=ROOT, stdout=subprocess.DEVNULL,
                                                      stderr=probe_log)
                         log_event(d, "g4_okx_probe_start", index=window["index"], pid=probe.pid)
+                        if window.get("okx_books_probe"):
+                            with (d / f"g4-{window['index']}-okx-books.log").open("x") as books_log:
+                                books_probe = subprocess.Popen(window["okx_books_probe"], cwd=ROOT,
+                                                               stdout=subprocess.DEVNULL, stderr=books_log)
+                            log_event(d, "g4_okx_books_probe_start", index=window["index"], pid=books_probe.pid)
                 delay = launch_unix + window["offset"] - time.time()
                 if delay > 0 and driver.poll() is None:
                     time.sleep(delay)
@@ -1855,6 +1974,8 @@ def run(args) -> int:
                     log_event(d, "g4_skipped", index=window["index"])
                     if probe is not None:
                         stop_probe_async(window, probe)
+                    if books_probe is not None:
+                        stop_probe_async(window, books_probe, "okx_books_probe")
                     continue
                 log_event(d, "g4_start", index=window["index"])
                 with (d / f"g4-{window['index']}.log").open("x") as handle:
@@ -1871,6 +1992,8 @@ def run(args) -> int:
                                       name=window["container_name"])
                         if probe is not None:
                             stop_probe_async(window, probe)
+                        if books_probe is not None:
+                            stop_probe_async(window, books_probe, "okx_books_probe")
                 obs = d / f"g4-{window['index']}" / "observations.jsonl"
                 if obs.exists():
                     cap = g4_window_receipt(read_jsonl(obs))

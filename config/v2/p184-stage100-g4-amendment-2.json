@@ -1,0 +1,86 @@
+{
+ "amendment_id": "G4-A2",
+ "approval_reference": "AskUserQuestion 2026-10-18 ~08:50Z (one question, three answers): B1 \"bar >= 8h REPORT_ONLY\" (with A1 \"dung chung bound\" and OKX books \"Reconnect + probe; tai dien thi limit\")",
+ "base_addendum_path": "config/v2/p184-stage100-g4-addendum.json",
+ "base_addendum_sha256": "4ed59dca0212566d3ff03c5a4c23eed3d252d0150844b9a4fd6fa543333d78b5",
+ "base_budget_path": "config/v2/p184-stage100-budget.json",
+ "base_budget_sha256": "ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541",
+ "decision_owner": "Bobby (owner)",
+ "frozen_at": "2026-10-18T09:09:24Z",
+ "frozen_at_unix": 1792314564.2584314,
+ "frozen_before_candidate": true,
+ "inherits": {
+  "g4_amendment_1_path": "config/v2/p184-stage100-g4-amendment-1.json",
+  "g4_amendment_1_sha256": "1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6",
+  "g4_amendment_1_tool_pin": "69c26d729d77d9b152bc8b4df86077827689dfc9b0d15fb290abfcdec64835fb",
+  "note": "amendment 1 (file unchanged) is re-pinned to gate_campaign_tool.new_sha256 below"
+ },
+ "pinned": {
+  "base_ref": "e80e575",
+  "budget": {
+   "new_sha256": "ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541",
+   "old_sha256": "ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541",
+   "path": "config/v2/p184-stage100-budget.json"
+  },
+  "driver": {
+   "new_sha256": "91b4423c27f8f8f03a1bb45520a70c341d20101b49be22af143eeb44942afa4c",
+   "old_sha256": "6296505fb960ccbe2b9f326baa17d98ab657821dd9dde1991eec37d70d796ad1",
+   "path": "scripts/phase3_consumer_load_acceptance.py"
+  },
+  "freeze_tool": {
+   "new_sha256": "fcbf9984f2edf3f7349959907d735a261a6f776f29dc3309a2378221cb50516c",
+   "old_sha256": null,
+   "path": "scripts/p184_freeze_g4_amendment_2.py"
+  },
+  "g4_addendum": {
+   "new_sha256": "4ed59dca0212566d3ff03c5a4c23eed3d252d0150844b9a4fd6fa543333d78b5",
+   "old_sha256": "4ed59dca0212566d3ff03c5a4c23eed3d252d0150844b9a4fd6fa543333d78b5",
+   "path": "config/v2/p184-stage100-g4-addendum.json"
+  },
+  "g4_amendment_1": {
+   "new_sha256": "1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6",
+   "old_sha256": "1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6",
+   "path": "config/v2/p184-stage100-g4-amendment-1.json"
+  },
+  "g4_observer": {
+   "new_sha256": "5d90cc60cc1ebad783d6bec848fe7017918f783e3ad0dfcfaa2aed1f47fcba74",
+   "old_sha256": "5d90cc60cc1ebad783d6bec848fe7017918f783e3ad0dfcfaa2aed1f47fcba74",
+   "path": "scripts/p184_g4_observer.py"
+  },
+  "gate_campaign_tool": {
+   "new_sha256": "8f67a861ef3f1f18d7ec8d30b09665bc546a9155d47ac30a8d275e34f1cd9bde",
+   "old_sha256": "69c26d729d77d9b152bc8b4df86077827689dfc9b0d15fb290abfcdec64835fb",
+   "path": "scripts/p184_gate_campaign.py"
+  },
+  "note": "old = at the pre-amendment base ref, new = frozen with this amendment; the scorer applies the amendment (and amendment 1 through it) only when the campaign tool sha256 equals gate_campaign_tool.new_sha256",
+  "okx_books_probe": {
+   "new_sha256": "9670d21998b62dd268f51c0009ce92440c74dfc84f74dabe93ac76d18dc12485",
+   "old_sha256": null,
+   "path": "scripts/p184_g4_okx_books_probe.py"
+  },
+  "okx_mark_index_probe": {
+   "new_sha256": "ee835d9c38bf6fe7b3410a21e32cadddd154af048156797efdce0cbd68a91e41",
+   "old_sha256": "ee835d9c38bf6fe7b3410a21e32cadddd154af048156797efdce0cbd68a91e41",
+   "path": "scripts/p184_g4_okx_mark_index_probe.py"
+  },
+  "reference_verifier": {
+   "new_sha256": "1b0bf756340e406ab209454bf16ea9fa31b8ee11b43a079b8087a62e7cd1cd4c",
+   "old_sha256": "7c0c90545e6392a8f2194598ad4a9df6021d34ca0b033f7a510c2626812e2530",
+   "path": "qdl/certification/reference_l2_acceptance.py"
+  }
+ },
+ "rca_reference": "DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md commit 53eb546 (2026-10-18 08:26-08:36Z read-only RCA, item B)",
+ "rule": {
+  "applies_to": "rows observed without a frozen baseline (not in the table, not in the addendum)",
+  "feed": "bar",
+  "report_only_min_interval_ms": 28800000,
+  "text": "A G4 row bar|VENUE|INTERVAL whose fixed interval is >= 8h and that is neither in the frozen table nor in the addendum is REPORT_ONLY (never passes, never fails, never blocks), the class of the addendum's bar 1h/2h/4h/6h. Every other row, gate, threshold and the window schedule are unchanged.",
+  "threshold_changes": []
+ },
+ "schema": "qdl.p184.stage100-g4-amendment-2.v1",
+ "scope": {
+  "old_receipts": "immutable: a campaign that did not record this amendment's sha256 at run time is scored exactly as before",
+  "unchanged": "frozen G4 table and its p95 rule, the addendum rows and limits, amendment 1's row and limits, every other gate G1-G14, the sampler, the observer population, the schedule"
+ },
+ "version": 1
+}

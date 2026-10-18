@@ -23,6 +23,12 @@ from qdl.data_quality.execution_mark_index import (
     validate_quiet_execution_mark_index_evidence,
 )
 from qdl.query import ConsumerGrade, DataRequirement, FeedType, RecoveryPolicy, StalePolicy
+# The funding settlement publication allowance is Query's own constant (stage 100g, 2026-10-10), imported, never
+# copied: the verifier and the server must apply one bound (final stage-100 074624Z, 2026-10-18: Query served an OKX
+# funding series 8 h + 13.8 s old under its allowance and this verifier, which had none, refused it).
+from qdl.query.service import (
+    _FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS as _QUERY_FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS,
+)
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import StableAcquisitionPlan
 from qdl_sdk import Grade
@@ -474,6 +480,28 @@ def reference_evidence(
     ).hexdigest()
 
 
+def reference_freshness_allowance_ms(request) -> int:
+    """Query's publication allowance for one reference request (qdl/query/service.py _reference_problem).
+
+    The predicate is Query's, on the SDK request shape: FUNDING_RATE history (a request with a time range, Query's
+    ReferenceRequest.is_history = start_ms is not None) gets _FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS; everything else
+    0. The constant is imported from Query, so a change there moves both sides together.
+    """
+    product = getattr(getattr(request, "product", None), "value", getattr(request, "product", None))
+    if product == "FUNDING_RATE" and getattr(request, "start_time_ns", None) is not None:
+        return _QUERY_FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS
+    return 0
+
+
+def reference_freshness_bound_ms(request) -> int | None:
+    """The effective source-age bound Query applies to one reference request: max_freshness_ms plus Query's allowance
+    (None when the request declares no bound; Query then applies none). Query refuses when floor(age ms) exceeds it."""
+    max_freshness_ms = getattr(request, "max_freshness_ms", None)
+    if max_freshness_ms is None:
+        return None
+    return int(max_freshness_ms) + reference_freshness_allowance_ms(request)
+
+
 def reference_quality(
     product,
     item,
@@ -514,7 +542,8 @@ def reference_quality(
             "component_index_age_ms": quiet_execution_evidence.component_index_age_ms,
             "gap_open": False,
         }
-    if source_age_ms > (request.max_freshness_ms or 86_400_000):
+    bound_ms = reference_freshness_bound_ms(request)
+    if source_age_ms > (86_400_000 if bound_ms is None else bound_ms):
         raise ValueError("reference response exceeds its governed freshness bound")
     return {
         "source_age_ms": int(source_age_ms),

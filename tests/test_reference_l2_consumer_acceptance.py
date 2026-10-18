@@ -20,6 +20,7 @@ from qdl.certification.reference_l2_acceptance import (
     build_reference_l2_acceptance_scope,
     reference_acceptance_batches,
     reference_evidence,
+    reference_freshness_bound_ms,
     reference_quality,
     reference_request_for_requirement,
 )
@@ -401,7 +402,9 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
             item for item in self.scope.references
             if item.requirement.feed is FeedType.FUNDING_RATE
         )
-        freshness_ms = product.sdk_requirement.max_freshness_ms
+        # The effective bound is Query's (max_freshness_ms + its FUNDING_RATE history publication allowance, A1
+        # 2026-10-18): one bound on both sides, see tests/test_p184_a1_reference_bound.py.
+        freshness_ms = reference_freshness_bound_ms(product.sdk_requirement)
         self.assertIsNotNone(freshness_ms)
         field = SimpleNamespace(
             name="funding_rate",
