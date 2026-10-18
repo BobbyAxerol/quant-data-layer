@@ -328,7 +328,8 @@
  "evidence_sha256": {
   "upgrade/evidence/releases/v2.2.4/RELEASE_NOTES.md": "677160024cb0b7e3bf523fc08afc26318484e5069719b07ea1b3951633015421",
   "upgrade/evidence/releases/v2.2.4/SCORECARD.md": "544a1213cbbf7dc21b2ae52ee75cf39e0d33ef56eaee4217d79d9df1ee801b22",
-  "upgrade/evidence/releases/v2.2.4/CERTIFICATE.md": "1efb74e84758b89528e4c22ad36649a053dcdd69811a007e1d05def8db56deb0",
+  "upgrade/evidence/releases/v2.2.4/CERTIFICATE.md": "abdd68a4e869b9e448bd257868cc8f9cae5056408e477656ece1a3b77d5791e2",
+  "upgrade/evidence/releases/v2.2.4/fmt-equivalence-addendum.md": "d17d04240edd96f955c9bba1bfb7ddbf7c1abdf414bb126040b5dc8c1beb4f9e",
   "upgrade/evidence/releases/v2.2.4/scorecard.json": "0780bcec753784db42904a6b3dc8c2bcab842569e5f4bc358c582d9280243f61",
   "upgrade/evidence/releases/v2.2.4/equivalence.json": "9332b1302a9942b0cbd65a8c4ccc0bc64e283c00f0e63afa40990c4cac86d385",
   "upgrade/evidence/releases/v2.2.4/release-preparation.json": "7b0e90a52c2525ad93ded1b1e4ee6be1141f0943f5a1f451c625d3751730f8b3",
