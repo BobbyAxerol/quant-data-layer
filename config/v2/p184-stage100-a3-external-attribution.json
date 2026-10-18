@@ -29,8 +29,8 @@
   "same_event_or_same_seconds": "probe evidence joins on the venue id DL keeps as source_sequence; lane faults on the event's/slice's own lane in its seconds (+- reset_pad_s)"
  },
  "decision_owner": "Bobby (owner)",
- "frozen_at": "2026-10-18T12:17:51Z",
- "frozen_at_unix": 1792325871.3338845,
+ "frozen_at": "2026-10-18T19:15:00Z",
+ "frozen_at_unix": 1792350900.7545927,
  "frozen_before_candidate": true,
  "inherits": {
   "g4_amendment_1_sha256": "1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6",
@@ -279,8 +279,8 @@
  "runtime_images": {
   "basis": "docker inspect .Image at freeze time (read-only)",
   "images": {
-   "ingestor_binance_usdm": "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784",
-   "ingestor_okx_swap": "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784",
+   "ingestor_binance_usdm": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+   "ingestor_okx_swap": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
    "market_projector_1": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
    "market_projector_2": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
    "query_kn_1": "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff",
@@ -288,8 +288,8 @@
    "rust_core": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
    "rust_core_2": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
    "rust_core_3": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
-   "stream_kn_1": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
-   "stream_kn_2": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+   "stream_kn_1": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+   "stream_kn_2": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
    "writer": "sha256:2deb90b0cc52eae7610fa44692f90df077e9db100ca259e38fd652a2dc1c5dc5"
   }
  },

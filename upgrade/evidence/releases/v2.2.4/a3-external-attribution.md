@@ -113,3 +113,34 @@ One declared run (a NEW run; the 092255Z receipt stays invalid and preserved). R
 problem, an unresolved allowance or a failed client smoke. A foreign job before or early in the load (guard TAINTED)
 allows one rerun; any other failure is a result. A3 applies only if the campaign's recorded runtime images equal the
 frozen ones.
+
+## Runtime-image pin refresh, 2026-10-18 ~19:15Z (not a criteria change)
+
+Why: A3 hard-codes the runtime image ids it was frozen with, and the campaign preflight refuses any other image set
+(`scripts/p184_gate_campaign.py` preflight, "A3: runtime images differ from the frozen ones"). The owner-approved
+rustls 0.23.46 roll (2026-10-18 ~15:50Z "Nang rustls ngay"; chain "Cu tiep tuc lam cho xong nhu da duyet" ~18:40Z)
+replaced the ingestor and stream-gateway image, so the final stage-100 could not start against the A3 of 12:17:51Z.
+
+What was done: the unchanged freeze tool (`scripts/p184_freeze_a3_amendment.py`, sha256 `71d73b5c...`, the pinned
+`freeze_tool`) was run again with the same inputs (`--base-ref 6ff401e`, `--base-profile
+.../profile-stage100-rc4-r16.json`) after the roll, to a scratch path, and the result replaced the file. The JSON diff
+against the previous file is exactly these paths and nothing else:
+
+| Path | Old (12:17:51Z, sha256 `cc5fc7dc...`) | New (19:15:00Z, sha256 `384e8512...`) |
+| --- | --- | --- |
+| `frozen_at` / `frozen_at_unix` | 2026-10-18T12:17:51Z | 2026-10-18T19:15:00Z |
+| `runtime_images.images.ingestor_okx_swap` | `a9679def...` | `27c79b53...` |
+| `runtime_images.images.ingestor_binance_usdm` | `a9679def...` | `27c79b53...` |
+| `runtime_images.images.stream_kn_1` | `60f83a51...` | `27c79b53...` |
+| `runtime_images.images.stream_kn_2` | `60f83a51...` | `27c79b53...` |
+
+Unchanged (same bytes in the JSON): every rule, class, condition, cap, stop rule, numeric limit (including the nine
+per-row G4 internal-segment limits recomputed from the same frozen baseline), the workload, the profile image, the
+decision record and every apparatus pin (no apparatus file changed since 12:17:51Z, so no tool hash moved: gate tool
+`e179ec78`, attribution `dcf3a17c`, evidence `3fec490b`, observer `1d33ca4a`, driver `293e1b1b`, ...). The other
+runtime images stay: query `3e9e4d3a` x2, projectors `60f83a51` x2, cores rc22 `7c848aad` x3, writer `2deb90b0`.
+
+Effect on old receipts: none. A campaign applies only the A3 file it recorded (path + sha256) at run time; 123222Z and
+122102Z recorded the 12:17:51Z file inside their run worktree (data-layer-p184-final-run-6d17b56f, kept), and every
+older receipt recorded no A3. The text `scope.inherited_not_rerun` (G12 / G13 inherited) is part of the frozen
+content and was not edited; for the rolled image set G12 and G13 are rerun (journal).

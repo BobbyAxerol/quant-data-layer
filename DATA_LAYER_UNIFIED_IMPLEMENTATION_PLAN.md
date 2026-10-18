@@ -75953,3 +75953,71 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
     ~0.3 s before it was processed on the shared runner (inferred). Product effect: under a processing backlog the gap
     between standby starts can be shorter than cooldown_ms by that backlog (production cooldown 60 s). Proposed: take
     the slot at decision time (Instant::now) or assert on the slot times; a code change, needs its own local CI.
+
+### P18.4 v2.2.4 final chain: rustls roll M1-M4 DONE, OPT step K HOLD FAIL -> rolled back, STOP - 2026-10-18 18:40-19:54Z (Claude)
+
+- Approvals (owner, relayed by the coordinator): ~15:50Z "Nang rustls ngay"; ~16:00Z CPU/RAM package "Nâng rust kèm gói
+  tối ưu CPU, Ram ... Không cần chờ nữa"; ~16:40Z A4 v2 pre-registered; ~18:40Z "Cứ tiếp tục làm cho xong như đã duyệt".
+  Packets drafts/RUSTLS_0.23.46_ROLL_PACKET.md (M1-M4, M5 not rolled) and drafts/OPT_RESOURCE_PACKAGE.md (K/Q/I/R),
+  merged per RUSTLS section 8. Status: M1-M4 production (rolled, HOLD PASS); K applied, HOLD FAIL, rolled back; Q, I,
+  R, G12, G13, final stage-100 NOT run (STOP rule "any HOLD failure -> roll back that role and STOP").
+- Lock `claude-dl-rustls-roll` 18:40:14Z (taken when codex-pma11 had expired; foreign [] ) -> released 19:53:4xZ.
+  Preconditions: live ids/images/RestartCount 0 equal the 16:23:55Z inspects; `qdl-v2-rust:2.2.4-9dab224` =
+  27c79b53...; no ROLL_* env; tools rc17v2 8de00c46, hold_check f6605d23, verify_service ae8768f3, ingestor_watch
+  48c5aa08, lane_report d46e971d (the RUSTLS packet swaps the hold_check/verify prefixes; the OPT packet has them right).
+  Baseline hold-pre READY 64 64, violations []; pre-roll 5-min watches core raw_age_ws max 140.9-164.5 ms.
+- M1 ingestor_okx_swap 18:46:18Z: rc17v2 exit 0, diff [image], a9679def -> 27c79b53, cpus 0.5, container 1443c855cf71,
+  verify image_ok, mismatch [], rc 0, healthy; 5 lanes qdl_native_session_ready (rustls handshake to OKX), 0 TLS/retry/
+  recycle lines; lanes: armed okx-public-003 6 bindings default staleness config, f1 fields true; 5 x 60 s raw_age max
+  102.9-146.8 ms; hold violations []. PASS.
+- M2 ingestor_binance_usdm 18:53:11Z: exit 0, diff [image], cpus 0.75, container 91ccbafe4671, verify ok; the Binance
+  runtime logs no session_ready event (OKX-only event), TLS proof = all 5 lanes receiving frames on the new container;
+  raw_age max 117.2-168.3 ms (pre max 164.5, within x1.2); violations []. PASS.
+- M3 stream_kn_1 19:00:18Z / M4 stream_kn_2 19:06:32Z: exit 0, diff [image], bundle_sha256 63efd9ff... on the new
+  gateways, cpus 0.75, containers 8b9800868b14 / 3dc403cccf3e; t+0 and t+5 min READY 64 64, violations [], refused /
+  overflow / hub_live_budget_refused / lagging deltas 0, 0 handshake/certificate lines; after M4 the 64 writer
+  subscriptions are on the NEW kn_1 (rustls 0.23.46 mTLS server). PASS.
+  - Receipts (rollout-rustls-0.23.46/): ingestor_okx_swap-receipt-20261018T184618Z.json bccae7dd...,
+    ingestor_binance_usdm-receipt-20261018T185311Z.json 2ec480ea..., stream_kn_1-receipt-20261018T190018Z.json 55caf1a0...,
+    stream_kn_2-receipt-20261018T190632Z.json ec555607...; rollback composes *-rollback-20261018T18/19*.compose.json;
+    SHA256SUMS.roll-20261018T1846Z c518f9b3....
+- Live after the roll (docker inspect 19:41Z): ingestors x2 + stream x2 27c79b53, projectors 60f83a51, cores rc22
+  7c848aad (M5 not rolled, no rustls code in the core binary), query 3e9e4d3a, writer 2deb90b0; RestartCount 0.
+- OPT step 0 (opt-resource-20261018/): caps equal the packet table (inspect-before.txt); coordinator check (read-only
+  `kafka_preferred_leader_election.py --observe`, one admin container): `__consumer_offsets-43` leader = broker 2
+  (kafka2 holds the core group coordinator, now verified, not inferred), 34 coordinator partitions not on their
+  preferred replica, 0 data; 10-min baseline 19:13:24-19:24:18Z: READY 64 64, violations [], raw_age max 164.4 ms,
+  PSI some avg60 3.81 / 4.82, kafka throttled periods 1.88 / 1.00 / 0.43 %.
+- Step K 19:24:37Z `docker update --cpus 2.25` kafka2, kafka1, kafka3 (NanoCpus 2250000000, RestartCount 0, StartedAt
+  unchanged). HOLD K 19:24:50-19:35:49Z: **FAIL** on two rules: core raw_age max 438.6 ms (rust_core_2, 19:30-19:31Z)
+  > 1.2 x 164.4 and `violations` = stream_kn_1 overflow +2 (the writer-side TRADE overflow class recorded since
+  10-16). Passed: READY 64 64, core retry/rebalance 0, PSI avg60 7.2 <= 4.82 + 5, ingestor lanes 5, 0 other lines.
+  Diagnostic: kafka throttled periods 1.88 -> 0.53 %, 1.00 -> 0.33 %, 0.43 -> 0 % (the target effect).
+  - Rolled back 19:37:12Z (`docker update --cpus 1.75` x3; lagging 0 and raw_age back at baseline first, R1.29).
+  - Attribution (verified, not a reversal of the rule): the spike window carried a market burst (rust_core_2 progress
+    window n 25,920 records vs ~12,000, mean raw_age 127 ms; OKX ingestor 711 frames/s vs ~350), commit_ms max 158;
+    after the rollback, at cap 1.75, the same magnitude recurred: raw_age max 437.1 ms at 19:39:34Z. So the HOLD rule
+    (one 10-min baseline, x1.2 on the max) tripped on market regime, not demonstrably on K. Recorded, not used to pass.
+  - Post-rollback: READY 64 64, violations [].
+  - Evidence opt-resource-20261018/SHA256SUMS e5f03bfe... (eval-K.json, hold-K.json, cg-K.json, watch-K.jsonl,
+    leaders-observe.json, post-rollback files).
+- Repo-only, done after the STOP (no runtime action): A3 runtime-image pin refresh (unchanged freeze tool 71d73b5c,
+  `--base-ref 6ff401e`, same profile): config/v2/p184-stage100-a3-external-attribution.json cc5fc7dc... -> 384e8512...;
+  JSON diff = frozen_at(_unix) 12:17:51Z -> 19:15:00Z and runtime_images ingestors x2 a9679def -> 27c79b53, stream x2
+  60f83a51 -> 27c79b53, nothing else (rules, limits, pins unchanged; documented in a3-external-attribution.md as a pin
+  refresh, not a criteria change). Preflight equality `gc.a3_runtime_images() == A3` true on the live set; A4 v2 `bind`
+  into the session scratchpad (read-only) records runtime_images equal to the refreshed A3 (binding not used for any
+  run). Pins regenerated from docker inspect: g12-image-set-v224.json stream -> 27c79b53 (284f31ca...),
+  g13-roles-v224.json ingestors + stream -> 27c79b53 (dcecb1bf...).
+  - Tests (host python3 -B -m unittest): a3_attribution + a4_preregistered + a4_post_hoc + gate_campaign + g4_amendment
+    + g4_amendment_2 + g13_final 266 OK. Discover tests/test_p184_*.py: 971, failures 1 + errors 58, all host-environment
+    (ModuleNotFoundError google / redis / confluent_kafka / pydantic) plus
+    test_p184_g12_isolated_fault test_core_request_starts_a_new_generation_with_a_snapshot, which fails identically in
+    the clean run worktree data-layer-p184-final-run-6d17b56f (pre-existing, unrelated).
+  - Step R (compose record) NOT done (K/Q/I not kept); docker-compose.v2-stable.yml unchanged.
+  - Not mine, untouched: the uncommitted rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs edit (another agent,
+    18:40:43Z, staleness test fix; it waited on the lock as claude-dl-flaky-test).
+- Open for the coordinator/owner: (1) K re-run decision (the HOLD rule vs market regime: e.g. a longer baseline, or
+  judging raw_age p99 / commit_ms instead of a single max); then Q, I, R; (2) G12 final, G13 (dr08 / dr05-upstream /
+  dr05-quiet + runtime window, run ids g13r9wa20261018 / g13r9fx01; generator p1/g13v56/make_g13v56.py prepared, check
+  mode only, compose 5051892c..., nothing written) and the final stage-100 on the rolled images, none started.
