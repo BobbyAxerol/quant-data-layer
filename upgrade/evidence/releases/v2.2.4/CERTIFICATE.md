@@ -1,10 +1,12 @@
 # Quant Data Layer v2.2.4 - scoped release certificate
 
-Status: **FAIL - NOT CERTIFIED, NOT PUBLISHED. Released as a package with stated limits by owner decision; tag blocked
-by the release workflow (section 7).** Assembled 2026-10-18 ~13:40Z. Every sha256 below was recomputed with `sha256sum`
-and every image digest read with `docker inspect` / `docker image inspect` at assembly. The machine form is
-[certificate.json](certificate.json) (schema `qdl.scoped-release-certificate.v2`, same shape as
-[v2.2.3](../v2.2.3/certificate.json)); its status is `FAIL`.
+Status: **PASS under amendments G4-A1, G4-A2 and A3 (frozen before the counted run) and A4 (POST_HOC_OWNER_DECISION,
+adopted after the counted run was scored). Without A4 the frozen rule gives FAIL on G2 and G4 (kept below, side by
+side). NOT TAGGED, NOT PUBLISHED.** First assembled 2026-10-18 ~13:40Z with status FAIL; re-issued 2026-10-18 ~15:30Z
+with A4. Every sha256 below was recomputed with `sha256sum` and every image digest read with `docker inspect` /
+`docker image inspect` at assembly. The machine form is [certificate.json](certificate.json) (schema
+`qdl.scoped-release-certificate.v2`, same shape as [v2.2.3](../v2.2.3/certificate.json)); its status is `PASS` and its
+required `amendments` list flags A4 `post_hoc: true`.
 
 Companion files: [SCORECARD.md](SCORECARD.md) / [scorecard.json](scorecard.json), [RELEASE_NOTES.md](RELEASE_NOTES.md),
 [endpoint-report.json](endpoint-report.json), [equivalence.json](equivalence.json).
@@ -18,13 +20,27 @@ Companion files: [SCORECARD.md](SCORECARD.md) / [scorecard.json](scorecard.json)
   4. Required CI jobs are green on the release PR head.
 - Anything else: do not create `certificate.json` with status PASS. No frozen threshold is widened after measuring.
 
-Result at assembly: (2) holds, (3) holds, **(1) does not hold: G2 and G4 are FAIL.** (4) is an external gate that runs
-after the push. So `status` = **FAIL**.
+Result at the first assembly (13:40Z): (2) holds, (3) holds, **(1) did not hold: G2 and G4 FAIL.** So `status` was
+**FAIL**.
 
-Owner decision (2026-10-18 ~13:40Z, AskUserQuestion "Release kèm limit + gói tối ưu sau (Recommended)"): package
-v2.2.4 now with G2 and G4 stated as FAIL rows with RCA, NOT as a full PASS; open IDRs for the optimisation package
-(Kafka cleaner I/O C1, broker CPU quota, core commit batching, Query MARK read path), each done one variable at a time
-with A/B in a later release; push, open PRs, clean up. The decision changes no verdict.
+Result at the re-issue (~15:30Z): (1) holds **under A4** (rescore receipt `scorecard.a4-post-hoc.json`
+`7a821d2d60c45ae290023e9434af7b320c06b906a4185dc299eee467a71fab7e`: G2 PASS, G4 PASS, every other gate byte-identical);
+(2) and (3) hold; (4) is an external gate that runs on the PR head after the push (as for v2.2.3). So `status` =
+**PASS**. Stated plainly: the last sentence of this rule ("No frozen threshold is widened after measuring") is **not
+met by A4**. A4 raises the G2 MARK BINANCE max after measuring and replaces the G4 OKX_INVERSE statistic after
+measuring, by a recorded owner decision. That is why A4 is labelled `POST_HOC_OWNER_DECISION`, why the verdicts
+without A4 stay in every surface, and why the certificate cannot be read as "the pre-registered rule passed".
+
+Owner decisions:
+- 2026-10-18 ~13:40Z (AskUserQuestion "Release kèm limit + gói tối ưu sau (Recommended)"): package v2.2.4 with G2 and
+  G4 stated as FAIL rows with RCA; open the optimisation-package IDRs (Kafka cleaner I/O C1, broker CPU quota, core
+  commit batching, Query MARK read path), one variable at a time with A/B in a later release. That decision changed no
+  verdict.
+- 2026-10-18 ~14:20Z instruction ("Xem lại cách chấm, nếu do bản thân mình sai thì sửa nhanh rồi Release, còn nếu là do
+  OKX thì nới gate 1 xíu rồi pass rồi release. Miễn Risk Engine và Execution Eligibility của TS chấp nhận là được") and
+  ~14:45Z answers (AskUserQuestion): G4 OKX_INVERSE "M1: chấm theo p95 pooled (Recommended)"; G2 MARK_INDEX_PRICE
+  BINANCE "Nới max lên 1200 ms (Recommended)". Frozen as A4 (rationale
+  [a4-post-hoc-ts-eligibility.md](a4-post-hoc-ts-eligibility.md)).
 
 ## 2. Identity
 
@@ -32,7 +48,7 @@ with A/B in a later release; push, open PRs, clean up. The decision changes no v
 | --- | --- | --- |
 | Previous published release | `v2.2.3` (main merge `28e605ec6a359d462cd3c425a78519f9f8e70f63`, source `481fd67`) | git |
 | Release head carrying this certificate | the packaging commit on `fix/p184-dl-closure` after `0c55957` (SHA reported in the PR) | git |
-| Runtime source after the newest image revisions | rust: none since `83bef59`; python: apparatus only since `31a5155` (`qdl/certification/reference_l2_acceptance.py`, three frozen `config/v2/p184-stage100-*` amendment files) | `git diff` (RELEASE_NOTES.md "Source And Images") |
+| Runtime source after the newest image revisions | rust: none since `83bef59`; python: apparatus only since `31a5155` (`qdl/certification/reference_l2_acceptance.py`, four frozen `config/v2/p184-stage100-*` amendment files incl. A4; the A4 rescore tool is under `scripts/`) | `git diff` (RELEASE_NOTES.md "Source And Images") |
 | Rust image (ingestors x2) | `qdl-v2-rust:2.2.4-83bef59` `sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784`, label `83bef596...` | `docker image inspect` |
 | Rust image (stream x2, projector x2) | `qdl-v2-rust:2.2.4-c7ce7d3` `sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e`, label `c7ce7d30...`; its stream gateway and projector binaries equal the 83bef59 build | `docker image inspect`, 83bef59 build receipt verdicts |
 | Python image (query x2) | `qdl-v2-python:2.2.4-31a5155` `sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff`, label `31a51552...` | `docker image inspect` |
@@ -40,7 +56,8 @@ with A/B in a later release; push, open PRs, clean up. The decision changes no v
 | TS writer measured with the release | `sha256:2deb90b0cc52eae7610fa44692f90df077e9db100ca259e38fd652a2dc1c5dc5` (TS `30f50a91`), receipt `release/30f50a91/receipt.json` `7040ba9fc68f17641ca69ffb9e52fa4240c9e9e4c956f06c2a3568ea97f64a1c` PASS | `docker inspect`, `sha256sum` |
 | Gate table (frozen 2026-10-09) | TS `upgrade/p184-phase-d-gates.md` `c67bf69bb921c992964eb8ff8b2e1bb17085a943fdf756d55526b6269641d5c4` | `sha256sum` |
 | Frozen budget / addendum | `ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541` / `4ed59dca0212566d3ff03c5a4c23eed3d252d0150844b9a4fd6fa543333d78b5` | `sha256sum` |
-| Amendments (frozen before the run) | G4-A1 `1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6`, G4-A2 `99961c41e08993944d158ae812ca61514271862a2d03e011f5d01ce71a0f9997`, A3 `cc5fc7dcf07e30b1b52cbc51b78c4a5485a63be84d5b814dcf89452007e57326` | `sha256sum` |
+| Amendments frozen before the run (pre-registered, recorded in `campaign.json`) | G4-A1 `1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6`, G4-A2 `99961c41e08993944d158ae812ca61514271862a2d03e011f5d01ce71a0f9997`, A3 `cc5fc7dcf07e30b1b52cbc51b78c4a5485a63be84d5b814dcf89452007e57326` | `sha256sum` |
+| Amendment adopted after the run was scored (**POST_HOC_OWNER_DECISION**) | A4 `config/v2/p184-stage100-a4-ts-eligibility.json` `14958a681848192c8b9e93feaf0ee3137a1851c38fe6d6763f3bcf6ce0c81312` (frozen 2026-10-18T15:18:14Z); rescore tool `scripts/p184_a4_post_hoc.py` `23b78e4ae7a367252cf8033aa64ee6357987c2117e7f6516679fd4c6efafba26`; frozen scorer unchanged `e179ec784621089795516ed25b2ea1f2e2ba30c86eea0de852ed4728aa6d104b` (the A3 pin) | `sha256sum` |
 
 ### Runtime at assembly (`docker inspect`, 2026-10-18 ~13:2xZ)
 
@@ -74,21 +91,43 @@ with A/B in a later release; push, open PRs, clean up. The decision changes no v
 | G12 final credit (final image set) | `~/.local/state/qdl-v2/p184-g12-v224-final-2deb90b0-20261018T042415Z/` | `evidence/verdict.json` `170af83797df3309d4c9778042ee5b4e8f4c7ec5fca89fede22d9d1d0eeadc27`, `FINAL_CREDIT.json` `c6bfaedd1edefdcc76de1095e012b87fa85ce57c79fb43f645e2d272171dc8fc` |
 | G13 76/76 (writer 2deb90b0) | runtime `p184-g13-20261018T051237Z`, dr08 `045558Z`, dr05-quiet `071750Z`, dr05-upstream `085316Z` | summaries `147a90aa...`, `17e731d6...`, `4f5aecbb...`, `b67dff66...` (full values in SCORECARD.md); W05 `5490c21e66bf33bae326f2ea2051677f70cf95372b13b823d4c2912835da9895` |
 | G13 packet v5.5 | `~/.local/state/trading-system/p184-20261005/runtime/p1/packet-g13-v5.5-20261018.md` | `507f9096ba8fba76d97441484d4c0d2146a9388aed298a1f01af47d3ca7320fc` |
-| Final stage-100 (counted) | `~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/` | scorecard `b9e76a83795f1af8f64b802b22ff1f410087a8f87ee4ef5d23b26a1d39cb4964`, campaign.json `2f96f55347dfd69e090436416364685f0479c3801c466ff5d3418af99ed8b7fc`, stage100/receipt.json `3fd22d861ae434c7f7e0e29ce21d3430b0982f376a50f06c8a0ee1a8b8f64ea0` |
+| Final stage-100 (counted) | `~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/` | scorecard (frozen rule, untouched) `b9e76a83795f1af8f64b802b22ff1f410087a8f87ee4ef5d23b26a1d39cb4964`, campaign.json `2f96f55347dfd69e090436416364685f0479c3801c466ff5d3418af99ed8b7fc`, stage100/receipt.json `3fd22d861ae434c7f7e0e29ce21d3430b0982f376a50f06c8a0ee1a8b8f64ea0` |
+| A4 post-hoc rescore of the counted run (A1 + A2 + A3 + A4) | same directory, `scorecard.a4-post-hoc.json` (+ `.sha256`) | `7a821d2d60c45ae290023e9434af7b320c06b906a4185dc299eee467a71fab7e` |
+| A4 rationale | [a4-post-hoc-ts-eligibility.md](a4-post-hoc-ts-eligibility.md) | (sha256 in certificate.json `evidence_sha256`) |
+| Deployed Paper consumer manifest r11 (packaging finding, section 6a) | [trading-system.paper.stable-r11.yaml](trading-system.paper.stable-r11.yaml), provenance [consumer-manifest-r11-provenance.json](consumer-manifest-r11-provenance.json) | `efd482fa4ffe7f9176387324f47d47d7e1c801bae6afb2c0747c3ce43652b8fc` (= deployed in query_kn_1/2) |
 | Image sets | `g12-image-set-v224.json` / `g13-roles-v224.json` (this directory) | `6303cdcb57eaefa16cdd33de2d010ac05e5944ee887ca0b9938e8f79afb4e2f9` / `984c4566223b196f05abe8b76c88de4127c91be0caebc33168f79457b9a471a2` |
 | Remote CI | PR head of `fix/p184-dl-closure` -> `dev` | external gate, recorded in the PR (not in this file) |
 
 ## 4. Gates
 
 [SCORECARD.md](SCORECARD.md): PASS G1 G3 G5 G6 G7 G8 G9 G10 G11 G14 (counted stage-100), PASS G12 (credited), PASS G13
-(76/76); **FAIL G2** (MARK_INDEX_PRICE BINANCE max 1082.9 ms > 1000 ms) and **FAIL G4** (OKX_INVERSE book_delta /
-book_snapshot / quote maxima over the addendum limits, internal segments). NOT_MEASURED 0, DEFERRED 0.
+(76/76) under every amendment set. G2 and G4, side by side:
+
+| Gate | Without A4 (frozen rule, G4-A1 + G4-A2 + A3) | With A4 (POST_HOC_OWNER_DECISION) |
+| --- | --- | --- |
+| G2 | **FAIL**: MARK_INDEX_PRICE BINANCE max 1082.9 ms, not < 1000 (p95 418.6) | **PASS**: max 1082.9 <= 1200, p95 418.6 <= 500; every other G2 row unchanged and inside |
+| G4 | **FAIL**: OKX_INVERSE book_delta / book_snapshot / quote maxima over the addendum max limits 282.5 / 300.7 / 322.6 | **PASS**: the three rows on the pooled OKX p95 limits 289.1 / 270.1 / 283.3 (worst window p95 198 / 193 / 231, n >= 102); maxima report-only; all 8 events above the replaced limits retained (observer v7, overflow 0) |
+| Summary | PASS 12, FAIL 2 (G2, G4) | PASS 14, FAIL 0, NOT_MEASURED 0, DEFERRED 0 |
+
+Amendments, all required to read this certificate (sha256): G4-A1 `1c8a276f...` (pre-run), G4-A2 `99961c41...`
+(pre-run), A3 `cc5fc7dc...` (pre-run), **A4 `14958a68...` (post-hoc, applied to 123222Z only)**. Full values in
+section 2 and certificate.json `amendments`.
 
 ## 5. Limits stated by this certificate
 
-1. **G2 FAIL** and **G4 FAIL** as above, with the RCA in SCORECARD.md. The optimisation package is IDR-116 (Kafka cleaner
-   I/O, C1), IDR-117 (broker CPU quota), IDR-118 (core commit batching), IDR-119 (Query MARK read path); IDR-115 (OKX
-   BOOK lane recycle with re-snapshot) is a separate product item.
+1. **PASS rests on a post-hoc amendment.** G2 and G4 FAIL under the frozen rule and PASS only under A4, adopted after
+   observing 123222Z. The latency did not change:
+   - G4 OKX_INVERSE tails are internal to DL under load: venue -> DL about 30 ms, receive -> CreateTime 154-295 ms,
+     CreateTime -> observer 115-206 ms. Their maxima (387.1 / 406.7 / 531.9 ms) are report-only under A4, and no max
+     limit applies to these three rows.
+   - G2 MARK BINANCE headroom under the TS 2000 ms budget is 1.67x instead of the frozen 2x.
+   - It is unknown how much of the G2 tail belongs to DL Query and how much to the TS writer's wake / min-interval /
+     1 s refresh read scheduling. IDR-126 adds wake/poll markers; IDR-119 follows that attribution.
+   - "No TS refusal" rests on the G6 and G9 samplers and the Python worker logs. No order admission was observed, and
+     the Rust writer and Risk logs were not read.
+   - The optimisation package stays open: IDR-116 (Kafka cleaner I/O, C1), IDR-117 (broker CPU quota), IDR-118 (core
+     commit batching), IDR-119 (Query MARK read path). IDR-115 (OKX BOOK lane recycle with re-snapshot) is a separate
+     product item.
 2. Scoped Data Layer certificate: not a Trading System order, accounting or alpha certification. Not HA: one host.
 3. `binance_bar_edge` is held on rc14 `08f356a8` (not a v2.2.4 revision).
 4. rust_core x3 stay on rc22 `7c848aad`; certified by binary equality of `qdl-realtime-core`
@@ -105,6 +144,10 @@ book_snapshot / quote maxima over the addendum limits, internal segments). NOT_M
 12. TEST_ONLY burst results are internal capacity, not production capacity claims.
 13. OKX FUNDING_RATE `max_freshness_ms` equals the 8 h cadence; the A1 apparatus parity fix applies Query's +60 s
     allowance in the verifier; the contract option is IDR-125.
+14. Consumer manifest packaging (section 6a): the deployed Paper manifest is r11. The repository's loadable
+    `consumers/stable/trading-system-paper.yaml` stays r10, because the repository catalog (revision 11) cannot serve
+    r11. Repository alignment is IDR-127. The repository's `alpha-okx-paper.yaml` (r14) also differs from the deployed
+    realm (r15); this was not investigated.
 
 ## 6. Rollback
 
@@ -113,7 +156,42 @@ writer -> `a44349a1`; Kafka config commands). Not touched by this release: kafka
 binance_bar_edge, market_cache, stable_redis, catalog, consumer manifests, JWT revisions, realm dirs, offsets, Redis
 data.
 
+## 6a. Packaging finding: deployed consumer manifest r11
+
+- Deployed in query_kn_1 and query_kn_2: `/consumer-realms/trading-system.paper.stable-r11.yaml` `efd482fa...`
+  (`docker exec ... sha256sum`, read-only). It comes from the realm dir mount `p184-d3-capacity-20261009/reader-public-r16`.
+- The repository file `consumers/stable/trading-system-paper.yaml` is r10 `1e489237...` (61 requirements, no
+  BTC-USD-SWAP). The image also bakes this r10 file, but Query does not use it for the Paper entry.
+- Source of r11, established and reproduced:
+  - Renderer `scripts/prepare_paper_read_extension.py` (commit `76db472`, `7594258f...`), with quotas 77 / 3000.
+  - Inputs: the deployed runtime catalog `fc3a1e1e...` (revision 12), the r10 manifest `1e489237...` and the r22
+    binding `5703582a...`.
+  - Rendered 2026-10-09 (DL plan "D1 rev11 rendered", applied 15:47-15:50Z the same day).
+  - Re-run 2026-10-18 in a `--network none` container of `qdl-v2-python:2.2.4-31a5155`: `prepared.json` byte-identical
+    (`553cab32...`), and `yaml.safe_dump` of its manifest = `efd482fa...` = deployed.
+- Packaged: a byte copy as release evidence ([trading-system.paper.stable-r11.yaml](trading-system.paper.stable-r11.yaml))
+  with [consumer-manifest-r11-provenance.json](consumer-manifest-r11-provenance.json).
+- **Not done:** replacing the loadable repository file. This was tried and reverted. With r11 in
+  `consumers/stable/trading-system-paper.yaml`, 13 manifest/catalog test modules gave 1 failure and 38 errors (r10: 91
+  tests OK). Causes:
+  - The repository catalog (revision 11, deliberately baked for the bar edge checkpoint) does not declare BTC-USD-SWAP.
+  - The release routing pins the r10 binding.
+  - One test expects exactly 10 MARK bindings.
+
+  Fixing this needs a separate slice: catalog r12, routing and tests together (IDR-127). Runtime is unchanged.
+
 ## 7. Publication: the release workflow constraint (STOP before tagging)
+
+**Update at the re-issue (~15:30Z):**
+- certificate.json now has `status: "PASS"`, which `release.yml` line 38 accepts.
+- The other checks of that step are unchanged and still hold: the endpoint report sha256 matches
+  (`9a11b3725c261041d7311b4497b0ab24a21d2e100def8c5192f142c0870c48aa`, file unchanged), and RELEASE_NOTES.md exists.
+- The SDK wheel check (`9f79e032...`) is unaffected; SDK sources are unchanged.
+- No workflow change was made or needed. Option B below is not used, and the workflow was not weakened.
+- Still required before a tag: the release head on `origin/main` (`release.yml` line 26 `git merge-base --is-ancestor`),
+  green required CI on the PR head, and an explicit owner instruction to tag. **No tag was created.**
+
+The text below is the analysis at the first assembly (status FAIL), kept as written.
 
 Exact constraint, `.github/workflows/release.yml` (job `publish`, step "Verify stable ancestry and certificate"):
 

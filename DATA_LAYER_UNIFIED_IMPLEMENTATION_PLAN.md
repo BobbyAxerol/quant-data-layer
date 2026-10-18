@@ -75715,7 +75715,7 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
     with the clock).
 - 2026-10-18 14:50-15:30Z amendment A4 FROZEN (POST_HOC_OWNER_DECISION) + post-hoc rescore of 123222Z (owner
   AskUserQuestion ~14:45Z: G4 OKX_INVERSE "M1: chấm theo p95 pooled (Recommended)", G2 MARK_INDEX_PRICE|BINANCE "Nới
-  max lên 1200 ms (Recommended)"; draft 54caaa0; Claude subagent). Status: implemented, tested locally, applied to the
+  max lên 1200 ms (Recommended)"; draft 5e496bf; Claude subagent). Status: implemented, tested locally, applied to the
   counted receipt only.
   - `config/v2/p184-stage100-a4-ts-eligibility.json` (schema qdl.p184.stage100-a4.v1, version 1, frozen
     2026-10-18T15:18:14Z) sha256 14958a681848192c8b9e93feaf0ee3137a1851c38fe6d6763f3bcf6ce0c81312:
@@ -75762,3 +75762,47 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
     event and every threshold exceedance): ACCEPTED in A4's retention condition.
   - Resources: no image built, no container created other than `--rm` test/render runs, no runtime action; lock not
     needed (no measurement).
+- 2026-10-18 15:20-15:45Z v2.2.4 certificate RE-ISSUED under A1-A4 + Paper manifest r11 packaging finding (Claude
+  subagent; same owner decisions). Status: certificate PASS with a required post-hoc amendment; not tagged.
+  - certificate.json (sha256 da2fd4848d36bf4d4a06a0bbca780aee7371fef0b057491686caff2239503ac9):
+    - status PASS, `status_basis`, required `amendments` [G4-A1 1c8a276f..., G4-A2 99961c41..., A3 cc5fc7dc...
+      (post_hoc false), A4 14958a68... (post_hoc true, POST_HOC_OWNER_DECISION, applied to 123222Z only, rescore tool
+      23b78e4a..., receipt 7a821d2d...)];
+    - `gates` G2 / G4 PASS next to `gates_without_a4` G2 / G4 FAIL; `failed_gates` {} next to `failed_gates_without_a4`;
+    - limits rewritten honestly (post-hoc PASS; G4 internal DL tails with maxima report-only; G2 headroom 1.67x and DL vs
+      TS read-schedule split unknown; TS acceptance evidence from samplers, no order admission observed; manifest
+      packaging); evidence_sha256 extended and every entry re-verified.
+  - scorecard.json (52979689...): status PASS_UNDER_POST_HOC_AMENDMENT_A4 with status_without_a4, A4 entry, G2/G4 with
+    verdict_without_a4 and the A4 rows (p95 per window, max report-only, retained outliers), summary 14 PASS with
+    summary_without_a4.
+  - CERTIFICATE.md / SCORECARD.md / RELEASE_NOTES.md: original verdict next to the A4 verdict, the amendment list with
+    sha256, and an explicit statement that the rule "no frozen threshold is widened after measuring" is NOT met by A4.
+    Section 6a / "Consumer manifest packaging" added. CERTIFICATION_LEDGER.md: entry recorded as
+    PASS_UNDER_POST_HOC_AMENDMENT, not as a pre-registered certification.
+  - release.yml (not edited): the publish step's checks replicated locally on the re-issued files:
+    - status == PASS (line 38);
+    - endpoint-report sha256 == certificate (9a11b372..., file unchanged);
+    - RELEASE_NOTES.md exists;
+    - SDK wheel pin unchanged (9f79e032...).
+
+    Still required for a tag: the head on origin/main (line 26), green required CI and an explicit owner instruction.
+    No tag created.
+  - Manifest r11 (packaging finding):
+    - Deployed: query_kn_1/2 `/consumer-realms/trading-system.paper.stable-r11.yaml` efd482fa... (docker exec sha256sum,
+      read-only; realm mount `p184-d3-capacity-20261009/reader-public-r16`); runtime catalog fc3a1e1e... (revision 12).
+    - Source established: `scripts/prepare_paper_read_extension.py` (76db472, 7594258f...) with quotas 77/3000 from
+      `p184-d1-rev11-20261009/` base-catalog fc3a1e1e / base-manifest 1e489237 (= repository r10) / base-binding 5703582a.
+    - Re-rendered in a `--network none` `qdl-v2-python:2.2.4-31a5155` container: prepared.json byte-identical
+      (553cab32...), and `yaml.safe_dump` of its manifest = efd482fa = deployed. No git branch holds r11.
+    - Packaged: byte copy `upgrade/evidence/releases/v2.2.4/trading-system.paper.stable-r11.yaml` (efd482fa) +
+      `consumer-manifest-r11-provenance.json` (94628054...).
+    - NOT done: replacing `consumers/stable/trading-system-paper.yaml`. Tried and reverted: r11 there gives 1 failure
+      + 38 errors in 13 manifest/catalog test modules (r10: 91 OK), because the repository catalog revision 11 has no
+      BTC-USD-SWAP (8482b54b...), the release routing pins r10 and one test expects 10 MARK bindings. That alignment is
+      TS-register IDR-127 (catalog r12 + routing + manifests + tests in one slice, owner approval before a rebuild).
+      Also seen: the repository alpha-okx-paper r14 vs realm r15. Runtime unchanged.
+  - TS commit 8e2849dd (feat/v2-rust-first-okx-demo, not pushed): IDR-119 updated, IDR-126 (TS trace wake/poll markers)
+    and IDR-127 opened; TS plan journal.
+  - Not updated: FINAL_STEPS.md (status header of the 13:45Z packaging, kept as history).
+  - Next: push fix/p184-dl-closure (fast-forward), PR head CI; tag only on an explicit owner instruction after the merge
+    to main; IDR-126 before IDR-119; IDR-116..118 one variable at a time.

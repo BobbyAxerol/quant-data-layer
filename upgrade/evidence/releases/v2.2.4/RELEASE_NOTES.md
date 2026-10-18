@@ -1,16 +1,24 @@
 # Quant Data Layer v2.2.4
 
-Status: **RELEASE PACKAGE WITH STATED LIMITS - NOT A FULL GATE PASS, NOT PUBLISHED.** Assembled 2026-10-18 ~13:40Z.
-The final stage-100 met its protocol and passed G1 G3 G5-G11 G14; G12 (credited) and G13 (76/76) passed on the final
-image set; **G2 and G4 FAIL on the rows named in [SCORECARD.md](SCORECARD.md)** (internal latency tails under the
-stage-100 load). The owner decided on 2026-10-18 ~13:40Z (AskUserQuestion "Release kèm limit + gói tối ưu sau
-(Recommended)") to package this release with those failures stated as limits with their RCA, and to do the
-optimisation package later, one variable at a time with A/B, in a later release (IDR-116..IDR-119).
+Status: **CERTIFICATE PASS UNDER A POST-HOC OWNER AMENDMENT (A4); NOT TAGGED, NOT PUBLISHED.** First assembled
+2026-10-18 ~13:40Z with certificate status FAIL. Re-issued ~15:30Z.
 
-[certificate.json](certificate.json) therefore carries status **FAIL** (the frozen decision rule in
-[CERTIFICATE.md](CERTIFICATE.md) section 1 allows PASS only with no FAIL gate). `.github/workflows/release.yml` refuses
-any status other than PASS, so the tag `v2.2.4` cannot be published by the existing workflow; that is an open owner
-decision (CERTIFICATE.md section 7), not something this package works around.
+- The final stage-100 met its protocol and passed G1 G3 G5-G11 G14. G12 (credited) and G13 (76/76) passed on the final
+  image set.
+- Under the frozen rule (G4-A1 + G4-A2 + A3, all frozen before the run), **G2 and G4 FAIL** on the rows named in
+  [SCORECARD.md](SCORECARD.md). These are internal latency tails under the stage-100 load.
+- On 2026-10-18 ~14:45Z the owner adopted **A4**, labelled `POST_HOC_OWNER_DECISION`. It was decided after the run was
+  scored:
+  - G4 OKX_INVERSE rows are gated by the pooled OKX p95 limits, with the max report-only and every outlier retained.
+  - G2 MARK BINANCE max is <= 1200 ms (0.6 x the TS 2000 ms budget).
+- Under A1-A4 every gate PASSES, so [certificate.json](certificate.json) has status **PASS** with a required
+  `amendments` list in which A4 is `post_hoc: true`.
+- The FAIL verdicts without A4 are kept next to the A4 verdicts everywhere.
+- The latency itself is unchanged. The optimisation package (IDR-116..IDR-119) stays open, one variable at a time with
+  A/B in a later release.
+
+`.github/workflows/release.yml` accepts status PASS. It was not changed. No tag was created; a tag needs a merge into
+`main`, green required CI and an explicit owner instruction.
 
 Machine files: [certificate.json](certificate.json), [scorecard.json](scorecard.json),
 [endpoint-report.json](endpoint-report.json), [equivalence.json](equivalence.json),
@@ -103,9 +111,9 @@ The deployed release set is not one image revision. Each role runs the newest im
 other binary or file in that image is proven equal to the measured one (equivalence receipts below). Runtime source
 after the newest image revision: `git diff 83bef59 HEAD -- rust Cargo.toml Cargo.lock 'Dockerfile*'` is empty;
 `git diff 31a5155 HEAD -- qdl app generated config consumers qdl_sdk Dockerfile pyproject.toml poetry.lock` changes only
-apparatus (`qdl/certification/reference_l2_acceptance.py`, imported only by scripts/ and tests/; and the three frozen
-amendment files `config/v2/p184-stage100-{g4-amendment-1,g4-amendment-2,a3-external-attribution}.json`, read only by the
-gate tooling). `git diff c7ce7d3 HEAD -- qdl_sdk generated contracts scripts/build_qdl_sdk_release.py` is empty, so the
+apparatus (`qdl/certification/reference_l2_acceptance.py`, imported only by scripts/ and tests/; and the four frozen
+amendment files `config/v2/p184-stage100-{g4-amendment-1,g4-amendment-2,a3-external-attribution,a4-ts-eligibility}.json`,
+read only by the gate tooling; `consumers/` is unchanged, see "Consumer manifest packaging"). `git diff c7ce7d3 HEAD -- qdl_sdk generated contracts scripts/build_qdl_sdk_release.py` is empty, so the
 SDK wheel built at c7ce7d3 is the wheel `release.yml` would rebuild at the release head.
 
 | Role | Image (tag, digest) | Revision | Build receipt (sha256) | Equivalence |
@@ -198,18 +206,38 @@ provider, not venue latency, fresh brokers):
 ## Gate Scorecard (G1-G14)
 
 Full table, RCA and evidence: [SCORECARD.md](SCORECARD.md). Frozen gate table sha256
-`c67bf69bb921c992964eb8ff8b2e1bb17085a943fdf756d55526b6269641d5c4`; no gate was widened after measuring; the three
-amendments (G4-A1, G4-A2, A3) were frozen before the counted run.
+`c67bf69bb921c992964eb8ff8b2e1bb17085a943fdf756d55526b6269641d5c4`.
 
-- Final stage-100 `p184-final-campaign-20261018T123222Z` (load 12:34:45-13:04:45Z, protocol_met true, guard CLEAN),
-  scorecard `b9e76a83795f1af8f64b802b22ff1f410087a8f87ee4ef5d23b26a1d39cb4964`: PASS G1 G3 G5 G6 G7 G8 G9 G10 G11 G14;
-  **FAIL G2** (MARK_INDEX_PRICE BINANCE max 1082.9 ms > 1000; p95 418.6) and **FAIL G4** (OKX_INVERSE book_delta,
-  book_snapshot and quote maxima over the addendum limits; internal segments, A3 rescued none).
+Amendments:
+
+| Id | File | sha256 | When |
+| --- | --- | --- | --- |
+| G4-A1 | `config/v2/p184-stage100-g4-amendment-1.json` | `1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6` | frozen before the counted run |
+| G4-A2 | `config/v2/p184-stage100-g4-amendment-2.json` | `99961c41e08993944d158ae812ca61514271862a2d03e011f5d01ce71a0f9997` | frozen before the counted run |
+| A3 | `config/v2/p184-stage100-a3-external-attribution.json` | `cc5fc7dcf07e30b1b52cbc51b78c4a5485a63be84d5b814dcf89452007e57326` | frozen before the counted run |
+| **A4** | `config/v2/p184-stage100-a4-ts-eligibility.json` | `14958a681848192c8b9e93feaf0ee3137a1851c38fe6d6763f3bcf6ce0c81312` | **POST_HOC_OWNER_DECISION**: adopted after the counted run was scored; applied to 123222Z only ([a4-post-hoc-ts-eligibility.md](a4-post-hoc-ts-eligibility.md)) |
+
+A4 widens one number after measuring: G2 MARK BINANCE max goes from < 1000 to <= 1200 ms. It also replaces one
+statistic after measuring: the G4 OKX_INVERSE max becomes the pooled p95. Both are recorded owner decisions. No other
+limit changed.
+
+- Final stage-100 `p184-final-campaign-20261018T123222Z` (load 12:34:45-13:04:45Z, protocol_met true, guard CLEAN).
+  - **Without A4** (scorecard `b9e76a83795f1af8f64b802b22ff1f410087a8f87ee4ef5d23b26a1d39cb4964`, untouched): PASS G1 G3
+    G5 G6 G7 G8 G9 G10 G11 G14.
+    - **FAIL G2**: MARK_INDEX_PRICE BINANCE max 1082.9 ms > 1000; p95 418.6.
+    - **FAIL G4**: OKX_INVERSE book_delta, book_snapshot and quote maxima over the addendum limits. The excess is in
+      internal segments; A3 rescued none.
+  - **With A4** (post-hoc rescore `scorecard.a4-post-hoc.json`
+    `7a821d2d60c45ae290023e9434af7b320c06b906a4185dc299eee467a71fab7e`):
+    - **PASS G2**: max 1082.9 <= 1200, p95 418.6 <= 500.
+    - **PASS G4**: OKX_INVERSE p95 per window at most 198 / 193 / 231 ms against 289.1 / 270.1 / 283.3. The maxima are
+      report-only, and all 8 outliers are retained.
+    - Every other gate is byte-identical to the scorecard without A4.
 - G12: **PASS, credited** on the final image set (`p184-g12-v224-final-2deb90b0-20261018T042415Z`, verdict
   `170af83797df3309d4c9778042ee5b4e8f4c7ec5fca89fede22d9d1d0eeadc27`).
 - G13: **76/76** on writer 2deb90b0 (runtime v5.5 `p184-g13-20261018T051237Z` + dr08 `045558Z` + dr05-quiet `071750Z` +
   dr05-upstream `085316Z`; W05 `5490c21e66bf33bae326f2ea2051677f70cf95372b13b823d4c2912835da9895`).
-- Summary: PASS 12; FAIL 2 (G2, G4); NOT_MEASURED 0; DEFERRED 0.
+- Summary without A4: PASS 12; FAIL 2 (G2, G4). Summary with A4: PASS 14; FAIL 0; NOT_MEASURED 0; DEFERRED 0.
 
 ## Known Residuals And Deferred Items
 
@@ -217,8 +245,9 @@ Register rows are in the Trading System `INTEGRATION_DEFECT_REGISTER.md` (the DL
 
 | Item | State | Next step |
 | --- | --- | --- |
-| G2 MARK BINANCE tail / Query MARK read path | OPEN, IDR-119 (optimisation package) | one variable at a time, A/B on the stage-100 harness |
-| G4 OKX_INVERSE internal tails | OPEN, IDR-116 (Kafka cleaner I/O, C1), IDR-117 (broker CPU quota), IDR-118 (core commit batching) | one variable at a time with A/B; never two at once |
+| G2 MARK BINANCE tail (PASS only under post-hoc A4) | OPEN: IDR-126 (TS trace wake/poll markers to split DL vs TS read scheduling) first, then IDR-119 (Query MARK read path) | attribution, then one variable at a time, A/B on the stage-100 harness |
+| G4 OKX_INVERSE internal tails (PASS only under post-hoc A4; maxima report-only) | OPEN, IDR-116 (Kafka cleaner I/O, C1), IDR-117 (broker CPU quota), IDR-118 (core commit batching) | one variable at a time with A/B; never two at once |
+| Repository consumer manifests / catalog vs deployed (Paper r11, alpha-okx r15, catalog r12) | OPEN, IDR-127 | one slice: catalog r12 + routing + manifests + tests together; no runtime change |
 | OKX BOOK lane session degradation | OPEN, IDR-115 (BOOK recycle with re-snapshot semantics; not an IDR-112 scope extension) | design + fake-venue BOOK handover + core fence tests |
 | IDR-108 | OPEN: Stream accepts on 8210 before its hot view serves | readiness signal (next DL release) |
 | OKX FUNDING_RATE bound = 8 h cadence | OPEN, IDR-125 (contract option of the A1 RCA: max_freshness 28,860,000 or 32,400,000 ms, manifest + JWT revision batch) | release-bundle work |
@@ -233,10 +262,18 @@ Register rows are in the Trading System `INTEGRATION_DEFECT_REGISTER.md` (the DL
 
 ## Limits
 
-- **G2 FAIL**: MARK_INDEX_PRICE BINANCE max 1082.9 ms against max < 1000 ms (p95 418.6 ms inside). Cause of the sample
-  not determined (no per-sample DL receipt clock on the Query-read MARK path).
-- **G4 FAIL**: OKX_INVERSE BTC-USD-SWAP book_delta (max 387.1 vs 282.5), book_snapshot (406.7 vs 300.7) and quote
-  (531.9 vs 322.6) in some windows; venue -> DL ~30 ms, the excess is internal; the internal stage is not separated.
+- **Post-hoc PASS.** G2 and G4 PASS only under A4, adopted after the counted run was scored. Without A4 they FAIL.
+- **G2**: MARK_INDEX_PRICE BINANCE max 1082.9 ms. That is above the frozen max < 1000 ms and inside A4's <= 1200 ms;
+  p95 418.6 ms is inside both. Headroom under the TS 2000 ms budget is 1.67x instead of the frozen 2x.
+  - The cause of the sample is not determined: there is no per-sample DL receipt clock on the Query-read MARK path.
+  - It is unknown how much of the tail belongs to DL Query and how much to the TS writer's wake / min-interval / 1 s
+    refresh read scheduling. IDR-126 adds wake/poll markers to the TS trace.
+- **G4**: OKX_INVERSE BTC-USD-SWAP maxima in some windows: book_delta 387.1 (vs the replaced 282.5), book_snapshot 406.7
+  (vs 300.7), quote 531.9 (vs 322.6).
+  - Venue -> DL is about 30 ms; the excess is internal, and the internal stage is not separated.
+  - Under A4 these maxima are report-only, and no max limit applies to these three rows.
+- **TS acceptance evidence.** G6 D3 has 0 refusals and 0 unsafe; G9 has 0 data-path losses; the TS Python worker logs
+  are clean. No order admission was observed, and the native Rust writer and Risk logs were not read.
 - Single host for every run: no HA, no independent failure domains, no mainnet or funded claim.
 - `binance_bar_edge` is not on a v2.2.4 revision. rust_core x3 stay on rc22 and are certified by binary equality.
 - Stream gateway and projector are on the c7ce7d3 image; their binaries equal the 83bef59 build; the gateway is
@@ -250,6 +287,24 @@ Register rows are in the Trading System `INTEGRATION_DEFECT_REGISTER.md` (the DL
 - G13 cells are shadow-certified (TEST_ONLY isolated harness or TS stack on one host); the W05 output file carries no
   run identity (see SCORECARD.md).
 - TEST_ONLY burst results above are not production capacity claims.
+
+## Consumer manifest packaging (finding 2026-10-18)
+
+- The deployed Paper manifest is `trading-system.paper.stable` **revision 11** (`efd482fa...`, query_kn_1 and
+  query_kn_2, `/consumer-realms/`).
+- The repository file `consumers/stable/trading-system-paper.yaml` is still revision 10 (`1e489237...`, no
+  BTC-USD-SWAP).
+- Source of r11, established and reproduced byte for byte: `scripts/prepare_paper_read_extension.py` (76db472) with
+  quotas 77/3000, from the deployed catalog revision 12 (`fc3a1e1e...`), the r10 manifest and the r22 binding (2026-10-09
+  D1 rev11).
+- The exact deployed bytes are packaged as release evidence:
+  - [trading-system.paper.stable-r11.yaml](trading-system.paper.stable-r11.yaml), sha256 = deployed;
+  - [consumer-manifest-r11-provenance.json](consumer-manifest-r11-provenance.json).
+- The loadable repository path stays r10. With r11 there, 13 manifest/catalog test modules fail (1 failure, 38
+  errors), because the repository catalog revision 11 does not declare BTC-USD-SWAP. Changing that path also changes
+  what a future python image bakes. Alignment is IDR-127.
+- Runtime unchanged. Also seen, not investigated: the repository `alpha-okx-paper.yaml` is r14 and the deployed realm is
+  r15.
 
 ## Rollback
 

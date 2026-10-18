@@ -1,7 +1,8 @@
 {
  "schema": "qdl.release-scorecard.v1",
  "release": "2.2.4",
- "status": "FAIL_G2_G4_WITH_STATED_LIMITS",
+ "status": "PASS_UNDER_POST_HOC_AMENDMENT_A4",
+ "status_without_a4": "FAIL_G2_G4_WITH_STATED_LIMITS",
  "gate_table": {
   "path": "trading-system upgrade/p184-phase-d-gates.md (FROZEN 2026-10-09)",
   "sha256": "c67bf69bb921c992964eb8ff8b2e1bb17085a943fdf756d55526b6269641d5c4"
@@ -17,15 +18,40 @@
  "amendments": {
   "G4-A1": {
    "path": "config/v2/p184-stage100-g4-amendment-1.json",
-   "sha256": "1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6"
+   "sha256": "1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6",
+   "post_hoc": false,
+   "frozen": "before the counted run"
   },
   "G4-A2": {
    "path": "config/v2/p184-stage100-g4-amendment-2.json",
-   "sha256": "99961c41e08993944d158ae812ca61514271862a2d03e011f5d01ce71a0f9997"
+   "sha256": "99961c41e08993944d158ae812ca61514271862a2d03e011f5d01ce71a0f9997",
+   "post_hoc": false,
+   "frozen": "before the counted run"
   },
   "A3": {
    "path": "config/v2/p184-stage100-a3-external-attribution.json",
-   "sha256": "cc5fc7dcf07e30b1b52cbc51b78c4a5485a63be84d5b814dcf89452007e57326"
+   "sha256": "cc5fc7dcf07e30b1b52cbc51b78c4a5485a63be84d5b814dcf89452007e57326",
+   "post_hoc": false,
+   "frozen": "before the counted run"
+  },
+  "A4": {
+   "path": "config/v2/p184-stage100-a4-ts-eligibility.json",
+   "sha256": "14958a681848192c8b9e93feaf0ee3137a1851c38fe6d6763f3bcf6ce0c81312",
+   "post_hoc": true,
+   "label": "POST_HOC_OWNER_DECISION",
+   "frozen_at": "2026-10-18T15:18:14Z",
+   "adopted": "after the counted run was scored (2026-10-18 13:09Z)",
+   "applied_to": "p184-final-campaign-20261018T123222Z only",
+   "decision": "AskUserQuestion 2026-10-18 ~14:45Z: G4 OKX_INVERSE 'M1: ch\u1ea5m theo p95 pooled (Recommended)'; G2 MARK_INDEX_PRICE|BINANCE 'N\u1edbi max l\u00ean 1200 ms (Recommended)'",
+   "rationale": "upgrade/evidence/releases/v2.2.4/a4-post-hoc-ts-eligibility.md",
+   "rescore_tool": {
+    "path": "scripts/p184_a4_post_hoc.py",
+    "sha256": "23b78e4ae7a367252cf8033aa64ee6357987c2117e7f6516679fd4c6efafba26"
+   },
+   "rescore_receipt": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/scorecard.a4-post-hoc.json",
+    "sha256": "7a821d2d60c45ae290023e9434af7b320c06b906a4185dc299eee467a71fab7e"
+   }
   }
  },
  "scoring_rule": "steady state >= 30 min at the stage-100 workload plus one burst window; a measurement outside the protocol can FAIL a gate but cannot PASS it; NOT_MEASURED is never upgraded",
@@ -79,6 +105,10 @@
    "a3-local/receipt.json": {
     "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/a3-local/receipt.json",
     "sha256": "166bfb4536d714a2998695c7ea8242368f067896a59df23626da6a1e6b56323d"
+   },
+   "scorecard.a4-post-hoc.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/scorecard.a4-post-hoc.json",
+    "sha256": "7a821d2d60c45ae290023e9434af7b320c06b906a4185dc299eee467a71fab7e"
    }
   },
   "logs": {
@@ -141,10 +171,22 @@
    ]
   },
   "G2": {
-   "verdict": "FAIL",
-   "reason": "outside: MARK|BINANCE; native scope LOAD_SLICES_SUPERSET: LOAD_SLICES_SUPERSET [1792326840000000000, 1792328700000000000) (every 60 s slice intersecting the load window, edge slices in full)",
+   "verdict": "PASS",
+   "verdict_without_a4": "FAIL",
+   "reason": "every row inside; native scope LOAD_SLICES_SUPERSET: LOAD_SLICES_SUPERSET [1792326840000000000, 1792328700000000000) (every 60 s slice intersecting the load window, edge slices in full)",
+   "reason_without_a4": "outside: MARK|BINANCE; native scope LOAD_SLICES_SUPERSET: LOAD_SLICES_SUPERSET [1792326840000000000, 1792328700000000000) (every 60 s slice intersecting the load window, edge slices in full)",
    "rule": "TRADE p95 <= 500 ms and max < 1500 ms; QUOTE and MARK p95 <= 500 ms and max < 1000 ms",
-   "outside_rows": [
+   "a4_rule": "MARK_INDEX_PRICE|BINANCE p95 <= 500 ms and max <= 1200 ms (POST_HOC_OWNER_DECISION)",
+   "a4_row": {
+    "feed_venue": "MARK_INDEX_PRICE|BINANCE",
+    "p50": 328.5,
+    "p95": 418.6,
+    "p99": 488.5,
+    "max": 1082.9,
+    "n": 9000,
+    "observed": "INSIDE"
+   },
+   "outside_rows_without_a4": [
     {
      "feed_venue": "MARK_INDEX_PRICE|BINANCE",
      "p50": 328.5,
@@ -202,10 +244,177 @@
    "rule": "p95 <= 5 s, max < 60 s"
   },
   "G4": {
-   "verdict": "FAIL",
-   "reason": "over limit: book_delta|OKX_INVERSE|, book_snapshot|OKX_INVERSE|, quote|OKX_INVERSE|",
+   "verdict": "PASS",
+   "verdict_without_a4": "FAIL",
+   "reason": "every row inside",
+   "reason_without_a4": "over limit: book_delta|OKX_INVERSE|, book_snapshot|OKX_INVERSE|, quote|OKX_INVERSE|",
    "rule": "candidate p95 <= frozen baseline p95 x 1.2 per row; missing coverage blocks the gate; amendment G4-A1 row mark_index_price|OKX|: same-event internal split (CreateTime - newest component receipt) p95 <= 200.9 ms and max <= 993.4 ms on windows with >= 5 samples (recomputed baseline x 1.2); composite, component gap and venue probe report-only; a window without probe coverage is UNKNOWN, not EXTERNAL; amendment G4-A2: bar rows with interval >= 8h and no frozen baseline report-only (owner B1), no threshold changes; addendum rows: candidate max <= baseline max x 1.2 on windows with >= 5 samples, 1h/2h/4h/6h and thin-baseline rows report-only",
-   "failing_rows": [
+   "a4_rule": "book_delta / book_snapshot / quote |OKX_INVERSE| gated by the pooled OKX row p95 limit (289.1 / 270.1 / 283.3 ms, frozen-table p95 rule, n >= 20 per window), max report-only, every event above the replaced addendum limit retained (POST_HOC_OWNER_DECISION)",
+   "a4_rows": [
+    {
+     "row": "book_delta|OKX_INVERSE|",
+     "verdict": "PASS",
+     "pooled_row": "book_delta|OKX|",
+     "limit_p95_ms": 289.1,
+     "p95_ms_per_window": [
+      147.0,
+      185.0,
+      198.0,
+      143.0,
+      170.0
+     ],
+     "p95_bucket_lower_ms_per_window": [
+      146.0,
+      184.0,
+      197.0,
+      142.0,
+      169.0
+     ],
+     "n_per_window": [
+      113,
+      114,
+      114,
+      113,
+      169
+     ],
+     "max_ms_per_window_report_only": [
+      234.987,
+      358.892,
+      258.978,
+      170.984,
+      387.114
+     ],
+     "replaced_addendum_max_limit_ms": 282.5,
+     "retained_outliers": [
+      {
+       "window": 2,
+       "partition": 1,
+       "offset": 225073169,
+       "visibility_ms": 358.892
+      },
+      {
+       "window": 5,
+       "partition": 1,
+       "offset": 225135820,
+       "visibility_ms": 387.114
+      }
+     ],
+     "problems": []
+    },
+    {
+     "row": "book_snapshot|OKX_INVERSE|",
+     "verdict": "PASS",
+     "pooled_row": "book_snapshot|OKX|",
+     "limit_p95_ms": 270.1,
+     "p95_ms_per_window": [
+      166.0,
+      193.0,
+      183.0,
+      160.0,
+      174.0
+     ],
+     "p95_bucket_lower_ms_per_window": [
+      165.0,
+      192.0,
+      182.0,
+      159.0,
+      173.0
+     ],
+     "n_per_window": [
+      120,
+      124,
+      124,
+      125,
+      183
+     ],
+     "max_ms_per_window_report_only": [
+      301.419,
+      399.916,
+      311.241,
+      277.296,
+      406.674
+     ],
+     "replaced_addendum_max_limit_ms": 300.7,
+     "retained_outliers": [
+      {
+       "window": 1,
+       "partition": 1,
+       "offset": 225059194,
+       "visibility_ms": 301.419
+      },
+      {
+       "window": 2,
+       "partition": 1,
+       "offset": 225073224,
+       "visibility_ms": 399.916
+      },
+      {
+       "window": 3,
+       "partition": 1,
+       "offset": 225085577,
+       "visibility_ms": 311.241
+      },
+      {
+       "window": 5,
+       "partition": 1,
+       "offset": 225135837,
+       "visibility_ms": 406.674
+      },
+      {
+       "window": 5,
+       "partition": 1,
+       "offset": 225135821,
+       "visibility_ms": 387.317
+      }
+     ],
+     "problems": []
+    },
+    {
+     "row": "quote|OKX_INVERSE|",
+     "verdict": "PASS",
+     "pooled_row": "quote|OKX|",
+     "limit_p95_ms": 283.3,
+     "p95_ms_per_window": [
+      178.0,
+      231.0,
+      208.0,
+      181.0,
+      213.0
+     ],
+     "p95_bucket_lower_ms_per_window": [
+      177.0,
+      230.0,
+      207.0,
+      180.0,
+      212.0
+     ],
+     "n_per_window": [
+      107,
+      112,
+      114,
+      102,
+      167
+     ],
+     "max_ms_per_window_report_only": [
+      264.863,
+      310.493,
+      288.111,
+      221.921,
+      531.927
+     ],
+     "replaced_addendum_max_limit_ms": 322.6,
+     "retained_outliers": [
+      {
+       "window": 5,
+       "partition": 3,
+       "offset": 655928413,
+       "visibility_ms": 531.927
+      }
+     ],
+     "problems": []
+    }
+   ],
+   "failing_rows_without_a4": [
     {
      "row": "book_delta|OKX_INVERSE|",
      "limit_max_ms": 282.5,
@@ -379,6 +588,27 @@
  "summary": {
   "PASS": [
    "G1",
+   "G2",
+   "G3",
+   "G4",
+   "G5",
+   "G6",
+   "G7",
+   "G8",
+   "G9",
+   "G10",
+   "G11",
+   "G12",
+   "G13",
+   "G14"
+  ],
+  "FAIL": [],
+  "NOT_MEASURED": [],
+  "DEFERRED": []
+ },
+ "summary_without_a4": {
+  "PASS": [
+   "G1",
    "G3",
    "G5",
    "G6",
@@ -398,5 +628,6 @@
   "NOT_MEASURED": [],
   "DEFERRED": []
  },
- "owner_decision": "2026-10-18 ~13:40Z AskUserQuestion 'Release kem limit + goi toi uu sau (Recommended)': package with G2/G4 FAIL stated as limits with RCA; optimisation package IDR-116..IDR-119 later, one variable at a time with A/B"
+ "owner_decision": "2026-10-18 ~13:40Z AskUserQuestion 'Release kem limit + goi toi uu sau (Recommended)': package with G2/G4 FAIL stated as limits with RCA; optimisation package IDR-116..IDR-119 later, one variable at a time with A/B",
+ "owner_decision_a4": "AskUserQuestion 2026-10-18 ~14:45Z: G4 OKX_INVERSE 'M1: ch\u1ea5m theo p95 pooled (Recommended)'; G2 MARK_INDEX_PRICE|BINANCE 'N\u1edbi max l\u00ean 1200 ms (Recommended)'; frozen as A4, labelled POST_HOC_OWNER_DECISION"
 }

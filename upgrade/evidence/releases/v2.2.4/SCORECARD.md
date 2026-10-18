@@ -1,13 +1,16 @@
 # Quant Data Layer v2.2.4 - gate scorecard G1-G14 (FINAL, frozen rules)
 
-Status: **FINAL - NOT A FULL PASS.** Assembled 2026-10-18 ~13:40Z from the receipts named below (every sha256 was
-recomputed with `sha256sum` at assembly). G2 and G4 FAIL on named rows; all other gates PASS or are credited. Machine
-form: [scorecard.json](scorecard.json) (schema `qdl.release-scorecard.v1`). Owner decision 2026-10-18 ~13:40Z
-(AskUserQuestion "Release kèm limit + gói tối ưu sau (Recommended)"): package the release with these FAIL rows stated
-as limits with their RCA, and do the optimisation package later, one variable at a time with A/B. That decision does
-not change any verdict below.
+Status: **FINAL. Under the frozen rule (G4-A1 + G4-A2 + A3): G2 and G4 FAIL. Under A4 (POST_HOC_OWNER_DECISION,
+adopted after the counted run was scored): every gate PASS.** Both verdicts are shown side by side below.
+- First assembled 2026-10-18 ~13:40Z and re-issued ~15:30Z with A4. Every sha256 was recomputed with `sha256sum`.
+- Machine form: [scorecard.json](scorecard.json) (schema `qdl.release-scorecard.v1`).
+- Owner decision 2026-10-18 ~13:40Z (AskUserQuestion "Release kèm limit + gói tối ưu sau (Recommended)"): package with
+  the FAIL rows stated as limits, and do the optimisation package later. It changed no verdict.
+- Owner answers ~14:45Z: G4 "M1: chấm theo p95 pooled (Recommended)" and G2 "Nới max lên 1200 ms (Recommended)". These
+  became A4 ([a4-post-hoc-ts-eligibility.md](a4-post-hoc-ts-eligibility.md)). A4 changes the G2 and G4 verdicts only;
+  the latency is unchanged.
 
-## Frozen inputs (no number was widened after measuring)
+## Frozen inputs (pre-registered; A4 below is the one post-measurement change)
 
 - Gate table: TS `upgrade/p184-phase-d-gates.md`, FROZEN 2026-10-09, sha256
   `c67bf69bb921c992964eb8ff8b2e1bb17085a943fdf756d55526b6269641d5c4`.
@@ -22,6 +25,16 @@ not change any verdict below.
   - A3 `config/v2/p184-stage100-a3-external-attribution.json` `cc5fc7dcf07e30b1b52cbc51b78c4a5485a63be84d5b814dcf89452007e57326`
     (frozen 2026-10-18T12:17:51Z; external-venue attribution can rescue a tail only when the same event's internal
     segments are inside their limits; rationale [a3-external-attribution.md](a3-external-attribution.md)).
+- **Adopted AFTER the counted run was scored (POST_HOC_OWNER_DECISION, applied to 123222Z only):**
+  - A4 `config/v2/p184-stage100-a4-ts-eligibility.json` `14958a681848192c8b9e93feaf0ee3137a1851c38fe6d6763f3bcf6ce0c81312`
+    (frozen 2026-10-18T15:18:14Z). G2 MARK_INDEX_PRICE|BINANCE: max <= 1200 ms instead of < 1000, p95 <= 500 unchanged.
+    G4 book_delta / book_snapshot / quote |OKX_INVERSE|: pooled OKX p95 limits 289.1 / 270.1 / 283.3 on windows with
+    n >= 20, max report-only, every event above the replaced limits 282.5 / 300.7 / 322.6 retained by observer v7 or
+    FAIL.
+  - Rescore: `scripts/p184_a4_post_hoc.py` (`23b78e4a...`) drives the unchanged frozen scorer (`e179ec78`, the A3 pin;
+    editing it would drop A3 and with it the A1/A2 re-pins). Receipt
+    `~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/scorecard.a4-post-hoc.json`
+    `7a821d2d60c45ae290023e9434af7b320c06b906a4185dc299eee467a71fab7e`. The stored `scorecard.json` is untouched.
 - Scoring rule: a PASS needs steady state >= 30 min at the stage-100 workload plus one burst window with
   `protocol_met: true`. A measurement outside the protocol can FAIL a gate but cannot PASS it. NOT_MEASURED is never
   upgraded.
@@ -42,12 +55,12 @@ Kafka effective describe `d3d77176c3dfca46e7f44cba465d271afe2709a1fc9d97f75e8088
 
 ## Scorecard (final stage-100 `p184-final-campaign-20261018T123222Z`, load 12:34:45-13:04:45Z, protocol_met true)
 
-| Gate | Rule (frozen) | Verdict | Numbers (from `scorecard.json` of the campaign) |
+| Gate | Rule (frozen) | Verdict (without A4 / with A4) | Numbers (from `scorecard.json` of the campaign) |
 | --- | --- | --- | --- |
 | G1 | BOOK p95 <= 500, p99 <= 1000, max < 2000 ms | **PASS** | BOOK_DELTA BINANCE p95 197.5 / p99 273.4 / max 780.7 (n 83,901); BOOK_DELTA OKX 205.4 / 278.0 / 829.4 (94,211); BOOK_SNAPSHOT BINANCE 215.1 / 340.4 / 702.2 (9,344); BOOK_SNAPSHOT OKX 213.2 / 315.3 / 814.0 (11,223) |
-| G2 | TRADE p95 <= 500, max < 1500; QUOTE and MARK p95 <= 500, max < 1000 ms | **FAIL** (one row) | **MARK_INDEX_PRICE BINANCE p95 418.6 / p99 488.5 / max 1082.9 (n 9,000) - max over 1000**; inside: TRADE BINANCE 248 / 611.3, TRADE OKX 241 / 507.3, QUOTE BINANCE 190 / 627.3, QUOTE OKX 200 / 684.4, MARK OKX 353.2 / 743.9 (p95 / max). A3 G2 report: UNKNOWN by construction (Query-read MARK records carry no per-sample DL receipt clock); no lane episode in the load |
+| G2 | TRADE p95 <= 500, max < 1500; QUOTE and MARK p95 <= 500, max < 1000 ms (A4: MARK BINANCE max <= 1200) | **FAIL** (one row) / **PASS** under A4 | **MARK_INDEX_PRICE BINANCE p95 418.6 / p99 488.5 / max 1082.9 (n 9,000) - max over 1000**; inside: TRADE BINANCE 248 / 611.3, TRADE OKX 241 / 507.3, QUOTE BINANCE 190 / 627.3, QUOTE OKX 200 / 684.4, MARK OKX 353.2 / 743.9 (p95 / max). A3 G2 report: UNKNOWN by construction (Query-read MARK records carry no per-sample DL receipt clock); no lane episode in the load |
 | G3 | BAR p95 <= 5 s, max < 60 s | **PASS** | pooled p95 1718 / max 3263 ms (n 320); BINANCE p95 2366, OKX p95 1452; read errors 0 |
-| G4 | per row vs frozen baseline (table p95 x 1.2; addendum max x 1.2) + A1/A2/A3 | **FAIL** (three addendum rows) | **book_delta OKX_INVERSE** max per window 235.0 / **358.9** / 259.0 / 171.0 / **387.1** vs 282.5; **book_snapshot OKX_INVERSE** **301.4 / 399.9 / 311.2** / 277.3 / **406.7** vs 300.7; **quote OKX_INVERSE** 264.9 / 310.5 / 288.1 / 221.9 / **531.9** vs 322.6 (all BTC-USD-SWAP). A3 attempted all three, rescued none: venue -> DL ~30 ms, internal split receive -> CreateTime 154-295 ms and CreateTime -> observer 115-206 ms (INTERNAL_SEGMENT_OVER_LIMIT); two near-limit units UNKNOWN on local checks. G4-A1 `mark_index_price|OKX|` PASS (internal p95 99-126, max 214-374 ms, EXTERNAL_VENUE_COMPONENT_CADENCE 5/5). Every frozen-table row PASS (e.g. bar BINANCE 1m max 160-246 vs 257.6). OKX books probe 5/5 covered, 0 book tails > 150 ms venue -> DL |
+| G4 | per row vs frozen baseline (table p95 x 1.2; addendum max x 1.2) + A1/A2/A3 (A4: the three OKX_INVERSE rows on the pooled OKX p95, max report-only) | **FAIL** (three addendum rows) / **PASS** under A4 (inverse p95 per window book_delta 143-198 vs 289.1, book_snapshot 160-193 vs 270.1, quote 178-231 vs 283.3; n 102-183; 8 outliers retained, overflow 0) | **book_delta OKX_INVERSE** max per window 235.0 / **358.9** / 259.0 / 171.0 / **387.1** vs 282.5; **book_snapshot OKX_INVERSE** **301.4 / 399.9 / 311.2** / 277.3 / **406.7** vs 300.7; **quote OKX_INVERSE** 264.9 / 310.5 / 288.1 / 221.9 / **531.9** vs 322.6 (all BTC-USD-SWAP). A3 attempted all three, rescued none: venue -> DL ~30 ms, internal split receive -> CreateTime 154-295 ms and CreateTime -> observer 115-206 ms (INTERNAL_SEGMENT_OVER_LIMIT); two near-limit units UNKNOWN on local checks. G4-A1 `mark_index_price|OKX|` PASS (internal p95 99-126, max 214-374 ms, EXTERNAL_VENUE_COMPONENT_CADENCE 5/5). Every frozen-table row PASS (e.g. bar BINANCE 1m max 160-246 vs 257.6). OKX books probe 5/5 covered, 0 book tails > 150 ms venue -> DL |
 | G5 | stage-50 p95/p99 targets per class; cold overlap | **PASS** | 11 latency/cold gates PASS (e.g. MARK_INDEX_REFERENCE BINANCE p95 61.8 / p99 102.2 of 250 / 500; L2_SNAPSHOT BINANCE 151.8 / 198.8 of 300 / 750) |
 | G6 | per-binding policy; 0 unsafe | **PASS** | every required D3 binding measured, unsafe 0 |
 | G7 | SDK -> writer p95 <= 100 ms; writer -> Redis p95 <= 50 ms | **PASS** | every feed inside (p95 SDK -> writer / writer -> Redis ms: BOOK_DELTA 30.7 / 6.3, BOOK_SNAPSHOT 18.1 / 15.8, MARK 0.9 / 7.7, QUOTE 1.0 / 2.0, TRADE 8.0 / 8.0) |
@@ -59,8 +72,11 @@ Kafka effective describe `d3d77176c3dfca46e7f44cba465d271afe2709a1fc9d97f75e8088
 | G13 | DR01-DR08, 76 cells | **PASS - 76/76** | separate runs on the final image set (below) |
 | G14 | CPU/RAM recorded per role (not a headroom gate) | **PASS** (recorded) | 18 roles, mem at/over limit none; DL mean CPU sum 5.63 vCPU (above the owner's 5 vCPU DL budget: stated limit) |
 
-Summary: PASS G1 G3 G5 G6 G7 G8 G9 G10 G11 G14 (campaign) + G12 G13 (separate credited runs) = 12; **FAIL G2, G4** = 2;
-NOT_MEASURED 0; DEFERRED 0.
+Summary without A4: PASS G1 G3 G5 G6 G7 G8 G9 G10 G11 G14 (campaign) + G12 G13 (separate credited runs) = 12; **FAIL
+G2, G4** = 2; NOT_MEASURED 0; DEFERRED 0.
+
+Summary with A4 (post-hoc): PASS 14 (G1-G14); FAIL 0; NOT_MEASURED 0; DEFERRED 0. The rescore leaves every gate other
+than G2 and G4 byte-identical (checked by the tool).
 
 Campaign files (sha256): `scorecard.json` `b9e76a83795f1af8f64b802b22ff1f410087a8f87ee4ef5d23b26a1d39cb4964`, `campaign.json`
 `2f96f55347dfd69e090436416364685f0479c3801c466ff5d3418af99ed8b7fc`, `timeline.jsonl`
@@ -84,13 +100,16 @@ smoke PASS (154 reads, 0 failed), Query funding allowance 60000 ms resolved from
 profile `qdl-v2-python:2.2.2-d6d2637` (`profile-stage100-rc4-r16.json` `12a8b578...`, quoted from the A3 freeze). Writer
 recreates inside the protocol: trace re-arm x2 (12:19:39Z, 12:31:12Z, same image) and the G11 restart 13:05:42Z.
 
-## RCA of the two FAIL gates (what is known, what is not)
+## RCA of the two gates that FAIL without A4 (what is known, what is not; A4 does not change it)
 
 - **G2 MARK_INDEX_PRICE BINANCE max 1082.9 ms.** MARK is not a native writer feed: the value comes from a Query
   reference read woken by the Stream event (IDR-029; TS IDR-113 re-read on a stale woken read). Stalls measured in this
   load (`qdl.stall`): query_kn_1 slow_request 25 / loop_lag 1, query_kn_2 slow_request 105 / loop_lag 2, gc 0 (IDR-114
   fixed the GC cycles). The 1082.9 ms sample's segment split is not measurable on this trace basis (no per-sample DL
-  receipt clock), so the cause of this sample is **not determined**. Optimisation item: IDR-119 (Query MARK read path).
+  receipt clock), so the cause of this sample is **not determined**. The trace basis (`ADAPTER_REFERENCE_RETURN`)
+  also includes the TS writer's own read scheduling (Binance wake read delay 100 ms, 500 ms minimum interval, 1 s
+  refresh fallback); how the tail divides between DL and TS is unknown. Next: IDR-126 (wake/poll markers in the TS
+  trace), then IDR-119 (Query MARK read path).
 - **G4 OKX_INVERSE book_delta / book_snapshot / quote maxima.** All on BTC-USD-SWAP; venue -> DL ~30 ms on every
   failing unit and the fresh-connection books probe saw no venue tail, so these are **internal** (DL ingest -> Kafka
   CreateTime -> observer path), not venue. Which internal stage (ingestor send, core commit, broker append, cleaner I/O,
@@ -160,8 +179,17 @@ recreates inside the protocol: trace re-arm x2 (12:19:39Z, 12:31:12Z, same image
 | `20261018T091556Z` | final set / 2deb90b0 | - | guard TAINTED (foreign ssh job) | TAINTED |
 | `20261018T092255Z` | final set / 2deb90b0 | false | INVALID: driver client image lacked the A1 constant (ImportError on every read) | INVALID, preserved |
 | `20261018T122102Z` | final set / 2deb90b0 | - | guard TAINTED (fwupdmgr) | TAINTED |
-| **`20261018T123222Z`** | **final set / 2deb90b0** | **true** | **PASS G1 G3 G5-G11 G14; FAIL G2 G4** | **COUNTED** |
+| **`20261018T123222Z`** | **final set / 2deb90b0** | **true** | **PASS G1 G3 G5-G11 G14; FAIL G2 G4 (frozen rule); PASS G2 G4 under post-hoc A4** | **COUNTED** |
 
 Scorecard sha256 prefixes of the history rows: 024530Z `68c250ad72d3`, 032230Z `63330fed78fd`, 105025Z `23ed2ef25336`,
 135719Z `da30687cd4f2`, 053803Z `8da1c190608e`, 074624Z `e0a786cb64d7`, 092255Z `ffb5b98e3400`; TAINTED marker of 122102Z
 `537df486acda...`.
+
+Report-only comparison of A4 on the history receipts (not certificate input; tests' mirrored receipts):
+- 053803Z: the inverse rows PASS; G4 stays FAIL on `mark_index_price|OKX|`, which is out of scope.
+- 135719Z: `quote|OKX_INVERSE|` FAIL. Its windows 2 and 3 predate observer v7 and have no outlier retention, which is
+  UNKNOWN = FAIL. G2 stays FAIL on QUOTE|OKX.
+- 074624Z: `book_delta|OKX_INVERSE|` FAIL for the same reason.
+- 092255Z: `book_snapshot|OKX_INVERSE|` FAIL for the same reason.
+
+So A4 does not pass every historical receipt.

@@ -2,17 +2,64 @@
  "schema": "qdl.scoped-release-certificate.v2",
  "release": "v2.2.4",
  "previous_published_release": "v2.2.3",
- "status": "FAIL",
- "status_rule": "PASS only with no FAIL gate, protocol_met, credited G12, G13 76/76 and green required CI (CERTIFICATE.md section 1, fixed before the numbers)",
- "failed_gates": {
+ "status": "PASS",
+ "status_basis": "PASS under amendments G4-A1, G4-A2, A3 (frozen before the counted run) and A4 (POST_HOC_OWNER_DECISION, adopted after the counted run was scored); without A4 the frozen rule gives FAIL on G2 and G4 (gates_without_a4)",
+ "amendments": [
+  {
+   "id": "G4-A1",
+   "path": "config/v2/p184-stage100-g4-amendment-1.json",
+   "sha256": "1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6",
+   "post_hoc": false,
+   "frozen": "before the counted run (recorded in campaign.json)"
+  },
+  {
+   "id": "G4-A2",
+   "path": "config/v2/p184-stage100-g4-amendment-2.json",
+   "sha256": "99961c41e08993944d158ae812ca61514271862a2d03e011f5d01ce71a0f9997",
+   "post_hoc": false,
+   "frozen": "before the counted run (recorded in campaign.json)"
+  },
+  {
+   "id": "A3",
+   "path": "config/v2/p184-stage100-a3-external-attribution.json",
+   "sha256": "cc5fc7dcf07e30b1b52cbc51b78c4a5485a63be84d5b814dcf89452007e57326",
+   "post_hoc": false,
+   "frozen": "before the counted run (recorded in campaign.json)"
+  },
+  {
+   "id": "A4",
+   "path": "config/v2/p184-stage100-a4-ts-eligibility.json",
+   "sha256": "14958a681848192c8b9e93feaf0ee3137a1851c38fe6d6763f3bcf6ce0c81312",
+   "post_hoc": true,
+   "label": "POST_HOC_OWNER_DECISION",
+   "frozen_at": "2026-10-18T15:18:14Z",
+   "adopted": "after the counted run was scored (2026-10-18 13:09Z)",
+   "applied_to": "p184-final-campaign-20261018T123222Z only",
+   "decision": "AskUserQuestion 2026-10-18 ~14:45Z: G4 OKX_INVERSE 'M1: ch\u1ea5m theo p95 pooled (Recommended)'; G2 MARK_INDEX_PRICE|BINANCE 'N\u1edbi max l\u00ean 1200 ms (Recommended)'",
+   "rationale": "upgrade/evidence/releases/v2.2.4/a4-post-hoc-ts-eligibility.md",
+   "rescore_tool": {
+    "path": "scripts/p184_a4_post_hoc.py",
+    "sha256": "23b78e4ae7a367252cf8033aa64ee6357987c2117e7f6516679fd4c6efafba26"
+   },
+   "rescore_receipt": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/scorecard.a4-post-hoc.json",
+    "sha256": "7a821d2d60c45ae290023e9434af7b320c06b906a4185dc299eee467a71fab7e"
+   }
+  }
+ ],
+ "amendments_required": true,
+ "status_rule": "PASS only with no FAIL gate, protocol_met, credited G12, G13 76/76 and green required CI (CERTIFICATE.md section 1, fixed before the numbers); the rule's 'no frozen threshold is widened after measuring' is NOT met by A4, which is a recorded post-measurement owner decision (CERTIFICATE.md section 1)",
+ "failed_gates": {},
+ "failed_gates_without_a4": {
   "G2": "MARK_INDEX_PRICE|BINANCE max 1082.9 ms > 1000 ms (p95 418.6); RCA SCORECARD.md; IDR-119",
   "G4": "OKX_INVERSE book_delta/book_snapshot/quote max over addendum limits; internal segments; RCA SCORECARD.md; IDR-116/117/118"
  },
- "classification": "SCOPED_DATA_LAYER_STAGE100_PROTOCOL_MET_G2_G4_FAIL_INTERNAL_TAILS_G12_CREDIT_G13_76_SINGLE_HOST_NOT_HA",
- "classification_note": "Not certified. 12 of 14 gates PASS (G12 credited, G13 76/76, the rest in a protocol-met stage-100 on the deployed set); G2 and G4 FAIL on named rows with internal latency tails under the stage-100 load. Packaged with these limits by owner decision 2026-10-18; the release workflow refuses a non-PASS status, so no tag is published by this package.",
+ "classification": "SCOPED_DATA_LAYER_STAGE100_PROTOCOL_MET_PASS_UNDER_POST_HOC_A4_G12_CREDIT_G13_76_SINGLE_HOST_NOT_HA",
+ "classification_note": "Certified only with the post-hoc amendment A4. Without A4: 12 of 14 gates PASS and G2/G4 FAIL on named rows with internal latency tails under the stage-100 load. With A4 (owner decision 2026-10-18 ~14:45Z, after the run was scored): G2 MARK BINANCE max <= 1200 ms and the G4 OKX_INVERSE rows on the pooled OKX p95 limits with maxima report-only; 14 of 14 PASS. The latency is unchanged; the optimisation package stays open.",
  "owner_decision": "2026-10-18 ~13:40Z AskUserQuestion 'Release kem limit + goi toi uu sau (Recommended)': package with G2/G4 FAIL stated as limits with RCA; optimisation package IDR-116..IDR-119 later, one variable at a time with A/B",
- "publication_status": "BLOCKED_RELEASE_WORKFLOW_REQUIRES_PASS_OWNER_DECISION_A_B_OR_C",
- "publication_requires": "owner choice among CERTIFICATE.md section 7 options (A: no v2.2.4 GitHub release, next certified release after the optimisation package; B: reviewed release.yml change for a documented limited status; C: manual release, not recommended); required remote CI on the PR head",
+ "owner_decision_a4": "AskUserQuestion 2026-10-18 ~14:45Z: G4 OKX_INVERSE 'M1: ch\u1ea5m theo p95 pooled (Recommended)'; G2 MARK_INDEX_PRICE|BINANCE 'N\u1edbi max l\u00ean 1200 ms (Recommended)'; instruction ~14:20Z 'Xem l\u1ea1i c\u00e1ch ch\u1ea5m, n\u1ebfu do b\u1ea3n th\u00e2n m\u00ecnh sai th\u00ec s\u1eeda nhanh r\u1ed3i Release, c\u00f2n n\u1ebfu l\u00e0 do OKX th\u00ec n\u1edbi gate 1 x\u00edu r\u1ed3i pass r\u1ed3i release. Mi\u1ec5n Risk Engine v\u00e0 Execution Eligibility c\u1ee7a TS ch\u1ea5p nh\u1eadn l\u00e0 \u0111\u01b0\u1ee3c'",
+ "publication_status": "NOT_TAGGED_CERTIFICATE_PASS_UNDER_POST_HOC_A4",
+ "publication_requires": "explicit owner instruction to tag; the release head merged into main (release.yml `git merge-base --is-ancestor`); required remote CI green on the PR head; release.yml itself is unchanged and accepts status PASS",
  "source_code_sha": {
   "rust_ingestors": "83bef596a3cf0e21b423330fd58060afa3a9b1c1",
   "rust_stream_projector": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
@@ -255,6 +302,22 @@
  },
  "gates": {
   "G1": "PASS",
+  "G2": "PASS",
+  "G3": "PASS",
+  "G4": "PASS",
+  "G5": "PASS",
+  "G6": "PASS",
+  "G7": "PASS",
+  "G8": "PASS",
+  "G9": "PASS",
+  "G10": "PASS",
+  "G11": "PASS",
+  "G14": "PASS",
+  "G12": "PASS",
+  "G13": "PASS"
+ },
+ "gates_without_a4": {
+  "G1": "PASS",
   "G2": "FAIL",
   "G3": "PASS",
   "G4": "FAIL",
@@ -292,8 +355,11 @@
   "note": "runs on the PR head after the push; recorded in the PR, not in this file (the file is part of the head)"
  },
  "limits": [
-  "G2 FAIL: MARK_INDEX_PRICE BINANCE max 1082.9 ms (> 1000; p95 418.6 inside); per-sample cause not determined (no DL receipt clock on the Query-read MARK path).",
-  "G4 FAIL: OKX_INVERSE BTC-USD-SWAP book_delta / book_snapshot / quote maxima over the addendum limits in some windows; venue -> DL ~30 ms, excess internal (A3 rescued none).",
+  "POST-HOC: G2 and G4 PASS only under A4 (adopted after observing 123222Z); without A4 they FAIL (gates_without_a4).",
+  "G2: MARK_INDEX_PRICE BINANCE max 1082.9 ms (frozen max < 1000 FAIL; A4 max <= 1200 PASS; p95 418.6 inside both); headroom under the TS 2000 ms budget 1.67x instead of 2x; per-sample cause not determined; the DL Query vs TS writer wake/min-interval/refresh split is unknown (IDR-126, then IDR-119).",
+  "G4: OKX_INVERSE BTC-USD-SWAP maxima 387.1 / 406.7 / 531.9 ms are report-only under A4 (no max limit on these rows); the tails are internal to DL (venue -> DL ~30 ms), IDR-116/117/118 open.",
+  "TS acceptance evidence for A4: G6 D3 refusals 0 / unsafe 0, G9 data-path losses 0, TS Python worker logs clean; no order admission observed; native Rust writer and Risk logs not read.",
+  "Consumer manifest packaging: deployed Paper manifest r11 efd482fa... packaged as release evidence; the loadable repository consumers/stable/trading-system-paper.yaml stays r10 (repository catalog revision 11 cannot serve r11); IDR-127.",
   "Single host; no HA, no independent failure domains.",
   "rust_core x3 on rc22 (binary equality); binance_bar_edge held on rc14 (scoped out).",
   "G14 DL mean CPU sum 5.63 vCPU above the owner's 5 vCPU budget (recorded, not a gate).",
@@ -326,11 +392,11 @@
   ]
  },
  "evidence_sha256": {
-  "upgrade/evidence/releases/v2.2.4/RELEASE_NOTES.md": "677160024cb0b7e3bf523fc08afc26318484e5069719b07ea1b3951633015421",
-  "upgrade/evidence/releases/v2.2.4/SCORECARD.md": "544a1213cbbf7dc21b2ae52ee75cf39e0d33ef56eaee4217d79d9df1ee801b22",
-  "upgrade/evidence/releases/v2.2.4/CERTIFICATE.md": "abdd68a4e869b9e448bd257868cc8f9cae5056408e477656ece1a3b77d5791e2",
+  "upgrade/evidence/releases/v2.2.4/RELEASE_NOTES.md": "9aa54cc91a99e4f8e270de2cfc0c576a770b51e4503d282e953c13765ce3edc3",
+  "upgrade/evidence/releases/v2.2.4/SCORECARD.md": "43067854b68ce373039763c5c58b14c237673a5e148f71578671c8fa12a80598",
+  "upgrade/evidence/releases/v2.2.4/CERTIFICATE.md": "915e9ff8abfaa4fa6ba422e3776f6e95e848f9af901b1836b2f58420f17e553a",
   "upgrade/evidence/releases/v2.2.4/fmt-equivalence-addendum.md": "d17d04240edd96f955c9bba1bfb7ddbf7c1abdf414bb126040b5dc8c1beb4f9e",
-  "upgrade/evidence/releases/v2.2.4/scorecard.json": "0780bcec753784db42904a6b3dc8c2bcab842569e5f4bc358c582d9280243f61",
+  "upgrade/evidence/releases/v2.2.4/scorecard.json": "52979689b18ac14f47c6aa210a88ab473c22f36643a20d3795b5957be7fc3052",
   "upgrade/evidence/releases/v2.2.4/equivalence.json": "9332b1302a9942b0cbd65a8c4ccc0bc64e283c00f0e63afa40990c4cac86d385",
   "upgrade/evidence/releases/v2.2.4/release-preparation.json": "7b0e90a52c2525ad93ded1b1e4ee6be1141f0943f5a1f451c625d3751730f8b3",
   "upgrade/evidence/releases/v2.2.4/g12-image-set-v224.json": "6303cdcb57eaefa16cdd33de2d010ac05e5944ee887ca0b9938e8f79afb4e2f9",
@@ -347,6 +413,12 @@
   "~/.local/state/qdl-v2/build-v2.2.4-31a5155/receipt.json": "e1a9bcc57847a83ea1425dfc66ed3598322a46e46948375bb47f97bbe1c93e38",
   "~/.local/state/qdl-v2/build-v2.2.4-c7ce7d3/receipt.json": "40d727b28a3a581eb9c5911e150a39ae0dac68d8d0a9afbb5cceee47b4cb4f7f",
   "~/.local/state/qdl-v2/build-v2.2.4-c7ce7d3/postcheck-addendum.json": "dad31fe8dc7f768de72e7577951af61d726689d8b32fcf5153046fd9bb190260",
-  "~/.local/state/trading-system/p184-n1-opt-20261013/release/30f50a91/receipt.json": "7040ba9fc68f17641ca69ffb9e52fa4240c9e9e4c956f06c2a3568ea97f64a1c"
+  "~/.local/state/trading-system/p184-n1-opt-20261013/release/30f50a91/receipt.json": "7040ba9fc68f17641ca69ffb9e52fa4240c9e9e4c956f06c2a3568ea97f64a1c",
+  "upgrade/evidence/releases/v2.2.4/a4-post-hoc-ts-eligibility.md": "319ca70cd86db20d55735877c9987f423f1e7d6d36c618d88cc92299a8638e93",
+  "upgrade/evidence/releases/v2.2.4/trading-system.paper.stable-r11.yaml": "efd482fa4ffe7f9176387324f47d47d7e1c801bae6afb2c0747c3ce43652b8fc",
+  "upgrade/evidence/releases/v2.2.4/consumer-manifest-r11-provenance.json": "946280544ad79106efd9503f92552c74f08e9b1fa56caa2b02c1d213e10ba37f",
+  "config/v2/p184-stage100-a4-ts-eligibility.json": "14958a681848192c8b9e93feaf0ee3137a1851c38fe6d6763f3bcf6ce0c81312",
+  "scripts/p184_a4_post_hoc.py": "23b78e4ae7a367252cf8033aa64ee6357987c2117e7f6516679fd4c6efafba26",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/scorecard.a4-post-hoc.json": "7a821d2d60c45ae290023e9434af7b320c06b906a4185dc299eee467a71fab7e"
  }
 }

@@ -2202,7 +2202,7 @@ rollback retention are recorded in the guide from existing packets, not re-probe
 is unchanged.
 
 
-## P18.4 DL v2.2.4 - 2026-10-18 (package with stated limits; certificate status FAIL)
+## P18.4 DL v2.2.4 - 2026-10-18 (package with stated limits; certificate FAIL at 13:40Z, re-issued PASS under post-hoc amendment A4 at ~15:30Z)
 
 Rule of this ledger: read before re-testing; re-run only when a "Pinned at" commit, image or config changes. Only
 items that passed are recorded as certified below; G2 and G4 are recorded as limits, not as certifications. Full
@@ -2270,3 +2270,30 @@ Pinned at: run worktree `data-layer-p184-final-run-6d17b56f` (DL `6d17b56`, gate
 limits; optimisation package IDR-116..IDR-119 one variable at a time with A/B in a later release. `release.yml` refuses a
 non-PASS certificate, so no `v2.2.4` tag was created (options in CERTIFICATE.md section 7). Next certification run: only
 after a product change in that package (new image digest = new "Pinned at").
+
+### 2026-10-18 ~15:30Z - amendment A4 (POST_HOC_OWNER_DECISION) rescore of 123222Z; certificate re-issued status PASS
+
+Pinned at: A4 `config/v2/p184-stage100-a4-ts-eligibility.json` `14958a681848192c8b9e93feaf0ee3137a1851c38fe6d6763f3bcf6ce0c81312`
+(frozen 2026-10-18T15:18:14Z, after the run was scored); rescore tool `scripts/p184_a4_post_hoc.py`
+`23b78e4ae7a367252cf8033aa64ee6357987c2117e7f6516679fd4c6efafba26`; frozen scorer `e179ec78...` unchanged (A3 pin);
+the stored scorecard `b9e76a83...` (untouched); pre-run amendments A1 (G4-A1) `1c8a276f...`, A2 (G4-A2) `99961c41...`,
+A3 `cc5fc7dc...`.
+
+- Owner answers (AskUserQuestion ~14:45Z): G4 OKX_INVERSE "M1: chấm theo p95 pooled (Recommended)", G2 MARK BINANCE
+  "Nới max lên 1200 ms (Recommended)".
+- Receipt `~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/scorecard.a4-post-hoc.json`
+  `7a821d2d60c45ae290023e9434af7b320c06b906a4185dc299eee467a71fab7e`:
+  - G2 **PASS under A4**: MARK BINANCE max 1082.9 <= 1200, p95 418.6.
+  - G4 **PASS under A4**: OKX_INVERSE p95 per window <= 198 / 193 / 231 against 289.1 / 270.1 / 283.3; maxima
+    report-only; 8 outliers retained.
+  - Every other gate is byte-identical to the scorecard without A4.
+- Recorded as **PASS_UNDER_POST_HOC_AMENDMENT, not as a pre-registered certification**. Without A4, G2 and G4 stay FAIL
+  and are kept as the record of the frozen rule. The latency is unchanged:
+  - G4 inverse tails are internal to DL (IDR-116..118 open);
+  - the G2 split between DL Query and TS read scheduling is unknown (IDR-126, then IDR-119).
+- certificate.json status PASS with a required `amendments` list (A4 `post_hoc: true`); `release.yml` unchanged (it
+  accepts PASS). No tag.
+- Tests: `tests.test_p184_a4_post_hoc` 18 OK (host). Parity on 053803Z / 135719Z / 074624Z / 092255Z / 123222Z without A4;
+  negatives for an inverse p95 over the pooled limit and for MARK BINANCE max 1200.1 ms.
+- Re-run only if the stored scorecard, the frozen scorer, A4 or the rescore tool changes. A new campaign is not scored
+  by A4: it applies to 123222Z only.

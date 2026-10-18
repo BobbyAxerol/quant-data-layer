@@ -5,7 +5,7 @@ Status: **FROZEN, POST-HOC, applied to one run only** (`p184-final-campaign-2026
 `qdl.p184.stage100-a4.v1`, version 1, sha256 `14958a681848192c8b9e93feaf0ee3137a1851c38fe6d6763f3bcf6ce0c81312`).
 Rescore tool: `scripts/p184_a4_post_hoc.py` (sha256 `23b78e4ae7a367252cf8033aa64ee6357987c2117e7f6516679fd4c6efafba26`).
 Analysis behind it: [drafts/A4_TS_ELIGIBILITY_TAIL_DRAFT.md](drafts/A4_TS_ELIGIBILITY_TAIL_DRAFT.md) and its JSON
-(commit `54caaa0`; the A4 JSON `pinned` block carries the sha256 of both draft files).
+(commit `5e496bf`; the A4 JSON `pinned` block carries the sha256 of both draft files).
 
 ## 1. What makes A4 post-hoc
 
