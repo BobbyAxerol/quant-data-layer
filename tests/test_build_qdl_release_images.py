@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -18,6 +19,18 @@ from scripts import build_qdl_release_images as b
 
 REPO = Path(__file__).resolve().parents[1]
 SHA = "a" * 64
+
+
+def git_has(*revs: str) -> bool:
+    """True when a git binary exists and every revision is resolvable in this checkout (CI images carry no git,
+    and a shallow checkout lacks history); the tests below read git itself, so they need both."""
+    if shutil.which("git") is None:
+        return False
+    return all(subprocess.run(["git", "-C", str(REPO), "cat-file", "-e", rev + "^{commit}"],
+                              capture_output=True).returncode == 0 for rev in revs)
+
+
+PRE_BUMP_REV = "87db2159f411e7c4d7d49033e7573b42a75fc91d"
 
 
 def shas(value: str = SHA) -> dict[str, str]:
@@ -46,6 +59,7 @@ class ArgumentTests(unittest.TestCase):
         self.assertEqual(ident["python_tag"], "qdl-v2-python:2.2.4-0123456")
         self.assertEqual(ident["build_dir"], "/state/build-v2.2.4-0123456")
 
+    @unittest.skipUnless(git_has("HEAD"), "git binary or checkout unavailable: resolve_rev reads git")
     def test_resolve_rev_rejects_non_commit(self):
         with self.assertRaises(b.BuildError):
             b.resolve_rev(REPO, "no-such-ref-p184")
@@ -340,6 +354,7 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(verdict["only_reference"], ["b==3"])
 
 
+@unittest.skipUnless(git_has("HEAD"), "git binary or checkout unavailable: these tests read this repository's git history")
 class SourceTests(unittest.TestCase):
     """git reads of this repository at HEAD (the release source carries the SDK bump)."""
 
@@ -350,11 +365,14 @@ class SourceTests(unittest.TestCase):
         result = b.source_preconditions(REPO, self.head())
         self.assertTrue(result["ok"], result["problems"])
 
+    @unittest.skipUnless(git_has(PRE_BUMP_REV), "pre-bump revision not in this (shallow?) checkout")
     def test_pre_bump_source_is_refused(self):
         result = b.source_preconditions(REPO, "87db2159f411e7c4d7d49033e7573b42a75fc91d")
         self.assertFalse(result["ok"])
         self.assertTrue(any("2.4.1" in p for p in result["problems"]))
 
+    @unittest.skipUnless(git_has(*(rev for _, rev in b.PYTHON_REFERENCE_TREE)),
+                         "rc19 reference revisions not in this (shallow?) checkout")
     def test_expected_python_diff_uses_the_rc19_tree_model(self):
         diff = b.expected_python_diff(REPO, self.head())
         self.assertIn("qdl_sdk/__init__.py", diff)

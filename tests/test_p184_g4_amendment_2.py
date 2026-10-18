@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -120,6 +122,13 @@ class AmendmentTwoApplicabilityTests(unittest.TestCase):
             self.assertEqual(campaign.applicable_g4_amendment_2({}), (None, [], None))
 
 
+def _git_head_available() -> bool:
+    """The freeze tool reads the base ref's file hashes through git; CI images carry no git binary."""
+    return shutil.which("git") is not None and subprocess.run(
+        ["git", "-C", str(campaign.ROOT), "cat-file", "-e", "HEAD^{commit}"], capture_output=True).returncode == 0
+
+
+@unittest.skipUnless(_git_head_available(), "git binary or checkout unavailable: freeze() reads the base ref via git")
 class AmendmentTwoFreezeTests(unittest.TestCase):
     def test_freeze_pins_the_working_tool_and_inherits_the_unchanged_amendment_1(self):
         out = freeze2.freeze(base_ref="HEAD", now=123.0)

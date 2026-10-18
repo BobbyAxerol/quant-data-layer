@@ -6,6 +6,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -58,7 +59,13 @@ class CoreBatchSizeMigrationTests(unittest.TestCase):
             receipt = migration.run([source], output, apply=False)
             self.assertFalse(output.exists())
             self.assertFalse(receipt["applied"])
-            receipt = migration.run([source], output, apply=True)
+            # The tool creates files with os.open(..., 0o640), which the process umask can narrow (CI: 0077);
+            # fix the umask so the asserted mode is the tool's requested mode, not the environment's.
+            previous_umask = os.umask(0o027)
+            try:
+                receipt = migration.run([source], output, apply=True)
+            finally:
+                os.umask(previous_umask)
             written = (output / "rust_core.json").read_bytes()
             self.assertEqual(written, migration.derive(_core()))
             self.assertEqual(source.read_bytes(), _core())
