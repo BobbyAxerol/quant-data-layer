@@ -1,0 +1,362 @@
+{
+ "schema": "qdl.p184.stage100-a4.draft.v0",
+ "amendment_id": "A4",
+ "status": "DRAFT_NOT_FROZEN_NOT_APPLIED",
+ "drafted_at": "2026-10-18",
+ "decision_owner": "Bobby (owner)",
+ "owner_instruction_verbatim": "Xem lại cách chấm, nếu do bản thân mình sai thì sửa nhanh rồi Release, còn nếu là do OKX thì nới gate 1 xíu rồi pass rồi release. Miễn Risk Engine và Execution Eligibility của TS chấp nhận là được",
+ "owner_instruction_reference": "AskUserQuestion 2026-10-18 ~14:20Z",
+ "post_hoc": {
+  "applies_to_counted_run": "p184-final-campaign-20261018T123222Z",
+  "label_required_in_certificate": "POST_HOC_OWNER_DECISION",
+  "statement": "A4 is drafted AFTER run 123222Z was scored. Applying it to that run is a post-hoc owner decision, not a pre-registered rule; the certificate must carry the original FAIL verdicts next to the A4 verdicts and name this file's sha256. The frozen budget, addendum, A1, A2 and A3 files are not edited."
+ },
+ "rationale_doc": "upgrade/evidence/releases/v2.2.4/drafts/A4_TS_ELIGIBILITY_TAIL_DRAFT.md",
+ "scope": {
+  "rows": [
+   "G2 MARK_INDEX_PRICE|BINANCE (max only)",
+   "G4 book_delta|OKX_INVERSE| (addendum max only)",
+   "G4 book_snapshot|OKX_INVERSE| (addendum max only)",
+   "G4 quote|OKX_INVERSE| (addendum max only)"
+  ],
+  "unchanged": [
+   "every p95 / p99 limit of every gate",
+   "every other G2 and G4 row, the frozen G4 table, amendments G4-A1 / G4-A2 / A3",
+   "G1, G3, G5-G14 rules",
+   "mark_index_price|OKX_INVERSE| addendum row (passes, not in scope)"
+  ]
+ },
+ "rule": {
+  "max_limit_ms": "min(headroom_fraction x ts_use_time_bound_ms, cap_multiple x current_max_limit_ms)",
+  "headroom_fraction": 0.5,
+  "cap_multiple": 2.0,
+  "ts_use_time_bound_basis": "the TS EXECUTION-grade use-time bound for the feed (DL consumer manifest trading-system.paper.stable rev 10 max_freshness_ms / event_recency, TS binding r23-v3, TS phase-d gates G6 D3 table); for BOOK_SNAPSHOT the TS stricter 2000 ms use-time check, not the 60000 ms DL read contract",
+  "p95_unchanged": true,
+  "conditions": [
+   "zero TS eligibility refusals / risk rejections attributable to these tails in the run (G6 D3 rows refusals = 0 and unsafe = 0; G9 eligibility_losses_data_path = 0; no DATA_STALE / EXECUTION_CONTEXT_NOT_EXECUTION_ELIGIBLE in the TS worker / writer logs over the load window)",
+   "every event above the CURRENT limit stays in the receipt (exceedance capsule: topic, partition, offset, source/received/producer/observer clocks, segment split) and is reported with the A4 verdict",
+   "the G4 apparatus is the frozen observer v7 with no exceedance overflow; a window with exceedance overflow is UNKNOWN = FAIL"
+  ]
+ },
+ "limits": {
+  "MARK_INDEX_PRICE|BINANCE": {
+   "gate": "G2",
+   "statistic": "max new-event transit, venue event -> TS execution Redis APPLY reply",
+   "current_max_limit_ms": 1000.0,
+   "current_rule_note": "frozen 2026-10-09 as 2x headroom under D3 MARK 2000 ms (TS upgrade/p184-phase-d-gates.md G2 row)",
+   "p95_limit_ms_unchanged": 500.0,
+   "ts_use_time_bound_ms": 2000,
+   "a_fraction_ms": 1000.0,
+   "b_cap_ms": 2000.0,
+   "a4_max_limit_ms": 1000.0,
+   "effect": "NONE: the frozen limit already equals 50 % of the TS bound"
+  },
+  "book_delta|OKX_INVERSE|": {
+   "gate": "G4",
+   "statistic": "per-window max delivery visibility, venue -> canonical (read_committed upper bound)",
+   "current_max_limit_ms": 282.5,
+   "ts_use_time_bound_ms": 2000,
+   "a_fraction_ms": 1000.0,
+   "b_cap_ms": 565.0,
+   "a4_max_limit_ms": 565.0
+  },
+  "book_snapshot|OKX_INVERSE|": {
+   "gate": "G4",
+   "statistic": "per-window max delivery visibility, venue -> canonical (read_committed upper bound)",
+   "current_max_limit_ms": 300.7,
+   "ts_use_time_bound_ms": 2000,
+   "ts_bound_note": "DL read contract 60000 ms is not an execution permission; TS stricter 2000 ms use-time check applies",
+   "a_fraction_ms": 1000.0,
+   "b_cap_ms": 601.4,
+   "a4_max_limit_ms": 601.4
+  },
+  "quote|OKX_INVERSE|": {
+   "gate": "G4",
+   "statistic": "per-window max delivery visibility, venue -> canonical (read_committed upper bound)",
+   "current_max_limit_ms": 322.6,
+   "ts_use_time_bound_ms": 2000,
+   "a_fraction_ms": 1000.0,
+   "b_cap_ms": 645.2,
+   "a4_max_limit_ms": 645.2
+  }
+ },
+ "g2_owner_option_not_default": {
+  "description": "only if the owner accepts less than 2x headroom for G2 MARK BINANCE: headroom_fraction 0.6 for that row only (limit 1200 ms, 1.67x headroom under 2000 ms)",
+  "a4_max_limit_ms": 1200.0,
+  "dry_rescore": {
+   "p184-final-campaign-20261017T135719Z": {
+    "max_ms": 1097.7,
+    "verdict": "PASS"
+   },
+   "p184-final-campaign-20261018T053803Z": {
+    "max_ms": 911.3,
+    "verdict": "PASS"
+   },
+   "p184-final-campaign-20261018T074624Z": {
+    "max_ms": 887.4,
+    "verdict": "PASS (run protocol_met false: not countable)"
+   },
+   "p184-final-campaign-20261018T123222Z": {
+    "max_ms": 1082.9,
+    "verdict": "PASS"
+   }
+  },
+  "risk_note": "Binance markPrice@1s cadence is 1000 ms: a transit T > 1000 ms leaves the previous event's age > 2000 ms for (T - 1000) ms (83 ms for 1082.9). TS Risk on the MARK quiet contract applies no event-age check (session 45000 ms, component 5000 ms; TS services/risk_engine/execution_market_context.py:244-245, 270-281); only the non-quiet fallback uses 2000 ms."
+ },
+ "dry_rescore_report_only": {
+  "basis": "scorecard.json of each run, rows in scope only; every other row keeps its recorded verdict",
+  "p184-final-campaign-20261018T123222Z": {
+   "scorecard_sha256": "b9e76a83795f1af8f64b802b22ff1f410087a8f87ee4ef5d23b26a1d39cb4964",
+   "protocol_met": true,
+   "MARK_INDEX_PRICE|BINANCE": {
+    "max_ms": 1082.9,
+    "p95_ms": 418.6,
+    "current": "FAIL",
+    "a4": "FAIL"
+   },
+   "book_delta|OKX_INVERSE|": {
+    "max_ms_per_window": [
+     234.987,
+     358.892,
+     258.978,
+     170.984,
+     387.114
+    ],
+    "current": "FAIL",
+    "a4": "PASS"
+   },
+   "book_snapshot|OKX_INVERSE|": {
+    "max_ms_per_window": [
+     301.419,
+     399.916,
+     311.241,
+     277.296,
+     406.674
+    ],
+    "current": "FAIL",
+    "a4": "PASS"
+   },
+   "quote|OKX_INVERSE|": {
+    "max_ms_per_window": [
+     264.863,
+     310.493,
+     288.111,
+     221.921,
+     531.927
+    ],
+    "current": "FAIL",
+    "a4": "PASS"
+   },
+   "gate_verdicts_under_a4": {
+    "G2": "FAIL (unchanged)",
+    "G4": "PASS (no other G4 row fails)"
+   },
+   "gate_verdicts_under_a4_with_g2_option_0_6": {
+    "G2": "PASS",
+    "G4": "PASS"
+   }
+  },
+  "p184-final-campaign-20261017T135719Z": {
+   "scorecard_sha256": "da30687cd4f24e150e7b8fb6b57c3c0a5a1bd7bf574d4e144902846977e69874",
+   "protocol_met": true,
+   "MARK_INDEX_PRICE|BINANCE": {
+    "max_ms": 1097.7,
+    "p95_ms": 396.2,
+    "current": "FAIL",
+    "a4": "FAIL"
+   },
+   "book_delta|OKX_INVERSE|": {
+    "max_ms_per_window": [
+     176.132,
+     184.797,
+     208.985,
+     168.327,
+     220.447
+    ],
+    "current": "PASS",
+    "a4": "PASS"
+   },
+   "book_snapshot|OKX_INVERSE|": {
+    "max_ms_per_window": [
+     176.197,
+     180.947,
+     260.611,
+     259.089,
+     284.559
+    ],
+    "current": "PASS",
+    "a4": "PASS"
+   },
+   "quote|OKX_INVERSE|": {
+    "max_ms_per_window": [
+     180.793,
+     723.455,
+     711.796,
+     194.681,
+     498.786
+    ],
+    "current": "FAIL",
+    "a4": "FAIL (windows 2, 3 over 645.2)"
+   },
+   "gate_verdicts_under_a4": {
+    "G2": "FAIL (also QUOTE|OKX outside, out of A4 scope)",
+    "G4": "FAIL"
+   }
+  },
+  "p184-final-campaign-20261018T053803Z": {
+   "scorecard_sha256": "8da1c190608ecbb004939e33375ebedf6865007481cd54253cc08e5a3d7347a6",
+   "protocol_met": true,
+   "MARK_INDEX_PRICE|BINANCE": {
+    "max_ms": 911.3,
+    "p95_ms": 376.0,
+    "current": "PASS",
+    "a4": "PASS"
+   },
+   "book_delta|OKX_INVERSE|": {
+    "max_ms_per_window": [
+     189.213,
+     262.844,
+     274.815,
+     212.264,
+     212.95
+    ],
+    "current": "PASS",
+    "a4": "PASS"
+   },
+   "book_snapshot|OKX_INVERSE|": {
+    "max_ms_per_window": [
+     161.41,
+     286.785,
+     289.488,
+     212.408,
+     184.802
+    ],
+    "current": "PASS",
+    "a4": "PASS"
+   },
+   "quote|OKX_INVERSE|": {
+    "max_ms_per_window": [
+     204.226,
+     304.558,
+     311.162,
+     254.228,
+     247.474
+    ],
+    "current": "PASS",
+    "a4": "PASS"
+   },
+   "gate_verdicts_under_a4": {
+    "G2": "PASS",
+    "G4": "FAIL (mark_index_price|OKX| window 1, the row later handled by G4-A1; out of A4 scope)"
+   }
+  },
+  "p184-final-campaign-20261018T074624Z": {
+   "scorecard_sha256": "e0a786cb64d7bf1e4361631612f9eee50b9ca1ee63188ee4fcce0ab7829b7563",
+   "protocol_met": false,
+   "MARK_INDEX_PRICE|BINANCE": {
+    "max_ms": 887.4,
+    "p95_ms": 388.0,
+    "current": "PASS (G2 NOT_MEASURED: protocol)",
+    "a4": "PASS"
+   },
+   "book_delta|OKX_INVERSE|": {
+    "max_ms_per_window": [
+     209.409,
+     388.775,
+     412.421,
+     228.466,
+     181.212
+    ],
+    "current": "FAIL",
+    "a4": "PASS"
+   },
+   "book_snapshot|OKX_INVERSE|": {
+    "max_ms_per_window": [
+     158.696,
+     246.532,
+     184.94,
+     259.857,
+     191.957
+    ],
+    "current": "PASS",
+    "a4": "PASS"
+   },
+   "quote|OKX_INVERSE|": {
+    "max_ms_per_window": [
+     216.124,
+     191.637,
+     193.432,
+     213.202,
+     237.855
+    ],
+    "current": "PASS",
+    "a4": "PASS"
+   },
+   "gate_verdicts_under_a4": {
+    "G2": "NOT_MEASURED (protocol)",
+    "G4": "FAIL (bar|BINANCE|8h without baseline at that tool version; protocol_met false, not countable)"
+   }
+  }
+ },
+ "sources_sha256": {
+  "config/v2/p184-stage100-budget.json": "ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541",
+  "config/v2/p184-stage100-g4-addendum.json": "4ed59dca0212566d3ff03c5a4c23eed3d252d0150844b9a4fd6fa543333d78b5",
+  "config/v2/p184-stage100-g4-amendment-1.json": "1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6",
+  "config/v2/p184-stage100-g4-amendment-2.json": "99961c41e08993944d158ae812ca61514271862a2d03e011f5d01ce71a0f9997",
+  "config/v2/p184-stage100-a3-external-attribution.json": "cc5fc7dcf07e30b1b52cbc51b78c4a5485a63be84d5b814dcf89452007e57326",
+  "scripts/p184_gate_campaign.py": "e179ec784621089795516ed25b2ea1f2e2ba30c86eea0de852ed4728aa6d104b",
+  "scripts/p184_g4_observer.py": "1d33ca4a567c665d60d30476a3c2617f85600786450b21aa02ecee7d4020939e",
+  "scripts/p184_g2_mark_trace_transit.py": "fe4c703b531191037964ad1036536c987d941c3da5c9319cb72e235e9b807eaf",
+  "123222Z/trace/mark-load.json": "cdf51e2858205c85faa7f77fb2c2f6eeecbfc1473d2ea68625ad2d74499161a9",
+  "123222Z/a3-local/local.jsonl": "9c3c4756f6a708a42ff09d693dd101ef82c42876efec7662d48bf12fa7d8c981",
+  "123222Z/g6-ts/summary.json": "8227c48fff6e949ca9c2c7588d3bf9f8d45a00656c2cfa84f1b5673128923d91",
+  "123222Z/g9g10/g9-g10-samples.jsonl": "2e3103b359deab51e40124ec17a370ad7c9c0aada802c3969d46ad69392695a8",
+  "123222Z/g4-1/observations.jsonl": "1a162aec40b45c2af0f40d5586a0ad0acc386b75cec4644c0b9f351f803692e7",
+  "123222Z/g4-2/observations.jsonl": "d1ac3a91ad4e085e6a2c4c39a8fb64786e0daded7c0183791d3a4b84f1e56d69",
+  "123222Z/g4-3/observations.jsonl": "41d01ebf6b1c339e6ceb4c4b36471039315f25336dbaf58c4a69c85982ce2ed2",
+  "123222Z/g4-4/observations.jsonl": "2a331a049713b7e626a3944c1f3db80df95eaaed3befbc02d0f851aef3f12cab",
+  "123222Z/g4-5/observations.jsonl": "2eac7b66eb0eef7492b37d5dd2dd5b72c98190ea19e3ac1e1f014cec8c4e4e98"
+ },
+ "freeze_steps_not_done": [
+  "owner approval of the exact limits and of the post-hoc label",
+  "freeze into config/v2/p184-stage100-a4-ts-eligibility-tail.json with frozen_at and this file's sha256; scorer change (p184_gate_campaign.py) applying A4 only when the campaign recorded A4's sha256, or a separate report-only rescore receipt for 123222Z",
+  "certificate update showing original and A4 verdicts side by side"
+ ],
+ "ts_enforcement_at_use": {
+  "basis": "code reading at TS bc713113 (services/adapters/rust identical to writer image 2deb90b0 = TS 30f50a91); env from saved compose snapshots, live containers not read",
+  "order_budget_ms": 2000,
+  "MARK_INDEX_PRICE": {
+   "quiet_contract": "no event-age check; session <= 45000 ms, component receipt age <= cadence (Binance USD-M BOTH 5000; OKX SWAP MARK 15000 / INDEX 70000)",
+   "fallback_event_age_ms": 2000,
+   "where": "services/risk_engine/execution_market_context.py:188-211, 244-249, 270-281; adapters/market_data/data_layer_v2.py:781-782"
+  },
+  "QUOTE": {
+   "event_age_ms": 2000,
+   "quiet_on_change_session_ms": 2000,
+   "where": "execution_market_context.py:216-231, 280; services/market_data/execution_recovery.py:96-100, 235, 250-262"
+  },
+  "BOOK_SNAPSHOT": {
+   "event_age_ms": 2000,
+   "required_only_for": "L2 orders (post-only, price-match, L2 queue model); P18.4 runs BBO_EXECUTABLE",
+   "where": "execution_market_context.py:322-331, 432-446, 576-581"
+  },
+  "BOOK_DELTA": {
+   "risk_reads": false,
+   "writer": "event age OBSERVE (non-blocking), session continuity <= 45000 ms, silence watchdog 60 s",
+   "where": "execution_recovery.py:21; adapters/market_data/data_layer_v2.py:440-460; data_layer_bridge.py:95-104"
+  },
+  "mark_read_scheduling": {
+   "refresh_s": 1.0,
+   "wake_min_interval_ms": 500,
+   "wake_read_delay_ms": {
+    "BINANCE": 100,
+    "OKX_default": 250
+   },
+   "where": "shared/config.py:215, 228-232; services/market_data/data_layer_bridge.py:1005-1026"
+  },
+  "manifest": {
+   "deployed": "trading-system.paper.stable revision 11 sha256 efd482fa4ffe7f9176387324f47d47d7e1c801bae6afb2c0747c3ce43652b8fc (same in query_kn_1 /consumer-realms)",
+   "repo_file_revision": "consumers/stable/trading-system-paper.yaml is revision 10 without BTC-USD-SWAP (packaging finding)"
+  }
+ }
+}
