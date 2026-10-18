@@ -75190,3 +75190,44 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
     max 2077 ms, host clock bound 0.35 ms. Not a gate result.
   - Next: wait for the other agent's G13 dr05 rerun and an absent host lock, then ONE final stage-100 from a clean run
     worktree at this commit.
+- 2026-10-18 06:43-07:21Z FINAL chain (v5.5) step 2 rerun after the TS apparatus fix a9cf1b41 (IDR-111 follow-up;
+  Claude subagent): **dr05-quiet 2/2 PASS (harness_ok); dr05-upstream 0/6 FAIL again, apparatus, no fault or oracle
+  reached -> STOP, not rerun**. Same image set (writer 2deb90b0 / TS 30f50a91; query 3e9e4d3a; ingestors a9679def;
+  stream/projector 60f83a51; core 7c848aad), production untouched.
+  - Fix commit a9cf1b41 pushed fast-forward (aa126794..a9cf1b41 incl. the 4 journal commits); CI "Quality And V1
+    Contract" run 39104694489 on a9cf1b41: completed success (job quality-contract success, GitHub API).
+  - Pins / shape: DL run worktree data-layer-p184-final-run-bb054498 (clean, bb054498), NEW clean TS run worktree
+    trading-system-final-run-a9cf1b41 (detached a9cf1b41); `p184_g13_final.py --role-images g13-roles-v224.json
+    (984c4566...) --python-image-ref qdl-v2-python:2.2.4-31a5155 --writer-image 2deb90b0 --ts-source-sha 30f50a91
+    --dl-source-sha bb054498 --phase isolated --only <step> --inputs p1/g13v55/inputs-g13v55-ci.json (b86a92e5...)`
+    = the 045826Z/050244Z shape with --ts-root changed. Dry runs: blocked {}, 6 / 2 cells.
+  - Lock "claude P18.4 G13 dr05 rerun FINAL 2deb90b0 a9cf1b41": waited 06:43-07:04Z (a Codex remote ssh job, then the
+    locks codex-pma11-instance-range-hk and epg10-08-manager-notice-port-0701), taken 07:04:38Z, released 07:20:51Z.
+  - dr05-upstream p184-g13-20261018T070444Z: exit [0,0,0,1,0], 779.9 s, rows 4fba03de...; all 6 cells
+    `DR05_SETUP_DEADLINE_EXCEEDED` after the 120 s setup bound, e.g. `{"cache_readable_s": 24.043, "clone_started_s":
+    23.223, "dl_reset_s": 20.428, "ready_budget_s": 120.0}` (others: dl_reset 19.1-20.4 s, cache_readable 22.7-24.0 s).
+    So the setup separation worked, but `subscription_attempted` never held in 96-98 s of 1 s heartbeats.
+    - Reading (verified from the credited 093001Z rows, writer heartbeats recorded in observe()): the DR05 clone has one
+      instrument = 2 BOOK slices on 4 fixed workers; workers 1-3 own no route and stay `REPORT_INVALID_OR_MISSING` for
+      the whole case (worker_liveness {"0": LIVE, "1"-"3": REPORT_INVALID_OR_MISSING} at positive_anchor, gap,
+      still_unanchored and return_anchor; demanded 2, unreported 0). fc644cd1's predicate requires EVERY worker LIVE
+      (scripts/p184_dr05_upstream.py subscription_attempted), which this clone can never satisfy; inside the old 30 s
+      budget this looked like a timeout. Apparatus defect of the readiness predicate, not the fence. The rows do not
+      carry the last heartbeat sample of the setup wait (gap in a9cf1b41's error evidence).
+    - Proposed (needs coordinator approval; not done): count only workers that own demanded routes (or require every
+      demanded slice reported past STARTING with demanded = reported + session-ready), carry the last heartbeat sample
+      in DR05_SETUP_DEADLINE_EXCEEDED, then rerun dr05-upstream only.
+  - dr05-quiet p184-g13-20261018T071750Z: exit [0,0,0,0,0,0], 174.0 s, harness_ok true, rows eb0efbde...; both
+    DR05.QUIET_TYPED cells ISOLATED_FAULT OBSERVED ok, predicate unchanged: BINANCE quiet_after 13706 ms, health lag
+    1323 ms; OKX 13652 / 1346 ms; strict_resume VERIFIED with bootstrap proof routes [BINANCE ETHUSDT TRADE] /
+    [OKX ETH-USDT-SWAP TRADE] (the a9cf1b41 bounded wait), view/health findings [] / [].
+  - W05 verifier in image 2deb90b0 (--network none, TS run worktree a9cf1b41 read-only, --expect-source-sha 30f50a91...,
+    --expect-image-digest sha256:2deb90b0...) over the 6 runtime jsonl of 051237Z + dr08 045558Z + the two new rows
+    files: **70/76** (DR01 9/9, DR02 8/8, DR03 6/6, DR04 14/14, DR05 11/17, DR06 6/6, DR07 12/12, DR08 4/4). DR issues
+    only CASE_FAILED on the 6 dr05-upstream cells (+ CASE_OPEN on 260 non-DR cells outside G13); no provenance or
+    drift issue; QUIET_TYPED closed. Output p184-g13-20261018T071750Z/verify/w05-final-v55-dr05rerun.json a1eaa219....
+  - Teardown: both summaries dl_source.removed true, removed_leftovers {}; DL --down counts removed 5 / 5; clone cleanup
+    upstream 24/24 ok (writer_exits 0), quiet 10/10 ok; afterwards 0 p184-/ts-p184 containers, 0 p184- networks,
+    0 volumes, 0 /tmp/p184-dr05-*; docker ps = 40 before and after; lock absent.
+  - Status: G13 on 2deb90b0 = 70/76; DR05 GAP_REFUSAL x3 / GENERATION_CHANGE_FENCED x3 open on the readiness
+    predicate (apparatus).
