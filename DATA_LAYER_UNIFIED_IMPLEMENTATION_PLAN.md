@@ -75126,3 +75126,37 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   - Status: final stage-100 = protocol met, NOT certified (G4 mark_index_price|OKX| window 1). G12 credited, G13 68/76
     (8 DR05 cells open on the harness defect). Open for the coordinator/owner: (1) the G4 OKX mark/index row
     (ingest->producer stage), (2) the TS harness fix for dr05-upstream/dr05-quiet + isolated rerun.
+- 2026-10-18 06:20-06:45Z read-only RCA of the final stage-100 G4 FAIL (p184-final-campaign-20261018T053803Z, scorecard
+  8da1c190..., row mark_index_price|OKX| window 1 p95 1632 > 1586.6 ms; Claude subagent). No product, runtime, gate or
+  apparatus change; one --rm probe container under a short own lock (06:26-06:29Z, released). Evidence:
+  ~/.local/state/qdl-v2/p184-g4-okx-mark-rca-20261018T062641Z/ (SHA256SUMS; probe jsonl 3ff32b2a..., scripts, outputs).
+  - Verified (code): the OKX row is a PAIRED event. rust/qdl-realtime-core/src/lib.rs process_mark_index (908-1145) emits
+    immediately on every changed component (no timer, coalescing window or linger in this path); the envelope carries
+    source_event_time = min(mark.ts, index.ts) (1044), received_at_ns = OLDEST component receipt (1042, 1081, "only as
+    fresh as its oldest provider confirmation") and normalized/published_at_ns = NEWEST receipt (1043, 1082-1083).
+    producer_ts is librdkafka CreateTime at the core's transactional send (rust/qdl-kafka/src/lib.rs 1136-1141, no
+    explicit timestamp). So the observer's "ingest->producer_ts" (CreateTime - received_at_ns, observer 341-346) for
+    this row = wait for the OTHER component's next push + internal; it is not an internal DL stage.
+  - Verified (same-event split from raw samples via source_sequence = mark_ts:index_ts:mark_recv:index_recv, bounded
+    stratified subset n=96/window, not the gated population): internal CreateTime - newest receipt p95 81-105 ms (all 5
+    windows; 105025Z 81-120, 135719Z 81-129; baseline 175720Z 88-147); per-component venue lag mark p95 46-49, index
+    p95 129-134 ms; venue-timestamp gap |mark.ts - index.ts| p95 1280-1649 ms, max ~2.0 s; index is the older component
+    in 77-85 % of samples. Window 1 internal p95 80.7 ms is the lowest of the five: no startup/warmup signature in this
+    row; guard cleaner activity is uniform across the windows.
+  - Verified (venue, official docs https://www.okx.com/docs-v5/en/ WebSocket public): mark-price "pushed every 200 ms
+    when the mark price changes, and ... every 10 seconds when the mark price does not change"; index-tickers "Push data
+    every 100ms if there are any changes, otherwise push once a minute"; ts = price/index update time. Direct probe
+    06:26:41-06:29:11Z (6 swaps + 6 indexes, one WS): mark ts interval p50 201 / max 210 ms; index ts interval p50 651 /
+    p95 1727 / max 2070 ms; recv-ts lag mark 38/44, index 104/131 ms (matches the DL venue->DL split); venue-only pair
+    gap at each push p95 1269 / max 2056 ms. Not same-window with 053803Z (inferred comparable, not proven).
+  - Conclusion: (b) venue semantics plus metric definition. The row measures the quiet age of the OKX index (only pushed
+    on change) carried by a pair anchored at its oldest component; window-to-window variance (and baseline 1195-1322 vs
+    candidate 1232-1632) tracks index-change sparsity, i.e. market regime. (a) rejected: no internal composition delay
+    exists to remove; anchoring the pair at max(ts) would only relabel, change a canonical contract and force a rust
+    rebuild + G12/stage-100 re-certification. (c) rejected for this row (internal split flat, lowest in window 1).
+  - Not done / open: no gate relaxation, no rerun. A rerun as-is is a market-regime coin flip, not evidence. Any owner
+    amendment (Codex review p184-idr112-113-provider-gates-review-20261018.md "Gate Amendment Options") would need, for
+    the SAME events and windows: observer per-event split newest-receipt -> CreateTime and component ts gap in the full
+    aggregate (report-only observer addition), the same split re-derived for the frozen baseline, a paired same-window
+    venue-direct mark-price/index-tickers probe, host clock bounds, all outliers retained, and the internal split held to
+    the frozen x1.2 rule against the baseline internal split.
