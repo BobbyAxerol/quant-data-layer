@@ -75882,3 +75882,48 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   of .github/workflows/ci.yml on the pushed head; result recorded in the next journal entry and in the handback.
 - PR #33 head 5e90eb7 failed only `contract-tests` / cargo-deny (`advisories FAILED, bans ok, licenses ok, sources
   ok`, RUSTSEC-2026-0346..0349); every other job success (run 39141057196).
+- 2026-10-18 ~16:40-17:00Z amendment A4 v2 FROZEN (PRE_REGISTERED, post_hoc false) for the final stage-100 run (owner
+  AskUserQuestion ~16:40Z "Duyệt A4 chốt trước (Recommended)"; rule content = the A4 approved ~14:45Z; Claude subagent).
+  Status: implemented, tested locally; not applied to any run (no run yet). No runtime action.
+  - `config/v2/p184-stage100-a4-v2-preregistered.json` (schema qdl.p184.stage100-a4.v2, version 2, frozen
+    2026-10-18T16:50:47Z) sha256 63f98668150bfda776317f97114b73855800515d0cfc9b7aa90ccb050f500324:
+    - same G2 / G4 rules as A4 v1 (MARK BINANCE max <= 1200 ms, p95 <= 500; inverse book_delta / book_snapshot /
+      quote on pooled OKX p95 289.1 / 270.1 / 283.3, max REPORT_ONLY, outliers retained); external_exemptions [];
+    - applies_to RUN_BOUND_BEFORE_LOAD, 100-session candidate, excluded_campaigns [123222Z] (A4 v1 post-hoc, file
+      14958a68 unchanged, stays its decision);
+    - pins scorer e179ec78 (= A3 gate_campaign_tool), A4 rule module p184_a4_post_hoc.py 23b78e4a, tool
+      p184_a4_preregistered.py b93d295f, observer 1d33ca4a, tests 1d50b18e, budget / addendum / G4-A1 / G4-A2.
+      A3 is NOT pinned by sha256 (see below).
+  - Integration: wrapper, the scorer is not edited (A3 pins its sha256; an edit drops A1-A3). `scripts/
+    p184_a4_preregistered.py` reuses the A4 v1 rule functions and relabels their rows PRE_REGISTERED / post_hoc false /
+    version 2, so both versions judge the same data identically; drift outside G2/G4 raises.
+  - Runtime-identity pin (no hard-coded digests: the rolled images do not exist yet):
+    - `bind --campaign-dir $C` is the launcher's first command, before the guard and `p184_gate_campaign.py run`.
+      It writes `$C.a4-v2-binding.json` (open "x") with the A4 v2 sha256, the code sha256s, the image id per A3 role +
+      writer (`a3_runtime_images()`), the writer identity in the preflight shape, and the cgroup caps of the A3 roles,
+      kafka1-3 and the writer;
+    - `close --campaign-dir $C` runs after scorecard.json and writes `$C.a4-v2-close.json` (images and caps read again);
+    - `score --campaign-dir $C --write` writes `$C/scorecard.a4-v2.json` + `.sha256`, with verdict_without_a4 per gate
+      and summary_without_a4;
+    - applied only if: freeze < bind < campaign start; the file is unchanged since the bind; preflight
+      runtime_identity / a3_runtime_images == binding; close == binding (no roll or cap change during the run); code /
+      config pins hold; stored scorecard reproduced; A3 applied; protocol met; G6 PASS; G9 PASS with 0 losses.
+      Otherwise the strict scorecard.json is the record.
+    - Live check (read-only docker inspect, receipts in the session scratchpad only): bind recorded today's images (=
+      A3's frozen set); a second bind is refused (FileExistsError); close is refused without scorecard.json.
+  - OPEN, blocks the final run: A3 hard-codes `runtime_images`, and the preflight refuses other images
+    (`scripts/p184_gate_campaign.py:1793-1797`). After the rustls roll, A3 must be re-frozen with the rolled image ids
+    (owner decision, scripts/p184_freeze_a3_amendment.py), or the campaign refuses to start. A4 v2 needs only "A3
+    applied" and reports the recorded A3 path / sha256.
+  - Tests `tests/test_p184_a4_preregistered.py` 14 OK on the host:
+    - negatives: inverse p95 over pooled -> FAIL; MARK BINANCE max 1200.1 / p95 500.1 -> FAIL; 15 invalid-file
+      variants; 5 bind refusals; 10 not-applied cases (missing binding / close, bound after start or before freeze,
+      file edited after bind, roll or cap change during the run, preflight images / writer identity differ, bind-time
+      code differs);
+    - parity: without a binding nothing is applied; frozen gates == stored on 5 receipts, 123222Z byte for byte in place;
+    - positive replay on 123222Z (synthetic pre-run binding): same summary and G2/G4 content as the post-hoc A4, G2 / G4
+      FAIL -> PASS, 8 outliers retained.
+    - Host, with a4_post_hoc + gate_campaign + a3_attribution + g4_amendment(+_2): 195 OK. In image
+      qdl-v2-python:2.2.4-31a5155 (--network none, receipts absent): a4_preregistered + a4_post_hoc + gate_campaign
+      123 OK, 10 skipped.
+  - Docs: `upgrade/evidence/releases/v2.2.4/a4-v2-preregistered.md`.
