@@ -3459,6 +3459,30 @@ const STALENESS_CAP_WINDOW_MS: i64 = 3_600_000;
 /// Suppressed triggers are logged at most once per this interval.
 const STALENESS_SUPPRESSED_LOG_MS: i64 = 10_000;
 
+/// Test-only observation of the cooldown/cap slots the detector takes, keyed by
+/// the configured cooldown so concurrent tests do not mix their slots.
+#[cfg(test)]
+mod test_slot_log {
+    use std::sync::Mutex;
+
+    static SLOTS: Mutex<Vec<(u64, i64)>> = Mutex::new(Vec::new());
+
+    pub(super) fn record(cooldown_ms: u64, host_ms: i64) {
+        SLOTS.lock().unwrap().push((cooldown_ms, host_ms));
+    }
+
+    pub(super) fn take(cooldown_ms: u64) -> Vec<i64> {
+        let mut slots = SLOTS.lock().unwrap();
+        let mine = slots
+            .iter()
+            .filter(|(cooldown, _)| *cooldown == cooldown_ms)
+            .map(|(_, at)| *at)
+            .collect();
+        slots.retain(|(cooldown, _)| *cooldown != cooldown_ms);
+        mine
+    }
+}
+
 /// Per-lane detector; lives across sessions so the baseline, cooldown and cap
 /// survive a recycle. Pure: all times are passed in (host ms).
 #[derive(Debug)]
@@ -3652,6 +3676,8 @@ impl StalenessDetector {
     /// A recycle attempt started (standby connecting): it counts for the
     /// cooldown and the hourly cap whether or not the standby succeeds.
     fn recycle_started(&mut self, host_ms: i64) {
+        #[cfg(test)]
+        test_slot_log::record(self.config.cooldown_ms, host_ms);
         self.recycles.push_back(host_ms);
     }
 
@@ -7683,19 +7709,24 @@ mod staleness_tests {
                 0
             }
         });
+        // Clear any slots left by an earlier run with this (unique) cooldown.
+        test_slot_log::take(1_250);
         let run = run_lane(
             schedule,
-            fast_staleness(1_200),
+            fast_staleness(1_250),
             Duration::from_millis(5_000),
         )
         .await;
         assert_eq!(run.log.acked.len(), 3, "{:?}", run.log);
-        let first = run.log.acked[1].unwrap();
-        let second = run.log.acked[2].unwrap();
+        // The cooldown is counted between the slots the detector took at the
+        // two trigger frames, not between the ACKs: the ACK time also carries
+        // the (runner-dependent) standby establishment latency.
+        let slots = test_slot_log::take(1_250);
+        assert_eq!(slots.len(), 2, "one slot per recycle: {slots:?}");
         assert!(
-            second.duration_since(first) >= Duration::from_millis(1_000),
-            "second recycle {:?} after the first",
-            second.duration_since(first)
+            slots[1] - slots[0] >= 1_250,
+            "second recycle slot {} ms after the first, cooldown 1250 ms",
+            slots[1] - slots[0]
         );
         assert_eq!(generations(&run.records).len(), 3);
         assert_eq!(run.report["staleness_recycles_total"], 2);
