@@ -75650,3 +75650,66 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   - After: docker ps 40, no qdl-p184-* / qdl-phase3-* leftovers, lock released, Codex resumed. Next (owner/coordinator):
     G2 MARK|BINANCE max 1083 ms and the OKX inverse G4 internal tails are the open items; both are measured as
     internal or unattributable, not venue.
+- 2026-10-18 13:15-14:00Z v2.2.4 RELEASE PACKAGING with stated limits (owner-approved ~13:40Z, AskUserQuestion "Release
+  kèm limit + gói tối ưu sau (Recommended)"; Claude subagent). Certificate status **FAIL** (G2, G4), not a full PASS;
+  no tag. Evidence: upgrade/evidence/releases/v2.2.4/.
+  - Files (DL): CERTIFICATE.md, SCORECARD.md, RELEASE_NOTES.md rewritten from the drafts (no `<<PENDING` left outside
+    drafts/); new certificate.json (status FAIL, failed_gates G2/G4, endpoint_report_sha256 9a11b372...), scorecard.json,
+    endpoint-report.json (schema qdl.release-endpoint-report.v2, runtime by docker inspect at assembly); equivalence.json
+    FINAL (final builds 83bef59 / 31a5155, final roll receipts, per-role rollback compose sha256); FINAL_STEPS.md status
+    header; CERTIFICATION_LEDGER.md section "P18.4 DL v2.2.4" (certified: G12 credit, G13 76/76, stage-100 G1 G3 G5-G11
+    G14 on this image set; G2/G4 recorded as limits). Generator (scratch, not in the repo):
+    scratchpad/rel224/gen_machine.py, every sha256 computed from the files, image digests asserted against
+    `docker image inspect`.
+  - Verified at assembly (not quoted): images a9679def (2.2.4-83bef59, ingestors x2), 60f83a51 (2.2.4-c7ce7d3,
+    stream/projector x4), 3e9e4d3a (2.2.4-31a5155, query x2), cores 7c848aad, bar edge 08f356a8, writer 2deb90b0; every
+    role RestartCount 0, OOM false. 83bef59 receipt: 11 of 12 binaries EQUAL to 60f83a51 (ingestor DIFFERENT by
+    design). `git diff 83bef59 HEAD -- rust ...` empty; `git diff 31a5155 HEAD -- qdl config ...` = apparatus only
+    (reference_l2_acceptance.py, imported by scripts/tests only; three frozen config/v2 amendment files);
+    `git diff c7ce7d3 HEAD -- qdl_sdk generated contracts scripts/build_qdl_sdk_release.py` empty, so the certified
+    SDK wheel 9f79e032... is what release.yml would rebuild.
+  - Observation: the G13 W05 output `w05-final-v55-76.json` is byte-identical to the v5.4 output (both 5490c21e...):
+    the verifier writes case states only. Provenance rests on its arguments and input receipts; stated as a limit.
+  - Release workflow constraint (STOP before tagging): release.yml `if certificate['status'] != 'PASS': raise
+    SystemExit(...)`; no other status is defined anywhere. Options for the owner in CERTIFICATE.md section 7 (A: no
+    v2.2.4 GitHub release, next certified release after the optimisation package - recommended; B: reviewed release.yml
+    change for a documented limited status; C: manual release, not recommended).
+  - IDRs opened in the TS INTEGRATION_DEFECT_REGISTER.md (the register both plans use): IDR-115 OKX BOOK lane recycle
+    with re-snapshot; optimisation package IDR-116 cleaner I/O (C1), IDR-117 broker CPU quota (C2), IDR-118 core commit
+    batching (C3), IDR-119 Query MARK read path (G2; first add a per-sample clock); residuals IDR-120 H1 WriterClone
+    lifecycle, IDR-121 Rust Shadow Core CI, IDR-122 TS ruff debt (measured 1286 findings with ruff 0.15.13 on TS
+    e4992fe5; the "~276" figure was not reproduced, it equals the I001 count), IDR-123 F821 (the undefined name at
+    scripts/p184_n1_isolated.py:605 is `asyncio`, not `read`), IDR-124 stage-A key coalescing, IDR-125 OKX FUNDING_RATE
+    8 h bound (contract option); IDR-108 unchanged (limit); IDR-112/113/114 state + deployed cells updated.
+  - Codex release-closure review section 5 (release and cleanup checklist): ACCEPTED (image/evidence map, receipts
+    preserved, removal by digest/id only, disk before/after recorded, no prune). Standing cleanup reminder of
+    P184_CODEX_CONTRIBUTIONS.md acknowledged for this packet.
+  - Cleanup (own lock claude-v224-release-cleanup 13:33:29-13:35:5xZ, lock absent before/after; no prune, no volume, no
+    container touched): df / free 224,162,775,040 -> 224,746,872,832 B (+584 MB; the Kafka volumes grew in the same
+    minutes, so this is not a clean attribution); docker system df images 111 -> 104 (33.48 -> 33.42 GB, layers mostly
+    shared), build cache 423 -> 412 records (31.75 -> 31.02 GB).
+    - Run worktrees removed (git worktree remove, no --force, each clean and its HEAD on a branch or refs/backup):
+      DL final-run-1ab4a638, 5157c8ce, 5a70bdf4, 6506d011, 860b79ba, 978a0327, aa78df7d, b6d21c9e, d03cd679, f6db0b82
+      (10); TS final-run-1401ccb1, 68f2572f (reachable via refs/backup/p184-pre-reword-20261016), ba096818, c385aaf6,
+      c9ebd619, ca435a18, f60e7fe5 (7). Kept (pins of the counted receipts): DL final-run-6d17b56f (stage-100), bb054498
+      (G12, G13); TS final-run-77a6d671 (G12 WriterClone pin), aa126794 (G12, G13 runtime/dr08), a9cf1b41 (dr05-quiet),
+      e9ae5484 (dr05-upstream). Left, not matching the pattern: data-layer-p184-s100-7285868.
+    - Images removed by full digest, refs 0 re-checked before each: 0df95f8888e1 (local/qdl-core:n1-test-clock-f1-d221fb8),
+      381d6bf9c069 (local/qdl-projector:p184-test-idr107-58fb7cd), b012aa18ef1d (local/qdl-stream:n1-opt05-ffa382f),
+      b095b18e2094 (local/qdl-stream:isolation-e3b5552), d27db0cffe15 (writer cand B16 5636e443), 2beedc0448c3 (writer
+      f1b52f6), 7d43121e41c5 (qdl-v2-python:2.2.3-rc16-bcb0283). Kept: deployed digests, rollback 5e261809, 60f83a51,
+      c21e164a, a44349a1, 734b08f1, 7c71e3af, cb5216b8, release tags (v2.2.x / v2.1 / v2.0 images), builder 551428d9,
+      rust base f41ecb66, driver client profile 2.2.2-d6d2637. Left for an owner decision (v2.2.3-era rollback targets of
+      roles changed in v2.2.4, not in the coordinator's keep list): baa72c96 (stream), ce629061 (projector), 7fba2577
+      (ingestor), b9ca6c36 (query rc19); 7cf232ace561 (referenced by tests/unit/test_p184_n1_capacity_python_writer.py);
+      every image of other work streams (portal, Codex test images, alpha runtime).
+    - Build cache: 18 records pruned by id (`docker builder prune --force --filter id=<id>`, 0 failures), only records
+      created inside our build windows (14 of DL python 31a5155 at 19:08Z, 1 of DL rust 6d61710 at 15:51Z, 3 of TS writer
+      6af62a7e at 07:04Z), reclaimable and not shared; the 20:04Z records of unknown origin and every shared record were left.
+    - Scratchpad: NOT cleaned. Removal of the 401 unreferenced entries (~737 MB) of this session's scratchpad was
+      refused by the tool permission classifier (irreversible local deletion); nothing was deleted. Keep set if it is
+      done later: every entry referenced by repos/state (b9 incl. dl-4d3476c and pytest-site, rehearsal incl.
+      dl-4d3476c-san, b17, final*, rollout1, opt, burst-b16*, ...).
+  - Next: push fix/p184-dl-closure, PR -> dev, required CI on the PR head; owner decision on CERTIFICATE.md section 7;
+    optimisation package one variable at a time (IDR-116 first per the G4 draft ranking, then 117, 118; IDR-119 starts
+    with the clock).

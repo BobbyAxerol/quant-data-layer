@@ -2200,3 +2200,73 @@ cleanup or Git staging/commit/push/merge. Authorized source/tool repair and vers
 without a new owner-approval gate; runtime remains separately exact-packet scoped. Runtime provenance and
 rollback retention are recorded in the guide from existing packets, not re-probed; canonical DL main@5bf5cd5
 is unchanged.
+
+
+## P18.4 DL v2.2.4 - 2026-10-18 (package with stated limits; certificate status FAIL)
+
+Rule of this ledger: read before re-testing; re-run only when a "Pinned at" commit, image or config changes. Only
+items that passed are recorded as certified below; G2 and G4 are recorded as limits, not as certifications. Full
+evidence: `upgrade/evidence/releases/v2.2.4/` (CERTIFICATE.md, SCORECARD.md, certificate.json, scorecard.json,
+endpoint-report.json, equivalence.json). Earlier release-preparation text is in that directory's
+`drafts/CERTIFICATION_LEDGER_ENTRIES.md` (draft of 2026-10-17, superseded by this section).
+
+### 2026-10-16..18 - v2.2.4 images built and rolled (tested locally / deployed)
+
+Pinned at: rust `qdl-v2-rust:2.2.4-83bef59` `sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784`
+(ingestors x2), rust `qdl-v2-rust:2.2.4-c7ce7d3` `sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e`
+(stream x2, projector x2), python `qdl-v2-python:2.2.4-31a5155`
+`sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff` (query x2); cores rc22 `7c848aad` (binary
+equality); bar edge rc14 `08f356a8` (held); TS writer `2deb90b0` (TS `30f50a91`); Kafka effective describe
+`d3d77176c3dfca46e7f44cba465d271afe2709a1fc9d97f75e808808fa959094`.
+
+- Build receipts: 83bef59 PASS `7e630925462e5cac3de7423c36b964834eeacba9f8c3e94cb9bfbd49d40e5671` (11 of 12 binaries
+  whole-file EQUAL to 60f83a51, ingestor DIFFERENT by design); 31a5155 PASS `e1a9bcc57847a83ea1425dfc66ed3598322a46e46948375bb47f97bbe1c93e38`
+  (exactly the 6 IDR-114 files differ from c21e164a, pip freeze equal); c7ce7d3 status FAIL kept, resolved by addendum
+  `dad31fe8dc7f768de72e7577951af61d726689d8b32fcf5153046fd9bb190260`.
+- Rolls: 2026-10-16 17:14-17:53Z (8 roles to c7ce7d3), 2026-10-17 16:46-17:06Z (ingestors to 6d61710, writer to
+  2deb90b0), 2026-10-18 03:35-04:09Z (ingestors to 83bef59, query to 31a5155; driver.log
+  `6b6173e563812703b2a54ad3bdb76ea69bedb3538790f1baf7789696381d22f2`). Each role diff `['image']`, HOLD per role,
+  RestartCount 0.
+
+### 2026-10-18 - G12 final credit on the final image set: CERTIFIED (shadow-certified, isolated TEST_ONLY harness)
+
+Pinned at: image set `g12-image-set-v224.json` `6303cdcb57eaefa16cdd33de2d010ac05e5944ee887ca0b9938e8f79afb4e2f9`; DL run
+worktree `bb054498`; TS WriterClone apparatus `77a6d671` (H1); Kafka effective `d3d77176...`.
+
+- `p184-g12-v224-final-2deb90b0-20261018T042415Z`: verdict v3 `pass: true`
+  (`evidence/verdict.json` `170af83797df3309d4c9778042ee5b4e8f4c7ec5fca89fede22d9d1d0eeadc27`); `--credit` exit 0,
+  production_parity MATCH (`FINAL_CREDIT.json` `c6bfaedd1edefdcc76de1095e012b87fa85ce57c79fb43f645e2d272171dc8fc`);
+  caught_up_s BINANCE/OKX broker 0.095/0.095, projector 0.100/0.046, Stream 0.572/0.573 (bound 600 s).
+- Inherited from other image sets: nothing. Re-run only if a pinned image, the Kafka describe or the apparatus pins change.
+
+### 2026-10-18 - G13 76/76 on writer 2deb90b0: CERTIFIED (shadow-certified, one host)
+
+Pinned at: roles `g13-roles-v224.json` `984c4566223b196f05abe8b76c88de4127c91be0caebc33168f79457b9a471a2`; writer
+`2deb90b0` / TS `30f50a91`; packet v5.5 `507f9096ba8fba76d97441484d4c0d2146a9388aed298a1f01af47d3ca7320fc`; TS run
+worktrees `aa126794`, `a9cf1b41`, `e9ae5484`; DL run worktree `bb054498`.
+
+- Runtime v5.5 `p184-g13-20261018T051237Z` 66/66 + dr08 `045558Z` 4/4 + dr05-quiet `071750Z` 2/2 + dr05-upstream
+  `085316Z` 6/6; W05 DR 76/76, 0 DR / provenance / drift issues
+  (`w05-final-v55-76.json` `5490c21e66bf33bae326f2ea2051677f70cf95372b13b823d4c2912835da9895`; the file holds case states only
+  and equals the v5.4 output byte for byte).
+
+### 2026-10-18 - final stage-100 under G4-A1 + G4-A2 + A3: protocol met; G2 and G4 FAIL (LIMITS, not certified)
+
+Pinned at: run worktree `data-layer-p184-final-run-6d17b56f` (DL `6d17b56`, gate tool `e179ec78`); budget
+`ff85335b...`, addendum `4ed59dca...`, A1 `1c8a276f...`, A2 `99961c41...`, A3 `cc5fc7dc...`; the image set above.
+
+- `p184-final-campaign-20261018T123222Z` (load 12:34:45-13:04:45Z, guard CLEAN), scorecard
+  `b9e76a83795f1af8f64b802b22ff1f410087a8f87ee4ef5d23b26a1d39cb4964`: PASS G1 G3 G5 G6 G7 G8 G9 G10 G11 G14 (certified
+  for this image set at the stage-100 workload, one host).
+- **Limit G2**: MARK_INDEX_PRICE BINANCE max 1082.9 ms > 1000 (p95 418.6); cause of the sample not determined.
+- **Limit G4**: OKX_INVERSE BTC-USD-SWAP book_delta / book_snapshot / quote maxima over the addendum limits; venue -> DL
+  ~30 ms, the excess is internal (A3 rescued none).
+- Earlier attempts (TAINTED / INVALID / FAIL) are listed in SCORECARD.md; their receipts are immutable.
+
+### 2026-10-18 - v2.2.4 certificate: status FAIL; not published
+
+`upgrade/evidence/releases/v2.2.4/certificate.json` status FAIL (failed_gates G2, G4), `endpoint_report_sha256`
+`9a11b3725c261041d7311b4497b0ab24a21d2e100def8c5192f142c0870c48aa`. Owner decision 2026-10-18 ~13:40Z: package with these
+limits; optimisation package IDR-116..IDR-119 one variable at a time with A/B in a later release. `release.yml` refuses a
+non-PASS certificate, so no `v2.2.4` tag was created (options in CERTIFICATE.md section 7). Next certification run: only
+after a product change in that package (new image digest = new "Pinned at").

@@ -1,0 +1,351 @@
+{
+ "schema": "qdl.scoped-release-certificate.v2",
+ "release": "v2.2.4",
+ "previous_published_release": "v2.2.3",
+ "status": "FAIL",
+ "status_rule": "PASS only with no FAIL gate, protocol_met, credited G12, G13 76/76 and green required CI (CERTIFICATE.md section 1, fixed before the numbers)",
+ "failed_gates": {
+  "G2": "MARK_INDEX_PRICE|BINANCE max 1082.9 ms > 1000 ms (p95 418.6); RCA SCORECARD.md; IDR-119",
+  "G4": "OKX_INVERSE book_delta/book_snapshot/quote max over addendum limits; internal segments; RCA SCORECARD.md; IDR-116/117/118"
+ },
+ "classification": "SCOPED_DATA_LAYER_STAGE100_PROTOCOL_MET_G2_G4_FAIL_INTERNAL_TAILS_G12_CREDIT_G13_76_SINGLE_HOST_NOT_HA",
+ "classification_note": "Not certified. 12 of 14 gates PASS (G12 credited, G13 76/76, the rest in a protocol-met stage-100 on the deployed set); G2 and G4 FAIL on named rows with internal latency tails under the stage-100 load. Packaged with these limits by owner decision 2026-10-18; the release workflow refuses a non-PASS status, so no tag is published by this package.",
+ "owner_decision": "2026-10-18 ~13:40Z AskUserQuestion 'Release kem limit + goi toi uu sau (Recommended)': package with G2/G4 FAIL stated as limits with RCA; optimisation package IDR-116..IDR-119 later, one variable at a time with A/B",
+ "publication_status": "BLOCKED_RELEASE_WORKFLOW_REQUIRES_PASS_OWNER_DECISION_A_B_OR_C",
+ "publication_requires": "owner choice among CERTIFICATE.md section 7 options (A: no v2.2.4 GitHub release, next certified release after the optimisation package; B: reviewed release.yml change for a documented limited status; C: manual release, not recommended); required remote CI on the PR head",
+ "source_code_sha": {
+  "rust_ingestors": "83bef596a3cf0e21b423330fd58060afa3a9b1c1",
+  "rust_stream_projector": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
+  "python_query": "31a515522aff3f6e5e7791aa21500cfa570ccb41",
+  "note": "release head = the packaging commit on fix/p184-dl-closure; no runtime source change after these revisions except apparatus (RELEASE_NOTES.md)"
+ },
+ "release_images": {
+  "rust_83bef59": {
+   "tag": "qdl-v2-rust:2.2.4-83bef59",
+   "digest": "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784",
+   "revision_label": "83bef596a3cf0e21b423330fd58060afa3a9b1c1"
+  },
+  "rust_c7ce7d3": {
+   "tag": "qdl-v2-rust:2.2.4-c7ce7d3",
+   "digest": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+   "revision_label": "c7ce7d3087cb8a2daf82ba941982bd296d488f45"
+  },
+  "python_31a5155": {
+   "tag": "qdl-v2-python:2.2.4-31a5155",
+   "digest": "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff",
+   "revision_label": "31a515522aff3f6e5e7791aa21500cfa570ccb41"
+  }
+ },
+ "runtime": [
+  {
+   "service": "qdl_v2_stable_candidate-query_kn_1-1",
+   "image": "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff",
+   "revision_label": "31a515522aff3f6e5e7791aa21500cfa570ccb41",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-18T03:47:53.818161802Z",
+   "health": "healthy"
+  },
+  {
+   "service": "qdl_v2_stable_candidate-query_kn_2-1",
+   "image": "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff",
+   "revision_label": "31a515522aff3f6e5e7791aa21500cfa570ccb41",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-18T03:58:41.79939515Z",
+   "health": "healthy"
+  },
+  {
+   "service": "qdl_v2_stable_candidate-ingestor_okx_swap-1",
+   "image": "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784",
+   "revision_label": "83bef596a3cf0e21b423330fd58060afa3a9b1c1",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-18T09:12:23.463316698Z",
+   "health": "healthy"
+  },
+  {
+   "service": "qdl_v2_stable_candidate-ingestor_binance_usdm-1",
+   "image": "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784",
+   "revision_label": "83bef596a3cf0e21b423330fd58060afa3a9b1c1",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-18T03:41:43.507579433Z",
+   "health": "healthy"
+  },
+  {
+   "service": "qdl_v2_stable_candidate-stream_kn_1-1",
+   "image": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+   "revision_label": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-16T17:20:00.02548465Z",
+   "health": null
+  },
+  {
+   "service": "qdl_v2_stable_candidate-stream_kn_2-1",
+   "image": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+   "revision_label": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-16T17:23:02.850735421Z",
+   "health": null
+  },
+  {
+   "service": "qdl_v2_stable_candidate-market_projector_1-1",
+   "image": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+   "revision_label": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-16T17:26:05.200369211Z",
+   "health": null
+  },
+  {
+   "service": "qdl_v2_stable_candidate-market_projector_2-1",
+   "image": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+   "revision_label": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-16T17:32:22.172312525Z",
+   "health": null
+  },
+  {
+   "service": "qdl_v2_stable_candidate-rust_core-1",
+   "image": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+   "revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-15T13:33:01.691485188Z",
+   "health": null
+  },
+  {
+   "service": "qdl_v2_stable_candidate-rust_core_2-1",
+   "image": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+   "revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-15T13:33:01.759574932Z",
+   "health": null
+  },
+  {
+   "service": "qdl_v2_stable_candidate-rust_core_3-1",
+   "image": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+   "revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-15T13:33:01.801734215Z",
+   "health": null
+  },
+  {
+   "service": "qdl_v2_stable_candidate-binance_bar_edge-1",
+   "image": "sha256:08f356a84151c6e865fbdc4a2efe6924df9336d15353254c2b2da684261794f5",
+   "revision_label": "a388537c897de909257c7f45db44c9ac44a62ccc",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-12T04:56:51.788238582Z",
+   "health": "healthy"
+  },
+  {
+   "service": "qdl_v2_stable_candidate-kafka1-1",
+   "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+   "revision_label": null,
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-16T14:14:11.546287855Z",
+   "health": "healthy"
+  },
+  {
+   "service": "qdl_v2_stable_candidate-kafka2-1",
+   "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+   "revision_label": null,
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-16T14:21:03.772629842Z",
+   "health": "healthy"
+  },
+  {
+   "service": "qdl_v2_stable_candidate-kafka3-1",
+   "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+   "revision_label": null,
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-16T14:25:32.091341239Z",
+   "health": "healthy"
+  },
+  {
+   "service": "qdl_v2_stable_candidate-market_cache-1",
+   "image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+   "revision_label": null,
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-09-27T05:29:58.000340326Z",
+   "health": "healthy"
+  },
+  {
+   "service": "qdl_v2_stable_candidate-stable_redis-1",
+   "image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+   "revision_label": null,
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-09-16T06:38:55.588316335Z",
+   "health": "healthy"
+  },
+  {
+   "service": "market_data_service_p184w",
+   "image": "sha256:2deb90b0cc52eae7610fa44692f90df077e9db100ca259e38fd652a2dc1c5dc5",
+   "revision_label": "30f50a91dbd67ce2a482480be598cf509b25333e",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-18T13:05:46.664345483Z",
+   "health": null
+  }
+ ],
+ "runtime_basis": "docker inspect, read-only, at certificate assembly (2026-10-18)",
+ "runtime_scope_totals": {
+  "application_roles_on_v224_images": 8,
+  "by_image": {
+   "python_31a5155": [
+    "query_kn_1",
+    "query_kn_2"
+   ],
+   "rust_83bef59": [
+    "ingestor_binance_usdm",
+    "ingestor_okx_swap"
+   ],
+   "rust_c7ce7d3": [
+    "market_projector_1",
+    "market_projector_2",
+    "stream_kn_1",
+    "stream_kn_2"
+   ]
+  },
+  "kept_by_equality": [
+   "rust_core",
+   "rust_core_2",
+   "rust_core_3"
+  ],
+  "held_scoped_out": [
+   "binance_bar_edge"
+  ],
+  "unchanged": [
+   "kafka1",
+   "kafka2",
+   "kafka3",
+   "market_cache",
+   "stable_redis"
+  ]
+ },
+ "gates": {
+  "G1": "PASS",
+  "G2": "FAIL",
+  "G3": "PASS",
+  "G4": "FAIL",
+  "G5": "PASS",
+  "G6": "PASS",
+  "G7": "PASS",
+  "G8": "PASS",
+  "G9": "PASS",
+  "G10": "PASS",
+  "G11": "PASS",
+  "G14": "PASS",
+  "G12": "PASS",
+  "G13": "PASS"
+ },
+ "endpoint_report_sha256": "9a11b3725c261041d7311b4497b0ab24a21d2e100def8c5192f142c0870c48aa",
+ "sdk": {
+  "name": "qdl-sdk",
+  "version": "2.4.1",
+  "wheel_sha256": "9f79e032604bf79db5ca9070c7f8a99b242e7cf22e1659b395b307dc798c28e7",
+  "builds_identical": true,
+  "sbom_sha256": "6bda0014b9ee304b679e44079976bc5d576a524571b5a771807e3aa0cdd2d442",
+  "release_json_sha256": "273e532665f634b3737d0fa014a3ced15efc468e9dd380ae034d8a2ee451be69",
+  "generated_contract_digest": "2ee96b1edab01d3185e4fb973f7e3a0715956f8648938039108eb6156187c116",
+  "built_at": "c7ce7d3087cb8a2daf82ba941982bd296d488f45 (SDK sources unchanged to the release head)"
+ },
+ "ci": {
+  "status": "REQUIRED_EXTERNAL_GATE",
+  "required_jobs": [
+   "consolidated-source-preflight",
+   "contract-tests",
+   "sdk-python310",
+   "unit-tests",
+   "kn-native-integration"
+  ],
+  "note": "runs on the PR head after the push; recorded in the PR, not in this file (the file is part of the head)"
+ },
+ "limits": [
+  "G2 FAIL: MARK_INDEX_PRICE BINANCE max 1082.9 ms (> 1000; p95 418.6 inside); per-sample cause not determined (no DL receipt clock on the Query-read MARK path).",
+  "G4 FAIL: OKX_INVERSE BTC-USD-SWAP book_delta / book_snapshot / quote maxima over the addendum limits in some windows; venue -> DL ~30 ms, excess internal (A3 rescued none).",
+  "Single host; no HA, no independent failure domains.",
+  "rust_core x3 on rc22 (binary equality); binance_bar_edge held on rc14 (scoped out).",
+  "G14 DL mean CPU sum 5.63 vCPU above the owner's 5 vCPU budget (recorded, not a gate).",
+  "IDR-108 open (Stream accepts before its hot view serves).",
+  "Stream gateway DIFFERENT_BUILD_PATH vs measured baa72c96 (DR08 A/B); projector EQUAL_LOADED_SECTIONS vs rc22; c7ce7d3 build receipt FAIL resolved by addendum.",
+  "Kafka C converging; A' effect over up to 7 d.",
+  "G12 harness shape not production shape; integrity layer report-only; WriterClone apparatus pin 77a6d671 (IDR-120).",
+  "G13 shadow-certified; W05 output carries no run identity.",
+  "TS writer vendors SDK 2.4.0; TEST_ONLY burst results are not capacity claims.",
+  "OKX FUNDING_RATE bound equals the 8 h cadence (A1 apparatus parity in the verifier; contract option IDR-125)."
+ ],
+ "rollback": {
+  "query_kn_1/2": "sha256:c21e164ac4db14af498b73104e344f003fa7117fdae2e465f50df8668cdca252",
+  "ingestor_okx_swap/binance_usdm": "sha256:5e261809b5046c4ff9de098d5b57eb049287abaabd722ed145701be47d79114b then sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+  "stream_kn/market_projector": "not changed by the final roll; v2.2.3-era targets baa72c96 / ce629061",
+  "market_data_service_p184w": "sha256:a44349a10e5284efae290ea38062dd23dea0ef015088be6cf041d3f4d0923c73",
+  "composes": "sha256 per role in equivalence.json",
+  "order": "reverse role order, failure only",
+  "not_touched": [
+   "kafka1-3 images",
+   "rust_core x3",
+   "binance_bar_edge",
+   "market_cache",
+   "stable_redis",
+   "catalog",
+   "consumer manifests",
+   "JWT revisions",
+   "offsets",
+   "Redis data"
+  ]
+ },
+ "evidence_sha256": {
+  "upgrade/evidence/releases/v2.2.4/RELEASE_NOTES.md": "677160024cb0b7e3bf523fc08afc26318484e5069719b07ea1b3951633015421",
+  "upgrade/evidence/releases/v2.2.4/SCORECARD.md": "544a1213cbbf7dc21b2ae52ee75cf39e0d33ef56eaee4217d79d9df1ee801b22",
+  "upgrade/evidence/releases/v2.2.4/CERTIFICATE.md": "1efb74e84758b89528e4c22ad36649a053dcdd69811a007e1d05def8db56deb0",
+  "upgrade/evidence/releases/v2.2.4/scorecard.json": "0780bcec753784db42904a6b3dc8c2bcab842569e5f4bc358c582d9280243f61",
+  "upgrade/evidence/releases/v2.2.4/equivalence.json": "9332b1302a9942b0cbd65a8c4ccc0bc64e283c00f0e63afa40990c4cac86d385",
+  "upgrade/evidence/releases/v2.2.4/release-preparation.json": "7b0e90a52c2525ad93ded1b1e4ee6be1141f0943f5a1f451c625d3751730f8b3",
+  "upgrade/evidence/releases/v2.2.4/g12-image-set-v224.json": "6303cdcb57eaefa16cdd33de2d010ac05e5944ee887ca0b9938e8f79afb4e2f9",
+  "upgrade/evidence/releases/v2.2.4/g13-roles-v224.json": "984c4566223b196f05abe8b76c88de4127c91be0caebc33168f79457b9a471a2",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/scorecard.json": "b9e76a83795f1af8f64b802b22ff1f410087a8f87ee4ef5d23b26a1d39cb4964",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/campaign.json": "2f96f55347dfd69e090436416364685f0479c3801c466ff5d3418af99ed8b7fc",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/stage100/receipt.json": "3fd22d861ae434c7f7e0e29ce21d3430b0982f376a50f06c8a0ee1a8b8f64ea0",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/stage100/gates.json": "0c039b197546e3c77ba83712aa65d4cc3c219faf75ba431013580c78170d5aa4",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/stage100/host.json": "97e1a89372e5a4a5c609ecbc2e6ff1bc46176effb0c5f18597a5acbacdbd701d",
+  "~/.local/state/qdl-v2/p184-g12-v224-final-2deb90b0-20261018T042415Z/evidence/verdict.json": "170af83797df3309d4c9778042ee5b4e8f4c7ec5fca89fede22d9d1d0eeadc27",
+  "~/.local/state/qdl-v2/p184-g12-v224-final-2deb90b0-20261018T042415Z/FINAL_CREDIT.json": "c6bfaedd1edefdcc76de1095e012b87fa85ce57c79fb43f645e2d272171dc8fc",
+  "~/.local/state/qdl-v2/p184-g13-20261018T085316Z/verify/w05-final-v55-76.json": "5490c21e66bf33bae326f2ea2051677f70cf95372b13b823d4c2912835da9895",
+  "~/.local/state/qdl-v2/build-v2.2.4-83bef59/receipt.json": "7e630925462e5cac3de7423c36b964834eeacba9f8c3e94cb9bfbd49d40e5671",
+  "~/.local/state/qdl-v2/build-v2.2.4-31a5155/receipt.json": "e1a9bcc57847a83ea1425dfc66ed3598322a46e46948375bb47f97bbe1c93e38",
+  "~/.local/state/qdl-v2/build-v2.2.4-c7ce7d3/receipt.json": "40d727b28a3a581eb9c5911e150a39ae0dac68d8d0a9afbb5cceee47b4cb4f7f",
+  "~/.local/state/qdl-v2/build-v2.2.4-c7ce7d3/postcheck-addendum.json": "dad31fe8dc7f768de72e7577951af61d726689d8b32fcf5153046fd9bb190260",
+  "~/.local/state/trading-system/p184-n1-opt-20261013/release/30f50a91/receipt.json": "7040ba9fc68f17641ca69ffb9e52fa4240c9e9e4c956f06c2a3568ea97f64a1c"
+ }
+}

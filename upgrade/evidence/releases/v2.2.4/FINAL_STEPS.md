@@ -1,6 +1,11 @@
 # v2.2.4 - ordered remaining release steps (DL v2.2.4 + TS final writer)
 
-Status: PLAN, nothing in this file has been run. Written 2026-10-16 ~15:40Z while another agent held the host lock
+Status (2026-10-18 ~13:45Z): steps a-g are done (with the IDR-112/113/114 rebuilds and rolls inserted after the first
+f attempts; see the DL Unified Plan); g produced a certificate with status FAIL (G2, G4), see CERTIFICATE.md; h: branch
+pushed and PRs opened, tag NOT created (release.yml requires PASS, CERTIFICATE.md section 7); i: cleanup executed in
+part (DL plan entry of 2026-10-18 packaging). The text below is the original plan of 2026-10-16, kept as written.
+
+Original status: PLAN, nothing in this file has been run. Written 2026-10-16 ~15:40Z while another agent held the host lock
 `claude-g12-final` (G12 final, until 16:26:44Z). The only actions were file edits and git reads.
 
 Basis:

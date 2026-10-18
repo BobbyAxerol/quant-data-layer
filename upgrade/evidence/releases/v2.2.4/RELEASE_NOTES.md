@@ -1,23 +1,28 @@
-# Quant Data Layer v2.2.4 (DRAFT)
+# Quant Data Layer v2.2.4
 
-Status: **DRAFT - not certified, not published.** Updated 2026-10-17 ~11:00Z (file edits only, host lock held by
-another agent's G13 v5.4 window). The release is certified only when [CERTIFICATE.md](CERTIFICATE.md) can be turned
-into `certificate.json` with status PASS. Every `<<PENDING:...>>` marker below names the receipt that fills it; the
-published file must contain none (`grep -rn '<<PENDING' upgrade/evidence/releases/v2.2.4 --exclude-dir=drafts` prints
-nothing). Machine inventory: [release-preparation.json](release-preparation.json). Ordered steps:
-[FINAL_STEPS.md](FINAL_STEPS.md). Gate table: [SCORECARD.md](SCORECARD.md). Per-role equivalence:
-[equivalence.json](equivalence.json).
+Status: **RELEASE PACKAGE WITH STATED LIMITS - NOT A FULL GATE PASS, NOT PUBLISHED.** Assembled 2026-10-18 ~13:40Z.
+The final stage-100 met its protocol and passed G1 G3 G5-G11 G14; G12 (credited) and G13 (76/76) passed on the final
+image set; **G2 and G4 FAIL on the rows named in [SCORECARD.md](SCORECARD.md)** (internal latency tails under the
+stage-100 load). The owner decided on 2026-10-18 ~13:40Z (AskUserQuestion "Release kèm limit + gói tối ưu sau
+(Recommended)") to package this release with those failures stated as limits with their RCA, and to do the
+optimisation package later, one variable at a time with A/B, in a later release (IDR-116..IDR-119).
+
+[certificate.json](certificate.json) therefore carries status **FAIL** (the frozen decision rule in
+[CERTIFICATE.md](CERTIFICATE.md) section 1 allows PASS only with no FAIL gate). `.github/workflows/release.yml` refuses
+any status other than PASS, so the tag `v2.2.4` cannot be published by the existing workflow; that is an open owner
+decision (CERTIFICATE.md section 7), not something this package works around.
+
+Machine files: [certificate.json](certificate.json), [scorecard.json](scorecard.json),
+[endpoint-report.json](endpoint-report.json), [equivalence.json](equivalence.json),
+[release-preparation.json](release-preparation.json) (preparation packet of 2026-10-16, kept as written).
 
 - Previous stable release: v2.2.3 (source `481fd67`, main merge `28e605e`, SDK 2.3.0).
-- Publication path (unchanged): required remote CI on the final head, `fix/p184-dl-closure` -> `dev` PR, release PR
-  `dev` -> `main`, annotated tag `v2.2.4` on the main merge commit. `.github/workflows/release.yml` checks main ancestry,
-  the certificate status, the endpoint-report hash and the SDK wheel hash.
 - Scope: the Data Layer release only. Not a Trading System release. Not HA (single host).
 
 ## Scope
 
-134 commits since `481fd67` at branch head `5dfabe6` (`git rev-list --count 481fd67..HEAD`; recompute at tag). Runtime
-paths changed: 60 files, +12422/-924 (`git diff --stat 481fd67 HEAD -- rust qdl qdl_sdk contracts generated config
+Commits since `481fd67`: 177 at `0c55957` plus the packaging commit (`git rev-list --count 481fd67..HEAD`). Runtime paths
+changed: 68 files, +15644/-950 (`git diff --shortstat 481fd67 0c55957 -- rust qdl qdl_sdk contracts generated config
 consumers Cargo.toml Cargo.lock 'Dockerfile*' app`). Grouped by runtime area:
 
 - **Core rebalance, rewind and Kafka client** (rust_core, shared `qdl-kafka`): pipelined transaction commit
@@ -35,13 +40,15 @@ consumers Cargo.toml Cargo.lock 'Dockerfile*' app`). Grouped by runtime area:
   LIVE carries the REPLAYING high watermark again (ffa382f), live-budget reserve for subscriptions at their floor
   (e3b5552), exact outstanding-record floor and attributable handoff refusals (Codex SR1/SR4, c934c1e), gateway
   dispatch/dequeue/send clocks (a388537).
+- **Ingestor** (OKX lanes): IDR-112 venue-timestamp staleness recycle (6d61710) and review F1-F3 (83bef59).
+- **Query stall**: IDR-114 per-request cycle removal and `qdl.stall` telemetry (31a5155).
 - **Projector**: IDR-107 bounded retry of transient poll errors (58fb7cd) with an allowlist and commit-only budget
   reset (Codex CF3/CF4, ff5683c).
 - **Kafka A' contract**: `md.latest.v2` carries no tombstones (bb15890: budget `state_topic_tombstones` v1, golden
   invariant, Rust guard test); operator tools for the cleaner I/O throttle (2eb77f8), the marker retention (c767b91),
   the internal-topic compaction plan C (2542cf0, 68556d4, c7c0355, cd3fd3a, c5aabbd), the preferred-leader election
   (32d2cf6) and the decision-B roll (e955324, 8064025). All dry-run by default.
-- **Apparatus and oracles** (scripts/tests only, no product path): G4 observer v2-v5, G9/G10/G11 native-writer
+- **Apparatus and oracles** (scripts/tests only, no product path): G4 observer v2-v7, G4-A1/A2/A3 amendments and the books/Binance probes, the A1 reference-bound parity and exact-client smoke, G9/G10/G11 native-writer
   oracles (Codex SR2/SR3/SR5), G9/TS sampler heartbeat dedupe (1e09f87), G12 oracle v3 and WriterClone lifecycle
   (d54264e, 945b99f, 968d5f2, 965f080, 3bb6bee), core-group harness (simultaneous replace), DR08 isolation campaign and
   deterministic starvation cell (2169c26), DR05 harness (f7d6afa, d03cd67, 8ae4266), G13 runner fixes, the isolated
@@ -52,21 +59,23 @@ consumers Cargo.toml Cargo.lock 'Dockerfile*' app`). Grouped by runtime area:
 
 | ID | Defect | Fix | Where it ships |
 | --- | --- | --- | --- |
-| IDR-090 | Binance current OPEN_INTEREST missing from the alpha entitlement | demand rev 4, reference-l2 rev 7, alpha-binance rev 16, routing rev 28 (2524732) | config baked into the python image; consumer-side JWT rev 16 / realm r16 is a deployment item |
+| IDR-090 | Binance current OPEN_INTEREST missing from the alpha entitlement | demand rev 4, reference-l2 rev 7, alpha-binance rev 16, routing rev 28 (2524732) | config baked into the python image; consumer-side JWT rev 16 / realm r16 is a deployment item (not verified live here) |
 | IDR-091 | Binance sampled-statistics history failed coverage on rolling windows not aligned to UTC midnight | cadence and edges on the UTC epoch grid (2524732) | python image |
 | IDR-092 | Binance funding-rate history returned PARTIAL_RESULT for a rolling 3-day window | settlement-grid coverage (2524732) | python image |
 | IDR-094 | rust_core held each batch until its Kafka transaction committed (stop-and-wait) | pipelined commit (a962a5c), K1/K3 stop intent and epoch abort (bcb0283) | rust_core (kept on rc22, binary equal) |
 | IDR-095 | possible gateway-side delay after a re-read | mitigation only: TCP_NODELAY (98b421f). The delay itself stays unmeasured | rust image (gateway) |
 | IDR-096 | replay work-budget status changed to RESOURCE_EXHAUSTED for existing clients | opt-in `SubscribeRequest.replay_budget_status_v2` (f5cd787); SDK sends it, progress-aware reconnect budget (bb75d06) | rust image + SDK 2.4.1 |
 | IDR-099 | untyped canonical-lineage refusal on the Query warmup path | typed `CANONICAL_LINEAGE_MISMATCH` (00056e5) | python image |
-| IDR-107 | a transient consumer poll error killed the projector (`exit 2`) | bounded retry with an allowlist, commit-only budget reset (58fb7cd, ff5683c) | rust image (projector) |
+| IDR-107 | a transient consumer poll error killed the projector (`exit 2`) | bounded retry with an allowlist, commit-only budget reset (58fb7cd, ff5683c) | rust image (projector, 60f83a51) |
+| IDR-112 | one OKX public WS session kept delivering while every frame arrived late; nothing detected it | venue-timestamp staleness detector on QUOTE + LATEST_STATE lanes with make-before-break recycle (6d61710); Codex review F1-F3 fixed in 83bef59 (absolute 15 s establish budget, ACK-cutover wording, recycle slot taken after the control permit) | rust image `2.2.4-83bef59` (ingestors x2) |
+| IDR-114 | each Query replica stalled 0.2-0.5 s about every 76-104 s (gen0 GC of per-request cycles: in-process httpx MARK/INDEX reads, refusal tracebacks) | `InProcessAsgiClient`, `release_exception_frames`, `qdl.stall` telemetry (31a5155) | python image `2.2.4-31a5155` (query x2) |
 
 Already in v2.2.3 and unchanged here: IDR-086, IDR-087, IDR-088. IDR-089 (reader tolerance for additive fields): see
 Public Interface for the minimum reader version.
 
 Trading System items measured with this release, owned by the TS release (not shipped here): IDR-100/101/102/105/106,
-IDR-110 and IDR-110b (native writer probe vs the D27 view boundary; both fixes in the TS writer, not in the Data
-Layer), IDR-109 and IDR-111 (apparatus).
+IDR-110 and IDR-110b (native writer probe vs the D27 view boundary), IDR-113 (MARK woken-read re-read; writer
+2deb90b0), IDR-109 and IDR-111 (apparatus).
 
 ## Public Interface
 
@@ -90,37 +99,45 @@ separate reviewed TS delta.
 
 ## Source And Images
 
-- Release source: `c7ce7d3087cb8a2daf82ba941982bd296d488f45` on `fix/p184-dl-closure`. Later commits only touch
-  scripts, tests and docs (`git diff --stat c7ce7d3 5dfabe6 -- rust qdl qdl_sdk contracts generated config consumers
-  Cargo.toml Cargo.lock 'Dockerfile*' app` is empty). Release head carrying the certificate:
-  `<<PENDING:DL_RELEASE_HEAD_SHA>>`.
-- Build: `python3 scripts/build_qdl_release_images.py --build --lock-owner claude-release-build` under lock
-  15:42:10-15:48:45Z on 2026-10-16. Receipt `~/.local/state/qdl-v2/build-v2.2.4-c7ce7d3/receipt.json` sha256
-  `40d727b28a3a581eb9c5911e150a39ae0dac68d8d0a9afbb5cceee47b4cb4f7f`.
-  **The receipt status is FAIL and is kept.** Two whole-file expectations failed (projector vs rc22, gateway vs
-  baa72c96). A coordinator, owner-delegated decision (2026-10-16) replaced them with a section-level verdict and a
-  build-path classification backed by a behavioural proof, without a rebuild. Addendum
-  `postcheck-addendum.json` sha256 `dad31fe8dc7f768de72e7577951af61d726689d8b32fcf5153046fd9bb190260`.
-- Rust `qdl-v2-rust:2.2.4-c7ce7d3` `sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e`:
-  12 binaries compiled in builder `551428d9` and copied onto rc16 `f41ecb66` (the owner-approved thin method). Revision
-  label = REV (verified with `docker image inspect`).
-- Python `qdl-v2-python:2.2.4-c7ce7d3`
-  `sha256:c21e164ac4db14af498b73104e344f003fa7117fdae2e465f50df8668cdca252`: recipe build of `Dockerfile` at REV. Revision
-  label = REV (verified).
-- Production roll 2026-10-16 17:14-17:53Z, one container at a time, saved rollback composes, compose diff `['image']`,
-  RestartCount 0, writer READY 64/64 gates (summary `eefb041c5ece53c17d28148eb3fa1c2e6be64f84b79ab20e6442f1bd44c0b271`).
+The deployed release set is not one image revision. Each role runs the newest image whose source covers it, and every
+other binary or file in that image is proven equal to the measured one (equivalence receipts below). Runtime source
+after the newest image revision: `git diff 83bef59 HEAD -- rust Cargo.toml Cargo.lock 'Dockerfile*'` is empty;
+`git diff 31a5155 HEAD -- qdl app generated config consumers qdl_sdk Dockerfile pyproject.toml poetry.lock` changes only
+apparatus (`qdl/certification/reference_l2_acceptance.py`, imported only by scripts/ and tests/; and the three frozen
+amendment files `config/v2/p184-stage100-{g4-amendment-1,g4-amendment-2,a3-external-attribution}.json`, read only by the
+gate tooling). `git diff c7ce7d3 HEAD -- qdl_sdk generated contracts scripts/build_qdl_sdk_release.py` is empty, so the
+SDK wheel built at c7ce7d3 is the wheel `release.yml` would rebuild at the release head.
 
-| Role | Measured before the release (stage-100 #3 / pre-release) | Release | Equivalence (post-check) |
-| --- | --- | --- | --- |
-| rust_core x3 | rc22 `7c848aad` (a4e7b3b) | **kept on rc22** (owner option B5a) | `qdl-realtime-core` `2d82167336a4268a9407d565325f656f2315632b26bdd18bd4527e73dd15e475` EQUAL to rc22 |
-| stream_kn_1/2 | `baa72c96` (TEST overlay, `qdl.test.only`, gateway c934c1e) | rust `60f83a51` | gateway DIFFERENT_BUILD_PATH (986 registry path strings, same .text size 8,202,831 B), source tree empty-diff since c934c1e, DR08 live-budget isolation A/B PASS (prereg `d22561fe...`, verdict `137ab779...`) |
-| market_projector_1/2 | rc14 `ce629061` | rust `60f83a51` | differs from rc14 by design (IDR-107, CF3/CF4); every loaded ELF section equals rc22 `efeb4728`; `.symtab`, `.strtab`, build-id differ |
-| ingestor_okx_swap / binance_usdm | rc18 `7fba2577` | rust `60f83a51` | differs from rc18 by design (qdl-kafka DL-R1/RB1); `qdl-native-raw-ingestor` equals rc22 `77ceeee1c2484db3f40f237040441878969dc3558709de282dfc4fe2ecb1ddbb` |
-| query_kn_1/2 | rc19 `b9ca6c36` | python `c21e164a` | 438 vs 438 files; only the 9 git-derived files differ (SDK files, query_pb2 field 8, budget config, `phase3_consumer_load.py` apparatus); pip freeze equal |
-| binance_bar_edge | rc14 `08f356a8` | unchanged (HELD) | not on the release revision |
+| Role | Image (tag, digest) | Revision | Build receipt (sha256) | Equivalence |
+| --- | --- | --- | --- | --- |
+| ingestor_okx_swap, ingestor_binance_usdm | `qdl-v2-rust:2.2.4-83bef59` `sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784` | `83bef59` | `~/.local/state/qdl-v2/build-v2.2.4-83bef59/receipt.json` `7e630925462e5cac3de7423c36b964834eeacba9f8c3e94cb9bfbd49d40e5671` PASS | `qdl-native-raw-ingestor` DIFFERENT (expected, IDR-112 + F1-F3); the other 11 binaries whole-file EQUAL to `60f83a51` and to `5e261809`; `qdl-realtime-core` EQUAL rc22 |
+| stream_kn_1/2, market_projector_1/2 | `qdl-v2-rust:2.2.4-c7ce7d3` `sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e` | `c7ce7d3` | `~/.local/state/qdl-v2/build-v2.2.4-c7ce7d3/receipt.json` `40d727b28a3a581eb9c5911e150a39ae0dac68d8d0a9afbb5cceee47b4cb4f7f` **FAIL, kept**, resolved by addendum `dad31fe8dc7f768de72e7577951af61d726689d8b32fcf5153046fd9bb190260` | `qdl-stream-gateway` / `qdl-projector` byte-identical to the 83bef59 image (so not recreated, owner decision in the roll packet); gateway DIFFERENT_BUILD_PATH vs `baa72c96` + DR08 A/B; projector EQUAL_LOADED_SECTIONS vs rc22 |
+| query_kn_1, query_kn_2 | `qdl-v2-python:2.2.4-31a5155` `sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff` | `31a5155` | `~/.local/state/qdl-v2/build-v2.2.4-31a5155/receipt.json` `e1a9bcc57847a83ea1425dfc66ed3598322a46e46948375bb47f97bbe1c93e38` PASS | vs `c21e164a`: exactly the 6 IDR-114 files differ (`equivalence-vs-c21e164a.json` `2ec87f343e30152d117b341abecd68ef27382a5e2a947f37fdf7252230e20424`), pip freeze equal |
+| rust_core x3 | `qdl-v2-rust:2.2.3-rc22-a4e7b3b` `sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb` | `a4e7b3b` | (rc22) | **kept**: release `qdl-realtime-core` `2d82167336a4268a9407d565325f656f2315632b26bdd18bd4527e73dd15e475` EQUAL rc22 |
+| binance_bar_edge | `qdl-v2-python:2.2.3-rc14-a388537` `sha256:08f356a84151c6e865fbdc4a2efe6924df9336d15353254c2b2da684261794f5` | `a388537` | - | **held, scoped out** (not on a v2.2.4 revision) |
 
-The final stage-100 measures the release digests directly (`<<PENDING:S100_DIR>>`), so the "measured before" column
-documents the equivalence evidence, not the gate numbers.
+Why the tags differ from the first release build `c7ce7d3` (2026-10-16):
+- **IDR-112** (final stage-100 135719Z: G2 QUOTE OKX 1350 ms from one late OKX session) needed an ingestor change:
+  rebuilt rust at `6d61710` (`5e261809`, rolled to both ingestors 2026-10-17 16:46-17:06Z), then at `83bef59` for the
+  Codex review F1-F3 (`a9679def`, rolled 2026-10-18 03:35-03:46Z). Only `qdl-native-raw-ingestor` changed, so stream
+  and projectors stay on `60f83a51`.
+- **IDR-114** (Query GC stalls, same run) changed six Python files: python rebuilt at `31a5155` (`3e9e4d3a`, rolled
+  query_kn_1 03:47Z, query_kn_2 03:58Z on 2026-10-18). The c7ce7d3 python image `c21e164a` is the Query rollback.
+- The first roll of the c7ce7d3 images (2026-10-16 17:14-17:53Z, summary
+  `eefb041c5ece53c17d28148eb3fa1c2e6be64f84b79ab20e6442f1bd44c0b271`) stays the provenance of stream/projector.
+
+Final roll (packet `drafts/FINAL_ROLL_PACKET_IDR112b_IDR114.md`, lock `claude-dl-final-roll`): driver
+`~/.local/state/qdl-v2/releases/v2.2.4/rollout-idr112b-idr114/driver.log` ALL_DONE 04:09:25Z (sha256
+`6b6173e563812703b2a54ad3bdb76ea69bedb3538790f1baf7789696381d22f2`; directory `SHA256SUMS`
+`8b034e7cee2e4879bd01069f302955e6d3aa08d847da85d8dc182867866327a4`); each role diff `['image']`, HOLD per role, writer
+READY 64 64.
+
+TS writer measured with this release: `market_data_service_p184w`
+`sha256:2deb90b0cc52eae7610fa44692f90df077e9db100ca259e38fd652a2dc1c5dc5` (TS `30f50a91`, IDR-113), build receipt
+`~/.local/state/trading-system/p184-n1-opt-20261013/release/30f50a91/receipt.json`
+`7040ba9fc68f17641ca69ffb9e52fa4240c9e9e4c956f06c2a3568ea97f64a1c` PASS; rolled 2026-10-17 16:59Z
+(`rc15/native-trace-roll/receipt-20261017T165933Z.json` `135f26f74361f49d4b16ef42593d488028810488da469ad1c89264fda34b5a62`).
+It vendors SDK 2.4.0; re-vendoring 2.4.1 is a separate TS delta.
 
 ## Runtime Config
 
@@ -149,7 +166,7 @@ documents the equivalence evidence, not the gate numbers.
 - Kafka CPU: kafka1 1.25 -> 1.75 vCPU (2026-10-14 13:47:40Z, docker update); kafka2/3 already 1.75.
 - Core config `releases/v2.2.3-rc18-core-batch1024` (batch 1024), ingestor_binance_usdm 0.75 vCPU (2026-10-15).
 
-## Findings During Preparation
+## Findings During Preparation (2026-10-16/17, unchanged)
 
 - **Coordinator load (G12 broker-restart mechanism).** Production `__consumer_offsets-43` held 1.65 GB (14.31M markers,
   4.07M offset-commit records). The first real coordinator load after the cleaner pass was measured at **4,783 ms**
@@ -180,51 +197,74 @@ provider, not venue latency, fresh brokers):
 
 ## Gate Scorecard (G1-G14)
 
-Full table, evidence and PENDING markers: [SCORECARD.md](SCORECARD.md). Frozen gate table sha256
-`c67bf69bb921c992964eb8ff8b2e1bb17085a943fdf756d55526b6269641d5c4`; no gate was widened; a NOT_MEASURED is never
-upgraded.
+Full table, RCA and evidence: [SCORECARD.md](SCORECARD.md). Frozen gate table sha256
+`c67bf69bb921c992964eb8ff8b2e1bb17085a943fdf756d55526b6269641d5c4`; no gate was widened after measuring; the three
+amendments (G4-A1, G4-A2, A3) were frozen before the counted run.
 
-- G12: **PASS, credited** (final, writer `a44349a1`, verdict `30648759e5766f5e085e1ea3874efe2ab69ceca0475fcca2ab23e3016b67d1be`).
-- G13: PASS, 76 of 76 cells closed (isolated 12/12 plus runtime window v5.4, receipt `p184-g13-20261017T103357Z`, W05 `5490c21e66bf33bae326f2ea2051677f70cf95372b13b823d4c2912835da9895`; verifier exit 1 only from 260 CASE_OPEN cells outside G13, 0 DR issues). Level: shadow-certified on the release set, 76/76 cells (isolated cells: TEST_ONLY harness; runtime cells: TS stack on the production writer image a44349a1; one host).
-- G1-G11, G14: `<<PENDING:S100_OUTCOME>>` (final stage-100 on the release digests).
-- Summary: PASS `<<PENDING:SUMMARY_PASS>>`; FAIL `<<PENDING:SUMMARY_FAIL>>`; NOT_MEASURED
-  `<<PENDING:SUMMARY_NOT_MEASURED>>`; DEFERRED `<<PENDING:SUMMARY_DEFERRED>>`.
+- Final stage-100 `p184-final-campaign-20261018T123222Z` (load 12:34:45-13:04:45Z, protocol_met true, guard CLEAN),
+  scorecard `b9e76a83795f1af8f64b802b22ff1f410087a8f87ee4ef5d23b26a1d39cb4964`: PASS G1 G3 G5 G6 G7 G8 G9 G10 G11 G14;
+  **FAIL G2** (MARK_INDEX_PRICE BINANCE max 1082.9 ms > 1000; p95 418.6) and **FAIL G4** (OKX_INVERSE book_delta,
+  book_snapshot and quote maxima over the addendum limits; internal segments, A3 rescued none).
+- G12: **PASS, credited** on the final image set (`p184-g12-v224-final-2deb90b0-20261018T042415Z`, verdict
+  `170af83797df3309d4c9778042ee5b4e8f4c7ec5fca89fede22d9d1d0eeadc27`).
+- G13: **76/76** on writer 2deb90b0 (runtime v5.5 `p184-g13-20261018T051237Z` + dr08 `045558Z` + dr05-quiet `071750Z` +
+  dr05-upstream `085316Z`; W05 `5490c21e66bf33bae326f2ea2051677f70cf95372b13b823d4c2912835da9895`).
+- Summary: PASS 12; FAIL 2 (G2, G4); NOT_MEASURED 0; DEFERRED 0.
 
 ## Known Residuals And Deferred Items
 
-| Item | State | Owner / next step |
+Register rows are in the Trading System `INTEGRATION_DEFECT_REGISTER.md` (the DL plan uses that register).
+
+| Item | State | Next step |
 | --- | --- | --- |
-| H1 (G12 WriterClone lifecycle owner) | ACCEPTED-DEFERRED. The G12 credit used the `77a6d671` WriterClone apparatus pin because the later WriterClone refuses `keep_exited=False`. Unifying the lifecycle owner and a mocked WriterClone integration test follow after the release. | TS follow-up; no gate change |
-| IDR-110 R1 (no record identity after a native restart) | fixed in IDR-110b (`a44349a1`): identity seeded from the verified Redis marker; tested locally and in the isolated quiet-key proof run2 (`e4074aa0...`) | monitored in the final stage-100 |
-| IDR-110 R2 (non-eligible Query QUOTE ended the read loop) | fixed in IDR-110b: DATA_STALE / DATA_NOT_READY on a probe marks only that route SESSION_UNVERIFIED; `probes_failed` must stay 0 in the final stage-100 | monitored; fall back to SkippedOffset if it recurs |
-| All-quiet `DATA_NOT_READY` | diagnostic only. In the isolated DR05 stack the QUOTE route turned SESSION_UNVERIFIED about 14 s after the last frame (Query detail "required data is not available"). Not reproduced on the release path with valid session evidence, so no DL defect is recorded and DL is unchanged. | revisit only if it reproduces |
-| IDR-108 | OPEN. Candidate fix: a readiness signal that turns SERVING only after the hot reader progressed and confirmed the broker head. | next DL release |
-| Rust Shadow Core CI (TS) | red before this work (`fmt` / `clippy` and wheel-matrix steps), not a required check. clippy and fmt were not run (the offline image has no component). Slice deferred. | TS CI follow-up |
-| Python debt ratchet | about 276 legacy ruff findings in the TS tree (coordinator figure, **not re-measured here**: ruff is not installed on the host); `scripts/p184_n1_isolated.py:605` is reported as F821 (line read: `before = await read()`), **not verified** | TS cleanup |
-| Stage-A key coalescing | measured, report-only, not designed | DL backlog |
-| Build receipt FAIL | kept; resolved by the postcheck addendum (see Source And Images) | none |
+| G2 MARK BINANCE tail / Query MARK read path | OPEN, IDR-119 (optimisation package) | one variable at a time, A/B on the stage-100 harness |
+| G4 OKX_INVERSE internal tails | OPEN, IDR-116 (Kafka cleaner I/O, C1), IDR-117 (broker CPU quota), IDR-118 (core commit batching) | one variable at a time with A/B; never two at once |
+| OKX BOOK lane session degradation | OPEN, IDR-115 (BOOK recycle with re-snapshot semantics; not an IDR-112 scope extension) | design + fake-venue BOOK handover + core fence tests |
+| IDR-108 | OPEN: Stream accepts on 8210 before its hot view serves | readiness signal (next DL release) |
+| OKX FUNDING_RATE bound = 8 h cadence | OPEN, IDR-125 (contract option of the A1 RCA: max_freshness 28,860,000 or 32,400,000 ms, manifest + JWT revision batch) | release-bundle work |
+| Stage-A key coalescing | OPEN, IDR-124 (measured, report-only, not designed) | DL backlog |
+| H1 WriterClone lifecycle owner | OPEN, IDR-120 (G12 used the `77a6d671` apparatus pin) | TS follow-up |
+| Rust Shadow Core CI (TS) | OPEN, IDR-121 (red before this work, not a required check) | TS CI slice |
+| TS ruff debt | OPEN, IDR-122: `ruff 0.15.13 check .` on TS `e4992fe5` = **1286** findings (402 auto-fixable); the earlier "~276" figure was not reproduced (it matches the I001 count, 275). CI checks changed files only | TS cleanup ratchet |
+| F821 in `scripts/p184_n1_isolated.py:605` | OPEN, IDR-123: verified with ruff, the undefined name is `asyncio` (line 605 `await asyncio.sleep(.1)`), not `read` | TS apparatus fix |
+| Build receipt FAIL (c7ce7d3) | kept; resolved by the postcheck addendum | none |
 | TS writer vendors SDK 2.4.0 | release this writer on 2.4.0; re-vendor 2.4.1 later | TS delta |
-| Kafka C | converging (~49 h estimate from 2026-10-16) | watch coordinator load |
+| Kafka C | converging (estimate ~49 h from 2026-10-16) | watch coordinator load |
 
 ## Limits
 
+- **G2 FAIL**: MARK_INDEX_PRICE BINANCE max 1082.9 ms against max < 1000 ms (p95 418.6 ms inside). Cause of the sample
+  not determined (no per-sample DL receipt clock on the Query-read MARK path).
+- **G4 FAIL**: OKX_INVERSE BTC-USD-SWAP book_delta (max 387.1 vs 282.5), book_snapshot (406.7 vs 300.7) and quote
+  (531.9 vs 322.6) in some windows; venue -> DL ~30 ms, the excess is internal; the internal stage is not separated.
 - Single host for every run: no HA, no independent failure domains, no mainnet or funded claim.
-- `binance_bar_edge` is not on the release revision. rust_core x3 stay on rc22 and are certified by binary equality.
-- The stream gateway and projector are certified by classification plus behavioural proof, not byte equality (see the
-  equivalence table).
+- `binance_bar_edge` is not on a v2.2.4 revision. rust_core x3 stay on rc22 and are certified by binary equality.
+- Stream gateway and projector are on the c7ce7d3 image; their binaries equal the 83bef59 build; the gateway is
+  classified DIFFERENT_BUILD_PATH vs the measured `baa72c96` overlay (behavioural DR08 A/B), projector equal in loaded
+  sections to rc22.
+- G14 DL mean CPU sum 5.63 vCPU at stage 100, above the owner's 5 vCPU DL budget (G14 records resources only).
 - Kafka C converging at measurement time; B applied 2026-10-16 14:25Z.
 - IDR-108: after a restart, Stream readiness (port accept) comes before hot-view serving.
-- G12 harness shape is not production shape (core members, Kafka CPU, topic segment settings, synthetic publisher).
+- G12 harness shape is not production shape (core members, Kafka CPU, topic segment settings, synthetic publisher);
+  its integrity layer is report-only.
+- G13 cells are shadow-certified (TEST_ONLY isolated harness or TS stack on one host); the W05 output file carries no
+  run identity (see SCORECARD.md).
 - TEST_ONLY burst results above are not production capacity claims.
-- `<<PENDING:LIMIT_G4_G9_FINAL>>` (final stage-100 outcome for G4 and G9).
-- G13: no open cells (76/76 closed); nothing carried by an owner decision. The 260 other cells of the W05 matrix (BR/FT/MG/OR) are outside G13.
 
 ## Rollback
 
-Per role, failure only, one container at a time with the saved composes in
-`~/.local/state/qdl-v2/releases/v2.2.4/rollout/` (query receipts in `.../p184-d3-capacity-20261009/rollout-rc15/`):
-query `b9ca6c36`, stream `baa72c96`, projector `ce629061`, ingestor `7fba2577`. Cores were not changed. Kafka config:
-cleaner `--add-config log.cleaner.io.max.bytes.per.second=8388608`; marker retention
+Failure only, one container at a time, reverse role order, with the saved composes (sha256 in
+[equivalence.json](equivalence.json)):
+
+| Role | Roll back to | Saved compose |
+| --- | --- | --- |
+| query_kn_1, query_kn_2 | `c21e164a` (`qdl-v2-python:2.2.4-c7ce7d3`) | `~/.local/state/qdl-v2/p184-d3-capacity-20261009/rollout-rc15/query_kn_{1,2}-rollback-20261018T03*.compose.json` |
+| ingestor_okx_swap, ingestor_binance_usdm | `5e261809` (`qdl-v2-rust:2.2.4-6d61710`), then `60f83a51` | `~/.local/state/qdl-v2/releases/v2.2.4/rollout-idr112b-idr114/<role>-rollback-20261018T03*.compose.json` |
+| stream_kn_1/2, market_projector_1/2 | not changed by the final roll; v2.2.3-era targets `baa72c96` (stream, TEST overlay) / `ce629061` (projector rc14) | `~/.local/state/qdl-v2/releases/v2.2.4/rollout/<role>-rollback-20261016T17*.compose.json` |
+| market_data_service_p184w (TS) | `a44349a1` (then `734b08f1`, `7c71e3af`, B17 `cb5216b8`) | `rc15/native-trace-roll/rollback-20261017T165933Z.compose.json` |
+
+Kafka config: cleaner `--add-config log.cleaner.io.max.bytes.per.second=8388608`; marker retention
 `--rollback-to 604800000 --apply`; internal topics `scripts/kafka_internal_topic_compaction.py --rollback --apply
---cert-dir <stable cert dir>`. Not touched: kafka1-3 images, rust_core x3, binance_bar_edge, market_cache, stable_redis,
-catalog, consumer manifests, JWT revisions.
+--cert-dir <stable cert dir>`; broker rebalance `scripts/kafka_auto_leader_rebalance_roll.py --rollback <packet> --broker
+kafkaN --apply`. Not touched: kafka1-3 images, rust_core x3, binance_bar_edge, market_cache, stable_redis, catalog,
+consumer manifests, JWT revisions, realm dirs, offsets, Redis data.

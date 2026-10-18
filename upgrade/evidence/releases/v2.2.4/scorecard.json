@@ -1,0 +1,402 @@
+{
+ "schema": "qdl.release-scorecard.v1",
+ "release": "2.2.4",
+ "status": "FAIL_G2_G4_WITH_STATED_LIMITS",
+ "gate_table": {
+  "path": "trading-system upgrade/p184-phase-d-gates.md (FROZEN 2026-10-09)",
+  "sha256": "c67bf69bb921c992964eb8ff8b2e1bb17085a943fdf756d55526b6269641d5c4"
+ },
+ "frozen_budget": {
+  "path": "config/v2/p184-stage100-budget.json",
+  "sha256": "ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541"
+ },
+ "frozen_addendum": {
+  "path": "config/v2/p184-stage100-g4-addendum.json",
+  "sha256": "4ed59dca0212566d3ff03c5a4c23eed3d252d0150844b9a4fd6fa543333d78b5"
+ },
+ "amendments": {
+  "G4-A1": {
+   "path": "config/v2/p184-stage100-g4-amendment-1.json",
+   "sha256": "1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6"
+  },
+  "G4-A2": {
+   "path": "config/v2/p184-stage100-g4-amendment-2.json",
+   "sha256": "99961c41e08993944d158ae812ca61514271862a2d03e011f5d01ce71a0f9997"
+  },
+  "A3": {
+   "path": "config/v2/p184-stage100-a3-external-attribution.json",
+   "sha256": "cc5fc7dcf07e30b1b52cbc51b78c4a5485a63be84d5b814dcf89452007e57326"
+  }
+ },
+ "scoring_rule": "steady state >= 30 min at the stage-100 workload plus one burst window; a measurement outside the protocol can FAIL a gate but cannot PASS it; NOT_MEASURED is never upgraded",
+ "campaign": {
+  "dir": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z",
+  "load_window_utc": "2026-10-18T12:34:45Z..13:04:45Z",
+  "protocol_met": true,
+  "protocol_problems": [],
+  "runtime_identity": {
+   "writer_image": "sha256:2deb90b0cc52eae7610fa44692f90df077e9db100ca259e38fd652a2dc1c5dc5",
+   "writer_restarts": 0,
+   "writer_started": "2026-10-18T12:31:12.464483074Z"
+  },
+  "files": {
+   "scorecard.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/scorecard.json",
+    "sha256": "b9e76a83795f1af8f64b802b22ff1f410087a8f87ee4ef5d23b26a1d39cb4964"
+   },
+   "campaign.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/campaign.json",
+    "sha256": "2f96f55347dfd69e090436416364685f0479c3801c466ff5d3418af99ed8b7fc"
+   },
+   "timeline.jsonl": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/timeline.jsonl",
+    "sha256": "cbf05017242feed6925c4c921fabcc924ced313933e6b736e543bdfe5eb54f1e"
+   },
+   "stage100/receipt.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/stage100/receipt.json",
+    "sha256": "3fd22d861ae434c7f7e0e29ce21d3430b0982f376a50f06c8a0ee1a8b8f64ea0"
+   },
+   "stage100/gates.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/stage100/gates.json",
+    "sha256": "0c039b197546e3c77ba83712aa65d4cc3c219faf75ba431013580c78170d5aa4"
+   },
+   "stage100/host.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/stage100/host.json",
+    "sha256": "97e1a89372e5a4a5c609ecbc2e6ff1bc46176effb0c5f18597a5acbacdbd701d"
+   },
+   "client-smoke/receipt.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/client-smoke/receipt.json",
+    "sha256": "b165a597be86de271ede2293e01712d7806dcae8e65c1afd7b8cd60c9a55daef"
+   },
+   "query-funding-allowance.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/query-funding-allowance.json",
+    "sha256": "d4fdd26ef2fb9473e47f34b5b7d0e6046c3032594a9cda4fffdd3c05734858b5"
+   },
+   "a3-timeline/timeline.jsonl": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/a3-timeline/timeline.jsonl",
+    "sha256": "90861375ce6d996d419faa42b1bc7cdfff907781030cdaa79e404a168e8e6974"
+   },
+   "a3-local/receipt.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/a3-local/receipt.json",
+    "sha256": "166bfb4536d714a2998695c7ea8242368f067896a59df23626da6a1e6b56323d"
+   }
+  },
+  "logs": {
+   ".run.log": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z.run.log",
+    "sha256": "c8e454d44fdb7387c6c7e5caf82491764cb9293e725ea932e33820915f4aadde"
+   },
+   ".guard.log": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z.guard.log",
+    "sha256": "d36027f6367257c5cd576e7895b94ef0166a32bef1f22019f0a24bcd241db1e1"
+   },
+   ".guard/summary.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z.guard/summary.json",
+    "sha256": "b7baed86956012fb9479dccbe7070b175f39e14f9f46742d2dd0b3343efda887"
+   },
+   ".g11-watcher.log": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z.g11-watcher.log",
+    "sha256": "3e38889ba15b2b70b1239be6fc4156b63924592b5c3567a62af40d692b0c4bed"
+   },
+   ".extra/SHA256SUMS": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z.extra/SHA256SUMS",
+    "sha256": "91b405c7fa3523303f6aede3c609c0f5e449314a1998dd9cab22d92291d9e4c2"
+   }
+  }
+ },
+ "gates": {
+  "G1": {
+   "verdict": "PASS",
+   "reason": "every BOOK row inside",
+   "rule": "p95 <= 500 ms, p99 <= 1000 ms (n >= 100), max < 2000 ms per feed/venue",
+   "rows": [
+    {
+     "feed_venue": "BOOK_DELTA|BINANCE",
+     "p95": 197.5,
+     "p99": 273.4,
+     "max": 780.7,
+     "n": 83901
+    },
+    {
+     "feed_venue": "BOOK_DELTA|OKX",
+     "p95": 205.4,
+     "p99": 278.0,
+     "max": 829.4,
+     "n": 94211
+    },
+    {
+     "feed_venue": "BOOK_SNAPSHOT|BINANCE",
+     "p95": 215.1,
+     "p99": 340.4,
+     "max": 702.2,
+     "n": 9344
+    },
+    {
+     "feed_venue": "BOOK_SNAPSHOT|OKX",
+     "p95": 213.2,
+     "p99": 315.3,
+     "max": 814.0,
+     "n": 11223
+    }
+   ]
+  },
+  "G2": {
+   "verdict": "FAIL",
+   "reason": "outside: MARK|BINANCE; native scope LOAD_SLICES_SUPERSET: LOAD_SLICES_SUPERSET [1792326840000000000, 1792328700000000000) (every 60 s slice intersecting the load window, edge slices in full)",
+   "rule": "TRADE p95 <= 500 ms and max < 1500 ms; QUOTE and MARK p95 <= 500 ms and max < 1000 ms",
+   "outside_rows": [
+    {
+     "feed_venue": "MARK_INDEX_PRICE|BINANCE",
+     "p50": 328.5,
+     "p95": 418.6,
+     "p99": 488.5,
+     "max": 1082.9,
+     "n": 9000
+    }
+   ],
+   "inside_rows": [
+    {
+     "feed_venue": "TRADE|BINANCE",
+     "p95": 248.0,
+     "max": 611.3495,
+     "n": 100331
+    },
+    {
+     "feed_venue": "TRADE|OKX",
+     "p95": 241.0,
+     "max": 507.3048,
+     "n": 22352
+    },
+    {
+     "feed_venue": "QUOTE|BINANCE",
+     "p95": 190.0,
+     "max": 627.294057,
+     "n": 103965
+    },
+    {
+     "feed_venue": "QUOTE|OKX",
+     "p95": 200.0,
+     "max": 684.438684,
+     "n": 92799
+    },
+    {
+     "feed_venue": "MARK_INDEX_PRICE|OKX",
+     "p95": 353.2,
+     "max": 743.9,
+     "n": 21516
+    }
+   ],
+   "a3": {
+    "amendment_id": "A3",
+    "applied": false,
+    "attributable_units": 0,
+    "episodes_in_load_report_only": [],
+    "outside_rows": {
+     "MARK_INDEX_PRICE|BINANCE": "UNKNOWN: no per-sample DL receipt clock on this trace basis (native writer slices / Query-read MARK records); counts as FAIL"
+    }
+   }
+  },
+  "G3": {
+   "verdict": "PASS",
+   "reason": "g3 probe",
+   "rule": "p95 <= 5 s, max < 60 s"
+  },
+  "G4": {
+   "verdict": "FAIL",
+   "reason": "over limit: book_delta|OKX_INVERSE|, book_snapshot|OKX_INVERSE|, quote|OKX_INVERSE|",
+   "rule": "candidate p95 <= frozen baseline p95 x 1.2 per row; missing coverage blocks the gate; amendment G4-A1 row mark_index_price|OKX|: same-event internal split (CreateTime - newest component receipt) p95 <= 200.9 ms and max <= 993.4 ms on windows with >= 5 samples (recomputed baseline x 1.2); composite, component gap and venue probe report-only; a window without probe coverage is UNKNOWN, not EXTERNAL; amendment G4-A2: bar rows with interval >= 8h and no frozen baseline report-only (owner B1), no threshold changes; addendum rows: candidate max <= baseline max x 1.2 on windows with >= 5 samples, 1h/2h/4h/6h and thin-baseline rows report-only",
+   "failing_rows": [
+    {
+     "row": "book_delta|OKX_INVERSE|",
+     "limit_max_ms": 282.5,
+     "max_ms_per_window": [
+      234.987,
+      358.892,
+      258.978,
+      170.984,
+      387.114
+     ],
+     "n_per_window": [
+      113,
+      114,
+      114,
+      113,
+      169
+     ],
+     "a3_rescued": false,
+     "a3_attributions": [
+      "INTERNAL_SEGMENT_OVER_LIMIT"
+     ]
+    },
+    {
+     "row": "book_snapshot|OKX_INVERSE|",
+     "limit_max_ms": 300.7,
+     "max_ms_per_window": [
+      301.419,
+      399.916,
+      311.241,
+      277.296,
+      406.674
+     ],
+     "n_per_window": [
+      120,
+      124,
+      124,
+      125,
+      183
+     ],
+     "a3_rescued": false,
+     "a3_attributions": [
+      "INTERNAL_SEGMENT_OVER_LIMIT",
+      "UNKNOWN"
+     ]
+    },
+    {
+     "row": "quote|OKX_INVERSE|",
+     "limit_max_ms": 322.6,
+     "max_ms_per_window": [
+      264.863,
+      310.493,
+      288.111,
+      221.921,
+      531.927
+     ],
+     "n_per_window": [
+      107,
+      112,
+      114,
+      102,
+      167
+     ],
+     "a3_rescued": false,
+     "a3_attributions": [
+      "INTERNAL_SEGMENT_OVER_LIMIT"
+     ]
+    }
+   ]
+  },
+  "G5": {
+   "verdict": "PASS",
+   "reason": "11 latency/cold gates",
+   "rule": "certified stage-50 p95/p99 per class and venue; frozen cold-shape limits"
+  },
+  "G6": {
+   "verdict": "PASS",
+   "reason": "every required D3 binding measured, 0 unsafe",
+   "rule": "per-binding D3 policy of the TS EXECUTION consumer (TRADE 3000, QUOTE/MARK/BOOK_DELTA 2000, BOOK_SNAPSHOT 60000, BAR1m 180000 ms, min with the requirement); zero unsafe eligibility; decided by D3_EXECUTION rows only"
+  },
+  "G7": {
+   "verdict": "PASS",
+   "reason": "every feed inside; native scope LOAD_SLICES_SUPERSET: LOAD_SLICES_SUPERSET [1792326840000000000, 1792328700000000000) (every 60 s slice intersecting the load window, edge slices in full)",
+   "rule": "SDK -> writer p95 <= 100 ms; writer -> Redis reply p95 <= 50 ms per feed"
+  },
+  "G8": {
+   "verdict": "PASS",
+   "reason": "inside",
+   "rule": "commandstats <= 60 % of one core per 10-min window; SLOWLOG (10 ms) 0 in steady state; PING p99 <= 5 ms"
+  },
+  "G9": {
+   "verdict": "PASS",
+   "reason": "inside",
+   "rule": "demanded == session-ready; 0 data-path eligibility losses (legitimate quiet TRADE refusals counted, excluded); v1 fallback 0"
+  },
+  "G10": {
+   "verdict": "PASS",
+   "reason": "all zero",
+   "rule": "0 gaps, 0 duplicates applied, 0 replay-expired, 0 overflow"
+  },
+  "G11": {
+   "verdict": "PASS",
+   "reason": "restart probe",
+   "rule": "fault cleared -> first valid apply per slice <= 30 s, -> caught up <= 60 s; no rewind; cursor never ahead",
+   "outage_seconds": 0.14,
+   "caught_up_max_s": 4.822
+  },
+  "G14": {
+   "verdict": "PASS",
+   "reason": "18 roles recorded",
+   "rule": "CPU/RAM per role recorded with headroom; budget set by the owner",
+   "dl_cpu_mean_sum_vcpu": 5.63
+  },
+  "G12": {
+   "verdict": "PASS",
+   "basis": "CREDIT (separate isolated run on the final image set)",
+   "receipt_dir": "~/.local/state/qdl-v2/p184-g12-v224-final-2deb90b0-20261018T042415Z",
+   "verdict_json": {
+    "path": "~/.local/state/qdl-v2/p184-g12-v224-final-2deb90b0-20261018T042415Z/evidence/verdict.json",
+    "sha256": "170af83797df3309d4c9778042ee5b4e8f4c7ec5fca89fede22d9d1d0eeadc27"
+   },
+   "final_credit": {
+    "path": "~/.local/state/qdl-v2/p184-g12-v224-final-2deb90b0-20261018T042415Z/FINAL_CREDIT.json",
+    "sha256": "c6bfaedd1edefdcc76de1095e012b87fa85ce57c79fb43f645e2d272171dc8fc"
+   },
+   "caught_up_s": {
+    "broker_stop_start": [
+     0.095,
+     0.095
+    ],
+    "projector_restart": [
+     0.1,
+     0.046
+    ],
+    "stream_restart": [
+     0.572,
+     0.573
+    ]
+   },
+   "bound_s": 600
+  },
+  "G13": {
+   "verdict": "PASS",
+   "basis": "76/76 DR cells on writer 2deb90b0 (W05 verifier)",
+   "cells": 76,
+   "closed": 76,
+   "receipts": {
+    "runtime_v55": {
+     "path": "~/.local/state/qdl-v2/p184-g13-20261018T051237Z/summary.json",
+     "sha256": "147a90aafbe755f83ae1d36cbd42be6f9b860ccded5de8fd44b4becdb434a0d7"
+    },
+    "dr08": {
+     "path": "~/.local/state/qdl-v2/p184-g13-20261018T045558Z/summary.json",
+     "sha256": "17e731d670174a00a67950ef2cfe1594d37c896e72d2d337bdd6cbf78ef0d5bd"
+    },
+    "dr05_quiet": {
+     "path": "~/.local/state/qdl-v2/p184-g13-20261018T071750Z/summary.json",
+     "sha256": "4f5aecbb5737f6295e4e595dbadf6d065b62ad25aad926b56b60a07b43acc084"
+    },
+    "dr05_upstream": {
+     "path": "~/.local/state/qdl-v2/p184-g13-20261018T085316Z/summary.json",
+     "sha256": "b67dff6653879af030edb8d0bd0a7898a97342b3425a9f264302768e87a93489"
+    }
+   },
+   "w05": {
+    "path": "~/.local/state/qdl-v2/p184-g13-20261018T085316Z/verify/w05-final-v55-76.json",
+    "sha256": "5490c21e66bf33bae326f2ea2051677f70cf95372b13b823d4c2912835da9895"
+   },
+   "w05_note": "verifier output holds case states only (byte-identical to the v5.4 output); provenance via verifier arguments and input receipts"
+  }
+ },
+ "summary": {
+  "PASS": [
+   "G1",
+   "G3",
+   "G5",
+   "G6",
+   "G7",
+   "G8",
+   "G9",
+   "G10",
+   "G11",
+   "G12",
+   "G13",
+   "G14"
+  ],
+  "FAIL": [
+   "G2",
+   "G4"
+  ],
+  "NOT_MEASURED": [],
+  "DEFERRED": []
+ },
+ "owner_decision": "2026-10-18 ~13:40Z AskUserQuestion 'Release kem limit + goi toi uu sau (Recommended)': package with G2/G4 FAIL stated as limits with RCA; optimisation package IDR-116..IDR-119 later, one variable at a time with A/B"
+}

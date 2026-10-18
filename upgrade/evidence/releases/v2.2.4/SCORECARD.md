@@ -1,136 +1,167 @@
-# Quant Data Layer v2.2.4 - gate scorecard G1-G14 (DRAFT, frozen rules)
+# Quant Data Layer v2.2.4 - gate scorecard G1-G14 (FINAL, frozen rules)
 
-Status: **DRAFT.** Written 2026-10-17 ~11:00Z. It holds only results that exist today. Everything that needs the final
-stage-100 is a `<<PENDING:...>>` marker (the G13 runtime window v5.4 is filled below). Machine form (`scorecard.json`, schema
-`qdl.release-scorecard.v1`, as in [v2.2.3](../v2.2.3/scorecard.json)) is written from this file at finalisation.
+Status: **FINAL - NOT A FULL PASS.** Assembled 2026-10-18 ~13:40Z from the receipts named below (every sha256 was
+recomputed with `sha256sum` at assembly). G2 and G4 FAIL on named rows; all other gates PASS or are credited. Machine
+form: [scorecard.json](scorecard.json) (schema `qdl.release-scorecard.v1`). Owner decision 2026-10-18 ~13:40Z
+(AskUserQuestion "Release kèm limit + gói tối ưu sau (Recommended)"): package the release with these FAIL rows stated
+as limits with their RCA, and do the optimisation package later, one variable at a time with A/B. That decision does
+not change any verdict below.
 
-## Frozen inputs (unchanged; no number is widened after measuring)
+## Frozen inputs (no number was widened after measuring)
 
 - Gate table: TS `upgrade/p184-phase-d-gates.md`, FROZEN 2026-10-09, sha256
-  `c67bf69bb921c992964eb8ff8b2e1bb17085a943fdf756d55526b6269641d5c4` (verified with `sha256sum` on 2026-10-17).
-- Budget: `config/v2/p184-stage100-budget.json` sha256 `ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541`
-  (verified).
-- Scoring rule (table, "Measurement rules"): a PASS needs steady state >= 30 min at the stage-100 workload plus one
-  burst window, with `protocol_met: true`. A measurement outside that rule can FAIL a gate but cannot PASS it. A
-  NOT_MEASURED is never upgraded.
-- Release identity measured: DL roles on `qdl-v2-rust:2.2.4-c7ce7d3` `sha256:60f83a51...` / `qdl-v2-python:2.2.4-c7ce7d3`
-  `sha256:c21e164a...` (REV `c7ce7d3`), cores on rc22 `7c848aad`, TS writer `a44349a1` (TS `6af62a7e`), Kafka config
-  effective sha256 `d3d77176...` (B x3, C, A', cleaner 4 MiB/s).
+  `c67bf69bb921c992964eb8ff8b2e1bb17085a943fdf756d55526b6269641d5c4`.
+- Budget: `config/v2/p184-stage100-budget.json` `ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541`;
+  G4 addendum `config/v2/p184-stage100-g4-addendum.json` `4ed59dca0212566d3ff03c5a4c23eed3d252d0150844b9a4fd6fa543333d78b5`.
+- Amendments frozen BEFORE the counted run (each owner-approved, each recorded in `campaign.json`):
+  - G4-A1 `config/v2/p184-stage100-g4-amendment-1.json` `1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6`
+    (row `mark_index_price|OKX|` only: same-event internal split; rationale
+    [g4-amendment-1-okx-mark-index.md](g4-amendment-1-okx-mark-index.md)).
+  - G4-A2 `config/v2/p184-stage100-g4-amendment-2.json` `99961c41e08993944d158ae812ca61514271862a2d03e011f5d01ce71a0f9997`
+    (bar rows >= 8h without a frozen baseline are REPORT_ONLY; no threshold change).
+  - A3 `config/v2/p184-stage100-a3-external-attribution.json` `cc5fc7dcf07e30b1b52cbc51b78c4a5485a63be84d5b814dcf89452007e57326`
+    (frozen 2026-10-18T12:17:51Z; external-venue attribution can rescue a tail only when the same event's internal
+    segments are inside their limits; rationale [a3-external-attribution.md](a3-external-attribution.md)).
+- Scoring rule: a PASS needs steady state >= 30 min at the stage-100 workload plus one burst window with
+  `protocol_met: true`. A measurement outside the protocol can FAIL a gate but cannot PASS it. NOT_MEASURED is never
+  upgraded.
 
-## Scorecard
+## Measured identity (docker inspect at assembly, 2026-10-18 13:2xZ; RestartCount 0, OOMKilled false everywhere)
 
-Legend: PASS = measured under the frozen rule; CREDIT = receipt credited under the stated basis; PENDING = not yet
-measured on the release digests; HISTORY = measured on other digests, kept, not credited.
+| Role | Image | Tag | Revision label |
+| --- | --- | --- | --- |
+| query_kn_1, query_kn_2 | `sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff` | `qdl-v2-python:2.2.4-31a5155` | `31a5155` |
+| ingestor_okx_swap, ingestor_binance_usdm | `sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784` | `qdl-v2-rust:2.2.4-83bef59` | `83bef59` |
+| stream_kn_1/2, market_projector_1/2 | `sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e` | `qdl-v2-rust:2.2.4-c7ce7d3` | `c7ce7d3` |
+| rust_core x3 | `sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb` | `qdl-v2-rust:2.2.3-rc22-a4e7b3b` | `a4e7b3b` |
+| binance_bar_edge (held, scoped out) | `sha256:08f356a84151c6e865fbdc4a2efe6924df9336d15353254c2b2da684261794f5` | `qdl-v2-python:2.2.3-rc14-a388537` | `a388537` |
+| market_data_service_p184w (TS writer) | `sha256:2deb90b0cc52eae7610fa44692f90df077e9db100ca259e38fd652a2dc1c5dc5` | `local/trading-system:p184-writer-release-30f50a91` | TS `30f50a91` |
 
-| Gate | Quantity (frozen) | Rule (frozen) | v2.2.4 status | Evidence / placeholder |
+Kafka effective describe `d3d77176c3dfca46e7f44cba465d271afe2709a1fc9d97f75e808808fa959094` (B x3, C, A', cleaner
+4 MiB/s), recorded before and after the G12 credit.
+
+## Scorecard (final stage-100 `p184-final-campaign-20261018T123222Z`, load 12:34:45-13:04:45Z, protocol_met true)
+
+| Gate | Rule (frozen) | Verdict | Numbers (from `scorecard.json` of the campaign) |
+| --- | --- | --- | --- |
+| G1 | BOOK p95 <= 500, p99 <= 1000, max < 2000 ms | **PASS** | BOOK_DELTA BINANCE p95 197.5 / p99 273.4 / max 780.7 (n 83,901); BOOK_DELTA OKX 205.4 / 278.0 / 829.4 (94,211); BOOK_SNAPSHOT BINANCE 215.1 / 340.4 / 702.2 (9,344); BOOK_SNAPSHOT OKX 213.2 / 315.3 / 814.0 (11,223) |
+| G2 | TRADE p95 <= 500, max < 1500; QUOTE and MARK p95 <= 500, max < 1000 ms | **FAIL** (one row) | **MARK_INDEX_PRICE BINANCE p95 418.6 / p99 488.5 / max 1082.9 (n 9,000) - max over 1000**; inside: TRADE BINANCE 248 / 611.3, TRADE OKX 241 / 507.3, QUOTE BINANCE 190 / 627.3, QUOTE OKX 200 / 684.4, MARK OKX 353.2 / 743.9 (p95 / max). A3 G2 report: UNKNOWN by construction (Query-read MARK records carry no per-sample DL receipt clock); no lane episode in the load |
+| G3 | BAR p95 <= 5 s, max < 60 s | **PASS** | pooled p95 1718 / max 3263 ms (n 320); BINANCE p95 2366, OKX p95 1452; read errors 0 |
+| G4 | per row vs frozen baseline (table p95 x 1.2; addendum max x 1.2) + A1/A2/A3 | **FAIL** (three addendum rows) | **book_delta OKX_INVERSE** max per window 235.0 / **358.9** / 259.0 / 171.0 / **387.1** vs 282.5; **book_snapshot OKX_INVERSE** **301.4 / 399.9 / 311.2** / 277.3 / **406.7** vs 300.7; **quote OKX_INVERSE** 264.9 / 310.5 / 288.1 / 221.9 / **531.9** vs 322.6 (all BTC-USD-SWAP). A3 attempted all three, rescued none: venue -> DL ~30 ms, internal split receive -> CreateTime 154-295 ms and CreateTime -> observer 115-206 ms (INTERNAL_SEGMENT_OVER_LIMIT); two near-limit units UNKNOWN on local checks. G4-A1 `mark_index_price|OKX|` PASS (internal p95 99-126, max 214-374 ms, EXTERNAL_VENUE_COMPONENT_CADENCE 5/5). Every frozen-table row PASS (e.g. bar BINANCE 1m max 160-246 vs 257.6). OKX books probe 5/5 covered, 0 book tails > 150 ms venue -> DL |
+| G5 | stage-50 p95/p99 targets per class; cold overlap | **PASS** | 11 latency/cold gates PASS (e.g. MARK_INDEX_REFERENCE BINANCE p95 61.8 / p99 102.2 of 250 / 500; L2_SNAPSHOT BINANCE 151.8 / 198.8 of 300 / 750) |
+| G6 | per-binding policy; 0 unsafe | **PASS** | every required D3 binding measured, unsafe 0 |
+| G7 | SDK -> writer p95 <= 100 ms; writer -> Redis p95 <= 50 ms | **PASS** | every feed inside (p95 SDK -> writer / writer -> Redis ms: BOOK_DELTA 30.7 / 6.3, BOOK_SNAPSHOT 18.1 / 15.8, MARK 0.9 / 7.7, QUOTE 1.0 / 2.0, TRADE 8.0 / 8.0) |
+| G8 | commandstats <= 60 % core / 10 min; SLOWLOG 0 steady; PING p99 <= 5 ms | **PASS** | core fraction ~0.07, slowlog_new_total 0, PING p99 1.305 ms, ping failures 0 |
+| G9 | demanded == session-ready all window; 0 data-path losses; v1 fallback 0 | **PASS** | 60 samples, demanded 64 == session-ready every sample, data-path losses 0 (38 legit quiet TRADE), v1 fallback 0, workers LIVE |
+| G10 | TRADE 0 gaps / 0 duplicates applied / 0 replay-expired / 0 overflow | **PASS** | all zero (TRADE BINANCE applied 100,331, OKX 22,352) |
+| G11 | first valid apply <= 30 s, caught up <= 60 s; no rewind; cursor never ahead | **PASS** | outage 0.14 s, first valid apply / caught up max 4.822 s (n 64), future events 0, rewinds 0 |
+| G12 | Kafka broker / projector / Stream restart caught up <= 600 s, then G1-G3 inside | **PASS - CREDIT** | separate isolated run on the final image set (below) |
+| G13 | DR01-DR08, 76 cells | **PASS - 76/76** | separate runs on the final image set (below) |
+| G14 | CPU/RAM recorded per role (not a headroom gate) | **PASS** (recorded) | 18 roles, mem at/over limit none; DL mean CPU sum 5.63 vCPU (above the owner's 5 vCPU DL budget: stated limit) |
+
+Summary: PASS G1 G3 G5 G6 G7 G8 G9 G10 G11 G14 (campaign) + G12 G13 (separate credited runs) = 12; **FAIL G2, G4** = 2;
+NOT_MEASURED 0; DEFERRED 0.
+
+Campaign files (sha256): `scorecard.json` `b9e76a83795f1af8f64b802b22ff1f410087a8f87ee4ef5d23b26a1d39cb4964`, `campaign.json`
+`2f96f55347dfd69e090436416364685f0479c3801c466ff5d3418af99ed8b7fc`, `timeline.jsonl`
+`cbf05017242feed6925c4c921fabcc924ced313933e6b736e543bdfe5eb54f1e`, `stage100/receipt.json`
+`3fd22d861ae434c7f7e0e29ce21d3430b0982f376a50f06c8a0ee1a8b8f64ea0`, `stage100/gates.json`
+`0c039b197546e3c77ba83712aa65d4cc3c219faf75ba431013580c78170d5aa4`, `stage100/host.json`
+`97e1a89372e5a4a5c609ecbc2e6ff1bc46176effb0c5f18597a5acbacdbd701d`, `client-smoke/receipt.json`
+`b165a597be86de271ede2293e01712d7806dcae8e65c1afd7b8cd60c9a55daef`, `query-funding-allowance.json`
+`d4fdd26ef2fb9473e47f34b5b7d0e6046c3032594a9cda4fffdd3c05734858b5`, `a3-timeline/timeline.jsonl`
+`90861375ce6d996d419faa42b1bc7cdfff907781030cdaa79e404a168e8e6974`, `a3-local/receipt.json`
+`166bfb4536d714a2998695c7ea8242368f067896a59df23626da6a1e6b56323d`, `.run.log`
+`c8e454d44fdb7387c6c7e5caf82491764cb9293e725ea932e33820915f4aadde`, `.guard.log`
+`d36027f6367257c5cd576e7895b94ef0166a32bef1f22019f0a24bcd241db1e1`, `.guard/summary.json`
+`b7baed86956012fb9479dccbe7070b175f39e14f9f46742d2dd0b3343efda887`, `.g11-watcher.log`
+`3e38889ba15b2b70b1239be6fc4156b63924592b5c3567a62af40d692b0c4bed`, `.extra/SHA256SUMS`
+`91b405c7fa3523303f6aede3c609c0f5e449314a1998dd9cab22d92291d9e4c2`.
+
+Apparatus: clean run worktree `data-layer-p184-final-run-6d17b56f` (DL `6d17b56`, gate tool `e179ec78` = A3 pin), lock
+`claude-s100-final-a3-6d17b56f` 12:18:58-13:10Z, Codex IDE tree paused 12:19:09-13:09:57Z, guard CLEAN, exact-client
+smoke PASS (154 reads, 0 failed), Query funding allowance 60000 ms resolved from the deployed Query images, client
+profile `qdl-v2-python:2.2.2-d6d2637` (`profile-stage100-rc4-r16.json` `12a8b578...`, quoted from the A3 freeze). Writer
+recreates inside the protocol: trace re-arm x2 (12:19:39Z, 12:31:12Z, same image) and the G11 restart 13:05:42Z.
+
+## RCA of the two FAIL gates (what is known, what is not)
+
+- **G2 MARK_INDEX_PRICE BINANCE max 1082.9 ms.** MARK is not a native writer feed: the value comes from a Query
+  reference read woken by the Stream event (IDR-029; TS IDR-113 re-read on a stale woken read). Stalls measured in this
+  load (`qdl.stall`): query_kn_1 slow_request 25 / loop_lag 1, query_kn_2 slow_request 105 / loop_lag 2, gc 0 (IDR-114
+  fixed the GC cycles). The 1082.9 ms sample's segment split is not measurable on this trace basis (no per-sample DL
+  receipt clock), so the cause of this sample is **not determined**. Optimisation item: IDR-119 (Query MARK read path).
+- **G4 OKX_INVERSE book_delta / book_snapshot / quote maxima.** All on BTC-USD-SWAP; venue -> DL ~30 ms on every
+  failing unit and the fresh-connection books probe saw no venue tail, so these are **internal** (DL ingest -> Kafka
+  CreateTime -> observer path), not venue. Which internal stage (ingestor send, core commit, broker append, cleaner I/O,
+  CPU quota) is **not separated** by this run. Optimisation items, one variable at a time with A/B: IDR-116 (Kafka cleaner
+  I/O, C1), IDR-117 (broker CPU quota), IDR-118 (core commit batching).
+
+## G12 - final credit (PASS, final image set)
+
+- Receipt `~/.local/state/qdl-v2/p184-g12-v224-final-2deb90b0-20261018T042415Z/` (namespace `p184-g12-dl-202cf867bb6a5628`),
+  run 04:25:02-04:51:45Z, lock "claude P18.4 G12 v224 FINAL 2deb90b0 20261018T041107Z" 04:24:15-04:52:31Z.
+- Verdict v3 COMPLETED, `pass: true`; images ts 2deb90b0 / python 3e9e4d3a / stream+projector 60f83a51 / core 7c848aad
+  (`g12-image-set-v224.json` `6303cdcb57eaefa16cdd33de2d010ac05e5944ee887ca0b9938e8f79afb4e2f9`). caught_up_s
+  BINANCE / OKX: broker stop/start 0.095 / 0.095, projector restart 0.100 / 0.046, Stream restart 0.572 / 0.573 (bound
+  600 s). Every fault: G1, G2 (TRADE/QUOTE/MARK lost 0, unseen 0), G3 BAR 1m, sampler PASS.
+- `--credit` exit 0: creditable true, `production_parity` MATCH, `cleaner_binding` RUN; effective describe `d3d77176...`
+  before and after. Writer clones strict_resume VERIFIED both venues. Teardown 12 removed, 0 left.
+- sha256: `evidence/verdict.json` `170af83797df3309d4c9778042ee5b4e8f4c7ec5fca89fede22d9d1d0eeadc27`, `FINAL_CREDIT.json`
+  `c6bfaedd1edefdcc76de1095e012b87fa85ce57c79fb43f645e2d272171dc8fc`, `production-parity.json`
+  `d4e1f82d8e28a5585babc633dbdf93b85eb9cf369dfcf50472ea37f3a1355f82`, `credit-snapshot.json`
+  `3aa5db2c800ed2e9d80249d88a3309201f802a469fcc238b7cbc2d5122448676`, `evidence/writer-precheck.json`
+  `cc448e2de8beadd4e0aec7a5cadee19ee9f365004169ddf99d2d2a62a4706da3`, `c-observe.json`
+  `598f05f87db0be06e938ce61aaebfc93cb06648add752ac4321d3ec077c948cd`, `c-observe-after.json`
+  `14f9365ec98bd11a6d67d4cfb47cc95f5238efea8237cca31754cb1aa315a6ae`, `evidence/teardown.json`
+  `53691d959d9f925e0b9856a807352475723fe89f11b6281407f13bf5e9ab12ff`.
+- Pins: DL run worktree `data-layer-p184-final-run-bb054498`, TS WriterClone apparatus `trading-system-final-run-77a6d671`
+  (coordinator decision H1), TS run worktree `trading-system-final-run-aa126794`. Inherited from other image sets:
+  nothing. The ingestor image is not part of the G12 harness (synthetic TEST_ONLY publisher).
+- Caveats (stated): integrity layer report-only; harness shape differs from production (one core member at 0.5 CPU,
+  Kafka 0.75 CPU each, latest topic without production segment settings, synthetic publisher at 4 Hz BOOK); container
+  overlap with foreign jobs NOT_DETERMINABLE after the fact (docker events rolled).
+
+## G13 - 76/76 on writer 2deb90b0 (TS 30f50a91), packet v5.5
+
+| Step | Cells | Result | Receipt | sha256 |
 | --- | --- | --- | --- | --- |
-| G1 | End-to-end to TS cache, BOOK_DELTA / BOOK_SNAPSHOT | p95 <= 500 ms, p99 <= 1000 ms (n >= 100), max < 2000 ms | `<<PENDING:G1_VERDICT>>` | `<<PENDING:G1_NUMBERS>>` per feed/venue (p50/p95/p99/max/n) |
-| G2 | New-event transit TRADE / QUOTE / MARK_INDEX_PRICE | TRADE max < 1500 ms; QUOTE, MARK max < 1000 ms; p95 <= 500 ms each | `<<PENDING:G2_VERDICT>>` | `<<PENDING:G2_NUMBERS>>` |
-| G3 | BAR from close | p95 <= 5 s, max < 60 s | `<<PENDING:G3_VERDICT>>` | `<<PENDING:G3_NUMBERS>>` |
-| G4 | Delivery lag venue -> canonical vs frozen baseline | rows with a frozen baseline judged; others NOT_MEASURED (never upgraded) | `<<PENDING:G4_VERDICT>>` | `<<PENDING:G4_NUMBERS>>` baselined rows and unbaselined rows listed separately; addendum sha256 `4ed59dca...` (quoted from the plan, not re-hashed here) |
-| G5 | Request latency, Query warmup / snapshot / reference batch | stage-50 p95/p99 targets per class; cold-overlap | `<<PENDING:G5_VERDICT>>` | `<<PENDING:G5_NUMBERS>>` incl. failed/missed of offered |
-| G6 | Durable-view event age and typed execution quality | per-binding policy; 0 unsafe eligibility | `<<PENDING:G6_VERDICT>>` | `<<PENDING:G6_NUMBERS>>` |
-| G7 | TS consumer path (SDK -> writer, writer -> Redis) | p95 <= 100 ms and p95 <= 50 ms per feed | `<<PENDING:G7_VERDICT>>` | `<<PENDING:G7_NUMBERS>>` |
-| G8 | TS execution Redis | commandstats <= 60 % of a core per 10 min; SLOWLOG 0 in steady state; PING p99 <= 5 ms | `<<PENDING:G8_VERDICT>>` | `<<PENDING:G8_NUMBERS>>` |
-| G9 | Readiness | demanded == session-ready all window; 0 data-path eligibility losses; v1_fallback 0 | `<<PENDING:G9_VERDICT>>` | `<<PENDING:G9_NUMBERS>>` (HISTORY: FAIL on 7c71e3af, see below) |
-| G10 | Integrity TRADE (LOSSLESS) | 0 gaps, 0 duplicates applied, 0 replay-expired, 0 overflow | `<<PENDING:G10_VERDICT>>` | `<<PENDING:G10_NUMBERS>>` native typed counters |
-| G11 | Recovery, writer restart | fault cleared -> first valid apply <= 30 s, caught up <= 60 s; no rewind; cursor never ahead | `<<PENDING:G11_VERDICT>>` | `<<PENDING:G11_NUMBERS>>` (HISTORY: PASS on 7c71e3af, see below) |
-| G12 | Recovery, Kafka broker / projector / Stream restart | caught up <= 600 s, then G1-G3 inside; same four timestamps | **PASS - CREDIT (final)** | see "G12" below |
-| G13 | Acceptance DR01-DR08 (76 cells) | every cell closed once on the final DL + writer digests | isolated **12/12 PASS**; runtime window v5.4 **PASS, 76/76 closed** | see "G13" below |
-| G14 | Resources, every DL role and the TS writer | CPU/RAM at stage 100 recorded with headroom (records resources; not a headroom gate) | `<<PENDING:G14_VERDICT>>` | `<<PENDING:G14_NUMBERS>>` per role; `host.json` of the final stage-100 |
+| runtime window v5.5 (dr01-deployed 7, dr01-wrong-account 2, dr02-dr03 14, dr04-dr06 22, dr05-transport 9, dr07 12) | 66 | 66/66 OBSERVED ok, all 6 steps harness_ok | `p184-g13-20261018T051237Z` | summary `147a90aafbe755f83ae1d36cbd42be6f9b860ccded5de8fd44b4becdb434a0d7`, plan `a3c1a8193b41e2a31627cc9a07978c24fb310767db24b23df6a180d8c43be7ad` |
+| dr08-isolated | 4 | 4/4 OBSERVED ok | `p184-g13-20261018T045558Z` | summary `17e731d670174a00a67950ef2cfe1594d37c896e72d2d337bdd6cbf78ef0d5bd`, evidence.jsonl `7eb4119b0cd38b8b4b06097438152bc71ed157bb5242f28189bcd1aabacb831d` |
+| dr05-quiet (amendment-1 predicate) | 2 | 2/2 ISOLATED_FAULT OBSERVED, harness_ok | `p184-g13-20261018T071750Z` | summary `4f5aecbb5737f6295e4e595dbadf6d065b62ad25aad926b56b60a07b43acc084`, rows `eb0efbdecfd946b4d99eec9f215a9e014293b64dd402c5a31d4fe857554dd1f9` |
+| dr05-upstream (after readiness predicate fix TS e9ae5484) | 6 | 6/6 ISOLATED_FAULT OBSERVED, harness_ok | `p184-g13-20261018T085316Z` | summary `b67dff6653879af030edb8d0bd0a7898a97342b3425a9f264302768e87a93489`, rows `4593442cdbe246be9ff9dea024971a4966a49c2816ea3df004de23577553dbb1` |
 
-Summary line for the certificate (fill from the rows above): PASS `<<PENDING:SUMMARY_PASS>>`, FAIL
-`<<PENDING:SUMMARY_FAIL>>`, NOT_MEASURED `<<PENDING:SUMMARY_NOT_MEASURED>>`, DEFERRED `<<PENDING:SUMMARY_DEFERRED>>`.
+- W05 verifier in image 2deb90b0 (`--expect-source-sha 30f50a91...`, `--expect-image-digest sha256:2deb90b0...`) over the
+  four receipts: **DR 76/76** (DR01 9, DR02 8, DR03 6, DR04 14, DR05 17, DR06 6, DR07 12, DR08 4), 0 DR issues, 0
+  provenance/drift issues; status FAIL only from CASE_OPEN on the 260 non-DR matrix cells outside G13. Output
+  `p184-g13-20261018T085316Z/verify/w05-final-v55-76.json` `5490c21e66bf33bae326f2ea2051677f70cf95372b13b823d4c2912835da9895`.
+  Observation: this file is byte-identical to the v5.4 verifier output (`w05-final-v54.json`, same sha256), because the
+  verifier output holds case states only and no run or image identity. The binding to writer 2deb90b0 rests on the
+  verifier arguments and the four input receipts (recorded in the DL plan), not on this hash alone.
+- Packet `packet-g13-v5.5-20261018.md` `507f9096ba8fba76d97441484d4c0d2146a9388aed298a1f01af47d3ca7320fc` (= its sidecar);
+  run ids `g13r8wa20261017` / `g13r8fx01`; TS CI "Quality And V1 Contract" 39048572869 on 30f50a91 (success per the
+  GitHub API at the time; not re-queried at assembly). Pins: DL run worktree `bb054498`, TS run worktrees `aa126794`
+  (runtime, dr08), `a9cf1b41` (dr05-quiet), `e9ae5484` (dr05-upstream).
+- Level: shadow-certified on the final image set (isolated cells TEST_ONLY harness; runtime cells TS stack on the
+  production writer image; one host). Failed apparatus attempts kept, not scored: `045826Z`, `050244Z`, `070444Z`
+  (IDR-111 follow-ups).
 
-## G12 - final credit (PASS)
+## Stage-100 attempts (receipts immutable; only `123222Z` is counted)
 
-- Receipt: `~/.local/state/qdl-v2/p184-g12-v224-final-a44349a1-20261017T084728Z/` (namespace
-  `p184-g12-dl-2e2219b81a8c6dc4`), run 08:48:32-09:15:32Z, lock "claude P18.4 G12 v224 FINAL a44349a1
-  20261017T084728Z" (08:47:28Z, 75 min, released ~09:17Z). Values below are from the plan journal; the file hashes were
-  re-computed with `sha256sum` on 2026-10-17.
-- Verdict v3 COMPLETED, `pass: true`, `images.ts = a44349a1`. `evidence/verdict.json`
-  `30648759e5766f5e085e1ea3874efe2ab69ceca0475fcca2ab23e3016b67d1be`.
-- `caught_up_s` BINANCE / OKX: broker stop/start 0.217 / 0.218, projector restart 0.174 / 0.174, Stream restart
-  0.759 / 0.760 (bound 600 s). Every fault: G1, G2 (TRADE/QUOTE/MARK lost 0), G3 BAR, monitor and sampler PASS.
-- `--credit` exit 0: creditable true, reason PASS, `production_parity` MATCH, `cleaner_binding` RUN, final profile
-  checked. Effective describe `d3d77176c3dfca46e7f44cba465d271afe2709a1fc9d97f75e808808fa959094` before and after
-  (`credit-snapshot.json` `6bb2021ab3e51065bf54697a7f424991fc4125bd29fb4ac0536597be9f4ff2fe`).
-- Writer clones: precheck ok, Redis UNCAPPED, strict_resume VERIFIED on both venues. Teardown: 12 removed, 0 left,
-  clone state erased (`evidence/teardown.json` `b9e9fccf33e8f320b8d76a534b49833caa31e3d3314cb3863570d0967f67d272`).
-- Inherited from other digests: nothing (`FINAL_CREDIT.json` `inherited: "nothing"`). Earlier runs on 7c71e3af and
-  734b08f1 are SIGNAL ONLY.
-- Basis caveats (stated, not hidden): WriterClone apparatus pin `77a6d671` (decision H1, deferred follow-up);
-  integrity layer report-only; harness shape differences listed in CERTIFICATE.md section 5 item 8; foreign-job overlap
-  with this window is NOT_DETERMINABLE (docker keeps only the last events; no lock held by anyone else when acquired).
-- Not rerun for the roll that put `c7ce7d3` images in production: the credited run's image set is
-  `g12-image-set-v224.json` sha256 `4740c995550737e7d30325aaa043f07cf3656014ca5611dd97e482619504ca61`
-  (core 7c848aad, projector/stream 60f83a51, python c21e164a, ts a44349a1).
-
-## G13 - 76 cells
-
-Isolated phase (credited on writer a44349a1, DL run worktree at `f6db0b82`, TS `6af62a7e`, roles
-`g13-roles-v224.json` `31e0716b...`):
-
-| Step | Cells | Result | Receipt | Evidence sha256 |
+| Run | Digests (DL / writer) | protocol_met | Outcome | Status |
 | --- | --- | --- | --- | --- |
-| dr08-isolated | 4 | 4/4 OK, harness_ok, 124.2 s | `p184-g13-20261017T091825Z` | evidence.jsonl `5f9f70799b1c6f4ec15ef16b139fa9bc8b3a345d3ae19a8d35eaae3e823cd541` |
-| dr05-upstream | 6 | 6/6 OBSERVED ok after one apparatus rerun, 334.9 s | `p184-g13-20261017T093001Z` | rows `189de29ed52ce2b9826508423dcc4d307e1a24dc5ba7a6e7abd811e8d8e92681` |
-| dr05-quiet (amendment-1) | 2 | 2/2 ISOLATED_FAULT OBSERVED, `harness_ok` true, 139.7 s | `p184-g13-20261017T092651Z` | rows `11991a2342a55f54dfa729fa816db00d706e871b666d534aa9694525d8c0e179` |
+| `20261016T024530Z` (#3) | pre-release / B16 | false | FAIL G9 (heartbeat counted 3x) | HISTORY, diagnostic |
+| `20261017T032230Z` | c7ce7d3 set / 7c71e3af | false | FAIL G4 G9 | HISTORY (writer replaced, IDR-110) |
+| `20261017T105025Z` | c7ce7d3 set / a44349a1 | true | FAIL G4 G8 | HISTORY (RCA; later fixes) |
+| `20261017T120552Z`, `131831Z`, `132336Z`, `133644Z` | c7ce7d3 set / a44349a1 | - | guard TAINTED, no scorecard | TAINTED |
+| `20261017T135719Z` (run 5) | c7ce7d3 set / a44349a1 | true | FAIL G2 G4 | HISTORY (led to IDR-112/113/114) |
+| `20261018T053803Z` | final set / 2deb90b0 | true | FAIL G4 (mark_index OKX window 1) | HISTORY (led to G4-A1) |
+| `20261018T074624Z` | final set / 2deb90b0 | false | FAIL G4 (book_delta OKX_INVERSE); funding-boundary driver failure | HISTORY (led to A1, A2) |
+| `20261018T091556Z` | final set / 2deb90b0 | - | guard TAINTED (foreign ssh job) | TAINTED |
+| `20261018T092255Z` | final set / 2deb90b0 | false | INVALID: driver client image lacked the A1 constant (ImportError on every read) | INVALID, preserved |
+| `20261018T122102Z` | final set / 2deb90b0 | - | guard TAINTED (fwupdmgr) | TAINTED |
+| **`20261018T123222Z`** | **final set / 2deb90b0** | **true** | **PASS G1 G3 G5-G11 G14; FAIL G2 G4** | **COUNTED** |
 
-- dr05-upstream run 1 (`T092050Z`) is NOT SCORED: `DR05.GENERATION_CHANGE_FENCED@OKX_INVERSE` failed its positive
-  anchor because the harness sampled before the writer subscribed (apparatus readiness race). Kept, summary sha256
-  `4b28325528a8cb3951640b1c7505080b1a890fb5138b119d22b3a4c158369bd5`. Fixed in TS `fc644cd1` (IDR-111).
-- W05 verifier over the three credited files: DR05 8/17 and DR08 4/4 closed, only issue CASE_OPEN on the runtime
-  cells not yet run (`w05-isolated-final-a44349a1.json` `b5519639fd0c23923322063025c566afcb1775c63adca574df067f3db46dce6f`).
-- amendment-1 (TS `1401ccb1`, owner-approved 2026-10-17): DR05.QUIET_TYPED@BINANCE / @OKX are closed by an
-  ISOLATED_FAULT producer with predicate `p184.dr05-quiet-typed.view-vocabulary.v1` (IDR-109). v2 matrix not edited.
-
-Runtime window (66 cells; dr01-deployed 7, dr01-wrong-account 2, dr02-dr03 14, dr04-dr06 views 22, dr05-transport 9,
-dr07 12):
-
-| Window | Result | Status |
-| --- | --- | --- |
-| v5.2 (2026-10-17 02:43Z, writer 7c71e3af) | 74/76 (2 QUIET cells NOT_OBSERVED) | HISTORY, other writer, not credited |
-| v5.3 (09:37Z, writer a44349a1) | 67/76, STOPPED at dr05-transport `DR05_CLONE_STRICT_RESUME_NOT_VERIFIED` (IDR-111 apparatus) | informational; the 9 transport cells stayed open. summary `2f6b9ddd84795dfff9ce3801559f95c01ada5d3910bd5297a6ab44dba071aba0`, W05 `23eeb0e89b8e1dd0d0f531c80739028a153bd6ee7bbe999900f9ac108a8128da` |
-| **v5.4 (final)** | 76 of 76 | PASS; receipt `p184-g13-20261017T103357Z`; summary `9d22e11100e8f23ce76f4b79242ac02455ea7ad2097a7e57cd11436738c68367`; W05 `verify/w05-final-v54.json` `5490c21e66bf33bae326f2ea2051677f70cf95372b13b823d4c2912835da9895` (verifier exit 1 only from 260 CASE_OPEN cells of the 336-cell matrix outside G13; 0 DR issues; DR cells per case: DR01 9, DR02 8, DR03 6, DR04 14, DR05 17, DR06 6, DR07 12, DR08 4); all 6 runtime steps `harness_ok`, exit codes 0; run ids `g13r7wa20261017` / `g13r7fx01`; packet `packet-g13-v5.4-20261017.md` `872265593331a0cc51ef3abb0f301bfdcb45a3978c5d4f845608813a0236101d`; TS CI run `39024582832` success on `c9ebd619` (per the packet; not re-verified here); harness fix `fc644cd1` = IDR-111, not in the writer image closure |
-
-Final G13 verdict rule: PASS when isolated 12/12 + runtime window together close all 76 cells with no provenance or
-drift issue on `a44349a1` / REV `c7ce7d3` digests; otherwise record the open cells as limits only by an owner decision.
-
-## Stage-100 attempts (all kept; only the last protocol-met run on the release digests is credited)
-
-| Run | Date | Digests | protocol_met | Outcome | Credit |
-| --- | --- | --- | --- | --- | --- |
-| #3 `p184-final-campaign-20261016T024530Z` | 2026-10-16 02:45Z | writer B16, stream `baa72c96`, rc19/rc14/rc18/rc22 | false | G9 FAIL (3 samples = one 30 s heartbeat counted 3x); every measured gate inside its rule | HISTORY, diagnostic |
-| final attempt `p184-final-campaign-20261017T032230Z` | 2026-10-17 03:20-03:48Z | release DL digests, writer 7c71e3af | false (guard stopped the driver 03:43Z, 20.4 min into the 30 min load) | G9 FAIL (7 heartbeats 63/64, QUOTE OKX BTC-USD-SWAP STALE); G4 FAIL on 2 rows outside the protocol window (bar BINANCE 1m p95 258.133 vs 257.6; book_snapshot OKX_INVERSE max 300.788 vs 300.7); G11 PASS (outage 0.138 s, first-apply/caught-up max 20.096 s); G1/G2/G7/G10 NOT_MEASURED | HISTORY: writer was replaced (IDR-110, IDR-110b); nothing inherited. scorecard sha256 `63330fed...` (prefix quoted from the plan) |
-| **final** | `<<PENDING:S100_DATE_UTC>>` | release DL digests + writer `a44349a1` | `<<PENDING:S100_PROTOCOL_MET>>` | `<<PENDING:S100_OUTCOME>>` | credit only if protocol_met true |
-
-Final stage-100 details to record: dir `<<PENDING:S100_DIR>>`; scorecard sha256 `<<PENDING:S100_SCORECARD_SHA256>>`;
-load window `<<PENDING:S100_LOAD_WINDOW_UTC>>`; lock owner and window `<<PENDING:S100_LOCK>>`; apparatus (DL run
-worktree sha, G4 observer v5, sampler dedupe `1e09f87`, G11 v2 oracle, native typed G10 counters)
-`<<PENDING:S100_APPARATUS_PINS>>`; trace re-arm 3600 s receipt `<<PENDING:S100_TRACE_REARM_RECEIPT>>`; taint watch
-`<<PENDING:S100_TAINT_WATCH>>`; production actions taken inside the protocol (writer re-arm, G11 coordinator restart)
-`<<PENDING:S100_PRODUCTION_ACTIONS>>`.
-
-Specific checks the final run must show (from the IDR-110 dispositions):
-- native writer `probes_failed` 0 and no native session churn (residual R2 monitored);
-- QUOTE `probes_unavailable` count and its codes, `probes_renewed_same_record` > 0 (R1/R2 fixes in IDR-110b);
-- stream gateway overflow / refused / hub_live_budget_refused deltas 0; the pre-existing TRADE BINANCE BTCUSDT
-  RESOURCE_EXHAUSTED pattern recorded as recurring or not;
-- `ts:ready_60_every_sample` acceptance and the guard (`guard_v2.sh`, 3 consecutive non-"READY 64 64" samples; the
-  guard counts one heartbeat snapshot up to 3 times and is frozen).
-
-## History kept (not credited for v2.2.4)
-
-- v2.2.3 scorecard: [../v2.2.3/scorecard.json](../v2.2.3/scorecard.json) (campaign `p184-final-campaign-20261011T123525Z`,
-  rc12-rc13 digests): PASS G1-G3, G5-G12, G14; G4 NOT_MEASURED; G13 DEFERRED.
-- G12 v1-predicate PASS receipts (rc10-full3, rc12, rc18-control2) are not credited (OF-G12-1, inheritance audit
-  [g12-g13-inheritance.md](g12-g13-inheritance.md)).
-- G12 qualification (`...final-20261016T151558Z`, pre-release images) and the 734b08f1 signal run
-  (`...final-idr110-20261017T060133Z`) are not credited.
-
-## PENDING index for this file
-
-`G1`-`G11`, `G14` `_VERDICT` / `_NUMBERS`; `S100_*` (DIR, SCORECARD_SHA256, DATE_UTC, PROTOCOL_MET, OUTCOME,
-LOAD_WINDOW_UTC, LOCK, APPARATUS_PINS, TRACE_REARM_RECEIPT, TAINT_WATCH, PRODUCTION_ACTIONS); `SUMMARY_PASS` / `_FAIL` / `_NOT_MEASURED` /
-`_DEFERRED`.
+Scorecard sha256 prefixes of the history rows: 024530Z `68c250ad72d3`, 032230Z `63330fed78fd`, 105025Z `23ed2ef25336`,
+135719Z `da30687cd4f2`, 053803Z `8da1c190608e`, 074624Z `e0a786cb64d7`, 092255Z `ffb5b98e3400`; TAINTED marker of 122102Z
+`537df486acda...`.

@@ -1,0 +1,536 @@
+{
+ "after_rollout": {
+  "latency_remeasured_after_final_roll": true,
+  "note": "final roll 2026-10-18 03:35-04:09Z; G12, G13 and the counted stage-100 all ran after it on this exact set",
+  "runtime_at_assembly": [
+   {
+    "health": "healthy",
+    "image": "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff",
+    "oom": false,
+    "restart": 0,
+    "revision_label": "31a515522aff3f6e5e7791aa21500cfa570ccb41",
+    "service": "qdl_v2_stable_candidate-query_kn_1-1",
+    "started": "2026-10-18T03:47:53.818161802Z",
+    "status": "running"
+   },
+   {
+    "health": "healthy",
+    "image": "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff",
+    "oom": false,
+    "restart": 0,
+    "revision_label": "31a515522aff3f6e5e7791aa21500cfa570ccb41",
+    "service": "qdl_v2_stable_candidate-query_kn_2-1",
+    "started": "2026-10-18T03:58:41.79939515Z",
+    "status": "running"
+   },
+   {
+    "health": "healthy",
+    "image": "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784",
+    "oom": false,
+    "restart": 0,
+    "revision_label": "83bef596a3cf0e21b423330fd58060afa3a9b1c1",
+    "service": "qdl_v2_stable_candidate-ingestor_okx_swap-1",
+    "started": "2026-10-18T09:12:23.463316698Z",
+    "status": "running"
+   },
+   {
+    "health": "healthy",
+    "image": "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784",
+    "oom": false,
+    "restart": 0,
+    "revision_label": "83bef596a3cf0e21b423330fd58060afa3a9b1c1",
+    "service": "qdl_v2_stable_candidate-ingestor_binance_usdm-1",
+    "started": "2026-10-18T03:41:43.507579433Z",
+    "status": "running"
+   },
+   {
+    "health": null,
+    "image": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+    "oom": false,
+    "restart": 0,
+    "revision_label": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
+    "service": "qdl_v2_stable_candidate-stream_kn_1-1",
+    "started": "2026-10-16T17:20:00.02548465Z",
+    "status": "running"
+   },
+   {
+    "health": null,
+    "image": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+    "oom": false,
+    "restart": 0,
+    "revision_label": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
+    "service": "qdl_v2_stable_candidate-stream_kn_2-1",
+    "started": "2026-10-16T17:23:02.850735421Z",
+    "status": "running"
+   },
+   {
+    "health": null,
+    "image": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+    "oom": false,
+    "restart": 0,
+    "revision_label": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
+    "service": "qdl_v2_stable_candidate-market_projector_1-1",
+    "started": "2026-10-16T17:26:05.200369211Z",
+    "status": "running"
+   },
+   {
+    "health": null,
+    "image": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+    "oom": false,
+    "restart": 0,
+    "revision_label": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
+    "service": "qdl_v2_stable_candidate-market_projector_2-1",
+    "started": "2026-10-16T17:32:22.172312525Z",
+    "status": "running"
+   },
+   {
+    "health": null,
+    "image": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+    "oom": false,
+    "restart": 0,
+    "revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e",
+    "service": "qdl_v2_stable_candidate-rust_core-1",
+    "started": "2026-10-15T13:33:01.691485188Z",
+    "status": "running"
+   },
+   {
+    "health": null,
+    "image": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+    "oom": false,
+    "restart": 0,
+    "revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e",
+    "service": "qdl_v2_stable_candidate-rust_core_2-1",
+    "started": "2026-10-15T13:33:01.759574932Z",
+    "status": "running"
+   },
+   {
+    "health": null,
+    "image": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+    "oom": false,
+    "restart": 0,
+    "revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e",
+    "service": "qdl_v2_stable_candidate-rust_core_3-1",
+    "started": "2026-10-15T13:33:01.801734215Z",
+    "status": "running"
+   },
+   {
+    "health": "healthy",
+    "image": "sha256:08f356a84151c6e865fbdc4a2efe6924df9336d15353254c2b2da684261794f5",
+    "oom": false,
+    "restart": 0,
+    "revision_label": "a388537c897de909257c7f45db44c9ac44a62ccc",
+    "service": "qdl_v2_stable_candidate-binance_bar_edge-1",
+    "started": "2026-10-12T04:56:51.788238582Z",
+    "status": "running"
+   },
+   {
+    "health": "healthy",
+    "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+    "oom": false,
+    "restart": 0,
+    "revision_label": null,
+    "service": "qdl_v2_stable_candidate-kafka1-1",
+    "started": "2026-10-16T14:14:11.546287855Z",
+    "status": "running"
+   },
+   {
+    "health": "healthy",
+    "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+    "oom": false,
+    "restart": 0,
+    "revision_label": null,
+    "service": "qdl_v2_stable_candidate-kafka2-1",
+    "started": "2026-10-16T14:21:03.772629842Z",
+    "status": "running"
+   },
+   {
+    "health": "healthy",
+    "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+    "oom": false,
+    "restart": 0,
+    "revision_label": null,
+    "service": "qdl_v2_stable_candidate-kafka3-1",
+    "started": "2026-10-16T14:25:32.091341239Z",
+    "status": "running"
+   },
+   {
+    "health": "healthy",
+    "image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+    "oom": false,
+    "restart": 0,
+    "revision_label": null,
+    "service": "qdl_v2_stable_candidate-market_cache-1",
+    "started": "2026-09-27T05:29:58.000340326Z",
+    "status": "running"
+   },
+   {
+    "health": "healthy",
+    "image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+    "oom": false,
+    "restart": 0,
+    "revision_label": null,
+    "service": "qdl_v2_stable_candidate-stable_redis-1",
+    "started": "2026-09-16T06:38:55.588316335Z",
+    "status": "running"
+   },
+   {
+    "health": null,
+    "image": "sha256:2deb90b0cc52eae7610fa44692f90df077e9db100ca259e38fd652a2dc1c5dc5",
+    "oom": false,
+    "restart": 0,
+    "revision_label": "30f50a91dbd67ce2a482480be598cf509b25333e",
+    "service": "market_data_service_p184w",
+    "started": "2026-10-18T13:05:46.664345483Z",
+    "status": "running"
+   }
+  ]
+ },
+ "before_rollout": {
+  "measurement_identity": {
+   "binance_bar_edge": {
+    "measured_digest_pre_release": "sha256:08f356a84151c6e865fbdc4a2efe6924df9336d15353254c2b2da684261794f5 (rc14)",
+    "release_digest": "unchanged",
+    "verdict": "SCOPED_OUT_NOT_ON_RELEASE_REVISION"
+   },
+   "ingestor_binance_usdm": {
+    "measured_digest_pre_release": "sha256:7fba25779f72a3adffc88f195935a316ac94acbfcb362996fafbff89f62c9103 (rc18)",
+    "release_digest": "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784",
+    "verdict": "OTHER_11_BINARIES_EQUAL_INGESTOR_DIFFERENT_BY_DESIGN"
+   },
+   "ingestor_okx_swap": {
+    "measured_digest_pre_release": "sha256:7fba25779f72a3adffc88f195935a316ac94acbfcb362996fafbff89f62c9103 (rc18)",
+    "release_digest": "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784",
+    "verdict": "OTHER_11_BINARIES_EQUAL_INGESTOR_DIFFERENT_BY_DESIGN"
+   },
+   "kafka1-3": {
+    "measured_digest_pre_release": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+    "release_digest": "unchanged image",
+    "verdict": "CONFIG_ONLY"
+   },
+   "market_data_service_p184w (TS writer)": {
+    "measured_digest_pre_release": "sha256:a44349a10e5284efae290ea38062dd23dea0ef015088be6cf041d3f4d0923c73 (IDR-110b, TS 6af62a7e)",
+    "release_digest": "sha256:2deb90b0cc52eae7610fa44692f90df077e9db100ca259e38fd652a2dc1c5dc5",
+    "verdict": "TS_RELEASE_ITEM_BUILD_RECEIPT_PASS"
+   },
+   "market_projector_1": {
+    "measured_digest_pre_release": "sha256:ce629061a8c180ae7e6cf88e32ebaddcf965ffe3924c88a3f1b942fc1623d4f9 (rc14, no IDR-107)",
+    "release_digest": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+    "verdict": "DIFFERENT_FROM_PRODUCTION_EQUAL_LOADED_SECTIONS_TO_RC22"
+   },
+   "market_projector_2": {
+    "measured_digest_pre_release": "sha256:ce629061a8c180ae7e6cf88e32ebaddcf965ffe3924c88a3f1b942fc1623d4f9 (rc14, no IDR-107)",
+    "release_digest": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+    "verdict": "DIFFERENT_FROM_PRODUCTION_EQUAL_LOADED_SECTIONS_TO_RC22"
+   },
+   "query_kn_1": {
+    "measured_digest_pre_release": "sha256:b9ca6c36fb0ad003b77e47bb3a777c3e565944d59cb3a2e9bc5dfb68e3448481 (qdl-v2-python:2.2.3-rc19-4d3476c)",
+    "release_digest": "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff",
+    "verdict": "FILES_EQUAL_EXCEPT_IDR114_SET"
+   },
+   "query_kn_2": {
+    "measured_digest_pre_release": "sha256:b9ca6c36fb0ad003b77e47bb3a777c3e565944d59cb3a2e9bc5dfb68e3448481 (qdl-v2-python:2.2.3-rc19-4d3476c)",
+    "release_digest": "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff",
+    "verdict": "FILES_EQUAL_EXCEPT_IDR114_SET"
+   },
+   "rust_core": {
+    "measured_digest_pre_release": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb (rc22, source a4e7b3b)",
+    "release_digest": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb (kept, not recreated)",
+    "verdict": "KEPT_RC22_BINARY_EQUAL"
+   },
+   "rust_core_2": {
+    "measured_digest_pre_release": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb (rc22, source a4e7b3b)",
+    "release_digest": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb (kept, not recreated)",
+    "verdict": "KEPT_RC22_BINARY_EQUAL"
+   },
+   "rust_core_3": {
+    "measured_digest_pre_release": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb (rc22, source a4e7b3b)",
+    "release_digest": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb (kept, not recreated)",
+    "verdict": "KEPT_RC22_BINARY_EQUAL"
+   },
+   "stream_kn_1": {
+    "measured_digest_pre_release": "sha256:baa72c96d5255cbfc0e332f893c470ff293d88fde4e20ea4c7c94ba5ea09a38b (TEST overlay, qdl.test.only, gateway c934c1e)",
+    "release_digest": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+    "verdict": "DIFFERENT_BUILD_PATH_WITH_BEHAVIOURAL_PROOF"
+   },
+   "stream_kn_2": {
+    "measured_digest_pre_release": "sha256:baa72c96d5255cbfc0e332f893c470ff293d88fde4e20ea4c7c94ba5ea09a38b (TEST overlay, qdl.test.only, gateway c934c1e)",
+    "release_digest": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+    "verdict": "DIFFERENT_BUILD_PATH_WITH_BEHAVIOURAL_PROOF"
+   }
+  },
+  "note": "the final stage-100 measured the deployed v2.2.4 set directly; this section records the per-role equivalence used for roles certified by equality (cores) or classification (gateway)"
+ },
+ "campaign": {
+  "dir": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z",
+  "files": {
+   "a3-local/receipt.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/a3-local/receipt.json",
+    "sha256": "166bfb4536d714a2998695c7ea8242368f067896a59df23626da6a1e6b56323d"
+   },
+   "a3-timeline/timeline.jsonl": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/a3-timeline/timeline.jsonl",
+    "sha256": "90861375ce6d996d419faa42b1bc7cdfff907781030cdaa79e404a168e8e6974"
+   },
+   "campaign.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/campaign.json",
+    "sha256": "2f96f55347dfd69e090436416364685f0479c3801c466ff5d3418af99ed8b7fc"
+   },
+   "client-smoke/receipt.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/client-smoke/receipt.json",
+    "sha256": "b165a597be86de271ede2293e01712d7806dcae8e65c1afd7b8cd60c9a55daef"
+   },
+   "query-funding-allowance.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/query-funding-allowance.json",
+    "sha256": "d4fdd26ef2fb9473e47f34b5b7d0e6046c3032594a9cda4fffdd3c05734858b5"
+   },
+   "scorecard.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/scorecard.json",
+    "sha256": "b9e76a83795f1af8f64b802b22ff1f410087a8f87ee4ef5d23b26a1d39cb4964"
+   },
+   "stage100/gates.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/stage100/gates.json",
+    "sha256": "0c039b197546e3c77ba83712aa65d4cc3c219faf75ba431013580c78170d5aa4"
+   },
+   "stage100/host.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/stage100/host.json",
+    "sha256": "97e1a89372e5a4a5c609ecbc2e6ff1bc46176effb0c5f18597a5acbacdbd701d"
+   },
+   "stage100/receipt.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/stage100/receipt.json",
+    "sha256": "3fd22d861ae434c7f7e0e29ce21d3430b0982f376a50f06c8a0ee1a8b8f64ea0"
+   },
+   "timeline.jsonl": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/timeline.jsonl",
+    "sha256": "cbf05017242feed6925c4c921fabcc924ced313933e6b736e543bdfe5eb54f1e"
+   }
+  },
+  "load_window_utc": "2026-10-18T12:34:45Z..13:04:45Z",
+  "logs": {
+   ".extra/SHA256SUMS": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z.extra/SHA256SUMS",
+    "sha256": "91b405c7fa3523303f6aede3c609c0f5e449314a1998dd9cab22d92291d9e4c2"
+   },
+   ".g11-watcher.log": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z.g11-watcher.log",
+    "sha256": "3e38889ba15b2b70b1239be6fc4156b63924592b5c3567a62af40d692b0c4bed"
+   },
+   ".guard.log": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z.guard.log",
+    "sha256": "d36027f6367257c5cd576e7895b94ef0166a32bef1f22019f0a24bcd241db1e1"
+   },
+   ".guard/summary.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z.guard/summary.json",
+    "sha256": "b7baed86956012fb9479dccbe7070b175f39e14f9f46742d2dd0b3343efda887"
+   },
+   ".run.log": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z.run.log",
+    "sha256": "c8e454d44fdb7387c6c7e5caf82491764cb9293e725ea932e33820915f4aadde"
+   }
+  },
+  "protocol_met": true,
+  "protocol_problems": [],
+  "runtime_identity": {
+   "writer_image": "sha256:2deb90b0cc52eae7610fa44692f90df077e9db100ca259e38fd652a2dc1c5dc5",
+   "writer_restarts": 0,
+   "writer_started": "2026-10-18T12:31:12.464483074Z"
+  }
+ },
+ "limits": [
+  "G2 FAIL: MARK_INDEX_PRICE BINANCE max 1082.9 ms (> 1000; p95 418.6 inside); per-sample cause not determined (no DL receipt clock on the Query-read MARK path).",
+  "G4 FAIL: OKX_INVERSE BTC-USD-SWAP book_delta / book_snapshot / quote maxima over the addendum limits in some windows; venue -> DL ~30 ms, excess internal (A3 rescued none).",
+  "Single host; no HA, no independent failure domains.",
+  "rust_core x3 on rc22 (binary equality); binance_bar_edge held on rc14 (scoped out).",
+  "G14 DL mean CPU sum 5.63 vCPU above the owner's 5 vCPU budget (recorded, not a gate).",
+  "IDR-108 open (Stream accepts before its hot view serves)."
+ ],
+ "measured": {
+  "G1_rows": [
+   {
+    "feed_venue": "BOOK_DELTA|BINANCE",
+    "max": 780.7,
+    "n": 83901,
+    "p95": 197.5,
+    "p99": 273.4
+   },
+   {
+    "feed_venue": "BOOK_DELTA|OKX",
+    "max": 829.4,
+    "n": 94211,
+    "p95": 205.4,
+    "p99": 278.0
+   },
+   {
+    "feed_venue": "BOOK_SNAPSHOT|BINANCE",
+    "max": 702.2,
+    "n": 9344,
+    "p95": 215.1,
+    "p99": 340.4
+   },
+   {
+    "feed_venue": "BOOK_SNAPSHOT|OKX",
+    "max": 814.0,
+    "n": 11223,
+    "p95": 213.2,
+    "p99": 315.3
+   }
+  ],
+  "G2_inside": [
+   {
+    "feed_venue": "TRADE|BINANCE",
+    "max": 611.3495,
+    "n": 100331,
+    "p95": 248.0
+   },
+   {
+    "feed_venue": "TRADE|OKX",
+    "max": 507.3048,
+    "n": 22352,
+    "p95": 241.0
+   },
+   {
+    "feed_venue": "QUOTE|BINANCE",
+    "max": 627.294057,
+    "n": 103965,
+    "p95": 190.0
+   },
+   {
+    "feed_venue": "QUOTE|OKX",
+    "max": 684.438684,
+    "n": 92799,
+    "p95": 200.0
+   },
+   {
+    "feed_venue": "MARK_INDEX_PRICE|OKX",
+    "max": 743.9,
+    "n": 21516,
+    "p95": 353.2
+   }
+  ],
+  "G2_outside": [
+   {
+    "feed_venue": "MARK_INDEX_PRICE|BINANCE",
+    "max": 1082.9,
+    "n": 9000,
+    "p50": 328.5,
+    "p95": 418.6,
+    "p99": 488.5
+   }
+  ],
+  "G4_failing_rows": [
+   {
+    "a3_attributions": [
+     "INTERNAL_SEGMENT_OVER_LIMIT"
+    ],
+    "a3_rescued": false,
+    "limit_max_ms": 282.5,
+    "max_ms_per_window": [
+     234.987,
+     358.892,
+     258.978,
+     170.984,
+     387.114
+    ],
+    "n_per_window": [
+     113,
+     114,
+     114,
+     113,
+     169
+    ],
+    "row": "book_delta|OKX_INVERSE|"
+   },
+   {
+    "a3_attributions": [
+     "INTERNAL_SEGMENT_OVER_LIMIT",
+     "UNKNOWN"
+    ],
+    "a3_rescued": false,
+    "limit_max_ms": 300.7,
+    "max_ms_per_window": [
+     301.419,
+     399.916,
+     311.241,
+     277.296,
+     406.674
+    ],
+    "n_per_window": [
+     120,
+     124,
+     124,
+     125,
+     183
+    ],
+    "row": "book_snapshot|OKX_INVERSE|"
+   },
+   {
+    "a3_attributions": [
+     "INTERNAL_SEGMENT_OVER_LIMIT"
+    ],
+    "a3_rescued": false,
+    "limit_max_ms": 322.6,
+    "max_ms_per_window": [
+     264.863,
+     310.493,
+     288.111,
+     221.921,
+     531.927
+    ],
+    "n_per_window": [
+     107,
+     112,
+     114,
+     102,
+     167
+    ],
+    "row": "quote|OKX_INVERSE|"
+   }
+  ],
+  "gates": {
+   "G1": {
+    "verdict": "PASS"
+   },
+   "G10": {
+    "verdict": "PASS"
+   },
+   "G11": {
+    "verdict": "PASS"
+   },
+   "G12": {
+    "verdict": "PASS"
+   },
+   "G13": {
+    "verdict": "PASS"
+   },
+   "G14": {
+    "verdict": "PASS"
+   },
+   "G2": {
+    "verdict": "FAIL"
+   },
+   "G3": {
+    "verdict": "PASS"
+   },
+   "G4": {
+    "verdict": "FAIL"
+   },
+   "G5": {
+    "verdict": "PASS"
+   },
+   "G6": {
+    "verdict": "PASS"
+   },
+   "G7": {
+    "verdict": "PASS"
+   },
+   "G8": {
+    "verdict": "PASS"
+   },
+   "G9": {
+    "verdict": "PASS"
+   }
+  }
+ },
+ "release": "v2.2.4",
+ "schema": "qdl.release-endpoint-report.v2",
+ "scope": "Data Layer P18.4 closure on the Kafka-native stack at the stage-100 workload: 64 demanded TS Paper slices, BINANCE and OKX (incl. OKX_INVERSE), one TS writer on the same host. Numbers are copied from the final campaign files cited below; nothing is re-measured here. Not a TS order/accounting/alpha certification, not HA."
+}
