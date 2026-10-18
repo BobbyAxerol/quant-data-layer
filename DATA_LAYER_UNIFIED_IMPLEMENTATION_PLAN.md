@@ -75827,3 +75827,28 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   the recorded config path back into the serialized output, so the byte-identity assertions stay byte-identity).
   Host: tests.test_p184_a3_attribution + g4_amendment + g4_amendment_2 + a4_post_hoc 90 OK;
   tests.test_build_qdl_release_images 39 OK.
+- 2026-10-18 ~16:00-16:40Z OPT resource package round 2: PACKET ONLY, not applied. Owner decision ~16:00Z: "Nâng rust
+  kèm gói tối ưu CPU, Ram lần 2 ...". Packet: `upgrade/evidence/releases/v2.2.4/drafts/OPT_RESOURCE_PACKAGE.md`. Claude
+  subagent, read-only evidence, no container started, no Kafka config altered.
+  - Proposal (live `docker update`, no restart, one step per variable with a 10-min HOLD, then one final stage-100):
+    - kafka1-3: 1.75 -> 2.25 vCPU;
+    - query_kn_1/2: 1.5 -> 2.0 vCPU and 1.5 -> 2 GiB;
+    - ingestor_okx_swap: 0.5 -> 1.0 vCPU;
+    - net effect: ceilings 17.25 -> 20.25 vCPU, limits +1 GiB, expected mean draw +~0.11 vCPU.
+  - Evidence from 123222Z (host.json cgroup, a3-local, guard cores/cleaner, broker G1 logs, Query `qdl.stall`):
+    - kafka2 is throttled in 131/143 intervals, 116 s in total; 1,467 / 873 ms at the 12:40:27 / 12:44:21.8 tails,
+      where core `commit_ms` reaches 154 and the load max is 197.5;
+    - broker throttling is 1.3-7x higher inside a broker's own md.latest cleaner episodes;
+    - the OKX ingestor is throttled 50-177 ms at 3 of the 4 tails;
+    - the Binance ingestor shows run-queue waits of 147-176 ms with no throttling (host contention);
+    - Query slow_request cluster 12:43:46-53 on both replicas, warmups 3.5 / 4.6 s, both replicas throttled;
+      query_kn_1 memory headroom 8.1 %;
+    - broker GC max ~54 ms (contributor only).
+  - Not proposed:
+    - C1 (it also changes the G12 parity hash, `p184_g12_isolated_fault.py:3288`);
+    - Kafka heap or memory (needs a rolling restart; procedure in the packet section 10);
+    - Binance ingestor, cores, stream, projectors, bar_edge, caches, TS writer.
+  - rc17v2 dry run refuses the OKX raise (`evidence_does_not_justify_raise`, usage 0.090, throttle 0.0050), so it is
+    an owner-approved `docker update` outside T4. The cumulative T4 budget is kept (+0.75 of +1.5).
+  - A4 is bound to 123222Z. The final run needs any relaxation pre-registered before launch.
+  - Next: owner approval of the exact values, then apply after the rust-image roll (packet section 11).
