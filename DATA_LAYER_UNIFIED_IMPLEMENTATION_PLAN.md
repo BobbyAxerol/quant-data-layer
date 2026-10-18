@@ -75345,7 +75345,8 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
       row-set extension (new frozen addendum). (3) declared schedule constraint (boundary close not at 00/08/12/16Z),
       allowed only if declared before the run with owner approval.
   - Files: this plan only. Nothing rerun; nothing rolled.
-- 2026-10-18 ~08:25-08:40Z RCA (read-only; Claude subagent) of open item (2), G4 book_delta|OKX_INVERSE| max 388.8 / 412.4
+- 2026-10-18 ~08:25-08:40Z RCA (read-only; Claude subagent; text first landed inside concurrent commit 53eb546) of open
+  item (2), G4 book_delta|OKX_INVERSE| max 388.8 / 412.4
   ms (windows 2 / 3) in p184-final-campaign-20261018T074624Z. No production mutation (receipts, source, docker
   inspect/logs and /proc netns counters only; lock absent).
   - Verified (observer v6 split of the exact max samples, g4-2/g4-3 final aggregate outliers): both maxima are BTC-USD-SWAP
