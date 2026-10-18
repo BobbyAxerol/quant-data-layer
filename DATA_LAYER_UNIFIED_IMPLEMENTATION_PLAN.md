@@ -75604,3 +75604,49 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
     + binance_probe + codex_pause_watch + g4_amendment_2 + g4_amendment + gate_campaign + g4_observer +
     foreign_activity_guard: 246 OK; in-image 226 OK. Dry run: preflight problems only the expected trace window (re-arm
     pending), allowance 60000, no A3 drift.
+- 2026-10-18 12:18-13:10Z FINAL stage-100 under G4-A1 + G4-A2 + A3 at DL 6d17b56 (NEW declared run; the invalid
+  092255Z receipt is preserved) (Claude subagent): **protocol met; PASS G1 G3 G5 G6 G7 G8 G9 G10 G11 G14; FAIL G2,
+  G4; G12/G13 inherited (not part of the campaign).** NOT certified: G2 and G4 fail with tails A3 does not attribute.
+  - Apparatus: clean run worktree data-layer-p184-final-run-6d17b56f (tool e179ec78 = A3 pin), lock
+    claude-s100-final-a3-6d17b56f 12:18:58-13:10Z (lock absent before, no foreign job, released), Codex tree pause
+    12:19:09-13:09:57Z (2 IDE servers stopped/resumed, 0 failures; no descendants at the time), trace re-arm
+    rc15/roll_writer_campaign_native.py sha256:2deb90b0... 3600 dry DRY_RUN (delta UNTIL only) + real OK x2 (12:19:39Z
+    not_ready 0; after attempt 1, 12:31:12Z not_ready 1, guard passed), production otherwise unchanged by docker inspect
+    (query 3e9e4d3a x2, ingestors a9679def x2, stream/projector 60f83a51, cores 7c848aad x3, writer 2deb90b0, RestartCount
+    0 everywhere; only the writer recreates of the re-arms and the G11 restart 13:05:42Z), dry run problems [].
+  - Attempt 1 p184-final-campaign-20261018T122102Z: exact-client smoke PASS (154 reads, 0 failed, both stream
+    subscribe/close PASS, allowance 60000 from the deployed Query images), load from 12:23:31Z; guard TAINTED + aborted
+    12:30:29Z (load +7 min): foreign `fwupdmgr` (fwupd-refresh.timer, systemd, 0.43 core), an infrastructure job ->
+    the one allowed rerun. Cleanup clean (driver SIGINT, no G11 restart, docker ps 40). sha256 TAINTED 537df486...,
+    timeline fad8a3a1..., campaign.json 2b9c501b..., client-smoke receipt ea9e1718....
+  - Rerun p184-final-campaign-20261018T123222Z: smoke PASS 12:32:37-12:33:21Z (154 reads 0 failed; launch re-planned
+    +5 s), driver 12:33:26-13:04:49Z exit 0 (driver acceptance PASS), load 12:34:45-13:04:45Z, 5 G4 windows (boundary
+    13:00Z), G11 restart 13:05:42Z (outage 0.14 s, first valid apply / caught up max 4.8 s, 0 rewinds), guard CLEAN,
+    campaign_exit 0, scorecard applied A3 (pins, images, profile, code all matched; evidence complete).
+  - G2 FAIL: MARK_INDEX_PRICE|BINANCE p95 418.6 max 1082.9 ms (n 9000, max < 1000 rule); TRADE/QUOTE both venues and
+    MARK|OKX inside (TRADE|BINANCE p95 248 max 611, QUOTE|BINANCE 190/627, TRADE|OKX 241/507, QUOTE|OKX 200/684, MARK|OKX
+    353/744). A3: UNKNOWN by construction (Query-read MARK records carry no DL receipt clock); no lane episode in the
+    load (no session fault at all).
+  - G4 FAIL: book_delta|OKX_INVERSE| (window max 358.9 / 387.1 vs 282.5), book_snapshot|OKX_INVERSE| (301.4 / 399.9 /
+    311.2 / 406.7 vs 300.7), quote|OKX_INVERSE| (531.9 vs 322.6), all BTC-USD-SWAP. A3 attempted all three, rescued
+    none: every unit has venue -> DL ~30 ms and an INTERNAL split (receive -> CreateTime 154-295 ms, CreateTime ->
+    observer 115-206 ms; internal total > the row limit -> INTERNAL_SEGMENT_OVER_LIMIT), two near-limit units UNKNOWN on
+    local checks (ingestor throttled 1 period, run-queue 80.6 ms, socket queue non-empty). OKX books probe 5/5 covered,
+    0 book tails > 150 ms venue -> DL. So the remaining G4 failures are internal (DL pipeline / observer path), not
+    venue. G4-A1 mark_index_price|OKX| PASS (internal p95 99-126, max 214-374, 5/5 EXTERNAL_VENUE_COMPONENT_CADENCE).
+  - G9 PASS: 60 samples, demanded 64 == session-ready every sample, 0 data-path losses (38 legit quiet TRADE), v1
+    fallback 0, workers LIVE; A3 G9 applied with nothing to attribute.
+  - Report-only: no ingestor session fault / staleness recycle in the window (okx-public-003 recycles 2 unchanged,
+    standby failures 0; read_gap max OKX 1559 / Binance 1581 ms); qdl.stall in the load query_kn_1 26 (slow_request 25,
+    loop_lag 1), query_kn_2 107 (slow_request 105, loop_lag 2); native_probe slot 4 pre-load -> pre-g11 same epoch
+    089f3c15: QUOTE requested 962 -> 32,879, TRADE 30 -> 1,360, failed 0, unavailable 0, unreported_routes 0; post-G11
+    epoch ce24bb1d failed 0; gateway overflow/refused unchanged pre-load/post (stream_kn_1 4/2, stream_kn_2 1/0),
+    hub_live_budget_refused 0, queue_isolation 0; Binance probe windows 1-3, 5 covered, window 4 not covered (probe's own
+    public connection dropped); A3 sampler 65 clock samples, bound max 0.30 ms, ingestor pids stable.
+  - sha256: scorecard.json b9e76a83..., campaign.json 2f96f553..., timeline.jsonl cbf05017..., stage100/receipt.json
+    3fd22d86..., gates.json 0c039b19..., client-smoke/receipt.json b165a597..., query-funding-allowance.json
+    d4fdd26e..., a3-timeline/timeline.jsonl 90861375..., a3-local/receipt.json 166bfb45..., .run.log c8e454d4...,
+    .guard.log d36027f6..., guard/summary.json b7baed86..., .g11-watcher.log 3e38889b..., .extra/SHA256SUMS 91b405c7....
+  - After: docker ps 40, no qdl-p184-* / qdl-phase3-* leftovers, lock released, Codex resumed. Next (owner/coordinator):
+    G2 MARK|BINANCE max 1083 ms and the OKX inverse G4 internal tails are the open items; both are measured as
+    internal or unattributable, not venue.
