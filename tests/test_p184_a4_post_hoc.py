@@ -17,15 +17,13 @@ from pathlib import Path
 
 from scripts import p184_a4_post_hoc as a4
 from scripts import p184_gate_campaign as gc
+from tests.p184_receipt_support import mirror
 
 STATE = Path.home() / ".local/state/qdl-v2"
 COUNTED = STATE / "p184-final-campaign-20261018T123222Z"
 RECEIPTS = [STATE / name for name in ("p184-final-campaign-20261018T053803Z", "p184-final-campaign-20261017T135719Z",
                                       "p184-final-campaign-20261018T074624Z", "p184-final-campaign-20261018T092255Z",
                                       "p184-final-campaign-20261018T123222Z")]
-PATH_KEYS = {"budget_path": "budget_sha256", "g4_addendum_path": "g4_addendum_sha256",
-             "g4_amendment_path": "g4_amendment_sha256", "g4_amendment_2_path": "g4_amendment_2_sha256",
-             "a3_path": "a3_sha256"}
 TABLE = {"book_delta|OKX|": {"candidate_p95_limit_ms": 289.1}, "book_snapshot|OKX|": {"candidate_p95_limit_ms": 270.1},
          "quote|OKX|": {"candidate_p95_limit_ms": 283.3}}
 ADDENDUM = {"rows": {"book_delta|OKX_INVERSE|": {"status": "GATED", "candidate_max_limit_ms": 282.5},
@@ -210,25 +208,6 @@ class FrozenScorerTests(unittest.TestCase):
         with a4.patched(score_mark=lambda m: None, score_g4=lambda *a, **k: None):
             self.assertNotEqual((gc.score_mark, gc.score_g4), before)
         self.assertEqual((gc.score_mark, gc.score_g4), before)
-
-
-def mirror(d: Path, root: Path) -> Path:
-    """Receipt copy whose recorded config paths point at this repository's files when the sha256 is the recorded one
-    (the run worktrees of older receipts were removed after release packaging). Everything else is a symlink."""
-    out = root / d.name
-    out.mkdir()
-    for item in d.iterdir():
-        if item.name != "campaign.json":
-            (out / item.name).symlink_to(item)
-    campaign = json.loads((d / "campaign.json").read_text())
-    for key, sha_key in PATH_KEYS.items():
-        path = campaign.get(key)
-        if path and not Path(path).exists():
-            local = gc.ROOT / "config/v2" / Path(path).name
-            if gc.sha256_file(local) == campaign.get(sha_key):
-                campaign[key] = str(local)
-    (out / "campaign.json").write_text(json.dumps(campaign))
-    return out
 
 
 def strip_paths(value):

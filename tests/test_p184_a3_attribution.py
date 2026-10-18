@@ -17,6 +17,7 @@ from unittest import mock
 from scripts import p184_a3_attribution as a3
 from scripts import p184_a3_evidence as evidence
 from scripts import p184_gate_campaign as campaign
+from tests.p184_receipt_support import as_recorded, mirror
 
 STATE = Path.home() / ".local/state/qdl-v2"
 RECEIPTS = [STATE / name for name in ("p184-final-campaign-20261018T053803Z", "p184-final-campaign-20261017T135719Z",
@@ -568,18 +569,28 @@ class ReviewFindingTests(unittest.TestCase):
 
 @unittest.skipUnless(all((d / "scorecard.json").exists() for d in RECEIPTS), "existing receipts not on this host")
 class ReceiptParityTests(unittest.TestCase):
-    """A3 not recorded -> every gate of every stored scorecard is byte-identical (incl. the invalid 092255Z)."""
+    """A3 not recorded -> every gate of every stored scorecard is byte-identical (incl. the invalid 092255Z).
+    Scored on mirrored receipts: the run worktrees named in their campaign.json were removed (p184_receipt_support)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.dirs = [mirror(d, Path(cls.tmp.name)) for d in RECEIPTS]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
 
     def test_every_gate_identical_without_a3(self):
-        for d in RECEIPTS:
+        for d in self.dirs:
             stored = json.loads((d / "scorecard.json").read_text())
             fresh = json.loads(json.dumps(campaign.build_scorecard(d), default=str))
-            self.assertEqual(json.dumps(fresh["gates"], sort_keys=True), json.dumps(stored["gates"], sort_keys=True),
-                             d.name)
+            self.assertEqual(as_recorded(json.dumps(fresh["gates"], sort_keys=True), d),
+                             json.dumps(stored["gates"], sort_keys=True), d.name)
             self.assertNotIn("a3", fresh)
 
     def test_a_recorded_but_unpinned_a3_is_not_applied_and_changes_no_verdict(self):
-        d = RECEIPTS[-1]
+        d = self.dirs[-1]
         stored = json.loads((d / "scorecard.json").read_text())
         with tempfile.TemporaryDirectory() as temporary:
             copy = Path(temporary) / d.name

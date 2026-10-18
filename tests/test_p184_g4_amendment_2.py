@@ -15,6 +15,7 @@ from scripts import p184_freeze_g4_amendment_2 as freeze2
 from scripts import p184_g4_okx_books_probe as books
 from scripts import p184_gate_campaign as campaign
 from scripts.p184_resp_readonly import read_jsonl
+from tests.p184_receipt_support import as_recorded, mirror
 from tests.test_p184_g4_amendment import TABLE, amendment, stats
 
 STATE = Path.home() / ".local/state/qdl-v2"
@@ -144,15 +145,26 @@ class ExistingReceiptParityTests(unittest.TestCase):
     """Nothing recorded -> every gate of the stored scorecard is reproduced byte-identically by this tool; with
     amendment 2 forced every row except the B1 rows is byte-identical (074624Z gains only bar|BINANCE|8h)."""
 
+    @classmethod
+    def setUpClass(cls):
+        # Mirrored receipts: the run worktrees named in their campaign.json were removed (p184_receipt_support).
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.dirs = [mirror(d, Path(cls.tmp.name)) for d in RECEIPTS]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
     def test_every_gate_identical_to_the_stored_scorecard(self):
-        for d in RECEIPTS:
+        for d in self.dirs:
             stored = json.loads((d / "scorecard.json").read_text())["gates"]
             fresh = json.loads(json.dumps(campaign.build_scorecard(d)["gates"], default=str))
-            self.assertEqual(json.dumps(fresh, sort_keys=True), json.dumps(stored, sort_keys=True), d.name)
+            self.assertEqual(as_recorded(json.dumps(fresh, sort_keys=True), d), json.dumps(stored, sort_keys=True),
+                             d.name)
 
     def test_forced_amendment_2_changes_only_long_bar_rows(self):
         added = {}
-        for d in RECEIPTS:
+        for d in self.dirs:
             c = json.loads((d / "campaign.json").read_text())
             table = json.loads(Path(c["budget_path"]).read_text())["g4_delivery_visibility"]["table"]
             addendum, _, _ = campaign.applicable_g4_addendum(c, table)

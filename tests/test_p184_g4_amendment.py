@@ -13,6 +13,7 @@ from scripts import p184_g4_observer as observer
 from scripts import p184_g4_okx_mark_index_probe as probe
 from scripts import p184_gate_campaign as campaign
 from scripts.p184_resp_readonly import read_jsonl
+from tests.p184_receipt_support import as_recorded, mirror
 
 S = 1_000_000_000
 MS = 1_000_000
@@ -242,15 +243,26 @@ class ExistingReceiptParityTests(unittest.TestCase):
     """053803Z / 135719Z: nothing recorded -> the scorer output is the current scorer's; with the amendment forced,
     every other row is byte-identical and the amended row is NOT_MEASURED (v5 windows carry no paired split)."""
 
+    @classmethod
+    def setUpClass(cls):
+        # Mirrored receipts: the run worktrees named in their campaign.json were removed (p184_receipt_support).
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.dirs = [mirror(d, Path(cls.tmp.name)) for d in RECEIPTS]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
     def test_g4_gate_identical_to_the_stored_scorecard(self):
-        for d in RECEIPTS:
+        for d in self.dirs:
             stored = {g["id"]: g for g in json.loads((d / "scorecard.json").read_text())["gates"]}["G4"]
             fresh = {g["id"]: g for g in json.loads(json.dumps(campaign.build_scorecard(d)["gates"],
                                                                 default=str))}["G4"]
-            self.assertEqual(json.dumps(fresh, sort_keys=True), json.dumps(stored, sort_keys=True), d.name)
+            self.assertEqual(as_recorded(json.dumps(fresh, sort_keys=True), d), json.dumps(stored, sort_keys=True),
+                             d.name)
 
     def test_forced_amendment_changes_only_the_amended_row(self):
-        for d in RECEIPTS:
+        for d in self.dirs:
             c = json.loads((d / "campaign.json").read_text())
             budget = json.loads(Path(c["budget_path"]).read_text())
             table = budget["g4_delivery_visibility"]["table"]

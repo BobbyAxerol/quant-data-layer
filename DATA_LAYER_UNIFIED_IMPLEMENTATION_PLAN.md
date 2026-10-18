@@ -75806,3 +75806,24 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   - Not updated: FINAL_STEPS.md (status header of the 13:45Z packaging, kept as history).
   - Next: push fix/p184-dl-closure (fast-forward), PR head CI; tag only on an explicit owner instruction after the merge
     to main; IDR-126 before IDR-119; IDR-116..118 one variable at a time.
+
+### P18.4 rustls 0.23.45 -> 0.23.46 (RUSTSEC-2026-0346..0349) + receipt-parity test mirror - 2026-10-18 (Claude)
+
+- Owner decision 2026-10-18 ~15:50Z (AskUserQuestion "Nang rustls ngay"): bump now. The four advisories were assessed
+  not reachable from DL code paths, but the policy is zero exceptions (`deny.toml` `[advisories] ignore = []`).
+- Change: `Cargo.toml` workspace pin `rustls = "=0.23.46"` (features `ring`, `std`, default-features off, unchanged);
+  `cargo update -p rustls --precise 0.23.46` in the pinned builder 551428d9 (cargo 1.82.0, crates.io fetch only).
+  `Cargo.lock` diff: rustls version + checksum only (48e13bd8...); no companion crate changed (rustls 0.23.46 keeps
+  rust-version 1.71 and the 0.23.45 dependency requirements). Resolved feature set before and after (cargo tree
+  -e features, linux-gnu): `log, logging, ring, std, tls12`. Provider: `rustls::crypto::ring::default_provider` in
+  stream-gateway tls.rs:10 / query_view.rs:31, binance-shadow :43, native-raw-ingestor :4596 / :7936 (unchanged).
+- rustls in the crate graph (cargo tree -i rustls): qdl-core, qdl-kafka, qdl-stream-gateway, hence 10 of the 12 release
+  binaries (`RUSTLS_LINKED` in scripts/build_qdl_release_images.py); qdl-projector and qdl-venue-core-certify have
+  none. The build recipe now compares against the live ingestor image 83bef59 (a9679def): linked binaries expected
+  DIFFERENT (new crate metadata hashes), the other two EQUAL. Equivalence beyond whole-file is decided per binary by a
+  symbol-level comparison (next entry), not by the recipe.
+- Tests: the A3 / G4-A1 / G4-A2 receipt-parity tests (4 failures + 2 errors since the 13:3x run-worktree cleanup) now
+  score mirrored receipts (`tests/p184_receipt_support.py`, the A4 `mirror` helper moved there; `as_recorded` puts
+  the recorded config path back into the serialized output, so the byte-identity assertions stay byte-identity).
+  Host: tests.test_p184_a3_attribution + g4_amendment + g4_amendment_2 + a4_post_hoc 90 OK;
+  tests.test_build_qdl_release_images 39 OK.

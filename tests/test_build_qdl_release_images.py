@@ -266,10 +266,13 @@ class SectionTests(unittest.TestCase):
 
 
 class VerdictTests(unittest.TestCase):
-    def references(self, gateway_equal=True):
+    """Fixture = the rustls 0.23.46 rebuild: every rustls-linked binary differs from every reference, qdl-projector
+    and qdl-venue-core-certify are whole-file EQUAL to 83bef59 (and to the earlier references they equalled)."""
+
+    def references(self):
         rc22 = shas("1" * 64)
         rc22["qdl-stream-gateway"] = "2" * 64
-        stream = {"qdl-stream-gateway": "3" * 64 if gateway_equal else "4" * 64}
+        stream = {"qdl-stream-gateway": "3" * 64}
         v224 = shas("1" * 64)
         v224["qdl-stream-gateway"] = "3" * 64
         v224["qdl-native-raw-ingestor"] = "8" * 64
@@ -277,35 +280,39 @@ class VerdictTests(unittest.TestCase):
                 "rc18_ingestor": {"qdl-native-raw-ingestor": "5" * 64},
                 "rc14_projector": {"qdl-projector": "6" * 64},
                 "v224_c7ce7d3": v224,
-                "v224_6d61710": {**v224, "qdl-native-raw-ingestor": "b" * 64}}
+                "v224_6d61710": {**v224, "qdl-native-raw-ingestor": "b" * 64},
+                "v224_83bef59": {**v224, "qdl-native-raw-ingestor": "c" * 64}}
 
     def release(self):
         rel = shas("1" * 64)
-        rel["qdl-stream-gateway"] = "3" * 64
-        rel["qdl-native-raw-ingestor"] = "a" * 64  # IDR-112: differs from every reference
+        for index, name in enumerate(sorted(b.RUSTLS_LINKED)):
+            rel[name] = f"{index:x}".rjust(2, "d") * 32  # rustls 0.23.46: differs from every reference
         return rel
 
     def test_expected_mix_passes(self):
         verdict = b.binary_verdicts(self.release(), self.references())
         self.assertTrue(verdict["ok"], verdict["unexpected"])
-        self.assertTrue(verdict["core_equal_to_measured"])
+        # The core binary links rustls: it is no longer byte-identical to the measured rc22 core.
+        self.assertFalse(verdict["core_equal_to_measured"])
 
-    def test_core_difference_is_unexpected_and_flagged(self):
+    def test_a_linked_binary_equal_to_a_reference_is_unexpected(self):
         rel = self.release()
-        rel["qdl-realtime-core"] = "9" * 64
+        rel["qdl-realtime-core"] = self.references()["v224_83bef59"]["qdl-realtime-core"]
         verdict = b.binary_verdicts(rel, self.references())
         self.assertFalse(verdict["ok"])
-        self.assertFalse(verdict["core_equal_to_measured"])
+        self.assertTrue(verdict["core_equal_to_measured"])
         self.assertEqual({r["binary"] for r in verdict["unexpected"]}, {"qdl-realtime-core"})
 
-    def test_gateway_difference_needs_a_build_path_analysis(self):
-        verdict = b.binary_verdicts(self.release(), self.references(gateway_equal=False))
-        self.assertEqual([(r["binary"], r["reference"], r["observed"]) for r in verdict["unexpected"]],
-                         [("qdl-stream-gateway", "stream_baa72c96", "NOT_ANALYSED")])
-        ok = {("qdl-stream-gateway", "stream_baa72c96"): {"observed": "DIFFERENT_BUILD_PATH"}}
-        self.assertTrue(b.binary_verdicts(self.release(), self.references(gateway_equal=False), ok)["ok"])
-        bad = {("qdl-stream-gateway", "stream_baa72c96"): {"observed": "DIFFERENT"}}
-        self.assertFalse(b.binary_verdicts(self.release(), self.references(gateway_equal=False), bad)["ok"])
+    def test_section_expectation_needs_an_analysis(self):
+        rows = {"qdl-stream-gateway": [("stream_baa72c96", "DIFFERENT_BUILD_PATH", "fixture")]}
+        with mock.patch.dict(b.BINARY_EXPECTATIONS, rows):
+            verdict = b.binary_verdicts(self.release(), self.references())
+            self.assertEqual([(r["binary"], r["reference"], r["observed"]) for r in verdict["unexpected"]],
+                             [("qdl-stream-gateway", "stream_baa72c96", "NOT_ANALYSED")])
+            ok = {("qdl-stream-gateway", "stream_baa72c96"): {"observed": "DIFFERENT_BUILD_PATH"}}
+            self.assertTrue(b.binary_verdicts(self.release(), self.references(), ok)["ok"])
+            bad = {("qdl-stream-gateway", "stream_baa72c96"): {"observed": "DIFFERENT"}}
+            self.assertFalse(b.binary_verdicts(self.release(), self.references(), bad)["ok"])
 
     def test_projector_loaded_sections_or_whole_file(self):
         rel = self.release()
@@ -314,10 +321,8 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual([(r["binary"], r["reference"], r["observed"]) for r in verdict["unexpected"]],
                          [("qdl-projector", "rc22_core", "NOT_ANALYSED"),
                           ("qdl-projector", "v224_c7ce7d3", "NOT_ANALYSED"),
-                          ("qdl-projector", "v224_6d61710", "NOT_ANALYSED")])
-        ok = {("qdl-projector", ref): {"observed": "EQUAL_LOADED_SECTIONS"}
-              for ref in ("rc22_core", "v224_c7ce7d3", "v224_6d61710")}
-        self.assertTrue(b.binary_verdicts(rel, self.references(), ok)["ok"])
+                          ("qdl-projector", "v224_6d61710", "NOT_ANALYSED"),
+                          ("qdl-projector", "v224_83bef59", "DIFFERENT")])
         self.assertTrue(b.binary_verdicts(self.release(), self.references())["ok"])  # whole-file EQUAL satisfies
 
     def test_missing_binary_or_unread_reference_fails(self):
@@ -398,36 +403,25 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class Idr112RebuildExpectationTests(unittest.TestCase):
-    def test_only_the_ingestor_may_differ_from_the_first_v224_build(self):
+class RustlsRebuildExpectationTests(unittest.TestCase):
+    """rustls 0.23.45 -> 0.23.46: rustls-linked binaries DIFFERENT from every reference, the other two EQUAL to 83bef59."""
+
+    def test_linked_set_is_every_binary_except_projector_and_venue_certify(self):
+        self.assertEqual(set(b.RUST_BINARIES) - b.RUSTLS_LINKED, {"qdl-projector", "qdl-venue-core-certify"})
+
+    def test_expectations_follow_the_linked_set(self):
         for name in b.RUST_BINARIES:
             rows = {ref: expected for ref, expected, _ in b.BINARY_EXPECTATIONS[name]}
-            if name == "qdl-native-raw-ingestor":
-                self.assertEqual(rows["v224_c7ce7d3"], "DIFFERENT")
-                self.assertEqual(rows["rc22_core"], "DIFFERENT")
+            if name in b.RUSTLS_LINKED:
+                self.assertEqual(set(rows.values()), {"DIFFERENT"}, name)
+                self.assertIn("v224_83bef59", rows, name)
             else:
-                self.assertEqual(rows["v224_c7ce7d3"], "EQUAL_LOADED_SECTIONS", name)
+                self.assertEqual(rows["v224_83bef59"], "EQUAL", name)
 
-    def test_an_unchanged_binary_that_differs_from_the_first_v224_build_is_unexpected(self):
+    def test_unlinked_binary_that_differs_from_83bef59_is_unexpected(self):
         refs = VerdictTests().references()
         rel = VerdictTests().release()
-        rel["qdl-kafka-smoke"] = "c" * 64
+        rel["qdl-venue-core-certify"] = "e" * 64
         unexpected = b.binary_verdicts(rel, refs)["unexpected"]
-        self.assertIn(("qdl-kafka-smoke", "v224_c7ce7d3", "NOT_ANALYSED"),
+        self.assertIn(("qdl-venue-core-certify", "v224_83bef59", "DIFFERENT"),
                       [(r["binary"], r["reference"], r["observed"]) for r in unexpected])
-
-
-class Idr112ReviewRebuildExpectationTests(unittest.TestCase):
-    def test_only_the_ingestor_may_differ_from_the_idr112_build(self):
-        for name in b.RUST_BINARIES:
-            rows = {ref: expected for ref, expected, _ in b.BINARY_EXPECTATIONS[name]}
-            expected = "DIFFERENT" if name == "qdl-native-raw-ingestor" else "EQUAL_LOADED_SECTIONS"
-            self.assertEqual(rows["v224_6d61710"], expected, name)
-
-    def test_an_ingestor_equal_to_the_idr112_build_is_unexpected(self):
-        refs = VerdictTests().references()
-        rel = VerdictTests().release()
-        rel["qdl-native-raw-ingestor"] = refs["v224_6d61710"]["qdl-native-raw-ingestor"]
-        unexpected = b.binary_verdicts(rel, refs)["unexpected"]
-        self.assertEqual([(r["binary"], r["reference"], r["observed"]) for r in unexpected],
-                         [("qdl-native-raw-ingestor", "v224_6d61710", "EQUAL")])

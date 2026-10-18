@@ -106,6 +106,10 @@ REFERENCES = {
     # 83bef59) must equal it in every binary except the ingestor.
     "v224_6d61710": ("qdl-v2-rust:2.2.4-6d61710",
                      "sha256:5e261809b5046c4ff9de098d5b57eb049287abaabd722ed145701be47d79114b"),
+    # The IDR-112 review rebuild (83bef59), live on both ingestors since 2026-10-18; every other binary in it is
+    # whole-file EQUAL to 60f83a51 (stream/projector) and rc22 (core). The rustls rebuild is compared against it.
+    "v224_83bef59": ("qdl-v2-rust:2.2.4-83bef59",
+                     "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784"),
 }
 PYTHON_REFERENCE = ("qdl-v2-python:2.2.3-rc19-4d3476c",
                     "sha256:b9ca6c36fb0ad003b77e47bb3a777c3e565944d59cb3a2e9bc5dfb68e3448481")
@@ -173,6 +177,26 @@ for _name in RUST_BINARIES:
             ("v224_6d61710", "EQUAL_LOADED_SECTIONS", "6d61710..REV changes only "
              "rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs among Rust sources (IDR-112 F1-F3); whole-file "
              "EQUAL expected, loaded sections equal at least"))
+
+# rustls 0.23.45 -> 0.23.46 (RUSTSEC-2026-0346..0349, owner decision 2026-10-18 "Nang rustls ngay"): the only change
+# since 83bef59 is Cargo.toml/Cargo.lock for rustls. Binaries whose crate graph contains rustls (cargo tree -i rustls
+# --target x86_64-unknown-linux-gnu: qdl-core, qdl-kafka, qdl-stream-gateway) get new crate metadata hashes, so their
+# files differ from every earlier build; whether anything outside rustls code changed is decided by
+# scripts/p184_rust_symbol_diff.py, not here. qdl-projector and qdl-venue-core-certify have no rustls in their graph.
+RUSTLS_LINKED = frozenset({
+    "qdl-authority-rehearsal", "qdl-binance-shadow", "qdl-kafka-smoke", "qdl-native-raw-ingestor",
+    "qdl-parity-replay", "qdl-phase91-canary-rehearsal", "qdl-phase92-primary-rehearsal", "qdl-production-core",
+    "qdl-realtime-core", "qdl-stream-gateway",
+})
+_RUSTLS_REASON = "rustls 0.23.46 (RUSTSEC-2026-0346..0349) is in this binary's crate graph"
+for _name in RUST_BINARIES:
+    if _name in RUSTLS_LINKED:
+        BINARY_EXPECTATIONS[_name] = [(ref, "DIFFERENT", _RUSTLS_REASON) for ref, _, _ in BINARY_EXPECTATIONS[_name]]
+        BINARY_EXPECTATIONS[_name].append(("v224_83bef59", "DIFFERENT", _RUSTLS_REASON + "; the only delta since "
+                                           "83bef59"))
+    else:
+        BINARY_EXPECTATIONS[_name].append(("v224_83bef59", "EQUAL", "no rustls in its crate graph and no other "
+                                           "source delta since 83bef59"))
 
 # Byte markers that only the isolated-replay-clock feature compiles in (qdl-test-data-clock replay
 # module). The env names QDL_TEST_DATA_CLOCK_* are present in every build (the guard that refuses
