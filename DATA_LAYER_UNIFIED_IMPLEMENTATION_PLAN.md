@@ -74950,3 +74950,34 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   Dry runs: rc17v2 both ingestors diff [image]; rc15 candidate() both Query diff [image], env/volume diff empty.
   Evidence ~/.local/state/qdl-v2/releases/v2.2.4/rollout-idr112b-idr114/SHA256SUMS; new read-only postchecks
   rollout/postchecks/ingestor_lane_report.py (d46e971d...), query_stall_report.py (812ae73f...).
+- 2026-10-18 04:10-04:53Z FINAL chain (v5.5, owner-approved ~03:30Z "Duyệt v5.5 + chuỗi cuối (Recommended)") step 1,
+  G12 final credit on the FINAL image set: **PASS, credited** (Claude subagent). Nothing inherited from earlier image sets.
+  - Precondition: coordinator roll driver rollout-idr112b-idr114/driver.log ALL_DONE 04:09:25Z (lock
+    claude-dl-final-roll released). docker inspect 04:10Z: query_kn_1/2 3e9e4d3a (python 2.2.4-31a5155), ingestors x2
+    a9679def (rust 2.2.4-83bef59), stream x2 / projector x2 60f83a51, core x3 7c848aad (rc22), bar_edge 08f356a8, writer
+    market_data_service_p184w 2deb90b0 (label 30f50a91, started 2026-10-17T16:59:41Z); all RestartCount 0. TS release
+    receipt release/30f50a91/receipt.json PASS (7040ba9f...); CI "Quality And V1 Contract" 39048572869 success on
+    30f50a91 (GitHub API, job quality-contract success).
+  - Pins: DL bb054498 (g12-image-set-v224.json python -> 3e9e4d3a, ts -> 2deb90b0, sha256 6303cdcb...; g13-roles-v224.json
+    query -> 3e9e4d3a, ingestors -> a9679def, sha256 984c4566...; regenerated from docker inspect). Clean detached run
+    worktrees data-layer-p184-final-run-bb054498 and trading-system-final-run-aa126794 (TS head). Same shape as
+    20261017T084728Z: --ts-root trading-system-final-run-77a6d671 (coordinator decision H1), --auto-leader-rebalance
+    false from a fresh parity snapshot, --credit.
+  - Lock "claude P18.4 G12 v224 FINAL 2deb90b0 20261018T041107Z": the lock tool waited 04:11-04:24Z on a foreign process
+    (a Codex app-server `ssh ... 178.128.51.255 python3 -c ...` job running on the remote portal host; local CPU ~0),
+    taken 04:24:15Z (75 min), released 04:52:31Z. df 206 GiB free.
+  - Receipt ~/.local/state/qdl-v2/p184-g12-v224-final-2deb90b0-20261018T042415Z/ (namespace
+    p184-g12-dl-202cf867bb6a5628), run 04:25:02-04:51:45Z, exit 0.
+    - verdict v3 COMPLETED **pass true**, images ts 2deb90b0 / python 3e9e4d3a / stream+projector 60f83a51 / core
+      7c848aad. caught_up_s BINANCE/OKX: broker_stop_start 0.095/0.095, projector_restart 0.100/0.046, stream_restart
+      0.572/0.573. Every fault: G1, G2 (TRADE/QUOTE/MARK lost 0, unseen 0), G3 BAR 1m, sampler PASS.
+    - Writer clones: precheck ok, Redis UNCAPPED, strict_resume VERIFIED on both venues.
+    - --credit exit 0: creditable true, reason PASS, production_parity MATCH, cleaner_binding RUN, final profile checked.
+      Effective describe sha256 d3d77176... before and after.
+    - sha256: verdict.json 170af837..., production-parity.json d4e1f82d..., credit-snapshot.json 3aa5db2c...,
+      writer-precheck.json cc448e2d..., c-observe.json 598f05f8... / c-observe-after.json 14f9365e..., teardown.json
+      53691d95..., FINAL_CREDIT.json c6bfaedd....
+    - Teardown: 12 removed, 0 left by label/name, 0 networks, 0 volumes (42/12 before = after), clone state erased
+      (complete), production_guard_breaches {}, production_external_recreates {}.
+  - Foreign-job overlap: none started inside the lock by the lock tool's check; docker events no longer hold the window
+    (oldest 04:53:18Z), so container overlap is NOT_DETERMINABLE from the host.
