@@ -75021,3 +75021,41 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
     by ready_s), and dr05-upstream readiness either starts the case budget after clone readiness or keeps the
     demanded > 0 gate plus an anchor retry until the deadline; then rerun only dr05-upstream + dr05-quiet on the same
     image set. Chain continues with the runtime window (independent of these 8 cells).
+- 2026-10-18 05:08-05:29Z FINAL chain (v5.5) step 3, G13 runtime window packet v5.5 on writer 2deb90b0: **66/66 runtime
+  cells OBSERVED ok, all 6 steps harness_ok; W05 68/76** (8 DR05 cells open from the step-2 apparatus FAIL, as the packet
+  states; 0 provenance or drift issue) (Claude subagent).
+  - Packet p1/packet-g13-v5.5-20261018.md sha256 507f9096... (= sidecar): v5.4 + image 2deb90b0 (TS 30f50a91) + run ids
+    g13r8wa20261017 / g13r8fx01 + pins DL bb054498 / TS run worktree aa126794 + CI 39048572869; approvals recorded in the
+    delta header (2026-10-17 ~15:20Z "Sửa cả hai, chạy lại gate", "fix hết"; 2026-10-18 ~03:30Z "Duyệt v5.5 + chuỗi
+    cuối"); gate 0.10 waiver carried over. Generator g13v55/make_g13v55.py 2c86ccd8... (`--image 2deb90b0 --ci-run
+    39048572869 --out-suffix=-ci`): compose 4cef60ad... (26 changed paths vs v5.4: 7 role image + run-id substitutions in
+    the allowed env keys), FX plan 615e1add..., inputs-ci b86a92e5..., alpha compose 96225365... unchanged.
+  - Gates: dry run exit 0, blocked {}, 66 cells, coverage 76 missing []; deployed_mismatches []; checkout_problems [];
+    writer env view (14 keys) and image equal the G12 credit-snapshot writer; DL run worktree bb054498 and TS run worktree
+    aa126794 clean before/after.
+  - Lock "claude P18.4 G13 v5.5 window (packet-g13-v5.5-20261018)" 05:09:02-05:29:14Z (released).
+  - Step 2: B9 99/99 pending [] mismatch []; B16 {} (binding digest 450c38a2..., 10 accounts incl. the 4 g13r8wa20261017);
+    B14 DNS 4/4; INDEX BINANCE:USD_M:BTCUSDT present=false (as v5.2-v5.4); B10 CA fc24c047... x3; bind sources 55 (8
+    identity files checked with alpine test -s, 8 ok). Step 3 FX g13r8fx01 FX_PROOF_SEED_COMMITTED (4 writes). Step 4
+    preflight_env PASS x2, compose config 0 x2. Step 5 ts-p184 up 05:10:20Z, 8 containers, 0 restarts, 7 roles on
+    2deb90b0, health 200 + "Gateway V3 Online", Traceback/401/UNAUTHENTICATED/BINDING_MISMATCH/CANARY all 0, gateway
+    writer scope holds the 4 g13r8wa accounts. Step 6 B12 4/4. Step 7 alphas up 05:11:53Z, warmup 700 rows both venues,
+    0 non-200, no new data-source row (last 2026-10-12). Step 7b FX snapshot 05:10:25Z validated_at_ms set, 1 rate.
+  - Runner p184-g13-20261018T051237Z (05:12:37-05:26:46Z, exit 0; summary.json 147a90aa..., plan.json a3c1a819...;
+    sealed DL export tree 05a573c6..., removed): dr01-deployed 7 [0x5] 27.6 s; dr01-wrong-account 2 [0,0] 4.7 s (cleanup
+    complete true); dr02-dr03-alpha 14 [0,0,0] 507.4 s; dr04-dr06-views 22 [0x4] 249.3 s; **dr05-transport 9 [0] 53.0 s,
+    all 9 OBSERVED ok** (bootstrap_checkpoint_proof complete: QUOTE routes BINANCE ETHUSDT, OKX BTC-USD-SWAP, OKX
+    ETH-USDT-SWAP, items QUOTE 3 / TRADE 2, checkpoint 5293 B; strict_resume VERIFIED, strict refusals 0, strict
+    heartbeat refusals 0 over 2 fresh heartbeats); dr07-reference 12 [0] 4.1 s. dr05-transport receipt 7b9a5cd6...,
+    jsonl 1fd303c8....
+  - W05 verifier in 2deb90b0 (--network none, --expect-source-sha 30f50a91, --expect-image-digest 2deb90b0) over the 6
+    runtime jsonl + dr08 045558Z: **68/76** (DR01 9/9, DR02 8/8, DR03 6/6, DR04 14/14, DR05 9/17, DR06 6/6, DR07 12/12,
+    DR08 4/4). Issues: CASE_OPEN on the 6 dr05-upstream cells (+ 260 non-DR BR* matrix cells, outside G13) and
+    CASE_BELOW_REQUIRED_LEVEL on the 2 DR05.QUIET_TYPED cells (no isolated row); no provenance or drift issue.
+    verify/w05-final-v55.json 20f8400f....
+  - Abort watch (30 s, 28 samples): writer rc 0, DL bad roles [], 0 QUOTA/RESOURCE_EXHAUSTED lines, load1 <= 16.52.
+  - Teardown: alpha down (2), ts-p184 down (8 + network), FX g13r8fx01 FX_PROOF_SEED_DEACTIVATED (3 x UPDATE 1),
+    wrong-account cleanup complete true, DSN env file and p1/r2 removed; 0 ts-p184/p184-g13-/p184-dr05- containers,
+    networks, volumes, /tmp/p184-dr05-*; docker ps = baseline 40; disk +48 MiB. Writer 2deb90b0 rc 0 unchanged.
+  - Status: G13 on 2deb90b0 = 68/76; DR05 GAP_REFUSAL x3 / GENERATION_CHANGE_FENCED x3 / QUIET_TYPED x2 open until the
+    harness fix and an isolated rerun on the same image set.
