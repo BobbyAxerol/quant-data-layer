@@ -56,7 +56,19 @@ neither shown nor excluded. v5 reads its OWN container cgroup v2 files (/sys/fs/
 cgroup namespace: the observer container's cgroup only) at READY, at every aggregate checkpoint and at the final
 aggregate, and emits them as `observer_cgroup` lines. cgroup_summary() folds them into the receipt (and the campaign's
 G4 window receipts) as report-only: window usage in cores, nr_throttled/nr_periods, throttled_ms, and the same per
-checkpoint interval. No verdict reads it; sampling, aggregates, percentiles and the frozen baseline are unchanged."""
+checkpoint interval. No verdict reads it; sampling, aggregates, percentiles and the frozen baseline are unchanged.
+
+Paired-event split (OBSERVER_VERSION v6, 2026-10-18, G4 amendment 1, config/v2/p184-stage100-g4-amendment-1.json):
+mark_index_price|OKX| is a PAIRED mark+index event (rust/qdl-realtime-core process_mark_index): source_event_time =
+min(mark.ts, index.ts), received_at_ns = the OLDEST component receipt, published_at_ns = the NEWEST, and
+source_sequence = mark_ts_ms:index_ts_ms:mark_receipt_ns:index_receipt_ns:<raw ids>. For that one row only, v6 also
+folds, per ADMITTED event (the unchanged v2 sampler population), the split of the same event into fixed histograms
+`paired_split` (paired_split()): internal_newest_receipt_to_producer_ts_ms = Kafka CreateTime - newest component
+receipt (the amendment's verdict quantity), component_ts_gap_ms = |mark.ts - index.ts|, component_receipt_gap_ms,
+and the per-component venue -> DL receipt; plus a top-OUTLIER_K capsule on the internal split, the count of events
+whose source_sequence does not parse (paired_missing) and of events whose published_at_ns differs from the newest
+component receipt (published_mismatch). Every other row, the visibility histograms, the sampler, percentiles and
+the summary of every other row are byte-identical to v5."""
 import argparse
 import hashlib
 import heapq
@@ -99,7 +111,7 @@ def top_record(event):
     return result
 
 ALL_FEEDS='trade,quote,mark_index_price,book_delta,book_snapshot,bar'
-OBSERVER_VERSION='qdl.p184.g4-observer.v5'
+OBSERVER_VERSION='qdl.p184.g4-observer.v6'
 LAUNCH_MODE='docker_run_isolated'
 DEFAULT_CPUS=0.5
 DEFAULT_MEMORY='512m'
@@ -134,8 +146,24 @@ def summarize_aggregate(aggregate):
                                   'visibility_ms':round((o['observer_receipt_wall_ns']-o['source_event_ns'])/1e6,3)
                                   if o.get('observer_receipt_wall_ns') and o.get('source_event_ns') else None}
                                for o in row.get('outliers') or []])
+        if row.get('paired_split') is not None:block['paired_split']=summarize_paired(row['paired_split'])
         out[key]=block
     return out
+
+
+def summarize_paired(paired):
+    """v6 summary of PAIRED_ROW's same-event split: stats per split quantity (BUCKET_UPPER_BOUND percentiles, exact
+    max), counters, and the internal-split outlier capsule with exact timestamps (G4 amendment 1)."""
+    return {'population':paired.get('population'),
+            **{name:Histogram.from_json((paired.get('histograms') or {}).get(name)).stats() for name in PAIRED_METRICS},
+            'missing':paired.get('missing'),'paired_missing':paired.get('paired_missing'),
+            'published_mismatch':paired.get('published_mismatch'),'older_component':paired.get('older_component'),
+            'internal_outliers':[{k:o.get(k) for k in ('topic','partition','offset','source_event_ns','received_at_ns',
+                                                        'published_at_ns','producer_timestamp_ms',
+                                                        'observer_receipt_wall_ns','paired_split')}
+                                 | {'native_symbol':(o.get('identity') or {}).get('native_symbol'),
+                                    'source_sequence_head':':'.join(str((o.get('identity') or {}).get('source_sequence') or '').split(':')[:4])}
+                                 for o in paired.get('outliers') or []]}
 
 
 def _summarize_records(lines):
@@ -268,6 +296,41 @@ BASELINE_COMPARABILITY=('frozen G4 table and addendum unchanged; gated populatio
                         'straddled limit is unresolved); max exact')
 
 
+# v6 (G4 amendment 1): the one paired row whose same-event split is aggregated, and its split quantities.
+PAIRED_ROW='mark_index_price|OKX|'
+PAIRED_METRICS=('internal_newest_receipt_to_producer_ts_ms','component_ts_gap_ms','component_receipt_gap_ms',
+                'mark_venue_to_dl_ms','index_venue_to_dl_ms')
+
+
+def paired_components(source_sequence):
+    """(mark_ts_ms, index_ts_ms, mark_receipt_ns, index_receipt_ns) of a paired mark+index event, else None.
+    rust/qdl-realtime-core/src/lib.rs process_mark_index writes source_sequence =
+    "{mark.ts}:{index.ts}:{mark.received_at_ns}:{index.received_at_ns}:{mark raw id}:{index raw id}"."""
+    parts=str(source_sequence or '').split(':')
+    if len(parts)<4:return None
+    try:values=tuple(int(x) for x in parts[:4])
+    except ValueError:return None
+    return values if all(v>0 for v in values) else None
+
+
+def paired_split(source_sequence,produced_ms,published_ns=None):
+    """Same-event split of one paired event (ms; None when source_sequence does not parse). The internal split is
+    Kafka CreateTime (ms resolution) - the NEWEST component receipt: the event cannot exist before its newest
+    component arrived, so this is the DL-internal pair -> produce time without the wait for the other component.
+    published_mismatch: published_at_ns present and different from the newest receipt (report-only consistency)."""
+    components=paired_components(source_sequence)
+    if components is None:return None
+    mark_ts,index_ts,mark_rx,index_rx=components
+    newest=max(mark_rx,index_rx)
+    return {'internal_newest_receipt_to_producer_ts_ms':(produced_ms*1_000_000-newest)/1e6 if produced_ms is not None else None,
+            'component_ts_gap_ms':float(abs(mark_ts-index_ts)),
+            'component_receipt_gap_ms':abs(mark_rx-index_rx)/1e6,
+            'mark_venue_to_dl_ms':(mark_rx-mark_ts*1_000_000)/1e6,
+            'index_venue_to_dl_ms':(index_rx-index_ts*1_000_000)/1e6,
+            'older_component':'index' if index_rx<mark_rx else 'mark' if mark_rx<index_rx else 'same',
+            'published_mismatch':bool(published_ns) and published_ns!=newest}
+
+
 def bucket_index(ms):
     """Fixed log-linear bucket of a duration in ms; -1 = negative (clock skew, counted, never clamped)."""
     if ms<0:return -1
@@ -347,11 +410,15 @@ def clock_values(source,received,produced_ms,seen):
 
 
 class _Row:
-    __slots__=('admitted','missing','all_events','all_missing','strata','outliers')
+    __slots__=('admitted','missing','all_events','all_missing','strata','outliers','paired')
 
-    def __init__(self):
+    def __init__(self,paired=False):
         self.admitted={m:Histogram() for m in METRICS};self.missing={m:0 for m in METRICS}
         self.all_events=Histogram();self.all_missing=0;self.strata={};self.outliers=[]
+        # v6: only PAIRED_ROW carries the same-event split; every other row keeps the v5 shape.
+        self.paired=({'histograms':{m:Histogram() for m in PAIRED_METRICS},'missing':{m:0 for m in PAIRED_METRICS},
+                      'paired_missing':0,'published_mismatch':0,'older_component':{},'outliers':[]}
+                     if paired else None)
 
 
 class WindowAggregator:
@@ -373,9 +440,10 @@ class WindowAggregator:
         span=max(1,(self.planned_end_ns-self.start_ns)//self.raw_slices)
         return max(0,min(self.raw_slices-1,(wall_ns-self.start_ns)//span))
 
-    def observe(self,feed,venue,interval,symbol,source,received,produced_ms,seen,admitted,make_record):
+    def observe(self,feed,venue,interval,symbol,source,received,produced_ms,seen,admitted,make_record,
+                source_sequence=None,published_ns=None):
         key='|'.join(str(x) for x in (feed,venue,interval or ''))
-        row=self.rows.get(key) or self.rows.setdefault(key,_Row())
+        row=self.rows.get(key) or self.rows.setdefault(key,_Row(paired=key==PAIRED_ROW))
         values=clock_values(source,received,produced_ms,seen)
         visibility=values['visibility_ms']
         self.accepted+=1;self.last_receipt_ns=seen
@@ -396,6 +464,7 @@ class WindowAggregator:
             for name,value in values.items():
                 if value is None:target.missing[name]+=1
                 else:target.admitted[name].add(value)
+        if row.paired is not None:self._observe_paired(row.paired,source_sequence,produced_ms,published_ns,make_record)
         stratum=self._slice(seen)
         if row.strata.get(stratum,0)>=self.raw_per_slice:return None
         if self.raw_emitted>=self.raw_cap:
@@ -403,9 +472,35 @@ class WindowAggregator:
         row.strata[stratum]=row.strata.get(stratum,0)+1;self.raw_emitted+=1
         return make_record()
 
+    def _observe_paired(self,paired,source_sequence,produced_ms,published_ns,make_record):
+        """v6: one admitted event of PAIRED_ROW into its same-event split (G4 amendment 1)."""
+        split=paired_split(source_sequence,produced_ms,published_ns)
+        if split is None:
+            paired['paired_missing']+=1;return
+        paired['published_mismatch']+=split['published_mismatch']
+        older=split['older_component'];paired['older_component'][older]=paired['older_component'].get(older,0)+1
+        for name in PAIRED_METRICS:
+            if split[name] is None:paired['missing'][name]+=1
+            else:paired['histograms'][name].add(split[name])
+        internal=split['internal_newest_receipt_to_producer_ts_ms']
+        if internal is None:return
+        heap=paired['outliers']
+        if len(heap)<self.outlier_k or internal>heap[0][0]:
+            self.seq+=1;item=(internal,self.seq,{**make_record(),'paired_split':dict(split)})
+            if len(heap)<self.outlier_k:heapq.heappush(heap,item)
+            else:heapq.heapreplace(heap,item)
+
+    @staticmethod
+    def _paired_json(paired):
+        return {'population':POPULATION,'histograms':{m:h.to_json() for m,h in paired['histograms'].items()},
+                'missing':dict(paired['missing']),'paired_missing':paired['paired_missing'],
+                'published_mismatch':paired['published_mismatch'],'older_component':dict(paired['older_component']),
+                'outliers':[record for _,_,record in sorted(paired['outliers'],key=lambda x:(-x[0],x[1]))]}
+
     @staticmethod
     def _row_json(row,outliers):
         out={'admitted':{m:h.to_json() for m,h in row.admitted.items()},'missing_clock':dict(row.missing)}
+        if outliers and row.paired is not None:out['paired_split']=WindowAggregator._paired_json(row.paired)
         if outliers:
             out.update(all_events_visibility_ms=row.all_events.to_json(),all_events_missing_clock=row.all_missing,
                        raw_samples=sum(row.strata.values()),
@@ -604,7 +699,8 @@ def worker(args):
                     return record
                 kind,stamp=message.timestamp()
                 raw=window.observe(feed,event.venue,interval,event.native_symbol,event.source_event_time_ns or None,
-                                   event.received_at_ns or None,stamp if kind==1 and stamp>=0 else None,wall,admitted,make_record)
+                                   event.received_at_ns or None,stamp if kind==1 and stamp>=0 else None,wall,admitted,make_record,
+                                   source_sequence=event.source_sequence,published_ns=event.published_at_ns or None)
                 if raw is not None:emit(raw)
             else:time.sleep(min(.1,max(0,end-time.monotonic())))
         emit(window.snapshot(time.time_ns(),last_poll_ns,final=True));finished=True

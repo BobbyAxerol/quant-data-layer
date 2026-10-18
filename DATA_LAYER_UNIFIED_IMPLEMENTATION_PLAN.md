@@ -75160,3 +75160,33 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
     aggregate (report-only observer addition), the same split re-derived for the frozen baseline, a paired same-window
     venue-direct mark-price/index-tickers probe, host clock bounds, all outliers retained, and the internal split held to
     the frozen x1.2 rule against the baseline internal split.
+- 2026-10-18 06:50-07:05Z G4 amendment 1 (G4-A1) frozen BEFORE the run (owner decision 2026-10-18 ~06:45Z, AskUserQuestion
+  "Amendment có bằng chứng + 1 run (Recommended)", decision owner Bobby; Claude subagent). ONE row, mark_index_price|OKX|
+  (paired mark+index event, RCA 44fed4d): verdict quantity = same-event internal split Kafka CreateTime - newest component
+  receipt; PASS per window needs p95 <= 200.9 ms (frozen-table shape, recomputed baseline p95 167.4 x 1.2, bucket
+  straddle unresolved) AND max <= 993.4 ms on windows >= 5 samples (addendum shape, baseline max 827.8 x 1.2) AND a
+  covering venue-direct probe (else attribution UNKNOWN, not EXTERNAL -> NOT_MEASURED). Composite value, component ts gap,
+  per-component venue -> DL and the probe (with chronyc host clock bound) report-only, all outliers kept. Every other row
+  and gate unchanged; old receipts immutable (applies only to a campaign that recorded the amendment sha256).
+  - Frozen file config/v2/p184-stage100-g4-amendment-1.json sha256 1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6
+    (frozen_at 07:00:48Z); rationale upgrade/evidence/releases/v2.2.4/g4-amendment-1-okx-mark-index.md.
+  - Baseline recomputed from the frozen table baseline run p184-d3-baseline-20261009 (summary sha256 = budget sources.g4;
+    composite p95 recomputed per window = 1322.2 / 1289.4 / 1296.2 / 1195.2 exactly; every record parsed, CreateTime
+    present, published_at == newest receipt): internal p95 167.4 / 143.8 / 139.1 / 138.2, max 292.1 / 245.8 / 182.5 /
+    827.8 ms (n 662/662/664/662).
+  - Apparatus (old 44fed4d -> new): scripts/p184_gate_campaign.py cf26d6e3 -> 69c26d72 (amendment scoring, records the
+    amendment, one venue probe per G4 window started 8 s before the observer and stopped off the window path);
+    scripts/p184_g4_observer.py ff4f5989 -> 5d90cc60 (v6: paired_split aggregate for that row only); new
+    scripts/p184_g4_okx_mark_index_probe.py ee835d9c, scripts/p184_freeze_g4_amendment.py d0ec263b; budget ff85335b and
+    addendum 4ed59dca unchanged.
+  - Tests (python3 -B -m unittest): tests.test_p184_g4_amendment (21, incl. negative internal p95/max over limit -> FAIL,
+    UNKNOWN attribution -> NOT_MEASURED, parity: 053803Z/135719Z re-scored G4 gate byte-identical to the stored
+    scorecards and, with the amendment forced, every other row byte-identical) + test_p184_gate_campaign +
+    test_p184_g4_observer: 137 OK.
+  - Smoke in the real path (own lock claude-g4a1-smoke 06:59:15-07:00:3xZ, released): one --rm probe container 56 s + one
+    40 s observer v6 window on production canonical (read-only), containers removed 0 left. Row: composite p95 1384 / max
+    2184 ms (n 223); internal p95 92 / max 187 ms; component ts gap p95 1288 / max 2003 ms; paired_missing 0,
+    published_mismatch 0; probe covered, mark ts interval p50 201, index p50 691 / max 2089 ms, venue pair gap p95 1271 /
+    max 2077 ms, host clock bound 0.35 ms. Not a gate result.
+  - Next: wait for the other agent's G13 dr05 rerun and an absent host lock, then ONE final stage-100 from a clean run
+    worktree at this commit.
