@@ -503,7 +503,12 @@ impl Subscription {
     /// ones. `Err(within_floor)` when refused: whether this subscription was
     /// at or under its floor then (attribute it with
     /// [`Self::note_handoff_refused`] / [`Self::note_handoff_timeout`]).
-    pub fn charge_handoff(&self, bytes: usize, weight: usize, entry: &Charge) -> Result<Charge, bool> {
+    pub fn charge_handoff(
+        &self,
+        bytes: usize,
+        weight: usize,
+        entry: &Charge,
+    ) -> Result<Charge, bool> {
         let (queued, held) = match self.state.lock() {
             Ok(state) => self.floor_load(&state, Some(entry)),
             Err(_) => return Err(false),
@@ -519,7 +524,9 @@ impl Subscription {
 
     /// The first refused top-up of one record (not every retry).
     pub fn note_handoff_refused(&self, within_floor: bool) {
-        self.counters.handoff_refused.fetch_add(1, Ordering::Relaxed);
+        self.counters
+            .handoff_refused
+            .fetch_add(1, Ordering::Relaxed);
         let counters = &self.budget.counters;
         let counter = if within_floor {
             &counters.handoff_refused_within_floor
@@ -532,7 +539,9 @@ impl Subscription {
     /// A top-up that timed out and ends the stream; `within_floor` at the
     /// last attempt.
     pub fn note_handoff_timeout(&self, within_floor: bool) {
-        self.counters.handoff_timeouts.fetch_add(1, Ordering::Relaxed);
+        self.counters
+            .handoff_timeouts
+            .fetch_add(1, Ordering::Relaxed);
         let counters = &self.budget.counters;
         let counter = if within_floor {
             &counters.handoff_timeout_within_floor
@@ -622,10 +631,15 @@ impl Subscription {
         let Ok(state) = self.state.lock() else {
             return Some(Next::Failed("subscription state poisoned".into()));
         };
-        if let Some(reason) = &state.failed { Some(Next::Failed(reason.clone())) }
-        else if state.overflowed { Some(Next::Overflow) }
-        else if state.closed { Some(Next::Closed) }
-        else { None }
+        if let Some(reason) = &state.failed {
+            Some(Next::Failed(reason.clone()))
+        } else if state.overflowed {
+            Some(Next::Overflow)
+        } else if state.closed {
+            Some(Next::Closed)
+        } else {
+            None
+        }
     }
 
     pub fn queued(&self) -> (usize, usize) {
@@ -1134,11 +1148,18 @@ mod tests {
         assert_eq!(subscription.outstanding(), (1, weight), "entry + top-up");
         first.absorb(extra);
         assert_eq!(first.records(), 1);
-        assert_eq!(subscription.outstanding(), (1, weight), "absorb moves, never adds");
+        assert_eq!(
+            subscription.outstanding(),
+            (1, weight),
+            "absorb moves, never adds"
+        );
         // A second record's top-up sees exactly one other record.
         subscription.offer(&records[3], 0);
         let fourth = take(&subscription).await;
-        assert_eq!(subscription.outstanding(), (2, weight + QUEUE_ENTRY_OVERHEAD));
+        assert_eq!(
+            subscription.outstanding(),
+            (2, weight + QUEUE_ENTRY_OVERHEAD)
+        );
         assert!(subscription
             .charge_handoff(weight - QUEUE_ENTRY_OVERHEAD, weight, &fourth)
             .is_ok());
@@ -1168,8 +1189,14 @@ mod tests {
             (1, 1, 0, 1)
         );
         let own = &subscription.counters;
-        assert_eq!((load(&own.handoff_refused), load(&own.handoff_timeouts)), (2, 1));
-        assert_eq!(load(&budget.reserve_exhausted) + load(&budget.over_floor_refused), 0);
+        assert_eq!(
+            (load(&own.handoff_refused), load(&own.handoff_timeouts)),
+            (2, 1)
+        );
+        assert_eq!(
+            load(&budget.reserve_exhausted) + load(&budget.over_floor_refused),
+            0
+        );
     }
 
     fn queue(feed: query::FeedType, depth: usize) -> Subscription {

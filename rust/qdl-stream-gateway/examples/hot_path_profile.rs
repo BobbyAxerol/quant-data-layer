@@ -27,20 +27,28 @@ fn account(bytes: usize) {
 unsafe impl GlobalAlloc for CountedSystem {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let ptr = System.alloc(layout);
-        if !ptr.is_null() { account(layout.size()); }
+        if !ptr.is_null() {
+            account(layout.size());
+        }
         ptr
     }
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         let ptr = System.alloc_zeroed(layout);
-        if !ptr.is_null() { account(layout.size()); }
+        if !ptr.is_null() {
+            account(layout.size());
+        }
         ptr
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
         let next = System.realloc(ptr, layout, size);
-        if !next.is_null() { account(size); }
+        if !next.is_null() {
+            account(size);
+        }
         next
     }
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) { System.dealloc(ptr, layout); }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        System.dealloc(ptr, layout);
+    }
 }
 
 fn start_counts() {
@@ -50,33 +58,57 @@ fn start_counts() {
 }
 fn stop_counts() -> (u64, u64) {
     COUNTING.store(false, Ordering::Relaxed);
-    (ALLOCS.load(Ordering::Relaxed), BYTES.load(Ordering::Relaxed))
+    (
+        ALLOCS.load(Ordering::Relaxed),
+        BYTES.load(Ordering::Relaxed),
+    )
 }
 fn now_ns() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as i64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as i64
 }
-fn uid(key: usize) -> String { format!("00000000-0000-4000-8000-{key:012}") }
-fn key(id: usize) -> Vec<u8> { format!("{}/trade/TEST_ONLY", uid(id)).into_bytes() }
+fn uid(key: usize) -> String {
+    format!("00000000-0000-4000-8000-{key:012}")
+}
+fn key(id: usize) -> Vec<u8> {
+    format!("{}/trade/TEST_ONLY", uid(id)).into_bytes()
+}
 fn record(offset: i64, physical_key: usize) -> RawRecord {
     let event = md::EventEnvelope {
-        instrument_uid: uid(physical_key), source_event_time_ns: now_ns(),
+        instrument_uid: uid(physical_key),
+        source_event_time_ns: now_ns(),
         published_at_ns: now_ns(),
         payload: Some(md::event_envelope::Payload::Trade(md::Trade {
-            native_trade_id: offset.to_string(), ..Default::default()
-        })), ..Default::default()
+            native_trade_id: offset.to_string(),
+            ..Default::default()
+        })),
+        ..Default::default()
     };
-    RawRecord { partition: 0, offset, key: key(physical_key),
-        payload: event.encode_to_vec(), timestamp_ms: 0 }
+    RawRecord {
+        partition: 0,
+        offset,
+        key: key(physical_key),
+        payload: event.encode_to_vec(),
+        timestamp_ms: 0,
+    }
 }
 fn hub() -> Hub {
-    Hub::new(&[(0, 1)], HubConfig {
-        ring_max_bytes: 64 * 1024 * 1024, ring_max_age: Duration::from_secs(300),
-    })
+    Hub::new(
+        &[(0, 1)],
+        HubConfig {
+            ring_max_bytes: 64 * 1024 * 1024,
+            ring_max_age: Duration::from_secs(300),
+        },
+    )
 }
 fn subscriber(id: u64, budget: &Arc<ByteBudget>, after: i64) -> Arc<Subscription> {
     let requirement = StreamRequirement::from_proto(&query::DataRequirement {
-        instrument_uid: uid(0), source_policy_id: "crypto_primary_v2".into(),
-        require_full_coverage: true, require_final_bars: true,
+        instrument_uid: uid(0),
+        source_policy_id: "crypto_primary_v2".into(),
+        require_full_coverage: true,
+        require_final_bars: true,
         feed_type: query::FeedType::from_str_name("FEED_TYPE_TRADE").unwrap() as i32,
         grade: query::ConsumerGrade::Alpha as i32,
         stale_policy_type: query::StalePolicy::Block as i32,
@@ -84,9 +116,17 @@ fn subscriber(id: u64, budget: &Arc<ByteBudget>, after: i64) -> Arc<Subscription
         recovery_policy: query::RecoveryPolicy::SnapshotAndReplay as i32,
         revision_policy: query::BarRevisionPolicy::Latest as i32,
         ..Default::default()
-    }).unwrap();
-    Arc::new(Subscription::new(id, "TEST_ONLY.profile".into(), requirement,
-        1000, 8 * 1024 * 1024, budget.clone(), after))
+    })
+    .unwrap();
+    Arc::new(Subscription::new(
+        id,
+        "TEST_ONLY.profile".into(),
+        requirement,
+        1000,
+        8 * 1024 * 1024,
+        budget.clone(),
+        after,
+    ))
 }
 fn summary(mut samples: Vec<u64>, counts: (u64, u64)) -> Value {
     assert!(!samples.is_empty());
@@ -103,9 +143,16 @@ fn dispatch_profile(fanout: usize) -> Value {
     let hub = hub();
     let budget = ByteBudget::new(64 * 1024 * 1024);
     assert!(hub.attach_live_budget(budget.clone()));
-    let subs: Vec<_> = (0..fanout).map(|i| subscriber(i as u64, &budget, 0)).collect();
+    let subs: Vec<_> = (0..fanout)
+        .map(|i| subscriber(i as u64, &budget, 0))
+        .collect();
     let physical = key(0);
-    for sub in &subs { assert_eq!(hub.register(0, &physical, sub.clone(), 0).unwrap().barrier, 1); }
+    for sub in &subs {
+        assert_eq!(
+            hub.register(0, &physical, sub.clone(), 0).unwrap().barrier,
+            1
+        );
+    }
     let records: Vec<_> = (1..=5000).map(|i| record(i, 0)).collect();
     let mut samples = Vec::with_capacity(records.len());
     let mut counts = (0, 0);
@@ -116,20 +163,23 @@ fn dispatch_profile(fanout: usize) -> Value {
         hub.dispatch(raw);
         let elapsed = start.elapsed().as_nanos() as u64;
         let count = stop_counts();
-        counts.0 += count.0; counts.1 += count.1;
+        counts.0 += count.0;
+        counts.1 += count.1;
         samples.push(elapsed);
         for sub in &subs {
             match sub.try_next() {
                 Some((record, _, charge)) => {
                     assert_eq!(record.raw.offset, expected);
                     drop(charge);
-                },
+                }
                 other => panic!("missing ordered delivery: {other:?}"),
             }
         }
         assert_eq!(budget.used(), 0);
     }
-    for sub in &subs { hub.unregister(0, &physical, sub.id); }
+    for sub in &subs {
+        hub.unregister(0, &physical, sub.id);
+    }
     assert_eq!(hub.subscriber_count(), 0);
     json!({"scenario": "dispatch_and_fanout", "fanout": fanout,
         "lossless_records_per_subscriber": 5000, "timing": summary(samples, counts),
@@ -138,7 +188,9 @@ fn dispatch_profile(fanout: usize) -> Value {
 }
 fn replay_profile(rows: usize, keys: usize) -> Value {
     let hub = hub();
-    for index in 0..rows { hub.dispatch(record(index as i64 + 1, index % keys)); }
+    for index in 0..rows {
+        hub.dispatch(record(index as i64 + 1, index % keys));
+    }
     let physical = key(0);
     let budget = ByteBudget::new(8 * 1024 * 1024);
     let mut samples = Vec::with_capacity(500);
@@ -150,7 +202,8 @@ fn replay_profile(rows: usize, keys: usize) -> Value {
         let registration = hub.register(0, &physical, sub, 0).unwrap();
         let elapsed = started.elapsed().as_nanos() as u64;
         let count = stop_counts();
-        counts.0 += count.0; counts.1 += count.1;
+        counts.0 += count.0;
+        counts.1 += count.1;
         samples.push(elapsed);
         assert_eq!(registration.barrier, rows as i64 + 1);
         let retained = registration.ring.expect("profile must fit retained ring");
@@ -170,7 +223,9 @@ fn replay_profile(rows: usize, keys: usize) -> Value {
 }
 fn concurrent_register_dispatch_profile() -> Value {
     let hub = Arc::new(hub());
-    for index in 0..10000 { hub.dispatch(record(index + 1, (index % 128) as usize)); }
+    for index in 0..10000 {
+        hub.dispatch(record(index + 1, (index % 128) as usize));
+    }
     let budget = ByteBudget::new(64 * 1024 * 1024);
     assert!(hub.attach_live_budget(budget.clone()));
     let live = subscriber(100000, &budget, 10000);
@@ -228,7 +283,8 @@ fn concurrent_register_dispatch_profile() -> Value {
     for summary in [&mut registration, &mut dispatch] {
         summary["allocated_calls"] = Value::Null;
         summary["allocated_bytes_including_realloc_request"] = Value::Null;
-        summary["allocation_window"] = json!("NOT_MEASURED: global allocation counters disabled during concurrent scenario");
+        summary["allocation_window"] =
+            json!("NOT_MEASURED: global allocation counters disabled during concurrent scenario");
     }
     json!({"scenario":"concurrent_register_dispatch", "initial_ring_records":10000,
         "register_key_matches":79, "rounds":1000, "register":registration,
@@ -243,24 +299,42 @@ fn concurrent_register_dispatch_profile() -> Value {
 fn concurrent_near_dispatch_profile(fanout: usize, heavy: bool) -> Value {
     let hub = Arc::new(hub());
     for index in 0..10000 {
-        hub.dispatch(record(index + 1, if heavy { 1 } else { (index % 128) as usize }));
+        hub.dispatch(record(
+            index + 1,
+            if heavy { 1 } else { (index % 128) as usize },
+        ));
     }
-    let (bridge_after, retained_rows) = if heavy { (9992, 10000) } else { (70 * 128 + 2, 79) };
+    let (bridge_after, retained_rows) = if heavy {
+        (9992, 10000)
+    } else {
+        (70 * 128 + 2, 79)
+    };
     let budget = ByteBudget::new(64 * 1024 * 1024);
     let replay = ByteBudget::new(64 * 1024 * 1024);
     assert!(hub.attach_live_budget(budget.clone()));
-    let lives: Vec<_> = (0..fanout).map(|i| {
-        let sub = subscriber(200000 + i as u64, &budget, 10000);
-        match hub.try_register_near(0, &key(0), sub.clone(), 10000, 32, &replay).unwrap() {
-            NearRegistration::Registered { barrier, bridge, charge } => {
-                assert_eq!(barrier, 10001);
-                assert!(bridge.is_empty());
-                drop(charge);
+    let lives: Vec<_> = (0..fanout)
+        .map(|i| {
+            let sub = subscriber(200000 + i as u64, &budget, 10000);
+            match hub
+                .try_register_near(0, &key(0), sub.clone(), 10000, 32, &replay)
+                .unwrap()
+            {
+                NearRegistration::Registered {
+                    barrier,
+                    bridge,
+                    charge,
+                } => {
+                    assert_eq!(barrier, 10001);
+                    assert!(bridge.is_empty());
+                    drop(charge);
+                }
+                NearRegistration::NeedReplay { .. } => {
+                    panic!("live subscriber must register at the frontier")
+                }
             }
-            NearRegistration::NeedReplay { .. } => panic!("live subscriber must register at the frontier"),
-        }
-        sub
-    }).collect();
+            sub
+        })
+        .collect();
     // Lock histograms cover only the contended rounds, not the fixture.
     #[cfg(feature = "lock-profile")]
     qdl_stream_gateway::hub::lock_profile::reset();
@@ -298,16 +372,20 @@ fn concurrent_near_dispatch_profile(fanout: usize, heavy: bool) -> Value {
         let started = Instant::now();
         if round % 2 == 0 {
             let sub = subscriber(round, &budget, bridge_after);
-            let NearRegistration::Registered { bridge, charge, .. } =
-                hub.try_register_near(0, &physical, sub, bridge_after, 32, &replay).unwrap()
-            else { panic!("8-record bridge must fit") };
+            let NearRegistration::Registered { bridge, charge, .. } = hub
+                .try_register_near(0, &physical, sub, bridge_after, 32, &replay)
+                .unwrap()
+            else {
+                panic!("8-record bridge must fit")
+            };
             near.push(started.elapsed().as_nanos() as u64);
             assert_eq!(bridge.len(), 8);
             drop((bridge, charge));
             hub.unregister(0, &physical, round);
         } else {
             let barrier = hub.next_offset(0).unwrap();
-            let (rows, charge) = hub.retained_replay(0, &physical, 0, barrier, 10001, &replay)
+            let (rows, charge) = hub
+                .retained_replay(0, &physical, 0, barrier, 10001, &replay)
                 .expect("ring covers the quiet key");
             retained.push(started.elapsed().as_nanos() as u64);
             assert_eq!(rows.len(), retained_rows);
@@ -316,15 +394,22 @@ fn concurrent_near_dispatch_profile(fanout: usize, heavy: bool) -> Value {
         done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
     }
     let dispatch = producer.join().unwrap();
-    for live in &lives { hub.unregister(0, &key(0), live.id); }
+    for live in &lives {
+        hub.unregister(0, &key(0), live.id);
+    }
     assert_eq!(hub.subscriber_count(), 0);
     assert_eq!(budget.used(), 0);
     assert_eq!(replay.used(), 0);
-    let mut parts = [summary(near, (0, 0)), summary(retained, (0, 0)), summary(dispatch, (0, 0))];
+    let mut parts = [
+        summary(near, (0, 0)),
+        summary(retained, (0, 0)),
+        summary(dispatch, (0, 0)),
+    ];
     for part in &mut parts {
         part["allocated_calls"] = Value::Null;
         part["allocated_bytes_including_realloc_request"] = Value::Null;
-        part["allocation_window"] = json!("NOT_MEASURED: global allocation counters disabled during concurrent scenario");
+        part["allocation_window"] =
+            json!("NOT_MEASURED: global allocation counters disabled during concurrent scenario");
     }
     let [near, retained, dispatch] = parts;
     json!({"scenario": "concurrent_near_retained_dispatch", "fanout": fanout,
@@ -338,26 +423,52 @@ fn profiled(run: impl FnOnce() -> Value) -> Value {
     qdl_stream_gateway::hub::lock_profile::reset();
     let mut value = run();
     #[cfg(feature = "lock-profile")]
-    { value["lock_profile"] = qdl_stream_gateway::hub::lock_profile::summary(); }
+    {
+        value["lock_profile"] = qdl_stream_gateway::hub::lock_profile::summary();
+    }
     #[cfg(not(feature = "lock-profile"))]
-    { value["lock_profile"] = json!("NOT_ENABLED: build with --features lock-profile"); }
+    {
+        value["lock_profile"] = json!("NOT_ENABLED: build with --features lock-profile");
+    }
     value
 }
 fn near_registration_checks() {
     let hub = hub();
     let live = ByteBudget::new(1024 * 1024);
     let replay = ByteBudget::new(1024 * 1024);
-    for offset in 1..=100 { hub.dispatch(record(offset, 0)); }
-    assert!(matches!(hub.try_register_near(0, &key(0), subscriber(1, &live, 0), 0, 32, &replay).unwrap(), NearRegistration::NeedReplay { barrier: 101 }));
+    for offset in 1..=100 {
+        hub.dispatch(record(offset, 0));
+    }
+    assert!(matches!(
+        hub.try_register_near(0, &key(0), subscriber(1, &live, 0), 0, 32, &replay)
+            .unwrap(),
+        NearRegistration::NeedReplay { barrier: 101 }
+    ));
     assert_eq!(hub.subscriber_count(), 0);
     assert_eq!(replay.used(), 0);
     let tiny = ByteBudget::new(1);
-    assert!(matches!(hub.try_register_near(0, &key(0), subscriber(2, &live, 99), 99, 32, &tiny).unwrap(), NearRegistration::NeedReplay { .. }));
+    assert!(matches!(
+        hub.try_register_near(0, &key(0), subscriber(2, &live, 99), 99, 32, &tiny)
+            .unwrap(),
+        NearRegistration::NeedReplay { .. }
+    ));
     assert_eq!(hub.subscriber_count(), 0);
     let sub = subscriber(3, &live, 98);
-    let NearRegistration::Registered { barrier, bridge, charge } = hub.try_register_near(0, &key(0), sub.clone(), 98, 32, &replay).unwrap() else { panic!("bridge should fit") };
+    let NearRegistration::Registered {
+        barrier,
+        bridge,
+        charge,
+    } = hub
+        .try_register_near(0, &key(0), sub.clone(), 98, 32, &replay)
+        .unwrap()
+    else {
+        panic!("bridge should fit")
+    };
     assert_eq!(barrier, 101);
-    assert_eq!(bridge.iter().map(|r| r.offset).collect::<Vec<_>>(), vec![99,100]);
+    assert_eq!(
+        bridge.iter().map(|r| r.offset).collect::<Vec<_>>(),
+        vec![99, 100]
+    );
     assert!(replay.used() > 0);
     hub.dispatch(record(101, 0));
     let (item, _, live_charge) = sub.try_next().unwrap();
@@ -365,28 +476,49 @@ fn near_registration_checks() {
     drop((bridge, charge, item, live_charge));
     assert_eq!(replay.used(), 0);
     hub.unregister(0, &key(0), 3);
-    assert!(matches!(hub.try_register_near(0, &key(0), subscriber(4, &live, 200), 200, 32, &replay).unwrap(), NearRegistration::NeedReplay { .. }));
-    let empty = Hub::new(&[(0,100)], HubConfig::default());
-    assert!(matches!(empty.try_register_near(0, &key(0), subscriber(5, &live, 0), 0, 32, &replay).unwrap(), NearRegistration::NeedReplay { .. }));
+    assert!(matches!(
+        hub.try_register_near(0, &key(0), subscriber(4, &live, 200), 200, 32, &replay)
+            .unwrap(),
+        NearRegistration::NeedReplay { .. }
+    ));
+    let empty = Hub::new(&[(0, 100)], HubConfig::default());
+    assert!(matches!(
+        empty
+            .try_register_near(0, &key(0), subscriber(5, &live, 0), 0, 32, &replay)
+            .unwrap(),
+        NearRegistration::NeedReplay { .. }
+    ));
     assert_eq!(empty.subscriber_count(), 0);
     assert_eq!(hub.subscriber_count(), 0);
 }
 fn main() {
-    assert!(std::env::args().skip(1).eq(["--test-only"]), "explicit --test-only required");
+    assert!(
+        std::env::args().skip(1).eq(["--test-only"]),
+        "explicit --test-only required"
+    );
     near_registration_checks();
     let mut cases = Vec::new();
-    for fanout in [0, 1, 16, 64] { cases.push(profiled(|| dispatch_profile(fanout))); }
-    for rows in [1000, 10000] {
-        for keys in [1, 128] { cases.push(profiled(|| replay_profile(rows, keys))); }
+    for fanout in [0, 1, 16, 64] {
+        cases.push(profiled(|| dispatch_profile(fanout)));
     }
-    let near: Vec<_> = [(1, false), (64, false), (1, true)].into_iter()
-        .map(|(fanout, heavy)| profiled(|| concurrent_near_dispatch_profile(fanout, heavy))).collect();
-    println!("{}", json!({"schema": "p184.n1-opt.stream-profile.v1",
+    for rows in [1000, 10000] {
+        for keys in [1, 128] {
+            cases.push(profiled(|| replay_profile(rows, keys)));
+        }
+    }
+    let near: Vec<_> = [(1, false), (64, false), (1, true)]
+        .into_iter()
+        .map(|(fanout, heavy)| profiled(|| concurrent_near_dispatch_profile(fanout, heavy)))
+        .collect();
+    println!(
+        "{}",
+        json!({"schema": "p184.n1-opt.stream-profile.v1",
         "provenance": "TEST_ONLY_STRUCTURAL_MICROPROFILE_NOT_PROVIDER_NOT_CAPACITY",
         "allocator": "System with example-only allocation counters; overhead included",
         "lock_wait_hold": if cfg!(feature = "lock-profile") { "per-scenario lock_profile histograms" } else { "NOT_MEASURED: build with --features lock-profile" },
         "cache_misses": "NOT_MEASURED", "concurrent": profiled(concurrent_register_dispatch_profile),
-        "concurrent_near": near, "cases": cases}));
+        "concurrent_near": near, "cases": cases})
+    );
 }
 
 #[cfg(test)]

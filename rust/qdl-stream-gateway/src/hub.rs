@@ -46,12 +46,25 @@ pub mod lock_profile {
     use std::time::{Duration, Instant};
 
     pub const OPS: [&str; 7] = [
-        "dispatch", "register", "register_near", "retained_replay",
-        "hot_snapshot", "advance", "unregister",
+        "dispatch",
+        "register",
+        "register_near",
+        "retained_replay",
+        "hot_snapshot",
+        "advance",
+        "unregister",
     ];
 
     #[derive(Clone, Copy)]
-    pub enum Op { Dispatch, Register, RegisterNear, RetainedReplay, HotSnapshot, Advance, Unregister }
+    pub enum Op {
+        Dispatch,
+        Register,
+        RegisterNear,
+        RetainedReplay,
+        HotSnapshot,
+        Advance,
+        Unregister,
+    }
 
     /// Bucket i holds samples whose bit length is i: ns < 2^i.
     const BUCKETS: usize = 48;
@@ -63,7 +76,10 @@ pub mod lock_profile {
 
     impl Histogram {
         const fn new() -> Self {
-            Self { buckets: [const { AtomicU64::new(0) }; BUCKETS], max_ns: AtomicU64::new(0) }
+            Self {
+                buckets: [const { AtomicU64::new(0) }; BUCKETS],
+                max_ns: AtomicU64::new(0),
+            }
         }
 
         fn record(&self, elapsed: Duration) {
@@ -82,7 +98,11 @@ pub mod lock_profile {
 
         /// Quantiles are bucket upper bounds (`_le_ns`); p99 only for n >= 100.
         fn summary(&self) -> serde_json::Value {
-            let counts: Vec<u64> = self.buckets.iter().map(|b| b.load(Ordering::Relaxed)).collect();
+            let counts: Vec<u64> = self
+                .buckets
+                .iter()
+                .map(|b| b.load(Ordering::Relaxed))
+                .collect();
             let n: u64 = counts.iter().sum();
             let le = |q: f64| -> Option<u64> {
                 let wanted = ((n as f64) * q).ceil().max(1.0) as u64;
@@ -167,10 +187,13 @@ pub mod lock_profile {
             .iter()
             .enumerate()
             .map(|(index, name)| {
-                ((*name).to_owned(), serde_json::json!({
-                    "wait": PROFILE.wait[index].summary(),
-                    "hold": PROFILE.hold[index].summary(),
-                }))
+                (
+                    (*name).to_owned(),
+                    serde_json::json!({
+                        "wait": PROFILE.wait[index].summary(),
+                        "hold": PROFILE.hold[index].summary(),
+                    }),
+                )
             })
             .collect();
         serde_json::json!({
@@ -384,8 +407,14 @@ pub struct Registration {
 /// Bulk replay remains unregistered until the retained bridge fits both budgets.
 #[derive(Debug)]
 pub enum NearRegistration {
-    NeedReplay { barrier: i64 },
-    Registered { barrier: i64, bridge: Vec<SharedRecord>, charge: Charge },
+    NeedReplay {
+        barrier: i64,
+    },
+    Registered {
+        barrier: i64,
+        bridge: Vec<SharedRecord>,
+        charge: Charge,
+    },
 }
 
 struct PartitionState {
@@ -517,7 +546,10 @@ impl Hub {
                 )
             })
             .collect();
-        let dispatch_gates = starts.iter().map(|&(partition, _)| (partition, Mutex::new(()))).collect();
+        let dispatch_gates = starts
+            .iter()
+            .map(|&(partition, _)| (partition, Mutex::new(())))
+            .collect();
         Self {
             partitions,
             dispatch_gates,
@@ -642,7 +674,9 @@ impl Hub {
             return;
         };
         // A poisoned gate guards no data; keep ordering, never stop dispatch.
-        let _gate = gate.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _gate = gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let record = Arc::new(record);
         let subscribers = {
             let (state, _hold) = profiled_lock!(Dispatch, partition.lock());
@@ -1007,8 +1041,14 @@ impl Hub {
 
     /// Retained replay without attaching a live subscriber. Coverage and the
     /// selected references are captured under the same partition lock.
-    pub fn retained_replay(&self, partition: i32, key: &[u8], after: i64,
-        barrier: i64, max_records: usize, budget: &Arc<ByteBudget>,
+    pub fn retained_replay(
+        &self,
+        partition: i32,
+        key: &[u8],
+        after: i64,
+        barrier: i64,
+        max_records: usize,
+        budget: &Arc<ByteBudget>,
     ) -> Option<(Vec<SharedRecord>, Charge)> {
         let partition_state = self.partitions.get(&partition)?;
         let (state, _hold) = profiled_lock!(RetainedReplay, partition_state.lock());
@@ -1020,14 +1060,22 @@ impl Hub {
         let entries = state.by_key.get(key);
         let begin = entries.map_or(0, |rows| rows.partition_point(|(_, r)| r.offset <= after));
         let end = entries.map_or(0, |rows| rows.partition_point(|(_, r)| r.offset < barrier));
-        if end.saturating_sub(begin) > max_records { return None; }
-        let selected = || entries.into_iter().flat_map(|rows| rows.range(begin..end))
-            .map(|(_, record)| record);
+        if end.saturating_sub(begin) > max_records {
+            return None;
+        }
+        let selected = || {
+            entries
+                .into_iter()
+                .flat_map(|rows| rows.range(begin..end))
+                .map(|(_, record)| record)
+        };
         let mut count = 0usize;
         let mut bytes = 0usize;
         for record in selected() {
             count += 1;
-            if count > max_records { return None; }
+            if count > max_records {
+                return None;
+            }
             bytes = bytes.checked_add(live_weight(record))?;
         }
         let charge = budget.charge(bytes)?;
@@ -1046,7 +1094,9 @@ impl Hub {
         max_bridge_records: usize,
         replay_budget: &Arc<ByteBudget>,
     ) -> Result<NearRegistration, String> {
-        let state = self.partitions.get(&partition)
+        let state = self
+            .partitions
+            .get(&partition)
             .ok_or_else(|| format!("partition {partition} is not served by this replica"))?;
         let (state, _hold) = profiled_lock!(RegisterNear, state.lock());
         let mut state = state.map_err(|_| "partition state poisoned".to_owned())?;
@@ -1064,8 +1114,12 @@ impl Hub {
         if end.saturating_sub(begin) > max_bridge_records {
             return Ok(NearRegistration::NeedReplay { barrier });
         }
-        let selected = || entries.into_iter().flat_map(|rows| rows.range(begin..end))
-            .map(|(_, record)| record);
+        let selected = || {
+            entries
+                .into_iter()
+                .flat_map(|rows| rows.range(begin..end))
+                .map(|(_, record)| record)
+        };
         let mut count = 0usize;
         let mut bytes = 0usize;
         for record in selected() {
@@ -1073,7 +1127,8 @@ impl Hub {
             if count > max_bridge_records {
                 return Ok(NearRegistration::NeedReplay { barrier });
             }
-            bytes = bytes.checked_add(live_weight(record))
+            bytes = bytes
+                .checked_add(live_weight(record))
                 .ok_or("replay bridge size overflow")?;
         }
         let Some(charge) = replay_budget.charge(bytes) else {
@@ -1081,7 +1136,11 @@ impl Hub {
         };
         let bridge = selected().cloned().collect();
         attach(&mut state.subscribers, key, subscriber);
-        Ok(NearRegistration::Registered { barrier, bridge, charge })
+        Ok(NearRegistration::Registered {
+            barrier,
+            bridge,
+            charge,
+        })
     }
 
     pub fn unregister(&self, partition: i32, key: &[u8], id: u64) {
@@ -1089,8 +1148,11 @@ impl Hub {
             let (state, _hold) = profiled_lock!(Unregister, state.lock());
             if let Ok(mut state) = state {
                 if let Some(list) = state.subscribers.get(key) {
-                    let kept: Vec<_> =
-                        list.iter().filter(|subscriber| subscriber.id != id).cloned().collect();
+                    let kept: Vec<_> = list
+                        .iter()
+                        .filter(|subscriber| subscriber.id != id)
+                        .cloned()
+                        .collect();
                     if kept.is_empty() {
                         state.subscribers.remove(key);
                     } else if kept.len() != list.len() {
@@ -1105,7 +1167,13 @@ impl Hub {
         self.partitions
             .values()
             .filter_map(|state| state.lock().ok())
-            .map(|state| state.subscribers.values().map(|list| list.len()).sum::<usize>())
+            .map(|state| {
+                state
+                    .subscribers
+                    .values()
+                    .map(|list| list.len())
+                    .sum::<usize>()
+            })
             .sum()
     }
 

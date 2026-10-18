@@ -797,7 +797,10 @@ fn check_control_high(replaying: &mut Option<u64>, control: &query::StreamContro
         "REPLAYING" => *replaying = Some(control.high_watermark),
         "LIVE" => {
             if let Some(high) = *replaying {
-                assert_eq!(control.high_watermark, high, "LIVE must carry the REPLAYING high_watermark");
+                assert_eq!(
+                    control.high_watermark, high,
+                    "LIVE must carry the REPLAYING high_watermark"
+                );
             }
         }
         _ => {}
@@ -1132,7 +1135,12 @@ async fn t02_retention_expires_and_a_submit_time_scan_limit_expires_for_every_cl
         assert_eq!(harness.state().metrics.expired.load(Ordering::Relaxed), 1);
         assert_eq!(harness.state().metrics.replayed.load(Ordering::Relaxed), 0);
         assert_eq!(
-            harness.state().replay.metrics.scan_limited.load(Ordering::Relaxed),
+            harness
+                .state()
+                .replay
+                .metrics
+                .scan_limited
+                .load(Ordering::Relaxed),
             1,
             "refused by the up-front span check"
         );
@@ -1166,7 +1174,11 @@ async fn idr096_matched_budget_is_cursor_expired_for_a_client_without_the_capabi
         let mut shapes = Shapes::default();
         read_shapes(&mut stream, usize::MAX, &mut shapes).await;
         let (code, message) = shapes.status.as_ref().expect("typed replay termination");
-        assert_eq!(*code, Code::OutOfRange, "ring={ring_max_bytes} batch={batch}");
+        assert_eq!(
+            *code,
+            Code::OutOfRange,
+            "ring={ring_max_bytes} batch={batch}"
+        );
         assert!(
             message.starts_with("CURSOR_EXPIRED:replay backlog exceeds the bounded gateway window"),
             "{message}"
@@ -1207,18 +1219,35 @@ async fn idr096_in_scan_scan_limit_follows_the_client_capability() {
         let (code, message) = shapes.status.as_ref().expect("typed replay termination");
         if budget_v2 {
             assert_eq!(*code, Code::ResourceExhausted);
-            assert!(message.starts_with("RATE_LIMITED:REPLAY_SCAN_LIMIT:"), "{message}");
-            assert!(message.contains("bound retries if no progress"), "{message}");
+            assert!(
+                message.starts_with("RATE_LIMITED:REPLAY_SCAN_LIMIT:"),
+                "{message}"
+            );
+            assert!(
+                message.contains("bound retries if no progress"),
+                "{message}"
+            );
             assert_eq!(harness.state().metrics.expired.load(Ordering::Relaxed), 0);
         } else {
             assert_eq!(*code, Code::OutOfRange);
-            assert!(message.starts_with("CURSOR_EXPIRED:REPLAY_SCAN_LIMIT:"), "{message}");
+            assert!(
+                message.starts_with("CURSOR_EXPIRED:REPLAY_SCAN_LIMIT:"),
+                "{message}"
+            );
             assert!(!message.contains("RATE_LIMITED"), "{message}");
             assert_eq!(harness.state().metrics.expired.load(Ordering::Relaxed), 1);
         }
         assert_eq!(shapes.controls, vec!["REPLAYING"]);
         assert_eq!(shapes.offsets(), expected[..5], "budget_v2={budget_v2}");
-        assert_eq!(harness.state().replay.metrics.ring_hits.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            harness
+                .state()
+                .replay
+                .metrics
+                .ring_hits
+                .load(Ordering::Relaxed),
+            1
+        );
         drop(stream);
         harness.baseline().await;
     }
@@ -1577,7 +1606,11 @@ async fn t04_a_stop_before_catch_up_never_announces_live() {
     let mut stream = harness.subscribe("TRADE", None, cursor, 100).await.unwrap();
     let mut shapes = Shapes::default();
     read_shapes(&mut stream, usize::MAX, &mut shapes).await;
-    assert!(!shapes.controls.iter().any(|code| code == "LIVE"), "{:?}", shapes.controls);
+    assert!(
+        !shapes.controls.iter().any(|code| code == "LIVE"),
+        "{:?}",
+        shapes.controls
+    );
     let (code, message) = shapes.status.as_ref().expect("typed stop");
     assert_eq!(*code, Code::Unavailable);
     assert!(message.starts_with("GATEWAY_SHUTTING_DOWN"), "{message}");
@@ -1798,8 +1831,18 @@ async fn t05_deep_lossless_streams_on_two_keys_never_overflow_idle_quote_readers
     assert_eq!(counters.reserve_exhausted.load(Ordering::Relaxed), 0);
     // SR4: no idle reader was refused (or timed out) at its transport top-up
     // either, which the enqueue counters above cannot see.
-    assert_eq!(counters.handoff_refused_within_floor.load(Ordering::Relaxed), 0);
-    assert_eq!(counters.handoff_timeout_within_floor.load(Ordering::Relaxed), 0);
+    assert_eq!(
+        counters
+            .handoff_refused_within_floor
+            .load(Ordering::Relaxed),
+        0
+    );
+    assert_eq!(
+        counters
+            .handoff_timeout_within_floor
+            .load(Ordering::Relaxed),
+        0
+    );
     // At least one deep stream ended with BACKPRESSURE (resume token) and
     // RESOURCE_EXHAUSTED; no idle one did.
     let mut ended = 0;
@@ -1862,9 +1905,7 @@ async fn t05_a_handoff_top_up_that_never_fits_is_counted_apart_from_enqueue() {
         .await
         .unwrap();
     stream.until_live().await;
-    harness
-        .log
-        .append(0, BOOK_KEY, &large_snapshot(1, 800));
+    harness.log.append(0, BOOK_KEY, &large_snapshot(1, 800));
     harness.settle();
     let (code, message) = stream.error().await;
     assert_eq!(code, Code::ResourceExhausted);
@@ -1881,7 +1922,11 @@ async fn t05_a_handoff_top_up_that_never_fits_is_counted_apart_from_enqueue() {
         (1, 1, 0, 0),
         "one record refused once (not per retry), one timeout"
     );
-    assert_eq!(load(&counters.reserve_exhausted), 0, "enqueue side never saw it");
+    assert_eq!(
+        load(&counters.reserve_exhausted),
+        0,
+        "enqueue side never saw it"
+    );
     assert_eq!(load(&counters.over_floor_refused), 0);
     drop(stream);
     harness.released().await;
@@ -2747,11 +2792,17 @@ async fn f3_a_joiner_is_answered_after_a_reader_open_failure() {
     assert!(coordinator.metrics.open_calls.load(Ordering::Relaxed) >= 1);
     assert!(coordinator.metrics.open_elapsed_ns.load(Ordering::Relaxed) > 0);
     assert_eq!(
-        coordinator.metrics.cursor_next_calls.load(Ordering::Relaxed),
+        coordinator
+            .metrics
+            .cursor_next_calls
+            .load(Ordering::Relaxed),
         0
     );
     assert_eq!(
-        coordinator.metrics.cursor_next_elapsed_ns.load(Ordering::Relaxed),
+        coordinator
+            .metrics
+            .cursor_next_elapsed_ns
+            .load(Ordering::Relaxed),
         0
     );
 }
@@ -2821,8 +2872,20 @@ async fn f3_joiners_at_the_last_record_and_empty_ranges_complete_exactly() {
     coordinator_baseline(&coordinator, &budget).await;
     assert!(coordinator.metrics.open_calls.load(Ordering::Relaxed) >= 1);
     assert!(coordinator.metrics.open_elapsed_ns.load(Ordering::Relaxed) > 0);
-    assert!(coordinator.metrics.cursor_next_calls.load(Ordering::Relaxed) >= 40);
-    assert!(coordinator.metrics.cursor_next_elapsed_ns.load(Ordering::Relaxed) > 0);
+    assert!(
+        coordinator
+            .metrics
+            .cursor_next_calls
+            .load(Ordering::Relaxed)
+            >= 40
+    );
+    assert!(
+        coordinator
+            .metrics
+            .cursor_next_elapsed_ns
+            .load(Ordering::Relaxed)
+            > 0
+    );
 }
 
 // F4: bounded replay - per-request scan limits, budget-charged channels,
@@ -3664,13 +3727,19 @@ async fn b07_replay_batches_ring_and_ready_reader_records_with_exact_accounting(
                 assert!(shapes.batched > 0, "ready replay records must batch");
                 assert!(shapes.sizes.iter().all(|&size| size <= batch as usize));
             }
-            assert_eq!(harness.state().metrics.replayed.load(Ordering::Relaxed), 300);
+            assert_eq!(
+                harness.state().metrics.replayed.load(Ordering::Relaxed),
+                300
+            );
             assert_eq!(harness.state().metrics.delivered.load(Ordering::Relaxed), 0);
             let next = harness.log.append(0, TRADE_KEY, &trade(999)) as u64;
             assert_eq!(stream.collect(1).await.1, vec![next]);
             drop(stream);
             harness.baseline().await;
-            assert_eq!(harness.state().metrics.replayed.load(Ordering::Relaxed), 300);
+            assert_eq!(
+                harness.state().metrics.replayed.load(Ordering::Relaxed),
+                300
+            );
             assert_eq!(harness.state().metrics.delivered.load(Ordering::Relaxed), 1);
         }
     }
@@ -3697,23 +3766,30 @@ async fn b08_replay_pending_records_precede_corruption_and_filtered_boundaries()
         let original_digest = DeliveryRequirement::from_proto(&wanted).unwrap().digest();
         wanted.max_freshness_ms = 15_000;
         let digest = DeliveryRequirement::from_proto(&wanted).unwrap().digest();
-        let mut claims = harness.codec.verify(
-            &harness.cursor("TRADE", None, 0, cursor),
-            CONSUMER,
-            "paper",
-            &original_digest,
-            &expectation(),
-            now_ns() as u64,
-        ).unwrap();
+        let mut claims = harness
+            .codec
+            .verify(
+                &harness.cursor("TRADE", None, 0, cursor),
+                CONSUMER,
+                "paper",
+                &original_digest,
+                &expectation(),
+                now_ns() as u64,
+            )
+            .unwrap();
         claims.requirement_digest = digest.clone();
-        let response = harness.gateway.subscribe(harness.authorized(query::SubscribeRequest {
-            consumer_id: CONSUMER.into(),
-            requirement: Some(wanted),
-            cursor_token: harness.codec.encode(&claims).unwrap(),
-            max_buffer_events: 100,
-            max_records_per_response: 64,
-            replay_budget_status_v2: false,
-        })).await.unwrap();
+        let response = harness
+            .gateway
+            .subscribe(harness.authorized(query::SubscribeRequest {
+                consumer_id: CONSUMER.into(),
+                requirement: Some(wanted),
+                cursor_token: harness.codec.encode(&claims).unwrap(),
+                max_buffer_events: 100,
+                max_records_per_response: 64,
+                replay_budget_status_v2: false,
+            }))
+            .await
+            .unwrap();
         let mut stream = Stream(response.into_inner(), None);
         let mut shapes = Shapes::default();
         read_shapes(&mut stream, usize::MAX, &mut shapes).await;
@@ -3722,12 +3798,24 @@ async fn b08_replay_pending_records_precede_corruption_and_filtered_boundaries()
         assert!(message.starts_with("DATA_INTEGRITY:"));
         assert_eq!(shapes.controls, vec!["REPLAYING"]);
         assert_eq!(shapes.offsets(), vec![first, second]);
-        assert_eq!(shapes.sizes, vec![1, 1], "never batch across filtered offset {filtered}");
+        assert_eq!(
+            shapes.sizes,
+            vec![1, 1],
+            "never batch across filtered offset {filtered}"
+        );
         assert!(shapes.offsets().iter().all(|&offset| offset < bad as u64));
         for (offset, token, _) in &shapes.events {
-            let claims = harness.codec.verify(
-                token, CONSUMER, "paper", &digest, &expectation(), now_ns() as u64,
-            ).unwrap();
+            let claims = harness
+                .codec
+                .verify(
+                    token,
+                    CONSUMER,
+                    "paper",
+                    &digest,
+                    &expectation(),
+                    now_ns() as u64,
+                )
+                .unwrap();
             assert_eq!(claims.source_offset, *offset);
         }
         assert_eq!(harness.state().metrics.replayed.load(Ordering::Relaxed), 2);
@@ -3758,8 +3846,15 @@ async fn b09_replay_cancellation_and_revocation_release_only_replay_charges() {
                 .unwrap();
             tokio::time::sleep(Duration::from_millis(100)).await;
             assert!(harness.state().replay.budget().used() > 0);
-            assert_eq!(harness.state().budget.used(), 0, "replay never borrows live budget");
-            let live_capacity = harness.state().budget.charge(1 << 20)
+            assert_eq!(
+                harness.state().budget.used(),
+                0,
+                "replay never borrows live budget"
+            );
+            let live_capacity = harness
+                .state()
+                .budget
+                .charge(1 << 20)
                 .expect("all live capacity remains available during blocked replay");
             drop(live_capacity);
             if revoke {
@@ -3806,7 +3901,10 @@ async fn b10_replay_batches_obey_existing_byte_bound() {
         read_shapes_until(&mut stream, usize::MAX, &mut shapes, true).await;
         assert!(shapes.status.is_none(), "{:?}", shapes.status);
         assert_eq!(shapes.controls, vec!["REPLAYING", "LIVE"]);
-        assert_eq!(shapes.offsets(), as_offsets(&harness.log.records_of(TRADE_KEY, cursor)));
+        assert_eq!(
+            shapes.offsets(),
+            as_offsets(&harness.log.records_of(TRADE_KEY, cursor))
+        );
         assert!(shapes.sizes.iter().all(|&size| size <= 3));
         if ring_max_bytes > 1 {
             assert_eq!(shapes.sizes, vec![3, 3, 2]);
@@ -3838,7 +3936,15 @@ async fn b11_replay_reader_flushes_without_waiting_to_fill() {
     assert!(shapes.status.is_none(), "{:?}", shapes.status);
     assert_eq!(shapes.offsets(), vec![(cursor + 1) as u64]);
     assert_eq!(shapes.sizes, vec![1]);
-    assert!(harness.state().replay.metrics.matched.load(Ordering::Relaxed) < 30);
+    assert!(
+        harness
+            .state()
+            .replay
+            .metrics
+            .matched
+            .load(Ordering::Relaxed)
+            < 30
+    );
     drop(stream);
     harness.baseline().await;
 }
@@ -4148,19 +4254,32 @@ async fn bench_serve_live_trade_bursts_over_grpc() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn opt01_bulk_replay_stays_unregistered_while_new_input_exceeds_queue() {
     for batch in [1, 64] {
-        let harness = Harness::new(Options { ring_max_bytes: 256,
-            range_delay: Duration::from_millis(1), ..Options::default() });
+        let harness = Harness::new(Options {
+            ring_max_bytes: 256,
+            range_delay: Duration::from_millis(1),
+            ..Options::default()
+        });
         let cursor = harness.log.append(0, TRADE_KEY, &trade(0));
-        for index in 1..=200 { harness.log.append(0, TRADE_KEY, &trade(index)); }
+        for index in 1..=200 {
+            harness.log.append(0, TRADE_KEY, &trade(index));
+        }
         harness.settle();
-        let mut stream = harness.subscribe_batched("TRADE", None, cursor, 1000, batch).await.unwrap();
+        let mut stream = harness
+            .subscribe_batched("TRADE", None, cursor, 1000, batch)
+            .await
+            .unwrap();
         assert!(matches!(stream.next().await, Item::Control(code) if code == "REPLAYING"));
         assert_eq!(harness.state().hub.subscriber_count(), 0);
-        for index in 201..=1400 { harness.log.append(0, TRADE_KEY, &trade(index)); }
+        for index in 201..=1400 {
+            harness.log.append(0, TRADE_KEY, &trade(index));
+        }
         harness.settle();
         assert_eq!(harness.state().hub.subscriber_count(), 0);
         let replayed = stream.until_live().await;
-        assert_eq!(replayed, as_offsets(&harness.log.records_of(TRADE_KEY, cursor)));
+        assert_eq!(
+            replayed,
+            as_offsets(&harness.log.records_of(TRADE_KEY, cursor))
+        );
         let next = harness.log.append(0, TRADE_KEY, &trade(1401));
         assert_eq!(stream.collect(1).await.1, vec![next as u64]);
         drop(stream);
@@ -4171,12 +4290,20 @@ async fn opt01_bulk_replay_stays_unregistered_while_new_input_exceeds_queue() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn opt01_handoff_completes_before_continuing_producer_stops() {
-    let harness = Harness::new(Options { ring_max_bytes: 256,
-        range_delay: Duration::from_millis(1), ..Options::default() });
+    let harness = Harness::new(Options {
+        ring_max_bytes: 256,
+        range_delay: Duration::from_millis(1),
+        ..Options::default()
+    });
     let cursor = harness.log.append(0, TRADE_KEY, &trade(0));
-    for index in 1..=200 { harness.log.append(0, TRADE_KEY, &trade(index)); }
+    for index in 1..=200 {
+        harness.log.append(0, TRADE_KEY, &trade(index));
+    }
     harness.settle();
-    let mut stream = harness.subscribe_batched("TRADE", None, cursor, 1000, 64).await.unwrap();
+    let mut stream = harness
+        .subscribe_batched("TRADE", None, cursor, 1000, 64)
+        .await
+        .unwrap();
     assert!(matches!(stream.next().await, Item::Control(code) if code == "REPLAYING"));
     let stop = Arc::new(AtomicBool::new(false));
     let finished = Arc::new(AtomicBool::new(false));
@@ -4199,7 +4326,10 @@ async fn opt01_handoff_completes_before_continuing_producer_stops() {
     let handed_off_while_producing = !finished.load(Ordering::Relaxed);
     stop.store(true, Ordering::Relaxed);
     producer.await.unwrap();
-    assert!(handed_off_while_producing, "must not rely on producer completion");
+    assert!(
+        handed_off_while_producing,
+        "must not rely on producer completion"
+    );
     let expected = as_offsets(&harness.log.records_of(TRADE_KEY, cursor));
     if actual.len() < expected.len() {
         actual.extend(stream.collect(expected.len() - actual.len()).await.1);

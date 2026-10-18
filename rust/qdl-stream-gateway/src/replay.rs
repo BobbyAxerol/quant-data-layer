@@ -140,10 +140,16 @@ pub struct ReplayEpisode {
 }
 impl ReplayEpisode {
     pub fn new(deadline: Instant) -> Arc<Self> {
-        Arc::new(Self { deadline, scanned: AtomicU64::new(0),
-            scanned_bytes: AtomicU64::new(0), matched: AtomicU64::new(0) })
+        Arc::new(Self {
+            deadline,
+            scanned: AtomicU64::new(0),
+            scanned_bytes: AtomicU64::new(0),
+            matched: AtomicU64::new(0),
+        })
     }
-    pub fn matched(&self) -> u64 { self.matched.load(Ordering::Relaxed) }
+    pub fn matched(&self) -> u64 {
+        self.matched.load(Ordering::Relaxed)
+    }
     pub fn scan(&self, bytes: u64, limits: &ReplayLimits) -> Option<&'static str> {
         saturating_add(&self.scanned, 1);
         saturating_add(&self.scanned_bytes, bytes);
@@ -151,22 +157,37 @@ impl ReplayEpisode {
             Some("REPLAY_SCAN_LIMIT")
         } else if self.scanned_bytes.load(Ordering::Relaxed) > limits.max_scanned_bytes {
             Some("REPLAY_BYTE_LIMIT")
-        } else { None }
+        } else {
+            None
+        }
     }
     pub fn reserve_match(self: &Arc<Self>, limit: u64) -> Option<MatchReservation> {
-        self.matched.fetch_update(Ordering::Relaxed, Ordering::Relaxed,
-            |n| (n < limit).then(|| n + 1)).ok()?;
-        Some(MatchReservation { episode: self.clone(), delivered: false })
+        self.matched
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                (n < limit).then(|| n + 1)
+            })
+            .ok()?;
+        Some(MatchReservation {
+            episode: self.clone(),
+            delivered: false,
+        })
     }
 }
 /// Undelivered/detached records do not consume a matched-record allowance.
-pub struct MatchReservation { episode: Arc<ReplayEpisode>, delivered: bool }
+pub struct MatchReservation {
+    episode: Arc<ReplayEpisode>,
+    delivered: bool,
+}
 impl MatchReservation {
-    pub fn delivered(mut self) { self.delivered = true; }
+    pub fn delivered(mut self) {
+        self.delivered = true;
+    }
 }
 impl Drop for MatchReservation {
     fn drop(&mut self) {
-        if !self.delivered { self.episode.matched.fetch_sub(1, Ordering::Relaxed); }
+        if !self.delivered {
+            self.episode.matched.fetch_sub(1, Ordering::Relaxed);
+        }
     }
 }
 
@@ -519,7 +540,10 @@ impl ReplayCoordinator {
             let next_started = Instant::now();
             saturating_add(&self.metrics.cursor_next_calls, 1);
             let next = cursor.next(Duration::from_millis(100));
-            saturating_add(&self.metrics.cursor_next_elapsed_ns, elapsed_ns(next_started));
+            saturating_add(
+                &self.metrics.cursor_next_elapsed_ns,
+                elapsed_ns(next_started),
+            );
             let record = match next {
                 Ok(Some(record)) => record,
                 Ok(None) => {
@@ -607,12 +631,14 @@ impl ReplayCoordinator {
                     index += 1;
                     continue;
                 }
-                let Some(reservation) = request.episode.reserve_match(self.limits.max_matched) else {
+                let Some(reservation) = request.episode.reserve_match(self.limits.max_matched)
+                else {
                     let mut done = active.swap_remove(index);
                     done.finish(ReplayEnd::Backlog);
                     continue;
                 };
-                match self.send_or_detach(&request.sink, &live, weight, allow_wait, Some(partition)) {
+                match self.send_or_detach(&request.sink, &live, weight, allow_wait, Some(partition))
+                {
                     Sent::Delivered => {
                         reservation.delivered();
                         *delivered = true;
@@ -691,7 +717,9 @@ impl ReplayCoordinator {
             Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
                 // A stalled subscriber must not hold the shared reader while
                 // another request in this pass can consume its next record.
-                if !allow_wait { return Sent::Detach; }
+                if !allow_wait {
+                    return Sent::Detach;
+                }
                 let started = Instant::now();
                 saturating_add(&self.metrics.slot_waits, 1);
                 // Only called by the spawn_blocking replay reader. Construct
@@ -706,12 +734,18 @@ impl ReplayCoordinator {
                         if remaining.is_zero() {
                             return SlotWait::Detach;
                         }
-                        let slice = if partition.is_some() { remaining.min(PEER_POLL) } else { remaining };
+                        let slice = if partition.is_some() {
+                            remaining.min(PEER_POLL)
+                        } else {
+                            remaining
+                        };
                         match tokio::time::timeout(slice, sink.reserve()).await {
                             Ok(Ok(permit)) => return SlotWait::Permit(permit),
                             Ok(Err(_)) => return SlotWait::Closed,
                             Err(_) => {
-                                if partition.is_some_and(|partition| self.queued_peer_ready(partition)) {
+                                if partition
+                                    .is_some_and(|partition| self.queued_peer_ready(partition))
+                                {
                                     saturating_add(&self.metrics.peer_preempted, 1);
                                     return SlotWait::Detach;
                                 }
@@ -937,7 +971,10 @@ mod tests {
             assert_eq!(delivered.record.raw.offset, offset as i64);
             drop(delivered);
         }
-        assert!(receiver.try_recv().is_err(), "timed-out record was not sent");
+        assert!(
+            receiver.try_recv().is_err(),
+            "timed-out record was not sent"
+        );
         assert_eq!(sink.capacity(), REPLAY_CHANNEL, "no leaked permit");
         assert_eq!(coordinator.budget.used(), 0);
         assert_eq!(outcome(send(&coordinator, &sink)).await, Sent::Delivered);
@@ -989,8 +1026,12 @@ mod tests {
     fn episode_allowances_survive_ranges_and_detached_matches() {
         let deadline = Instant::now() + Duration::from_secs(2);
         let episode = ReplayEpisode::new(deadline);
-        let limits = ReplayLimits { max_scanned_records: 2,
-            max_scanned_bytes: 10, max_matched: 1, ..ReplayLimits::default() };
+        let limits = ReplayLimits {
+            max_scanned_records: 2,
+            max_scanned_bytes: 10,
+            max_matched: 1,
+            ..ReplayLimits::default()
+        };
         assert_eq!(episode.scan(4, &limits), None);
         let detached = episode.reserve_match(1).unwrap();
         assert!(episode.reserve_match(1).is_none());
@@ -1005,14 +1046,24 @@ mod tests {
         assert_eq!(bytes.scan(5, &limits), Some("REPLAY_BYTE_LIMIT"));
         let (sink, _rx) = tokio::sync::mpsc::channel(1);
         let (done, _end) = tokio::sync::oneshot::channel();
-        let request = ReplayRequest::new(10, 20, b"key".to_vec(),
-            ("TRADE".into(), None), None, sink, done,
-            Arc::new(AtomicBool::new(false)), deadline + Duration::from_secs(10))
-            .with_episode(episode.clone());
+        let request = ReplayRequest::new(
+            10,
+            20,
+            b"key".to_vec(),
+            ("TRADE".into(), None),
+            None,
+            sink,
+            done,
+            Arc::new(AtomicBool::new(false)),
+            deadline + Duration::from_secs(10),
+        )
+        .with_episode(episode.clone());
         assert_eq!(request.deadline, deadline);
         assert_eq!(request.episode.matched(), 1);
-        assert_eq!(request.ended(11, deadline + Duration::from_millis(1)),
-            Some(ReplayEnd::ScanLimit("REPLAY_TIME_LIMIT")));
+        assert_eq!(
+            request.ended(11, deadline + Duration::from_millis(1)),
+            Some(ReplayEnd::ScanLimit("REPLAY_TIME_LIMIT"))
+        );
     }
 
     #[test]
@@ -1022,7 +1073,10 @@ mod tests {
         fill(&coordinator, &sink);
         let before = coordinator.budget.used();
         let row = record(900);
-        assert_eq!(coordinator.send_or_detach(&sink, &row, row.weight(), false, None), Sent::Detach);
+        assert_eq!(
+            coordinator.send_or_detach(&sink, &row, row.weight(), false, None),
+            Sent::Detach
+        );
         assert_eq!(coordinator.metrics.slot_waits.load(Ordering::Relaxed), 0);
         assert_eq!(coordinator.budget.used(), before);
     }
@@ -1040,9 +1094,20 @@ mod tests {
                 fill(&coordinator, &peer_sink);
             }
             let (done, _end) = tokio::sync::oneshot::channel();
-            coordinator.requeue(0, ReplayRequest::new(0, 10, b"peer".to_vec(),
-                ("TRADE".into(), None), None, peer_sink, done,
-                Arc::new(AtomicBool::new(false)), Instant::now() + Duration::from_secs(5)));
+            coordinator.requeue(
+                0,
+                ReplayRequest::new(
+                    0,
+                    10,
+                    b"peer".to_vec(),
+                    ("TRADE".into(), None),
+                    None,
+                    peer_sink,
+                    done,
+                    Arc::new(AtomicBool::new(false)),
+                    Instant::now() + Duration::from_secs(5),
+                ),
+            );
             let used = coordinator.budget.used();
             let worker = coordinator.clone();
             let started = Instant::now();
@@ -1054,17 +1119,26 @@ mod tests {
             let elapsed = started.elapsed();
             if peer_ready {
                 assert!(elapsed < DETACH_AFTER, "{elapsed:?}");
-                assert_eq!(coordinator.metrics.peer_preempted.load(Ordering::Relaxed), 1);
+                assert_eq!(
+                    coordinator.metrics.peer_preempted.load(Ordering::Relaxed),
+                    1
+                );
             } else {
                 assert!(elapsed >= DETACH_AFTER, "{elapsed:?}");
-                assert_eq!(coordinator.metrics.peer_preempted.load(Ordering::Relaxed), 0);
+                assert_eq!(
+                    coordinator.metrics.peer_preempted.load(Ordering::Relaxed),
+                    0
+                );
             }
             assert_eq!(coordinator.metrics.slot_waits.load(Ordering::Relaxed), 1);
-            assert_eq!(coordinator.budget.used(), used, "no charge for the detached record");
+            assert_eq!(
+                coordinator.budget.used(),
+                used,
+                "no charge for the detached record"
+            );
             for mut request in coordinator.take_batch(0) {
                 request.finish(ReplayEnd::Cancelled);
             }
         }
     }
-
 }
