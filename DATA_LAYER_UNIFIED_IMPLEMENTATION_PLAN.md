@@ -76536,3 +76536,24 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
 - CI2 proof: this journal entry is pushed alone as a docs-only commit. Its run is recorded in the PR #34 report;
   expected: base dc25b79 (run 39217653087), docs only => consolidated-source-preflight, repository-scan,
   contract-tests (base_check); suites skipped.
+
+### P18.4 Data Layer v2.2.4 published - 2026-10-19 (Claude)
+
+- Owner approval: closeout plan 2026-10-16 (merge `fix/p184-dl-closure` -> dev -> main, then tag); the auto-mode
+  classifier blocked the first merge call, and the owner re-approved the whole chain via AskUserQuestion on 2026-10-19
+  ("Duyệt cả chuỗi").
+- PR #33 (`fix/p184-dl-closure` -> dev) merged at head 33797dd as 789bfa6 after CI run 39206402498 was green (5/5 jobs).
+- PR #35 (dev -> main) merged as b5ab3c2 after CI runs 39210158182 (pull_request) and 39210138010 (push to dev) were
+  both green on 789bfa6.
+- Annotated tag `v2.2.4` (object 1d26848f, tagger BobbyAxerol) on b5ab3c2. `release.yml` run 39214746630 succeeded:
+  ancestry on main, certificate status PASS, endpoint report sha256, SDK 2.4.1 wheel rebuilt and matched
+  `sdk.wheel_sha256` 9f79e032. The release https://github.com/BobbyAxerol/quant-data-layer/releases/tag/v2.2.4 carries
+  certificate.json, endpoint-report.json, qdl_sdk-2.4.1 wheel, CycloneDX SBOM and release.json.
+- Classification unchanged from the certificate: scoped Data Layer stage-100 PASS under amendments G4-A1, G4-A2, A3,
+  A4 v2 (applied, not needed) and post-hoc A5 (G11 TRADE clock; without A5, G11 FAILs on one slice from venue
+  silence); G12 credited; G13 76/76; single host, not HA; measured with unrelated stacks paused (IDR-128).
+- Runtime unchanged by the publication (no container recreated): rust 27c79b53 (ingestors, stream), core rc22
+  7c848aad, projector 60f83a51, query 3e9e4d3a; TS writer 2deb90b0.
+- Open after the release: PR #34 (change-scoped CI with sharded unit suite; full run 30 -> 12 min) is under review
+  with one blocking finding (the consolidated build had no accepted DL CI receipt form); IDR-115..128 per the TS
+  register; v2.2.3 rollback images are removed by digest after 2026-10-25.
