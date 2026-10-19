@@ -38,7 +38,12 @@ from qdl.runtime.readiness import (
     MeasuredRuntimeReadiness,
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
-from qdl.runtime.stall_telemetry import install_gc_pause_telemetry, install_request_stall_telemetry
+from qdl.runtime.memory_maintenance import install_query_memory_maintenance
+from qdl.runtime.stall_telemetry import (
+    install_gc_pause_telemetry,
+    install_request_stall_telemetry,
+    process_stall_recorder,
+)
 from qdl.runtime.stable_capacity import STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
 from qdl.runtime.stable_deployment import (
     StableAcquisitionPlan,
@@ -807,6 +812,9 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
     app.state.stable_query_backend = query_backend
     # IDR-114: slow requests and event-loop lag on the replica itself (observation only).
     install_request_stall_telemetry(app)
+    # IDR-129: full collection + malloc_trim when RSS is above the soft limit and the
+    # large-warmup lane is idle (QDL_QUERY_MEMORY_SOFT_LIMIT_MIB, 0 disables).
+    install_query_memory_maintenance(app, service, recorder=process_stall_recorder())
     read_view_secret_file = os.environ.get(READ_VIEW_SECRET_FILE_ENV, "").strip()
     if kn_backend is not None and read_view_secret_file:
         # D29: the native Stream's GetSnapshot/GetFeedStatus read view.
