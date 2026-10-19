@@ -76726,3 +76726,6 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   writer starts (BOOTSTRAP, STRICT) are two warmup bursts -> fixed Query first (W9 before W12), RSS watch with a
   1.8 GiB hold rule, acceptance RSS < 1.6 GiB 10 min after STRICT; certificate scope: Query code changed -> G5/G6
   need a delta proof (isolated 64-warmup burst A/B + IDR-129 tests), not inheritance.
+- 12:40Z: the queued hardened-permission rehearsal re-run (waiting behind the IDR-128 A/B lock, no lock held, no
+  container started) was cancelled on purpose: the IDR-129 Query rebuild changes the window image again, so the
+  hardened generation and the final Query image are rehearsed once together before the window (packet item 2.5a).
