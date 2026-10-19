@@ -76660,3 +76660,52 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   claude-dl-v225): debug runs found and fixed rehearsal-only setup gaps (stable_state ownership, Query state symlink
   runtime/session-liveness -> /session-liveness, OKX ETH-USDT index lane, clone Postgres CPU). Results, window packet
   and certificate scope: `upgrade/evidence/releases/v2.2.5/drafts/` (status: DRAFT, rehearsal in progress).
+- 2026-10-19 10:00-11:07Z (continued, same slice):
+  - CI: PR #38 (fix/v225-config-certs -> dev) full run 39238627766 on 3915a76 (merge of origin/dev 51387a2 included):
+    all 13 jobs green (unit-tests 1-4, release-gates, rust-workspace, kn-native-integration, contract-tests,
+    sdk-python310, repository-scan, consolidated-source-preflight).
+  - Python image `qdl-v2-python:2.2.5-601c3d8` = sha256:b7056141ec26661edbf0566fe93ab2c6ac9f27749fd550db5062ca841a639c05
+    (build receipt `~/.local/state/qdl-v2/build-v2.2.5-601c3d8/receipt.json`, copy in the evidence folder): label
+    revision 601c3d8, files vs production Query image 3e9e4d3a: 16 different = exactly the git-expected set (IDR-127
+    config/consumers, stage-100 amendment JSONs, apparatus `qdl/certification/reference_l2_acceptance.py`),
+    unexpected 0, pip freeze equal. Rust images not rebuilt. Pinned in `deploy/compose/qdl-v2-stable-kn.v2.2.5.env`.
+  - bar edge offline probe (--network none): image a388537 bakes catalog 11 / acquisition 19 = its checkpoint;
+    image 2.2.5 bakes 12 / 20 and its restore would refuse (catalog_revision, acquisition_revision). Bar edge stays
+    on a388537 in the window (mounts only).
+  - K6: production observed read-only 10:35Z (`kafka_internal_topic_compaction.py --observe`): the temporary
+    `min.cleanable.dirty.ratio` on `__consumer_offsets` is already ABSENT (removed 2026-10-16 14:12Z), decision C
+    APPLIED, no drift. K6 is a no-op; W5 re-observes only.
+  - Isolated rehearsal (receipt `upgrade/evidence/releases/v2.2.5/rehearsal-20261019.json`, lock claude-dl-v225, 2.99
+    vCPU caps, ETH-only live venue data, TS writer clone 2deb90b0): A deployed generation/v2.2.4 -> B new
+    generation/v2.2.5 -> C rollback -> D re-roll, all PASS. Consumer-visible outage 251.3 / 267.8 / 290.7 s; DL
+    Query READY over mTLS 139.6-161.4 s after the broker recreate; offsets of every group continuous, URP 0; writer
+    cursor items unchanged, BOOTSTRAP then STRICT 12/12 READY, 0 auth/protocol failures; the other generation refused
+    by Query, both Streams and Kafka in every phase. Teardown 13 containers / 4 networks / 4 volumes / 4 dirs, 0 left.
+    Debug runs before it found: stable_state ownership and the Query `runtime/session-liveness` symlink (rehearsal
+    setup only), and a real window finding: a STRICT writer start after > 120 s outage parks TRADE/QUOTE in
+    HANDOFF_RESUME_REQUIRED (writer execution-surface TTL 120 s, IDR-101) -> W12 = BOOTSTRAP then STRICT.
+    Tool fix after the run: readiness needs a heartbeat newer than the restart (the run's STRICT timer was a false
+    positive; STRICT readiness is shown by the steady sample).
+  - Cleanup: rehearsal resources 0 left; host lock released 11:07Z; kept: python image b7056141 (window target), TLS
+    generations under ~/.local/state/qdl-v2/tls, secrets env ~/.local/state/qdl-v2/releases/v2.2.5/kn-secrets.env
+    (0600), build dir build-v2.2.5-601c3d8 (36 MB). Disk / 53 % used before and after.
+  - Codex review `p184-v225-bounded-window-review-20261019.md` dispositions (coordinator relayed 2026-10-19):
+    A (CI classification): ACCEPTED - this slice ran only affected modules locally (CI8); GitHub full run green.
+    B (config/TLS evidence): ACCEPTED - packet states the full-mesh outage with measured duration; rehearsal receipt
+    carries the A->B->C->D trust/role map, offset and cursor continuity, per-route recovery, outage and cleanup;
+    semantic catalog/manifest parity recorded (`semantic-parity.json`: 712 -> 716, exactly the four inverse
+    bindings, 0 removed / 0 changed; TS r11 adds only the inverse requirements, quotas 77/3000; alpha-okx r15 quotas
+    only); old-identity rejection proven; wrong-realm rejection: ALTERNATIVE - not re-tested in the rehearsal (the
+    realm/subject binding code is unchanged; covered by tests/test_consumer_key_realms.py); quotas after the
+    stable_redis recreate: writer admitted in B/C/D. K6: exact pre-window state recorded (absent) with the exact
+    restore command; no-op. BAR on its current image; no inactive credential renewal: ACCEPTED.
+    C (writer): ACCEPTED - W12-A default (2deb90b0, identity mount only), W12-B only with its full proof.
+    D (inheritance): ACCEPTED - `CERTIFICATE_SCOPE.md` is a per-gate matrix, inheritance conditional on W12-A and
+    K6 no-op; data-policy refusals counted apart; READY vs execution-eligible reported apart; latency quantities
+    3 and 4 NOT_MEASURED passively (inherited); passive soak = regression only; IDR-128 limit stays.
+    E (finite closeout): ACCEPTED - no duplicate run, K2/K3/K4 deferred, then window, then TS phase E.
+  - Open decisions (owner): window date; acquisition r20 vs r21 (repository r20 carries the inverse L2
+    materialization the core already runs); W12-A vs W12-B; certificate scope as proposed.
+  - Status: implemented and tested locally (rehearsal isolated); NOT production-ready until the window executes and
+    its acceptance passes. Packet: `upgrade/evidence/releases/v2.2.5/drafts/MAINTENANCE_WINDOW_PACKET.md`; scope:
+    `upgrade/evidence/releases/v2.2.5/drafts/CERTIFICATE_SCOPE.md`.

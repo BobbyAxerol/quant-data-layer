@@ -299,9 +299,10 @@ class Rehearsal:
             t = round((now_ns() - t0) / 1e9, 1)
             for u in rows:
                 last_bad[f"{u.get('provider')}|{u.get('symbol')}|{u.get('feed')}|{u.get('error_code')}"] = t
-            if beat.get("heartbeat") and first_seen is None:
+            fresh = float(beat.get("last_seen_unix") or 0) * 1e9 > t0  # a beat of THIS process, not the stopped one
+            if beat.get("heartbeat") and fresh and first_seen is None:
                 first_seen = t
-            if self.writer_beat()["ready"]:
+            if fresh and self.writer_beat()["ready"]:
                 return {"ready": True, "ready_after_s": t, "first_heartbeat_s": first_seen, "samples": samples,
                         "route_last_unhealthy_s": dict(sorted(last_bad.items()))}
             time.sleep(3)
@@ -591,7 +592,9 @@ class Rehearsal:
         self.note("A_writer_ready", writer=self.writer_beat())
         # The production writer runs STRICT; a clean BOOTSTRAP -> STRICT restart on the same identity first.
         self.restart_writer(read_env(a.old_gen)["QDL_TLS_TS_IDENTITY_DIR"], "STRICT")
-        if not self.wait(LIMITS["writer_s"], lambda: self.writer_ready_since(0), poll=5):
+        strict_a = self.route_timeline(LIMITS["writer_s"], now_ns())
+        self.note("A_strict_restart", **strict_a)
+        if not strict_a["ready"]:
             raise RuntimeError("STOP phase A: STRICT restart never became ready")
         self.steady("A", a.old_gen)
         self.note("A_refusals", counts=self.refusal_counts(phase_a_iso))

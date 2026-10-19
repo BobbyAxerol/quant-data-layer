@@ -1,0 +1,160 @@
+{
+ "checks": 118,
+ "new": "gen-20261019T084200Z",
+ "new_ca": {
+  "not_after": "2027-10-19T08:42:01Z",
+  "not_before": "2026-10-19T08:42:01Z",
+  "sha256_fingerprint": "610c0c6fe0758a872907fbc926c2295dadb7ce31e4d059350fd3fdec567abd12"
+ },
+ "new_truststores": {
+  "truststore-kn-v220.jks": [
+   "610c0c6fe0758a872907fbc926c2295dadb7ce31e4d059350fd3fdec567abd12"
+  ],
+  "truststore.jks": [
+   "610c0c6fe0758a872907fbc926c2295dadb7ce31e4d059350fd3fdec567abd12"
+  ]
+ },
+ "old": "20260822T144323Z",
+ "old_ca": {
+  "not_after": "2026-11-20T14:43:23Z",
+  "sha256_fingerprint": "7b374a30c8de92b954ed2bf3ab9943b290812f250db2f5ac90e9ef5223561487"
+ },
+ "old_truststores": {
+  "truststore-kn-v220.jks": [
+   "772d0b682f5e9720c64b2cb4d23b72c1f4870dfaa0a29d94fdcc7dcd03159fcf",
+   "7b374a30c8de92b954ed2bf3ab9943b290812f250db2f5ac90e9ef5223561487"
+  ],
+  "truststore.jks": [
+   "7b374a30c8de92b954ed2bf3ab9943b290812f250db2f5ac90e9ef5223561487"
+  ]
+ },
+ "problems": [],
+ "schema": "qdl.mesh-tls-verify.v1",
+ "slots": {
+  "identities/trading-system": {
+   "cn": "stable-trading-system",
+   "eku": [
+    "TLS Web Client Authentication",
+    "TLS Web Server Authentication"
+   ],
+   "not_after": "2027-10-19T08:42:05Z",
+   "old_not_after": "2026-11-20T14:43:25Z",
+   "san": [
+    "DNS:localhost",
+    "DNS:stable-trading-system"
+   ]
+  },
+  "kn-tls/kn-projector": {
+   "cn": "kn-projector",
+   "eku": [
+    "TLS Web Client Authentication",
+    "TLS Web Server Authentication"
+   ],
+   "not_after": "2027-10-19T08:42:06Z",
+   "old_not_after": "2026-12-25T04:31:41Z",
+   "san": [
+    "DNS:kn-projector",
+    "DNS:localhost"
+   ]
+  },
+  "kn-tls/kn-stream": {
+   "cn": "kn-stream",
+   "eku": [
+    "TLS Web Client Authentication",
+    "TLS Web Server Authentication"
+   ],
+   "not_after": "2027-10-19T08:42:06Z",
+   "old_not_after": "2026-12-25T04:31:41Z",
+   "san": [
+    "DNS:kn-stream",
+    "DNS:localhost"
+   ]
+  },
+  "stable-certs/authority-dispatcher": {
+   "cn": "stable-authority-dispatcher",
+   "eku": [
+    "TLS Web Client Authentication",
+    "TLS Web Server Authentication"
+   ],
+   "not_after": "2027-10-19T08:42:04Z",
+   "old_not_after": "2026-11-20T14:43:25Z",
+   "san": [
+    "DNS:localhost",
+    "DNS:stable-authority-dispatcher"
+   ]
+  },
+  "stable-certs/core": {
+   "cn": "phase8-core",
+   "eku": [
+    "TLS Web Client Authentication",
+    "TLS Web Server Authentication"
+   ],
+   "not_after": "2027-10-19T08:42:03Z",
+   "old_not_after": "2026-11-20T14:43:24Z",
+   "san": [
+    "DNS:localhost",
+    "DNS:phase8-core"
+   ]
+  },
+  "stable-certs/producer": {
+   "cn": "phase8-producer",
+   "eku": [
+    "TLS Web Client Authentication",
+    "TLS Web Server Authentication"
+   ],
+   "not_after": "2027-10-19T08:42:03Z",
+   "old_not_after": "2026-11-20T14:43:24Z",
+   "san": [
+    "DNS:localhost",
+    "DNS:phase8-producer"
+   ]
+  },
+  "stable-certs/projector": {
+   "cn": "phase8-consumer",
+   "eku": [
+    "TLS Web Client Authentication",
+    "TLS Web Server Authentication"
+   ],
+   "not_after": "2027-10-19T08:42:03Z",
+   "old_not_after": "2026-11-20T14:43:24Z",
+   "san": [
+    "DNS:localhost",
+    "DNS:phase8-consumer"
+   ]
+  },
+  "stable-certs/query": {
+   "cn": "stable-query",
+   "eku": [
+    "TLS Web Client Authentication",
+    "TLS Web Server Authentication"
+   ],
+   "not_after": "2027-10-19T08:42:09Z",
+   "old_not_after": "2026-11-20T14:43:26Z",
+   "san": [
+    "DNS:localhost",
+    "DNS:qdl-v2-query",
+    "DNS:query_v2_1",
+    "DNS:query_v2_2"
+   ]
+  },
+  "stable-certs/stream": {
+   "cn": "stable-stream",
+   "eku": [
+    "TLS Web Client Authentication",
+    "TLS Web Server Authentication"
+   ],
+   "not_after": "2027-10-19T08:42:09Z",
+   "old_not_after": "2026-11-20T14:43:27Z",
+   "san": [
+    "DNS:localhost",
+    "DNS:qdl-v2-stream",
+    "DNS:qdl-v2-stream-a",
+    "DNS:qdl-v2-stream-b",
+    "DNS:stream_v2_active",
+    "DNS:stream_v2_passive"
+   ]
+  }
+ },
+ "verdict": "PASS",
+ "verified_utc": "2026-10-19T08:43:13Z"
+}

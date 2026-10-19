@@ -1,0 +1,763 @@
+{
+ "classification": "ISOLATED_REHEARSAL (same host, <=3 vCPU caps, ETH-only live public venue data); not production evidence",
+ "notes": [
+  "strict_restart_timer is a false positive in this run (it accepted the stopped process' last heartbeat); STRICT readiness is shown by the steady 'last' sample ~60 s after the STRICT start and by 0 STRICT_RESUME_REFUSAL / HANDOFF_RESUME_REQUIRED; the tool is fixed after this run (heartbeat must be newer than the restart).",
+  "ready_all_samples=false in every steady window: its first samples fall into the STRICT restart start-up; the last sample is READY 12/12.",
+  "Debug run (same day, before the BOOTSTRAP step existed): a STRICT start after a >120 s outage parked every TRADE/QUOTE slice in HANDOFF_RESUME_REQUIRED (writer execution-surface TTL 120 s, IDR-101 fail-closed).",
+  "Kafka ACL granularity is not mirrored (rehearsal super.users by CN); CN continuity is proven by the principals being accepted on both generations and refused across generations.",
+  "SOURCE_UNAVAILABLE counts are MARK reference reads during start-up (data policy), not auth/protocol failures."
+ ],
+ "phase_A_baseline": {
+  "dl_up": {
+   "brokers_s": 66.03,
+   "canonical_topic_id": "osGVi_7ATuyJgTtZnfU2KQ",
+   "dynamic_truststore_override": {
+    "1": 2,
+    "2": 2,
+    "3": 2
+   },
+   "generation": "20260822T144323Z",
+   "query": {
+    "body_status": "READY",
+    "keys": [
+     "authority",
+     "config_revision",
+     "ready",
+     "role",
+     "status"
+    ],
+    "ok": true,
+    "status": 200
+   },
+   "urp": 0
+  },
+  "refusals": {
+   "query_kn_1": {
+    " 401": 0,
+    "PERMISSION_DENIED": 0,
+    "UNAUTHENTICATED": 0,
+    "certificate": 0,
+    "manifest_revision": 0
+   },
+   "stream_kn_1": {
+    " 401": 0,
+    "PERMISSION_DENIED": 0,
+    "UNAUTHENTICATED": 0,
+    "certificate": 0,
+    "manifest_revision": 0
+   },
+   "stream_kn_2": {
+    " 401": 0,
+    "PERMISSION_DENIED": 0,
+    "UNAUTHENTICATED": 0,
+    "certificate": 0,
+    "manifest_revision": 0
+   },
+   "ts_writer": {
+    "auth_protocol": {
+     "401": 0,
+     "CERTIFICATE_VERIFY_FAILED": 0,
+     "HANDOFF_RESUME_REQUIRED": 0,
+     "SSLError": 0,
+     "STRICT_RESUME_REFUSAL": 0,
+     "UNAUTHENTICATED": 0
+    },
+    "data_policy": {
+     "DATA_STALE": 0,
+     "EVENT_AGE": 0,
+     "OPEN_SEQUENCE_GAP": 0,
+     "SESSION_STATE": 0,
+     "SOURCE_UNAVAILABLE": 2
+    }
+   }
+  },
+  "steady": {
+   "last": {
+    "alive": true,
+    "demanded": 12,
+    "ready": false,
+    "status": "DEGRADED",
+    "unhealthy": 4,
+    "unhealthy_rows": [
+     {
+      "error_code": null,
+      "feed": "BAR",
+      "interval": "1m",
+      "provider": "BINANCE",
+      "reconnect_count": 0,
+      "retryable": null,
+      "state": "STARTING",
+      "symbol": "ETHUSDT",
+      "worker": null
+     },
+     {
+      "error_code": null,
+      "feed": "BOOK_DELTA",
+      "interval": null,
+      "provider": "BINANCE",
+      "reconnect_count": 0,
+      "retryable": null,
+      "state": "STARTING",
+      "symbol": "ETHUSDT",
+      "worker": null
+     },
+     {
+      "error_code": null,
+      "feed": "BOOK_SNAPSHOT",
+      "interval": null,
+      "provider": "BINANCE",
+      "reconnect_count": 0,
+      "retryable": null,
+      "state": "STARTING",
+      "symbol": "ETHUSDT",
+      "worker": null
+     },
+     {
+      "error_code": null,
+      "feed": "MARK_INDEX_PRICE",
+      "interval": null,
+      "provider": "BINANCE",
+      "reconnect_count": 0,
+      "retryable": null,
+      "state": "STARTING",
+      "symbol": "ETHUSDT",
+      "worker": null
+     }
+    ]
+   },
+   "ready_all_samples": false,
+   "samples": 7
+  },
+  "writer_ready": {
+   "alive": true,
+   "demanded": 12,
+   "ready": true,
+   "status": "DEGRADED",
+   "unhealthy": 0,
+   "unhealthy_rows": []
+  }
+ },
+ "phases": {
+  "B": {
+   "brokers_answer_s": 59.19,
+   "consumer_visible_outage_s": 251.27,
+   "dl_all_healthy_s": 158.95,
+   "generation": "gen-20261019T084200Z",
+   "kafka_offset_continuity": {
+    "groups": [
+     "kn-projector-v3-a",
+     "kn-projector-v3-b",
+     "qdl-v2-book-resync-ingestor_binance_usdm-binance-public-book-001",
+     "qdl-v2-book-resync-ingestor_okx_swap-okx-public-001",
+     "qdl-v2-realtime-core-v2"
+    ],
+    "missing_after": [],
+    "ok": true,
+    "partitions_after": 25,
+    "partitions_before": 23,
+    "regressed": {}
+   },
+   "mesh_stop_s": 18.7,
+   "negative_probes": {
+    "kafka_admin_with_current_generation": true,
+    "kafka_admin_with_other_generation": false,
+    "query_with_other_identity": {
+     "detail": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate in certificate chain (_ssl.c:1010)>",
+     "error": "URLError",
+     "ok": false
+    },
+    "stream_with_other_identity": {
+     "ok": false,
+     "rc": 1,
+     "tail": " verify error:num=20:unable to get local issuer certificate 40B76B89CF720000:error:0A000086:SSL routines:tls_post_process_server_certificate:certificate verify failed:../ssl/statem/statem_clnt.c:1889:"
+    }
+   },
+   "query_ready_mtls_s": 161.41,
+   "refusals": {
+    "query_kn_1": {
+     " 401": 0,
+     "PERMISSION_DENIED": 0,
+     "UNAUTHENTICATED": 0,
+     "certificate": 0,
+     "manifest_revision": 0
+    },
+    "stream_kn_1": {
+     " 401": 0,
+     "PERMISSION_DENIED": 0,
+     "UNAUTHENTICATED": 0,
+     "certificate": 0,
+     "manifest_revision": 0
+    },
+    "stream_kn_2": {
+     " 401": 0,
+     "PERMISSION_DENIED": 0,
+     "UNAUTHENTICATED": 0,
+     "certificate": 0,
+     "manifest_revision": 0
+    },
+    "ts_writer": {
+     "auth_protocol": {
+      "401": 0,
+      "CERTIFICATE_VERIFY_FAILED": 0,
+      "HANDOFF_RESUME_REQUIRED": 0,
+      "SSLError": 0,
+      "STRICT_RESUME_REFUSAL": 0,
+      "UNAUTHENTICATED": 0
+     },
+     "data_policy": {
+      "DATA_STALE": 0,
+      "EVENT_AGE": 0,
+      "OPEN_SEQUENCE_GAP": 0,
+      "SESSION_STATE": 0,
+      "SOURCE_UNAVAILABLE": 20
+     }
+    }
+   },
+   "release_env": "deploy/compose/qdl-v2-stable-kn.v2.2.5.env",
+   "roles_healthy_after_s": {
+    "ingestor_binance_usdm": 67.8,
+    "ingestor_okx_swap": 67.8,
+    "kafka1": 77.3,
+    "kafka2": 77.3,
+    "kafka3": 77.3,
+    "market_cache": 77.3,
+    "market_projector_1": 74.0,
+    "query_kn_1": 158.9,
+    "rust_core": 64.8,
+    "stable_redis": 77.3,
+    "stream_kn_1": 80.5,
+    "stream_kn_2": 80.5
+   },
+   "route_recovery_bootstrap": {
+    "first_heartbeat_s": 12.4,
+    "ready": true,
+    "ready_after_s": 36.6,
+    "route_last_unhealthy_s": {
+     "BINANCE|ETHUSDT|BAR|WORKER_UNAVAILABLE": 36.6,
+     "BINANCE|ETHUSDT|BOOK_DELTA|WORKER_UNAVAILABLE": 36.6,
+     "BINANCE|ETHUSDT|BOOK_SNAPSHOT|WORKER_UNAVAILABLE": 36.6,
+     "BINANCE|ETHUSDT|MARK_INDEX_PRICE|WORKER_UNAVAILABLE": 36.6,
+     "BINANCE|ETHUSDT|QUOTE|WORKER_UNAVAILABLE": 36.6,
+     "BINANCE|ETHUSDT|TRADE|WORKER_UNAVAILABLE": 36.6,
+     "OKX|ETH-USDT-SWAP|BAR|WORKER_UNAVAILABLE": 36.6,
+     "OKX|ETH-USDT-SWAP|BOOK_DELTA|WORKER_UNAVAILABLE": 36.6,
+     "OKX|ETH-USDT-SWAP|BOOK_SNAPSHOT|WORKER_UNAVAILABLE": 36.6,
+     "OKX|ETH-USDT-SWAP|MARK_INDEX_PRICE|WORKER_UNAVAILABLE": 36.6,
+     "OKX|ETH-USDT-SWAP|QUOTE|WORKER_UNAVAILABLE": 36.6,
+     "OKX|ETH-USDT-SWAP|TRADE|WORKER_UNAVAILABLE": 36.6
+    },
+    "samples": 4
+   },
+   "steady": {
+    "last": {
+     "alive": true,
+     "demanded": 12,
+     "ready": true,
+     "status": "DEGRADED",
+     "unhealthy": 0,
+     "unhealthy_rows": []
+    },
+    "query": {
+     "body_status": "READY",
+     "keys": [
+      "authority",
+      "config_revision",
+      "ready",
+      "role",
+      "status"
+     ],
+     "ok": true,
+     "status": 200
+    },
+    "ready_all_samples": false,
+    "samples": 9
+   },
+   "stream_tls": {
+    "qdl-v2-stream-a": true,
+    "qdl-v2-stream-b": true
+   },
+   "strict_restart_timer": {
+    "first_heartbeat_s": 1.6,
+    "ready": true,
+    "ready_after_s": 1.6,
+    "route_last_unhealthy_s": {},
+    "samples": 1
+   },
+   "urp": 0,
+   "writer_bootstrap_ready_after_stop_s": 242.02,
+   "writer_bootstrap_recovery_s": 47.06,
+   "writer_cursor_items": {
+    "after": {
+     "by_feed": {
+      "QUOTE": 2,
+      "TRADE": 2
+     },
+     "files": 1,
+     "invalid_files": 0
+    },
+    "before": {
+     "by_feed": {
+      "QUOTE": 2,
+      "TRADE": 2
+     },
+     "files": 1,
+     "invalid_files": 0
+    }
+   },
+   "writer_exit_code": "0",
+   "writer_stop_s": 4.13
+  },
+  "C": {
+   "brokers_answer_s": 57.78,
+   "consumer_visible_outage_s": 267.84,
+   "dl_all_healthy_s": 137.16,
+   "generation": "20260822T144323Z",
+   "kafka_offset_continuity": {
+    "groups": [
+     "kn-projector-v3-a",
+     "kn-projector-v3-b",
+     "qdl-v2-book-resync-ingestor_binance_usdm-binance-public-book-001",
+     "qdl-v2-book-resync-ingestor_okx_swap-okx-public-001",
+     "qdl-v2-realtime-core-v2"
+    ],
+    "missing_after": [],
+    "ok": true,
+    "partitions_after": 27,
+    "partitions_before": 25,
+    "regressed": {}
+   },
+   "mesh_stop_s": 20.9,
+   "negative_probes": {
+    "kafka_admin_with_current_generation": true,
+    "kafka_admin_with_other_generation": false,
+    "query_with_other_identity": {
+     "detail": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate in certificate chain (_ssl.c:1010)>",
+     "error": "URLError",
+     "ok": false
+    },
+    "stream_with_other_identity": {
+     "ok": false,
+     "rc": 1,
+     "tail": " verify error:num=20:unable to get local issuer certificate 4017508779770000:error:0A000086:SSL routines:tls_post_process_server_certificate:certificate verify failed:../ssl/statem/statem_clnt.c:1889:"
+    }
+   },
+   "query_ready_mtls_s": 139.64,
+   "refusals": {
+    "query_kn_1": {
+     " 401": 0,
+     "PERMISSION_DENIED": 0,
+     "UNAUTHENTICATED": 0,
+     "certificate": 0,
+     "manifest_revision": 0
+    },
+    "stream_kn_1": {
+     " 401": 0,
+     "PERMISSION_DENIED": 0,
+     "UNAUTHENTICATED": 0,
+     "certificate": 0,
+     "manifest_revision": 0
+    },
+    "stream_kn_2": {
+     " 401": 0,
+     "PERMISSION_DENIED": 0,
+     "UNAUTHENTICATED": 0,
+     "certificate": 0,
+     "manifest_revision": 0
+    },
+    "ts_writer": {
+     "auth_protocol": {
+      "401": 0,
+      "CERTIFICATE_VERIFY_FAILED": 0,
+      "HANDOFF_RESUME_REQUIRED": 0,
+      "SSLError": 0,
+      "STRICT_RESUME_REFUSAL": 0,
+      "UNAUTHENTICATED": 0
+     },
+     "data_policy": {
+      "DATA_STALE": 0,
+      "EVENT_AGE": 0,
+      "OPEN_SEQUENCE_GAP": 0,
+      "SESSION_STATE": 0,
+      "SOURCE_UNAVAILABLE": 46
+     }
+    }
+   },
+   "release_env": "deploy/compose/qdl-v2-stable-kn.v2.2.4.env",
+   "roles_healthy_after_s": {
+    "ingestor_binance_usdm": 66.1,
+    "ingestor_okx_swap": 66.1,
+    "kafka1": 75.3,
+    "kafka2": 75.3,
+    "kafka3": 75.3,
+    "market_cache": 75.3,
+    "market_projector_1": 72.3,
+    "query_kn_1": 137.2,
+    "rust_core": 63.1,
+    "stable_redis": 75.3,
+    "stream_kn_1": 78.6,
+    "stream_kn_2": 78.6
+   },
+   "route_recovery_bootstrap": {
+    "first_heartbeat_s": 13.1,
+    "ready": true,
+    "ready_after_s": 71.2,
+    "route_last_unhealthy_s": {
+     "BINANCE|ETHUSDT|BAR|None": 64.8,
+     "BINANCE|ETHUSDT|BAR|WORKER_UNAVAILABLE": 28.9,
+     "BINANCE|ETHUSDT|BOOK_DELTA|None": 64.8,
+     "BINANCE|ETHUSDT|BOOK_DELTA|WORKER_UNAVAILABLE": 28.9,
+     "BINANCE|ETHUSDT|BOOK_SNAPSHOT|None": 64.8,
+     "BINANCE|ETHUSDT|BOOK_SNAPSHOT|WORKER_UNAVAILABLE": 28.9,
+     "BINANCE|ETHUSDT|MARK_INDEX_PRICE|None": 64.8,
+     "BINANCE|ETHUSDT|MARK_INDEX_PRICE|WORKER_UNAVAILABLE": 28.9,
+     "BINANCE|ETHUSDT|QUOTE|WORKER_UNAVAILABLE": 28.9,
+     "BINANCE|ETHUSDT|TRADE|WORKER_UNAVAILABLE": 28.9,
+     "OKX|ETH-USDT-SWAP|BAR|None": 64.8,
+     "OKX|ETH-USDT-SWAP|BAR|WORKER_UNAVAILABLE": 28.9,
+     "OKX|ETH-USDT-SWAP|BOOK_DELTA|None": 64.8,
+     "OKX|ETH-USDT-SWAP|BOOK_DELTA|WORKER_UNAVAILABLE": 28.9,
+     "OKX|ETH-USDT-SWAP|BOOK_SNAPSHOT|None": 64.8,
+     "OKX|ETH-USDT-SWAP|BOOK_SNAPSHOT|WORKER_UNAVAILABLE": 28.9,
+     "OKX|ETH-USDT-SWAP|MARK_INDEX_PRICE|None": 64.8,
+     "OKX|ETH-USDT-SWAP|MARK_INDEX_PRICE|WORKER_UNAVAILABLE": 28.9,
+     "OKX|ETH-USDT-SWAP|QUOTE|WORKER_UNAVAILABLE": 28.9,
+     "OKX|ETH-USDT-SWAP|TRADE|WORKER_UNAVAILABLE": 28.9
+    },
+    "samples": 9
+   },
+   "steady": {
+    "last": {
+     "alive": true,
+     "demanded": 12,
+     "ready": true,
+     "status": "DEGRADED",
+     "unhealthy": 0,
+     "unhealthy_rows": []
+    },
+    "query": {
+     "body_status": "READY",
+     "keys": [
+      "authority",
+      "config_revision",
+      "ready",
+      "role",
+      "status"
+     ],
+     "ok": true,
+     "status": 200
+    },
+    "ready_all_samples": false,
+    "samples": 9
+   },
+   "stream_tls": {
+    "qdl-v2-stream-a": true,
+    "qdl-v2-stream-b": true
+   },
+   "strict_restart_timer": {
+    "first_heartbeat_s": 1.8,
+    "ready": true,
+    "ready_after_s": 1.8,
+    "route_last_unhealthy_s": {},
+    "samples": 1
+   },
+   "urp": 0,
+   "writer_bootstrap_ready_after_stop_s": 258.16,
+   "writer_bootstrap_recovery_s": 82.76,
+   "writer_cursor_items": {
+    "after": {
+     "by_feed": {
+      "QUOTE": 2,
+      "TRADE": 2
+     },
+     "files": 1,
+     "invalid_files": 0
+    },
+    "before": {
+     "by_feed": {
+      "QUOTE": 2,
+      "TRADE": 2
+     },
+     "files": 1,
+     "invalid_files": 0
+    }
+   },
+   "writer_exit_code": "0",
+   "writer_stop_s": 4.07
+  },
+  "D": {
+   "brokers_answer_s": 59.46,
+   "consumer_visible_outage_s": 290.65,
+   "dl_all_healthy_s": 139.28,
+   "generation": "gen-20261019T084200Z",
+   "kafka_offset_continuity": {
+    "groups": [
+     "kn-projector-v3-a",
+     "kn-projector-v3-b",
+     "qdl-v2-book-resync-ingestor_binance_usdm-binance-public-book-001",
+     "qdl-v2-book-resync-ingestor_okx_swap-okx-public-001",
+     "qdl-v2-realtime-core-v2"
+    ],
+    "missing_after": [],
+    "ok": true,
+    "partitions_after": 27,
+    "partitions_before": 27,
+    "regressed": {}
+   },
+   "mesh_stop_s": 15.47,
+   "negative_probes": {
+    "kafka_admin_with_current_generation": true,
+    "kafka_admin_with_other_generation": false,
+    "query_with_other_identity": {
+     "detail": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate in certificate chain (_ssl.c:1010)>",
+     "error": "URLError",
+     "ok": false
+    },
+    "stream_with_other_identity": {
+     "ok": false,
+     "rc": 1,
+     "tail": " verify error:num=20:unable to get local issuer certificate 4017CEF72F790000:error:0A000086:SSL routines:tls_post_process_server_certificate:certificate verify failed:../ssl/statem/statem_clnt.c:1889:"
+    }
+   },
+   "query_ready_mtls_s": 141.76,
+   "refusals": {
+    "query_kn_1": {
+     " 401": 0,
+     "PERMISSION_DENIED": 0,
+     "UNAUTHENTICATED": 0,
+     "certificate": 0,
+     "manifest_revision": 0
+    },
+    "stream_kn_1": {
+     " 401": 0,
+     "PERMISSION_DENIED": 0,
+     "UNAUTHENTICATED": 0,
+     "certificate": 0,
+     "manifest_revision": 0
+    },
+    "stream_kn_2": {
+     " 401": 0,
+     "PERMISSION_DENIED": 0,
+     "UNAUTHENTICATED": 0,
+     "certificate": 0,
+     "manifest_revision": 0
+    },
+    "ts_writer": {
+     "auth_protocol": {
+      "401": 0,
+      "CERTIFICATE_VERIFY_FAILED": 0,
+      "HANDOFF_RESUME_REQUIRED": 0,
+      "SSLError": 0,
+      "STRICT_RESUME_REFUSAL": 0,
+      "UNAUTHENTICATED": 0
+     },
+     "data_policy": {
+      "DATA_STALE": 0,
+      "EVENT_AGE": 0,
+      "OPEN_SEQUENCE_GAP": 0,
+      "SESSION_STATE": 0,
+      "SOURCE_UNAVAILABLE": 38
+     }
+    }
+   },
+   "release_env": "deploy/compose/qdl-v2-stable-kn.v2.2.5.env",
+   "roles_healthy_after_s": {
+    "ingestor_binance_usdm": 68.1,
+    "ingestor_okx_swap": 68.1,
+    "kafka1": 77.2,
+    "kafka2": 77.2,
+    "kafka3": 77.2,
+    "market_cache": 77.2,
+    "market_projector_1": 74.3,
+    "query_kn_1": 139.3,
+    "rust_core": 65.0,
+    "stable_redis": 77.2,
+    "stream_kn_1": 80.5,
+    "stream_kn_2": 80.5
+   },
+   "route_recovery_bootstrap": {
+    "first_heartbeat_s": 13.1,
+    "ready": true,
+    "ready_after_s": 96.2,
+    "route_last_unhealthy_s": {
+     "BINANCE|ETHUSDT|BAR|None": 60.5,
+     "BINANCE|ETHUSDT|BAR|WORKER_UNAVAILABLE": 28.4,
+     "BINANCE|ETHUSDT|BOOK_DELTA|None": 60.5,
+     "BINANCE|ETHUSDT|BOOK_DELTA|WORKER_UNAVAILABLE": 28.4,
+     "BINANCE|ETHUSDT|BOOK_SNAPSHOT|None": 60.5,
+     "BINANCE|ETHUSDT|BOOK_SNAPSHOT|WORKER_UNAVAILABLE": 28.4,
+     "BINANCE|ETHUSDT|MARK_INDEX_PRICE|None": 60.5,
+     "BINANCE|ETHUSDT|MARK_INDEX_PRICE|WORKER_UNAVAILABLE": 28.4,
+     "BINANCE|ETHUSDT|QUOTE|None": 60.5,
+     "BINANCE|ETHUSDT|QUOTE|WORKER_UNAVAILABLE": 28.4,
+     "BINANCE|ETHUSDT|TRADE|WORKER_UNAVAILABLE": 28.4,
+     "OKX|ETH-USDT-SWAP|BAR|None": 60.5,
+     "OKX|ETH-USDT-SWAP|BAR|WORKER_UNAVAILABLE": 28.4,
+     "OKX|ETH-USDT-SWAP|BOOK_DELTA|None": 60.5,
+     "OKX|ETH-USDT-SWAP|BOOK_DELTA|WORKER_UNAVAILABLE": 28.4,
+     "OKX|ETH-USDT-SWAP|BOOK_SNAPSHOT|None": 60.5,
+     "OKX|ETH-USDT-SWAP|BOOK_SNAPSHOT|WORKER_UNAVAILABLE": 28.4,
+     "OKX|ETH-USDT-SWAP|MARK_INDEX_PRICE|None": 60.5,
+     "OKX|ETH-USDT-SWAP|MARK_INDEX_PRICE|WORKER_UNAVAILABLE": 28.4,
+     "OKX|ETH-USDT-SWAP|QUOTE|None": 96.2,
+     "OKX|ETH-USDT-SWAP|QUOTE|WORKER_UNAVAILABLE": 28.4,
+     "OKX|ETH-USDT-SWAP|TRADE|WORKER_UNAVAILABLE": 28.4
+    },
+    "samples": 12
+   },
+   "steady": {
+    "last": {
+     "alive": true,
+     "demanded": 12,
+     "ready": false,
+     "status": "DEGRADED",
+     "unhealthy": 1,
+     "unhealthy_rows": [
+      {
+       "error_code": "SOURCE_UNAVAILABLE",
+       "feed": "MARK_INDEX_PRICE",
+       "interval": null,
+       "provider": "OKX",
+       "reconnect_count": 6,
+       "retryable": true,
+       "state": "DISCONNECTED",
+       "symbol": "ETH-USDT-SWAP",
+       "worker": null
+      }
+     ]
+    },
+    "query": {
+     "body_status": "READY",
+     "keys": [
+      "authority",
+      "config_revision",
+      "ready",
+      "role",
+      "status"
+     ],
+     "ok": true,
+     "status": 200
+    },
+    "ready_all_samples": false,
+    "samples": 9
+   },
+   "stream_tls": {
+    "qdl-v2-stream-a": true,
+    "qdl-v2-stream-b": true
+   },
+   "strict_restart_timer": {
+    "first_heartbeat_s": 1.8,
+    "ready": true,
+    "ready_after_s": 1.8,
+    "route_last_unhealthy_s": {},
+    "samples": 1
+   },
+   "urp": 0,
+   "writer_bootstrap_ready_after_stop_s": 280.84,
+   "writer_bootstrap_recovery_s": 108.57,
+   "writer_cursor_items": {
+    "after": {
+     "by_feed": {
+      "QUOTE": 2,
+      "TRADE": 2
+     },
+     "files": 1,
+     "invalid_files": 0
+    },
+    "before": {
+     "by_feed": {
+      "QUOTE": 2,
+      "TRADE": 2
+     },
+     "files": 1,
+     "invalid_files": 0
+    }
+   },
+   "writer_exit_code": "0",
+   "writer_stop_s": 4.27
+  }
+ },
+ "run": {
+  "compose": "deploy/compose/qdl-v2-stable-kn.yml @ 3915a76",
+  "ended": "2026-10-19T11:07:23.358Z",
+  "events_sha256": "4c4375afb826f12bbaff866099d2b0b2661101030535193421eadcceacf66263",
+  "host_lock_owner": "claude-dl-v225",
+  "project": "qdl-v225-reh",
+  "started": "2026-10-19T10:34:16.716Z",
+  "tool": "scripts/kn_mesh_rotation_rehearsal.py @ 3915a76"
+ },
+ "schema": "qdl.v225.window-rehearsal-receipt.v1",
+ "setup": {
+  "cpu_caps": {
+   "ingestor_binance_usdm": 0.15,
+   "ingestor_okx_swap": 0.15,
+   "kafka1": 0.32,
+   "kafka2": 0.32,
+   "kafka3": 0.32,
+   "market_cache": 0.09,
+   "market_projector_1": 0.2,
+   "query_kn_1": 0.25,
+   "rust_core": 0.3,
+   "stable_redis": 0.05,
+   "stream_kn_1": 0.12,
+   "stream_kn_2": 0.12
+  },
+  "cpu_total": 2.99,
+  "narrowed_ingestors": {
+   "ingestor_binance_usdm.json": {
+    "bindings_after": 5,
+    "bindings_before": 27,
+    "feeds": [
+     "BAR",
+     "BOOK",
+     "MARK_INDEX",
+     "QUOTE",
+     "TRADE"
+    ]
+   },
+   "ingestor_okx_swap.json": {
+    "bindings_after": 19,
+    "bindings_before": 103,
+    "feeds": [
+     "BAR",
+     "BOOK",
+     "MARK_INDEX",
+     "QUOTE",
+     "TRADE"
+    ]
+   }
+  }
+ },
+ "teardown": {
+  "containers": 13,
+  "dirs": 4,
+  "left_containers": 0,
+  "networks": 4,
+  "volumes": 4
+ },
+ "trust_role_map": [
+  {
+   "generation": "20260822T144323Z",
+   "images": "v2.2.4 env",
+   "phase": "A",
+   "writer": "2deb90b0 BOOTSTRAP->STRICT"
+  },
+  {
+   "generation": "gen-20261019T084200Z",
+   "images": "v2.2.5 env (Query b7056141)",
+   "phase": "B",
+   "writer": "2deb90b0 new identity, BOOTSTRAP->STRICT"
+  },
+  {
+   "generation": "20260822T144323Z",
+   "images": "v2.2.4 env",
+   "phase": "C",
+   "writer": "2deb90b0 old identity, BOOTSTRAP->STRICT"
+  },
+  {
+   "generation": "gen-20261019T084200Z",
+   "images": "v2.2.5 env",
+   "phase": "D",
+   "writer": "2deb90b0 new identity, BOOTSTRAP->STRICT"
+  }
+ ]
+}
