@@ -76522,3 +76522,17 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   - ci-result FAILED: "changes output 'reuse_run' invalid: None". GitHub omits a job output whose value is empty,
     so `needs.changes.outputs` had no reuse_run. Fixed: an absent reuse_run means no reuse (tree, flags and
     base_check are never empty); test added. Tests 122 OK on the host.
+- GitHub run 6: run 39217653087 on dc25b79. Full: CI2 base 73f62e7, the diff has CI-defining files. All 13 jobs
+  success, wall 713 s; shards 473 / 435 / 676 / 669 s; rust-workspace 189 s; tree 1ee31417. This is the first full
+  run that records `tree=`.
+- CI1 proof, run 39219019908: PR #34 closed and reopened with the same head dc25b79 and the same dev 789bfa6, so the
+  merge ref has the identical tree 1ee31417. The `changes` job printed "inherited full CI run 39217653087 on
+  identical tree 1ee31417...".
+  - Ran: changes 24 s, repository-scan 16 s, consolidated-source-preflight 11 s, contract-tests 13 s (base_check).
+  - Skipped: unit-tests, sdk-python310, release-gates, rust-workspace, kn-native-integration.
+  - ci-result success; **wall 52 s instead of 713 s**.
+  - CI6: its receipt (scope inherited, inherited_from_run 39217653087, sha256 9e694bf2...) is ACCEPTED by
+    `p184_consolidated_build.verify_dl_ci_receipt` for dc25b79 (`git rev-parse dc25b79^{tree}` = 1ee31417).
+- CI2 proof: this journal entry is pushed alone as a docs-only commit. Its run is recorded in the PR #34 report;
+  expected: base dc25b79 (run 39217653087), docs only => consolidated-source-preflight, repository-scan,
+  contract-tests (base_check); suites skipped.
