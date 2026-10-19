@@ -1,7 +1,9 @@
 """Offline recipe tests. No Docker or network calls."""
 
+import hashlib
 import io
 import json
+import tempfile
 from pathlib import Path
 import subprocess
 import sys
@@ -14,6 +16,27 @@ ROOT = Path(__file__).resolve().parents[1]
 SHA = "a" * 40
 READY = dict(ts_status="pass", ts_commit="b" * 40, ts_receipt="c" * 64,
              dl_ci_status="pass", dl_ci_receipt="d" * 64, build_approval="approved")
+JOBS = ["consolidated-source-preflight", "unit-tests[shard=1]", "unit-tests[shard=2]", "release-gates"]
+RECEIPT = {"schema": build.LOCAL_CI_RECEIPT_SCHEMA, "sha": SHA, "status": "PASS", "scope": "full",
+           "workflow_jobs": JOBS, "jobs": {job: "PASS" for job in JOBS}}
+_TMP = None
+
+
+def write_receipt(receipt, name="summary.json"):
+    path = Path(_TMP.name) / name
+    path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    return path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def setUpModule():
+    global _TMP
+    _TMP = tempfile.TemporaryDirectory()
+    path, digest = write_receipt(RECEIPT)
+    READY.update(dl_ci_receipt=digest, dl_ci_receipt_file=path)
+
+
+def tearDownModule():
+    _TMP.cleanup()
 
 
 class NoProcessTests(unittest.TestCase):
@@ -197,3 +220,41 @@ class SourceTests(NoProcessTests):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DlCiReceiptScopeTests(NoProcessTests):
+    def prepare(self, receipt, **kwargs):
+        path, digest = write_receipt(receipt, "candidate.json")
+        args = {**READY, "dl_ci_receipt": digest, "dl_ci_receipt_file": path, **kwargs}
+        with patch.object(build, "source_contract", return_value={"Dockerfile": SHA}):
+            return build.prepare(ROOT, SHA, "v2.2.3-rc.1", **args)
+
+    def test_full_passing_receipt_for_the_commit_is_accepted(self):
+        self.assertEqual(self.prepare(RECEIPT)["status"], "PREPARED_NOT_EXECUTED")
+
+    def test_scoped_or_unscoped_receipts_are_refused(self):
+        for scope in ("affected", None, "FULL"):
+            receipt = {**RECEIPT, "scope": scope} if scope else {k: v for k, v in RECEIPT.items() if k != "scope"}
+            with self.subTest(scope=scope), self.assertRaisesRegex(ValueError, "scope"):
+                self.prepare(receipt)
+
+    def test_status_commit_schema_and_job_coverage_are_checked(self):
+        cases = {
+            "status": {**RECEIPT, "status": "INCOMPLETE"},
+            "different commit": {**RECEIPT, "sha": "f" * 40},
+            "schema": {**RECEIPT, "schema": "other"},
+            "every workflow job": {**RECEIPT, "jobs": {JOBS[0]: "PASS"}},
+        }
+        for message, receipt in cases.items():
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                self.prepare(receipt)
+
+    def test_digest_only_or_mismatched_digest_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "receipt file"):
+            self.prepare(RECEIPT, dl_ci_receipt_file=None)
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            self.prepare(RECEIPT, dl_ci_receipt="0" * 64)
+
+    def test_pending_dl_ci_needs_no_receipt(self):
+        recipe = self.prepare(RECEIPT, dl_ci_status="pending", dl_ci_receipt=None, dl_ci_receipt_file=None)
+        self.assertEqual(recipe["status"], "HOLD")

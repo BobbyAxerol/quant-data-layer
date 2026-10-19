@@ -6,7 +6,15 @@ GitHub. This runner parses the workflow with yaml and replays every job's steps,
 added so `git diff` steps work), or a private clone when the checkout asks for full history
 (`fetch-depth: 0`). Each step records name, command, exit code, duration and log path; `summary.json`
 (schema qdl.p184.local-ci-receipt.v1) carries the sha and PASS/FAIL/SKIPPED per step; its SHA-256 is the
-`--dl-ci-receipt-sha256` input of scripts/p184_consolidated_build.py only when the overall status is PASS.
+`--dl-ci-receipt-sha256` input of scripts/p184_consolidated_build.py only when the overall status is PASS and
+`scope` is `full` (that script reads the receipt with `--dl-ci-receipt` and refuses anything else).
+
+Scope: by default every job runs (push-event semantics; job-level `needs`/`if` are ignored), a `strategy.matrix`
+job runs once per combination (`unit-tests[shard=1]`, ...), and the receipt says `scope: full`. The orchestration
+jobs `changes` and `ci-result` (ORCHESTRATION_JOBS) only route GitHub jobs and are not replayed. `--changed-since
+BASE` is a quick local preflight: scripts/ci_change_scope.py classifies `BASE...SHA` as a pull request into dev and
+only the jobs whose job-level `if:` holds run; such a receipt says `scope: affected`, as does any `--jobs` subset, and
+is never a release receipt.
 
 Boundary (what it will not do):
 * never pushes, publishes or changes the source repository; `--out` must be outside it;
@@ -23,7 +31,8 @@ Boundary (what it will not do):
   into summary.json. The root disk is shared with the runtime (Kafka/Postgres, 2026-10-08 incident), so it
   aborts when less than 40 GB is free on the output or Docker filesystem.
 
-usage: p184_local_ci.py --sha SHA --out DIR [--jobs a,b] [--dry-run] [--allow-pull] [--allow-download]
+usage: p184_local_ci.py --sha SHA --out DIR [--jobs a,b] [--changed-since BASE] [--dry-run] [--allow-pull]
+                        [--allow-download]
 """
 from __future__ import annotations
 
@@ -31,6 +40,7 @@ import argparse
 import dataclasses
 import datetime as dt
 import hashlib
+import itertools
 import json
 import os
 import re
@@ -44,6 +54,11 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+try:  # imported as scripts.p184_local_ci (tests) or run as scripts/p184_local_ci.py
+    from scripts import ci_change_scope
+except ImportError:
+    import ci_change_scope
+
 SCHEMA = "qdl.p184.local-ci-receipt.v1"
 WORKFLOW = ".github/workflows/ci.yml"
 EVENT = "push"
@@ -65,6 +80,9 @@ OWNED_NETWORK_PREFIXES = ("qdl_phase2_",)
 EXTRA_OWNED_PROJECTS = ("qdl_phase71_beta",)
 FIXED_NAMES = ("kn-python-redis", "kn-kafka", "kn-redis-6379", "kn-redis-6380")
 PROTECTED_PROJECTS = frozenset({"data_layer", "qdl_v2_stable_candidate"})
+# GitHub-only routing jobs: `changes` classifies the PR diff, `ci-result` aggregates job results.
+ORCHESTRATION_JOBS = ("changes", "ci-result")
+SCOPE_TERM_RE = re.compile(r"needs\.changes\.outputs\.(\w+)\s*==\s*'true'")
 
 
 def owned_image_tags(sha):
@@ -114,27 +132,85 @@ def substitute(text, context):
     return EXPR_RE.sub(repl, text)
 
 
-def expression_context(sha, job_env):
+def expression_context(sha, job_env, matrix=None):
     context = {"github.sha": sha, "github.event_name": EVENT, "github.token": "",
                "github.ref_name": "dev", "github.base_ref": ""}
     for key, value in job_env.items():
         context[f"env.{key}"] = value
+    for key, value in (matrix or {}).items():
+        context[f"matrix.{key}"] = value
     return context
 
 
-def job_environment(job, sha):
-    base = expression_context(sha, {})
+def job_environment(job, sha, matrix=None):
+    base = expression_context(sha, {}, matrix)
     return {key: substitute(str(value), base) for key, value in (job.get("env") or {}).items()}
 
 
-def plan_steps(workflow, sha, jobs=None):
-    """Flatten the workflow into ordered Steps with expressions substituted (no execution)."""
-    steps = []
-    for job_name, job in workflow["jobs"].items():
-        if jobs and job_name not in jobs:
+def matrix_combinations(job):
+    """[{}] for a plain job, else one dict per combination of a list-valued `strategy.matrix` (in YAML order)."""
+    matrix = (job.get("strategy") or {}).get("matrix")
+    if not matrix:
+        return [{}]
+    if not isinstance(matrix, dict) or any(key in matrix for key in ("include", "exclude")) or not all(
+            isinstance(values, list) and values for values in matrix.values()):
+        raise ValueError(f"unsupported strategy.matrix: {matrix!r}")
+    keys = list(matrix)
+    return [dict(zip(keys, values)) for values in itertools.product(*(matrix[key] for key in keys))]
+
+
+def expanded_name(job_id, matrix):
+    return job_id + ("[" + ",".join(f"{k}={v}" for k, v in matrix.items()) + "]" if matrix else "")
+
+
+def expand_jobs(workflow):
+    """Ordered {expanded job name: (job id, job dict, matrix values)}; orchestration jobs are left out."""
+    expanded = {}
+    for job_id, job in workflow["jobs"].items():
+        if job_id in ORCHESTRATION_JOBS:
             continue
-        env = job_environment(job, sha)
-        context = expression_context(sha, env)
+        for matrix in matrix_combinations(job):
+            expanded[expanded_name(job_id, matrix)] = (job_id, job, matrix)
+    return expanded
+
+
+def job_in_scope(condition, outputs):
+    """Evaluate a job-level `if:` made of `needs.changes.outputs.X == 'true'` terms joined by `||`."""
+    if condition is None:
+        return True
+    expr = EXPR_RE.sub(lambda m: m.group(1), str(condition)).strip()
+    terms = [term.strip() for term in expr.split("||")]
+    values = []
+    for term in terms:
+        match = SCOPE_TERM_RE.fullmatch(term)
+        if not match or match.group(1) not in ci_change_scope.FLAGS:
+            raise ValueError(f"unsupported job-level condition: {expr}")
+        values.append(outputs.get(match.group(1)) is True)
+    return any(values)
+
+
+def select_jobs(workflow, jobs_filter=frozenset(), outputs=None):
+    """Expanded job names to run. `jobs_filter` takes job ids or expanded names; `outputs` (classifier flags)
+    keeps only jobs whose job-level `if:` holds."""
+    selected = []
+    for name, (job_id, job, _matrix) in expand_jobs(workflow).items():
+        if jobs_filter and job_id not in jobs_filter and name not in jobs_filter:
+            continue
+        if outputs is not None and not job_in_scope(job.get("if"), outputs):
+            continue
+        selected.append(name)
+    return selected
+
+
+def plan_steps(workflow, sha, jobs=None):
+    """Flatten the workflow into ordered Steps with expressions substituted (no execution). `jobs` holds expanded
+    job names (see select_jobs); None plans every non-orchestration job."""
+    steps = []
+    for job_name, (job_id, job, matrix) in expand_jobs(workflow).items():
+        if jobs is not None and job_name not in jobs:
+            continue
+        env = job_environment(job, sha, matrix)
+        context = expression_context(sha, env, matrix)
         for index, raw in enumerate(job.get("steps") or [], start=1):
             minutes = raw.get("timeout-minutes")
             steps.append(Step(
@@ -237,6 +313,8 @@ def classify(step, *, sha, read_file, image_present, host_python, python_version
                         "(not pulled; pass --allow-pull)", blocking=True)
     if uses == "docker/setup-buildx-action":
         return Decision("noop", reason="local docker buildx")
+    if uses == "actions/cache":
+        return Decision("noop", reason="no remote cache locally: cold build")
     if uses == "bufbuild/buf-setup-action":
         image = f"bufbuild/buf:{step.with_.get('version')}"
         if image_present(image):
@@ -499,7 +577,8 @@ def execute(args, steps, decisions, sha, out):
                          "GITHUB_WORKSPACE": str(source), "RUNNER_TEMP": str(job_dir / "runner-temp"),
                          "TMPDIR": str(tmp), "PYTHONDONTWRITEBYTECODE": "1", "COMPOSE_PROJECT_NAME": project,
                          "PATH": f"{bindir}:{os.environ.get('PATH', '')}"})
-        env_base.update(job_environment(args.workflow_data["jobs"][job], sha))
+        _job_id, job_def, matrix = args.expanded_jobs[job]
+        env_base.update(job_environment(job_def, sha, matrix))
         try:
             for step in job_steps:
                 decision = decisions[(job, step.index)]
@@ -618,7 +697,10 @@ def main(argv=None):
     parser.add_argument("--sha", required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--workflow", default=WORKFLOW)
-    parser.add_argument("--jobs", default="", help="comma-separated job ids (default: all)")
+    parser.add_argument("--jobs", default="", help="comma-separated job ids or expanded names (default: all); "
+                        "a subset makes the receipt scope=affected")
+    parser.add_argument("--changed-since", default="", help="quick preflight: run only the jobs scripts/"
+                        "ci_change_scope.py selects for BASE...SHA (receipt scope=affected, never a release input)")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--allow-pull", action="store_true")
     parser.add_argument("--allow-download", action="store_true")
@@ -636,11 +718,32 @@ def main(argv=None):
     if workflow_text is None:
         raise SystemExit(f"{args.workflow} not present at {sha}")
     args.workflow_data = load_workflow(workflow_text)
-    jobs = {j for j in args.jobs.split(",") if j}
-    unknown = jobs - set(args.workflow_data["jobs"])
+    args.expanded_jobs = expand_jobs(args.workflow_data)
+    jobs_filter = {j for j in args.jobs.split(",") if j}
+    known = set(args.expanded_jobs) | {job_id for job_id, _job, _m in args.expanded_jobs.values()}
+    unknown = jobs_filter - known
     if unknown:
         raise SystemExit(f"unknown jobs: {sorted(unknown)}")
-    steps = plan_steps(args.workflow_data, sha, jobs)
+    scope_basis = {"jobs_filter": sorted(jobs_filter), "changed_since": None, "classifier": None}
+    outputs = None
+    if args.changed_since:
+        base = sh(["git", "-C", str(args.repo), "rev-parse", "--verify",
+                   f"{args.changed_since}^{{commit}}"]).stdout.strip()
+        if not re.fullmatch(r"[0-9a-f]{40}", base):
+            raise SystemExit(f"cannot resolve --changed-since {args.changed_since}")
+        decision = ci_change_scope.decide(repo=args.repo, base=base, head=sha, event="pull_request",
+                                          base_ref="dev", labels=set())
+        outputs = {flag: decision[flag] for flag in ci_change_scope.FLAGS}
+        scope_basis.update(changed_since=base, classifier=decision)
+    selected = select_jobs(args.workflow_data, jobs_filter, outputs)
+    scope = "affected" if (jobs_filter or args.changed_since) else "full"
+    if scope == "full" and selected != list(args.expanded_jobs):
+        raise SystemExit("internal: full scope must select every job")
+    if not selected:
+        print(json.dumps({"schema": SCHEMA + ".plan", "sha": sha, "scope": scope, "scope_basis": scope_basis,
+                          "jobs": {}, "note": "no job in scope"}, indent=2))
+        return 0
+    steps = plan_steps(args.workflow_data, sha, set(selected))
     host_python = sh([HOST_PYTHON, "-c", "import platform; print(platform.python_version())"]).stdout.strip()
     decisions, python_version, tools = {}, None, {"trivy_image": args.trivy_image}
     current_job, unavailable = None, set()
@@ -671,8 +774,9 @@ def main(argv=None):
                 view["run"] += 1
             else:
                 view["skipped"].append(f'#{entry["index"]} {entry["name"]}: {entry["predicted_reason"]}')
-        print(json.dumps({"schema": SCHEMA + ".plan", "sha": sha, "workflow": args.workflow,
-                          "host_python": host_python, "jobs": jobs_view, "steps": plan}, indent=2))
+        print(json.dumps({"schema": SCHEMA + ".plan", "sha": sha, "workflow": args.workflow, "scope": scope,
+                          "scope_basis": scope_basis, "host_python": host_python, "jobs": jobs_view,
+                          "steps": plan}, indent=2))
         return 0
     out.mkdir(parents=True, exist_ok=True)
     problems = preflight_host(sha, out)
@@ -682,6 +786,8 @@ def main(argv=None):
     records, counts, job_status = execute(args, steps, decisions, sha, out)
     summary = {"schema": SCHEMA, "sha": sha, "workflow": args.workflow, "event": EVENT, "started_at": started,
                "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(), "jobs": job_status,
+               "scope": scope, "scope_basis": scope_basis, "workflow_jobs": list(args.expanded_jobs),
+               "orchestration_jobs_not_replayed": [j for j in ORCHESTRATION_JOBS if j in args.workflow_data["jobs"]],
                "status": overall_status(records), "steps": records, "cleanup": counts,
                "flags": {"allow_pull": args.allow_pull, "allow_download": args.allow_download,
                          "trivy_image": args.trivy_image or None}}

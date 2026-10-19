@@ -1,4 +1,10 @@
-"""Offline IDR039 recipe preparation. Never execute builds or activate runtime."""
+"""Offline IDR039 recipe preparation. Never execute builds or activate runtime.
+
+A passing DL CI gate needs the receipt file itself (`--dl-ci-receipt`), not only its digest: the receipt of
+scripts/p184_local_ci.py must hash to `--dl-ci-receipt-sha256`, name the source commit, have status PASS and
+scope `full`. A scoped preflight (`scope: affected`, from `--changed-since` or `--jobs`) or a receipt without a
+scope is refused, so a quick affected-only CI run can never stand in for the release CI.
+"""
 
 import argparse
 import hashlib
@@ -7,6 +13,8 @@ from pathlib import Path
 import re
 import shlex
 import subprocess
+
+LOCAL_CI_RECEIPT_SCHEMA = "qdl.p184.local-ci-receipt.v1"
 
 
 PREREQUISITES = {
@@ -83,9 +91,34 @@ def source_contract(repo, commit):
     return hashes
 
 
+def verify_dl_ci_receipt(path, commit, expected_sha256):
+    """Refuse a DL CI receipt that is not a full, passing run of exactly `commit` with the attested digest."""
+    if path is None:
+        raise ValueError("DL CI pass requires the receipt file (--dl-ci-receipt), not only its digest")
+    data = Path(path).read_bytes()
+    if hashlib.sha256(data).hexdigest() != expected_sha256:
+        raise ValueError("DL CI receipt file does not match --dl-ci-receipt-sha256")
+    try:
+        receipt = json.loads(data)
+    except ValueError as exc:
+        raise ValueError("DL CI receipt is not JSON") from exc
+    if receipt.get("schema") != LOCAL_CI_RECEIPT_SCHEMA:
+        raise ValueError(f"DL CI receipt schema must be {LOCAL_CI_RECEIPT_SCHEMA}")
+    if receipt.get("sha") != commit:
+        raise ValueError("DL CI receipt is for a different commit")
+    if receipt.get("scope") != "full":
+        raise ValueError(f"DL CI receipt scope is {receipt.get('scope')!r}; a release needs scope 'full'")
+    if receipt.get("status") != "PASS":
+        raise ValueError(f"DL CI receipt status is {receipt.get('status')!r}; a release needs PASS")
+    expected_jobs = receipt.get("workflow_jobs") or []
+    if not expected_jobs or set(receipt.get("jobs") or {}) != set(expected_jobs):
+        raise ValueError("DL CI receipt does not cover every workflow job")
+    return receipt
+
+
 def prepare(repo, commit, release, *, ts_status="pending", ts_commit=None,
             ts_receipt=None, dl_ci_status="pending", dl_ci_receipt=None,
-            build_approval="pending", dependency_image="builder"):
+            build_approval="pending", dependency_image="builder", dl_ci_receipt_file=None):
     full_sha(commit, "source commit")
     if not re.fullmatch(r"v2\.\d+\.\d+(?:-rc\.\d+)?", release):
         raise ValueError("release must be v2.N.N or v2.N.N-rc.N")
@@ -98,6 +131,7 @@ def prepare(repo, commit, release, *, ts_status="pending", ts_commit=None,
         full_sha(ts_receipt, "TS completed-test receipt SHA256", 64)
     if dl_ci_status == "pass":
         full_sha(dl_ci_receipt, "DL CI receipt SHA256 for source commit", 64)
+        verify_dl_ci_receipt(dl_ci_receipt_file, commit, dl_ci_receipt)
     if dependency_image != "builder" and not re.fullmatch(
         r"[a-z0-9][a-z0-9./:_-]*@sha256:[0-9a-f]{64}", dependency_image
     ):
@@ -156,7 +190,8 @@ def prepare(repo, commit, release, *, ts_status="pending", ts_commit=None,
         "holds": holds, "images": images, "build_script": script,
         "build_script_sha256": hashlib.sha256(script.encode()).hexdigest() if script else None,
         "limitations": [
-            "Gate inputs are operator attestations, not independently verified CI results.",
+            "TS gate inputs are operator attestations; the DL CI receipt is checked for commit, PASS and full "
+            "scope, not re-executed.",
             "Ancestry and source markers do not replace semantic regression tests.",
             "One application commit does not make upstream package resolution reproducible.",
             "No image built, pushed, deployed or certified by this generator.",
@@ -176,6 +211,7 @@ def main():
     parser.add_argument("--ts-tests-receipt-sha256")
     parser.add_argument("--dl-ci-status", choices=["pending", "pass"], default="pending")
     parser.add_argument("--dl-ci-receipt-sha256")
+    parser.add_argument("--dl-ci-receipt", type=Path, help="summary.json of scripts/p184_local_ci.py (scope full)")
     parser.add_argument("--build-approval", choices=["pending", "approved"], default="pending")
     parser.add_argument("--dependency-image", default="builder")
     args = parser.parse_args()
@@ -185,9 +221,9 @@ def main():
             ts_status=args.ts_tests_status, ts_commit=args.ts_source_commit,
             ts_receipt=args.ts_tests_receipt_sha256, dl_ci_status=args.dl_ci_status,
             dl_ci_receipt=args.dl_ci_receipt_sha256, build_approval=args.build_approval,
-            dependency_image=args.dependency_image,
+            dependency_image=args.dependency_image, dl_ci_receipt_file=args.dl_ci_receipt,
         )
-    except (ValueError, subprocess.CalledProcessError) as exc:
+    except (ValueError, OSError, subprocess.CalledProcessError) as exc:
         parser.error(str(exc))
     print(json.dumps(recipe, indent=2, sort_keys=True))
     return 2 if recipe["holds"] else 0

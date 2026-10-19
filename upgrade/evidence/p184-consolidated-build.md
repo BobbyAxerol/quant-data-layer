@@ -110,13 +110,19 @@ python3 -B scripts/p184_consolidated_build.py \
   --ts-tests-status pass --ts-source-commit FULL_TESTED_TS_COMMIT \
   --ts-tests-receipt-sha256 TS_COMPLETED_RECEIPT_SHA256 \
   --dl-ci-status pass --dl-ci-receipt-sha256 EXACT_DL_COMMIT_CI_RECEIPT_SHA256 \
+  --dl-ci-receipt PATH/TO/p184_local_ci/summary.json \
   --build-approval approved
 ```
+
+The DL CI receipt file is required (2026-10-19): it must hash to the given digest, name
+the source commit, have status PASS and `scope: full`. A scoped preflight receipt
+(`p184_local_ci.py --changed-since` or `--jobs`, `scope: affected`) is refused.
 
 This still ONLY prints JSON, with PREPARED_NOT_EXECUTED and a future build_script.
 Gate receipts are explicit operator attestations, not remote CI verification.
 Do not use placeholder digests as acceptance evidence. The parent must review the
-receipt contents and their commit association; this tool checks digest syntax only.
+receipt contents and their commit association; this tool checks the DL CI receipt
+fields above and only the digest syntax of the TS receipt.
 Never pipe preparation output into execution as part of this source-only task.
 
 ## Same-Source SDK Promotion Gate
