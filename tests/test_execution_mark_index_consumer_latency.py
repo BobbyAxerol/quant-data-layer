@@ -71,7 +71,7 @@ class ExecutionMarkIndexConsumerLatencyTests(unittest.TestCase):
 
     def test_manifest_selects_exact_execution_mark_index_scope(self) -> None:
         requirements = execution_mark_index_requirements(self.manifest)
-        self.assertEqual(len(requirements), 10)
+        self.assertEqual(len(requirements), 11)  # 10 linear + inverse BTC-USD-SWAP (r11)
         self.assertTrue(all(
             item.product is ReferenceProduct.MARK_INDEX_PRICE
             and item.max_freshness_ms == 2_000
@@ -104,7 +104,7 @@ class ExecutionMarkIndexConsumerLatencyTests(unittest.TestCase):
             _response(requirements, now_ns=now_ns),
             usable_at_ns=now_ns,
         )
-        self.assertEqual(len(values), 10)
+        self.assertEqual(len(values), 11)
         for evidence in values.values():
             self.assertEqual(evidence["recency_mode"], "COMPONENT_SESSION_LIVE")
             self.assertEqual(evidence["provider_confirmation_to_usable_ms"], 60_000)
@@ -198,7 +198,7 @@ class ExecutionMarkIndexConsumerLatencyTests(unittest.TestCase):
                 "per_binding": per_binding,
                 "consumer_call_to_usable_ms": {"n": 149, "p99_ms": 281},
             },
-            requirement_count=10,
+            requirement_count=len(requirements),
             duration_seconds=300,
             cadence_seconds=2,
             max_consumer_call_p99_ms=2_000,

@@ -76609,3 +76609,110 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   host measurement lock held by `claude-dl-v225` until 11:58Z.
 - Found while reading: the 2026-08-22 cert-material directory (mounted into the brokers) has world-readable private
   keys (`-rw-r--r--`); recorded for the v2.2.5 rotation, not changed here.
+### DL v2.2.5 slice: IDR-127 config, versioned KN compose, healthchecks, mesh TLS rotation tooling - 2026-10-19 (Claude)
+
+- Owner approvals 2026-10-19: one maintenance window before ~2026-11-06 for DL v2.2.5 (IDR-127 + versioned compose
+  for the KN roles + healthchecks) together with the atomic mesh mTLS rotation (every deployed mesh certificate
+  expires 2026-11-20 14:43Z) and the TS writer roll; full isolated rehearsal first; rollback = old certificates +
+  old digests. Owner 09:00Z: keep v2.2.5 compact ("phải gọn lại"); healthcheck cadence relaxed (C1); K6 approved;
+  K2 deferred; K3/K4 only if config-level and measurable in the rehearsal (they are not: deferred). No production
+  container, Kafka, Redis or Postgres was touched in this slice.
+- Branch `fix/v225-config-certs` from origin/dev 3afd932, worktree `/home/bobby/.worktrees/data-layer-v225`.
+- IDR-127 (repository carries what production runs):
+  - `consumers/stable/alpha-okx-paper.yaml` = deployed realm r15 bytes (sha256 33b9cfd4...96fa);
+    `consumers/stable/trading-system-paper.yaml` = deployed r11 bytes (efd482fa...b8fc).
+  - `config/v2/stable-source-bindings.yaml` = deployed catalog r12 bytes (fc3a1e1e...6cc5, JSON form, valid YAML).
+    Semantic parity against r11: 712 -> 716 bindings, exactly the four OKX BTC-USD-SWAP inverse bindings
+    (book_delta, book_snapshot, mark_index_price, quote) and one instrument added, 0 removed, 0 changed. TS manifest
+    r10 -> r11: 61 -> 65 requirements, 0 removed, 4 added (the same inverse instrument), quotas 50/1500 -> 77/3000;
+    alpha-okx r14 -> r15: quotas only (60/2400 -> 300/4950).
+  - `config/v2/stable-acquisition-bindings.yaml` r20 = deployed r20 bindings with the port-less OKX URLs (6674d0b;
+    OKX stops :8443 on 2026-10-31) plus `materialized_snapshot_interval_ms: 1000` on the two inverse L2 rows, which
+    the running core config already applies (`releases/v2.2.3-rc18-core-batch1024/rust_core.json`, 11 hot books).
+    Its identity_digest therefore differs from the deployed r20 file; equal without those two rows. Open decision:
+    keep r20 (chosen: bar edge stays on its image, Query reads the mounted runtime file) or bump to r21.
+  - Routing r28 -> r29, crypto demand r7 -> r8, authority promotion scope r10 -> r11 (the four inverse bindings the
+    core already runs), capture row for OKX BTC-USD-SWAP appended with provenance; the six live/sandbox realm
+    manifests are compiled runtime outputs (scripts/compile_consumer_realms.py, reproduced byte-identical in the image)
+    and are kept as evidence under `upgrade/evidence/releases/v2.2.5/consumer-realms/` (not baked: .dockerignore).
+  - Tests pinned to r10/r11 counts updated to the deployed truth; paper/sandbox extension tests rebased on the
+    committed pre-inverse inputs (`tests/inverse_extension_support.py`). Affected modules locally (CI8, image
+    qdl-v2-python:2.2.4-31a5155): 128 modules / 2168 tests first pass -> 28 slice-caused failures fixed, re-run of
+    the 13 affected modules 215 OK (1 skip). Full suite = GitHub CI.
+- Versioned compose: `deploy/compose/qdl-v2-stable-kn.yml` + `qdl-v2-stable-kn.v2.2.4.env` (images by digest, host
+  paths), rendered by `scripts/kn_versioned_compose.py` from live docker inspect; TLS sources are the generation
+  variables, env-only secrets come from a host-only 0600 env (`~/.local/state/qdl-v2/releases/v2.2.5/kn-secrets.env`,
+  copied from the live containers, never regenerated). Parity against live (v2.2.4 env + deployed generation):
+  PASS, 847 field checks, only intended deltas (healthchecks added on stream_kn x2 / market_projector x2 /
+  rust_core x3; cadence 15 s on Kafka / Query / stable_redis; stable_redis log rotation; stable_tls volume -> byte-equal
+  generation dir; nested /kn/tls and client-CA binds; session-liveness as volume subpath). CI5: `deploy/compose/**`
+  forces a full CI run.
+- Mesh TLS: `scripts/phase80_generate_tls.sh` also issues kn-projector / kn-stream (one trust anchor);
+  `scripts/rotate_mesh_tls.py` export / generate / verify. Deployed generation exported read-only to
+  `~/.local/state/qdl-v2/tls/gen-20260822T144323Z` (stable_tls volume byte copy); new generation
+  `~/.local/state/qdl-v2/tls/gen-20261019T084200Z` (365 days, notAfter 2027-10-19; the 90-day default of 2026-08-22
+  only replaced the 2-day bug, no policy names 90; each renewal is a full-mesh outage, so 365 + expiry alert).
+  Verify old vs new: PASS 118/118 (CN/SAN per identity, EKU/KU, key match, chain only to the new CA, keystores,
+  truststores = exactly the new CA incl. the brokers' dynamic `truststore-kn-v220.jks`, passwords unchanged).
+- Python release image tool retargeted to v2.2.5 (reference = production Query image 3e9e4d3a, tree 31a5155); rust
+  images are not rebuilt (rust diff since the running revisions is the cfg(test) ingestor commit 539d28c only).
+- Isolated rehearsal tool `scripts/kn_mesh_rotation_rehearsal.py` (project qdl-v225-reh, <= 3 vCPU, host lock
+  claude-dl-v225): debug runs found and fixed rehearsal-only setup gaps (stable_state ownership, Query state symlink
+  runtime/session-liveness -> /session-liveness, OKX ETH-USDT index lane, clone Postgres CPU). Results, window packet
+  and certificate scope: `upgrade/evidence/releases/v2.2.5/drafts/` (status: DRAFT, rehearsal in progress).
+- 2026-10-19 10:00-11:07Z (continued, same slice):
+  - CI: PR #38 (fix/v225-config-certs -> dev) full run 39238627766 on 3915a76 (merge of origin/dev 51387a2 included):
+    all 13 jobs green (unit-tests 1-4, release-gates, rust-workspace, kn-native-integration, contract-tests,
+    sdk-python310, repository-scan, consolidated-source-preflight).
+  - Python image `qdl-v2-python:2.2.5-601c3d8` = sha256:b7056141ec26661edbf0566fe93ab2c6ac9f27749fd550db5062ca841a639c05
+    (build receipt `~/.local/state/qdl-v2/build-v2.2.5-601c3d8/receipt.json`, copy in the evidence folder): label
+    revision 601c3d8, files vs production Query image 3e9e4d3a: 16 different = exactly the git-expected set (IDR-127
+    config/consumers, stage-100 amendment JSONs, apparatus `qdl/certification/reference_l2_acceptance.py`),
+    unexpected 0, pip freeze equal. Rust images not rebuilt. Pinned in `deploy/compose/qdl-v2-stable-kn.v2.2.5.env`.
+  - bar edge offline probe (--network none): image a388537 bakes catalog 11 / acquisition 19 = its checkpoint;
+    image 2.2.5 bakes 12 / 20 and its restore would refuse (catalog_revision, acquisition_revision). Bar edge stays
+    on a388537 in the window (mounts only).
+  - K6: production observed read-only 10:35Z (`kafka_internal_topic_compaction.py --observe`): the temporary
+    `min.cleanable.dirty.ratio` on `__consumer_offsets` is already ABSENT (removed 2026-10-16 14:12Z), decision C
+    APPLIED, no drift. K6 is a no-op; W5 re-observes only.
+  - Isolated rehearsal (receipt `upgrade/evidence/releases/v2.2.5/rehearsal-20261019.json`, lock claude-dl-v225, 2.99
+    vCPU caps, ETH-only live venue data, TS writer clone 2deb90b0): A deployed generation/v2.2.4 -> B new
+    generation/v2.2.5 -> C rollback -> D re-roll, all PASS. Consumer-visible outage 251.3 / 267.8 / 290.7 s; DL
+    Query READY over mTLS 139.6-161.4 s after the broker recreate; offsets of every group continuous, URP 0; writer
+    cursor items unchanged, BOOTSTRAP then STRICT 12/12 READY, 0 auth/protocol failures; the other generation refused
+    by Query, both Streams and Kafka in every phase. Teardown 13 containers / 4 networks / 4 volumes / 4 dirs, 0 left.
+    Debug runs before it found: stable_state ownership and the Query `runtime/session-liveness` symlink (rehearsal
+    setup only), and a real window finding: a STRICT writer start after > 120 s outage parks TRADE/QUOTE in
+    HANDOFF_RESUME_REQUIRED (writer execution-surface TTL 120 s, IDR-101) -> W12 = BOOTSTRAP then STRICT.
+    Tool fix after the run: readiness needs a heartbeat newer than the restart (the run's STRICT timer was a false
+    positive; STRICT readiness is shown by the steady sample).
+  - Cleanup: rehearsal resources 0 left; host lock released 11:07Z; kept: python image b7056141 (window target), TLS
+    generations under ~/.local/state/qdl-v2/tls, secrets env ~/.local/state/qdl-v2/releases/v2.2.5/kn-secrets.env
+    (0600), build dir build-v2.2.5-601c3d8 (36 MB). Disk / 53 % used before and after.
+  - Codex review `p184-v225-bounded-window-review-20261019.md` dispositions (coordinator relayed 2026-10-19):
+    A (CI classification): ACCEPTED - this slice ran only affected modules locally (CI8); GitHub full run green.
+    B (config/TLS evidence): ACCEPTED - packet states the full-mesh outage with measured duration; rehearsal receipt
+    carries the A->B->C->D trust/role map, offset and cursor continuity, per-route recovery, outage and cleanup;
+    semantic catalog/manifest parity recorded (`semantic-parity.json`: 712 -> 716, exactly the four inverse
+    bindings, 0 removed / 0 changed; TS r11 adds only the inverse requirements, quotas 77/3000; alpha-okx r15 quotas
+    only); old-identity rejection proven; wrong-realm rejection: ALTERNATIVE - not re-tested in the rehearsal (the
+    realm/subject binding code is unchanged; covered by tests/test_consumer_key_realms.py); quotas after the
+    stable_redis recreate: writer admitted in B/C/D. K6: exact pre-window state recorded (absent) with the exact
+    restore command; no-op. BAR on its current image; no inactive credential renewal: ACCEPTED.
+    C (writer): ACCEPTED - W12-A default (2deb90b0, identity mount only), W12-B only with its full proof.
+    D (inheritance): ACCEPTED - `CERTIFICATE_SCOPE.md` is a per-gate matrix, inheritance conditional on W12-A and
+    K6 no-op; data-policy refusals counted apart; READY vs execution-eligible reported apart; latency quantities
+    3 and 4 NOT_MEASURED passively (inherited); passive soak = regression only; IDR-128 limit stays.
+    E (finite closeout): ACCEPTED - no duplicate run, K2/K3/K4 deferred, then window, then TS phase E.
+  - Open decisions (owner): window date; acquisition r20 vs r21 (repository r20 carries the inverse L2
+    materialization the core already runs); W12-A vs W12-B; certificate scope as proposed.
+  - Status: implemented and tested locally (rehearsal isolated); NOT production-ready until the window executes and
+    its acceptance passes. Packet: `upgrade/evidence/releases/v2.2.5/drafts/MAINTENANCE_WINDOW_PACKET.md`; scope:
+    `upgrade/evidence/releases/v2.2.5/drafts/CERTIFICATE_SCOPE.md`.
+  - Permissions (F2/F3 finding relayed 11:15Z: the deployed broker cert dir has world-readable private keys; not
+    changed live): `rotate_mesh_tls.py` gains `harden` / `perms` (and `verify` fails on them): private material
+    0400/0440 owned by its consumer (kafka/ uid 1000 = appuser of the pinned Kafka image, from /proc of the live
+    broker; stable-certs/ and kn-tls/ 10001 (cap_drop ALL, no DAC override); identities/ root for the TS writer),
+    public certificates 0444, directories 0750. Applied to gen-20261019T084200Z: 112 files, bytes unchanged
+    (sha256 before == after), perms PASS. The rehearsal above ran before hardening; a hardened-permission re-run is
+    queued behind the IDR-128 host lock (until ~13:57Z) and is a pre-window check in the packet.

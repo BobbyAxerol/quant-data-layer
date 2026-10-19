@@ -61,12 +61,14 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             for item in scope.products
         }
         self.assertEqual(actual, expected)
-        self.assertEqual(len(scope.products), 319 + UNIVERSE_TOTAL)
+        # +4 inverse BTC-USD-SWAP Trading System products since manifest r11
+        # (QUOTE/BOOK_SNAPSHOT/BOOK_DELTA durable, MARK_INDEX_PRICE on demand).
+        self.assertEqual(len(scope.products), 323 + UNIVERSE_TOTAL)
         self.assertEqual(
             Counter(product.delivery for product in scope.products),
             {
-                DeliveryClass.DURABLE: 234 + UNIVERSE_TOTAL,
-                DeliveryClass.ON_DEMAND: 85,
+                DeliveryClass.DURABLE: 237 + UNIVERSE_TOTAL,
+                DeliveryClass.ON_DEMAND: 86,
             },
         )
 
@@ -102,13 +104,13 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             (product.consumer_id, requirement_key(product.requirement))
             for product in scope.products
         }
-        self.assertEqual(len(scope.products), 315 + UNIVERSE_TOTAL)
+        self.assertEqual(len(scope.products), 319 + UNIVERSE_TOTAL)
         self.assertEqual(actual, expected)
         self.assertEqual(
             Counter(product.delivery for product in scope.products),
             {
-                DeliveryClass.DURABLE: 230 + UNIVERSE_TOTAL,
-                DeliveryClass.ON_DEMAND: 85,
+                DeliveryClass.DURABLE: 233 + UNIVERSE_TOTAL,
+                DeliveryClass.ON_DEMAND: 86,
             },
         )
         self.assertEqual(
@@ -140,7 +142,7 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             consumer_ids=FIVE_LIQUID_CONSUMER_IDS,
         )
         deltas = [item for item in scope.products if item.feed is FeedType.BOOK_DELTA]
-        self.assertEqual(len(deltas), 20)
+        self.assertEqual(len(deltas), 21)
         self.assertTrue(all(
             item.requirement.event_recency_policy is StalePolicy.OBSERVE
             and item.requirement.max_session_liveness_ms == 45_000
@@ -168,6 +170,7 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
                 ("OKX", "SOL-USDT-SWAP"),
                 ("OKX", "DOGE-USDT-SWAP"),
                 ("OKX", "BNB-USDT-SWAP"),
+                ("OKX", "BTC-USD-SWAP"),  # inverse Paper extension (r11)
             },
         )
 
@@ -179,7 +182,7 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             consumer_ids=FIVE_LIQUID_CONSUMER_IDS,
         )
         quotes = [item for item in scope.products if item.feed is FeedType.QUOTE]
-        self.assertEqual(len(quotes), 20)
+        self.assertEqual(len(quotes), 21)
         execution_quotes = [
             item
             for item in quotes
@@ -190,7 +193,7 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             for item in quotes
             if item.consumer_id != "trading-system.paper.stable"
         ]
-        self.assertEqual(len(execution_quotes), 10)
+        self.assertEqual(len(execution_quotes), 11)
         self.assertEqual(len(alpha_quotes), 10)
         self.assertTrue(all(
             item.requirement.event_recency_policy is StalePolicy.OBSERVE
@@ -217,7 +220,7 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
             {
                 ("alpha.binance.paper.stable", "ALPHA", 5_000): 5,
                 ("alpha.okx.paper.stable", "ALPHA", 5_000): 5,
-                ("trading-system.paper.stable", "EXECUTION", 2_000): 10,
+                ("trading-system.paper.stable", "EXECUTION", 2_000): 11,
             },
         )
 
@@ -239,7 +242,7 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
                 FeedType.BOOK_DELTA,
             }
         ]
-        self.assertEqual(len(typed), 30)
+        self.assertEqual(len(typed), 33)
         self.assertTrue(all(route.route == "V2_PRIMARY" for route, _ in typed))
         self.assertTrue(all(route.fallback == "BLOCKED" for route, _ in typed))
         self.assertEqual(
@@ -265,6 +268,7 @@ class Phase105ConsumerAcceptanceScopeTests(unittest.TestCase):
                 ("OKX", "SOL-USDT-SWAP"),
                 ("OKX", "DOGE-USDT-SWAP"),
                 ("OKX", "BNB-USDT-SWAP"),
+                ("OKX", "BTC-USD-SWAP"),  # inverse Paper extension (r11)
             },
         )
         self.assertEqual(

@@ -1,0 +1,184 @@
+{
+  "dockerignore_excludes": "upgrade/evidence/",
+  "files": [
+    {
+      "bytes": 147906,
+      "consumer_id": "alpha.binance.live.stable",
+      "deployed_path": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/reader-public-r16/alpha.binance.live.stable.yaml",
+      "environment": "live",
+      "generator": {
+        "function": "compile_realm",
+        "realm": "live",
+        "reproduced": "byte-identical: yaml.safe_dump(compile_realm(git show 718631d:consumers/stable/alpha-binance-paper.yaml, 'live'), sort_keys=False) has the same sha256",
+        "script": "scripts/compile_consumer_realms.py",
+        "serializer": "yaml.safe_dump(sort_keys=False)",
+        "source_commit": "718631d",
+        "source_manifest": "consumers/stable/alpha-binance-paper.yaml",
+        "source_manifest_revision": 14
+      },
+      "manifest_revision": 1,
+      "manifest_sha256_canonical_json": "4613d8024aaa0f76f75eef11e12808cf123878d81fde032617dfea268f38c686",
+      "path": "upgrade/evidence/releases/v2.2.5/consumer-realms/alpha.binance.live.stable.yaml",
+      "requirements": 375,
+      "sha256": "e6b74f2820458a9336045bcf49f628ddfc0d83ca06c63726b58fa4b1f6cf37ca"
+    },
+    {
+      "bytes": 147915,
+      "consumer_id": "alpha.binance.sandbox.stable",
+      "deployed_path": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/reader-public-r16/alpha.binance.sandbox.stable.yaml",
+      "environment": "sandbox",
+      "generator": {
+        "function": "compile_realm",
+        "realm": "sandbox",
+        "reproduced": "byte-identical: yaml.safe_dump(compile_realm(git show 718631d:consumers/stable/alpha-binance-paper.yaml, 'sandbox'), sort_keys=False) has the same sha256",
+        "script": "scripts/compile_consumer_realms.py",
+        "serializer": "yaml.safe_dump(sort_keys=False)",
+        "source_commit": "718631d",
+        "source_manifest": "consumers/stable/alpha-binance-paper.yaml",
+        "source_manifest_revision": 14
+      },
+      "manifest_revision": 1,
+      "manifest_sha256_canonical_json": "c35123e33225914d92c7b58847cc825613ec026895519d404941c67402756146",
+      "path": "upgrade/evidence/releases/v2.2.5/consumer-realms/alpha.binance.sandbox.stable.yaml",
+      "requirements": 375,
+      "sha256": "514397f90bc9411f08f5e0eaadc637ff9fa872925849639e3ffe3b41a689e048"
+    },
+    {
+      "bytes": 147948,
+      "consumer_id": "alpha.okx.live.stable",
+      "deployed_path": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/reader-public-r16/alpha.okx.live.stable.yaml",
+      "environment": "live",
+      "generator": {
+        "function": "compile_realm",
+        "realm": "live",
+        "reproduced": "byte-identical: yaml.safe_dump(compile_realm(git show e8d3435:consumers/stable/alpha-okx-paper.yaml, 'live'), sort_keys=False) has the same sha256",
+        "script": "scripts/compile_consumer_realms.py",
+        "serializer": "yaml.safe_dump(sort_keys=False)",
+        "source_commit": "e8d3435",
+        "source_manifest": "consumers/stable/alpha-okx-paper.yaml",
+        "source_manifest_revision": 14
+      },
+      "manifest_revision": 1,
+      "manifest_sha256_canonical_json": "fb5f74d0c71891d78f1df31000e9774679172b08feb6d86d774e661b872139be",
+      "path": "upgrade/evidence/releases/v2.2.5/consumer-realms/alpha.okx.live.stable.yaml",
+      "requirements": 375,
+      "sha256": "aa1096f95d118befa5e697bee81ddc68041cd03abd5fafa6546925329b1a2cd9"
+    },
+    {
+      "bytes": 147957,
+      "consumer_id": "alpha.okx.sandbox.stable",
+      "deployed_path": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/reader-public-r16/alpha.okx.sandbox.stable.yaml",
+      "environment": "sandbox",
+      "generator": {
+        "function": "compile_realm",
+        "realm": "sandbox",
+        "reproduced": "byte-identical: yaml.safe_dump(compile_realm(git show e8d3435:consumers/stable/alpha-okx-paper.yaml, 'sandbox'), sort_keys=False) has the same sha256",
+        "script": "scripts/compile_consumer_realms.py",
+        "serializer": "yaml.safe_dump(sort_keys=False)",
+        "source_commit": "e8d3435",
+        "source_manifest": "consumers/stable/alpha-okx-paper.yaml",
+        "source_manifest_revision": 14
+      },
+      "manifest_revision": 1,
+      "manifest_sha256_canonical_json": "ce62e8134a4e1d213bf3ae981f8a3a27413167050a8b325d80417690f19df89a",
+      "path": "upgrade/evidence/releases/v2.2.5/consumer-realms/alpha.okx.sandbox.stable.yaml",
+      "requirements": 375,
+      "sha256": "4ec1d11b6c94055c81ce29c5d3bd73293f6e6d57621ddbd2bf8a03f4025b7afb"
+    },
+    {
+      "bytes": 25511,
+      "consumer_id": "trading-system.live.stable",
+      "deployed_path": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/reader-public-r16/trading-system.live.stable.yaml",
+      "environment": "live",
+      "generator": {
+        "function": "compile_realm",
+        "realm": "live",
+        "reproduced": "byte-identical: yaml.safe_dump(compile_realm(git show 6be8d54:consumers/stable/trading-system-paper.yaml, 'live'), sort_keys=False) has the same sha256",
+        "script": "scripts/compile_consumer_realms.py",
+        "serializer": "yaml.safe_dump(sort_keys=False)",
+        "source_commit": "6be8d54",
+        "source_manifest": "consumers/stable/trading-system-paper.yaml",
+        "source_manifest_revision": 10
+      },
+      "manifest_revision": 1,
+      "manifest_sha256_canonical_json": "913e86baf2f4b413ed027dc4f50b662c3b0cdfcdd332200a573be43ba9fedcdb",
+      "path": "upgrade/evidence/releases/v2.2.5/consumer-realms/trading-system.live.stable.yaml",
+      "requirements": 60,
+      "sha256": "2d5790522e59a2c5144ed453a8ce1740509eb3273278c58b757ca6e1d28977de"
+    },
+    {
+      "bytes": 35597,
+      "consumer_id": "trading-system.sandbox.stable",
+      "deployed_path": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/reader-public-r16/trading-system.sandbox.stable.yaml",
+      "environment": "sandbox",
+      "generator": {
+        "function": "prepare_sandbox_extension",
+        "input_manifest": {
+          "reproduced": "byte-identical: yaml.safe_dump(compile_realm(git show 6be8d54:consumers/stable/trading-system-paper.yaml (r10), \"sandbox\"), sort_keys=False)",
+          "revision": 1,
+          "sha256": "db2997aa512444e3741dbed9054eaee6e71b34d254a562e8c461ed33fb898cd5"
+        },
+        "note": "revision 2 = compiled sandbox r1 + the four inverse BTC-USD-SWAP requirements; the same preparation produced catalog r12 (catalog.json sha256 fc3a1e1e...) and acquisition r20 (acquisition.json sha256 09c895f1...)",
+        "prepared_packet": "~/.local/state/trading-system/p183e-20260930-dependencies/qdl-prepared/inverse-r2/manifest.json (same sha256)",
+        "receipt": "~/.local/state/trading-system/p183e-20260930-dependencies/qdl-prepared/inverse-r2/receipt.json sha256 75a43555386f8b371981336b89fe3e188f755bdbff8e795ef313533644aefaec",
+        "script": "qdl/runtime/sandbox_extension.py",
+        "serializer": "json.dumps(indent=2, sort_keys=True) (JSON content in a .yaml file)",
+        "source_commit": "1615eb2"
+      },
+      "manifest_revision": 2,
+      "manifest_sha256_canonical_json": "971e9f4b286e8e7d5eba1187481755ef811a872913d2e6ec2cd31948ea808307",
+      "path": "upgrade/evidence/releases/v2.2.5/consumer-realms/trading-system.sandbox.stable.yaml",
+      "requirements": 64,
+      "sha256": "fa7073f164ea75232e035d2f620b172de1b65d635702ebfd026244ba66e63713"
+    },
+    {
+      "bindings": 716,
+      "bytes": 261587,
+      "contains_okx_8443_urls": true,
+      "deployed_path": "~/.local/state/qdl-v2/releases/v2.2.0-02cd827/runtime/stable-acquisition-bindings.yaml (root-owned; read with sudo -n cat)",
+      "generator": {
+        "function": "prepare_sandbox_extension",
+        "prepared_packet": "~/.local/state/trading-system/p183e-20260930-dependencies/qdl-prepared/inverse-r2/acquisition.json (same sha256)",
+        "script": "qdl/runtime/sandbox_extension.py",
+        "source_commit": "1615eb2"
+      },
+      "path": "upgrade/evidence/releases/v2.2.5/consumer-realms/stable-acquisition-bindings.runtime-r20.yaml",
+      "repository_counterpart": {
+        "path": "config/v2/stable-acquisition-bindings.yaml",
+        "relation": "same 716 bindings and revision; differs in (a) websocket_url/business_websocket_url, port-less in the repository (6674d0b, OKX stops accepting :8443 on 2026-10-31; transport fields are not identity) and (b) l2.materialized_snapshot_interval_ms: 1000 on okx-swap-btc-usd-swap-book_snapshot/book_delta, present in the repository and absent from this file. (b) is what the running core already does (v2.2.3-rc18-core-batch1024 rust_core*.json materialize okx-swap-btc-usd-swap-book-primary-v2 at 1000 ms, 11 hot books) and what the current compiler emits for EXECUTION-grade demand; the 2026-09-30 preparation predates that field. Because l2 is identity, StableAcquisitionPlan.identity_digest of the two files differs only by these two rows (equal with them removed).",
+        "revision": 20,
+        "sha256": "a38b779888abc55c6a2551ddd5285226c648d8cf953e857db66227abb67e41f9"
+      },
+      "revision": 20,
+      "sha256": "09c895f1bdbaa721df336471eba910a9d95c027d11e2bda0e6d0cca60590f223"
+    }
+  ],
+  "idr": "IDR-127",
+  "not_reproduced_from_current_sources": "The live/sandbox realm files were compiled from earlier Paper revisions (alpha r14, Trading System r10); recompiling from the current Paper sources would give different bytes (e.g. alpha-okx r15 quotas, TS r11 inverse rows). They stay deployed as-is.",
+  "realm_mount": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/reader-public-r16 -> /consumer-realms (query/stream)",
+  "release": "v2.2.5",
+  "schema": "qdl.v2.idr127-consumer-realm-evidence.v1",
+  "sources_in_repository": {
+    "config/v2/stable-source-bindings.yaml": {
+      "catalog_revision": 12,
+      "deployed": "~/.local/state/qdl-v2/releases/v2.2.0-02cd827/runtime/stable-source-bindings.yaml",
+      "sha256": "fc3a1e1ec283e6c49b671f55cc270bd8f0241d595b241e6c7f5c87f5dc686cc5"
+    },
+    "consumers/stable/alpha-binance-paper.yaml": {
+      "deployed": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/reader-public-r16/alpha.binance.paper.stable-r16.yaml",
+      "revision": 16,
+      "sha256": "050d96dcc6f1da5b42b373e05baae4e6d7965eb44d163e5a320302975ecd9269"
+    },
+    "consumers/stable/alpha-okx-paper.yaml": {
+      "deployed": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/reader-public-r16/alpha.okx.paper.stable-r15.yaml",
+      "revision": 15,
+      "sha256": "33b9cfd4ff19fee20560ee912192a880204789d99994dcb2dbfcd81ed60396fa"
+    },
+    "consumers/stable/trading-system-paper.yaml": {
+      "deployed": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/reader-public-r16/trading-system.paper.stable-r11.yaml",
+      "revision": 11,
+      "sha256": "efd482fa4ffe7f9176387324f47d47d7e1c801bae6afb2c0747c3ce43652b8fc"
+    }
+  },
+  "statement": "Byte copies of the deployed consumer realm manifests that are compiled runtime outputs, not repository sources, plus the deployed acquisition plan r20 (kept here because the repository file differs in OKX transport URLs). Release evidence only: never loaded from this path and not baked into images, because .dockerignore excludes upgrade/evidence/."
+}

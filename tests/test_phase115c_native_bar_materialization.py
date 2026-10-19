@@ -30,6 +30,19 @@ def _module():
 
 class Phase115CNativeBarMaterializationTests(unittest.TestCase):
     @staticmethod
+    def _binding_order_free(payload: dict) -> dict:
+        """Bindings keyed by identity, not list position.
+
+        The committed catalog r12 / acquisition r20 are the deployed bytes: the
+        2026-09-30 inverse preparation appended the four BTC-USD-SWAP rows after
+        the sorted block, while this tool emits bindings sorted by ID. Every
+        row must still be reproduced exactly; only their position differs.
+        """
+        result = deepcopy(payload)
+        result["bindings"] = sorted(result["bindings"], key=lambda item: item["binding_id"])
+        return result
+
+    @staticmethod
     def _canonical_demand(payload: dict) -> dict:
         result = deepcopy(payload)
         for consumer in result["consumers"]:
@@ -190,14 +203,21 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
         })
         self.assertEqual(self.summary["price_binding_counts"], {
             "binance_usdm": 80 + UNIVERSE_PER_VENUE["BINANCE"],
-            "okx_swap": 80 + UNIVERSE_PER_VENUE["OKX"],
+            # +1: the inverse BTC-USD-SWAP QUOTE (demand revision 8).
+            "okx_swap": 81 + UNIVERSE_PER_VENUE["OKX"],
         })
         self.assertEqual(
             self._canonical_demand(self.demand),
             self._canonical_demand(self.current_demand),
         )
-        self.assertEqual(self.catalog, self.current_catalog)
-        self.assertEqual(self.acquisition, self.current_acquisition)
+        self.assertEqual(
+            self._binding_order_free(self.catalog),
+            self._binding_order_free(self.current_catalog),
+        )
+        self.assertEqual(
+            self._binding_order_free(self.acquisition),
+            self._binding_order_free(self.current_acquisition),
+        )
         self.assertEqual(self.scope, self.current_scope)
 
     def test_five_liquid_price_plane_has_exact_trade_quote_and_l2_counts(self) -> None:
@@ -210,7 +230,7 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
         self.assertEqual(product_counts[("BINANCE", "USDM", "TRADE")], 5)
         self.assertEqual(product_counts[("BINANCE", "USDM", "QUOTE")], 5)
         self.assertEqual(product_counts[("OKX", "SWAP", "TRADE")], 5)
-        self.assertEqual(product_counts[("OKX", "SWAP", "QUOTE")], 5)
+        self.assertEqual(product_counts[("OKX", "SWAP", "QUOTE")], 6)  # + inverse BTC-USD-SWAP
         current_l2 = {
             item["binding_id"] for item in self.current_catalog["bindings"]
             if str(item["feed"]).startswith("BOOK_")
@@ -220,7 +240,7 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
             if item.feed.value.startswith("BOOK_")
         }
         self.assertEqual(materialized_l2, current_l2)
-        self.assertEqual(len(materialized_l2), 32)
+        self.assertEqual(len(materialized_l2), 34)  # + inverse BTC-USD-SWAP snapshot/delta
         retired_symbols = {"BTCUSDT_260925", "ETHUSDT_260925"}
         self.assertFalse(any(
             item.feed.value.startswith("BOOK_")
@@ -266,7 +286,8 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
             and (item.instrument.identity.venue, item.instrument.identity.market)
             in {("BINANCE", "USDM"), ("OKX", "SWAP")}
         }
-        self.assertEqual(len(mark_bindings), 10)
+        # Ten linear plus the inverse BTC-USD-SWAP already in the catalog (r12).
+        self.assertEqual(len(mark_bindings), 11)
         self.assertTrue(set(mark_bindings).issubset(set(scope["binding_ids"])))
         baseline_by_requirement = {
             self.tool._source_requirement_key(item): item
@@ -286,7 +307,7 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
             source_by_id={item.binding_id: item for item in loaded_catalog.bindings},
             selected_ids=frozenset(mark_bindings),
         )
-        self.assertEqual(len(entries), 15)
+        self.assertEqual(len(entries), 17)
         self.assertEqual(
             Counter(
                 (entry.source.instrument.identity.venue, entry.mark_index_component)
@@ -294,8 +315,8 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
             ),
             {
                 ("BINANCE", "BOTH"): 5,
-                ("OKX", "MARK"): 5,
-                ("OKX", "INDEX"): 5,
+                ("OKX", "MARK"): 6,
+                ("OKX", "INDEX"): 6,
             },
         )
         self.assertEqual(
@@ -310,6 +331,7 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
                 ("SOL-USDT-SWAP", "SOL-USDT"),
                 ("DOGE-USDT-SWAP", "DOGE-USDT"),
                 ("BNB-USDT-SWAP", "BNB-USDT"),
+                ("BTC-USD-SWAP", "BTC-USD"),
             },
         )
 
@@ -374,8 +396,13 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
             okx_spot_capture=ROOT / "config/v2/captures/okx-instruments-spot.filtered.json",
         )
         self.assertEqual(demand, self.current_demand)
-        self.assertEqual(catalog, self.current_catalog)
-        self.assertEqual(acquisition, self.current_acquisition)
+        self.assertEqual(
+            self._binding_order_free(catalog), self._binding_order_free(self.current_catalog)
+        )
+        self.assertEqual(
+            self._binding_order_free(acquisition),
+            self._binding_order_free(self.current_acquisition),
+        )
         self.assertEqual(scope, self.current_scope)
         self.assertTrue(summary["acquisition_policy_changed"])
         self.assertEqual(summary["acquisition_revision"], self.current_acquisition["revision"])

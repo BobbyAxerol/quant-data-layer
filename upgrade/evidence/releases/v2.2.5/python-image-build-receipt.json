@@ -1,0 +1,184 @@
+{
+  "components": [
+    "python"
+  ],
+  "finished_utc": "2026-10-19T10:33:55Z",
+  "free_gib_after": 228.2,
+  "free_gib_before": 230.1,
+  "identity": {
+    "build_dir": "/home/bobby/.local/state/qdl-v2/build-v2.2.5-601c3d8",
+    "python_tag": "qdl-v2-python:2.2.5-601c3d8",
+    "rev": "601c3d8a8ec6f649fe5ebe8012ac61d2821feacc",
+    "rust_tag": "qdl-v2-rust:2.2.5-601c3d8",
+    "sha7": "601c3d8"
+  },
+  "lock": {
+    "owner": "claude-dl-v225",
+    "purpose": "DL v2.2.5 isolated mesh TLS rotation rehearsal (qdl-v225-reh, <=3 vCPU) + python image build; no production",
+    "started_utc": "2026-10-19T08:58:28Z",
+    "until_utc": "2026-10-19T11:58:28Z"
+  },
+  "lock_checks": [
+    {
+      "stage": "start",
+      "until_utc": "2026-10-19T11:58:28Z"
+    },
+    {
+      "at_utc": "2026-10-19T10:32:17Z",
+      "stage": "python-image",
+      "until_utc": "2026-10-19T11:58:28Z"
+    }
+  ],
+  "python": {
+    "files": {
+      "expected_but_equal": [],
+      "files_reference": 439,
+      "files_release": 445,
+      "observed_different": [
+        "config/v2/captures/okx-instruments-swap.filtered.json",
+        "config/v2/captures/provenance.json",
+        "config/v2/p184-stage100-a3-external-attribution.json",
+        "config/v2/p184-stage100-a4-ts-eligibility.json",
+        "config/v2/p184-stage100-a4-v2-preregistered.json",
+        "config/v2/p184-stage100-a5-g11-trade-clock.json",
+        "config/v2/p184-stage100-g4-amendment-1.json",
+        "config/v2/p184-stage100-g4-amendment-2.json",
+        "config/v2/stable-acquisition-bindings.yaml",
+        "config/v2/stable-authority-promotion-scope.yaml",
+        "config/v2/stable-crypto-demand.yaml",
+        "config/v2/stable-source-bindings.yaml",
+        "config/v2/stable-v2-release-routing.yaml",
+        "consumers/stable/alpha-okx-paper.yaml",
+        "consumers/stable/trading-system-paper.yaml",
+        "qdl/certification/reference_l2_acceptance.py"
+      ],
+      "ok": true,
+      "unexpected_different": []
+    },
+    "image": "sha256:b7056141ec26661edbf0566fe93ab2c6ac9f27749fd550db5062ca841a639c05",
+    "label_ok": true,
+    "labels": {
+      "io.qdl.dependency-image": "builder",
+      "org.opencontainers.image.revision": "601c3d8a8ec6f649fe5ebe8012ac61d2821feacc",
+      "org.opencontainers.image.source": "https://github.com/BobbyAxerol/quant-data-layer",
+      "org.opencontainers.image.title": "Quant Data Layer",
+      "org.opencontainers.image.version": "2.2.5"
+    },
+    "ok": true,
+    "pip_freeze": {
+      "equal": true,
+      "only_reference": [],
+      "only_release": []
+    },
+    "tag": "qdl-v2-python:2.2.5-601c3d8"
+  },
+  "release": "2.2.5",
+  "schema": "qdl.release-image-build-receipt.v1",
+  "script_sha256": "103c620f52f61d4fe721109e7440300c24b7882cafbe39aca37d66d0ba728cae",
+  "source_archive_sha256": "a561a7b6edb6f5da006755f7dfb94a0f6dff18d1b5da4cc94b082c5201ae9def",
+  "started_utc": "2026-10-19T10:32:15Z",
+  "status": "PASS",
+  "steps": [
+    {
+      "argv": [
+        "docker",
+        "build",
+        "-f",
+        "/home/bobby/.local/state/qdl-v2/build-v2.2.5-601c3d8/src/Dockerfile",
+        "--build-arg",
+        "QDL_GIT_SHA=601c3d8a8ec6f649fe5ebe8012ac61d2821feacc",
+        "--build-arg",
+        "QDL_RELEASE=2.2.5",
+        "--iidfile",
+        "/home/bobby/.local/state/qdl-v2/build-v2.2.5-601c3d8/python.iid",
+        "-t",
+        "qdl-v2-python:2.2.5-601c3d8",
+        "/home/bobby/.local/state/qdl-v2/build-v2.2.5-601c3d8/src"
+      ],
+      "output": "/home/bobby/.local/state/qdl-v2/build-v2.2.5-601c3d8/python-image.out",
+      "rc": 0,
+      "seconds": 92.5,
+      "step": "python-image"
+    },
+    {
+      "argv": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "--network",
+        "none",
+        "--read-only",
+        "--entrypoint",
+        "sh",
+        "sha256:b7056141ec26661edbf0566fe93ab2c6ac9f27749fd550db5062ca841a639c05",
+        "-c",
+        "cd /app && find qdl app generated config consumers qdl_sdk -type f ! -name '*.pyc' ! -path '*/__pycache__/*' -print0 2>/dev/null | sort -z | xargs -0 sha256sum"
+      ],
+      "output": "/home/bobby/.local/state/qdl-v2/build-v2.2.5-601c3d8/python-postcheck-files.out",
+      "rc": 0,
+      "seconds": 1.3,
+      "step": "python-postcheck-files"
+    },
+    {
+      "argv": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "--network",
+        "none",
+        "--read-only",
+        "--entrypoint",
+        "sh",
+        "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff",
+        "-c",
+        "cd /app && find qdl app generated config consumers qdl_sdk -type f ! -name '*.pyc' ! -path '*/__pycache__/*' -print0 2>/dev/null | sort -z | xargs -0 sha256sum"
+      ],
+      "output": "/home/bobby/.local/state/qdl-v2/build-v2.2.5-601c3d8/ref-rc19-files.out",
+      "rc": 0,
+      "seconds": 1.0,
+      "step": "ref-rc19-files"
+    },
+    {
+      "argv": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "--network",
+        "none",
+        "--read-only",
+        "--entrypoint",
+        "sh",
+        "sha256:b7056141ec26661edbf0566fe93ab2c6ac9f27749fd550db5062ca841a639c05",
+        "-c",
+        "PIP_DISABLE_PIP_VERSION_CHECK=1 /opt/venv/bin/python -m pip freeze --all"
+      ],
+      "output": "/home/bobby/.local/state/qdl-v2/build-v2.2.5-601c3d8/python-pip-freeze.out",
+      "rc": 0,
+      "seconds": 1.6,
+      "step": "python-pip-freeze"
+    },
+    {
+      "argv": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "--network",
+        "none",
+        "--read-only",
+        "--entrypoint",
+        "sh",
+        "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff",
+        "-c",
+        "PIP_DISABLE_PIP_VERSION_CHECK=1 /opt/venv/bin/python -m pip freeze --all"
+      ],
+      "output": "/home/bobby/.local/state/qdl-v2/build-v2.2.5-601c3d8/ref-rc19-pip-freeze.out",
+      "rc": 0,
+      "seconds": 2.1,
+      "step": "ref-rc19-pip-freeze"
+    }
+  ]
+}

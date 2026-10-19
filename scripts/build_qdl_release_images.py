@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the Data Layer v2.2.4 release images reproducibly (dry-run by default).
+"""Build the Data Layer release images reproducibly (dry-run by default; v2.2.5: python only).
 
 Purpose
     One recipe for the two v2.2.4 release images, built from ``git archive <REV>``:
@@ -45,7 +45,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.host_measurement_lock import MAX_MINUTES as MAX_LOCK_MINUTES, lock_state  # noqa: E402
 
 
-RELEASE = "2.2.4"
+# v2.2.5 (IDR-127 + versioned compose + mesh TLS rotation) rebuilds only the python image: no rust source changed
+# since the v2.2.4 runtime binaries (the rust images keep their v2.2.4 digests; see the v2.2.5 plan entry).
+RELEASE = "2.2.5"
 SDK_VERSION = "2.4.1"
 REPO = Path(__file__).resolve().parents[1]
 HOME = Path.home()
@@ -111,11 +113,11 @@ REFERENCES = {
     "v224_83bef59": ("qdl-v2-rust:2.2.4-83bef59",
                      "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784"),
 }
-PYTHON_REFERENCE = ("qdl-v2-python:2.2.3-rc19-4d3476c",
-                    "sha256:b9ca6c36fb0ad003b77e47bb3a777c3e565944d59cb3a2e9bc5dfb68e3448481")
-# rc19 is a thin overlay: /app/qdl at 4d3476c, every other /app path at bcb0283 (build-query-rc19-4d3476c).
-PYTHON_REFERENCE_TREE = (("qdl/", "4d3476c5b6944eba557d00ee71f351f150a5b752"),
-                         ("", "bcb02833f4193ed116bde3f730c8299b34a0e87f"))
+# The python image that runs Query in production (v2.2.4, 31a5155, built from one tree). v2.2.4 compared against
+# rc19 (a thin overlay: /app/qdl at 4d3476c, everything else at bcb0283).
+PYTHON_REFERENCE = ("qdl-v2-python:2.2.4-31a5155",
+                    "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff")
+PYTHON_REFERENCE_TREE = (("", "31a515522aff3f6e5e7791aa21500cfa570ccb41"),)
 PYTHON_HASH_ROOTS = ("qdl", "app", "generated", "config", "consumers", "qdl_sdk")
 
 # Per binary: (reference, expectation, reason). The production reference of each role is listed
@@ -293,7 +295,7 @@ def source_preconditions(repo: Path, rev: str) -> dict:
 
 
 def expected_python_diff(repo: Path, rev: str) -> list[str]:
-    """Paths under PYTHON_HASH_ROOTS whose bytes differ between the rc19 tree model and REV."""
+    """Paths under PYTHON_HASH_ROOTS whose bytes differ between the reference tree model and REV."""
     changed = set()
     for prefix, base in PYTHON_REFERENCE_TREE:
         names = git(repo, "diff", "--name-only", "--no-renames", base, rev, "--", *PYTHON_HASH_ROOTS)

@@ -93,7 +93,7 @@ class ConsumerRealmCompilerTests(unittest.TestCase):
                     if r.source_policy_id in {"crypto_primary_v2", "crypto_liquid_v2"}))
                 self.assertFalse(any(r.source_policy_id == "vn_primary_v2" for r in result.requirements))
                 if name == "trading-system-paper":
-                    self.assertEqual(len(result.requirements), 60)
+                    self.assertEqual(len(result.requirements), 64)  # 65 in r11 minus the VN TRADE row
                 self.assertEqual(result.quotas, original.quotas)
                 self.assertEqual(result.allowed_permissions, original.allowed_permissions)
                 self.assertEqual(result.allowed_purposes, original.allowed_purposes)

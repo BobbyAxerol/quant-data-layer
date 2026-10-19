@@ -79,7 +79,7 @@ class ExecutionL2StatusMatrixTests(unittest.TestCase):
             execution_demand=DEFAULT_EXECUTION_DEMAND,
             trading_manifest=DEFAULT_TRADING_MANIFEST,
         )
-        self.assertEqual(len(products), 20)
+        self.assertEqual(len(products), 22)  # ten linear pairs + inverse BTC-USD-SWAP pair (r11)
         self.assertEqual(
             {(item.venue, item.native_symbol) for item in products},
             {
@@ -94,6 +94,7 @@ class ExecutionL2StatusMatrixTests(unittest.TestCase):
                     "SOL-USDT-SWAP",
                     "DOGE-USDT-SWAP",
                     "BNB-USDT-SWAP",
+                    "BTC-USD-SWAP",
                 )
             },
         )
@@ -103,7 +104,8 @@ class ExecutionL2StatusMatrixTests(unittest.TestCase):
                 (venue, symbol, feed)
                 for venue, symbols in {
                     "BINANCE": ("BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "BNBUSDT"),
-                    "OKX": ("BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP", "DOGE-USDT-SWAP", "BNB-USDT-SWAP"),
+                    "OKX": ("BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP", "DOGE-USDT-SWAP", "BNB-USDT-SWAP",
+                            "BTC-USD-SWAP"),
                 }.items()
                 for symbol in symbols
                 for feed in ("BOOK_SNAPSHOT", "BOOK_DELTA")

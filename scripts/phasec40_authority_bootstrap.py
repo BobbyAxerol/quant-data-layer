@@ -65,6 +65,9 @@ R1_PRECANARY_FIELDS = {
 # so a catalog growth cannot silently widen the old handoff blast radius.
 _C40_VENUE_MARKETS = frozenset({("BINANCE", "USDM"), ("OKX", "SWAP")})
 _C40_BASE_ASSETS = frozenset({"BTC", "ETH"})
+# The four C40 perpetuals are the USDT-margined linear ones; the inverse
+# BTC-USD-SWAP added by IDR-075 (catalog revision 12) is outside C40.
+_C40_SETTLEMENT_ASSETS = frozenset({"USDT"})
 _C40_FEEDS = frozenset({("TRADE", None), ("QUOTE", None), ("BAR", "1m")})
 
 
@@ -86,6 +89,7 @@ def _c40_binding_ids(
         ) in _C40_VENUE_MARKETS
         and source_by_id[item.binding_id].instrument.identity.product_type.value == "PERPETUAL"
         and source_by_id[item.binding_id].instrument.base_asset in _C40_BASE_ASSETS
+        and source_by_id[item.binding_id].instrument.settlement_asset in _C40_SETTLEMENT_ASSETS
         and source_by_id[item.binding_id].source_policy_id == "crypto_primary_v2"
         and (
             source_by_id[item.binding_id].feed.value,
