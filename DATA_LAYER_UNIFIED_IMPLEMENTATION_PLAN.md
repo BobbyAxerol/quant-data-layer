@@ -76874,6 +76874,7 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   | A-stage production image | 472 / 574 / 652 / 683 | 155 -> 398 | 308 MiB | 716 -> 368 |
   | F sliced body + frame release | 395 / 457 / 427 / - | 100 -> 146 | 52 MiB | 438 -> 360 |
   | G F + maintenance (512 then) | 391 / 408 / 468 / 458 | 99 -> 161 | 68 MiB | 464 -> 377 |
+  | H built image 84512ab (default 448) | 361 / 374 / 426 / 445 | 103 -> 116 | 22 MiB | 448 -> 410 |
   Garbage after the fix holds no QueryServiceError/work frames (0 vs 137) and only the 256 KiB read buffers of
   closed TLS connections (asyncio sslproto). G never reached its 512 MiB limit; default lowered to 448 MiB so the
   bounded behaviour is the default one (final proof on the built image below). Client warmup latency (200s):
@@ -76885,3 +76886,15 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   refused-item test FAILS on the unfixed service. Affected 37 modules (api_v2, query service, runtime.stable,
   warmup, stall telemetry): 552 tests, 1 failure `test_phaseb_stable_edge` catalog L2 count 32 != 34 = the image's
   baked config predates dev's IDR-127 catalog (environment, not this change), 36 skipped.
+- Final proof on the built image (arm H, 16:28-16:43Z): `scripts/build_qdl_release_images.py --rev 84512ab
+  --component python --build` -> `qdl-v2-python:2.2.5-84512ab`
+  `sha256:69304bd478ee7822625c21e8573354c0a24c2baf1f16cc317d216c227f38ef27`, receipt
+  `~/.local/state/qdl-v2/build-v2.2.5-84512ab/receipt.json` PASS. Same 64-warmup bursts x 12, no source mount,
+  default soft limit: RSS 197 (start) / 361 (burst 1) / 361-445 over bursts 1-12, malloc in use flat 94-116 MiB
+  (production image: 155 -> 398). Maintenance ran 3 times: RSS 450 -> 378, 451 -> 374, 454 -> 406 MiB, gc
+  128-152 ms, trim 8-12 ms. Client warmup latency (200s) p50 6.6-8.3 s / p95 9.3-10.0 s vs production image
+  6.4-8.7 s / 9.3-10.2 s: not worse. Status: implemented, tested locally, isolated-replay measured; not deployed
+  (ships in v2.2.5; window acceptance = the packet's RSS rule).
+- Cleanup: every `qdl-rss-*` container `--rm` and removed (cache, quota, sync, query, driver, unit-test
+  containers; 0 left), network `qdl-rss-net` removed, no volume created; host lock released 16:43:34Z. Kept: the
+  image `qdl-v2-python:2.2.5-84512ab` (v2.2.5 candidate) and the evidence dirs above.
