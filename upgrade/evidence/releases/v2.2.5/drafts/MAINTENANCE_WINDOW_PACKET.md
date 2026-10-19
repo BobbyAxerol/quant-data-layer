@@ -25,7 +25,7 @@ rebuild behaviour of the KN roles.
 | Mesh TLS | generation 20260822T144323Z (CA `qdl-phase8-certification-ca`, notAfter 2026-11-20 14:43Z) + KN client CA 2026-09-27 (leaves notAfter 2026-12-25) | generation 20261019T084200Z: one CA for the whole mesh, every leaf 365 days (notAfter 2027-10-19), same CN/SAN per identity, `ca.key` deleted | every mesh peer |
 | Container definitions | per-role inspect composes under ~/.local/state (pre-OPT caps in some files, drift R1/R4) | `deploy/compose/qdl-v2-stable-kn.yml` (committed), caps = live, parity PASS | all roles below |
 | Healthchecks | none on stream_kn x2, market_projector x2, rust_core x3; 2 s / 5 s probes on stable_redis / Query / Kafka | liveness probes added (TCP 8210 / status-file freshness 30 s / TCP 8300); cadence 15 s on Kafka, Query, stable_redis (same tests) | same |
-| Query image | qdl-v2-python:2.2.4-31a5155 (3e9e4d3a) | qdl-v2-python:2.2.5-601c3d8 (b7056141; files equal to 3e9e4d3a except the 16 git-expected config/apparatus files, pip freeze equal) | query_kn_1/2 |
+| Query image | qdl-v2-python:2.2.4-31a5155 (3e9e4d3a) | **slot: the v2.2.5 python image rebuilt with the IDR-129 fix** (branch fix/idr129-query-rss, another agent). The IDR-127-only candidate qdl-v2-python:2.2.5-601c3d8 (b7056141) is superseded once the fix merges; the window env is re-pinned to the new digest and its build receipt then lists the IDR-129 Query files as changed (delta proof, not equivalence) | query_kn_1/2 |
 | Rust images | 27c79b53 (ingestors, stream), 60f83a51 (projectors), 7c848aad (core) | **unchanged digests** | recreated for mounts/healthchecks only |
 | bar edge | qdl-v2-python:2.2.3-rc14-a388537 (08f356a8), held | **unchanged image** (held: a new python image bakes catalog r12 / acquisition r20 and would refuse the r11/r19 checkpoint, section 6) | recreated for mounts only |
 | Kafka topic config (K6) | the temporary `min.cleanable.dirty.ratio` 0.05 on `__consumer_offsets` was already removed 2026-10-16 14:12Z (plan journal; observed ABSENT 2026-10-19 10:35Z with `kafka_internal_topic_compaction.py --observe`) | unchanged: K6 is a no-op, W5 only re-observes | no |
@@ -37,9 +37,24 @@ provides that file), JWT signing keys and their public keys, cursor keys, consum
 release dir, Postgres, the V1 fallback (`data_layer_service`, stopped rollback container per the coordinator),
 every other TS service, portal stacks.
 
+## 1b. IDR-129 (Query RSS after warmup bursts) and the writer recreate
+
+Production 2026-10-19: a writer recreate opens 64 concurrent `/warmup` requests (about 8 s each, 429
+REPLICA_LANE_BUSY); query_kn_1 reached 2045/2048 MiB and restarted at 12:02:55Z, query_kn_2 was restarted under
+control at 12:07:25Z (MALLOC_ARENA_MAX=2 already set). The window recreates the writer TWICE (W12 BOOTSTRAP, then
+STRICT), i.e. two warmup bursts right after the Query replicas were recreated. Therefore:
+
+- v2.2.5 ships the IDR-129 fix in the Query image (slot above); no window without it, or the owner explicitly accepts
+  the known risk with the mitigation below.
+- W9 runs the fixed Query image before W12.
+- During W12 sample `docker stats` of query_kn_1/2 every 5 s; if either exceeds 1.8 GiB, do not start the STRICT
+  restart until it falls back below the post-W9 level (or restart that one replica, the other one serving the alias).
+- Acceptance adds: Query RSS 10 min after the STRICT start below 1.6 GiB and not growing.
+
 ## 2. Pre-window checklist (T-1 day to T-0; no production mutation)
 
-1. `fix/v225-config-certs` merged into dev with green CI; python image built and recorded (section 3).
+1. `fix/v225-config-certs` merged into dev (done: 3d49de3, PR #38, CI green); IDR-129 fix merged into dev; python
+   image rebuilt from that dev commit and recorded (section 3); window env re-pinned.
 2. Re-verify the TLS generation on the day:
    `sudo python3 -B scripts/rotate_mesh_tls.py verify --old-env ~/.local/state/qdl-v2/tls/gen-20260822T144323Z/generation.env --new-env ~/.local/state/qdl-v2/tls/gen-20261019T084200Z/generation.env --out <window dir>/tls-verify.json` -> PASS.
    Then `sudo python3 -B scripts/rotate_mesh_tls.py perms --gen-dir ~/.local/state/qdl-v2/tls/gen-20261019T084200Z`
@@ -65,7 +80,7 @@ every other TS service, portal stacks.
 | rust_core x3 | qdl-v2-rust@sha256:7c848aad... | same |
 | ingestors, stream_kn x2 | qdl-v2-rust@sha256:27c79b53... | same |
 | market_projector x2 | qdl-v2-rust@sha256:60f83a51... | same |
-| query_kn x2 | qdl-v2-python@sha256:3e9e4d3a... | qdl-v2-python@sha256:b7056141... (2.2.5-601c3d8) |
+| query_kn x2 | qdl-v2-python@sha256:3e9e4d3a... | rebuild with IDR-129 (slot; b7056141 = IDR-127-only candidate) |
 | binance_bar_edge | qdl-v2-python@sha256:08f356a8... | same (held) |
 | market_cache, stable_redis | redis@sha256:dfa18828... | same |
 
@@ -196,7 +211,7 @@ section 9.
 ## 9. Owner go / no-go
 
 - [ ] Date/time of the window (before 2026-11-06) and the window owner.
-- [ ] v2.2.5 merged in dev, CI green; python image digest recorded.
+- [ ] v2.2.5 merged in dev, CI green (done); IDR-129 fix merged and the python image rebuilt, digest recorded.
 - [ ] TS release image + equivalence proof ready, or fallback W12 (identity switch only) accepted.
 - [ ] Pre-window checks 2.2-2.7 PASS on the day.
 - [ ] Portal stacks paused for the window (IDR-128).

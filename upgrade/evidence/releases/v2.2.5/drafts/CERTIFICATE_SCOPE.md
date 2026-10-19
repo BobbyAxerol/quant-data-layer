@@ -14,7 +14,7 @@ each latency quantity named with its clock or marked NOT_MEASURED.
 |---|---|---|
 | D1 mesh TLS generation 20260822T144323Z -> 20261019T084200Z (new CA; same CN/SAN per identity; RSA 3072 CA / 2048 leaves as before; same openssl profile; 365 days) | `rotate_mesh_tls.py verify` 118/118 PASS; rehearsal A->B->C->D handshakes, principals and refusal of the other generation | procedure risk only; covered by the rehearsal and the window acceptance |
 | D2 container definitions from `deploy/compose/qdl-v2-stable-kn.yml` (healthchecks added/retuned; mount sources by generation; stable_redis log rotation) | `kn_versioned_compose.py parity` PASS (847 field checks; only the intended deltas) | healthchecks are liveness only (IDR-108 open) |
-| D3 Query image 2.2.4-31a5155 (3e9e4d3a) -> 2.2.5-601c3d8 (b7056141) | build receipt `build-v2.2.5-601c3d8/receipt.json`: every /app file equal to 3e9e4d3a except the git-expected 16 (config/consumers bytes of IDR-127, stage-100 amendment JSONs, one apparatus module `qdl/certification/reference_l2_acceptance.py`), unexpected 0, pip freeze equal | Query reads catalog/acquisition/realm from unchanged mounts |
+| D3 Query image 2.2.4-31a5155 (3e9e4d3a) -> v2.2.5 rebuild **with the IDR-129 fix** (Query code changes; b7056141 was the IDR-127-only candidate: 16 git-expected config/apparatus files, pip freeze equal) | IDR-129 fix tests on its PR + an isolated 64-concurrent-warmup burst on the fixed Query (RSS peak and return, warmup latency, 429 counts) vs 3e9e4d3a + the new build receipt (changed files = git diff) | Query code changed: delta proof, not inheritance |
 | D4 stable_redis recreated (quota/session state, ephemeral) | rehearsal B/C/D: writer admitted and ready after the recreate | quota counters restart from zero (by design) |
 | D5 K6 (`__consumer_offsets` dirty ratio) | observed 2026-10-19 10:35Z: the temporary override is already ABSENT (removed 2026-10-16 14:12Z, plan 73687); decision C keys unchanged | none: K6 is a no-op in the window (re-observed in W5) |
 | D6 TS writer: W12-A (default) keeps 2deb90b0 and switches only its identity mount; W12-B rolls the TS release image | W12-A: rehearsal (same image, BOOTSTRAP -> STRICT lifecycle); W12-B: TS closure-equivalence + affected correctness/performance proof (TS certificate) | W12-B is outside this DL certificate |
@@ -31,8 +31,8 @@ proof that makes the inheritance valid.
 |---|---|---|---|---|
 | G1 BOOK / G2 TRADE-QUOTE-MARK / G3 BAR transit (stage-100 040311Z) | rust binaries yes; Query D3 config-only | D1, D2, D4 | v2.2.4 counted run under G4-A1, G4-A2, A3, A4 v2, post-hoc A5 | R1 + R4 (regression only); valid for W12-A; W12-B needs the TS proof |
 | G4 per-row delivery | yes | D1, D2 | same run | R1 + R4 |
-| G5 request latency | Query D3 | D1 (TLS session cost), D2 | same run | R4 request-latency histograms (writer native_probe) within the certified envelope |
-| G6 execution eligibility | yes | D3 config | same run | R1 item 3 (READY and execution-eligible counted separately) |
+| G5 request latency | **no: Query code (IDR-129)** | D1 (TLS session cost), D2, D3 | v2.2.4 run as baseline only | delta proof: isolated warmup-burst A/B (3e9e4d3a vs fixed image) + R4 request-latency histograms within the certified envelope |
+| G6 execution eligibility | Query code changed (IDR-129) | D3 | v2.2.4 run as baseline only | delta proof: IDR-129 tests show no eligibility path change + R1 item 3 (READY and execution-eligible counted separately) |
 | G7-G10 (integrity, lossless TRADE, cursor, ordering) | yes | D1, D4 | same run | rehearsal offset/cursor continuity + R1 |
 | G11 recovery clock (A5) | yes | D1 | same run | window recovery measured (R1), not a gate re-run |
 | G12 isolated fault | binaries yes | none for the harness | g12-g13-inheritance (v2.2.4) | none |
@@ -47,7 +47,8 @@ otherwise; nothing here claims capacity beyond v2.2.4.
 
 1. R1 window acceptance (packet section 8) recorded as a receipt.
 2. R2 compose parity after the window (v2.2.5 env + new generation vs live): PASS, intended deltas only.
-3. R3 Query image equivalence (build receipt above).
+3. R3 Query image: build receipt of the IDR-129 rebuild (changed files = git diff) + the IDR-129 delta proof (warmup
+   burst RSS/latency A/B on an isolated Query, its PR tests); not an equivalence claim.
 4. R4 60-minute passive soak, regression/availability only (no load added). Reported separately:
    - auth/protocol failures (401, UNAUTHENTICATED, TLS verify, STRICT_RESUME_REFUSAL, HANDOFF_RESUME_REQUIRED): must
      be 0 after W12 settles;
