@@ -76843,3 +76843,69 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
 - Runbook `docs/runbooks/kn-host-reboot-recovery.md` section 5 carries the result, the per-partition table and
   what the number does not include (Kafka unclean-shutdown recovery, restart back-off, all-roles-at-once contention,
   Query/Stream warm-up, writer session). Status: tested locally (isolated drill); a real reboot drill is still open.
+
+### DL v2.2.5 window packet: go-readiness slice (W12-A steps, monitor, old identities, K6, F3, R1-R4, go/no-go) - 2026-10-19 (Claude)
+
+- Coordinator 2026-10-19 ~15:00Z: bring the v2.2.5 window to "ready for go" (owner approvals of 2026-10-19: one
+  window before ~11-06, cert rotation + v2.2.5, W12-A, rehearsal first; DL PRs into dev merged when CI is green).
+  Branch `docs/v225-window-ready` from origin/dev e9a7ed9, worktree `/home/bobby/.worktrees/data-layer-v225-final`.
+  No production container, Kafka, Redis or Postgres write; production reads only (docker inspect/stats/logs, one
+  heartbeat SELECT, mTLS GET `/health/ready` and TLS handshakes on 18301/18302/18320/18321 with the deployed TS
+  identity). Host lock held by `claude-idr129-query-rss` during this slice: no container, build or test run started.
+- `MAINTENANCE_WINDOW_PACKET.md` completed:
+  (a) W12-A as W12a BOOTSTRAP -> W12b STRICT with exact commands from `scripts/kn_window_writer.py render` (new tool:
+  the writer's effective config from docker inspect -> four 0600 composes bootstrap / strict / rollback-bootstrap /
+  rollback; refuses unless the deltas are exactly identity source and/or REQUIRE_RESUME; read-only dry run on the live
+  writer 15:14Z: deltas as intended, `label_compose_deltas` [] = equal to the compose it was created from,
+  `docker compose config` valid for all four) and `ready` (three consecutive heartbeats of THIS container after its
+  StartedAt, READY/V2_PRIMARY/64/64/0, RestartCount 0; live read: ready, execution-ready 53 of 64), the clean
+  `docker stop -t 30` before the STRICT recreate, and the expected warmup burst per writer start with the 1.8 GiB hold.
+  (b) monitor (TS PR #21, f7d19f47) as W14 on the TS v2.0.1 image or deferred; finding: `monitor_inventory_refresh.py`
+  copies only certificates directly in a source dir, its default glob does not match the new generation layout, the
+  hardened dirs are unreadable for the host user, and the client CA bundles carry the inactive phase105b /
+  consumer-realms CAs (notAfter 2026-11-24..12-26) that would alert from 11-03 -> stage the mesh public certificates
+  (no bundles) into `~/.local/state/trading-system/monitor-cert-sources/gen-20261019T084200Z` and run the refresh
+  with `--cert-glob '' --cert-source`; compose files from `git archive v2.0.1` (the canonical TS checkout is on a
+  feature branch with uncommitted compose edits); `.env` backup + the two keys + preflight; recreate monitor only.
+  (c) old-identity holders: correction of the brief - V1 `data_layer_service` carries NO mesh identity (binds .env,
+  data, logs; no TLS/CERT/KAFKA/V2 key in its env or .env), so the rotation does not affect it; the TS containers
+  `market_data_service`, `-dr07-rollback`, `-r49-rollback` mount the 2026-08-22 identity and are usable only with a
+  full rollback until 2026-11-20 14:43Z; cleanup step (owner approval, rule 34) keeps the `*-jwt` keys (JWT is not
+  rotated). (d) K6 exact pre-window state recorded at T-0 (W0.4) and compared after W4 (W5); topic configs live in
+  KRaft metadata, so no restore is expected; exact restore commands for both directions. (e) section 7b: outage
+  4-5 min expected (rehearsal 251-291 s), 10 min budget, market_cache loss contingency +494 s (F3), rollback 4.5 min;
+  one total deadline T_W1 + 25 min, 20 min rollback reserve. (f) see the certificate scope below. (g) R1-R4 with
+  exact commands; the Query/Stream probe helpers were run read-only on production with the deployed identity (READY,
+  Verification OK) and the new one (curl rc 60 / verify error, as expected before the window). R4 =
+  `kn_window_writer.py soak` (writer READY samples and execution-ready as two numbers, native_probe request latency
+  differenced over the soak with the writer's bucket bounds, served age NOT_MEASURED, Query memory growth, restarts,
+  auth/protocol vs data-policy counts per code/venue/symbol/feed); live 6 s smoke read-only OK. (h) go/no-go
+  checklist rows 1-16 incl. host lock, foreign containers, Codex pause decision, disk >= 50 GB, a root tar + sha256 of
+  the old generation directories, baseline, open-order-path check. W0.1 rollback capture of the 17 roles verified
+  read-only (0600 because env-only secrets are in it).
+- `CERTIFICATE_SCOPE.md`: D3 is a delta proof with four named items (IDR-129 PR tests incl. failed/cancelled requests;
+  isolated production-volume A/B 3e9e4d3a vs fixed without manual gc/trim in scored arms, incl. hot-read latency;
+  the final rehearsal burst; build receipt); G5/G6 are not inherited in any branch; G1-G3 inherit only for the
+  Stream-delivered feeds; W12-A decided; R4 served age NOT_MEASURED.
+- Rehearsal tool for the final run (`scripts/kn_mesh_rotation_rehearsal.py`): probes run as root (the hardened
+  `identities/` is root 0750; the writer itself runs as root), rehearsal Query memory cap = production 2 GiB, CPU caps
+  rebalanced to fit a 0.2 vCPU burst driver (total still 2.99), `--expect-query-image`, `--burst`: after phase D,
+  3 bursts of 64 concurrent TS-manifest r11 warmups (the 12 ETH requirements of the deployed binding cycled) with the
+  new TS identity, cgroup memory sampled every 2 s; predeclared gate no restart / no OOM kill / settled <= baseline +
+  128 MiB and < 1.6 GiB / last step <= 32 MiB; latency, statuses and writer readiness reported, not gated.
+  `--ts-root`: the writer clone loader/schema come from a frozen `git archive v2.0.0` of TS
+  (`~/.local/state/qdl-v2/releases/v2.2.5/ts-src-v2.0.0`, loader sha256 dc339c2d...; identical to the former default
+  worktree for the loader and migrations), so the run does not depend on another agent's worktree.
+- Tests: `tests/test_kn_window_writer.py` 12 passed locally (`python3 -B -m unittest`, pure functions; Docker parts
+  exercised by the read-only dry runs above). Rehearsal changes: syntax checked; exercised only by the final run.
+- Codex `p184-final-phase-closure-review-20261019.md` dispositions: 1 (IDR-129 acceptance: 1.8 GiB hold, < 1.6 GiB
+  after 10 min, repeated-burst plateau, no OOM/restart; diagnostic gc/trim runs labelled and not scored) ACCEPTED, in
+  the certificate scope; the fix itself belongs to the IDR-129 owner. 2 (IDR-128 restart overlap) CHECKED: query_kn_1
+  12:02:55Z and query_kn_2 12:07:25Z fall after arm A (run log closed 11:49:28Z) and before the valid arm B attempt 4
+  (123515Z); attempt 1 (115951Z) was already invalidated for that restart; cpu.weight != isolation ACCEPTED (IDR-128
+  stays open). 3 (bootstrap continuity, process-epoch readiness, total deadline, order path) ACCEPTED: packet sections
+  4, 7b, checklist row 16, `kn_window_writer.py ready`. 4 (W12-A, per-path proof, rolled digests in the receipt)
+  ACCEPTED. 5 (TS Phase E ledger) DEFERRED to the TS Phase E owner (not DL scope). 6 (keep old TLS rollback material
+  until the rollback period ends; scoped cleanup) ACCEPTED: section 5c.
+- Status: implemented and tested locally (docs, tools); the window is NOT ready for go until the IDR-129 fix is
+  merged, the python image rebuilt and re-pinned, and the final rehearsal passes (next entries).

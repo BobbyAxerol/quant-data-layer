@@ -69,12 +69,25 @@ MESH_CLIENTS = ("rust_core", "ingestor_binance_usdm", "ingestor_okx_swap", "mark
                 "stream_kn_1", "stream_kn_2")
 CACHES = ("stable_redis", "market_cache")
 ROLES = BROKERS + CACHES + MESH_CLIENTS
-# vCPU caps: sum with the writer clone (0.35), its Redis (0.05) / Postgres (0.15) and the holder (0.05) = 2.99.
-CPU_CAPS = {"kafka1": 0.32, "kafka2": 0.32, "kafka3": 0.32, "stable_redis": 0.05, "market_cache": 0.09, "rust_core": 0.3,
-            "ingestor_binance_usdm": 0.15, "ingestor_okx_swap": 0.15, "market_projector_1": 0.2,
+# vCPU caps: sum with the writer clone (0.35), its Redis (0.05) / Postgres (0.15), the holder (0.02) and the
+# warmup-burst driver (0.2, final pre-window run) = 2.99. Query keeps the production memory cap (2 GiB) so that the
+# burst RSS check sees the window's limit.
+CPU_CAPS = {"kafka1": 0.29, "kafka2": 0.29, "kafka3": 0.29, "stable_redis": 0.05, "market_cache": 0.07, "rust_core": 0.3,
+            "ingestor_binance_usdm": 0.12, "ingestor_okx_swap": 0.12, "market_projector_1": 0.2,
             "query_kn_1": 0.25, "stream_kn_1": 0.12, "stream_kn_2": 0.12}
-WRITER_CPUS, CLONE_REDIS_CPUS, CLONE_PG_CPUS, HOLDER_CPUS = 0.35, 0.05, 0.15, 0.05
-MEM = {"kafka1": "1g", "kafka2": "1g", "kafka3": "1g", "market_cache": "512m", "query_kn_1": "1536m"}
+WRITER_CPUS, CLONE_REDIS_CPUS, CLONE_PG_CPUS, HOLDER_CPUS, BURST_CPUS = 0.35, 0.05, 0.15, 0.02, 0.2
+MEM = {"kafka1": "1g", "kafka2": "1g", "kafka3": "1g", "market_cache": "512m", "query_kn_1": "2g"}
+# Warmup-burst check (packet section 1b, IDR-129): the window's writer starts open 64 concurrent /warmup requests of
+# the TS manifest mix (BAR 1m x1000 rows + latest-only feeds). Predeclared gate on the rehearsal Query: no restart /
+# OOM kill, usage (cgroup memory.current - inactive_file, the docker-stats figure) after the settle <= baseline +
+# BURST_RSS_TOLERANCE_MIB and < BURST_RSS_CEILING_MIB, and no per-burst step between the last two bursts
+# (<= BURST_STEP_MIB). Request outcomes, latency and the writer clone's readiness during the bursts are reported,
+# not gated (0.25 vCPU Query). Data volume = rehearsal history (ETH, minutes of bars), not production volume: the
+# production-volume delta proof is the IDR-129 isolated A/B.
+BURST = {"slices": 64, "bursts": 3, "gap_s": 30, "settle_s": 120, "sample_s": 2.0, "rounds": 4}
+BURST_RSS_TOLERANCE_MIB, BURST_RSS_CEILING_MIB, BURST_STEP_MIB = 128, 1638, 32
+ETH_PERPS = {"ETHUSDT", "ETH-USDT-SWAP"}
+TS_MANIFEST = "trading-system.paper.stable-r11.yaml"
 SUPER_USERS = ("User:phase8-admin;User:kafka1;User:kafka2;User:kafka3;User:phase8-core;User:phase8-producer;"
                "User:phase8-consumer;User:kn-projector;User:kn-stream;User:stable-authority-dispatcher")
 ETH = {"ETHUSDT", "ETH-USDT-SWAP", "ETH-USDT"}  # ETH-USDT: the OKX index-tickers lane of ETH-USDT-SWAP MARK_INDEX
@@ -90,6 +103,75 @@ TOPICS = {  # name -> config (6 partitions, RF3; production names from the broke
 }
 DYNAMIC_TRUST = "listener.name.ssl.ssl.truststore.location=/etc/kafka/secrets/truststore-kn-v220.jks"
 LIMITS = {"deadline_s": 2 * 3600 + 1800, "brokers_s": 300, "roles_s": 600, "writer_s": 900, "steady_s": 60}
+
+
+BURST_DRIVER = r"""
+import asyncio, json, statistics, sys, time
+import httpx
+from qdl_sdk.credentials import RotatingJwtCredentialProvider
+from qdl_sdk.errors import DataLayerError
+from qdl_sdk.models import (BarRevisionPolicy, DataRequirement, Feed, GapPolicy, Grade, RecoveryPolicy,
+                            StalePolicy)
+from qdl_sdk.tls import WorkloadTlsConfig
+from qdl_sdk.transport import RestQueryTransport
+
+cfg = json.load(open("/work/burst.json"))
+ENUMS = {"feed": Feed, "consumer_grade": Grade, "stale_policy": StalePolicy, "gap_policy": GapPolicy,
+         "recovery": RecoveryPolicy, "bar_revision_policy": BarRevisionPolicy, "event_recency_policy": StalePolicy}
+
+def requirement(item):
+    return DataRequirement(**{k: (ENUMS[k](v) if k in ENUMS and v is not None else v) for k, v in item.items()})
+
+async def one(t, req, out):
+    # one writer slice: queued warmup (single replica, no redirect header); retry a retryable refusal or a transport
+    # error like the bridge reconnect loop
+    started = time.perf_counter()
+    for round_ in range(cfg["rounds"]):
+        t0 = time.perf_counter()
+        try:
+            payload = await t.warmup(req, consumer_id=cfg["consumer_id"])
+        except DataLayerError as caught:
+            out["requests"].append([caught.code, caught.reason, round((time.perf_counter() - t0) * 1e3)])
+            if not caught.retryable:
+                out["refused"].append(caught.code)
+                return
+            await asyncio.sleep(max(0.25 * (round_ + 1), (caught.retry_after_ms or 0) / 1000))
+            continue
+        except httpx.HTTPError as caught:
+            out["requests"].append(["TRANSPORT", type(caught).__name__, round((time.perf_counter() - t0) * 1e3)])
+            await asyncio.sleep(1.0)
+            continue
+        out["requests"].append(["200", len(payload.get("data", ())), round((time.perf_counter() - t0) * 1e3)])
+        out["ok_ms"].append(round((time.perf_counter() - started) * 1e3))
+        return
+    out["failed"] += 1
+
+async def main():
+    j = cfg["jwt"]
+    cred = RotatingJwtCredentialProvider(private_key_file="/jwt/private.key", key_id=j["key_id"], algorithm="RS256",
+        issuer=j["issuer"], audience=j["audience"], subject=j["subject"], environment=j["environment"],
+        roles=("market_data_reader", "historical_reader", "stream_consumer"), venues=("BINANCE", "OKX"),
+        consumer_manifest_revision=j["manifest_revision"], lifetime_seconds=600, refresh_before_seconds=120)
+    tls = WorkloadTlsConfig("/id/ca.crt", "/id/client.crt", "/id/client.key")
+    t = RestQueryTransport(cfg["url"], timeout_seconds=30.0, credential_provider=cred, tls=tls)
+    reqs = [requirement(item) for item in cfg["requirements"]]
+    out = {"requests": [], "ok_ms": [], "refused": [], "failed": 0}
+    t0 = time.perf_counter()
+    await asyncio.gather(*(one(t, r, out) for r in reqs))
+    statuses = {}
+    for status, _, _ in out["requests"]:
+        statuses[status] = statuses.get(status, 0) + 1
+    ok = sorted(ms for st, _, ms in out["requests"] if st == "200")
+    rows = sorted(n for st, n, _ in out["requests"] if st == "200")
+    print(json.dumps({"wall_s": round(time.perf_counter() - t0, 1), "slices": len(reqs), "statuses": statuses,
+                      "failed_slices": out["failed"], "refused": sorted(set(out["refused"])),
+                      "req200_ms_p50": ok[len(ok) // 2] if ok else None,
+                      "req200_ms_max": ok[-1] if ok else None, "rows_max": rows[-1] if rows else None,
+                      "rows_total": sum(rows)}))
+    await t.close()
+
+asyncio.run(main())
+"""
 
 
 def now_ns() -> int:
@@ -128,6 +210,7 @@ class Rehearsal:
         self.holder = f"{PROJECT}-tsholder"
         self.first_healthy = {}
         self.current_gen_env = None
+        self.ts_root = Path(getattr(args, "ts_root", None) or TS_ROOT)  # TS checkout for the writer clone loader
 
     # ------------------------------------------------------------------ bookkeeping
     def note(self, event, **fields):
@@ -187,7 +270,8 @@ class Rehearsal:
         self.write_rehearsal_env(topic_id="pending")
         (self.base / "override.yml").write_text(self.override())
         self.note("prepared", narrowed_ingestors=narrowed, cpu_caps=CPU_CAPS,
-                  cpu_total=round(sum(CPU_CAPS.values()) + WRITER_CPUS + CLONE_REDIS_CPUS + CLONE_PG_CPUS + HOLDER_CPUS, 3))
+                  cpu_total=round(sum(CPU_CAPS.values()) + WRITER_CPUS + CLONE_REDIS_CPUS + CLONE_PG_CPUS + HOLDER_CPUS
+                                  + BURST_CPUS, 3))
 
     def write_rehearsal_env(self, topic_id):
         (self.base / "rehearsal.env").write_text(
@@ -332,7 +416,7 @@ class Rehearsal:
                 "'keys':sorted(b)[:12]}))\n"
                 "except Exception as e:\n print(json.dumps({'ok':False,'error':type(e).__name__,'detail':str(e)[:200]}))\n")
         proc = sh(["docker", "run", "--rm", "--network", f"{PROJECT}_executor_network", "--label", f"{LABEL}=v225",
-                   "--cpus", "0.2", "--memory", "256m", "--read-only", "-v", f"{identity_dir}:/id:ro",
+                   "--cpus", "0.2", "--memory", "256m", "--read-only", "--user", "0:0", "-v", f"{identity_dir}:/id:ro",
                    "--entrypoint", "python", image, "-B", "-c", code], timeout=60, check=False)
         try:
             return json.loads(proc.stdout.strip().splitlines()[-1])
@@ -342,7 +426,7 @@ class Rehearsal:
     def probe_stream(self, identity_dir, alias, image):
         """TLS handshake to a Stream gateway with a TS identity (openssl s_client, verify the server chain)."""
         proc = sh(["docker", "run", "--rm", "--network", f"{PROJECT}_executor_network", "--label", f"{LABEL}=v225",
-                   "--cpus", "0.2", "--memory", "128m", "--read-only", "-v", f"{identity_dir}:/id:ro",
+                   "--cpus", "0.2", "--memory", "128m", "--read-only", "--user", "0:0", "-v", f"{identity_dir}:/id:ro",
                    "--entrypoint", "openssl", image, "s_client", "-connect", f"{alias}:8210", "-servername", alias,
                    "-cert", "/id/client.crt", "-key", "/id/client.key", "-CAfile", "/id/ca.crt",
                    "-verify_return_error", "-brief"], timeout=40, check=False, input_text="")
@@ -360,7 +444,7 @@ class Rehearsal:
         return inspect, clone
 
     def start_writer(self, ts_identity_dir):
-        iso = g12.load_writer_clone(TS_ROOT)
+        iso = g12.load_writer_clone(self.ts_root)
         deployed, inspect = self.writer_inspect(ts_identity_dir)
         sh(["docker", "run", "-d", "--rm", "--name", self.holder, "--label", f"{LABEL}=v225", "--network",
             f"{PROJECT}_executor_network", "--cpus", str(HOLDER_CPUS), "--memory", "32m", "--entrypoint", "sleep",
@@ -404,7 +488,7 @@ class Rehearsal:
         clone.writer_args = (lambda c=clone, b=base_args, d=destination: g12.lifecycle_writer_args(
             b(), c.image, str(c.state_dir), d, c.lifecycle["phase"]))
         clone._prepare_lifecycle = lambda: None  # lifecycle managed here (G12 pattern)
-        sql, schema = g12.clone_schema_sql(TS_ROOT)
+        sql, schema = g12.clone_schema_sql(self.ts_root)
         ready = clone._wait_ready
         clone._wait_ready = lambda c=clone, r=ready, s=sql: (r(), g12.apply_clone_schema(c, s))
         clone.__enter__()
@@ -576,6 +660,99 @@ class Rehearsal:
                          query=self.probe_query(read_env(gen)["QDL_TLS_TS_IDENTITY_DIR"],
                                                 read_env(self.current_release)["QDL_IMAGE_QUERY"]))
 
+    # ------------------------------------------------------------------ warmup-burst RSS check (IDR-129, packet 1b)
+    def query_memory(self):
+        """Rehearsal Query cgroup: usage = memory.current - inactive_file (the docker-stats figure), anon, OOM kills."""
+        cid, restarts, started = sh(["docker", "inspect", "-f", "{{.Id}}|{{.RestartCount}}|{{.State.StartedAt}}",
+                                     f"{PROJECT}-query_kn_1-1"]).stdout.strip().split("|")
+        base = Path(f"/sys/fs/cgroup/system.slice/docker-{cid}.scope")
+        stat = dict(line.split() for line in (base / "memory.stat").read_text().splitlines())
+        events = dict(line.split() for line in (base / "memory.events").read_text().splitlines())
+        current = int((base / "memory.current").read_text())
+        return {"usage_mib": round((current - int(stat["inactive_file"])) / 2**20, 1),
+                "anon_mib": round(int(stat["anon"]) / 2**20, 1), "restart_count": int(restarts),
+                "started_at": started, "oom_kill": int(events.get("oom_kill", 0))}
+
+    def burst_requirements(self, release_env, deployed):
+        """The TS manifest (r11, the realm the rehearsal Query serves) requirements of the ETH perpetual products of
+        the deployed writer binding (= the clone's 12 slices), cycled to BURST['slices'] in a fixed order."""
+        import yaml  # host dependency of the rehearsal tool only here
+        binding_src = next(m["Source"] for m in deployed["Mounts"]
+                           if m["Destination"].startswith("/run/secrets/qdl-v2-binding/"))
+        binding = json.loads(Path(binding_src).read_text())
+        eth = {(p["instrument_uid"], p["feed"], p.get("interval")) for p in binding["products"]
+               if p.get("native_symbol") in ETH_PERPS}
+        manifest = yaml.safe_load((Path(release_env["QDL_CONSUMER_REALM_DIR"]) / TS_MANIFEST).read_text())
+        chosen = sorted((r for r in manifest["spec"]["requirements"]
+                         if (r["instrument_uid"], r["feed"], r.get("interval")) in eth),
+                        key=lambda r: (r["feed"], r["instrument_uid"], r.get("interval") or ""))
+        if len(chosen) != len(eth):
+            raise RuntimeError(f"burst: manifest matches {len(chosen)} of {len(eth)} ETH binding products")
+        return [chosen[i % len(chosen)] for i in range(BURST["slices"])], len(chosen)
+
+    def burst_check(self, release, gen):
+        release_env, gen_env = read_env(release), read_env(gen)
+        deployed = json.loads(sh(["docker", "inspect", WRITER]).stdout)[0]
+        env = dict(item.split("=", 1) for item in deployed["Config"]["Env"])
+        jwt_src = next(m["Source"] for m in deployed["Mounts"] if m["Destination"] == "/run/secrets/qdl-v2-jwt/private.key")
+        requirements, distinct = self.burst_requirements(release_env, deployed)
+        work = self.base / "burst"
+        work.mkdir(mode=0o755)
+        (work / "driver.py").write_text(BURST_DRIVER)
+        (work / "burst.json").write_text(json.dumps({
+            "url": "https://qdl-v2-query:8200", "consumer_id": env["MARKET_DATA_DATA_LAYER_V2_CONSUMER_ID"],
+            "rounds": BURST["rounds"], "requirements": requirements,
+            "jwt": {"key_id": env["DATA_LAYER_V2_JWT_KEY_ID"], "issuer": env["DATA_LAYER_V2_JWT_ISSUER"],
+                    "audience": env["DATA_LAYER_V2_JWT_AUDIENCE"], "subject": env["DATA_LAYER_V2_JWT_SUBJECT"],
+                    "environment": env["DATA_LAYER_V2_JWT_ENVIRONMENT"],
+                    "manifest_revision": int(env["DATA_LAYER_V2_JWT_MANIFEST_REVISION"])}}))
+        baseline = self.query_memory()
+        self.note("burst_baseline", query=baseline, slices=len(requirements), distinct_requirements=distinct,
+                  feeds=sorted({r["feed"] for r in requirements}), image=release_env["QDL_IMAGE_QUERY"])
+        bursts = []
+        for number in range(1, BURST["bursts"] + 1):
+            samples, writer_ready = [], []
+            proc = subprocess.Popen(
+                ["docker", "run", "--rm", "--name", f"{PROJECT}-burst", "--label", f"{LABEL}=v225", "--network",
+                 f"{PROJECT}_executor_network", "--cpus", str(BURST_CPUS), "--memory", "512m", "--read-only",
+                 "--user", "0:0", "-v", f"{gen_env['QDL_TLS_TS_IDENTITY_DIR']}:/id:ro",
+                 "-v", f"{jwt_src}:/jwt/private.key:ro", "-v", f"{work}:/work:ro", "--entrypoint", "python",
+                 release_env["QDL_IMAGE_QUERY"], "-B", "/work/driver.py"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            deadline = time.monotonic() + 600
+            while proc.poll() is None and time.monotonic() < deadline:
+                samples.append(self.query_memory()["usage_mib"])
+                writer_ready.append(self.writer_beat()["ready"])
+                time.sleep(BURST["sample_s"])
+            if proc.poll() is None:
+                proc.kill()
+            stdout, stderr = proc.communicate(timeout=60)
+            try:
+                result = json.loads(stdout.strip().splitlines()[-1])
+            except (IndexError, ValueError):
+                result = {"error": "NO_OUTPUT", "stderr": stderr[-400:]}
+            time.sleep(BURST["settle_s"] if number == BURST["bursts"] else BURST["gap_s"])
+            after = self.query_memory()
+            bursts.append({"burst": number, "driver": result, "peak_usage_mib": max(samples, default=None),
+                           "samples": len(samples), "writer_ready_samples": f"{sum(writer_ready)}/{len(writer_ready)}",
+                           "after": after})
+            self.note("burst", **bursts[-1])
+        last = bursts[-1]["after"]
+        step = (round(bursts[-1]["after"]["usage_mib"] - bursts[-2]["after"]["usage_mib"], 1)
+                if len(bursts) > 1 else None)
+        checks = {
+            "no_restart": last["restart_count"] == baseline["restart_count"] and last["started_at"] == baseline["started_at"],
+            "no_oom_kill": last["oom_kill"] == baseline["oom_kill"],
+            "settled_near_baseline": last["usage_mib"] <= baseline["usage_mib"] + BURST_RSS_TOLERANCE_MIB,
+            "below_ceiling": last["usage_mib"] < BURST_RSS_CEILING_MIB,
+            "no_per_burst_step": step is None or step <= BURST_STEP_MIB}
+        return self.note("burst_check", verdict="PASS" if all(checks.values()) else "FAIL", checks=checks,
+                         baseline_usage_mib=baseline["usage_mib"], settled_usage_mib=last["usage_mib"],
+                         last_step_mib=step, thresholds={"tolerance_mib": BURST_RSS_TOLERANCE_MIB,
+                                                         "ceiling_mib": BURST_RSS_CEILING_MIB,
+                                                         "step_mib": BURST_STEP_MIB, **BURST},
+                         scope="window-config check at rehearsal data volume; production-volume proof = IDR-129 A/B")
+
     def run(self):
         a = self.args
         self.prepare()
@@ -622,6 +799,11 @@ class Rehearsal:
         self.steady("D", a.new_gen)
         self.negative_probes("D", a.new_release, a.new_gen, a.old_gen)
         self.note("D_refusals", counts=self.refusal_counts(d_iso))
+        if a.burst:
+            burst = self.burst_check(a.new_release, a.new_gen)
+            self.note("D_refusals_after_burst", counts=self.refusal_counts(d_iso))
+            if burst["verdict"] != "PASS":
+                raise RuntimeError(f"warmup-burst check FAIL: {burst['checks']}")
         self.note("rehearsal_complete")
 
     # ------------------------------------------------------------------ teardown
@@ -650,7 +832,7 @@ class Rehearsal:
         for vol in vols:
             sh(["docker", "volume", "rm", vol], check=False)
         removed["volumes"] = len(vols)
-        for sub in ("state", "tsstate", "tslogs", "ingestor-config"):
+        for sub in ("state", "tsstate", "tslogs", "ingestor-config", "burst"):
             path = self.base / sub
             if path.exists():
                 sh(["sudo", "-n", "rm", "-rf", "--one-file-system", str(path)], check=False)
@@ -674,6 +856,9 @@ def main(argv=None) -> int:
     p.add_argument("--secrets", type=Path)
     p.add_argument("--lock-owner")
     p.add_argument("--keep", action="store_true", help="do not tear down after the run (diagnosis only)")
+    p.add_argument("--burst", action="store_true", help="after phase D: warmup-burst RSS check on the rehearsal Query")
+    p.add_argument("--expect-query-image", help="refuse unless the new release env pins this Query image")
+    p.add_argument("--ts-root", help=f"TS checkout providing the writer clone loader and schema (default {TS_ROOT})")
     args = p.parse_args(argv)
     if args.down:
         Rehearsal(args.down, args).down()
@@ -681,6 +866,8 @@ def main(argv=None) -> int:
     if not all([args.run, args.old_gen, args.new_gen, args.old_release, args.new_release, args.secrets,
                 args.lock_owner]):
         p.error("--run needs --old-gen --new-gen --old-release --new-release --secrets --lock-owner")
+    if args.expect_query_image and read_env(args.new_release).get("QDL_IMAGE_QUERY") != args.expect_query_image:
+        p.error(f"{args.new_release} does not pin QDL_IMAGE_QUERY={args.expect_query_image}")
     reh = Rehearsal(args.run, args)
     status = 0
     try:
