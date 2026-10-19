@@ -76161,3 +76161,71 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
     DL roles rc 0, Codex resumed, lock released. Trace expires on its own at ~03:09Z.
   - Next (coordinator/owner): G4 bar|BINANCE|1m, book_snapshot|BINANCE| and book_snapshot|OKX_INVERSE| window 5, and G8
     (one writer EVAL 12.25 ms) are internal / unattributed under host contention; release decision per the owner rules.
+- 2026-10-19 02:57-04:40Z FINAL stage-100 low-load rerun on the same DL set + OPT caps + A1/A2/A3/A4 v2 (Claude
+  subagent): **p184-final-campaign-20261019T040311Z protocol_met true; PASS G1-G10, G14; FAIL G11 only (one slice,
+  verdict EXTERNAL_QUIET, see below); G12 / G13 separate (credited / 76/76 above). Identical with and without A4 v2.**
+  NOT certified until the owner rules on G11.
+  - Load reduction (host-only, reversible): 15 portal containers `docker pause`d by id (portal-execution-edge{,-live,
+    -sandbox}-{execution-edge,source-proxy,manager-projection-worker}-1, portal-execution-edge{,-live,-sandbox}-
+    projection-postgres-1, portal-manager-read-paper-v2-portal_manager_{read,issuer}-1,
+    portal-native-manager-read-native-manager-read-1; ids 131c8c7e 73cd3e85 510a0fa2 ed97b30e e5895351 8113bdc7
+    8c7913cc cfbd5942 9a222eec 1f2f7796 dadf1c61 ffdcbdeb 30c3a81d 2a87918c 3a4b35c1), all rc 0, unpaused by the
+    watcher at the end of each attempt (03:26:59Z, 04:40:18-19Z, rc 0); Codex tree SIGSTOP/SIGCONT by
+    p184_codex_pause_watch.py (2 processes, stopped 2 / resumed 2 / 0 failures each attempt). Apparatus otherwise as
+    021044Z (run worktree data-layer-p184-final-run-b58e40dd, trace re-arm OK, A4 v2 bind, guard --abort).
+  - Attempt 1 p184-final-campaign-20261019T030130Z (lock claude-s100-final-lowload-b58e40dd 02:57:58Z): guard
+    TAINTED + aborted at 03:26:54Z: foreign `(mandb)` (man-db.timer, uid 0) 03:26:26.6-03:26:28.1Z at 0.34 core inside
+    the load phase (rule > 0.2 core); campaign_exit 130; not scored, not evidence (guard summary c3d551ba...).
+  - Attempt 2 040311Z (lock claude-s100-final-lowload-rerun-b58e40dd 03:57:44Z, released): driver 04:03:52-04:35:22Z,
+    5 G4 windows (04:05:52, 04:09:37, 04:13:22, 04:17:07, 04:29:30Z), G11 restart 04:36:21Z, guard CLEAN aborted false
+    (one foreign `package-data-downloader` = update-notifier-download.timer 04:37:04Z, 0.06 core, phase post_load_g11,
+    after the G11 slice in question applied; not in the load window).
+  - Load (guard host.jsonl phase=load, same basis for both): load1 p50 16.2 / p95 20.6 / max 25.1 (n 1864) vs 021044Z
+    22.0 / 26.6 / 29.4 (n 1861; the 021044Z entry above quotes 21.4 on another window). G11 phase load1 p50 12.0.
+  - Gates (scorecard.json ebe11b8c..., scorecard.a4-v2.json 7fffb04e...): the 021044Z failures all pass at the lower
+    load: G4 bar|BINANCE|1m p95 per window 106 / 105 / 142 / 146 / 225 ms (limit 257.6); book_snapshot|BINANCE| 144 /
+    141 / 135 / 141 / 173 (limit 260); book_snapshot|OKX_INVERSE| max 187-276 (addendum limit 300.7); G8 0 new SLOWLOG
+    entries, PING steady p99 1.05 ms. G3 pooled p95 1641 / max 3208 ms; G9 60 samples, demanded 64 = session-ready,
+    legit quiet refusals TRADE_EVENT_STALE 26; G14 DL mean 5.75 vCPU, no role at its memory limit.
+  - G11 FAIL "first valid apply max 36.415 s > 30 s": exactly OKX|BNB-USDT-SWAP|TRADE (caught_up 36.415 s, within 60 s);
+    the other 63 slices <= 4.93 s; outage 0.113 s (outage_start 04:36:21.076Z, fault cleared 04:36:21.189Z); 0
+    rewinds; cursor never ahead (3 samples, 21 compared, 0 unmatched) (g11-summary.json 77cac9b6...,
+    g11-observations.jsonl 01eddf13...).
+  - G11 RCA (read-only; evidence in ~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.g11-forensic/):
+    - md.canonical.v2, read_committed, assign only, no group join / commit, by offsets_for_times 04:35:20Z ->
+      04:38:00Z over all 6 partitions (64,589 records, every partition done), reader in a --rm read-only container
+      on the query_kn_1 image with the observer's ro TLS mounts (reader.py 5fcc088a..., canonical.jsonl cf96554e...).
+      OKX BNB-USDT-SWAP trades are on partition 2, one connection_generation (210) throughout: last before the restart
+      trade id 241971262 src 04:36:15.209Z (offset 235684298); the next one is trade id 241971263 src 04:36:57.139Z,
+      DL received +28 ms, published 04:36:57.167Z, Kafka CreateTime 04:36:57.191Z (offset 235686122). **No OKX
+      BNB-USDT-SWAP trade exists in Kafka between 04:36:15.209Z and 04:36:57.139Z (41.9 s).** In the same window other
+      OKX trade slices were active (ETH 856, BTC 885, SOL 222, DOGE 209 trades vs BNB 49).
+    - Venue confirmation: OKX public REST /api/v5/market/history-trades?instId=BNB-USDT-SWAP&type=1&after=241971264
+      returns 241971263 at 04:36:57.139Z, then 241971262 at 04:36:15.209Z (same ids/timestamps as the canonical topic;
+      okx-history-trades-after-241971264.json b579fdb9...). The trade ids are adjacent, so the venue printed no trade on
+      that instrument between them.
+    - Writer side: the TS cache execution_trade key was rewritten at 04:36:57.604Z (G11 poll, upper bound one 500 ms
+      poll) carrying event 04:36:57.139Z, i.e. <= 0.437 s after DL publish. No trade was delivered earlier and left
+      unapplied (none existed). During the 36.4 s the key was readable but NOT_EXECUTION_ELIGIBLE on all 78 POST polls:
+      quiet-TRADE renewals keep the session LIVE but carry DL quality LAST_EVENT_STALE / execution_eligible false (same
+      shape on the live key read at 04:47Z), which is the correct at-use semantics of a stale last trade. Native probe
+      counters (heartbeat, new worker epoch c644bb68) for that route: 11 requested / 4 renewed / 7 renewed_same_record
+      / 0 skipped / 0 failed / 0 unavailable by 04:39:44Z (30 / 11 / 19 / 0 / 0 / 0 by 04:43:54Z); TRADE probe cadence
+      15 s (TS session.rs probe_cadence_ms, bound 45000 / 3). Per-probe timestamps are not recorded, so the exact
+      renewal times inside the 36 s are not measured.
+    - **Verdict EXTERNAL_QUIET**: the venue had no trade until +36.0 s after the fault cleared; DL and the writer
+      applied the first one within ~0.47 s of its source time. Not a DL or writer defect.
+  - G11 first-valid-apply max in earlier final runs (g11-summary.json of each): 021044Z 4.385 s (OKX DOGE BOOK_*,
+    tie); 123222Z 4.822 (OKX SOL BOOK_SNAPSHOT); 053803Z 6.214 (OKX DOGE TRADE, tie with OKX BNB TRADE); 135719Z 8.798
+    (OKX BNB TRADE); 105025Z 27.442 (OKX BNB TRADE, 154 NOT_EXECUTION_ELIGIBLE polls); also 074624Z 25.927 and 032230Z
+    20.096 (OKX BNB TRADE). OKX BNB-USDT-SWAP TRADE set the max in 15 of 28 measured G11 runs since 10-10 (one tie):
+    the frozen rule times the next venue print on the least liquid demanded slice, so a quiet stretch > 30 s fails it
+    without any internal delay.
+  - After: docker ps = baseline, 15 portal containers running again, Codex resumed, lock absent (checked 04:42Z), writer
+    2deb90b0 running (restarted by G11 04:36:21Z). One deviation in this RCA: the forensic reader container ran
+    ~12 s at 04:45:40-04:45:51Z without the host lock (acquire was called with --wait-hours 0, which returns
+    WINDOW_NOT_SCHEDULED at once; lock was ABSENT, no foreign job, no measurement running).
+  - Next (owner): rule on G11 for this run: accept OKX BNB TRADE as EXTERNAL_QUIET under the owner's external rule,
+    and/or a prospective oracle amendment (TRADE first-valid-apply clock starts at max(fault cleared, first
+    DL-committed trade of that slice after the fault), with the cursor/no-rewind checks unchanged). Re-running for a
+    luckier market is not a fix.
