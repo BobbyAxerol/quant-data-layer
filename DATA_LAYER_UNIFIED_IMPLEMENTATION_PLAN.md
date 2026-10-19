@@ -76813,3 +76813,33 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   50 ms = -19 % commits/write IO, +59 ms ACK p50, +12.5 ms BOOK_DELTA apply p50; full-writer A/B not done.
 - Host lock `claude-w12-writer-proof` 13:19:58-13:50:05Z, released on completion; containers `--rm`; no production
   mutation. Status: proposal; owner/TS go needed only for a later W12-B.
+
+### F3 KN market_cache rebuild drill (isolated) - 2026-10-19 (Claude)
+
+- Owner approval 2026-10-19 (F3): measure the stage-B market_cache rebuild on an isolated stack. Follows the entry
+  "F3 KN reboot runbook and legacy boot unit retirement" (measurement was pending there). Branch
+  `docs/f3-kn-rebuild-drill` from origin/dev cd272f8, worktree `/home/bobby/.worktrees/data-layer-f3-drill`. Docs
+  only; no production container, Kafka write, consumer group, Redis or Postgres touched.
+- Host lock `claude-f3-knrd` 13:50:24-14:15:21Z (queued behind IDR-128 A/B and W12 writer proof).
+- Copy (13:52:35-14:04:11Z): production state topics copied read-only into the drill broker (python image 31a5155,
+  kn-projector identity read-only, assign mode, `OFFSET_BEGINNING`, read_committed, no commit; unique never-joined
+  group id - the client requires one - and the production ACL refused even its coordinator lookup,
+  `GROUP_AUTHORIZATION_FAILED`). 5,163,467 records (latest 2,479,903 / bars 2,683,564), 858,545 tombstones, 6.0 GiB
+  values, 2.6 GiB on the drill broker. Production broker eth0 tx (3 brokers) 10.46 MiB/s baseline -> 18.96 MiB/s
+  average during 693 s (+8.5), peak 5-s interval 54.6 MiB/s; broker CPU +0.01-0.04 cores each. The 10 MiB/s token
+  bucket bounded the average, not bursts (28.5 MiB/s into the copy in one 10-s window); next time cap bursts too.
+- Build (projector `qdl-v2-rust:2.2.4-c7ce7d3` with stage A and cleaner off, 0.75 CPU; drill Redis with production
+  args, 0.5 CPU; drill broker 0.25 CPU): **all 12 partitions published 494 s after projector start** (bars READY at
+  389 s, latest at 494 s), 706 products published, 0 unpublished, 47,728 keys / 1.16 GiB (production 47,751 /
+  1.16 GiB), errors empty. Projector 234.9 CPU-s (about 0.48 cores avg), memory peak 108 MiB; Redis peak 1,187 MiB.
+  One projector owned both topics here (production splits latest/bars over two projectors), so the shared CPU was
+  the constraint; production should not be slower for the same data, which was not measured.
+- Drill fixes found on the way: the rust image's default entrypoint is not the projector (production sets
+  `/usr/local/bin/qdl-projector`); `kafka-get-offsets.sh` range `0-5` excluded partition 5 (listed explicitly);
+  sampler died with the parent session 14:09:13-14:12:29Z, so the per-partition times come from each checkpoint's
+  `at_ms` (static drill topics -> written at the boundary), and no data was lost.
+- Cleanup: 4 containers, 1 volume (copied data), 1 network removed; 0 `knrd-*` left; disk 232.9 GiB free before,
+  230.8 GiB minimum, 233 GiB after. Receipts (no data, 144 KiB) `~/.local/state/qdl-v2/f3-drill/`.
+- Runbook `docs/runbooks/kn-host-reboot-recovery.md` section 5 carries the result, the per-partition table and
+  what the number does not include (Kafka unclean-shutdown recovery, restart back-off, all-roles-at-once contention,
+  Query/Stream warm-up, writer session). Status: tested locally (isolated drill); a real reboot drill is still open.

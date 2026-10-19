@@ -3,7 +3,7 @@
 Status: operator runbook for the production KN topology of release v2.2.4 (project `qdl_v2_stable_candidate`),
 written 2026-10-19 (owner approval F3). It replaces the legacy boot unit `qdl-v2-stable-boot-recovery.service`,
 which was retired the same day (section 7). A real host reboot of the KN topology has **not** been exercised; the
-only drilled part is the market_cache rebuild (section 5), measured on an isolated stack. Nothing here claims high
+only drilled part is the market_cache rebuild (section 5), measured on an isolated stack (494 s). Nothing here claims high
 availability: every role shares one host (see `kn-single-points-of-failure.md`).
 
 ## 1. Rules
@@ -82,7 +82,7 @@ startx() { for r in "$@"; do s=$(docker inspect -f '{{.State.Status}}' ${P}-$r-1
 | 1 | `startx kafka1 kafka2 kafka3` | All three `healthy`; from inside a broker with `admin.properties`: `kafka-topics.sh --describe --under-replicated-partitions` and `--under-min-isr-partitions` both empty | ~20 s per broker, ISR ~3.7-3.9 s after a clean roll (plan 2026-10-16 B roll); unclean-shutdown log recovery not measured | Broker log: `docker logs --since 10m ${P}-kafka1-1`; a broker stuck in recovery is waited out, not recreated; quorum needs 2 of 3 |
 | 2 | `startx market_cache stable_redis` | `redis-cli ping` = PONG on both; `market_cache` `INFO keyspace` may be empty (expected after a reboot) | seconds | Check memory (`docker stats`); no persistence to restore, nothing else to do |
 | 3 | `startx rust_core rust_core_2 rust_core_3` | Running, `RestartCount` not climbing; `kafka-consumer-groups.sh --describe --group qdl-v2-realtime-core-v2` shows 3 members and falling lag | < 1 min | Logs per core; core refuses duplicate `source_id` bindings by design |
-| 4 | `startx market_projector_1 market_projector_2` | `docker exec ${P}-market_projector_1-1 cat /status/status.json`: `errors` empty, `stage_b.owned` non-empty; on an empty cache `stage_b.builds` rises to the number of owned partitions and `published` rises when each build ends | rebuild: section 5 | `integrity stop` in `errors` = a record that does not decode: **stop and escalate**, do not flush or reset offsets; `memory pressure` = market_cache full (`noeviction`), check its memory |
+| 4 | `startx market_projector_1 market_projector_2` | `docker exec ${P}-market_projector_1-1 cat /status/status.json`: `errors` empty, `stage_b.owned` non-empty; on an empty cache `stage_b.builds` rises to the number of owned partitions and `published` rises when each build ends | rebuild: 494 s in the drill (section 5) | `integrity stop` in `errors` = a record that does not decode: **stop and escalate**, do not flush or reset offsets; `memory pressure` = market_cache full (`noeviction`), check its memory |
 | 5 | `startx query_kn_1 query_kn_2 stream_kn_1 stream_kn_2` | Query `healthy`; `curl --noproxy '*' --resolve qdl-v2-query:18301:127.0.0.1 --cacert $I/ca.crt --cert $I/client.crt --key $I/client.key https://qdl-v2-query:18301/health/ready` (`I` = the TS writer identity dir mounted at `/run/secrets/qdl-v2`) returns `READY`, same on 18302; `/health/dependencies` lists `query_cache ready_products` close to the pre-reboot value (706 of 716 on 2026-10-19) | ready products follow the projector publishes | NOT_READY products while step 4 still builds is expected; a dependency `false` names the missing role |
 | 6 | `startx ingestor_binance_usdm ingestor_okx_swap binance_bar_edge` | All three `healthy` (session-liveness LIVE / bar heartbeat fresh) | ingestor LIVE within its establish budget (OKX quote make-before-break, IDR-112) | Venue reachability first (proxy, DNS); one ingestor per venue, no second copy (SPOF runbook) |
 | 7 | `docker start market_data_service_p184w` (only if exited) | Postgres `service_heartbeats` row `market_data`: `status READY`, `consumer_mode V2_PRIMARY`, `demanded_v2_slices = 64`, `unhealthy_v2_slices = 0`, `v1_fallback_count = 0`, `last_seen_at` fresh | after step 5 is READY | The writer stays fail-closed (not eligible) until Query publishes; do not switch it to V1 (BLOCKED) |
@@ -100,19 +100,85 @@ the plan journal.
 
 Mechanism: no checkpoint in an empty cache -> each owned partition of `md.latest.v2` and `md.bars.v2` (6 + 6) is
 read from its start, applied into a staged generation, and published at the end offset read at assignment
-(`stage_b.rs:8-13`). On 2026-10-19 `market_projector_1` owned all six `md.latest.v2` partitions (status file), so
-the latest topic, which carries almost all of the data, is rebuilt by one projector at its 0.75 CPU cap.
+(`stage_b.rs:8-13`). On 2026-10-19 `market_projector_1` owned the six `md.latest.v2` partitions and
+`market_projector_2` the six `md.bars.v2` partitions (status files), each at a 0.75 CPU cap.
 
-Measurement: **pending**. The isolated drill (state topics copied read-only into a drill broker, one projector with
-stage A off and the cleaner off, a drill Redis with the production arguments, <= 1.5 vCPU) is queued behind the
-host measurement lock; its result and receipts go into this section and the plan entry "F3 KN reboot runbook".
-Until then the rebuild time is unmeasured. Size for orientation (broker 1, 2026-10-19): `md.latest.v2` 4.35 GiB in
-6 partitions (395-1,131 MiB each), `md.bars.v2` 0.93 GiB; production `market_cache` holds 47,751 keys / 1.16 GiB.
-Production stage B cannot be pointed at a separate consumer group: `run_stage_b` hard-codes the group
-`kn-projector-v3-b` (`main.rs`), so a second projector against production Kafka would join the production group.
+**Result (drill 2026-10-19 14:06:06-14:14:20Z): an empty market_cache is fully rebuilt in 494 s (8 min 14 s)**,
+counted from projector container start to the last partition's build boundary. Every partition was published, with
+706 products READY and 0 unpublished; production Query reported 706 of 716 `ready_products` that day. The rebuilt
+cache held 47,728 keys / 1.16 GiB, against 47,751 keys / 1.16 GiB in production. Status `errors` stayed empty, with
+no integrity stop and no memory pressure.
+
+| Partition (build boundary = copied records) | Done after start (s) | | Partition | Done after start (s) |
+|---|---|---|---|---|
+| `md.latest.v2/4` (94,193) | 226.3 | | `md.bars.v2/1` (317,330) | 273.0 |
+| `md.latest.v2/3` (281,215) | 403.3 | | `md.bars.v2/5` (308,229) | 281.0 |
+| `md.latest.v2/2` (523,723) | 460.3 | | `md.bars.v2/2` (290,804) | 304.6 |
+| `md.latest.v2/1` (529,110) | 478.7 | | `md.bars.v2/4` (440,535) | 341.4 |
+| `md.latest.v2/5` (366,890) | 485.0 | | `md.bars.v2/3` (646,714) | 388.5 |
+| `md.latest.v2/0` (684,772) | **493.8** | | `md.bars.v2/0` (679,952) | 389.3 |
+
+Per topic: `md.bars.v2` was READY at 389 s and `md.latest.v2` at 494 s. Products of a partition become READY only at
+that partition's boundary; Query reports them NOT_READY until then.
+
+Setup (isolated, all names `knrd-*`, <= 1.5 vCPU during the build):
+- one drill broker `apache/kafka@sha256:9516fb76...`: 0.5 CPU for the copy, 0.25 CPU for the build;
+- a drill Redis with the production arguments: image `dfa18828`, `--save "" --appendonly no`, `noeviction`, same
+  listpack settings, maxmemory 2,500 MB, 0.5 CPU;
+- one projector on the production image `qdl-v2-rust:2.2.4-c7ce7d3` (`60f83a51`, entrypoint
+  `/usr/local/bin/qdl-projector`) with stage A off and the cleaner off, 0.75 CPU / 512 MiB, on an `--internal`
+  network that has no route to production.
+
+The state topics were first copied from production. The copy ran as a container of the certified python image
+`qdl-v2-python:2.2.4-31a5155` with the kn-projector identity mounted read-only and these properties:
+- **Read-only, no consumer group.** Assign mode, explicit `OFFSET_BEGINNING`, `read_committed`, no commit, and a
+  unique group id that is never joined. The production ACL even refused that group's coordinator lookup
+  (`GROUP_AUTHORIZATION_FAILED`), so no group was touched.
+- **Content preserved.** Partition, key, value, headers and timestamp were kept, tombstones included.
+- **Bounded snapshot.** The copy stopped at the end offsets taken at its start.
+- **Size.** 5,163,467 records (2,479,903 latest + 2,683,564 bars), 858,545 tombstones, 6.0 GiB of values, 2.6 GiB
+  on the drill broker (lz4).
+
+Resources during the build:
+
+| Container | CPU used | Throttled periods | Memory peak |
+|---|---|---|---|
+| projector | 234.9 CPU-s, about 0.48 cores on average | 854 of 5,408 | 108 MiB |
+| drill Redis | 182.7 CPU-s since its start (idle during the copy), about 0.37 cores over the build | 1,715 | 1,187 MiB |
+| drill broker | 97.0 CPU-s for copy plus build | 149 s throttled time | 1,536 MiB (its limit; includes page cache) |
+
+Host root disk free: 232.9 GiB before, minimum 230.8 GiB during the copy, 233 GiB after teardown.
+
+The single projector did both topics, unlike production. The latest partitions sped up once the bars partitions had
+finished: `md.latest.v2/0` went from checkpoint 248,732 at 14:12:35Z to 684,772 at 14:14:20Z. The shared CPU was
+therefore the constraint, and production, where the two projectors split the topics, should not be slower for the
+same data. That expectation was not measured. Also not measured: a bigger log after growth or compaction state,
+and the drill broker capped at 0.25 CPU, against 2.25 CPU per production broker.
+
+Production impact of the copy (693 s, token bucket of 10 MiB/s on consumed bytes), sampled from `/proc/<pid>/net/dev`
+and the broker cgroups:
+
+| Quantity | Baseline | During the copy |
+|---|---|---|
+| Broker eth0 tx, sum of the three brokers | 10.46 MiB/s (60 s) | 18.96 MiB/s on average (+8.5 MiB/s), peak 5-s interval 54.6 MiB/s |
+| Broker CPU, kafka1 / kafka2 / kafka3 | 1.188 / 1.337 / 0.869 cores | 1.200 / 1.373 / 0.901 cores |
+
+Host IO pressure was not raised in the middle of the copy (PSI io some avg10 14.4 against avg300 15.4). The bucket
+bounds the average, not bursts: one 10-s window measured 28.5 MiB/s into the copy container. A re-run should cap
+bursts with `fetch.max.bytes` as well. The cause of the bursts (prefetch and refetch of partial batches) was not
+verified.
+
+Cleanup: 4 containers, 1 volume (`knrd-kafka-data`, the copied data) and 1 network removed. Afterwards 0 `knrd-*`
+containers, volumes or networks remained, and the copied data was gone (volume deleted, Redis was memory-only).
+Receipts (outside Git, 144 KiB, no data): `~/.local/state/qdl-v2/f3-drill/` holds the scripts, `copy.out`,
+`monitor.out`, `partition_done.txt`, `cgroup_final.txt` and `sample.jsonl`. The sampler died with its parent
+session from 14:09:13Z to 14:12:29Z; the per-partition times above come from each checkpoint's `at_ms`, written at
+the partition boundary because the drill topics were static, so the gap loses nothing. Host lock `claude-f3-knrd`
+was held 13:50:24-14:15:21Z.
 
 What the number does not include: Kafka log recovery after an unclean shutdown, the Docker restart back-off of
-roles that start before their dependencies, Query/Stream warm-up and the writer's own session establishment.
+roles that start before their dependencies, contention from all roles starting at once, Query/Stream warm-up and
+the writer's own session establishment. For a recovery deadline, use the 494 s build plus those, plus margin.
 
 ## 6. Rollback and fallback
 
