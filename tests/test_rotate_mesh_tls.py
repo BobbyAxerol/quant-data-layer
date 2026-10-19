@@ -46,6 +46,21 @@ class GeneratorContractTest(unittest.TestCase):
         self.assertIn('"truststore-kn-v220.jks"', source)
         self.assertIn("QDL_PHASE8_CERT_PASSWORD", source)  # deployed store password carried, never printed
 
+    def test_private_material_is_never_world_readable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            for name in ("kafka1.keystore.p12", "store.password", "admin.properties", "truststore.jks", "x.key"):
+                (d / name).write_text("x")
+                for subtree in tool.PERMS:
+                    self.assertFalse(tool._wanted_mode(d / name, subtree) & 0o004, (name, subtree))
+            (d / "ca.crt").write_text("x")
+            self.assertEqual(tool._wanted_mode(d / "ca.crt", "kafka"), 0o444)
+            self.assertEqual(tool._wanted_mode(d, "kafka"), 0o750)
+            self.assertEqual(tool._wanted_mode(d / "x.key", "kn-tls"), 0o400)
+        self.assertEqual(tool.PERMS["kafka"], (1000, 1000))  # appuser of the pinned Kafka image
+        self.assertEqual(tool.PERMS["stable-certs"], (10001, 10001))
+        self.assertEqual(tool.PERMS["identities"], (0, 0))  # the TS writer runs as root
+
     def test_env_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
             env = {k: f"/x/{k.lower()}" for k in tool.ENV_KEYS}

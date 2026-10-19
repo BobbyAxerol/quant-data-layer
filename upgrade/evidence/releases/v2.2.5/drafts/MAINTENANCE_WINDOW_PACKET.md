@@ -15,6 +15,9 @@ old certificates (valid to 2026-11-20 14:43Z) + old digests; K6 (restore the def
 `__consumer_offsets`); keep v2.2.5 compact (owner 09:00Z). The production steps below still need the owner's explicit
 go for the chosen date (section 9).
 
+Related runbook: `docs/runbooks/kn-host-reboot-recovery.md` (DL dev 51387a2, PR #37) for start order and cache
+rebuild behaviour of the KN roles.
+
 ## 1. What changes and what does not
 
 | Area | Before (v2.2.4 runtime) | After (v2.2.5) | Recreated in the window |
@@ -39,6 +42,10 @@ every other TS service, portal stacks.
 1. `fix/v225-config-certs` merged into dev with green CI; python image built and recorded (section 3).
 2. Re-verify the TLS generation on the day:
    `sudo python3 -B scripts/rotate_mesh_tls.py verify --old-env ~/.local/state/qdl-v2/tls/gen-20260822T144323Z/generation.env --new-env ~/.local/state/qdl-v2/tls/gen-20261019T084200Z/generation.env --out <window dir>/tls-verify.json` -> PASS.
+   Then `sudo python3 -B scripts/rotate_mesh_tls.py perms --gen-dir ~/.local/state/qdl-v2/tls/gen-20261019T084200Z`
+   -> PASS: private keys, keystores, password and .properties files 0400/0440 owned by their consumer (kafka/ uid
+   1000 appuser; stable-certs/ and kn-tls/ uid 10001; identities/ root for the TS writer), public certificates 0444,
+   directories 0750 (the deployed 2026-08-22 broker dir has world-readable keys; it is not changed, it is replaced).
 3. Re-run compose parity against live (v2.2.4 env + deployed generation):
    `python3 -B scripts/kn_versioned_compose.py inventory --out <window dir>/pre-inventory.json` and
    `python3 -B scripts/kn_versioned_compose.py parity --compose deploy/compose/qdl-v2-stable-kn.yml --env-file deploy/compose/qdl-v2-stable-kn.v2.2.4.env --env-file ~/.local/state/qdl-v2/tls/gen-20260822T144323Z/generation.env --env-file ~/.local/state/qdl-v2/releases/v2.2.5/kn-secrets.env` -> PASS.
@@ -86,7 +93,7 @@ Never `$C up` without `--no-deps <services>`; never `--remove-orphans`; never na
 | W5 | K6 re-observe (no alter expected): `python3 -B scripts/kafka_internal_topic_compaction.py --observe --cert-dir ~/.local/state/qdl-v2/tls/gen-20261019T084200Z/kafka`; record `temp_state` and the decision-C keys. Only if the temporary key reappeared: `--remove-temp --apply --cert-dir <same> --lock-owner <window owner>`; exact restore of the measured pre-window state = `--apply-temp --apply` (only if the pre-window observation showed it present) | temp_state ABSENT, c_state APPLIED, no drift |
 | W6 | `$C up -d --no-deps --force-recreate rust_core rust_core_2 rust_core_3` (simultaneous: same image, no mixed-version group) | 3 members in `qdl-v2-realtime-core-v2`, healthy, no retry loop |
 | W7 | `$C up -d --no-deps --force-recreate ingestor_binance_usdm ingestor_okx_swap` | healthy (session-liveness fresh) |
-| W8 | `$C up -d --no-deps --force-recreate market_projector_1 market_projector_2` | healthy (status fresh), lag falling |
+| W8 | `$C up -d --no-deps --force-recreate market_projector_1 market_projector_2` (market_cache is never stopped and stable_redis came back in W4: the projector exits when its cache is unreachable) | healthy (status fresh), lag falling |
 | W9 | `$C up -d --no-deps --force-recreate query_kn_1 query_kn_2` | healthy; `/health/ready` READY over mTLS with the NEW TS identity; ready products back to the baseline |
 | W10 | `$C up -d --no-deps --force-recreate stream_kn_1 stream_kn_2` | healthy; TLS handshake with the NEW TS identity verifies |
 | W11 | `$C up -d --no-deps --force-recreate binance_bar_edge` (image unchanged) | healthy; log shows checkpoint restore, no bootstrap |

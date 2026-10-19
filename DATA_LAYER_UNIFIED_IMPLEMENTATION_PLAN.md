@@ -76709,3 +76709,10 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   - Status: implemented and tested locally (rehearsal isolated); NOT production-ready until the window executes and
     its acceptance passes. Packet: `upgrade/evidence/releases/v2.2.5/drafts/MAINTENANCE_WINDOW_PACKET.md`; scope:
     `upgrade/evidence/releases/v2.2.5/drafts/CERTIFICATE_SCOPE.md`.
+  - Permissions (F2/F3 finding relayed 11:15Z: the deployed broker cert dir has world-readable private keys; not
+    changed live): `rotate_mesh_tls.py` gains `harden` / `perms` (and `verify` fails on them): private material
+    0400/0440 owned by its consumer (kafka/ uid 1000 = appuser of the pinned Kafka image, from /proc of the live
+    broker; stable-certs/ and kn-tls/ 10001 (cap_drop ALL, no DAC override); identities/ root for the TS writer),
+    public certificates 0444, directories 0750. Applied to gen-20261019T084200Z: 112 files, bytes unchanged
+    (sha256 before == after), perms PASS. The rehearsal above ran before hardening; a hardened-permission re-run is
+    queued behind the IDR-128 host lock (until ~13:57Z) and is a pre-window check in the packet.

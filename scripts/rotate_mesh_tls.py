@@ -216,6 +216,66 @@ def require_root() -> None:
         raise SystemExit("run with sudo: deployed material is owned by uid 10001/root")
 
 
+# ----------------------------------------------------------------------------------------------- permissions
+# Consumer of each generation subtree (uid, gid) and the modes it gets (owner F2/F3 finding 2026-10-19: the 2026-08-22
+# cert-material dir mounted into the brokers has world-readable private keys). Kafka runs as appuser uid 1000
+# (docker inspect + /proc of the live broker); the DL roles as 10001:10001 with cap_drop ALL (no DAC override); the
+# TS writer as root with default capabilities. Private material (keys, keystores, passwords, .properties carrying
+# the store password, truststores) 0400/0440 owned by the consumer; public certificates 0444; directories 0750.
+PERMS = {
+    "kafka": (1000, 1000),
+    "stable-certs": (QDL_UID, QDL_UID),
+    "kn-tls": (QDL_UID, QDL_UID),
+    "identities": (0, 0),
+}
+PUBLIC_SUFFIXES = (".crt", ".public.pem")
+
+
+def _wanted_mode(path: Path, subtree: str) -> int:
+    if path.is_dir():
+        return 0o750
+    if path.name.endswith(PUBLIC_SUFFIXES) and not path.name.endswith("client-ca-bundle.crt"):
+        return 0o444
+    if path.name.endswith("client-ca-bundle.crt"):
+        return 0o444
+    return 0o400 if subtree in ("kn-tls", "identities") else 0o440
+
+
+def harden(gen_dir: Path) -> dict:
+    """Apply PERMS to an existing generation; file bytes unchanged (sha256 before == after)."""
+    require_root()
+    before = {str(f): sha256_file(f) for f in gen_dir.rglob("*") if f.is_file()}
+    for subtree, (uid, gid) in PERMS.items():
+        root = gen_dir / subtree
+        if not root.exists():
+            continue
+        for path in [root, *root.rglob("*")]:
+            os.chown(path, uid, gid, follow_symlinks=False)
+            os.chmod(path, _wanted_mode(path, subtree))
+    after = {str(f): sha256_file(f) for f in gen_dir.rglob("*") if f.is_file()}
+    return {"files": len(after), "bytes_unchanged": before == after, "problems": perms_check(gen_dir)}
+
+
+def perms_check(gen_dir: Path) -> list[str]:
+    """Every private file of the generation is owner-only/group-only for its consumer; nothing world-readable
+    except public certificates; directories 0750."""
+    problems = []
+    for subtree, (uid, gid) in PERMS.items():
+        root = gen_dir / subtree
+        if not root.exists():
+            continue
+        for path in [root, *root.rglob("*")]:
+            st = path.lstat()
+            mode = st.st_mode & 0o777
+            if (st.st_uid, st.st_gid) != (uid, gid):
+                problems.append(f"{path}: owner {st.st_uid}:{st.st_gid} != {uid}:{gid}")
+            if mode != _wanted_mode(path, subtree):
+                problems.append(f"{path}: mode {oct(mode)} != {oct(_wanted_mode(path, subtree))}")
+            if path.is_file() and mode & 0o004 and _wanted_mode(path, subtree) != 0o444:
+                problems.append(f"{path}: private file is world-readable")
+    return problems
+
+
 # ----------------------------------------------------------------------------------------------- slots
 def slots(env: dict) -> list[dict]:
     """Every identity the mesh mounts: (consumer, cert, key, expected CN, purpose)."""
@@ -383,6 +443,7 @@ def generate(gen_dir: Path, old_env: dict, days: int) -> dict:
     write_env(gen_dir / "generation.env", env, f"NEW generation, {days}-day validity, created {now_utc()}")
     os.chown(gen_dir / "generation.env", 1001, 1001)
     doc = describe(env)
+    doc["permissions"] = harden(gen_dir)
     doc["validity_days"] = days
     doc["generator_sha256"] = sha256_file(GENERATOR)
     _write_manifest(gen_dir, doc, kind="generate")
@@ -471,6 +532,9 @@ def verify(old_env: dict, new_env: dict, *, min_days: int, at: dt.datetime | Non
     for key, fps in old["client_ca_bundles"].items():
         expected = [new_ca["sha256_fingerprint"] if fp == old_ca["sha256_fingerprint"] else fp for fp in fps]
         check(new["client_ca_bundles"].get(key) == expected, f"{key}: client CA bundle is not old-with-CA-replaced")
+    new_root = Path(new_env["QDL_TLS_KAFKA_DIR"]).parent
+    for problem in perms_check(new_root):
+        check(False, f"permissions: {problem}")
     result = {"schema": "qdl.mesh-tls-verify.v1", "verified_utc": now_utc(), "old": old_env["QDL_TLS_GENERATION"],
               "new": new_env["QDL_TLS_GENERATION"], "checks": checks, "problems": problems,
               "verdict": "PASS" if not problems else "FAIL",
@@ -497,6 +561,10 @@ def main(argv=None) -> int:
     g.add_argument("--gen-dir", type=Path, required=True)
     g.add_argument("--old-env", type=Path, required=True, help="generation.env of the deployed (exported) generation")
     g.add_argument("--days", type=int, default=DEFAULT_DAYS)
+    h = sub.add_parser("harden", help="apply PERMS to an existing generation (bytes unchanged)")
+    h.add_argument("--gen-dir", type=Path, required=True)
+    c = sub.add_parser("perms", help="read-only permission check of a generation")
+    c.add_argument("--gen-dir", type=Path, required=True)
     v = sub.add_parser("verify")
     v.add_argument("--old-env", type=Path, required=True)
     v.add_argument("--new-env", type=Path, required=True)
@@ -514,6 +582,15 @@ def main(argv=None) -> int:
         doc = generate(args.gen_dir, read_env(args.old_env), args.days)
         print(json.dumps({"generated": str(args.gen_dir), "slots": len(doc["slots"]), "days": args.days}))
         return 0
+    if args.mode == "harden":
+        result = harden(args.gen_dir)
+        print(json.dumps(result))
+        return 0 if result["bytes_unchanged"] and not result["problems"] else 2
+    if args.mode == "perms":
+        require_root()
+        problems = perms_check(args.gen_dir)
+        print(json.dumps({"gen_dir": str(args.gen_dir), "problems": problems, "verdict": "PASS" if not problems else "FAIL"}))
+        return 0 if not problems else 2
     require_root()
     result = verify(read_env(args.old_env), read_env(args.new_env), min_days=args.min_days)
     text = json.dumps(result, indent=1, sort_keys=True) + "\n"
