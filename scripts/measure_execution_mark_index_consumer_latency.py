@@ -80,8 +80,13 @@ def _summary(samples: Iterable[float]) -> dict[str, float | int]:
     }
 
 
+# Trading System Paper manifest revision 11: five Binance + five OKX linear
+# perpetuals plus the inverse OKX BTC-USD-SWAP (IDR-075, deployed 2026-10-09).
+EXECUTION_MARK_INDEX_REQUIREMENTS = 11
+
+
 def execution_mark_index_requirements(manifest: Path) -> tuple[ReferenceRequirement, ...]:
-    """Return the exact ten execution MARK/INDEX requirements of the manifest."""
+    """Return the exact execution MARK/INDEX requirements of the manifest."""
 
     document = ConsumerManifestLoader.load(manifest)
     selected = [
@@ -89,9 +94,10 @@ def execution_mark_index_requirements(manifest: Path) -> tuple[ReferenceRequirem
         for item in document.requirements
         if item.feed is FeedType.MARK_INDEX_PRICE
     ]
-    if len(selected) != 10:
+    if len(selected) != EXECUTION_MARK_INDEX_REQUIREMENTS:
         raise ValueError(
-            "execution MARK/INDEX consumer latency probe requires exactly 10 manifest bindings"
+            "execution MARK/INDEX consumer latency probe requires exactly "
+            f"{EXECUTION_MARK_INDEX_REQUIREMENTS} manifest bindings"
         )
     if any(item.consumer_grade is not ConsumerGrade.EXECUTION for item in selected):
         raise ValueError("execution MARK/INDEX manifest contains a non-execution requirement")

@@ -23,8 +23,9 @@ class ConsumerEndpointBenchmarkTests(unittest.TestCase):
         cls.manifest, cls.scope = bench.load_scope("trading-system.paper.stable")
 
     def test_exact_ts_scope_not_two_per_feed(self):
-        self.assertEqual(len(self.scope.products), 60)
-        self.assertEqual(Counter(p.venue for p in self.scope.products), {"BINANCE": 30, "OKX": 30})
+        # 60 linear five-symbol products + 4 inverse BTC-USD-SWAP (manifest r11).
+        self.assertEqual(len(self.scope.products), 64)
+        self.assertEqual(Counter(p.venue for p in self.scope.products), {"BINANCE": 30, "OKX": 34})
         cases = bench.cases_for(self.scope.products, 8)
         singles = {ps[0].identity for op, ps in cases if op in ("snapshot", "reference_batch") and len(ps) == 1}
         self.assertEqual(singles, {p.identity for p in self.scope.products})
@@ -41,7 +42,7 @@ class ConsumerEndpointBenchmarkTests(unittest.TestCase):
             cases = bench.cases_for(scope.products, 8)
             singles = {ps[0].identity for op, ps in cases if op in ("snapshot", "reference_batch") and len(ps) == 1}
             self.assertEqual(singles, {p.identity for p in scope.products})
-        self.assertEqual(len(products), 319 + UNIVERSE_TOTAL)
+        self.assertEqual(len(products), 323 + UNIVERSE_TOTAL)  # +4 inverse TS products (r11)
         reference_feeds = set()
         for p in products:
             if p.delivery.value == "ON_DEMAND":
@@ -161,7 +162,7 @@ class ConsumerEndpointBenchmarkTests(unittest.TestCase):
         with patch("qdl_sdk.transport.RestQueryTransport", side_effect=AssertionError("network must not run")):
             result = asyncio.run(bench.run_client(p, inventory=True))
         self.assertEqual(result["status"], "INVENTORY_ONLY")
-        self.assertEqual(result["scope"]["product_count"], 60)
+        self.assertEqual(result["scope"]["product_count"], 64)
 
     def test_deadline_permission_and_disabled_stream_remain_visible(self):
         p = bench.validate_profile(self.profile)

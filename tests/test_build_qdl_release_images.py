@@ -55,9 +55,9 @@ class ArgumentTests(unittest.TestCase):
     def test_identity_names_release_tags_and_receipt_dir(self):
         rev = "0123456789abcdef0123456789abcdef01234567"
         ident = b.identity(rev, Path("/state"))
-        self.assertEqual(ident["rust_tag"], "qdl-v2-rust:2.2.4-0123456")
-        self.assertEqual(ident["python_tag"], "qdl-v2-python:2.2.4-0123456")
-        self.assertEqual(ident["build_dir"], "/state/build-v2.2.4-0123456")
+        self.assertEqual(ident["rust_tag"], "qdl-v2-rust:2.2.5-0123456")
+        self.assertEqual(ident["python_tag"], "qdl-v2-python:2.2.5-0123456")
+        self.assertEqual(ident["build_dir"], "/state/build-v2.2.5-0123456")
 
     @unittest.skipUnless(git_has("HEAD"), "git binary or checkout unavailable: resolve_rev reads git")
     def test_resolve_rev_rejects_non_commit(self):
@@ -123,12 +123,12 @@ class GuardTests(unittest.TestCase):
 
 class CommandTests(unittest.TestCase):
     def test_rust_compile_is_offline_pinned_and_read_only_source(self):
-        argv = b.rust_compile_argv(Path("/s/build-v2.2.4-abc1234"), Path("/w"))
+        argv = b.rust_compile_argv(Path("/s/build-v2.2.5-abc1234"), Path("/w"))
         self.assertIn("--network", argv)
         self.assertEqual(argv[argv.index("--network") + 1], "none")
         self.assertIn("--pull=never", argv)
         self.assertIn(b.BUILDER_IMAGE, argv)
-        self.assertIn("/s/build-v2.2.4-abc1234/src:/src:ro", argv)
+        self.assertIn("/s/build-v2.2.5-abc1234/src:/src:ro", argv)
         self.assertIn("CARGO_TARGET_DIR=/work/dl-target", argv)
         script = argv[-1]
         self.assertEqual(script.count("cargo build --offline --locked --release"), 4)
@@ -142,7 +142,7 @@ class CommandTests(unittest.TestCase):
     def test_rust_dockerfile_is_release_labelled_without_test_label(self):
         text = b.rust_dockerfile("f" * 40)
         self.assertTrue(text.startswith(f"FROM {b.RUST_BASE_TAG}\n"))
-        self.assertIn('org.opencontainers.image.version="2.2.4"', text)
+        self.assertIn('org.opencontainers.image.version="2.2.5"', text)
         self.assertIn('qdl.build.method="cargo-cache-551428d9+runtime-overlay-f41ecb66"', text)
         self.assertNotIn("qdl.test.only", text)
         self.assertIn("USER 10001:10001", text)
@@ -161,7 +161,7 @@ class CommandTests(unittest.TestCase):
     def test_python_build_carries_revision_and_release(self):
         argv = b.python_image_argv(Path("/s/d"), "e" * 40, "t")
         self.assertIn("QDL_GIT_SHA=" + "e" * 40, argv)
-        self.assertIn("QDL_RELEASE=2.2.4", argv)
+        self.assertIn("QDL_RELEASE=2.2.5", argv)
         self.assertIn("/s/d/src/Dockerfile", argv)
 
 
@@ -377,25 +377,21 @@ class SourceTests(unittest.TestCase):
         self.assertTrue(any("2.4.1" in p for p in result["problems"]))
 
     @unittest.skipUnless(git_has(*(rev for _, rev in b.PYTHON_REFERENCE_TREE)),
-                         "rc19 reference revisions not in this (shallow?) checkout")
-    def test_expected_python_diff_uses_the_rc19_tree_model(self):
+                         "reference revision not in this (shallow?) checkout")
+    def test_expected_python_diff_is_the_git_diff_against_the_production_query_tree(self):
+        self.assertEqual(b.PYTHON_REFERENCE[1],
+                         "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff")
         diff = b.expected_python_diff(REPO, self.head())
-        self.assertIn("qdl_sdk/__init__.py", diff)
-        self.assertIn("generated/python/qdl/query/v2/query_pb2.py", diff)
-        # rc19 carries qdl/ at 4d3476c, so the bcb0283..4d3476c Query files are not expected to differ.
-        for name in subprocess.check_output(["git", "-C", str(REPO), "diff", "--name-only",
-                                             b.PYTHON_REFERENCE_TREE[1][1], b.PYTHON_REFERENCE_TREE[0][1],
-                                             "--", "qdl"]).decode().split():
-            if name not in subprocess.check_output(["git", "-C", str(REPO), "diff", "--name-only",
-                                                    b.PYTHON_REFERENCE_TREE[0][1], self.head(),
-                                                    "--", "qdl"]).decode().split():
-                self.assertNotIn(name, diff)
+        expected = subprocess.check_output(["git", "-C", str(REPO), "diff", "--name-only", "--no-renames",
+                                            b.PYTHON_REFERENCE_TREE[0][1], self.head(), "--",
+                                            *b.PYTHON_HASH_ROOTS]).decode().split()
+        self.assertEqual(diff, sorted(expected))
 
     def test_plan_is_dry(self):
         with mock.patch.object(b.subprocess, "run", wraps=subprocess.run) as run:
             result = b.plan(REPO, self.head(), ["rust", "python"], Path("/state"))
         self.assertFalse(any(call.args and call.args[0][:1] == ["docker"] for call in run.call_args_list))
-        self.assertEqual(result["identity"]["build_dir"], f"/state/build-v2.2.4-{self.head()[:7]}")
+        self.assertEqual(result["identity"]["build_dir"], f"/state/build-v2.2.5-{self.head()[:7]}")
         self.assertTrue(result["source_preconditions"]["ok"])
 
 

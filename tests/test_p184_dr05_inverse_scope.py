@@ -12,6 +12,7 @@ from unittest.mock import patch
 import yaml
 
 from scripts import p184_dr05_dl_fault as dr
+from tests.inverse_extension_support import pre_inverse_catalog
 
 NS = "p184-dr05-dl-0123456789abcdef"
 ALL = ("BINANCE", "OKX", "OKX_INVERSE")
@@ -20,8 +21,11 @@ INV_SOURCE = "okx-swap-btc-usd-swap-book-primary-v2"
 
 
 def inverse_catalog(path):
-    """Write the repo catalog + the inverse instrument and its two BOOK bindings; return the path."""
-    catalog = yaml.safe_load((dr.ROOT / "config/v2/stable-source-bindings.yaml").read_text())
+    """Write the pre-inverse catalog + the inverse instrument and its two BOOK bindings; return the path.
+
+    The repository catalog (revision 12, IDR-127) already declares BTC-USD-SWAP, so the fixture starts from the
+    recovered, hash-pinned revision 11."""
+    catalog = pre_inverse_catalog()
     catalog["catalog_revision"] += 1
     catalog["instruments"].append({
         "instrument_uid": INV_UID, "instrument_id": "OKX.SWAP.PERPETUAL.BTC-USD", "metadata_revision": 1,
@@ -148,8 +152,10 @@ class ConfigTests(unittest.TestCase):
 
     def test_inverse_scope_without_a_catalog_that_defines_it_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
+            linear_only = Path(tmp) / "catalog-r11.yaml"
+            linear_only.write_text(yaml.safe_dump(pre_inverse_catalog()))  # no BTC-USD-SWAP BOOK
             work = Path(tmp) / "case"
-            dr.prepare(work, scopes=ALL)  # repo catalog has no BTC-USD-SWAP BOOK
+            dr.prepare(work, scopes=ALL, catalog=linear_only)
             with self.assertRaises(ValueError):
                 dr.material(work, exported())
 

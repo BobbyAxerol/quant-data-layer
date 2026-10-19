@@ -23,15 +23,20 @@ class TradingConsumerScopeTests(unittest.TestCase):
             for venue, suffix in (("BINANCE", "USDT"), ("OKX", "-USDT-SWAP"))
             for symbol in ("BTC", "ETH", "SOL", "DOGE", "BNB")
             for feed in ("TRADE", "QUOTE", "BAR", "MARK_INDEX_PRICE", "BOOK_SNAPSHOT", "BOOK_DELTA")
+        } | {
+            # IDR-075 inverse Paper extension (manifest revision 11): the four
+            # deployed BTC-USD-SWAP execution feeds, no TRADE/BAR.
+            ("OKX", "BTC-USD-SWAP", feed, None)
+            for feed in ("QUOTE", "MARK_INDEX_PRICE", "BOOK_SNAPSHOT", "BOOK_DELTA")
         }
-        self.assertEqual(len(self.binding.products), 60)
+        self.assertEqual(len(self.binding.products), 64)
         self.assertEqual(expected, {(p.venue, p.native_symbol, p.feed, p.interval) for p in self.binding.products})
-        self.assertEqual(len({p.requirement_id for p in self.binding.products}), 60)
+        self.assertEqual(len({p.requirement_id for p in self.binding.products}), 64)
 
     def test_sealed_roundtrip_and_manifest_revision(self):
         parsed = ConsumerRouteBinding.from_canonical_mapping(self.binding.canonical_mapping())
         self.assertEqual(parsed, self.binding)
-        self.assertEqual(parsed.consumer_manifest_revision, 10)
+        self.assertEqual(parsed.consumer_manifest_revision, 11)
         value = self.binding.canonical_mapping()
         value["products"][0]["native_symbol"] = "WRONG"
         with self.assertRaises(ValueError):
@@ -56,7 +61,7 @@ class TradingConsumerScopeTests(unittest.TestCase):
         manifest = ConsumerManifestLoader.load(ROOT / "consumers/stable/trading-system-paper.yaml")
         streams = sum(p.feed in {"TRADE", "QUOTE", "BAR", "BOOK_DELTA"} for p in self.binding.products)
         polls_per_minute = sum(60 if p.feed == "MARK_INDEX_PRICE" else 2 if p.feed == "BOOK_SNAPSHOT" else 0 for p in self.binding.products)
-        self.assertEqual(streams, 40)
+        self.assertEqual(streams, 42)  # 40 linear + inverse QUOTE and BOOK_DELTA
         self.assertGreaterEqual(manifest.quotas.max_streams, streams + 10)
         self.assertGreaterEqual(manifest.quotas.requests_per_minute, 2 * polls_per_minute)
 

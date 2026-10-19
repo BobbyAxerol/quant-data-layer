@@ -73,6 +73,8 @@ FULL_PATTERNS = (
     ".github/**", "Dockerfile*", "docker-compose*.yml", ".dockerignore", ".trivyignore", "pyproject.toml",
     "poetry.lock", "requirements*", "scripts/ci_change_scope.py", "scripts/ci_test_shard.py",
     "scripts/prepare_nonroot_runtime.sh",
+    # The versioned production compose (DL v2.2.5) defines how the release runs: CI5 forces a full run.
+    "deploy/compose/**",
 )
 DOC_PATTERNS = ("*.md", "docs/**", "LICENSE")
 DOC_EXCEPTIONS = ("qdl_sdk/**", "tests/**")  # SDK README/CHANGELOG ship in the wheel; tests/** are test inputs

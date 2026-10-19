@@ -8,6 +8,9 @@ from qdl.runtime.production_catalog import ProductionDemandManifest
 from qdl.runtime.sandbox_extension import _digest, prepare_sandbox_extension
 from scripts.compile_consumer_realms import compile_realm
 from scripts.phase115_render_consumer_route_binding import binding_from_stable_release
+from tests.inverse_extension_support import (
+    pre_inverse_acquisition, pre_inverse_catalog, pre_inverse_paper_manifest, without_inverse_products,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -15,20 +18,20 @@ ROOT = Path(__file__).resolve().parents[1]
 class SandboxExtensionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        manifest = compile_realm(yaml.safe_load(
-            (ROOT / "consumers/stable/trading-system-paper.yaml").read_text()), "sandbox")
+        # The committed catalog/acquisition/Paper manifest already carry the
+        # inverse feeds (IDR-127); the extension runs on the recovered,
+        # hash-pinned pre-inverse documents (sandbox r1 = compiled Paper r10).
+        manifest = compile_realm(pre_inverse_paper_manifest(), "sandbox")
         binding = binding_from_stable_release(
             ROOT / "config/v2/stable-v2-release-routing.yaml", ROOT,
             "trading-system.paper.stable").canonical_mapping()
         binding["consumer_id"] = manifest["metadata"]["id"]
-        binding["consumer_manifest_revision"] = 1
         for row in binding["products"]:
             row["consumer_id"] = binding["consumer_id"]
-        binding.pop("binding_sha256")
-        binding["binding_sha256"] = _digest(binding)
+        binding = without_inverse_products(binding, manifest_revision=1, reseal=_digest)
         cls.inputs = dict(
-            catalog=yaml.safe_load((ROOT / "config/v2/stable-source-bindings.yaml").read_text()),
-            acquisition=yaml.safe_load((ROOT / "config/v2/stable-acquisition-bindings.yaml").read_text()),
+            catalog=pre_inverse_catalog(),
+            acquisition=pre_inverse_acquisition(),
             manifest=manifest, binding=binding,
             demand=ProductionDemandManifest.load_many([ROOT / "config/v2/okx-inverse-sandbox-demand.yaml"]),
             template_uid="fb26214c-7b9b-5961-95b2-55154755af0f",
