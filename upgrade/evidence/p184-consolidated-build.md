@@ -117,6 +117,11 @@ python3 -B scripts/p184_consolidated_build.py \
 The DL CI receipt file is required (2026-10-19): it must hash to the given digest, name
 the source commit, have status PASS and `scope: full`. A scoped preflight receipt
 (`p184_local_ci.py --changed-since` or `--jobs`, `scope: affected`) is refused.
+GitHub CI is the authoritative full run: `python3 -B scripts/ci_github_run_receipt.py
+--run-id RUN --out FILE` writes a `qdl.ci.github-run-receipt.v1` receipt that is accepted
+instead when head_sha is the source commit, the run succeeded, the `changes` job said
+full=true and every job succeeded (none skipped). A pull_request run counts only when its
+base is an ancestor of the commit; otherwise use a push-to-dev or workflow_dispatch run.
 
 This still ONLY prints JSON, with PREPARED_NOT_EXECUTED and a future build_script.
 Gate receipts are explicit operator attestations, not remote CI verification.

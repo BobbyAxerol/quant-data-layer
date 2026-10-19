@@ -1,9 +1,16 @@
 """Offline IDR039 recipe preparation. Never execute builds or activate runtime.
 
-A passing DL CI gate needs the receipt file itself (`--dl-ci-receipt`), not only its digest: the receipt of
-scripts/p184_local_ci.py must hash to `--dl-ci-receipt-sha256`, name the source commit, have status PASS and
-scope `full`. A scoped preflight (`scope: affected`, from `--changed-since` or `--jobs`) or a receipt without a
-scope is refused, so a quick affected-only CI run can never stand in for the release CI.
+A passing DL CI gate needs the receipt file itself (`--dl-ci-receipt`), not only its digest; it must hash to
+`--dl-ci-receipt-sha256`. Two receipt forms are accepted:
+* scripts/p184_local_ci.py (qdl.p184.local-ci-receipt.v1): names the source commit, status PASS, scope `full`, every
+  workflow job present. A scoped preflight (`scope: affected`, from `--changed-since` or `--jobs`) or a receipt
+  without a scope is refused, so a quick affected-only run can never stand in for the release CI;
+* scripts/ci_github_run_receipt.py (qdl.ci.github-run-receipt.v1), GitHub CI being the authoritative full run:
+  head_sha = source commit, workflow .github/workflows/ci.yml, run completed / success, the `changes` job said
+  full=true (every flag true) for this head, every expected job (ci-result and changes included) concluded success
+  and no job was skipped. A pull_request run tests GitHub's merge of head into base, so it is accepted only when that
+  base is an ancestor of the source commit (the merge tree then equals the commit's tree); push and
+  workflow_dispatch runs test the commit itself. The scope is re-derived from these fields, not read from `scope`.
 """
 
 import argparse
@@ -15,6 +22,8 @@ import shlex
 import subprocess
 
 LOCAL_CI_RECEIPT_SCHEMA = "qdl.p184.local-ci-receipt.v1"
+GITHUB_RUN_RECEIPT_SCHEMA = "qdl.ci.github-run-receipt.v1"
+CI_WORKFLOW = ".github/workflows/ci.yml"
 
 
 PREREQUISITES = {
@@ -91,7 +100,47 @@ def source_contract(repo, commit):
     return hashes
 
 
-def verify_dl_ci_receipt(path, commit, expected_sha256):
+def verify_github_run_receipt(receipt, commit, repo):
+    """Refuse a GitHub run receipt that is not a full, successful CI run of exactly `commit`."""
+    if receipt.get("head_sha") != commit:
+        raise ValueError("DL CI GitHub run is for a different commit")
+    if receipt.get("workflow_path") != CI_WORKFLOW:
+        raise ValueError(f"DL CI GitHub run must be of {CI_WORKFLOW}")
+    if (receipt.get("status"), receipt.get("conclusion")) != ("completed", "success"):
+        raise ValueError("DL CI GitHub run conclusion must be success")
+    outputs = receipt.get("changes_outputs") or {}
+    fields = receipt.get("changes_fields") or {}
+    if any(outputs.get(flag) != "true" for flag in ("full", "python", "rust", "contracts")):
+        raise ValueError(f"DL CI GitHub run scope is not full: changes outputs {outputs}")
+    if fields.get("head") != commit:
+        raise ValueError("DL CI GitHub run changes job classified a different head")
+    event = receipt.get("event")
+    if fields.get("event") != event:
+        raise ValueError("DL CI GitHub run event differs from its changes job")
+    if event == "pull_request":
+        base = fields.get("base") or ""
+        full_sha(base, "pull-request base of the DL CI GitHub run")
+        try:
+            git(repo, "merge-base", "--is-ancestor", base, commit)
+        except subprocess.CalledProcessError as exc:
+            raise ValueError("DL CI GitHub pull_request run tested a merge that differs from the commit "
+                             "(base is not an ancestor); use a push or workflow_dispatch run") from exc
+    elif event not in ("push", "workflow_dispatch"):
+        raise ValueError(f"DL CI GitHub run event {event!r} not accepted")
+    jobs = {row.get("name"): row.get("conclusion") for row in receipt.get("jobs") or []}
+    expected = receipt.get("expected_jobs") or []
+    if not {"changes", "ci-result"} <= set(expected):
+        raise ValueError("DL CI GitHub run expected jobs must include changes and ci-result")
+    missing = [name for name in expected if name not in jobs]
+    if missing:
+        raise ValueError(f"DL CI GitHub run does not cover every workflow job: missing {missing}")
+    not_success = sorted(name for name, conclusion in jobs.items() if conclusion != "success")
+    if not_success:
+        raise ValueError(f"DL CI GitHub run has jobs not success (skipped or failed): {not_success}")
+    return receipt
+
+
+def verify_dl_ci_receipt(path, commit, expected_sha256, repo=None):
     """Refuse a DL CI receipt that is not a full, passing run of exactly `commit` with the attested digest."""
     if path is None:
         raise ValueError("DL CI pass requires the receipt file (--dl-ci-receipt), not only its digest")
@@ -102,8 +151,10 @@ def verify_dl_ci_receipt(path, commit, expected_sha256):
         receipt = json.loads(data)
     except ValueError as exc:
         raise ValueError("DL CI receipt is not JSON") from exc
+    if receipt.get("schema") == GITHUB_RUN_RECEIPT_SCHEMA:
+        return verify_github_run_receipt(receipt, commit, repo)
     if receipt.get("schema") != LOCAL_CI_RECEIPT_SCHEMA:
-        raise ValueError(f"DL CI receipt schema must be {LOCAL_CI_RECEIPT_SCHEMA}")
+        raise ValueError(f"DL CI receipt schema must be {LOCAL_CI_RECEIPT_SCHEMA} or {GITHUB_RUN_RECEIPT_SCHEMA}")
     if receipt.get("sha") != commit:
         raise ValueError("DL CI receipt is for a different commit")
     if receipt.get("scope") != "full":
@@ -131,7 +182,7 @@ def prepare(repo, commit, release, *, ts_status="pending", ts_commit=None,
         full_sha(ts_receipt, "TS completed-test receipt SHA256", 64)
     if dl_ci_status == "pass":
         full_sha(dl_ci_receipt, "DL CI receipt SHA256 for source commit", 64)
-        verify_dl_ci_receipt(dl_ci_receipt_file, commit, dl_ci_receipt)
+        verify_dl_ci_receipt(dl_ci_receipt_file, commit, dl_ci_receipt, repo)
     if dependency_image != "builder" and not re.fullmatch(
         r"[a-z0-9][a-z0-9./:_-]*@sha256:[0-9a-f]{64}", dependency_image
     ):
@@ -190,8 +241,8 @@ def prepare(repo, commit, release, *, ts_status="pending", ts_commit=None,
         "holds": holds, "images": images, "build_script": script,
         "build_script_sha256": hashlib.sha256(script.encode()).hexdigest() if script else None,
         "limitations": [
-            "TS gate inputs are operator attestations; the DL CI receipt is checked for commit, PASS and full "
-            "scope, not re-executed.",
+            "TS gate inputs are operator attestations; the DL CI receipt (local replay or GitHub run) is checked "
+            "for commit, success and full scope, not re-executed.",
             "Ancestry and source markers do not replace semantic regression tests.",
             "One application commit does not make upstream package resolution reproducible.",
             "No image built, pushed, deployed or certified by this generator.",
@@ -211,7 +262,8 @@ def main():
     parser.add_argument("--ts-tests-receipt-sha256")
     parser.add_argument("--dl-ci-status", choices=["pending", "pass"], default="pending")
     parser.add_argument("--dl-ci-receipt-sha256")
-    parser.add_argument("--dl-ci-receipt", type=Path, help="summary.json of scripts/p184_local_ci.py (scope full)")
+    parser.add_argument("--dl-ci-receipt", type=Path, help="summary.json of scripts/p184_local_ci.py (scope full) or the "
+                        "receipt of scripts/ci_github_run_receipt.py")
     parser.add_argument("--build-approval", choices=["pending", "approved"], default="pending")
     parser.add_argument("--dependency-image", default="builder")
     args = parser.parse_args()

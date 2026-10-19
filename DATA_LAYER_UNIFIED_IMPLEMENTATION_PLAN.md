@@ -76423,3 +76423,42 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   - The weights file needs a refresh when modules grow.
   - `scripts/p184_local_ci.py` full replay now builds the CI image once per shard plus once for release-gates.
     Local cost is higher; the receipt stays exact.
+- GitHub run 3: run 39211947957 on 6bfca83 (journal commit; still full because the PR contains ci.yml). All 13 jobs
+  success, ci-result PASS, wall 723 s. Per job: changes 9 s, consolidated-source-preflight 10 s, repository-scan
+  14 s, contract-tests 16 s, sdk-python310 10 s, rust-workspace 179 s (cargo cache hit across pushes of the same PR),
+  release-gates 265 s, kn-native-integration 348 s, unit-tests shard 1 700 s / 2 665 s / 3 635 s / 4 651 s,
+  ci-result 7 s.
+- Coordinator review of PR #34 (blocking, fixed): change 7 made `p184_consolidated_build.py --dl-ci-status pass`
+  unreachable. Every local receipt is INCOMPLETE because its sudo step is skipped, and GitHub CI, now the
+  authoritative full run, had no accepted receipt form.
+  - New `scripts/ci_github_run_receipt.py --run-id N [--repo R] --out FILE` writes schema
+    `qdl.ci.github-run-receipt.v1`. Token from ~/.config/data-layer/github/token.env, never printed; read-only REST
+    calls. Contents: run id, attempt, html_url, workflow path, event, head branch / sha, status, conclusion; every
+    job of the latest attempt (name, conclusion, times); the expected job names from the workflow file at head_sha
+    (matrix as `unit-tests (1)`).
+  - Scope source: the `changes` job log, i.e. the `full=` / `python=` / `rust=` / `contracts=` stdout lines of
+    ci_change_scope.py and the `"event"` / `"base"` / `"head"` fields of its JSON summary. Repeated values must
+    agree. The REST API exposes neither the step summary nor the job outputs. The log is corroborated by the job
+    conclusions. Job-log downloads redirect to a signed blob URL, so the client drops the Authorization header on a
+    cross-host redirect (the first live try failed with 401 without that).
+  - `p184_consolidated_build.py` accepts either receipt; the local-receipt rules are unchanged. A GitHub receipt is
+    refused unless all of the following hold, checked from the raw fields (`scope` is not trusted):
+    - sha256 = `--dl-ci-receipt-sha256`;
+    - head_sha = commit; workflow `.github/workflows/ci.yml`; run completed / success;
+    - the changes job said full / python / rust / contracts = true for this head and this event;
+    - every expected job, `changes` and `ci-result` included, is present with conclusion success, and no job is
+      skipped or failed;
+    - event push or workflow_dispatch; or pull_request only when the classifier's base is an ancestor of the commit
+      (GitHub tests the merge of head into base; the merge tree equals the commit's tree only then).
+  - Live check: the receipt of run 39211947957 (sha256 57e0be8c...) is REFUSED for 6bfca83. Its pull_request base
+    5c51a42 (dev before #33) is not an ancestor of 6bfca83, so that run tested a merged tree different from the commit.
+- Branch updated by merging origin/dev 789bfa6 (PR #33 merged) into it, no force-push: the PR diff against dev is
+  now only the CI commits.
+- Tests (host, lock checked and absent): `tests.test_ci_github_run_receipt tests.test_p184_consolidated_build
+  tests.test_ci_change_scope tests.test_ci_test_shard tests.test_p184_local_ci` 104 OK. New cases:
+  - receipt script: log parsing, including echoed command text, conflicts and missing flags; GitHub job naming; full
+    vs partial scope; CLI with a fake client; refusal of a run that is not completed; auth dropped on redirect;
+  - consolidated build: push / dispatch accepted without git; pull_request accepted only with an ancestor base;
+    refused for another commit, another workflow, failure, full=false, another classified head, an event mismatch,
+    an unsupported event, expected jobs without ci-result, a missing job, a skipped job, `scope` saying full over a
+    failed shard, and a digest mismatch.
