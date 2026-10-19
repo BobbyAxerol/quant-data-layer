@@ -1,0 +1,198 @@
+{
+ "schema": "dl.v225.w12-writer-proof-evidence.v1",
+ "created_utc": "2026-10-19",
+ "test_only_measurements": true,
+ "production_writer": {
+  "container": "market_data_service_p184w",
+  "image": "sha256:2deb90b0cc52eae7610fa44692f90df077e9db100ca259e38fd652a2dc1c5dc5",
+  "label_revision": "30f50a91dbd67ce2a482480be598cf509b25333e",
+  "binary_sha256": "aefe6a47dd2ec57d1ea425ccadc47beae736de172118a48e4dd2b7e0e6f7b433"
+ },
+ "release_candidate": {
+  "image": "ghcr.io/bobbyaxerol/executorbroker:sha-3b4466521df2ba78e2a68a6ce1f6da819346fe1b",
+  "digest": "sha256:9a251870cae21e0588f51d9db4f6fe47e293983e593496efd05fefffe9fc0ff9",
+  "pulled_in_this_proof": false,
+  "reason": "registry returned unauthorized; no GHCR credential for the TS package in this session"
+ },
+ "item1_binary": {
+  "local_rebuild_main_3b446652_sha256": "448ad37eb325c16128f500bec949328b4551e7e68bdb1d0ee1d485cc8bb57ec6",
+  "builder": "ghcr.io/pyo3/maturin@sha256:e557fd4c6a0bd13fc926f0a4a886f4143a7ea8a77593f9fd396d637472ab086f",
+  "size_bytes_equal": 6547864,
+  "fmt_commit_54c4dbaa_vs_deployed": "prior proof: only panic Location line/column words (180) and build-id differ",
+  "unstripped_function_diff_54c4dbaa_vs_3b446652": {
+   "functions": 4216,
+   "equal": 4214,
+   "differ": [
+    "market_data_writer::latency::LatencyAggregates::observe (the reviewed latency.rs change; 1813 -> 1817 instructions)",
+    "ring_core_0_17_14__p256_point_mul_base_vartime (trailing alignment nop padding only)"
+   ],
+   "only_one_side": 0
+  },
+  "stripped_deployed_vs_main_sections_differing": [
+   ".note.gnu.build-id",
+   ".rela.dyn",
+   ".text",
+   ".rodata",
+   ".eh_frame_hdr",
+   ".eh_frame",
+   ".gcc_except_table",
+   ".init_array",
+   ".data.rel.ro",
+   ".got",
+   ".data"
+  ],
+  "stripped_classification": "code-address shift after the grown observe() (jump tables, FDEs, relocations, GOT, vtables) plus panic-location lines; not verified word by word"
+ },
+ "item1_closure": {
+  "deployed_image_43_file_writer_closure_equals_git_30f50a91": true,
+  "deployed_image_import_closure_56_files_equals_git_30f50a91": true,
+  "git_import_closure_30f50a91_to_3b446652": {
+   "added": [
+    "adapters/market_data/cursor_group_commit.py"
+   ],
+   "changed": {
+    "adapters/market_data/data_layer_v2.py": "T1 wiring",
+    "shared/config.py": "T1 setting + MARKET_DATA_V1_COMPAT_ENABLED",
+    "services/market_data/main.py": "V1 lease renewal behind the V1 switch",
+    "services/market_data/data_layer_bridge.py": "V1 pub/sub, REST recovery, VN quotes behind the V1 switch",
+    "services/market_data/native_plan.py": "lint only (import blank line, zip strict=False = default)",
+    "services/market_data/native_worker.py": "lint only (blank line)",
+    "services/market_data/trailing_observation.py": "lint only (one statement per line)",
+    "alpha_sdk/order_batch.py": "lint only (import order)"
+   },
+   "not_in_import_closure_but_in_43_files": {
+    "services/market_data/native_handoff.py": "lint only",
+    "scripts/p184_n1_cursor_handoff.py": "lint only (operator script, not run by the writer)"
+   }
+  },
+  "ghcr_image_side": "NOT_VERIFIED"
+ },
+ "item2_live_routes": {
+  "window_utc": "2026-10-19T12:53:25Z/13:08:26Z",
+  "python_store_routes": [
+   "BAR/1m",
+   "BOOK_DELTA",
+   "BOOK_SNAPSHOT"
+  ],
+  "native_rust_checkpoint_routes": [
+   "TRADE",
+   "QUOTE"
+  ],
+  "per_worker": {
+   "worker-0": {
+    "commits_per_s": 27.9,
+    "acks_per_commit": 1.15,
+    "io_ms_per_commit": 14.4,
+    "pending_peak": 7
+   },
+   "worker-1": {
+    "commits_per_s": 24.5,
+    "acks_per_commit": 1.11,
+    "io_ms_per_commit": 14.2,
+    "pending_peak": 7
+   },
+   "worker-2": {
+    "commits_per_s": 20.8,
+    "acks_per_commit": 1.03,
+    "io_ms_per_commit": 13.6,
+    "pending_peak": 4
+   },
+   "worker-3": {
+    "commits_per_s": 28.2,
+    "acks_per_commit": 1.12,
+    "io_ms_per_commit": 14.4,
+    "pending_peak": 7
+   }
+  },
+  "errors": 0,
+  "production_book_delta_gateway_send_to_redis_reply_ms_p50": [
+   25.3,
+   27.0
+  ]
+ },
+ "item4_ab": {
+  "apparatus": "component-level: real SDK 2.4.0 FileCursorStore vs TS GroupCommitFileCursorStore (dev = main code), inline-ACK route loop, production delivery-trace schedule (4 workers, 22 BOOK routes, 300 s, 20 s pause at 200 s), --network none, 2 CPUs, order A1 B1 B2 A2, host lock held 13:19:58-13:50:05Z",
+  "arms": {
+   "A1": {
+    "interval_ms": 0,
+    "commits_per_s": 90.37,
+    "acks_per_s": 105.75,
+    "acks_per_commit": 1.17,
+    "pending_p99_max": 3,
+    "pending_peak_max": 6,
+    "ack_latency_p50_ms_max": 15.624,
+    "ack_latency_p99_ms_max": 32.057,
+    "ack_latency_max_ms": 46.787,
+    "book_delta_inline_done_p50_ms_max": 24.85,
+    "catchup_max_s": 0.128,
+    "write_syscalls": 27112,
+    "cgroup_wios": 29676,
+    "cgroup_wbytes": 677158912,
+    "cgroup_cpu_usage_s": 61.601,
+    "host_iowait_share": 0.112,
+    "events_replayed": 33985
+   },
+   "B1": {
+    "interval_ms": 50,
+    "commits_per_s": 73.36,
+    "acks_per_s": 104.23,
+    "acks_per_commit": 1.421,
+    "pending_p99_max": 5,
+    "pending_peak_max": 6,
+    "ack_latency_p50_ms_max": 74.614,
+    "ack_latency_p99_ms_max": 99.015,
+    "ack_latency_max_ms": 107.184,
+    "book_delta_inline_done_p50_ms_max": 37.557,
+    "catchup_max_s": 0.371,
+    "write_syscalls": 22015,
+    "cgroup_wios": 24189,
+    "cgroup_wbytes": 550297600,
+    "cgroup_cpu_usage_s": 56.062,
+    "host_iowait_share": 0.1069,
+    "events_replayed": 33985
+   },
+   "B2": {
+    "interval_ms": 50,
+    "commits_per_s": 73.35,
+    "acks_per_s": 104.19,
+    "acks_per_commit": 1.421,
+    "pending_p99_max": 5,
+    "pending_peak_max": 6,
+    "ack_latency_p50_ms_max": 74.64,
+    "ack_latency_p99_ms_max": 98.518,
+    "ack_latency_max_ms": 114.591,
+    "book_delta_inline_done_p50_ms_max": 37.316,
+    "catchup_max_s": 0.321,
+    "write_syscalls": 22012,
+    "cgroup_wios": 23925,
+    "cgroup_wbytes": 549154816,
+    "cgroup_cpu_usage_s": 55.657,
+    "host_iowait_share": 0.10798,
+    "events_replayed": 33985
+   },
+   "A2": {
+    "interval_ms": 0,
+    "commits_per_s": 90.2,
+    "acks_per_s": 105.76,
+    "acks_per_commit": 1.172,
+    "pending_p99_max": 3,
+    "pending_peak_max": 6,
+    "ack_latency_p50_ms_max": 15.737,
+    "ack_latency_p99_ms_max": 32.752,
+    "ack_latency_max_ms": 44.793,
+    "book_delta_inline_done_p50_ms_max": 24.863,
+    "catchup_max_s": 0.137,
+    "write_syscalls": 27061,
+    "cgroup_wios": 29194,
+    "cgroup_wbytes": 674140160,
+    "cgroup_cpu_usage_s": 61.678,
+    "host_iowait_share": 0.11343,
+    "events_replayed": 33985
+   }
+  },
+  "not_measured": [
+   "inline latency p95/p99 in steady state (the injected pause dominates the tails)",
+   "full writer instance (Stream transport, projection, Redis apply replaced by the recorded schedule)"
+  ]
+ }
+}

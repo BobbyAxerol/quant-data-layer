@@ -76799,3 +76799,17 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   io.weight. No new campaign now (Codex review E).
 - Unchanged: the v2.2.4 certificate's operational condition (measure and run with unrelated heavy stacks paused);
   IDR-128 stays OPEN.
+
+### DL v2.2.5 window: W12 decision (TS writer proof package) - 2026-10-19 (Claude)
+
+- Decision record `upgrade/evidence/releases/v2.2.5/drafts/W12_DECISION.md` (+ `W12_DECISION_EVIDENCE.json`).
+  **Verdict W12-A** (writer 2deb90b0, identity mount only; packet section 5 and rollback unchanged).
+- Proof items: (1) writer binary main vs deployed: function-level only `LatencyAggregates::observe` (reviewed
+  latency.rs change) + alignment padding; Python closure diff fully classified; GHCR image NOT verified (registry
+  unauthorized in this session) -> not complete. (2) T1 runtime routes PASS: Python store = BAR/BOOK_DELTA/
+  BOOK_SNAPSHOT (101 commits/s, ~14 ms each, errors 0), TRADE/QUOTE = native Rust checkpoints. (3) T1 failure-step
+  and cancellation tests added on TS `test/writer-t1-proof` 0c5148e1 (18 passed x3 locally); PR not opened (TS repo
+  not visible to the available token), CI not run. (4) component-level isolated A/B ABBA on the production trace:
+  50 ms = -19 % commits/write IO, +59 ms ACK p50, +12.5 ms BOOK_DELTA apply p50; full-writer A/B not done.
+- Host lock `claude-w12-writer-proof` 13:19:58-13:50:05Z, released on completion; containers `--rm`; no production
+  mutation. Status: proposal; owner/TS go needed only for a later W12-B.
