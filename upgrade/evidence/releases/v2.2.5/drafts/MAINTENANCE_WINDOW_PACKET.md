@@ -83,7 +83,8 @@ image, the hardened generation gen-20261019T084200Z, the window env, writer clon
 `scripts/kn_mesh_rotation_rehearsal.py --run <base> --old-gen <old generation.env> --new-gen <new generation.env>
 --old-release deploy/compose/qdl-v2-stable-kn.v2.2.4.env --new-release deploy/compose/qdl-v2-stable-kn.v2.2.5.env
 --secrets ~/.local/state/qdl-v2/releases/v2.2.5/kn-secrets.env --lock-owner <owner> --expect-query-image <digest>
---burst` (A -> B -> C -> D, then the 64-warmup burst check on the rehearsal Query), receipt next to
+--burst --ts-root ~/.local/state/qdl-v2/releases/v2.2.5/ts-src-v2.0.0` (writer clone loader and schema from
+`git archive v2.0.0` of TS, frozen outside the scratchpad) (A -> B -> C -> D, then the 64-warmup burst check on the rehearsal Query), receipt next to
 `rehearsal-20261019.json`.
 
 ## 3. Images

@@ -76893,6 +76893,9 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   3 bursts of 64 concurrent TS-manifest r11 warmups (the 12 ETH requirements of the deployed binding cycled) with the
   new TS identity, cgroup memory sampled every 2 s; predeclared gate no restart / no OOM kill / settled <= baseline +
   128 MiB and < 1.6 GiB / last step <= 32 MiB; latency, statuses and writer readiness reported, not gated.
+  `--ts-root`: the writer clone loader/schema come from a frozen `git archive v2.0.0` of TS
+  (`~/.local/state/qdl-v2/releases/v2.2.5/ts-src-v2.0.0`, loader sha256 dc339c2d...; identical to the former default
+  worktree for the loader and migrations), so the run does not depend on another agent's worktree.
 - Tests: `tests/test_kn_window_writer.py` 12 passed locally (`python3 -B -m unittest`, pure functions; Docker parts
   exercised by the read-only dry runs above). Rehearsal changes: syntax checked; exercised only by the final run.
 - Codex `p184-final-phase-closure-review-20261019.md` dispositions: 1 (IDR-129 acceptance: 1.8 GiB hold, < 1.6 GiB

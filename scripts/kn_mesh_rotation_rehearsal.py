@@ -210,6 +210,7 @@ class Rehearsal:
         self.holder = f"{PROJECT}-tsholder"
         self.first_healthy = {}
         self.current_gen_env = None
+        self.ts_root = Path(getattr(args, "ts_root", None) or TS_ROOT)  # TS checkout for the writer clone loader
 
     # ------------------------------------------------------------------ bookkeeping
     def note(self, event, **fields):
@@ -443,7 +444,7 @@ class Rehearsal:
         return inspect, clone
 
     def start_writer(self, ts_identity_dir):
-        iso = g12.load_writer_clone(TS_ROOT)
+        iso = g12.load_writer_clone(self.ts_root)
         deployed, inspect = self.writer_inspect(ts_identity_dir)
         sh(["docker", "run", "-d", "--rm", "--name", self.holder, "--label", f"{LABEL}=v225", "--network",
             f"{PROJECT}_executor_network", "--cpus", str(HOLDER_CPUS), "--memory", "32m", "--entrypoint", "sleep",
@@ -487,7 +488,7 @@ class Rehearsal:
         clone.writer_args = (lambda c=clone, b=base_args, d=destination: g12.lifecycle_writer_args(
             b(), c.image, str(c.state_dir), d, c.lifecycle["phase"]))
         clone._prepare_lifecycle = lambda: None  # lifecycle managed here (G12 pattern)
-        sql, schema = g12.clone_schema_sql(TS_ROOT)
+        sql, schema = g12.clone_schema_sql(self.ts_root)
         ready = clone._wait_ready
         clone._wait_ready = lambda c=clone, r=ready, s=sql: (r(), g12.apply_clone_schema(c, s))
         clone.__enter__()
@@ -857,6 +858,7 @@ def main(argv=None) -> int:
     p.add_argument("--keep", action="store_true", help="do not tear down after the run (diagnosis only)")
     p.add_argument("--burst", action="store_true", help="after phase D: warmup-burst RSS check on the rehearsal Query")
     p.add_argument("--expect-query-image", help="refuse unless the new release env pins this Query image")
+    p.add_argument("--ts-root", help=f"TS checkout providing the writer clone loader and schema (default {TS_ROOT})")
     args = p.parse_args(argv)
     if args.down:
         Rehearsal(args.down, args).down()
