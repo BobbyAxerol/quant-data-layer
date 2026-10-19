@@ -76287,3 +76287,252 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
     - Not run (unaffected): rust fmt / clippy / test, cargo-deny, contract and SDK jobs, the rest of the unit suite.
   - Deviation: the A5 host tests at ~05:05Z ran without reading the host lock first (34a); the lock was absent then
     (and at 05:23Z), and no measurement was running.
+
+### CI/CD: change-scoped jobs and sharded unit suite - 2026-10-19 (Claude)
+
+- Owner request 2026-10-19: "tối ưu CI/CD, đừng sửa 1 tí lại chạy CI toàn bộ thì lâu lắm; chạy thông minh nhưng vẫn hiệu
+  quả và đúng quy trình". Branch `ci/change-scope-and-shards` (worktree `/home/bobby/.worktrees/data-layer-ci-scope`),
+  based on `fix/p184-dl-closure` 33797dd; draft PR into dev, it shrinks to this commit once PR #33 merges.
+  Status: implemented, tested locally; GitHub proof runs below.
+- Measured baseline (GitHub run 39201550345, docs-only commit 288a580, 30 min wall): `unit-tests` 30 min, of which
+  the single "Run unit tests" step (`python -m unittest discover -s tests` in `test_runner`) took 1583 s and every other
+  step < 60 s; `contract-tests` 4 min (Rust fmt / clippy / test 260 s); `kn-native-integration` 5 min;
+  `sdk-python310` and `consolidated-source-preflight` < 1 min. No readable required checks on the repo; ruleset
+  NO-FORCE disabled. A docs-only journal commit cost the full 30 min.
+- Design (`.github/workflows/ci.yml`):
+  - `changes` job (checkout with full history) self-tests and runs `scripts/ci_change_scope.py`, outputs `full`,
+    `python`, `rust`, `contracts`, `reason` and writes the JSON summary to the step summary.
+  - Job gates (job-level `needs: changes` + `if:`; a job skipped by `if` reports Skipped):
+    `contract-tests` (buf format / lint / breaking, generated code current, python generated contracts) if contracts;
+    new `rust-workspace` (Rust fmt / clippy / test + cargo-deny, moved out of contract-tests) if rust, with
+    `actions/cache@5a3ec84e` (v4.2.3) of `.cargo-ci/registry`, `.cargo-ci/git`, `target` mounted into rust:1.82-slim,
+    exact key `rust-workspace-<os>-rust-1.82-slim-<hashFiles(Cargo.lock, rust-toolchain.toml)>`, no restore-keys,
+    saved only on success, `CARGO_INCREMENTAL=0`; `sdk-python310` if python; `unit-tests` = matrix of 4 shards
+    (fail-fast false) running `python -B -m scripts.ci_test_shard --shard N --of 4` in `test_runner`, if python;
+    `release-gates` = every other step of the former unit-tests job, unchanged and in order (image build, runtime
+    audit, KN Redis readback, Phase 5/6/7 named gates, beta topology, migration, load, Redis rebuild, Rust replay tool
+    + fixtures, durability perf, trivy image scan, SBOM rehearsal, cleanup), if python or rust; `kn-native-integration`
+    if rust; `repository-scan` (trivy fs secret + misconfig, split out) and `consolidated-source-preflight` always.
+  - `ci-result` (needs all, `if: always()`) runs `ci_change_scope.py --verify-needs` on `toJSON(needs)`: FAIL when
+    `changes` did not succeed or lacks an output, when an in-scope job is not `success` (failure, cancelled or
+    skipped), or when an out-of-scope job failed; PASS when the rest were skipped by scope. It is the single status.
+  - `workflow_dispatch` added; concurrency: a pull request cancels its older run; every other event has its own
+    group (`run-<run_id>`). Deviation from the requested `github.ref` group: GitHub keeps one pending run per group and
+    cancels older pending ones even with cancel-in-progress false, which would drop the full run of an intermediate
+    dev push.
+- Process rule (recorded here and in the workflow header): a PR into dev runs only its scoped suites; a PR into
+  `main`, a push to dev, `workflow_dispatch`, the `ci:full` label (read from the payload on the next push / reopen) and
+  any change to a CI-defining file (`.github/**`, `Dockerfile*`, `docker-compose*.yml`, `.dockerignore`,
+  `.trivyignore`, `pyproject.toml`, `poetry.lock`, `requirements*`, `scripts/ci_change_scope.py`,
+  `scripts/ci_test_shard.py`, `scripts/prepare_nonroot_runtime.sh`) run everything. A release receipt requires a
+  full run.
+- Path rules (`scripts/ci_change_scope.py`), with two adjustments the code required:
+  - docs (`*.md`, `docs/**`, `LICENSE`) set no suite, except (adjustment 1) a doc whose exact path appears in a tracked
+    file under `tests/` as a whole path (`qdl_sdk/README.md` does not name `README.md`; tests read
+    docs/runbooks/phase93-hold-close-expand.md and
+    docs/runbooks/phase103-shared-rust-primary-handoff.md) and markdown under `qdl_sdk/` (README/CHANGELOG ship in the
+    wheel, tests/test_qdl_sdk_release.py reads them) or `tests/`, which run python;
+  - Rust: `rust/**` (all 9 Cargo workspace members are under rust/), `Cargo.toml`, `Cargo.lock`, `deny.toml`,
+    `rust-toolchain*`, `.cargo/**`; (adjustment 2) `tests/fixtures/**` sets python + rust because Rust tests read
+    tests/fixtures/phase2, phase9 and phase104 (rust/qdl-core/src/canonical.rs, l2_book.rs, l2_adapter.rs,
+    okx_simulator.rs, rust/qdl-venue-core/src/authority.rs);
+  - `contracts/**`, `generated/**` set contracts + python + rust (Rust reads contracts/golden and generated/rust);
+    anything else, unknown included, sets python; a classifier crash fails `changes`, hence `ci-result`.
+- Sharding (`scripts/ci_test_shard.py`): `unittest.defaultTestLoader.discover("tests")` from the same cwd as before
+  (run as a module so sys.path[0] is the cwd, as with `python -m unittest`; the requested
+  `python -B scripts/ci_test_shard.py` would put scripts/ first on sys.path and let tests import scripts modules by bare
+  name), grouped by top-level module, greedy longest-first balance by test count (or seconds from an optional
+  `scripts/ci_test_shard_weights.json`, not checked in yet), runner settings of `unittest.main` (warnings "default").
+  Import failures stay `_FailedTest` and fail their shard; shard 1 verifies that the 4 shards cover every module once
+  and none is empty; each shard prints per-module seconds (`shard-timing`). Discovery in qdl-v2-python:2.2.4-31a5155
+  (--network none, worktree ro): 334 modules, weight 4040 (test cases, minimum 1 per module), 1010 per shard.
+- Release receipt: `scripts/p184_local_ci.py` expands `strategy.matrix` (`unit-tests[shard=1..4]`, `${{ matrix.* }}`
+  substituted), ignores job-level `needs`/`if` (local = push semantics = full), does not replay the routing jobs
+  `changes` / `ci-result`, treats `actions/cache` as a no-op (cold build), and writes `scope`, `scope_basis` and
+  `workflow_jobs` into summary.json. `--changed-since BASE` runs only the jobs the classifier selects for BASE...SHA
+  (job-level `if:` evaluated; unsupported conditions fail closed) and, like any `--jobs` subset, marks the receipt
+  `scope: affected`. `scripts/p184_consolidated_build.py` now needs the receipt file for a DL CI pass
+  (`--dl-ci-receipt`): sha256 = `--dl-ci-receipt-sha256`, schema, sha = source commit, scope `full`, status PASS and
+  jobs = workflow_jobs, else it refuses; a digest-only attestation is refused.
+- Tests (host python 3.12.3, after the host lock was released): `python3 -B -m unittest tests.test_ci_change_scope
+  tests.test_ci_test_shard tests.test_p184_local_ci tests.test_p184_consolidated_build` 89 OK, 0 skipped; the same
+  modules in `qdl-v2-python:2.2.4-31a5155` (--network none, worktree ro) 89 run, OK, 7 skipped (git-dependent
+  classifier and dry-run tests: the image has no git; the `changes` job runs tests.test_ci_change_scope on the runner
+  where git exists). Covered: path rules (CI-defining, docs, test-read docs, Rust incl. every Cargo member and every
+  file Rust reads outside rust/, contracts / generated / fixtures fan-out, unknown -> python), forced-full cases (push,
+  dispatch, PR into main, `ci:full`, zero / empty / unknown base), merge-base diff, GITHUB_OUTPUT format,
+  `--verify-needs` (scoped skips pass; failure, cancelled, in-scope skip, changes failure, missing output or missing
+  need fail), workflow wiring (every `needs` / `needs.*.outputs.*` / `steps.*.outputs` reference exists, job-level
+  `if:` == JOB_SCOPE, ci-result needs every job, shard count, cache pin and key), partition properties (complete,
+  disjoint, non-empty, deterministic, greedy bound), discovery shards on a temp tree (an import failure and a failing
+  test each fail their shard), local-CI matrix expansion / scope selection / dry-run scope marking, consolidated build
+  refusing affected, unscoped, INCOMPLETE, other-commit, other-schema, partial-job, digest-only and mismatched
+  receipts. A guard test asserts that no tests/ file names the plan, the certification ledger or the root README as
+  a path: the first local `--changed-since` dry run showed the new test file itself naming the plan, which would have
+  made every journal commit run python (fixed before push; AGENTS.md stays test-read via
+  tests/test_host_measurement_lock.py). Found while testing: `unittest.defaultTestLoader` keeps `_top_level_dir` across discover calls in Python
+  3.12, so the shard runner uses a fresh `TestLoader()` (same class and behaviour on a first discover).
+- Not run locally: the full unit suite and the shards themselves (no whole-suite run on the shared host; GitHub is the
+  proof), the Rust job and its cache, ruff (not installed on the host or in the image; syntax checked only).
+- Deviation (34a): at ~05:57-05:58Z four import-only discovery containers (`--list`, --network none, a few seconds
+  each) and at ~06:01Z one 0.04 s host unittest ran inside foreign host-lock windows (Codex PMA11 05:56:52-06:01:52Z,
+  then epg10-08 from 05:59:31Z): the lock was read but not honoured at that moment. Any measurement in those windows
+  should treat them as foreign activity. Afterwards every run waited for the lock to clear.
+- GitHub proof run 1: run 39208370362 on b1023f3 (PR #34 opened as a draft into dev; event pull_request; scope
+  full because the PR changes .github/workflows/ci.yml, docker-compose.v2-stable.yml from PR #33 and the two CI
+  scripts). Wall 1011 s (16.9 min) against 30 min before. Per job: changes 13 s (29 classifier tests OK on the runner,
+  git and yaml present), consolidated-source-preflight 10 s, repository-scan 21 s, contract-tests 14 s, sdk-python310
+  13 s, rust-workspace 260 s (Rust step 239 s, cold), release-gates 256 s, kn-native-integration 363 s, unit-tests
+  shard 1 642 s / 2 629 s / 3 983 s / 4 359 s (image build 49-57 s per shard), ci-result 7 s.
+  - Shards by test count (1026/1026/1026/1025) were unbalanced in time: suite seconds 550 / 540 / 894 / 262, sum
+    2246 s over 336 modules. Shard 3 set the wall time.
+  - Shard 4 FAILED one test: `test_fund_phase6_capacity` (synthetic sustained-load gate, burst window 405.5 events/s
+    against the >= 450 floor = 0.9 x 500). It is a wall-clock throughput threshold on a shared 2-vCPU runner. Its
+    predecessor module in the shard (`test_fund_phase5_stream_sdk`) is also its predecessor in the full discovery
+    order, so this is not a new ordering. Not fixed here; watched in the next runs. `ci-result` FAILED as designed
+    ("unit-tests: in scope, result failure").
+  - Cargo cache save FAILED (warning, the job stayed green): `tar` as the runner user could not read crate sources
+    that root extracted in the container. Fixed: the Rust step now runs `chown -R $CACHE_OWNER target
+    /usr/local/cargo/registry /usr/local/cargo/git` inside the container after cargo, and exits with cargo's status.
+- Shard balance: `scripts/ci_test_shard_weights.json` holds the per-module seconds of run 39208370362 (336 modules).
+  With these weights the greedy partition gives 561.5 s per shard (84 modules each). A module missing from the file
+  weighs its test-case count. Refresh the file from the `shard-timing` lines when the shards drift.
+- Scoped path on GitHub: it cannot be shown on PR #34 itself. `changes` diffs the whole PR (merge base...head), as it
+  must, and the PR contains ci.yml, so every push to it runs full. The first PR into dev after this merges is the
+  GitHub proof. Locally: `p184_local_ci.py --changed-since <ci commit> --dry-run` on a docs-only commit selects only
+  consolidated-source-preflight + repository-scan, and the classifier / `--verify-needs` tests cover the docs-only
+  PASS and the skip rules.
+- GitHub proof run 2: run 39210279457 on 139d23f (weights + cache ownership fix; scope full for the same reason).
+  **All 12 jobs success, ci-result PASS, wall 720 s (12.0 min)** against 30 min before and 16.9 min in run 1.
+  - Per job: changes 12 s, consolidated-source-preflight 13 s, repository-scan 17 s, contract-tests 13 s,
+    sdk-python310 10 s, rust-workspace 291 s (cold, Rust step 259 s), release-gates 201 s, kn-native-integration
+    335 s, unit-tests shard 1 517 s / 2 688 s / 3 661 s / 4 695 s, ci-result 5 s.
+  - Partition check PASS: 336 modules, loads 561 s each by run-1 seconds. Measured suite seconds per shard:
+    574 / 592 / 426 / 596 (runner variance against the run-1 weights).
+  - `test_fund_phase6_capacity` passed in this run.
+  - Cargo cache saved: key `rust-workspace-Linux-rust-1.82-slim-5df2c155...`, 740 MB, scoped to refs/pull/34/merge.
+    GitHub lets a PR read caches of its own merge ref and of the base branch. After merge, a push to dev saves the
+    cache every PR into dev reads.
+  - Cache-hit measurement (attempt 2: rerun of rust-workspace only): restore 12 s, Rust fmt/clippy/test 154 s against
+    259 s cold, job 182 s against 291 s.
+- Status: implemented, tested locally, GitHub full path proven (run 39210279457 green). The scoped / docs-only path
+  is proven locally only, until the first PR into dev after merge. Not merged; PR #34 stays a draft.
+- Open:
+  - `test_fund_phase6_capacity` throughput floor is wall-clock sensitive on shared runners (1 failure in 2 runs here).
+    Proposed: own slice, if it recurs.
+  - The weights file needs a refresh when modules grow.
+  - `scripts/p184_local_ci.py` full replay now builds the CI image once per shard plus once for release-gates.
+    Local cost is higher; the receipt stays exact.
+- GitHub run 3: run 39211947957 on 6bfca83 (journal commit; still full because the PR contains ci.yml). All 13 jobs
+  success, ci-result PASS, wall 723 s. Per job: changes 9 s, consolidated-source-preflight 10 s, repository-scan
+  14 s, contract-tests 16 s, sdk-python310 10 s, rust-workspace 179 s (cargo cache hit across pushes of the same PR),
+  release-gates 265 s, kn-native-integration 348 s, unit-tests shard 1 700 s / 2 665 s / 3 635 s / 4 651 s,
+  ci-result 7 s.
+- Coordinator review of PR #34 (blocking, fixed): change 7 made `p184_consolidated_build.py --dl-ci-status pass`
+  unreachable. Every local receipt is INCOMPLETE because its sudo step is skipped, and GitHub CI, now the
+  authoritative full run, had no accepted receipt form.
+  - New `scripts/ci_github_run_receipt.py --run-id N [--repo R] --out FILE` writes schema
+    `qdl.ci.github-run-receipt.v1`. Token from ~/.config/data-layer/github/token.env, never printed; read-only REST
+    calls. Contents: run id, attempt, html_url, workflow path, event, head branch / sha, status, conclusion; every
+    job of the latest attempt (name, conclusion, times); the expected job names from the workflow file at head_sha
+    (matrix as `unit-tests (1)`).
+  - Scope source: the `changes` job log, i.e. the `full=` / `python=` / `rust=` / `contracts=` stdout lines of
+    ci_change_scope.py and the `"event"` / `"base"` / `"head"` fields of its JSON summary. Repeated values must
+    agree. The REST API exposes neither the step summary nor the job outputs. The log is corroborated by the job
+    conclusions. Job-log downloads redirect to a signed blob URL, so the client drops the Authorization header on a
+    cross-host redirect (the first live try failed with 401 without that).
+  - `p184_consolidated_build.py` accepts either receipt; the local-receipt rules are unchanged. A GitHub receipt is
+    refused unless all of the following hold, checked from the raw fields (`scope` is not trusted):
+    - sha256 = `--dl-ci-receipt-sha256`;
+    - head_sha = commit; workflow `.github/workflows/ci.yml`; run completed / success;
+    - the changes job said full / python / rust / contracts = true for this head and this event;
+    - every expected job, `changes` and `ci-result` included, is present with conclusion success, and no job is
+      skipped or failed;
+    - event push or workflow_dispatch; or pull_request only when the classifier's base is an ancestor of the commit
+      (GitHub tests the merge of head into base; the merge tree equals the commit's tree only then).
+  - Live check: the receipt of run 39211947957 (sha256 57e0be8c...) is REFUSED for 6bfca83. Its pull_request base
+    5c51a42 (dev before #33) is not an ancestor of 6bfca83, so that run tested a merged tree different from the commit.
+- Branch updated by merging origin/dev 789bfa6 (PR #33 merged) into it, no force-push: the PR diff against dev is
+  now only the CI commits.
+- Tests (host, lock checked and absent): `tests.test_ci_github_run_receipt tests.test_p184_consolidated_build
+  tests.test_ci_change_scope tests.test_ci_test_shard tests.test_p184_local_ci` 104 OK. New cases:
+  - receipt script: log parsing, including echoed command text, conflicts and missing flags; GitHub job naming; full
+    vs partial scope; CLI with a fake client; refusal of a run that is not completed; auth dropped on redirect;
+  - consolidated build: push / dispatch accepted without git; pull_request accepted only with an ancestor base;
+    refused for another commit, another workflow, failure, full=false, another classified head, an event mismatch,
+    an unsupported event, expected jobs without ci-result, a missing job, a skipped job, `scope` saying full over a
+    failed shard, and a digest mismatch.
+- GitHub run 4: run 39213849110 on 73f62e7 (receipt fix, after merging dev 789bfa6). All 13 jobs success, wall
+  795 s. Shards 687 / 447 / 676 / 770 s (suite 581 / 360 / 584 / 676 s; dev added modules since the weights).
+  - Its receipt (`ci_github_run_receipt.py --run-id 39213849110`, sha256 3d9af2ac...) is ACCEPTED for 73f62e7:
+    pull_request base 789bfa6 is an ancestor.
+- Owner standing rules CI1-CI8 (/home/bobby/CLAUDE.md section 7b, 2026-10-19). Trigger: the v2.2.4 promotion ran
+  the full CI three times on the same bytes (PR #33 merge ref, push to dev 789bfa6, PR #35 dev->main merge ref),
+  ~30 min each, with no added assurance. Implemented in this slice:
+  - CI1 tree-identity reuse (`changes` job, `--reuse-lookup`, `actions: read`, GH_TOKEN = workflow token):
+    - Rule: identical git tree => identical bytes, `.github` included. A full green run of that tree is the evidence.
+      Running it again adds nothing; flake detection is not a reason to rerun (CI7: rerun only the failed job).
+    - The job prints `tree=` (`git rev-parse HEAD^{tree}` of the tested checkout: the merge ref for a pull_request,
+      the pushed commit for a push). It then reads the last 20 successful ci.yml runs.
+    - The API reports a pull_request run's head_sha as the PR head, not the merge commit it tested (checked: run
+      39211947957 reports 6bfca83, the branch head). A candidate's tree therefore comes from its own `changes` log
+      (`tree=`). Runs from before this change have no such line and are never reused.
+    - Reuse only from a run that: is attempt 1; had every job success (none skipped / cancelled / failed); had the
+      classifier say full; did not itself inherit; and has a byte-identical tree. Then every suite flag is false,
+      `reuse_run=<id>`, and ci-result writes "inherited full CI run <id> on identical tree <tree>" to the step
+      summary.
+    - Never for workflow_dispatch or `ci:full`. An API error, missing token or the 90 s deadline means no reuse
+      (fail toward running).
+  - CI2 incremental base: for a pull_request, the scope diff starts at the nearest strict ancestor of the PR head
+    with a green full or inherited-full run (its head_sha, nearest by `rev-list --count`). With no such ancestor or a
+    failed lookup it starts at the PR base. A CI-defining file changed since that ancestor still forces full.
+  - CI3: push triggers only `dev` and `main` (main added); pull requests cancel their older run.
+  - CI5: `base_check` is true on every pull_request, so contract-tests (PR-base `buf breaking`) still runs on
+    inherited and docs-only PR runs.
+  - CI6: the GitHub receipt records `tested_tree`; for an inherited run it also records `inherited_from_run` and
+    embeds the original run's receipt (one level; an inherited origin is refused). `p184_consolidated_build.py`
+    checks:
+    - tested tree = `git rev-parse <commit>^{tree}` (this replaces the ancestor rule whenever a tree is recorded);
+    - for an inherited run: reuse_run = inherited_from_run, no failed or cancelled job, changes and ci-result
+      success, not workflow_dispatch, and the embedded original passes every full-run rule on the same tree;
+    - a scoped (incremental) run is never accepted.
+  - Expected saving for a promotion like v2.2.4: 3 full runs -> 1 full + 2 inherited, about 12 min + 2 x ~1 min
+    (changes lookup, preflight, secret scan, contract-tests) instead of 3 x 12-30 min.
+  - Live read-only check of the lookup (host token): 24.9 s for the 20 candidates.
+    - Only 39213849110 and 39211947957 qualify as full (no `tree=` yet, so they serve CI2 but not CI1); older runs
+      have no `changes` job; re-run attempts are excluded.
+    - The nearest green ancestor of 73f62e7 is 6bfca83 (run 39211947957).
+- Tests (host, lock checked, absent; impact-based): `tests.test_ci_github_run_receipt tests.test_p184_consolidated_build
+  tests.test_ci_change_scope tests.test_ci_test_shard tests.test_p184_local_ci` 121 OK; in qdl-v2-python:2.2.4-31a5155
+  (--network none, ro) OK, 14 skipped (git-dependent). New cases:
+  - CI1: match (pull_request into dev and main, push), and no reuse on tree mismatch, scoped / inherited /
+    re-run / failed candidate, own run, workflow_dispatch, ci:full and API failure;
+  - CI2: docs-only after green => no suite (base_check only); a code change after green => that suite only;
+    inherited-full ancestor counts; a CI-defining change since the ancestor => full; no green ancestor, API failure,
+    scoped ancestor and non-ancestor => PR base; the nearest of two green ancestors wins;
+  - ci-result: inherited PASS with summary line; contract-tests still required by base_check; inconsistent or
+    invalid reuse outputs FAIL;
+  - receipts: inherited receipt embeds a full origin and is accepted; an origin that inherited itself is refused;
+    the consolidated build refuses a tree mismatch and nine inherited-run defects, and accepts a full run and an
+    inherited run on the matching tree.
+- GitHub run 5: run 39216183450 on 59b90c5.
+  - CI2 picked the nearest green full ancestor 73f62e7 (run 39213849110); the diff since it has ci.yml and
+    ci_change_scope.py, so the run was full; tree 48cd872b. Every suite job success. Wall 749 s; shards
+    714 / 670 / 536 / 569 s; rust-workspace 196 s (cache hit).
+  - ci-result FAILED: "changes output 'reuse_run' invalid: None". GitHub omits a job output whose value is empty,
+    so `needs.changes.outputs` had no reuse_run. Fixed: an absent reuse_run means no reuse (tree, flags and
+    base_check are never empty); test added. Tests 122 OK on the host.
+- GitHub run 6: run 39217653087 on dc25b79. Full: CI2 base 73f62e7, the diff has CI-defining files. All 13 jobs
+  success, wall 713 s; shards 473 / 435 / 676 / 669 s; rust-workspace 189 s; tree 1ee31417. This is the first full
+  run that records `tree=`.
+- CI1 proof, run 39219019908: PR #34 closed and reopened with the same head dc25b79 and the same dev 789bfa6, so the
+  merge ref has the identical tree 1ee31417. The `changes` job printed "inherited full CI run 39217653087 on
+  identical tree 1ee31417...".
+  - Ran: changes 24 s, repository-scan 16 s, consolidated-source-preflight 11 s, contract-tests 13 s (base_check).
+  - Skipped: unit-tests, sdk-python310, release-gates, rust-workspace, kn-native-integration.
+  - ci-result success; **wall 52 s instead of 713 s**.
+  - CI6: its receipt (scope inherited, inherited_from_run 39217653087, sha256 9e694bf2...) is ACCEPTED by
+    `p184_consolidated_build.verify_dl_ci_receipt` for dc25b79 (`git rev-parse dc25b79^{tree}` = 1ee31417).
+- CI2 proof: this journal entry is pushed alone as a docs-only commit. Its run is recorded in the PR #34 report;
+  expected: base dc25b79 (run 39217653087), docs only => consolidated-source-preflight, repository-scan,
+  contract-tests (base_check); suites skipped.

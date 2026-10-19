@@ -1,7 +1,9 @@
 """Offline recipe tests. No Docker or network calls."""
 
+import hashlib
 import io
 import json
+import tempfile
 from pathlib import Path
 import subprocess
 import sys
@@ -14,6 +16,27 @@ ROOT = Path(__file__).resolve().parents[1]
 SHA = "a" * 40
 READY = dict(ts_status="pass", ts_commit="b" * 40, ts_receipt="c" * 64,
              dl_ci_status="pass", dl_ci_receipt="d" * 64, build_approval="approved")
+JOBS = ["consolidated-source-preflight", "unit-tests[shard=1]", "unit-tests[shard=2]", "release-gates"]
+RECEIPT = {"schema": build.LOCAL_CI_RECEIPT_SCHEMA, "sha": SHA, "status": "PASS", "scope": "full",
+           "workflow_jobs": JOBS, "jobs": {job: "PASS" for job in JOBS}}
+_TMP = None
+
+
+def write_receipt(receipt, name="summary.json"):
+    path = Path(_TMP.name) / name
+    path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    return path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def setUpModule():
+    global _TMP
+    _TMP = tempfile.TemporaryDirectory()
+    path, digest = write_receipt(RECEIPT)
+    READY.update(dl_ci_receipt=digest, dl_ci_receipt_file=path)
+
+
+def tearDownModule():
+    _TMP.cleanup()
 
 
 class NoProcessTests(unittest.TestCase):
@@ -197,3 +220,189 @@ class SourceTests(NoProcessTests):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DlCiReceiptScopeTests(NoProcessTests):
+    def prepare(self, receipt, **kwargs):
+        path, digest = write_receipt(receipt, "candidate.json")
+        args = {**READY, "dl_ci_receipt": digest, "dl_ci_receipt_file": path, **kwargs}
+        with patch.object(build, "source_contract", return_value={"Dockerfile": SHA}):
+            return build.prepare(ROOT, SHA, "v2.2.3-rc.1", **args)
+
+    def test_full_passing_receipt_for_the_commit_is_accepted(self):
+        self.assertEqual(self.prepare(RECEIPT)["status"], "PREPARED_NOT_EXECUTED")
+
+    def test_scoped_or_unscoped_receipts_are_refused(self):
+        for scope in ("affected", None, "FULL"):
+            receipt = {**RECEIPT, "scope": scope} if scope else {k: v for k, v in RECEIPT.items() if k != "scope"}
+            with self.subTest(scope=scope), self.assertRaisesRegex(ValueError, "scope"):
+                self.prepare(receipt)
+
+    def test_status_commit_schema_and_job_coverage_are_checked(self):
+        cases = {
+            "status": {**RECEIPT, "status": "INCOMPLETE"},
+            "different commit": {**RECEIPT, "sha": "f" * 40},
+            "schema": {**RECEIPT, "schema": "other"},
+            "every workflow job": {**RECEIPT, "jobs": {JOBS[0]: "PASS"}},
+        }
+        for message, receipt in cases.items():
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                self.prepare(receipt)
+
+    def test_digest_only_or_mismatched_digest_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "receipt file"):
+            self.prepare(RECEIPT, dl_ci_receipt_file=None)
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            self.prepare(RECEIPT, dl_ci_receipt="0" * 64)
+
+    def test_pending_dl_ci_needs_no_receipt(self):
+        recipe = self.prepare(RECEIPT, dl_ci_status="pending", dl_ci_receipt=None, dl_ci_receipt_file=None)
+        self.assertEqual(recipe["status"], "HOLD")
+
+
+GH_JOBS = ["changes", "consolidated-source-preflight", "repository-scan", "contract-tests", "rust-workspace",
+           "sdk-python310", "unit-tests (1)", "unit-tests (2)", "unit-tests (3)", "unit-tests (4)", "release-gates",
+           "kn-native-integration", "ci-result"]
+GH_RECEIPT = {
+    "schema": build.GITHUB_RUN_RECEIPT_SCHEMA, "repo": "owner/repo", "run_id": 1, "run_attempt": 1,
+    "workflow_path": ".github/workflows/ci.yml", "event": "push", "head_branch": "dev", "head_sha": SHA,
+    "status": "completed", "conclusion": "success",
+    "jobs": [{"name": name, "conclusion": "success", "status": "completed"} for name in GH_JOBS],
+    "expected_jobs": GH_JOBS,
+    "changes_outputs": {"full": "true", "python": "true", "rust": "true", "contracts": "true"},
+    "changes_fields": {"event": "push", "head": SHA, "base": "e" * 40, "base_ref": ""},
+    "scope": "full",
+}
+
+
+class GitHubRunReceiptTests(NoProcessTests):
+    """Offline fixtures shaped like scripts/ci_github_run_receipt.py output; git ancestry is mocked."""
+
+    def prepare(self, receipt, ancestor=True, **kwargs):
+        path, digest = write_receipt(receipt, "github.json")
+        args = {**READY, "dl_ci_receipt": digest, "dl_ci_receipt_file": path, **kwargs}
+
+        def fake_git(repo, *git_args):
+            self.assertEqual(git_args[:2], ("merge-base", "--is-ancestor"))
+            if not ancestor:
+                raise subprocess.CalledProcessError(1, "git")
+            return ""
+        with patch.object(build, "source_contract", return_value={"Dockerfile": SHA}), \
+                patch.object(build, "git", side_effect=fake_git) as git:
+            recipe = build.prepare(ROOT, SHA, "v2.2.3-rc.1", **args)
+        return recipe, git
+
+    def test_full_push_and_dispatch_runs_are_accepted_without_git(self):
+        for event in ("push", "workflow_dispatch"):
+            receipt = {**GH_RECEIPT, "event": event, "changes_fields": {**GH_RECEIPT["changes_fields"], "event": event}}
+            with self.subTest(event=event):
+                recipe, git = self.prepare(receipt)
+                self.assertEqual(recipe["status"], "PREPARED_NOT_EXECUTED")
+                git.assert_not_called()
+
+    def test_pull_request_run_needs_base_ancestor_of_commit(self):
+        receipt = {**GH_RECEIPT, "event": "pull_request",
+                   "changes_fields": {**GH_RECEIPT["changes_fields"], "event": "pull_request"}}
+        recipe, git = self.prepare(receipt)
+        self.assertEqual(recipe["status"], "PREPARED_NOT_EXECUTED")
+        git.assert_called_once()
+        with self.assertRaisesRegex(ValueError, "not an ancestor"):
+            self.prepare(receipt, ancestor=False)
+
+    def test_refusals(self):
+        jobs = GH_RECEIPT["jobs"]
+        cases = {
+            "different commit": {**GH_RECEIPT, "head_sha": "f" * 40},
+            "must be of": {**GH_RECEIPT, "workflow_path": ".github/workflows/release.yml"},
+            "conclusion must be success": {**GH_RECEIPT, "conclusion": "failure"},
+            "scope is not full": {**GH_RECEIPT, "changes_outputs": {**GH_RECEIPT["changes_outputs"], "full": "false"}},
+            "classified a different head": {**GH_RECEIPT, "changes_fields": {**GH_RECEIPT["changes_fields"],
+                                                                            "head": "f" * 40}},
+            "event differs": {**GH_RECEIPT, "event": "workflow_dispatch"},
+            "not accepted": {**GH_RECEIPT, "event": "schedule",
+                             "changes_fields": {**GH_RECEIPT["changes_fields"], "event": "schedule"}},
+            "include changes and ci-result": {**GH_RECEIPT, "expected_jobs": GH_JOBS[:-1]},
+            "missing": {**GH_RECEIPT, "jobs": [j for j in jobs if j["name"] != "ci-result"]},
+            "skipped or failed": {**GH_RECEIPT, "jobs": [dict(j, conclusion="skipped") if j["name"] == "rust-workspace"
+                                                         else j for j in jobs]},
+        }
+        for message, receipt in cases.items():
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                self.prepare(receipt)
+
+    def test_scope_field_is_not_trusted(self):
+        receipt = {**GH_RECEIPT, "scope": "full",
+                   "jobs": [dict(j, conclusion="failure") if j["name"] == "unit-tests (2)" else j
+                            for j in GH_RECEIPT["jobs"]]}
+        with self.assertRaisesRegex(ValueError, "unit-tests \\(2\\)"):
+            self.prepare(receipt)
+
+    def test_digest_mismatch_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            self.prepare(GH_RECEIPT, dl_ci_receipt="0" * 64)
+
+
+TREE = "d" * 40
+
+
+def inherited_receipt(**changes):
+    origin = {**GH_RECEIPT, "run_id": 7, "event": "pull_request", "head_sha": "b" * 40,
+              "changes_outputs": {**GH_RECEIPT["changes_outputs"], "tree": TREE, "reuse_run": ""}}
+    receipt = {**GH_RECEIPT, "run_id": 8, "inherited_from_run": 7, "inherited_receipt": origin, "scope": "inherited",
+               "changes_outputs": {"full": "false", "python": "false", "rust": "false", "contracts": "false",
+                                   "base_check": "false", "tree": TREE, "reuse_run": "7"},
+               "jobs": [{"name": n, "conclusion": "skipped" if n.startswith(("unit-tests", "rust")) else "success"}
+                        for n in GH_JOBS]}
+    receipt.update(changes)
+    return receipt
+
+
+class TreeIdentityReceiptTests(NoProcessTests):
+    """CI1 / CI6: the tested tree must equal the commit's tree; an inherited run must embed a full original run on
+    the same tree. git rev-parse is mocked."""
+
+    def verify(self, receipt, tree=TREE):
+        with patch.object(build, "git", return_value=tree):
+            return build.verify_github_run_receipt(receipt, SHA, ROOT)
+
+    def test_full_run_with_matching_tree_is_accepted_and_mismatch_refused(self):
+        receipt = {**GH_RECEIPT, "changes_outputs": {**GH_RECEIPT["changes_outputs"], "tree": TREE}}
+        self.assertIs(self.verify(receipt), receipt)
+        with self.assertRaisesRegex(ValueError, "differs from the commit's tree"):
+            self.verify(receipt, tree="e" * 40)
+
+    def test_inherited_run_is_accepted(self):
+        receipt = inherited_receipt()
+        self.assertIs(self.verify(receipt), receipt)
+
+    def test_inherited_refusals(self):
+        origin = inherited_receipt()["inherited_receipt"]
+        cases = {
+            "does not match its changes job": inherited_receipt(inherited_from_run=6),
+            "never a workflow_dispatch": inherited_receipt(event="workflow_dispatch", changes_fields={
+                **GH_RECEIPT["changes_fields"], "event": "workflow_dispatch"}),
+            "failed or cancelled": inherited_receipt(jobs=[{"name": "changes", "conclusion": "success"},
+                                                           {"name": "ci-result", "conclusion": "success"},
+                                                           {"name": "repository-scan", "conclusion": "failure"}]),
+            "needs changes and ci-result": inherited_receipt(jobs=[{"name": "changes", "conclusion": "success"}]),
+            "does not embed": inherited_receipt(inherited_receipt={**origin, "run_id": 6}),
+            "tested a different tree": inherited_receipt(inherited_receipt={
+                **origin, "changes_outputs": {**origin["changes_outputs"], "tree": "e" * 40}}),
+            "scope is not full": inherited_receipt(inherited_receipt={
+                **origin, "changes_outputs": {**origin["changes_outputs"], "rust": "false"}}),
+            "itself inherited": inherited_receipt(inherited_receipt={
+                **origin, "changes_outputs": {**origin["changes_outputs"], "reuse_run": "3"}}),
+            "jobs not success": inherited_receipt(inherited_receipt={
+                **origin, "jobs": [dict(j, conclusion="skipped") if j["name"] == "release-gates" else j
+                                   for j in origin["jobs"]]}),
+        }
+        for message, receipt in cases.items():
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                self.verify(receipt)
+
+    def test_scoped_run_without_inheritance_is_refused(self):
+        receipt = inherited_receipt()
+        del receipt["inherited_from_run"]
+        receipt["changes_outputs"] = {**receipt["changes_outputs"], "reuse_run": ""}
+        with self.assertRaisesRegex(ValueError, "scope is not full"):
+            self.verify(receipt)

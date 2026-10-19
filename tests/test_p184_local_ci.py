@@ -1,7 +1,13 @@
 """Offline tests for scripts/p184_local_ci.py plan parsing and step classification. No Docker, git or network."""
 
+import contextlib
+import io
+import json
 from pathlib import Path
+import shutil
 import subprocess
+import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -45,8 +51,10 @@ class PlanParsingTests(NoProcessTests):
 
     def test_every_job_and_step_is_planned_in_order(self):
         raw = yaml.safe_load(WORKFLOW)["jobs"]
-        self.assertEqual(list(dict.fromkeys(s.job for s in self.steps)), list(raw))
-        for job, body in raw.items():
+        expanded = ci.expand_jobs(self.workflow)
+        self.assertEqual(list(dict.fromkeys(s.job for s in self.steps)), list(expanded))
+        self.assertEqual({job_id for job_id, _j, _m in expanded.values()}, set(raw) - set(ci.ORCHESTRATION_JOBS))
+        for job, (job_id, body, _matrix) in expanded.items():
             planned = [s for s in self.steps if s.job == job]
             self.assertEqual([s.index for s in planned], list(range(1, len(body["steps"]) + 1)))
             for step, raw_step in zip(planned, body["steps"]):
@@ -55,11 +63,11 @@ class PlanParsingTests(NoProcessTests):
                     self.assertEqual(step.script, raw_step["run"])  # same command text, byte for byte
 
     def test_expressions_are_substituted_with_the_exact_sha(self):
-        unit = [s for s in self.steps if s.job == "unit-tests"]
+        unit = [s for s in self.steps if s.job == "release-gates"]
         build = next(s for s in unit if s.name == "Build immutable Rust replay tool")
         self.assertIn(f"qdl-core:{SHA}", build.script)
         self.assertNotIn("${{", build.script)
-        env = ci.job_environment(self.workflow["jobs"]["unit-tests"], SHA)
+        env = ci.job_environment(self.workflow["jobs"]["release-gates"], SHA)
         self.assertEqual(env["QDL_CI_IMAGE"], f"data-layer-ci:{SHA}")
         scan = next(s for s in unit if s.name.startswith("Scan final runtime image"))
         self.assertEqual(scan.with_["image-ref"], f"data-layer-ci:{SHA}")
@@ -94,20 +102,25 @@ class PlanParsingTests(NoProcessTests):
         self.assertEqual(by_name[("consolidated-source-preflight",
                                   "Checkout exact CI revision with prerequisite history")].reason, "clone")
         self.assertEqual(by_name[("contract-tests", "Checkout")].reason, "archive")
-        self.assertIn("requires_sudo", by_name[("unit-tests", "Prepare non-root runtime bind mounts")].reason)
-        build = by_name[("unit-tests", "Build data_layer image")]
+        self.assertIn("requires_sudo", by_name[("release-gates", "Prepare non-root runtime bind mounts")].reason)
+        build = by_name[("release-gates", "Build data_layer image")]
         self.assertEqual((build.action, build.blocking), ("skip", True))
         self.assertIn("python:3.12-slim@sha256:" + "1" * 64, build.reason)
-        self.assertIn("postgres:16-alpine", by_name[("unit-tests", "Run additive PostgreSQL migration gate")].reason)
+        shard_build = by_name[("unit-tests[shard=1]", "Build data_layer image")]
+        self.assertEqual((shard_build.action, shard_build.blocking), ("skip", True))
+        self.assertIn("postgres:16-alpine",
+                      by_name[("release-gates", "Run additive PostgreSQL migration gate")].reason)
         self.assertEqual(by_name[("contract-tests", "Test Python generated contracts")].executor, "container")
         self.assertIn("--allow-download",
-                      by_name[("contract-tests", "Check Rust dependency, license and advisory policy")].reason)
+                      by_name[("rust-workspace", "Check Rust dependency, license and advisory policy")].reason)
+        self.assertEqual(by_name[("rust-workspace", "Cache Cargo registry and target for this lockfile and "
+                                  "toolchain")].action, "noop")
         sdk = by_name[("sdk-python310", "Set up declared minimum Python")]
         self.assertEqual((sdk.action, sdk.blocking), ("skip", True))
         predicted = ci.predict(self.steps, decisions)
-        unit = [p for s, p in zip(self.steps, predicted) if s.job == "unit-tests"]
-        self.assertEqual(unit[-1][0], "RUN")  # `if: always()` compose cleanup still runs after a blocking skip
-        self.assertEqual(unit[6][0], "SKIPPED")
+        gates = [p for s, p in zip(self.steps, predicted) if s.job == "release-gates"]
+        self.assertEqual(gates[-1][0], "RUN")  # `if: always()` compose cleanup still runs after a blocking skip
+        self.assertEqual(gates[6][0], "SKIPPED")
 
 
 class ClassificationTests(NoProcessTests):
@@ -182,10 +195,6 @@ class SafetyTests(NoProcessTests):
         self.assertEqual(ci.MIN_FREE_BYTES, 40 * 1024 ** 3)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TrivyCommandFlagsTests(unittest.TestCase):
     def test_boolean_ignore_unfixed_and_repo_ignorefile_are_passed(self):
         import tempfile
@@ -201,3 +210,121 @@ class TrivyCommandFlagsTests(unittest.TestCase):
                 self.assertIn("--ignorefile", cmd)
             step = SimpleNamespace(with_={"image-ref": "img", "ignore-unfixed": False})
             self.assertNotIn("--ignore-unfixed", ci.trivy_command(step, "aquasec/trivy:x", src))
+
+
+class MatrixAndScopeTests(NoProcessTests):
+    def setUp(self):
+        super().setUp()
+        self.workflow = ci.load_workflow(WORKFLOW)
+
+    def test_matrix_jobs_expand_with_substituted_shard(self):
+        expanded = ci.expand_jobs(self.workflow)
+        shards = [name for name in expanded if name.startswith("unit-tests")]
+        self.assertEqual(shards, [f"unit-tests[shard={i}]" for i in (1, 2, 3, 4)])
+        steps = ci.plan_steps(self.workflow, SHA, {"unit-tests[shard=3]"})
+        run = next(s for s in steps if s.name == "Run unit test shard")
+        self.assertIn("--shard 3 --of", run.script)
+        self.assertNotIn("${{", run.script)
+        self.assertEqual(ci.job_environment(expanded["unit-tests[shard=3]"][1], SHA)["QDL_TEST_SHARDS"], "4")
+
+    def test_matrix_combinations_and_unsupported_forms(self):
+        self.assertEqual(ci.matrix_combinations({}), [{}])
+        self.assertEqual(ci.matrix_combinations({"strategy": {"matrix": {"a": [1, 2], "b": ["x"]}}}),
+                         [{"a": 1, "b": "x"}, {"a": 2, "b": "x"}])
+        self.assertEqual(ci.expanded_name("j", {"a": 1, "b": "x"}), "j[a=1,b=x]")
+        for matrix in ({"include": [{"a": 1}]}, {"a": []}, {"a": 1}, "${{ fromJSON(x) }}"):
+            with self.subTest(matrix=matrix), self.assertRaises(ValueError):
+                ci.matrix_combinations({"strategy": {"matrix": matrix}})
+
+    def test_full_selection_ignores_job_level_if_and_skips_orchestration(self):
+        selected = ci.select_jobs(self.workflow)
+        self.assertEqual(selected, list(ci.expand_jobs(self.workflow)))
+        for job in ci.ORCHESTRATION_JOBS:
+            self.assertIn(job, self.workflow["jobs"])
+            self.assertFalse(any(name.startswith(job) for name in selected))
+        for job in ("contract-tests", "rust-workspace", "release-gates", "kn-native-integration",
+                    "consolidated-source-preflight", "repository-scan", "sdk-python310"):
+            self.assertIn(job, selected)
+
+    def test_changed_since_selection_follows_job_level_if(self):
+        none = dict.fromkeys(("full", "python", "rust", "contracts"), False)
+        docs = ci.select_jobs(self.workflow, outputs=none)
+        self.assertEqual(docs, ["consolidated-source-preflight", "repository-scan"])
+        python = ci.select_jobs(self.workflow, outputs={**none, "python": True})
+        self.assertEqual(python, ["consolidated-source-preflight", "repository-scan", "sdk-python310",
+                                  "unit-tests[shard=1]", "unit-tests[shard=2]", "unit-tests[shard=3]",
+                                  "unit-tests[shard=4]", "release-gates"])
+        rust = ci.select_jobs(self.workflow, outputs={**none, "rust": True})
+        self.assertEqual(rust, ["consolidated-source-preflight", "repository-scan", "rust-workspace",
+                                "release-gates", "kn-native-integration"])
+        self.assertEqual(ci.select_jobs(self.workflow, {"unit-tests"}),
+                         [f"unit-tests[shard={i}]" for i in (1, 2, 3, 4)])
+        self.assertEqual(ci.select_jobs(self.workflow, {"unit-tests[shard=2]"}), ["unit-tests[shard=2]"])
+
+    def test_unsupported_job_condition_fails_closed(self):
+        for condition in ("github.ref == 'refs/heads/dev'", "needs.changes.outputs.docs == 'true'",
+                          "needs.changes.outputs.python != 'true'"):
+            with self.subTest(condition=condition), self.assertRaises(ValueError):
+                ci.job_in_scope(condition, {"python": True})
+        self.assertTrue(ci.job_in_scope(None, {}))
+
+
+@unittest.skipUnless(shutil.which("git"), "git binary required (CI images carry none)")
+class DryRunScopeTests(unittest.TestCase):
+    """main() --dry-run against a throw-away git repository holding the working-tree ci.yml; job execution is
+    patched to fail, so only read-only git calls run."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = Path(self.tmp.name) / "repo"
+        (self.repo / ".github/workflows").mkdir(parents=True)
+        (self.repo / ".github/workflows/ci.yml").write_text(WORKFLOW)
+        (self.repo / "NOTES.md").write_text("x\n")
+        self.git("init", "-q", "-b", "dev")
+        self.base = self.commit("base")
+        guard = patch.object(ci, "execute", side_effect=AssertionError("dry run must not execute jobs"))
+        guard.start()
+        self.addCleanup(guard.stop)
+
+    def git(self, *args):
+        return subprocess.run(["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@invalid",
+                               *args], check=True, capture_output=True, text=True).stdout.strip()
+
+    def commit(self, message):
+        self.git("add", "-A")
+        self.git("commit", "-q", "--allow-empty", "-m", message)
+        return self.git("rev-parse", "HEAD")
+
+    def plan(self, sha, *extra):
+        out = io.StringIO()
+        with patch.object(ci, "image_present", return_value=False), patch.object(ci, "HOST_PYTHON", sys.executable), \
+                contextlib.redirect_stdout(out):
+            code = ci.main(["--repo", str(self.repo), "--sha", sha, "--out", str(Path(self.tmp.name) / "out"),
+                            "--dry-run", *extra])
+        self.assertEqual(code, 0)
+        return json.loads(out.getvalue())
+
+    def test_default_is_full_with_every_expanded_job(self):
+        plan = self.plan(self.base)
+        self.assertEqual(plan["scope"], "full")
+        self.assertEqual(list(plan["jobs"]), list(ci.expand_jobs(ci.load_workflow(WORKFLOW))))
+        self.assertNotIn("changes", plan["jobs"])
+
+    def test_jobs_subset_and_changed_since_are_affected(self):
+        self.assertEqual(self.plan(self.base, "--jobs", "repository-scan")["scope"], "affected")
+        (self.repo / "NOTES.md").write_text("y\n")
+        head = self.commit("docs")
+        plan = self.plan(head, "--changed-since", self.base)
+        self.assertEqual(plan["scope"], "affected")
+        self.assertEqual(plan["scope_basis"]["changed_since"], self.base)
+        self.assertEqual(plan["scope_basis"]["classifier"]["changed_files"], 1)
+        # PR semantics: docs only => preflight + secret scan + contract-tests (PR-base buf breaking, CI5).
+        self.assertEqual(sorted(plan["jobs"]), ["consolidated-source-preflight", "contract-tests", "repository-scan"])
+        (self.repo / "qdl").mkdir()
+        (self.repo / "qdl/x.py").write_text("x = 1\n")
+        head = self.commit("code")
+        plan = self.plan(head, "--changed-since", self.base)
+        self.assertIn("unit-tests[shard=4]", plan["jobs"])
+        self.assertNotIn("rust-workspace", plan["jobs"])
+        self.assertEqual(plan["scope"], "affected")

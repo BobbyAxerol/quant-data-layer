@@ -1,12 +1,74 @@
 name: CI
 
+# Owner rules CI1-CI8 (/home/bobby/CLAUDE.md section 7b, 2026-10-19), implemented by scripts/ci_change_scope.py:
+# - a pull request into dev runs only the suites its changed paths need, counted from the nearest ancestor of the
+#   PR head with a green full run (CI2), else from the PR base;
+# - a pull request into main, a push to dev or main, workflow_dispatch, the `ci:full` label (read on the next push)
+#   and any change to a CI-defining file run everything (CI5);
+# - tree-identity reuse (CI1): when an earlier full, all-green run tested the byte-identical git tree (the PR merge
+#   ref, then the push of that merge, then the dev->main PR), the suites are skipped and ci-result reports
+#   "inherited full CI run <id>"; workflow_dispatch and ci:full always run fresh; contract-tests (PR-base
+#   `buf breaking`) still runs on every pull_request;
+# - `ci-result` is the single status: it fails when an in-scope job did not succeed and passes when the other jobs
+#   were skipped by scope. A release receipt needs a full run on the exact tree, direct or inherited (CI6).
 on:
   pull_request:
     branches: ["dev", "main"]
   push:
-    branches: ["dev"]
+    branches: ["dev", "main"]  # CI3: push runs only on the integration and release branches
+  workflow_dispatch:
+
+# A newer push to a pull request cancels its older run. Every other event gets its own group: GitHub keeps one
+# pending run per group and cancels older pending ones, which would drop the full run of an intermediate dev push.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read  # tree-identity reuse: list earlier CI runs and read their `changes` logs
+    outputs:
+      full: ${{ steps.scope.outputs.full }}
+      python: ${{ steps.scope.outputs.python }}
+      rust: ${{ steps.scope.outputs.rust }}
+      contracts: ${{ steps.scope.outputs.contracts }}
+      base_check: ${{ steps.scope.outputs.base_check }}
+      tree: ${{ steps.scope.outputs.tree }}
+      reuse_run: ${{ steps.scope.outputs.reuse_run }}
+      reason: ${{ steps.scope.outputs.reason }}
+    steps:
+      - name: Checkout with history for the change diff
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Self-test the scope classifier (git rules run here; the CI image has no git)
+        run: python3 -B -m unittest -v tests.test_ci_change_scope
+
+      - name: Classify changed paths
+        id: scope
+        shell: bash
+        env:
+          CI_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          CI_EVENT: ${{ github.event_name }}
+          CI_BASE_REF: ${{ github.base_ref }}
+          CI_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 -B scripts/ci_change_scope.py --base "$CI_BASE" --head "$CI_HEAD" --event "$CI_EVENT" \
+            --base-ref "$CI_BASE_REF" --labels "$CI_LABELS" --github-output "$GITHUB_OUTPUT" \
+            --summary-file "$RUNNER_TEMP/ci-scope.json" --reuse-lookup
+          {
+            echo '### CI scope'
+            echo '```json'
+            cat "$RUNNER_TEMP/ci-scope.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   consolidated-source-preflight:
     runs-on: ubuntu-latest
     permissions:
@@ -80,7 +142,26 @@ jobs:
           print(f"Committed-source preflight PASS: {sha}; build remains HOLD")
           PY
 
+  repository-scan:
+    # Always on: a docs-only change can still leak a secret.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Scan repository for leaked secrets and critical misconfiguration
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret,misconfig
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+
   contract-tests:
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true' || needs.changes.outputs.base_check == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -133,10 +214,33 @@ jobs:
           python -m pip install --disable-pip-version-check protobuf==6.33.6
           python -m unittest tests.test_phase1_contracts
 
+  rust-workspace:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Cache Cargo registry and target for this lockfile and toolchain
+        # Exact key only (no restore-keys): a Cargo.lock or toolchain change never reuses an older cache.
+        # Saved by the post step only when the job succeeds. The Rust step hands the cached directories back to the
+        # runner user (crate sources extracted by root are not readable by the cache tar otherwise; run 39208370362).
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            .cargo-ci/registry
+            .cargo-ci/git
+            target
+          key: rust-workspace-${{ runner.os }}-rust-1.82-slim-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+
       - name: Test Rust generated contracts
         run: |
-          docker run --rm -v "$PWD:/workspace" -w /workspace rust:1.82-slim \
-            sh -c 'apt-get update -qq && apt-get install -y --no-install-recommends clang cmake libclang-dev libcurl4-openssl-dev libssl-dev libzstd-dev make pkg-config zlib1g-dev >/dev/null && cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --workspace --locked -- --test-threads=1'
+          mkdir -p .cargo-ci/registry .cargo-ci/git
+          docker run --rm -v "$PWD:/workspace" -w /workspace \
+            -v "$PWD/.cargo-ci/registry:/usr/local/cargo/registry" -v "$PWD/.cargo-ci/git:/usr/local/cargo/git" \
+            -e CARGO_INCREMENTAL=0 -e CACHE_OWNER="$(id -u):$(id -g)" rust:1.82-slim \
+            sh -c 'apt-get update -qq && apt-get install -y --no-install-recommends clang cmake libclang-dev libcurl4-openssl-dev libssl-dev libzstd-dev make pkg-config zlib1g-dev >/dev/null && cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --workspace --locked -- --test-threads=1; status=$?; chown -R "$CACHE_OWNER" target /usr/local/cargo/registry /usr/local/cargo/git 2>/dev/null; exit $status'
 
       - name: Check Rust dependency, license and advisory policy
         env:
@@ -157,6 +261,8 @@ jobs:
             sh -c 'apt-get update -qq && apt-get install -y --no-install-recommends git >/dev/null && /tools/cargo-deny/cargo-deny check'
 
   sdk-python310:
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -176,6 +282,46 @@ jobs:
           PYTHONPATH= python -c 'import json, qdl_sdk; assert qdl_sdk.__version__ == json.load(open("/tmp/qdl-sdk-build.json"))["version"]'
 
   unit-tests:
+    # The former single "Run unit tests" step (`python -m unittest discover -s tests`, 1583 s in run 39201550345)
+    # split into deterministic module shards (scripts/ci_test_shard.py); shard 1 also verifies the partition.
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      QDL_TEST_SHARDS: "4"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Prepare non-root runtime bind mounts
+        run: sudo scripts/prepare_nonroot_runtime.sh
+
+      - name: Build data_layer image
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml build data_layer
+
+      - name: Run unit test shard
+        run: >-
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml
+          run --rm test_runner python -B -m scripts.ci_test_shard
+          --shard ${{ matrix.shard }} --of "${QDL_TEST_SHARDS}"
+
+      - name: Clean CI Compose resources
+        if: always()
+        run: >-
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml
+          down --volumes --remove-orphans
+
+  release-gates:
+    # Every step of the former unit-tests job other than the unit suite, unchanged and in the same order.
+    needs: changes
+    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     env:
       # The mutable compatibility tag remains for legacy test helpers. Security
@@ -213,11 +359,6 @@ jobs:
             python -m pip install --disable-pip-version-check --no-cache-dir "pip-audit>=2.9,<3"
             pip-audit --cache-dir /tmp/qdl-pip-audit-cache -r /tmp/qdl-runtime-requirements.txt --progress-spinner=off
           '
-
-      - name: Run unit tests
-        run: >-
-          docker compose -f docker-compose.yml -f docker-compose.ci.yml
-          run --rm test_runner python -m unittest discover -s tests
 
       - name: Run KN Query and BAR readback against isolated Redis
         run: |
@@ -309,16 +450,6 @@ jobs:
           ignore-unfixed: true
           severity: CRITICAL,HIGH
 
-      - name: Scan repository for leaked secrets and critical misconfiguration
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          scanners: secret,misconfig
-          format: table
-          exit-code: "1"
-          severity: CRITICAL,HIGH
-
       - name: Rehearse immutable SBOM and signed release manifest
         run: |
           evidence_dir="$(mktemp -d)"
@@ -345,6 +476,8 @@ jobs:
     # KN-1 K1.6: native gateway reads against a real, isolated Kafka broker.
     # The test is `#[ignore]` in the workspace run and fails loudly here if
     # the broker is missing; it never contacts a shared or production broker.
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -414,3 +547,30 @@ jobs:
       - name: Remove isolated Kafka and Redis
         if: always()
         run: docker rm -f kn-redis-6379 kn-redis-6380 kn-kafka
+
+  ci-result:
+    # The single CI status: fails if any in-scope job failed, was cancelled or was skipped although in scope;
+    # passes when jobs succeeded or were skipped by scope (scripts/ci_change_scope.py --verify-needs).
+    if: always()
+    needs:
+      - changes
+      - consolidated-source-preflight
+      - repository-scan
+      - contract-tests
+      - rust-workspace
+      - sdk-python310
+      - unit-tests
+      - release-gates
+      - kn-native-integration
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Require every in-scope job to succeed
+        shell: bash
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: python3 -B scripts/ci_change_scope.py --verify-needs
