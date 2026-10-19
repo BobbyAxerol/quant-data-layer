@@ -172,9 +172,27 @@ class BatchedSubscribeTests(unittest.IsolatedAsyncioTestCase):
             requirement=requirement().to_proto(),
             cursor_token="cursor-test",
             max_buffer_events=1000,
+            # 2.4.1 always opts into replay budget status v2 (IDR-096).
+            replay_budget_status_v2=True,
         ).SerializeToString()
         self.assertEqual(gateway.requests[0], legacy, "field 7 absent, as in 2.2.x")
         self.assertEqual(set(gateway.response_sizes), {1})
+
+    async def test_every_request_opts_into_replay_budget_status_v2(self):
+        # IDR-096 (B): the session bounds reconnects by progress, so the SDK
+        # asks for RESOURCE_EXHAUSTED replay budgets; a gateway that does not
+        # know field 8 ignores it (proto3) and keeps CURSOR_EXPIRED.
+        for limit in (1, DEFAULT_MAX_RECORDS_PER_RESPONSE):
+            with self.subTest(limit=limit):
+                _, gateway = await self.run_stream(
+                    batching=True, max_records_per_response=limit
+                )
+                request = query_pb2.SubscribeRequest.FromString(gateway.requests[0])
+                self.assertIs(request.replay_budget_status_v2, True)
+        legacy = query_pb2.SubscribeRequest(consumer_id="consumer-test")
+        self.assertIs(legacy.replay_budget_status_v2, False, "absent means the old mapping")
+        field = query_pb2.SubscribeRequest.DESCRIPTOR.fields_by_name["replay_budget_status_v2"]
+        self.assertEqual(field.number, 8)
 
     async def test_an_older_gateway_is_read_one_record_per_response(self):
         reference, _ = await self.run_stream(batching=True, max_records_per_response=1)

@@ -424,7 +424,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ByteBudget::new(32 << 20),
         ),
         Arc::new(NotReadyReadView),
-        ByteBudget::new(32 << 20),
+        // The live budget as production builds it (reserve for idle readers).
+        ByteBudget::live(32 << 20),
         limits,
     ));
     let port: u16 = args.get(6).map(String::as_str).unwrap_or("18219").parse()?;

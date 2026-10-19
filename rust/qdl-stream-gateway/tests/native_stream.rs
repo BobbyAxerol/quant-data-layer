@@ -544,6 +544,8 @@ struct Options {
     range_delay: Duration,
     /// Replay budget when it differs from the live one.
     replay_budget: Option<usize>,
+    /// Build the live budget as production does (`ByteBudget::live`).
+    live_reserve: bool,
 }
 
 impl Default for Options {
@@ -564,6 +566,7 @@ impl Default for Options {
             max_streams: 64,
             range_delay: Duration::ZERO,
             replay_budget: None,
+            live_reserve: false,
         }
     }
 }
@@ -602,7 +605,11 @@ impl Harness {
             bundle: bundle_with_streams(3, &options.permissions, &ALL_FEEDS, options.max_streams),
             expectation: expectation(),
         });
-        let budget = ByteBudget::new(options.budget);
+        let budget = if options.live_reserve {
+            ByteBudget::live(options.budget)
+        } else {
+            ByteBudget::new(options.budget)
+        };
         let state = Arc::new(GatewayState::new(
             authority,
             Arc::new(NoQuota),
@@ -713,6 +720,21 @@ impl Harness {
         buffer: u32,
         batch: u32,
     ) -> Result<Stream, Status> {
+        self.subscribe_budget(feed, interval, after, buffer, batch, false)
+            .await
+    }
+
+    /// Subscribe with `SubscribeRequest.replay_budget_status_v2` (SDK 2.4.1,
+    /// IDR-096); `false` is every older client, which never sets field 8.
+    async fn subscribe_budget(
+        &self,
+        feed: &str,
+        interval: Option<&str>,
+        after: i64,
+        buffer: u32,
+        batch: u32,
+        budget_v2: bool,
+    ) -> Result<Stream, Status> {
         let partition = 0;
         let request = self.authorized(query::SubscribeRequest {
             consumer_id: CONSUMER.into(),
@@ -720,9 +742,10 @@ impl Harness {
             cursor_token: self.cursor(feed, interval, partition, after),
             max_buffer_events: buffer,
             max_records_per_response: batch,
+            replay_budget_status_v2: budget_v2,
         });
         let response = self.gateway.subscribe(request).await?;
-        Ok(Stream(response.into_inner()))
+        Ok(Stream(response.into_inner(), None))
     }
 
     /// Wait until every stream slot is released (tasks noticed the client left).
@@ -762,7 +785,27 @@ struct Stream(
     std::pin::Pin<
         Box<dyn tokio_stream::Stream<Item = Result<query::SubscribeResponse, Status>> + Send>,
     >,
+    /// high_watermark of this subscription's REPLAYING control, if seen.
+    Option<u64>,
 );
+
+/// Wire contract (qdl/stream/grpc_service.py; this gateway through aa1f98f): REPLAYING and
+/// LIVE of one subscription carry the same high_watermark. Every reader in this suite
+/// checks it, so a catch-up path that extends its internal barrier cannot leak it.
+fn check_control_high(replaying: &mut Option<u64>, control: &query::StreamControl) {
+    match control.code.as_str() {
+        "REPLAYING" => *replaying = Some(control.high_watermark),
+        "LIVE" => {
+            if let Some(high) = *replaying {
+                assert_eq!(
+                    control.high_watermark, high,
+                    "LIVE must carry the REPLAYING high_watermark"
+                );
+            }
+        }
+        _ => {}
+    }
+}
 
 #[derive(Debug)]
 enum Item {
@@ -781,7 +824,10 @@ impl Stream {
             Ok(Some(Ok(response))) => {
                 let record = response.record.unwrap();
                 match record.payload.unwrap() {
-                    query::stream_record::Payload::Control(control) => Item::Control(control.code),
+                    query::stream_record::Payload::Control(control) => {
+                        check_control_high(&mut self.1, &control);
+                        Item::Control(control.code)
+                    }
                     query::stream_record::Payload::Event(event) => {
                         Item::Event(record.logical_offset, Box::new(event))
                     }
@@ -808,15 +854,11 @@ impl Stream {
     }
 
     async fn until_live(&mut self) -> Vec<u64> {
-        let mut offsets = Vec::new();
-        loop {
-            match self.next().await {
-                Item::Control(code) if code == "LIVE" => return offsets,
-                Item::Control(_) => {}
-                Item::Event(offset, _) => offsets.push(offset),
-                other => panic!("stream ended before LIVE: {other:?}"),
-            }
-        }
+        let mut shapes = Shapes::default();
+        read_shapes_until(self, usize::MAX, &mut shapes, true).await;
+        assert!(shapes.status.is_none(), "{:?}", shapes.status);
+        assert_eq!(shapes.controls.last().map(String::as_str), Some("LIVE"));
+        shapes.offsets()
     }
 
     async fn error(&mut self) -> (Code, String) {
@@ -931,10 +973,11 @@ async fn t01_offset_zero_is_snapshot_state_not_a_genesis_or_skipped_event() {
                 cursor_token: snapshot.stream_cursor,
                 max_buffer_events: 100,
                 max_records_per_response: 0,
+                replay_budget_status_v2: false,
             }))
             .await
             .unwrap();
-        let mut stream = Stream(response.into_inner());
+        let mut stream = Stream(response.into_inner(), None);
         assert_eq!(stream.until_live().await, vec![1]);
         assert_eq!(harness.log.append(0, TRADE_KEY, &trade(102)), 2);
         harness.settle();
@@ -1039,7 +1082,7 @@ async fn t02_ring_hit_and_replay_reader_deliver_the_same_records() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn t02_retention_scan_and_backlog_limits_end_typed() {
+async fn t02_retention_expires_and_a_submit_time_scan_limit_expires_for_every_client() {
     // Below the retention floor: typed expiry, a fresh snapshot is required.
     let harness = Harness::new(Options {
         ring_max_bytes: 256,
@@ -1054,51 +1097,235 @@ async fn t02_retention_scan_and_backlog_limits_end_typed() {
     let (code, message) = stream.error().await;
     assert_eq!(code, Code::OutOfRange);
     assert!(message.starts_with("CURSOR_EXPIRED:RETENTION"), "{message}");
+    assert_eq!(harness.state().metrics.expired.load(Ordering::Relaxed), 1);
 
-    // A sparse key beyond the scan budget: typed expiry, never an endless scan.
-    let mut limits = Options::default().limits;
-    limits.replay = ReplayLimits {
-        max_scanned_records: 25,
-        ..ReplayLimits::default()
-    };
-    let harness = Harness::new(Options {
-        ring_max_bytes: 256,
-        limits,
-        ..Options::default()
-    });
-    let cursor = harness.log.append(0, TRADE_KEY, &trade(1));
-    for index in 0..60u64 {
-        harness
-            .log
-            .append(0, QUOTE_KEY, &quote(index as u32, vec![]));
+    // A sparse key whose offset span alone exceeds the scan budget is refused
+    // at submit (a ring miss): a retry cannot progress, so it is CURSOR_EXPIRED
+    // whether or not the client opted into replay_budget_status_v2 (IDR-096 (A)).
+    for budget_v2 in [false, true] {
+        let mut limits = Options::default().limits;
+        limits.replay = ReplayLimits {
+            max_scanned_records: 25,
+            ..ReplayLimits::default()
+        };
+        let harness = Harness::new(Options {
+            ring_max_bytes: 256,
+            limits,
+            ..Options::default()
+        });
+        let cursor = harness.log.append(0, TRADE_KEY, &trade(1));
+        for index in 0..60u64 {
+            harness
+                .log
+                .append(0, QUOTE_KEY, &quote(index as u32, vec![]));
+        }
+        harness.log.append(0, TRADE_KEY, &trade(2));
+        harness.settle();
+        let mut stream = harness
+            .subscribe_budget("TRADE", None, cursor, 100, 0, budget_v2)
+            .await
+            .unwrap();
+        let (code, message) = stream.error().await;
+        assert_eq!(code, Code::OutOfRange, "budget_v2={budget_v2}");
+        assert!(
+            message.starts_with("CURSOR_EXPIRED:REPLAY_SCAN_LIMIT:"),
+            "budget_v2={budget_v2}: {message}"
+        );
+        assert!(!message.contains("RATE_LIMITED"), "{message}");
+        assert_eq!(harness.state().metrics.expired.load(Ordering::Relaxed), 1);
+        assert_eq!(harness.state().metrics.replayed.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            harness
+                .state()
+                .replay
+                .metrics
+                .scan_limited
+                .load(Ordering::Relaxed),
+            1,
+            "refused by the up-front span check"
+        );
+        drop(stream);
+        harness.baseline().await;
     }
-    harness.log.append(0, TRADE_KEY, &trade(2));
-    harness.settle();
-    let mut stream = harness.subscribe("TRADE", None, cursor, 100).await.unwrap();
-    let (code, message) = stream.error().await;
-    assert_eq!(code, Code::OutOfRange);
-    assert!(message.contains("REPLAY_SCAN_LIMIT"), "{message}");
+}
 
-    // More matching records than the bounded window: typed expiry (parity).
-    let mut limits = Options::default().limits;
-    limits.replay = ReplayLimits {
-        max_matched: 5,
-        ..ReplayLimits::default()
-    };
-    let harness = Harness::new(Options {
-        limits,
-        ..Options::default()
-    });
-    let cursor = harness.log.append(0, TRADE_KEY, &trade(1));
-    for index in 0..10u64 {
-        harness.log.append(0, TRADE_KEY, &trade(10 + index));
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn idr096_matched_budget_is_cursor_expired_for_a_client_without_the_capability() {
+    // Pre-2.4.1 clients (no field 8) keep the pre-ed1b85b mapping on ring and
+    // reader paths: the records before the bound arrive, then OUT_OF_RANGE.
+    for (ring_max_bytes, batch) in [(32 << 20, 0), (1, 0), (32 << 20, 64), (1, 64)] {
+        let mut limits = Options::default().limits;
+        limits.replay.max_matched = 5;
+        let harness = Harness::new(Options {
+            ring_max_bytes,
+            limits,
+            ..Options::default()
+        });
+        let cursor = harness.log.append(0, TRADE_KEY, &trade(1));
+        for index in 0..10u64 {
+            harness.log.append(0, TRADE_KEY, &trade(10 + index));
+        }
+        harness.settle();
+        let expected = as_offsets(&harness.log.records_of(TRADE_KEY, cursor));
+        let mut stream = harness
+            .subscribe_budget("TRADE", None, cursor, 100, batch, false)
+            .await
+            .unwrap();
+        let mut shapes = Shapes::default();
+        read_shapes(&mut stream, usize::MAX, &mut shapes).await;
+        let (code, message) = shapes.status.as_ref().expect("typed replay termination");
+        assert_eq!(
+            *code,
+            Code::OutOfRange,
+            "ring={ring_max_bytes} batch={batch}"
+        );
+        assert!(
+            message.starts_with("CURSOR_EXPIRED:replay backlog exceeds the bounded gateway window"),
+            "{message}"
+        );
+        assert!(!message.contains("RATE_LIMITED"), "{message}");
+        assert_eq!(shapes.controls, vec!["REPLAYING"]);
+        assert_eq!(shapes.offsets(), expected[..5]);
+        assert_eq!(harness.state().metrics.expired.load(Ordering::Relaxed), 1);
+        drop(stream);
+        harness.baseline().await;
     }
-    harness.settle();
-    let mut stream = harness.subscribe("TRADE", None, cursor, 100).await.unwrap();
-    let (code, message) = stream.error().await;
-    assert_eq!(code, Code::OutOfRange);
-    assert!(message.contains("replay backlog exceeds"), "{message}");
-    assert!(harness.state().metrics.expired.load(Ordering::Relaxed) >= 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn idr096_in_scan_scan_limit_follows_the_client_capability() {
+    // Ring hit: the span check never runs, the episode scan bound stops the
+    // catch-up after five records (a retry from the last token progresses).
+    for budget_v2 in [false, true] {
+        let mut limits = Options::default().limits;
+        limits.replay.max_scanned_records = 5;
+        let harness = Harness::new(Options {
+            ring_max_bytes: 32 << 20,
+            limits,
+            ..Options::default()
+        });
+        let cursor = harness.log.append(0, TRADE_KEY, &trade(1));
+        for index in 0..10u64 {
+            harness.log.append(0, TRADE_KEY, &trade(10 + index));
+        }
+        harness.settle();
+        let expected = as_offsets(&harness.log.records_of(TRADE_KEY, cursor));
+        let mut stream = harness
+            .subscribe_budget("TRADE", None, cursor, 100, 0, budget_v2)
+            .await
+            .unwrap();
+        let mut shapes = Shapes::default();
+        read_shapes(&mut stream, usize::MAX, &mut shapes).await;
+        let (code, message) = shapes.status.as_ref().expect("typed replay termination");
+        if budget_v2 {
+            assert_eq!(*code, Code::ResourceExhausted);
+            assert!(
+                message.starts_with("RATE_LIMITED:REPLAY_SCAN_LIMIT:"),
+                "{message}"
+            );
+            assert!(
+                message.contains("bound retries if no progress"),
+                "{message}"
+            );
+            assert_eq!(harness.state().metrics.expired.load(Ordering::Relaxed), 0);
+        } else {
+            assert_eq!(*code, Code::OutOfRange);
+            assert!(
+                message.starts_with("CURSOR_EXPIRED:REPLAY_SCAN_LIMIT:"),
+                "{message}"
+            );
+            assert!(!message.contains("RATE_LIMITED"), "{message}");
+            assert_eq!(harness.state().metrics.expired.load(Ordering::Relaxed), 1);
+        }
+        assert_eq!(shapes.controls, vec!["REPLAYING"]);
+        assert_eq!(shapes.offsets(), expected[..5], "budget_v2={budget_v2}");
+        assert_eq!(
+            harness
+                .state()
+                .replay
+                .metrics
+                .ring_hits
+                .load(Ordering::Relaxed),
+            1
+        );
+        drop(stream);
+        harness.baseline().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn t02_matched_budget_resumes_exactly_on_ring_and_reader_without_expiry() {
+    for (ring_max_bytes, expect_hit, batch) in [
+        (32 << 20, true, 1),
+        (1, false, 1),
+        (32 << 20, true, 64),
+        (1, false, 64),
+    ] {
+        let mut limits = Options::default().limits;
+        limits.replay.max_matched = 5;
+        let harness = Harness::new(Options {
+            ring_max_bytes,
+            limits,
+            ..Options::default()
+        });
+        let cursor = harness.log.append(0, TRADE_KEY, &trade(1));
+        for index in 0..10u64 {
+            harness.log.append(0, TRADE_KEY, &trade(10 + index));
+        }
+        harness.settle();
+        let expected = as_offsets(&harness.log.records_of(TRADE_KEY, cursor));
+        let mut stream = harness
+            .subscribe_budget("TRADE", None, cursor, 100, batch, true)
+            .await
+            .unwrap();
+        let mut shapes = Shapes::default();
+        read_shapes(&mut stream, usize::MAX, &mut shapes).await;
+        let (code, message) = shapes.status.as_ref().expect("typed replay termination");
+        assert_eq!(*code, Code::ResourceExhausted);
+        assert!(message.starts_with("RATE_LIMITED:REPLAY_MATCHED_LIMIT:"));
+        assert!(message.contains("resume from the last token"));
+        assert!(!message.contains("CURSOR_EXPIRED"));
+        assert_eq!(shapes.controls, vec!["REPLAYING"]);
+        assert_eq!(shapes.offsets(), expected[..5]);
+        harness.assert_tokens("TRADE", &shapes);
+        if batch == 1 {
+            assert_eq!(shapes.batched, 0);
+        } else if expect_hit {
+            assert_eq!(shapes.sizes, vec![5], "pending batch precedes terminal");
+        }
+        assert_eq!(harness.state().metrics.replayed.load(Ordering::Relaxed), 5);
+        assert_eq!(harness.state().metrics.delivered.load(Ordering::Relaxed), 0);
+        assert_eq!(harness.state().metrics.expired.load(Ordering::Relaxed), 0);
+        let metrics = &harness.state().replay.metrics;
+        assert_eq!(metrics.ring_hits.load(Ordering::Relaxed) == 1, expect_hit);
+        assert_eq!(
+            metrics.reader_replays.load(Ordering::Relaxed) == 1,
+            !expect_hit
+        );
+        drop(stream);
+        harness.baseline().await;
+
+        // Resume using the actual delivered signed token, not a newly minted cursor.
+        let response = harness
+            .gateway
+            .subscribe(harness.authorized(query::SubscribeRequest {
+                consumer_id: CONSUMER.into(),
+                requirement: Some(requirement("TRADE", None)),
+                cursor_token: shapes.events.last().unwrap().1.clone(),
+                max_buffer_events: 100,
+                max_records_per_response: batch,
+                replay_budget_status_v2: true,
+            }))
+            .await
+            .unwrap();
+        let mut resumed = Stream(response.into_inner(), None);
+        assert_eq!(resumed.until_live().await, expected[5..]);
+        assert_eq!(harness.state().metrics.replayed.load(Ordering::Relaxed), 10);
+        assert_eq!(harness.state().metrics.delivered.load(Ordering::Relaxed), 0);
+        assert_eq!(harness.state().metrics.expired.load(Ordering::Relaxed), 0);
+        drop(resumed);
+        harness.baseline().await;
+    }
 }
 
 /// Deterministic xorshift so the property test is reproducible.
@@ -1339,7 +1566,9 @@ async fn t04_a_replica_behind_the_cursor_waits_bounded_then_answers_retryable() 
     let next = log.append(0, TRADE_KEY, &trade(2));
     let (controls, offsets) = stream.collect(1).await;
     assert_eq!(offsets, vec![next as u64], "{controls:?}");
-    assert!(controls.contains(&"LIVE".to_owned()));
+    if !controls.contains(&"LIVE".to_owned()) {
+        assert!(matches!(stream.next().await, Item::Control(code) if code == "LIVE"));
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1365,6 +1594,28 @@ async fn t04_a_stopping_replica_ends_streams_retryable_and_they_resume_exactly()
     replica.settle();
     let mut resumed = replica.subscribe("TRADE", None, first, 100).await.unwrap();
     assert_eq!(resumed.until_live().await, vec![next as u64]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn t04_a_stop_before_catch_up_never_announces_live() {
+    let harness = Harness::new(Options::default());
+    let cursor = harness.log.append(0, TRADE_KEY, &trade(1));
+    harness.log.append(0, TRADE_KEY, &trade(2));
+    harness.settle();
+    harness.state().shut_down();
+    let mut stream = harness.subscribe("TRADE", None, cursor, 100).await.unwrap();
+    let mut shapes = Shapes::default();
+    read_shapes(&mut stream, usize::MAX, &mut shapes).await;
+    assert!(
+        !shapes.controls.iter().any(|code| code == "LIVE"),
+        "{:?}",
+        shapes.controls
+    );
+    let (code, message) = shapes.status.as_ref().expect("typed stop");
+    assert_eq!(*code, Code::Unavailable);
+    assert!(message.starts_with("GATEWAY_SHUTTING_DOWN"), "{message}");
+    drop(stream);
+    harness.released().await;
 }
 
 // ------------------------------------------------------------------ K2-T05
@@ -1501,6 +1752,184 @@ async fn t05_the_replica_byte_budget_bounds_all_queues_together() {
         Code::ResourceExhausted,
         "over budget is typed backpressure"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn t05_deep_lossless_streams_on_two_keys_never_overflow_idle_quote_readers() {
+    // 2026-10-15 stage-100 shape over gRPC: two stalled lossless streams on
+    // different keys, each under its fair-share cap, fill the live budget;
+    // idle QUOTE readers keep flowing and only a deep stream ends typed.
+    let weight = live_weight(TRADE_KEY, &trade(1)).max(live_weight(BOOK_KEY, &delta(1, false)));
+    // Reserve 64 records (production: 4 MiB, thousands of quotes): enough
+    // for ten idle readers each holding two records at a handoff.
+    let total = 512 * weight;
+    let mut options = Options {
+        budget: total,
+        live_reserve: true,
+        replay_budget: Some(64 << 20),
+        ..Options::default()
+    };
+    options.limits.queue_bytes_per_subscription = total / 2;
+    // A stalled deep stream may also end on its blocked send; both are its own.
+    options.limits.slow_consumer_after = Duration::from_secs(2);
+    let harness = Harness::new(options);
+    let trade_cursor = harness.log.append(0, TRADE_KEY, &trade(1));
+    let book_cursor = harness.log.append(0, BOOK_KEY, &delta(1, false));
+    let quote_cursor = harness.log.append(0, QUOTE_KEY, &quote(1, vec![]));
+    harness.settle();
+    let mut deep_trade = harness
+        .subscribe("TRADE", None, trade_cursor, 1_000)
+        .await
+        .unwrap();
+    let mut deep_book = harness
+        .subscribe("BOOK_DELTA", None, book_cursor, 1_000)
+        .await
+        .unwrap();
+    deep_trade.until_live().await;
+    deep_book.until_live().await;
+    let mut idle = Vec::new();
+    for _ in 0..10 {
+        let mut stream = harness
+            .subscribe("QUOTE", None, quote_cursor, 100)
+            .await
+            .unwrap();
+        stream.until_live().await;
+        idle.push(stream);
+    }
+    // The deep clients stop reading; records arrive in bursts.
+    for burst in 0..8u64 {
+        for index in 0..40u64 {
+            harness
+                .log
+                .append(0, TRADE_KEY, &trade(100 + burst * 40 + index));
+            harness
+                .log
+                .append(0, BOOK_KEY, &delta(100 + burst * 40 + index, false));
+        }
+        let offset = harness
+            .log
+            .append(0, QUOTE_KEY, &quote(2 + burst as u32, vec![])) as u64;
+        harness.settle();
+        assert!(harness.state().budget.used() <= total);
+        for stream in &mut idle {
+            let (controls, offsets) = stream.collect(1).await;
+            let counters = &harness.state().budget.counters;
+            assert_eq!(
+                offsets,
+                vec![offset],
+                "idle reader stalled: {controls:?} (reserve admitted {}, over floor {}, \
+                 reserve exhausted {}, weights {weight}/{})",
+                counters.reserve_admitted.load(Ordering::Relaxed),
+                counters.over_floor_refused.load(Ordering::Relaxed),
+                counters.reserve_exhausted.load(Ordering::Relaxed),
+                live_weight(QUOTE_KEY, &quote(1, vec![])),
+            );
+        }
+    }
+    let counters = &harness.state().budget.counters;
+    assert!(counters.over_floor_refused.load(Ordering::Relaxed) >= 1);
+    assert_eq!(counters.reserve_exhausted.load(Ordering::Relaxed), 0);
+    // SR4: no idle reader was refused (or timed out) at its transport top-up
+    // either, which the enqueue counters above cannot see.
+    assert_eq!(
+        counters
+            .handoff_refused_within_floor
+            .load(Ordering::Relaxed),
+        0
+    );
+    assert_eq!(
+        counters
+            .handoff_timeout_within_floor
+            .load(Ordering::Relaxed),
+        0
+    );
+    // At least one deep stream ended with BACKPRESSURE (resume token) and
+    // RESOURCE_EXHAUSTED; no idle one did.
+    let mut ended = 0;
+    for stream in [&mut deep_trade, &mut deep_book] {
+        let mut saw_backpressure = false;
+        loop {
+            match stream.next().await {
+                Item::Control(code) if code == "RATE_LIMITED" => saw_backpressure = true,
+                Item::Error(code, message) => {
+                    assert!(saw_backpressure, "BACKPRESSURE control precedes the status");
+                    assert_eq!(code, Code::ResourceExhausted);
+                    assert!(message.starts_with("RATE_LIMITED:"), "{message}");
+                    ended += 1;
+                    break;
+                }
+                Item::End => break, // Still open (the other deep stream ended first).
+                _ => {}
+            }
+        }
+    }
+    assert!(ended >= 1);
+    assert_eq!(
+        harness.state().metrics.overflow.load(Ordering::Relaxed),
+        ended,
+        "only deep streams overflowed"
+    );
+    // A closed deep client resumes from its cursor as today.
+    let mut resumed = harness
+        .subscribe("TRADE", None, trade_cursor, 1_000)
+        .await
+        .unwrap();
+    assert!(!resumed.until_live().await.is_empty());
+    drop((deep_trade, deep_book, idle, resumed));
+    harness.released().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn t05_a_handoff_top_up_that_never_fits_is_counted_apart_from_enqueue() {
+    // SR4 (review 2026-10-16): a refused transport top-up ends the stream
+    // BACKPRESSURE without touching the enqueue-side isolation counters; it
+    // has its own refusal and timeout counters, by floor state.
+    let weight = live_weight(BOOK_KEY, &large_snapshot(1, 800));
+    // The shared decoded copy and the queue entry fit the shared part; the
+    // private transport copy would need 2 x weight in all, even with the
+    // reserve: an idle reader at its floor whose reserve is exhausted.
+    let total = 2 * weight - 1;
+    let mut options = Options {
+        budget: total,
+        live_reserve: true,
+        replay_budget: Some(64 << 20),
+        ..Options::default()
+    };
+    options.limits.queue_bytes_per_subscription = total;
+    options.limits.slow_consumer_after = Duration::from_millis(300);
+    let harness = Harness::new(options);
+    let cursor = harness.log.append(0, BOOK_KEY, &snapshot(0));
+    harness.settle();
+    let mut stream = harness
+        .subscribe("BOOK_SNAPSHOT", None, cursor, 10)
+        .await
+        .unwrap();
+    stream.until_live().await;
+    harness.log.append(0, BOOK_KEY, &large_snapshot(1, 800));
+    harness.settle();
+    let (code, message) = stream.error().await;
+    assert_eq!(code, Code::ResourceExhausted);
+    assert!(message.contains("at handoff"), "{message}");
+    let counters = &harness.state().budget.counters;
+    let load = |value: &std::sync::atomic::AtomicU64| value.load(Ordering::Relaxed);
+    assert_eq!(
+        (
+            load(&counters.handoff_refused_within_floor),
+            load(&counters.handoff_timeout_within_floor),
+            load(&counters.handoff_refused_over_floor),
+            load(&counters.handoff_timeout_over_floor),
+        ),
+        (1, 1, 0, 0),
+        "one record refused once (not per retry), one timeout"
+    );
+    assert_eq!(
+        load(&counters.reserve_exhausted),
+        0,
+        "enqueue side never saw it"
+    );
+    assert_eq!(load(&counters.over_floor_refused), 0);
+    drop(stream);
+    harness.released().await;
 }
 
 // ------------------------------------------------------------------ K2-T06
@@ -1814,6 +2243,7 @@ async fn t07_every_rpc_refuses_missing_or_mismatched_identity() {
         cursor_token: cursor.clone(),
         max_buffer_events: 10,
         max_records_per_response: 0,
+        replay_budget_status_v2: false,
     };
     let replay = query::ReplayRequest {
         consumer_id: CONSUMER.into(),
@@ -2359,6 +2789,22 @@ async fn f3_a_joiner_is_answered_after_a_reader_open_failure() {
         );
     }
     coordinator_baseline(&coordinator, &budget).await;
+    assert!(coordinator.metrics.open_calls.load(Ordering::Relaxed) >= 1);
+    assert!(coordinator.metrics.open_elapsed_ns.load(Ordering::Relaxed) > 0);
+    assert_eq!(
+        coordinator
+            .metrics
+            .cursor_next_calls
+            .load(Ordering::Relaxed),
+        0
+    );
+    assert_eq!(
+        coordinator
+            .metrics
+            .cursor_next_elapsed_ns
+            .load(Ordering::Relaxed),
+        0
+    );
 }
 
 /// The coordinator back at rest, checked as one snapshot: the driver re-takes
@@ -2424,6 +2870,22 @@ async fn f3_joiners_at_the_last_record_and_empty_ranges_complete_exactly() {
     assert_eq!(empty_end.await.unwrap(), ReplayEnd::Complete);
     drop((all, tail, empty));
     coordinator_baseline(&coordinator, &budget).await;
+    assert!(coordinator.metrics.open_calls.load(Ordering::Relaxed) >= 1);
+    assert!(coordinator.metrics.open_elapsed_ns.load(Ordering::Relaxed) > 0);
+    assert!(
+        coordinator
+            .metrics
+            .cursor_next_calls
+            .load(Ordering::Relaxed)
+            >= 40
+    );
+    assert!(
+        coordinator
+            .metrics
+            .cursor_next_elapsed_ns
+            .load(Ordering::Relaxed)
+            > 0
+    );
 }
 
 // F4: bounded replay - per-request scan limits, budget-charged channels,
@@ -2457,9 +2919,15 @@ fn live_weight(key: &str, envelope: &EventEnvelope) -> usize {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn f4_the_coordinator_enforces_the_scan_byte_and_record_limits() {
-    for (records, bytes, reason) in [
-        (2_000_000, 1, "REPLAY_BYTE_LIMIT"),
-        (1, 1 << 30, "REPLAY_SCAN_LIMIT"),
+    // (records, bytes, reason, refused at submit). The record case's span (2
+    // offsets) already exceeds a 1-record budget, so it is refused before any
+    // scan and is CURSOR_EXPIRED for every client (IDR-096 (A)); the byte case
+    // stops inside the pass and follows the client's replay_budget_status_v2.
+    for (records, bytes, reason, at_submit, budget_v2) in [
+        (2_000_000, 1, "REPLAY_BYTE_LIMIT", false, false),
+        (2_000_000, 1, "REPLAY_BYTE_LIMIT", false, true),
+        (1, 1 << 30, "REPLAY_SCAN_LIMIT", true, false),
+        (1, 1 << 30, "REPLAY_SCAN_LIMIT", true, true),
     ] {
         let mut limits = StreamLimits::default();
         limits.replay.max_scanned_bytes = bytes;
@@ -2473,13 +2941,29 @@ async fn f4_the_coordinator_enforces_the_scan_byte_and_record_limits() {
         harness.log.append(0, QUOTE_KEY, &quote(1, vec![]));
         harness.log.append(0, TRADE_KEY, &trade(2));
         harness.settle();
-        // Records: the range is 2 offsets, so the up-front span check passes
-        // only for the byte case; the record case must stop inside the pass.
-        let mut stream = harness.subscribe("TRADE", None, cursor, 100).await.unwrap();
+        let mut stream = harness
+            .subscribe_budget("TRADE", None, cursor, 100, 0, budget_v2)
+            .await
+            .unwrap();
+        let retryable = budget_v2 && !at_submit;
         loop {
             match stream.next().await {
-                Item::Error(Code::OutOfRange, message) => {
-                    assert!(message.contains(reason), "{message}");
+                Item::Error(Code::ResourceExhausted, message) if retryable => {
+                    assert!(
+                        message.starts_with(&format!("RATE_LIMITED:{reason}:")),
+                        "{message}"
+                    );
+                    assert!(!message.contains("CURSOR_EXPIRED"), "{message}");
+                    assert_eq!(harness.state().metrics.expired.load(Ordering::Relaxed), 0);
+                    break;
+                }
+                Item::Error(Code::OutOfRange, message) if !retryable => {
+                    assert!(
+                        message.starts_with(&format!("CURSOR_EXPIRED:{reason}:")),
+                        "{reason} budget_v2={budget_v2}: {message}"
+                    );
+                    assert!(!message.contains("RATE_LIMITED"), "{message}");
+                    assert_eq!(harness.state().metrics.expired.load(Ordering::Relaxed), 1);
                     break;
                 }
                 Item::Event(offset, _) => panic!("{reason}: delivered {offset} past the bound"),
@@ -2943,6 +3427,10 @@ impl Shapes {
 
 /// Read raw responses until `count` events arrived or the stream ended.
 async fn read_shapes(stream: &mut Stream, count: usize, shapes: &mut Shapes) {
+    read_shapes_until(stream, count, shapes, false).await;
+}
+
+async fn read_shapes_until(stream: &mut Stream, count: usize, shapes: &mut Shapes, live: bool) {
     while shapes.events.len() < count && shapes.status.is_none() {
         let response = match tokio::time::timeout(Duration::from_secs(5), stream.0.next()).await {
             Err(_) | Ok(None) => break,
@@ -2956,7 +3444,12 @@ async fn read_shapes(stream: &mut Stream, count: usize, shapes: &mut Shapes) {
             let record = response.record.expect("a response carries a record");
             match record.payload.expect("payload") {
                 query::stream_record::Payload::Control(control) => {
-                    shapes.controls.push(control.code)
+                    check_control_high(&mut stream.1, &control);
+                    let reached_live = control.code == "LIVE";
+                    shapes.controls.push(control.code);
+                    if live && reached_live {
+                        return;
+                    }
                 }
                 query::stream_record::Payload::Event(event) => {
                     shapes.sizes.push(1);
@@ -2974,6 +3467,10 @@ async fn read_shapes(stream: &mut Stream, count: usize, shapes: &mut Shapes) {
         assert!(
             response.records.len() >= 2,
             "a batch has two or more records"
+        );
+        assert!(
+            response.encoded_len() <= qdl_stream_gateway::service::MAX_BATCH_BYTES,
+            "multi-record response exceeds the byte bound"
         );
         shapes.batched += 1;
         shapes.sizes.push(response.records.len());
@@ -3198,6 +3695,423 @@ fn b04_the_batch_limit_is_clamped_and_lossless_only() {
     }
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn b07_replay_batches_ring_and_ready_reader_records_with_exact_accounting() {
+    for ring_max_bytes in [32 << 20, 1] {
+        for batch in [0, 1, 64] {
+            let harness = Harness::new(Options {
+                ring_max_bytes,
+                ..Options::default()
+            });
+            let cursor = harness.log.append(0, TRADE_KEY, &trade(1));
+            for index in 0..300 {
+                harness.log.append(0, TRADE_KEY, &trade(10 + index));
+            }
+            harness.settle();
+            let expected = as_offsets(&harness.log.records_of(TRADE_KEY, cursor));
+            let mut stream = harness
+                .subscribe_batched("TRADE", None, cursor, 1_000, batch)
+                .await
+                .unwrap();
+            // Fill the two-response handoff so the reader has a ready backlog.
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let mut shapes = Shapes::default();
+            read_shapes_until(&mut stream, usize::MAX, &mut shapes, true).await;
+            assert!(shapes.status.is_none(), "{:?}", shapes.status);
+            assert_eq!(shapes.controls, vec!["REPLAYING", "LIVE"]);
+            assert_eq!(shapes.offsets(), expected);
+            harness.assert_tokens("TRADE", &shapes);
+            if batch <= 1 {
+                assert_eq!(shapes.batched, 0);
+            } else {
+                assert!(shapes.batched > 0, "ready replay records must batch");
+                assert!(shapes.sizes.iter().all(|&size| size <= batch as usize));
+            }
+            assert_eq!(
+                harness.state().metrics.replayed.load(Ordering::Relaxed),
+                300
+            );
+            assert_eq!(harness.state().metrics.delivered.load(Ordering::Relaxed), 0);
+            let next = harness.log.append(0, TRADE_KEY, &trade(999)) as u64;
+            assert_eq!(stream.collect(1).await.1, vec![next]);
+            drop(stream);
+            harness.baseline().await;
+            assert_eq!(
+                harness.state().metrics.replayed.load(Ordering::Relaxed),
+                300
+            );
+            assert_eq!(harness.state().metrics.delivered.load(Ordering::Relaxed), 1);
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn b08_replay_pending_records_precede_corruption_and_filtered_boundaries() {
+    for ring_max_bytes in [32 << 20, 1] {
+        let harness = Harness::new(Options {
+            ring_max_bytes,
+            ..Options::default()
+        });
+        let cursor = harness.log.append(0, TRADE_KEY, &trade(1));
+        let first = harness.log.append(0, TRADE_KEY, &trade(2)) as u64;
+        let mut old = trade(3);
+        old.source_event_time_ns = 1;
+        old.published_at_ns = 1;
+        let filtered = harness.log.append(0, TRADE_KEY, &old) as u64;
+        let second = harness.log.append(0, TRADE_KEY, &trade(4)) as u64;
+        let bad = harness.log.append_corrupt(0, TRADE_KEY);
+        harness.log.append(0, TRADE_KEY, &trade(5));
+        harness.settle();
+        let mut wanted = requirement("TRADE", None);
+        let original_digest = DeliveryRequirement::from_proto(&wanted).unwrap().digest();
+        wanted.max_freshness_ms = 15_000;
+        let digest = DeliveryRequirement::from_proto(&wanted).unwrap().digest();
+        let mut claims = harness
+            .codec
+            .verify(
+                &harness.cursor("TRADE", None, 0, cursor),
+                CONSUMER,
+                "paper",
+                &original_digest,
+                &expectation(),
+                now_ns() as u64,
+            )
+            .unwrap();
+        claims.requirement_digest = digest.clone();
+        let response = harness
+            .gateway
+            .subscribe(harness.authorized(query::SubscribeRequest {
+                consumer_id: CONSUMER.into(),
+                requirement: Some(wanted),
+                cursor_token: harness.codec.encode(&claims).unwrap(),
+                max_buffer_events: 100,
+                max_records_per_response: 64,
+                replay_budget_status_v2: false,
+            }))
+            .await
+            .unwrap();
+        let mut stream = Stream(response.into_inner(), None);
+        let mut shapes = Shapes::default();
+        read_shapes(&mut stream, usize::MAX, &mut shapes).await;
+        let (code, message) = shapes.status.as_ref().expect("corruption is terminal");
+        assert_eq!(*code, Code::DataLoss);
+        assert!(message.starts_with("DATA_INTEGRITY:"));
+        assert_eq!(shapes.controls, vec!["REPLAYING"]);
+        assert_eq!(shapes.offsets(), vec![first, second]);
+        assert_eq!(
+            shapes.sizes,
+            vec![1, 1],
+            "never batch across filtered offset {filtered}"
+        );
+        assert!(shapes.offsets().iter().all(|&offset| offset < bad as u64));
+        for (offset, token, _) in &shapes.events {
+            let claims = harness
+                .codec
+                .verify(
+                    token,
+                    CONSUMER,
+                    "paper",
+                    &digest,
+                    &expectation(),
+                    now_ns() as u64,
+                )
+                .unwrap();
+            assert_eq!(claims.source_offset, *offset);
+        }
+        assert_eq!(harness.state().metrics.replayed.load(Ordering::Relaxed), 2);
+        assert_eq!(harness.state().metrics.delivered.load(Ordering::Relaxed), 0);
+        drop(stream);
+        harness.baseline().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn b09_replay_cancellation_and_revocation_release_only_replay_charges() {
+    for ring_max_bytes in [32 << 20, 1] {
+        for revoke in [false, true] {
+            let harness = Harness::new(Options {
+                ring_max_bytes,
+                budget: 1 << 20,
+                replay_budget: Some(8 << 20),
+                ..Options::default()
+            });
+            let cursor = harness.log.append(0, TRADE_KEY, &trade(1));
+            for index in 0..300 {
+                harness.log.append(0, TRADE_KEY, &trade(10 + index));
+            }
+            harness.settle();
+            let mut stream = harness
+                .subscribe_batched("TRADE", None, cursor, 1_000, 64)
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            assert!(harness.state().replay.budget().used() > 0);
+            assert_eq!(
+                harness.state().budget.used(),
+                0,
+                "replay never borrows live budget"
+            );
+            let live_capacity = harness
+                .state()
+                .budget
+                .charge(1 << 20)
+                .expect("all live capacity remains available during blocked replay");
+            drop(live_capacity);
+            if revoke {
+                revoke_all(&harness);
+                let mut shapes = Shapes::default();
+                read_shapes(&mut stream, usize::MAX, &mut shapes).await;
+                assert_eq!(shapes.status.as_ref().unwrap().0, Code::Unauthenticated);
+                assert!(!shapes.controls.iter().any(|code| code == "LIVE"));
+                assert!(shapes.events.len() < 300);
+                assert_eq!(
+                    harness.state().metrics.replayed.load(Ordering::Relaxed),
+                    shapes.events.len() as u64,
+                    "only successfully handed records count"
+                );
+            }
+            drop(stream);
+            harness.baseline().await;
+            assert_eq!(harness.state().metrics.delivered.load(Ordering::Relaxed), 0);
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn b10_replay_batches_obey_existing_byte_bound() {
+    for ring_max_bytes in [32 << 20, 1] {
+        let harness = Harness::new(Options {
+            ring_max_bytes,
+            ..Options::default()
+        });
+        let cursor = harness.log.append(0, TRADE_KEY, &trade(1));
+        for index in 0..8 {
+            let mut event = trade(index);
+            if let Some(event_envelope::Payload::Trade(trade)) = event.payload.as_mut() {
+                trade.native_trade_id = "x".repeat(300_000);
+            }
+            harness.log.append(0, TRADE_KEY, &event);
+        }
+        harness.settle();
+        let mut stream = harness
+            .subscribe_batched("TRADE", None, cursor, 100, 64)
+            .await
+            .unwrap();
+        let mut shapes = Shapes::default();
+        read_shapes_until(&mut stream, usize::MAX, &mut shapes, true).await;
+        assert!(shapes.status.is_none(), "{:?}", shapes.status);
+        assert_eq!(shapes.controls, vec!["REPLAYING", "LIVE"]);
+        assert_eq!(
+            shapes.offsets(),
+            as_offsets(&harness.log.records_of(TRADE_KEY, cursor))
+        );
+        assert!(shapes.sizes.iter().all(|&size| size <= 3));
+        if ring_max_bytes > 1 {
+            assert_eq!(shapes.sizes, vec![3, 3, 2]);
+        }
+        harness.assert_tokens("TRADE", &shapes);
+        drop(stream);
+        harness.baseline().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn b11_replay_reader_flushes_without_waiting_to_fill() {
+    let harness = Harness::new(Options {
+        ring_max_bytes: 1,
+        range_delay: Duration::from_millis(50),
+        ..Options::default()
+    });
+    let cursor = harness.log.append(0, TRADE_KEY, &trade(1));
+    for index in 0..30 {
+        harness.log.append(0, TRADE_KEY, &trade(10 + index));
+    }
+    harness.settle();
+    let mut stream = harness
+        .subscribe_batched("TRADE", None, cursor, 100, 64)
+        .await
+        .unwrap();
+    let mut shapes = Shapes::default();
+    read_shapes(&mut stream, 1, &mut shapes).await;
+    assert!(shapes.status.is_none(), "{:?}", shapes.status);
+    assert_eq!(shapes.offsets(), vec![(cursor + 1) as u64]);
+    assert_eq!(shapes.sizes, vec![1]);
+    assert!(
+        harness
+            .state()
+            .replay
+            .metrics
+            .matched
+            .load(Ordering::Relaxed)
+            < 30
+    );
+    drop(stream);
+    harness.baseline().await;
+}
+
+fn wall_ns() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64
+}
+
+/// Every record of the next responses until `count` event records arrived,
+/// each with the test's wall clock when the response was read.
+async fn raw_records(stream: &mut Stream, count: usize) -> Vec<(query::StreamRecord, u64)> {
+    let mut out = Vec::new();
+    let events = |out: &Vec<(query::StreamRecord, u64)>| {
+        out.iter()
+            .filter(|(record, _)| {
+                matches!(
+                    record.payload,
+                    Some(query::stream_record::Payload::Event(_))
+                )
+            })
+            .count()
+    };
+    while events(&out) < count {
+        let response = tokio::time::timeout(Duration::from_secs(5), stream.0.next())
+            .await
+            .expect("a response in time")
+            .expect("stream open")
+            .expect("no status");
+        let read = wall_ns();
+        for record in response.record.into_iter().chain(response.records) {
+            out.push((record, read));
+        }
+    }
+    out
+}
+
+/// SDK 2.4.0 gateway clocks: every Subscribe event record carries its own
+/// hub dispatch, dequeue and transport send wall clocks, in that order and
+/// before the client read it; controls and Replay RPC records carry none; a
+/// replayed record has no hub dispatch. A client that stops reading shows up
+/// as dequeue -> send (the transport did not pull), queued records as
+/// dispatch -> dequeue.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn b05_subscribe_records_carry_gateway_dispatch_dequeue_and_send_clocks() {
+    let harness = Harness::new(Options::default());
+    let started = wall_ns();
+    let cursor = harness.log.append(0, TRADE_KEY, &trade(1));
+    let replayed = harness.log.append(0, TRADE_KEY, &trade(2));
+    harness.settle();
+    let mut stream = harness
+        .subscribe_batched("TRADE", None, cursor, 1_000, 64)
+        .await
+        .unwrap();
+    // REPLAYING, the replayed record, LIVE.
+    let head = raw_records(&mut stream, 1).await;
+    let mut controls = 0;
+    for (record, read) in &head {
+        match &record.payload {
+            Some(query::stream_record::Payload::Control(_)) => {
+                controls += 1;
+                assert_eq!(
+                    (
+                        record.gateway_dispatch_wall_ns,
+                        record.gateway_dequeue_wall_ns,
+                        record.gateway_send_wall_ns
+                    ),
+                    (0, 0, 0),
+                    "a control carries no gateway clock"
+                );
+            }
+            Some(query::stream_record::Payload::Event(_)) => {
+                assert_eq!(record.logical_offset, replayed as u64);
+                assert_eq!(record.gateway_dispatch_wall_ns, 0, "replay skips the hub");
+                assert!(record.gateway_dequeue_wall_ns >= started);
+                assert!(record.gateway_send_wall_ns >= record.gateway_dequeue_wall_ns);
+                assert!(*read >= record.gateway_send_wall_ns);
+            }
+            None => panic!("payload"),
+        }
+    }
+    assert_eq!(controls, 1, "REPLAYING before the replayed record");
+    assert!(stream.until_live().await.is_empty());
+    // A burst while the client does not read.
+    let burst_started = wall_ns();
+    for index in 0..300u64 {
+        harness.log.append(0, TRADE_KEY, &trade(10 + index));
+    }
+    harness.settle();
+    let pause = Duration::from_millis(300);
+    tokio::time::sleep(pause).await;
+    let resumed = wall_ns();
+    let records = raw_records(&mut stream, 300).await;
+    let mut previous_send = 0;
+    let mut previous_dequeue = 0;
+    let mut held_in_handoff = 0;
+    let mut held_in_queue = 0;
+    for (record, read) in &records {
+        let (dispatch, dequeue, send) = (
+            record.gateway_dispatch_wall_ns,
+            record.gateway_dequeue_wall_ns,
+            record.gateway_send_wall_ns,
+        );
+        assert!(
+            dispatch >= burst_started,
+            "{dispatch} live records pass the hub"
+        );
+        assert!(dequeue >= dispatch, "dequeue after dispatch");
+        assert!(send >= dequeue, "send after dequeue");
+        assert!(*read >= send, "the client reads after the send");
+        assert!(
+            send >= previous_send && dequeue >= previous_dequeue,
+            "in order"
+        );
+        previous_send = send;
+        previous_dequeue = dequeue;
+        // The transport only takes a response when the client reads.
+        assert!(
+            send >= resumed,
+            "nothing is sent while the client does not read"
+        );
+        if dequeue < resumed {
+            held_in_handoff += 1;
+        } else if dequeue - dispatch >= pause.as_nanos() as u64 / 2 {
+            held_in_queue += 1;
+        }
+    }
+    assert!(
+        held_in_handoff >= 1,
+        "a record waited in the handoff for the client"
+    );
+    assert!(
+        held_in_queue >= 1,
+        "records waited in the subscription queue"
+    );
+    // Every record once, in order, batched or not.
+    let offsets: Vec<u64> = records.iter().map(|(r, _)| r.logical_offset).collect();
+    assert_eq!(
+        offsets,
+        as_offsets(&harness.log.records_of(TRADE_KEY, replayed))
+    );
+    drop(stream);
+    harness.released().await;
+    // The Replay RPC is unchanged: no gateway clock.
+    let mut replay = harness.replay_rpc("TRADE", cursor, 10).await.unwrap();
+    let mut events = 0;
+    while let Ok(Some(item)) = tokio::time::timeout(Duration::from_secs(5), replay.next()).await {
+        let Ok(response) = item else { break };
+        let record = response.record.expect("record");
+        if let Some(query::stream_record::Payload::Event(_)) = record.payload {
+            events += 1;
+            assert_eq!(
+                (
+                    record.gateway_dispatch_wall_ns,
+                    record.gateway_dequeue_wall_ns,
+                    record.gateway_send_wall_ns
+                ),
+                (0, 0, 0)
+            );
+        }
+    }
+    assert!(events >= 1, "the replay returned records");
+    harness.baseline().await;
+}
+
 /// Process CPU (user + system) in milliseconds, from `/proc/self/stat`
 /// (clock ticks of 10 ms at the usual 100 Hz).
 fn process_cpu_ms() -> f64 {
@@ -3335,4 +4249,92 @@ async fn bench_serve_live_trade_bursts_over_grpc() {
     }
     stop.send(()).unwrap();
     server.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn opt01_bulk_replay_stays_unregistered_while_new_input_exceeds_queue() {
+    for batch in [1, 64] {
+        let harness = Harness::new(Options {
+            ring_max_bytes: 256,
+            range_delay: Duration::from_millis(1),
+            ..Options::default()
+        });
+        let cursor = harness.log.append(0, TRADE_KEY, &trade(0));
+        for index in 1..=200 {
+            harness.log.append(0, TRADE_KEY, &trade(index));
+        }
+        harness.settle();
+        let mut stream = harness
+            .subscribe_batched("TRADE", None, cursor, 1000, batch)
+            .await
+            .unwrap();
+        assert!(matches!(stream.next().await, Item::Control(code) if code == "REPLAYING"));
+        assert_eq!(harness.state().hub.subscriber_count(), 0);
+        for index in 201..=1400 {
+            harness.log.append(0, TRADE_KEY, &trade(index));
+        }
+        harness.settle();
+        assert_eq!(harness.state().hub.subscriber_count(), 0);
+        let replayed = stream.until_live().await;
+        assert_eq!(
+            replayed,
+            as_offsets(&harness.log.records_of(TRADE_KEY, cursor))
+        );
+        let next = harness.log.append(0, TRADE_KEY, &trade(1401));
+        assert_eq!(stream.collect(1).await.1, vec![next as u64]);
+        drop(stream);
+        harness.released().await;
+        assert_eq!(harness.state().hub.subscriber_count(), 0);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn opt01_handoff_completes_before_continuing_producer_stops() {
+    let harness = Harness::new(Options {
+        ring_max_bytes: 256,
+        range_delay: Duration::from_millis(1),
+        ..Options::default()
+    });
+    let cursor = harness.log.append(0, TRADE_KEY, &trade(0));
+    for index in 1..=200 {
+        harness.log.append(0, TRADE_KEY, &trade(index));
+    }
+    harness.settle();
+    let mut stream = harness
+        .subscribe_batched("TRADE", None, cursor, 1000, 64)
+        .await
+        .unwrap();
+    assert!(matches!(stream.next().await, Item::Control(code) if code == "REPLAYING"));
+    let stop = Arc::new(AtomicBool::new(false));
+    let finished = Arc::new(AtomicBool::new(false));
+    let producer = {
+        let stop = stop.clone();
+        let finished = finished.clone();
+        let log = harness.log.clone();
+        tokio::spawn(async move {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut count = 201;
+            while !stop.load(Ordering::Relaxed) && Instant::now() < deadline {
+                log.append(0, TRADE_KEY, &trade(count));
+                count += 1;
+                tokio::time::sleep(Duration::from_millis(3)).await;
+            }
+            finished.store(true, Ordering::Relaxed);
+        })
+    };
+    let mut actual = stream.until_live().await;
+    let handed_off_while_producing = !finished.load(Ordering::Relaxed);
+    stop.store(true, Ordering::Relaxed);
+    producer.await.unwrap();
+    assert!(
+        handed_off_while_producing,
+        "must not rely on producer completion"
+    );
+    let expected = as_offsets(&harness.log.records_of(TRADE_KEY, cursor));
+    if actual.len() < expected.len() {
+        actual.extend(stream.collect(expected.len() - actual.len()).await.1);
+    }
+    assert_eq!(actual, expected);
+    drop(stream);
+    harness.released().await;
 }

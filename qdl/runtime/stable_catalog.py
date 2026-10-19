@@ -28,6 +28,7 @@ from qdl.query import (
     METRIC_INTERVAL_FEEDS,
     OPTIONAL_INTERVAL_FEEDS,
 )
+from qdl.query.results import CanonicalLineageMismatch
 from qdl.transport.contracts import partition_key
 
 
@@ -475,7 +476,7 @@ class StableSourceCatalog:
             or envelope.adapter_version != binding.adapter_version
             or envelope.normalizer_version != binding.normalizer_version
         ):
-            raise ValueError("canonical event identity/lineage differs from stable binding")
+            raise CanonicalLineageMismatch("canonical event identity/lineage differs from stable binding")
         if (
             envelope.schema_major != 2
             or len(envelope.event_id) != 16

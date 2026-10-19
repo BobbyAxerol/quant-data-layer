@@ -196,6 +196,10 @@ class PlanTests(unittest.TestCase):
         self.assertNotIn("min.compaction.lag.ms", by_name["md.latest.v2"]["configs"])
         self.assertEqual(by_name["md.latest.v2"]["replication_factor"], 3)
         self.assertEqual(by_name["md.latest.v2"]["configs"]["min.insync.replicas"], "2")
+        # A': md.latest.v2 carries no tombstones -> marker lifetime 6 h; md.bars.v2 keeps the 7 d tombstone lifetime.
+        self.assertEqual(by_name["md.latest.v2"]["configs"]["delete.retention.ms"], "21600000")
+        self.assertEqual(by_name["md.bars.v2"]["configs"]["delete.retention.ms"], "604800000")
+        self.assertEqual(packet.planned_topic_configs(budget["md.latest.v2"]), by_name["md.latest.v2"]["configs"])
 
     def test_commands_are_explicit_and_exact(self):
         commands = plan_commands(_plan())
@@ -449,7 +453,10 @@ class ApplyVerifyTests(unittest.TestCase):
             ("md.bars.v2", "config", ("min.insync.replicas", "1"), "config:min.insync.replicas"),
             ("md.bars.v2", "config", ("cleanup.policy", "delete"), "config:cleanup.policy"),
             ("md.latest.v2", "config", ("cleanup.policy", "compact,delete"), "config:cleanup.policy"),
+            # A' (2026-10-16): 21,600,000 (6 h) on md.latest.v2 is the plan; 24 h and the pre-A' 7 d drift.
             ("md.latest.v2", "config", ("delete.retention.ms", "86400000"), "config:delete.retention.ms"),
+            ("md.latest.v2", "config", ("delete.retention.ms", "604800000"), "config:delete.retention.ms"),
+            ("md.bars.v2", "config", ("delete.retention.ms", "21600000"), "config:delete.retention.ms"),
             ("md.bars.v2", "config", ("min.compaction.lag.ms", "0"), "config:min.compaction.lag.ms"),
             ("md.bars.v2", "drop", "min.compaction.lag.ms", "config:min.compaction.lag.ms"),
             ("md.latest.v2", "config", ("min.compaction.lag.ms", "3600000"), "config:min.compaction.lag.ms"),

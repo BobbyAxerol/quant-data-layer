@@ -148,14 +148,50 @@ class CandidateBudgetTests(unittest.TestCase):
         topics = self.budget["retention"]["state_topics"]
         self.assertEqual({k for k, v in topics.items() if isinstance(v, dict)}, {"md.latest.v2", "md.bars.v2"})
         self.assertNotIn("md.canonical.v2", topics)
+        contract = self.budget["retention"]["state_topic_tombstones"]["topics"]
         for name in ("md.latest.v2", "md.bars.v2"):
             self.assertEqual(topics[name]["cleanup.policy"], "compact")
             self.assertEqual(topics[name]["replication_factor"], 3)
-            self.assertGreaterEqual(topics[name]["delete.retention.ms"], self.budget["retention"]["tombstone_lifetime_ms"])
+            # A' (2026-10-16): the tombstone lifetime binds only the topics that carry tombstones.
+            if contract[name]["carries_tombstones"]:
+                self.assertGreaterEqual(topics[name]["delete.retention.ms"],
+                                        self.budget["retention"]["tombstone_lifetime_ms"])
             # Owner decision, Astra KN-3 review R1: bounded segments on both state topics.
             self.assertEqual(topics[name]["segment.ms"], 3_600_000)
             self.assertEqual(topics[name]["segment.bytes"], 134_217_728)
         self.assertEqual(topics["md.bars.v2"]["segment.ms"], topics["md.bars.v2"]["min.compaction.lag.ms"])
+
+    def test_tombstone_contract_is_per_topic(self):
+        """A': md.latest.v2 declares it carries no tombstones, so its delete.retention.ms is only the
+        transaction-marker lifetime, bounded below by the D21 replay pass; md.bars.v2 keeps the
+        tombstone lifetime and the rebuild horizon."""
+        retention = self.budget["retention"]
+        block = retention["state_topic_tombstones"]
+        topics = retention["state_topics"]
+        self.assertEqual(block["schema"], "qdl.kn.v220.state-topic-tombstones.v1")
+        self.assertEqual(set(block["topics"]), {"md.latest.v2", "md.bars.v2"})
+        for name, spec in block["topics"].items():
+            self.assertIsInstance(spec["carries_tombstones"], bool, name)
+        carrying = sorted(n for n, s in block["topics"].items() if s["carries_tombstones"])
+        self.assertEqual(carrying, ["md.bars.v2"])
+        self.assertEqual(block["tombstone_lifetime_ms_applies_to"], carrying)
+        self.assertEqual(block["rebuild_horizon_applies_to"], carrying)
+        self.assertEqual(topics["md.bars.v2"]["delete.retention.ms"], retention["tombstone_lifetime_ms"])
+        latest = block["topics"]["md.latest.v2"]
+        self.assertFalse(latest["carries_tombstones"])
+        self.assertIn("md_latest_writer_never_emits_a_tombstone", latest["guard"])
+        self.assertEqual(topics["md.latest.v2"]["delete.retention.ms"], 21_600_000)
+        self.assertLess(topics["md.latest.v2"]["delete.retention.ms"], retention["tombstone_lifetime_ms"])
+        # D21: one replay pass of the largest partition fits the marker lifetime with margin.
+        self.assertGreaterEqual(topics["md.latest.v2"]["delete.retention.ms"],
+                                latest["d21_min_margin"] * latest["d21_replay_pass_upper_bound_s"] * 1000)
+        self.assertGreaterEqual(latest["d21_min_margin"], 4)
+        # The golden oracle (read by the Rust guard) agrees with the budget.
+        golden = json.loads((ROOT / "contracts/golden/kn_v220/state_contract.json").read_text(encoding="utf-8"))
+        invariants = golden["state_topic_invariants"]
+        self.assertEqual(invariants["schema"], "qdl.kn.v220.golden.state-topic-invariants.v1")
+        self.assertEqual({n: s["carries_tombstones"] for n, s in invariants["topics"].items()},
+                         {n: s["carries_tombstones"] for n, s in block["topics"].items()})
 
 
 if __name__ == "__main__":

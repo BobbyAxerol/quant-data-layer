@@ -8,8 +8,13 @@ control plane, not the APPLY scripts. The campaign runner records the writer's r
 
 Samples (allowlisted read-only commands only, never MONITOR, never SLOWLOG RESET or CONFIG SET):
 * PING every --ping-ms: client-side round trip (host -> container IP), ms;
-* every --stats-seconds: INFO commandstats (cumulative usec/calls per command) and SLOWLOG GET 128 (id, start time,
-  duration, command name only - no arguments are kept) plus SLOWLOG threshold (CONFIG GET slowlog-log-slower-than);
+* every --stats-seconds: INFO commandstats (cumulative usec/calls per command) and SLOWLOG GET 128 plus SLOWLOG
+  threshold (CONFIG GET slowlog-log-slower-than). Per SLOWLOG row: id, start time, duration, command name, and
+  (attribution, report-only, 2026-10-15) the client address and client name Redis >= 4 records in the entry, and for
+  EVAL/EVALSHA(_RO) a script identity: the sha argument of EVALSHA, the sha1 of the EVAL script body (computed here,
+  the body is never stored; SLOWLOG cuts arguments over 128 bytes, so for a cut body the sha1 is of the visible
+  prefix and script_body_truncated is true - it then identifies the script family, not the SCRIPT LOAD sha). Keys
+  and every other argument are never kept;
 * every 60 s: CLIENT LIST, reduced to the count of clients whose flags contain 'O' (MONITOR).
 
 Gate (frozen table, rev 2): sum of INFO commandstats usec deltas <= 60 % of one core over every 10-min window; SLOWLOG
@@ -21,7 +26,9 @@ usage: p184_g8_redis_sampler.py --seconds N --out DIR [--container redis_marketd
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -53,16 +60,64 @@ def parse_commandstats(text: str) -> dict[str, dict[str, int]]:
     return out
 
 
+_SLOWLOG_CUT = re.compile(rb"\.\.\. \((\d+) more bytes\)$")
+_SHA1_HEX = re.compile(r"[0-9a-f]{40}")
+
+
+def _text(value, limit: int) -> str | None:
+    if value is None:
+        return None
+    return (value.decode(errors="replace") if isinstance(value, bytes) else str(value))[:limit]
+
+
+def script_identity(command: str, args) -> dict:
+    """Script identity of an EVAL/EVALSHA(_RO) SLOWLOG row; {} for any other command. Only a digest is returned."""
+    if len(args) < 2:
+        return {}
+    body = args[1] if isinstance(args[1], bytes) else str(args[1]).encode()
+    if command in ("EVALSHA", "EVALSHA_RO"):
+        sha = body.decode(errors="replace").lower()
+        return {"script_sha1": sha if _SHA1_HEX.fullmatch(sha) else None, "script_sha1_basis": "EVALSHA_ARGUMENT"}
+    if command in ("EVAL", "EVAL_RO"):
+        cut = _SLOWLOG_CUT.search(body)
+        visible = body[:cut.start()] if cut else body
+        return {"script_sha1": hashlib.sha1(visible).hexdigest(),
+                "script_sha1_basis": "SHA1_OF_VISIBLE_PREFIX" if cut else "SHA1_OF_BODY",
+                "script_body_truncated": bool(cut)}
+    return {}
+
+
 def slowlog_rows(reply) -> list[dict]:
+    """SLOWLOG GET rows: [id, start, duration_us, args, client_addr, client_name] (the last two from Redis 4).
+    Keeps the command name, client address/name and a script digest; never a key or any other argument."""
     rows = []
     for entry in reply or []:
         try:
-            command = entry[3][0].decode(errors="replace")[:32] if entry[3] else "?"
-            rows.append({"id": int(entry[0]), "start_s": int(entry[1]), "duration_us": int(entry[2]),
-                         "command": command.upper()})
-        except (IndexError, TypeError, ValueError):
+            args = entry[3] or []
+            command = args[0].decode(errors="replace")[:32].upper() if args else "?"
+            row = {"id": int(entry[0]), "start_s": int(entry[1]), "duration_us": int(entry[2]), "command": command,
+                   "client_addr": _text(entry[4], 64) if len(entry) > 4 else None,
+                   "client_name": _text(entry[5], 64) if len(entry) > 5 else None}
+            row.update(script_identity(command, args))
+            rows.append(row)
+        except (IndexError, TypeError, ValueError, AttributeError):
             continue
     return rows
+
+
+def slowlog_attribution(rows) -> list[dict]:
+    """Report-only: count / max duration per (command, script, client name)."""
+    groups = {}
+    for row in rows:
+        key = (row.get("command"), row.get("script_sha1"), row.get("client_name"))
+        g = groups.setdefault(key, {"command": key[0], "script_sha1": key[1], "client_name": key[2], "count": 0,
+                                    "max_duration_us": 0, "client_addrs": set()})
+        g["count"] += 1
+        g["max_duration_us"] = max(g["max_duration_us"], row.get("duration_us") or 0)
+        if row.get("client_addr"):
+            g["client_addrs"].add(row["client_addr"])
+    out = [{**g, "client_addrs": sorted(g["client_addrs"])[:10]} for g in groups.values()]
+    return sorted(out, key=lambda g: (-g["count"], str(g["command"])))
 
 
 def monitor_clients(text: str) -> int:
@@ -133,6 +188,8 @@ def summarize(samples, *, steady_from_ns=None, steady_to_ns=None, window_seconds
         "slowlog_new_total": len(slow),
         "slowlog_new_steady": len(steady_slow),
         "slowlog_steady_rows": steady_slow[:50],
+        "slowlog_steady_attribution": slowlog_attribution(steady_slow),
+        "slowlog_new_attribution": slowlog_attribution(slow),
         "ping_all_ms": quantiles([p["rtt_ms"] for p in pings if p.get("rtt_ms") is not None]),
         "ping_steady_ms": quantiles(steady_pings),
         "ping_failures": ping_failures,

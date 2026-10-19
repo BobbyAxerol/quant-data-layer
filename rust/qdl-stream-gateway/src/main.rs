@@ -254,7 +254,8 @@ async fn serve() -> Result<(), String> {
         },
     ));
     let reader = hub.run(Box::new(source));
-    let budget = ByteBudget::new(memory.queue_total as usize);
+    // Deep subscriptions cannot exhaust what an idle one needs (memory.rs).
+    let budget = ByteBudget::live(memory.queue_total as usize);
     let replay = ReplayCoordinator::new(
         Arc::new(KafkaRangeSource::new(settings, readers)),
         readers,
@@ -316,6 +317,27 @@ async fn serve() -> Result<(), String> {
             let replay = &reporter.replay.metrics;
             let load = |value: &std::sync::atomic::AtomicU64| value.load(Ordering::Relaxed);
             let (rss, cpu) = process_usage();
+            // Which live-budget isolation branch fired (memory.rs reserve).
+            let isolation = &reporter.budget.counters;
+            let queue_isolation = serde_json::json!({
+                "reserve_admitted": load(&isolation.reserve_admitted),
+                "over_floor_refused": load(&isolation.over_floor_refused),
+                "reserve_exhausted": load(&isolation.reserve_exhausted),
+                // Transport top-ups: refusals (once per record) and the
+                // streams they closed, apart from the enqueue counters.
+                "handoff_refused_within_floor": load(&isolation.handoff_refused_within_floor),
+                "handoff_refused_over_floor": load(&isolation.handoff_refused_over_floor),
+                "handoff_timeout_within_floor": load(&isolation.handoff_timeout_within_floor),
+                "handoff_timeout_over_floor": load(&isolation.handoff_timeout_over_floor),
+            });
+            let replay_timing = serde_json::json!({
+                "slot_waits": load(&replay.slot_waits),
+                "slot_wait_ns": load(&replay.slot_wait_ns),
+                "open_calls": load(&replay.open_calls),
+                "open_elapsed_ns": load(&replay.open_elapsed_ns),
+                "cursor_next_calls": load(&replay.cursor_next_calls),
+                "cursor_next_elapsed_ns": load(&replay.cursor_next_elapsed_ns),
+            });
             println!(
                 "{}",
                 serde_json::json!({
@@ -355,7 +377,9 @@ async fn serve() -> Result<(), String> {
                     "replay_readers_free": reporter.replay.available(),
                     "replay_in_flight": reporter.replay.in_flight(),
                     "replay_detached": load(&replay.detached),
+                    "replay_timing": replay_timing,
                     "queue_bytes": reporter.budget.used(),
+                    "queue_isolation": queue_isolation,
                     "rss_bytes": rss,
                     "cpu_seconds": cpu,
                 })

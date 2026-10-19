@@ -7,6 +7,7 @@ members = [
     "rust/qdl-provider-envelope",
     "rust/qdl-realtime-core",
     "rust/qdl-stream-gateway",
+    "rust/qdl-test-data-clock",
     "rust/qdl-venue-core",
 ]
 resolver = "2"
@@ -27,13 +28,14 @@ proc-macro-crate = "=3.3.0"
 ring = "=0.17.14"
 qdl-contracts = { path = "rust/qdl-contracts", version = "=0.1.0" }
 qdl-core = { path = "rust/qdl-core", version = "=0.1.0" }
+qdl-test-data-clock = { path = "rust/qdl-test-data-clock", version = "=0.1.0", default-features = false }
 rdkafka = { version = "=0.39.0", features = ["cmake-build", "ssl", "zstd"] }
 redis = { version = "=0.25.4", default-features = false, features = ["script"] }
 # The asynchronous REST edge stays on the Rust 1.82-compatible HTTP/1/2 Rustls
 # feature set.  The 0.12 line removes the advisory-affected 0.11 TLS/Hyper
 # dependency tree without enabling optional HTTP/3 support.
 reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls"] }
-rustls = { version = "=0.23.45", default-features = false, features = ["ring", "std"] }
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"] }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.145"
 sha2 = "0.10.9"

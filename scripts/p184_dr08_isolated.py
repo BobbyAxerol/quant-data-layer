@@ -566,6 +566,63 @@ def replay_boundary(start, consumer, token, producer, baseline_id):
         child.close()
 
 
+# OF-G13-1 (inheritance audit 2026-10-16): NO_CROSS_CONSUMER_STARVATION is judged on an identity-matched marker
+# published AFTER the stopped slow subscription is seen overflowing (gateway metrics, 1 s cadence), never on whether
+# an overflow sample happened to land inside the publish loop. Bounded wait; no overflow seen -> not observed.
+STARVATION_OVERFLOW_WAIT_S = 30
+
+
+def wait_overflow(path, *, since_ns, before, timeout=None, clock=None, pause=None):
+    """The first metrics sample whose overflow counter is above ``before`` (the stopped slow subscription's queue
+    overflowed), as {overflow_delta, waited_ms}; None if none within ``timeout`` (STARVATION_OVERFLOW_WAIT_S)."""
+    timeout = STARVATION_OVERFLOW_WAIT_S if timeout is None else timeout
+    clock, pause = clock or time.monotonic, pause or time.sleep
+    started = clock()
+    while True:
+        try:
+            samples = read_metrics(path, since_ns=since_ns)
+        except (FileNotFoundError, ValueError):
+            samples = []
+        if samples and samples[-1].get("overflow", 0) > before.get("overflow", 0):
+            return {"overflow_delta": samples[-1]["overflow"] - before.get("overflow", 0),
+                    "waited_ms": (clock() - started) * 1000}
+        if clock() - started >= timeout:
+            return None
+        pause(.2)
+
+
+def process_stopped(pid):
+    """True when the process is in the stopped state (SIGSTOP), from /proc/<pid>/stat; None if unreadable."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return None
+    return stat.rsplit(")", 1)[1].split()[0] == "T"
+
+
+def starvation_fact(fast_end, progress_samples, overflow, marker, baseline_id):
+    """DR08.NO_CROSS_CONSUMER_STARVATION: while the slow consumer is stopped and its subscription has overflowed,
+    the fast consumer still receives every event, the marker (trade id baseline + REPLAY) by identity. Without an
+    observed overflow the window is not the one judged: observed False (never a PASS)."""
+    marker = marker or {}
+    expected_marker = baseline_id + REPLAY
+    fact = {"observed": overflow is not None, "passed": False,
+            "fast_events": fast_end.get("count"), "distinct_identities": True,
+            "identity_order_checked": True, "progress_checked_every": 100,
+            "progress_while_slow_stopped": progress_samples, "measurement_n": len(progress_samples),
+            "slow_overflow_before_marker": overflow, "marker": marker, "expected_marker_trade_id": expected_marker,
+            "predicate": "v2: marker by identity after the slow overflow, slow consumer stopped throughout"}
+    if overflow is None:
+        fact["failure_stage"] = "slow_overflow_not_observed"
+        return fact
+    fact["passed"] = (fast_end.get("code") == "OK" and fast_end.get("count") == REPLAY + 1
+                      and fast_end.get("last") == baseline_id + REPLAY + 1
+                      and len(progress_samples) == REPLAY // 100 - 1
+                      and marker.get("trade_id") == expected_marker and marker.get("fast_last") == expected_marker
+                      and marker.get("fast_count") == REPLAY and marker.get("slow_stopped") is True)
+    return fact
+
+
 def run_faults(packet):
     facts, children = {}, []
     stage = "baseline_metrics"
@@ -597,22 +654,31 @@ def run_faults(packet):
         stage = "stalled_consumer_live_progress"
         progress_samples = []
         stalled_started_ns = time.monotonic_ns()
-        slow_resumed = False
-        for _ in range(REPLAY // 100):
-            producer.publish(100)
-            # Backpressure the test producer on the independent fast consumer,
-            # not the stalled one. This also bounds IPC and records progress.
-            progress = fast.wait("progress")
-            if not slow_resumed:
+        # OF-G13-1: the slow consumer stays stopped through the burst AND the marker (the old in-loop resume on the
+        # first overflow sample depended on when the 1 s metrics line landed). REPLAY - 1 burst events, then the
+        # slow subscription's overflow is awaited, then ONE marker event (REPLAY in total, so the exact replay
+        # boundary below is unchanged) must reach the fast consumer by identity while the slow one is still stopped.
+        batches = REPLAY // 100
+        for index in range(batches):
+            last_batch = index == batches - 1
+            producer.publish(99 if last_batch else 100)
+            if not last_batch:
+                # Backpressure the test producer on the independent fast consumer,
+                # not the stalled one. This also bounds IPC and records progress.
+                progress = fast.wait("progress")
                 progress_samples.append({"count": progress["count"],
                     "elapsed_ms": (time.monotonic_ns() - stalled_started_ns) / 1_000_000})
-                samples = read_metrics(packet["metrics_path"], since_ns=started)
-                if samples and samples[-1].get("overflow", 0) > before.get("overflow", 0):
-                    slow.resume()
-                    slow_resumed = True
+        stage = "slow_overflow_before_marker"
+        overflow = wait_overflow(packet["metrics_path"], since_ns=started, before=before)
+        stage = "starvation_marker"
+        producer.publish(1)
+        marker_id, marker_ns = producer.next_id - 1, time.monotonic_ns()
+        landed = fast.wait("progress")
+        marker = {"trade_id": marker_id, "fast_count": landed.get("count"), "fast_last": landed.get("last"),
+                  "latency_ms": (time.monotonic_ns() - marker_ns) / 1_000_000,
+                  "slow_stopped": process_stopped(slow.process.pid), "slow_progress_at_marker": slow.progress}
         stage = "slow_terminal"
-        if not slow_resumed:
-            slow.resume()
+        slow.resume()
         slow_end = slow.wait("done")
         slow.close()
         bounded = slow_end["code"] == "RESOURCE_EXHAUSTED" and "RATE_LIMITED" in slow_end["controls"]
@@ -650,12 +716,7 @@ def run_faults(packet):
             "fresh_snapshot_rpc": "MarketDataStreamService/GetSnapshot",
             "snapshot_path": "isolated candidate Query " + packet["query_provenance"]["image_ref"].split(":", 1)[-1]
                 + " to canonical hot read; not production v2.2.2 or projector recovery proof"}
-        facts[CELLS[2]] = {"observed": True,
-            "passed": fast_end["code"] == "OK" and fast_end["count"] == REPLAY + 1 and fast_end["last"] == baseline_id + REPLAY + 1
-                and bool(progress_samples) and slow_resumed,
-            "fast_events": fast_end["count"], "distinct_identities": True,
-            "identity_order_checked": True, "progress_checked_every": 100,
-            "progress_while_slow_stopped": progress_samples, "measurement_n": len(progress_samples)}
+        facts[CELLS[2]] = starvation_fact(fast_end, progress_samples, overflow, marker, baseline_id)
         time.sleep(2)
         stage = "final_metrics"
         metrics = read_metrics(packet["metrics_path"], since_ns=started)
@@ -682,6 +743,656 @@ def run_faults(packet):
         for child in children:
             child.close()
     return facts
+
+
+# ------------------------------------------------- live-budget isolation mode
+# Stream gateway live-budget isolation A/B (DL e3b5552, stage-100 2026-10-15
+# RCA): several deep lossless subscriptions on DISTINCT keys must not make
+# idle readers on other keys overflow. Same isolated stack as DR08 (one
+# broker, deployed core, Stream, Query, quota Redis), different scenario:
+# three stalled TRADE readers (BTC/ETH/SOL, deep buffers) and idle QUOTE,
+# MARK_INDEX_PRICE, BOOK_DELTA and BOOK_SNAPSHOT readers (BNB/DOGE) under the
+# production 32 MiB live budget. It writes facts only; the campaign
+# (--isolation-campaign) preregisters the acceptance before any run and applies
+# it to both images unchanged.
+# Review SR4 (2026-10-16): idle progress is proved by the IDENTITY of the
+# marker record published after the last burst (its raw capture id), not by a
+# local receive time; the handoff refusal/timeout counters are part of C2; a
+# BOOK-weight idle cohort (the deployed depth@100ms binding: a REST snapshot,
+# then contiguous diff-depth frames) sits next to the small QUOTE/MARK records.
+ISOLATION_MODE = "live_budget_isolation"
+ISOLATION_DEEP = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
+ISOLATION_IDLE = ("BNBUSDT", "DOGEUSDT")
+ISOLATION_BOOK_FEEDS = ("BOOK_DELTA", "BOOK_SNAPSHOT")
+ISOLATION_IDLE_FEEDS = ("QUOTE", "MARK_INDEX_PRICE") + ISOLATION_BOOK_FEEDS
+IDLE_READERS_PER_ROUTE = 8
+# Binance depth@100ms: 10 frames/s per book; each changes this many levels per
+# side (a delta of about 2 KB canonical payload, ~18 KB live weight).
+IDLE_BOOK_HOLD_RATE_HZ = 10
+BOOK_DELTA_LEVELS_PER_SIDE = 40
+BOOK_BASE_UPDATE_ID = 1_000_000
+# The core materializes a BOOK_SNAPSHOT at most once per 1000 ms of source time
+# (deployed l2.materialized_snapshot_interval_ms); a quiet gap before the marker
+# makes the marker delta publish one too, carrying the marker's capture id.
+BOOK_MARKER_QUIET_SECONDS = 1.5
+BASELINE_KINDS = ("pre_reserve", "prior_candidate")
+DEEP_BUFFER = 3000
+DEEP_ROUNDS = 12
+DEEP_PER_ROUND = 250
+# Idle traffic while the deep readers hold the budget (first A/B 20261015T155507Z
+# published one idle record per route then and could not discriminate).
+IDLE_HOLD_SECONDS = 8
+IDLE_HOLD_RATE_HZ = 50
+LIVE_RESERVE_BYTES = QUEUE_BYTES // 8  # rust/qdl-stream-gateway/src/memory.rs LIVE_RESERVE_DIVISOR
+ISOLATION_ACCEPTANCE = {
+    "C1_candidate_idle_closures": "== 0 (client terminal statuses and Stream closures of the idle identity)",
+    "C1b_candidate_idle_progress": "every idle reader receives its route's marker record BY IDENTITY (the raw "
+                                   "capture id of the frame published after the last deep burst and the idle "
+                                   "hold; MARK_INDEX_PRICE by that capture id inside source_sequence), then stops",
+    "C2_candidate_reserve_exhausted": "== 0 (queue_isolation.reserve_exhausted), AND handoff_refused_within_floor "
+                                      "== 0 and handoff_timeout_within_floor == 0 (queue_isolation), AND the idle "
+                                      "identity's handoff_refused == 0 and handoff_timeouts == 0 over a "
+                                      "subscription-closed report for every idle reader",
+    "C3_candidate_over_floor_refused": "> 0, and every abnormal Stream closure belongs to the deep identity",
+    "C4_candidate_deep_resume": "every deep reader resumes from its last resume token and receives every later "
+                                "trade id of its key, contiguous, to the last published",
+    "D1_baseline_discriminates": "baseline idle closures >= 1 (gating only for baseline_kind pre_reserve; "
+                                 "report-only against a prior candidate)",
+    "report_only": "peak queue bytes and peak reserve bytes used (1 s metric samples), over-floor handoff "
+                   "counters, max canonical payload bytes per idle feed",
+}
+
+
+def isolation_feed(channel):
+    """The binding kind of a deployed channel: a feed, or BOOK (one binding, two feeds)."""
+    channel = channel.lower()
+    for suffix, feed in (("@trade", "TRADE"), ("@bookticker", "QUOTE"), ("@markprice@1s", "MARK_INDEX_PRICE"),
+                         ("@depth@100ms", "BOOK")):
+        if channel.endswith(suffix):
+            return feed
+    return None
+
+
+def binding_kind(feed):
+    return "BOOK" if feed in ISOLATION_BOOK_FEEDS else feed
+
+
+def isolation_routes():
+    return ([(symbol, "TRADE") for symbol in ISOLATION_DEEP]
+            + [(symbol, feed) for symbol in ISOLATION_IDLE for feed in ISOLATION_IDLE_FEEDS])
+
+
+def isolation_binding_keys():
+    """(symbol, binding kind) in route order, each once."""
+    return list(dict.fromkeys((symbol, binding_kind(feed)) for symbol, feed in isolation_routes()))
+
+
+def isolation_bindings(bindings):
+    """The deployed BINANCE USDM core bindings of the scenario, exactly one per binding key."""
+    wanted = isolation_binding_keys()
+    found = {}
+    for row in bindings:
+        if row.get("venue") != "BINANCE" or row.get("market") != "USDM":
+            continue
+        key = (row.get("native_symbol"), isolation_feed(row.get("native_channel", "")))
+        if key in wanted:
+            if key in found:
+                raise ValueError("ambiguous deployed binding for " + repr(key))
+            found[key] = row
+    missing = sorted(set(wanted) - set(found))
+    if missing:
+        raise ValueError("deployed core lacks isolation routes: " + repr(missing))
+    return [found[key] for key in wanted]
+
+
+def isolation_frame(feed, symbol, index, now_ns):
+    """A synthetic Binance frame the deployed core normalizes for `feed`."""
+    ms = now_ns // 1_000_000
+    if feed == "TRADE":
+        return {"e": "trade", "E": ms, "T": ms, "s": symbol, "a": index, "t": index,
+                "p": "100", "q": "1", "f": index, "l": index, "m": False}
+    if feed == "QUOTE":
+        return {"e": "bookTicker", "u": index, "E": ms, "T": ms, "s": symbol,
+                "b": str(100 + index % 7), "B": "1", "a": str(101 + index % 7), "A": "1"}
+    if feed == "MARK_INDEX_PRICE":
+        return {"e": "markPriceUpdate", "E": ms, "T": ms, "s": symbol, "p": f"{100 + index / 1000:.3f}",
+                "i": "100.000", "P": "100", "r": "0.0001"}
+    raise ValueError("unknown isolation feed " + str(feed))
+
+
+def book_levels(count, quantity):
+    return ([[f"{100 - i / 100:.2f}", quantity] for i in range(count)],
+            [[f"{101 + i / 100:.2f}", quantity] for i in range(count)])
+
+
+def book_frame(symbol, index, depth, now_ns):
+    """(frame, transport) of the index-th frame of a synthetic Binance diff-depth book.
+
+    1: the REST bootstrap snapshot (HTTP, lastUpdateId = BOOK_BASE_UPDATE_ID, `depth`
+    levels per side); 2: the bridging delta (U <= lastUpdateId + 1 <= u); then contiguous
+    deltas (pu = previous u) changing BOOK_DELTA_LEVELS_PER_SIDE quantities per side; the
+    top prices never move, so snapshots follow the 1 s materialization cadence."""
+    ms = now_ns // 1_000_000
+    if index == 1:
+        bids, asks = book_levels(depth, "1.000")
+        return {"lastUpdateId": BOOK_BASE_UPDATE_ID, "E": ms, "T": ms, "bids": bids, "asks": asks}, 2
+    end = BOOK_BASE_UPDATE_ID + index - 1
+    start = BOOK_BASE_UPDATE_ID if index == 2 else end
+    bids, asks = book_levels(BOOK_DELTA_LEVELS_PER_SIDE, f"{1 + index % 97 / 1000:.3f}")
+    return {"e": "depthUpdate", "E": ms, "T": ms, "s": symbol, "U": start, "u": end, "pu": end - 1 if index > 2
+            else BOOK_BASE_UPDATE_ID - 1, "b": bids, "a": asks}, 1
+
+
+def marker_match(marker, capture_hex, source_sequence):
+    """How a record is the marker frame's own record, or None.
+
+    QUOTE/TRADE/BOOK records carry the frame's capture id; a MARK_INDEX_PRICE pair carries
+    a derived id and names both component capture ids in source_sequence (rust core)."""
+    if not marker:
+        return None
+    if capture_hex == marker:
+        return "raw_capture_id"
+    if marker in source_sequence:
+        return "source_sequence"
+    return None
+
+
+class IsolationProducer:
+    """One raw template per binding (sealed by --prepare-material); frame ids per binding from 1."""
+
+    @staticmethod
+    def key_of(route):
+        return (route["symbol"], binding_kind(route["feed"]))
+
+    def __init__(self, packet):
+        from confluent_kafka import Producer
+        from qdl.provider.v1.raw_provider_pb2 import RawProviderEnvelope
+        from qdl.raw.envelope import validate_raw_envelope
+        self.packet = packet
+        self.templates, self.book_depth, self.last_capture = {}, {}, {}
+        for route in packet["isolation_routes"]:
+            template = RawProviderEnvelope.FromString(base64.b64decode(route["raw_template"], validate=True))
+            validate_raw_envelope(template)
+            if not template.test_provenance:
+                raise ValueError("isolation requires test-only raw templates")
+            key = self.key_of(route)
+            self.templates.setdefault(key, template)
+            if key[1] == "BOOK":
+                self.book_depth[key] = int(route["book_depth"])
+        self.producer = Producer({**kafka_security(packet),
+            "enable.idempotence": True, "message.timeout.ms": 20000,
+            "queue.buffering.max.messages": 20000, "queue.buffering.max.kbytes": 16384})
+        self.next_id = {route: 1 for route in self.templates}
+
+    def publish(self, plan):
+        """plan: {(symbol, binding kind): count}; returns once every record is acknowledged."""
+        from qdl.provider.v1.raw_provider_pb2 import RawProviderEnvelope
+        errors = []
+        def delivered(error, _message):
+            if error is not None:
+                errors.append(str(error.code()))
+        for route, count in plan.items():
+            template = self.templates[route]
+            for _ in range(count):
+                raw = RawProviderEnvelope()
+                raw.CopyFrom(template)
+                index, now = self.next_id[route], time.time_ns()
+                self.next_id[route] += 1
+                raw.capture_id = uuid.uuid4().bytes
+                raw.received_at_ns = now
+                if route[1] == "BOOK":
+                    frame, raw.transport_protocol = book_frame(route[0], index, self.book_depth[route], now)
+                else:
+                    frame = isolation_frame(route[1], route[0], index, now)
+                raw.raw_frame_bytes = json.dumps(frame).encode()
+                self.last_capture[route] = raw.capture_id
+                raw.raw_frame_sha256 = hashlib.sha256(raw.raw_frame_bytes).digest()
+                self.producer.produce(self.packet["raw_topic"], key=raw.subscription_id.encode(),
+                    value=raw.SerializeToString(), headers=[("qdl-event-id", raw.capture_id)],
+                    on_delivery=delivered)
+                self.producer.poll(0)
+        if self.producer.flush(30) or errors:
+            raise RuntimeError("isolated raw publication failed")
+
+
+def isolation_wait_seed(packet, routes):
+    """Offset of the last seed record once every route has one canonical record."""
+    from confluent_kafka import Consumer as KafkaConsumer, TopicPartition
+    from qdl.marketdata.v2.market_data_pb2 import EventEnvelope
+    topic = json.loads(Path(packet["slice"]["bundle"]).read_text())["catalog"]["canonical_stream"]
+    wanted = {(route["instrument_uid"], route["payload"]) for route in routes}
+    consumer = KafkaConsumer({**kafka_security(packet), "group.id": "kn-" + packet["namespace"] + "-seed",
+        "enable.auto.commit": False, "enable.auto.offset.store": False, "isolation.level": "read_committed"})
+    started, seen, last = time.monotonic(), set(), None
+    try:
+        consumer.assign([TopicPartition(topic, 0, 0)])
+        while time.monotonic() - started < 45:
+            message = consumer.poll(.2)
+            if message is None:
+                continue
+            if message.error():
+                raise RuntimeError("isolated canonical seed read failed")
+            event = EventEnvelope.FromString(message.value())
+            seen.add((event.instrument_uid, event.WhichOneof("payload")))
+            last = message.offset()
+            if wanted <= seen:
+                return {"offset": last, "seed_wait_ms": (time.monotonic() - started) * 1000}
+        raise TimeoutError("ISOLATION_SEED_TIMEOUT:" + repr(sorted(wanted - seen)))
+    finally:
+        consumer.close()
+
+
+def isolation_token(runner, consumer, uid, feed, offset):
+    domain = runner.requirement(consumer, uid, feed)
+    return runner.codec.encode(runner.claims(consumer, domain, offset, partition=0))
+
+
+async def isolation_stream(packet, runner, channel, consumer, route, token, buffer, on_event, *, stall=False):
+    """One Subscribe; returns its terminal facts. on_event(record) per event record."""
+    import grpc
+    from qdl.query.v2 import query_pb2 as pb
+    from qdl.certification.phase103_consumer_acceptance import sdk_requirement
+    domain = runner.requirement(consumer, route["instrument_uid"], route["feed"])
+    requirement = sdk_requirement(SimpleNamespace(requirement=domain)).to_proto()
+    metadata = (("authorization", "Bearer " + runner.jwt(consumer)),
+                ("x-qdl-consumer-id", consumer), ("x-qdl-purpose", "INTERNAL_ALPHA"))
+    rpc = channel.unary_stream("/qdl.query.v2.MarketDataStreamService/Subscribe",
+        request_serializer=pb.SubscribeRequest.SerializeToString,
+        response_deserializer=pb.SubscribeResponse.FromString)
+    call = rpc(pb.SubscribeRequest(consumer_id=consumer, requirement=requirement,
+               cursor_token=token, max_buffer_events=buffer), metadata=metadata, timeout=300)
+    controls, last_token = [], token
+    try:
+        async for response in call:
+            for record in ([response.record] if response.HasField("record") else []) + list(response.records):
+                if record.resume_token:
+                    last_token = record.resume_token
+                if record.HasField("control"):
+                    controls.append(record.control.code)
+                    if record.control.code == "LIVE":
+                        on_event(None)  # LIVE announced
+                        if stall:
+                            os.kill(os.getpid(), signal.SIGSTOP)
+                    continue
+                on_event(record)
+        return {"code": "OK", "controls": controls, "token": last_token}
+    except grpc.aio.AioRpcError as error:
+        return {"code": error.code().name, "detail": error.details()[:200], "controls": controls,
+                "token": last_token}
+    finally:
+        call.cancel()
+
+
+class _Reached(Exception):
+    """A resumed deep reader received the last published trade id."""
+
+
+def isolation_deep_main(packet, route, token, stall, until_id, pipe):
+    """Child: one deep TRADE reader. Stalled: SIGSTOP at LIVE until the parent resumes it."""
+    async def run():
+        runner = harness(packet)
+        consumer = packet["consumer_id"]
+        channel = await channel_for(runner, consumer)
+        state = {"count": 0, "first": None, "last": None, "contiguous": True}
+        def on_event(record):
+            if record is None:
+                pipe.send({"kind": "live"})
+                return
+            if not record.event.HasField("trade") or record.event.instrument_uid != route["instrument_uid"]:
+                raise ValueError("deep stream product mismatch")
+            current = int(record.event.trade.native_trade_id)
+            if state["last"] is not None and current != state["last"] + 1:
+                state["contiguous"] = False
+            state["first"] = state["first"] or current
+            state["last"] = current
+            state["count"] += 1
+            if until_id and current >= until_id:
+                raise _Reached
+        try:
+            end = await isolation_stream(packet, runner, channel, consumer, route, token, DEEP_BUFFER,
+                                         on_event, stall=stall)
+        except _Reached:
+            end = {"code": "OK_REACHED", "controls": []}
+        finally:
+            await channel.close()
+        pipe.send({"kind": "done", **state, **end})
+    try:
+        asyncio.run(run())
+    except Exception as error:
+        pipe.send({"kind": "error", "type": type(error).__name__})
+    finally:
+        pipe.close()
+
+
+def isolation_idle_main(packet, routes, tokens, pipe):
+    """Child: every idle reader as one task on one channel.
+
+    The parent sends each route's marker capture id; a reader that receives that
+    record (or already did) stops there. The rest are cancelled at the deadline."""
+    async def run():
+        runner = harness(packet)
+        consumer = packet["fast_consumer_id"]
+        channel = await channel_for(runner, consumer)
+        readers, markers = [], {}
+        for route in routes:
+            for slot in range(IDLE_READERS_PER_ROUTE):
+                readers.append({"route": route["symbol"] + "/" + route["feed"], "feed": route["feed"],
+                                "slot": slot, "events": 0, "max_payload_bytes": 0, "end": None,
+                                "marker": None, "seen": []})
+        async def read(reader, route, token):
+            def on_event(record):
+                if record is None:
+                    reader["live"] = True
+                    return
+                event = record.event
+                reader["events"] += 1
+                reader["max_payload_bytes"] = max(reader["max_payload_bytes"], event.ByteSize())
+                identity = (event.raw_capture_id.hex(), event.source_sequence, record.logical_offset)
+                marker = markers.get(reader["route"])
+                if marker is None:
+                    reader["seen"].append(identity)  # the marker may arrive before its id does
+                    return
+                by = marker_match(marker, identity[0], identity[1])
+                if by:
+                    reader["marker"] = {"by": by, "logical_offset": identity[2]}
+                    raise _Reached
+            try:
+                reader["end"] = await isolation_stream(packet, runner, channel, consumer, route, token, 100,
+                                                       on_event)
+            except _Reached:
+                pass
+        tasks, index = [], 0
+        for route in routes:
+            for _ in range(IDLE_READERS_PER_ROUTE):
+                tasks.append(asyncio.create_task(read(readers[index], route, tokens[route["key"]])))
+                index += 1
+        live_deadline = time.monotonic() + 45
+        while time.monotonic() < live_deadline and not all(r.get("live") or r["end"] for r in readers):
+            await asyncio.sleep(.1)
+        pipe.send({"kind": "started", "readers": len(readers),
+                   "live": sum(1 for r in readers if r.get("live"))})
+        loop = asyncio.get_running_loop()
+        request = await loop.run_in_executor(None, pipe.recv)
+        markers.update(request["markers"])
+        for reader, task in zip(readers, tasks):
+            marker = markers[reader["route"]]
+            for capture, sequence, offset in reader["seen"]:
+                by = marker_match(marker, capture, sequence)
+                if by and reader["marker"] is None:
+                    reader["marker"] = {"by": by + "_before_request", "logical_offset": offset}
+                    task.cancel()
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and not all(
+                r["end"] is not None or r["marker"] is not None for r in readers):
+            await asyncio.sleep(.1)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await channel.close()
+        for reader in readers:
+            reader["progressed"] = reader["marker"] is not None
+            reader["terminal"] = None if reader["end"] is None else reader["end"]["code"]
+            reader.pop("end")
+            reader.pop("seen")
+        pipe.send({"kind": "done", "readers": readers})
+    try:
+        asyncio.run(run())
+    except Exception as error:
+        pipe.send({"kind": "error", "type": type(error).__name__})
+    finally:
+        pipe.close()
+
+
+class IsolationChild:
+    def __init__(self, target, *args):
+        ctx = multiprocessing.get_context("spawn")
+        self.pipe, sender = ctx.Pipe(duplex=True)
+        self.process = ctx.Process(target=target, args=(*args, sender))
+        self.process.start()
+
+    def wait(self, kind, timeout=60):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.pipe.poll(min(.2, max(0, deadline - time.monotonic()))):
+                row = self.pipe.recv()
+                if row["kind"] == kind:
+                    return row
+                if row["kind"] in ("done", "error"):
+                    raise RuntimeError(f"isolation child ended before {kind}: {row}")
+        raise TimeoutError(f"isolation child did not reach {kind}")
+
+    def resume(self):
+        os.kill(self.process.pid, signal.SIGCONT)
+
+    def close(self):
+        if self.process.is_alive():
+            self.resume()
+            self.process.terminate()
+        self.process.join(5)
+        if self.process.is_alive():
+            self.process.kill()
+            self.process.join(5)
+        self.pipe.close()
+
+
+def isolation_closures(path):
+    """Stream closure outcomes per consumer identity (abnormal = not 'ended')."""
+    rows = {}
+    for line in Path(path).read_text().splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict) and row.get("event") == "qdl_kn_subscription_closed":
+            per = rows.setdefault(row.get("consumer_id"), {})
+            per[row.get("outcome")] = per.get(row.get("outcome"), 0) + 1
+    return rows
+
+
+def isolation_handoff(path):
+    """Per consumer identity: subscription-closed reports, and the summed handoff
+    refusal/timeout counters (None when no report carries them: an older Stream)."""
+    rows = {}
+    for line in Path(path).read_text().splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict) and row.get("event") == "qdl_kn_subscription_closed":
+            per = rows.setdefault(row.get("consumer_id"), {"reports": 0, "handoff_refused": None,
+                                                           "handoff_timeouts": None})
+            per["reports"] += 1
+            for name in ("handoff_refused", "handoff_timeouts"):
+                if isinstance(row.get(name), int):
+                    per[name] = (per[name] or 0) + row[name]
+    return rows
+
+
+def isolation_metric_summary(metrics):
+    peak = max((row.get("queue_bytes", 0) for row in metrics), default=0)
+    isolation = metrics[-1].get("queue_isolation") if metrics else None
+    return {"peak_queue_bytes": peak, "queue_bytes_total": QUEUE_BYTES,
+            "peak_reserve_bytes_used": max(0, peak - (QUEUE_BYTES - LIVE_RESERVE_BYTES)),
+            "reserve_bytes": LIVE_RESERVE_BYTES, "queue_isolation": isolation,
+            "overflow": metrics[-1].get("overflow") if metrics else None, "samples": len(metrics),
+            "sampling": "1 s gateway metrics; a peak between samples is not seen"}
+
+
+def run_isolation(packet):
+    """Driver of ISOLATION_MODE inside the isolated namespace; returns facts, never a verdict."""
+    facts, children, stage = {"observed": False}, [], "baseline_metrics"
+    started = time.time_ns()
+    try:
+        wait_metrics(packet["metrics_path"], since_ns=started)
+        routes = packet["isolation_routes"]
+        deep_routes = [r for r in routes if r["feed"] == "TRADE"]
+        idle_routes = [r for r in routes if r["feed"] != "TRADE"]
+        stage = "seed"
+        producer = IsolationProducer(packet)
+        idle_keys = list(dict.fromkeys(producer.key_of(r) for r in idle_routes))
+        # A book needs its REST bootstrap snapshot and one bridging delta.
+        producer.publish({producer.key_of(r): 2 if producer.key_of(r)[1] == "BOOK" else 1 for r in routes})
+        seed = isolation_wait_seed(packet, routes)
+        runner = harness(packet)
+        tokens = {r["key"]: isolation_token(runner, packet["fast_consumer_id"] if r["feed"] != "TRADE"
+                  else packet["consumer_id"], r["instrument_uid"], r["feed"], seed["offset"]) for r in routes}
+        stage = "deep_subscribe"
+        deep = {}
+        for route in deep_routes:
+            child = IsolationChild(isolation_deep_main, packet, route, tokens[route["key"]], True, 0)
+            children.append(child)
+            child.wait("live", 60)
+            deep[route["key"]] = child
+        stage = "idle_subscribe"
+        idle = IsolationChild(isolation_idle_main, packet, idle_routes, tokens)
+        children.append(idle)
+        idle_started = idle.wait("started", 60)
+        if idle_started["live"] != idle_started["readers"]:
+            raise RuntimeError("not every idle reader reached LIVE: " + json.dumps(idle_started))
+        stage = "bursts"
+        burst_started = time.monotonic()
+        for _ in range(DEEP_ROUNDS):
+            plan = {producer.key_of(r): DEEP_PER_ROUND for r in deep_routes}
+            plan.update({key: 1 for key in idle_keys})
+            producer.publish(plan)
+        burst_seconds = time.monotonic() - burst_started
+        stage = "idle_under_pressure"
+        hold_started, idle_published = time.monotonic(), 0
+        hold_plan = {key: (IDLE_BOOK_HOLD_RATE_HZ if key[1] == "BOOK" else IDLE_HOLD_RATE_HZ) // 10
+                     for key in idle_keys}
+        while time.monotonic() - hold_started < IDLE_HOLD_SECONDS:
+            step = time.monotonic()
+            producer.publish(hold_plan)
+            idle_published += sum(hold_plan.values())
+            time.sleep(max(0, .1 - (time.monotonic() - step)))
+        hold_seconds = time.monotonic() - hold_started
+        stage = "idle_marker"
+        time.sleep(BOOK_MARKER_QUIET_SECONDS)
+        producer.publish({key: 1 for key in idle_keys})
+        markers = {r["key"]: producer.last_capture[producer.key_of(r)].hex() for r in idle_routes}
+        idle.pipe.send({"markers": markers})
+        idle_end = idle.wait("done", 60)
+        stage = "deep_terminal"
+        time.sleep(6)  # with the hold: > QDL_KN_SLOW_CONSUMER_MS (10 s), a blocked send ends typed
+        deep_end = {}
+        for key, child in deep.items():
+            child.resume()
+            deep_end[key] = child.wait("done", 60)
+        stage = "deep_resume"
+        resumed = {}
+        for route in deep_routes:
+            end = deep_end[route["key"]]
+            published_last = producer.next_id[(route["symbol"], route["feed"])] - 1
+            if end.get("last") == published_last:
+                resumed[route["key"]] = {"needed": False, "lossless": end.get("contiguous") is True}
+                continue
+            child = IsolationChild(isolation_deep_main, packet, route, end["token"], False, published_last)
+            children.append(child)
+            done = child.wait("done", 120)
+            resumed[route["key"]] = {"needed": True, "first": done.get("first"), "last": done.get("last"),
+                "expected_first": (end.get("last") or 1) + 1, "published_last": published_last,
+                "contiguous": done.get("contiguous"), "code": done.get("code"),
+                "lossless": (end.get("contiguous") is True and done.get("contiguous") is True
+                             and done.get("first") == (end.get("last") or 1) + 1
+                             and done.get("last") == published_last)}
+        time.sleep(2)
+        stage = "final_metrics"
+        metrics = read_metrics(packet["metrics_path"], since_ns=started)
+        deep_trades = DEEP_ROUNDS * DEEP_PER_ROUND
+        facts = {"observed": True, "seed": seed,
+            "burst": {"deep_routes": len(deep_routes), "trades_per_deep_route": deep_trades,
+                      "seconds": burst_seconds,
+                      "trade_rate_per_s": len(deep_routes) * deep_trades / burst_seconds if burst_seconds else None,
+                      "idle_hold_seconds": hold_seconds, "idle_records_during_hold": idle_published},
+            "idle": idle_end["readers"], "deep": deep_end, "resume": resumed, "markers": markers,
+            "closures": isolation_closures(packet["metrics_path"]),
+            "handoff": isolation_handoff(packet["metrics_path"]),
+            "deep_identity": packet["consumer_id"], "idle_identity": packet["fast_consumer_id"],
+            "metrics": isolation_metric_summary(metrics)}
+    except Exception as error:
+        facts.update(failure_type=type(error).__name__, failure_stage=stage,
+                     failure_detail=str(error)[:200] if isinstance(error, (TimeoutError, ValueError, RuntimeError)) else None)
+    finally:
+        for child in children:
+            child.close()
+    return facts
+
+
+def isolation_outcome(facts):
+    """Per-run measures the preregistered acceptance reads (no thresholds here)."""
+    if not facts.get("observed"):
+        return {"observed": False}
+    idle = facts["idle"]
+    closures = facts.get("closures", {})
+    abnormal = {cid: sum(n for outcome, n in per.items() if outcome != "ended")
+                for cid, per in closures.items()}
+    isolation = facts["metrics"].get("queue_isolation") or {}
+    idle_handoff = (facts.get("handoff") or {}).get(facts["idle_identity"]) or {}
+    payloads = {}
+    for reader in idle:
+        feed = reader.get("feed")
+        payloads[feed] = max(payloads.get(feed, 0), reader.get("max_payload_bytes") or 0)
+    marker_by = {}
+    for reader in idle:
+        by = (reader.get("marker") or {}).get("by")
+        marker_by[str(by)] = marker_by.get(str(by), 0) + 1
+    return {"observed": True,
+        "idle_readers": len(idle),
+        "idle_marker_by": marker_by,
+        "idle_max_payload_bytes": payloads,
+        "idle_subscription_reports": idle_handoff.get("reports", 0),
+        "idle_handoff_refused": idle_handoff.get("handoff_refused"),
+        "idle_handoff_timeouts": idle_handoff.get("handoff_timeouts"),
+        **{name: isolation.get(name) for name in (
+            "handoff_refused_within_floor", "handoff_timeout_within_floor",
+            "handoff_refused_over_floor", "handoff_timeout_over_floor")},
+        "idle_client_terminals": sum(1 for r in idle if r.get("terminal") is not None),
+        "idle_stream_abnormal_closures": abnormal.get(facts["idle_identity"], 0),
+        "idle_not_progressed": sum(1 for r in idle if not r.get("progressed")),
+        "deep_stream_abnormal_closures": abnormal.get(facts["deep_identity"], 0),
+        "other_abnormal_closures": sum(n for cid, n in abnormal.items()
+                                       if cid not in (facts["idle_identity"], facts["deep_identity"])),
+        "reserve_exhausted": isolation.get("reserve_exhausted"),
+        "over_floor_refused": isolation.get("over_floor_refused"),
+        "reserve_admitted": isolation.get("reserve_admitted"),
+        "deep_resume_lossless": all(r.get("lossless") for r in facts["resume"].values()),
+        "deep_resumed": sum(1 for r in facts["resume"].values() if r.get("needed")),
+        "peak_queue_bytes": facts["metrics"]["peak_queue_bytes"],
+        "peak_reserve_bytes_used": facts["metrics"]["peak_reserve_bytes_used"],
+        "trade_rate_per_s": facts["burst"]["trade_rate_per_s"]}
+
+
+def isolation_verdict(candidate, baseline, baseline_kind="pre_reserve"):
+    """Apply ISOLATION_ACCEPTANCE (preregistered) to the two runs' outcomes."""
+    if baseline_kind not in BASELINE_KINDS:
+        raise ValueError("unknown baseline kind " + repr(baseline_kind))
+    c, b = candidate, baseline
+    idle_closures = (c.get("idle_client_terminals", 1) + c.get("idle_stream_abnormal_closures", 1))
+    readers = c.get("idle_readers")
+    checks = {
+        "C1_candidate_idle_closures": c.get("observed") is True and idle_closures == 0,
+        "C1b_candidate_idle_progress": (c.get("observed") is True and c.get("idle_not_progressed") == 0
+            and isinstance(readers, int) and readers > 0
+            and sum(n for by, n in (c.get("idle_marker_by") or {}).items() if by != "None") == readers),
+        "C2_candidate_reserve_exhausted": (c.get("reserve_exhausted") == 0
+            and c.get("handoff_refused_within_floor") == 0 and c.get("handoff_timeout_within_floor") == 0
+            and c.get("idle_handoff_refused") == 0 and c.get("idle_handoff_timeouts") == 0
+            and isinstance(readers, int) and c.get("idle_subscription_reports", 0) >= readers),
+        "C3_candidate_over_floor_refused": (isinstance(c.get("over_floor_refused"), int)
+            and c["over_floor_refused"] > 0 and c.get("deep_stream_abnormal_closures", 0) > 0
+            and c.get("other_abnormal_closures", 1) == 0),
+        "C4_candidate_deep_resume": c.get("deep_resume_lossless") is True,
+    }
+    discriminates = b.get("observed") is True and (
+        b.get("idle_client_terminals", 0) + b.get("idle_stream_abnormal_closures", 0)) >= 1
+    report_only = {"baseline_kind": baseline_kind}
+    if baseline_kind == "pre_reserve":
+        checks["D1_baseline_discriminates"] = discriminates
+    else:
+        report_only["D1_baseline_discriminates"] = discriminates
+    return {"checks": checks, "verdict": "PASS" if all(checks.values()) else "FAIL", "report_only": report_only,
+            "peak_reserve_bytes_used": c.get("peak_reserve_bytes_used"),
+            "reserve_bytes": LIVE_RESERVE_BYTES}
 
 
 def dependency_smoke():
@@ -747,6 +1458,38 @@ IMAGES = {
 }
 
 
+def isolation_route_rows(bindings, catalog):
+    """Route rows (symbol, feed, uid, policy, payload, key) for the selected core bindings;
+    a book binding gives a BOOK_DELTA and a BOOK_SNAPSHOT route (with its deployed depth)."""
+    payloads = {"TRADE": "trade", "QUOTE": "quote", "MARK_INDEX_PRICE": "mark_index_price",
+                "BOOK_DELTA": "book_delta", "BOOK_SNAPSHOT": "book_snapshot"}
+    rows = []
+    for binding in bindings:
+        kind = isolation_feed(binding["native_channel"])
+        for feed in (ISOLATION_BOOK_FEEDS if kind == "BOOK" else (kind,)):
+            entry = next(x for x in catalog.bindings if x.instrument.instrument_uid == binding["instrument_uid"]
+                         and x.feed.value == feed and x.source_id == binding["source_id"])
+            row = {"symbol": binding["native_symbol"], "feed": feed, "instrument_uid": binding["instrument_uid"],
+                   "source_policy_id": entry.source_policy_id, "payload": payloads[feed],
+                   "key": binding["native_symbol"] + "/" + feed, "binding": binding}
+            if kind == "BOOK":
+                row["book_depth"] = int(binding["l2"]["depth_per_side"])
+            rows.append(row)
+    return rows
+
+
+def isolation_manifest(mapping, label, routes):
+    """Deep: the TRADE routes, DEEP_BUFFER events. Idle: QUOTE/MARK routes, enough streams."""
+    base = mapping["spec"]["requirements"][0]
+    selected = [r for r in routes if (r["feed"] == "TRADE") == (label == "deep")]
+    mapping["spec"]["requirements"] = [{**base, "instrument_uid": r["instrument_uid"], "feed": r["feed"],
+                                        "source_policy_id": r["source_policy_id"]} for r in selected]
+    streams = len(selected) * (1 if label == "deep" else IDLE_READERS_PER_ROUTE)
+    mapping["spec"]["quotas"].update(max_streams=streams + 2,
+        max_buffer_events=DEEP_BUFFER if label == "deep" else 100)
+    return mapping
+
+
 def prepare_material(work):
     """Inside the network-disabled Python image; only fresh test credentials."""
     import secrets
@@ -774,13 +1517,15 @@ def prepare_material(work):
     cfg = json.loads((work / "core.json").read_text())
     packet = json.loads((work / "packet.json").read_text())
     b = cfg["core"]["bindings"][0]
+    isolation = packet.get("mode") == ISOLATION_MODE
     namespace = packet["namespace"]
     root = Path(__file__).resolve().parents[1]
     catalog = yaml.safe_load((root / "config/v2/stable-source-bindings.yaml").read_text())
     catalog["canonical_stream"] = cfg["core"]["canonical_stream"]
     # The synthetic adapter has its own declared lineage in this test-only catalog.
+    source_ids = {row["source_id"] for row in cfg["core"]["bindings"]}
     for row in catalog["bindings"]:
-        if row["source"]["source_id"] == b["source_id"]:
+        if row["source"]["source_id"] in source_ids:
             row["source"]["adapter_version"] = "p184-synthetic-test-only"
     save("catalog.yaml", yaml.safe_dump(catalog))
     loaded = StableSourceCatalog.load(work / "catalog.yaml")
@@ -843,7 +1588,8 @@ group.initial.rebalance.delay.ms=0
 """
     save("broker.properties", props.replace("PASSWORD", password), True)
     manifests, identities, keys, subjects = [], [], {}, {}
-    for label in ("slow", "fast"):
+    routes = isolation_route_rows(cfg["core"]["bindings"], loaded) if isolation else []
+    for label in (("deep", "idle") if isolation else ("slow", "fast")):
         cid = namespace + "." + label
         subject = "spiffe://qdl/paper/" + cid
         mapping = manifest_mapping(consumer_id=cid, subject=subject, instrument_uid=b["instrument_uid"],
@@ -851,6 +1597,8 @@ group.initial.rebalance.delay.ms=0
         mapping["spec"]["quotas"]["max_buffer_events"] = QUEUE
         mapping["spec"]["requirements"][0].update(warmup_limit=1, require_full_coverage=False,
             require_final_bars=False, max_freshness_ms=60000)
+        if isolation:
+            isolation_manifest(mapping, label, routes)
         manifest_path = work / (label + ".yaml")
         save(label + ".yaml", yaml.safe_dump(mapping))
         manifests.append(manifest_path)
@@ -868,14 +1616,16 @@ group.initial.rebalance.delay.ms=0
     save("cursor-keys.json", {"dr08": secrets.token_hex(32)}, True)
     save("read-view.secret", secrets.token_hex(32), True)
     save("probes.json", [])
-    raw = build_raw_envelope(capture_id=uuid.uuid4().bytes,
-        **{k: b[k] for k in ("provider", "venue", "market", "product_type", "native_symbol", "native_channel")},
-        subscription_id=b["source_id"], source_session_id=namespace, connection_generation=1,
-        lease_epoch=1, authority_revision=cfg["authority"]["revision"], partition_plan_epoch=1,
-        received_at_ns=time.time_ns(), transport_protocol=1, transport_compression=1, capture_boundary=2,
-        raw_frame_bytes=b'{"e":"aggTrade","a":1}', adapter_version="p184-synthetic-test-only",
-        config_revision=1, instrument_catalog_revision=b["instrument_catalog_revision"],
-        correlation_id=namespace, test_provenance=True)
+    def template(b):
+        return build_raw_envelope(capture_id=uuid.uuid4().bytes,
+            **{k: b[k] for k in ("provider", "venue", "market", "product_type", "native_symbol", "native_channel")},
+            subscription_id=b["source_id"], source_session_id=namespace, connection_generation=1,
+            lease_epoch=1, authority_revision=cfg["authority"]["revision"], partition_plan_epoch=1,
+            received_at_ns=time.time_ns(), transport_protocol=1, transport_compression=1, capture_boundary=2,
+            raw_frame_bytes=b'{"e":"aggTrade","a":1}', adapter_version="p184-synthetic-test-only",
+            config_revision=1, instrument_catalog_revision=b["instrument_catalog_revision"],
+            correlation_id=namespace, test_provenance=True)
+    raw = template(b)
     packet.update(consumer_id=namespace + ".slow", fast_consumer_id=namespace + ".fast",
         instrument_uid=b["instrument_uid"], raw_template=base64.b64encode(raw.SerializeToString()).decode(),
         raw_topic=cfg["raw_topics"][0], metrics_path="/work/stream-runtime.log",
@@ -884,6 +1634,12 @@ group.initial.rebalance.delay.ms=0
         slice={"bundle": "/work/bundle.json", "cursor_keys": "/work/cursor-keys.json",
             "profile": "/work/profile.json", "probes": "/work/probes.json",
             "topic_id": "pending", "route_generation": namespace, "target": "localhost:8210"})
+    if isolation:
+        for route in routes:
+            # A book binding's two routes share one binding (and frame sequence).
+            route["raw_template"] = base64.b64encode(template(route.pop("binding")).SerializeToString()).decode()
+        packet.update(consumer_id=namespace + ".deep", fast_consumer_id=namespace + ".idle",
+            isolation_routes=routes, isolated_manifest_paths=["/work/deep.yaml", "/work/idle.yaml"])
     (work / "packet.json").write_text(json.dumps(packet))
     # Keep all newly generated private material owned by the container's host UID.
 
@@ -978,7 +1734,7 @@ def candidate_stream_provenance(path, *, development):
 
 
 def orchestrate(work, *, development, source_sha, image_digest, restart_samples=None, stream_binary=None,
-                images=None, query_image_ref=None):
+                images=None, query_image_ref=None, isolation=False):
     """Adapt measure_l2_top_materialization's isolated broker/core packet.
 
     images: optional {role: sha256 id} overrides of IMAGES; query_image_ref names the Query image."""
@@ -1024,7 +1780,9 @@ def orchestrate(work, *, development, source_sha, image_digest, restart_samples=
         cfg = json.loads(command(["docker", "exec", runtime["Id"], "cat", "/runtime/core.json"]))
         selected = [b for b in cfg["core"]["bindings"] if b["venue"] == "BINANCE" and b["market"] == "USDM"
                     and b["native_symbol"] == "BTCUSDT" and b["native_channel"].lower().endswith(("@aggtrade", "@trade"))]
-        if len(selected) != 1:
+        if isolation:
+            selected = isolation_bindings(cfg["core"]["bindings"])
+        elif len(selected) != 1:
             raise ValueError("expected one deployed BTCUSDT trade binding")
         cfg["core"].update(bindings=selected, allow_test_provenance=True,
                             canonical_stream=namespace + ".canonical", quarantine_stream=namespace + ".quarantine")
@@ -1036,6 +1794,8 @@ def orchestrate(work, *, development, source_sha, image_digest, restart_samples=
             "ts_image_digest": image_digest, "images": run_images, "bootstrap": "localhost:9092",
             "restart_samples": count, "query_provenance": {"image_ref": query_ref,
                 "scope": "isolated candidate Query; not production v2.2.2"}}
+        if isolation:
+            packet["mode"] = ISOLATION_MODE
         if candidate:
             shutil.copyfile(stream_binary, work / "candidate-stream")
             (work / "candidate-stream").chmod(0o555)
@@ -1138,7 +1898,8 @@ def orchestrate(work, *, development, source_sha, image_digest, restart_samples=
         driver_args = script + ["--packet", "/work/packet.json", "--output", "/work/evidence.jsonl"]
         if development:
             driver_args += ["--development"]
-        launch("driver", run_images["python"], driver_args, memory="512m", cpus=.75, network=net, env=penv, detach=False)
+        launch("driver", run_images["python"], driver_args, memory="1g" if isolation else "512m",
+               cpus=1 if isolation else .75, network=net, env=penv, detach=False)
     finally:
         if log_process is not None:
             log_process.terminate()
@@ -1159,7 +1920,7 @@ def orchestrate(work, *, development, source_sha, image_digest, restart_samples=
                 if command(["docker", "ps", "-aq", "--filter", "name=^/" + name + "$"]):
                     cleanup_failures.append(name)
         (work / "candidate-stream").unlink(missing_ok=True)
-        for filename in ("client.key", "server.p12", "slow.key", "fast.key", "cursor-keys.json",
+        for filename in ("client.key", "server.p12", "slow.key", "fast.key", "deep.key", "idle.key", "cursor-keys.json",
                          "read-view.secret", "broker.properties"):
             (work / filename).unlink(missing_ok=True)
         after = inventory()
@@ -1171,6 +1932,70 @@ def orchestrate(work, *, development, source_sha, image_digest, restart_samples=
         if cleanup_failures or not unchanged:
             raise RuntimeError("cleanup or shared runtime verification failed")
 
+
+
+def isolation_prereg(*, candidate, baseline, images, query_image_ref, source_sha, now_utc,
+                     baseline_kind="pre_reserve"):
+    """The acceptance and scenario, fixed before any run (written exclusively, hashed)."""
+    for name, value in (("candidate", candidate), ("baseline", baseline)):
+        if not isinstance(value, str) or not IMAGE_ID.fullmatch(value):
+            raise ValueError(f"immutable {name} Stream image ID required")
+    if candidate == baseline:
+        raise ValueError("an A/B needs two different Stream images")
+    if not isinstance(source_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+        raise ValueError("full DL source SHA required")
+    if "stream" in (images or {}):
+        raise ValueError("the Stream image is the A/B variable; pass it as candidate/baseline")
+    if baseline_kind not in BASELINE_KINDS:
+        raise ValueError("baseline kind must be one of " + repr(BASELINE_KINDS))
+    return {"schema": "p184.dl.live-budget-isolation.prereg.v2", "created_utc": now_utc,
+        "source_sha": source_sha, "candidate_stream": candidate, "baseline_stream": baseline,
+        "baseline_kind": baseline_kind,
+        "shared_images": dict(sorted((images or {}).items())), "query_image_ref": query_image_ref,
+        "order": ["candidate", "baseline"], "acceptance": ISOLATION_ACCEPTANCE,
+        "scenario": {"deep_trade_symbols": list(ISOLATION_DEEP), "idle_symbols": list(ISOLATION_IDLE),
+            "idle_feeds": list(ISOLATION_IDLE_FEEDS), "idle_readers_per_route": IDLE_READERS_PER_ROUTE,
+            "idle_readers": len(ISOLATION_IDLE) * len(ISOLATION_IDLE_FEEDS) * IDLE_READERS_PER_ROUTE,
+            "deep_buffer_events": DEEP_BUFFER, "rounds": DEEP_ROUNDS, "trades_per_round_per_deep": DEEP_PER_ROUND,
+            "idle_hold_seconds": IDLE_HOLD_SECONDS, "idle_hold_rate_hz_per_route": IDLE_HOLD_RATE_HZ,
+            "idle_book_hold_rate_hz_per_book": IDLE_BOOK_HOLD_RATE_HZ,
+            "book_delta_levels_per_side": BOOK_DELTA_LEVELS_PER_SIDE,
+            "book_snapshot_depth": "deployed l2.depth_per_side", "book_marker_quiet_seconds": BOOK_MARKER_QUIET_SECONDS,
+            "idle_marker": "raw capture id of the frame published after the idle hold, per route",
+            "live_budget_bytes": QUEUE_BYTES, "reserve_bytes": LIVE_RESERVE_BYTES,
+            "slow_consumer_ms": 10000, "data": "SYNTHETIC_TEST_ONLY"}}
+
+
+def isolation_campaign(directory, *, candidate, baseline, images, query_image_ref, source_sha,
+                       baseline_kind="pre_reserve"):
+    """Preregister, run candidate then baseline with everything but Stream equal, then judge."""
+    from datetime import datetime, timezone
+    prereg = isolation_prereg(candidate=candidate, baseline=baseline, images=images,
+        query_image_ref=query_image_ref, source_sha=source_sha, baseline_kind=baseline_kind,
+        now_utc=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    directory = directory.resolve()
+    directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+    text = json.dumps(prereg, sort_keys=True, indent=1)
+    with (directory / "preregistration.json").open("x") as handle:
+        handle.write(text)
+    prereg_sha = hashlib.sha256(text.encode()).hexdigest()
+    outcomes, errors = {}, {}
+    for label, stream in (("candidate", candidate), ("baseline", baseline)):
+        try:
+            orchestrate(directory / label, development=True, source_sha=source_sha, image_digest=stream,
+                        images={**images, "stream": stream}, query_image_ref=query_image_ref, isolation=True)
+        except Exception as error:  # the facts file (if any) still decides; errors are recorded
+            errors[label] = type(error).__name__ + ":" + str(error)[:200]
+        try:
+            row = json.loads((directory / label / "evidence.jsonl").read_text().splitlines()[0])
+            outcomes[label] = row["outcome"]
+        except (FileNotFoundError, IndexError, KeyError, json.JSONDecodeError):
+            outcomes[label] = {"observed": False}
+    verdict = {"preregistration_sha256": prereg_sha, "outcomes": outcomes, "errors": errors,
+               **isolation_verdict(outcomes["candidate"], outcomes["baseline"], baseline_kind)}
+    with (directory / "verdict.json").open("x") as handle:
+        handle.write(json.dumps(verdict, sort_keys=True, indent=1))
+    return verdict
 
 
 def main(argv=None):
@@ -1191,7 +2016,30 @@ def main(argv=None):
     parser.add_argument("--image", action="append", default=[], metavar="ROLE=sha256:ID",
                         help="orchestrator image override (repeatable); IMAGES are the defaults")
     parser.add_argument("--query-image-ref", help="orchestrator Query image label, required with a new query digest")
+    parser.add_argument("--isolation-campaign", type=Path,
+                        help="NEW directory: preregister, then run the live-budget isolation A/B")
+    parser.add_argument("--candidate-stream", help="isolation campaign candidate Stream image sha256 ID")
+    parser.add_argument("--baseline-stream", help="isolation campaign baseline Stream image sha256 ID")
+    parser.add_argument("--source-sha", help="isolation campaign DL source SHA under test")
+    parser.add_argument("--baseline-kind", choices=BASELINE_KINDS, default="pre_reserve",
+                        help="pre_reserve: D1 gates (the baseline must overflow idle readers); "
+                             "prior_candidate: D1 is report-only")
     args = parser.parse_args(argv)
+    if args.isolation_campaign:
+        def campaign_deadline(_signum, _frame):
+            raise TimeoutError("whole isolation campaign deadline")
+        previous = signal.signal(signal.SIGALRM, campaign_deadline)
+        signal.alarm(1500)
+        try:
+            verdict = isolation_campaign(args.isolation_campaign, candidate=args.candidate_stream,
+                baseline=args.baseline_stream, images=parse_image_overrides(args.image),
+                query_image_ref=args.query_image_ref, source_sha=args.source_sha,
+                baseline_kind=args.baseline_kind)
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous)
+        print(json.dumps(verdict, sort_keys=True))
+        return 0 if verdict["verdict"] == "PASS" else 1
     if args.orchestrate:
         def orchestration_deadline(_signum, _frame):
             raise TimeoutError("whole DR08 orchestration deadline")
@@ -1221,6 +2069,14 @@ def main(argv=None):
         parser.error("--packet and --output are required")
     packet = json.loads(args.packet.read_text())
     validate_packet(packet, development=args.development)
+    if packet.get("mode") == ISOLATION_MODE:
+        facts = run_isolation(packet)
+        with args.output.open("x", encoding="utf-8") as output:
+            output.write(json.dumps({"mode": ISOLATION_MODE, "facts": facts,
+                                     "outcome": isolation_outcome(facts)}, sort_keys=True) + "\n")
+            output.flush()
+            os.fsync(output.fileno())
+        return 0
     # Exclusive creation happens BEFORE any traffic. No resume/relabel operation.
     with args.output.open("x", encoding="utf-8") as output:
         run_id = str(uuid.uuid4())

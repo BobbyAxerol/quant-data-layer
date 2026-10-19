@@ -555,6 +555,11 @@ class GrpcStreamTransport:
         )
         if self.max_records_per_response > 1:
             request.max_records_per_response = self.max_records_per_response
+        # SDK 2.4.1 (IDR-096): the session bounds reconnects by progress
+        # (client.py `_delivered_high`), so it opts into retryable
+        # RESOURCE_EXHAUSTED for replay work budgets. An older gateway ignores
+        # field 8 and answers OUT_OF_RANGE CURSOR_EXPIRED; both are handled.
+        request.replay_budget_status_v2 = True
         if self._credential_provider is None:
             raise DataLayerError(
                 "UNAUTHENTICATED",
@@ -592,10 +597,14 @@ class GrpcStreamTransport:
                                 {"high_watermark": record.control.high_watermark},
                             )
                         elif payload == "event":
+                            # Gateway clocks (2.4.0): 0 means not set.
                             yield StreamEvent(
                                 record.logical_offset,
                                 record.resume_token,
                                 record.event,
+                                record.gateway_dispatch_wall_ns or None,
+                                record.gateway_dequeue_wall_ns or None,
+                                record.gateway_send_wall_ns or None,
                             )
                 return
             except grpc.aio.AioRpcError as error:

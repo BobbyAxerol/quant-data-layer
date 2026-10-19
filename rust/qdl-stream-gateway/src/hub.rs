@@ -35,6 +35,190 @@ use std::time::{Duration, Instant};
 /// Accounting overhead per queued/ringed record beyond key and payload.
 pub const RECORD_OVERHEAD: usize = 96;
 
+/// TEST_ONLY partition-lock wait/hold histograms for the OPT-01 lock
+/// disposition. Compiled only with `--features lock-profile`; default and
+/// image builds contain no timing calls. Process-wide, fixed log2 buckets,
+/// no per-event logging. Hold is recorded when the timer drops, right after
+/// the guard (it includes the unlock).
+#[cfg(feature = "lock-profile")]
+pub mod lock_profile {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{Duration, Instant};
+
+    pub const OPS: [&str; 7] = [
+        "dispatch",
+        "register",
+        "register_near",
+        "retained_replay",
+        "hot_snapshot",
+        "advance",
+        "unregister",
+    ];
+
+    #[derive(Clone, Copy)]
+    pub enum Op {
+        Dispatch,
+        Register,
+        RegisterNear,
+        RetainedReplay,
+        HotSnapshot,
+        Advance,
+        Unregister,
+    }
+
+    /// Bucket i holds samples whose bit length is i: ns < 2^i.
+    const BUCKETS: usize = 48;
+
+    pub struct Histogram {
+        buckets: [AtomicU64; BUCKETS],
+        max_ns: AtomicU64,
+    }
+
+    impl Histogram {
+        const fn new() -> Self {
+            Self {
+                buckets: [const { AtomicU64::new(0) }; BUCKETS],
+                max_ns: AtomicU64::new(0),
+            }
+        }
+
+        fn record(&self, elapsed: Duration) {
+            let ns = elapsed.as_nanos().min(u64::MAX as u128) as u64;
+            let index = ((u64::BITS - ns.leading_zeros()) as usize).min(BUCKETS - 1);
+            self.buckets[index].fetch_add(1, Ordering::Relaxed);
+            self.max_ns.fetch_max(ns, Ordering::Relaxed);
+        }
+
+        fn reset(&self) {
+            for bucket in &self.buckets {
+                bucket.store(0, Ordering::Relaxed);
+            }
+            self.max_ns.store(0, Ordering::Relaxed);
+        }
+
+        /// Quantiles are bucket upper bounds (`_le_ns`); p99 only for n >= 100.
+        fn summary(&self) -> serde_json::Value {
+            let counts: Vec<u64> = self
+                .buckets
+                .iter()
+                .map(|b| b.load(Ordering::Relaxed))
+                .collect();
+            let n: u64 = counts.iter().sum();
+            let le = |q: f64| -> Option<u64> {
+                let wanted = ((n as f64) * q).ceil().max(1.0) as u64;
+                let mut seen = 0;
+                for (index, count) in counts.iter().enumerate() {
+                    seen += count;
+                    if seen >= wanted {
+                        return Some(1u64 << index);
+                    }
+                }
+                None
+            };
+            serde_json::json!({
+                "n": n,
+                "p50_le_ns": (n > 0).then(|| le(0.5)).flatten(),
+                "p95_le_ns": (n > 0).then(|| le(0.95)).flatten(),
+                "p99_le_ns": (n >= 100).then(|| le(0.99)).flatten(),
+                "max_ns": self.max_ns.load(Ordering::Relaxed),
+                "buckets": counts,
+            })
+        }
+    }
+
+    struct Profile {
+        wait: [Histogram; OPS.len()],
+        hold: [Histogram; OPS.len()],
+        dispatch_fanout: Histogram,
+    }
+
+    static PROFILE: Profile = Profile {
+        wait: [const { Histogram::new() }; OPS.len()],
+        hold: [const { Histogram::new() }; OPS.len()],
+        dispatch_fanout: Histogram::new(),
+    };
+
+    /// Started immediately before the lock call.
+    pub struct Wait(Op, Instant);
+
+    pub fn waiting(op: Op) -> Wait {
+        Wait(op, Instant::now())
+    }
+
+    impl Wait {
+        /// Record the wait; the returned timer records the hold on drop.
+        pub fn acquired(self) -> Hold {
+            let now = Instant::now();
+            PROFILE.wait[self.0 as usize].record(now.duration_since(self.1));
+            Hold(self.0, now)
+        }
+    }
+
+    pub struct Hold(Op, Instant);
+
+    impl Drop for Hold {
+        fn drop(&mut self) {
+            PROFILE.hold[self.0 as usize].record(self.1.elapsed());
+        }
+    }
+
+    /// Dispatch decode + fan-out span, a subset of the dispatch hold.
+    pub struct Fanout(Instant);
+
+    pub fn fanout() -> Fanout {
+        Fanout(Instant::now())
+    }
+
+    impl Drop for Fanout {
+        fn drop(&mut self) {
+            PROFILE.dispatch_fanout.record(self.0.elapsed());
+        }
+    }
+
+    pub fn reset() {
+        for histogram in PROFILE.wait.iter().chain(&PROFILE.hold) {
+            histogram.reset();
+        }
+        PROFILE.dispatch_fanout.reset();
+    }
+
+    pub fn summary() -> serde_json::Value {
+        let ops: serde_json::Map<String, serde_json::Value> = OPS
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                (
+                    (*name).to_owned(),
+                    serde_json::json!({
+                        "wait": PROFILE.wait[index].summary(),
+                        "hold": PROFILE.hold[index].summary(),
+                    }),
+                )
+            })
+            .collect();
+        serde_json::json!({
+            "unit": "ns", "buckets": "log2; quantiles are bucket upper bounds",
+            "ops": ops, "dispatch_decode_fanout_hold": PROFILE.dispatch_fanout.summary(),
+            "overhead": "two Instant::now plus atomics per lock; compare with feature-off inclusive timings",
+        })
+    }
+}
+
+/// Acquire a partition lock, timed under `lock-profile` (no-op otherwise).
+/// Returns `(lock result, hold timer)`; bind the timer for the guard's scope.
+macro_rules! profiled_lock {
+    ($op:ident, $lock:expr) => {{
+        #[cfg(feature = "lock-profile")]
+        let wait = $crate::hub::lock_profile::waiting($crate::hub::lock_profile::Op::$op);
+        let guard = $lock;
+        #[cfg(feature = "lock-profile")]
+        let hold = wait.acquired();
+        #[cfg(not(feature = "lock-profile"))]
+        let hold = ();
+        (guard, hold)
+    }};
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RawRecord {
     pub partition: i32,
@@ -73,6 +257,10 @@ pub struct LiveRecord {
     /// replay budget by their owner) and when the dispatch-time charge was
     /// refused: each subscriber then charges the full weight itself.
     pub shared_charge: Option<Charge>,
+    /// Gateway wall clock (Unix ns) when the live hub dispatched this record
+    /// to its subscriptions; 0 for replay/ring decodes (diagnostic only,
+    /// `StreamRecord.gateway_dispatch_wall_ns`, SDK 2.4.0).
+    pub dispatched_wall_ns: u64,
 }
 
 /// Empirical decoded-size allowance per payload byte: measured
@@ -96,14 +284,16 @@ impl LiveRecord {
 
     /// Decode without a shared charge (the caller accounts for it).
     pub fn decode(raw: SharedRecord) -> Result<Arc<Self>, String> {
-        Self::decode_charged(raw, None)
+        Self::decode_charged(raw, None, 0)
     }
 
     /// Decode once and charge the decoded copy to `budget` once, for every
     /// holder together. A refused charge leaves `shared_charge` empty.
+    /// `dispatched_wall_ns` is the live dispatch wall clock (0 = none).
     pub fn decode_charged(
         raw: SharedRecord,
         budget: Option<&Arc<ByteBudget>>,
+        dispatched_wall_ns: u64,
     ) -> Result<Arc<Self>, String> {
         let envelope = EventEnvelope::decode(raw.payload.as_slice())
             .map_err(|error| format!("canonical record failed to decode: {error}"))?;
@@ -112,6 +302,7 @@ impl LiveRecord {
             raw,
             envelope,
             shared_charge,
+            dispatched_wall_ns,
         }))
     }
 }
@@ -213,6 +404,19 @@ pub struct Registration {
     pub ring: Option<Vec<SharedRecord>>,
 }
 
+/// Bulk replay remains unregistered until the retained bridge fits both budgets.
+#[derive(Debug)]
+pub enum NearRegistration {
+    NeedReplay {
+        barrier: i64,
+    },
+    Registered {
+        barrier: i64,
+        bridge: Vec<SharedRecord>,
+        charge: Charge,
+    },
+}
+
 struct PartitionState {
     /// Every record below this offset has been dispatched.
     next_offset: i64,
@@ -220,7 +424,9 @@ struct PartitionState {
     ring_bytes: usize,
     /// The ring holds every dispatched record in `[ring_start, next_offset)`.
     ring_start: i64,
-    subscribers: HashMap<Vec<u8>, Vec<Arc<Subscription>>>,
+    /// Copy-on-write per key: dispatch clones the `Arc` under the partition
+    /// lock and offers outside it; register/unregister (rare) replace the list.
+    subscribers: HashMap<Vec<u8>, Arc<[Arc<Subscription>]>>,
     /// The ring's records per key, in ring (offset) order. Same entries as
     /// `ring`, so it is bounded by the ring and evicted with it.
     by_key: HashMap<Vec<u8>, VecDeque<(Instant, SharedRecord)>>,
@@ -272,6 +478,11 @@ fn lock_until<T>(mutex: &Mutex<T>, deadline: Instant) -> Result<MutexGuard<'_, T
 
 pub struct Hub {
     partitions: HashMap<i32, Mutex<PartitionState>>,
+    /// Dispatcher-only gate per partition (lock order: gate, then partition).
+    /// Held across decode/offer so every subscriber sees one partition's
+    /// records in offset order even with concurrent dispatch callers, while
+    /// the partition lock covers only ring/boundary/list-snapshot work.
+    dispatch_gates: HashMap<i32, Mutex<()>>,
     config: HubConfig,
     pub metrics: HubMetrics,
     stop: AtomicBool,
@@ -289,6 +500,19 @@ pub struct Hub {
     /// The replica live budget a dispatched record is charged to once
     /// ([`Hub::attach_live_budget`]); unset, subscribers charge in full.
     live_budget: OnceLock<Arc<ByteBudget>>,
+    data_clock: crate::replay_clock::DataClock,
+}
+
+/// Copy-on-write append of `subscriber` to `key`'s list (rare: registration).
+fn attach(
+    lists: &mut HashMap<Vec<u8>, Arc<[Arc<Subscription>]>>,
+    key: &[u8],
+    subscriber: Arc<Subscription>,
+) {
+    let mut next: Vec<Arc<Subscription>> =
+        lists.get(key).map(|list| list.to_vec()).unwrap_or_default();
+    next.push(subscriber);
+    lists.insert(key.to_vec(), next.into());
 }
 
 fn now_ns() -> i64 {
@@ -300,7 +524,11 @@ fn now_ns() -> i64 {
 
 impl Hub {
     /// `starts`: the first offset the reader will deliver per partition.
+    /// Panics before serving if configured TEST data time is invalid or unsupported.
     pub fn new(starts: &[(i32, i64)], config: HubConfig) -> Self {
+        // Fail before the reader/server starts; never ignore configured TEST time.
+        let data_clock = crate::replay_clock::DataClock::from_env()
+            .unwrap_or_else(|error| panic!("stream gateway startup refused: {error}"));
         let partitions = starts
             .iter()
             .map(|&(partition, start)| {
@@ -318,8 +546,13 @@ impl Hub {
                 )
             })
             .collect();
+        let dispatch_gates = starts
+            .iter()
+            .map(|&(partition, _)| (partition, Mutex::new(())))
+            .collect();
         Self {
             partitions,
+            dispatch_gates,
             config,
             metrics: HubMetrics::default(),
             stop: AtomicBool::new(false),
@@ -332,6 +565,7 @@ impl Hub {
             key_home: Mutex::new(HashMap::new()),
             started_ms: now_ns() / 1_000_000,
             live_budget: OnceLock::new(),
+            data_clock,
         }
     }
 
@@ -340,6 +574,36 @@ impl Hub {
     /// whether this one was attached.
     pub fn attach_live_budget(&self, budget: Arc<ByteBudget>) -> bool {
         self.live_budget.set(budget).is_ok()
+    }
+
+    pub(crate) fn freshness_now_ns(&self, real_ns: i64) -> Result<i64, &'static str> {
+        self.data_clock.now_ns(real_ns)
+    }
+
+    #[cfg(feature = "isolated-replay-clock")]
+    pub(crate) fn test_clock_enabled(&self) -> bool {
+        self.data_clock.is_replay()
+    }
+
+    #[cfg(feature = "isolated-replay-clock")]
+    pub(crate) fn check_test_clock(&self) -> Result<(), &'static str> {
+        self.data_clock.now_ns(0).map(|_| ())
+    }
+
+    #[cfg(feature = "isolated-replay-clock")]
+    pub(crate) async fn test_clock_invalidated(&self) {
+        loop {
+            if self.check_test_clock().is_err() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    #[cfg(all(test, feature = "isolated-replay-clock"))]
+    pub(crate) fn with_test_data_clock(mut self, clock: crate::replay_clock::DataClock) -> Self {
+        self.data_clock = clock;
+        self
     }
 
     pub fn partitions(&self) -> Vec<i32> {
@@ -403,59 +667,81 @@ impl Hub {
     /// Dispatch one committed record. A record at or below an already
     /// dispatched offset is a duplicate transport delivery and is ignored.
     pub fn dispatch(&self, record: RawRecord) {
-        let Some(partition) = self.partitions.get(&record.partition) else {
+        let (Some(partition), Some(gate)) = (
+            self.partitions.get(&record.partition),
+            self.dispatch_gates.get(&record.partition),
+        ) else {
             return;
         };
+        // A poisoned gate guards no data; keep ordering, never stop dispatch.
+        let _gate = gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let record = Arc::new(record);
-        let Ok(mut state) = partition.lock() else {
-            return;
-        };
-        if record.offset < state.next_offset {
-            self.metrics.duplicates.fetch_add(1, Ordering::Relaxed);
-            return;
-        }
-        self.metrics.records.fetch_add(1, Ordering::Relaxed);
-        self.metrics
-            .bytes
-            .fetch_add(record.payload.len() as u64, Ordering::Relaxed);
-        if record.timestamp_ms >= self.started_ms {
+        let subscribers = {
+            let (state, _hold) = profiled_lock!(Dispatch, partition.lock());
+            let Ok(mut state) = state else {
+                return;
+            };
+            if record.offset < state.next_offset {
+                self.metrics.duplicates.fetch_add(1, Ordering::Relaxed);
+                return;
+            }
+            self.metrics.records.fetch_add(1, Ordering::Relaxed);
             self.metrics
-                .dispatch_lag
-                .record(now_ns() / 1_000_000 - record.timestamp_ms);
-        }
-        let now = Instant::now();
-        state.ring_bytes += record.weight();
-        state.ring.push_back((now, record.clone()));
-        if let Some(entries) = state.by_key.get_mut(&record.key) {
-            entries.push_back((now, record.clone()));
-        } else {
-            state
-                .by_key
-                .insert(record.key.clone(), VecDeque::from([(now, record.clone())]));
-            self.enter_home(&record.key, record.partition);
-        }
-        state.next_offset = record.offset + 1;
-        self.evict(record.partition, &mut state, now);
-        let Some(subscribers) = state.subscribers.get(&record.key) else {
-            return;
+                .bytes
+                .fetch_add(record.payload.len() as u64, Ordering::Relaxed);
+            if record.timestamp_ms >= self.started_ms {
+                self.metrics
+                    .dispatch_lag
+                    .record(now_ns() / 1_000_000 - record.timestamp_ms);
+            }
+            let now = Instant::now();
+            state.ring_bytes += record.weight();
+            state.ring.push_back((now, record.clone()));
+            if let Some(entries) = state.by_key.get_mut(&record.key) {
+                entries.push_back((now, record.clone()));
+            } else {
+                state
+                    .by_key
+                    .insert(record.key.clone(), VecDeque::from([(now, record.clone())]));
+                self.enter_home(&record.key, record.partition);
+            }
+            state.next_offset = record.offset + 1;
+            self.evict(record.partition, &mut state, now);
+            // Registration is atomic with this boundary: a subscriber attached
+            // at barrier <= offset is in this snapshot, one attached later has
+            // barrier > offset and gets the record from the ring instead.
+            let Some(subscribers) = state.subscribers.get(&record.key) else {
+                return;
+            };
+            subscribers.clone()
         };
+        #[cfg(feature = "lock-profile")]
+        let _fanout = lock_profile::fanout();
         let budget = self.live_budget.get();
-        match LiveRecord::decode_charged(record, budget) {
+        let at = now_ns();
+        match LiveRecord::decode_charged(record, budget, at.max(0) as u64) {
             Ok(live) => {
                 if budget.is_some() && live.shared_charge.is_none() {
                     self.metrics
                         .live_budget_refused
                         .fetch_add(1, Ordering::Relaxed);
                 }
-                let at = now_ns();
-                for subscriber in subscribers {
+                for subscriber in subscribers.iter() {
                     self.metrics.offers.fetch_add(1, Ordering::Relaxed);
-                    subscriber.offer(&live, at);
+                    match self.freshness_now_ns(at) {
+                        Ok(data_at) => subscriber.offer(&live, data_at),
+                        Err(error) => {
+                            subscriber.fail(error);
+                            subscriber.close();
+                        }
+                    }
                 }
             }
             Err(error) => {
                 self.metrics.decode_failures.fetch_add(1, Ordering::Relaxed);
-                for subscriber in subscribers {
+                for subscriber in subscribers.iter() {
                     subscriber.fail(&error);
                 }
             }
@@ -466,7 +752,8 @@ impl Hub {
     /// aborted batches): every offset below `position` is dispatched.
     pub fn advance(&self, partition: i32, position: i64) {
         if let Some(state) = self.partitions.get(&partition) {
-            if let Ok(mut state) = state.lock() {
+            let (state, _hold) = profiled_lock!(Advance, state.lock());
+            if let Ok(mut state) = state {
                 if position > state.next_offset {
                     state.next_offset = position;
                     if state.ring.is_empty() {
@@ -489,7 +776,8 @@ impl Hub {
         let Some(state) = self.partitions.get(&partition) else {
             return Ok(None);
         };
-        let state = lock_until(state, deadline)?;
+        let (state, _hold) = profiled_lock!(HotSnapshot, lock_until(state, deadline));
+        let state = state?;
         let Some(entries) = state.by_key.get(key) else {
             return Ok(None);
         };
@@ -515,7 +803,8 @@ impl Hub {
         let Some(state) = self.partitions.get(&partition) else {
             return Ok(Vec::new());
         };
-        let state = lock_until(state, deadline)?;
+        let (state, _hold) = profiled_lock!(HotSnapshot, lock_until(state, deadline));
+        let state = state?;
         let Some(entries) = state.by_key.get(key) else {
             return Ok(Vec::new());
         };
@@ -728,9 +1017,8 @@ impl Hub {
             .partitions
             .get(&partition)
             .ok_or_else(|| format!("partition {partition} is not served by this replica"))?;
-        let mut state = state
-            .lock()
-            .map_err(|_| "partition state poisoned".to_owned())?;
+        let (state, _hold) = profiled_lock!(Register, state.lock());
+        let mut state = state.map_err(|_| "partition state poisoned".to_owned())?;
         let barrier = state.next_offset;
         let ring = if after + 1 >= barrier {
             Some(Vec::new())
@@ -747,21 +1035,128 @@ impl Hub {
         } else {
             None
         };
-        state
-            .subscribers
-            .entry(key.to_vec())
-            .or_default()
-            .push(subscriber);
+        attach(&mut state.subscribers, key, subscriber);
         Ok(Registration { barrier, ring })
+    }
+
+    /// Retained replay without attaching a live subscriber. Coverage and the
+    /// selected references are captured under the same partition lock.
+    pub fn retained_replay(
+        &self,
+        partition: i32,
+        key: &[u8],
+        after: i64,
+        barrier: i64,
+        max_records: usize,
+        budget: &Arc<ByteBudget>,
+    ) -> Option<(Vec<SharedRecord>, Charge)> {
+        let partition_state = self.partitions.get(&partition)?;
+        let (state, _hold) = profiled_lock!(RetainedReplay, partition_state.lock());
+        let mut state = state.ok()?;
+        self.evict(partition, &mut state, Instant::now());
+        if barrier > state.next_offset || after.checked_add(1)? < state.ring_start {
+            return None;
+        }
+        let entries = state.by_key.get(key);
+        let begin = entries.map_or(0, |rows| rows.partition_point(|(_, r)| r.offset <= after));
+        let end = entries.map_or(0, |rows| rows.partition_point(|(_, r)| r.offset < barrier));
+        if end.saturating_sub(begin) > max_records {
+            return None;
+        }
+        let selected = || {
+            entries
+                .into_iter()
+                .flat_map(|rows| rows.range(begin..end))
+                .map(|(_, record)| record)
+        };
+        let mut count = 0usize;
+        let mut bytes = 0usize;
+        for record in selected() {
+            count += 1;
+            if count > max_records {
+                return None;
+            }
+            bytes = bytes.checked_add(live_weight(record))?;
+        }
+        let charge = budget.charge(bytes)?;
+        Some((selected().cloned().collect(), charge))
+    }
+
+    /// Capture a charged, bounded bridge and attach live atomically. The caller
+    /// must retain the charge until the bridge is drained and preserve one
+    /// cumulative replay deadline/budget across unsuccessful attempts.
+    pub fn try_register_near(
+        &self,
+        partition: i32,
+        key: &[u8],
+        subscriber: Arc<Subscription>,
+        after: i64,
+        max_bridge_records: usize,
+        replay_budget: &Arc<ByteBudget>,
+    ) -> Result<NearRegistration, String> {
+        let state = self
+            .partitions
+            .get(&partition)
+            .ok_or_else(|| format!("partition {partition} is not served by this replica"))?;
+        let (state, _hold) = profiled_lock!(RegisterNear, state.lock());
+        let mut state = state.map_err(|_| "partition state poisoned".to_owned())?;
+        self.evict(partition, &mut state, Instant::now());
+        let barrier = state.next_offset;
+        let start = after.checked_add(1).ok_or("replay offset overflow")?;
+        // A cursor ahead of this replica requires catch-up, never registration
+        // against a lower barrier. Missing key alone cannot establish coverage.
+        if start > barrier || (start < barrier && start < state.ring_start) {
+            return Ok(NearRegistration::NeedReplay { barrier });
+        }
+        let entries = state.by_key.get(key);
+        let begin = entries.map_or(0, |rows| rows.partition_point(|(_, r)| r.offset <= after));
+        let end = entries.map_or(0, VecDeque::len);
+        if end.saturating_sub(begin) > max_bridge_records {
+            return Ok(NearRegistration::NeedReplay { barrier });
+        }
+        let selected = || {
+            entries
+                .into_iter()
+                .flat_map(|rows| rows.range(begin..end))
+                .map(|(_, record)| record)
+        };
+        let mut count = 0usize;
+        let mut bytes = 0usize;
+        for record in selected() {
+            count += 1;
+            if count > max_bridge_records {
+                return Ok(NearRegistration::NeedReplay { barrier });
+            }
+            bytes = bytes
+                .checked_add(live_weight(record))
+                .ok_or("replay bridge size overflow")?;
+        }
+        let Some(charge) = replay_budget.charge(bytes) else {
+            return Ok(NearRegistration::NeedReplay { barrier });
+        };
+        let bridge = selected().cloned().collect();
+        attach(&mut state.subscribers, key, subscriber);
+        Ok(NearRegistration::Registered {
+            barrier,
+            bridge,
+            charge,
+        })
     }
 
     pub fn unregister(&self, partition: i32, key: &[u8], id: u64) {
         if let Some(state) = self.partitions.get(&partition) {
-            if let Ok(mut state) = state.lock() {
-                if let Some(list) = state.subscribers.get_mut(key) {
-                    list.retain(|subscriber| subscriber.id != id);
-                    if list.is_empty() {
+            let (state, _hold) = profiled_lock!(Unregister, state.lock());
+            if let Ok(mut state) = state {
+                if let Some(list) = state.subscribers.get(key) {
+                    let kept: Vec<_> = list
+                        .iter()
+                        .filter(|subscriber| subscriber.id != id)
+                        .cloned()
+                        .collect();
+                    if kept.is_empty() {
                         state.subscribers.remove(key);
+                    } else if kept.len() != list.len() {
+                        state.subscribers.insert(key.to_vec(), kept.into());
                     }
                 }
             }
@@ -772,7 +1167,13 @@ impl Hub {
         self.partitions
             .values()
             .filter_map(|state| state.lock().ok())
-            .map(|state| state.subscribers.values().map(Vec::len).sum::<usize>())
+            .map(|state| {
+                state
+                    .subscribers
+                    .values()
+                    .map(|list| list.len())
+                    .sum::<usize>()
+            })
             .sum()
     }
 
@@ -1432,5 +1833,152 @@ mod tests {
         // A per-subscription cap equal to the whole budget (the old default)
         // lets the slow subscriber take it all and overflow the idle one.
         assert_eq!(run(total, total).await, (true, false));
+    }
+
+    /// 2026-10-15 stage-100 shape: deep lossless subscriptions on different
+    /// keys, each under its own fair-share cap, together exhaust the live
+    /// budget; idle readers must keep flowing. Returns (idle overflows, deep
+    /// overflows, the budget after the run).
+    async fn deep_and_idle(budget: Arc<ByteBudget>) -> (usize, usize, Arc<ByteBudget>) {
+        let total = budget.limit();
+        let share = crate::memory::default_queue_bytes_per_subscription(total as u64) as usize;
+        let hub = Hub::new(&[(0, 0)], HubConfig::default());
+        hub.attach_live_budget(budget.clone());
+        let deep_keys: Vec<Vec<u8>> = (0..3).map(|i| format!("deep{i}").into_bytes()).collect();
+        let idle_keys: Vec<Vec<u8>> = (0..30).map(|i| format!("idle{i}").into_bytes()).collect();
+        let mut deep: Vec<_> = deep_keys
+            .iter()
+            .enumerate()
+            .map(|(id, key)| subscribe(&hub, key, id as u64, 2_000, share, &budget))
+            .collect();
+        let idle: Vec<_> = idle_keys
+            .iter()
+            .enumerate()
+            .map(|(id, key)| subscribe(&hub, key, 100 + id as u64, 1_000, share, &budget))
+            .collect();
+        let (mut offset, mut deep_overflows, mut idle_overflows) = (0i64, 0, 0);
+        for _round in 0..200 {
+            for key in &deep_keys {
+                hub.dispatch(big_trade(key, offset));
+                offset += 1;
+                assert!(budget.used() <= total, "{} > {total}", budget.used());
+            }
+            // A deep subscription that overflowed is ended by its stream task
+            // (BACKPRESSURE + resume token) and resubscribes empty from its
+            // cursor, as a client does.
+            for (index, subscription) in deep.iter_mut().enumerate() {
+                if matches!(subscription.terminal(), Some(Next::Overflow)) {
+                    deep_overflows += 1;
+                    subscription.close();
+                    hub.unregister(0, &deep_keys[index], subscription.id);
+                    *subscription = subscribe(
+                        &hub,
+                        &deep_keys[index],
+                        1_000 + offset as u64,
+                        2_000,
+                        share,
+                        &budget,
+                    );
+                }
+            }
+            for key in &idle_keys {
+                hub.dispatch(big_trade(key, offset));
+                offset += 1;
+            }
+            // Every idle reader takes its record to the transport at once
+            // (entry charge topped up to a private copy), then sends it.
+            let mut in_flight = Vec::new();
+            for subscription in &idle {
+                match subscription.next().await {
+                    Next::Record(record, _, mut charge) => {
+                        let (weight, entry) = (record.weight(), charge.bytes());
+                        let missing = weight.saturating_sub(entry);
+                        if missing > 0 {
+                            match subscription.charge_handoff(missing, weight, &charge) {
+                                Ok(extra) => charge.absorb(extra),
+                                Err(_) => idle_overflows += 1,
+                            }
+                        }
+                        in_flight.push((record, charge));
+                    }
+                    Next::Overflow => {
+                        idle_overflows += 1;
+                        subscription.close();
+                    }
+                    other => panic!("{other:?}"),
+                }
+                assert!(budget.used() <= total, "{} > {total}", budget.used());
+            }
+            drop(in_flight);
+            if idle_overflows > 0 {
+                break;
+            }
+        }
+        for subscription in deep.iter().chain(&idle) {
+            subscription.close();
+        }
+        (idle_overflows, deep_overflows, budget)
+    }
+
+    #[tokio::test]
+    async fn deep_lossless_subscriptions_cannot_overflow_thirty_idle_ones() {
+        let total = 512 * big_weight();
+        let budget = ByteBudget::live(total);
+        let (reserve, floor) = budget.reserve_and_floor();
+        assert_eq!((reserve, floor), (total / 8, total / 128));
+        let (idle, deep, budget) = deep_and_idle(budget).await;
+        assert_eq!(idle, 0, "no idle reader overflowed or stalled at handoff");
+        assert!(deep >= 1, "the deep subscription over its floor was closed");
+        let counters = &budget.counters;
+        assert!(counters.over_floor_refused.load(Ordering::Relaxed) >= 1);
+        assert!(
+            counters.reserve_admitted.load(Ordering::Relaxed) >= 1,
+            "the reserve was used"
+        );
+        assert_eq!(counters.reserve_exhausted.load(Ordering::Relaxed), 0);
+        assert_eq!(budget.used(), 0, "every byte released");
+
+        // The same run without the reserve (before this fix): the deep
+        // subscriptions exhaust the budget and idle readers overflow.
+        let (idle, _, budget) = deep_and_idle(ByteBudget::new(total)).await;
+        assert!(idle >= 1);
+        assert_eq!(
+            budget.counters.over_floor_refused.load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(budget.used(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_single_deep_subscription_over_its_floor_alone_overflows() {
+        let weight = big_weight();
+        let total = 128 * weight;
+        let budget = ByteBudget::live(total);
+        let hub = Hub::new(&[(0, 0)], HubConfig::default());
+        hub.attach_live_budget(budget.clone());
+        // Its own cap is the whole budget: only the reserve can stop it.
+        let deep = subscribe(&hub, b"deep", 0, 10_000, total, &budget);
+        let idle = subscribe(&hub, b"idle", 1, 10_000, total, &budget);
+        let mut offset = 0;
+        while deep.terminal().is_none() {
+            hub.dispatch(big_trade(b"deep", offset));
+            offset += 1;
+            assert!(offset < 1_000);
+        }
+        let (reserve, _) = budget.reserve_and_floor();
+        assert!(
+            budget.used() <= total - reserve,
+            "deep never entered the reserve"
+        );
+        assert!(deep.queued().1 > total / 2);
+        hub.dispatch(big_trade(b"idle", offset));
+        assert!(matches!(deep.next().await, Next::Overflow));
+        assert!(matches!(idle.next().await, Next::Record(..)));
+        assert_eq!(
+            budget.counters.over_floor_refused.load(Ordering::Relaxed),
+            1
+        );
+        deep.close();
+        assert!(budget.used() < weight + QUEUE_ENTRY_OVERHEAD);
     }
 }

@@ -185,6 +185,32 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(result["status"], "PASS", result["failed_gates"])
         self.assertEqual(self._evaluate(final=True)["status"], "PASS")
 
+    def test_ts_samples_count_each_heartbeat_snapshot_once(self):
+        ready = {"ready": 60, "demanded": 60, "fallback": 0, "v2_error": 7, "key_tail": "k"}
+        stale = {**ready, "ready": 59, "unhealthy": [{"feed": "QUOTE", "state": "STALE"}]}
+        samples = [{**ready, "last_seen_unix": 0.5, "at_ns": 1 * 10**9, "age_s": 0.5},
+                   *({**stale, "last_seen_unix": 30.5, "at_ns": t * 10**9, "age_s": t - 30.5} for t in (31, 41, 51)),
+                   {**ready, "last_seen_unix": 60.5, "at_ns": 61 * 10**9, "age_s": 0.5}]
+        ts = {**_passing_ts(), "samples": samples, "expected_samples": 5}
+        gate = next(g for g in self._evaluate(ts=ts)["gates"] if g["gate"] == "ts:ready_60_every_sample")
+        self.assertEqual(gate["status"], "FAIL")  # the frozen rule: every snapshot ready
+        self.assertEqual((gate["samples"], gate["distinct_heartbeats"], gate["duplicate_reads"], gate["not_ready"]),
+                         (5, 3, 2, 1))
+
+    def test_ts_legacy_reads_merge_only_same_content_within_tolerance(self):
+        from qdl.certification.phase3_consumer_load import distinct_heartbeat_reads, _ts_sample_content, \
+            _ts_sample_identity
+        base = {"ready": 60, "demanded": 60, "fallback": 0, "v2_error": 7}
+        # Same snapshot (published at 30 s), at_ns stamped after a variable docker exec latency.
+        same = [{**base, "at_ns": int(t * 10**9), "age_s": age} for t, age in ((32.0, 1.2), (43.5, 11.1))]
+        self.assertEqual(len(distinct_heartbeat_reads(same, _ts_sample_identity, _ts_sample_content)), 1)
+        # Next snapshot 30 s later with identical content is a distinct heartbeat.
+        later = [*same, {**base, "at_ns": 61 * 10**9, "age_s": 0.8}]
+        self.assertEqual(len(distinct_heartbeat_reads(later, _ts_sample_identity, _ts_sample_content)), 2)
+        # Different content inside the tolerance is never merged.
+        changed = [same[0], {**same[1], "ready": 59}]
+        self.assertEqual(len(distinct_heartbeat_reads(changed, _ts_sample_identity, _ts_sample_content)), 2)
+
     def test_under_issued_traffic_fails_instead_of_disappearing(self):
         receipt = _passing_receipt()
         receipt["poll_ledgers"][0].update(sent=110, completed=110, missed=10)

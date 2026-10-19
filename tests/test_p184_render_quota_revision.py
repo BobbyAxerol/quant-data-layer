@@ -14,9 +14,11 @@ class RenderQuotaRevisionTests(unittest.TestCase):
         self.manifest = yaml.safe_load((ROOT / "consumers/stable/alpha-binance-paper.yaml").read_text())
 
     def test_only_revision_and_named_quotas_change(self):
-        out = render(self.manifest, {"requests_per_minute": 4950, "max_streams": 300})
+        quotas = self.manifest["spec"]["quotas"]
+        rpm, streams = quotas["requests_per_minute"] + 50, quotas["max_streams"] + 10
+        out = render(self.manifest, {"requests_per_minute": rpm, "max_streams": streams})
         self.assertEqual(out["metadata"]["revision"], self.manifest["metadata"]["revision"] + 1)
-        self.assertEqual((out["spec"]["quotas"]["requests_per_minute"], out["spec"]["quotas"]["max_streams"]), (4950, 300))
+        self.assertEqual((out["spec"]["quotas"]["requests_per_minute"], out["spec"]["quotas"]["max_streams"]), (rpm, streams))
         self.assertEqual(out["spec"]["requirements"], self.manifest["spec"]["requirements"])
         self.assertEqual(out["spec"]["quotas"]["max_warmup_rows"], self.manifest["spec"]["quotas"]["max_warmup_rows"])
 

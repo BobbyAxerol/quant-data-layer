@@ -118,6 +118,15 @@ message SubscribeRequest {
   // already-available event records into SubscribeResponse.records; it never
   // waits to fill a batch and clamps the value to its own cap.
   uint32 max_records_per_response = 7;
+  // Additive (SDK 2.4.1, IDR-096): the client retries a replay work-budget stop
+  // with a progress-aware bound. Only when true does a Subscribe catch-up that
+  // reaches REPLAY_MATCHED_LIMIT, REPLAY_SCAN_LIMIT (inside a scan) or
+  // REPLAY_BYTE_LIMIT end with RESOURCE_EXHAUSTED "RATE_LIMITED:{reason}:...".
+  // false (absent) keeps the pre-2.4.1 mapping: OUT_OF_RANGE "CURSOR_EXPIRED:...".
+  // A range refused before any scan (it cannot fit the scan budget, so a retry
+  // cannot progress) is OUT_OF_RANGE "CURSOR_EXPIRED:REPLAY_SCAN_LIMIT:..." for
+  // every client. REPLAY_TIME_LIMIT and RETENTION are unchanged by this field.
+  bool replay_budget_status_v2 = 8;
 }
 
 message ReplayRequest {
@@ -147,6 +156,22 @@ message StreamControl {
 message StreamRecord {
   uint64 logical_offset = 1;
   string resume_token = 2;
+  // Additive (SDK 2.4.0): stream gateway wall clocks (Unix ns, the gateway
+  // host clock) for one event record of a Subscribe response, diagnostics
+  // only, never delivery authority. 0 (absent) = not measured: controls,
+  // Replay responses, and any gateway without the fields. Each record of a
+  // batched response carries its own values.
+  // When the replica's live hub handed the record to this subscription's
+  // queue. 0 for committed replay records (they never pass the live hub).
+  uint64 gateway_dispatch_wall_ns = 3;
+  // When this subscription's task took the record from its queue (live) or
+  // from the replay source and built the response for it.
+  uint64 gateway_dequeue_wall_ns = 4;
+  // When the gRPC transport took the response carrying the record from the
+  // gateway's bounded handoff, to encode it for HTTP/2. A gap from dequeue to
+  // send is time the transport did not pull (client flow control); a gap
+  // from send to the client's receive is the network plus client buffers.
+  uint64 gateway_send_wall_ns = 5;
   oneof payload {
     qdl.marketdata.v2.EventEnvelope event = 10;
     StreamControl control = 11;

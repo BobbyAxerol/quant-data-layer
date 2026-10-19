@@ -1,5 +1,5 @@
 schema: qdl.v2.stable-release-routing.v1
-revision: 27
+revision: 28
 contract_version: 2.0.0
 source_catalog:
   path: /app/config/v2/stable-source-bindings.yaml
@@ -53,8 +53,8 @@ consumers:
     reason: V1_OKX_TRADE_EQUIVALENCE_UNPROVEN
 - consumer_id: alpha.binance.paper.stable
   manifest: /app/consumers/stable/alpha-binance-paper.yaml
-  manifest_revision: 14
-  manifest_sha256: 96a06ce715055804a0695abcf5159235b4d7ba13738698983833de5f3ec5bc5f
+  manifest_revision: 16
+  manifest_sha256: 6e049e756e7b37753139bf4958fbf872944b81d310dbd988b41f0f08a56f9031
   demand_revision: 7
   products:
   - requirement_key: 00d1d68e-45b0-5cbf-9825-15ba00cb6a66:BAR:1d:crypto_primary_v2
@@ -1437,6 +1437,10 @@ consumers:
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8aedd349-6999-5874-b0dd-34c6451c0b3a:OPEN_INTEREST::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
   - requirement_key: 8aedd349-6999-5874-b0dd-34c6451c0b3a:OPEN_INTEREST:1d:crypto_liquid_v2
     route: V2_PRIMARY
     fallback: BLOCKED
@@ -1462,6 +1466,10 @@ consumers:
     fallback: BLOCKED
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
   - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:MARK_INDEX_PRICE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:OPEN_INTEREST::crypto_liquid_v2
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
@@ -1493,6 +1501,10 @@ consumers:
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: b2d78145-b541-58e2-941b-06c44c65e45f:OPEN_INTEREST::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
   - requirement_key: b2d78145-b541-58e2-941b-06c44c65e45f:OPEN_INTEREST:1d:crypto_liquid_v2
     route: V2_PRIMARY
     fallback: BLOCKED
@@ -1521,6 +1533,10 @@ consumers:
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: e4ce7249-a4e8-5073-beb8-dab908596c34:OPEN_INTEREST::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
   - requirement_key: e4ce7249-a4e8-5073-beb8-dab908596c34:OPEN_INTEREST:1d:crypto_liquid_v2
     route: V2_PRIMARY
     fallback: BLOCKED
@@ -1546,6 +1562,10 @@ consumers:
     fallback: BLOCKED
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
   - requirement_key: ee93fabf-68df-5b50-8924-51bf25a5a757:MARK_INDEX_PRICE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+  - requirement_key: ee93fabf-68df-5b50-8924-51bf25a5a757:OPEN_INTEREST::crypto_liquid_v2
     route: V2_PRIMARY
     fallback: BLOCKED
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN

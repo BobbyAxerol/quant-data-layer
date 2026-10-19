@@ -1,0 +1,502 @@
+{
+ "schema": "p184.g12-g13-inheritance.v1",
+ "status": "AUDIT (read-only). Not an inheritance approval and not a gate result.",
+ "written_utc": "2026-10-16",
+ "author": "Claude (subagent), read-only audit",
+ "dl_head_at_audit": "87db215",
+ "ts_head_at_audit": "bdf7685e",
+ "rules": {
+  "G12": "TS upgrade/p184-phase-d-gates.md G12 (frozen 2026-10-09): fault cleared -> consumers caught up to live <= 600 s, then G1-G3 inside gate; four timestamps as G11",
+  "G13": "same file G13: every cell closed once on the final DL + writer digests (R2.5 case matrix)",
+  "inheritance": "Codex P184_CODEX_CONTRIBUTIONS.md: do not credit historical receipts against final-image gates without approved inheritance; preserve old receipts; rerun only affected paths",
+  "verdicts": {
+   "INHERIT": "no change on the exercised path since the receipt; eligible for an owner-recorded inheritance decision (not automatic)",
+   "RERUN_AFFECTED": "a changed component is on the path but some of the receipt's evidence still describes an unchanged binary; rerun the existing step",
+   "RERUN_FULL": "the system under test itself changed; the receipt cannot contribute",
+   "NOT_APPLICABLE": "scenario no longer applies to the deployed state"
+  },
+  "certification_ledger": "CERTIFICATION_LEDGER.md has no G12/G13 rows (grep), so no Pinned-at column constrains these cells"
+ },
+ "current_deployment": {
+  "observed_utc": "2026-10-16T03:0xZ (docker inspect, read-only)",
+  "roles": {
+   "rust_core / rust_core_2 / rust_core_3": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb (rc22, DL a4e7b3b; NanoCpus 1.0/1.0/0.5)",
+   "stream_kn_1 / stream_kn_2": "sha256:baa72c96d5255cbfc0e332f893c470ff293d88fde4e20ea4c7c94ba5ea09a38b (local/qdl-stream:isolation-sr1-c934c1e, DL c934c1e; started 01:46/01:47Z)",
+   "query_kn_1 / query_kn_2": "sha256:b9ca6c36fb0ad003b77e47bb3a777c3e565944d59cb3a2e9bc5dfb68e3448481 (rc19, DL 4d3476c)",
+   "market_projector_1 / _2": "sha256:ce629061a8c180ae7e6cf88e32ebaddcf965ffe3924c88a3f1b942fc1623d4f9 (rc14, DL a388537)",
+   "ingestor_binance_usdm": "sha256:7fba25779f72a3adffc88f195935a316ac94acbfcb362996fafbff89f62c9103 (RUST18, DL cdbf28b; cpus 0.75)",
+   "ingestor_okx_swap": "sha256:7fba2577... (RUST18; cpus 0.5)",
+   "binance_bar_edge": "sha256:08f356a84151c6e865fbdc4a2efe6924df9336d15353254c2b2da684261794f5 (rc14)",
+   "kafka1-3": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+   "market_cache / stable_redis": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+   "market_data_service_p184w (writer)": "sha256:d27db0cffe157491d9b01e7a469ac7fec53d8269a1eefde4c532cc441f7740c6 (B16, TS 5636e443; MARKET_DATA_NATIVE_FEEDS=TRADE,QUOTE, MARKET_DATA_NATIVE_APPLY_MAX_ROWS=16, DATA_LAYER_V2_BOOK_SNAPSHOT_BATCH_MAX_WAIT_MS=0, JWT manifest rev 11)"
+  },
+  "query_realm_mount": "p184-d3-capacity-20261009/reader-public-r16 (bundle.json and alpha.binance r16 mtime 2026-10-12 09:46Z, before the G13 v4.2 window 12:57Z)",
+  "core_config": "releases/v2.2.3-rc18-core-batch1024 (batch_size 1024, batch_wait_ms 25 for all three)",
+  "kafka_leader_rebalance": "KAFKA_AUTO_LEADER_REBALANCE_ENABLE not set (Kafka default true), production and G12 harness alike"
+ },
+ "changes_since_receipts": [
+  {
+   "id": "W",
+   "what": "writer B13 -> B14 -> B16 d27db0cf (TS 5636e443): native TRADE/QUOTE apply, G2 slices, G7 BOOK_SNAPSHOT wait 0 + latest-only projection (e8cd7b7c), G8 APPLY_MAX_ROWS=16 sub-units (5636e443), G9 health validity",
+   "roles": [
+    "market_data_service_p184w"
+   ]
+  },
+  {
+   "id": "S",
+   "what": "stream b095b18e -> baa72c96 (DL c934c1e, SR1 exact outstanding-record floor, SR4 handoff counters); earlier today's base b095b18e = live-budget reserve isolation",
+   "roles": [
+    "stream_kn_1",
+    "stream_kn_2"
+   ]
+  },
+  {
+   "id": "C",
+   "what": "core rc22 7c848aad by simultaneous replace (2026-10-15 13:33Z); rewind-in-generation with a fresh RealtimeCore, native Kafka error classification",
+   "roles": [
+    "rust_core",
+    "rust_core_2",
+    "rust_core_3"
+   ]
+  },
+  {
+   "id": "I",
+   "what": "ingestor_binance_usdm cpus 0.5 -> 0.75 (image unchanged)",
+   "roles": [
+    "ingestor_binance_usdm"
+   ]
+  },
+  {
+   "id": "K",
+   "what": "md.latest.v2 delete.retention.ms 604800000 -> 21600000 (dynamic topic config, 02:05Z)",
+   "roles": [
+    "kafka (topic md.latest.v2 only)"
+   ]
+  },
+  {
+   "id": "O",
+   "what": "stage-100 oracles G10/G11 v2 (SR2/SR3/SR5) - campaign scorer only, not used by the G12 or G13 harnesses",
+   "roles": []
+  },
+  {
+   "id": "Q",
+   "what": "not today but after every G13 receipt: Query rc16 7d43121e (bcb0283) / rc12 3b585597 -> rc19 b9ca6c36 (4d3476c: BAR warmup fast render + per-source authorization; 00056e5 additive typed reason; f5cd787/bb75d06 stream/SDK)",
+   "roles": [
+    "query_kn_1",
+    "query_kn_2"
+   ]
+  }
+ ],
+ "receipt_pins": {
+  "p184-g13-20261011T134532Z / 140432Z (41 cells)": "python 3b585597 (rc12 5ee9463), rust ebc7b794 (rc12) for every rust role, writer 44baacc0 (TS a37ff4d)",
+  "p184-g13-20261012T130309Z / 20261013T170506Z (35 cells)": "roles-v4.json c5b11f1e: query 7d43121e (rc16 bcb0283), core f41ecb66 (rc16), stream/projector/ingestors ce629061 (rc14), bar_edge 08f356a8; writer 2beedc04 (TS f1b52f63); alphas ca4548a1; runner daa8841 (sealed export tree bc014a9c); verify-b 0bfaafe3 = 35/35"
+ },
+ "g12": [
+  {
+   "scenario": "G12 broker stop/start (canonical leader, 60 s)",
+   "exercises": "Kafka RF3/ISR2 + transactional core commit + projector stage A/B + Stream + Query + TS writer clone (WriterClone copies the production writer env) -> TS cache; G1 BOOK, G2 TRADE/QUOTE/MARK, G3 BAR 1m after caught-up",
+   "last_pass": {
+    "receipt": "~/.local/state/qdl-v2/p184-g12-rc12-20261011/evidence/verdict.json",
+    "sha256": "20f296719c740dd53a2f32f20b0f18b673b7fa082532c54ee478d7166fbc5e3e",
+    "pinned": "core/projector/stream rust ebc7b794 (rc12 5ee9463), python 3b585597, writer 64347a94 (TS a3035c8, Python writer), kafka 9516fb76; caught-up predicate v1",
+    "result": "PASS, caught up 224.7 s"
+   },
+   "later_receipts": [
+    {
+     "receipt": "~/.local/state/qdl-v2/p184-g12-rc18-v2-control/evidence/verdict.json",
+     "sha256": "176733002be734b6759d67b126746f3ff2cce633e0fd4a0fed8eacd5dc06a56a",
+     "pinned": "core rc16, stream/projector rc14, python rc16, writer f1b52f6; predicate v2",
+     "result": "FAIL: caught up 0.26 s, G1 PASS, G2 max TRADE 2465 ms / QUOTE 1966 ms"
+    },
+    {
+     "receipt": "~/.local/state/qdl-v2/p184-g12-rc18-v2b-compat/evidence/verdict.json",
+     "sha256": "2f9e34642e2d8b35feca657d59210dc787a6f22c0d3c6ad94727a2fcc430f8f2",
+     "pinned": "core/stream RUST18, projector rc14, python rc16, writer f1b52f6; predicate v2",
+     "result": "FAIL: caught up 0.125 s, G1 PASS, G2 max TRADE 1678 ms / QUOTE 1679 ms"
+    }
+   ],
+   "touched_by_changes": [
+    "C",
+    "S",
+    "W",
+    "Q"
+   ],
+   "verdict": "RERUN_FULL",
+   "reason": "Every consumer-side role on the path changed since the last PASS (core rc12->rc22, Stream -> baa72c96, Query rc12->rc19, writer Python -> native B16). The newest receipts with the corrected predicate v2 FAIL G2 max in both arms; TS plan 76388-76394 attributes it to Kafka automatic leader rebalance after the broker returns (product behaviour, auto.leader.rebalance on in production) and leaves the handling as an owner decision that is not recorded. A rerun on today's images without that decision is expected to FAIL G2 again. Also: production projector is still rc14 ce629061 without the IDR-107 poll-error classification (projector exit 2 at broker kill seen in N1 r2c-broker9k); a projector exit is a G12 stop condition."
+  },
+  {
+   "scenario": "G12 projector restart",
+   "exercises": "projector stage A/B restart, same epoch; recovery observed end-to-end at the TS cache through Stream/Query/writer",
+   "last_pass": {
+    "receipt": "~/.local/state/qdl-v2/p184-g12-rc12-20261011/evidence/verdict.json",
+    "sha256": "20f296719c740dd53a2f32f20b0f18b673b7fa082532c54ee478d7166fbc5e3e",
+    "pinned": "as above",
+    "result": "PASS, caught up 19.4 s"
+   },
+   "later_receipts": [
+    {
+     "receipt": "~/.local/state/qdl-v2/p184-g12-rc18-control2/evidence/verdict.json",
+     "sha256": "4c8fef257c4e09c04636bb271f6a89602a6d6d3a7deddd08edcaae13c33b27de",
+     "pinned": "core rc16, projector/stream rc14 ce629061, python rc16, writer f1b52f6; predicate v1",
+     "result": "PASS, caught up 471.9 s"
+    }
+   ],
+   "touched_by_changes": [
+    "S",
+    "W",
+    "Q",
+    "C"
+   ],
+   "verdict": "RERUN_AFFECTED",
+   "reason": "The projector itself is unchanged: production ce629061 = rc14 a388537, and `git diff --stat 5ee9463 a388537 -- rust/qdl-projector rust/qdl-kafka/src/lib.rs rust/qdl-contracts` is empty, so the projector part of the rc12 receipt still describes the deployed binary. The G12 quantity (caught-up and G1-G3 at the TS cache) crosses the changed Stream and writer, so the scenario cannot close on the old receipt. It runs in the same harness lifetime as the other two faults, so it adds no separate run."
+  },
+  {
+   "scenario": "G12 Stream restart",
+   "exercises": "Stream gateway stop/start; writer reconnect/resume/replay through the gateway hub, handoff and live budget",
+   "last_pass": {
+    "receipt": "~/.local/state/qdl-v2/p184-g12-rc12-20261011/evidence/verdict.json",
+    "sha256": "20f296719c740dd53a2f32f20b0f18b673b7fa082532c54ee478d7166fbc5e3e",
+    "pinned": "as above",
+    "result": "PASS, caught up 138.4 s"
+   },
+   "touched_by_changes": [
+    "S",
+    "W",
+    "Q",
+    "C"
+   ],
+   "verdict": "RERUN_FULL",
+   "reason": "Today's Stream change (c934c1e exact outstanding-record accounting through queue/handoff/batch; b095b18e live reserve and over-floor BACKPRESSURE) is the restarted role, and the writer's native TRADE/QUOTE reconnect/resume is new. `git diff --stat a388537 c934c1e -- rust/qdl-stream-gateway/src` = 9 files, +2503/-219 (hub, replay, service, subscription, memory)."
+  },
+  {
+   "scenario": "G12 core-group simultaneous replace + single-member restart + SIGKILL (addendum-5 run S2)",
+   "exercises": "3 core members x 6 raw partitions, consumer-group rebalance, rewind, kill recovery; kafka x3 + publisher + monitor only (no projector/Stream/Query/writer started: provenance.jsonl roles net, kafka-1..3, core..core-3, monitor, publisher)",
+   "last_pass": {
+    "receipt": "~/.local/state/qdl-v2/p184-coregroup-20261015/S2-acceptance.json",
+    "sha256": "4626b44a49b217d9777922e5d0fbfba0393b97ff77e75c3a3a6224502fc83f3e",
+    "prereg_sha256": "42b82e61a5ea5b93268149c559659d1a29dca550f0268c47afdfecc72afc7664",
+    "addendum_5_sha256": "2fa5dffbd088062f0db0657bbf800eee39f3be985e3f4975f4d2e336976dca44",
+    "pinned": "core RUST18 7fba2577 -> rc22 7c848aad, kafka 9516fb76; profile batch 1024, wait 25 ms, core cpus 1.0, initial rebalance delay 3000 ms; harness DL 3af4ec0+",
+    "result": "run_S2 PASS 16/16: re-formed 6.98 s after first new start, full pause 10.6 s, kill ownership + caught up 10.2 s, retries 0"
+   },
+   "touched_by_changes": [],
+   "verdict": "INHERIT",
+   "reason": "Same core digest and same core config as production (production core.json: batch_size 1024, batch_wait_ms 25 on all three), same Kafka image. None of today's changes is on this path: Stream, writer and ingestor are not started by core-group mode; md.latest.v2 retention does not act on raw -> canonical. Production simultaneous replace on 2026-10-15 13:33Z re-formed 3x2 in 11.2 s (DL plan), consistent with S2. Caveat: production rust_core_3 has 0.5 CPU (set long before this work) while the profile gave every member 1.0; not separately tested. Level: shadow-certified (isolated), not production fault evidence."
+  },
+  {
+   "scenario": "G12 core-group rolling replace (A' control, B3)",
+   "exercises": "mixed-version rolling RUST18 -> rc22",
+   "last_pass": {
+    "receipt": "~/.local/state/qdl-v2/p184-coregroup-20261015/B3-acceptance.json",
+    "sha256": "44d6fcb9ffd97162cc098f653cfcc46a1b4ca92de12457f316b8579f1a9e57e8",
+    "result": "B3 PASS at batch 25/low rate; A' (production-like) reproduced the storm"
+   },
+   "touched_by_changes": [],
+   "verdict": "NOT_APPLICABLE",
+   "reason": "All three cores already run rc22; there is no mixed-version state left to certify, and the release procedure is the simultaneous replace (S2). B3 cannot certify production batch-1024 rolling (incident 2); it is kept as history, not credited."
+  }
+ ],
+ "g13": [
+  {
+   "step": "dr01-deployed",
+   "cells": [
+    "DR01.BINDING_COMPILE@BINANCE",
+    "DR01.BINDING_COMPILE@OKX",
+    "DR01.WRONG_REALM_DENIED@BINANCE",
+    "DR01.WRONG_REALM_DENIED@OKX",
+    "DR01.WRONG_REVISION_DENIED@BINANCE",
+    "DR01.WRONG_REVISION_DENIED@OKX",
+    "DR01.NO_GLOBAL_GRANT@ANY"
+   ],
+   "n": 7,
+   "receipt": "~/.local/state/qdl-v2/p184-g13-20261013T170506Z/summary.json",
+   "receipt_sha256": "9c285293c52a0ce3481a4255f3e06d97f02e4bf283d473623fe2fe6b0587a1db",
+   "receipt_step_duration_s": 27.3,
+   "receipt_harness_ok": true,
+   "exercises": "alpha SDK credentials -> Query HTTPS snapshot route (/v2/market-data/{uid}/snapshot) -> JWT/realm/revision/entitlement (qdl/security, qdl/consumer, consumers/, config/v2) on realm reader-public-r16",
+   "touched_by_changes": [],
+   "verdict": "INHERIT",
+   "reason": "`git diff --stat bcb0283 4d3476c -- qdl/security qdl/consumer consumers config/v2 qdl/reference` is empty; the router diff is BAR warmup fast render plus additive refusal logging (extra_reasons), not the auth/denial path; the realm bundle and revisions (Binance 16, OKX 15, writer 11) are unchanged since before the window. Today's changes (W, S, C, I, K) are not on this path. Receipt digests name query 7d43121e, so crediting it needs a recorded owner inheritance decision; alternative: rerun in the dr02-dr03 runtime window (+27 s)."
+  },
+  {
+   "step": "dr01-wrong-account",
+   "cells": [
+    "DR01.WRONG_ACCOUNT_DENIED@BINANCE",
+    "DR01.WRONG_ACCOUNT_DENIED@OKX"
+   ],
+   "n": 2,
+   "receipt": "~/.local/state/qdl-v2/p184-g13-20261012T130309Z/summary.json",
+   "receipt_sha256": "e3663d6e1442707937fc43cb3d501257ea195599e696a2e2624e315e306082fd",
+   "receipt_step_duration_s": 4.8,
+   "receipt_harness_ok": true,
+   "exercises": "TS Gateway (test stack ts-p184 on image 2beedc04) admin registration + wrong-account denial; no DL role on the path",
+   "touched_by_changes": [],
+   "verdict": "INHERIT",
+   "reason": "`git diff --stat f1b52f63 5636e443 -- services/gateway scripts/p184_dr01_wrong_account.py` is empty. The runner records the writer digest as provenance (G13-R1), so the cells name 2beedc04 rather than d27db0cf: inheritance must be recorded, or the step rerun in the same window (+5 s)."
+  },
+  {
+   "step": "dr02-dr03-alpha",
+   "cells": [
+    "DR02.HISTORY_LIMIT_BOUNDED_BUFFER@BINANCE",
+    "DR02.HISTORY_LIMIT_BOUNDED_BUFFER@OKX",
+    "DR02.MIXED_ITEM_OUTCOMES_VISIBLE@BINANCE",
+    "DR02.MIXED_ITEM_OUTCOMES_VISIBLE@OKX",
+    "DR02.WARMUP_SINGLE_SYMBOL_EXACT_CLOSED_ROWS@BINANCE",
+    "DR02.WARMUP_SINGLE_SYMBOL_EXACT_CLOSED_ROWS@OKX",
+    "DR02.WARMUP_UNIVERSE_CONTEXT_BATCH@BINANCE",
+    "DR02.WARMUP_UNIVERSE_CONTEXT_BATCH@OKX",
+    "DR03.APPEND_1M_NO_FUTURE_SKIP_DUPLICATE@BINANCE",
+    "DR03.APPEND_1M_NO_FUTURE_SKIP_DUPLICATE@OKX",
+    "DR03.NO_FULL_HISTORY_RELOAD_PER_CYCLE@BINANCE",
+    "DR03.NO_FULL_HISTORY_RELOAD_PER_CYCLE@OKX",
+    "DR03.RESTART_SAME_CANDLE_NO_DUPLICATE_DECISION@BINANCE",
+    "DR03.RESTART_SAME_CANDLE_NO_DUPLICATE_DECISION@OKX"
+   ],
+   "n": 14,
+   "receipt": "~/.local/state/qdl-v2/p184-g13-20261012T130309Z/summary.json",
+   "receipt_sha256": "e3663d6e1442707937fc43cb3d501257ea195599e696a2e2624e315e306082fd",
+   "receipt_step_duration_s": 513.1,
+   "receipt_harness_ok": true,
+   "exercises": "alpha (ca4548a1, qdl-sdk 2.1.0) -> Query warmup/batch/history (BAR render, per-source authorization) and Stream 1m BAR append; spool fed by projector",
+   "touched_by_changes": [
+    "Q",
+    "S",
+    "C"
+   ],
+   "verdict": "RERUN_AFFECTED",
+   "reason": "Query rc16 -> rc19 changed exactly the DR02 path: 4d3476c 'BAR warmup renders validated rows directly and authorizes once per source' (router +190 lines, service, stable_source). DR03 1m append crosses today's Stream (S) and core rc22 (C). Alpha image and harness scripts unchanged (`git diff --stat f1b52f63 5636e443 -- scripts/p184_dr_alpha_reads.py alpha_sdk` empty)."
+  },
+  {
+   "step": "dr07-reference",
+   "cells": [
+    "DR07.FUNDING_RATE@BINANCE",
+    "DR07.FUNDING_RATE@OKX",
+    "DR07.INSTRUMENT_METADATA_PROVENANCE@BINANCE",
+    "DR07.INSTRUMENT_METADATA_PROVENANCE@OKX",
+    "DR07.LONG_SHORT_RATIO@BINANCE",
+    "DR07.LONG_SHORT_RATIO@OKX",
+    "DR07.OPEN_INTEREST@BINANCE",
+    "DR07.OPEN_INTEREST@OKX",
+    "DR07.TAKER_FLOW@BINANCE",
+    "DR07.TAKER_FLOW@OKX",
+    "DR07.FX_PROOF@ANY",
+    "DR07.REFERENCE_NEVER_EXECUTION_AUTHORITY@ANY"
+   ],
+   "n": 12,
+   "receipt": "~/.local/state/qdl-v2/p184-g13-20261012T130309Z/summary.json",
+   "receipt_sha256": "e3663d6e1442707937fc43cb3d501257ea195599e696a2e2624e315e306082fd",
+   "receipt_step_duration_s": 4.2,
+   "receipt_harness_ok": true,
+   "exercises": "alpha_sdk.reference -> Query reference routes -> qdl/reference; FX proof from services/performance in the writer image",
+   "touched_by_changes": [],
+   "verdict": "INHERIT",
+   "reason": "DL reference modules and routes unchanged bcb0283..4d3476c (router diff mentions reference only in import context lines). TS services/performance, alpha_sdk and scripts/p184_dr07_reference.py unchanged f1b52f63..5636e443; shared/config.py gained two additive fields only. Same G13-R1 provenance caveat as above (+4 s to rerun in the window)."
+  },
+  {
+   "step": "dr04-dr06-views",
+   "cells": [
+    "DR04.EXPLICIT_LAST@BINANCE",
+    "DR04.EXPLICIT_LAST@OKX",
+    "DR04.L2_SNAPSHOT_DELTA_SEQUENCE_DEPTH@BINANCE",
+    "DR04.L2_SNAPSHOT_DELTA_SEQUENCE_DEPTH@OKX",
+    "DR04.MARK_INDEX_COMPONENTS@BINANCE",
+    "DR04.MARK_INDEX_COMPONENTS@OKX",
+    "DR04.QUOTE_BBO@BINANCE",
+    "DR04.QUOTE_BBO@OKX",
+    "DR04.RISK_REREADS_OWN_AUTHORITY@BINANCE",
+    "DR04.RISK_REREADS_OWN_AUTHORITY@OKX",
+    "DR04.L2_SNAPSHOT_DELTA_SEQUENCE_DEPTH@OKX_INVERSE",
+    "DR04.MARK_INDEX_COMPONENTS@OKX_INVERSE",
+    "DR04.QUOTE_BBO@OKX_INVERSE",
+    "DR04.RISK_REREADS_OWN_AUTHORITY@OKX_INVERSE",
+    "DR06.EXPLICIT_LAST_L2_MARK_STILL_FAIL_WHEN_INVALID@BINANCE",
+    "DR06.EXPLICIT_LAST_L2_MARK_STILL_FAIL_WHEN_INVALID@OKX",
+    "DR06.UNRELATED_STALE_TRADE_DOES_NOT_BLOCK_MARKET_LIMIT@BINANCE",
+    "DR06.UNRELATED_STALE_TRADE_DOES_NOT_BLOCK_MARKET_LIMIT@OKX",
+    "DR06.EXPLICIT_LAST_L2_MARK_STILL_FAIL_WHEN_INVALID@OKX_INVERSE",
+    "DR06.UNRELATED_STALE_TRADE_DOES_NOT_BLOCK_MARKET_LIMIT@OKX_INVERSE",
+    "DR05.QUIET_TYPED@BINANCE",
+    "DR05.QUIET_TYPED@OKX"
+   ],
+   "n": 22,
+   "receipt": "~/.local/state/qdl-v2/p184-g13-20261011T140432Z/summary.json",
+   "receipt_sha256": "f0b7b523fa6af40503f009f97d4ebde9119dda228b7902644f93e0629de40a6c",
+   "receipt_step_duration_s": 609.8,
+   "receipt_harness_ok": true,
+   "exercises": "Stream/Query -> production writer -> TS execution Redis -> MarketCacheReader + Risk validator (docker exec into market_data_service_p184w); BOOK, QUOTE, MARK/INDEX, LAST and DR05 quiet TRADE",
+   "touched_by_changes": [
+    "W",
+    "S",
+    "C",
+    "Q"
+   ],
+   "verdict": "RERUN_FULL",
+   "reason": "Receipt is on writer 44baacc0 (Python, TS a37ff4d) and DL rc12. Today's writer B16 changes the apply path these cells read (native TRADE/QUOTE apply with APPLY_MAX_ROWS=16, BOOK_SNAPSHOT wait 0 and latest-only projection); Risk changed since (IDR-098 32593f35, IDR-105/106 6796e0d0). TS `git diff --stat a37ff4dc 5636e443` over services/market_data, services/risk_engine, shared, rust/crates/market-data-writer: 98 files, +36118."
+  },
+  {
+   "step": "dr05-upstream",
+   "cells": [
+    "DR05.GAP_REFUSAL@BINANCE",
+    "DR05.GAP_REFUSAL@OKX",
+    "DR05.GAP_REFUSAL@OKX_INVERSE",
+    "DR05.GENERATION_CHANGE_FENCED@BINANCE",
+    "DR05.GENERATION_CHANGE_FENCED@OKX",
+    "DR05.GENERATION_CHANGE_FENCED@OKX_INVERSE"
+   ],
+   "n": 6,
+   "receipt": "~/.local/state/qdl-v2/p184-g13-20261011T134532Z/summary.json",
+   "receipt_sha256": "445e05c9de1a0074fb0f94acc950e25536e9a74342edea44e4142a8d6765e55c",
+   "receipt_step_duration_s": 333.1,
+   "receipt_harness_ok": true,
+   "exercises": "isolated raw publisher -> core sequence/generation fence (canonical.rs, realtime-core) -> quarantine -> Stream/Query BOOK views -> writer clone BOOK path -> at-use validation",
+   "touched_by_changes": [
+    "C",
+    "S",
+    "W"
+   ],
+   "verdict": "RERUN_FULL",
+   "reason": "Core rc12 -> rc22 changes the fence path itself (`git diff --stat 5ee9463 a4e7b3b` over qdl-core/realtime-core/qdl-kafka: canonical.rs +295, qdl-realtime-core.rs +1983, qdl-kafka lib +1734; rc22 rewinds with a fresh RealtimeCore). Codex's open BOOK committed-prefix/aborted-suffix resync question is on this path. The writer BOOK path changed today (e8cd7b7c)."
+  },
+  {
+   "step": "dr05-transport",
+   "cells": [
+    "DR05.STALE_TYPED@BINANCE",
+    "DR05.STALE_TYPED@OKX",
+    "DR05.STALE_TYPED@OKX_INVERSE",
+    "DR05.DISCONNECT_RECONNECT@BINANCE",
+    "DR05.DISCONNECT_RECONNECT@OKX",
+    "DR05.DISCONNECT_RECONNECT@OKX_INVERSE",
+    "DR05.APPROVED_FALLBACK_AND_RETURN_NO_FORBIDDEN_V1@BINANCE",
+    "DR05.APPROVED_FALLBACK_AND_RETURN_NO_FORBIDDEN_V1@OKX",
+    "DR05.APPROVED_FALLBACK_AND_RETURN_NO_FORBIDDEN_V1@OKX_INVERSE"
+   ],
+   "n": 9,
+   "receipt": "~/.local/state/qdl-v2/p184-g13-20261011T134532Z/summary.json",
+   "receipt_sha256": "445e05c9de1a0074fb0f94acc950e25536e9a74342edea44e4142a8d6765e55c",
+   "receipt_step_duration_s": 40.1,
+   "receipt_harness_ok": true,
+   "exercises": "writer clone transport: stale typing, disconnect/reconnect, approved fallback and return (no forbidden V1)",
+   "touched_by_changes": [
+    "W",
+    "S"
+   ],
+   "verdict": "RERUN_FULL",
+   "reason": "Writer image Python 44baacc0 -> native B16 (session/reconnect for TRADE/QUOTE in Rust, G9 health validity, BOOK batch wait) and Stream -> baa72c96 are both the system under test."
+  },
+  {
+   "step": "dr08-isolated",
+   "cells": [
+    "DR08.ALERT_PATH_OBSERVABLE@ANY",
+    "DR08.CONSUMER_RESTART_RECOVERY_MEASURED@ANY",
+    "DR08.NO_CROSS_CONSUMER_STARVATION@ANY",
+    "DR08.SLOW_CONSUMER_BOUNDED_QUEUE@ANY"
+   ],
+   "n": 4,
+   "receipt": "~/.local/state/qdl-v2/p184-g13-20261011T134532Z/summary.json",
+   "receipt_sha256": "445e05c9de1a0074fb0f94acc950e25536e9a74342edea44e4142a8d6765e55c",
+   "receipt_step_duration_s": 130.8,
+   "receipt_harness_ok": true,
+   "exercises": "isolated Kafka -> core -> Stream service/subscription/hub (slow consumer bounded queue, no cross-consumer starvation, restart recovery, alert path)",
+   "touched_by_changes": [
+    "S",
+    "C",
+    "Q"
+   ],
+   "verdict": "RERUN_FULL",
+   "reason": "Today's Stream change rewrites the slow-consumer accounting these cells judge (SR1 exact outstanding-record floor; b095b18e over-floor subscription alone ends BACKPRESSURE). Apparatus: in the 2026-10-15 development A/B NO_CROSS_CONSUMER_STARVATION failed identically on both arms (slow stream overflow not inside the 100-publish window: timing drift; DL plan line 73525 at 87db215) - fix that window before the qualification run (5 restart samples)."
+  }
+ ],
+ "oracle_flags": [
+  {
+   "id": "OF-G12-1",
+   "cells": [
+    "G12 broker/projector/Stream PASS receipts with predicate v1: rc10-full3 (c7b8ea95), rc12 (20f29671), rc18-control2 (4c8fef25)"
+   ],
+   "type": "window/predicate loophole (SR5-like: the recovery clock did not measure consumer recovery)",
+   "detail": "TS plan 76388: predicate v1 measured publisher jitter against the core's 1000 ms quiet-snapshot cadence, so caught-up times of 138-484 s were apparatus delay, and the 300 s G1-G3 window started that late. With predicate v2 (caught up 0.1-0.3 s) the window covers the post-return period and G2 max FAILs in both arms (Kafka auto leader rebalance stall 1.2-2.0 s). Whether each v1 window missed the stall is inferred, not proven per run. Do not credit v1 PASS as G12 PASS on any image set."
+  },
+  {
+   "id": "OF-G12-2",
+   "cells": [
+    "G12 G2/G3 oracle (scripts/p184_g12_isolated_fault.py md_sample/md_stats, lines 1013-1055 at 87db215)"
+   ],
+   "type": "SR3-like: absent observations do not block",
+   "detail": "Events whose reference + LOST_AFTER_S is not covered by sampler rows are counted 'pending' and excluded from the verdict; nothing requires pending == 0. The oracle also has no duplicate-applied, cursor post-to-post rewind or native typed continuity check (SR5-like): it scores first-seen transit only. With the native writer now applying TRADE/QUOTE, a rerun should require pending == 0 at window end and read the native trade_integrity counters the G10 v2 sampler uses."
+  },
+  {
+   "id": "OF-G12-3",
+   "cells": [
+    "G12 receipts before DL 35571a0"
+   ],
+   "type": "sampler undersampling (Codex R3)",
+   "detail": "Pre-fix receipts can only be false negatives (update_gap), not false PASS; fixed sampler applies to the next run. No credit change."
+  },
+  {
+   "id": "OF-G13-1",
+   "cells": [
+    "DR08.NO_CROSS_CONSUMER_STARVATION@ANY"
+   ],
+   "type": "timing-dependent predicate",
+   "detail": "Requires the slow stream's overflow metric to rise inside a 100-publish window; failed identically on both arms on 2026-10-15 (harness drift). Its 2026-10-11 PASS depended on that timing, and SR1 changed how the slow subscription terminates. Re-check the predicate against the BACKPRESSURE path before crediting any rerun."
+  },
+  {
+   "id": "OF-G13-2",
+   "cells": [
+    "DR05.GAP_REFUSAL@*",
+    "DR05.GENERATION_CHANGE_FENCED@*"
+   ],
+   "type": "weak attribution (minor)",
+   "detail": "scripts/p184_dr05_verdict.py:39-40 accepts DATA_NOT_READY in the snapshot detail as 'fault_typed'; the quarantine SEQUENCE_GAP + capture_id check (lines 26-29) still pins the fault, so not a false PASS by itself. post_fence_generation hard-codes generation == 8 (line 49): rc22's fresh-RealtimeCore rewind may legitimately change numbering -> possible false FAIL, not false PASS."
+  },
+  {
+   "id": "OF-G13-3",
+   "cells": [
+    "DR05.DISCONNECT_RECONNECT@*"
+   ],
+   "type": "historical false positive, already fixed",
+   "detail": "The 2026-10-11 04:38Z PASS counted startup quota controls; fixed before 134532Z (counts only controls after the cut, TS a37ff4d). The receipts used here are post-fix."
+  },
+  {
+   "id": "OF-G13-4",
+   "cells": [
+    "DR04.EXPLICIT_LAST@*"
+   ],
+   "type": "market-dependent",
+   "detail": "First views run (134532Z) refused EXPLICIT_LAST@OKX for a stale LAST in a quiet market; the rerun (140432Z) passed. Schedule the rerun in an active market hour or accept one retry rule up front."
+  }
+ ],
+ "minimal_rerun": [
+  {
+   "order": 0,
+   "item": "Owner decision before G12 broker rerun: handling of the Kafka automatic leader rebalance stall after a broker returns (runbook preferred election vs broker config), TS plan 76394. Without it the broker fault is expected to FAIL G2 max again.",
+   "duration_min": 0
+  },
+  {
+   "order": 1,
+   "item": "G12 full (broker, projector, Stream; one harness lifetime, faults not separable)",
+   "command": "python3 -B scripts/p184_g12_isolated_fault.py --run ~/.local/state/qdl-v2/p184-g12-v224-<UTC> --export ~/.local/state/qdl-v2/dr05-export-20261010/public-export.json --namespace p184-g12-dl-$(openssl rand -hex 8) --image-set <image-set-v224.json: core=sha256:7c848aad..., projector=sha256:ce629061..., stream=sha256:baa72c96..., python=sha256:b9ca6c36..., ts=sha256:d27db0cf...; kafka/redis/postgres/holder defaults> --query-code image",
+   "duration_min": "31-44 measured (rc12 30.6, rc18-control2 38.4, rc10-full3 43.8; orchestrator deadline 60)",
+   "precheck": "WriterClone has never started the native B16 writer in G12 (it copies the production env incl. MARKET_DATA_NATIVE_FEEDS); run --dry/first-step readiness and expect a harness fix if the native slot needs DL identity it drops. Projector stays rc14 (no IDR-107): a projector exit at broker stop stops the run."
+  },
+  {
+   "order": 2,
+   "item": "G13 isolated phase: dr05-upstream (6 cells), dr08-isolated (4 cells, after the starvation-window fix)",
+   "command": "python3 -B scripts/p184_g13_final.py --phase isolated --role-images <roles-v224.json from docker inspect> --python-image-ref qdl-v2-python:2.2.3-rc19-4d3476c --writer-image sha256:d27db0cffe157491d9b01e7a469ac7fec53d8269a1eefde4c532cc441f7740c6 --ts-source-sha 5636e443b81bbe593db72ccea0236e3346caf38e --dl-source-sha <DL release commit> --inputs <inputs-v224.json> --ts-root <clean TS run worktree at 5636e443>",
+   "duration_min": "~8 (dr05-upstream 5.6, dr08 2.2 measured on rc12)"
+  },
+  {
+   "order": 3,
+   "item": "G13 runtime phase (approved packet): dr04-dr06-views (22), dr05-transport (9), dr02-dr03-alpha (14); recommended in the same window: dr01-deployed (7), dr01-wrong-account (2), dr07-reference (12) so all 76 cells name the final digests without an inheritance amendment",
+   "command": "python3 -B scripts/p184_g13_final.py --phase runtime --role-images <roles-v224.json> --python-image-ref qdl-v2-python:2.2.3-rc19-4d3476c --writer-image sha256:d27db0cf... --ts-source-sha 5636e443... --dl-source-sha <DL release commit> --inputs <inputs-v224.json> --runtime-approval <packet-g13-v5.md> --ts-root <TS run worktree> [--only <step>]",
+   "duration_min": "~20 of steps (views 10.2, dr02-dr03 8.6, transport 0.7, dr01+dr07 0.6) inside a ~25-30 min window incl. ts-p184 + alpha stack up/down (v4.2 window was 18 min)"
+  }
+ ],
+ "constraints": "No run before the host measurement lock (claude-n1-opt-20261013, stage-100 #3) expires at 2026-10-16T04:04:12Z; G12/G13 runs are serial to any production measurement.",
+ "g13_totals": {
+  "cells": 76,
+  "INHERIT": 21,
+  "RERUN_AFFECTED": 14,
+  "RERUN_FULL": 41
+ }
+}

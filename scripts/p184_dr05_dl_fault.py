@@ -48,6 +48,13 @@ LABEL = "p184.dr05.dl"
 ROLES = ("kafka", "quota", "core", "stream", "query")
 CELLS = tuple(f"DR05.{fault}@{venue}" for venue in VENUES for fault in FAULTS)
 SOURCE_CATALOG = "source-catalog.yaml"
+# Catalog adapter_version of the isolated material (handoff "adapter_mode"). SYNTHETIC (default, unchanged):
+# every isolated binding declares the synthetic publisher's adapter. CAPTURE (TEST_ONLY real-capture replay
+# only): the source catalog's own adapter_version is kept so Query's lineage check runs against the true value
+# of the replayed provider raws (never relabelled); the run must seal the pinned capture sha256 and its
+# test-clock images, and the selected raws are proven equal per route (G12 ``capture_adapter_parity``).
+SYNTHETIC_ADAPTER = "p184-synthetic-test-only"
+ADAPTER_MODES = ("SYNTHETIC", "CAPTURE")
 
 
 def cells_for(scopes):
@@ -86,6 +93,26 @@ def source_catalog_path(work):
     return copied if copied.is_file() else ROOT / "config/v2/stable-source-bindings.yaml"
 
 
+def adapter_mode(handoff):
+    """The material's adapter mode from the run's handoff; anything but an explicit, sealed CAPTURE run is
+    SYNTHETIC. CAPTURE requires TEST_ONLY provenance, an exact G12 namespace, a pinned capture sha256 and the
+    orchestrator's test-clock image check; SYNTHETIC refuses any capture field (no half-sealed run)."""
+    mode = handoff.get("adapter_mode", "SYNTHETIC")
+    if mode not in ADAPTER_MODES:
+        raise ValueError("adapter_mode must be one of " + ",".join(ADAPTER_MODES))
+    capture = ("capture_raw_sha256", "test_clock_images")
+    if mode == "SYNTHETIC":
+        if any(key in handoff for key in capture):
+            raise ValueError("capture fields require adapter_mode CAPTURE")
+        return mode
+    if (handoff.get("provenance") != "TEST_ONLY"
+            or not re.fullmatch(r"p184-g12-dl-[0-9a-f]{16}", str(handoff.get("namespace")))
+            or not re.fullmatch(r"[0-9a-f]{64}", str(handoff.get("capture_raw_sha256")))
+            or handoff.get("test_clock_images") is not True):
+        raise ValueError("CAPTURE adapter mode needs a TEST_ONLY G12 run, a pinned raw sha256 and test-clock images")
+    return mode
+
+
 def namespace(value):
     # G12 (scripts/p184_g12_isolated_fault.py) reuses this material/frame code
     # for its own disposable namespace; both shapes stay exact and disposable.
@@ -102,28 +129,38 @@ def pending_rows(scopes=VENUES):
             for cell in cells_for(scopes)]
 
 
-def frame(venue, snapshot, sequence, previous, generation, quantity, at_ns):
+def frame(venue, snapshot, sequence, previous, generation, quantity, at_ns, levels=None):
     """Provider-shaped test bytes, following realtime-core delayed_book_frame.
 
     Stamp at publish time, not preparation time. Same lane across generations;
     a lane rename tests a different fence and is not this case.
+
+    ``levels`` (optional): {"bids": [(price, qty), ...], "asks": [...]} replaces the
+    default one-level book (bid 60000 x ``quantity``, ask 60001 x 1); a qty of "0"
+    removes a level, as on the venue. The DR05 cells keep the default (fixed top);
+    the G12 publisher passes a deterministically moving top (p184_g12 ``book_levels``).
     """
     if venue not in SCOPES or type(at_ns) is not int or at_ns <= 0:
         raise ValueError("venue and positive integer timestamp required")
     venue, _, symbol = SCOPES[venue]  # a scope selects the instrument; the frame names the real venue
     ms = at_ns // 1_000_000
+    if levels is None:
+        levels = {"bids": [("60000", quantity)], "asks": [("60001", "1")]}
     if venue == "OKX":
+        bids = [[price, qty, "0", "1"] for price, qty in levels["bids"]]
+        asks = [[price, qty, "0", "1"] for price, qty in levels["asks"]]
         payload = {"arg": {"channel": "books", "instId": symbol},
                    "action": "snapshot" if snapshot else "update", "data": [{
                        "seqId": str(sequence), "prevSeqId": "-1" if snapshot else str(previous),
-                       "ts": str(ms), "bids": [["60000", quantity, "0", "1"]],
-                       "asks": [["60001", "1", "0", "1"]]}]}
-    elif snapshot:
-        payload = {"lastUpdateId": sequence, "E": ms,
-                   "bids": [["60000", quantity]], "asks": [["60001", "1"]]}
+                       "ts": str(ms), "bids": bids, "asks": asks}]}
     else:
-        payload = {"s": symbol, "U": previous, "u": sequence, "pu": previous,
-                   "E": ms, "b": [["60000", quantity]], "a": [["60001", "1"]]}
+        bids = [[price, qty] for price, qty in levels["bids"]]
+        asks = [[price, qty] for price, qty in levels["asks"]]
+        if snapshot:
+            payload = {"lastUpdateId": sequence, "E": ms, "bids": bids, "asks": asks}
+        else:
+            payload = {"s": symbol, "U": previous, "u": sequence, "pu": previous,
+                       "E": ms, "b": bids, "a": asks}
     return {"venue": venue, "native_symbol": symbol, "connection_generation": generation,
             "sequence": sequence, "previous": previous, "snapshot": snapshot,
             "transport": "HTTP" if snapshot and venue == "BINANCE" else "WEBSOCKET",
@@ -203,6 +240,14 @@ def image_set(work=None):
     return dict(IMAGES)
 
 
+def query_entry(work):
+    """The query role's script: the DR05 diagnostic Query, or, once scripts/p184_dr05_quiet.py --seal added the
+    quiet TRADE lane (handoff "dr05_quiet"), the same Query reading provider-session liveness from the work dir."""
+    handoff = Path(work) / "handoff.json"
+    quiet = handoff.is_file() and json.loads(handoff.read_text()).get("dr05_quiet") is not None
+    return "scripts/p184_dr05_quiet.py" if quiet else "scripts/p184_dr05_observer.py"
+
+
 def topology(ns, work, topic_id="", *, core_binary=None, images=None):
     """Generate executable Docker argv, but do not execute or discover config.
 
@@ -241,7 +286,7 @@ def topology(ns, work, topic_id="", *, core_binary=None, images=None):
             ["/usr/local/bin/qdl-stream-gateway", "serve"]),
         "query": ("query", "512m", "0.5", {**common, "PYTHONPATH": "/app:/app/generated/python",
             "PYTHONDONTWRITEBYTECODE": "1"},
-            ["python", "-B", "scripts/p184_dr05_observer.py", "--query", "/work"]),
+            ["python", "-B", query_entry(work), "--query", "/work"]),
     }
     result = {}
     for role, (image, memory, cpus, env, command) in spec.items():
@@ -272,7 +317,20 @@ def sh(argv):
     return subprocess.run(argv, check=True, capture_output=True, text=True, timeout=15).stdout
 
 
-def owned(ns, role, call=sh, *, allow_disappearance=True):
+def _docker_absence(error, ident):
+    """True only for docker's exact one-line 'no such object/container: <ident>' reply."""
+    text = (error.stderr or "").strip().lower()
+    return (error.returncode == 1 and "\n" not in text and text.endswith(": " + ident.lower())
+            and ("no such object" in text or "no such container" in text))
+
+
+def owned(ns, role, call=sh, *, allow_disappearance=True, gone=None):
+    """Exact-name owned container row, or None.
+
+    ``gone`` (a list) makes a strict caller tolerate one race only: the listed
+    id is reported absent by docker and the exact name no longer lists; the
+    role is appended to ``gone``. Any other inspection error still raises.
+    """
     name = namespace(ns) + "-" + role
     if role not in (*ROLES, "helper", "tsvalidator"):
         raise ValueError("unknown owned role")
@@ -283,7 +341,12 @@ def owned(ns, role, call=sh, *, allow_disappearance=True):
         raise ValueError("ambiguous container")
     try:
         row = json.loads(call(["docker", "inspect", ids[0]]))[0]
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError as error:
+        if gone is not None and _docker_absence(error, ids[0]):
+            if call(["docker", "ps", "-aq", "--filter", "name=^/" + name + "$"]).strip():
+                raise
+            gone.append(role)
+            return None
         if not allow_disappearance:
             raise
         # --rm can finish between the exact-name listing and inspection.
@@ -314,10 +377,11 @@ def readiness(ns, call=sh, images=None):
 
 
 def cleanup(ns, call=sh):
-    removed = []
+    removed, already_gone = [], []
     # Preflight ALL ownership before stopping anything. Never remove networks,
     # images, shared volumes, files or a container selected only by a label.
-    rows = [(role, owned(ns, role, call, allow_disappearance=False))
+    # A --rm container listed then gone before inspection is already removed.
+    rows = [(role, owned(ns, role, call, allow_disappearance=False, gone=already_gone))
             for role in reversed((*ROLES, "helper", "tsvalidator"))]
     if any(row and row["HostConfig"].get("AutoRemove") is not True for _, row in rows):
         raise ValueError("refuse non-disposable container")
@@ -338,10 +402,10 @@ def cleanup(ns, call=sh):
                     if call(["docker", "ps", "-aq", "--no-trunc", "--filter",
                              "name=^/" + ns + "-" + role + "$"]).strip():
                         raise RuntimeError("container identity replaced during cleanup") from error
-                    removed.append(role)
+                    already_gone.append(role)
                     continue
                 deadline = time.monotonic() + 5
-                while (remaining := owned(ns, role, call, allow_disappearance=False)) is not None:
+                while (remaining := owned(ns, role, call, allow_disappearance=False, gone=[])) is not None:
                     if remaining["Id"] != row["Id"]:
                         raise RuntimeError("container identity replaced during cleanup")
                     if remaining.get("State", {}).get("Running") or time.monotonic() >= deadline:
@@ -354,7 +418,8 @@ def cleanup(ns, call=sh):
                 failures.append(role + ":" + type(error).__name__)
     if failures:
         raise RuntimeError("cleanup incomplete: " + ",".join(failures))
-    return {"removed": removed, "scope": ns}
+    return {"removed": removed, "already_gone": already_gone,
+            "counts": {"removed": len(removed), "already_gone": len(already_gone)}, "scope": ns}
 
 
 def prepare(work, images=None, scopes=None, catalog=None):
@@ -454,8 +519,9 @@ def material(work, exported):
                            and b["feed"] in ("BOOK_SNAPSHOT", "BOOK_DELTA")]
     if len(catalog["bindings"]) != 2 * len(scopes):
         raise ValueError("every scope's BOOK snapshot/delta must match the source catalog")
-    for binding in catalog["bindings"]:
-        binding["source"]["adapter_version"] = "p184-synthetic-test-only"
+    if adapter_mode(packet) == "SYNTHETIC":
+        for binding in catalog["bindings"]:
+            binding["source"]["adapter_version"] = SYNTHETIC_ADAPTER
     save("catalog.yaml", yaml.safe_dump(catalog))
     loaded = StableSourceCatalog.load(work / "catalog.yaml")
     for b in cfg["core"]["bindings"]:
@@ -537,7 +603,9 @@ group.initial.rebalance.delay.ms=0
                                max_freshness_ms=2000)
             requirements.append(requirement)
         mapping["spec"]["requirements"] = requirements
-        mapping["spec"]["quotas"]["max_buffer_events"] = 1000
+        # Entitlement = production trading-system.paper.stable rev 11 (2000). Writers send their own explicit depth
+        # (DATA_LAYER_V2_MAX_BUFFER_EVENTS, default 1000), so the clone keeps 1000 unless a run sets 2000.
+        mapping["spec"]["quotas"]["max_buffer_events"] = 2000
         save(label + ".yaml", yaml.safe_dump(mapping))
         from scripts.p184_dr05_case import consumer_packet
         consumer, route = consumer_packet(work / (label + ".yaml"), loaded, scope, ISSUER, AUDIENCE)

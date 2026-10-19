@@ -1,0 +1,69 @@
+{
+ "schema": "qdl.p184.stage100-a5.v1",
+ "amendment_id": "A5",
+ "version": 1,
+ "title": "G11 TRADE first-valid-apply clock starts at the slice's first canonical TRADE event after the fault",
+ "decision_owner": "Bobby (owner)",
+ "owner_rule_verbatim": "nếu gate không đạt xác định là lỗi external thì nới gate rồi release gọn nhé",
+ "owner_rule_reference": "owner rule 2026-10-18 ~16:00Z, with \"duyệt hết theo recommend của bạn, k hỏi lại\" (the coordinator recommendation A5 is approved without a further question)",
+ "frozen_at": "2026-10-19T05:03:03Z",
+ "frozen_at_unix": 1792386183.5972471,
+ "rationale_doc": "upgrade/evidence/releases/v2.2.4/a5-g11-trade-clock.md",
+ "rule": {
+  "gate": "G11",
+  "feeds": ["TRADE"],
+  "clock": "max(fault_cleared_ms, first canonical TRADE kafka_create_time_ms > outage_start_ms - pre_fault_guard_ms)",
+  "pre_fault_guard_ms": 3000,
+  "pre_fault_guard_basis": "the G11 TRADE live bound (scripts/p184_g11_writer_restart_probe.py LIVE_BOUND_MS TRADE 3000): an event committed less than 3 s before the writer stopped may not have been applied, so it starts the clock at fault_cleared exactly as the frozen rule",
+  "first_valid_apply_le_s": 30.0,
+  "event_time_basis": "Kafka record CreateTime of md.canonical.v2 (set by DL before its transaction commit, the earliest time the writer could read the event); the venue source time is reported next to it",
+  "evidence": "a read_committed, assign-only read of md.canonical.v2 by the pinned reader covering, on every partition carrying the slice, outage_start - guard .. first_apply (every assigned partition done, no read error); the event the probe saw applied first must be one of the canonical post-fault TRADE events of the slice. Missing or incomplete evidence: the slice keeps the frozen clock (A5 not applied to it).",
+  "negative": "an earlier post-fault TRADE event that the writer did not apply within 30 s moves the clock back to that event, so the slice FAILs",
+  "unchanged": ["caught_up_le_s", "rewinds", "cursor_never_ahead", "roster", "other_slices", "other_gates"],
+  "unchanged_detail": "caught up <= 60 s from fault_cleared, no rewind (high-water), cursor never ahead (roster complete), unresolved slices / observation window, every non-TRADE slice, every other gate; the frozen probe verdict() runs on the amended report"
+ },
+ "post_hoc_applications": [
+  {
+   "campaign_id": "p184-final-campaign-20261019T040311Z",
+   "label": "POST_HOC_OWNER_DECISION",
+   "post_hoc": true,
+   "statement": "A5 was adopted after this run was scored (scorecard.json 2026-10-19 04:39Z, G11 FAIL 'first valid apply max 36.415 s > 30 s' on OKX|BNB-USDT-SWAP|TRADE|None only). The verdict without A5 stays the record of the frozen rule.",
+   "scorecard_sha256": "ebe11b8c10145bb92b7a850c4134d81101aaf7000a210f198b175316b20acbbf",
+   "campaign_json_sha256": "6f6098cb950c177237cd663cc36b6891c85d12f19aaa8b1b35a84c174e9b3ee0",
+   "g11_summary_sha256": "77cac9b625bd1729cd46f7b003b40b397fd5d4de2f29dee7f8da79cc4b59253f",
+   "g11_observations_sha256": "01eddf13fbe0802f1ecc32fff1c0da73517ee68a024524786450e86be1385adf",
+   "rescore_receipt": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/scorecard.a5.json",
+   "evidence": {
+    "dir_suffix": ".g11-forensic",
+    "slices": [
+     {
+      "slice": "OKX|BNB-USDT-SWAP|TRADE|None",
+      "venue": "OKX",
+      "native_symbol": "BNB-USDT-SWAP",
+      "canonical": "canonical.jsonl",
+      "canonical_sha256": "cf96554ec3d9affa646a9be4dd2fb8f64fbb2dd9751a3f37b54b178ffc1f80e8",
+      "read_window_utc": "2026-10-19T04:35:20Z..04:38:00Z (offsets_for_times, all 6 partitions; recorded in DL plan commit 288a5805, the reader output does not carry it)"
+     }
+    ],
+    "venue_confirmation_report_only": {
+     "file": "okx-history-trades-after-241971264.json",
+     "sha256": "b579fdb9f13fe17844e6c266f97e03e10adffb924a145fb96da07ff0589da4d6",
+     "source": "OKX public REST /api/v5/market/history-trades?instId=BNB-USDT-SWAP&type=1&after=241971264: 241971263 at 04:36:57.139Z, then 241971262 at 04:36:15.209Z (adjacent trade ids)"
+    }
+   }
+  }
+ ],
+ "pre_registered": {
+  "label": "PRE_REGISTERED",
+  "post_hoc": false,
+  "applies_to": "any stage-100 campaign whose campaign.json started_unix is after frozen_at_unix, scored by the pinned scorer",
+  "evidence_dir_suffix": ".g11-canonical",
+  "evidence_layout": "<campaign>.g11-canonical/reader.py (sha256 = pinned reader), canonical.jsonl per slice, a5-evidence.json {schema qdl.p184.stage100-a5-evidence.v1, campaign_id, slices: [{slice, canonical, canonical_sha256}]}"
+ },
+ "pinned": {
+  "scorer": {"path": "scripts/p184_gate_campaign.py", "sha256": "e179ec784621089795516ed25b2ea1f2e2ba30c86eea0de852ed4728aa6d104b", "note": "= the A3 gate_campaign_tool pin; not edited by A5"},
+  "g11_probe": {"path": "scripts/p184_g11_writer_restart_probe.py", "sha256": "adb811ccc6da8a7249197e5e8e22fb49deebee0c03f36ded71c3c84838bf3e95"},
+  "rescore_tool": {"path": "scripts/p184_a5_g11_trade_clock.py", "sha256": "4892abd1630eff84c1a3b6eb0b57b3c57912883cbd354378d686e67ab89af7e7"},
+  "reader": {"path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.g11-forensic/reader.py", "sha256": "5fcc088a053a058a882174daa3b24adc1edbcf455869d138006c3de1ecd25d7c", "note": "read-only md.canonical.v2 reader (isolated --rm container on the query_kn_1 image, ro TLS mounts, assign only, read_committed, no group join or commit)"}
+ }
+}

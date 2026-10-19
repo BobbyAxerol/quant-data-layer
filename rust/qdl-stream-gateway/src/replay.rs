@@ -38,8 +38,8 @@ pub struct ReplayLimits {
     pub max_scanned_records: u64,
     pub max_scanned_bytes: u64,
     pub max_duration: Duration,
-    /// `max_replay_events` of the Python gateway: more matching records than
-    /// this means the backlog exceeds the bounded window (resnapshot).
+    /// Maximum matching records per bounded replay. Exhaustion is retryable
+    /// REPLAY_MATCHED_LIMIT, not retention loss; resume from the last token.
     pub max_matched: u64,
 }
 
@@ -61,6 +61,10 @@ pub enum ReplayEnd {
     /// `limit` matched records were emitted (Replay RPC page).
     PageFull,
     ScanLimit(&'static str),
+    /// Refused at submit, before any scan: the offset span alone exceeds the
+    /// scan budget. A retry from the same or an older token cannot progress,
+    /// so every client gets CURSOR_EXPIRED (IDR-096 (A)).
+    SpanLimit,
     Backlog,
     Retention,
     Cancelled,
@@ -85,6 +89,17 @@ pub struct ReplayMetrics {
     pub detached: AtomicU64,
     /// Detached because the replay budget was exhausted.
     pub budget_detached: AtomicU64,
+    /// Full-channel slot waits and cumulative elapsed time (saturating).
+    pub slot_waits: AtomicU64,
+    pub slot_wait_ns: AtomicU64,
+    /// Sole-request slot waits ended early because a queued peer of the same
+    /// partition could make progress (it then detached, not waited 200 ms).
+    pub peer_preempted: AtomicU64,
+    /// Replay-only source calls, including failures and empty cursor polls.
+    pub open_calls: AtomicU64,
+    pub open_elapsed_ns: AtomicU64,
+    pub cursor_next_calls: AtomicU64,
+    pub cursor_next_elapsed_ns: AtomicU64,
 }
 
 /// Records handed to one replay request at a time; a request that cannot
@@ -96,6 +111,9 @@ pub struct ReplayMetrics {
 /// exhausted a request detaches at once instead of stalling the shared pass.
 pub const REPLAY_CHANNEL: usize = 32;
 pub const DETACH_AFTER: Duration = Duration::from_millis(200);
+/// Slice of a sole request's bounded slot wait between checks for a queued
+/// peer that can make progress. Only shortens the wait; never extends it.
+const PEER_POLL: Duration = Duration::from_millis(2);
 
 /// A replayed record and the budget bytes it holds until the receiver drops
 /// it (F4: replay channels are inside the replica byte budget).
@@ -108,6 +126,68 @@ impl Replayed {
     /// The record and its charge, which the caller hands on to the transport.
     pub fn into_parts(self) -> (Arc<LiveRecord>, Charge) {
         (self.record, self.charge)
+    }
+}
+
+/// One Subscribe catch-up episode, shared only by its sequential scan ranges.
+/// Count limits and the absolute deadline never restart at a range boundary.
+#[derive(Debug)]
+pub struct ReplayEpisode {
+    pub deadline: Instant,
+    scanned: AtomicU64,
+    scanned_bytes: AtomicU64,
+    matched: AtomicU64,
+}
+impl ReplayEpisode {
+    pub fn new(deadline: Instant) -> Arc<Self> {
+        Arc::new(Self {
+            deadline,
+            scanned: AtomicU64::new(0),
+            scanned_bytes: AtomicU64::new(0),
+            matched: AtomicU64::new(0),
+        })
+    }
+    pub fn matched(&self) -> u64 {
+        self.matched.load(Ordering::Relaxed)
+    }
+    pub fn scan(&self, bytes: u64, limits: &ReplayLimits) -> Option<&'static str> {
+        saturating_add(&self.scanned, 1);
+        saturating_add(&self.scanned_bytes, bytes);
+        if self.scanned.load(Ordering::Relaxed) > limits.max_scanned_records {
+            Some("REPLAY_SCAN_LIMIT")
+        } else if self.scanned_bytes.load(Ordering::Relaxed) > limits.max_scanned_bytes {
+            Some("REPLAY_BYTE_LIMIT")
+        } else {
+            None
+        }
+    }
+    pub fn reserve_match(self: &Arc<Self>, limit: u64) -> Option<MatchReservation> {
+        self.matched
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                (n < limit).then(|| n + 1)
+            })
+            .ok()?;
+        Some(MatchReservation {
+            episode: self.clone(),
+            delivered: false,
+        })
+    }
+}
+/// Undelivered/detached records do not consume a matched-record allowance.
+pub struct MatchReservation {
+    episode: Arc<ReplayEpisode>,
+    delivered: bool,
+}
+impl MatchReservation {
+    pub fn delivered(mut self) {
+        self.delivered = true;
+    }
+}
+impl Drop for MatchReservation {
+    fn drop(&mut self) {
+        if !self.delivered {
+            self.episode.matched.fetch_sub(1, Ordering::Relaxed);
+        }
     }
 }
 
@@ -125,8 +205,7 @@ pub struct ReplayRequest {
     pub cancel: Arc<AtomicBool>,
     pub deadline: Instant,
     matched: u64,
-    scanned: u64,
-    scanned_bytes: u64,
+    episode: Arc<ReplayEpisode>,
 }
 
 impl ReplayRequest {
@@ -154,9 +233,14 @@ impl ReplayRequest {
             cancel,
             deadline,
             matched: 0,
-            scanned: 0,
-            scanned_bytes: 0,
+            episode: ReplayEpisode::new(deadline),
         }
+    }
+
+    pub fn with_episode(mut self, episode: Arc<ReplayEpisode>) -> Self {
+        self.deadline = self.deadline.min(episode.deadline);
+        self.episode = episode;
+        self
     }
 
     fn finish(&mut self, end: ReplayEnd) {
@@ -264,7 +348,7 @@ impl ReplayCoordinator {
         // a range that cannot fit the scan budget is refused without a scan.
         if (request.barrier - request.after - 1) as u64 > self.limits.max_scanned_records {
             self.metrics.scan_limited.fetch_add(1, Ordering::Relaxed);
-            request.finish(ReplayEnd::ScanLimit("REPLAY_SCAN_LIMIT"));
+            request.finish(ReplayEnd::SpanLimit);
             return;
         }
         let start = {
@@ -406,7 +490,11 @@ impl ReplayCoordinator {
             };
             let from = first.after + 1;
             self.set_position_only(partition, from);
-            match self.source.open(partition, from) {
+            let started = Instant::now();
+            saturating_add(&self.metrics.open_calls, 1);
+            let opened = self.source.open(partition, from);
+            saturating_add(&self.metrics.open_elapsed_ns, elapsed_ns(started));
+            match opened {
                 Ok(cursor) => break cursor,
                 Err(RangeError::Retention) => {
                     let mut expired = batch.remove(0);
@@ -449,7 +537,14 @@ impl ReplayCoordinator {
             if active.is_empty() {
                 return;
             }
-            let record = match cursor.next(Duration::from_millis(100)) {
+            let next_started = Instant::now();
+            saturating_add(&self.metrics.cursor_next_calls, 1);
+            let next = cursor.next(Duration::from_millis(100));
+            saturating_add(
+                &self.metrics.cursor_next_elapsed_ns,
+                elapsed_ns(next_started),
+            );
+            let record = match next {
                 Ok(Some(record)) => record,
                 Ok(None) => {
                     if let Some(next) = cursor.position() {
@@ -483,15 +578,7 @@ impl ReplayCoordinator {
                     index += 1;
                     continue;
                 }
-                request.scanned += 1;
-                request.scanned_bytes += size;
-                let limit = if request.scanned > self.limits.max_scanned_records {
-                    Some("REPLAY_SCAN_LIMIT")
-                } else if request.scanned_bytes > self.limits.max_scanned_bytes {
-                    Some("REPLAY_BYTE_LIMIT")
-                } else {
-                    None
-                };
+                let limit = request.episode.scan(size, &self.limits);
                 match limit {
                     Some(reason) => {
                         self.metrics.scan_limited.fetch_add(1, Ordering::Relaxed);
@@ -530,6 +617,7 @@ impl ReplayCoordinator {
             let weight = live.weight();
             let mut index = 0;
             while index < active.len() {
+                let allow_wait = active.len() == 1;
                 let request = &mut active[index];
                 let wanted = request.key == live.raw.key
                     && offset > request.after
@@ -543,13 +631,16 @@ impl ReplayCoordinator {
                     index += 1;
                     continue;
                 }
-                if request.matched >= self.limits.max_matched {
+                let Some(reservation) = request.episode.reserve_match(self.limits.max_matched)
+                else {
                     let mut done = active.swap_remove(index);
                     done.finish(ReplayEnd::Backlog);
                     continue;
-                }
-                match self.send_or_detach(&request.sink, &live, weight) {
+                };
+                match self.send_or_detach(&request.sink, &live, weight, allow_wait, Some(partition))
+                {
                     Sent::Delivered => {
+                        reservation.delivered();
                         *delivered = true;
                         request.after = offset;
                         request.matched += 1;
@@ -562,10 +653,12 @@ impl ReplayCoordinator {
                         index += 1;
                     }
                     Sent::Closed => {
+                        drop(reservation);
                         let mut done = active.swap_remove(index);
                         done.finish(ReplayEnd::Cancelled);
                     }
                     Sent::Detach => {
+                        drop(reservation);
                         // Too slow for the shared pass: continue from its own
                         // offset later.
                         self.metrics.detached.fetch_add(1, Ordering::Relaxed);
@@ -573,6 +666,7 @@ impl ReplayCoordinator {
                         self.requeue(partition, detached);
                     }
                     Sent::Starved => {
+                        drop(reservation);
                         *starved = true;
                         self.metrics.budget_detached.fetch_add(1, Ordering::Relaxed);
                         let detached = active.swap_remove(index);
@@ -581,6 +675,25 @@ impl ReplayCoordinator {
                 }
             }
         }
+    }
+
+    /// A request queued for this partition's next pass (pending or joiner)
+    /// can make progress now: a free channel slot, or it must be answered
+    /// (closed, cancelled, expired). Stalled queued peers never qualify, so
+    /// a set of only stalled requests keeps the existing bounded wait.
+    fn queued_peer_ready(&self, partition: i32) -> bool {
+        let Ok(map) = self.partitions.lock() else {
+            return false;
+        };
+        let now = Instant::now();
+        map.get(&partition).is_some_and(|entry| {
+            entry.pending.iter().chain(&entry.joiners).any(|request| {
+                request.sink.capacity() > 0
+                    || request.sink.is_closed()
+                    || request.cancel.load(Ordering::Relaxed)
+                    || now > request.deadline
+            })
+        })
     }
 
     fn set_position_only(&self, partition: i32, position: i64) {
@@ -594,31 +707,84 @@ impl ReplayCoordinator {
         sink: &tokio::sync::mpsc::Sender<Replayed>,
         record: &Arc<LiveRecord>,
         weight: usize,
+        allow_wait: bool,
+        partition: Option<i32>,
     ) -> Sent {
         let deadline = Instant::now() + DETACH_AFTER;
-        loop {
-            if sink.is_closed() {
-                return Sent::Closed;
-            }
-            if sink.capacity() > 0 {
-                let Some(charge) = self.budget.charge(weight) else {
-                    return Sent::Starved;
-                };
-                match sink.try_send(Replayed {
-                    record: record.clone(),
-                    charge,
-                }) {
-                    Ok(()) => return Sent::Delivered,
-                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return Sent::Closed,
-                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {}
+        let permit = match sink.try_reserve() {
+            Ok(permit) => permit,
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return Sent::Closed,
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                // A stalled subscriber must not hold the shared reader while
+                // another request in this pass can consume its next record.
+                if !allow_wait {
+                    return Sent::Detach;
+                }
+                let started = Instant::now();
+                saturating_add(&self.metrics.slot_waits, 1);
+                // Only called by the spawn_blocking replay reader. Construct
+                // the timer inside its runtime, retaining the original bound.
+                // The sole request in this pass must not hold the shared
+                // reader for DETACH_AFTER while a queued peer could progress
+                // (the peer only runs in the next pass): wait in short slices
+                // and detach as soon as such a peer exists.
+                let reserved = tokio::runtime::Handle::current().block_on(async {
+                    loop {
+                        let remaining = deadline.saturating_duration_since(Instant::now());
+                        if remaining.is_zero() {
+                            return SlotWait::Detach;
+                        }
+                        let slice = if partition.is_some() {
+                            remaining.min(PEER_POLL)
+                        } else {
+                            remaining
+                        };
+                        match tokio::time::timeout(slice, sink.reserve()).await {
+                            Ok(Ok(permit)) => return SlotWait::Permit(permit),
+                            Ok(Err(_)) => return SlotWait::Closed,
+                            Err(_) => {
+                                if partition
+                                    .is_some_and(|partition| self.queued_peer_ready(partition))
+                                {
+                                    saturating_add(&self.metrics.peer_preempted, 1);
+                                    return SlotWait::Detach;
+                                }
+                            }
+                        }
+                    }
+                });
+                saturating_add(&self.metrics.slot_wait_ns, elapsed_ns(started));
+                match reserved {
+                    SlotWait::Permit(permit) => permit,
+                    SlotWait::Closed => return Sent::Closed,
+                    SlotWait::Detach => return Sent::Detach,
                 }
             }
-            if Instant::now() >= deadline {
-                return Sent::Detach;
-            }
-            std::thread::sleep(Duration::from_millis(2));
+        };
+        if sink.is_closed() {
+            return Sent::Closed;
         }
+        // Never hold replay bytes while waiting for a slot. A failed charge
+        // drops the permit and leaves starvation/backoff to the shared pass.
+        let Some(charge) = self.budget.charge(weight) else {
+            return Sent::Starved;
+        };
+        permit.send(Replayed {
+            record: record.clone(),
+            charge,
+        });
+        Sent::Delivered
     }
+}
+
+fn saturating_add(counter: &AtomicU64, value: u64) {
+    let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+        Some(current.saturating_add(value))
+    });
+}
+
+fn elapsed_ns(started: Instant) -> u64 {
+    started.elapsed().as_nanos().min(u64::MAX as u128) as u64
 }
 
 /// How a pass ended, for the partition's driver.
@@ -630,9 +796,349 @@ enum Pass {
 
 const STARVED_BACKOFF: Duration = Duration::from_millis(50);
 
+/// Outcome of a sole request's bounded slot wait.
+enum SlotWait<P> {
+    Permit(P),
+    Closed,
+    Detach,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 enum Sent {
     Delivered,
     Closed,
     Detach,
     Starved,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::mpsc;
+
+    struct UnusedSource;
+
+    impl RangeSource for UnusedSource {
+        fn open(&self, _: i32, _: i64) -> Result<Box<dyn RangeCursor>, RangeError> {
+            panic!("slot tests must not read the source");
+        }
+    }
+
+    fn record(offset: i64) -> Arc<LiveRecord> {
+        Arc::new(LiveRecord {
+            raw: Arc::new(RawRecord {
+                partition: 0,
+                offset,
+                key: b"test-only".to_vec(),
+                payload: Vec::new(),
+                timestamp_ms: 0,
+            }),
+            envelope: Default::default(),
+            shared_charge: None,
+            dispatched_wall_ns: 0,
+        })
+    }
+
+    fn coordinator(bytes: usize) -> Arc<ReplayCoordinator> {
+        ReplayCoordinator::new(
+            Arc::new(UnusedSource),
+            1,
+            ReplayLimits::default(),
+            ByteBudget::new(bytes),
+        )
+    }
+
+    fn fill(coordinator: &ReplayCoordinator, sink: &mpsc::Sender<Replayed>) {
+        for offset in 0..REPLAY_CHANNEL {
+            let record = record(offset as i64);
+            sink.try_reserve().unwrap().send(Replayed {
+                charge: coordinator.budget.charge(record.weight()).unwrap(),
+                record,
+            });
+        }
+        assert_eq!(sink.capacity(), 0);
+    }
+
+    fn send(
+        coordinator: &Arc<ReplayCoordinator>,
+        sink: &mpsc::Sender<Replayed>,
+    ) -> tokio::task::JoinHandle<Sent> {
+        let coordinator = coordinator.clone();
+        let sink = sink.clone();
+        tokio::task::spawn_blocking(move || {
+            let record = record(REPLAY_CHANNEL as i64);
+            coordinator.send_or_detach(&sink, &record, record.weight(), true, None)
+        })
+    }
+
+    async fn outcome(task: tokio::task::JoinHandle<Sent>) -> Sent {
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("bounded slot operation")
+            .expect("blocking reader")
+    }
+
+    async fn waiting(coordinator: &ReplayCoordinator) {
+        // Synchronize on entry into the slow path, not a guessed sleep.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while coordinator.metrics.slot_waits.load(Ordering::Relaxed) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("reader entered the full-channel wait");
+    }
+
+    #[tokio::test]
+    async fn available_slot_delivers_without_waiting_and_releases_charge() {
+        let coordinator = coordinator(1 << 20);
+        let (sink, mut receiver) = mpsc::channel(REPLAY_CHANNEL);
+        assert_eq!(outcome(send(&coordinator, &sink)).await, Sent::Delivered);
+        assert_eq!(coordinator.metrics.slot_waits.load(Ordering::Relaxed), 0);
+        assert_eq!(coordinator.metrics.slot_wait_ns.load(Ordering::Relaxed), 0);
+        let delivered = receiver.try_recv().unwrap();
+        assert_eq!(delivered.record.raw.offset, REPLAY_CHANNEL as i64);
+        assert_eq!(coordinator.budget.used(), delivered.record.weight());
+        drop(delivered);
+        assert_eq!(coordinator.budget.used(), 0);
+        assert_eq!(sink.capacity(), REPLAY_CHANNEL);
+    }
+
+    #[tokio::test]
+    async fn full_channel_wakes_on_a_slot_and_preserves_order_and_budget() {
+        let coordinator = coordinator(1 << 20);
+        let (sink, mut receiver) = mpsc::channel(REPLAY_CHANNEL);
+        fill(&coordinator, &sink);
+        let used = coordinator.budget.used();
+        let task = send(&coordinator, &sink);
+        waiting(&coordinator).await;
+        assert_eq!(coordinator.budget.used(), used, "no charge while waiting");
+        let first = receiver.try_recv().unwrap();
+        assert_eq!(first.record.raw.offset, 0);
+        drop(first);
+        assert_eq!(outcome(task).await, Sent::Delivered);
+        assert_eq!(coordinator.budget.used(), used);
+        assert_eq!(coordinator.metrics.slot_waits.load(Ordering::Relaxed), 1);
+        assert!(coordinator.metrics.slot_wait_ns.load(Ordering::Relaxed) > 0);
+        for offset in 1..=REPLAY_CHANNEL {
+            let delivered = receiver.try_recv().unwrap();
+            assert_eq!(delivered.record.raw.offset, offset as i64);
+            drop(delivered);
+        }
+        assert!(receiver.try_recv().is_err(), "no duplicate or extra record");
+        assert_eq!(coordinator.budget.used(), 0);
+        assert_eq!(sink.capacity(), REPLAY_CHANNEL);
+    }
+
+    #[tokio::test]
+    async fn closed_channel_is_cancelled_before_or_during_slot_wait() {
+        for during_wait in [false, true] {
+            let coordinator = coordinator(1 << 20);
+            let (sink, receiver) = mpsc::channel(REPLAY_CHANNEL);
+            let task = if during_wait {
+                fill(&coordinator, &sink);
+                let task = send(&coordinator, &sink);
+                waiting(&coordinator).await;
+                drop(receiver);
+                task
+            } else {
+                drop(receiver);
+                send(&coordinator, &sink)
+            };
+            assert_eq!(outcome(task).await, Sent::Closed);
+            assert_eq!(coordinator.budget.used(), 0);
+            assert_eq!(
+                coordinator.metrics.slot_waits.load(Ordering::Relaxed),
+                u64::from(during_wait)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn full_channel_detaches_at_the_existing_deadline_without_leaking() {
+        let coordinator = coordinator(1 << 20);
+        let (sink, mut receiver) = mpsc::channel(REPLAY_CHANNEL);
+        fill(&coordinator, &sink);
+        let used = coordinator.budget.used();
+        let started = Instant::now();
+        assert_eq!(outcome(send(&coordinator, &sink)).await, Sent::Detach);
+        assert!(started.elapsed() >= DETACH_AFTER);
+        assert_eq!(coordinator.metrics.slot_waits.load(Ordering::Relaxed), 1);
+        assert!(coordinator.metrics.slot_wait_ns.load(Ordering::Relaxed) > 0);
+        assert_eq!(coordinator.budget.used(), used);
+        for offset in 0..REPLAY_CHANNEL {
+            let delivered = receiver.try_recv().unwrap();
+            assert_eq!(delivered.record.raw.offset, offset as i64);
+            drop(delivered);
+        }
+        assert!(
+            receiver.try_recv().is_err(),
+            "timed-out record was not sent"
+        );
+        assert_eq!(sink.capacity(), REPLAY_CHANNEL, "no leaked permit");
+        assert_eq!(coordinator.budget.used(), 0);
+        assert_eq!(outcome(send(&coordinator, &sink)).await, Sent::Delivered);
+        drop(receiver);
+        assert_eq!(coordinator.budget.used(), 0);
+    }
+
+    #[tokio::test]
+    async fn budget_starvation_releases_the_slot_on_both_paths() {
+        let weight = record(0).weight();
+        for full in [false, true] {
+            let coordinator = coordinator(REPLAY_CHANNEL * weight);
+            let (sink, mut receiver) = mpsc::channel(REPLAY_CHANNEL);
+            let held = if full {
+                fill(&coordinator, &sink);
+                None
+            } else {
+                Some(coordinator.budget.charge(REPLAY_CHANNEL * weight).unwrap())
+            };
+            let task = send(&coordinator, &sink);
+            let received = if full {
+                waiting(&coordinator).await;
+                // Free capacity but retain its charge, like a transport handoff.
+                Some(receiver.try_recv().unwrap())
+            } else {
+                None
+            };
+            assert_eq!(outcome(task).await, Sent::Starved);
+            assert_eq!(coordinator.budget.used(), REPLAY_CHANNEL * weight);
+            assert_eq!(sink.capacity(), if full { 1 } else { REPLAY_CHANNEL });
+            assert_eq!(
+                coordinator.metrics.slot_waits.load(Ordering::Relaxed),
+                u64::from(full)
+            );
+            drop((held, received, receiver));
+            assert_eq!(coordinator.budget.used(), 0);
+        }
+    }
+
+    #[test]
+    fn diagnostic_counters_saturate_instead_of_wrapping() {
+        let counter = AtomicU64::new(u64::MAX - 1);
+        saturating_add(&counter, 2);
+        assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
+        saturating_add(&counter, 1);
+        assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
+    }
+    #[test]
+    fn episode_allowances_survive_ranges_and_detached_matches() {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let episode = ReplayEpisode::new(deadline);
+        let limits = ReplayLimits {
+            max_scanned_records: 2,
+            max_scanned_bytes: 10,
+            max_matched: 1,
+            ..ReplayLimits::default()
+        };
+        assert_eq!(episode.scan(4, &limits), None);
+        let detached = episode.reserve_match(1).unwrap();
+        assert!(episode.reserve_match(1).is_none());
+        drop(detached);
+        assert_eq!(episode.matched(), 0);
+        episode.reserve_match(1).unwrap().delivered();
+        assert!(episode.reserve_match(1).is_none());
+        assert_eq!(episode.scan(4, &limits), None);
+        assert_eq!(episode.scan(1, &limits), Some("REPLAY_SCAN_LIMIT"));
+        let bytes = ReplayEpisode::new(deadline);
+        assert_eq!(bytes.scan(6, &limits), None);
+        assert_eq!(bytes.scan(5, &limits), Some("REPLAY_BYTE_LIMIT"));
+        let (sink, _rx) = tokio::sync::mpsc::channel(1);
+        let (done, _end) = tokio::sync::oneshot::channel();
+        let request = ReplayRequest::new(
+            10,
+            20,
+            b"key".to_vec(),
+            ("TRADE".into(), None),
+            None,
+            sink,
+            done,
+            Arc::new(AtomicBool::new(false)),
+            deadline + Duration::from_secs(10),
+        )
+        .with_episode(episode.clone());
+        assert_eq!(request.deadline, deadline);
+        assert_eq!(request.episode.matched(), 1);
+        assert_eq!(
+            request.ended(11, deadline + Duration::from_millis(1)),
+            Some(ReplayEnd::ScanLimit("REPLAY_TIME_LIMIT"))
+        );
+    }
+
+    #[test]
+    fn full_peer_detaches_without_wait_or_byte_charge() {
+        let coordinator = coordinator(1024 * 1024);
+        let (sink, _receiver) = mpsc::channel(REPLAY_CHANNEL);
+        fill(&coordinator, &sink);
+        let before = coordinator.budget.used();
+        let row = record(900);
+        assert_eq!(
+            coordinator.send_or_detach(&sink, &row, row.weight(), false, None),
+            Sent::Detach
+        );
+        assert_eq!(coordinator.metrics.slot_waits.load(Ordering::Relaxed), 0);
+        assert_eq!(coordinator.budget.used(), before);
+    }
+
+    /// A queued peer that can progress ends the sole request's wait early; a
+    /// queued peer that is itself stalled keeps the full bounded wait.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sole_wait_yields_to_a_ready_queued_peer_only() {
+        for peer_ready in [true, false] {
+            let coordinator = coordinator(1 << 20);
+            let (sink, _receiver) = mpsc::channel(REPLAY_CHANNEL);
+            fill(&coordinator, &sink);
+            let (peer_sink, _peer_receiver) = mpsc::channel(REPLAY_CHANNEL);
+            if !peer_ready {
+                fill(&coordinator, &peer_sink);
+            }
+            let (done, _end) = tokio::sync::oneshot::channel();
+            coordinator.requeue(
+                0,
+                ReplayRequest::new(
+                    0,
+                    10,
+                    b"peer".to_vec(),
+                    ("TRADE".into(), None),
+                    None,
+                    peer_sink,
+                    done,
+                    Arc::new(AtomicBool::new(false)),
+                    Instant::now() + Duration::from_secs(5),
+                ),
+            );
+            let used = coordinator.budget.used();
+            let worker = coordinator.clone();
+            let started = Instant::now();
+            let sent = tokio::task::spawn_blocking(move || {
+                let row = record(900);
+                worker.send_or_detach(&sink, &row, row.weight(), true, Some(0))
+            });
+            assert_eq!(outcome(sent).await, Sent::Detach);
+            let elapsed = started.elapsed();
+            if peer_ready {
+                assert!(elapsed < DETACH_AFTER, "{elapsed:?}");
+                assert_eq!(
+                    coordinator.metrics.peer_preempted.load(Ordering::Relaxed),
+                    1
+                );
+            } else {
+                assert!(elapsed >= DETACH_AFTER, "{elapsed:?}");
+                assert_eq!(
+                    coordinator.metrics.peer_preempted.load(Ordering::Relaxed),
+                    0
+                );
+            }
+            assert_eq!(coordinator.metrics.slot_waits.load(Ordering::Relaxed), 1);
+            assert_eq!(
+                coordinator.budget.used(),
+                used,
+                "no charge for the detached record"
+            );
+            for mut request in coordinator.take_batch(0) {
+                request.finish(ReplayEnd::Cancelled);
+            }
+        }
+    }
 }

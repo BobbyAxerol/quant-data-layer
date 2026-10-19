@@ -47,6 +47,14 @@ _SEQUENCE_POLICIES = frozenset({"NONE", "MONOTONIC", "CONTIGUOUS"})
 STABLE_TOPIC_PARTITIONS = 6
 STABLE_CORE_WORKER_COUNT = 3
 STABLE_CORE_DEDUP_CAPACITY = 100_000
+# Records per realtime-core transaction (P18.4 capacity package step 1). A
+# transaction costs ~17 ms fixed plus a per-record term; at 256 a hot partition
+# saturated near 5.5-7.6k rec/s in the isolated arch-A bench, at 2048 the same
+# 6-partition drain committed 17.5k rec/s. batch_wait_ms stays 25: a calm
+# partition still leaves after 25 ms, so the larger cap only matters in bursts.
+# Owner decision 2026-10-14: 1024 (2048 overflowed the gateway live queue 7x in
+# OPT-05 W2; 1024 passed W3/W4 and is the production value since the rc18 rollout).
+STABLE_CORE_BATCH_SIZE = 1024
 V2_REALTIME_RAW_TOPIC = "md.raw.realtime.v2"
 SHARED_REALTIME_CORE_GROUP_ID = "qdl-v2-realtime-core-v2"
 SHARED_REALTIME_CORE_ID_PREFIX = "qdl-v2-realtime-core"
@@ -930,7 +938,7 @@ class StableAcquisitionPlan:
             "authority": dict(authority),
             "shard_id": f"{SHARED_REALTIME_CORE_ID_PREFIX}-{worker_index:03d}",
             "transactional_id": f"{SHARED_REALTIME_CORE_ID_PREFIX}-{worker_index:03d}",
-            "batch_size": 256,
+            "batch_size": STABLE_CORE_BATCH_SIZE,
             "batch_wait_ms": 25,
             "max_events": max_events,
             "metrics_every_batches": 100,

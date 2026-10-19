@@ -1,0 +1,82 @@
+--- a/scripts/build_qdl_sdk_release.py
++++ b/scripts/build_qdl_sdk_release.py
+@@ -15,7 +15,7 @@
+ ROOT = Path(__file__).resolve().parents[1]
+ NAME = "qdl-sdk"
+ NORMALIZED_NAME = "qdl_sdk"
+-VERSION = "2.4.0"
++VERSION = "2.4.1"
+ DIST_INFO = f"{NORMALIZED_NAME}-{VERSION}.dist-info"
+ DEPENDENCIES = (
+     "grpcio>=1.70.0,<2.0.0",
+--- a/qdl_sdk/__init__.py
++++ b/qdl_sdk/__init__.py
+@@ -1,6 +1,6 @@
+ """Stable Python SDK V2 with typed public models and generated transports."""
+
+-__version__ = "2.4.0"
++__version__ = "2.4.1"
+
+ from qdl_sdk.client import AsyncDataLayerClient, DataLayerClientV2, WarmupStreamSession
+ from qdl_sdk.credentials import (
+--- a/qdl_sdk/CHANGELOG.md
++++ b/qdl_sdk/CHANGELOG.md
+@@ -1,5 +1,20 @@
+ # SDK Changelog
+
++## 2.4.1 (replay budget status opt-in, progress-bounded reconnects; IDR-096)
++
++`GrpcStreamTransport` sets the additive `SubscribeRequest.replay_budget_status_v2 = 8`
++(bool). A stream gateway built from f5cd787 or later (Data Layer v2.2.4) then ends a Subscribe catch-up that reaches a replay
++work budget (`REPLAY_MATCHED_LIMIT`, in-scan `REPLAY_SCAN_LIMIT`, `REPLAY_BYTE_LIMIT`)
++with retryable `RESOURCE_EXHAUSTED "RATE_LIMITED:{reason}:..."` instead of
++`OUT_OF_RANGE "CURSOR_EXPIRED:..."`. An older gateway ignores field 8 and keeps the
++`CURSOR_EXPIRED` mapping; both are handled. A range refused at submit (its offset span
++alone exceeds the scan budget) stays `OUT_OF_RANGE CURSOR_EXPIRED:REPLAY_SCAN_LIMIT`
++for every client. `WarmupStreamSession` renews its reconnect budget only when a
++delivered offset exceeds the highest offset this session generation has yielded, so
++a retryable replay budget that re-delivers the same unacknowledged window cannot retry
++forever. Clients that do not set field 8 (2.1.x-2.4.0) see no change. Public models
++and positional `StreamEvent` construction are unchanged.
++
+ ## 2.4.0 (Subscribe gateway clocks)
+
+ `StreamEvent` gains three optional diagnostic fields, `gateway_dispatch_wall_ns`,
+--- a/qdl_sdk/README.md
++++ b/qdl_sdk/README.md
+@@ -161,7 +161,7 @@
+ python scripts/build_qdl_sdk_release.py --output-dir dist/qdl-sdk
+ ```
+
+-The output contains a reproducible `qdl_sdk-2.4.0-py3-none-any.whl`, a release
++The output contains a reproducible `qdl_sdk-2.4.1-py3-none-any.whl`, a release
+ manifest with the wheel/source/generated-contract SHA-256 digests, and a
+ CycloneDX SBOM. The wheel contains only the public SDK plus generated Protobuf
+ contracts; it does not package `qdl.api_v2`, runtime adapters, provider code or
+--- a/tests/test_phaseb_stable_release.py
++++ b/tests/test_phaseb_stable_release.py
+@@ -317,7 +317,7 @@
+         )
+         generated = build_openapi()
+         self.assertEqual(package["project"]["version"], "2.0.0")
+-        self.assertEqual(qdl_sdk.__version__, "2.4.0")
++        self.assertEqual(qdl_sdk.__version__, "2.4.1")
+         self.assertEqual(generated["info"]["version"], "2.0.0")
+         self.assertEqual(snapshot, generated)
+         # ``reference:batch`` is a governed V2 public path in the checked-in
+--- a/tests/test_qdl_sdk_release.py
++++ b/tests/test_qdl_sdk_release.py
+@@ -41,11 +41,11 @@
+                     expected = base64.urlsafe_b64encode(hashlib.sha256(payload).digest()).rstrip(b"=").decode()
+                     self.assertEqual(encoded, "sha256=" + expected)
+                     self.assertEqual(int(size), len(payload))
+-                self.assertIn("qdl_sdk-2.4.0-py3-none-any.whl", archive.read("qdl_sdk/README.md").decode())
++                self.assertIn("qdl_sdk-2.4.1-py3-none-any.whl", archive.read("qdl_sdk/README.md").decode())
+
+             release = json.loads(Path(first_result["manifest"]).read_text())
+             self.assertFalse(release["contains_service_internals"])
+-            self.assertEqual(release["version"], "2.4.0")
++            self.assertEqual(release["version"], "2.4.1")
+             self.assertEqual(len(release["generated_contract_digest"]), 64)
+             sbom = json.loads(Path(first_result["sbom"]).read_text())
+             self.assertEqual(sbom["bomFormat"], "CycloneDX")

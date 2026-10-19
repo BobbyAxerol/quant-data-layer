@@ -99,6 +99,11 @@ impl AsyncWrite for TlsIo {
     }
 }
 
+/// Socket options for an accepted gateway connection, applied before TLS.
+fn configure_accepted(tcp: &TcpStream) -> io::Result<()> {
+    tcp.set_nodelay(true)
+}
+
 /// Accepts TCP connections and completes handshakes concurrently; a failed
 /// handshake (no or untrusted client certificate) drops only that
 /// connection. Handshakes are bounded in time.
@@ -114,6 +119,24 @@ pub async fn incoming(
             let Ok((tcp, _)) = listener.accept().await else {
                 continue;
             };
+            // IDR-095 / Codex B1. Disable Nagle on the accepted socket before
+            // the TLS handshake. The gateway writes many small HTTP/2 frames
+            // (one batch response, then a WINDOW_UPDATE or PING); with Nagle on,
+            // a small write that follows an unacknowledged one waits for the
+            // peer's delayed ACK. tonic's `tcp_nodelay` builder option applies
+            // only to its own listener, not to this custom incoming stream. A
+            // socket that refuses the option is already unusable (reset or
+            // closed), so it is dropped and logged rather than served with Nagle.
+            if let Err(error) = configure_accepted(&tcp) {
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "qdl_stream_gateway_accept_nodelay_failed",
+                        "error": error.to_string(),
+                    })
+                );
+                continue;
+            }
             let acceptor = acceptor.clone();
             let connection = sender.clone();
             tokio::spawn(async move {
@@ -130,4 +153,23 @@ pub async fn incoming(
         }
     });
     Ok(ReceiverStream::new(receiver))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::configure_accepted;
+    use tokio::net::{TcpListener, TcpStream};
+
+    #[tokio::test]
+    async fn accepted_socket_has_nodelay_before_any_tls_byte() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let client = tokio::spawn(TcpStream::connect(address));
+        let (accepted, _) = listener.accept().await.unwrap();
+        // Nagle is on by default for an accepted socket on Linux.
+        assert!(!accepted.nodelay().unwrap());
+        configure_accepted(&accepted).unwrap();
+        assert!(accepted.nodelay().unwrap());
+        drop(client.await.unwrap().unwrap());
+    }
 }

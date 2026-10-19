@@ -1,0 +1,190 @@
+{
+ "schema": "qdl.p184.stage100-a4.v1",
+ "amendment_id": "A4",
+ "version": 1,
+ "label": "POST_HOC_OWNER_DECISION",
+ "post_hoc": true,
+ "post_hoc_statement": "A4 was adopted AFTER the counted run p184-final-campaign-20261018T123222Z was scored (scorecard.json written 2026-10-18 13:09Z, verdict G2 FAIL, G4 FAIL under G4-A1 + G4-A2 + A3). It is not a pre-registered rule. The frozen budget, the G4 addendum, G4-A1, G4-A2 and A3 are not edited; the verdicts without A4 remain the record of the frozen rule and are shown next to the A4 verdicts in every certificate surface.",
+ "decision_owner": "Bobby (owner)",
+ "approval_reference": "AskUserQuestion 2026-10-18 ~14:45Z (two answers)",
+ "owner_answers_verbatim": {
+  "G4 OKX_INVERSE": "M1: chấm theo p95 pooled (Recommended)",
+  "G2 MARK_INDEX_PRICE|BINANCE": "Nới max lên 1200 ms (Recommended)"
+ },
+ "owner_instruction_verbatim": "Xem lại cách chấm, nếu do bản thân mình sai thì sửa nhanh rồi Release, còn nếu là do OKX thì nới gate 1 xíu rồi pass rồi release. Miễn Risk Engine và Execution Eligibility của TS chấp nhận là được",
+ "owner_instruction_reference": "AskUserQuestion 2026-10-18 ~14:20Z",
+ "frozen_at": "2026-10-18T15:18:14Z",
+ "frozen_at_unix": 1792336694.532787,
+ "rationale_doc": "upgrade/evidence/releases/v2.2.4/a4-post-hoc-ts-eligibility.md",
+ "applies_to": {
+  "campaign_id": "p184-final-campaign-20261018T123222Z",
+  "scorecard_sha256": "b9e76a83795f1af8f64b802b22ff1f410087a8f87ee4ef5d23b26a1d39cb4964",
+  "campaign_json_sha256": "2f96f55347dfd69e090436416364685f0479c3801c466ff5d3418af99ed8b7fc",
+  "scorer_sha256": "e179ec784621089795516ed25b2ea1f2e2ba30c86eea0de852ed4728aa6d104b",
+  "rescore_receipt": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/scorecard.a4-post-hoc.json",
+  "only_this_run": true
+ },
+ "rules": {
+  "G2": {
+   "row": "MARK_INDEX_PRICE|BINANCE",
+   "statistic": "new-event transit, venue event -> TS execution Redis APPLY reply (scripts/p184_g2_mark_trace_transit.py)",
+   "max_le_ms": 1200.0,
+   "p95_le_ms": 500.0,
+   "replaced_rule": "max < 1000 ms and p95 <= 500 ms (frozen 2026-10-09, TS upgrade/p184-phase-d-gates.md G2 row: 2x headroom under D3 MARK 2000 ms)",
+   "basis": "0.6 x the TS 2000 ms MARK use-time budget (1.67x headroom instead of 2x)",
+   "unchanged": "p95 limit; every other G2 row (TRADE p95 <= 500 / max < 1500; QUOTE p95 <= 500 / max < 1000; MARK|OKX p95 <= 500 / max < 1000)"
+  },
+  "G4": {
+   "statistic": "per-window delivery visibility, venue -> canonical (read_committed upper bound), observer v7",
+   "rows": {
+    "book_delta|OKX_INVERSE|": {
+     "pooled_row": "book_delta|OKX|",
+     "p95_limit_ms": 289.1,
+     "replaced_addendum_max_limit_ms": 282.5
+    },
+    "book_snapshot|OKX_INVERSE|": {
+     "pooled_row": "book_snapshot|OKX|",
+     "p95_limit_ms": 270.1,
+     "replaced_addendum_max_limit_ms": 300.7
+    },
+    "quote|OKX_INVERSE|": {
+     "pooled_row": "quote|OKX|",
+     "p95_limit_ms": 283.3,
+     "replaced_addendum_max_limit_ms": 322.6
+    }
+   },
+   "p95_rule": "the frozen-table rule of the pooled row: per window with n >= 20, FAIL when the p95 bucket lower edge is over the limit; a p95 bucket straddling the limit is unresolved (NOT_MEASURED, never PASS); no window with n >= 20 -> NOT_MEASURED; the pooled limit must equal the frozen budget table value at score time",
+   "min_samples_per_window": 20,
+   "max": "REPORT_ONLY",
+   "retention": "every window whose max is over the replaced addendum max limit needs observer v7 exceedance retention for the row with threshold_ms <= that limit, overflow 0, admitted_seen == the window n and the window maximum among the retained events; otherwise the row is FAIL (UNKNOWN = FAIL). Every retained event is listed in the rescore receipt.",
+   "unchanged": "every frozen-table row and its p95 rule, the mark_index_price|OKX_INVERSE| addendum row, every other addendum row, G4-A1, G4-A2, A3 and the window schedule"
+  }
+ },
+ "conditions": [
+  "the unchanged frozen scorer (scripts/p184_gate_campaign.py, sha256 pinned here and by A3) reproduces the stored scorecard.json byte for byte (A3 applied)",
+  "protocol_met true",
+  "G6 PASS (TS D3_EXECUTION rows: 0 refusals, 0 unsafe) and G9 PASS with 0 data-path eligibility losses",
+  "every gate other than G2 and G4 byte-identical with and without A4 (checked by the rescore tool)"
+ ],
+ "unchanged": [
+  "G1, G3, G5-G14 rules and verdicts",
+  "the frozen budget, the G4 addendum, G4-A1, G4-A2 and A3 files",
+  "the stored scorecard.json of every run"
+ ],
+ "ts_acceptance_bounds": {
+  "code_basis": "TS feat/v2-rust-first-okx-demo bc713113 (services/adapters/rust identical to the measured writer 2deb90b0 = TS 30f50a91)",
+  "order_budget_ms": {
+   "value": 2000,
+   "where": [
+    "services/risk_pool/ordinary.py:65-67",
+    "scripts/p184_prepare_runtime.py:285",
+    "services/market_data/runtime.py:55-60",
+    "services/market_data/execution_recovery.py:96-100, 235"
+   ]
+  },
+  "MARK_INDEX_PRICE": {
+   "quiet_contract": "no event-age check; session liveness <= 45000 ms and component receipt age <= cadence (Binance USD-M 5000 ms)",
+   "fallback_event_age_ms": 2000,
+   "where": [
+    "services/risk_engine/execution_market_context.py:188-211, 244-249, 270-281",
+    "adapters/market_data/data_layer_v2.py:781-782",
+    "DL qdl/runtime/production_catalog.py:81-84 (cadence)"
+   ]
+  },
+  "QUOTE": {
+   "event_age_ms": 2000,
+   "quiet_on_change_session_ms": 2000,
+   "where": [
+    "services/risk_engine/execution_market_context.py:216-231, 280",
+    "services/market_data/execution_recovery.py:250-262",
+    "rust view.rs:340-348, 434"
+   ]
+  },
+  "BOOK_SNAPSHOT": {
+   "event_age_ms": 2000,
+   "required_only_for": "L2 orders; P18.4 runs BBO_EXECUTABLE",
+   "where": [
+    "services/risk_engine/execution_market_context.py:322-331, 432-446"
+   ],
+   "note": "the DL 60000 ms BOOK_SNAPSHOT read contract is not an execution permission"
+  },
+  "BOOK_DELTA": {
+   "risk_reads": false,
+   "writer": "event age OBSERVE, session continuity <= 45000 ms, silence watchdog 60 s",
+   "where": [
+    "services/market_data/execution_recovery.py:21",
+    "adapters/market_data/data_layer_v2.py:440-460",
+    "services/market_data/data_layer_bridge.py:95-104"
+   ]
+  },
+  "mark_read_scheduling": {
+   "refresh_s": 1.0,
+   "wake_min_interval_ms": 500,
+   "wake_read_delay_ms_binance": 100,
+   "where": [
+    "shared/config.py:215, 228-232",
+    "services/market_data/data_layer_bridge.py:1005-1026"
+   ]
+  },
+  "deployed_manifest": "trading-system.paper.stable revision 11 sha256 efd482fa4ffe7f9176387324f47d47d7e1c801bae6afb2c0747c3ce43652b8fc (r11 lines 642-644 MARK DOGEUSDT 2000 ms, 854-856 BOOK_DELTA BTC-USD-SWAP 2000 ms, 867-868 BOOK_SNAPSHOT 60000 ms, 894-896 QUOTE BTC-USD-SWAP 2000 ms)",
+  "run_evidence": "123222Z G6 MARK BINANCE n 2990 max age 1394 ms refusals 0 unsafe 0, QUOTE OKX n 3582 refusals 0 unsafe 0; G9 0 data-path losses; TS Python worker logs 12:00-13:59Z no non-INFO line (draft section 2.3)"
+ },
+ "limits_stated": [
+  "Post-hoc: adopted after observing 123222Z; not evidence that a pre-registered rule passed.",
+  "G4: the inverse tails are internal to DL under load (venue -> DL ~30 ms; receive -> CreateTime 154-295 ms, CreateTime -> observer 115-206 ms); A4 changes the statistic, not the latency.",
+  "G4: the inverse window maximum is report-only (387.1 / 406.7 / 531.9 ms in 123222Z); no max limit applies to these three rows under A4.",
+  "G2: the split of the MARK BINANCE tail between DL Query and the TS writer's wake / min-interval / 1 s refresh read scheduling is unknown (trace basis ADAPTER_REFERENCE_RETURN); IDR-126 adds wake/poll markers.",
+  "G2: with 1000 ms Binance cadence a 1082.9 ms transit leaves the previous MARK event older than 2000 ms for about 83 ms; TS Risk on the MARK quiet contract applies no event-age check (code reading, not a captured read).",
+  "No TS order admission was observed during the load; 'no refusal' rests on G6 / G9 samplers and worker logs."
+ ],
+ "pinned": {
+  "rescore_tool": {
+   "path": "scripts/p184_a4_post_hoc.py",
+   "sha256": "23b78e4ae7a367252cf8033aa64ee6357987c2117e7f6516679fd4c6efafba26"
+  },
+  "scorer": {
+   "path": "scripts/p184_gate_campaign.py",
+   "sha256": "e179ec784621089795516ed25b2ea1f2e2ba30c86eea0de852ed4728aa6d104b"
+  },
+  "tests": {
+   "path": "tests/test_p184_a4_post_hoc.py",
+   "sha256": "c8bf8a21fadf2fd6ad3a1e1e7b62f8b9ffda075c7ed44bba3048a1313f3eaac4"
+  },
+  "budget": {
+   "path": "config/v2/p184-stage100-budget.json",
+   "sha256": "ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541"
+  },
+  "g4_addendum": {
+   "path": "config/v2/p184-stage100-g4-addendum.json",
+   "sha256": "4ed59dca0212566d3ff03c5a4c23eed3d252d0150844b9a4fd6fa543333d78b5"
+  },
+  "g4_amendment_1": {
+   "path": "config/v2/p184-stage100-g4-amendment-1.json",
+   "sha256": "1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6"
+  },
+  "g4_amendment_2": {
+   "path": "config/v2/p184-stage100-g4-amendment-2.json",
+   "sha256": "99961c41e08993944d158ae812ca61514271862a2d03e011f5d01ce71a0f9997"
+  },
+  "a3": {
+   "path": "config/v2/p184-stage100-a3-external-attribution.json",
+   "sha256": "cc5fc7dcf07e30b1b52cbc51b78c4a5485a63be84d5b814dcf89452007e57326"
+  },
+  "g4_observer": {
+   "path": "scripts/p184_g4_observer.py",
+   "sha256": "1d33ca4a567c665d60d30476a3c2617f85600786450b21aa02ecee7d4020939e"
+  },
+  "mark_trace_transit": {
+   "path": "scripts/p184_g2_mark_trace_transit.py",
+   "sha256": "fe4c703b531191037964ad1036536c987d941c3da5c9319cb72e235e9b807eaf"
+  },
+  "draft_json": {
+   "path": "upgrade/evidence/releases/v2.2.4/drafts/A4_TS_ELIGIBILITY_TAIL_DRAFT.json",
+   "sha256": "6c174871c0a430a57aa51adb1926a0eea5727523bd2baed44eea7a6048002808"
+  },
+  "draft_md": {
+   "path": "upgrade/evidence/releases/v2.2.4/drafts/A4_TS_ELIGIBILITY_TAIL_DRAFT.md",
+   "sha256": "f0af15225ded236cd185201d19e7108f717545e59ae1872bb6839e3c8e54e218"
+  }
+ }
+}

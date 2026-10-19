@@ -1,4 +1,12 @@
 """Offline contracts of the G12 isolated fault harness; no Docker daemon or broker."""
+import json
+from pathlib import Path
+import re
+import sys
+import tempfile
+import threading
+import time
+import types
 import unittest
 from unittest.mock import patch
 
@@ -7,6 +15,51 @@ from scripts import p184_g12_isolated_fault as g12
 NS = "p184-g12-dl-0123456789abcdef"
 S = 1_000_000_000  # one second in ns
 MS = 1_000_000
+C_PLAN = {"__consumer_offsets": {"delete.retention.ms": "600000", "segment.ms": "60000"},
+          "__transaction_state": {"segment.ms": "600000"}}
+NATIVE_ENV = {"MARKET_DATA_NATIVE_FEEDS": "TRADE,QUOTE", "MARKET_DATA_NATIVE_FLAT_V2": "1",
+              "MARKET_DATA_NATIVE_BINARY": "/usr/local/bin/market-data-writer", "MARKET_DATA_NATIVE_REQUIRE_RESUME": "1",
+              "MARKET_DATA_NATIVE_EVENTS": "1024", "MARKET_DATA_NATIVE_APPLY_MAX_ROWS": "16",
+              "DATA_LAYER_V2_BOOK_SNAPSHOT_BATCH_MAX_WAIT_MS": "0", "DATA_LAYER_V2_STREAM_BATCH_MAX_ITEMS": "64"}
+
+
+def lifecycle_ok():
+    """A writer-precheck.json of two clones that went BOOTSTRAP -> STRICT with a verified strict-resume start."""
+    cell = {"ok": True, "problems": [],
+            "lifecycle": {"phase": "STRICT", "strict_resume": "VERIFIED", "bootstrap_exit": {"exit_code": 0},
+                          "native_checkpoints": ["cursors/fixed-workers-v1/native-0/c.json"],
+                          "strict_precheck": {"ok": True, "problems": []}}}
+    return {v: json.loads(json.dumps(cell)) for v in g12.VENUES}
+
+
+CLEANER = {"default": {"log.cleaner.io.max.bytes.per.second": "4194304"}, "brokers": {"1": {}, "2": {}, "3": {}}}
+
+
+def effective(rebalance=True, topics=None, brokers=None, cleaner=None, schema=None):
+    """A sealed effective production observation consistent with the C + A' profile (Codex K3)."""
+    from scripts.kafka_internal_topic_compaction import FROZEN_OTHERS
+    base = {t: {**FROZEN_OTHERS[t], **C_PLAN[t]} for t in g12.INTERNAL_TOPICS}
+    base[g12.PRODUCTION_LATEST_TOPIC] = {"cleanup.policy": "compact", "delete.retention.ms": "21600000"}
+    for topic, values in (topics or {}).items():
+        base[topic] = {k: v for k, v in {**base[topic], **values}.items() if v is not None}
+    rows = {n: {g12.REBALANCE_ENV: str(rebalance).lower(), "image": "sha256:" + "9" * 64}
+            for n in g12.PRODUCTION_KAFKA}
+    for name, values in (brokers or {}).items():
+        rows[name] = {**rows[name], **values}
+    doc = {"schema": schema or g12.EFFECTIVE_SCHEMA, "taken_utc": "2026-10-16T12:00:00Z", "topics": base,
+           "brokers": rows}
+    if doc["schema"] == g12.EFFECTIVE_SCHEMA:
+        doc["cleaner"] = json.loads(json.dumps(cleaner or CLEANER))
+    return g12.seal_effective(doc)
+
+
+def parity_doc(rebalance=True, writer_image=None, env=None):
+    """A valid --production-parity document (B17-like writer view, C + A' profile, effective observation)."""
+    return {"schema": "p184.g12.production-parity.v2", "taken_utc": "2026-10-16T12:00:00Z",
+            "kafka": g12.kafka_profile(rebalance, C_PLAN, 21600000),
+            "writer": {"container": g12.TS_WRITER, "image": writer_image or g12.IMAGES["ts"],
+                       "env": dict(env or NATIVE_ENV)},
+            "effective": effective(rebalance)}
 
 
 def stream_rows(venue, start, end, *, step_ms=250, transit_ms=100, approved=True, first_seq=1001):
@@ -51,6 +104,26 @@ def md_rows(venue, start, end, *, trade_ms=100, quote_ms=100, bar_ms=800, mark_m
             evs.append({"k": "ev", "t": close_ms * MS + bar_ms * MS, "venue": venue, "feed": "BAR",
                         "id": str(open_ms), "ev_ms": open_ms})
     return pubs, evs
+
+
+NATIVE_NAMES = ("gaps", "continuity_errors", "snapshot_replaced", "sequence_resets", "cursor_expired_errors",
+                "slow_consumer_errors", "duplicates_applied", "offset_regressions", "reconnects", "replayed_events",
+                "applied", "refreshed", "duplicates_rejected")
+
+
+def hb_rows(venue, start, end, *, step_s=2, counters=None, workers=(4, 4), liveness="LIVE", key="hb-key-0001"):
+    """Sampler heartbeat rows (k == hb) of one clone every step_s: pooled typed TRADE counters, all workers LIVE.
+    ``counters(t_ns) -> dict`` overrides the default (every failure counter 0, applied growing)."""
+    rows, t = [], start
+    while t <= end:
+        values = counters(t) if counters else {**{n: 0 for n in NATIVE_NAMES}, "applied": t // S}
+        rows.append({"k": "hb", "t": t, "venue": venue, "heartbeat": True, "status": "READY",
+                     "key_tail": key, "last_seen_unix": t / S - 0.5, "trade_integrity": values,
+                     "trade_integrity_scope": {"counter_scope": "current_live_worker_epochs",
+                                               "workers_reporting": workers[0], "workers_expected": workers[1]},
+                     "worker_liveness": {str(i): liveness for i in range(workers[1])}})
+        t += step_s * S
+    return rows
 
 
 class NamespaceAndTopologyTests(unittest.TestCase):
@@ -155,7 +228,11 @@ class AnalysisTests(unittest.TestCase):
                 newest = row["seq"]
         state = g12.caught_up(g12.view_series(views), g12.publish_index(pubs), "OKX", cleared)
         self.assertEqual(state["first_valid_apply_ns"], cleared + 1500 * MS)
-        self.assertEqual(state["caught_up_ns"], 130 * S + 100 * MS)
+        # Predicate v2: the 130.1 s sample shows frame 130.0 s right after frame 128.5 s (the late 128.75-129.75 s
+        # applies stay hidden): a 1.5 s source gap past the emission due after 128.5 s (frame 129.75 s), so the
+        # first sample proving cadence too is the next update's, 130.35 s.
+        self.assertEqual(state["caught_up_ns"], 130 * S + 350 * MS)
+        self.assertEqual(state["rejected_samples"]["update_transit"] >= 1, True)
 
     def test_not_approved_or_undecidable_is_not_caught_up(self):
         pubs, views = stream_rows("OKX", 100 * S, 200 * S, approved=False)
@@ -208,6 +285,7 @@ class AnalysisTests(unittest.TestCase):
             p, v = md_rows(venue, 0, 500 * S)
             pubs += p
             views += v
+            views += hb_rows(venue, 0, 500 * S)
         monitor = [{"t": t * S, "ports": {"8210": t >= 62}, "projector_lag": 0, "under_replicated": 0}
                    for t in range(0, 500)]
         fault = {"k": "fault", "name": "stream_restart", "kind": "stream", "injected_ns": 60 * S,
@@ -222,7 +300,8 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(result["parts"], {"caught_up": True, "window_complete": True, "g1": "PASS",
                                            "g2": "PASS", "g2_feeds": {"TRADE": "PASS", "QUOTE": "PASS",
                                                                       "MARK": "PASS"}, "g3": "PASS",
-                                           "monitor": "PASS"})
+                                           "integrity_report_only": "PASS", "monitor": "PASS",
+                                           "sampler": "PASS"})
         self.assertEqual(result["g2"]["TRADE"]["BINANCE"]["n"], 1200)
         self.assertEqual(result["g3"]["BAR_1m"]["OKX"]["n"], 5)  # closes 120..360 s in [62.1, 362.1) s
         short = g12.evaluate_fault(fault, pubs, [v for v in views if v["t"] < 200 * S], monitor)
@@ -332,16 +411,47 @@ class ImageSetTests(unittest.TestCase):
                     g12.check_sealed_images(work, attested)
 
     def test_cli_passes_the_image_set_to_the_orchestrator(self):
-        with patch.object(g12, "orchestrate", return_value=0) as orchestrate:
-            g12.main(["--run", "/home/bobby/x", "--export", "/home/bobby/e.json", "--namespace", NS,
-                      "--image", "core=" + FINAL["core"], "--query-code", "image"])
-        images, query_code = orchestrate.call_args.args[3:5]
-        self.assertEqual(images["core"], FINAL["core"])
-        self.assertEqual(images["python"], g12.IMAGES["python"])
-        self.assertEqual(query_code, "image")
-        with patch.object(g12, "orchestrate", return_value=0) as orchestrate:
-            g12.main(["--run", "/home/bobby/x", "--export", "/home/bobby/e.json", "--namespace", NS])
-        self.assertEqual(orchestrate.call_args.args[3:5], (g12.IMAGES, "worktree"))
+        with tempfile.TemporaryDirectory() as tmp, patch("scripts.kafka_b_roll_runbook.CERT", Path(tmp)):
+            parity_true, parity_false = Path(tmp) / "p-true.json", Path(tmp) / "p-false.json"
+            parity_true.write_text(json.dumps(parity_doc(True)))
+            parity_false.write_text(json.dumps(parity_doc(False)))
+            with patch.object(g12, "orchestrate", return_value=0) as orchestrate:
+                g12.main(["--run", "/home/bobby/x", "--export", "/home/bobby/e.json", "--namespace", NS,
+                          "--image", "core=" + FINAL["core"], "--query-code", "image", "--auto-leader-rebalance",
+                          "true", "--production-parity", str(parity_true), "--ts-root", "/home/bobby/ts-run"])
+            images, query_code = orchestrate.call_args.args[3:5]
+            self.assertEqual(images["core"], FINAL["core"])
+            self.assertEqual(images["python"], g12.IMAGES["python"])
+            self.assertEqual(query_code, "image")
+            self.assertEqual(orchestrate.call_args.kwargs["parity"], parity_doc(True))
+            self.assertEqual(orchestrate.call_args.kwargs["ts_root"], Path("/home/bobby/ts-run"))
+            self.assertTrue(callable(orchestrate.call_args.kwargs["observe_production"]))
+            with patch.object(g12, "orchestrate", return_value=0) as orchestrate:
+                g12.main(["--run", "/home/bobby/x", "--export", "/home/bobby/e.json", "--namespace", NS,
+                          "--auto-leader-rebalance", "false", "--production-parity", str(parity_false)])
+            self.assertEqual(orchestrate.call_args.args[3:5], (g12.IMAGES, "worktree"))
+            self.assertIs(orchestrate.call_args.kwargs["auto_leader_rebalance"], False)
+            # The flags are explicit: --run without the rebalance value or the parity snapshot is refused.
+            for missing in (["--production-parity", str(parity_true)], ["--auto-leader-rebalance", "true"]):
+                with self.subTest(argv=missing), patch.object(g12, "orchestrate", return_value=0) as orchestrate, \
+                        patch("sys.stderr"), self.assertRaises(SystemExit):
+                    g12.main(["--run", "/home/bobby/x", "--export", "/home/bobby/e.json", "--namespace", NS,
+                              *missing])
+                orchestrate.assert_not_called()
+            # The image set's ts role must be the deployed writer of the snapshot (B17 parity, not a stale build).
+            with patch.object(g12, "orchestrate", return_value=0) as orchestrate, \
+                    patch("sys.stderr"), self.assertRaises(SystemExit):
+                g12.main(["--run", "/home/bobby/x", "--export", "/home/bobby/e.json", "--namespace", NS,
+                          "--image", "ts=sha256:" + "e" * 64, "--auto-leader-rebalance", "true",
+                          "--production-parity", str(parity_true)])
+            orchestrate.assert_not_called()
+            # The rebalance flag must agree with the snapshot (production's value).
+            with self.assertRaises(ValueError):
+                g12.orchestrate("/home/bobby/x", "/x", NS, auto_leader_rebalance=False, parity=parity_doc(True))
+            with self.assertRaisesRegex(ValueError, "observer"):  # a parity run binds the effective config
+                g12.orchestrate("/home/bobby/x", "/x", NS, auto_leader_rebalance=True, parity=parity_doc(True))
+        with self.assertRaises(ValueError):
+            g12.orchestrate("/home/bobby/x", "/x", NS)
 
 
 class TopicReadinessTests(unittest.TestCase):
@@ -392,7 +502,7 @@ class OrchestratorSignalTests(unittest.TestCase):
                 calls.append("down")
         before = signal.getsignal(signal.SIGTERM)
         with tempfile.TemporaryDirectory() as base, patch.object(g12, "Run", FakeRun):
-            self.assertEqual(g12.orchestrate(base, "/x", NS), 1)
+            self.assertEqual(g12.orchestrate(base, "/x", NS, auto_leader_rebalance=True), 1)
             verdict = g12.json.loads((Path(base) / "evidence" / "verdict.json").read_text())
         self.assertIn("signal", verdict["error"])
         self.assertEqual(calls, ["stopped", "down"])
@@ -634,7 +744,7 @@ class MarketDataWindowTests(unittest.TestCase):
         none = self.window(*self.rows(trades=False, quotes=False, bars=False, marks=False))
         self.assertEqual((none["g2_status"], none["g3_status"]), ("NOT_MEASURED", "NOT_MEASURED"))
 
-    def test_lost_trade_fails_unseen_quote_does_not_pending_excluded(self):
+    def test_lost_trade_fails_unseen_quote_does_not_pending_blocks(self):
         pubs, evs = self.rows()
         lost = next(e for e in evs if e["feed"] == "TRADE" and e["venue"] == "OKX" and e["t"] > 200 * S)
         conflated = next(e for e in evs if e["feed"] == "QUOTE" and e["venue"] == "OKX" and e["t"] > 200 * S)
@@ -643,10 +753,12 @@ class MarketDataWindowTests(unittest.TestCase):
         self.assertEqual((result["g2"]["TRADE"]["OKX"]["lost"], result["g2"]["TRADE"]["OKX"]["status"]), (1, "FAIL"))
         self.assertEqual(result["g2"]["QUOTE"]["OKX"]["unseen"], 1)
         self.assertEqual(result["g2"]["QUOTE"]["OKX"]["status"], "PASS")
-        # The sampler has not yet covered reference + 10 s: undecidable, excluded rather than lost.
+        # The sampler has not yet covered reference + 10 s: undecidable, not lost, and never a PASS (OF-G12-2).
         early = g12.md_window(pubs, [e for e in evs if e["t"] < 205 * S], 100 * S, 400 * S)
         self.assertEqual(early["g2"]["TRADE"]["OKX"]["lost"], 0)
         self.assertGreater(early["g2"]["TRADE"]["OKX"]["pending"], 0)
+        self.assertEqual(early["g2"]["TRADE"]["OKX"]["status"], "NOT_MEASURED")
+        self.assertEqual(early["g2_status"], "NOT_MEASURED")
 
     def test_mark_window_gate_and_unseen(self):
         result = self.window(*self.rows())
@@ -691,6 +803,7 @@ class MarketDataWindowTests(unittest.TestCase):
                 p, v = md_rows(venue, 0, 500 * S, **kwargs)
                 pubs += p
                 views += v
+                views += hb_rows(venue, 0, 500 * S)
             return g12.evaluate_fault(fault, pubs, views, monitor)
         self.assertTrue(run()["pass"])
         no_bars = run(bars=False)
@@ -936,6 +1049,60 @@ class ExitStateTests(unittest.TestCase):
                      (Path(base) / "evidence" / "orchestrator.jsonl").read_text().splitlines()]
             self.assertEqual(notes[-1]["step"], "role_exited")
 
+    def stats_case(self, base, results, listings):
+        """Run.sample_stats with fake `docker stats` results and successive running_names listings."""
+        run = g12.Run(base, "/home/bobby/e.json", NS)
+        run.evidence.mkdir(parents=True, exist_ok=True)
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(argv)
+            code, out = results.pop(0)
+            return types.SimpleNamespace(returncode=code, stdout=out, stderr="EOF" if code else "")
+        listing = iter(listings)
+        with patch.object(g12.subprocess, "run", side_effect=fake_run), \
+                patch.object(g12, "running_names", side_effect=lambda ns: set(next(listing))):
+            value = run.sample_stats()
+        return run, value, calls
+
+    def test_stats_sample_writes_rows(self):
+        with tempfile.TemporaryDirectory() as base:
+            line = json.dumps({"Name": NS + "-core", "CPUPerc": "1%", "MemUsage": "1MiB"})
+            run, value, calls = self.stats_case(base, [(0, line + "\n")], [[NS + "-core"]])
+            self.assertEqual(value, 1)
+            self.assertEqual(calls[0][:4], ["docker", "stats", "--no-stream", "--format"])
+            self.assertEqual(run.stats_skipped, 0)
+
+    def test_stats_sample_retries_without_a_role_that_exited_during_it(self):
+        """N1 r2b5a-6k-1: capacity-observer exited 0 during the sample; docker stats returned EOF."""
+        with tempfile.TemporaryDirectory() as base:
+            line = json.dumps({"Name": NS + "-core", "CPUPerc": "1%", "MemUsage": "1MiB"})
+            names = [NS + "-capacity-observer", NS + "-core"]
+            run, value, calls = self.stats_case(base, [(1, ""), (0, line + "\n")],
+                                                [names, [NS + "-core"]])
+            self.assertEqual(value, 1)
+            self.assertEqual(calls[1][5:], [NS + "-core"])
+            self.assertEqual(run.stats_skipped, 0)
+
+    def test_stats_sample_is_skipped_and_counted_when_roles_keep_exiting(self):
+        with tempfile.TemporaryDirectory() as base:
+            names = [NS + "-a", NS + "-b", NS + "-c"]
+            run, value, _ = self.stats_case(base, [(1, ""), (1, "")], [names, names[1:], names[2:]])
+            self.assertIsNone(value)
+            self.assertEqual(run.stats_skipped, 1)
+            marker = json.loads((run.evidence / "stats.jsonl").read_text().splitlines()[-1])
+            self.assertEqual((marker["skipped"], marker["roles"]), ("ROLE_EXITED_DURING_SAMPLE", ["a", "b"]))
+            notes = [json.loads(line) for line in (run.evidence / "orchestrator.jsonl").read_text().splitlines()]
+            self.assertEqual(notes[-1]["step"], "stats_skipped_role_exited")
+
+    def test_stats_failure_with_every_role_running_still_raises(self):
+        with tempfile.TemporaryDirectory() as base:
+            names = [NS + "-a", NS + "-b"]
+            with self.assertRaises(RuntimeError):
+                self.stats_case(base, [(1, "")], [names, names])
+            with self.assertRaises(RuntimeError):  # retried survivors that still fail while all run: real failure
+                self.stats_case(base, [(1, ""), (1, "")], [names, names[1:], names[1:]])
+
     def test_stop_events_terminates_the_follower(self):
         import tempfile
 
@@ -954,6 +1121,61 @@ class ExitStateTests(unittest.TestCase):
             with patch.object(g12.time, "sleep"):
                 self.assertEqual(run.stop_events(), -15)
             self.assertIsNone(run.events_proc)
+
+
+class LogFollowerTests(unittest.TestCase):
+    """IDR-107: the projector exited 2 during the broker fault and --rm took its stderr with it."""
+
+    def test_follow_argv_is_bounded_and_product_role_scoped(self):
+        argv = g12.follow_argv(NS, "projector", 600)
+        self.assertEqual(argv, ["timeout", "600", "docker", "logs", "--follow", "--timestamps", NS + "-projector"])
+        self.assertIn("kafka-2", g12.FOLLOWED_ROLES)
+        for bad in ((NS, "monitor", 10), (NS, "projector", 0), (NS, "projector", g12.LIMITS["deadline_s"] + 901),
+                    ("qdl_v2_stable_candidate", "projector", 10)):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                g12.follow_argv(*bad)
+
+    def test_an_exited_role_keeps_its_output_per_life_without_a_restart_policy(self):
+        def exits(ns, role, seconds):
+            return [sys.executable, "-c", f"print('{role} life'); import sys; sys.exit(2)"]
+        with tempfile.TemporaryDirectory() as base:
+            run = g12.Run(base, "/home/bobby/e.json", NS)
+            run.evidence.mkdir(parents=True)
+            with patch.object(g12, "follow_argv", side_effect=exits):
+                self.assertEqual(run.follow_logs("projector"), 1)
+                self.assertEqual(run.follow_logs("projector"), 2)  # restarted by the fault: a new file
+                self.assertIsNone(run.follow_logs("monitor"))
+            self.assertEqual(run.stop_followers(), {"followers": 2, "forced": []})
+            logs = run.evidence / "logs"
+            for life in (1, 2):
+                self.assertEqual((logs / f"projector.life{life}.log").read_text(), "projector life\n")
+            self.assertEqual(run.followers, [])
+            self.assertNotIn("--restart", " ".join(g12._base(NS, "projector", network="none", memory="1g",
+                                                               cpus="1")))
+
+    def test_the_tail_is_bounded_and_a_stuck_follower_is_ended(self):
+        with tempfile.TemporaryDirectory() as base:
+            run = g12.Run(base, "/home/bobby/e.json", NS)
+            run.evidence.mkdir(parents=True)
+            with patch.object(g12, "FOLLOW_TAIL_BYTES", 8), \
+                    patch.object(g12, "follow_argv", return_value=[sys.executable, "-c", "print('x' * 100 + 'END')"]):
+                run.follow_logs("core")
+            with patch.object(g12, "follow_argv", return_value=[sys.executable, "-c", "import time; time.sleep(60)"]):
+                run.follow_logs("query")
+            started = time.monotonic()
+            self.assertEqual(run.stop_followers(wait_s=1.0), {"followers": 2, "forced": ["query"]})
+            self.assertLess(time.monotonic() - started, 10)
+            self.assertEqual((run.evidence / "logs/core.life1.log").read_text(), "xxxxEND\n")
+
+    def test_start_follows_the_started_role(self):
+        with tempfile.TemporaryDirectory() as base:
+            run = g12.Run(base, "/home/bobby/e.json", NS)
+            run.topology = lambda topic_id="": {"stream": ["docker", "run"]}
+            with patch.object(g12, "sh"), patch.object(g12.Run, "verify_image"), \
+                    patch.object(g12.Run, "follow_logs") as follow:
+                run.start("stream", "topic")
+            follow.assert_called_once_with("stream")
+            self.assertIn("stream", run.expected)
 
 
 class QueryStateTopicTests(unittest.TestCase):
@@ -1122,6 +1344,7 @@ class MonitorGapRuleTests(unittest.TestCase):
             p, v = md_rows(venue, 0, 500 * S)
             pubs += p
             views += v
+            views += hb_rows(venue, 0, 500 * S)
         return g12.evaluate_fault(self.FAULT, pubs, views, sorted(monitor, key=lambda r: r["t"]))
 
     @staticmethod
@@ -1159,3 +1382,3084 @@ class MonitorGapRuleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------- caught-up predicate v2 and the moving top
+
+def core_emissions(frames, interval_ms=1000):
+    """The core's BOOK_SNAPSHOT materialization (due_l2_materialized_snapshot): first frame, then a frame whose
+    integer-ms provider time is >= interval after the last emission, or >= 100 ms with another top."""
+    out, last = [], None
+    for t, seq, top in frames:
+        ms = t // MS
+        if last is None or ms - last[0] >= interval_ms or (top != last[1] and ms - last[0] >= 100):
+            out.append((t, seq))
+            last = (ms, top)
+    return out
+
+
+def book_run(venue, start, end, *, moving=False, transit_ms=100, keep=lambda i: True, interval_ms=1000,
+             freeze=None, sample_ms=50, hz=4):
+    """Publisher BOOK rows (4 Hz, +0..2 ms deterministic stamp jitter; ``moving``: the publisher's book_top, else a
+    fixed top with no top recorded), the core's emissions, and sampler rows every ``sample_ms`` showing the newest
+    kept emission ``transit_ms`` after its frame. ``freeze=(from_ns, to_ns)``: no view update applies in it."""
+    period = S // hz
+    frames, pubs = [], []
+    t, seq = start, 1001
+    while t < end:
+        stamp = t + (seq * 7919 % 3) * MS
+        top = g12.book_top(seq) if moving else None
+        frames.append((stamp, seq, top))
+        row = {"k": "pub", "t": stamp, "venue": venue, "seq": seq, "gen": 7, "snapshot": seq == 1001}
+        if moving:
+            row["top"] = list(top)
+        pubs.append(row)
+        t += period
+        seq += 1
+    emitted = [e for i, e in enumerate(core_emissions(frames, interval_ms)) if keep(i)]
+    updates = [(pub + transit_ms * MS, seq) for pub, seq in emitted]
+    if freeze is not None:
+        updates = [(at, seq) for at, seq in updates if not freeze[0] <= at < freeze[1]]
+    views, k, shown = [], -1, None
+    t = start
+    while t < end:
+        while k + 1 < len(updates) and updates[k + 1][0] <= t:
+            k += 1
+            shown = updates[k][1]
+        if shown is not None:
+            views.append({"k": "view", "t": t, "venue": venue, "seq": shown, "v": "APPROVED"})
+        t += sample_ms * MS
+    return pubs, views, emitted
+
+
+def caught(pubs, views, venue, cleared, predicate=None):
+    return g12.caught_up(g12.view_series(views), g12.publish_index(pubs), venue, cleared,
+                         frames=g12.book_frames(pubs), predicate=predicate)
+
+
+class CaughtUpPredicateV2Tests(unittest.TestCase):
+    CLEARED = 100 * S
+
+    def test_parameters_come_from_the_core_not_from_data(self):
+        default = g12.caught_up_predicate()
+        self.assertEqual((default["version"], default["transit_max_ms"], default["hold_s"], default["slack_ms"],
+                          default["publisher_tick_ms"], default["top_change_min_interval_ms"]),
+                         ("p184.g12.caught_up.v2", 1000, 30, 1, 250.0, 100))
+        self.assertEqual(default["materialized_snapshot_interval_ms"], {"BINANCE": 1000, "OKX": 1000})
+        from qdl.runtime.execution_l2 import EXECUTION_L2_MATERIALIZATION_INTERVAL_MS
+        self.assertEqual(g12.L2_DEFAULT_MATERIALIZATION_MS, EXECUTION_L2_MATERIALIZATION_INTERVAL_MS)
+        core = (Path(g12.ROOT) / "rust/qdl-realtime-core/src/lib.rs").read_text()
+        self.assertEqual(int(re.search(r"const L2_TOP_CHANGE_MIN_INTERVAL_MS: i64 = (\d+);", core).group(1)),
+                         g12.L2_TOP_CHANGE_MIN_INTERVAL_MS)
+        # The core resolves the interval as L2Binding::materialized_snapshot_interval_ms does.
+        config = {"core": {"bindings": [
+            {"venue": "BINANCE", "l2": {"snapshot_refresh_seconds": 30, "materialized_snapshot_interval_ms": 1000}},
+            {"venue": "OKX", "l2": {"snapshot_refresh_seconds": 30}},
+            {"venue": "OKX", "provider_kind": "okx_trade"}]}}
+        frozen = g12.caught_up_predicate(config, 4.0)
+        self.assertEqual(frozen["materialized_snapshot_interval_ms"], {"BINANCE": 1000, "OKX": 30000})
+        self.assertEqual(frozen["materialization_interval_source"], "core.json")
+        with self.assertRaises(ValueError):
+            g12.caught_up_predicate({"core": {"bindings": [config["core"]["bindings"][0]]}})
+
+    def test_quiet_but_timely_passes(self):
+        # Fixed top: one snapshot per ~1 s (4 or 5 frames); every sample of a timely view, not an age limit.
+        pubs, views, emitted = book_run("BINANCE", 90 * S, 200 * S, transit_ms=100)
+        gaps = {round((b[0] - a[0]) / (250 * MS)) for a, b in zip(emitted, emitted[1:])}
+        self.assertTrue(gaps <= {4, 5} and 5 in gaps)  # the integer-ms rule moves some emissions a frame later
+        index = g12.publish_index(pubs)
+        ages = [(v["t"] - index[("BINANCE", v["seq"])]) / MS for v in views if v["t"] >= self.CLEARED]
+        self.assertGreater(max(ages), 1000)  # the v1 per-sample age limit failed exactly this timely view
+        state = caught(pubs, views, "BINANCE", self.CLEARED)
+        self.assertIsNotNone(state["caught_up_ns"])
+        self.assertLess(state["caught_up_ns"] - self.CLEARED, int(1.5 * S))
+        self.assertEqual(state["rejected_samples"].get("update_gap", 0), 0)
+        self.assertEqual(state["rejected_samples"].get("open_gap", 0), 0)
+
+    def test_moving_top_fires_the_top_change_rule_and_passes(self):
+        pubs, views, emitted = book_run("OKX", 90 * S, 200 * S, moving=True, transit_ms=150)
+        frames = len(pubs)
+        self.assertGreater(len(emitted), 0.8 * frames)  # 32 of 40 frames move the top, each one emitted
+        state = caught(pubs, views, "OKX", self.CLEARED)
+        self.assertIsNotNone(state["caught_up_ns"])
+        self.assertLess(state["caught_up_ns"] - self.CLEARED, S)
+
+    def test_slow_transit_fails(self):
+        for moving in (False, True):
+            with self.subTest(moving=moving):
+                pubs, views, _ = book_run("BINANCE", 90 * S, 200 * S, moving=moving, transit_ms=1100)
+                state = caught(pubs, views, "BINANCE", self.CLEARED)
+                self.assertIsNone(state["caught_up_ns"])
+                self.assertGreater(state["rejected_samples"]["update_transit"], 0)
+
+    def test_large_update_gap_fails(self):
+        # Quiet: the view applies every other snapshot (2-2.5 s source gap > 1000 + 250 + 1 ms).
+        pubs, views, _ = book_run("BINANCE", 90 * S, 200 * S, keep=lambda i: i % 2 == 0)
+        state = caught(pubs, views, "BINANCE", self.CLEARED)
+        self.assertIsNone(state["caught_up_ns"])
+        self.assertGreater(state["rejected_samples"]["update_gap"], 0)
+        # Moving top: every third frame (750 ms) > max(100, 250) + one 250 ms tick + 1 ms.
+        pubs, views, _ = book_run("OKX", 90 * S, 200 * S, moving=True, keep=lambda i: i % 3 == 0)
+        state = caught(pubs, views, "OKX", self.CLEARED)
+        self.assertIsNone(state["caught_up_ns"])
+        self.assertGreater(state["rejected_samples"]["update_gap"], 0)
+
+    def test_stale_after_fault_fails(self):
+        for moving in (False, True):
+            with self.subTest(moving=moving):
+                # Stuck on a post-clear frame for the rest of the run: never caught up (open gap).
+                pubs, views, _ = book_run("OKX", 90 * S, 200 * S, moving=moving, freeze=(101 * S, 300 * S))
+                state = caught(pubs, views, "OKX", self.CLEARED)
+                self.assertIsNone(state["caught_up_ns"])
+                self.assertGreater(state["rejected_samples"]["open_gap"], 0)
+                # Stuck for 5 s, then timely again: caught up only after the stall, not across it.
+                pubs, views, _ = book_run("OKX", 90 * S, 200 * S, moving=moving, freeze=(101 * S, 106 * S))
+                state = caught(pubs, views, "OKX", self.CLEARED)
+                self.assertGreaterEqual(state["caught_up_ns"], 106 * S)
+                self.assertLess(state["caught_up_ns"], 108 * S)
+
+    def test_frozen_predicate_is_read_back_and_used(self):
+        # Core configured with a 2 s quiet interval: the frozen run parameters pass it, the default ones do not.
+        pubs, views, _ = book_run("BINANCE", 90 * S, 200 * S, interval_ms=2000)
+        self.assertIsNone(caught(pubs, views, "BINANCE", self.CLEARED)["caught_up_ns"])
+        frozen = dict(g12.caught_up_predicate(), materialized_snapshot_interval_ms={"BINANCE": 2000, "OKX": 2000})
+        self.assertIsNotNone(caught(pubs, views, "BINANCE", self.CLEARED, frozen)["caught_up_ns"])
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = Path(tmp)
+            self.assertFalse(g12.load_predicate(evidence)["frozen"])
+            self.assertFalse(g12.evaluate(evidence)["caught_up_predicate"]["frozen"])
+            (evidence / g12.PREDICATE_FILE).write_text(json.dumps(frozen))
+            loaded = g12.load_predicate(evidence)
+            self.assertTrue(loaded["frozen"])
+            self.assertEqual(loaded["materialized_snapshot_interval_ms"]["BINANCE"], 2000)
+            self.assertEqual(g12.evaluate(evidence)["caught_up_predicate"], loaded)
+            (evidence / g12.PREDICATE_FILE).write_text(json.dumps(dict(frozen, version="p184.g12.caught_up.v1")))
+            with self.assertRaises(ValueError):
+                g12.load_predicate(evidence)
+
+    def test_prepare_freezes_the_predicate_before_data(self):
+        """Run.prepare writes evidence/caught-up-predicate.json from the run's core.json once the material exists,
+        before any role (publisher included) starts; it is never overwritten."""
+        core = {"raw_topics": [NS + ".raw"], "core": {"bindings": [
+            {"venue": "BINANCE", "l2": {"snapshot_refresh_seconds": 30, "materialized_snapshot_interval_ms": 1000}},
+            {"venue": "OKX", "l2": {"snapshot_refresh_seconds": 30, "materialized_snapshot_interval_ms": 500}}]}}
+        calls = []
+
+        def sh(argv, timeout=60, check=True):
+            calls.append(list(argv))
+            if "--material" in argv:
+                (run.work / "packet.json").write_text(json.dumps({"namespace": NS}))
+                (run.work / "core.json").write_text(json.dumps(core))
+                (run.work / "broker.properties").write_text("ssl.keystore.password=x\n")
+            return ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            export = Path(tmp) / "export.json"
+            export.write_text("{}")
+            run = g12.Run(Path(tmp) / "run", export, NS)
+            with patch.object(g12, "sh", side_effect=sh), \
+                    patch.object(g12, "host_resources", return_value={"disk_free_bytes": 10**12,
+                                                                      "mem_available_bytes": 10**12}), \
+                    patch.object(g12, "image_record", side_effect=lambda image: {"id": image}), \
+                    patch.object(g12, "owned_names", return_value=[]), \
+                    patch.object(g12, "production_guard", return_value={}), \
+                    patch.object(g12.Run, "start_events"):
+                run.prepare()
+            frozen = json.loads((run.evidence / g12.PREDICATE_FILE).read_text())
+            self.assertEqual(frozen, g12.caught_up_predicate(core, g12.PUBLISH_HZ))
+            self.assertEqual(frozen["materialized_snapshot_interval_ms"], {"BINANCE": 1000, "OKX": 500})
+            self.assertEqual(run.predicate, frozen)
+            notes = [json.loads(line) for line in (run.evidence / "orchestrator.jsonl").read_text().splitlines()]
+            self.assertEqual(notes[-1]["step"], "caught_up_predicate_frozen")
+            self.assertFalse(any("--publish" in argv for argv in calls))  # no data source started yet
+            self.assertFalse((run.evidence / "publish.jsonl").exists())
+
+
+class CaptureAdapterModeTests(unittest.TestCase):
+    """CAPTURE adapter mode (RCA 2026-10-14): real-capture replay keeps the source catalog adapter_version;
+    SYNTHETIC (default) is unchanged. Real offline material, python image (qdl, yaml, cryptography)."""
+
+    RAW_SHA = "ab" * 32
+
+    def material(self, tmp, **handoff):
+        from scripts import p184_dr05_dl_fault as dr
+        from tests.test_p184_dr05_dl_fault import MaterialTests
+        work = Path(tmp) / "work"
+        work.mkdir()
+        (work / "handoff.json").write_text(json.dumps({"namespace": NS, "images": g12.dr05_images(g12.IMAGES),
+                                                       "g12_images": g12.IMAGES, **handoff}))
+        dr.material(work, MaterialTests.exported())
+        return work, g12.seal_market_feeds(work, NS)
+
+    def capture(self, tmp):
+        return self.material(tmp, provenance="TEST_ONLY", adapter_mode="CAPTURE",
+                             capture_raw_sha256=self.RAW_SHA, test_clock_images=True)
+
+    @staticmethod
+    def raws(work, override=None):
+        """One raw per bound route with the catalog's value (override: route index -> adapter_version)."""
+        import yaml
+        catalog = yaml.safe_load((work / "catalog.yaml").read_text())
+        versions = {b["source"]["source_id"]: b["source"]["adapter_version"] for b in catalog["bindings"]}
+        out = []
+        for index, binding in enumerate(json.loads((work / "core.json").read_text())["core"]["bindings"]):
+            version = (override or {}).get(index, versions[binding["source_id"]])
+            out.append((g12.physical_route(binding), version))
+        return out
+
+    def test_synthetic_default_is_unchanged(self):
+        import yaml
+        with tempfile.TemporaryDirectory() as tmp:
+            work, sealed = self.material(tmp)
+            catalog = yaml.safe_load((work / "catalog.yaml").read_text())
+            self.assertEqual({b["source"]["adapter_version"] for b in catalog["bindings"]}, {g12.TEST_ADAPTER})
+            self.assertEqual(sealed["adapter_mode"], "SYNTHETIC")
+            with self.assertRaises(ValueError):  # no parity proof on synthetic material
+                g12.capture_adapter_parity(work, self.raws(work), self.RAW_SHA)
+
+    def test_capture_keeps_source_adapter_and_proves_parity(self):
+        import yaml
+        from scripts.p184_dr05_dl_fault import source_catalog_path
+        from qdl.runtime.stable_catalog import StableSourceCatalog
+        with tempfile.TemporaryDirectory() as tmp:
+            work, sealed = self.capture(tmp)
+            source = {b["source"]["source_id"]: b["source"]["adapter_version"]
+                      for b in yaml.safe_load(source_catalog_path(work).read_text())["bindings"]}
+            catalog = yaml.safe_load((work / "catalog.yaml").read_text())
+            self.assertEqual(len(catalog["bindings"]), 4 + 8)
+            for binding in catalog["bindings"]:
+                self.assertEqual(binding["source"]["adapter_version"], source[binding["source"]["source_id"]])
+                self.assertNotEqual(binding["source"]["adapter_version"], g12.TEST_ADAPTER)
+            self.assertEqual(sealed["adapter_mode"], "CAPTURE")
+            self.assertEqual(set(sealed["adapter_versions"].values()), {"binance-usdm/2.0.0", "okx-v5/2.0.0"})
+            StableSourceCatalog.load(work / "catalog.yaml")  # the bundle/catalog generation still loads
+            receipt = g12.capture_adapter_parity(work, self.raws(work) * 3, self.RAW_SHA)
+            self.assertEqual((receipt["status"], receipt["relabelled"], receipt["selected_raw_frames"]),
+                             ("PROVEN", False, 3 * 11))
+            self.assertEqual(receipt["adapter_versions"], ["binance-usdm/2.0.0", "okx-v5/2.0.0"])
+            self.assertEqual(len(receipt["routes"]), 11)
+            self.assertTrue(all(r["raw_frames"] == 3 for r in receipt["routes"]))
+            with self.assertRaisesRegex(ValueError, "differs from its binding"):  # one raw off
+                g12.capture_adapter_parity(work, self.raws(work) + self.raws(work, {3: g12.TEST_ADAPTER}),
+                                           self.RAW_SHA)
+            with self.assertRaisesRegex(ValueError, "exactly this capture"):
+                g12.capture_adapter_parity(work, self.raws(work), "cd" * 32)
+            with self.assertRaisesRegex(ValueError, "outside the bound routes"):
+                g12.capture_adapter_parity(work, self.raws(work) + [(("X",) * 6, "okx-v5/2.0.0")], self.RAW_SHA)
+            with self.assertRaisesRegex(ValueError, "every bound route"):
+                g12.capture_adapter_parity(work, self.raws(work)[1:], self.RAW_SHA)
+
+    def test_capture_mode_handoff_must_be_fully_sealed(self):
+        from scripts.p184_dr05_dl_fault import adapter_mode
+        sealed = {"namespace": NS, "provenance": "TEST_ONLY", "adapter_mode": "CAPTURE",
+                  "capture_raw_sha256": self.RAW_SHA, "test_clock_images": True}
+        self.assertEqual(adapter_mode(sealed), "CAPTURE")
+        self.assertEqual(adapter_mode({"namespace": NS}), "SYNTHETIC")
+        for key, value in (("provenance", "PRODUCTION"), ("capture_raw_sha256", "short"),
+                           ("test_clock_images", False), ("namespace", "prod"), ("adapter_mode", "RELABEL")):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                adapter_mode({**sealed, key: value})
+        with self.assertRaises(ValueError):  # a capture field without the mode is never silently synthetic
+            adapter_mode({"namespace": NS, "capture_raw_sha256": self.RAW_SHA})
+
+    def test_run_requires_test_clock_images_and_seals_the_pin(self):
+        calls = []
+
+        def sh(argv, timeout=60, check=True):
+            calls.append(list(argv))
+            if "--material" in argv:
+                (run.work / "packet.json").write_text(json.dumps({"namespace": NS}))
+                (run.work / "core.json").write_text(json.dumps({"raw_topics": [NS + ".raw"], "core": {"bindings": [
+                    {"venue": v, "l2": {"snapshot_refresh_seconds": 30}} for v in g12.VENUES]}}))
+                (run.work / "broker.properties").write_text("ssl.keystore.password=x\n")
+            return ""
+
+        def record(labelled):
+            return lambda image: {"id": image, "test_only": "isolated-replay-clock" if image in labelled else None}
+
+        for labelled_roles, ok in ((("core", "stream"), True), (("core",), False)):
+            with self.subTest(labelled=labelled_roles), tempfile.TemporaryDirectory() as tmp:
+                export = Path(tmp) / "export.json"
+                export.write_text("{}")
+                run = g12.Run(Path(tmp) / "run", export, NS)
+                with self.assertRaises(ValueError):
+                    run.use_capture_adapter("not-a-sha")
+                run.use_capture_adapter(self.RAW_SHA)
+                labelled = {run.images[role] for role in labelled_roles}
+                with patch.object(g12, "sh", side_effect=sh), \
+                        patch.object(g12, "host_resources", return_value={"disk_free_bytes": 10**12,
+                                                                          "mem_available_bytes": 10**12}), \
+                        patch.object(g12, "image_record", side_effect=record(labelled)), \
+                        patch.object(g12, "owned_names", return_value=[]), \
+                        patch.object(g12, "production_guard", return_value={}), \
+                        patch.object(g12.Run, "start_events"):
+                    if not ok:
+                        with self.assertRaisesRegex(RuntimeError, "stream image lacks"):
+                            run.prepare()
+                        self.assertFalse((run.work / "handoff.json").exists())
+                        continue
+                    run.prepare()
+                handoff = json.loads((run.work / "handoff.json").read_text())
+                self.assertEqual((handoff["adapter_mode"], handoff["capture_raw_sha256"], handoff["test_clock_images"]),
+                                 ("CAPTURE", self.RAW_SHA, True))
+                with self.assertRaises(ValueError):  # fixed before prepare
+                    run.use_capture_adapter(self.RAW_SHA)
+
+
+class PublisherBookTopTests(unittest.TestCase):
+    def test_top_is_deterministic_bounded_moving_then_quiet(self):
+        shape = g12.BOOK_TOP
+        tops = [g12.book_top(seq) for seq in range(1001, 1001 + 4 * shape["cycle"])]
+        self.assertEqual(tops, [g12.book_top(seq) for seq in range(1001, 1001 + 4 * shape["cycle"])])
+        for bid, ask in tops:
+            self.assertTrue(shape["base"] <= int(bid) <= shape["base"] + shape["steps"] - 1)
+            self.assertEqual(int(ask) - int(bid), shape["spread"])
+        moving = shape["cycle"] - shape["quiet"]
+        for seq in range(1000, 1000 + 2 * shape["cycle"]):
+            changed = g12.book_top(seq + 1) != g12.book_top(seq)
+            self.assertEqual(changed, (seq + 1) % shape["cycle"] < moving, seq)
+        self.assertEqual(len(set(tops)), shape["steps"])
+
+    def test_levels_and_frames_keep_one_level_per_side(self):
+        from scripts import p184_dr05_dl_fault as dr
+        at = 1_791_696_000_123 * MS
+        for seq in range(1001, 1001 + 2 * g12.BOOK_TOP["cycle"]):
+            levels = g12.book_levels(seq, seq - 1, False, "5")
+            bid, ask = g12.book_top(seq)
+            self.assertEqual((levels["bids"][0], levels["asks"][0]), ((bid, "5"), (ask, "1")))
+            for side in ("bids", "asks"):
+                prices = [price for price, _ in levels[side]]
+                self.assertEqual(len(prices), len(set(prices)))  # the core refuses a duplicate price
+                self.assertTrue(all(qty == "0" for _, qty in levels[side][1:]))
+            self.assertLess(max(int(p) for p, q in levels["bids"] if q != "0"),
+                            min(int(p) for p, q in levels["asks"] if q != "0"))
+        self.assertEqual(g12.book_levels(1039, 0, True, "5"), {"bids": [("60007", "5")], "asks": [("60017", "1")]})
+        b = g12.book_frame("BINANCE", False, 1009, 1008, 7, at)["payload"]
+        self.assertEqual((b["U"], b["u"], b["pu"], b["b"], b["a"]),
+                         (1008, 1009, 1008, [["60001", "10"], ["60000", "0"]], [["60011", "1"], ["60010", "0"]]))
+        o = g12.book_frame("OKX", True, 1009, 1008, 8, at)["payload"]["data"][0]
+        self.assertEqual((o["prevSeqId"], o["bids"], o["asks"]), ("-1", [["60001", "10", "0", "1"]],
+                                                                  [["60011", "1", "0", "1"]]))
+        # The DR05 cells keep the fixed default book byte for byte.
+        self.assertEqual(dr.frame("BINANCE", False, 5, 4, 7, "3", at)["payload"],
+                         {"s": "ETHUSDT", "U": 4, "u": 5, "pu": 4, "E": 1_791_696_000_123,
+                          "b": [["60000", "3"]], "a": [["60001", "1"]]})
+        self.assertEqual(dr.frame("OKX", True, 5, 0, 7, "3", at)["payload"]["data"][0]["bids"],
+                         [["60000", "3", "0", "1"]])
+
+    def test_core_rule_fires_on_top_change_and_quiet_interval(self):
+        frames = [(t * 250 * MS, seq, g12.book_top(seq)) for t, seq in enumerate(range(1000, 1400))]
+        emitted = core_emissions(frames)
+        gaps = sorted({(b[0] - a[0]) // MS for a, b in zip(emitted, emitted[1:])})
+        self.assertEqual(gaps, [250, 1000])  # moving: every frame; quiet 2 s: the 1 s rule
+        fixed = core_emissions([(t, seq, None) for t, seq, _ in frames])
+        self.assertEqual({(b[0] - a[0]) // MS for a, b in zip(fixed, fixed[1:])}, {1000})
+
+    def test_market_data_is_unchanged_by_the_book_top(self):
+        def run(interleave):
+            clock = iter(range(1_791_696_000_000 * MS, 1_791_697_000_000 * MS, 7 * MS))
+            source = g12.MarketDataSource(clock=lambda: next(clock))
+            events = source.seed(1_791_696_000_000 * MS)
+            for tick in range(40):
+                if interleave:
+                    g12.book_frame("BINANCE", False, 1001 + tick, 1000 + tick, 7, 1_791_696_000_000 * MS)
+                events += source.tick(tick, 4.0)
+            return events
+        plain, interleaved = run(False), run(True)
+        self.assertEqual(plain, interleaved)
+        feeds = {e["feed"] for e in plain}
+        self.assertTrue({"TRADE", "QUOTE"} <= feeds)
+
+
+BOOK_IDENTITY = {"BINANCE": ("BINANCE_DIRECT", "USDM", "ETHUSDT", "ethusdt@depth@100ms",
+                             "binance-usdm-ethusdt-book-primary-v2"),
+                 "OKX": ("OKX_DIRECT", "SWAP", "ETH-USDT-SWAP", "books", "okx-swap-eth-usdt-swap-book-primary-v2")}
+
+
+def book_binding(venue):
+    """The sealed core.json BOOK binding shape (r2b6 run) of one venue."""
+    provider, market, symbol, channel, source = BOOK_IDENTITY[venue]
+    return {"venue": venue, "provider": provider, "market": market, "product_type": "PERPETUAL",
+            "native_symbol": symbol, "native_channel": channel, "source_id": source,
+            "instrument_catalog_revision": 11, "l2": {"snapshot_refresh_seconds": 30}}
+
+
+def resync_request(venue, generation, received_at_ns, *, session=None, summary=g12.L2_RESNAPSHOT_REQUIRED_V1,
+                   reason="QUARANTINE_REASON_SEQUENCE_GAP", test_provenance=True, quarantined_at_ns=None):
+    """(wire, event_id) of a core resnapshot request built as the Rust core builds it
+    (``l2_resnapshot_request``: the raw frame, evidence = sha256(raw || reason be32), id = sha256(capture || V1))."""
+    import hashlib
+    from qdl.provider.v1.raw_provider_pb2 import QuarantineReason, QuarantineRecord, RawProviderEnvelope
+    b = book_binding(venue)
+    payload = b'{"u":1}'
+    raw = RawProviderEnvelope(
+        capture_id=bytes(16), provider=b["provider"], venue=venue, market=b["market"],
+        product_type=b["product_type"], native_symbol=b["native_symbol"], native_channel=b["native_channel"],
+        subscription_id=b["source_id"], source_session_id=session or f"{NS}.{venue}",
+        connection_generation=generation, received_at_ns=received_at_ns, raw_frame_bytes=payload,
+        raw_frame_sha256=hashlib.sha256(payload).digest(), adapter_version="p184-synthetic-test-only",
+        instrument_catalog_revision=11, test_provenance=test_provenance)
+    code = QuarantineReason.Value(reason)
+    record = QuarantineRecord(
+        raw=raw, reason=code, safe_summary=summary,
+        quarantined_at_ns=received_at_ns + MS if quarantined_at_ns is None else quarantined_at_ns,
+        evidence_sha256=hashlib.sha256(raw.SerializeToString() + code.to_bytes(4, "big", signed=True)).digest())
+    event_id = hashlib.sha256(raw.capture_id + summary.encode()).digest()
+    return record.SerializeToString(), event_id
+
+
+def fake_kafka(producer, deliveries):
+    """A confluent_kafka stand-in: ``deliveries`` is a list of (after_consume_calls, make_record) quarantine
+    records the publisher's read-only listener receives; ``make_record()`` -> (wire, event_id) runs at delivery,
+    so a request can name a raw frame received after the lane's snapshot, as the core's requests do."""
+    class Message:
+        def __init__(self, wire, event_id, offset):
+            self.wire, self.event_id, self._offset = wire, event_id, offset
+
+        def error(self):
+            return None
+
+        def value(self):
+            return self.wire
+
+        def headers(self):
+            return [("qdl-event-id", self.event_id)]
+
+        def offset(self):
+            return self._offset
+
+    class Consumer:
+        assigned, closed = [], []
+
+        def __init__(self, config):
+            self.config, self.calls, self.pending = config, 0, list(deliveries)
+            Consumer.config_seen = config
+
+        def assign(self, partitions):
+            Consumer.assigned.extend(partitions)
+
+        def list_topics(self, topic, timeout):
+            meta = types.SimpleNamespace(error=None, partitions={5: None, 0: None, 3: None, 1: None, 2: None, 4: None})
+            return types.SimpleNamespace(topics={topic: meta})
+
+        def consume(self, num_messages, timeout):
+            self.calls += 1
+            ready = [d for d in self.pending if d[0] <= self.calls]
+            self.pending = [d for d in self.pending if d[0] > self.calls]
+            return [Message(*make(), offset) for offset, (_, make) in enumerate(ready)]
+
+        def close(self):
+            Consumer.closed.append(True)
+
+    fake = types.ModuleType("confluent_kafka")
+    fake.Producer, fake.Consumer, fake.OFFSET_BEGINNING = producer, Consumer, -2
+    fake.TopicPartition = lambda topic, partition, offset: (topic, partition, offset)
+    return fake
+
+
+class ResyncListenerAssignTests(unittest.TestCase):
+    def test_missing_or_failed_topic_metadata_is_an_error(self):
+        fake = fake_kafka(None, [])
+        for topics in ({}, {NS + ".quarantine": types.SimpleNamespace(error="UNKNOWN_TOPIC", partitions={0: None})},
+                       {NS + ".quarantine": types.SimpleNamespace(error=None, partitions={})}):
+            consumer = types.SimpleNamespace(list_topics=lambda topic, timeout, t=topics: types.SimpleNamespace(topics=t),
+                                             assign=lambda partitions: self.fail("assigned without metadata"))
+            with patch.dict(sys.modules, {"confluent_kafka": fake}), self.assertRaises(RuntimeError):
+                g12.assign_resync_listener(consumer, NS + ".quarantine", -2)
+
+
+class BookResyncRequestTests(unittest.TestCase):
+    """book_resync_request: the TEST twin of the ingestor's matches_book_resync + snapshot_satisfies_resync."""
+
+    NOW = 1_792_000_000 * S
+
+    def check(self, wire_and_id, venue="BINANCE", generation=7, anchor=None, now=None):
+        wire, event_id = wire_and_id
+        return g12.book_resync_request(wire, event_id, book_binding(venue), f"{NS}.{venue}", generation,
+                                       self.NOW if now is None else now, anchor)
+
+    def test_own_lane_current_generation_fresh_request_is_accepted(self):
+        self.assertEqual(self.check(resync_request("BINANCE", 7, self.NOW - 2 * S)), (True, None))
+        self.assertEqual(self.check(resync_request("OKX", 9, self.NOW - 2 * S), venue="OKX", generation=9),
+                         (True, None))
+
+    def test_other_records_are_ignored_without_a_refusal(self):
+        self.assertEqual(self.check((b"\xff\x00garbage", b"")), (False, None))
+        self.assertEqual(self.check(resync_request("BINANCE", 7, self.NOW - S, summary="SEQUENCE_GAP")),
+                         (False, None))
+        # The OKX lane's request is not the Binance lane's business (and vice versa).
+        self.assertEqual(self.check(resync_request("OKX", 7, self.NOW - S)), (False, None))
+
+    def test_refusals_mirror_the_ingestor(self):
+        cases = {
+            "GENERATION": self.check(resync_request("BINANCE", 6, self.NOW - S)),
+            "SESSION": self.check(resync_request("BINANCE", 7, self.NOW - S, session=NS + ".OKX")),
+            # Older than l2.snapshot_refresh_seconds (30 s): the ingestor drops it, so does the TEST lane.
+            "AGE": self.check(resync_request("BINANCE", 7, self.NOW - 31 * S)),
+            "REASON": self.check(resync_request("BINANCE", 7, self.NOW - S,
+                                                reason="QUARANTINE_REASON_UNSPECIFIED")),
+            "IDENTITY": self.check(resync_request("BINANCE", 7, self.NOW - S, test_provenance=False)),
+        }
+        for label, result in cases.items():
+            self.assertEqual(result, (False, label), label)
+        future = resync_request("BINANCE", 7, self.NOW - S, quarantined_at_ns=self.NOW + S)
+        self.assertEqual(self.check(future), (False, "AGE"))
+
+    def test_digests_are_verified(self):
+        wire, event_id = resync_request("BINANCE", 7, self.NOW - S)
+        self.assertEqual(self.check((wire, bytes(32))), (False, "DIGEST"))
+        from qdl.provider.v1.raw_provider_pb2 import QuarantineRecord
+        record = QuarantineRecord.FromString(wire)
+        record.evidence_sha256 = bytes(32)
+        self.assertEqual(self.check((record.SerializeToString(), event_id)), (False, "DIGEST"))
+        record = QuarantineRecord.FromString(wire)
+        record.raw.raw_frame_bytes = b'{"u":2}'
+        self.assertEqual(self.check((record.SerializeToString(), event_id)), (False, "DIGEST"))
+
+    def test_a_request_already_satisfied_by_the_published_snapshot_is_refused(self):
+        request = resync_request("BINANCE", 7, self.NOW - 2 * S)
+        self.assertEqual(self.check(request, anchor=(7, self.NOW - 2 * S)), (False, "SATISFIED"))
+        self.assertEqual(self.check(request, anchor=(7, self.NOW - 3 * S)), (True, None))
+        self.assertEqual(self.check(request, anchor=(6, self.NOW)), (True, None))
+
+
+class PublisherResyncTests(unittest.TestCase):
+    """publish(): a core resnapshot request on <ns>.quarantine becomes gen+1 + snapshot on that lane only."""
+
+    def test_core_request_starts_a_new_generation_with_a_snapshot(self):
+        book_frames = []
+
+        class Producer:
+            def __init__(self, config):
+                pass
+
+            def produce(self, topic, partition, key, value, headers, on_delivery):
+                pass
+
+            def poll(self, timeout):
+                return 0
+
+            def flush(self, timeout):
+                return 0
+
+        class Raw:
+            subscription_id, capture_id = "sub", "cap"
+
+            def SerializeToString(self):
+                return b"x"
+
+        def book_raw(binding, frame, ns):
+            book_frames.append((binding["venue"], frame["connection_generation"], frame["snapshot"]))
+            return Raw()
+
+        # Each request names a generation-7 raw received after the lane's snapshot (wall clock at delivery).
+        def request():
+            return resync_request("BINANCE", 7, time.time_ns() - MS)
+        lanes = {(v, f): {"physical_native_symbol": "ETH-USDT"} for v in g12.VENUES for f in g12.MD_FEEDS}
+        lanes[("OKX", "INDEX")] = {"physical_native_symbol": "ETH-USDT"}
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            (work / "core.json").write_text(json.dumps({
+                "raw_topics": [NS + ".raw"], "core": {"allow_test_provenance": True,
+                                                       "quarantine_stream": NS + ".quarantine",
+                                                       "bindings": [book_binding(v) for v in g12.VENUES]}}))
+            out = work / "publish.jsonl"
+            fake = fake_kafka(Producer, [(3, request), (8, request)])
+            with patch.dict(sys.modules, {"confluent_kafka": fake}), \
+                    patch.object(g12, "_packet", return_value={"namespace": NS}), \
+                    patch.object(g12, "_security", return_value={}), \
+                    patch.object(g12, "md_bindings", return_value=lanes), \
+                    patch.object(g12, "md_envelope", return_value=Raw()), \
+                    patch("scripts.p184_dr05_raw_publisher.raw_envelope", side_effect=book_raw):
+                g12.publish(work, out, 2.0, 4.0)
+            rows = g12.load_jsonl(out)
+        resyncs = [r for r in rows if r.get("k") == "resync"]
+        self.assertEqual([(r["venue"], r["new_gen"], r["cause"]) for r in resyncs],
+                         [("BINANCE", 8, g12.L2_RESNAPSHOT_REQUIRED_V1)])
+        # The repeated request names generation 7, which is no longer current: refused, no second resync.
+        self.assertIn({"k": "resync_request_refused", "venue": "BINANCE", "reason": "GENERATION"},
+                      [{k: r[k] for k in ("k", "venue", "reason")} for r in rows
+                       if r.get("k") == "resync_request_refused"])
+        binance = [(g, snap) for v, g, snap in book_frames if v == "BINANCE"]
+        okx = [(g, snap) for v, g, snap in book_frames if v == "OKX"]
+        self.assertEqual(binance[0], (7, True))
+        first_new = binance.index((8, True))
+        self.assertTrue(all(g == 7 and not snap for g, snap in binance[1:first_new]))
+        self.assertTrue(all(g == 8 and not snap for g, snap in binance[first_new + 1:]))
+        self.assertEqual(okx[0], (7, True))
+        self.assertTrue(all(g == 7 and not snap for g, snap in okx[1:]))
+        # Every partition of the quarantine topic (the core keys requests; six partitions in capacity runs).
+        self.assertEqual(fake.Consumer.assigned, [(NS + ".quarantine", p, -2) for p in range(6)])
+        self.assertEqual(fake.Consumer.config_seen["isolation.level"], "read_committed")
+        self.assertFalse(fake.Consumer.config_seen["enable.auto.commit"])
+        self.assertEqual(fake.Consumer.closed, [True])
+
+
+class PublisherScheduleTests(unittest.TestCase):
+    """publish(): BOOK frames keep their own schedule while market-data sends are slow."""
+
+    def test_book_is_not_delayed_by_market_data_sends(self):
+        produced, lock = [], threading.Lock()
+
+        class Producer:
+            def __init__(self, config):
+                pass
+
+            def produce(self, topic, partition, key, value, headers, on_delivery):
+                with lock:
+                    produced.append((time.monotonic(), value))
+
+            def poll(self, timeout):
+                return 0
+
+            def flush(self, timeout):
+                return 0
+
+        class Raw:
+            subscription_id, capture_id = "sub", "cap"
+
+            def __init__(self, tag):
+                self.tag = tag
+
+            def SerializeToString(self):
+                return self.tag
+
+        def slow_md(binding, frame, ns):
+            time.sleep(0.12)  # a slow (CPU-starved) market-data send
+            return Raw(b"md")
+
+        book_frames = []
+
+        def book_raw(binding, frame, ns):
+            book_frames.append(frame)
+            return Raw(b"book")
+
+        lanes = {(v, f): {"physical_native_symbol": "ETH-USDT"} for v in g12.VENUES for f in g12.MD_FEEDS}
+        lanes[("OKX", "INDEX")] = {"physical_native_symbol": "ETH-USDT"}
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            (work / "core.json").write_text(json.dumps({
+                "raw_topics": [NS + ".raw"], "core": {"allow_test_provenance": True,
+                                                       "quarantine_stream": NS + ".quarantine",
+                                                       "bindings": [book_binding(v) for v in g12.VENUES]}}))
+            out = work / "publish.jsonl"
+            fake = fake_kafka(Producer, [])
+            with patch.dict(sys.modules, {"confluent_kafka": fake}), \
+                    patch.object(g12, "_packet", return_value={"namespace": NS}), \
+                    patch.object(g12, "_security", return_value={}), \
+                    patch.object(g12, "md_bindings", return_value=lanes), \
+                    patch.object(g12, "md_envelope", side_effect=slow_md), \
+                    patch("scripts.p184_dr05_raw_publisher.raw_envelope", side_effect=book_raw):
+                g12.publish(work, out, 3.0, 4.0)
+            rows = g12.load_jsonl(out)
+        pubs = [r for r in rows if r.get("k") == "pub" and r["venue"] == "BINANCE"]
+        self.assertGreaterEqual(len(pubs), 11)
+        gaps = [(b["t"] - a["t"]) / MS for a, b in zip(pubs, pubs[1:])]
+        # Each tick sends >= 2 slow market-data events (>= 240 ms of sends at 4 Hz, seeds first): sharing the
+        # tick, BOOK would slip by those sends; on its own schedule it stays on the 250 ms grid.
+        self.assertLess(max(gaps), 300, gaps)
+        self.assertLess(max(r["late_ms"] for r in pubs), 50)
+        self.assertEqual([tuple(r["top"]) for r in pubs], [g12.book_top(r["seq"]) for r in pubs])
+        self.assertTrue(any(r.get("k") == "pub_md" for r in rows))
+        self.assertEqual(rows[-1]["k"], "end")
+        self.assertFalse(rows[-1]["md_thread_alive"])
+        self.assertEqual(book_frames[0]["payload"]["bids"], [[g12.book_top(1001)[0], "2"]])
+
+
+# ---------------------------------------------------------------- BOOK sampler coverage (undersampled, holes)
+
+def dedup(views, step_ms=50):
+    """The sampler's logged rows: a row on a view change or every 500 ms, each with its previous poll ``pt``."""
+    out, last = [], {}
+    for v in views:
+        key, seen = (v["venue"], v["seq"]), last.get(v["venue"])
+        if seen is None or seen[0] != key or v["t"] - seen[1] >= 500 * MS:
+            out.append(dict(v, pt=v["t"] - step_ms * MS))
+            last[v["venue"]] = (key, v["t"])
+    return out
+
+
+def hide_emissions(views, emitted, after_ns, transit_ms, n=2):
+    """Drop every sampler row showing ``n`` consecutive moving-top emissions (250 ms apart) after ``after_ns``:
+    the core emitted and the view applied each, the sampler never saw them (one hidden 250 ms emission is still
+    within regime interval + one tick: two make the observed source gap exceed the cadence)."""
+    k = next(k for k in range(1, len(emitted) - n) if emitted[k][0] >= after_ns
+             and all(emitted[i + 1][0] - emitted[i][0] < 300 * MS for i in range(k - 1, k + n)))
+    lo, hi = emitted[k][0] + transit_ms * MS, emitted[k + n][0] + transit_ms * MS
+    return [v for v in views if not lo <= v["t"] < hi], [seq for _, seq in emitted[k:k + n]]
+
+
+class SamplerCoverageTests(unittest.TestCase):
+    CLEARED = 100 * S
+
+    def run_fault(self, hide=None, okx_views=lambda views: views):
+        pubs, views = [], []
+        for venue in g12.VENUES:
+            p, v, emitted = book_run(venue, 0, 500 * S, moving=True, transit_ms=150)
+            if venue == "OKX":
+                if hide is not None:
+                    v, _ = hide_emissions(v, emitted, hide, 150)
+                v = okx_views(v)
+            pubs += p
+            views += v
+            p, v = md_rows(venue, 0, 500 * S)
+            pubs += p
+            views += v
+            views += hb_rows(venue, 0, 500 * S)
+        monitor = [{"t": t * S, "ports": {"8210": t >= 62}, "projector_lag": 0, "under_replicated": 0}
+                   for t in range(0, 500)]
+        fault = {"k": "fault", "name": "stream_restart", "kind": "stream", "injected_ns": 60 * S,
+                 "restart_ns": 61 * S}
+        return g12.evaluate_fault(fault, pubs, views, monitor)
+
+    def test_missed_samples_of_applied_emissions_are_undersampled_not_a_gap(self):
+        pubs, views, emitted = book_run("OKX", 90 * S, 200 * S, moving=True, transit_ms=150)
+        holed, hidden = hide_emissions(views, emitted, 110 * S, 150)
+        self.assertFalse(set(hidden) & {v["seq"] for v in holed})
+        state = caught(pubs, holed, "OKX", self.CLEARED)
+        self.assertEqual(state["rejected_samples"].get("update_gap", 0), 0)
+        self.assertEqual(state["rejected_samples"].get("update_transit", 0), 0)
+        self.assertGreater(state["rejected_samples"]["undersampled"], 0)
+        self.assertLess(state["caught_up_ns"] - self.CLEARED, S)  # the hole neither starts nor breaks the hold
+        self.assertGreater(state["undersampled_in_hold"], 0)
+        # Fault level: no per-apply BOOK evidence proves the apply, so NOT_MEASURED, never a PASS or a FAIL.
+        result = self.run_fault(hide=70 * S)
+        self.assertTrue(result["g12_caught_up_pass"])
+        self.assertEqual((result["parts"]["sampler"], result["reason"]), ("NOT_MEASURED", "SAMPLER_UNDERSAMPLED"))
+        self.assertFalse(result["pass"])
+        whole = self.run_fault()
+        self.assertEqual((whole["parts"]["sampler"], whole["pass"]), ("PASS", True))
+        self.assertEqual(whole["venues"]["OKX"]["undersampled_in_hold"], 0)
+
+    def test_a_real_skipped_apply_stays_a_gap_with_logged_polls(self):
+        # Production sampler shape (rows only on change / 500 ms, ``pt`` = previous poll 50 ms before): the view
+        # skipping two of every three emissions is a product update_gap, never excused as undersampled.
+        pubs, views, _ = book_run("OKX", 90 * S, 200 * S, moving=True, keep=lambda i: i % 3 == 0)
+        logged = dedup(views)
+        state = g12.caught_up(g12.view_series(logged), g12.publish_index(pubs), "OKX", self.CLEARED,
+                              frames=g12.book_frames(pubs), polls=g12.view_polls(logged))
+        self.assertIsNone(state["caught_up_ns"])
+        self.assertGreater(state["rejected_samples"]["update_gap"], 0)
+        self.assertEqual(state["rejected_samples"].get("undersampled", 0), 0)
+        # Rows without ``pt`` (a run logged before it): the logged-row hole is all there is, so a gap after a
+        # > 100 ms silent stretch is undersampled; either way the venue is never cleanly caught up (no PASS).
+        bare = [{k: v for k, v in row.items() if k != "pt"} for row in logged]
+        state = caught(pubs, bare, "OKX", self.CLEARED)
+        self.assertGreater(state["rejected_samples"]["undersampled"], 0)
+        self.assertTrue(state["caught_up_ns"] is None or state["undersampled_in_hold"] > 0, state)
+
+    def test_a_sampler_hole_over_the_rule_is_not_measured(self):
+        hole = (70 * S, 105 * S)  # longer than the 30 s hold, inside the caught-up hold
+        result = self.run_fault(okx_views=lambda v: [r for r in v if not hole[0] <= r["t"] < hole[1]])
+        self.assertGreater(result["venues"]["OKX"]["sampler_max_gap_s"], g12.SAMPLER_MAX_GAP_S)
+        self.assertLessEqual(result["venues"]["BINANCE"]["sampler_max_gap_s"], 1)
+        self.assertEqual((result["parts"]["sampler"], result["reason"]), ("NOT_MEASURED", "SAMPLER_GAP"))
+        self.assertFalse(result["pass"])
+        # The sampler gone for the rest of the run: not caught up is undecidable, not a product failure.
+        dead = self.run_fault(okx_views=lambda v: [r for r in v if r["t"] < 63 * S])
+        self.assertEqual((dead["sampler"], dead["reason"]), ("NOT_MEASURED", "SAMPLER_GAP"))
+        self.assertFalse(dead["pass"])
+        rows = [(1 * S, 5, True), (2 * S, None, False), (8 * S, 6, True)]
+        self.assertEqual(g12.sampler_max_gap_s({"OKX": rows}, "OKX", 0, 10 * S), 7.0)  # READ_ERROR is no view
+        self.assertEqual(g12.sampler_max_gap_s({}, "OKX", 0, 2 * S), 2.0)
+
+    def test_regressing_view_and_future_publication_are_rejected(self):
+        pubs, views, _ = book_run("OKX", 90 * S, 200 * S)
+        old = next(v["seq"] for v in views if v["t"] >= 117 * S)
+        # After 120 s the view regresses to a 3 s older post-clear frame and stays there (repeated seq).
+        regressed = [v if v["t"] < 120 * S else dict(v, seq=old) for v in views]
+        state = caught(pubs, regressed, "OKX", self.CLEARED)
+        self.assertIsNone(state["caught_up_ns"])
+        self.assertGreater(state["rejected_samples"]["open_gap"], 0)
+        # A sample showing a frame before its publish time is an impossible apply, never caught-up evidence.
+        pubs, views = stream_rows("OKX", 90 * S, 200 * S, transit_ms=-50)
+        state = g12.caught_up(g12.view_series(views), g12.publish_index(pubs), "OKX", self.CLEARED)
+        self.assertIsNone(state["caught_up_ns"])
+        self.assertGreater(state["rejected_samples"]["future_publish"], 0)
+
+
+class CoreGroupReproductionTests(unittest.TestCase):
+    """INCIDENT 2026-10-15: --core-group runs the production core-group shape (3 members, 6 raw partitions)."""
+
+    def test_default_shape_is_the_single_core_g12(self):
+        with tempfile.TemporaryDirectory() as work:
+            self.assertEqual(g12.core_group(work), {"members": 1, "raw_partitions": 1})
+        self.assertEqual(g12.topics(NS)[NS + ".raw"][0], 1)
+        roles = g12.topology(NS, "/home/bobby/x/work", "T", uid="1:1")
+        self.assertFalse({"core-2", "core-3"} & set(roles))
+        self.assertEqual(roles["core"][-1], "/work/core.json")
+
+    def test_three_members_share_one_group_with_own_config_and_client(self):
+        roles = g12.topology(NS, "/home/bobby/x/work", "T", uid="1:1", core_members=3)
+        for index, role in enumerate(g12.CORE_MEMBERS, start=1):
+            with self.subTest(role=role):
+                argv = roles[role]
+                suffix = "" if index == 1 else f"-{index}"
+                self.assertEqual(argv[argv.index("--name") + 1], f"{NS}-{role}")
+                self.assertIn(f"QDL_KAFKA_GROUP_ID={NS}", argv)
+                self.assertIn(f"QDL_KAFKA_CLIENT_ID={NS}{suffix}", argv)
+                self.assertEqual(argv[-1], f"/work/core{suffix}.json")
+                self.assertIn("--rm", argv)
+        for role in g12.CORE_MEMBERS[1:]:
+            self.assertIn(role, g12.TEARDOWN_ORDER)
+            self.assertIn(role, g12.FOLLOWED_ROLES)
+            self.assertEqual(g12.role_image_key(role), "core")
+
+    def test_member_configs_differ_only_in_transactional_id(self):
+        with tempfile.TemporaryDirectory() as work:
+            base = {"transactional_id": NS, "raw_topics": [NS + ".raw"], "batch_size": 1024}
+            (Path(work) / "core.json").write_text(json.dumps(base))
+            g12.write_member_configs(work, 3)
+            ids = {NS}
+            for index in (2, 3):
+                member = json.loads((Path(work) / f"core-{index}.json").read_text())
+                self.assertEqual({k: v for k, v in member.items() if k != "transactional_id"},
+                                 {k: v for k, v in base.items() if k != "transactional_id"})
+                ids.add(member["transactional_id"])
+            self.assertEqual(len(ids), 3)
+            (Path(work) / g12.CORE_GROUP_FILE).write_text(json.dumps({"members": 3, "raw_partitions": 6}))
+            self.assertEqual(g12.core_group(work)["raw_partitions"], 6)
+            (Path(work) / g12.CORE_GROUP_FILE).write_text(json.dumps({"members": 2, "raw_partitions": 6}))
+            with self.assertRaises(ValueError):
+                g12.core_group(work)
+        self.assertEqual(g12.topics(NS, 6)[NS + ".raw"][0], 6)
+
+    # The sealed core roster of B2 (2026-10-15): 2 BOOK + per venue TRADE/QUOTE/BAR/MARK, OKX MARK and INDEX
+    # components sharing one source_id - 10 keys; crc32 % 6 left raw/5 without a record for the whole run.
+    SEALED = [{"source_id": f"{v}-book", "venue": v, "l2": {"depth_per_side": 100}, "provider_kind": f"{v}_book"}
+              for v in ("binance", "okx")] + [
+        {"source_id": f"{v}-{lane}", "venue": v, "provider_kind": f"{v}_{kind}"}
+        for v in ("binance", "okx") for lane, kind in (("trade", "trade"), ("quote", "bbo"), ("bar-1m", "bar"))] + [
+        {"source_id": "binance-mark_index_price", "venue": "binance", "provider_kind": "binance_usdm_mark_index"},
+        {"source_id": "okx-mark_index_price", "venue": "okx", "provider_kind": "okx_mark_price"},
+        {"source_id": "okx-mark_index_price", "venue": "okx", "provider_kind": "okx_index_price"}]
+
+    def test_raw_partition_plan_covers_every_partition_and_is_deterministic(self):
+        import zlib
+        crc = {zlib.crc32(b["source_id"].encode()) % 6 for b in self.SEALED}
+        plan = g12.raw_partition_plan(self.SEALED, 6)
+        self.assertEqual(len(plan), 10)
+        self.assertEqual(set(plan.values()), set(range(6)), crc)  # every raw partition gets traffic
+        self.assertEqual(plan, g12.raw_partition_plan(list(reversed(self.SEALED)), 6))  # order-independent
+        # the six highest-rate lanes (BOOK, TRADE, QUOTE x 2 venues) land on six different partitions
+        fast = [plan[b["source_id"]] for b in self.SEALED if b["source_id"].endswith(("book", "trade", "quote"))]
+        self.assertEqual(sorted(fast), list(range(6)))
+        self.assertEqual(set(g12.raw_partition_plan(self.SEALED, 1).values()), {0})
+
+    def test_kill_uses_sigkill_and_stop_uses_sigterm(self):
+        row = {"Id": "abc", "Name": "/" + NS + "-core-2", "Config": {"Labels": {g12.LABEL: NS}},
+               "HostConfig": {"AutoRemove": True}}
+        for kill, expected in ((False, ["docker", "stop", "--time", "30", "abc"]),
+                               (True, ["docker", "kill", "--signal", "KILL", "abc"])):
+            calls = []
+
+            def sh(argv, timeout=60, check=True):
+                calls.append(argv)
+                return json.dumps([row]) if argv[:2] == ["docker", "inspect"] else ""
+            with self.subTest(kill=kill), patch.object(g12, "sh", sh):
+                self.assertTrue(g12.stop_role(NS, "core-2", kill=kill))
+                self.assertIn(expected, calls)
+
+    def _evidence(self, root, *, final_retries, kill_lag):
+        ev = Path(root)
+        (ev / "logs").mkdir()
+        (ev / "verdict-ns.json").write_text(json.dumps({"namespace": NS}))
+        t0 = 1_800_000_000 * S
+        windows = [("baseline", t0, t0 + 100 * S), ("after_roll_core", t0 + 100 * S, t0 + 200 * S),
+                   ("after_kill", t0 + 205 * S, t0 + 300 * S)]
+        faults = [{"k": "core_window", "name": n, "start_ns": a, "end_ns": b} for n, a, b in windows]
+        faults.insert(2, {"k": "core_kill", "role": "core-2", "injected_ns": t0 + 200 * S,
+                          "restart_ns": t0 + 200 * S + MS})
+        (ev / "faults.jsonl").write_text("".join(json.dumps(f) + "\n" for f in faults))
+
+        def stamp(t):
+            from datetime import datetime, timezone
+            return datetime.fromtimestamp(t // S, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + ".000000001Z"
+        lines = [f"{stamp(t0 + 150 * S)} " + json.dumps({"event": "qdl_realtime_core_rebalance_rewind"}),
+                 f"{stamp(t0 + 150 * S)} " + json.dumps({"event": "qdl_realtime_core_progress"})]
+        lines += [f"{stamp(t0 + (210 + 10 * n) * S)} " + json.dumps(
+            {"event": "qdl_realtime_core_retry", "error": "consumer rebalanced"}) for n in range(final_retries)]
+        (ev / "logs" / "core-2.life1.log").write_text("\n".join(lines) + "\n")
+        rows = []
+        for t in range(0, 300):
+            members, assigned, lag = 3, [2, 2, 2], 5
+            if 200 <= t < 212:
+                members, assigned, lag = 4, [0, 2, 2, 2], 400
+            elif t >= 212:
+                lag = kill_lag
+            rows.append({"t": t0 + t * S, "groups": {NS: {"members": members, "assigned": assigned}},
+                         "lag": {NS: lag}})
+        (ev / "monitor.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+        return ev
+
+    def test_verdict_counts_windows_storm_and_kill_catch_up(self):
+        with tempfile.TemporaryDirectory() as root:
+            verdict = g12.core_group_verdict(self._evidence(root, final_retries=0, kill_lag=3))
+            self.assertFalse(verdict["storm"])
+            self.assertEqual(verdict["windows"]["after_roll_core"]["rewinds"], 1)
+            self.assertEqual(verdict["windows"]["after_roll_core"]["retries"], 0)
+            self.assertEqual(verdict["windows"]["baseline"]["max_lag"], 5)
+            # The dead member (empty, until its session expires) counts as short.
+            self.assertEqual(verdict["windows"]["after_kill"]["short_member_samples"], 7)
+            # RB2: the count-only monitor has no member ids, so recovery is not a clock; the old reading stays
+            # a diagnostic that closes nothing.
+            self.assertEqual(verdict["core_kill_first_healthy_sample_s"], 12.0)
+            self.assertIsNone(verdict["core_kill_caught_up_s"])
+            self.assertEqual(verdict["core_kill"]["reason"], "NO_EXIT_EVENT")
+            self.assertEqual(verdict["totals"]["qdl_realtime_core_rebalance_rewind"], 1)
+        with tempfile.TemporaryDirectory() as root:
+            verdict = g12.core_group_verdict(self._evidence(root, final_retries=3, kill_lag=50))
+            self.assertTrue(verdict["storm"])
+            self.assertEqual(verdict["windows"]["after_kill"]["retries"], 3)
+            self.assertIsNone(verdict["core_kill_caught_up_s"])
+
+
+PREREG = {
+    "schema": "p184-coregroup-prereg.v1",
+    "criteria": {
+        "run_A_control": "storm reproduced: storm=true OR retries >= 2 per member after the last roll OR group < 3 "
+                         "members at a window end. If not reproduced: harness NOT valid evidence; run B cannot "
+                         "certify the fix.",
+        "run_B_fix": ["storm=false", "retries == 0 and rewind_failed == 0 in every window",
+                      "rewinds <= 2 per roll window and 0 in baseline",
+                      "last 30 s of every window: 3 members, each >= 1 partition",
+                      "core_kill_caught_up_s <= 60 and dead member's partitions moved <= 15 s",
+                      "no inflight_commit_failed / stop_drain_failed", "0 production guard breaches"]}}
+
+
+OLD_CORE, NEW_CORE = "sha256:" + "a" * 64, "sha256:" + "b" * 64
+ADDENDUM_2 = {
+    "schema": "p184-coregroup-prereg-addendum.v1",
+    "run_B2": {"criteria": [
+        "storm=false",
+        "new-image member lives: retries == 0, rewind_failed == 0, rewinds <= 2 per window, 0 in baseline",
+        "old-image (RUST18) member lives: <= 1 retry per member, only in the roll window in which it is a survivor "
+        "of a roll; 0 in baseline",
+        "once all 3 members run the new image (after_roll_core-3 and after_kill): retries == 0 absolute",
+        "last 30 s of every window: 3 members, all 6 partitions owned exactly once",
+        "core kill (RB2 clocks): ownership restored <= 15 s after exit confirmed; caught up <= 60 s",
+        "no inflight_commit_failed / stop_drain_failed",
+        "0 production guard breaches",
+        "coverage: monitor gap <= 5 s, member logs cover every window (else NOT_MEASURED, never PASS)"]}}
+B2 = ADDENDUM_2["run_B2"]["criteria"]
+
+
+class CoreGroupAcceptanceTests(unittest.TestCase):
+    """RB2/RB3 (review 2026-10-15): recovery clocks tied to the dead member and a versioned acceptance layer."""
+
+    T0 = 1_800_000_000 * S
+    # (window, start s, end s); rolls injected at 120/272/424, kill at 576 (core-2), teardown at 730.
+    WINDOWS = [("baseline", 0, 120), ("after_roll_core", 122, 272), ("after_roll_core-2", 274, 424),
+               ("after_roll_core-3", 426, 576), ("after_kill", 578, 728)]
+    OWNERS = {"core": (0, 1), "core-2": (2, 3), "core-3": (4, 5)}
+
+    @staticmethod
+    def stamp(t):
+        from datetime import datetime, timezone
+        return datetime.fromtimestamp(t // S, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + f".{t % S:09d}Z"
+
+    def build(self, root, *, drop_life=None, monitor_from=0, events=(), drop_window=None, detail=True,
+              restored_at=586, truncate=None, images=False, unknown_image=None):
+        """A complete healthy 5-window run; keyword arguments break one thing at a time. ``images``: record each
+        life's image (life 1 OLD, later lives NEW = the roll target) in provenance and die events."""
+        T, ev = self.T0, Path(root) / "evidence"
+        (ev / "logs").mkdir(parents=True)
+        (ev / "verdict-ns.json").write_text(json.dumps({"namespace": NS}))
+        faults = []
+        for name, a, b in self.WINDOWS:
+            if name != drop_window:
+                faults.append({"k": "core_window", "name": name, "start_ns": T + a * S, "end_ns": T + b * S})
+            if name.startswith("after_roll_"):
+                role = name[len("after_roll_"):]
+                faults.insert(-1, {"k": "core_roll", "role": role, "injected_ns": T + (a - 2) * S,
+                                   "restart_ns": T + (a - 1) * S, **({"image": NEW_CORE} if images else {})})
+        faults.insert(-1, {"k": "core_kill", "role": "core-2", "injected_ns": T + 576 * S, "restart_ns": T + 577 * S})
+        (ev / "faults.jsonl").write_text("".join(json.dumps(f) + "\n" for f in faults))
+        # Lives: (role, life, first s, die s); the kill's die is 0.2 s after injection.
+        lives = [("core", 1, 0.5, 120.5), ("core", 2, 121.5, 730), ("core-2", 1, 0.5, 272.5),
+                 ("core-2", 2, 273.5, 576.2), ("core-2", 3, 577.5, 731), ("core-3", 1, 0.5, 424.5),
+                 ("core-3", 2, 425.5, 732)]
+        die, provenance = [], []
+        for role, life, first, end in lives:
+            image = None if (role, life) == unknown_image else OLD_CORE if life == 1 else NEW_CORE
+            attributes = {"name": f"{NS}-{role}", "exitCode": "137" if (role, life) == ("core-2", 2) else "0"}
+            if images and image:
+                attributes["image"] = image
+                provenance.append({"t": T + int((first - 0.4) * S), "role": role, "image_role": "core",
+                                   "expected": image, "actual": image, "match": True})
+            die.append({"Action": "die", "timeNano": T + int(end * S), "Actor": {"Attributes": attributes}})
+            if (role, life) == drop_life:
+                continue
+            lines = [f"{self.stamp(T + int(first * S))} " + json.dumps(
+                {"event": "qdl_realtime_core_started", "generation": 1})]
+            lines += [f"{self.stamp(T + int(t * S))} " + json.dumps({"event": "qdl_realtime_core_progress"})
+                      for t in range(int(first) + 1, int(end))]
+            lines += [f"{self.stamp(T + int(t * S))} " + json.dumps(dict({"event": e}, **extra))
+                      for r, t, e, extra in events if r == role and first <= t < end]
+            text = "\n".join(lines) + "\n"
+            if (role, life) == truncate:
+                text = text[len(text) // 2:]  # the follower's tail: starts mid-line
+            (ev / "logs" / f"{role}.life{life}.log").write_text(text)
+        (ev / "container-events.jsonl").write_text("".join(json.dumps(d) + "\n" for d in die))
+        if images:
+            (ev / "provenance.jsonl").write_text("".join(json.dumps(r) + "\n" for r in provenance))
+        rows = []
+        for t in range(monitor_from, 730):
+            lives_at = {"core": 1 if t < 121 else 2, "core-2": 1 if t < 273 else 2 if t < restored_at else 3,
+                        "core-3": 1 if t < 425 else 2}
+            owners = dict(self.OWNERS)
+            if t >= restored_at:  # new owners after the dead member left
+                owners = {"core": (0, 1, 2), "core-2": (5,), "core-3": (3, 4)}
+            members = [{"member_id": f"m-{role}-{lives_at[role]}", "client_id": g12.core_client_id(NS, role),
+                        "host": "/10.0.0.1", "partitions": [f"{NS}.raw/{p}" for p in owners[role]]}
+                       for role in g12.CORE_MEMBERS]
+            frozen = 576 <= t < 589  # the dead member's partitions stand still until the new owner commits
+            offsets = {f"{NS}.raw/{p}": [575 if frozen and p in (2, 3) else t - 1, t] for p in range(6)}
+            lag = sum(e - c for c, e in offsets.values())
+            if t == 60:
+                lag = 20  # baseline maximum: the stale samples right after the kill are "within baseline"
+            group = {"state": "STABLE", "members": 3, "assigned": sorted(len(m["partitions"]) for m in members)}
+            if detail:
+                group["detail"] = members
+            row = {"t": T + t * S, "groups": {NS: group}, "lag": {NS: lag}}
+            if detail:
+                row["offsets"] = {NS: offsets}
+            rows.append(row)
+        (ev / "monitor.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+        (ev / "orchestrator.jsonl").write_text(json.dumps({"step": "teardown", "production_guard_breaches": {}})
+                                               + "\n")
+        (ev / "core-group-verdict.json").write_text(json.dumps({"status": "COMPLETED", "error": None}))
+        return Path(root)
+
+    def accept(self, base):
+        result = g12.core_group_accept(base, self.prereg)
+        return result, {row["condition"]: row["result"] for row in result["acceptance"]["run_B_fix"]["conditions"]}
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.prereg = Path(self.tmp.name) / "prereg.json"
+        self.prereg.write_text(json.dumps(PREREG))
+        self.addendum = Path(self.tmp.name) / "addendum.json"
+        self.addendum.write_text(json.dumps(ADDENDUM_2))
+
+    def root(self, name):
+        path = Path(self.tmp.name) / name
+        path.mkdir()
+        return path
+
+    def test_healthy_run_passes_every_frozen_condition(self):
+        base = self.build(self.root("ok"), events=[("core-3", 150, "qdl_realtime_core_rebalance_rewind", {})])
+        result, rows = self.accept(base)
+        self.assertEqual(result["acceptance"]["run_B_fix"]["result"], "PASS", rows)
+        self.assertEqual(len(rows), 4 + len(PREREG["criteria"]["run_B_fix"]))
+        self.assertEqual(result["acceptance"]["run_A_control"]["result"], "FAIL")  # no storm to reproduce
+        self.assertEqual(result["windows"]["after_roll_core"]["tail_coverage_basis"], ["partitions"])
+
+    def test_stale_three_member_view_after_kill_does_not_close_recovery(self):
+        verdict = g12.core_group_verdict(self.build(self.root("stale")) / "evidence")
+        clocks = verdict["core_kill"]
+        # 577-585: the old 3-member assignment (dead member still listed) with lag inside the baseline range.
+        self.assertEqual(verdict["core_kill_first_healthy_sample_s"], 0.0)  # the old reading took the stale view
+        self.assertEqual(clocks["exit_confirmed_s"], 0.2)
+        self.assertEqual(clocks["dead_member_id"], "m-core-2-2")
+        self.assertEqual(clocks["affected_partitions"], [f"{NS}.raw/2", f"{NS}.raw/3"])
+        self.assertEqual(clocks["ownership_restored_s"], 10.0)  # only the ownership change closes it
+        self.assertEqual(clocks["progress_s"], 13.0)  # and progress past the post-fault offsets
+        self.assertEqual(clocks["caught_up_s"], 13.0)
+        self.assertEqual(verdict["core_kill_caught_up_s"], 13.0)
+        # The stale view never changes: recovery is not restored and, with full monitor coverage, that is a FAIL.
+        result, rows = self.accept(self.build(self.root("never"), restored_at=10_000))
+        self.assertEqual(result["verdict"]["core_kill"]["reason"], "OWNERSHIP_NOT_RESTORED")
+        self.assertEqual(rows["core_kill_caught_up_s <= 60 and dead member's partitions moved <= 15 s"], "FAIL")
+        # Moved, but after the 15 s deadline.
+        _, rows = self.accept(self.build(self.root("late"), restored_at=600))
+        self.assertEqual(rows["core_kill_caught_up_s <= 60 and dead member's partitions moved <= 15 s"], "FAIL")
+
+    def test_absent_transfer_measurement_is_not_measured(self):
+        result, rows = self.accept(self.build(self.root("counts"), detail=False))
+        self.assertEqual(result["verdict"]["core_kill"]["reason"], "NO_MEMBER_DETAIL")
+        self.assertEqual(rows["core_kill_caught_up_s <= 60 and dead member's partitions moved <= 15 s"],
+                         "NOT_MEASURED")
+        self.assertEqual(result["acceptance"]["run_B_fix"]["result"], "NOT_MEASURED")
+        self.assertEqual(result["windows"]["baseline"]["tail_coverage_basis"], ["counts"])
+
+    def test_missing_member_log_is_not_measured(self):
+        result, rows = self.accept(self.build(self.root("nolog"), drop_life=("core-3", 2)))
+        self.assertFalse(result["windows"]["after_roll_core-3"]["log_covered"]["core-3"])
+        self.assertEqual(rows["harness: every member's retained log covers every window"], "NOT_MEASURED")
+        self.assertEqual(rows["retries == 0 and rewind_failed == 0 in every window"], "NOT_MEASURED")
+        self.assertEqual(rows["no inflight_commit_failed / stop_drain_failed"], "NOT_MEASURED")
+        self.assertEqual(result["acceptance"]["run_B_fix"]["result"], "NOT_MEASURED")
+
+    def test_truncated_life_covers_only_its_retained_tail(self):
+        result, rows = self.accept(self.build(self.root("tail"), truncate=("core", 2)))
+        covered = {name: w["log_covered"]["core"] for name, w in result["windows"].items()}
+        self.assertFalse(covered["after_roll_core"])
+        self.assertTrue(covered["after_kill"])
+        self.assertEqual(result["acceptance"]["run_B_fix"]["result"], "NOT_MEASURED")
+
+    def test_one_tail_sample_only_is_not_a_pass(self):
+        base = self.build(self.root("tailonly"), monitor_from=728)
+        verdict = g12.core_group_verdict(base / "evidence")
+        self.assertFalse(verdict["storm"])  # the old diagnostic would call this healthy
+        result, rows = self.accept(base)
+        self.assertEqual(rows["harness: monitor coverage per window (gap <= 5 s)"], "NOT_MEASURED")
+        self.assertEqual(rows["storm=false"], "NOT_MEASURED")
+        self.assertEqual(rows["last 30 s of every window: 3 members, each >= 1 partition"], "NOT_MEASURED")
+        self.assertEqual(result["acceptance"]["run_B_fix"]["result"], "NOT_MEASURED")
+
+    def test_early_roll_failure_then_healthy_finish_fails(self):
+        events = [("core", 130 + n, "qdl_realtime_core_retry", {"error": "rebalanced"}) for n in range(3)]
+        base = self.build(self.root("early"), events=events)
+        self.assertFalse(g12.core_group_verdict(base / "evidence")["storm"])
+        result, rows = self.accept(base)
+        self.assertEqual(rows["storm=false"], "PASS")
+        self.assertEqual(rows["retries == 0 and rewind_failed == 0 in every window"], "FAIL")
+        self.assertEqual(result["acceptance"]["run_B_fix"]["result"], "FAIL")
+
+    def test_missing_roll_window_is_not_measured(self):
+        result, rows = self.accept(self.build(self.root("nowin"), drop_window="after_roll_core-2"))
+        self.assertEqual(rows["harness: all windows present"], "NOT_MEASURED")
+        self.assertEqual(rows["rewinds <= 2 per roll window and 0 in baseline"], "NOT_MEASURED")
+        self.assertEqual(result["acceptance"]["run_B_fix"]["result"], "NOT_MEASURED")
+
+    def test_more_than_two_rewinds_in_a_roll_window_fails(self):
+        events = [("core-3", 300 + n, "qdl_realtime_core_rebalance_rewind", {}) for n in range(3)]
+        _, rows = self.accept(self.build(self.root("rewinds"), events=events))
+        self.assertEqual(rows["rewinds <= 2 per roll window and 0 in baseline"], "FAIL")
+        events = [("core", 30, "qdl_realtime_core_rebalance_rewind", {})]
+        _, rows = self.accept(self.build(self.root("baseline"), events=events))
+        self.assertEqual(rows["rewinds <= 2 per roll window and 0 in baseline"], "FAIL")
+        events = [("core", 140, "qdl_realtime_core_rewind_failed", {}),
+                  ("core-2", 140, "qdl_realtime_core_inflight_commit_failed", {})]
+        _, rows = self.accept(self.build(self.root("failed"), events=events))
+        self.assertEqual(rows["retries == 0 and rewind_failed == 0 in every window"], "FAIL")
+        self.assertEqual(rows["no inflight_commit_failed / stop_drain_failed"], "FAIL")
+
+    def test_control_run_reproduces_on_any_sub_condition_and_unknown_text_is_not_guessed(self):
+        events = [(role, 600 + n, "qdl_realtime_core_retry", {"error": "rebalanced"})
+                  for role in g12.CORE_MEMBERS for n in range(2)]
+        result, _ = self.accept(self.build(self.root("storm"), events=events))
+        control = result["acceptance"]["run_A_control"]
+        self.assertEqual(control["conditions"][-1]["result"], "PASS")
+        self.assertEqual(control["conditions"][-1]["detail"]["storm"], True)
+        verdict = g12.core_group_verdict(self.build(self.root("plain")) / "evidence")
+        verdict["status"] = "COMPLETED"
+        out = g12.core_group_acceptance(verdict, {"criteria": {"run_B_fix": ["storm=false", "something new"]}})
+        rows = {r["condition"]: (r["result"], r["detail"]) for r in out["run_B_fix"]["conditions"]}
+        self.assertEqual(rows["something new"], ("NOT_MEASURED", {"reason": "UNKNOWN_CONDITION"}))
+        self.assertEqual(out["run_B_fix"]["result"], "NOT_MEASURED")
+
+    def test_cli_reevaluates_saved_evidence_without_writing(self):
+        import contextlib
+        import io
+        base = self.build(self.root("cli"))
+        before = {p: p.stat().st_mtime_ns for p in base.rglob("*")}
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = g12.main(["--core-group-accept", str(base), "--prereg", str(self.prereg)])
+        self.assertEqual(code, 0)
+        printed = json.loads(buffer.getvalue())
+        self.assertEqual(printed["acceptance"]["schema"], g12.CORE_GROUP_ACCEPTANCE_SCHEMA_V1)
+        self.assertEqual(printed["acceptance"]["run_B_fix"]["result"], "PASS")
+        self.assertEqual(before, {p: p.stat().st_mtime_ns for p in base.rglob("*")})
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            g12.main(["--core-group-accept", str(base)])
+
+    # -- addendum-2 (owner decision 2026-10-15): per-image acceptance --
+    def accept_b2(self, base):
+        result = g12.core_group_accept(base, self.prereg, self.addendum)
+        b2 = result["acceptance"]["run_B2"]
+        return result, b2, {row["condition"]: row["result"] for row in b2["conditions"]}
+
+    def retry(self, role, t):
+        return (role, t, "qdl_realtime_core_retry", {"error": "consumer rebalanced"})
+
+    def test_b_like_old_image_survivor_retries_pass_only_per_image(self):
+        # Run B's shape: the two old-image survivors retry once each in the first roll window.
+        base = self.build(self.root("blike"), images=True, events=[self.retry("core-2", 150),
+                                                                   self.retry("core-3", 160)])
+        result, b2, rows = self.accept_b2(base)
+        self.assertEqual(result["acceptance"]["schema"], "p184.coregroup.acceptance.v2")
+        self.assertEqual(b2["result"], "PASS", rows)
+        self.assertEqual(len(rows), 5 + len(B2))
+        self.assertEqual(result["acceptance"]["run_B_fix"]["result"], "FAIL")  # v1 reading kept, unchanged
+        lives = result["by_life"]["after_roll_core"]
+        self.assertEqual({k: (v["image"], v["retries"]) for k, v in lives.items()},
+                         {"core-2.life1": (OLD_CORE, 1), "core-3.life1": (OLD_CORE, 1)})
+        self.assertEqual(result["core_images"]["lives"]["core-2"], [OLD_CORE, NEW_CORE, NEW_CORE])
+
+    def test_old_image_member_with_two_retries_fails(self):
+        _, b2, rows = self.accept_b2(self.build(self.root("old2"), images=True,
+                                                events=[self.retry("core-3", 150), self.retry("core-3", 300)]))
+        self.assertEqual(rows[B2[2]], "FAIL")
+        self.assertEqual(b2["result"], "FAIL")
+        self.assertEqual(rows[B2[1]], "PASS")
+
+    def test_old_image_retry_outside_a_survivor_window_fails(self):
+        # core-2's old life retries while it is itself being rolled (span opens at the roll injection, 272 s).
+        _, _, rows = self.accept_b2(self.build(self.root("ownroll"), images=True, events=[self.retry("core-2", 272)]))
+        self.assertEqual(rows[B2[2]], "FAIL")
+        _, _, rows = self.accept_b2(self.build(self.root("base"), images=True, events=[self.retry("core", 30)]))
+        self.assertEqual(rows[B2[2]], "FAIL")
+
+    def test_new_image_retry_fails(self):
+        _, b2, rows = self.accept_b2(self.build(self.root("new"), images=True, events=[self.retry("core", 200)]))
+        self.assertEqual(rows[B2[1]], "FAIL")
+        self.assertEqual(rows[B2[2]], "PASS")
+        self.assertEqual(b2["result"], "FAIL")
+        events = [("core", 200 + n, "qdl_realtime_core_rebalance_rewind", {}) for n in range(3)]
+        _, _, rows = self.accept_b2(self.build(self.root("rew"), images=True, events=events))
+        self.assertEqual(rows[B2[1]], "FAIL")
+        events = [("core", 200, "qdl_realtime_core_rewind_failed", {})]
+        _, _, rows = self.accept_b2(self.build(self.root("rwf"), images=True, events=events))
+        self.assertEqual(rows[B2[1]], "FAIL")
+
+    def test_retry_after_all_members_on_new_image_fails(self):
+        _, b2, rows = self.accept_b2(self.build(self.root("allnew"), images=True,
+                                                events=[self.retry("core-3", 600)]))
+        self.assertEqual(rows[B2[3]], "FAIL")
+        self.assertEqual(b2["result"], "FAIL")
+
+    def test_unknown_life_image_or_counts_only_monitor_is_not_measured(self):
+        base = self.build(self.root("unknown"), images=True, unknown_image=("core-2", 1),
+                          events=[self.retry("core-2", 150)])
+        _, b2, rows = self.accept_b2(base)
+        self.assertEqual(rows[B2[2]], "NOT_MEASURED")
+        self.assertEqual(b2["result"], "NOT_MEASURED")
+        _, b2, rows = self.accept_b2(self.build(self.root("noimg")))  # no provenance at all
+        self.assertEqual(rows[B2[1]], "NOT_MEASURED")
+        _, b2, rows = self.accept_b2(self.build(self.root("cnt"), images=True, detail=False))
+        self.assertEqual(rows[B2[4]], "NOT_MEASURED")
+        self.assertEqual(b2["result"], "NOT_MEASURED")
+        _, b2, rows = self.accept_b2(self.build(self.root("nolog2"), images=True, drop_life=("core-3", 2)))
+        self.assertEqual(rows[B2[8]], "NOT_MEASURED")
+        self.assertEqual(b2["result"], "NOT_MEASURED")
+
+    # -- B2 apparatus fixes (2026-10-15): stable-group baseline and idle partitions in the kill clocks --
+    def test_formation_retry_before_stability_is_not_counted_in_baseline(self):
+        retry = [self.retry("core-2", 5)]
+        # B2 as run: the baseline opened at member start, so core-2's formation retry is a baseline retry.
+        verdict = g12.core_group_verdict(self.build(self.root("asrun"), events=retry) / "evidence")
+        self.assertEqual(verdict["windows"]["baseline"]["retries"], 1)
+        formation = verdict["baseline_formation"]
+        self.assertFalse(formation["formation_recorded"])
+        self.assertFalse(formation["baseline_opened_on_stable_group"])
+        self.assertEqual([(e["role"], e["event"]) for e in formation["baseline_events_before_stable"]],
+                         [("core-2", "qdl_realtime_core_retry")])
+        # Fixed: a diagnostic formation window up to the stable hold, the baseline after it.
+        base = self.build(self.root("fixed"), events=retry)
+        faults = g12.load_jsonl(base / "evidence" / "faults.jsonl")
+        faults[0]["start_ns"] = self.T0 + 20 * S
+        faults.insert(0, {"k": "core_window", "name": "formation", "start_ns": self.T0, "end_ns": self.T0 + 20 * S,
+                          "diagnostic": True})
+        (base / "evidence" / "faults.jsonl").write_text("".join(json.dumps(f) + "\n" for f in faults))
+        verdict = g12.core_group_verdict(base / "evidence")
+        self.assertEqual(verdict["windows"]["formation"]["retries"], 1)
+        self.assertEqual(verdict["windows"]["baseline"]["retries"], 0)
+        self.assertTrue(verdict["baseline_formation"]["baseline_opened_on_stable_group"])
+        self.assertEqual(verdict["baseline_formation"]["baseline_events_before_stable"], [])
+        _, _, rows = self.accept_b2(base)
+        self.assertNotIn("formation", g12.CORE_GROUP_WINDOWS)  # diagnostic, never judged
+        self.assertEqual(rows["once all 3 members run the new image (after_roll_core-3 and after_kill): retries == 0 "
+                              "absolute"], "PASS")
+
+    def monitor_row(self, t, members=3, state="STABLE", owners=None):
+        owners = owners or self.OWNERS
+        detail = [{"member_id": f"m-{role}", "client_id": g12.core_client_id(NS, role), "host": "/10.0.0.1",
+                   "partitions": [f"{NS}.raw/{p}" for p in owners[role]]} for role in g12.CORE_MEMBERS[:members]]
+        return {"t": self.T0 + int(t * S), "groups": {NS: {"state": state, "members": members, "detail": detail,
+                                                         "assigned": [len(m["partitions"]) for m in detail]}}}
+
+    def test_group_stability_hold(self):
+        stable_at = lambda rows: g12.core_group_stable_at(rows, NS, 6, 3, 10, self.T0)  # noqa: E731
+        joining = [self.monitor_row(t, members=2, owners={"core": (0, 1, 2), "core-2": (3, 4, 5)}) for t in range(5)]
+        rows = joining + [self.monitor_row(t) for t in range(5, 30)]
+        self.assertEqual(stable_at(rows), self.T0 + 15 * S)
+        rows[8] = self.monitor_row(8, state="PREPARING_REBALANCE")  # a rebalance restarts the hold
+        self.assertEqual(stable_at(rows), self.T0 + 19 * S)
+        del rows[10:17]  # a monitor gap > MONITOR_MAX_GAP_S restarts it too
+        self.assertEqual(stable_at(rows), self.T0 + 27 * S)
+        self.assertIsNone(stable_at(joining))
+
+    def formation_run(self, rows, name):
+        work, evidence = self.root(name + "-work"), self.root(name + "-ev")
+        (work / g12.CORE_GROUP_FILE).write_text(json.dumps({"members": 3, "raw_partitions": 6}))
+        (evidence / "monitor.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+        faults = []
+
+        def wait(seconds, faulted=(), until=None, step=5.0):
+            return until() or None  # the bound elapsed after one look
+        run = types.SimpleNamespace(work=work, evidence=evidence, ns=NS, wait=wait, fault_row=faults.append,
+                                    note=lambda *a, **k: None)
+        return run, faults
+
+    def test_never_stable_group_makes_the_run_not_measured(self):
+        run, faults = self.formation_run([self.monitor_row(t, members=2, owners={"core": (0, 1, 2),
+                                                                                "core-2": (3, 4, 5)})
+                                          for t in range(120)], "never")
+        with self.assertRaises(g12.CoreGroupNotMeasured):
+            g12.Run.core_group_formation(run, self.T0)
+        self.assertEqual((faults[0]["name"], faults[0]["reason"], faults[0]["stable_at_ns"]),
+                         ("formation", "GROUP_NEVER_STABLE", None))
+        run, faults = self.formation_run([self.monitor_row(t) for t in range(30)], "stable")
+        self.assertEqual(g12.Run.core_group_formation(run, self.T0), self.T0 + 10 * S)
+        self.assertNotIn("reason", faults[0])
+        # the orchestrator records NOT_MEASURED (not FAIL) and the harness row follows it
+        verdict = {"status": "NOT_MEASURED", "error": "CoreGroupNotMeasured: GROUP_NEVER_STABLE", "windows": {}}
+        harness = g12.core_group_acceptance(verdict, PREREG)["run_B_fix"]["conditions"][0]
+        self.assertEqual((harness["condition"], harness["result"]), ("harness: run COMPLETED", "NOT_MEASURED"))
+
+    def test_orchestrator_stops_not_measured_when_the_group_never_forms(self):
+        tmp = Path(self.tmp.name)
+
+        class FakeRun:
+            def __init__(self, base, export, ns, images):
+                self.images = images
+                self.evidence = tmp / "orch"
+                self.evidence.mkdir()
+
+            def prepare(self):
+                pass
+
+            def core_group_up(self):
+                pass
+
+            def core_group_formation(self, start_ns):
+                raise g12.CoreGroupNotMeasured("GROUP_NEVER_STABLE within 120 s")
+
+            def core_group_window(self, *a, **k):
+                raise AssertionError("no baseline after a never-stable formation")
+
+            def note(self, *a, **k):
+                pass
+
+            def down(self):
+                pass
+        with patch.object(g12, "Run", FakeRun), patch.object(g12, "core_group_verdict", return_value={}):
+            self.assertEqual(g12.orchestrate_core_group(tmp, tmp, NS, {}, NEW_CORE), 1)
+        saved = json.loads((tmp / "orch" / "core-group-verdict.json").read_text())
+        self.assertEqual(saved["status"], "NOT_MEASURED")
+        self.assertIn("GROUP_NEVER_STABLE", saved["error"])
+
+    def kill_clocks(self, pre, post_of):
+        """core-2 (owner of raw/2, raw/3) killed at t=1 s, exit at 1.2 s; ownership moves at t=3 s.
+        ``pre``: {p: [committed, end]} before the kill; ``post_of(t)``: offsets from t=3 s on."""
+        base = {p: [100, 100] for p in range(6)}
+        rows = [{**self.monitor_row(0), "offsets": {NS: {f"{NS}.raw/{p}": v for p, v in {**base, **pre}.items()}},
+                 "lag": {NS: 0}}]
+        moved = {"core": (0, 1, 2), "core-2": (5,), "core-3": (3, 4)}
+        for t in range(3, 40):
+            row = self.monitor_row(t, owners=moved)
+            row["groups"][NS]["detail"][1]["member_id"] = "m-core-2-new"
+            offsets = {**base, **post_of(t)}
+            row["offsets"] = {NS: {f"{NS}.raw/{p}": v for p, v in offsets.items()}}
+            row["lag"] = {NS: sum(max(0, e - max(c, 0)) for c, e in offsets.values())}
+            rows.append(row)
+        die = [{"Action": "die", "timeNano": self.T0 + 1200 * MS,
+                "Actor": {"Attributes": {"name": f"{NS}-core-2", "exitCode": "137"}}}]
+        return g12.core_kill_recovery({"role": "core-2", "injected_ns": self.T0 + S}, rows, die, NS, 6, 3, 5)
+
+    def test_kill_clock_excludes_a_partition_that_never_had_a_record(self):
+        # B2: raw/2 [-1001, 0] for the whole run; raw/3 has a backlog the new owner consumes by t=6 s.
+        clocks = self.kill_clocks({2: [-1001, 0], 3: [100, 120]},
+                                  lambda t: {2: [-1001, 0], 3: [100 if t < 6 else 130, 130]})
+        self.assertEqual(clocks["idle_partitions"], [f"{NS}.raw/2"])
+        self.assertEqual(clocks["idle_reasons"], {f"{NS}.raw/2": "NO_RECORDS"})
+        self.assertEqual(clocks["post_fault_offsets"], {f"{NS}.raw/3": 130})
+        self.assertEqual((clocks["ownership_restored_s"], clocks["progress_s"], clocks["caught_up_s"]),
+                         (2.0, 5.0, 5.0))
+        self.assertEqual(clocks["progress_basis"], "NON_IDLE_PAST_POST_FAULT_OFFSETS")
+        self.assertIsNone(clocks["reason"])
+
+    def test_kill_clock_idle_at_committed_log_end_and_new_input_is_not_idle(self):
+        # raw/2 fully committed and no record after the kill: idle; raw/3 fully committed but new records arrive.
+        clocks = self.kill_clocks({2: [50, 50], 3: [70, 70]},
+                                  lambda t: {2: [50, 50], 3: [70 if t < 8 else 75, 75]})
+        self.assertEqual(clocks["idle_reasons"], {f"{NS}.raw/2": "COMMITTED_AT_LOG_END"})
+        self.assertEqual(clocks["post_fault_offsets"], {f"{NS}.raw/3": 75})
+        self.assertEqual(clocks["progress_s"], 7.0)
+        # a non-idle partition that never advances is still NO_PROGRESS
+        clocks = self.kill_clocks({2: [50, 50], 3: [70, 70]}, lambda t: {2: [50, 50], 3: [70, 75]})
+        self.assertEqual((clocks["reason"], clocks["progress_s"]), ("NO_PROGRESS", None))
+
+    def test_kill_clock_all_affected_idle_progress_is_ownership(self):
+        clocks = self.kill_clocks({2: [-1001, 0], 3: [50, 50]}, lambda t: {2: [-1001, 0], 3: [50, 50]})
+        self.assertEqual(clocks["idle_partitions"], [f"{NS}.raw/2", f"{NS}.raw/3"])
+        self.assertEqual(clocks["progress_basis"], "ALL_AFFECTED_IDLE")
+        self.assertEqual(clocks["progress_s"], clocks["ownership_restored_s"])
+        self.assertEqual(clocks["caught_up_s"], 2.0)
+        self.assertIsNone(clocks["reason"])
+
+    def test_cli_addendum_flag(self):
+        import contextlib
+        import io
+        base = self.build(self.root("cli2"), images=True)
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = g12.main(["--core-group-accept", str(base), "--prereg", str(self.prereg),
+                             "--addendum", str(self.addendum)])
+        self.assertEqual(code, 0)
+        printed = json.loads(buffer.getvalue())
+        self.assertEqual(printed["acceptance"]["schema"], g12.CORE_GROUP_ACCEPTANCE_SCHEMA)
+        self.assertEqual(printed["acceptance"]["run_B2"]["result"], "PASS")
+
+    def test_monitor_records_member_ownership_and_core_offsets(self):
+        tp = lambda t, p: types.SimpleNamespace(topic=t, partition=p)  # noqa: E731
+        member = types.SimpleNamespace(member_id="m-1", client_id=NS + "-2", host="/10.0.0.2",
+                                       assignment=types.SimpleNamespace(topic_partitions=[tp(NS + ".raw", 3),
+                                                                                          tp(NS + ".raw", 2)]))
+
+        class Future:
+            def result(self, timeout=None):
+                return types.SimpleNamespace(state="ConsumerGroupState.STABLE", members=[member])
+
+        class Admin:
+            def describe_consumer_groups(self, groups, request_timeout=None):
+                return {group: Future() for group in groups}
+
+        class Source:
+            def describe_cluster(self, deadline):
+                return {}
+
+            def describe_topics(self, roster, deadline):
+                return {}
+
+            def committed_offsets(self, group, roster, deadline):
+                return {(t, p): 5 for t, n in roster.items() for p in range(n)}
+
+            def log_end_offsets(self, partitions, deadline):
+                return {tp: 7 for tp in partitions}
+        rosters = {"kn-projector-v3-a": {"c": 1}, "kn-projector-v3-b": {"l": 1}, NS: {NS + ".raw": 6}}
+        stub = types.ModuleType("scripts.kn_recovery_observe")
+        stub.Deadline = lambda seconds: seconds
+        with patch.dict(sys.modules, {"scripts.kn_recovery_observe": stub}):
+            row = g12.kafka_sample(Source(), Admin(), {}, rosters, (NS,))
+        self.assertEqual(row["groups"][NS]["detail"], [{"member_id": "m-1", "client_id": NS + "-2",
+                                                        "host": "/10.0.0.2",
+                                                        "partitions": [f"{NS}.raw/2", f"{NS}.raw/3"]}])
+        self.assertEqual(row["offsets"][NS][f"{NS}.raw/4"], [5, 7])
+        self.assertNotIn("kn-projector-v3-a", row["offsets"])
+        self.assertEqual(g12.core_client_id(NS, "core"), NS)
+        self.assertEqual(g12.core_client_id(NS, "core-3"), NS + "-3")
+
+
+ADDENDUM_S = {
+    "schema": "p184-coregroup-prereg-addendum.v1",
+    "run_A_prime": {"criteria": [
+        "reproduction: each old-image survivor of the first roll retries >= 2 times in after_roll_core"]},
+    "run_S": {"criteria": [
+        "storm=false",
+        "replace-all: group re-formed (3 members, 6 partitions owned exactly once) <= 30 s after the first new "
+        "member started, then stable >= 10 s",
+        "replace-all: core lag within the baseline maximum <= 60 s after the first new member started",
+        "new-image member lives: retries == 0, rewind_failed == 0, rewinds <= 2 per window, 0 in baseline",
+        "old-image member lives: 0 retries, rewinds and rewind failures in every judged window",
+        "every window after the replace (after_replace_all, after_restart_core-3, after_kill): retries == 0 "
+        "absolute",
+        "last 30 s of every window: 3 members, all 6 partitions owned exactly once",
+        "core kill (RB2 clocks): ownership restored <= 15 s after exit confirmed; caught up <= 60 s",
+        "no inflight_commit_failed / stop_drain_failed",
+        "0 production guard breaches",
+        "coverage: monitor gap <= 5 s, member logs cover every window (else NOT_MEASURED, never PASS)"]}}
+
+# The frozen addendum-4 (prereg-addendum-4.json, sha256 06c561ed...) criteria, verbatim.
+ADDENDUM_4 = {
+    "schema": "p184-coregroup-prereg-addendum.v1",
+    "run_A_prime": {"mode": "rolling (--core-group)", "criterion":
+                    "control valid iff each old-image survivor of the first roll retries >= 2 times in "
+                    "after_roll_core; else harness not production-like and S cannot be credited"},
+    "run_S": {"mode": "--core-group-simultaneous", "criteria": [
+        "storm=false",
+        "group re-forms (3 members, 6 partitions owned exactly once) <= 30 s after the first new member starts and "
+        "holds stable >= 10 s; lag back within the baseline maximum <= 60 s",
+        "new-image lives: retries 0, rewind_failed 0, rewinds <= 2 per window",
+        "old-image lives: 0 retries, rewinds, rewind failures in every judged window",
+        "every window after the replace: retries 0 absolute",
+        "last 30 s of every window: 3 members, 6 partitions owned exactly once",
+        "core kill: ownership restored <= 15 s after exit confirmed, caught up <= 60 s",
+        "no inflight_commit_failed / stop_drain_failed; 0 production guard breaches",
+        "monitor/log coverage gaps -> NOT_MEASURED, never PASS"]}}
+
+
+# The frozen addendum-5 (prereg-addendum-5.json, frozen 2026-10-15T12:17:23Z) run_S2 criteria, verbatim.
+ADDENDUM_5 = {
+    "schema": "p184-coregroup-prereg-addendum.v1",
+    "run_S2": {"mode": "--core-group-simultaneous", "criteria": [
+        ADDENDUM_4["run_S"]["criteria"][0], ADDENDUM_4["run_S"]["criteria"][1],
+        "new-image lives: retries 0, rewind_failed 0, rewinds <= 2 per surviving member per window (a member "
+        "restarted in that window is not a survivor)",
+        *ADDENDUM_4["run_S"]["criteria"][3:]]}}
+
+class CoreGroupProfileTests(unittest.TestCase):
+    """INCIDENT 2026-10-15 #2: production-like core profile; defaults keep the B3 harness."""
+
+    def test_defaults_keep_the_b3_harness(self):
+        profile = g12.core_profile()
+        self.assertEqual(profile, {**g12.CORE_PROFILE_DEFAULTS, "core_cpus": "0.5"})
+        config = {"batch_size": 25, "batch_wait_ms": 10, "transactional_id": NS}
+        self.assertEqual(g12.apply_core_profile(config, profile), config)
+        roles = g12.topology(NS, "/home/bobby/x/work", "T", uid="1:1", core_members=3)
+        for role in g12.CORE_MEMBERS:
+            self.assertEqual(roles[role][roles[role].index("--cpus") + 1], "0.5")
+        self.assertIn("group.initial.rebalance.delay.ms=0\n", g12.broker_properties("pw", 1))
+
+    def test_production_values_reach_config_topology_and_brokers(self):
+        profile = g12.core_profile(batch_size=1024, batch_wait_ms=25, core_cpus="1.0", hz=20.0,
+                                   replace_gap_s=3.0, precondition_restarts=3, initial_rebalance_delay_ms=3000)
+        config = g12.apply_core_profile({"batch_size": 25, "batch_wait_ms": 10, "x": 1}, profile)
+        self.assertEqual(config, {"batch_size": 1024, "batch_wait_ms": 25, "x": 1})
+        roles = g12.topology(NS, "/home/bobby/x/work", "T", uid="1:1", core_members=3,
+                             core_cpus=profile["core_cpus"])
+        for role in g12.CORE_MEMBERS:
+            self.assertEqual(roles[role][roles[role].index("--cpus") + 1], "1.0")
+        self.assertIn("group.initial.rebalance.delay.ms=3000\n", g12.broker_properties("pw", 2, 3000))
+
+    def test_out_of_range_profiles_are_refused(self):
+        for bad in ({"batch_size": 0}, {"batch_size": True}, {"hz": 25}, {"hz": 0}, {"core_cpus": "3"},
+                    {"core_cpus": "x"}, {"replace_gap_s": 31}, {"precondition_restarts": 6}, {"nope": 1},
+                    {"initial_rebalance_delay_ms": -1}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                g12.core_profile(**bad)
+
+    def test_cli_profile_needs_a_core_group_mode_and_reaches_the_orchestrator(self):
+        import contextlib
+        import io
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            g12.main(["--analyze", "/x", "--core-batch-size", "1024"])
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            g12.main(["--core-group", "/x", "--export", "/e", "--namespace", NS, "--new-core", NEW_CORE,
+                      "--core-hz", "50"])
+        calls = []
+        with patch.object(g12, "image_record", return_value={"id": NEW_CORE}), \
+                patch.object(g12, "orchestrate_core_group", lambda *a, **k: calls.append((a, k)) or 0):
+            for mode in ("--core-group", "--core-group-simultaneous"):
+                g12.main([mode, "/x", "--export", "/e", "--namespace", NS, "--new-core", NEW_CORE,
+                          "--core-batch-size", "1024", "--core-replace-gap-s", "3"])
+            g12.main(["--core-group", "/x", "--export", "/e", "--namespace", NS, "--new-core", NEW_CORE])
+        (args, kwargs), (_, kwargs_s), (_, kwargs_default) = calls
+        self.assertEqual(str(args[0]), "/x")
+        self.assertFalse(kwargs["simultaneous"])
+        self.assertTrue(kwargs_s["simultaneous"])
+        self.assertEqual((kwargs["profile"]["batch_size"], kwargs["profile"]["replace_gap_s"]), (1024, 3.0))
+        self.assertEqual(kwargs_default["profile"], g12.core_profile())
+
+    def fake_run(self, steps):
+        """A Run stand-in recording each orchestration step."""
+        class FakeRun:
+            def __init__(self, base, export, ns, images):
+                self.images = images
+                self.evidence = Path(tempfile.mkdtemp(dir=self_tmp))
+
+            def prepare(self):
+                pass
+
+            def core_group_up(self):
+                steps.append(("up",))
+
+            def core_group_formation(self, start_ns):
+                steps.append(("formation",))
+
+            def core_group_window(self, name, seconds, **fields):
+                steps.append(("window", name, seconds, fields.get("diagnostic", False)))
+
+            def core_replace(self, role, image=None, kill=False, gap_s=0.0, kind=None):
+                steps.append(("replace", role, image, kill, gap_s, kind))
+
+            def core_replace_all(self, image, gap_s=0.0):
+                steps.append(("replace_all", image, gap_s))
+
+            def note(self, *a, **k):
+                pass
+
+            def down(self):
+                pass
+        self_tmp = self.tmp
+        return FakeRun
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = tmp.name
+
+    def orchestrate(self, **kwargs):
+        steps = []
+        with patch.object(g12, "Run", self.fake_run(steps)), patch.object(g12, "core_group_verdict", return_value={}):
+            self.assertEqual(g12.orchestrate_core_group(Path(self.tmp), Path(self.tmp), NS, {}, NEW_CORE, **kwargs), 0)
+        return steps
+
+    def test_default_rolling_sequence_is_unchanged(self):
+        hold = g12.CORE_GROUP["hold_s"]
+        self.assertEqual(self.orchestrate(), [
+            ("up",), ("formation",), ("window", "baseline", g12.CORE_GROUP["baseline_s"], False),
+            ("replace", "core", NEW_CORE, False, 0.0, None), ("window", "after_roll_core", hold, False),
+            ("replace", "core-2", NEW_CORE, False, 0.0, None), ("window", "after_roll_core-2", hold, False),
+            ("replace", "core-3", NEW_CORE, False, 0.0, None), ("window", "after_roll_core-3", hold, False),
+            ("replace", "core-2", None, True, 0.0, None), ("window", "after_kill", hold, False)])
+
+    def test_production_like_rolling_preconditions_then_rolls_with_the_gap(self):
+        steps = self.orchestrate(profile={"replace_gap_s": 3.0, "precondition_restarts": 2})
+        self.assertEqual(steps[2:6], [
+            ("replace", "core-2", None, False, 3.0, "core_precondition"),
+            ("window", "precondition_1", g12.CORE_GROUP["precondition_hold_s"], True),
+            ("replace", "core-2", None, False, 3.0, "core_precondition"),
+            ("window", "precondition_2", g12.CORE_GROUP["precondition_hold_s"], True)])
+        self.assertEqual(steps[6][1], "baseline")
+        self.assertEqual([s[4] for s in steps if s[0] == "replace" and s[2] == NEW_CORE], [3.0, 3.0, 3.0])
+        self.assertEqual(steps[-2], ("replace", "core-2", None, True, 0.0, None))  # the kill restarts at once
+
+    def test_simultaneous_sequence(self):
+        hold = g12.CORE_GROUP["hold_s"]
+        self.assertEqual(self.orchestrate(simultaneous=True, profile={"replace_gap_s": 2.0}), [
+            ("up",), ("formation",), ("window", "baseline", g12.CORE_GROUP["baseline_s"], False),
+            ("replace_all", NEW_CORE, 2.0), ("window", "after_replace_all", hold, False),
+            ("replace", "core-3", NEW_CORE, False, 2.0, None), ("window", "after_restart_core-3", hold, False),
+            ("replace", "core-2", None, True, 0.0, None), ("window", "after_kill", hold, False)])
+        self.assertEqual(g12.CORE_GROUP_S_WINDOWS[1:], ("after_replace_all", "after_restart_core-3", "after_kill"))
+
+    def fake_self(self, rows):
+        started, followed = [], []
+        fake = types.SimpleNamespace(
+            images={"core": OLD_CORE}, ns=NS, topic_id="T",
+            topology=lambda topic_id: {role: ["run", role] for role in g12.CORE_MEMBERS},
+            verify_image=lambda role: None, follow_logs=followed.append, fault_row=rows.append,
+            note=lambda *a, **k: None)
+        return fake, started, followed
+
+    def test_replace_waits_the_gap_after_the_exit(self):
+        rows, stops, sleeps, runs = [], [], [], []
+        fake, _, followed = self.fake_self(rows)
+        with patch.object(g12, "stop_role", lambda ns, role, kill=False: stops.append((role, kill)) or True), \
+                patch.object(g12, "sh", lambda argv, timeout=60, check=True: runs.append(argv) or ""), \
+                patch.object(g12.time, "sleep", sleeps.append):
+            g12.Run.core_replace(fake, "core", image=NEW_CORE, gap_s=3.0)
+            g12.Run.core_replace(fake, "core-2", kill=True)
+            g12.Run.core_replace(fake, "core-2", gap_s=1.0, kind="core_precondition")
+        self.assertEqual(sleeps, [3.0, 1.0])  # a kill restarts at once
+        self.assertEqual([r["k"] for r in rows], ["core_roll", "core_kill", "core_precondition"])
+        self.assertEqual([r["gap_s"] for r in rows], [3.0, 0.0, 1.0])
+        self.assertTrue(all(r["injected_ns"] <= r["stopped_ns"] <= r["restart_ns"] for r in rows))
+        self.assertEqual(stops, [("core", False), ("core-2", True), ("core-2", False)])
+
+    def test_replace_all_stops_every_member_before_any_start(self):
+        rows, order = [], []
+        fake, _, followed = self.fake_self(rows)
+        lock = threading.Lock()
+
+        def stop(ns, role, kill=False):
+            with lock:
+                order.append(("stop", role, kill))
+            return True
+        with patch.object(g12, "stop_role", stop), \
+                patch.object(g12, "sh", lambda argv, timeout=60, check=True: order.append(("start", argv[1])) or ""), \
+                patch.object(g12.time, "sleep", lambda s: order.append(("sleep", s))):
+            row = g12.Run.core_replace_all(fake, NEW_CORE, gap_s=2.0)
+        self.assertEqual(sorted(order[:3]), [("stop", r, False) for r in sorted(g12.CORE_MEMBERS)])
+        self.assertEqual(order[3:], [("sleep", 2.0)] + [("start", r) for r in g12.CORE_MEMBERS])
+        self.assertEqual(fake.images["core"], NEW_CORE)
+        self.assertEqual(followed, list(g12.CORE_MEMBERS))
+        self.assertEqual((row["k"], row["image"], rows), ("core_replace_all", NEW_CORE, [row]))
+        with patch.object(g12, "stop_role", lambda ns, role, kill=False: role != "core-3"), \
+                self.assertRaises(RuntimeError):
+            g12.Run.core_replace_all(fake, NEW_CORE)
+
+
+class CoreGroupSimultaneousAcceptanceTests(unittest.TestCase):
+    """``--core-group-simultaneous`` verdict and run_S / run_A_prime acceptance on synthetic evidence."""
+
+    T0 = 1_800_000_000 * S
+    OWNERS = {"core": (0, 1), "core-2": (2, 3), "core-3": (4, 5)}
+    stamp = staticmethod(CoreGroupAcceptanceTests.stamp)
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.prereg = Path(self.tmp.name) / "prereg.json"
+        self.prereg.write_text(json.dumps(PREREG))
+        self.addendum = Path(self.tmp.name) / "addendum.json"
+        self.addendum.write_text(json.dumps(ADDENDUM_S))
+
+    def build(self, name, *, reform_at=128, events=()):
+        """Baseline 0-120 (old image); replace-all injected 120 (all gone 120.6, first start 121); restart of
+        core-3 at 272; SIGKILL of core-2 at 424 (ownership moves at 432); end 580."""
+        T, ev = self.T0, Path(self.tmp.name) / name / "evidence"
+        (ev / "logs").mkdir(parents=True)
+        (ev / "verdict-ns.json").write_text(json.dumps({"namespace": NS}))
+        windows = [("baseline", 0, 120), ("after_replace_all", 122, 272), ("after_restart_core-3", 274, 424),
+                   ("after_kill", 426, 576)]
+        faults = [{"k": "core_window", "name": "baseline", "start_ns": T, "end_ns": T + 120 * S},
+                  {"k": "core_replace_all", "roles": list(g12.CORE_MEMBERS), "image": NEW_CORE,
+                   "injected_ns": T + 120 * S, "stopped_ns": T + 120 * S + 600 * MS, "gap_s": 0.0,
+                   "restart_ns": T + 121 * S, "started_ns": T + 121 * S + 500 * MS}]
+        faults.append({"k": "core_window", "name": "after_replace_all", "start_ns": T + 122 * S, "end_ns": T + 272 * S})
+        faults.append({"k": "core_roll", "role": "core-3", "image": NEW_CORE, "injected_ns": T + 272 * S,
+                       "restart_ns": T + 273 * S})
+        faults.append({"k": "core_window", "name": "after_restart_core-3", "start_ns": T + 274 * S,
+                       "end_ns": T + 424 * S})
+        faults.append({"k": "core_kill", "role": "core-2", "injected_ns": T + 424 * S, "restart_ns": T + 425 * S})
+        faults.append({"k": "core_window", "name": "after_kill", "start_ns": T + 426 * S, "end_ns": T + 576 * S})
+        self.assertEqual([w[0] for w in windows], list(g12.CORE_GROUP_S_WINDOWS))
+        (ev / "faults.jsonl").write_text("".join(json.dumps(f) + "\n" for f in faults))
+        lives = [("core", 1, 0.5, 120.5), ("core", 2, 121.5, 580), ("core-2", 1, 0.5, 120.5),
+                 ("core-2", 2, 121.5, 424.2), ("core-2", 3, 425.5, 581), ("core-3", 1, 0.5, 120.5),
+                 ("core-3", 2, 121.5, 272.5), ("core-3", 3, 273.5, 582)]
+        die, provenance = [], []
+        for role, life, first, end in lives:
+            image = OLD_CORE if life == 1 else NEW_CORE
+            die.append({"Action": "die", "timeNano": T + int(end * S), "Actor": {"Attributes": {
+                "name": f"{NS}-{role}", "image": image, "exitCode": "137" if (role, life) == ("core-2", 2) else "0"}}})
+            provenance.append({"t": T + int((first - 0.4) * S), "role": role, "image_role": "core",
+                               "expected": image, "actual": image, "match": True})
+            lines = [f"{self.stamp(T + int(first * S))} " + json.dumps(
+                {"event": "qdl_realtime_core_started", "generation": 1})]
+            lines += [f"{self.stamp(T + int(t * S))} " + json.dumps({"event": "qdl_realtime_core_progress"})
+                      for t in range(int(first) + 1, int(end))]
+            lines += [f"{self.stamp(T + int(t * S))} " + json.dumps(dict({"event": e}, **extra))
+                      for r, t, e, extra in events if r == role and first <= t < end]
+            (ev / "logs" / f"{role}.life{life}.log").write_text("\n".join(lines) + "\n")
+        (ev / "container-events.jsonl").write_text("".join(json.dumps(d) + "\n" for d in die))
+        (ev / "provenance.jsonl").write_text("".join(json.dumps(r) + "\n" for r in provenance))
+        rows = []
+        for t in range(0, 580):
+            gen = {"core": 1 if t < 121 else 2, "core-2": 1 if t < 121 else 2 if t < 432 else 3,
+                   "core-3": 1 if t < 121 else 2 if t < 273 else 3}
+            owners = dict(self.OWNERS) if t < 432 else {"core": (0, 1, 2), "core-2": (5,), "core-3": (3, 4)}
+            members = [{"member_id": f"m-{role}-{gen[role]}", "client_id": g12.core_client_id(NS, role),
+                        "host": "/10.0.0.1", "partitions": [f"{NS}.raw/{p}" for p in owners[role]]}
+                       for role in g12.CORE_MEMBERS]
+            if 121 <= t < reform_at:  # all members gone, then re-joining
+                members, state = members[:1 if t >= 123 else 0], "PREPARING_REBALANCE"
+            else:
+                state = "STABLE"
+            stalled = 121 <= t < max(130, reform_at + 2)
+            frozen = 424 <= t < 437
+            offsets = {f"{NS}.raw/{p}": [119 if stalled else 423 if frozen and p in (2, 3) else t - 1, t]
+                       for p in range(6)}
+            lag = 20 if t == 60 else sum(e - c for c, e in offsets.values())
+            group = {"state": state, "members": len(members), "detail": members,
+                     "assigned": sorted(len(m["partitions"]) for m in members)}
+            rows.append({"t": T + t * S, "groups": {NS: group}, "lag": {NS: lag}, "offsets": {NS: offsets}})
+        (ev / "monitor.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+        (ev / "orchestrator.jsonl").write_text(json.dumps({"step": "teardown", "production_guard_breaches": {}})
+                                               + "\n")
+        (ev / "core-group-verdict.json").write_text(json.dumps({"status": "COMPLETED", "error": None}))
+        return ev.parent
+
+    def accept(self, base, key="run_S"):
+        result = g12.core_group_accept(base, self.prereg, self.addendum)
+        run = result["acceptance"][key]
+        return result, run, {row["condition"]: row["result"] for row in run["conditions"]}
+
+    def test_clean_simultaneous_replace_passes_run_s(self):
+        base = self.build("ok", events=[("core-3", 280, "qdl_realtime_core_rebalance_rewind", {})])
+        verdict = g12.core_group_verdict(base / "evidence")
+        self.assertEqual(verdict["mode"], "simultaneous")
+        self.assertEqual(verdict["core_images"]["target"], NEW_CORE)
+        clocks = verdict["replace_all"]
+        self.assertEqual((clocks["stopped_s"], clocks["reformed_s"], clocks["stable_s"], clocks["caught_up_s"]),
+                         (0.6, 7.0, 17.0, 9.0))
+        self.assertFalse(verdict["storm"])
+        result, run, rows = self.accept(base)
+        self.assertEqual(run["result"], "PASS", rows)
+        self.assertEqual(rows["harness: run mode is simultaneous"], "PASS")
+        self.assertEqual(result["verdict"]["core_kill"]["ownership_restored_s"], 8.0)
+        # run_A_prime belongs to a rolling run: its mode row fails here
+        _, _, rows = self.accept(base, "run_A_prime")
+        self.assertEqual(rows["harness: run mode is rolling"], "FAIL")
+
+    def test_all_new_retry_and_slow_reform_fail(self):
+        base = self.build("retry", events=[("core", 300, "qdl_realtime_core_retry", {"error": "rebalanced"})])
+        _, run, rows = self.accept(base)
+        self.assertEqual(rows["every window after the replace (after_replace_all, after_restart_core-3, after_kill): "
+                              "retries == 0 absolute"], "FAIL")
+        self.assertEqual(rows["new-image member lives: retries == 0, rewind_failed == 0, rewinds <= 2 per window, "
+                              "0 in baseline"], "FAIL")
+        self.assertEqual(run["result"], "FAIL")
+        _, run, rows = self.accept(self.build("slow", reform_at=160))
+        self.assertEqual(rows["replace-all: group re-formed (3 members, 6 partitions owned exactly once) <= 30 s "
+                              "after the first new member started, then stable >= 10 s"], "FAIL")
+        self.assertEqual(run["result"], "FAIL")
+
+    def test_old_image_retry_in_the_baseline_fails(self):
+        base = self.build("old", events=[("core-2", 60, "qdl_realtime_core_retry", {"error": "rebalanced"})])
+        _, _, rows = self.accept(base)
+        self.assertEqual(rows["old-image member lives: 0 retries, rewinds and rewind failures in every judged "
+                              "window"], "FAIL")
+
+    def test_a_prime_reproduction_counts_first_roll_survivor_retries(self):
+        helper = CoreGroupAcceptanceTests("test_healthy_run_passes_every_frozen_condition")
+        root = Path(self.tmp.name)
+        reproduction = "reproduction: each old-image survivor of the first roll retries >= 2 times in after_roll_core"
+        for name, per, expected in (("rep", 2, "PASS"), ("norep", 1, "FAIL")):
+            (root / name).mkdir()
+            events = [(role, 130 + 10 * n, "qdl_realtime_core_retry", {"error": "rebalanced"})
+                      for role in ("core-2", "core-3") for n in range(per)]
+            base = helper.build(root / name, images=True, events=events)
+            _, run, rows = self.accept(base, "run_A_prime")
+            with self.subTest(name=name):
+                self.assertEqual(rows[reproduction], expected)
+                self.assertEqual(rows["harness: run mode is rolling"], "PASS")
+
+    def accept4(self, base, key="run_S", addendum=None):
+        path = Path(self.tmp.name) / "addendum-4.json"
+        path.write_text(json.dumps(addendum or ADDENDUM_4))
+        result = g12.core_group_accept(base, self.prereg, path)
+        run = result["acceptance"][key]
+        return result, run, {row["condition"]: row for row in run["conditions"]}
+
+    def test_addendum_4_frozen_strings_map_to_rules(self):
+        frozen = ADDENDUM_4["run_S"]["criteria"]
+        self.assertEqual(set(frozen) - {"storm=false"}, set(g12.CORE_GROUP_CRITERIA_MAP)
+                         - {ADDENDUM_4["run_A_prime"]["criterion"]})
+        result, run, rows = self.accept4(self.build("ok4", events=[("core-3", 280, "qdl_realtime_core_rebalance_rewind",
+                                                                       {})]))
+        self.assertEqual(result["acceptance"]["criteria_map"], g12.CORE_GROUP_CRITERIA_MAP_VERSION)
+        for text in frozen:
+            with self.subTest(text=text):
+                self.assertEqual(rows[text]["result"], "PASS", rows[text]["detail"])
+        self.assertEqual(run["result"], "PASS")
+        group = rows[frozen[1]]["detail"]["rules"]
+        self.assertEqual(len(group), 2)
+        # a violation still reaches the mapped rule: a retry after the replace fails three frozen strings
+        _, run, rows = self.accept4(self.build("retry4", events=[("core", 300, "qdl_realtime_core_retry",
+                                                                   {"error": "rebalanced"})]))
+        for text in (frozen[2], frozen[4]):
+            self.assertEqual(rows[text]["result"], "FAIL")
+        self.assertEqual(run["result"], "FAIL")
+        _, _, rows = self.accept4(self.build("slow4", reform_at=160))
+        self.assertEqual(rows[frozen[1]]["result"], "FAIL")
+        # old-image rewind outside the baseline (stop of the old group) fails the literal old-image rule
+        _, _, rows = self.accept4(self.build("oldrw", events=[("core-2", 120, "qdl_realtime_core_rebalance_rewind",
+                                                                {})]))
+        self.assertEqual(rows[frozen[3]]["result"], "FAIL")
+
+    def test_addendum_4_a_prime_singular_criterion_is_evaluated(self):
+        helper = CoreGroupAcceptanceTests("test_healthy_run_passes_every_frozen_condition")
+        text = ADDENDUM_4["run_A_prime"]["criterion"]
+        root = Path(self.tmp.name)
+        for name, per, expected in (("rep4", 2, "PASS"), ("norep4", 1, "FAIL")):
+            (root / name).mkdir()
+            events = [(role, 130 + 10 * n, "qdl_realtime_core_retry", {"error": "rebalanced"})
+                      for role in ("core-2", "core-3") for n in range(per)]
+            _, run, rows = self.accept4(helper.build(root / name, images=True, events=events), "run_A_prime")
+            with self.subTest(name=name):
+                self.assertEqual(rows[text]["result"], expected)
+                self.assertEqual(rows["harness: run mode is rolling"]["result"], "PASS")
+        # a frozen run block without a readable criterion fails closed
+        _, run, rows = self.accept4(self.build("nocrit"), "run_S", {"run_S": {"mode": "simultaneous"}})
+        self.assertEqual(rows["harness: frozen criteria present"]["result"], "NOT_MEASURED")
+        self.assertEqual(run["result"], "NOT_MEASURED")
+
+    def test_unknown_criterion_string_is_not_measured(self):
+        addendum = {"run_S": {"criteria": ["storm=false", "group re-forms quickly"]}}
+        _, run, rows = self.accept4(self.build("unknown4"), "run_S", addendum)
+        self.assertEqual(rows["storm=false"]["result"], "PASS")
+        self.assertEqual(rows["group re-forms quickly"]["result"], "NOT_MEASURED")
+        self.assertEqual(rows["group re-forms quickly"]["detail"], {"reason": "UNKNOWN_CONDITION"})
+        self.assertEqual(run["result"], "NOT_MEASURED")
+        # the map is not applied to the original prereg's run_B_fix rules
+        out = g12.core_group_acceptance({"windows": {}}, {"criteria": {"run_B_fix": [
+            ADDENDUM_4["run_S"]["criteria"][1]]}})
+        self.assertEqual(out["run_B_fix"]["conditions"][-1]["detail"], {"reason": "UNKNOWN_CONDITION"})
+
+    def accept5(self, base, addendum=None):
+        path = Path(self.tmp.name) / "addendum-5.json"
+        path.write_text(json.dumps(addendum or ADDENDUM_5))
+        result = g12.core_group_accept(base, self.prereg, path)
+        run = result["acceptance"]["run_S2"]
+        return result, run, {row["condition"]: row for row in run["conditions"]}
+
+    NEW5 = ADDENDUM_5["run_S2"]["criteria"][2]
+
+    @staticmethod
+    def rewinds(*pairs):
+        """Rebalance rewinds in after_restart_core-3 (span 272-424): (role, count) pairs."""
+        return [(role, 280 + 10 * n, "qdl_realtime_core_rebalance_rewind", {}) for role, k in pairs
+                for n in range(k)]
+
+    def test_addendum_5_strings_map_verbatim_and_pass_clean_run(self):
+        frozen = ADDENDUM_5["run_S2"]["criteria"]
+        self.assertEqual(set(frozen) - {"storm=false"}, set(g12.CORE_GROUP_CRITERIA_MAP_ADDENDUM_5))
+        result, run, rows = self.accept5(self.build("ok5", events=self.rewinds(("core", 1))))
+        self.assertEqual(result["acceptance"]["criteria_map"], "p184.coregroup.criteria-map.addendum-5.v1")
+        for text in frozen:
+            with self.subTest(text=text):
+                self.assertEqual(rows[text]["result"], "PASS", rows[text]["detail"])
+        self.assertEqual(rows["harness: run mode is simultaneous"]["result"], "PASS")
+        self.assertEqual(run["result"], "PASS")
+        self.assertEqual(rows[self.NEW5]["detail"]["map"], g12.CORE_GROUP_CRITERIA_MAP_ADDENDUM_5_VERSION)
+        restarted = {n: w["restarted_roles"] for n, w in result["windows"].items()}
+        self.assertEqual(restarted, {"baseline": [], "after_replace_all": list(g12.CORE_MEMBERS),
+                                     "after_restart_core-3": ["core-3"], "after_kill": ["core-2"]})
+
+    def test_addendum_5_rewinds_are_counted_per_surviving_member(self):
+        rule = ("new-image member lives: retries == 0, rewind_failed == 0, rewinds <= 2 per surviving member per "
+                "window (members restarted / killed in the window excluded), 0 in baseline")
+        # S-like: 3 rewinds after the restart of core-3, split 2 + 1 across the two survivors -> PASS
+        _, run, rows = self.accept5(self.build("split", events=self.rewinds(("core-2", 2), ("core", 1))))
+        self.assertEqual(rows[self.NEW5]["result"], "PASS", rows[self.NEW5]["detail"])
+        window = rows[self.NEW5]["detail"]["rules"][rule]["detail"]["windows"]["after_restart_core-3"]
+        self.assertEqual((window["survivors"], window["rewinds_per_survivor"]),
+                         (["core", "core-2"], {"core": 1, "core-2": 2}))
+        self.assertEqual(run["result"], "PASS")
+        # ... and the same evidence still FAILs under addendum-4 (rewinds 3 > 2 per window), unchanged
+        _, run4, rows4 = self.accept4(self.build("split4", events=self.rewinds(("core-2", 2), ("core", 1))))
+        self.assertEqual(rows4[ADDENDUM_4["run_S"]["criteria"][2]]["result"], "FAIL")
+        self.assertEqual(run4["result"], "FAIL")
+        # 3 rewinds on one survivor -> FAIL
+        _, run, rows = self.accept5(self.build("one", events=self.rewinds(("core-2", 3))))
+        self.assertEqual(rows[self.NEW5]["result"], "FAIL")
+        self.assertEqual(run["result"], "FAIL")
+        # the restarted member's rewinds are excluded (reported), its retries are not
+        _, run, rows = self.accept5(self.build("restarted", events=self.rewinds(("core-3", 3), ("core", 2))))
+        self.assertEqual(rows[self.NEW5]["result"], "PASS", rows[self.NEW5]["detail"])
+        window = rows[self.NEW5]["detail"]["rules"][rule]["detail"]["windows"]["after_restart_core-3"]
+        self.assertEqual(window["rewinds_excluded_restarted"], {"core-3": 3})
+        _, _, rows = self.accept5(self.build("restarted-retry", events=[
+            ("core-3", 300, "qdl_realtime_core_retry", {"error": "rebalanced"})]))
+        self.assertEqual(rows[self.NEW5]["result"], "FAIL")
+        # the killed member (core-2) is not a survivor of after_kill; core-3 is
+        _, _, rows = self.accept5(self.build("kill", events=[
+            (role, 440 + n, "qdl_realtime_core_rebalance_rewind", {}) for role, k in (("core-2", 3), ("core-3", 3))
+            for n in range(k)]))
+        self.assertEqual(rows[self.NEW5]["result"], "FAIL")
+        window = rows[self.NEW5]["detail"]["rules"][rule]["detail"]["windows"]["after_kill"]
+        self.assertEqual((window["rewinds_per_survivor"], window["rewinds_excluded_restarted"]),
+                         ({"core": 0, "core-3": 3}, {"core-2": 3}))
+
+    def test_addendum_5_without_restart_attribution_is_not_measured(self):
+        base = self.build("legacy5")
+        verdict = g12.core_group_verdict(base / "evidence")
+        verdict["status"] = "COMPLETED"
+        for window in verdict["windows"].values():
+            window.pop("restarted_roles")
+        out = g12.core_group_acceptance(verdict, PREREG, ADDENDUM_5)
+        rows = {row["condition"]: row["result"] for row in out["run_S2"]["conditions"]}
+        self.assertEqual(rows[self.NEW5], "NOT_MEASURED")
+        # an unknown string under run_S2 stays NOT_MEASURED; addendum-4's run_S map version is unchanged
+        out = g12.core_group_acceptance(verdict, PREREG, {"run_S2": {"criteria": [
+            "new-image lives: retries 0, rewind_failed 0, rewinds <= 2 per window"]}})
+        self.assertEqual(out["run_S2"]["conditions"][-1]["detail"], {"reason": "UNKNOWN_CONDITION"})
+        self.assertEqual(g12.CORE_GROUP_CRITERIA_MAP_VERSION, "p184.coregroup.criteria-map.addendum-4.v1")
+
+    def test_replace_all_clocks_from_fixture(self):
+        base = self.build("clocks")
+        clocks = g12.core_group_verdict(base / "evidence")["replace_all"]
+        # injected 120, all gone 120.6, first die event 120.5, first start 121, re-formed 128, stable 138
+        self.assertEqual((clocks["stopped_s"], clocks["reformed_s"], clocks["stable_s"], clocks["caught_up_s"]),
+                         (0.6, 7.0, 17.0, 9.0))
+        self.assertEqual((clocks["pause_s"], clocks["injected_to_reformed_s"], clocks["first_stop_ns"]),
+                         (7.5, 8.0, self.T0 + int(120.5 * S)))
+        self.assertIsNone(clocks["reason"])
+        result, _, _ = self.accept4(base)
+        self.assertEqual(result["verdict"]["mode"], "simultaneous")
+        self.assertEqual(result["verdict"]["replace_all"]["pause_s"], 7.5)
+        never = g12.core_group_verdict(self.build("never", reform_at=600) / "evidence")["replace_all"]
+        self.assertEqual((never["reason"], never["reformed_s"], never["pause_s"]), ("NEVER_REFORMED", None, None))
+
+
+class IntegrityOracleTests(unittest.TestCase):
+    """OF-G12-2 (inheritance audit 2026-10-16): rewinds, duplicates applied and native typed counters per fault;
+    absent observations are NOT_MEASURED. The part is REPORT-ONLY (coordinator 2026-10-16): never gates G12.
+    OF-G12-1: only a frozen predicate v2 run is credited."""
+    FAULT = {"k": "fault", "name": "stream_restart", "kind": "stream", "injected_ns": 60 * S, "restart_ns": 61 * S}
+    MONITOR = [{"t": t * S, "ports": {"8210": t >= 62}, "projector_lag": 0, "under_replicated": 0}
+               for t in range(0, 500)]
+
+    def inputs(self, *, hb=None, edit=None):
+        pubs, views = [], []
+        for venue in g12.VENUES:
+            p, v = stream_rows(venue, 0, 500 * S)
+            pubs += p
+            views += v
+            p, v = md_rows(venue, 0, 500 * S)
+            pubs += p
+            views += v
+            views += (hb or {}).get(venue, hb_rows(venue, 0, 500 * S)) if hb is not None else hb_rows(venue, 0, 500 * S)
+        if edit:
+            views = edit(views)
+        return pubs, views
+
+    def fault(self, **kwargs):
+        pubs, views = self.inputs(**kwargs)
+        return g12.evaluate_fault(self.FAULT, pubs, views, self.MONITOR)
+
+    def test_clean_run_passes_with_every_check_measured(self):
+        result = self.fault()
+        self.assertEqual(result["parts"]["integrity_report_only"], "PASS")
+        okx = result["integrity"]["venues"]["OKX"]
+        self.assertEqual((okx["book_rewinds"], okx["trade_duplicates_n"], okx["native"]["status"]), ([], 0, "PASS"))
+        self.assertEqual(okx["rewinds"], {"TRADE": 0, "QUOTE": 0, "MARK": 0})
+        self.assertTrue(okx["native"]["complete"])
+        self.assertEqual(result["integrity"]["scope_ns"][0], self.FAULT["injected_ns"])
+        self.assertEqual(result["integrity"]["scope_ns"][1], result["g1_window_ns"][1])
+        self.assertTrue(result["pass"])
+
+    def test_book_rewind_is_post_to_post_against_the_high_water(self):
+        # 200 s: the OKX view goes back to an older sequence after newer ones (all inside the scope).
+        def back(views):
+            older = next(v for v in views if v.get("k") == "view" and v["venue"] == "OKX" and v["t"] >= 150 * S)
+            return views + [dict(older, t=200 * S + 1)]
+        result = self.fault(edit=back)
+        self.assertEqual(result["integrity"]["venues"]["OKX"]["status"], "FAIL")
+        self.assertIn("BOOK rewind", result["integrity"]["venues"]["OKX"]["reasons"])
+        self.assertEqual(result["integrity"]["venues"]["BINANCE"]["status"], "PASS")
+        self.assertTrue(result["pass"])  # report-only: G12 still PASSes
+        # Before the injection: outside the scope (the high-water still includes it).
+        def early(views):
+            older = next(v for v in views if v.get("k") == "view" and v["venue"] == "OKX" and v["t"] >= 10 * S)
+            return views + [dict(older, t=30 * S + 1)]
+        self.assertEqual(self.fault(edit=early)["parts"]["integrity_report_only"], "PASS")
+        rows = [{"k": "view", "t": 1, "venue": "OKX", "seq": 100}, {"k": "view", "t": 2, "venue": "OKX", "seq": 200},
+                {"k": "view", "t": 3, "venue": "OKX", "seq": 150}, {"k": "view", "t": 4, "venue": "OKX", "seq": None}]
+        self.assertEqual(g12.book_rewinds(rows)["OKX"], [{"t": 3, "before": 200, "after": 150}])  # PRE100->200->150
+
+    def test_trade_duplicate_applied_fails_bar_reapply_is_report_only(self):
+        def dup(feed, later_s=30):
+            def edit(views):
+                ev = next(v for v in views if v.get("k") == "ev" and v["venue"] == "OKX" and v["feed"] == feed
+                          and v["t"] >= 100 * S)
+                return views + [dict(ev, t=ev["t"] + later_s * S)]
+            return edit
+        trade = self.fault(edit=dup("TRADE"))
+        self.assertEqual(trade["integrity"]["venues"]["OKX"]["trade_duplicates_n"], 1)
+        self.assertIn("TRADE duplicate applied", trade["integrity"]["venues"]["OKX"]["reasons"])
+        self.assertEqual(trade["parts"]["integrity_report_only"], "FAIL")
+        self.assertEqual(trade["parts"]["g2"], "PASS")  # transit counts the first receipt; integrity catches it
+        self.assertTrue(trade["pass"])  # report-only: G12 still PASSes
+        bar = self.fault(edit=dup("BAR", 90))  # a retained closed bar re-written after a newer one
+        self.assertEqual(bar["integrity"]["venues"]["OKX"]["report_only_rewinds"]["BAR"], 1)
+        self.assertEqual(bar["parts"]["integrity_report_only"], "PASS")
+
+    def test_quote_and_mark_event_time_rewind_fails(self):
+        for feed in ("QUOTE", "MARK", "TRADE"):
+            with self.subTest(feed=feed):
+                def edit(views, feed=feed):
+                    ev = next(v for v in views if v.get("k") == "ev" and v["venue"] == "BINANCE"
+                              and v["feed"] == feed and v["t"] >= 100 * S)
+                    return views + [dict(ev, t=ev["t"] + 20 * S, id="x-" + str(ev["id"]))]
+                result = self.fault(edit=edit)
+                self.assertEqual(result["integrity"]["venues"]["BINANCE"]["rewinds"][feed], 1)
+                self.assertEqual(result["parts"]["integrity_report_only"], "FAIL")
+                self.assertTrue(result["pass"])  # report-only
+
+    def test_native_failure_counter_fails(self):
+        for name in ("gaps", "cursor_expired_errors", "slow_consumer_errors", "duplicates_applied",
+                     "offset_regressions", "snapshot_replaced"):
+            with self.subTest(name=name):
+                def counters(t, name=name):
+                    return {**{n: 0 for n in NATIVE_NAMES}, "applied": t // S, name: 1 if t >= 120 * S else 0}
+                result = self.fault(hb={"OKX": hb_rows("OKX", 0, 500 * S, counters=counters)})
+                self.assertEqual(result["integrity"]["venues"]["OKX"]["native"]["status"], "FAIL")
+                self.assertEqual(result["parts"]["integrity_report_only"], "FAIL")
+                self.assertFalse(result["integrity"]["gating"])
+                self.assertTrue(result["pass"])  # report-only
+        # A failure counter that moved before the injection is outside the scope.
+        before = lambda t: {**{n: 0 for n in NATIVE_NAMES}, "applied": t // S, "gaps": 1 if t >= 30 * S else 0}
+        early = self.fault(hb={"OKX": hb_rows("OKX", 0, 500 * S, counters=before)})
+        self.assertEqual(early["parts"]["integrity_report_only"], "PASS")
+
+    def test_native_coverage_gaps_are_not_measured(self):
+        cases = {
+            "absent": [],
+            "old sampler rows": [{"k": "hb", "t": t * S, "venue": "OKX", "heartbeat": True, "status": "READY",
+                                  "demanded": 4, "session_ready": 4} for t in range(0, 500, 2)],
+            "worker not live": hb_rows("OKX", 0, 500 * S, liveness="RESTARTING"),
+            "roster incomplete": hb_rows("OKX", 0, 500 * S, workers=(3, 4)),
+            "no sample after the scope": hb_rows("OKX", 0, 300 * S),
+            "counters decreased": hb_rows("OKX", 0, 500 * S, counters=lambda t: {
+                **{n: 0 for n in NATIVE_NAMES}, "applied": (t // S) if t < 200 * S else 1}),
+            "bool is not a count": hb_rows("OKX", 0, 500 * S, counters=lambda t: {
+                **{n: 0 for n in NATIVE_NAMES}, "gaps": False}),
+        }
+        for label, rows in cases.items():
+            with self.subTest(label):
+                result = self.fault(hb={"OKX": rows})
+                okx = result["integrity"]["venues"]["OKX"]
+                self.assertEqual(okx["native"]["status"], "NOT_MEASURED", okx["native"])
+                self.assertEqual(okx["status"], "NOT_MEASURED")
+                self.assertEqual(result["parts"]["integrity_report_only"], "NOT_MEASURED")
+                self.assertTrue(result["pass"])  # report-only: G12 still PASSes
+        late = self.fault(hb={"OKX": hb_rows("OKX", 0, 300 * S)})
+        self.assertEqual(g12.verdict_undecided(late), ["integrity.OKX no heartbeat after the scope"])
+
+    def test_notification_coverage_gaps_are_not_measured(self):
+        listener = self.fault(edit=lambda v: v + [{"k": "ev_error", "t": 150 * S, "venue": "OKX",
+                                                   "error": "ConnectionError"}])
+        self.assertIn("notification listener errors", listener["integrity"]["venues"]["OKX"]["reasons"])
+        self.assertEqual(listener["parts"]["integrity_report_only"], "NOT_MEASURED")
+        anonymous = self.fault(edit=lambda v: v + [{"k": "ev", "t": 150 * S, "venue": "OKX", "feed": "TRADE",
+                                                    "id": None, "ev_ms": None}])
+        self.assertEqual(anonymous["parts"]["integrity_report_only"], "NOT_MEASURED")
+        no_trade = self.fault(edit=lambda v: [r for r in v if not (r.get("k") == "ev" and r.get("feed") == "TRADE")])
+        self.assertIn("no TRADE notification", no_trade["integrity"]["venues"]["OKX"]["reasons"])
+        self.assertEqual(no_trade["parts"]["g2"], "FAIL")  # G2 (lost trades), not the integrity report, blocks it
+        self.assertFalse(no_trade["pass"])
+        self.assertTrue(listener["pass"] and anonymous["pass"])  # missing integrity coverage never blocks G12
+
+    def test_pending_is_undecided_until_resolved(self):
+        pubs, views = self.inputs()
+        # The sampler stops at 365 s: a TRADE published at 358 s and not yet applied is undecidable (pending).
+        views = [r for r in views if r["t"] <= 365 * S
+                 and not (r.get("feed") == "TRADE" and r["venue"] == "OKX" and 358 * S <= r["t"] < 358.2 * S)]
+        result = g12.evaluate_fault(self.FAULT, pubs, views, self.MONITOR)
+        self.assertEqual(result["g2"]["TRADE"]["OKX"]["status"], "NOT_MEASURED")
+        undecided = g12.verdict_undecided(result)
+        self.assertTrue(any("pending" in item for item in undecided), undecided)
+        self.assertFalse(result["pass"])
+        self.assertEqual(g12.verdict_undecided(self.fault()), [])
+
+    def test_sampler_keeps_the_typed_counters_raw(self):
+        for field in g12.NATIVE_HEARTBEAT_FIELDS:
+            self.assertIn(f'"{field}"', g12.SAMPLER)
+        self.assertIn('"last_seen_unix": b.get("last_seen_unix")', g12.SAMPLER)
+        self.assertIn('"key_tail"', g12.SAMPLER)
+
+    def test_unfrozen_predicate_never_passes_and_v1_receipts_are_not_credited(self):
+        faults = [dict(self.FAULT, name=n) for n in ("broker_stop_start", "projector_restart", "stream_restart")]
+        good = {"pass": True, "parts": {"integrity": "PASS"}}
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = Path(tmp)
+            (evidence / "faults.jsonl").write_text("".join(json.dumps(f) + "\n" for f in faults))
+            with patch.object(g12, "evaluate_fault", return_value=good):
+                unfrozen = g12.evaluate(evidence)
+                self.assertFalse(unfrozen["pass"])
+                self.assertTrue(unfrozen["credit"].startswith("NOT_CREDITABLE"))
+                (evidence / g12.PREDICATE_FILE).write_text(json.dumps(g12.caught_up_predicate()))
+                frozen = g12.evaluate(evidence)
+                self.assertTrue(frozen["pass"])
+                self.assertEqual(frozen["schema"], g12.VERDICT_SCHEMA)
+        bound = {"parity_sha256": effective()["sha256"], "before": effective(), "after": effective()}
+        frozen.update(status="COMPLETED", writer_precheck=lifecycle_ok(), broker_config={"production_parity": "MATCH",
+                                                         "kafka_profile": parity_doc(True)["kafka"],
+                                                         "production_effective": bound})
+        self.assertEqual(g12.g12_receipt_creditable(frozen), (True, "PASS"))
+        # Kafka parity (coordinator 2026-10-16): a run that did not mirror production is not credited, and a run on a
+        # superseded profile (rebalance=true before decision B) is not the final G12.
+        self.assertEqual(g12.g12_receipt_creditable(frozen, parity_doc(True)["kafka"]), (True, "PASS"))
+        self.assertFalse(g12.g12_receipt_creditable(frozen, parity_doc(False)["kafka"])[0])
+        for parity in ("MISMATCH", "NO_PROFILE", "NOT_MEASURED", "CHANGED_DURING_RUN", None):
+            with self.subTest(parity=parity):
+                unmirrored = dict(frozen, broker_config={"production_parity": parity})
+                self.assertFalse(g12.g12_receipt_creditable(unmirrored)[0])
+        stale = [dict(frozen, schema="p184.g12.verdict.v2"),  # rc10-full3 / rc12 / rc18-control2 era
+                 dict(frozen, caught_up_predicate=dict(frozen["caught_up_predicate"], version="p184.g12.caught_up.v1")),
+                 dict(frozen, caught_up_predicate=dict(frozen["caught_up_predicate"], frozen=False)),
+                 dict(frozen, status="FAIL"),
+                 dict(frozen, faults=frozen["faults"][:2]),
+                 dict(frozen, **{"pass": False}),
+                 None]
+        for verdict in stale:
+            with self.subTest(verdict=str(verdict)[:60]):
+                self.assertFalse(g12.g12_receipt_creditable(verdict)[0])
+
+
+class BrokerAndWriterPrecheckTests(unittest.TestCase):
+    """Coordinator 2026-10-16: explicit auto.leader.rebalance.enable (production's value, recorded) and a
+    WriterClone precheck against the DEPLOYED writer's run-time docker inspect (B17 and later; no hard-coded build)."""
+
+    def test_auto_leader_rebalance_is_always_explicit(self):
+        self.assertIn("auto.leader.rebalance.enable=true\n", g12.broker_properties("pw", 1))
+        self.assertIn("auto.leader.rebalance.enable=false\n", g12.broker_properties("pw", 1, 0, False))
+        self.assertNotIn("auto.leader.rebalance.enable=true", g12.broker_properties("pw", 3, 3000, False))
+        for value in ("false", 0, None):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                g12.broker_properties("pw", 1, 0, value)
+
+    IMAGE = "sha256:" + "d" * 64
+
+    @staticmethod
+    def argv(**changes):
+        env = {"TRADING_REDIS_URL": "redis://localhost:6391/2", "POSTGRES_DSN": "postgresql://x:y@h/db",
+               **NATIVE_ENV, **changes}
+        argv = ["docker", "run", "-d", "--rm", "--name", "x"]
+        for key, value in env.items():
+            if value is not None:
+                argv += ["-e", f"{key}={value}"]
+        return argv + ["--entrypoint", "python", "sha256:ts", "-B", "-m", "services.market_data.main"]
+
+    @classmethod
+    def inspect(cls, image=None, **changes):
+        env = {"POSTGRES_DSN": "postgresql://secret@h/db", "REDIS_URL": "redis://r", **NATIVE_ENV, **changes}
+        return {"Image": image or cls.IMAGE, "Config": {"Env": [f"{k}={v}" for k, v in env.items() if v is not None]}}
+
+    def test_reference_keeps_only_the_non_secret_writer_view(self):
+        ref = g12.writer_reference(self.inspect())
+        self.assertEqual(ref, {"container": g12.TS_WRITER, "image": self.IMAGE, "env": NATIVE_ENV})
+        self.assertNotIn("secret", json.dumps(ref))
+
+    def test_deployed_writer_passes_whatever_its_build(self):
+        # B17 today (APPLY_MAX_ROWS 16, BOOK wait 0); a later build with other tuning passes when the clone equals it.
+        for changes in ({}, {"MARKET_DATA_NATIVE_APPLY_MAX_ROWS": "32", "MARKET_DATA_NATIVE_PROBE": "1"}):
+            with self.subTest(changes=changes):
+                deployed = g12.writer_reference(self.inspect(**changes))
+                check = g12.writer_clone_precheck(self.argv(**changes), self.IMAGE, deployed,
+                                                  dict(deployed))
+                self.assertEqual((check["ok"], check["problems"]), (True, []))
+                self.assertEqual(check["clone_env"], deployed["env"])
+                self.assertNotIn("TRADING_REDIS_URL", json.dumps(check))
+                self.assertNotIn("POSTGRES_DSN", json.dumps(check))
+
+    def test_clone_or_deployed_drift_is_refused(self):
+        deployed = g12.writer_reference(self.inspect())
+        cases = {
+            "clone apply rows differ": (self.argv(MARKET_DATA_NATIVE_APPLY_MAX_ROWS="64"), self.IMAGE, deployed, None),
+            "clone native key extra": (self.argv(MARKET_DATA_NATIVE_TEST_CLOCK_FILE="/x"), self.IMAGE, deployed, None),
+            "clone book wait default": (self.argv(DATA_LAYER_V2_BOOK_SNAPSHOT_BATCH_MAX_WAIT_MS=None), self.IMAGE,
+                                        deployed, None),
+            "python writer deployed": (self.argv(**{k: None for k in NATIVE_ENV if k.startswith("MARKET_DATA_NATIVE")}),
+                                       self.IMAGE, g12.writer_reference(self.inspect(
+                                           **{k: None for k in NATIVE_ENV if k.startswith("MARKET_DATA_NATIVE")})),
+                                       None),
+            "clone image not deployed": (self.argv(), "sha256:" + "e" * 64, deployed, None),
+            "no clone image": (self.argv(), None, deployed, None),
+            "deployed image unknown": (self.argv(), self.IMAGE, dict(deployed, image=None), None),
+            "writer rolled since snapshot (image)": (self.argv(), self.IMAGE, deployed,
+                                                     dict(deployed, image="sha256:" + "b" * 64)),
+            "writer env changed since snapshot": (self.argv(), self.IMAGE, deployed,
+                                                  dict(deployed, env=dict(deployed["env"],
+                                                                          MARKET_DATA_NATIVE_APPLY_MAX_ROWS="8"))),
+        }
+        for label, (argv, clone, dep, ref) in cases.items():
+            with self.subTest(label):
+                check = g12.writer_clone_precheck(argv, clone, dep, ref)
+                self.assertFalse(check["ok"])
+                self.assertTrue(check["problems"])
+
+    def test_clone_redis_cpu_parity(self):
+        self.assertEqual(g12.clone_redis_cpu_parity("0")["parity"], "UNCAPPED")
+        self.assertTrue(g12.clone_redis_cpu_parity(0)["ok"])
+        self.assertTrue(g12.clone_redis_cpu_parity("1000000000")["ok"])
+        self.assertEqual(g12.clone_redis_cpu_parity(2 * 10**9)["parity"], "CAPPED_GE_1")
+        low = g12.clone_redis_cpu_parity("500000000")
+        self.assertEqual((low["parity"], low["ok"]), ("CAPPED_BELOW_1", False))
+
+    def test_argv_env(self):
+        self.assertEqual(g12.argv_env(["-e", "A=1", "-e", "B=x=y", "-v", "C=2", "-e"]), {"A": "1", "B": "x=y"})
+
+    def test_heartbeat_trade_integrity_exposure_is_reported(self):
+        rows = hb_rows("OKX", 0, 10 * S) + hb_rows("BINANCE", 0, 10 * S, workers=(3, 4))
+        exposed = g12.heartbeat_integrity_exposed(rows)
+        self.assertIsNone(exposed["OKX"])
+        self.assertIn("workers reporting 3 of 4", exposed["BINANCE"])
+        old = [{"k": "hb", "t": S, "venue": "OKX", "heartbeat": True, "status": "READY"}]
+        self.assertEqual(g12.heartbeat_integrity_exposed(old)["BINANCE"], "no heartbeat sample")
+        self.assertIsNotNone(g12.heartbeat_integrity_exposed(old)["OKX"])
+
+    def test_verdict_carries_the_writer_precheck(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = Path(tmp)
+            self.assertIsNone(g12.evaluate(evidence)["writer_precheck"])
+            (evidence / g12.WRITER_PRECHECK_FILE).write_text(json.dumps({"OKX": {"ok": True}}))
+            self.assertEqual(g12.evaluate(evidence)["writer_precheck"], {"OKX": {"ok": True}})
+
+
+class ProductionEffectiveBindingTests(unittest.TestCase):
+    """Codex K3 (2026-10-16): credit binds the EFFECTIVE production Kafka configuration (describe + inspect, hashed)
+    before and after the run; a missing or drifted observation refuses credit even when every constant is equal."""
+
+    def verdict(self, before=None, after=None, parity=None):
+        out = {"schema": g12.VERDICT_SCHEMA, "status": "COMPLETED", "pass": True, "writer_precheck": lifecycle_ok(),
+               "faults": [{"name": n} for n in ("broker_stop_start", "projector_restart", "stream_restart")],
+               "caught_up_predicate": {"version": g12.CAUGHT_UP_VERSION, "frozen": True},
+               "broker_config": {"production_parity": "MATCH", "kafka_profile": parity_doc()["kafka"],
+                                 "production_effective": {"parity_sha256": (parity or effective())["sha256"]}}}
+        bound = out["broker_config"]["production_effective"]
+        for phase, value in (("before", before), ("after", after)):
+            if value is not None:
+                bound[phase] = value
+        return out
+
+    def test_bound_and_unchanged_is_creditable(self):
+        verdict = self.verdict(effective(), effective())
+        self.assertEqual(g12.g12_receipt_creditable(verdict), (True, "PASS"))
+        self.assertEqual(g12.g12_receipt_creditable(verdict, parity_doc()["kafka"], effective()), (True, "PASS"))
+
+    def test_missing_or_failed_observation_refuses(self):
+        for before, after in ((None, effective()), (effective(), None), (effective(), {"error": "describe failed"})):
+            with self.subTest(before=bool(before), after=str(after)[:30]):
+                ok, reason = g12.g12_receipt_creditable(self.verdict(before, after))
+                self.assertFalse(ok)
+                self.assertIn("not observed", reason)
+        verdict = self.verdict(effective(), effective())
+        verdict["broker_config"].pop("production_effective")
+        self.assertFalse(g12.g12_receipt_creditable(verdict)[0])
+
+    def test_drift_while_constants_equal_refuses(self):
+        # The profile constants, MATCH and the isolated-run parity are identical in every case below; only the
+        # production observation moved.
+        drifts = {
+            "temp key back": effective(topics={"__consumer_offsets": {"min.cleanable.dirty.ratio": "0.05"}}),
+            "A' moved": effective(topics={g12.PRODUCTION_LATEST_TOPIC: {"delete.retention.ms": "604800000"}}),
+            "C key removed": effective(topics={"__consumer_offsets": {"segment.ms": None}}),
+            "cleaner setting not restored": effective(topics={"__consumer_offsets": {"segment.bytes": "1048576"}}),
+            "one broker rebalance": effective(brokers={g12.PRODUCTION_KAFKA[0]: {g12.REBALANCE_ENV: "false"}}),
+            "broker recreated on another image": effective(brokers={g12.PRODUCTION_KAFKA[1]: {"image": "sha256:" + "8" * 64}}),
+            "tampered hash": dict(effective(), topics={**effective()["topics"], g12.PRODUCTION_LATEST_TOPIC: {}}),
+        }
+        for name, after in drifts.items():
+            with self.subTest(drift=name):
+                verdict = self.verdict(effective(), after)
+                self.assertEqual(verdict["broker_config"]["kafka_profile"], parity_doc()["kafka"])
+                ok, reason = g12.g12_receipt_creditable(verdict, parity_doc()["kafka"])
+                self.assertFalse(ok)
+                self.assertTrue("drifted" in reason or "!=" in reason or "present" in reason or "sha256" in reason,
+                                reason)
+        # drift between the run and the credit-time snapshot (constants still equal)
+        moved = effective(brokers={g12.PRODUCTION_KAFKA[2]: {"image": "sha256:" + "7" * 64}})
+        ok, reason = g12.g12_receipt_creditable(self.verdict(effective(), effective()), parity_doc()["kafka"], moved)
+        self.assertFalse(ok)
+        self.assertIn("credit time", reason)
+
+    def test_run_binds_before_and_after_and_stops_on_drift_before(self):
+        run = g12.Run.__new__(g12.Run)
+        run.parity, run.auto_leader_rebalance = parity_doc(), True
+        run.bind_production("before", effective)
+        run.bind_production("after", lambda: effective(topics={"__consumer_offsets": {"min.cleanable.dirty.ratio":
+                                                                                        "0.05"}}))
+        config = run.broker_config()
+        bound = config["production_effective"]
+        self.assertEqual((bound["parity_sha256"], bound["before"]["sha256"]), (effective()["sha256"],) * 2)
+        self.assertNotEqual(bound["after"]["sha256"], bound["parity_sha256"])  # recorded, credit refuses
+        for observe in (lambda: effective(brokers={g12.PRODUCTION_KAFKA[0]: {"image": "sha256:" + "1" * 64}}),
+                        lambda: (_ for _ in ()).throw(RuntimeError("describe failed"))):
+            fresh = g12.Run.__new__(g12.Run)
+            fresh.parity, fresh.auto_leader_rebalance = parity_doc(), True
+            with self.subTest(observe=observe), self.assertRaisesRegex(RuntimeError, "STOP"):
+                fresh.bind_production("before", observe)
+
+    def test_observer_reads_describe_and_every_broker(self):
+        from scripts.kn_state_topics_packet import CommandResult
+
+        class Runner:
+            def __init__(self, fail=None):
+                self.calls, self.fail = [], fail
+
+            def run(self, command):
+                self.calls.append(list(command))
+                if "brokers" in command:
+                    if "--entity-default" in command:
+                        if self.fail == "default":
+                            return CommandResult(1, "", "boom")
+                        return CommandResult(0, "Default configs for brokers in the cluster are:\n"
+                                             "  log.cleaner.io.max.bytes.per.second=4194304 sensitive=false synonyms="
+                                             "{DYNAMIC_DEFAULT_BROKER_CONFIG:log.cleaner.io.max.bytes.per.second="
+                                             "4194304}\n  log.retention.ms=1 sensitive=false synonyms={}\n", "")
+                    node = command[command.index("--entity-name") + 1]
+                    return CommandResult(0, f"Dynamic configs for broker {node} are:\n", "")
+                topic = command[command.index("--entity-name") + 1]
+                if topic == self.fail:
+                    return CommandResult(1, "", "boom")
+                lines = [f"Dynamic configs for topic {topic} are:"] + [
+                    f"  {k}={v} sensitive=false synonyms={{DYNAMIC_TOPIC_CONFIG:{k}={v}}}"
+                    for k, v in effective()["topics"][topic].items()]
+                return CommandResult(0, "\n".join(lines) + "\n", "")
+
+        def inspect(name):
+            node = g12.PRODUCTION_KAFKA.index(name) + 1
+            return {"Image": "sha256:" + "9" * 64,
+                    "Config": {"Env": [f"{g12.REBALANCE_ENV}=true", "X=1", f"KAFKA_NODE_ID={node}"]}}
+        runner = Runner()
+        observed = g12.observe_production_kafka(runner, inspect, now="2026-10-16T12:00:00Z")
+        self.assertEqual(observed, effective())
+        topic_calls = [c for c in runner.calls if "topics" in c]
+        self.assertEqual(sorted(c[c.index("--entity-name") + 1] for c in topic_calls),
+                         sorted([*g12.INTERNAL_TOPICS, g12.PRODUCTION_LATEST_TOPIC]))
+        broker_calls = [c for c in runner.calls if "brokers" in c]
+        self.assertEqual(len(broker_calls), 1 + len(g12.PRODUCTION_KAFKA))
+        with self.assertRaises(RuntimeError):
+            g12.observe_production_kafka(Runner(fail="default"), inspect)
+        with self.assertRaises(RuntimeError):
+            g12.observe_production_kafka(Runner(), lambda name: {"Image": "x", "Config": {"Env": []}})
+        self.assertFalse(any("--alter" in c for c in runner.calls))
+        with self.assertRaises(RuntimeError):
+            g12.observe_production_kafka(Runner(fail="md.latest.v2"), inspect)
+        with self.assertRaises(RuntimeError):
+            g12.observe_production_kafka(Runner(), lambda name: None)
+
+
+class InternalTopicParityTests(unittest.TestCase):
+    """Codex K1 (2026-10-16): a G12 receipt carries the effective internal-topic overrides before/after the faults,
+    so a B-only run is never credited as C+B proof."""
+
+    @staticmethod
+    def snap(**extra):
+        base = {"cleanup.policy": "compact", "segment.bytes": "104857600"}
+        return {t: {"overrides": {**base, **extra.get(t, {})}, "sha256": "x"} for t in g12.INTERNAL_TOPICS}
+
+    def test_classification(self):
+        c = {"__consumer_offsets": {"delete.retention.ms": "3600000", "segment.ms": "600000"}}
+        self.assertEqual(g12.internal_topic_parity({}), "NOT_MEASURED")
+        self.assertEqual(g12.internal_topic_parity({"before": self.snap()}), "NOT_MEASURED")
+        self.assertEqual(g12.internal_topic_parity({"before": self.snap(), "after": {"error": "x"}}), "NOT_MEASURED")
+        self.assertEqual(g12.internal_topic_parity({"before": self.snap(), "after": self.snap()}),
+                         "C_ABSENT_B_ONLY")
+        self.assertEqual(g12.internal_topic_parity({"before": self.snap(**c), "after": self.snap(**c)}), "C_PRESENT")
+        self.assertEqual(g12.internal_topic_parity({"before": self.snap(), "after": self.snap(**c)}),
+                         "CHANGED_DURING_RUN")
+        # a non-C override changing is not a C claim either way
+        other = {"__transaction_state": {"min.insync.replicas": "1"}}
+        self.assertEqual(g12.internal_topic_parity({"before": self.snap(), "after": self.snap(**other)}),
+                         "C_ABSENT_B_ONLY")
+
+    def test_receipt_records_snapshots_and_failed_reads(self):
+        run = g12.Run.__new__(g12.Run)
+        run.auto_leader_rebalance, notes = False, []
+        run.note = lambda step, **fields: notes.append((step, fields))
+        run.ns, run.work, run.images = "p184-g12-dl-0123456789abcdef", Path("/w"), g12.IMAGES
+        before = self.snap()
+        with patch.object(g12, "sh", return_value="noise\n" + json.dumps(before) + "\n"):
+            run.record_internal_topics("before")
+        with patch.object(g12, "sh", side_effect=RuntimeError("helper failed")):
+            run.record_internal_topics("after")
+        config = run.broker_config()
+        self.assertIs(config["auto.leader.rebalance.enable"], False)
+        self.assertEqual(config["internal_topics"]["before"], before)
+        self.assertIn("helper failed", config["internal_topics"]["after"]["error"])
+        self.assertEqual(config["internal_topic_parity"], "NOT_MEASURED")
+        self.assertEqual([n[0] for n in notes], ["internal_topics", "internal_topics"])
+
+
+class ProductionParityTests(unittest.TestCase):
+    """Coordinator 2026-10-16: G12 mirrors production Kafka exactly (internal-topic decision C, md.latest A',
+    auto.leader.rebalance as deployed) from a docker-inspect-derived snapshot, and records MATCH or refuses credit."""
+
+    @staticmethod
+    def kafka_inspect(value=None):
+        env = ["KAFKA_NODE_ID=1"] + ([] if value is None else [f"KAFKA_AUTO_LEADER_REBALANCE_ENABLE={value}"])
+        return {"Image": "sha256:" + "9" * 64, "Config": {"Env": env}}
+
+    def test_rebalance_follows_the_broker_env(self):
+        names = g12.PRODUCTION_KAFKA
+        self.assertIs(g12.production_rebalance({n: self.kafka_inspect() for n in names}), True)  # Kafka default
+        self.assertIs(g12.production_rebalance({n: self.kafka_inspect("false") for n in names}), False)  # after B
+        self.assertIs(g12.production_rebalance({n: self.kafka_inspect("TRUE") for n in names}), True)
+        mixed = {names[0]: self.kafka_inspect("false"), names[1]: self.kafka_inspect(), names[2]: self.kafka_inspect()}
+        for bad in (mixed, {n: self.kafka_inspect("maybe") for n in names}, {names[0]: self.kafka_inspect()}):
+            with self.subTest(bad=str(bad)[:60]), self.assertRaises(ValueError):
+                g12.production_rebalance(bad)
+
+    def test_snapshot_is_derived_from_inspect_and_committed_plans(self):
+        writer = BrokerAndWriterPrecheckTests.inspect(image="sha256:" + "c" * 64)
+
+        def inspect(name):
+            return writer if name == g12.TS_WRITER else self.kafka_inspect()
+        doc = g12.production_parity_snapshot(inspect, effective, now="2026-10-16T12:00:00Z")
+        from scripts.kafka_internal_topic_compaction import PLAN
+        self.assertEqual(doc["kafka"]["internal_topics"], PLAN)
+        self.assertEqual(doc["kafka"]["state_topics"], {"latest": {"delete.retention.ms": "21600000"}})
+        self.assertIs(doc["kafka"]["auto.leader.rebalance.enable"], True)
+        self.assertEqual(doc["writer"], {"container": g12.TS_WRITER, "image": "sha256:" + "c" * 64,
+                                         "env": NATIVE_ENV})
+        self.assertNotIn("secret", json.dumps(doc))
+        self.assertEqual(g12.validate_parity(doc), doc)
+        self.assertEqual(doc["effective"], effective())
+        # the snapshot refuses a described config that is not the committed plans, whatever the constants say
+        for drifted in (lambda: effective(topics={"__consumer_offsets": {"min.cleanable.dirty.ratio": "0.05"}}),
+                        lambda: effective(topics={g12.PRODUCTION_LATEST_TOPIC: {"delete.retention.ms": "604800000"}}),
+                        lambda: effective(topics={"__transaction_state": {"segment.ms": None}}),
+                        lambda: effective(brokers={g12.PRODUCTION_KAFKA[2]: {g12.REBALANCE_ENV: "false"}})):
+            with self.subTest(drift=str(drifted())[:80]), self.assertRaises(ValueError):
+                g12.production_parity_snapshot(inspect, drifted, now="2026-10-16T12:00:00Z")
+
+    def test_profile_and_parity_validation(self):
+        good = parity_doc()
+        self.assertEqual(g12.validate_parity(good), good)
+        bad = [dict(good, schema="x"),
+               dict(good, kafka=dict(good["kafka"], **{"auto.leader.rebalance.enable": "true"})),
+               dict(good, kafka=dict(good["kafka"], internal_topics={"__consumer_offsets": {}})),
+               dict(good, kafka=dict(good["kafka"], internal_topics=dict(
+                   good["kafka"]["internal_topics"], __transaction_state={"retention.ms": "1"}))),
+               dict(good, kafka=dict(good["kafka"], state_topics={"latest": {"segment.ms": "1"}})),
+               dict(good, writer=dict(good["writer"], image="cb5216b8")),
+               dict(good, writer=dict(good["writer"], env=dict(NATIVE_ENV, POSTGRES_DSN="x"))),
+               dict(good, writer=dict(good["writer"], env={"DATA_LAYER_V2_STREAM_BATCH_MAX_ITEMS": "64"})),
+               dict(good, schema="p184.g12.production-parity.v1"),  # pre-K3 document: constants only
+               {k: v for k, v in good.items() if k != "effective"},
+               dict(good, effective=dict(good["effective"], sha256="0" * 64)),
+               dict(good, effective=effective(topics={"__consumer_offsets": {"min.cleanable.dirty.ratio": "0.05"}}))]
+        for doc in bad:
+            with self.subTest(doc=json.dumps(doc)[:120]), self.assertRaises(ValueError):
+                g12.validate_parity(doc)
+
+    def test_latest_topic_takes_the_a_prime_value_only_from_a_profile(self):
+        self.assertEqual(g12.topics(NS)[NS + ".latest"][1]["delete.retention.ms"], "604800000")
+        latest = g12.topics(NS, latest={"delete.retention.ms": "21600000"})
+        self.assertEqual(latest[NS + ".latest"][1]["delete.retention.ms"], "21600000")
+        self.assertEqual(latest[NS + ".bars"][1]["delete.retention.ms"], "604800000")  # bars contract unchanged
+        with self.assertRaises(ValueError):
+            g12.topics(NS, latest={"segment.ms": "1"})
+        with tempfile.TemporaryDirectory() as work:
+            self.assertIsNone(g12.handoff_kafka_profile(work))
+            (Path(work) / "handoff.json").write_text(json.dumps({"kafka_profile": parity_doc()["kafka"]}))
+            self.assertEqual(g12.handoff_kafka_profile(work), parity_doc()["kafka"])
+
+    @staticmethod
+    def snap(c=None, latest="21600000"):
+        base = {"cleanup.policy": "compact", "segment.bytes": "104857600"}
+        out = {t: {"overrides": {**base, **((c or {}).get(t) or {})}, "sha256": "x"} for t in g12.INTERNAL_TOPICS}
+        out["latest"] = {"overrides": {"cleanup.policy": "compact", "delete.retention.ms": latest}, "sha256": "x"}
+        return out
+
+    def test_production_parity_classification(self):
+        profile = parity_doc()["kafka"]
+        match = self.snap(C_PLAN)
+        self.assertEqual(g12.production_parity(profile, {"before": match, "after": match}), "MATCH")
+        self.assertEqual(g12.production_parity(None, {"before": match, "after": match}), "NO_PROFILE")
+        self.assertEqual(g12.production_parity(profile, {"before": match}), "NOT_MEASURED")
+        self.assertEqual(g12.production_parity(profile, {"before": match, "after": {"error": "x"}}), "NOT_MEASURED")
+        self.assertEqual(g12.production_parity(profile, {"before": self.snap(), "after": self.snap()}), "MISMATCH")
+        self.assertEqual(g12.production_parity(profile, {"before": self.snap(C_PLAN, "604800000"),
+                                                         "after": self.snap(C_PLAN, "604800000")}), "MISMATCH")
+        self.assertEqual(g12.production_parity(profile, {"before": match, "after": self.snap()}),
+                         "CHANGED_DURING_RUN")
+        extra = {**C_PLAN, "__transaction_state": {"segment.ms": "600000", "delete.retention.ms": "1"}}
+        self.assertEqual(g12.production_parity(profile, {"before": self.snap(extra), "after": self.snap(extra)}),
+                         "MISMATCH")
+        # the C-only classification ignores the extra ``applied`` phase
+        self.assertEqual(g12.internal_topic_parity({"applied": match, "before": match, "after": match}), "C_PRESENT")
+
+    def test_apply_stops_unless_the_profile_is_mirrored(self):
+        run = g12.Run.__new__(g12.Run)
+        run.ns, run.work, run.images, notes = NS, Path("/w"), g12.IMAGES, []
+        run.note = lambda step, **fields: notes.append((step, fields))
+        run.parity, run.auto_leader_rebalance = parity_doc(), True
+        with patch.object(g12, "sh", return_value=json.dumps(self.snap(C_PLAN)) + "\n") as sh:
+            run.apply_kafka_profile()
+        self.assertIn("--apply-internal-configs", sh.call_args.args[0])
+        self.assertEqual(run.internal_topics["applied"], self.snap(C_PLAN))
+        run.internal_topics.update(before=self.snap(C_PLAN), after=self.snap(C_PLAN))
+        config = run.broker_config()
+        self.assertEqual((config["production_parity"], config["internal_topic_parity"]), ("MATCH", "C_PRESENT"))
+        self.assertEqual(config["kafka_profile"], parity_doc()["kafka"])
+        run.internal_topics = {}
+        with patch.object(g12, "sh", return_value=json.dumps(self.snap()) + "\n"), self.assertRaises(RuntimeError):
+            run.apply_kafka_profile()
+
+    def test_credit_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "evidence").mkdir()
+            (base / "evidence" / "verdict.json").write_text(json.dumps({"schema": "x"}))
+            snapshot = base / "now.json"
+            snapshot.write_text(json.dumps(parity_doc(False)))
+            with patch("sys.stdout"):
+                self.assertEqual(g12.main(["--credit", str(base), "--production-parity", str(snapshot)]), 1)
+            with patch.object(g12, "g12_receipt_creditable", return_value=(True, "PASS")) as credit, \
+                    patch("sys.stdout"):
+                self.assertEqual(g12.main(["--credit", str(base), "--production-parity", str(snapshot)]), 0)
+            self.assertEqual(credit.call_args.args[1], parity_doc(False)["kafka"])
+            self.assertEqual(credit.call_args.args[2], parity_doc(False)["effective"])
+
+    def test_parity_snapshot_mode_is_exclusive_create(self):
+        doc = parity_doc()
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "parity.json"
+            with patch.object(g12, "production_parity_snapshot", return_value=doc), patch("sys.stdout"):
+                self.assertEqual(g12.main(["--parity-snapshot", str(out), "--cert-dir", tmp]), 0)
+                self.assertEqual(json.loads(out.read_text()), doc)
+                with self.assertRaises(FileExistsError):
+                    g12.main(["--parity-snapshot", str(out), "--cert-dir", tmp])
+
+
+class WriterCloneLifecycleTests(unittest.TestCase):
+    """Coordinator 2026-10-16 (G12 final stop "TS clones never applied: TRADE@..,QUOTE@.."): the clone mirrors the
+    production writer lifecycle - BOOTSTRAP without REQUIRE_RESUME until native checkpoints exist, a clean stop, then
+    the exact deployed env with a verified strict-resume start - and its Postgres gets the heartbeat schema."""
+
+    IMAGE = "sha256:" + "d" * 64
+    DEST = "/app/state/data-layer-v2"
+
+    def inspect(self, mounts=None, cursor="/app/state/data-layer-v2/cursors"):
+        env = [f"{k}={v}" for k, v in NATIVE_ENV.items()] + ([f"DATA_LAYER_V2_CURSOR_DIR={cursor}"] if cursor else [])
+        return {"Image": self.IMAGE, "Config": {"Env": env, "User": "root"},
+                "Mounts": mounts if mounts is not None else [
+                    {"Type": "bind", "Source": "/h/logs", "Destination": "/app/logs"},
+                    {"Type": "bind", "Source": "/h/state", "Destination": "/app/state/data-layer-v2"},
+                    {"Type": "bind", "Source": "/h/secrets", "Destination": "/run/secrets/qdl-v2"}]}
+
+    def argv(self, **changes):
+        env = {"POSTGRES_DSN": "postgresql://x:y@h/db", "DATA_LAYER_V2_CURSOR_DIR": "/app/state/data-layer-v2/cursors",
+               **NATIVE_ENV, **changes}
+        argv = ["docker", "run", "-d", "--rm", "--name", "w", "--tmpfs", "/app/state:uid=0,mode=1777"]
+        for key, value in env.items():
+            if value is not None:
+                argv += ["-e", f"{key}={value}"]
+        return argv + ["-v", "/run/logs:/tmp/writer-stderr", "--entrypoint", "sh", self.IMAGE, "-c", "exec python"]
+
+    def test_state_destination_is_the_deployed_cursor_bind(self):
+        self.assertEqual(g12.writer_state_destination(self.inspect()), self.DEST)
+        nested = self.inspect()["Mounts"] + [{"Type": "bind", "Source": "/h/c", "Destination": self.DEST + "/cursors"}]
+        self.assertEqual(g12.writer_state_destination(self.inspect(nested)), self.DEST + "/cursors")
+        for inspect in (self.inspect(mounts=[]), self.inspect(cursor=None),
+                        self.inspect([{"Type": "volume", "Destination": self.DEST}]),
+                        self.inspect([{"Type": "bind", "Destination": "/app/state/data-layer-v2-x"}])):
+            with self.subTest(inspect=str(inspect)[-80:]), self.assertRaises(ValueError):
+                g12.writer_state_destination(inspect)
+
+    def test_bootstrap_flips_only_the_flag_and_both_phases_bind_the_state(self):
+        base = self.argv()
+        boot = g12.lifecycle_writer_args(base, self.IMAGE, "/run/tsstate-okx", self.DEST, "BOOTSTRAP")
+        strict = g12.lifecycle_writer_args(base, self.IMAGE, "/run/tsstate-okx", self.DEST, "STRICT")
+        self.assertEqual(g12.argv_env(boot)["MARKET_DATA_NATIVE_REQUIRE_RESUME"], "0")
+        self.assertEqual(g12.argv_env(strict), g12.argv_env(base))
+        for argv in (boot, strict):
+            bind = argv.index("/run/tsstate-okx:" + self.DEST + ":rw")
+            self.assertEqual((argv[bind - 1], argv[bind + 1:bind + 4]), ("-v", ["--entrypoint", "sh", self.IMAGE]))
+            self.assertEqual(len(argv), len(base) + 2)
+        self.assertEqual(g12.bootstrap_env_delta(boot, strict),
+                         {"MARKET_DATA_NATIVE_REQUIRE_RESUME": {"bootstrap": "0", "strict": "1"}})
+        deployed = g12.writer_reference(self.inspect())
+        self.assertTrue(g12.writer_clone_precheck(strict, self.IMAGE, deployed, dict(deployed))["ok"])
+        self.assertFalse(g12.writer_clone_precheck(boot, self.IMAGE, deployed, dict(deployed))["ok"])
+        self.assertEqual(base, self.argv())  # input untouched
+
+    def test_lifecycle_refusals(self):
+        cases = {"no strict flag": (self.argv(MARKET_DATA_NATIVE_REQUIRE_RESUME=None), "STRICT"),
+                 "flag 0 deployed": (self.argv(MARKET_DATA_NATIVE_REQUIRE_RESUME="0"), "BOOTSTRAP"),
+                 "flag twice": (self.argv() [:-6] + ["-e", "MARKET_DATA_NATIVE_REQUIRE_RESUME=1"] + self.argv()[-6:],
+                                "STRICT"),
+                 "state already mounted": (self.argv()[:-6] + ["-v", "/x:" + self.DEST] + self.argv()[-6:], "STRICT"),
+                 "unknown phase": (self.argv(), "LIVE")}
+        for label, (argv, phase) in cases.items():
+            with self.subTest(label), self.assertRaises(ValueError):
+                g12.lifecycle_writer_args(argv, self.IMAGE, "/s", self.DEST, phase)
+        with self.assertRaises(ValueError):
+            g12.lifecycle_writer_args(self.argv(), "sha256:" + "e" * 64, "/s", self.DEST, "STRICT")
+
+    def test_md_missing_since_needs_every_feed_after_the_restart(self):
+        rows = [{"k": "ev", "t": 5 * S, "venue": "OKX", "feed": f, "id": "1"} for f in g12.MD_FEEDS]
+        rows += [{"k": "ev", "t": 20 * S, "venue": "OKX", "feed": f, "id": "2"} for f in ("MARK", "BAR")]
+        self.assertEqual(g12.md_missing_since(rows, 0, venues=("OKX",)), [])
+        self.assertEqual(g12.md_missing_since(rows, 10 * S, venues=("OKX",)), ["TRADE@OKX", "QUOTE@OKX"])
+        rows.append({"k": "ev", "t": 21 * S, "venue": "OKX", "feed": "TRADE", "id": None})
+        self.assertIn("TRADE@OKX", g12.md_missing_since(rows, 10 * S, venues=("OKX",)))
+
+    def test_cursor_inventory_and_native_checkpoints(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            native = root / "cursors/fixed-workers-v1/native-0"
+            native.mkdir(parents=True)
+            (native / "p184-g12-dl-x.ts.json").write_text('{"offset": 3}')
+            (root / "cursors/fixed-workers-v1/native-1").mkdir()
+            (root / "cursors/fixed-workers-v1/native-1/empty.json").write_text("")
+            (root / "cursors/fixed-workers-v1/worker-2").mkdir()
+            (root / "cursors/fixed-workers-v1/worker-2/py.json").write_text("{}")
+            inventory = g12.cursor_inventory(root)
+            self.assertEqual(len(inventory), 3)
+            # The writer's 0600 root-owned cursor: size from stat, no digest, still a native checkpoint.
+            real_read = Path.read_bytes
+            with patch.object(Path, "read_bytes", lambda self: (_ for _ in ()).throw(PermissionError())
+                              if self.name.startswith("p184") else real_read(self)):
+                unreadable = g12.cursor_inventory(root)
+            row = unreadable["cursors/fixed-workers-v1/native-0/p184-g12-dl-x.ts.json"]
+            self.assertEqual((row["bytes"], row["sha256"], row["read"]), (13, None, "PermissionError"))
+            self.assertEqual(g12.native_checkpoints(unreadable), g12.native_checkpoints(inventory))
+            self.assertNotIn("offset", json.dumps(inventory))
+            self.assertEqual(g12.native_checkpoints(inventory),
+                             ["cursors/fixed-workers-v1/native-0/p184-g12-dl-x.ts.json"])
+        self.assertEqual(g12.native_checkpoints({}), [])
+
+    def test_clone_schema_comes_from_the_ts_migration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / g12.CLONE_SCHEMA_MIGRATIONS[0]
+            path.parent.mkdir(parents=True)
+            path.write_text("CREATE TABLE IF NOT EXISTS service_heartbeats (service_name TEXT PRIMARY KEY);\n")
+            sql, provenance = g12.clone_schema_sql(tmp)
+            self.assertIn("service_heartbeats", sql)
+            self.assertEqual(provenance["migrations"][0]["path"], g12.CLONE_SCHEMA_MIGRATIONS[0])
+            path.write_text("CREATE TABLE other (x int);\n")
+            with self.assertRaises(ValueError):
+                g12.clone_schema_sql(tmp)
+        calls = []
+        clone = types.SimpleNamespace(pg_name="ns-tspg-okx", pg_port=5442)
+        g12.apply_clone_schema(clone, "SELECT 1", run=lambda argv, timeout: calls.append(argv))
+        self.assertEqual(calls[0][:5], ["docker", "exec", "-e", "PGPASSWORD=dr05", "ns-tspg-okx"])
+        self.assertIn("ON_ERROR_STOP=1", calls[0])
+        self.assertEqual(calls[0][-2:], ["-c", "SELECT 1"])
+
+    def test_refusal_lines(self):
+        text = "a\n2026 native session error HANDOFF_RESUME_REQUIRED x\nb\n" + "y HANDOFF_RESUME_REQUIRED\n" * 7
+        found = g12.refusal_lines(text)
+        self.assertEqual((found["count"], len(found["last"])), (8, 5))
+        self.assertEqual(g12.refusal_lines(None), {"count": 0, "last": []})
+
+    def test_credit_requires_the_verified_lifecycle(self):
+        self.assertEqual(g12.writer_lifecycle_problems(lifecycle_ok()), [])
+        for path, value in ((("lifecycle", "strict_resume"), "FAILED"), (("lifecycle", "strict_resume"), None),
+                            (("lifecycle", "bootstrap_exit"), {"exit_code": 137}),
+                            (("lifecycle", "native_checkpoints"), []),
+                            (("lifecycle", "strict_precheck"), {"ok": False}), (("ok",), False)):
+            with self.subTest(path=path, value=value):
+                doc = lifecycle_ok()
+                cell = doc["OKX"]
+                for key in path[:-1]:
+                    cell = cell[key]
+                cell[path[-1]] = value
+                self.assertTrue(g12.writer_lifecycle_problems(doc))
+        self.assertTrue(g12.writer_lifecycle_problems(None))
+        self.assertTrue(g12.writer_lifecycle_problems({"BINANCE": lifecycle_ok()["BINANCE"]}))
+
+    # -- Run.strict_restart with fakes (no Docker)
+    CONSUMER = NS + ".okx"
+
+    @classmethod
+    def cursor_doc(cls, offsets, consumer=None, token="tok-secret"):
+        items = {f"{consumer or cls.CONSUMER}|uid-eth|{feed}||policy": {"token": token, "offset": off}
+                 for feed, off in offsets.items()}
+        return json.dumps({"schema": g12.CURSOR_SCHEMA, "items": items})
+
+    def run_with(self, tmp, *, exit_code=0, checkpoint=True, applied=True, delayed_only=False, native_applied=True,
+                 boot=None, strict=None, refusals=""):
+        run = g12.Run.__new__(g12.Run)
+        run.ns, run.images, run.parity = NS, dict(g12.IMAGES, ts=self.IMAGE), None
+        run.evidence = Path(tmp) / "evidence"
+        run.evidence.mkdir()
+        run.expected, run.clones, run.writer_precheck, run.notes = {"tswriter-okx"}, {}, {}, []
+        run.note = lambda step, **fields: run.notes.append(step)
+        run.verify_image = lambda role: None
+        run.views_fresh = lambda since: True
+        run.wait = lambda seconds, faulted=(), until=None, step=5.0: until()
+        state = Path(tmp) / "tsstate-okx"
+        (state / "cursors/fixed-workers-v1/native-0").mkdir(parents=True)
+        rel = f"cursors/fixed-workers-v1/native-0/{self.CONSUMER}.json"
+        if checkpoint:
+            (state / rel).write_text('{"o": 1}')
+        started = []
+        clone = types.SimpleNamespace(image=self.IMAGE, state_dir=state, lifecycle={"phase": "BOOTSTRAP"},
+                                      inspect=self.inspect(), log_tail=lambda lines: refusals,
+                                      run=lambda *argv, timeout: started.append(list(argv)))
+        clone.writer_args = lambda: g12.lifecycle_writer_args(self.argv(), self.IMAGE, str(state), self.DEST,
+                                                              clone.lifecycle["phase"])
+        run.clones = {"OKX": clone}
+        run.writer_precheck = {"OKX": {"ok": True, "lifecycle": {"phase": "BOOTSTRAP", "strict_resume": "PENDING"}}}
+        died = {}
+        run.exit_states = lambda roles, wait_s=3.0: {"tswriter-okx": {"lives": [
+            {"exit_code": exit_code, "oom_killed": False, "died_ns": died["ns"]}]}}
+
+        def stop_role(ns, role, timeout=30, kill=False):
+            died["ns"] = time.time_ns()
+            return True
+
+        boot = {"TRADE": 5, "QUOTE": 7} if boot is None else boot
+        strict = {"TRADE": 9, "QUOTE": 8} if strict is None else strict
+
+        def docs(state_dir, holder, ns, run=None):
+            return {rel: self.cursor_doc(strict if started else boot)} if checkpoint else {}
+
+        def jsonl(path):
+            if not started or not applied:
+                return []
+            t0 = time.time_ns() - 60 * S if delayed_only else time.time_ns() + S
+            feeds = [f for f in g12.MD_FEEDS if native_applied or f not in ("TRADE", "QUOTE")]
+            if path.name == "publish.jsonl":
+                return [{"k": "pub_md", "t": t0, "venue": "OKX", "feed": f, "id": "9"} for f in feeds]
+            return [{"k": "ev", "t": time.time_ns() + 2 * S, "venue": "OKX", "feed": f, "id": "9"} for f in feeds]
+        return run, started, stop_role, jsonl, docs
+
+    def strict(self, tmp, **kwargs):
+        run, started, stop_role, jsonl, docs = self.run_with(tmp, **kwargs)
+        with patch.object(g12, "stop_role", stop_role), patch.object(g12, "load_jsonl", jsonl), \
+                patch.object(g12, "read_native_cursor_docs", docs), patch.object(g12, "VENUES", ("OKX",)):
+            run.strict_restart()
+        return run, started
+
+    def test_strict_restart_verifies_the_resumed_start(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run, started = self.strict(tmp)
+            self.assertEqual(len(started), 1)
+            self.assertEqual(g12.argv_env(started[0])["MARKET_DATA_NATIVE_REQUIRE_RESUME"], "1")
+            lifecycle = run.writer_precheck["OKX"]["lifecycle"]
+            self.assertEqual((lifecycle["phase"], lifecycle["strict_resume"]), ("STRICT", "VERIFIED"))
+            self.assertEqual(lifecycle["native_feeds"], ["TRADE", "QUOTE"])
+            self.assertEqual({f: r["offset"] for f, r in lifecycle["bootstrap_frontier"].items()},
+                             {"TRADE": 5, "QUOTE": 7})
+            self.assertEqual(lifecycle["strict_progress"]["routes"], {"TRADE": "ADVANCED", "QUOTE": "ADVANCED"})
+            self.assertTrue(lifecycle["strict_precheck"]["ok"])
+            self.assertIn("tswriter-okx", run.expected)
+            saved = (run.evidence / g12.WRITER_PRECHECK_FILE).read_text()
+            self.assertEqual(json.loads(saved)["OKX"]["lifecycle"]["strict_resume"], "VERIFIED")
+            self.assertNotIn("tok-secret", saved)  # tokens are never kept
+
+    def test_strict_restart_stops_on_every_non_genuine_start(self):
+        cases = (("unclean exit", {"exit_code": 137}, "did not stop cleanly", False),
+                 ("no checkpoint", {"checkpoint": False}, "left no native checkpoint", False),
+                 ("one route without checkpoint", {"boot": {"TRADE": 5}}, "QUOTE: no native checkpoint", False),
+                 ("nothing applied", {"applied": False}, "strict-resume start not verified", True),
+                 # W1: bootstrap notifications drained after the restart (old publish stamps) never count.
+                 ("delayed bootstrap notifications", {"delayed_only": True}, "not verified", True),
+                 # W1: native sessions refused while Python BOOK/MARK/BAR keep applying.
+                 ("native refused, python healthy", {"native_applied": False}, "not verified", True),
+                 ("durable checkpoint not advanced", {"strict": {"TRADE": 5, "QUOTE": 8}}, "NOT_ADVANCED", True),
+                 ("checkpoint regressed", {"strict": {"TRADE": 9, "QUOTE": 3}}, "REGRESSED", True),
+                 ("refusal in the writer log", {"refusals": "x HANDOFF_RESUME_REQUIRED y"}, "refusals", True))
+        for label, kwargs, text, restarted in cases:
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaisesRegex(RuntimeError, text):
+                    self.strict(tmp, **kwargs)
+
+    def test_genuine_resume_from_an_older_cursor_then_catch_up_passes(self):
+        # Replay from the bootstrap frontier (duplicates are safe) then new events: advanced on the same key.
+        with tempfile.TemporaryDirectory() as tmp:
+            run, _ = self.strict(tmp, boot={"TRADE": 1, "QUOTE": 1}, strict={"TRADE": 2, "QUOTE": 40})
+            self.assertEqual(run.writer_precheck["OKX"]["lifecycle"]["strict_resume"], "VERIFIED")
+
+
+class CodexFollowupReviewTests(unittest.TestCase):
+    """Codex WriterClone/guard follow-up review 2026-10-16: W1 (strict start joined to new publications + per-route
+    checkpoints), W2 (state erased only after the writer is verified absent), D1 (admin launches under the host lock),
+    D2 (cleaner settings in the effective hash), D3 (pass window after the baseline completes)."""
+
+    # W1
+    def test_md_resumed_needs_a_publication_after_that_venue_start(self):
+        starts = {"OKX": 100 * S, "BINANCE": 200 * S}
+        pubs = [{"k": "pub_md", "t": 150 * S, "venue": "OKX", "feed": "TRADE", "id": "a"},
+                {"k": "pub_md", "t": 90 * S, "venue": "OKX", "feed": "QUOTE", "id": "b"},
+                {"k": "pub_md", "t": 150 * S, "venue": "BINANCE", "feed": "TRADE", "id": "c"},
+                {"k": "pub_md", "t": 210 * S, "venue": "BINANCE", "feed": "QUOTE", "id": "d"}]
+        evs = [{"k": "ev", "t": 160 * S, "venue": "OKX", "feed": "TRADE", "id": "a"},
+               {"k": "ev", "t": 160 * S, "venue": "OKX", "feed": "QUOTE", "id": "b"},  # delayed bootstrap event
+               {"k": "ev", "t": 220 * S, "venue": "BINANCE", "feed": "TRADE", "id": "c"},  # before BINANCE start
+               {"k": "ev", "t": 220 * S, "venue": "BINANCE", "feed": "QUOTE", "id": "d"},
+               {"k": "ev", "t": 230 * S, "venue": "OKX", "feed": "MARK", "id": "zz"}]  # no publication
+        self.assertEqual(g12.md_resumed_missing(evs, pubs, starts, feeds=("TRADE", "QUOTE", "MARK")),
+                         ["QUOTE@OKX", "MARK@OKX", "TRADE@BINANCE", "MARK@BINANCE"])
+
+    def test_cursor_frontier_requires_each_route_once_for_this_consumer(self):
+        doc = WriterCloneLifecycleTests.cursor_doc
+        c = WriterCloneLifecycleTests.CONSUMER
+        frontier, problems = g12.cursor_frontier({"n0/x.json": doc({"TRADE": 3, "QUOTE": 4})}, c, ["TRADE", "QUOTE"])
+        self.assertEqual((sorted(frontier), problems), (["QUOTE", "TRADE"], []))
+        self.assertNotIn("tok-secret", json.dumps(frontier))
+        cases = {"missing route": ({"n0/x.json": doc({"TRADE": 3})}, "QUOTE: no native checkpoint"),
+                 "other consumer": ({"n0/x.json": doc({"TRADE": 3, "QUOTE": 4}, consumer="prod.ts")}, "another"),
+                 "malformed": ({"n0/x.json": "{not json"}, "malformed"),
+                 "wrong schema": ({"n0/x.json": json.dumps({"schema": "v1", "items": {}})}, "malformed"),
+                 "no token": ({"n0/x.json": doc({"TRADE": 3, "QUOTE": 4}, token="")}, "no valid offset"),
+                 "duplicate route": ({"n0/x.json": doc({"TRADE": 3, "QUOTE": 4}),
+                                      "n1/x.json": doc({"TRADE": 5})}, "more than one")}
+        for label, (docs, text) in cases.items():
+            with self.subTest(label):
+                _, problems = g12.cursor_frontier(docs, c, ["TRADE", "QUOTE"])
+                self.assertTrue(any(text in p for p in problems), problems)
+        # an empty worker slot (no document) is not required
+        self.assertEqual(g12.cursor_frontier({"n0/x.json": doc({"TRADE": 1, "QUOTE": 1})}, c, ["TRADE", "QUOTE"])[1],
+                         [])
+
+    def test_frontier_progress(self):
+        b = {"TRADE": {"offset": 5, "key_sha256": "k"}}
+        self.assertEqual(g12.frontier_progress(b, {"TRADE": {"offset": 6, "key_sha256": "k"}}, ["TRADE"]),
+                         (True, {"TRADE": "ADVANCED"}))
+        for after, row in (({"TRADE": {"offset": 5, "key_sha256": "k"}}, "NOT_ADVANCED"),
+                           ({"TRADE": {"offset": 4, "key_sha256": "k"}}, "REGRESSED"),
+                           ({"TRADE": {"offset": 9, "key_sha256": "j"}}, "KEY_CHANGED"), ({}, "MISSING")):
+            self.assertEqual(g12.frontier_progress(b, after, ["TRADE"]), (False, {"TRADE": row}))
+
+    def test_read_native_cursor_docs_parses_the_holder_output(self):
+        calls = []
+
+        def run(argv, timeout):
+            calls.append(argv)
+            return "\n@@FILE cursors/fixed-workers-v1/native-4/c.json\n{\"a\": 1}\n@@FILE x/y.json\n{}"
+        docs = g12.read_native_cursor_docs("/s", "sha256:h", NS, run=run)
+        self.assertEqual(docs, {"cursors/fixed-workers-v1/native-4/c.json": "{\"a\": 1}\n", "x/y.json": "{}\n"})
+        self.assertIn("none", calls[0])
+        self.assertIn("/s:/state:ro", calls[0])
+
+    # W2
+    def down_run(self, tmp, present):
+        run = g12.Run.__new__(g12.Run)
+        run.ns, run.images, run.evidence, run.work = NS, dict(g12.IMAGES), Path(tmp) / "e", Path(tmp) / "w"
+        run.evidence.mkdir()
+        run.work.mkdir()
+        state = run.work / "tsstate-okx"
+        state.mkdir()
+        (state / "c.json").write_text("{}")
+        clone = types.SimpleNamespace(name=f"{NS}-tswriter-okx", state_dir=state,
+                                      close=lambda: [{"kind": "container", "name": "x", "ok": False}])
+        run.clones, run.guard0, run.notes = {"OKX": clone}, None, []
+        run.note = lambda step, **fields: run.notes.append(step)
+        run.keep_logs = lambda: None
+        run.stop_followers = lambda: {}
+        run.stop_events = lambda: 0
+        order = []
+
+        def sh(argv, timeout=60, check=True):
+            if argv[:3] == ["docker", "ps", "-aq"]:
+                order.append("liveness")
+                if present == "error":
+                    raise RuntimeError("daemon")
+                return "abc\n" if present else ""
+            if argv[:2] == ["docker", "run"]:
+                order.append("erase")
+                for child in state.iterdir():
+                    child.unlink()
+            return ""
+
+        def teardown(ns):
+            order.append("teardown")
+            return {"removed_containers": [], "errors": []}
+        return run, order, sh, teardown, state
+
+    def test_down_erases_state_only_after_teardown_and_verified_absence(self):
+        for present, erased in ((False, True), (True, False), ("error", False)):
+            with self.subTest(present=present), tempfile.TemporaryDirectory() as tmp:
+                run, order, sh, teardown, state = self.down_run(tmp, present)
+                with patch.object(g12, "sh", sh), patch.object(g12, "teardown", teardown):
+                    report = run.down()
+                self.assertEqual(order[:2], ["teardown", "liveness"])
+                self.assertEqual(state.exists(), not erased)
+                erased_doc = report["clone_state_erased"]
+                self.assertEqual(erased_doc["complete"], erased)
+                if not erased:
+                    self.assertTrue(any("clone state kept" in e for e in report["errors"]))
+                # the first close() failure is preserved even when later cleanup succeeds
+                self.assertEqual(report["writer_clone_removed"][0]["ok"], False)
+
+    # D1
+    def test_admin_runner_checks_the_lock_before_every_launch(self):
+        from scripts import kn_state_topics_packet as packet
+        with tempfile.TemporaryDirectory() as tmp:
+            lock = Path(tmp) / "lock"
+            launched = []
+            runner = packet.AdminContainerRunner(Path(tmp), image="apache/kafka@sha256:x", lock_guard=True,
+                                                 lock_owner="claude-g12-final", lock_path=lock)
+
+            def write(owner, minutes=30):
+                until = (time.time() + minutes * 60)
+                import datetime as dt
+                lock.write_text(json.dumps({"owner": owner, "until_utc": dt.datetime.fromtimestamp(
+                    until, dt.timezone.utc).isoformat()}))
+            with patch.object(packet, "_subprocess", lambda argv, timeout: launched.append(argv) or
+                              packet.CommandResult(0, "", "")):
+                runner.run(["kafka-configs.sh", "--describe"])  # absent
+                write("claude-g12-final")
+                runner.run(["kafka-configs.sh", "--describe"])  # own
+                write("someone", minutes=-5)
+                runner.run(["kafka-configs.sh", "--describe"])  # expired
+                write("claude-burst-x")  # owner replaced between two describes
+                with self.assertRaises(packet.Refused):
+                    runner.run(["kafka-configs.sh", "--describe"])
+                lock.write_text("{garbage")
+                with self.assertRaises(packet.Refused):
+                    runner.run(["kafka-configs.sh", "--describe"])
+            self.assertEqual(len(launched), 3)
+            unguarded = packet.AdminContainerRunner(Path(tmp), image="apache/kafka@sha256:x")
+            unguarded.check_lock()  # default: no guard (callers opt in)
+
+    def test_parity_snapshot_paths_name_their_lock_owner(self):
+        from scripts import kafka_b_roll_runbook as runbook
+        argv = runbook.parity_argv(Path("/o.json"), Path("/c"))
+        self.assertEqual(argv[argv.index("--lock-owner") + 1], runbook.OWNER)
+        seen = {}
+
+        class Runner:
+            def __init__(self, cert, **kwargs):
+                seen.update(kwargs)
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch("scripts.kn_state_topics_packet.AdminContainerRunner", Runner), \
+                patch.object(g12, "production_parity_snapshot", return_value=parity_doc()), patch("sys.stdout"):
+            g12.main(["--parity-snapshot", str(Path(tmp) / "p.json"), "--cert-dir", tmp, "--lock-owner", "me"])
+        self.assertEqual(seen, {"lock_guard": True, "lock_owner": "me"})
+
+    # D2
+    def test_cleaner_settings_are_parsed_and_hashed(self):
+        out = ("Default configs for brokers in the cluster are:\n"
+               "  log.cleaner.io.max.bytes.per.second=4194304 sensitive=false synonyms={DYNAMIC_DEFAULT_BROKER_CONFIG:"
+               "log.cleaner.io.max.bytes.per.second=4194304}\n"
+               "  min.cleanable.dirty.ratio=0.05 sensitive=false synonyms={}\n"
+               "  log.retention.ms=5 sensitive=false synonyms={}\n")
+        self.assertEqual(g12.parse_cleaner_configs(out), {"log.cleaner.io.max.bytes.per.second": "4194304",
+                                                          "min.cleanable.dirty.ratio": "0.05"})
+        base = effective()
+        throttled = effective(cleaner={"default": {"log.cleaner.io.max.bytes.per.second": "1048576"},
+                                       "brokers": {"1": {}, "2": {}, "3": {}}})
+        self.assertNotEqual(base["sha256"], throttled["sha256"])  # throttle-only change, topics/images equal
+        self.assertEqual(g12.effective_problems(throttled, parity_doc()["kafka"]), [])
+        no_cleaner = g12.seal_effective({k: v for k, v in base.items() if k not in ("sha256", "cleaner")})
+        self.assertIn("cleaner settings (cluster default + every broker) not observed",
+                      g12.effective_problems(no_cleaner, parity_doc()["kafka"]))
+
+    def test_pre_d2_run_is_compared_on_its_v1_binding_and_reported(self):
+        v1 = effective(schema=g12.EFFECTIVE_SCHEMA_V1)
+        config = {"production_parity": "MATCH", "kafka_profile": parity_doc()["kafka"],
+                  "production_effective": {"parity_sha256": v1["sha256"], "before": v1, "after": v1}}
+        self.assertEqual(g12.effective_v1_sha256(effective()), v1["sha256"])
+        self.assertEqual(g12.production_effective_problems(config, effective()), [])
+        self.assertEqual(g12.cleaner_binding(config, effective()), "CREDIT_TIME_ONLY")
+        moved = effective(brokers={g12.PRODUCTION_KAFKA[0]: {"image": "sha256:" + "1" * 64}})
+        self.assertTrue(g12.production_effective_problems(config, moved))
+        v2 = effective()
+        bound = dict(config, production_effective={"parity_sha256": v2["sha256"], "before": v2, "after": v2})
+        self.assertEqual(g12.cleaner_binding(bound), "RUN")
+        throttled = effective(cleaner={"default": {}, "brokers": {"1": {}, "2": {}, "3": {}}})
+        self.assertTrue(g12.production_effective_problems(bound, throttled))  # v2 run: cleaner drift refuses
+
+    # D3
+    def test_pass_during_baseline_collection_is_not_credited(self):
+        from scripts import kafka_offsets_pass_watch as watch
+
+        def snap(at, done, passes, offsets):
+            doc = {"read_contract": watch.READ_CONTRACT, "at_utc": at, "partition": "__consumer_offsets-43",
+                   "replicas": {"1": {"segment_count": 1, "size_bytes": 10, "empty_segments": 0,
+                                      "cleaner_checkpoint": 1, "log_start_checkpoint": 0, "passes": passes}},
+                   "group_offsets": offsets, "group_states": {}}
+            if done:
+                doc["baseline_completed_utc"] = done
+            return doc
+        during = [{"started_utc": "2026-10-16T10:00:05+00:00", "finished_utc": "2026-10-16T10:00:06+00:00",
+                   "end_messages": 3}]
+        before = snap("2026-10-16T10:00:00+00:00", "2026-10-16T10:00:10+00:00", [], {"g": {"t-0": 5}})
+        # the offset of group h vanished during the baseline collection: absent from both maps
+        after = snap("2026-10-16T11:00:00+00:00", None, during, {"g": {"t-0": 5}})
+        report = watch.compare(before, after)
+        self.assertFalse(report["replicas"]["1"]["pass_started"])
+        self.assertEqual(report["replicas"]["1"]["passes_during_baseline"], during)
+        self.assertFalse(report["cleaner_completed_all_replicas"])
+        self.assertEqual((report["pass_window_from_utc"], report["baseline_bound_exact"]),
+                         ("2026-10-16T10:00:10+00:00", True))
+        later = [{"started_utc": "2026-10-16T10:30:00+00:00", "finished_utc": "2026-10-16T10:31:00+00:00",
+                  "end_messages": 3}]
+        self.assertTrue(watch.compare(before, snap("2026-10-16T11:00:00+00:00", None, later,
+                                                   {"g": {"t-0": 5}}))["cleaner_completed_all_replicas"])
+        legacy = {k: v for k, v in before.items() if k != "baseline_completed_utc"}
+        self.assertFalse(watch.compare(legacy, after)["baseline_bound_exact"])
+
+    def test_snapshot_records_offsets_capture_and_baseline_completion(self):
+        from scripts import kafka_offsets_pass_watch as watch
+        from scripts.kn_state_topics_packet import CommandResult
+        import datetime as dt
+        ticks = iter([dt.datetime(2026, 10, 16, 10, 0, 7, tzinfo=dt.timezone.utc),
+                      dt.datetime(2026, 10, 16, 10, 0, 9, tzinfo=dt.timezone.utc)])
+        admin = types.SimpleNamespace(run=lambda cmd: CommandResult(0, "", ""), describe=lambda: {})
+        with patch.object(watch, "read_cleaner_log", return_value=("", [], [])), \
+                patch.object(watch, "_run", return_value=""), \
+                patch.object(watch, "parse_partition_dir", return_value={}), \
+                patch.object(watch, "parse_cleaner_passes", return_value=[]):
+            doc = watch.snapshot(admin, "__consumer_offsets-43", 1, brokers=(1,),
+                                 now=dt.datetime(2026, 10, 16, 10, 0, 0, tzinfo=dt.timezone.utc),
+                                 clock=lambda: next(ticks))
+        self.assertEqual((doc["at_utc"][:19], doc["offsets_captured_utc"][:19], doc["baseline_completed_utc"][:19]),
+                         ("2026-10-16T10:00:00", "2026-10-16T10:00:07", "2026-10-16T10:00:09"))
+
+
+class ImageSetParameterTests(unittest.TestCase):
+    """Coordinator 2026-10-16: the final G12 points --image-set at the release digests; a set that does not name every
+    role is refused instead of silently mixing in the IMAGES defaults."""
+
+    def test_run_refuses_an_incomplete_image_set_and_accepts_a_complete_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parity = Path(tmp) / "parity.json"
+            parity.write_text(json.dumps(parity_doc(False, writer_image=g12.IMAGES["ts"])))
+            partial = Path(tmp) / "partial.json"
+            partial.write_text(json.dumps({"core": "sha256:" + "a" * 64}))
+            argv = ["--run", tmp, "--export", tmp, "--namespace", NS, "--auto-leader-rebalance", "false",
+                    "--production-parity", str(parity), "--cert-dir", tmp]
+            with patch("sys.stderr"), self.assertRaises(SystemExit):
+                g12.main(argv + ["--image-set", str(partial)])
+            full = Path(tmp) / "full.json"
+            full.write_text(json.dumps(dict(g12.IMAGES, core="sha256:" + "a" * 64)))
+            with patch.object(g12, "orchestrate", return_value=0) as run:
+                self.assertEqual(g12.main(argv + ["--image-set", str(full)]), 0)
+            self.assertEqual(run.call_args.args[3]["core"], "sha256:" + "a" * 64)

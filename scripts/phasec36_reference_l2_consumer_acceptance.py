@@ -198,6 +198,12 @@ async def _certify_references(
 
 
 async def run(args: argparse.Namespace) -> dict[str, object]:
+    # A1 (2026-10-18): the verifier no longer imports Query's funding allowance; this script runs in the image whose
+    # Query it certifies, so it configures that image's constant (absent -> unconfigured -> funding history fails
+    # closed, never a silent pass).
+    from qdl.certification.reference_l2_acceptance import configure_query_funding_allowance_ms
+    from qdl.query import service as _query_service
+    configure_query_funding_allowance_ms(getattr(_query_service, "_FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS", None))
     catalog = StableSourceCatalog.load(args.catalog)
     acquisition = StableAcquisitionPlan.load(args.acquisition, catalog=catalog)
     scope = build_reference_l2_acceptance_scope(

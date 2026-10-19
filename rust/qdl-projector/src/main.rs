@@ -24,7 +24,9 @@ use qdl_projector::kafka_pipe::{KafkaPipe, KafkaPipeSettings};
 use qdl_projector::kafka_state::{KafkaPartitionReader, KafkaStateSettings, KafkaStateSource};
 use qdl_projector::products::{retained_caps, ProductMap, ProductTransform, TransformSettings};
 use qdl_projector::shutdown::{drain_threads, Stop};
-use qdl_projector::stage_a::{StageA, StageAError, StageALimits, StageAMetrics};
+use qdl_projector::stage_a::{
+    StageA, StageAError, StageALimits, StageAMetrics, Step, MAX_CONSECUTIVE_SOURCE_ERRORS,
+};
 use qdl_projector::stage_b::{StageB, StageBError, StageBLimits, StageBMetrics};
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{BaseConsumer, Consumer};
@@ -235,7 +237,8 @@ fn status_json(status: &Status) -> serde_json::Value {
         "schema": "qdl.kn3.projector-status.v1",
         "at_ms": now_ms(),
         "started_ms": status.started_ms,
-        "stage_a": {"transactions": a.transactions, "inputs": a.inputs, "outputs": a.outputs, "aborts": a.aborts},
+        "stage_a": {"transactions": a.transactions, "inputs": a.inputs, "outputs": a.outputs, "aborts": a.aborts,
+            "poll_errors": a.poll_errors},
         "stage_b": {
             "batches": b.batches, "latest_applied": b.latest_applied, "bars_applied": b.bars_applied,
             "duplicates": b.duplicates, "stale": b.stale, "conflicts": b.conflicts,
@@ -304,9 +307,15 @@ fn run_stage_a(config: Config, status: Shared, latest: u32, bars: u32, stop: Arc
     let mut stage = StageA::new(pipe, transform, StageALimits::default());
     while !stop.requested() {
         match stage.step() {
-            Ok(_) => {
+            Ok(step) => {
                 if let Ok(mut shared) = status.lock() {
                     shared.stage_a = stage.metrics.clone();
+                }
+                // Transient consumer error (StageA bounds the consecutive run); a short pause keeps the healthy
+                // partitions flowing while librdkafka backs off the failed broker itself.
+                if let Step::PollError(reason) = step {
+                    record_error(&status, "stage_a", format!("poll: {reason}"));
+                    stop.wait(Duration::from_millis(100));
                 }
             }
             Err(StageAError::Integrity {
@@ -409,8 +418,12 @@ fn run_stage_b(config: Config, status: Shared, stop: Arc<Stop>) {
             Err(error) => {
                 source_errors += 1;
                 record_error(&status, "stage_b", format!("{error:?}"));
-                if source_errors > 30 {
-                    fatal(&status, "stage_b", "30 consecutive errors".into());
+                if source_errors > MAX_CONSECUTIVE_SOURCE_ERRORS {
+                    fatal(
+                        &status,
+                        "stage_b",
+                        format!("{MAX_CONSECUTIVE_SOURCE_ERRORS} consecutive errors"),
+                    );
                 }
                 stop.wait(Duration::from_secs(1));
             }

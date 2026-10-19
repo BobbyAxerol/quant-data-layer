@@ -53,7 +53,10 @@ from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.query import CoverageStatus, DataRequirement, FeedType, GapRecord, HistoryResult, MarketDataItem, RecoveryPolicy
 from qdl.query.contracts import CanonicalErrorCode, QueryProblem
-from qdl.query.results import NON_REPLAYABLE_STREAM_CURSOR, QueryBackendError, GapScanResult
+from qdl.query.results import (
+    CANONICAL_LINEAGE_MISMATCH, NON_REPLAYABLE_STREAM_CURSOR, CanonicalLineageMismatch, GapScanResult,
+    QueryBackendError,
+)
 from qdl.query.row_cache import BoundedRowCache, RenderSlot
 from qdl.replay.cursor_v3 import CursorV3Claims, SignedCursorV3Codec, requirement_digest
 from qdl.runtime.kn_hot_view import HOT_FEEDS, HotViewGap, HotViewUnavailable
@@ -329,8 +332,12 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
             records = self._parsed(binding, candidate)
             self._validate_records(binding, records)
         except (ValueError, DecodeError) as error:
+            # IDR-099: a catalog lineage refusal adds its typed token after the
+            # unchanged first reason; code and retryability are unchanged.
+            detail = ("HOT_BACKUP_LINEAGE_INVALID: " + CANONICAL_LINEAGE_MISMATCH
+                      if isinstance(error, CanonicalLineageMismatch) else "HOT_BACKUP_LINEAGE_INVALID")
             raise QueryBackendError(QueryProblem(
-                CanonicalErrorCode.INTERNAL_ERROR, "HOT_BACKUP_LINEAGE_INVALID", False,
+                CanonicalErrorCode.INTERNAL_ERROR, detail, False,
             )) from error
         if len(records) != 1 or not self._hot_monotonic(binding, candidate):
             raise HotViewUnavailable("HOT_BACKUP_BEHIND_RETURNED_VIEW")

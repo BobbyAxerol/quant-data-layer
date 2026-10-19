@@ -19,6 +19,7 @@ pub mod query_view;
 pub mod reader;
 pub mod readview;
 pub mod replay;
+mod replay_clock;
 pub mod requirement;
 pub mod service;
 pub mod subscription;

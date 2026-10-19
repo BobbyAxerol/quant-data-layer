@@ -1895,10 +1895,20 @@ class StableBinanceBarEdge:
         if not due:
             return 0
 
-        latest: dict[str, object] = {}
+        # Each binding is published as soon as its own read settles, not after
+        # the slowest read of the cycle. A batch-wide wait (0-3 s of Binance
+        # settlement reads) used to land in every bar's raw_age, because
+        # received_at_ns is stamped when the bar settles. Per binding the order
+        # is unchanged: Kafka ACK first, then the checkpoint moves and is
+        # persisted. A binding whose publish fails keeps its checkpoint and is
+        # read again next cycle; the others still publish, and the cycle then
+        # raises so the failure is counted as before.
         workers = min(
             len(due), int(getattr(self, "max_concurrent_requests", 32))
         )
+        acknowledged_total = 0
+        acknowledged_ids: list[str] = []
+        publish_error: Exception | None = None
         with ThreadPoolExecutor(
             max_workers=workers,
             thread_name_prefix="qdl-final-bar",
@@ -1913,38 +1923,65 @@ class StableBinanceBarEdge:
                 for source, acquisition in due
             }
             for future in as_completed(futures):
-                source, _acquisition = futures[future]
+                source, acquisition = futures[future]
                 try:
-                    latest[source.binding_id] = future.result()
+                    envelope = future.result()
                 except Exception as error:
                     self._schedule_retry(
                         source.binding_id,
                         now=now,
                         error=error,
                     )
+                    continue
+                try:
+                    acknowledged = self._publish_settled_binding(
+                        source, acquisition, envelope,
+                        observed_ms=observed_ms, now=now,
+                    )
+                except Exception as error:
+                    if publish_error is None:
+                        publish_error = error
+                    continue
+                if acknowledged:
+                    acknowledged_total += acknowledged
+                    acknowledged_ids.append(source.binding_id)
+        if acknowledged_ids:
+            logger.info(
+                "stable multi-venue closed BAR ACK count=%s bindings=%s",
+                acknowledged_total,
+                ",".join(sorted(acknowledged_ids)),
+            )
+        if publish_error is not None:
+            raise publish_error
+        return acknowledged_total
 
-        pending = []
-        for source, acquisition in due:
-            envelope = latest.get(source.binding_id)
-            if envelope is None:
-                continue
-            try:
-                values = self._pending_for_binding(
-                    source, acquisition, envelope, observed_ms=observed_ms
-                )
-            except Exception as error:
-                self._schedule_retry(
-                    source.binding_id,
-                    now=now,
-                    error=error,
-                )
-                continue
-            if values:
-                pending.extend(
-                    (source, item, open_time_ms)
-                    for item, open_time_ms in values
-                )
-                continue
+    def _publish_settled_binding(
+        self,
+        source: StableSourceBinding,
+        acquisition: StableAcquisitionBinding,
+        envelope,
+        *,
+        observed_ms: int,
+        now: float,
+    ) -> int:
+        """Publish one binding's settled rows, then move and persist its checkpoint.
+
+        Returns the number of acknowledged rows (0 when nothing was due). A
+        missing Kafka ACK raises before the checkpoint moves, so the binding is
+        read and published again; downstream identity is the bar's event id.
+        """
+        try:
+            values = self._pending_for_binding(
+                source, acquisition, envelope, observed_ms=observed_ms
+            )
+        except Exception as error:
+            self._schedule_retry(
+                source.binding_id,
+                now=now,
+                error=error,
+            )
+            return 0
+        if not values:
             expected_open_ms = self._expected_closed_open_ms(
                 source, observed_ms=observed_ms
             )
@@ -1954,29 +1991,17 @@ class StableBinanceBarEdge:
                 and (previous_open_ms is None or previous_open_ms < expected_open_ms)
             ):
                 self._schedule_retry(source.binding_id, now=now)
-        if not pending:
             return 0
-
         acknowledgements = self.publisher.publish_many(
-            item for _source, item, _open_time_ms in pending
+            item for item, _open_time_ms in values
         )
-        if len(acknowledgements) != len(pending):
+        if len(acknowledgements) != len(values):
             raise RuntimeError("stable latest-closed BAR cycle missed a Kafka ACK")
-
-        acknowledged_opens: dict[str, int] = {}
-        for source, _item, open_time_ms in pending:
-            acknowledged_opens[source.binding_id] = max(
-                open_time_ms, acknowledged_opens.get(source.binding_id, -1)
-            )
-        self._last_open_ms.update(acknowledged_opens)
-        for binding_id in acknowledged_opens:
-            self._clear_retry(binding_id)
-        self._persist_state()
-        logger.info(
-            "stable multi-venue closed BAR ACK count=%s bindings=%s",
-            len(acknowledgements),
-            ",".join(sorted(acknowledged_opens)),
+        self._last_open_ms[source.binding_id] = max(
+            open_time_ms for _item, open_time_ms in values
         )
+        self._clear_retry(source.binding_id)
+        self._persist_state()
         return len(acknowledgements)
 
     def _live_history_ready(self, binding_id: str) -> bool:

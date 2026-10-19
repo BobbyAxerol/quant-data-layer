@@ -34,8 +34,14 @@ Do not substitute the TS-only stable renderer for the alpha compiler.
 python3 -B scripts/p184_dr01_deployed.py prepare \
   --root /home/bobby/.worktrees/data-layer-p184-closure \
   --inventory <original-alpha-inventory.json> \
-  --deployment <deployment-id> --venue BINANCE --output <fresh-binance-packet.json>
+  --deployment <deployment-id> --venue BINANCE --output <fresh-binance-packet.json> \
+  --manifest-dir <host source of the readers' /consumer-realms> --manifest-revision <served revision>
 ```
+
+The manifest revision is not assumed: prepare refuses unless the realm directory
+holds exactly one paper manifest for the venue's alpha consumer at the declared
+revision and the realm bundle.json serves it (same canonical sha). The wrong
+revision is the declared revision minus one unless --wrong-revision is given.
 
 Repeat for OKX. Host prepare is offline; it does not mount credentials or call
 Query. If the exact deployed catalog is supplied with --catalog, its hash is
@@ -54,9 +60,9 @@ docker compose -f <alpha-noorder-sdk2b.compose.json> run --rm --no-deps -T \
 ```
 
 Only four sequential GETs per venue: positive QUOTE from binding, same signed
-identity with environment=live (401 UNAUTHENTICATED), revision13 (401
+identity with environment=live (401 UNAUTHENTICATED), the packet's wrong revision (401
 UNAUTHENTICATED), and real out-of-entitlement instrument/feed (403
-PERMISSION_DENIED). Normal JWT14, realm paper, TLS CA/hostname/client certificate
+PERMISSION_DENIED). Normal JWT at the packet revision, realm paper, TLS CA/hostname/client certificate
 checks remain enabled. No retries/proxy/redirects. Positive failure, drift or
 transport failure cannot become negative PASS. Token/signing material is never
 printed or copied. Budget:4 requests per venue, no streams or provider-direct.

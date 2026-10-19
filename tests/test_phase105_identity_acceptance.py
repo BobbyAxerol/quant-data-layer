@@ -930,19 +930,21 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
                 )
             },
             {
-                "global_release_route_count": 318 + UNIVERSE_TOTAL,
-                "global_v2_primary_product_count": 314 + UNIVERSE_TOTAL,
+                "global_release_route_count": 323 + UNIVERSE_TOTAL,
+                "global_v2_primary_product_count": 319 + UNIVERSE_TOTAL,
                 "global_v1_primary_route_count": 4,
-                "selected_release_route_count": 316 + UNIVERSE_TOTAL,
-                "selected_v2_primary_product_count": 314 + UNIVERSE_TOTAL,
+                "selected_release_route_count": 321 + UNIVERSE_TOTAL,
+                "selected_v2_primary_product_count": 319 + UNIVERSE_TOTAL,
                 "selected_v1_primary_excluded_count": 2,
                 # ceil(pacing + native-basis deferral 600 + tail 75). The pacing
                 # floor is the slowest identity's opening operations at its sealed
                 # quota; v2.1.1 option A raised the alpha identities from 180 to
                 # 2,400 rpm (alpha.binance 340.0 s -> 25.5 s, minimum 1015 -> 701).
                 # D48 adds the daily universe's BAR products to alpha.binance, so
-                # its opening operations and the minimum grow to 768.0.
-                "minimum_deadline_seconds": 768.0,
+                # its opening operations and the minimum grow to 768.0. Rev 16
+                # (IDR-090) carries the deployed rev 15 quota (4,950 rpm) and five
+                # current-OI reads: faster pacing outweighs them, 766.0.
+                "minimum_deadline_seconds": 766.0,
             },
         )
         self.assertEqual(

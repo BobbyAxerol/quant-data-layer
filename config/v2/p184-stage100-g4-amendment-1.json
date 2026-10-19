@@ -1,0 +1,259 @@
+{
+ "amendment_id": "G4-A1",
+ "approval_reference": "AskUserQuestion 2026-10-18 ~06:45Z, option \"Amendment co bang chung + 1 run (Recommended)\": versioned G4 amendment for ONE row, then one clean final stage-100",
+ "base_addendum_path": "config/v2/p184-stage100-g4-addendum.json",
+ "base_addendum_sha256": "4ed59dca0212566d3ff03c5a4c23eed3d252d0150844b9a4fd6fa543333d78b5",
+ "base_budget_path": "config/v2/p184-stage100-budget.json",
+ "base_budget_sha256": "ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541",
+ "baseline": {
+  "baseline_max_ms": 827.8,
+  "baseline_max_ms_windows": [
+   292.1,
+   245.8,
+   182.5,
+   827.8
+  ],
+  "baseline_p95_ms": 167.4,
+  "baseline_p95_ms_windows": [
+   167.4,
+   143.8,
+   139.1,
+   138.2
+  ],
+  "campaign_dir": "/home/bobby/.local/state/qdl-v2/p184-d3-baseline-20261009",
+  "frozen_table_row": {
+   "baseline_p95_ms": 1322.2,
+   "baseline_p95_ms_windows": [
+    1322.2,
+    1289.4,
+    1296.2,
+    1195.2
+   ],
+   "candidate_p95_limit_ms": 1586.6
+  },
+  "method": "same records the frozen table was computed from: composite p95 recomputed per window with observer _summarize_records equals baseline_p95_ms_windows exactly; the internal split of those same records, exact nearest rank (index int(0.95 n)), max exact",
+  "role": "frozen G4 table baseline (budget sources.g4)",
+  "windows": [
+   {
+    "component_receipt_gap_ms": {
+     "max": 1854.9,
+     "n": 662,
+     "negative": 0,
+     "p50": 249.1,
+     "p95": 1099.2
+    },
+    "component_ts_gap_ms": {
+     "max": 1954.0,
+     "n": 662,
+     "negative": 0,
+     "p50": 305.0,
+     "p95": 1134.0
+    },
+    "composite_visibility_ms": {
+     "max": 2121.5,
+     "n": 662,
+     "negative": 0,
+     "p50": 492.6,
+     "p95": 1322.2,
+     "p99": 1918.4
+    },
+    "index": 1,
+    "internal": {
+     "max": 292.1,
+     "n": 662,
+     "negative": 0,
+     "p50": 99.9,
+     "p95": 167.4
+    },
+    "no_create_time": 0,
+    "published_mismatch": 0,
+    "records": 662,
+    "unparsed": 0
+   },
+   {
+    "component_receipt_gap_ms": {
+     "max": 1917.9,
+     "n": 662,
+     "negative": 0,
+     "p50": 306.6,
+     "p95": 1090.6
+    },
+    "component_ts_gap_ms": {
+     "max": 1995.0,
+     "n": 662,
+     "negative": 0,
+     "p50": 352.0,
+     "p95": 1168.0
+    },
+    "composite_visibility_ms": {
+     "max": 2103.4,
+     "n": 662,
+     "negative": 0,
+     "p50": 489.7,
+     "p95": 1289.4,
+     "p99": 1877.0
+    },
+    "index": 2,
+    "internal": {
+     "max": 245.8,
+     "n": 662,
+     "negative": 0,
+     "p50": 75.9,
+     "p95": 143.8
+    },
+    "no_create_time": 0,
+    "published_mismatch": 0,
+    "records": 662,
+    "unparsed": 0
+   },
+   {
+    "component_receipt_gap_ms": {
+     "max": 1939.3,
+     "n": 664,
+     "negative": 0,
+     "p50": 274.0,
+     "p95": 1107.9
+    },
+    "component_ts_gap_ms": {
+     "max": 2016.0,
+     "n": 664,
+     "negative": 0,
+     "p50": 309.0,
+     "p95": 1124.0
+    },
+    "composite_visibility_ms": {
+     "max": 2135.5,
+     "n": 664,
+     "negative": 0,
+     "p50": 456.4,
+     "p95": 1296.2,
+     "p99": 1831.5
+    },
+    "index": 3,
+    "internal": {
+     "max": 182.5,
+     "n": 664,
+     "negative": 0,
+     "p50": 75.5,
+     "p95": 139.1
+    },
+    "no_create_time": 0,
+    "published_mismatch": 0,
+    "records": 664,
+    "unparsed": 0
+   },
+   {
+    "component_receipt_gap_ms": {
+     "max": 1968.2,
+     "n": 662,
+     "negative": 0,
+     "p50": 285.6,
+     "p95": 1062.1
+    },
+    "component_ts_gap_ms": {
+     "max": 2056.0,
+     "n": 662,
+     "negative": 0,
+     "p50": 327.0,
+     "p95": 1093.0
+    },
+    "composite_visibility_ms": {
+     "max": 2267.1,
+     "n": 662,
+     "negative": 0,
+     "p50": 459.9,
+     "p95": 1195.2,
+     "p99": 1970.0
+    },
+    "index": 4,
+    "internal": {
+     "max": 827.8,
+     "n": 662,
+     "negative": 0,
+     "p50": 73.9,
+     "p95": 138.2
+    },
+    "no_create_time": 0,
+    "published_mismatch": 0,
+    "records": 662,
+    "unparsed": 0
+   }
+  ]
+ },
+ "codex_guidance": "/home/bobby/.worktrees/ts-codex-p184-review/upgrade/p184-idr112-113-provider-gates-review-20261018.md section \"Gate Amendment Options\"",
+ "decision_owner": "Bobby (owner)",
+ "frozen_at": "2026-10-18T07:00:48Z",
+ "frozen_at_unix": 1792306848.0366623,
+ "frozen_before_candidate": true,
+ "limits": {
+  "candidate_max_limit_ms": 993.4,
+  "candidate_p95_limit_ms": 200.9
+ },
+ "pinned": {
+  "base_ref": "44fed4d",
+  "budget": {
+   "new_sha256": "ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541",
+   "old_sha256": "ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541",
+   "path": "config/v2/p184-stage100-budget.json"
+  },
+  "freeze_tool": {
+   "new_sha256": "d0ec263b414c71c2c5b97b9f7d471d8c14529593dd1e141d2af2375533364a35",
+   "old_sha256": null,
+   "path": "scripts/p184_freeze_g4_amendment.py"
+  },
+  "g4_addendum": {
+   "new_sha256": "4ed59dca0212566d3ff03c5a4c23eed3d252d0150844b9a4fd6fa543333d78b5",
+   "old_sha256": "4ed59dca0212566d3ff03c5a4c23eed3d252d0150844b9a4fd6fa543333d78b5",
+   "path": "config/v2/p184-stage100-g4-addendum.json"
+  },
+  "g4_observer": {
+   "new_sha256": "5d90cc60cc1ebad783d6bec848fe7017918f783e3ad0dfcfaa2aed1f47fcba74",
+   "old_sha256": "ff4f59898b5023801ca67df2da7d72a1fea16b7f1935664fec81e07cb236f7e0",
+   "path": "scripts/p184_g4_observer.py"
+  },
+  "gate_campaign_tool": {
+   "new_sha256": "69c26d729d77d9b152bc8b4df86077827689dfc9b0d15fb290abfcdec64835fb",
+   "old_sha256": "cf26d6e31b5dfcaa5572be6304943380542e6b292275ce799268a619e85bde98",
+   "path": "scripts/p184_gate_campaign.py"
+  },
+  "note": "old = at the pre-amendment base ref, new = frozen with this amendment; the scorer applies the amendment only when the campaign tool sha256 equals gate_campaign_tool.new_sha256",
+  "okx_mark_index_probe": {
+   "new_sha256": "ee835d9c38bf6fe7b3410a21e32cadddd154af048156797efdce0cbd68a91e41",
+   "old_sha256": null,
+   "path": "scripts/p184_g4_okx_mark_index_probe.py"
+  }
+ },
+ "rca_reference": "DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md commit 44fed4d (2026-10-18 06:20-06:45Z read-only RCA)",
+ "row": "mark_index_price|OKX|",
+ "rule": {
+  "definition": "per admitted event of the row (unchanged v2 sampler population): Kafka CreateTime (ms, librdkafka at the core's transactional send) - max(mark_receipt_ns, index_receipt_ns) from source_sequence fields 3-4 (observer v6 paired_split)",
+  "factor": 1.2,
+  "max_min_samples_per_window": 5,
+  "quantity": "internal_newest_receipt_to_producer_ts_ms",
+  "report_only": [
+   "composite visibility (the frozen-table quantity) per window, with the frozen limit and whether it would exceed it, all outliers kept (top-5 capsule over every accepted event)",
+   "component ts gap |mark.ts - index.ts|, component receipt gap, per-component venue -> DL, older component, internal-split outlier capsule",
+   "venue-direct OKX mark-price/index-tickers probe per G4 window (scripts/p184_g4_okx_mark_index_probe.py) with the host clock bound (chronyc)"
+  ],
+  "text": "PASS needs, in every window with samples: internal-split p95 <= candidate_p95_limit_ms (BUCKET_UPPER_BOUND p95; a bucket straddling the limit is unresolved = NOT_MEASURED) and, on windows with >= 5 samples, max <= candidate_max_limit_ms; a decisive excess in any window = FAIL; plus, per window, a covering venue probe (attribution EXTERNAL_VENUE_COMPONENT_CADENCE); a window without one is UNKNOWN, which is not EXTERNAL -> NOT_MEASURED. Events without a parsable split, without CreateTime, or with published_at != newest receipt -> NOT_MEASURED. No window with samples -> NOT_MEASURED."
+ },
+ "schema": "qdl.p184.stage100-g4-amendment.v1",
+ "scope": {
+  "applies_to": [
+   "mark_index_price|OKX|"
+  ],
+  "old_receipts": "immutable: a campaign that did not record this amendment's sha256 at run time is scored exactly as before (053803Z / 135719Z and earlier keep their verdicts)",
+  "unchanged": "every other G4 row (frozen table and addendum), every other gate G1-G14, every threshold, the sampler, the observer population and the window schedule"
+ },
+ "sources": {
+  "g4-1-summary.json": "09bd7219c41e570aa8524dbb022204f4854ff75be548727287f1e5aa0ee41b87",
+  "g4-1/observations.jsonl": "42bbff0fa4eacdc2102489c25144a9ae1b687afb332bc494f6ae0ffa6d700411",
+  "g4-2-summary.json": "83c8ab8c3630bde923b70417c6c0e5347ebbb6267e498795b2fce6671509e215",
+  "g4-2/observations.jsonl": "3edad237d35e75f9de2b35d9d40cbbbab4ecd2460ee9f6af142e4c82c7418f7e",
+  "g4-3-summary.json": "f7174be2ebeaf4d9f070cf8fc7ac7a974172f3a3ada25c83a6ae2be5449f5c7e",
+  "g4-3/observations.jsonl": "ca237ba9bdf2c624869343bef50d9a7cfb993d68aa7d1874e894d946b4f0a409",
+  "g4-4-summary.json": "a902171d065a9352ca0ad706c73d607dac8bc7be2da3f5b40624753526a72bcf",
+  "g4-4/observations.jsonl": "4c7c6b87d0915c130e557d906eee16a55b405888d580d1ad0f72c54c61a0c7e8"
+ },
+ "version": 1
+}

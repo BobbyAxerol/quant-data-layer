@@ -474,6 +474,52 @@ def reference_evidence(
     ).hexdigest()
 
 
+# A1 (owner 2026-10-18): the verifier and the DEPLOYED Query apply one freshness bound. Query's FUNDING_RATE history
+# publication allowance (qdl/query/service.py _FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS, stage 100g) is NOT imported
+# here: this module is mounted into the driver's client container, whose image may predate the constant (final
+# stage-100 092255Z: the profile image 2.2.2 has no such symbol, the import failed and every client read with it).
+# The driver resolves the allowance host-side from the deployed Query image and configures it in the client; until
+# it is configured a FUNDING_RATE history bound fails closed (the read is refused, never silently allowed or denied).
+_query_funding_allowance_ms: int | None = None
+
+
+def configure_query_funding_allowance_ms(value: int | None) -> None:
+    """Set (or, with None, clear) the deployed Query's FUNDING_RATE history publication allowance in milliseconds."""
+    global _query_funding_allowance_ms
+    if value is not None and (type(value) is not int or not 0 <= value <= 3_600_000):
+        raise ValueError("Query funding settlement allowance must be an int in 0..3600000 ms")
+    _query_funding_allowance_ms = value
+
+
+def configured_query_funding_allowance_ms() -> int | None:
+    return _query_funding_allowance_ms
+
+
+def reference_freshness_allowance_ms(request) -> int:
+    """Query's publication allowance for one reference request (qdl/query/service.py _reference_problem).
+
+    The predicate is Query's, on the SDK request shape: FUNDING_RATE history (a request with a time range, Query's
+    ReferenceRequest.is_history = start_ms is not None) gets the deployed Query's allowance (configured by
+    configure_query_funding_allowance_ms, resolved by the driver from the deployed image); everything else 0. An
+    unconfigured allowance for a FUNDING_RATE history request raises ValueError (fail closed).
+    """
+    product = getattr(getattr(request, "product", None), "value", getattr(request, "product", None))
+    if product == "FUNDING_RATE" and getattr(request, "start_time_ns", None) is not None:
+        if _query_funding_allowance_ms is None:
+            raise ValueError("Query funding settlement allowance is not configured (fail closed)")
+        return _query_funding_allowance_ms
+    return 0
+
+
+def reference_freshness_bound_ms(request) -> int | None:
+    """The effective source-age bound Query applies to one reference request: max_freshness_ms plus Query's allowance
+    (None when the request declares no bound; Query then applies none). Query refuses when floor(age ms) exceeds it."""
+    max_freshness_ms = getattr(request, "max_freshness_ms", None)
+    if max_freshness_ms is None:
+        return None
+    return int(max_freshness_ms) + reference_freshness_allowance_ms(request)
+
+
 def reference_quality(
     product,
     item,
@@ -514,7 +560,8 @@ def reference_quality(
             "component_index_age_ms": quiet_execution_evidence.component_index_age_ms,
             "gap_open": False,
         }
-    if source_age_ms > (request.max_freshness_ms or 86_400_000):
+    bound_ms = reference_freshness_bound_ms(request)
+    if source_age_ms > (86_400_000 if bound_ms is None else bound_ms):
         raise ValueError("reference response exceeds its governed freshness bound")
     return {
         "source_age_ms": int(source_age_ms),

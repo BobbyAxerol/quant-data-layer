@@ -216,6 +216,18 @@ away. The earlier Python stream's coalescing of BOOK_SNAPSHOT is not ported.
   (`CURSOR_EXPIRED` backlog) - all `OUT_OF_RANGE`, resnapshot; wall time is
   `RESOURCE_EXHAUSTED RATE_LIMITED:REPLAY_TIME_LIMIT` (retryable, the token
   has advanced through everything delivered).
+  Additive (SDK 2.4.1, IDR-096): a Subscribe that sets
+  `SubscribeRequest.replay_budget_status_v2 = 8` (bool) receives
+  `RESOURCE_EXHAUSTED RATE_LIMITED:{REPLAY_MATCHED_LIMIT|REPLAY_SCAN_LIMIT|REPLAY_BYTE_LIMIT}:...`
+  instead (retryable; the client bounds retries by progress). Absent/false
+  keeps the mapping above unchanged. A range refused at submit because its
+  offset span alone exceeds the scan budget cannot progress on retry and is
+  `OUT_OF_RANGE CURSOR_EXPIRED:REPLAY_SCAN_LIMIT` for every client. The Replay
+  RPC has no such field and keeps the mapping above.
+- **REPLAYING and LIVE of one subscription carry the same `high_watermark`** (the barrier
+  announced at REPLAYING, as in `qdl/stream/grpc_service.py`). Records after that barrier may
+  arrive between the two controls (bounded near-frontier bridge); the gateway never announces an
+  internally extended barrier. Consumers may reject a LIVE whose high differs.
 - **A committed record that does not decode is never skipped.** Every stream
   or Replay whose range holds it on that physical key ends
   `DATA_LOSS DATA_INTEGRITY:committed record <partition>:<offset> ...`; other
@@ -297,3 +309,23 @@ watermark before/after reading. Missing/partial old-writer indexes use the
 verified bounded row scanner; corruption and races never mean gap-free.
 Diagnostic scans use this small index, not the OHLC protobuf history. Query
 history still verifies every payload hash/open/product and is not weakened.
+
+## 9. Subscribe gateway clocks (additive, SDK 2.4.0)
+
+- `StreamRecord.gateway_dispatch_wall_ns = 3`, `gateway_dequeue_wall_ns = 4`
+  and `gateway_send_wall_ns = 5` (uint64, Unix ns, the gateway host's wall
+  clock) are additive diagnostics; no field number is reused and no delivery,
+  cursor, ACK or freshness decision reads them. 0/absent means not measured.
+- The gateway sets them on every Subscribe event record, batched or not, each
+  record with its own dispatch and dequeue clock: dispatch = the live hub
+  offered the record to this subscription's queue (0 for records replayed from
+  the ring or the committed log); dequeue = the subscription task took the
+  record and built its response; send = the gRPC transport took the response
+  from the bounded handoff (OUTBOUND_HANDOFF) to encode it. Records of one
+  batched response share the send clock. Controls and Replay RPC records carry
+  none.
+- Reading: dispatch -> dequeue is the subscription queue wait; dequeue ->
+  send is time the transport did not pull (HTTP/2 flow control, i.e. the
+  client not reading; tonic may pull up to its encode chunk ahead); send ->
+  client receive is the network plus client buffers. Cross-host differences
+  include the hosts' clock offset.

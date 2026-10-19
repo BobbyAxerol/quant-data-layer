@@ -1,0 +1,98 @@
+diff --git a/docker-compose.v2-stable.yml b/docker-compose.v2-stable.yml
+index 5e3defb..35df33e 100644
+--- a/docker-compose.v2-stable.yml
++++ b/docker-compose.v2-stable.yml
+@@ -181,21 +181,37 @@ services:
+     # DL-V2 R1.5 measured allocation: 50% of its 0.75 ceiling with bursts to 69% across the quorum.
+     # R1.25: 1.00 left kafka1 at 97% of a core and 18.6% throttled while its
+     # peers ran 1.25; parity with kafka2/kafka3.
+-    cpus: 1.25
++    # P18.4 G4 RCA (2026-10-14 13:47:40Z, owner-approved after the cleaner io
++    # limit 8 -> 4 MiB/s): 1.25 -> 1.75, docker update, no restart; kafka1
++    # throttle 28.8% -> 0.17% of periods. Live value, docker inspect 2026-10-16.
++    # OPT resource package round 2 (owner 2026-10-18 ~16:00Z; drafts/OPT_RESOURCE_PACKAGE.md step K, applied
++    # 2026-10-19T00:20:57Z by docker update, no restart; HOLD per packet section 14): 1.75 -> 2.25 (kafka2
++    # throttled in 131/143 intervals of the 123222Z load; same cap on every broker, leadership moves on failover).
++    cpus: 2.25
+     hostname: kafka1
+     environment: {<<: *kafka-env, KAFKA_NODE_ID: 1, KAFKA_ADVERTISED_LISTENERS: "SSL://kafka1:9092", KAFKA_SSL_KEYSTORE_FILENAME: kafka1.keystore.p12}
+     volumes: ["${QDL_STABLE_CERT_DIR:?set QDL_STABLE_CERT_DIR}:/etc/kafka/secrets:ro", kafka1_data:/var/lib/kafka/data]
+   kafka2:
+     <<: *kafka
+     # DL-V2 R1.5 measured allocation: 69% of its 0.75 ceiling.
+-    cpus: 1.25
++    # Live 1.75 vCPU / 2 GiB since the plan's final-ceiling record (kafka2 and
++    # kafka3 1.75); docker inspect 2026-10-16. The repo file had kept 1.25.
++    # OPT resource package round 2 (owner 2026-10-18 ~16:00Z; drafts/OPT_RESOURCE_PACKAGE.md step K, applied
++    # 2026-10-19T00:20:57Z by docker update, no restart; HOLD per packet section 14): 1.75 -> 2.25 (kafka2
++    # throttled in 131/143 intervals of the 123222Z load; same cap on every broker, leadership moves on failover).
++    cpus: 2.25
++    mem_limit: 2g
+     hostname: kafka2
+     environment: {<<: *kafka-env, KAFKA_NODE_ID: 2, KAFKA_ADVERTISED_LISTENERS: "SSL://kafka2:9092", KAFKA_SSL_KEYSTORE_FILENAME: kafka2.keystore.p12}
+     volumes: ["${QDL_STABLE_CERT_DIR:?set QDL_STABLE_CERT_DIR}:/etc/kafka/secrets:ro", kafka2_data:/var/lib/kafka/data]
+   kafka3:
+     <<: *kafka
+     # DL-V2 R1.5 measured allocation: 66% of its 0.75 ceiling.
+-    cpus: 1.25
++    # Live 1.75 vCPU (plan final-ceiling record); docker inspect 2026-10-16.
++    # OPT resource package round 2 (owner 2026-10-18 ~16:00Z; drafts/OPT_RESOURCE_PACKAGE.md step K, applied
++    # 2026-10-19T00:20:57Z by docker update, no restart; HOLD per packet section 14): 1.75 -> 2.25 (kafka2
++    # throttled in 131/143 intervals of the 123222Z load; same cap on every broker, leadership moves on failover).
++    cpus: 2.25
+     hostname: kafka3
+     environment: {<<: *kafka-env, KAFKA_NODE_ID: 3, KAFKA_ADVERTISED_LISTENERS: "SSL://kafka3:9092", KAFKA_SSL_KEYSTORE_FILENAME: kafka3.keystore.p12}
+     volumes: ["${QDL_STABLE_CERT_DIR:?set QDL_STABLE_CERT_DIR}:/etc/kafka/secrets:ro", kafka3_data:/var/lib/kafka/data]
+@@ -306,11 +322,15 @@ services:
+     # was throttled 2-4 s per 100 s at 0.2-0.4 CPU average; 1.50 cut that to
+     # 0.4 s and turned L2/MARK_INDEX/TS gates green. Retained per the
+     # contract's selective Query ceiling (1.5).
+-    cpus: 1.50
++    # OPT resource package round 2 (owner 2026-10-18 ~16:00Z; drafts/OPT_RESOURCE_PACKAGE.md step Q, applied
++    # 2026-10-19T00:32:44Z by docker update, no restart): 1.5 -> 2.0 vCPU and 1.5 -> 2 GiB (memory-swap 4g, the
++    # 2x ratio); query_kn_1 had 8.1 % memory headroom and both replicas were throttled in the 12:43Z cluster.
++    cpus: 2.00
+     # v2.1.1 Phase-3 final stage 50 (2026-09-23): the start-up warmup storm
+     # OOM-killed query_v2_1 at 512 MiB (kernel memcg, anon-rss 517 MB); at 1 GiB
+-    # the same run completed with no restart. The contract's Query ceiling.
+-    mem_limit: 1g
++    # the same run completed with no restart. The contract's Query ceiling was 1g (live 1.5g since
++    # the rc15 rolls); OPT step Q: 2g.
++    mem_limit: 2g
+     command: [python, -m, app.entrypoints.query_v2_stable]
+     networks:
+       stable_internal: {}
+@@ -341,8 +361,8 @@ services:
+   query_v2_2:
+     <<: *python
+     # DL-V2 R1.5 measured allocation: 1% measured, kept equal to query_v2_1 because the shared qdl-v2-query alias can send either reader all of the traffic.
+-    cpus: 1.50  # see query_v2_1
+-    mem_limit: 1g  # see query_v2_1
++    cpus: 2.00  # see query_v2_1 (OPT step Q)
++    mem_limit: 2g  # see query_v2_1 (OPT step Q)
+     command: [python, -m, app.entrypoints.query_v2_stable]
+     networks:
+       stable_internal: {}
+@@ -907,7 +927,9 @@ services:
+   ingestor_binance_usdm:
+     <<: *rust
+     # DL-V2 R1.5 measured allocation: 20% of its 0.75 ceiling.
+-    cpus: 0.50
++    # P18.4 T4 (2026-10-15 15:59:15Z, owner-approved): 0.50 -> 0.75 (window 9
++    # throttled 7.17% > 5%); +0.25 of the +1.5 vCPU step-1 envelope.
++    cpus: 0.75
+     entrypoint: [/usr/local/bin/qdl-native-raw-ingestor]
+     command: [/runtime/config.json]
+     networks: [stable_internal, stable_egress]
+@@ -946,7 +968,10 @@ services:
+   ingestor_okx_swap:
+     <<: *rust
+     # DL-V2 R1.5 measured allocation: 15% of its 0.75 ceiling.
+-    cpus: 0.50
++    # OPT resource package round 2 (owner 2026-10-18 ~16:00Z; drafts/OPT_RESOURCE_PACKAGE.md step I, applied
++    # 2026-10-19T00:44:10Z by docker update outside T4, no restart): 0.50 -> 1.00 (throttled 50-177 ms at 3 of
++    # the 4 G4 tails of 123222Z); T4 cumulative budget kept (+0.75 of +1.5).
++    cpus: 1.00
+     entrypoint: [/usr/local/bin/qdl-native-raw-ingestor]
+     command: [/runtime/config.json]
+     networks: [stable_internal, stable_egress]

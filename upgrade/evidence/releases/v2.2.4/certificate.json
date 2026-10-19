@@ -1,0 +1,621 @@
+{
+ "schema": "qdl.scoped-release-certificate.v2",
+ "release": "v2.2.4",
+ "previous_published_release": "v2.2.3",
+ "status": "PASS",
+ "status_basis": "PASS under G4-A1, G4-A2, A3 (frozen before the counted run; A3 refreshed 384e8512 for the rustls images), A4 v2 (PRE_REGISTERED, applied, not needed) and A5 (POST_HOC_OWNER_DECISION, adopted after the counted run was scored, EXTERNAL_QUIET); without A5 the frozen rule gives FAIL on G11 only (one slice, OKX|BNB-USDT-SWAP|TRADE, 36.415 s > 30 s: venue silence)",
+ "counted_run": "p184-final-campaign-20261019T040311Z",
+ "amendments": [
+  {
+   "id": "G4-A1",
+   "alias": "A1",
+   "path": "config/v2/p184-stage100-g4-amendment-1.json",
+   "sha256": "1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6",
+   "post_hoc": false,
+   "frozen": "before the counted run (recorded in campaign.json g4_amendment_sha256)",
+   "scope": "G4 row mark_index_price|OKX|: same-event internal split"
+  },
+  {
+   "id": "G4-A2",
+   "alias": "A2",
+   "path": "config/v2/p184-stage100-g4-amendment-2.json",
+   "sha256": "99961c41e08993944d158ae812ca61514271862a2d03e011f5d01ce71a0f9997",
+   "post_hoc": false,
+   "frozen": "before the counted run (recorded in campaign.json g4_amendment_2_sha256)",
+   "scope": "G4 bar rows >= 8h without a frozen baseline REPORT_ONLY; no threshold change"
+  },
+  {
+   "id": "A3",
+   "path": "config/v2/p184-stage100-a3-external-attribution.json",
+   "sha256": "384e85121c7c4c2fec06de12dd031a78550ac199fe9b6da9771dec118df5cec9",
+   "post_hoc": false,
+   "frozen": "before the counted run (recorded in campaign.json a3_sha256; runtime-image pin refresh of 2026-10-18 19:15Z for the rustls roll, rules unchanged; cc5fc7dc... -> 384e8512...)",
+   "applied_in_run": true,
+   "rescued_units": 0
+  },
+  {
+   "id": "A4",
+   "version": 2,
+   "path": "config/v2/p184-stage100-a4-v2-preregistered.json",
+   "sha256": "63f98668150bfda776317f97114b73855800515d0cfc9b7aa90ccb050f500324",
+   "post_hoc": false,
+   "label": "PRE_REGISTERED",
+   "frozen_at": "2026-10-18T16:50:47Z",
+   "binding": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.a4-v2-binding.json",
+    "sha256": "f08b594a07a1f213ce0710b93c0d853a1c62848786f7f6a40ccf908597f55f73"
+   },
+   "close": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.a4-v2-close.json",
+    "sha256": "ba3325230063fef5f1c89be75b6ee06a5a447ada12b62ef2ef14a20d7b12ed3a"
+   },
+   "rescore_receipt": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/scorecard.a4-v2.json",
+    "sha256": "7fffb04e3d06fb6dfbe32d749f59de64aa951bbd71d1ffe4b3284a1b8e4fceee"
+   },
+   "rescore_tool": {
+    "path": "scripts/p184_a4_preregistered.py",
+    "sha256": "b93d295f75f0b62f268ec39f65d28b7f60e64daa97e3ee737a371f42f7d90181"
+   },
+   "rules_module": {
+    "path": "scripts/p184_a4_post_hoc.py",
+    "sha256": "23b78e4ae7a367252cf8033aa64ee6357987c2117e7f6516679fd4c6efafba26"
+   },
+   "applied_in_run": true,
+   "needed": false,
+   "note": "applied (bound before load, close equal) but not needed: G2 and G4 PASS without it; the scorecard with A4 v2 equals the frozen one on every verdict"
+  },
+  {
+   "id": "A5",
+   "version": 1,
+   "path": "config/v2/p184-stage100-a5-g11-trade-clock.json",
+   "sha256": "c5b46c5faefe20e31061a3bd647b9e60537b982eee43b484715ec9cdcc5aae78",
+   "post_hoc": true,
+   "label": "POST_HOC_OWNER_DECISION",
+   "frozen_at": "2026-10-19T05:03:03Z",
+   "adopted": "after the counted run was scored (scorecard.json 2026-10-19 04:39Z)",
+   "applied_to": "p184-final-campaign-20261019T040311Z only (post hoc); pre-registered for campaigns started after the freeze",
+   "classification": "EXTERNAL_QUIET (venue printed no trade on OKX BNB-USDT-SWAP for 41.9 s; adjacent trade ids 241971262 / 241971263)",
+   "decision": "owner rule 2026-10-18 ~16:00Z 'n\u1ebfu gate kh\u00f4ng \u0111\u1ea1t x\u00e1c \u0111\u1ecbnh l\u00e0 l\u1ed7i external th\u00ec n\u1edbi gate r\u1ed3i release g\u1ecdn nh\u00e9' + 'duy\u1ec7t h\u1ebft theo recommend c\u1ee7a b\u1ea1n, k h\u1ecfi l\u1ea1i'",
+   "rationale": "upgrade/evidence/releases/v2.2.4/a5-g11-trade-clock.md",
+   "rescore_tool": {
+    "path": "scripts/p184_a5_g11_trade_clock.py",
+    "sha256": "4892abd1630eff84c1a3b6eb0b57b3c57912883cbd354378d686e67ab89af7e7"
+   },
+   "rescore_receipt": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/scorecard.a5.json",
+    "sha256": "b1c2e7b450363f094c25adb34988f9356da327ef3d0b6a863a001dab2692d08d"
+   },
+   "evidence": {
+    "reader.py": {
+     "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.g11-forensic/reader.py",
+     "sha256": "5fcc088a053a058a882174daa3b24adc1edbcf455869d138006c3de1ecd25d7c"
+    },
+    "canonical.jsonl": {
+     "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.g11-forensic/canonical.jsonl",
+     "sha256": "cf96554ec3d9affa646a9be4dd2fb8f64fbb2dd9751a3f37b54b178ffc1f80e8"
+    },
+    "okx-history-trades-after-241971264.json": {
+     "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.g11-forensic/okx-history-trades-after-241971264.json",
+     "sha256": "b579fdb9f13fe17844e6c266f97e03e10adffb924a145fb96da07ff0589da4d6"
+    }
+   }
+  }
+ ],
+ "amendments_required": true,
+ "status_rule": "PASS only with no FAIL gate, protocol_met, credited G12, G13 76/76 and green required CI (CERTIFICATE.md section 1, fixed before the numbers); the rule's 'no frozen threshold is widened after measuring' is NOT met by A4, which is a recorded post-measurement owner decision (CERTIFICATE.md section 1)",
+ "failed_gates": {},
+ "failed_gates_without_a5": {
+  "G11": "first valid apply max 36.415 s > 30 s on OKX|BNB-USDT-SWAP|TRADE only (EXTERNAL_QUIET: no venue trade between 04:36:15.209Z and 04:36:57.139Z; writer applied the first one 0.413 s after its DL Kafka time); see a5-g11-trade-clock.md"
+ },
+ "classification": "SCOPED_DATA_LAYER_STAGE100_PROTOCOL_MET_PASS_UNDER_POST_HOC_A5_G12_CREDIT_G13_76_SINGLE_HOST_NOT_HA",
+ "classification_note": "Certified on the final counted run 040311Z (rustls 0.23.46 images + OPT caps). G1-G10 and G14 PASS under the pre-registered rules (A4 v2 changes nothing); G11 PASSES only under the post-hoc A5, which re-times one TRADE slice from its first post-fault venue print. Measured with the portal stack paused: production must not run unrelated heavy workloads beside DL (IDR-128).",
+ "owner_decision": "owner rule 2026-10-18 ~16:00Z 'n\u1ebfu gate kh\u00f4ng \u0111\u1ea1t x\u00e1c \u0111\u1ecbnh l\u00e0 l\u1ed7i external th\u00ec n\u1edbi gate r\u1ed3i release g\u1ecdn nh\u00e9'; 'duy\u1ec7t h\u1ebft theo recommend c\u1ee7a b\u1ea1n, k h\u1ecfi l\u1ea1i'",
+ "publication_status": "NOT_TAGGED_CERTIFICATE_PASS_UNDER_POST_HOC_A5",
+ "publication_requires": "explicit owner instruction to tag; the release head merged into main (release.yml `git merge-base --is-ancestor`); required remote CI green on the PR head; release.yml itself is unchanged and accepts status PASS",
+ "supersedes": {
+  "certificate": "2026-10-18 ~15:30Z PASS under post-hoc A4 on p184-final-campaign-20261018T123222Z",
+  "certificate_sha256": "da2fd4848d36bf4d4a06a0bbca780aee7371fef0b057491686caff2239503ac9",
+  "why": "the deployed image set changed after that run (rustls 0.23.46 roll, OPT caps); the final counted run on the deployed set is p184-final-campaign-20261019T040311Z; A4 v1 stays a post-hoc decision for p184-final-campaign-20261018T123222Z only and is not an input of this certificate"
+ },
+ "source_code_sha": {
+  "rust_ingestors_stream": "9dab22429ea44566587f31d9f56f8b059933c795",
+  "rust_projector": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
+  "rust_core": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e",
+  "python_query": "31a515522aff3f6e5e7791aa21500cfa570ccb41",
+  "note": "release head = the packaging commit on fix/p184-dl-closure; runtime source after these revisions: rust only a cfg(test) change in qdl-native-raw-ingestor.rs (539d28c); python apparatus only (RELEASE_NOTES.md)"
+ },
+ "release_images": {
+  "rust_9dab224": {
+   "tag": "qdl-v2-rust:2.2.4-9dab224",
+   "digest": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+   "revision_label": "9dab22429ea44566587f31d9f56f8b059933c795",
+   "roles": [
+    "ingestor_okx_swap",
+    "ingestor_binance_usdm",
+    "stream_kn_1",
+    "stream_kn_2"
+   ]
+  },
+  "rust_c7ce7d3": {
+   "tag": "qdl-v2-rust:2.2.4-c7ce7d3",
+   "digest": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+   "revision_label": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
+   "roles": [
+    "market_projector_1",
+    "market_projector_2"
+   ]
+  },
+  "rust_rc22": {
+   "tag": "qdl-v2-rust:2.2.3-rc22-a4e7b3b",
+   "digest": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+   "revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e",
+   "roles": [
+    "rust_core",
+    "rust_core_2",
+    "rust_core_3"
+   ],
+   "kept": "binary equality, no rustls code"
+  },
+  "python_31a5155": {
+   "tag": "qdl-v2-python:2.2.4-31a5155",
+   "digest": "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff",
+   "revision_label": "31a515522aff3f6e5e7791aa21500cfa570ccb41",
+   "roles": [
+    "query_kn_1",
+    "query_kn_2"
+   ]
+  },
+  "ts_writer": {
+   "tag": "local/trading-system:p184-writer-release-30f50a91",
+   "digest": "sha256:2deb90b0cc52eae7610fa44692f90df077e9db100ca259e38fd652a2dc1c5dc5",
+   "revision_label": "30f50a91dbd67ce2a482480be598cf509b25333e"
+  }
+ },
+ "runtime": [
+  {
+   "service": "qdl_v2_stable_candidate-query_kn_1-1",
+   "image": "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff",
+   "revision_label": "31a515522aff3f6e5e7791aa21500cfa570ccb41",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-18T03:47:53.818161802Z",
+   "health": "healthy",
+   "cpus": 2.0,
+   "memory_mib": 2048,
+   "memory_swap_mib": 4096
+  },
+  {
+   "service": "qdl_v2_stable_candidate-query_kn_2-1",
+   "image": "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff",
+   "revision_label": "31a515522aff3f6e5e7791aa21500cfa570ccb41",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-18T03:58:41.79939515Z",
+   "health": "healthy",
+   "cpus": 2.0,
+   "memory_mib": 2048,
+   "memory_swap_mib": 4096
+  },
+  {
+   "service": "qdl_v2_stable_candidate-ingestor_okx_swap-1",
+   "image": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+   "revision_label": "9dab22429ea44566587f31d9f56f8b059933c795",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-18T18:46:19.924991172Z",
+   "health": "healthy",
+   "cpus": 1.0,
+   "memory_mib": 256,
+   "memory_swap_mib": 512
+  },
+  {
+   "service": "qdl_v2_stable_candidate-ingestor_binance_usdm-1",
+   "image": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+   "revision_label": "9dab22429ea44566587f31d9f56f8b059933c795",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-18T18:53:12.695455921Z",
+   "health": "healthy",
+   "cpus": 0.75,
+   "memory_mib": 256,
+   "memory_swap_mib": 512
+  },
+  {
+   "service": "qdl_v2_stable_candidate-stream_kn_1-1",
+   "image": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+   "revision_label": "9dab22429ea44566587f31d9f56f8b059933c795",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-18T19:00:22.050959139Z",
+   "health": null,
+   "cpus": 0.75,
+   "memory_mib": 512,
+   "memory_swap_mib": 1024
+  },
+  {
+   "service": "qdl_v2_stable_candidate-stream_kn_2-1",
+   "image": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+   "revision_label": "9dab22429ea44566587f31d9f56f8b059933c795",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-18T19:07:18.365016713Z",
+   "health": null,
+   "cpus": 0.75,
+   "memory_mib": 512,
+   "memory_swap_mib": 1024
+  },
+  {
+   "service": "qdl_v2_stable_candidate-market_projector_1-1",
+   "image": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+   "revision_label": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-16T17:26:05.200369211Z",
+   "health": null,
+   "cpus": 0.75,
+   "memory_mib": 512,
+   "memory_swap_mib": 1024
+  },
+  {
+   "service": "qdl_v2_stable_candidate-market_projector_2-1",
+   "image": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+   "revision_label": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-16T17:32:22.172312525Z",
+   "health": null,
+   "cpus": 0.75,
+   "memory_mib": 512,
+   "memory_swap_mib": 1024
+  },
+  {
+   "service": "qdl_v2_stable_candidate-rust_core-1",
+   "image": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+   "revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-15T13:33:01.691485188Z",
+   "health": null,
+   "cpus": 1.0,
+   "memory_mib": 256,
+   "memory_swap_mib": 512
+  },
+  {
+   "service": "qdl_v2_stable_candidate-rust_core_2-1",
+   "image": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+   "revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-15T13:33:01.759574932Z",
+   "health": null,
+   "cpus": 1.0,
+   "memory_mib": 256,
+   "memory_swap_mib": 512
+  },
+  {
+   "service": "qdl_v2_stable_candidate-rust_core_3-1",
+   "image": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+   "revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-15T13:33:01.801734215Z",
+   "health": null,
+   "cpus": 0.5,
+   "memory_mib": 256,
+   "memory_swap_mib": 512
+  },
+  {
+   "service": "qdl_v2_stable_candidate-binance_bar_edge-1",
+   "image": "sha256:08f356a84151c6e865fbdc4a2efe6924df9336d15353254c2b2da684261794f5",
+   "revision_label": "a388537c897de909257c7f45db44c9ac44a62ccc",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-12T04:56:51.788238582Z",
+   "health": "healthy",
+   "cpus": 0.75,
+   "memory_mib": 512,
+   "memory_swap_mib": 1024
+  },
+  {
+   "service": "qdl_v2_stable_candidate-kafka1-1",
+   "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+   "revision_label": null,
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-16T14:14:11.546287855Z",
+   "health": "healthy",
+   "cpus": 2.25,
+   "memory_mib": 1536,
+   "memory_swap_mib": 3072
+  },
+  {
+   "service": "qdl_v2_stable_candidate-kafka2-1",
+   "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+   "revision_label": null,
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-16T14:21:03.772629842Z",
+   "health": "healthy",
+   "cpus": 2.25,
+   "memory_mib": 2048,
+   "memory_swap_mib": 4096
+  },
+  {
+   "service": "qdl_v2_stable_candidate-kafka3-1",
+   "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+   "revision_label": null,
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-16T14:25:32.091341239Z",
+   "health": "healthy",
+   "cpus": 2.25,
+   "memory_mib": 1536,
+   "memory_swap_mib": 3072
+  },
+  {
+   "service": "qdl_v2_stable_candidate-market_cache-1",
+   "image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+   "revision_label": null,
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-09-27T05:29:58.000340326Z",
+   "health": "healthy",
+   "cpus": 1.0,
+   "memory_mib": 9216,
+   "memory_swap_mib": 18432
+  },
+  {
+   "service": "qdl_v2_stable_candidate-stable_redis-1",
+   "image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+   "revision_label": null,
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-09-16T06:38:55.588316335Z",
+   "health": "healthy",
+   "cpus": 0.5,
+   "memory_mib": 160,
+   "memory_swap_mib": 320
+  },
+  {
+   "service": "market_data_service_p184w",
+   "image": "sha256:2deb90b0cc52eae7610fa44692f90df077e9db100ca259e38fd652a2dc1c5dc5",
+   "revision_label": "30f50a91dbd67ce2a482480be598cf509b25333e",
+   "restart": 0,
+   "oom": false,
+   "status": "running",
+   "started": "2026-10-19T04:36:21.189014418Z",
+   "health": null,
+   "cpus": null,
+   "memory_mib": null,
+   "memory_swap_mib": null
+  }
+ ],
+ "runtime_basis": "docker inspect, read-only, at certificate re-issue (2026-10-19); equal to the A4 v2 binding of p184-final-campaign-20261019T040311Z (images) and to the OPT caps",
+ "resource_caps": {
+  "kafka1-3": "2.25 vCPU (K)",
+  "query_kn_1/2": "2.0 vCPU, 2 GiB, swap 4 GiB (Q)",
+  "ingestor_okx_swap": "1.0 vCPU (I)",
+  "ingestor_binance_usdm": "0.75 vCPU",
+  "evidence": {
+   "path": "~/.local/state/qdl-v2/releases/v2.2.4/opt-resource-20261018/SHA256SUMS",
+   "sha256": "ba5e465e014138bb1b529859d04f97a238b6b478352a27d3ee6e3ebeebf4cdd1"
+  }
+ },
+ "runtime_scope_totals": {
+  "application_roles_on_v224_images": 8,
+  "by_image": {
+   "rust_9dab224": [
+    "ingestor_binance_usdm",
+    "ingestor_okx_swap",
+    "stream_kn_1",
+    "stream_kn_2"
+   ],
+   "rust_c7ce7d3": [
+    "market_projector_1",
+    "market_projector_2"
+   ],
+   "python_31a5155": [
+    "query_kn_1",
+    "query_kn_2"
+   ]
+  },
+  "kept_by_equality": [
+   "rust_core",
+   "rust_core_2",
+   "rust_core_3"
+  ],
+  "held_scoped_out": [
+   "binance_bar_edge"
+  ],
+  "unchanged": [
+   "kafka1",
+   "kafka2",
+   "kafka3",
+   "market_cache",
+   "stable_redis"
+  ]
+ },
+ "gates": {
+  "G1": "PASS",
+  "G2": "PASS",
+  "G3": "PASS",
+  "G4": "PASS",
+  "G5": "PASS",
+  "G6": "PASS",
+  "G7": "PASS",
+  "G8": "PASS",
+  "G9": "PASS",
+  "G10": "PASS",
+  "G11": "PASS",
+  "G14": "PASS",
+  "G12": "PASS",
+  "G13": "PASS"
+ },
+ "gates_without_a5": {
+  "G1": "PASS",
+  "G2": "PASS",
+  "G3": "PASS",
+  "G4": "PASS",
+  "G5": "PASS",
+  "G6": "PASS",
+  "G7": "PASS",
+  "G8": "PASS",
+  "G9": "PASS",
+  "G10": "PASS",
+  "G11": "FAIL",
+  "G14": "PASS",
+  "G12": "PASS",
+  "G13": "PASS"
+ },
+ "endpoint_report_sha256": "013b66e683a9ed6846a82d8b858a5a5bc5dcb28cebf80688eb7c099fae4740b7",
+ "sdk": {
+  "name": "qdl-sdk",
+  "version": "2.4.1",
+  "wheel_sha256": "9f79e032604bf79db5ca9070c7f8a99b242e7cf22e1659b395b307dc798c28e7",
+  "builds_identical": true,
+  "sbom_sha256": "6bda0014b9ee304b679e44079976bc5d576a524571b5a771807e3aa0cdd2d442",
+  "release_json_sha256": "273e532665f634b3737d0fa014a3ced15efc468e9dd380ae034d8a2ee451be69",
+  "generated_contract_digest": "2ee96b1edab01d3185e4fb973f7e3a0715956f8648938039108eb6156187c116",
+  "built_at": "c7ce7d3087cb8a2daf82ba941982bd296d488f45 (SDK sources unchanged to the release head)"
+ },
+ "ci": {
+  "status": "REQUIRED_EXTERNAL_GATE",
+  "required_jobs": [
+   "consolidated-source-preflight",
+   "contract-tests",
+   "sdk-python310",
+   "unit-tests",
+   "kn-native-integration"
+  ],
+  "note": "runs on the PR head after the push; recorded in the PR, not in this file (the file is part of the head)"
+ },
+ "limits": [
+  "POST-HOC: G11 PASSES only under A5 (adopted after observing 040311Z); without A5 it FAILs on one TRADE slice (gates_without_a5). A5 re-times only TRADE slices with canonical-topic evidence; caught-up, rewind and cursor checks are the frozen ones.",
+  "Host workload isolation: the counted run was measured with 15 portal containers paused and the Codex tree stopped (load1 p50 16.2 on 16 vCPU). The same set at load1 p50 22.0 (021044Z) failed G4 (3 rows) and G8. Production must not run unrelated heavy workloads beside DL; IDR-128 open (capacity limit).",
+  "G14 DL mean CPU sum 5.75 vCPU above the owner's 5 vCPU budget (recorded, not a gate).",
+  "Single host; no HA, no independent failure domains.",
+  "rust_core x3 on rc22 (binary equality; no rustls code in qdl-realtime-core); binance_bar_edge held on rc14.",
+  "rustls 0.23.46: the change is not confined to rustls functions at machine-code level (same-source codegen); behaviour equivalence rests on the HOLDs, G12, G13 and the stage-100, not on the symbol diff.",
+  "IDR-108 open (Stream accepts before its hot view serves).",
+  "G12 harness shape not production shape; integrity layer report-only; WriterClone apparatus pin 77a6d671.",
+  "G13 shadow-certified; the W05 output carries no run identity (byte-identical to the v5.5 output).",
+  "TS writer vendors SDK 2.4.0; TEST_ONLY burst results are not capacity claims.",
+  "OKX FUNDING_RATE bound equals the 8 h cadence (A1 apparatus parity in the verifier; contract option IDR-125).",
+  "Consumer manifest packaging: deployed Paper r11 packaged as evidence; repository loadable file stays r10 (IDR-127)."
+ ],
+ "rollback": {
+  "ingestor_okx_swap/binance_usdm": "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784 (rustls rollback composes), then 5e261809 / 60f83a51",
+  "stream_kn_1/2": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e (rustls rollback composes), then baa72c96",
+  "query_kn_1/2": "sha256:c21e164ac4db14af498b73104e344f003fa7117fdae2e465f50df8668cdca252",
+  "market_projector_1/2": "not changed since 2026-10-16; v2.2.3-era target ce629061",
+  "market_data_service_p184w": "sha256:a44349a10e5284efae290ea38062dd23dea0ef015088be6cf041d3f4d0923c73",
+  "resource_caps": "docker update back to kafka 1.75, query 1.5 cpu + 1536m/3g (memory only while usage <= 1.3 GiB), ingestor_okx_swap 0.5 (OPT packet section 12)",
+  "composes": "sha256 per role in equivalence.json",
+  "order": "reverse role order, failure only",
+  "not_touched": [
+   "kafka1-3 images",
+   "rust_core x3",
+   "binance_bar_edge",
+   "market_cache",
+   "stable_redis",
+   "catalog",
+   "consumer manifests",
+   "JWT revisions",
+   "offsets",
+   "Redis data"
+  ]
+ },
+ "evidence_sha256": {
+  "upgrade/evidence/releases/v2.2.4/RELEASE_NOTES.md": "f116067e44e2eb21f48b50554e337b89c832a3cfe38c0db91a1d61bba0980ae3",
+  "upgrade/evidence/releases/v2.2.4/SCORECARD.md": "ab025d969a2688a0cf8751e6f5a3f514ec81c70c99a3f4d4120448f276274eaf",
+  "upgrade/evidence/releases/v2.2.4/CERTIFICATE.md": "9fd2e7242d07bf5d008a52223a0c1ba6a4a7948e7a49c602d63b3122c2b56e8c",
+  "upgrade/evidence/releases/v2.2.4/a5-g11-trade-clock.md": "aa50429b0ecfcd8d7281a119922e0756ba403bb26e9582992ba2cfff3ca5865f",
+  "upgrade/evidence/releases/v2.2.4/scorecard.json": "2dc2f8d1daa75acb83ecfff0b2aac6c505b39aac4bd71330ec0678d89bb43470",
+  "upgrade/evidence/releases/v2.2.4/equivalence.json": "46ee5b28bc3a064ad68b9947a6d2ab089f953c4c1b4b75c273d46e030acee5bc",
+  "upgrade/evidence/releases/v2.2.4/endpoint-report.json": "013b66e683a9ed6846a82d8b858a5a5bc5dcb28cebf80688eb7c099fae4740b7",
+  "upgrade/evidence/releases/v2.2.4/a4-v2-preregistered.md": "4e865b666ee25aa32a65725ce5c5ed8d134ecad6594d958d349cdc9be07aaa3f",
+  "upgrade/evidence/releases/v2.2.4/a3-external-attribution.md": "37c79fe3492250266a157dfbac39436f487a23a8f0bb3f879e97532ea3f1126a",
+  "upgrade/evidence/releases/v2.2.4/fmt-equivalence-addendum.md": "d17d04240edd96f955c9bba1bfb7ddbf7c1abdf414bb126040b5dc8c1beb4f9e",
+  "upgrade/evidence/releases/v2.2.4/g12-image-set-v224.json": "284f31ca4ad10d4bf2b6f3ab4ad29e625a02ee9c326da00e51f8465436c09d88",
+  "upgrade/evidence/releases/v2.2.4/g13-roles-v224.json": "dcecb1bf3511eb3608a77ad927275e07dbd15d343b62c04a7eb412871b8b60b4",
+  "upgrade/evidence/releases/v2.2.4/trading-system.paper.stable-r11.yaml": "efd482fa4ffe7f9176387324f47d47d7e1c801bae6afb2c0747c3ce43652b8fc",
+  "upgrade/evidence/releases/v2.2.4/consumer-manifest-r11-provenance.json": "946280544ad79106efd9503f92552c74f08e9b1fa56caa2b02c1d213e10ba37f",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/scorecard.json": "ebe11b8c10145bb92b7a850c4134d81101aaf7000a210f198b175316b20acbbf",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/scorecard.a5.json": "b1c2e7b450363f094c25adb34988f9356da327ef3d0b6a863a001dab2692d08d",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/scorecard.a4-v2.json": "7fffb04e3d06fb6dfbe32d749f59de64aa951bbd71d1ffe4b3284a1b8e4fceee",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/campaign.json": "6f6098cb950c177237cd663cc36b6891c85d12f19aaa8b1b35a84c174e9b3ee0",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/timeline.jsonl": "a6b69e7f725316c3a3ed247285c9edfd41cad6af69bc0acbdc1d76b20c5f2bda",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/stage100/receipt.json": "b0c1674cfc72f813ced6875cd5ff08b3c871ad3548d9403d3ded5f9884301700",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/stage100/gates.json": "f4895f43cb700489205fd6c32f837d7a3afd73d89f4f38fc5a50829bf60cba84",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/stage100/host.json": "2a0f2da4185e714bb297982037c9221c92981362d6bcc0d6068f47cd92bc8bf7",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/client-smoke/receipt.json": "d22d7bbdec57603c3596a69613b742ae39c88328b097652b4b013704315ff318",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/query-funding-allowance.json": "ebd852fd6156710eba6def5a9a4557ff2d15f97165cf61902f61dabd83e80da3",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/a3-timeline/timeline.jsonl": "c9f042d04198179c1f4e3a4be9f5d143439eca490428ce76e20af6ee737078f5",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/a3-local/receipt.json": "8b3faad7a45a1dd472467da36fbf3d858da4565efbc962fa9d55e211d20b4e53",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/g11/g11-summary.json": "77cac9b625bd1729cd46f7b003b40b397fd5d4de2f29dee7f8da79cc4b59253f",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/g11/g11-observations.jsonl": "01eddf13fbe0802f1ecc32fff1c0da73517ee68a024524786450e86be1385adf",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/trace/transit-load.json": "003c42a9dc338e444e7435ffd59be5e7fb7cf68032afce3e100c25aa932edc44",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/trace/mark-load.json": "b7e0c582b97786da88f04b463d8fe6fae2a3ce1354d79c0eec56636c623b9b8e",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.run.log": "872e1abc27d90f156df4d723f6c6cb1bbd5a16cf10c57dd2233f2b3002b4f97e",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.guard.log": "54b3caa445ab46770f6fcd23d96f93297f454bf9aa2e7b99e33a9e23e8ef02f3",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.guard/summary.json": "8593cbeaf986d89bf22e36a3d225a3b0b35ea1f2d13f60e815f85e03aebded01",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.guard/host.jsonl": "a18a6bf80414829b9a9b0ce326308573acea278aecc323e2f2f8b77340d6007c",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.g11-watcher.log": "54582015613317b3ea8ddc291dda40aa477b854844a9381d13b9b1f6c5bb2933",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.a4-v2-binding.json": "f08b594a07a1f213ce0710b93c0d853a1c62848786f7f6a40ccf908597f55f73",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.a4-v2-close.json": "ba3325230063fef5f1c89be75b6ee06a5a447ada12b62ef2ef14a20d7b12ed3a",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.g11-forensic/reader.py": "5fcc088a053a058a882174daa3b24adc1edbcf455869d138006c3de1ecd25d7c",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.g11-forensic/canonical.jsonl": "cf96554ec3d9affa646a9be4dd2fb8f64fbb2dd9751a3f37b54b178ffc1f80e8",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.g11-forensic/okx-history-trades-after-241971264.json": "b579fdb9f13fe17844e6c266f97e03e10adffb924a145fb96da07ff0589da4d6",
+  "~/.local/state/qdl-v2/p184-g12-v224-final-27c79b53-20261019T005952Z/evidence/verdict.json": "87386ad0f34423136132b4abb83077decd3573a382694b145b515cec3055449e",
+  "~/.local/state/qdl-v2/p184-g12-v224-final-27c79b53-20261019T005952Z/FINAL_CREDIT.json": "eb9d1e29a7b4769d4d5e9a2e96be3e0397bf24b3d56f695fb096116c25874dbf",
+  "~/.local/state/qdl-v2/p184-g12-v224-final-27c79b53-20261019T005952Z/production-parity.json": "a6da20dfdf04553c6f18d7b732a751a53d1b7e757ab3edddaf6255063ad5afff",
+  "~/.local/state/qdl-v2/p184-g12-v224-final-27c79b53-20261019T005952Z/credit-snapshot.json": "17f9f46ab2171686072d2d6a21f5bf15004183e3382649f25782e6db3f76e9a3",
+  "~/.local/state/qdl-v2/p184-g12-v224-final-27c79b53-20261019T005952Z/evidence/writer-precheck.json": "4fbd4b32921402596b80abe0db36743cf8d057daed9294bdfbec2a4c9e6d917f",
+  "~/.local/state/qdl-v2/p184-g12-v224-final-27c79b53-20261019T005952Z/evidence/teardown.json": "724b16718ec1f0aa32e9659a7b45945fd40d1071a263797e23112b89ff894252",
+  "~/.local/state/qdl-v2/p184-g12-v224-final-27c79b53-20261019T005952Z/SHA256SUMS": "61dc4d641862674e1da06d405f294091c9769bf63a3dd7ca40c9c373e1874291",
+  "~/.local/state/qdl-v2/p184-g13-20261019T015047Z/summary.json": "5b897eaf105b5bcdf8ae3723e43ec11dc3ec0c35abfae25007e211ff5befb747",
+  "~/.local/state/qdl-v2/p184-g13-20261019T012840Z/summary.json": "1f2dc10526cc913e452392a807cf8ab2ae8961897ca1c7c908b381e5c2eb4240",
+  "~/.local/state/qdl-v2/p184-g13-20261019T014124Z/summary.json": "0bb783ed4c663044b2e86c14e60f13a0b4407334137447bfaabc652cb7bc3294",
+  "~/.local/state/qdl-v2/p184-g13-20261019T013746Z/summary.json": "d68f866afd408f7a62e536f83946037c1a60a04673b269af7bcdc368d7d56897",
+  "~/.local/state/qdl-v2/p184-g13-20261019T015047Z/verify/w05-final-v56.json": "5490c21e66bf33bae326f2ea2051677f70cf95372b13b823d4c2912835da9895",
+  "~/.local/state/trading-system/p184-20261005/runtime/p1/packet-g13-v5.6-20261019.md": "44bdecd4201e53592b2b520d040c9e0fd9a9a43e70fe85916eae4f4e382fb3da",
+  "~/.local/state/qdl-v2/build-v2.2.4-9dab224/receipt.json": "e38fd27548f7482621d5ed1e7d2e6bc2225fd14aa39d365696d2eef0ab86674c",
+  "~/.local/state/qdl-v2/build-v2.2.4-9dab224/symbol-diff-vs-a9679def/summary.json": "49f2164e88972600a1a80903f8b724c33f9bc23c83f6e362201636707c8762ef",
+  "~/.local/state/qdl-v2/releases/v2.2.4/rollout-rustls-0.23.46/SHA256SUMS.roll-20261018T1846Z": "c518f9b307bec97190f504a40b6d429b238d1feab4f7d77169a6a03f68d95ddc",
+  "~/.local/state/qdl-v2/releases/v2.2.4/opt-resource-20261018/SHA256SUMS": "ba5e465e014138bb1b529859d04f97a238b6b478352a27d3ee6e3ebeebf4cdd1",
+  "~/.local/state/qdl-v2/build-v2.2.4-31a5155/receipt.json": "e1a9bcc57847a83ea1425dfc66ed3598322a46e46948375bb47f97bbe1c93e38",
+  "~/.local/state/qdl-v2/build-v2.2.4-c7ce7d3/receipt.json": "40d727b28a3a581eb9c5911e150a39ae0dac68d8d0a9afbb5cceee47b4cb4f7f",
+  "~/.local/state/qdl-v2/build-v2.2.4-c7ce7d3/postcheck-addendum.json": "dad31fe8dc7f768de72e7577951af61d726689d8b32fcf5153046fd9bb190260",
+  "~/.local/state/trading-system/p184-n1-opt-20261013/release/30f50a91/receipt.json": "7040ba9fc68f17641ca69ffb9e52fa4240c9e9e4c956f06c2a3568ea97f64a1c",
+  "~/.local/state/qdl-v2/p184-final-campaign-20261019T021044Z/scorecard.json": "c0504f4bb6fa039b372803cebb1849140f9ecf1faadab71c96f854492f0b05de",
+  "config/v2/p184-stage100-g4-amendment-1.json": "1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6",
+  "config/v2/p184-stage100-g4-amendment-2.json": "99961c41e08993944d158ae812ca61514271862a2d03e011f5d01ce71a0f9997",
+  "config/v2/p184-stage100-a3-external-attribution.json": "384e85121c7c4c2fec06de12dd031a78550ac199fe9b6da9771dec118df5cec9",
+  "config/v2/p184-stage100-a4-v2-preregistered.json": "63f98668150bfda776317f97114b73855800515d0cfc9b7aa90ccb050f500324",
+  "config/v2/p184-stage100-a5-g11-trade-clock.json": "c5b46c5faefe20e31061a3bd647b9e60537b982eee43b484715ec9cdcc5aae78",
+  "scripts/p184_a5_g11_trade_clock.py": "4892abd1630eff84c1a3b6eb0b57b3c57912883cbd354378d686e67ab89af7e7",
+  "scripts/p184_a4_preregistered.py": "b93d295f75f0b62f268ec39f65d28b7f60e64daa97e3ee737a371f42f7d90181",
+  "scripts/p184_a4_post_hoc.py": "23b78e4ae7a367252cf8033aa64ee6357987c2117e7f6516679fd4c6efafba26",
+  "scripts/p184_gate_campaign.py": "e179ec784621089795516ed25b2ea1f2e2ba30c86eea0de852ed4728aa6d104b",
+  "scripts/p184_g11_writer_restart_probe.py": "adb811ccc6da8a7249197e5e8e22fb49deebee0c03f36ded71c3c84838bf3e95"
+ },
+ "evidence_sha256_note": "the .md entries are the files as committed with this certificate; certificate.json cannot list its own sha256"
+}
