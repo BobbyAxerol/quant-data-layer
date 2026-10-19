@@ -76515,3 +76515,10 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   - receipts: inherited receipt embeds a full origin and is accepted; an origin that inherited itself is refused;
     the consolidated build refuses a tree mismatch and nine inherited-run defects, and accepts a full run and an
     inherited run on the matching tree.
+- GitHub run 5: run 39216183450 on 59b90c5.
+  - CI2 picked the nearest green full ancestor 73f62e7 (run 39213849110); the diff since it has ci.yml and
+    ci_change_scope.py, so the run was full; tree 48cd872b. Every suite job success. Wall 749 s; shards
+    714 / 670 / 536 / 569 s; rust-workspace 196 s (cache hit).
+  - ci-result FAILED: "changes output 'reuse_run' invalid: None". GitHub omits a job output whose value is empty,
+    so `needs.changes.outputs` had no reuse_run. Fixed: an absent reuse_run means no reuse (tree, flags and
+    base_check are never empty); test added. Tests 122 OK on the host.

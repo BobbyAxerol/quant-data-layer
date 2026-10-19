@@ -262,12 +262,18 @@ class VerifyInheritedNeedsTests(unittest.TestCase):
                 self.assertEqual(scope.main(["--verify-needs"]), 0)
             self.assertIn("inherited full CI run 123 on identical tree " + "c" * 40, summary.read_text())
 
+    def test_absent_reuse_run_means_no_reuse(self):
+        """GitHub drops empty job outputs from `needs` (run 39216183450 failed ci-result on exactly this)."""
+        outputs = {k: v for k, v in OUT.items() if k != "reuse_run"}
+        self.assertEqual(scope.verify_needs(needs(outputs, sdk_python310="success", unit_tests="success",
+                                                  release_gates="success")), [])
+
     def test_base_check_keeps_contract_tests_required(self):
         self.assertTrue(scope.verify_needs(needs(self.INHERITED)))  # contract-tests skipped although base_check
 
     def test_inconsistent_or_invalid_reuse_outputs_fail(self):
         for outputs in (dict(self.INHERITED, python="true"), dict(self.INHERITED, reuse_run="x1"),
-                        dict(self.INHERITED, tree="short"), {k: v for k, v in OUT.items() if k != "reuse_run"},
+                        dict(self.INHERITED, tree="short"), {k: v for k, v in OUT.items() if k != "tree"},
                         {k: v for k, v in OUT.items() if k != "base_check"}):
             with self.subTest(outputs=outputs):
                 self.assertTrue(scope.verify_needs(needs(outputs, contract_tests="success", sdk_python310="success",

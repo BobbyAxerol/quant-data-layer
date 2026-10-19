@@ -421,8 +421,9 @@ def verify_needs(needs):
             problems.append(f"changes output {flag!r} missing or invalid: {outputs.get(flag)!r}")
     if not re.fullmatch(r"[0-9a-f]{40}", outputs.get("tree") or ""):
         problems.append(f"changes output 'tree' missing or invalid: {outputs.get('tree')!r}")
-    reuse = outputs.get("reuse_run")
-    if reuse is None or (reuse and not reuse.isdigit()):
+    # GitHub omits a job output whose value is empty, so an absent reuse_run means "no reuse" (run 39216183450).
+    reuse = outputs.get("reuse_run") or ""
+    if reuse and not reuse.isdigit():
         problems.append(f"changes output 'reuse_run' invalid: {reuse!r}")
     elif reuse and any(outputs.get(flag) == "true" for flag in FLAGS):
         problems.append("changes inherited a run but still scoped suites in")
