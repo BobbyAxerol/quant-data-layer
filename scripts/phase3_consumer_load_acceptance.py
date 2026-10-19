@@ -384,6 +384,109 @@ def _docker_image_id(image: str) -> str:
     return value
 
 
+# A1 (owner 2026-10-18, fix of the 092255Z apparatus defect): the reference verifier's FUNDING_RATE history allowance
+# is the DEPLOYED Query's (qdl/query/service.py _FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS), resolved here on the host
+# from the image every query container runs, and passed to the client in its inner configuration. The client image
+# (the profile image, possibly older than the deployed Query) never imports a Query symbol for it.
+_QUERY_ALLOWANCE_PROBE = r"""
+import inspect, json
+import qdl.query.service as service
+value = getattr(service, "_FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS", None)
+source = inspect.getsource(service.V2QueryService._reference_problem)
+print(json.dumps({"allowance_ms": value if type(value) is int else None,
+                  "applied_in_reference_problem": "_FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS" in source
+                  and "is_history" in source and "FUNDING_RATE" in source}))
+"""
+
+
+def _container_image_id(container: str) -> str:
+    value = subprocess.run(["docker", "inspect", "--format", "{{.Image}}", container], capture_output=True,
+                           text=True, check=True, timeout=20).stdout.strip()
+    if not _DIGEST_RE.fullmatch(value):
+        raise ValueError("deployed Query container did not resolve to an immutable image id")
+    return value
+
+
+def _query_image_allowance(image_id: str) -> dict[str, object]:
+    """Read the allowance constant (and that _reference_problem applies it) inside the deployed Query image: one
+    disposable, network-less, read-only container; nothing of the running Query is touched."""
+    result = subprocess.run(
+        ["docker", "run", "--rm", "--name", "qdl-phase3-target-allowance-" + uuid.uuid4().hex[:8],
+         "--network", "none", "--read-only", "--cap-drop", "ALL",
+         "--security-opt", "no-new-privileges", "--pids-limit", "32", "--memory", "256m", "--cpus", "0.5",
+         "--label", "qdl.phase3.disposable-load=true", "--entrypoint", "python", image_id, "-B", "-c",
+         _QUERY_ALLOWANCE_PROBE],
+        capture_output=True, text=True, timeout=120, check=False)
+    if result.returncode != 0:
+        raise RuntimeError("deployed Query allowance probe failed (fail closed)")
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    try:
+        value = json.loads(lines[-1])
+    except (IndexError, json.JSONDecodeError) as error:
+        raise RuntimeError("deployed Query allowance probe gave no result (fail closed)") from error
+    return value
+
+
+def resolve_query_funding_allowance(query_containers, *, image_of=None, probe=None) -> dict[str, object]:
+    """{'allowance_ms', 'query_images', 'basis', ...} of the deployed Query, fail closed: every query container must
+    resolve to an image whose qdl/query/service.py defines the int constant and applies it in _reference_problem,
+    and all images must agree. image_of / probe are injectable for tests."""
+    image_of = image_of or _container_image_id
+    probe = probe or _query_image_allowance
+    containers = list(query_containers)
+    if not containers:
+        raise RuntimeError("no deployed Query container to resolve the funding allowance from (fail closed)")
+    images = {name: image_of(name) for name in containers}
+    per_image = {image: probe(image) for image in sorted(set(images.values()))}
+    values = set()
+    for image, found in per_image.items():
+        if type(found.get("allowance_ms")) is not int or not found.get("applied_in_reference_problem"):
+            raise RuntimeError(f"deployed Query image {image[:19]} has no applied funding allowance (fail closed)")
+        values.add(found["allowance_ms"])
+    if len(values) != 1:
+        raise RuntimeError("deployed Query replicas disagree on the funding allowance (fail closed)")
+    return {"allowance_ms": values.pop(), "query_images": images, "per_image": per_image,
+            "basis": "qdl.query.service._FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS read inside the deployed Query image "
+                     "(docker run --rm --network none), applied by V2QueryService._reference_problem"}
+
+
+QUERY_ALLOWANCE_SCHEMA = "qdl.p184.query-funding-allowance.v1"
+
+
+def query_allowance_document(resolved: dict[str, object], *, now: float | None = None) -> dict[str, object]:
+    """The versioned campaign input for A1: the resolution plus its own digest (provenance/type are re-validated by
+    load_query_allowance)."""
+    body = {"schema": QUERY_ALLOWANCE_SCHEMA, "allowance_ms": resolved["allowance_ms"],
+            "query_images": dict(sorted(dict(resolved["query_images"]).items())),
+            "per_image": resolved.get("per_image"), "basis": resolved.get("basis"),
+            "resolved_at_unix": time.time() if now is None else now}
+    return {**body, "body_sha256": _sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode())}
+
+
+def load_query_allowance(path: Path, query_containers, *, image_of=None) -> dict[str, object]:
+    """Validate the campaign input (schema, digest, int type) AND that every query container still runs the image it
+    was resolved from; any mismatch refuses the run before the client starts (fail closed)."""
+    image_of = image_of or _container_image_id
+    document = json.loads(Path(path).read_text())
+    body = {k: v for k, v in document.items() if k != "body_sha256"}
+    if document.get("schema") != QUERY_ALLOWANCE_SCHEMA:
+        raise RuntimeError("query allowance input has an unknown schema (fail closed)")
+    if document.get("body_sha256") != _sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()):
+        raise RuntimeError("query allowance input digest mismatch (fail closed)")
+    value = document.get("allowance_ms")
+    if type(value) is not int or value < 0:
+        raise RuntimeError("query allowance input has no int allowance (fail closed)")
+    recorded = document.get("query_images") or {}
+    current = {name: image_of(name) for name in query_containers}
+    if not current or current != {name: recorded.get(name) for name in current}:
+        raise RuntimeError("deployed Query images differ from the ones the allowance was resolved from (fail closed)")
+    for image in set(current.values()):
+        found = (document.get("per_image") or {}).get(image) or {}
+        if found.get("allowance_ms") != value or not found.get("applied_in_reference_problem"):
+            raise RuntimeError("query allowance input provenance is inconsistent (fail closed)")
+    return {**document, "verified_against_running_images": current, "input_path": str(path)}
+
+
 def _docker_stats(containers: list[str]) -> list[dict[str, object]]:
     result = subprocess.run(
         ["docker", "stats", "--no-stream", "--format", "{{json .}}", *containers],
@@ -506,7 +609,10 @@ def docker_command(
     mode: str,
     sessions: int,
     duration_seconds: int,
+    query_funding_allowance_ms: int,
 ) -> tuple[list[str], dict[str, object]]:
+    if type(query_funding_allowance_ms) is not int or query_funding_allowance_ms < 0:
+        raise ValueError("Phase-3 needs the deployed Query's funding allowance (fail closed)")
     identities = profile["identities"]
     assert isinstance(identities, list)
     inner_identities = []
@@ -545,6 +651,7 @@ def docker_command(
         "queries": profile["queries"],
         "stream_targets": profile["stream_targets"],
         "identities": inner_identities,
+        "query_funding_allowance_ms": query_funding_allowance_ms,
     }
     cmd = [
         "docker", "run", "--rm", "--name", name,
@@ -570,6 +677,10 @@ def docker_command(
            "--mount", f"type=bind,src={ROOT / 'generated/python/qdl'},dst=/app/generated/python/qdl,readonly")
           if profile.get("sdk_from_source") else ()),
         "--mount", f"type=bind,src={ROOT / 'qdl/certification/phase3_consumer_load.py'},dst=/app/qdl/certification/phase3_consumer_load.py,readonly",
+        # A1 (owner 2026-10-18): the per-request reference verifier is apparatus (no runtime role imports it), so it
+        # comes from the same source as this driver; the Query allowance it applies arrives in the inner config
+        # (query_funding_allowance_ms, resolved host-side from the deployed Query image), never as an import.
+        "--mount", f"type=bind,src={ROOT / 'qdl/certification/reference_l2_acceptance.py'},dst=/app/qdl/certification/reference_l2_acceptance.py,readonly",
         "--mount", f"type=bind,src={Path(__file__).resolve()},dst=/driver/phase3_consumer_load_acceptance.py,readonly",
         "--mount", f"type=bind,src={ROOT / 'scripts/phase3_consumer_load_bootstrap.sh'},dst=/driver/phase3_consumer_load_bootstrap.sh,readonly",
         # The KN-2 oracle/judge the kn4-matrix handoff reuses, from the same source as this driver.
@@ -607,6 +718,9 @@ def run_host(args: argparse.Namespace) -> int:
     output = args.output.resolve()
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
     image_id = _docker_image_id(str(profile["image"]))
+    allowance = (load_query_allowance(args.query_allowance, profile["query_containers"])
+                 if getattr(args, "query_allowance", None) else
+                 resolve_query_funding_allowance(profile["query_containers"]))
     name = "qdl-phase3-load-" + uuid.uuid4().hex[:12]
     command, inner = docker_command(
         profile,
@@ -615,6 +729,7 @@ def run_host(args: argparse.Namespace) -> int:
         mode=args.mode,
         sessions=args.sessions,
         duration_seconds=args.duration_seconds,
+        query_funding_allowance_ms=allowance["allowance_ms"],
     )
     before = _docker_stats(list(profile["query_containers"]))
     started = time.monotonic()
@@ -662,6 +777,7 @@ def run_host(args: argparse.Namespace) -> int:
         "client_stderr_sha256": _sha256(stderr.encode()),
         "cleanup_error": cleanup_error,
         "inner_config_sha256": _sha256(json.dumps(inner, sort_keys=True, separators=(",", ":")).encode()),
+        "query_funding_allowance": allowance,
         "secret_values_recorded": False,
         "order_actions": 0,
     }
@@ -951,7 +1067,7 @@ def _inside_config() -> dict[str, object]:
         raise ValueError("Phase-3 inner configuration is invalid")
     expected = {
         "mode", "logical_sessions", "duration_seconds", "catalog", "acquisition",
-        "queries", "stream_targets", "identities",
+        "queries", "stream_targets", "identities", "query_funding_allowance_ms",
     }
     if str(value.get("mode", "")).startswith("target") or value.get("mode") == "kn4-matrix":
         expected |= {"budget", "final"}
@@ -959,6 +1075,12 @@ def _inside_config() -> dict[str, object]:
         expected |= {"oracle_bootstrap"}
     if set(value) != expected:
         raise ValueError("Phase-3 inner configuration fields are invalid")
+    from qdl.certification.reference_l2_acceptance import configure_query_funding_allowance_ms
+
+    # A1: the deployed Query's allowance, resolved by the host (fail closed: absent/invalid -> ValueError, no reads).
+    if type(value["query_funding_allowance_ms"]) is not int:
+        raise ValueError("Phase-3 inner configuration has no deployed Query funding allowance")
+    configure_query_funding_allowance_ms(value["query_funding_allowance_ms"])
     return value
 
 
@@ -1771,11 +1893,13 @@ async def main():
     async for key in client.scan_iter(match="service:heartbeat:market_data:*", count=100):
         value = await client.get(key)
         if value:
-            rows.append(json.loads(value))
+            rows.append((key, json.loads(value)))
     await client.aclose()
-    beat = max(rows, key=lambda row: row.get("last_seen_unix", 0))
+    key, beat = max(rows, key=lambda row: row[1].get("last_seen_unix", 0))
     details = beat["details"]
+    # last_seen_unix + key_tail identify the heartbeat snapshot, so repeated reads of it count once.
     print(json.dumps({"status": beat["status"], "age_s": round(time.time() - beat["last_seen_unix"], 1),
+        "last_seen_unix": beat["last_seen_unix"], "key_tail": key[-24:],
         "ready": details.get("ready_v2_slices"), "demanded": details.get("demanded_v2_slices"),
         "fallback": details.get("v1_fallback_count"), "v2_error": details.get("v2_error_count"),
         "unhealthy": details.get("reported_unhealthy_slices") or []}))
@@ -2023,6 +2147,126 @@ class _G6Recorder:
                 for key, row in self.rows.items()}
 
 
+# A1 (owner 2026-10-18), additive receipt evidence: the server timing of every reference read the verifier judged
+# (the 074624Z refusal at an OKX funding settlement kept only a detail digest). No payload values are kept.
+_REFERENCE_TIMING: ContextVar[list | None] = ContextVar("qdl_phase3_reference_timing", default=None)
+_REFERENCE_EXAMPLE_CAP = 64
+_FUNDING_SETTLEMENT_PERIOD_NS = 8 * 3_600_000_000_000
+_FUNDING_SETTLEMENT_TOLERANCE_NS = 60_000_000_000  # the acceptance window's settlement jitter (60 s)
+
+
+def reference_timing(references, response, *, sent_ns: int, now_ns: int) -> list[dict[str, object]]:
+    """Per result of one reference batch: status, cache_hit, coalesced, received_at_ns, newest_observed_at_ns (for
+    FUNDING_RATE the fundingTime of the newest settled row), source_age_ms at receipt, the declared max_freshness_ms,
+    the effective bound (reference_freshness_bound_ms, Query's rule) and whether the read needed the allowance, and
+    settlement_crossing: a FUNDING_RATE read sent after an 8 h boundary whose newest row predates that boundary by
+    more than 60 s (the settlement was due but not in the served series). Pure; report-only."""
+    from qdl.certification.reference_l2_acceptance import reference_freshness_bound_ms
+
+    out = []
+    for reference, item in zip(references, getattr(response, "results", None) or []):
+        request = reference.sdk_requirement
+        product = str(getattr(request.product, "value", request.product))
+        data = getattr(item, "data", None)
+        observations = getattr(data, "observations", None) or []
+        newest = max((int(o.observed_at_ns) for o in observations), default=None)
+        received = getattr(data, "received_at_ns", None)
+        bound = reference_freshness_bound_ms(request)
+        age = None if newest is None else max(0, (now_ns - newest) // 1_000_000)
+        boundary = (sent_ns // _FUNDING_SETTLEMENT_PERIOD_NS) * _FUNDING_SETTLEMENT_PERIOD_NS
+        problem = getattr(item, "problem", None)
+        out.append({
+            "key": f"{product}|{reference.venue}|{reference.native_symbol}",
+            "status": getattr(item, "status", None),
+            "problem_code": getattr(problem, "code", None) if problem is not None else None,
+            "cache_hit": getattr(data, "cache_hit", None), "coalesced": getattr(data, "coalesced", None),
+            "sent_ns": sent_ns, "receipt_ns": now_ns, "received_at_ns": received,
+            "newest_observed_at_ns": newest, "observations": len(observations),
+            "source_age_ms": age, "receive_age_ms": (None if not received else max(0, (now_ns - int(received)) // 1_000_000)),
+            "max_freshness_ms": request.max_freshness_ms, "effective_bound_ms": bound,
+            "allowance_used": bool(age is not None and request.max_freshness_ms is not None
+                                   and age > request.max_freshness_ms),
+            "settlement_crossing": bool(product == "FUNDING_RATE" and newest is not None
+                                        and newest < boundary - _FUNDING_SETTLEMENT_TOLERANCE_NS),
+            "settlement_boundary_ns": boundary if product == "FUNDING_RATE" else None,
+        })
+    return out
+
+
+class _ReferenceTimingRecorder:
+    def __init__(self, cap: int = _REFERENCE_EXAMPLE_CAP) -> None:
+        self.cap = cap
+        self.rows: dict[str, dict[str, object]] = {}
+        self.examples: list[dict[str, object]] = []
+        self.examples_seen = 0
+
+    def view(self, entry: dict[str, object], *, window: str, accepted: bool, error_code: str | None,
+             served_by: str | None) -> None:
+        row = self.rows.setdefault(entry["key"], {"n": 0, "accepted": 0, "refused": 0, "cache_hits": 0,
+                                                  "coalesced": 0, "max_source_age_ms": None,
+                                                  "max_receive_age_ms": None, "allowance_used": 0,
+                                                  "settlement_crossings": 0, "max_freshness_ms": None,
+                                                  "effective_bound_ms": None})
+        row["n"] += 1
+        row["accepted" if accepted else "refused"] += 1
+        row["cache_hits"] += bool(entry.get("cache_hit"))
+        row["coalesced"] += bool(entry.get("coalesced"))
+        row["allowance_used"] += bool(entry.get("allowance_used"))
+        row["settlement_crossings"] += bool(entry.get("settlement_crossing"))
+        row["max_freshness_ms"], row["effective_bound_ms"] = entry.get("max_freshness_ms"), entry.get("effective_bound_ms")
+        for name, field in (("max_source_age_ms", "source_age_ms"), ("max_receive_age_ms", "receive_age_ms")):
+            value = entry.get(field)
+            if isinstance(value, int):
+                row[name] = value if row[name] is None else max(row[name], value)
+        if not accepted or entry.get("allowance_used") or entry.get("settlement_crossing"):
+            self.examples_seen += 1
+            if len(self.examples) < self.cap:
+                self.examples.append({**entry, "window": window, "accepted": accepted, "error_code": error_code,
+                                      "served_by": served_by})
+
+    def evidence(self) -> dict[str, object]:
+        return {"rows": self.rows, "examples": self.examples, "examples_seen": self.examples_seen}
+
+
+def _reference_timing_record(recorder, window: str, *, accepted: bool, error_code: str | None) -> list | None:
+    """Fold the read's reference timing into the recorder; returns it (for the error record). Never raises."""
+    try:
+        timing = _REFERENCE_TIMING.get()
+        if timing:
+            for entry in timing:
+                recorder.reference.view(entry, window=window, accepted=accepted, error_code=error_code,
+                                        served_by=_SERVED_BY.get())
+        return timing
+    except Exception:
+        return None
+
+
+def merge_reference_timing(blocks: list[dict[str, object] | None]) -> dict[str, object]:
+    """Merge per-worker reference timing: exact counts and maxima, examples bounded."""
+    rows: dict[str, dict[str, object]] = {}
+    examples, seen = [], 0
+    for block in blocks:
+        block = block or {}
+        seen += int(block.get("examples_seen") or 0)
+        examples.extend(block.get("examples") or [])
+        for key, row in (block.get("rows") or {}).items():
+            out = rows.setdefault(key, {})
+            for name, value in row.items():
+                if name in ("max_freshness_ms", "effective_bound_ms"):  # declared, identical per key
+                    out[name] = value
+                elif name in ("max_source_age_ms", "max_receive_age_ms"):
+                    if isinstance(value, int):
+                        out[name] = value if out.get(name) is None else max(out[name], value)
+                    else:
+                        out.setdefault(name, None)
+                else:
+                    out[name] = int(out.get(name) or 0) + int(value or 0)
+    examples.sort(key=lambda item: (item.get("sent_ns") or 0))
+    return {"schema": "qdl.phase3.reference-timing.v1", "report_only": True,
+            "rows": dict(sorted(rows.items())), "examples": examples[:_REFERENCE_EXAMPLE_CAP],
+            "examples_seen": seen}
+
+
 def merge_g6(blocks: list[dict[str, object]]) -> dict[str, object]:
     """Merge per-worker G6 evidence: exact counts/max, pooled bounded reservoirs for p50/p95."""
     merged: dict[str, dict[str, object]] = {}
@@ -2138,6 +2382,10 @@ async def _target_read(client, operation: str, products) -> object:
             _G6_VIEW.set(_g6_reference_observations(references, response, sent_ns=sent_ns, now_ns=time.time_ns()))
         except Exception:
             _G6_VIEW.set(None)  # diagnostics never change the read result
+        try:
+            _REFERENCE_TIMING.set(reference_timing(references, response, sent_ns=sent_ns, now_ns=time.time_ns()))
+        except Exception:
+            _REFERENCE_TIMING.set(None)  # diagnostics never change the read result
         if response.partial or len(response.results) != len(references):
             raise ValueError("PARTIAL_RESULT")
         for reference, result in zip(references, response.results, strict=True):
@@ -2209,6 +2457,7 @@ class _TargetRecorder:
         # milliseconds, so a tail can be matched to server-side samples.
         self.outliers: list[list[object]] = []
         self.g6 = _G6Recorder()
+        self.reference = _ReferenceTimingRecorder()
 
     def outlier(self, kind: str, value_ms: float, label: str) -> None:
         if len(self.outliers) < 400:
@@ -2250,6 +2499,22 @@ def _g6_record(recorder, products, window: str, error_code: str | None) -> None:
         pass
 
 
+# Fail fast (Codex review 2026-10-18, after 092255Z: 146,701 ImportErrors over a 30-min load): an error that can only
+# come from the apparatus itself (code that does not load in this client image) is deterministic and repeats on every
+# read, so the worker process exits at once with a typed line instead of recording a 30-minute error storm. The
+# coordinator process then fails (missing worker result) and the driver exits within seconds; no load is measured.
+_APPARATUS_ERRORS = (ImportError, NameError, SyntaxError)
+APPARATUS_FAULT_EXIT = 70
+
+
+def _abort_on_apparatus_error(error: BaseException, *, where: str) -> None:
+    if isinstance(error, _APPARATUS_ERRORS):
+        sys.stderr.write(json.dumps({"event": "qdl_phase3_apparatus_fault", "where": where,
+                                     "error_type": type(error).__name__}) + "\n")
+        sys.stderr.flush()
+        os._exit(APPARATUS_FAULT_EXIT)
+
+
 async def _target_poll_loop(*, client, label, operation, products, period, phase, start, end, recorder,
                             stop=None) -> None:
     from qdl.certification.phase3_consumer_load import DeclaredRateTicker, PollLedger
@@ -2279,22 +2544,27 @@ async def _target_poll_loop(*, client, label, operation, products, period, phase
             window = recorder.window(sent)
             _SERVED_BY.set(None)
             _G6_VIEW.set(None)
+            _REFERENCE_TIMING.set(None)
             sent_ns = time.time_ns()
             try:
                 await _target_read(client, operation, products)
             except asyncio.CancelledError:
                 raise
             except Exception as error:
+                _abort_on_apparatus_error(error, where=f"poll {label} {operation}")
                 failed_ns = time.time_ns()
                 ledger.record_failure(_error_code(error))
                 _g6_record(recorder, products, window, _error_code(error))
+                timing = _reference_timing_record(recorder, window, accepted=False, error_code=_error_code(error))
                 recorder.error(operation=operation, poll=label, window=window,
                                product=_product_evidence(products[0]), error=_safe_error(error),
                                served_by=_SERVED_BY.get(), sent_ns=sent_ns, failed_ns=failed_ns,
-                               elapsed_ms=round((failed_ns - sent_ns) / 1e6, 3))
+                               elapsed_ms=round((failed_ns - sent_ns) / 1e6, 3),
+                               **({"reference_timing": timing[:16]} if timing else {}))
                 continue
             done = time.monotonic()
             _g6_record(recorder, products, window, None)
+            _reference_timing_record(recorder, window, accepted=True, error_code=None)
             ledger.completed += 1
             if done > due + period:
                 ledger.late += 1
@@ -2806,6 +3076,7 @@ async def _target_worker(config: dict[str, object], worker: int, workers: int) -
         "cold": recorder.cold,
         "outliers": recorder.outliers,
         "g6_view_quality": recorder.g6.evidence(),
+        "reference_timing": recorder.reference.evidence(),
         "counters": dict(recorder.counters),
         "errors": recorder.errors,
         "error_count": recorder.error_count,
@@ -2901,6 +3172,7 @@ def _merge_target(results: list[dict[str, object]], *, plan, final: bool) -> dic
         "cold": [item for result in results for item in result["cold"]],
         "outliers": sorted(entry for result in results for entry in result.get("outliers", [])),
         "g6_view_quality": merge_g6([result.get("g6_view_quality") for result in results]),
+        "reference_timing": merge_reference_timing([result.get("reference_timing") for result in results]),
         "load_window_unix_s": next((item.get("load_window_unix_s") for item in results if item["worker"] == 0), None),
         "counters": dict(sum((Counter(item["counters"]) for item in results), Counter())),
         "errors": [item for result in results for item in result["errors"]][:40],
@@ -2943,9 +3215,20 @@ async def run_target_inside() -> dict[str, object]:
         for process in processes:
             process.stdin.write(f"GO {go}\n".encode())
             await process.stdin.drain()
-        for process in processes:
-            stdout, _ = await asyncio.wait_for(process.communicate(),
-                                               timeout=float(config["duration_seconds"]) + 240.0)
+        # All workers are awaited together: one that exits with APPARATUS_FAULT_EXIT (fail fast) ends the run at once
+        # instead of after the slowest worker's whole load.
+        tasks = {asyncio.ensure_future(process.communicate()): process for process in processes}
+        pending = set(tasks)
+        deadline = time.monotonic() + float(config["duration_seconds"]) + 240.0
+        while pending:
+            done, pending = await asyncio.wait(pending, timeout=max(0.0, deadline - time.monotonic()),
+                                               return_when=asyncio.FIRST_COMPLETED)
+            if not done:
+                raise TimeoutError("target workers exceeded the stage deadline")
+            if any(tasks[task].returncode == APPARATUS_FAULT_EXIT for task in done):
+                raise RuntimeError("apparatus fault in a target worker (fail fast, no load measured)")
+        for task, process in tasks.items():
+            stdout, _ = task.result()
             lines = [line for line in stdout.decode().splitlines() if line.startswith("{")]
             results.append(json.loads(lines[-1]))
     finally:
@@ -2966,11 +3249,38 @@ def run_target_worker(index: int, count: int) -> int:
     return 0
 
 
+async def _matrix_stream_once(client, product, *, timeout_seconds: float = 30.0) -> int:
+    """One warmup-then-stream session of `product`: the first live StreamEvent within timeout_seconds is projected
+    and validated against the product's view (the reconnect probe's pattern), acknowledged, then the stream closes.
+    Control events before it are skipped. Returns the number of stream events read (1); raises otherwise."""
+    from qdl.certification.phase103_consumer_acceptance import sdk_requirement, validate_product_view
+    from qdl_sdk.models import StreamEvent
+    from qdl_sdk.projection import market_data_view_from_stream
+
+    requirement = sdk_requirement(product)
+    deadline = time.monotonic() + timeout_seconds
+    async with client.warmup_then_stream(requirement) as session:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ValueError("no live stream event within the smoke deadline")
+            event = await asyncio.wait_for(session.__anext__(), timeout=remaining)
+            if not isinstance(event, StreamEvent):
+                continue
+            view = market_data_view_from_stream(event, template=session.warmup.data[-1], requirement=requirement)
+            validate_product_view(product, view, require_current_quality=True)
+            session.acknowledge(event)
+            return 1
+
+
 async def run_target_matrix_inside() -> dict[str, object]:
     """Every read product of the stage-50 profile once through each replica.
 
     Also the bounded longer-interval sample: one 500-row 5m/15m/1h BAR warmup
-    per venue and replica. Streams are exercised by the stages themselves.
+    per venue and replica, and (A1 exact-client smoke, Codex review 2026-10-18)
+    one stream warmup-then-subscribe per venue on the first replica: the first
+    live event is validated, then the stream is closed. Streams are otherwise
+    exercised by the stages themselves.
     """
 
     from qdl.certification.phase103_consumer_acceptance import sdk_requirement, validate_product_view
@@ -3033,6 +3343,24 @@ async def run_target_matrix_inside() -> dict[str, object]:
                             validate_product_view(product, item, require_current_quality=False)
                         if len(opens) != 500 or len(set(opens)) != 500 or opens != sorted(opens):
                             raise ValueError("longer-interval sample is not 500 ordered distinct opens")
+                        entry["status"] = "PASS"
+                    except Exception as error:
+                        entry.update(status="FAIL", error=_safe_error(error))
+                    entry["ms"] = round((time.monotonic() - started) * 1000.0, 3)
+                    results.append(entry)
+            if url == config["queries"][0]:
+                streamed = {venue: next((item for session in plan.sessions for item in session.streams
+                                         if item.venue == venue and item.feed.value in ("TRADE", "QUOTE")), None)
+                            for venue in sorted(_TARGET_VENUE_IDENTITY)}
+                for venue, product in streamed.items():
+                    started = time.monotonic()
+                    entry = {"replica": replica, "operation": "STREAM_SUBSCRIBE_CLOSE", "venue": venue,
+                             "feed": getattr(getattr(product, "feed", None), "value", None),
+                             "symbols": [product.native_symbol] if product is not None else []}
+                    try:
+                        if product is None:
+                            raise ValueError("no TRADE/QUOTE stream product for the venue in the plan")
+                        entry["events"] = await _matrix_stream_once(clients[product.consumer_id], product)
                         entry["status"] = "PASS"
                     except Exception as error:
                         entry.update(status="FAIL", error=_safe_error(error))
@@ -3624,9 +3952,13 @@ def run_target_host(args: argparse.Namespace) -> int:
     output = args.output.resolve()
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
     image_id = _docker_image_id(str(profile["image"]))
+    allowance = (load_query_allowance(args.query_allowance, profile["query_containers"])
+                 if getattr(args, "query_allowance", None) else
+                 resolve_query_funding_allowance(profile["query_containers"]))
     name = "qdl-phase3-target-" + uuid.uuid4().hex[:12]
     command, inner = docker_command(profile, name=name, image_id=image_id, mode=args.mode,
-                                    sessions=args.sessions, duration_seconds=duration)
+                                    sessions=args.sessions, duration_seconds=duration,
+                                    query_funding_allowance_ms=allowance["allowance_ms"])
     inner.update(budget=budget, final=final)
     if args.mode == "kn4-matrix":
         inner["oracle_bootstrap"] = profile.get("oracle_bootstrap")
@@ -3747,6 +4079,7 @@ def run_target_host(args: argparse.Namespace) -> int:
         "client_stderr_tail_sha256": _sha256(stderr.encode()),
         "cleanup_error": cleanup_error,
         "inner_config_sha256": _sha256(json.dumps(inner, sort_keys=True, separators=(",", ":")).encode()),
+        "query_funding_allowance": allowance,
         "secret_values_recorded": False,
         "order_actions": 0,
     }
@@ -3777,6 +4110,10 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--sessions", type=int)
     value.add_argument("--duration-seconds", type=int)
     value.add_argument("--budget", type=Path, help="P18.4 stage-100 budget (qdl.p184.stage100-budget.v1)")
+    value.add_argument("--query-allowance", type=Path,
+                       help="A1 campaign input (qdl.p184.query-funding-allowance.v1, written by the campaign "
+                            "preflight from the deployed Query image); verified against the running Query images. "
+                            "Without it the driver resolves the allowance itself (same function, fail closed)")
     return value
 
 

@@ -72305,3 +72305,3985 @@ no build, CI or subagent job running.
   PREPARED_NOT_PUBLISHED; local CI on 481fd67 41 PASS, 3 SKIPPED (2 PR-only, 1 sudo), summary 83e7dda9; remote CI, owner decision and tag open.
 - Open: IDR-087 tested locally only (no live broker stop of the bar edge); DL CPU 5.08 vCPU > 5 budget; writer burst
   capacity depends on knob 64. Not committed.
+- Phase E started after v2.2.3 was published (owner decisions 2026-10-11): G4 addendum; event_id in the TS writer;
+  IDR-040 stays OFF.
+  - S1, DR01 probe: the revision comes from the live realm (`--manifest-dir`, `--manifest-revision`, wrong =
+    N-1). No literal 14/13 remains; checked read-only against the live rev-15 realm.
+  - S2, G4 addendum tooling:
+    - scripts/p184_freeze_g4_addendum.py freezes one addendum from a dedicated baseline run
+      (`p184_gate_campaign.py run --baseline`, role=baseline) and refuses candidate dirs and overwrites.
+    - 15 rows: bar BINANCE 5m/1h/2h/4h/6h, bar OKX 5m/15m/1h/2h/4h/6h, and four OKX_INVERSE rows.
+    - Bar 1h-6h are REPORT_ONLY. Other rows are gated on max <= 1.2 x the baseline window max, using only windows
+      with >= 5 samples; a row with no such window is REPORT_ONLY if the baseline had none, otherwise
+      NOT_MEASURED.
+    - score_g4 applies the addendum only if it was frozen before the campaign start for the same budget. Without
+      the file, scoring is byte-identical to before (checked on 9 real campaigns).
+  - Tests: 101 OK.
+  - Open drift: the repo's consumers/stable/alpha-*-paper.yaml are still rev 14 while the live realm serves rev 15.
+    Change them only with a python image rebuild (coupling #3).
+- R1, G4 baseline run `p184-g4-baseline-20261011T175720Z`:
+  - Plane: rc13, writer 44baacc0, 100 sessions, 4 windows, driver exit 0.
+  - Addendum frozen as config/v2/p184-stage100-g4-addendum.json (sha256 4ed59dca) before any candidate.
+  - GATED (limit = 1.2 x baseline max): OKX_INVERSE book_delta 235.4, book_snapshot 250.6, mark 2164.8, quote
+    268.8 ms.
+  - REPORT_ONLY: 11 bar rows (1h-6h by rule; 5m/15m had no window with >= 5 samples).
+- Phase E R3 runner blockers fixed (tested locally; dry-run on real inputs: blocked {}):
+  - B5: dr01.alpha_service is per venue.
+  - B6: dr01 prepare runs in a --rm rc13 container (network none); dr07 runs in a --rm writer-image container on
+    the consumer networks. The DSN comes only from a 0600 env file; read-only mounts.
+  - B7: dr01-wrong-account takes a fixed run_id; the plan emits the 4 writer-scope accounts the Gateway must list;
+    the runner checks WRITER_ACCOUNT_SCOPE_JSON first.
+  - Offline: dr01 prepare compiles bindings equal to the sealed alpha bindings (B11 closed).
+  - Tests: 75 OK.
+- startup:bounded root cause (2 of ~10 stage-100 runs): when the large-warmup lane is full, Query refuses at once
+  without retry_after_ms.
+  - The SDK then retries after 250/500 ms while the queue is still full, and one session uses up the frozen 10
+    driver attempts (~1,575 refusals over ~65 s for 60 large warmups; 10-11 log evidence).
+  - Fix (qdl/query/lanes.py ReadLaneAtCapacity; qdl/query/service.py): a full-queue refusal on the queued large
+    lane carries retry_after_ms 2000. The SDK honours 0..2000.
+  - Unchanged: messages and detail_sha256, REPLICA_LANE_BUSY (0), the 8 s wait expiry, the hot lane, the frozen
+    client budget.
+  - Model: 0/200 failing runs at service-time scale 0.8-1.2.
+  - Tests: 207 OK.
+  - Needs a Query image and a query_kn_1/2 roll, then stage-100 re-runs.
+- Phase E capacity step 1: gateway clocks on Subscribe records (additive, SDK 2.4.0). The goal is to split the G2
+  burst tail between DL backlog and writer pull backpressure.
+  - StreamRecord fields 3/4/5 (uint64 Unix ns):
+    - gateway_dispatch_wall_ns: hub to subscription queue;
+    - gateway_dequeue_wall_ns: subscription task;
+    - gateway_send_wall_ns: tonic took the response.
+  - Controls and Replay carry 0; the SDK maps 0 to None.
+  - scripts/p184_trace_feed_transit.py splits ingest_to_sdk into ingest->dispatch, dispatch->dequeue,
+    dequeue->send and send->SDK when present.
+  - Tests:
+    - buf format, lint and breaking PASS vs both frozen baselines and HEAD;
+    - Rust fmt, clippy and cargo test (lib 50, native_stream 42 incl. b05);
+    - Python 744 OK.
+  - Note: `buf generate` used the repo's remote buf.build plugins, so the proto source left the host, as it did for
+    4c779ac. Future generation should use local plugins only.
+
+### P18.4 DR07 Binance reference closure (IDR-090/091/092) - 2026-10-12
+
+Status: IMPLEMENTED / tested locally; not deployed.
+- Trigger: TS G13 DR07 receipt p184-g13-20261012T052510Z failed 3 BINANCE cells (OPEN_INTEREST, LONG_SHORT_RATIO,
+  TAKER_FLOW). FUNDING@BINANCE was a hidden false PASS (TS IDR-093).
+- IDR-090: Binance current open interest (interval null) was missing from `stable-reference-l2-demand.yaml`.
+  - Demand rev 4 -> reference-l2 rev 7 -> alpha-binance-paper rev 16 (+5 rows, quota 4950/300 kept from the deployed
+    r15) -> release routing rev 28, primary-consumer routing rev 9.
+  - Candidate realm r16 rendered in scratch only: bundle 63efd9ff; catalog byte-identical.
+- IDR-091: `_paginate` cadence and edges now use the UTC epoch grid, not the caller's window start.
+- IDR-092: `_funding_grid_coverage` infers the settlement period from provider rows and adds an internal-gap check.
+  OKX is not affected.
+- Tests, run in the rc14 image, --network none:
+  - 52 reference/consumer/release/routing modules: 773 OK (35 skipped);
+  - after IDR-092: 119 OK + 43 OK.
+  - Each new regression test fails on the old adapter.
+- Rollout (owner packet, not yet approved):
+  - query_kn_1/2 to a python rc15 image, mounting a new realm with alpha.binance r16;
+  - stream_kn_1/2 change only the realm mount;
+  - every alpha.binance caller moves to JWT manifest revision 16 in the same window;
+  - OKX, the writer (trading-system.paper r11), kafka, rust_core, projector, ingestor, stable_redis and the catalog
+    are untouched;
+  - rollback: the D3 reader rollback composes (realm r15, bundle bce26969, query rc14 08f356a8) and JWT rev 15.
+
+### P18.4 rust_core pipelined transaction commit (IDR-094) - 2026-10-12
+
+Status: IMPLEMENTED / tested locally; not deployed.
+
+Problem. `qdl-realtime-core` was stop-and-wait: normalize up to 256 records, then wait for the full Kafka
+transaction to commit before reading the next batch. In the stage-100 campaign p184-final-campaign-20261012T062754Z,
+core-1 owned partitions p1+p4, which hold BTCUSDT@trade and ETHUSDT@trade. During bursts its raw_age reached 1.4-1.9 s
+while it used at most 0.33/1.0 vCPU with no throttling.
+
+Change.
+- Batch N+1 is collected and normalized while batch N's transaction commits (`TransactionPipeline`, at most one
+  transaction in flight).
+- N+1 begins only after N has committed, and carries only its own input offsets, so exactly-once is unchanged.
+- Blocking rdkafka transaction calls run under spawn_blocking.
+- Error semantics are unchanged: begin failure returns without an abort; a failure in the body aborts and returns the
+  original error.
+- After a failed commit, the next batch is never started (fail closed).
+- The raw provider-envelope header is kept, because the projector reads it for lineage. Its bytes are now moved, not
+  cloned.
+- New progress fields: commit_wait_ms, commit_hidden_ms, commit_pipeline_depth.
+
+Tests (rustc 1.82, --network none):
+- fmt and clippy -D warnings are clean for qdl-kafka and qdl-realtime-core.
+- qdl-kafka lib: 32 passed, 2 ignored.
+- Core bin: 11 passed. Native-raw-ingestor: 44 passed. Production-core: 7 passed. Realtime-core lib: 56 passed.
+- 8 new tests cover ordering, overlap, fail-closed, cancel safety, panic propagation and the state-machine parity.
+- Benchmark (256-record batch, 235 us per record normalize, 85 ms commit): 1748 -> 2867 rec/s (1.64x) at both 1 and
+  2 vCPU.
+
+Not yet exercised against a real broker: abort, fencing and generation restart. Before the live rollout, run the
+ignored broker test on the isolated readiness Kafka.
+
+Rollout, pending owner approval:
+- Recreate only rust_core, rust_core_2 and rust_core_3 on a new qdl-v2-rust image.
+- Ingestors, projectors and stream gateways stay on rc14 ce629061.
+- Rollback: rust_core x3 back to ce629061. Transactional ids are unchanged, so init_transactions fences the other
+  producer.
+
+### P18.4 G13 runner for mixed-image deployments and per-venue revisions - 2026-10-12
+
+Status: IMPLEMENTED / tested locally (54 unit tests and the CLI dry-run). Not yet run against the live stack.
+
+Problem. Two runner assumptions block G13 v4 after the planned rollout:
+- B1: every python role must share one image, and every rust role must share one image.
+- B2: `dr01.manifest_revision` is a single value for both venues, but Binance moves to r16 while OKX stays r15.
+
+Change to `scripts/p184_g13_final.py`:
+- Per-role digest map:
+  - set it with `--role-image ROLE=digest` (repeatable) or `--role-images roles.json`;
+  - the legacy `--python-image`/`--rust-image` flags expand into the map; mixing both forms is refused;
+  - the map must list exactly the 12 roles;
+  - the inventory check fails closed on a drifted, missing or unlisted container; the 7 infra containers are
+    allow-listed;
+  - harness images are derived from the map (query/python, core, stream), and inconsistent source roles are refused;
+  - `--python-image-ref` (alias `--query-image-ref`) must resolve to the query digest;
+  - receipts record the full role map.
+- Per-venue `dr01.manifest_revision`, `wrong_revision` and `manifest_dir`: a scalar or a {BINANCE, OKX} map.
+  - The DR01 realm loader selects manifests by `metadata.id` and checks the revision against bundle.json, so a single
+    realm dir holding binance r16 and okx r15 works.
+  - A DR07 connections revision that differs from the DR01 revision is refused.
+
+### P18.4 IDR-094 follow-up: stop intent (K1), rebalance epoch (K3), terminal pipeline - 2026-10-12
+
+Status: IMPLEMENTED / tested locally at unit level. The broker scenarios have not run yet.
+
+Source: Codex independent review `p184-idr094-core-review-20261012.md`, findings verified against code. Disposition:
+- K1 FIXED;
+- K3 FIXED (option B);
+- K2 ACCEPTED as a gate: the existing ignored broker test does not exercise the bridge or the pipeline.
+
+K1. A failed drain after SIGTERM could start a new generation. Fix:
+- A single process-wide stop latch (watch channel).
+- `finish_generation` returns Stopped, StopDrainFailed or Failed. StopDrainFailed is terminal: the process exits
+  non-zero after the `qdl_realtime_core_stop_drain_failed` log.
+- `supervise` checks the latch before each generation and never retries after a stop.
+- A stop during backoff exits 0.
+
+K3. The consumer uses the cooperative group protocol, and the pipeline now polls N+1 while N commits. Before this fix,
+a revocation served then let N commit its offsets with newer group metadata, which risks duplicate output from the new
+owner. Fix:
+- `RebalanceEpochContext` bumps an AtomicU64 on a non-empty Revoke (which includes lost partitions) and on
+  `Rebalance::Error`. It never waits inside the callback.
+- An Assign or an empty callback does not invalidate a batch, so one core's restart does not abort the other cores.
+- Each batch records the epoch before its first poll. `commit_offsets_unless_rebalanced` checks it before
+  send_offsets and again before commit_transaction.
+- On a mismatch, the transaction aborts with the retryable `Rebalanced` error and the generation restarts from the
+  committed offsets.
+
+Pipeline. It is terminal after a failure, and the documentation says a drop detaches started spawn_blocking work.
+
+Tests (rustc 1.82, --network none):
+- fmt and clippy -D warnings are clean;
+- qdl-kafka lib 40 passed / 2 ignored; core bin 18; ingestor 44; production-core 7; core lib 56;
+- 15 new tests for K1, K3 and the terminal pipeline.
+
+Gate before rollout: isolated broker scenarios 1-4, run on this commit:
+1. distinct offsets;
+2. commit failure with abort, resume and the SIGTERM path;
+3. rebalance during an in-flight commit, counting cascading rebalances;
+4. transactional.id fencing.
+
+### P18.4 IDR-094 isolated broker evidence (K2 gate) - 2026-10-12
+
+Status: tested locally on an isolated broker. Not live; rc16 release-image rerun pending.
+
+Setup: isolated KRaft broker apache/kafka@sha256:9516fb76 with mTLS, on network idr094-net, tmpfs storage, all
+containers --rm and torn down afterwards. The live stack was not touched. Harness:
+scratchpad/idr094 (setup.sh, k3-matrix.sh, bin-run.sh, teardown.sh).
+
+Results:
+- Real TransactionalKafkaBridge + TransactionPipeline (BEFORE a962a5c and AFTER bcb0283):
+  - Ordered, non-overlapping transactions; read_committed == 30 outputs and offsets advance in the same transaction.
+  - A same transactional.id producer fences the in-flight batch with Fenced (retryable). N+1 is never polled, and no
+    output or offset becomes visible.
+  - Generation 2 resumes exactly the 30 uncommitted inputs (60 unique).
+- qdl-realtime-core binary (9000 records; fence, 15 s broker pause, SIGKILL/restart, SIGTERM). rc14, rc15 and AFTER all
+  end with read_committed 9000, all unique, in order, committed offset 9000.
+- K1 SIGTERM with a pending commit whose drain fails:
+  - rc14 and rc15 lose the stop and start generation 2; the process had to be killed. K1 predates IDR-094.
+  - AFTER exits 1 with qdl_realtime_core_stop_drain_failed and starts no new generation.
+- K3 rebalance during an in-flight commit (6 partitions, cooperative group, 8 s held window):
+
+  | Members | BEFORE a962a5c | AFTER bcb0283 |
+  |---|---|---|
+  | 2 | 160-167 duplicate canonical identities | 0 duplicates and 0 missing; one Rebalanced abort and restart |
+  | 3 | 165 duplicates | 0 duplicates; one abort per member, settled after one round |
+
+  - Natural 10 ms local commits did not trigger it.
+  - The serial stop-and-wait shape never duplicates, which confirms that the window was introduced by pipelining.
+
+Conclusion: rc15 (a962a5c) must not go live. bcb0283 (image rc16 f41ecb66) closes K1/K3 in these tests.
+
+Open:
+- the release-image rerun;
+- a 3-process binary rebalance case;
+- after rollout, watch the Rebalanced-abort and restart counters for cascades.
+
+### P18.4 IDR-094 release-image broker rerun (rc16) - K2 gate closed locally - 2026-10-12
+
+Status: K2 gate passed on the release image. Tested locally on an isolated broker, not on the live stack.
+
+Image: `qdl-v2-rust:2.2.3-rc16-bcb0283` sha256:f41ecb66, label revision bcb0283, qdl-realtime-core binary 0d8b0326.
+
+- Binary phase A (9000 records):
+  - outputs: read_committed 9000, all unique, in order, quarantine 0, committed offset 9000;
+  - recovery: fence -> generation 2; 15 s broker pause -> generation 3; after a SIGKILL the next core resumes.
+- K1 phase B: a SIGTERM during a pending, failing commit exits 1 with stop_drain_failed and starts no new generation.
+  rc14 and rc15 lose the stop.
+- K3 matrix: 0 duplicates and 0 missing out of 6000 in every case. Each membership change causes about one Rebalanced
+  abort and restart per affected member, then it settles.
+- Three rc16 processes in one group, 6 partitions, with core-2 restarted by SIGTERM and core-3 restarted by SIGKILL
+  mid-load:
+  - outputs: 18000 in, read_committed 18000, all unique, ordered per partition, offsets 3000 x 6;
+  - restarts did not cascade;
+  - once, the broker itself rejected a stale-generation offset commit; the batch aborted and retried, with no
+    duplicate.
+- A killed member holds its partitions until the session timeout (librdkafka default 45 s).
+  - Rollout recreates send SIGTERM, which makes the member leave cleanly.
+  - session.timeout.ms is kept at its default (one variable at a time).
+- Teardown: broker, volumes and network removed; scratch reduced to 8 MB.
+
+### P18.4 G13 runner provenance guards: G13-R1, R2, R3 and U1 (Codex findings) - 2026-10-12
+
+Status: IMPLEMENTED / tested locally (offline, with docker and git mocked). There has been no real G13 run yet.
+
+Sources: the Codex reports p184-g13-independent-20261012.json and p184-broker-g13-followup-20261012.md. Each finding
+was verified against the code. All four are FIXED:
+- R1: `dr07.image` is bound to the writer digest. A different digest is refused with DR07_IMAGE_NOT_WRITER, because the
+  DR07 rows claim the writer digest as their provenance.
+- R2: the dirty check covers the whole tracked tree with no pathspec (DL_CHECKOUT_DIRTY). Plan-journal edits are not
+  exempt.
+- R3: the inventory reads the run state. Mapped roles, the writer and the infra must be running. A container that is
+  stopped, paused, restarting or OOM-killed is refused. The init one-shots must have exited 0.
+  RestartCount is recorded, not refused.
+- U1: every DL path the harness mounts or executes comes from a sealed `git archive <dl_sha>` export.
+  - The tree id is recomputed in pure Python and must equal `<dl_sha>^{tree}` (SOURCE_EXPORT_MISMATCH otherwise).
+  - The export is read-only and is removed after the run.
+  - The tree hash and the archive sha256 are recorded in plan.json, every step receipt and summary.json.
+  - Untracked or ignored code (sitecustomize.py, .pth, stray modules) can no longer run.
+
+Tests:
+- 66 OK in the rc14 image (--network none); the real-git U1 class runs on the host, 6 OK.
+- Reverting a single fix makes its new tests fail: R1 1F+1E, R2 1F, R3 18F, U1 21F+1E.
+
+Open:
+- the runner process itself still starts from the worktree (untracked files there are not checked);
+- arch-b's microbench window (10:40-10:50Z) overlapped two short test containers, so it is tainted. It was not a gate.
+
+### P18.4 capacity package step 1: core batch 2048, ingestor CPU, telemetry, A1, B1, raw_age split, bar edge per-binding publish - 2026-10-12
+
+Status: IMPLEMENTED / tested locally (historical evidence below); committed as `98b421f`; not deployed.
+The bar_edge change (b) remains outside the approved rollout envelope. This dated status correction does not
+change the earlier test receipts. See [2026-10-12 takeover reconciliation](upgrade/evidence/p184-codex-n1-takeover-20261012.md).
+- Core batch: `STABLE_CORE_BATCH_SIZE = 2048` (qdl/runtime/stable_deployment.py); batch_wait_ms stays 25. The
+  transactional producer queue is now 64 MiB / 32768 messages (`transactional_producer_config`, qdl-kafka lib.rs).
+  Sizing comes from a 120 s public capture. Binance depth frames: 2.5 KiB mean, 16 KiB p99. A canonical BOOK record is
+  about 2.2x raw + 0.7 KiB, so 2048 records at the mean are about 12.6 MiB, more than the old 8 MiB bound.
+- Live configs are not regenerated. `scripts/migrate_core_batch_size.py` derives versioned copies of the three core
+  JSONs and changes only the `batch_size` token. It proves that the parsed objects are equal apart from that key.
+- Ingestor (qdl-native-raw-ingestor.rs):
+  - one producer per process, with its queue sized to the sum of the per-lane bounds;
+  - borrowed routing parses: `binance::route_subscribed` and `OkxRouting` (qdl-core json_probe.rs), proven equal to the
+    old Value parses on an edge-case corpus;
+  - shared `Arc<RawBinding>`, and frame bytes are moved instead of copied;
+  - the LIVE liveness fsync is no longer awaited on the lane task, and lineage and generation writes run on the
+    blocking pool.
+  - Both SHA-256 digests are kept: capture_id hashes (session, generation, receipt, frame), while raw_frame_sha256
+    hashes the frame only.
+- Ingestor telemetry: `qdl_native_raw_ingestor_progress` every 10 s. Per lane it reports frames/s, bytes,
+  enqueue/produce ms, inflight, read-gap max with its time, and last_frame_age.
+- Codex A1: the JSON serialization for the raw hash is lazy (canonical.rs `raw_payload_hash`). The golden test shows the
+  envelope bytes are equal to daa8841 for 19 fixtures x 2 contexts.
+- Codex B1: `set_nodelay(true)` on each accepted gateway socket before TLS (tls.rs `configure_accepted`). On error the
+  connection is dropped and logged.
+- Coordinator (a): core progress lines add `raw_age_websocket_ms` and `raw_age_rest_ms`, keyed by transport_protocol.
+  Every other field is unchanged.
+- Coordinator (b): binance_bar_edge publishes each binding as its read settles. Per binding the order stays ACK, then
+  checkpoint, then persist. A failed binding keeps its checkpoint; the others proceed; the cycle then raises.
+- Tests (rustc 1.82, --network none, --cpus 2): fmt and clippy -D warnings are clean.
+  - Passing suites: qdl-core 55, qdl-kafka lib 42 (2 ignored), ingestor 49, realtime-core bin 19, production-core 7,
+    realtime-core lib 56, projector lib 31, gateway lib 51, native_stream 42.
+  - Python: tests 72 + 60 OK; the final combined run is recorded in the handoff report.
+- Bench (isolated 3-broker mTLS cluster, core 1 vCPU, synthetic trade frames, tmpfs):
+  - 6-partition drain: b256 4352 rec/s; b2048 25916 rec/s on rc16; 27245 rec/s with the new binary.
+  - Paced, new binary: offered 12000 rec/s, committed 11377 rec/s, raw_age max 613 ms. arch-A's b256 run saturated at
+    8000 offered: 6935 rec/s committed, raw_age max 4982 ms. Exact-set verification: 780000 of 780000.
+- Ingestor CPU micro-bench on the captured frames, release build, 1 CPU:
+  - Binance: 4.56 -> 2.43 us/frame;
+  - OKX: 15.9 -> 3.2-3.5 us/frame;
+  - output bytes are identical.
+
+
+### P18.4 DL-only N1 takeover documentation - 2026-10-12
+
+Status: DOCS_REVIEWED; runtime acceptance remains OPEN.
+The user approved takeover broadly; the parent delegated this slice to exactly three DL documents. The parent
+owns review/commit and TS N1. This delegated slice performs no runtime/tests/builds, tool changes or commit.
+Source/tool repair and versioned tools/tests are already authorized after this slice under the takeover; no new
+owner-approval gate is introduced. Runtime remains separately exact-packet scoped. Lock expiry alone is not
+permission to run a measurement in this task.
+
+Goal and guide: reconcile committed source with packet/receipt status and define the independent DL handoff in
+[focused takeover guide](upgrade/evidence/p184-codex-n1-takeover-20261012.md), governed by
+[architecture](upgrade/quant-data-layer-fund-grade-upgrade-architecture.md) and
+[DR runtime runbook](upgrade/evidence/p184-dr-runtime-runbook.md). Scope is this plan, that guide and
+CERTIFICATION_LEDGER.md only. Invariants: preserve historical evidence, packet seals, source/runtime separation,
+V1 fallback, ordering/identity/durability, quotas and freshness gates. No TS, tool or deployed-config edit.
+Documentation rollback is removal of only this slice's exact diff after review, never a broad worktree reset.
+
+Reconciliation and dispositions:
+- FIXED IN DOCS: step 1 is committed at 98b421f798fca70e82188e30e8fbe4cc8bce5721, not an uncommitted draft.
+  Existing test/benchmark numbers are inherited reports, not runs by this takeover. rc17 Rust build was canceled;
+  no rc17 rollout. The packet still has RUST17, no seal sidecar and no execution receipts at the audited paths.
+- DOCUMENTED, OUTSIDE THIS DELEGATED SLICE: rc17 tool findings T1-T5 and explicit negative/control cases are in
+  the guide. Tool/packet bytes are unchanged. The parent has authorized source/tool repair and versioned tools/tests
+  after this slice under the takeover; no new owner approval is needed for that work. Tests: NOT_EXECUTED.
+  Runtime execution remains separately governed by its exact packet and rollback.
+- SUPERSEDES STALE CURRENT-STATUS WORDING ONLY: the earlier G13 runner entry's "no real G13 run yet" is historical.
+  v4.2 has 28/35 cells recorded closed; v4.3 has only the seven dr01-deployed cells pending. Even 35/35 here is not
+  the full 336-cell matrix. Source/image inheritance is not automatic after rc17 or N1; preserve failed receipts.
+- HELD: bar_edge per-binding publication is committed but excluded from rollout; baked acquisition/manifest
+  differences require separate scope and checkpoint compatibility disposition. No silent promotion via py rc17.
+- PROPOSED, NOT_EXECUTED: bounded 45-minute stall observation with a 60-minute hard deadline, transport-separated
+  clocks, explicit output/resource limits and fail-closed attribution. No assertion that mixed raw_age proves
+  a simultaneous WebSocket stall across six partitions. Observer acquisition needs its own coordinated window.
+- HELD: stage-100 acceptance needs the approved offline 6k/9k replay gate and writer trace coverage; the rc17
+  envelope excludes the writer recreate required to re-arm the expired trace. No-trace is diagnostic only.
+
+Verification boundary: only source/document reads, packet/receipt hashes, Git status/log/worktree inventory and
+scoped documentation diff/link checks. No application, integration, fault or load tests; no new PASS/FAIL/SKIP
+counts. Planned tool cases and observation checks in the guide are NOT_EXECUTED. apply_patch helper and shell variant
+were reported broken (mountinfo); owner permitted AGENTS32 exact-match Python fallback, restricted to these files.
+Verification results (documentation checks, not test acceptance):
+- `git diff --check`: exit 0, no whitespace findings.
+- `git diff -- DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md CERTIFICATION_LEDGER.md`: reviewed exact scope.
+- `git diff --no-index -- /dev/null upgrade/evidence/p184-codex-n1-takeover-20261012.md`: reviewed new guide;
+  exit 1 is the expected new-file difference, not a failed test.
+- `python3 -B` bounded documentation checker: all new relative links resolve, new text is ASCII with no trailing
+  whitespace; ledger HEAD prefix identical; plan HEAD prefix differs only by the exact status correction;
+  five protected tool/packet/seal/receipt SHA-256 values unchanged; exactly three dirty docs, empty Git index.
+
+Runtime/cleanup: zero mutations; no images, containers, caches, logs, namespaces, credentials or lock removed.
+No Docker/disk/restart probe was run. Canonical DL /home/bobby/data_layer main@5bf5cd5; active feature worktree
+/home/bobby/.worktrees/data-layer-p184-closure fix/p184-dl-closure@98b421f. Recorded role digests/config and named
+rollback artifacts are in the guide, not a fresh live inventory; release evidence stays under
+upgrade/evidence/releases/v2.2.3/. No worktree cleanup, staging, commit, push, merge or release.
+Next handoff: the parent owns review/staging/commit of this three-file diff. Source/tool repair and versioned
+tools/tests may follow under the existing takeover authorization; tests stay NOT_EXECUTED until begun. Later
+runtime/observation work remains separately exact-packet scoped. N1 source and final writer acceptance stay with main.
+
+Main review closeout (Codex, 2026-10-12): accepted the three-document handoff after scoped diff and
+`git diff --check` (exit 0). This docs slice is being committed as one transaction with BobbyAxerol identity;
+no push/merge, no executable tool change, no rollout or test-resource creation. The delegated audit's
+"no staging/commit" statements describe its handback, not a restriction on this main-reviewed commit.
+T1-T5 source/tool fixes remain permitted follow-up work; only runtime application retains its exact-packet gate.
+TS N1 integration proceeds independently on the existing TS feature branch. Historical support-worktree
+recommendations are superseded by the recorded owner capacity package, not a second implementation branch.
+
+
+### N1 isolated historical replay clock boundary - 2026-10-12 (Codex)
+
+Status: IN_PROGRESS, TEST tooling only; no production defect or capacity certificate asserted.
+Owner N1 end-to-end goal and TS guide P184_NATIVE_MARKET_DATA_WORKER.md section11 permit a
+frozen TEST data clock with original provider bytes retained. TS smoke2 had no durable
+cursor. Read-only review found Stream hub admission and replay/live delivery still compare
+historical event timestamps with real wall time, unlike clocked Query/native. This is a
+concrete missing TEST boundary, not evidence that deployed real-time freshness is wrong.
+Approved implementation scope: feature-gated, default-off isolated Stream data clock for
+freshness decisions only; preserve JWT/TLS/cursor expiry, Kafka timing, queue deadlines,
+trace timestamps and durability. Require namespace-scoped frozen hash-pinned input, actual
+loopback-only network and bounded expiry; invalid clock fails closed. No config/policy,
+manifest, production role or release artifact changes. Use separate TEST build, not a
+production replacement. Tests: exact interpolation, malformed/expired/regressing clock,
+unchanged default time path, freshness rejection and preserved security clock. Independent
+review plus native/Query/Stream historical integration precede any real workload campaign.
+Canonical DL main@5bf5cd5 unchanged; active feature fix/p184-dl-closure@f9305693 aligned;
+parent owns main-plan updates, review and commit. No push/merge. Rollback is reverting only
+this TEST slice; disposable image/resources cleaned after evidence and phase closure.
+
+N1 TEST-clock cross-review checkpoint: initial feature-enabled tests61unit+42native-stream
+PASS,1manual benchmark-server ignored; default-disabled transport regression also passed.
+No broker or runtime claim. Clippy found format_collect in TEST hash formatting. Independent
+review additionally requires TEST expiry/failure fencing at transport dequeue and blocked/idle
+subscriptions, and consistent FAILED_PRECONDITION clock-fault status rather than DATA_INTEGRITY.
+These follow-ups stay in the same TEST-only slice; no production policy/time changes. Source
+journal/tests remain pending final verification before commit or TEST image packaging.
+
+N1 TEST-clock verified source checkpoint (2026-10-12): final feature-selected suite
+stream-clock-tests2=68unit+42native-stream PASS,1manual benchmark-server ignored;
+strict clippy stream-clock-clippy2 PASS. Full default-disabled stream-clock-default2:
+54unit+1hot-lookup+42native-stream PASS;3broker-dependent committed-read tests not run
+(no isolated broker in source runner),1manual benchmark server ignored. No claim those
+four cases passed; broker/full-path checks remain required. Expiry now fences enqueue,
+blocked send, idle lifecycle and final tonic dequeue; charges are released, a latched
+FAILED_PRECONDITION wins over queued controls/older terminal. Security/cursor time
+unchanged, normal default path preserved. Evidence under TS p184-n1-final-20261012.
+All test containers --rm; no runtime changes, push/merge or release. Feature-only TEST
+image and historical integration are next; this source slice cannot certify6k/9k.
+
+N1 TEST packaging/integration (2026-10-12): source545e719 built release-mode feature
+binary9e8da24cf076 in isolated2CPU/3GiB builder; TEST imageb610238afa5b overlays pinned
+basece629061, never production release. TS image3e526ad83849 (source4ff59051) completed
+historical TEST native TRADE/QUOTE apply/PUBLISH/cursor on both venues. Receipt at TS
+p184-n1-final-20261012/dl-clock3/evidence/n1-clock-integration.json; no real-provider,
+throughput or live freshness claim.16 containers removed,zero residue/errors.
+Next approved N1 preparation: tiny offline Rust example reuses production
+RealtimeCore::process_at_transport_offset for captured raw bytes with explicit original
+transport offsets and declared processing time. No provider parser reimplementation,
+no runtime/core behavior change, no raw rewriting. Emit per-frame canonical identity/
+payload hashes and dispositions for a parent disk-backed uniqueness oracle; do not
+claim emitted count is unique count. TEST raw refused, bounded rows/input/output,
+ordering checked. Config/admission/clock provenance remains explicit; this inventory
+alone cannot certify runtime admission, historical authority or6k/9k.
+Agent owns example/tests only; parent reviews/tests/commits with this journal.
+
+N1 normalizer inventory source verified (2026-10-12): example n1_capture_inventory
+reuses RealtimeCore::process_at_transport_offset; no provider parser copy.9inline tests
+PASS/0fail/ignore and strict clippy PASS against immutable deployed-corebcb02833 source
+plus only this example. That pin matters: HEAD qdl-core normalization has unreleased
+changes; do not silently use HEAD as production oracle. Input/output each hard-capped
+at8GiB, rows12M, bounded config/line/partitions; original raw bytes/offset/time retained,
+explicit processing clock, exact config hash, TEST rejection and required completion
+record. No unique-count or runtime-authority claim from emitted rows alone.
+Historical MARK regression proves processing-time expiry: original-time pair emits1,
+fixed+24h processing emits0 with MARK_INDEX_COMPONENT_EXPIRED. Thus the existing
+historical integration validates native TRADE/QUOTE, not full MARK background; the
+core's TEST data-time boundary must also be addressed before full historical replay.
+Missing cached dependency in offline build retained as oracle-tests1; oracle-tests2
+fetched only locked versions and passed. No lockfile update, runtime change or rollout.
+Example binary/provenance recorded under TS p184-n1-final-20261012/oracle-binary1.json.
+
+Oracle owning-branch check: oracle-head-tests1 reused a target directory across two
+source exports mounted at /src; excluded from source-specific proof because Cargo
+mtime reuse can be ambiguous. Repeated with a separate oracle-head-target directory:
+oracle-head-tests2 rebuilt normalization dependencies and9PASS/0fail/ignore. Original
+baseline binary remains independently copied/hash-pinned; oracle-tests2 build log
+records its normalizer crates compiled from immutablebcb02833. Future source variants
+use separate targets. Real shard3 inventory completed120000rows with exit0; pending
+identity-ledger validation, do not yet call emitted records unique or background full.
+
+N1 inventory ledger verified (2026-10-12): shard3 has86211 emitted/unique canonical
+IDs,0repeated IDs,0payload conflicts,2core duplicate dispositions and36209 filtered
+raw outcomes. The complete120000-row footer and input-row SHA match the frozen input.
+Output SHA e0e4eef4b62b68235dc403e73091ed094cc4c5399b44795a85f05206703afd92.
+Fresh-core BOOK bootstrap is incomplete (16582 REJECTED_AWAITING_SNAPSHOT); the raw
+received clock regresses21038 times within partitions. Do not treat this declared
+raw-receipt processing clock as historical production timing, or raw count as6k/9k
+capacity. Ledger summary/index retained outside Git; bounded no-network helpers
+removed. Production unchanged; oracle slice ready to commit.
+
+Next N1 TEST-only boundary approved under the existing goal: mechanically extract
+Stream's guarded replay clock into a small shared crate and use it at Kafka core's
+normalization processing-time boundary only. Default feature remains off. Preserve
+provider clocks, security/wall telemetry, Kafka deadlines, TTL and durability. Clock
+failure is fatal and latched; validate idle/collect/pre-submit paths without dropping
+an already-submitted transaction. Same frozen namespace.stream timeline/hash across
+roles. Parent owns journals and commits; agent owns disjoint shared-clock/core source.
+Tests require default/feature parity, historical MARK and expiry fencing. TEST core
+image must overlay deployed bcb02833 source, not introduce HEAD normalizer changes.
+No production mutation, release or capacity claim; rollback removes only TEST overlay.
+
+Shared TEST clock implementation checkpoint (2026-10-12): mechanical shared crate
+preserves frozen namespace.stream identity, caller-local feature opt-in even when
+Cargo unifies dependency features, default real clock and TEST-support dev gating.
+Core injects only normalization processing time; idle/collect expiry is guarded,
+pre-submit expiry drops unstarted work, and finish_generation settles an existing
+transaction before returning a fatal latched clock error. Source shared-clock-tests1:
+Kafka42PASS/2ignored (one isolated broker test, one manual microbenchmark), core27PASS,
+Stream59PASS, clock10PASS. Strict clippy/default-path/transport/pinned overlay pending.
+Pinned TEST overlay prepared from immutablebcb02833: only Cargo files/core entrypoint
+and shared-clock crate differ; all base normalizer bytes verified unchanged. Patch
+SHA013e7999d357e515f533725dcb0b40c6313a6bf1ceb624b6fd01fc0eabf88074;
+no TEST image built yet. Runtime checkpoint4:40roles unchanged. No rollout/push/merge.
+
+Shared-clock source closure: strict clippy shared-clock-clippy1 PASS. Default-off
+shared-clock-default1: Kafka42/core20/Stream51/shared-clock4 PASS; same2 Kafka ignores
+(one broker fixture, one microbenchmark). Feature transport shared-clock-transport1:
+42PASS/0fail,1manual benchmark-server ignored. Counts overlap previous runs and must
+not be added into a distinct total. No feature-enabled image or full background
+acceptance yet. Parent reviewed default feature union fencing, expiration cancellation
+and transaction settlement; normalizer provider logic unchanged. Source commit follows;
+pinned bcb02833 overlay tests/build and integration continue, not a goal stopping point.
+Canonical/source/runtime/rollback map unchanged. Helpers --rm removed; active build
+cache/targets and the named N1 candidate/TEST images retained for ongoing packaging.
+No broad prune, push/merge or production restart. Disk available55127191552bytes at
+this source checkpoint; this is headroom, not cleanup reclaimed space.
+
+Pinned core overlay verification/build (2026-10-12): immutablebcb02833 plus TEST
+clockb10bf9c compiled with --locked --offline in its own core-clock-target.
+core-clock-pinned-tests1:Kafka40/core26/shared-clock10PASS,2explicit Kafka ignores
+(broker fixture and microbenchmark). core-clock-release1 optimized build PASS.
+TEST image08074f537dc906b2cd5a95ac049ef7fe8b74e7cb830ff236c1ccf6c4c0d3fa04
+uses original basef41ecb66; binary5cd39dafeb8301c11894a834062c9d241d754483eed5675428303d41b0951af6.
+Base normalizer bytes unchanged; labels/receipt distinguish baseline source from
+clock overlay source. Not a production release or rollout. Integration4 native
+TRADE/QUOTE completed both venues, but new background helper failed before view
+checks (.feed str misread as enum). Failed receipt retained,16testcontainers removed,
+zero residue/errors. Helper-only fix is being verified in integration5 using exactly
+same images. Background/capacity/runtime acceptance remains unproven until receipt.
+
+
+N1 integration5 (2026-10-12) on unchanged TEST images08074f53/b610238a and TS3e526ad8:
+native checks completed both venues; background readback all_verified=true for
+MARK_INDEX_PRICE/BOOK_SNAPSHOT/BOOK_DELTA/BAR, four rows per venue. This is TEST
+clock correctness only, not provider/capacity evidence. Sixteen testcontainers
+removed,0namespace/network/volume residue and0cleanup errors. Runtime checkpoint5
+confirms40production roles unchanged. No rollout, image rebuild, push or merge.
+
+Readonly raw retention metadata refreshed (15876263offset positions), then four
+bounded5000row samples through the already-pinned bcb02833 oracle. Binance ETH hot
+counts1159/1301QUOTE and1250/289TRADE; samples are independent, not a continuous
+acceptance corpus. No canonical injection or fabricated provider clocks. Receipt
+is in TS evidence p184-n1-final-20261012/retention-yield1/receipt.json. Source-side
+canonical-weighted pacing103tests passed in TS; final6k/9k real corpus/fault/runtime
+qualification remains open. No production principal/ACL/quota/offset changes.
+
+
+N1 R2 recovery closure continuation (2026-10-13), owner-approved IN_PROGRESS.
+Guide: TS upgrade/P184_N1_ACCEPTANCE_AMENDMENT_R2.md; existing KN bounded lossless
+Stream architecture unchanged. Diagnostic13 exposed retained-history replay budget
+max_matched10000 classified as CURSOR_EXPIRED/OUT_OF_RANGE. Distinguish retryable
+budget exhaustion from actual retention/token loss; never advance a lossless cursor
+via latest snapshot. Scope first: typed replay limit result and tests, preserve
+queue/depth/scan/time limits, authentic tokens, ordering and actual retention refusal.
+Inspect both ring and Kafka replay branches. Source tests and existing isolated
+runtime only before rollout; no production image/ACL/manifest changes. Broader replay
+batching and continuity convergence remain dependent on measured evidence. Rollback
+is removal of exact TEST namespace/image, not mutation of production offsets.
+Parent Codex owns journal/commit; disjoint agent may edit Stream typed-status tests.
+Status not certified; no600s rerun to hide known latency or recovery failure.
+
+N1 recovery follow-up design within same scope: Subscribe replay currently emits
+one response/event while live path honors requested batching up to64. Under load,
+replay runs before live drain and the1000record live queue fills. Reuse existing
+bounded Batch/transport charge contract for replay too, only when already requested
+by client. Ring groups bounded by count/bytes; reader drains only immediately
+available records (no wait-to-fill). Flush before terminal/control/filtered boundaries;
+keep ordered per-record tokens and correct replay counters, independent live/replay
+budget ownership. No enlarged queues/replay maxima or production rollout. Tests:
+ring+reader parity/order/expiry/revocation/terminal, same limits, clientbatch1compat.
+Classification and batching are separate reviewed source slices; parent runs tests
+only after resource measurement lock clears. Not a catch-up PASS until isolated run.
+
+2026-10-13 tested coherent Stream recovery slice: cargo test --offline --locked
+-p qdl-stream-gateway --lib --test native_stream:51lib+48native PASS,0fail,
+1ignored manual benchmark server (not an acceptance test). Same command with
+--features isolated-replay-clock:59lib+48native PASS,0fail, same1manual ignore.
+Tests include ring/reader matched-limit exact continuation, retention refusal,
+scan-budget no-progress retry, batch1/64 parity, terminal-before-control ordering,
+byte/count caps, cancellation/revocation budget release and no wait-to-fill.
+No production role/image/config/ACL changed. TEST containers --rm removed;
+shared cache/build artifacts retained only for active N1 candidate packaging.
+Actual at-rate recovery remains NOT_MEASURED; source tests do not certify it.
+Companion TS continuity/retry checks remain in review, source packaging not deployed.
+
+
+N1 R2 paired recovery runtime follow-up (2026-10-13): Stream ed1b85b packaged as
+TESTclock0003a6e3 (binarysha3e53e447, archive7531b65b), not production. TS runner
+capacity-r2-diagnostic16/17/18 under ~/.local/state/trading-system/p184-n1-final-20261012
+used same core08074f/batch1024, RF3/minISR2 and broker1 isolatedcap1.75.16 conserved
+270000 exactrecords after3overflows,0expiry but ACKp95upper564ms >500ms.17/18 pause
+hotwriter~1.58s conserved270000 each with finaldurablecursor; remain FAILED because
+intermediate sessions exhaust replay-page retry budget before finalOK. No false
+retention/OUT_OF_RANGE observed, but this is not at-rate recovery certification.
+Further work must measure replay-page/RPC/batch/catch-up timing; do not increase
+queue1000/replay10000 or weaken freshness to labelPASS. Recovery tests remain in
+scope; no catalogue rerun or production change. All temporary namespaces removed,
+0residue; source/runtime gate remains open. Foreign host measurement lock started
+12:04:30Z after18finished12:01:46Z; further heavy jobs/artifact cleanup deferred.
+See TS upgrade/evidence/P184_N1_R2_DIAGNOSTIC_20261013.md for exact n/units/pins.
+
+Cleanup after foreign lock release: exact four11:33/11:38 BuildKitcontextentries
+and3hashedarchives removed; superseded TS TESTimage d9f82eff removed, active and
+qualifiedrollback retained. Free disk262680969216->262764195840B(sharedhost),
+container image/state/restart/OOM tuples unchanged. TS evidence receipt
+p184-n1-final-20261012/r2-recovery-cleanup-20261013.json. No DL runtime mutation.
+
+N1 bounded replay wakeup investigation (2026-10-13), IN_PROGRESS. Continue approved
+R2 only: channel32 currently polls capacity with fixed2ms sleeps on the blocking
+reader. Evaluate slot notification under the existing200ms detach deadline, not
+larger buffers or replay pages. Add bounded wait counters and behavior tests for
+available/full/closed/budget-starved channels and deadline. Preserve ordered
+delivery, replay budget ownership, cancellation and slow-consumer isolation.
+Source proof is not attribution of all observed delay; compare the same short
+isolated9k pause workload before600s. No production change; rollback is removal
+of exact disposable namespace. Keep old FAIL receipts. Companion TS review must
+retain fault-specific progress/timing gaps, not relax clean-run certificate checks.
+Per-subscription existing close report gains wall start/end, monotonic elapsed and
+optional replay-to-live transport handoff elapsed. Null means no completed handoff;
+this is not Redis ACK or consumer usable. No per-event log or new endpoint.
+Source review: bounded Tokio permit notification is invoked only inside the
+existing spawn_blocking pass. Replay bytes are charged after slot acquisition;
+closed/deadline/budget failure returns the permit. Six unit tests cover these
+paths and saturating counters, existing coalesced/slow-consumer tests retained.
+Initial compile failed JSON macro recursion; fixed by grouping additive replay
+metrics, without changing runtime resource limits. Feature isolated-replay-clock:
+65unit+48native PASS,0fail;1existing ignored manual benchmark. Default feature
+verification and paired short experiment pending. No capacity claim.
+Default cargo test --offline --locked -p qdl-stream-gateway --lib --test native_stream
+also PASS:57unit+48native,0fail,1same ignored manual benchmark. Counts overlap
+feature suite; do not sum. Both --rm test containers removed. Source ready for
+TEST-only packaging and one paired9k30s writerpause against diagnostic18, only
+Stream image changed. No release or600s qualification implied.
+
+N1 aa1f98f TESTbinary packaged d504648b (binarysha0f15f296); diagnostic19 changes
+Stream only vs18,9k30s/writerpause1586.643ms. Exact270000canonical/publication and
+finaldurable271074covers271073. RemainsFAILED: oneREPLAY_MATCHED_LIMIT thenOK.
+SDKACKp95upper11ms(n270056), fullactivationeventACK2048ms/max4379.568.14timedserver
+replayepisodes; lasttransporthandoff~9269ms afterunpause, ongoingload~8630ms remains.
+Not consumer usable/recovery certificate. Lastmetrics:8opens59.917ms,71473reads
+798.323ms,24587slotwaits3479.549ms;9overflow/0expiry. Remaininghandoff livequeue
+fills while replay executes, even after partialpage catch-up. Do not increasecaps.
+TS R2 diagnostic report has exact bounds, per-stage denominators and proposed
+continuation; source tests are not fullcapacity.19cleanup14roles/0residue and
+18productionrolesunchanged. Receipt12:56:38Z precedes foreignPMlock12:57:45Z;
+next20refused beforestartup. Archive/cachecleanup deferred duringforeignlock.
+No production/push/merge/release; IN_PROGRESS, NOT_READY.
+
+
+<a id="p184-n1-opt-dl"></a>
+### P18.4 N1-OPT - DL Companion Scope And Planning Journal (2026-10-13)
+
+Status: **IN_PROGRESS / OPT-02**. Active owner goal confirms execution
+of OPT-00 through OPT-05. Preserve preliminary OPT-00 diagnostics; follow
+the profile/correctness ladder before algorithm changes. Production stays
+unchanged. N1 remains IN_PROGRESS, cutover NOT_READY. No DL release gate waived.
+
+Detailed guide/tracker (single source of truth):
+`/home/bobby/.worktrees/trading-system-next-upgrade/TRADING_SYSTEM_UNIFIED_IMPLEMENTATION_PLAN.md#ts-p184-n1-opt`.
+Governing design remains KN plus TS N1/R2. Do not duplicate the full contract.
+Aligned feature pins: DL `fix/p184-dl-closure@7197358`, TS
+`feat/v2-rust-first-okx-demo@cb12c8ed`; recheck against Claude before each slice.
+
+| Work | DL ownership | Required boundary |
+| --- | --- | --- |
+| OPT-00 | Stream/replay/queue/cost profile | Same-event coordinates, bytes AND count; transport, ACK and durable cursor kept separate |
+| OPT-01 | `rust/qdl-stream-gateway/src/{hub,subscription,replay,service}.rs` | Bounded replay/live convergence; atomic register/barrier, per-key index coverage, terminal/cancel/auth/budget integrity |
+| OPT-02 | Affected Stream envelope/token assembly | Preserve wire/auth contracts; TS owns native View/payload changes |
+| OPT-03 | Consumer-boundary review only | TS owns checkpoint fsync/grouping/flush and Python return compatibility |
+| OPT-04 | Existing Stream health/queue only when attributed | No global Disruptor/spin, relaxed quota or shared slow-consumer gating |
+| OPT-05 | Existing isolated R2 apparatus and paired image/proof pins | Short correctness/latency/recovery and cleanup, not 600s or production certification |
+
+Source shows opportunities, not measured cache-miss/lock attribution. Fix bounded
+replay/live first, then measured lock/copy/allocation/diagnostic overhead. Keep
+queue1000/replay10000, byte caps, finite retry, freshness, generation, lossless
+TRADE, QUOTE semantics, TLS/auth and durability. At9k,1000undrained slots cover
+about111ms; do not hide the handoff problem with more buffers. LIVE is not proof
+of consumer usable. A missing by_key entry cannot prove history coverage after
+eviction. Ring/Kafka, aborted offset holes, dispatch/register/reset, slow-client,
+cancellation and terminal-order regressions are required.
+
+Existing aa1f98f/d504648b tests and diagnostic19 remain baseline evidence only;
+19 remains FAILED. Short paired one-instrument6k/9k and per-episode recovery,
+including beyond10000 records and catch-up while input continues, precede600s.
+Keep real-provider oracle and TEST_ONLY capacity separate. SPSC/PMU options need
+bounded evidence; measured no-change is allowed, unresolved correctness or
+missing required recovery proof is not. Preserve frozen owner G1-G14 amendments.
+
+Obey host measurement lock before jobs; no overlapping agent timing runs. Build
+only changed binaries with immutable pins. Keep active/qualified rollback and
+one paired candidate/baseline set; clean exact test resources after each attempt,
+record disk pre/post and unchanged production image/restart state. No broad
+prune, shared-state cleanup, runtime/ACL/manifest/SDK/binding change, core/Kafka
+redesign, push/merge/tag/release. Detailed dispositions belong in this journal
+and the TS tracker with cross-linked evidence, not scattered unlinked notes.
+
+Planning journal: added this entry alongside TS phase, native-guide pointer and
+cutover dependency. Independent read-only review incorporated. Documentation
+checks only, no source tests/builds/measurements/runtime operations or resources
+created. Cleanup not needed; prior deferred cleanup not silently closed. The
+apply_patch sandbox helper failed before mutation; exact-match rule32 fallback
+used. Documentation verification: `git diff --check` plus read-only anchor,
+link/table/status/scope validation. Canonical worktrees and their existing edits
+were not changed; recorded runtime pins are not a new runtime-health measurement.
+TS planning commit: `eaa03f5a` (three Markdown files only), not pushed/merged.
+Next permitted action: execute OPT-00 with exact pins under owner approval.
+
+Execution start 2026-10-13: TS eaa03f5a / DL 545ea7b aligned. Parent first
+freezes paired baseline and adds isolated profile-only measurements for Stream
+lock/dispatch/replay; TS profile harness is delegated in disjoint files. No
+algorithm changes until costs observed, no production mutation. Existing
+aa1f98f/d504648b and writer abcff9c6 remain baseline; diagnostic19 stays FAILED.
+No host measurement lock at initial read; recheck before jobs.
+
+
+**Planning checkpoint - latest owner instruction (2026-10-13)**
+The current instruction is to finish the bounded N1-OPT plan and await approval.
+This checkpoint supersedes the execution-start wording above, without deleting
+historical work or evidence. No further algorithm edits or heavy jobs in this
+planning slice. Existing uncommitted profile-only examples are preserved, not
+claimed as optimized application code or capacity acceptance. The previously
+running ts-profile-bind-a2 completed with exit 0 and 17 profiles; this is only
+a microprofile, not a 6k/9k result. Source/production algorithms unchanged.
+
+Independent read-only review recommends unregistered bounded replay catch-up,
+then atomic near-frontier registration with a small charged ring bridge. This
+is an OPT-01 option, not a chosen implementation or measured improvement.
+Across internal rounds preserve ONE absolute deadline and cumulative matched/
+scanned byte/record budgets; do not rearm overflow latches or reset allowances.
+Only complete replay proves a scanned frontier; cancellation/page exhaustion
+does not. Keep transport progress separate from consumer apply/durable cursor.
+Tests must cover ongoing input, boundary races, sparse keys/retention holes,
+cumulative budget exhaustion, and terminal/auth/cancel plus consumer isolation.
+
+Plan covers six costs with measured-change or measured-no-change dispositions,
+short paired checks before image builds, and unchanged N1 full qualification.
+No public contract, runtime, freshness, buffer or resource-cap change authorized.
+Branch alignment: TS feat/v2-rust-first-okx-demo@eaa03f5a; DL
+fix/p184-dl-closure@545ea7b. Preserve Claude SDK changes and owner's guide.
+Canonical checkouts/runtime/rollback artifacts untouched; no new image/build/
+container started in this planning checkpoint. No push/merge or certification.
+
+Planning verification: both git diff --check passed. Docker name-filter inventory
+found zero ts-n1-opt containers. Released only our measurement lock. No image/
+cache/data cleanup performed; existing profile binaries and receipts retained
+for review. Documentation-only checkpoint; no performance gate claimed.
+
+
+**N1-OPT execution continuation - 2026-10-13**
+Active owner goal confirms execution of OPT-00 through OPT-05; this supersedes
+the preceding planning-only checkpoint. No additional approval wait is needed.
+Recorded baseline microprofiles and their limitations in TS
+`upgrade/evidence/P184_N1_OPT_BASELINE_20261013.md` (shared guide reference).
+Two host-bind TS runs completed, 17 profiles each. Two Stream baseline runs
+completed; no optimization, capacity or recovery PASS inferred. OPT-00 remains
+open for observability gaps/profile review before OPT-01 algorithm changes.
+Separate lock wait/hold and trace-on contention have not been measured. No
+production mutation or new heavy job in this continuation; profile-only source
+is retained, Claude SDK changes remain untouched. Both canonical checkouts,
+runtime and qualified rollback artifacts unchanged; no push/merge.
+
+
+**OPT-00 concurrent profile slice - 2026-10-13**
+Added TEST_ONLY Hub public-API concurrent dispatch/register profile; no
+application algorithm changes. Two isolated runs pass: n=1000 each operation,
+dispatch p95 0.090846/0.089176 ms; register 0.091696/0.093286 ms. Exact
+live offsets, sparse replay ranges, final subscriptions/budget checked.
+First harness run failed before correction and was stopped exactly by name;
+retained exit137 and panic evidence. Replaced panic-stranding barrier with
+bounded/disconnect-aware rendezvous and dropped the final decoded reference
+before checking charge release. See linked TS baseline report for hashes.
+Commands: run.py dl dl-profile-build4 cargo build --offline --locked --release
+-p qdl-stream-gateway --example hot_path_profile; dl-profile-concurrent-a2/a3
+run /work/dl-target/release/examples/hot_path_profile --test-only. Builds use
+existing image, no image build. Separate lock wait/hold remains unmeasured;
+no optimization/capacity PASS. All runs serialized under own measurement lock.
+No runtime, auth, schema, cap or queue changes. Claude SDK files untouched.
+
+
+**OPT-01 start - bounded near-frontier registration (2026-10-13)**
+OPT-00 baseline disposition: inclusive profiles cover all six opportunities;
+separate lock wait/hold, trace-on contention and PMU remain precise observability
+gaps, not measured benefits. OPT-01 starts with an additive Hub primitive only: bulk
+catch-up stays unregistered, registration atomically captures a small charged
+bridge. Preserve partition coverage, physical-key offsets, count/byte bounds,
+retention eviction and no queue/cap changes. Service integration and cumulative
+replay deadlines/counters remain mandatory before claiming recovery fixed.
+Tests first cover missing retention, bounded bridge and exact registration
+boundary; no rollout or capacity claim from API-only work.
+
+
+**OPT-01 primitive checkpoint - 2026-10-13**
+Implemented Hub::try_register_near: under partition lock, evict expired ring
+entries, require partition coverage, inspect by_key, enforce small bridge count
+and charge decoded-size allowance before cloning references/registering live.
+Ahead-of-replica cursor returns NeedReplay rather than a lower boundary. No
+existing Subscribe path switched yet: cumulative replay budgets/deadline and
+terminal/cancellation integration remain open. This is NOT a recovery fix PASS.
+Isolated release build passed; example checks passed; cargo test --offline
+--locked --release -p qdl-stream-gateway --example hot_path_profile: 1 PASS,
+0 fail/ignore. Checks cover over-count, insufficient bytes, retained boundary
+99/100 then live101, cursor ahead and absent retention; exact charge cleanup.
+Evidence: p184-n1-opt-20261013/dl-near-build1, dl-near-check1, dl-near-test1.
+OPT-00 baseline is recorded with explicit observability limits, not all internal
+lock/trace timings measured. Carry those costs into affected OPT-03/04 reviews;
+no unmeasured optimization benefit claimed. Current status OPT-01 IN_PROGRESS.
+No new image, runtime or other consumer changes. Test containers use --rm;
+retain compiler artifacts for active N1, no broad cache/image prune. Release
+own measurement lock after jobs. Claude SDK edits remain outside staged scope.
+
+
+OPT-01 replay-accounting slice: add episode-owned absolute deadline and
+cumulative scan-record/byte/match accounting reusable by sequential catch-up
+ranges. Existing Replay RPC retains independent page accounting. Test limits
+across ranges before connecting Subscribe; no timeout reset or cap change.
+
+
+**OPT-01 episode budget implementation checkpoint - 2026-10-13**
+ReplayEpisode carries absolute deadline and cumulative scanned records/bytes
+and matched reservations across future sequential catch-up ranges. Existing
+Replay RPC keeps local page count. An undelivered reservation is released
+before requeue, preventing a transient false matched-limit on the next reader.
+No new Subscribe loop connected yet; no claim that live overflow is repaired.
+Seven replay unit tests passed initially (one new budget/deadline regression).
+First native_stream run returned 48 pass/1 benchmark-server ignore, but wrapper
+rejected it with code125 because source changed during the run: NOT acceptance.
+A fresh pinned run is required; retain the rejected receipt. No production
+mutation or new image; only isolated existing toolchain image used.
+
+Final pinned validation: dl-episode-native2 exit0, source hashes unchanged,
+48 PASS/0 FAIL/1 ignored (explicit client-driven benchmark server only).
+dl-episode-test2 exit0, source unchanged, 7 PASS/0 FAIL/0 ignored (51
+unrelated tests filtered). Container name-filter inventory empty. Own
+measurement lock released; no new image, no disk/cache deletion. Retain
+active N1 compiler cache and exact receipts; runtime/rollback untouched.
+
+
+OPT-01 Subscribe integration starts: replace eager live registration with
+near-frontier bounded bridge; sequential scan ranges share ReplayEpisode.
+Race the entire catch-up against one deadline, client close, revocation and
+shutdown. Only Complete scan advances frontier; preserve typed terminal errors,
+replay/live ordering and existing RPC page semantics. Full native_stream suite
+and targeted ongoing-input regression required before acceptance.
+
+
+**OPT-01 Subscribe integration test checkpoint - 2026-10-13**
+Subscribe now uses unregistered bulk ring/reader catch-up, then a charged
+near-frontier bridge under partition lock before live registration. Retained
+bulk replay uses by_key with partition-level coverage and expiry checks. One
+ReplayEpisode carries deadline, scan bytes/records and matched allowance;
+only Complete advances scanned frontier. Catch-up races auth/client close/
+shutdown/deadline; terminal latch is checked before LIVE.
+First native suite: 46 pass/2 fail/1 ignore. Restored indexed retained-ring
+bulk path; adjusted replica-ahead test to require exact replay plus subsequent
+LIVE rather than demanding the recovered event arrive only after LIVE.
+Pinned rerun dl-catchup-native2: 49 PASS/0 FAIL/1 ignored benchmark server.
+Added opt01 regression: 200 pending then 1200 newly offered records versus
+queue1000, assert no live registration during bulk catch-up; exact replay then
+live at batch1/64. Added continuing-producer handoff before producer stops.
+dl-catchup-ongoing1: both new tests PASS, 49 unrelated filtered. These are
+in-process TEST_ONLY correctness, NOT 6k/9k capacity or consumer ACK proof.
+Property interleaving test now takes over60s (suite69.75s); investigate before
+performance closure, do not hide by increasing limits. Independent read-only
+review active; OPT-01 remains IN_PROGRESS. No runtime changes or image build.
+
+Independent review (Lovelace, read-only) found two P2s: selected by_key ranges
+were still scanning historical prefixes under lock; immediately-ready filtered
+replay could defer cooperative deadline/cancellation. Fixed with partition_point
+offset bounds before range iteration/cloning, and explicit absolute-deadline
+checks plus yield every REPLAY_CHANNEL records/between rounds. No threshold
+or queue increase. Final full native_stream rerun pending at this checkpoint.
+Resource inventory: Docker104 images/40 active,34.25GB; BuildKit217 entries/47
+active,26.65GB with74.29MB reclaimable. Filesystem available257404563456 bytes.
+No images built during slice; no broad prune or volume deletion. Active N1
+compiler artifacts retained for subsequent checks, not claimed cleaned.
+
+Final pinned dl-catchup-native3: exit0, unchanged source hashes,50 PASS/0 FAIL/
+1 ignored benchmark server; suite66.70s. Two new tests included (burst over
+queue bound and handoff while producer continues). Review P2 fixes included.
+OPT-01 remains IN_PROGRESS: investigate interleaving test slowdown, complete
+measured dispatch lock disposition, then paired short full-path proof in OPT05.
+No owned profile/test containers remain. Own measurement lock released;
+production/canonical/rollback untouched. No push/merge/rollout.
+
+### P18.4 IDR-096 replay work-budget status change: SDK fix + compatibility proposal - 2026-10-13 (Claude)
+
+Status:
+- SDK fix: IMPLEMENTED / tested locally, not released.
+- Gateway gating: PROPOSED; the gateway is Codex's N1-OPT area.
+
+Cause. ed1b85b/aa1f98f changed the Stream gateway so that REPLAY_MATCHED/SCAN/BYTE_LIMIT now return
+RESOURCE_EXHAUSTED instead of OUT_OF_RANGE CURSOR_EXPIRED (service.rs:967-995).
+
+Audit of consumers. qdl_sdk 2.1.0-2.4.0, the TS Python writer, N1, the alpha runtime and TS alpha_sdk all treat
+RESOURCE_EXHAUSTED as retryable with bounded backoff. Two behavioural incompatibilities exist for deployed readers:
+1. The SDK reset its reconnect budget on every re-delivered event (client.py:440). A non-acknowledging session
+   therefore re-replays the same 10000-record window forever, where it used to snapshot-recover. The writer MARK
+   stream_wakes session does not acknowledge.
+2. A submit-time REPLAY_SCAN_LIMIT (replay.rs:271-277, gap > 2M records) can never progress on retry. A non-strict
+   resumed writer slice now loops instead of SNAPSHOT_REPLACED.
+
+SDK fix (this commit, additive). Only an event above the highest delivered offset renews the reconnect budget
+(`_delivered_high`); a snapshot replacement resets that mark. Tests in the rc17 python image, --network none:
+- sdk discover: 112 OK;
+- test_kn_async_cursor: 22 OK;
+- the new bounded-retry test errors on the unfixed SDK.
+It needs SDK release 2.4.1, vendored into TS and alpha.
+
+Proposed gateway compatibility (owner rule: stable, additive interfaces):
+- (A) A submit-time REPLAY_SCAN_LIMIT keeps OUT_OF_RANGE CURSOR_EXPIRED for every client.
+- (B) MATCHED/SCAN/BYTE_LIMIT during replay return RESOURCE_EXHAUSTED only to clients that send a new additive
+  SubscribeRequest capability, e.g. `replay_budget_retryable`. Other clients get the pre-ed1b85b mapping.
+
+N1 findings for Codex:
+- telemetry.rs:139-145 does not count exhausted REPLAY_* in the integrity counters;
+- the protect_continuity attempt budget (session.rs:519-521/619) caps the backlog.
+
+OPT-01 fairness attribution: targeted property trace1 passed but took63.71s;
+closed-subscription reports show up to14.28s handoff for67 replay records,
+including8-record tail near14.28s. Source waits DETACH_AFTER on full sink inside
+shared replay pass. Test bounded no-wait detach when peer requests are active;
+retain wait when sole request, budgets/offsets/cancel unchanged. Do not call
+this confirmed root cause until paired result. No runtime changes.
+
+
+OPT-01 fairness slice tested: peer-aware nonblocking detach on full replay
+sink, existing bounded wait retained for sole active request. No cap/buffer
+increase. dl-fairness-unit1:8 PASS; dl-fairness-native1:50 PASS/0 FAIL/1 ignored
+(explicit benchmark server), source unchanged. Same12-seed property before/
+after63.71/21.24s; n282 handoffs each, p95 13688.708069/3815.346563ms, max
+15091.328461/4633.188981ms. Attribution only, intentionally stalled clients,
+not consumer ACK or 6k/9k acceptance. Full report in linked baseline evidence.
+Claude branch alignment: SDK bb75d06 landed on DL branch; preserved without
+changes. TS 3b4c4136. No runtime/image build; exact --rm tests only. OPT-01
+remains pending full-path OPT05 proof; do not call whole optimization complete.
+
+OPT-02 TS-owned work started after OPT01 local boundary/fairness tests; full
+6k/9k proof remains OPT05. TS candidate reduces requested allocation but paired
+CPU/time does not yet pass. See TS baseline report and main tracker. No DL
+source/runtime change in this slice. Isolated Redis/test containers removed;
+no image builds/prune. Own measurement lock released after all jobs.
+
+
+### P18.4 N1-OPT OPT-01 DL slices after handover to Claude - 2026-10-13
+
+Owner reassigned N1-OPT to Claude at 17:10Z (handover DL c49ffd1, clean). Guide and tracker: TS Unified Plan
+`#ts-p184-n1-opt`. Tests ran serially in the toolchain image 551428d9 under the host lock, all --rm, network none.
+- c140e7e: replay sole-request slot wait yields to a ready queued peer of the same partition (2 ms slices, stalled-only
+  sets keep the 200 ms bound; metric peer_preempted). Catch-up observes a stop that began before the subscribe
+  (watch wait_for; the Ref is dropped in an async block so the future stays Send) and never announces LIVE on a
+  stopping replica (new t04 test). TEST_ONLY `lock-profile` feature (never in images). Property test 21.24 -> 1.60 s.
+- 8ddba09: pre-frozen lock rule triggered on a valid paired profile (feature-on vs off p50 within 1.05-1.15x):
+  register_near wait p99 32768-65536 ns, decode+fanout = whole dispatch hold. Subscriber lists are now copy-on-write
+  `Arc<[Arc<Subscription>]>`; dispatch keeps duplicate check, ring/by_key/boundary, eviction and the Arc clone under
+  the partition lock and runs decode/charge/offer under a per-partition dispatcher gate (order gate -> partition).
+  Registration stays atomic with the boundary. Result: register_near wait p99 128 ns, dispatch hold p50 512 ns,
+  inclusive dispatch p50 fanout1 1.64 -> 1.30 us, fanout64 11.1 -> 10.9 us.
+- Tests: lib 60/60, lib + isolated-replay-clock 68/68, native_stream 51/0/1 ignored, hot_lookup_contention 1/1,
+  committed_reads 3 ignored (broker), clippy --all-targets --features lock-profile -D warnings.
+- Not yet: full-path proof (OPT-05 on a TEST stream image built from this source), and the stream image for the
+  combined step-1 rollout must include these commits (batch 2048 only after this is live, diag13).
+
+
+### P18.4 IDR-096 gateway fix, LIVE high fix, step-1 rollout preparation - 2026-10-14 (Claude)
+
+- f5cd787: IDR-096 (A)+(B): additive SubscribeRequest.replay_budget_status_v2 = 8; old clients keep the pre-ed1b85b
+  CURSOR_EXPIRED mapping; submit-time scan limit is CURSOR_EXPIRED for all; SDK sends the field. Generated code via
+  make contract-generate (owner-approved remote buf plugins); buf format/lint/breaking OK.
+- ffa382f: LIVE carries the REPLAYING high_watermark again (regression from 2743938, found by OPT-05 W1 as N1
+  STREAM_CONTROL_INVALID); every native_stream reader asserts it (4 tests fail on f5cd787); contract doc updated.
+- cdbf28b: migrate_core_batch_size --target-batch-size (owner 2026-10-14: production step-1 uses batch 1024, not 2048;
+  2048 overflowed 7x in OPT-05 W2). Tests 6; rc17 rollout tool tests 49 (incl. two new 1024 cases, outside Git).
+- RUST18 = qdl-v2-rust:2.2.3-rc18-cdbf28b sha256:7fba25779f72a3adffc88f195935a316ac94acbfcb362996fafbff89f62c9103:
+  owner-approved thin image (compile in builder 551428d9 with the existing cache, git archive of cdbf28b, COPY the 12
+  Dockerfile binaries + admission policy onto rc16 f41ecb66). Post-checks: 12 binary sums match SHA256SUMS, ldd
+  complete for core/ingestor/stream, user 10001, label revision cdbf28b. Build dir ~/.local/state/qdl-v2/build-rc18-cdbf28b.
+- TS N1-OPT reached TESTED_ISOLATED_OPTIMIZATION_PASS (TS b2075780). Alpha GA1 (BAR handoff accepts records between
+  REPLAYING and LIVE) fixed in execution_alpha 3f83a73.
+- Running: pre-rollout gates (isolated idr094 broker rerun on RUST18 at 1024, P1 G12 with the production Python writer,
+  P2 Python-writer capacity runs). Rollout order after the gates: stream, then core (batch 1024), then ingestor.
+
+
+### P18.4 production rollout: writer 7cf232ac + DL step-1 RUST18 batch 1024 - 2026-10-14 09:56-10:56Z (Claude)
+
+Owner-approved packet (AskUserQuestion 2026-10-14). Host lock held; no test jobs during the window.
+- Writer market_data_service_p184w 2beedc04 -> 7cf232ac (IDR-097 fix) via roll_writer_campaign_ra.py, same config
+  (6 pins, depth 0, 64, READ_AHEAD 256, JWT rev 11): OK, not_ready_samples 0; READY 64/64, 0 errors, RSS ~406 MiB.
+- rollout_rc17_v2 defect found and fixed: the first stream_kn_1 roll failed closed as service_mismatch['volumes'] and
+  rolled back cleanly (exit 2, writer READY): Docker reports Mounts in no fixed order and the tool compared the list
+  by position. Tool now compares volumes order-insensitively (sha a8b6e1a9..., 51 tests incl. 2 new; backups
+  *.bak-pre-volorder). A real volume change still fails.
+- Rolled to RUST18 7fba2577 one container at a time, each accepted by the tool:
+  stream_kn_1 (10 min watch), stream_kn_2 (10 min), rust_core / _2 / _3 with batch 1024 (config dir
+  releases/v2.2.3-rc18-core-batch1024, only batch_size 256 -> 1024 differs; 0 retries, 0 fenced, no budget violation;
+  5 min watches; commit mean 15-35 ms), ingestor_okx_swap and ingestor_binance_usdm (5 min each). All 7 RestartCount 0.
+- Observation: before stream_kn_2 moved, the writer (subscribed only to stream_kn_2 on rc14) showed 2 TRADE
+  snapshot_replaced after an rc14 overflow -> CURSOR_EXPIRED (the pre-existing behaviour reproduced by P2d-b). After
+  both streams were on RUST18, 0 new overflow, replay_expired, snapshot_replaced or reconnects over 40+ min.
+- Not touched: kafka, stable_redis, market_cache, projectors (rc14), query (rc16), bar_edge (rc14 08f356a8, STOP),
+  catalog/manifests, JWT. Rollback per role: stream/ingestor rc14 ce629061, core rc16 f41ecb66 + old config (saved
+  composes in rollout-rc18/), writer 2beedc04 compose.
+- Final stage-100 campaign on the new set started 10:58Z (writer trace re-armed, same image).
+
+
+### P18.4 G12 v2 sampler coverage (Codex recovery review R3) - 2026-10-15 (Claude)
+- Finding confirmed in source (Codex 80ff089a R3): `caught_up` compared each view sample with the previously
+  *observed* sequence, so a latest-state sampler that missed an applied intermediate snapshot reported `update_gap`
+  (or an inflated `update_transit`) - an apparatus false negative; no sampler coverage check existed (only the Kafka
+  monitor had `MONITOR_MAX_GAP_S`).
+- Fix (`scripts/p184_g12_isolated_fault.py`): the sampler records `pt` (previous successful poll) on each row; a
+  rejected sample whose poll hole exceeds the top-change floor is `undersampled`, which can neither start nor break a
+  hold; per-venue `sampler_max_gap_s` over clear -> caught-up + hold; a gap above `SAMPLER_MAX_GAP_S` (=
+  MONITOR_MAX_GAP_S) or any undersampled sample in the hold makes the fault `NOT_MEASURED` (never PASS/FAIL). There is
+  no per-apply BOOK evidence, so `undersampled` never resolves to PASS. Stuck-view (`open_gap`) and genuine skipped
+  apply detection unchanged; new `future_publish` reason.
+- Tests: 4 new (omitted samples -> NOT_MEASURED; real skipped applies still `update_gap`; 35 s hole / dead sampler ->
+  NOT_MEASURED; regressed/repeated seq and future publish). `python -B -m unittest tests.test_p184_g12_isolated_fault`
+  in `qdl-v2-python:2.2.3-rc17-98b421f` (`--rm --network none`): 91 tests OK. Status: tested locally; effective
+  for the next G12 run only (`pt` needs the redeployed sampler). Earlier G12 v2 PASS/FAIL receipts are unchanged.
+
+
+### P18.4 IDR-107 projector stage A poll classification + G12 role log retention - 2026-10-15 (Claude)
+- Trigger: N1 R2C `r2c-broker9k` (TS evidence `p184-n1-opt-20261013/r2/r2c-broker9k`) - projector rc14 ce629061 exit 2 at
+  broker kill + 7.5 s; status file 6 s after the kill showed aborts 0, errors {}; stderr not retained (`--rm`). The
+  identical diagnostic rerun passed (same NOT_COORDINATOR on EndTxn, recovered). Root cause from code + timing,
+  inferred not proven: `KafkaPipe::poll` mapped every consumer poll error to Abortable and stage A escalated it to
+  Fatal -> `fatal()` exit 2; librdkafka reports broker transport / refused connection / all-brokers-down as non-fatal
+  consumer error events. rc14 == HEAD on this path before this change.
+- Fix (`rust/qdl-projector`): `classify_poll` - `MessageConsumption(_)` is Transient except the explicit Fatal code;
+  `MessageConsumptionFatal`, PartitionEOF and unexpected kinds stay Fatal. Records already taken are delivered and
+  the error is reported on the next poll (a dropped record would be skipped by the next commit). Stage A returns
+  `Step::PollError`, counts `poll_errors` (status JSON, additive), pauses 100 ms (healthy partitions keep flowing;
+  librdkafka backs off the failed broker) and turns the 31st consecutive error without a committed batch into Fatal
+  (`MAX_CONSECUTIVE_SOURCE_ERRORS` = 30, now shared with stage B). In a transaction a transient error is handled as
+  Abortable (abort + rewind); abort/rewind failure, ProducerFenced/InvalidProducerEpoch/auth and the ambiguous-commit
+  deadline stay Fatal. No restart policy change.
+- Harness (`scripts/p184_g12_isolated_fault.py`): bounded `docker logs --follow` follower per product role and per
+  container life into `evidence/logs/<role>.life<n>.log` (1 MB tail), stopped in teardown; roles stay `--rm`, no
+  restart policy (an exit must stay visible).
+- Tests: `cargo test --offline --locked --release -p qdl-projector` 35 passed (+4 new: classify_poll, one transient
+  retried, budget -> Fatal incl. empty polls, fatal immediate), `cargo fmt --check` clean (qdl-rust-builder r134);
+  ignored Kafka case with an unreachable bootstrap added, not run. G12 unittest 95 OK in qdl-v2-python rc17 image.
+  Status: tested locally; affected acceptance = one isolated broker9k on a TEST projector image (TS N1 R2C follow-up).
+- Codex review 45c3704e CF3/CF4 (2026-10-15, FIXED): `classify_poll` is now an allowlist - only transport/coordinator
+  codes (BrokerTransportFailure, AllBrokersDown, Resolve, BrokerNotAvailable, NetworkException, Request/Message/
+  Operation timeouts, TimedOutQueue, LeaderNotAvailable, NotLeaderForPartition, NotCoordinator,
+  CoordinatorNotAvailable, CoordinatorLoadInProgress, WaitingForCoordinator) are Transient; authorization/auth/SSL,
+  unknown topic, config and unlisted codes are Fatal (fail closed). The consecutive poll-error budget now resets only
+  on a committed batch (an aborted batch never resets it), matching the "without a committed batch" statement above.
+  36 lib tests (alternating poll error / abortable abort loop -> Fatal at 31; commit resets), fmt clean.
+- Affected proof: TS N1 `r2d2-broker9k` (TEST projector 381d6bf9 = 58fb7cd) PASS - caught up 1.31 s / durable 1.70 s
+  after a 60 s broker outage, exact 5.4M, projector one life, aborts 0, errors {}; `poll_errors` 0, so the transient
+  path itself was not exercised at runtime (unit-test proof only). The final projector binary (CF3/CF4) ships in rc19.
+
+
+### P18.4 INCIDENT 2026-10-15 07:14-07:28Z: rc19 core rollout -> self-sustaining core-group rebalance storm, rolled back (Claude)
+- Rollout (approved: core session timeout 10 s after a clean R2): image rc19 `d1659102` (DL ff5683c; 12 binaries, rc18
+  recipe), config `releases/v2.2.3-rc18-core-batch1024` unchanged, tool rollout_rc17_v2 (a8b6e1a9), receipts
+  `p184-d3-capacity-20261009/rollout-rc19/`. rust_core 06:59Z accepted (0 retries), rust_core_2 07:06Z accepted
+  (survivor rust_core rc19 had 1 retry: "Failed to commit offsets ... Specified group generation id"), rust_core_3
+  07:13:48Z FAILED budget_violated -> tool rollback to RUST18 verified (07:16:30Z).
+- Symptom: every rebalance aborts each member's in-flight transaction (`Rebalanced {epoch 0 -> 2}`, retryable); the
+  supervisor starts a new generation with a new consumer, whose leave/join is the next rebalance. The group alternated
+  between {core-001} and {core-002, core-003} (never 3 members; kafka-consumer-groups --describe --members sampled
+  07:25-07:26Z), one retry per core about every 55 s (attempt counters 17-18), data flowing with periodic stalls.
+  It persisted after rust_core_3 returned to RUST18, so it was self-sustaining once started.
+- Action: 07:27:53Z rust_core_2 and rust_core recreated from the tool's saved rollback composes (RUST18 7fba2577, same
+  config). Verified 07:31-07:34Z: 3 members x 2 partitions, 0 retries on all cores since 07:28:30Z, RestartCount 0.
+  Owner informed; read-only monitoring approved after a classifier block.
+- Inferred cause (not proven): heartbeat.interval 1 s (was the 3 s default) makes members observe a rebalance while a
+  batch-1024 transaction is in flight far more often; combined with abort-and-rebuild-consumer on any epoch change this
+  feeds back. The F1 TEST proof used the isolated single-core G12 harness, so multi-member group dynamics were never
+  exercised - an evidence gap (E7: test where the product runs).
+- Status: F1 (core-kill recovery) NOT deployed; production = RUST18 on all 3 cores. rc19 must not be rolled again
+  until a 3-core isolated reproduction shows the storm and a fix shows its absence (candidate: on `Rebalanced`, abort
+  and rewind inside the same consumer instead of rebuilding the generation; and/or keep the default heartbeat).
+- RCA + fix (2026-10-15, tested locally, NOT deployed): the per-member epoch rises only on a revoke (`lib.rs:937`),
+  is read at the top of every batch loop even while idle (`qdl-realtime-core.rs:714`), and any revoke aborts the next
+  transaction; the supervisor then drops the bridge (close + LeaveGroup) and rejoins after a backoff that never resets
+  (500 ms doubling to 30 s, ~24 s from attempt 6). Join -> revoke -> abort -> leave -> rejoin is a loop present in
+  RUST18 too (production rust_core_3 on RUST18 logged attempts 1-16 every ~55 s after 07:16Z). Heartbeat 1 s
+  (inferred) splits "old member leaves" and "replacement joins" into two rebalances so the join revokes survivors;
+  rollout receipts fit (survivors on 1 s: 0 -> 1 -> 6-7 retries). Fix: on a rebalance abort (Rebalanced, or a
+  non-fatal IllegalGeneration txn error) rewind the SAME consumer to its committed offsets with a fresh RealtimeCore
+  (cap 3 consecutive rewinds without a commit; any other error keeps the rebuild path); heartbeat back to 3000 ms,
+  session stays 10000 ms (dead member's partitions move in ~13 s). EOS: rebalance error only after a successful abort;
+  committed-offset read with require_stable; seek discards pre-seek fetches; zombie fencing via group metadata kept.
+  cargo test -p qdl-kafka all pass (lib 45, realtime-core 21, ingestor 49, production-core 7), fmt clean.
+- G12 harness `--core-group BASE --new-core <img>`: 3 core members in one group on 6 raw partitions; 120 s baseline,
+  rolling SIGTERM replace of each member onto the new image (150 s hold each), then SIGKILL core-2 + restart;
+  `core-group-verdict.json`. 101 unittest OK. Acceptance to freeze before running: run A (RUST18 -> rc19) must
+  reproduce the storm or the harness is not valid evidence; run B (RUST18 -> fixed) storm=false, retries 0,
+  rewind_failed 0, <= 2 rewinds per roll window, 3 members each owning >= 1 partition at every window end,
+  core-kill caught up <= 60 s with partitions moved <= 15 s, no inflight/stop-drain failure, 0 guard breaches.
+- Core-group A/B (prereg 42b82e61 + addendum-1 29258445; images python b9ca6c36, projector ce629061, stream RUST18):
+  A (RUST18 -> rc19 d1659102) reproduced the storm (after_roll_core-3: 10 retries, 100/150 short-member samples,
+  1 member at window end) -> harness valid as evidence. B (RUST18 -> rc20 d83a3168, e19a9f6): no storm (rc20 lives:
+  0 retries, 1 rewind; kill window max_lag 2) but FAIL on the frozen "retries == 0 in every window": 2 retries in
+  after_roll_core, both in core-2.life1 / core-3.life1 = members still on RUST18 (old rebuild path) while only `core`
+  was rolled. Verdict kept as FAIL; how mixed-version rolls are judged is an owner decision (no relaxation by me).
+- Codex review 2440f983 DL dispositions: RB1 FIXED (typed rewind failure reaches the supervisor: Configuration/Fencing
+  non-retryable, timeout retryable; fatal drain error takes precedence; plus epoch fence around fetch+seek because
+  librdkafka only guarantees no assignment change while nobody polls - our invariant, not the library's; fence hit
+  re-rewinds within the 3-rewind budget). RB2 FIXED (core-kill clocks: exit confirmed / ownership restored = dead
+  member id gone, roster 3, STABLE, 6 partitions owned once / progress past post-fault log-end / caught up; monitor
+  records member detail and offsets). RB3 FIXED (`core_group_acceptance` p184.coregroup.acceptance.v1, per-condition
+  PASS/FAIL/NOT_MEASURED + coverage conditions; CLI `--core-group-accept BASE --prereg FILE`, read-only). Found:
+  the log follower kept only a 1 MB tail, truncating core logs in A and B (retry/rewind totals undercounted there) ->
+  32 MB for core-group members. Saved-evidence acceptance: A run_A_control PASS (storm), B run_B_fix FAIL (2 RUST18
+  retries), several rows NOT_MEASURED (truncation; old monitor lacks member ids). Codex question 2 (BOOK/canonical
+  after a fresh core) goes to the N1 exactness core-kill run. Tests: cargo qdl-kafka 46+49+7+25 pass, fmt clean;
+  113 unittest OK. RB1 changes core bytes -> rc20 superseded; rc21 built from this commit for the next B run.
+- Codex review 610b4294 DL-R1 FIXED (core binary only; shared retry_class unchanged for ingestor/production-core):
+  `kafka_action` classifies native codes - Terminal (Topic/Group/Cluster/TransactionalId/DelegationToken authorization,
+  SASL/_AUTHENTICATION, InvalidConfig, InvalidTransactionTimeout, InvalidGroupId, InconsistentGroupProtocol,
+  ClientConfig) -> `qdl_realtime_core_terminal_kafka_error` + non-zero exit after 1 generation; RebuildInstance (fatal
+  transaction error, MessageConsumptionFatal, _FATAL/_FENCED) -> new generation with a new bridge, never rewound;
+  everything else keeps the shared class. generation_failure ranks terminal > non-transport > rebuild > retryable so a
+  higher drain cause is kept. 5 new tests incl. real librdkafka MockCluster EndTxn PRODUCER_FENCED / TRANSACTIONAL_ID_
+  AUTHORIZATION_FAILED / INVALID_RECORD; qdl-kafka lib 46, ingestor 49, production-core 7, realtime-core 30 pass; fmt clean.
+- B2 apparatus fixes (9ba2e7b): baseline opens on a stable group (formation window diagnostic), idle partitions in
+  kill clocks, publisher round-robins lanes over every raw partition; 127 unittest OK. Re-evaluated saved B2: kill
+  clocks PASS (ownership 9.2 s, raw/5 idle NO_RECORDS), old-image condition still FAIL (baseline retry 4.5 s after
+  start, before the group first held stable at +16 s) -> B2 stays FAIL; B3 on rc22 under addendum-3.
+- Core-group B3 (addendum-3 ef96a1d9; RUST18 -> rc22 7c848aad = DL a4e7b3b; harness 9ba2e7b): run_B2 criteria PASS on
+  all 14 conditions - storm false; rc22 lives 0 retries / 1 rewind / 0 rewind_failed; old-image retries core-3 = 1
+  inside its survivor window; all-new windows 0 retries; every window tail 3 members x 6 partitions owned once; core
+  kill: exit 0.19 s, ownership restored = progress = caught up 9.58 s (raw/1, raw/4 non-idle); monitor gap <= 1.0 s;
+  member logs cover every window. With A (storm reproduced on rc19) and N1 r2e-corekill9k (exact 5.4M, caught up
+  14.9 s on TEST core 32fe603) this is the multi-member evidence required before any core rollout. Status:
+  shadow-certified for the rebalance/kill behaviour (isolated TEST), not production-ready until rolled under packet.
+
+
+### P18.4 INCIDENT 2 2026-10-15 10:55-11:01Z: rc22 rust_core roll -> rollback -> RUST18 group storm, restored (Claude)
+- Owner-approved rc22 rollout (core x3 then projectors). rust_core rolled 10:55:04Z to rc22 7c848aad; settle budget
+  violated (rc22 member 9 rewinds, RUST18 survivors rust_core_2/_3 4 retries each, 3 in settle) -> tool rollback to
+  RUST18 verified (10:57:31Z); chain stopped, projectors and cores 2/3 untouched by the rollout.
+- After rollback the all-RUST18 group stayed in the morning's storm ({001} vs {002,003}, retries every ~30 s).
+  11:01:05Z (owner approved after a classifier block) rust_core_2 + rust_core_3 recreated simultaneously from the saved
+  RUST18 rollback composes (same image/config). Verified 11:01:11-11:03:39Z: 3 members x 2 partitions, 0 retries.
+- Inferred (RCA running): rc22's own member behaves as designed (rewind, no leave/join), but mixed-version rolling
+  keeps RUST18 members on the rebuild path, and with production batch 1024 a revoke almost always hits an in-flight
+  transaction, so the old members ping-pong; the isolated B3 harness (batch 25, low rate) under-represented this
+  (E7: test where the product runs). Consequence: per-member rolling from RUST18 is storm-prone in production; the
+  candidate procedure is a simultaneous replace of all 3 cores (no mixed-version period, short full core pause),
+  to be proven on a production-like harness (batch 1024, sustained load) before any new packet. rc22 NOT deployed.
+- Incident 2 RCA (read-only logs, supersedes the load inference above): the loop is rejoin timing, not load. RUST18's
+  supervisor backoff counter never resets (500 ms x 2^n x 0.8 jitter, cap ~24-30 s; qdl-realtime-core.rs:1147,1192,
+  same in rc22): the 10:55 roll did not coalesce (leave 05.69, 2-member stable 07.98, rc22 join 09.59) so the join
+  revoked both RUST18 survivors; afterwards rust_core_2 rejoined after 1.8/3.3/6.5/12.9/24.2 s and rust_core_3 (never
+  recreated since the morning) always after ~24.2 s, so each late rejoin revoked the other - ping-pong. A rejoin landing
+  inside its own leave rebalance ends it (10:57:52 rust_core 0.93 s); the 11:01 recovery coalesced partly by luck (rust_core's
+  backoff expired at 11:01:06.84, recreate 06.57). Production brokers use group.initial.rebalance.delay.ms=3000 (harness 0);
+  transaction duty ~100% in production vs ~11% in B3, but RUST18 reads the epoch before waiting for input, so load is not
+  the driver. Register item: rc22 also never resets the backoff counter (no loop because rc22 rewinds, but a rebuild after
+  long uptime waits 24-30 s).
+- Harness (uncommitted->this commit): production-like core profile (--core-batch-size/--core-batch-wait-ms/--core-cpus/
+  --core-hz/--core-initial-rebalance-delay-ms/--core-replace-gap-s/--core-precondition-restarts K to age old members'
+  backoff unevenly) and `--core-group-simultaneous` (stop all 3, start all 3 on the new image, then a single restart and a
+  SIGKILL); acceptance per run mode (run_A_prime, run_S). 140 unittest OK; B3 recomputation unchanged (run_B2 PASS 14/14).
+- A'/S (addendum-4 06c561ed, production-like profile, DL 306f42f harness; evaluator mapping fix this commit:
+  criteria-map addendum-4.v1 maps each frozen string verbatim, unknown -> NOT_MEASURED, `criterion` singular read,
+  `old_image_zero` implements its text exactly; S clocks now exported). A' PASS (control valid: old survivors 5 and 4
+  retries in after_roll_core - the production storm reproduced). S FAIL on one frozen criterion: new-image rewinds 3
+  in after_restart_core-3 (core-2.life5 2, core.life2 1; attribution span starts at the restart injection) vs limit 2;
+  all else PASS - storm false, re-formed 7.3 s after the first new start (stable 17.3 s, caught up 7.3 s, peak lag 560
+  -> 2), retries 0 in every window, old-image events 0, tails 3x6 owned once, kill ownership/caught-up 7.7 s, no drain
+  failures, 0 guard breaches. Full core pause first die -> re-formed 10.9 s (stop call -> re-formed 11.3 s). The
+  "<= 2 rewinds per window" limit was frozen from "one per survivor"; a single-member restart can legitimately cost a
+  survivor a rewind on the leave and another on the rejoin - not relaxed here; any change needs an owner-approved
+  addendum and a fresh run. rc22 rollout shape (simultaneous replace, ~11 s full core pause) awaits that decision.
+- S2 (addendum-5 2fa5dffb, owner-approved per-surviving-member rewind budget; evaluator criteria-map addendum-5.v1
+  with `restarted_roles` per window, this commit; 147 unittest OK): PASS 16/16, once, no retry. Replace-all: old
+  members stopped 1.0 s, gap 3 s, re-formed 6.98 s after the first new start (stable 16.98 s, caught up 6.98 s),
+  full core pause first die -> re-formed 10.6 s; rewinds per window 0/2/0 (would also pass addendum-4); retries 0
+  everywhere; kill: exit 0.20 s, ownership + caught up 10.2 s. Rewind attribution (Codex advisory §8, report only):
+  S2's 2 rewinds both 5.6 s after the 2 -> 3 membership change (core-3 rejoin); saved S's 4 rewinds all attributed
+  to leave/join changes, 0 unattributed (S keeps its addendum-4 FAIL). Status: shadow-certified (isolated,
+  production-like profile) for a simultaneous replace RUST18 -> rc22; production rollout needs its own packet/tool.
+
+
+### P18.4 PRODUCTION: DL core rc22 by simultaneous replace - 2026-10-15 13:32:22-13:35:18Z (Claude, owner-approved)
+- Tool rollout_core_simultaneous.py (outside Git, sha b5c9ca2b; 34 tests incl. the captured production describe
+  output) RUST18 7fba2577 -> rc22 7c848aad (DL a4e7b3b) on rust_core, rust_core_2, rust_core_3, config
+  releases/v2.2.3-rc18-core-batch1024 unchanged; receipts p184-d3-capacity-20261009/rollout-rc22-simultaneous/
+  (stamp 20261015T133222Z). Preflight: group 3x2 stable, 0 retries/rewinds in the last 300 s, writer (native B12)
+  READY 64/64, lock held. All 3 stopped exit 0 (stop start 13:33:00.42Z, dead 13:33:01.03Z); compose 13:33:01.2-02.1Z;
+  group re-formed 3x2 at 13:33:12.45Z (full core pause ~12.0 s, re-form 11.2 s from compose start); settle 120 s clean;
+  writer READY 64/64 at the end. rc 0.
+- Independent check 13:35:25Z: all three on rc22, RestartCount 0, 0 retries, 0 rewinds since 13:33:00Z; group 3x2.
+- Effect: F1 (core-kill recovery ~10 s on the isolated production-like harness vs RUST18 ~101 s) and the rebalance-
+  storm fix are now production. Rollback: same tool path back to RUST18 via the saved rollback composes (simultaneous).
+  Not touched: projectors (ce629061), stream/ingestors (RUST18), kafka, stable_redis, market_cache, Query (rc19),
+  bar_edge, writer.
+
+### P18.4 stream gateway live-budget isolation (idle readers vs deep lossless subscriptions) - 2026-10-15 (Claude)
+- Defect (read-only RCA of the stage-100 run): 2-3 deep lossless TRADE subscriptions, each under its 16 MiB fair-share
+  cap, together held 28.5 MB of the shared 32 MiB `QDL_KN_QUEUE_BYTES_TOTAL` (kn_1 `hub_live_budget_refused` 5,698);
+  `Subscription::offer` then overflowed every subscriber with nothing droppable, including idle QUOTE/BOOK/MARK
+  readers with empty queues: 358 RESOURCE_EXHAUSTED closes, against the memory.rs contract "one slow subscriber must
+  not overflow the rest".
+- Fix (no budget, quota, queue or config value changed): the live `ByteBudget` keeps a derived reserve of 1/8 of the
+  budget (4 MiB of 32 MiB; `memory::LIVE_RESERVE_DIVISOR`) that only a subscription at or under its floor may use. The
+  floor is `reserve / 16` (256 KiB), or holding at most one other record of any size. The floor counts the queue plus
+  the subscription's dequeued, unreleased charges (handoff channel, batch, transport), which are now attributed to the
+  subscription until dropped. A subscription over its floor can fill at most `limit - reserve`; once that is full its
+  own push fails and it alone ends with BACKPRESSURE + resume token (the existing lossless path), then replays from
+  its cursor. Handoff top-ups use the same rule. The total never exceeds `limit`. Replay budget unchanged (no reserve).
+  New counters in the gateway report: `queue_isolation.{reserve_admitted, over_floor_refused, reserve_exhausted}`.
+- Tests (cargo test --release -p qdl-stream-gateway in the pinned toolchain image): lib 63/63, hot_lookup 1/1,
+  native_stream 54/54 (+1 ignored), committed_reads 3 ignored. New tests: hub 3 deep + 30 idle (with the reserve 0 idle
+  overflows; with the old budget idle readers overflow), a single deep subscription over its floor alone overflows,
+  and gRPC with 2 deep stalled streams + 10 idle QUOTE readers (repeated 60x, 0 failures). Two defects in the first
+  version were found and fixed during the repeats: the floor ignored out-of-queue bytes, and it counted an idle
+  reader's own handed-off record. `cargo fmt --check`: no drift beyond HEAD (HEAD already has 92 pre-existing diffs).
+- Sizing caveat (open): the reserve holds about 2 records per idle reader at handoff (full-weight transport copy).
+  4 MiB covers thousands of QUOTE records but only about 100 BOOK_DELTA readers at about 18 KB each. If
+  `reserve_exhausted` is non-zero in the isolated proof or production, the reserve is too small. Status: implemented,
+  tested locally; not deployed.
+- Test image (overlay on the production stream image qdl-v2-rust:2.2.3-rc18-cdbf28b `7fba2577`, binary
+  sha256 606a5263...b77af from e3b5552): `local/qdl-stream:isolation-e3b5552` =
+  `sha256:b095b18e209494a87e698856a316f8d6ef75e6eae059d0540f4d5e9c28878719`. Not a release, not deployed.
+- Isolated DR08 development A/B (own host lock; images: core = deployed rc22 7c848aad, python/query rc19 b9ca6c36,
+  the default kafka/redis; only the stream image differs). Receipts are under p184-n1-final-20261012/: candidate
+  dr08-isolation-e3b5552-20261015T153911Z, baseline dr08-baseline-rc18-20261015T154126Z. Both:
+  SLOW_CONSUMER_BOUNDED_QUEUE, CONSUMER_RESTART_RECOVERY_MEASURED and ALERT_PATH_OBSERVABLE development_pass;
+  NO_CROSS_CONSUMER_STARVATION fails identically on BOTH (the fast consumer got all 10,001 events, but the slow stream's
+  `overflow` metric did not rise inside the 100-publish window, so `slow_resumed` stayed false). This is pre-existing
+  DR08 harness timing drift (the default image set is stale: its query image 77682eea is no longer on the host), not
+  this change. shared_runtime_unchanged=true, cleanup_failures=[], images_built=0.
+- Open: no existing isolated harness has several deep subscriptions on different keys plus idle readers (DR08: one
+  slow and one fast consumer on one BTCUSDT TRADE key). The cross-key proof is the in-process gRPC test above. Before
+  any rollout, an isolated multi-key run (for example G12 publisher lanes, or DR08 extended with deep TRADE/BOOK readers
+  and idle QUOTE/MARK readers) must show idle closes = 0, `queue_isolation.reserve_exhausted` = 0 and
+  `over_floor_refused` > 0 only for deep identities.
+- Gate closure: isolated multi-key A/B (2026-10-15, Claude). `scripts/p184_dr08_isolated.py` has a new
+  `--isolation-campaign` mode (ISOLATION_MODE) on the existing DR08 stack, which is otherwise unchanged. Stack: one TLS broker, the
+  deployed core rc22 7c848aad, quota Redis, Query rc19 b9ca6c36, Stream = the A/B variable, 32 MiB live budget.
+  Scenario: three stalled deep TRADE readers on distinct keys (BTC/ETH/SOL, 3,000-event buffers, 3,000 trades per
+  key in 12 bursts at about 15k trades/s). 32 idle readers (8 each on BNB/DOGE QUOTE and MARK_INDEX_PRICE) receive 50 Hz per
+  route for 8 s while the deep readers hold the budget. Then deep readers resume from their last resume token.
+  Acceptance is written to `preregistration.json` (sha256) before any run and applied unchanged by `verdict.json`.
+  Receipts are under p184-n1-final-20261012/:
+  - live-budget-isolation-ab-20261015T155507Z: FAIL by prereg (D1). The baseline did not discriminate: it held 33.55 MB
+    for about 10 s, but only one idle record per route arrived in that window. This was a scenario defect, fixed by adding
+    the idle hold phase with the acceptance unchanged.
+  - live-budget-isolation-ab-20261015T155918Z: PASS but TAINTED (AGENTS 34a). During the candidate run another actor
+    recreated production `market_data_service_p184w` (created 15:59:38Z) and `ingestor_binance_usdm` (15:59:15Z).
+    This harness only reads the core config. Not used as evidence.
+  - live-budget-isolation-ab-20261015T160503Z (prereg b087db9d...): PASS, clean window (shared_runtime_unchanged both
+    runs). Candidate b095b18e: idle closures 0/32 and every idle reader received data after the bursts;
+    reserve_exhausted 0; over_floor_refused 3, and the only abnormal closures are the 3 deep ones; reserve_admitted
+    8,650; all 3 deep resumed losslessly (ids 48..3001 contiguous). Baseline 7fba2577: 32/32 idle readers closed
+    RESOURCE_EXHAUSTED, peak 33,550,757 B. Candidate peak queue 29,355,208 B. Peak reserve use is 0 B in the 1 s samples,
+    but the reserve admitted 8,650 charges, so transient use was not captured. Cleanup: 16 containers, 0 left; no
+    networks or volumes; images built 0.
+  - Status: shadow-certified (isolated A/B), not deployed. The next step is a rollout packet for stream_kn_1/2 (digest
+    b095b18e, rollback 7fba2577), owner approval only.
+  - 2026-10-15 PRODUCTION (owner-approved via AskUserQuestion; classifier had blocked the first attempt):
+    - 15:59:15Z ingestor_binance_usdm cpus 0.5 -> 0.75 (T4 evidence: window 9 throttled 7.17 % > 5 %, usage peak 0.280
+      core; ingestor_okx_swap peak exactly 5.00 %, not qualified, unchanged). rollout_rc17_v2.py (8de00c46) accepted,
+      diff ["cpus"], image 7fba2577 unchanged, total raise +0.25 of +1.5 vCPU. Rollback compose
+      ~/.local/state/qdl-v2/p184-d3-capacity-20261009/rollout-rc17/ingestor_binance_usdm-rollback-20261015T155915Z.compose.json.
+    - 16:18-16:20Z stream_kn_1 then stream_kn_2 7fba2577 -> b095b18e (this isolation fix), same tool, diff ["image"],
+      bundle 63efd9ff unchanged, RestartCount 0, writer READY 64/64 after each; rollback composes in the same dir.
+      Post-roll metric line: hub_live_budget_refused 0, overflow 0, queue_isolation counters 0, replay_refused 0.
+    - Correction: the two production recreates at 15:59Z that tainted isolation run 155918Z were the coordinator's
+      (ingestor raise + writer B14), launched without re-checking the measurement lock held by the isolation run.
+      Run 160503Z is the clean evidence. Lock check is now done before every production action.
+    - 16:23:52Z final stage-100 #2 launched (apparatus f7ea809, profile r16, G11 armed, trace re-armed 3600 s, lock
+      claude-n1-opt-20261013 until 17:42:27Z): ~/.local/state/qdl-v2/p184-final-campaign-20261015T162352Z.
+  - 2026-10-15 ~19:00Z Codex review p184-stage100-second-run-review-20261016.md (ts-codex-p184-review) dispositions:
+    - SR1 (P1, live reserve used by over-floor handoffs, subscription.rs:152,443,457): ACCEPTED. Isolation/fairness
+      defect in the deployed stream b095b18e; no total-cap bypass or data loss shown. Fix: exact outstanding-record
+      count through queue/handoff/batch/release; regressions as listed; isolated A/B rerun vs b095b18e and 7fba2577
+      with a new preregistration; then stream_kn roll packet. No reserve/buffer increase.
+    - SR2 (P1, G10 misses native typed integrity counters): ACCEPTED. Sampler gains native trade_integrity pinned to
+      activation/route; missing coverage -> NOT_MEASURED.
+    - SR3 (P1/P2, G10 roster/absent fields/unconfirmed_rows can PASS): ACCEPTED. Field validation, frozen-route
+      roster, unconfirmed_rows blocks unless reconciled, duplicate_applied described as an offset high-water check.
+    - SR4 (P2, isolation C1b by time not identity; handoff refusal not counted): ACCEPTED. Identity-matched C1b and
+      attributable handoff refusal/timeout counters; claim narrowed until rerun.
+    - SR5 (P2, G11 misses post-to-post rewinds, liveness not payload/quality, roster-incomplete cursors): ACCEPTED.
+      Oracle amended; retained evidence re-scored into a new dir (original scorecard immutable).
+    - Advice G2: ACCEPTED - catch_up reclassified to source event before activation start (startup backlog only);
+      replayed in-load rows stay in G2 with a report-only replayed_live count. Advice G8: ACCEPTED - crash/lost
+      reply after each part, intermediate visibility, whole-unit latency preserved; default 64 until measured.
+      G7/G14 notes: ACKNOWLEDGED (G14 is a recording gate, not headroom/HA).
+    - Kafka cleaner (G4): delete.retention.ms on md.latest.v2 is coupled to retention.tombstone_lifetime_ms and the
+      rebuild_horizon contract; NOT changed as a free topic knob. Design (contract change vs cleaner IO cap) under
+      evaluation; no Kafka CPU raise (T4 not met outside cleaner phases).
+    - Lock overlaps recorded: short correctness jobs of subagents overlapped other agents' lock windows (fix-dl-mark
+      17:28-18:13Z, fix-py 17:50-18:10Z and 18:23Z, EPG10-01 18:24-18:27Z; B15 overlay build under the kafka dump
+      lock 18:27Z); no timing claims made from the affected runs.
+  - 2026-10-16 01:45-01:50Z PRODUCTION (owner-approved via AskUserQuestion): (1) writer market_data_service_p184w B14
+    41b77d04 -> B16 d27db0cf (TS 5636e443: G2 slices/catch_up by source-before-activation, G7 BOOK_SNAPSHOT wait, G8
+    apply sub-units with the split-unit stamp fix) via roll_writer_campaign_native.py --set-env
+    MARKET_DATA_NATIVE_APPLY_MAX_ROWS=16 --set-env DATA_LAYER_V2_BOOK_SNAPSHOT_BATCH_MAX_WAIT_MS=0 (trace 600 s), OK,
+    1 not-ready sample, RestartCount 0; rollback compose = B14 in rc15/native-trace-roll. B16 isolated proofs 7/7 PASS
+    (~/.local/state/trading-system/p184-n1-opt-20261013/b16/proofs-receipt.json, incl. a real 64-row unit split 4x16,
+    duplicate_applied 0, all receive stamps). (2) stream_kn_1 then stream_kn_2 b095b18e -> baa72c96 (c934c1e SR1 exact
+    outstanding-record accounting, SR4 handoff counters), rollout_rc17_v2.py accepted, diff image, bundle unchanged;
+    post-roll metric lines: refused/overflow/handoff_* / reserve_exhausted all 0; writer 0 error lines; rust_core x3 0
+    retry/rebalance. Isolated A/B receipts live-budget-isolation-ab-20261015T191657Z-sr1-vs-{rc18,e3b5552}.
+  - Kafka md.latest cleaner (2eb77f8 evidence md-latest-cleaner-20261015/): markers are 100 % of surviving old
+    segments, but with min.cleanable.dirty.ratio 0.5 lowering delete.retention.ms to 24 h does NOT reduce cleaner I/O;
+    6 h ~ -37 %, 1 h ~ -46 % (inferred). md.latest.v2 never carries tombstones in production (products.rs:212-225).
+    The cleaner I/O throttle already exists at 4 MiB/s (set 10-14; v2.2.3 RELEASE_NOTES still says 8 MiB/s - stale).
+    Decision: A' - decouple md.latest marker lifetime from the bars tombstone contract (invariant "md.latest.v2 carries
+    no tombstones" in budget/golden + Rust guard test; packet allow-list), then a dynamic topic alter to ~6 h;
+    measure D21 per-product rebuild replay < 6 h first. B (3 MiB/s) not taken alone (small benefit, untested).
+  - 2026-10-16 02:05:37Z PRODUCTION (owner-approved via AskUserQuestion): A' applied - md.latest.v2 delete.retention.ms
+    604800000 -> 21600000 via scripts/kafka_md_latest_marker_retention.py --apply (c767b91; describe before/after,
+    other overrides unchanged). Dynamic topic config, no restart. Contract: bb15890 (budget state_topic_tombstones v1:
+    tombstone lifetime / rebuild horizon apply to md.bars.v2 only; md.latest.v2 carries_tombstones false; golden
+    state_topic_invariants; Rust guard md_latest_writer_never_emits_a_tombstone). D21 upper bound ~1,290 s per
+    partition pass (inferred) vs 6 h (>= 16x). Expected effect arrives gradually up to 7 d (markers already stamped
+    with a 7 d deleteHorizonMs keep it) - stage-100 #3 G4 is NOT expected to benefit yet. Rollback:
+    --rollback-to 604800000 --apply. Open: kn_state_topics_packet verify not rerun (needs the projector principal
+    argument; not located this session); stage-A key coalescing (29-48 % duplicate records per transaction, TRADE
+    79-88 %) measured, report-only, not designed.
+  - 2026-10-16 stage-100 #3 (02:45:30Z, ~/.local/state/qdl-v2/p184-final-campaign-20261016T024530Z; writer B16,
+    stream baa72c96, A' applied; Asia-hours load): protocol_met false - driver acceptance ts:ready_60_every_sample and
+    G9 FAIL (3 samples). Every other measured gate was inside its rule (G2 TRADE max 333/348 ms vs 7.5 s in #2, QUOTE
+    p95 168/177; G7 BOOK_SNAPSHOT sdk_to_writer p95 16.8 ms vs 105.5; G8 0 slowlog; G4 inside). RCA (read-only): no
+    heartbeat stall - one 30 s heartbeat snapshot (03:10:55.7Z) caught QUOTE OKX BNB-USDT-SWAP STALE (age 2.565 s >
+    2.0) during a quiet BBO; route never stalled (native slices 323/338 rows/min, source->ack max 222 ms); pricing
+    eligible 33/33; the sampler counted that one snapshot as 3 G9 samples. Margin defect in the native QUOTE
+    liveness accounting (probe bound/2 + 1 s report validity vs a 2.0 s sealed entitlement). Fix in progress: writer
+    diagnostics + margin fix (entitlement unchanged), G9/TS sampler dedupe by heartbeat identity. Status of #3:
+    diagnostic only (not certification).
+  - G12/G13 inheritance audit badee80: INHERIT G13 21/76 cells and core-group S2; the rest rerun on final digests;
+    v1-predicate G12 PASS receipts not credited (d54264e g12_receipt_creditable). Oracle fixes d54264e (G12 v3),
+    f7d6afa (DR05 generation from schedule), 2169c26 (DR08 identity-matched starvation). Coordinator decisions: G12
+    fault-window integrity layer is REPORT-ONLY (frozen G12 row unchanged; lossless TRADE remains G10); BAR overwrite
+    report-only; G12 precheck requires a native B16 WriterClone exposing trade_integrity.
+  - G12 broker-restart blocker RCA (32d2cf6): ~300 s after a broker returns, auto.leader.rebalance moves group/txn
+    coordinators; coordinator state load (1.4 s / 0.6 s in the harness) stalls the core's transactional commit ->
+    TRADE/QUOTE max 2.47/1.97 s. Client tuning insufficient. Production __consumer_offsets-43 (core group) ~1 GB of
+    24 h internal-topic retention (load time not measured). OWNER DECISION 2026-10-16 (AskUserQuestion): "C then B" -
+    C: measure lower delete.retention.ms on __consumer_offsets/__transaction_state on an aged-state harness, apply
+    dynamically if it holds; B: auto.leader.rebalance.enable=false on kafka1-3 (sequential recreate) + preferred
+    leader election as a declared maintenance step with its stall measured and recorded; G12 rerun with the same
+    config. Both after the isolated burst campaign (lock claude-burst-b16 until ~06:15Z).
+  - Isolated burst ladder (TEST_ONLY internal capacity) running 03:30Z-~06:15Z: prereg TS 3d9582de
+    contracts/baseline/rust-first-v2/p18/p184-burst-b16-prereg.v1.json (rules verbatim from R2C), images = production
+    pins; apparatus flag fix TS 42297916. Not venue latency, does not answer G4.
+  - Release packet prepared (no builds): DL ef6e24b upgrade/evidence/releases/v2.2.4/ (83 commits since v2.2.3; SDK
+    must be bumped to 2.4.1 before builds; stream baa72c96 and query rc19 are test overlays; ingestor/projector release
+    binaries differ from production) and TS d5a13aff upgrade/evidence/P184_WRITER_RELEASE_PACKET_20261016.md (canonical
+    image via Dockerfile --target runtime-rust-shadow; deploy/Dockerfile.market-data-native is stale; 10 TS commit
+    subjects fail validate_pr_governance.py - owner decision before the PR). Final certification runs on release
+    digests after rollout.
+  - 2026-10-16 B16 burst amendment-1 (owner-approved via AskUserQuestion): isolated harness consumer quota
+    max_buffer_events 1000 -> 2000 (scripts/p184_dr05_dl_fault.py) = production trading-system.paper.stable rev 11
+    entitlement (deployed stream bundle reader-public-r16, manifest sha 2d661d46). Parity only: the TS writer clone
+    still requests its own explicit depth (default 1000); the amended rerun sets 2000. No gateway, manifest or JWT
+    revision change. Tests: dr05_dl_fault/dr05_case/g12_isolated_fault 221 passed (rc16 python image, --network none).
+  - 2026-10-16 Kafka coordinator-load measurement (ee2c359; evidence ~/.local/state/qdl-v2/p184-g12-coordinator-load-20261016/):
+    production __consumer_offsets-43 (core group) = 1.65 GB, 14.31M transaction markers + 4.07M offset-commit records
+    (verified by read-only dump); markers live ~3 cleaner passes (~10-11 h apart). Harness warm-move load fit: ~8.0
+    us/offset-commit record + ~0.33 us/marker (510k records 2.1-3.5 s, 1.0M 4.9-6.2 s); 3M not measured (load blocked
+    by the classifier). Projection (inferred): a coordinator move today ~37.5 s unloaded; proposed C (1 h / 10 min)
+    ~2.2 s max. Production load lines absent (logs rotated). B readiness: roll --check ok, 0 URP, order kafka1->2->3.
+    OWNER DECISION (AskUserQuestion): "B + C 10 min" - C: __consumer_offsets delete.retention.ms=600000 +
+    segment.ms=60000, __transaction_state segment.ms=600000 (dynamic; rollback = delete overrides); projected max ~0.31
+    s unloaded / ~0.54 s loaded after ~49 h convergence (old 24 h horizons persist). Order: apply C after the current
+    isolated burst rerun; track partition-43 size; then B (sequential recreate, auto.leader.rebalance.enable=false,
+    declared preferred election with consumer stall measured) once the partition is small, bounded by convergence.
+    Watch: single cleaner thread (4 MiB/s) shared with md.latest (G4).
+  - 2026-10-16 final G12/G13 rerun preparation (no runs yet): 13ef59c - WriterClone precheck compares against the
+    deployed writer (docker inspect at run time; B17 matches), `--parity-snapshot` (rebalance from kafka1-3 env, C
+    from kafka_internal_topic_compaction.PLAN, A' from budget), `--run` requires `--production-parity` and applies C/A'
+    in the harness before baseline (STOP unless MATCH), g12_receipt_creditable requires MATCH and `--credit` refuses
+    runs on a stale profile, writer Redis CPU parity recorded, `--ts-root` pin; G13 dr05 checks deployed inventory.
+    ea0fa3ae - upgrade/evidence/releases/v2.2.4/g12-g13-final-rerun.md (commands, 12-point read-only pre-flight),
+    image sets, scripts/host_measurement_lock.py (+ tests). Order: G12 interim (rebalance=true, C+A') -> G13 isolated
+    -> G13 runtime (packet v5 draft; dr01-deployed needs CI on the final TS commit -> push after the approved governance
+    reword) -> B roll -> G12 final with --credit on the post-B snapshot. Known harness deltas recorded, not changed:
+    core 1 member 0.5 CPU (prod 3), kafka 0.75 CPU (prod 1.75), latest topic 3 partitions.
+  - 2026-10-16 12:53-14:28Z PRODUCTION Kafka sequence (owner-approved: "B ngay", temporary dirty ratio 0.05; lock
+    claude-kafka-b; receipts ~/.local/state/qdl-v2/p184-kafka-b-20261016/ and
+    ~/.local/state/qdl-v2/p184-g12-coordinator-load-20261016/pass-watch/):
+    - DeleteRecords force-trim was NOT possible (Kafka 4.2 ReplicaManager refuses internal topics); old markers were
+      already past their deleteHorizon, so a forced cleaner pass was used instead.
+    - 12:54:49Z min.cleanable.dirty.ratio=0.05 on __consumer_offsets; repeated passes shrank partition 43 from
+      ~1.65 GB / 18.4M records to ~230-260 MB / ~2.95-3.2M on all three replicas, plateau from ~13:50Z (above the
+      tool's self-chosen 32 MiB threshold; not pursued further). Group offsets before/after: 5/5 groups, no missing
+      or decreased offset. 14:12Z temp key removed (TEMP_NOT_PRESENT), C still APPLIED.
+    - B roll with manual HOLD gates (Codex F1): kafka1 14:14Z, kafka2 14:21Z, kafka3 (quorum leader + core group
+      coordinator) 14:25Z; each healthy ~20 s, ISR ~3.7-3.9 s, no other role restarted, writer demanded ==
+      session-ready in every sample, 0 eligibility losses, READY 64/64 between steps. Core commit stall max per roll:
+      2.5 s / 3.3 s / 5.2 s. FIRST REAL PRODUCTION coordinator load: __consumer_offsets-43 3,201,999 records /
+      267 MB in 4,783 ms (1,593 ms queued behind __consumer_offsets-24: 1.88M records in 1,592 ms) on broker 2.
+    - elect --scope data OK; final-check OK: env false x3, parity rebalance false, effective sha256 f4836dfc...
+    - Remaining: __consumer_offsets-43 and -24 still carry ~3M/1.9M records -> a coordinator move costs ~5 s today;
+      C keeps reducing it; tracked, not a gate change. G12 final launched next on the post-B config.
+  - 2026-10-16 15:42-15:59Z v2.2.4 release images built at c7ce7d3 (FINAL_STEPS b; locks claude-release-build
+    15:42:10-15:48:45Z and 15:54:25-15:59:19Z; receipts ~/.local/state/qdl-v2/build-v2.2.4-c7ce7d3/):
+    - rust qdl-v2-rust:2.2.4-c7ce7d3 60f83a51..., python qdl-v2-python:2.2.4-c7ce7d3 c21e164a...; receipt.json FAIL on
+      two whole-file expectations (kept unchanged): realtime-core == rc22 2d821673, ingestor == rc22 77ceeee1, python
+      files/pip freeze == rc19 except the git-derived set, ldd/uid/markers clean.
+    - Coordinator decision (owner-delegated): keep the images, amend by postcheck-addendum.json/.md. Projector vs rc22
+      EQUAL_LOADED_SECTIONS (all SHF_ALLOC sections byte-equal; .symtab/.strtab and the linker build-id note differ; the
+      only source change is the products.rs mod tests hunk). Gateway vs baa72c96 DIFFERENT_BUILD_PATH (TEST overlay built
+      with CARGO_HOME /usr/local/cargo, 986 registry paths each; gateway crate + path deps + Cargo.lock unchanged since
+      c934c1e) with behavioural proof: DR08 live-budget isolation A/B release vs baa72c96
+      (p184-n1-final-20261012/live-budget-isolation-ab-20261016T155455Z-release-c7ce7d3-vs-baa72c96, prereg d22561fe)
+      PASS, candidate idle closures 0/64, reserve_exhausted 0, deep resume lossless 3/3.
+    - SDK 2.4.1 wheel x2 --network none byte-identical 9f79e032..., contract digest 2ee96b1e; SDK tests (3 modules, 15)
+      OK in the release python image --network none.
+    - scripts/build_qdl_release_images.py: section-level verdicts (EQUAL_LOADED_SECTIONS, DIFFERENT_BUILD_PATH) with
+      reference binary extraction for future builds; tests added.
+  - 2026-10-16 17:13-17:53Z v2.2.4 PRODUCTION ROLL (FINAL_STEPS d; lock claude-dl-roll 17:13:22-17:53:21Z; summary
+    ~/.local/state/qdl-v2/releases/v2.2.4/rollout/roll-summary-20261016.json sha256 eefb041c...): one container at a
+    time, every role diff == ['image'], RestartCount 0, label c7ce7d3, cpus unchanged:
+    - query_kn_1/2 b9ca6c36 -> c21e164a (17:14:46Z, 17:18:01Z); stream_kn_1/2 baa72c96 -> 60f83a51 (17:19:56Z,
+      17:22:59Z, bundle 63efd9ff...); market_projector_1/2 ce629061 -> 60f83a51 (17:26:03Z, 17:32:21Z; T6 settle_ok,
+      0 rebuild/abandon/refuse/ownership_lost; groups -a/-b Stable 2 members 25/25 samples); ingestor_okx_swap
+      (0.5 cpu) 17:40:55Z, ingestor_binance_usdm (0.75 cpu) 17:47:08Z 7fba2577 -> 60f83a51, 5-min watch clean.
+    - Untouched: rust_core x3 (rc22 7c848aad), kafka1-3, stable_redis, market_cache, binance_bar_edge, TS writer B17.
+    - Row-2 HOLD criterion ("gateway refused/overflow/handoff counters 0") NOT met literally; disposition (coordinator):
+      roll kept, deviation recorded, no criterion change.
+      - overflow: 4 closures RESOURCE_EXHAUSTED (queue 1000), all on the writer's TRADE BINANCE BTCUSDT
+        subscription: 17:16:13Z on the old image, 17:34:03-08Z on new stream_kn_1. Pre-existing: hold-baseline.json
+        (old image, before any roll) already shows stream_kn_1 cumulative overflow 2; same pattern seen 11:11Z and
+        15:05Z without a roll (host load ~16/16, writer 140-176% CPU). Consumer-side slowness, not a gateway
+        regression; rolling back would not remove it. Tracked as open item for the canonical writer roll; overflow
+        under load is scored by the final stage-100 on release digests (no inheritance from this roll).
+      - refused: 3 on old stream_kn_2 at 17:20:02Z (41 subscriptions failing over) and 2 on new stream_kn_1 during
+        the stream_kn_2 roll; counter = auth/quota rejections (rust/qdl-stream-gateway/src/service.rs:357); clients
+        retried, 64/64 active, hub_live_budget_refused and all queue_isolation counters 0. Shared-quota-release
+        hypothesis NOT checked. Quiet 2-min window before ingestors: overflow 0, refused 0.
+    - Not run: query warmup/batch smoke (no consumer credential used); evidence is health READY RUST_PRIMARY, writer
+      READY 64/64, 0 new error lines. Stream subscriptions now 64/0 across stream_kn_1/2 (was 41/23).
+    - Status: production-deployed, not certified. Open: G12 final on release set, G13, final stage-100.
+  - 2026-10-16 18:35-19:14Z final G12 / G13 isolated on the deployed release set (FINAL_STEPS a' and e; Claude
+    subagent; run worktrees DL 860b79ba (image sets regenerated from docker inspect: g12-image-set-v224.json sha256
+    baab6eb5..., g13-roles-v224.json 31e0716b...) and TS 77a6d671 (canonical writer label; ae2bc7fe/1dde708e on top
+    change only the release tool, its test and the TS plan)):
+    - Image set: core rc22 7c848aad, projector + stream 60f83a51 (qdl-v2-rust:2.2.4-c7ce7d3), python c21e164a
+      (qdl-v2-python:2.2.4-c7ce7d3), ts canonical writer 7c71e3af, kafka 9516fb76, redis dfa18828, postgres cf78e766,
+      holder d9e853e8. Harness unit tests in the release python image (--network none): 363 OK (5 skipped).
+    - G12 FINAL: PASS and CREDITED. Lock "claude P18.4 G12 v224 final-release 20261016T183459Z" 18:35:00-19:05Z;
+      receipt ~/.local/state/qdl-v2/p184-g12-v224-final-release-20261016T183459Z/ (verdict.json sha256 000df3e8...,
+      schema p184.g12.verdict.v3, status COMPLETED, verdict images == the image set). Faults, caught_up_s
+      BINANCE/OKX: broker_stop_start (node 3) 0.241/0.242, projector_restart 0.226/0.226, stream_restart 0.932/0.934;
+      every fault G1/G2 (TRADE, QUOTE, MARK)/G3/monitor/sampler PASS; integrity layer report-only NOT_MEASURED.
+      Run profile rebalance false + C + A'; production_parity MATCH; writer precheck clone_env == deployed (canonical
+      writer, Redis UNCAPPED). Effective Kafka observation v2 (incl. cleaner keys) sha256 d3d77176... in both the
+      pre-run snapshot (production-parity.json 46a688e4...) and the credit snapshot (credit-snapshot.json 03b72e19...,
+      Codex K3); `--credit` exit 0: creditable true, reason PASS, cleaner_binding RUN (cleaner default 4 MiB/s).
+      C observed APPLIED with no drift before the run (c-observe.json). Teardown 12 removed, 0 left, clone state
+      erased. Harness deltas unchanged and not claimed (1 core member 0.5 CPU, kafka 0.75 CPU, latest 3 partitions).
+    - G13 isolated (lock "claude P18.4 G13 isolated v224 release 20261016T190612Z" 19:06:12-19:14Z; receipts
+      ~/.local/state/qdl-v2/p184-g13-20261016T190623Z/, summary.json ef2c65dd...): dr08-isolated 4/4 cells CLOSED
+      (W05 verifier in the canonical image, verify/w05-isolated.json 5be864d5..., no provenance/drift issue);
+      **dr05-upstream FAIL 0/6** - every cell aborted with RuntimeError ('docker','exec','-i') -> 137 (one -> 128):
+      the probe exec into the TS writer clone was SIGKILLed / could not start, i.e. the clone container went away
+      during the probe ~25 s into each case; no DR05 assertion was evaluated. STOPPED, no rerun (not clearly an
+      infrastructure fault). Root-cause reading (inferred, not verified: the clone's stderr dir is removed by
+      WriterClone.close() and the exec failure path does not capture stderr_tail): this is the first dr05-upstream on
+      a native-writer env (earlier PASSes were Python writers 2beedc04-era). TS scripts/p184_dr05_isolated.py
+      WriterClone copies the deployed env incl. MARKET_DATA_NATIVE_REQUIRE_RESUME=1 onto a fresh tmpfs /app/state
+      without the bootstrap -> strict-restart lifecycle that the G12 clone gained in 968d5f2 (same class as the G12
+      stop "TS clones never applied", HANDOFF_RESUME_REQUIRED). Proposed (owner/coordinator decision): apparatus fix in
+      the TS DR05 clone (bootstrap/strict lifecycle mirroring G12, keep stderr on any exec failure), tests, then one
+      dr05-upstream rerun on the same pins. Production untouched (writer/stream/core/kafka RestartCount 0).
+    - G13 runtime window NOT run: packet v5.1 drafted (p1/packet-g13-v5.1-20261016.md; g13v51/make_g13v51.py =
+      v5 with the 7 TS role images B17 -> 7c71e3af only, compose 91b96268..., inputs-ci 0dd8fa35... with CI run
+      38940466654 per coordinator - not independently verified, no gh/token on the host). Runtime dry run exit 0,
+      blocked {}, 6 steps / 66 cells, coverage 76/76. It needs owner approval (sidecar) and writes test-scoped rows
+      to live_data_executor (FX seed, runner accounts) - outside this subagent's read/observe scope.
+    - Cleanup: 0 p184-/ts-p184 containers, networks, volumes left; run worktrees data-layer-p184-final-run-860b79ba
+      and trading-system-final-run-77a6d671 kept clean (needed by the dr05-upstream rerun and the runtime window).
+      A stale trading-system-final-run-68f2572f (pre-reword pin, not created here) remains.
+- 2026-10-16 19:30-19:50Z G13 dr05-upstream reset fix, TS clone strict-resume lifecycle, rerun PASS 6/6 (Claude subagent):
+  - Reset failure cause (receipt p184-g13-20261016T192640Z, control/reset-30a11fa3....json): ResetStageError
+    stage=reset_topics, KafkaException UNKNOWN_TOPIC_OR_PART raised by a concurrent future inside DL
+    scripts/p184_dr05_reset.py reset_topics. Verified only to that level: the stderr tail is cut at 240 chars, the
+    broker was removed by --down and the work dir holds no broker log, so the receipt does not show which topic or
+    which call raised it. reset_topics had two calls that can raise it: delete_topics (topic absent) and
+    describe_topics right after create_topics (KRaft metadata propagation lag). The earlier reading "a topic did
+    not exist at the first reset" stays unverified. All three topics are created at --up
+    (p184_dr08_isolated.prepare_topics).
+  - DL fix d03cd679 (apparatus only): a topic that delete reports as UNKNOWN_TOPIC_OR_PART counts as already deleted
+    (listed in already_absent). describe after create retries UNKNOWN_TOPIC_OR_PART only until the deadline. The
+    post-state is verified: all three topics present with 1 partition / 1 replica, and the canonical topic id
+    changed. Every other Kafka error still raises, and group deletion still tolerates only GROUP_ID_NOT_FOUND.
+    The harness runs the script from the sealed `git archive <dl_sha>` export, mounted at /app in the helper
+    (p184_dr05_dl_fault.helper_command), so it is not the image copy. The release images did not change.
+    Tests: in qdl-v2-python:2.2.4-c7ce7d3 (--network none), test_p184_dr05_{reset,case,channel,dl_fault} = 93 OK
+    (5 new). g13-roles-v224.json is unchanged (sha256 31e0716b...); the only files changed between 860b79ba and
+    d03cd679 are the plan and these two files.
+  - TS fix ba096818 (apparatus only): WriterClone runs a bootstrap -> strict lifecycle when the clone keeps native
+    feeds and the deployed env sets MARKET_DATA_NATIVE_REQUIRE_RESUME=1. This is the dr05-transport clone of the
+    deployed source, which keeps TRADE,QUOTE. Without the lifecycle, session.rs:545 (requires_resume &&
+    restored.is_none()) refuses HANDOFF_RESUME_REQUIRED. The lifecycle mirrors DL 968d5f2/965f080:
+    - A durable state dir is bound at the deployed cursor-root bind (/app/state/data-layer-v2). BOOTSTRAP
+      differs from the deployed env by that flag only (=0); the delta is checked.
+    - The clone stops cleanly (exit 0), and a --rm holder inventories the native fixed-worker checkpoints.
+    - The clone restarts with the exact deployed env. VERIFIED means views are fresh after the strict start and
+      there are 0 HANDOFF_RESUME_REQUIRED lines.
+    - Bootstrap is not scored; writer_lifecycle is recorded in the cell detail.
+    - dr05-upstream refuses (DR05_CLONE_STRICT_LIFECYCLE_REQUIRED) any per-case clone that would need the
+      lifecycle. Its BOOK-only binding narrows the native feeds to none.
+    No oracle, predicate, schedule or threshold changed. Tests: host overlay 71 passed, 1 known host-only failure
+    (no redis module, also failing at 77a6d671); in 7c71e3af --network none 70 passed, 2 skipped (DL repo not
+    mounted). The dr05-transport lifecycle has not run against real Docker yet; its first real run is the
+    runtime window.
+  - Prereg note (extends the 73e7bfe8 note): contracts/baseline/rust-first-v2/p18/p184-burst-b16-prereg.v1.json
+    amendment-1 pins p184_dr05_isolated.py sha256 3c9a21d8.... ba096818 changes that file again. No script
+    enforces the pin. B16 receipts stay valid at the pinned revision, and a B16 rerun needs that revision or a new
+    amendment.
+  - Rerun ONCE under lock "claude P18.4 G13 dr05-upstream rerun d03cd679 20261016T193816Z" (19:38-19:45Z,
+    released). Command shape as 192640Z, with DL run worktree data-layer-p184-final-run-d03cd679,
+    --dl-source-sha d03cd679, --ts-root trading-system-final-run-ba096818, --ts-source-sha 77a6d671, writer
+    7c71e3af, python 2.2.4-c7ce7d3, roles-v224, inputs g13v51/inputs-g13v51-ci.json, --only dr05-upstream.
+    Receipt ~/.local/state/qdl-v2/p184-g13-20261016T193828Z/: summary.json d24f476f..., plan.json 22161735...,
+    dr05-upstream/receipt.json 3413eaa4..., rows f1d288d9.... **PASS 6/6** (GAP_REFUSAL and
+    GENERATION_CHANGE_FENCED x BINANCE/OKX/OKX_INVERSE), 339.8 s, exit codes [0,0,0,0,0], harness_ok, dl_source
+    removed. Teardown: --down removed 5 DL roles. Afterwards 0 p184-/ts-p184 containers/networks and 0
+    /tmp/p184-dr05-* dirs. Production writer 7c71e3af kept RestartCount 0.
+  - G13 isolated is now complete on the release set: dr08 4/4 (190623Z) + dr05-upstream 6/6 (193828Z) = 10/10.
+  - Runtime window (packet v5.1) NOT started; it stopped at gate 0.10.
+    - Gate 0.10 needs a Codex review of the DL runner commit or an owner waiver. P184_CODEX_CONTRIBUTIONS.md
+      (last updated 15:14Z) has no review of 860b79ba, d03cd679 or ba096818, and no waiver is recorded.
+    - The window would also run from new pins: RUN_DL d03cd679 (instead of 860b79ba) and RUN_TS ba096818 (instead
+      of 77a6d671), and dr05-transport would run the new clone lifecycle.
+    - The inputs, compose and FX plan have no TS/DL pin and are unchanged (inputs-ci 0dd8fa35..., compose
+      91b96268..., fx plan 8e8494f7...).
+    - TS delta 77a6d671..ba096818: the dr05 scripts and tests, the release tool (ae2bc7fe), and the plan.
+    - Runtime dry run with the new pins: exit 0, blocked {}, 6 steps / 66 cells, coverage 76/76, est 39 min,
+      timeouts 95 min.
+    - Gates checked read-only: 0.1 (d03cd679 contains 13ef59c and 3bb6bee), 0.5 (all images present), 0.9
+      (writer 7c71e3af, 0 restarts, started 18:30:37Z), load1 14.5, 196 GB free.
+    - Next: an owner/Codex decision on gate 0.10 and the pin delta. Then run the window from the main session; a
+      subagent runtime attempt was classifier-refused before, as recorded on 2026-10-13.
+- 2026-10-17 02:43-03:14Z G13 runtime window, packet v5.2 (owner-approved; Claude subagent): STOPPED at 74/76, 2 DR05
+  QUIET_TYPED cells NOT_OBSERVED. No rerun, because this is not an infrastructure fault.
+  - Packet p1/packet-g13-v5.2-20261017.md sha256 3f9a318d... = sidecar (checked before start). Read with all its
+    layers: v5.1, v5 section 3, v4.2 sections 6-8, v4.3 alpha compose, and the v2 step-2 snippets.
+  - Pins: run worktrees DL d03cd679 (data-layer-p184-final-run-d03cd679) and TS ba096818
+    (trading-system-final-run-ba096818). Both are pristine before and after (status --ignored = 0 lines). Other
+    pins: --ts-source-sha 77a6d671; writer/roles/seed/DR07/verifier image W = 7c71e3af; roles g13-roles-v224.json
+    31e0716b...; python ref qdl-v2-python:2.2.4-c7ce7d3 (= c21e164a). Files: compose g13v51 91b96268..., inputs-ci
+    0dd8fa35..., alpha compose v4.3 96225365... (all re-hashed in the window).
+  - Gates:
+    - 0.1: d03cd679 contains 13ef59c and 3bb6bee.
+    - 0.3: before the lock, a foreign codex ssh/remote cargo process was seen; it was waited out by the lock tool.
+      load1 at start 10.8-14.7; 221 GB free.
+    - 0.4: deployed_mismatches = []; checkout_problems = []; dry run exit 0, blocked {}, 6 steps / 66 cells,
+      coverage 76/76 (missing []).
+    - 0.5: all images present.
+    - 0.6: CI 38940466654 per coordinator, not independently verified.
+    - 0.9: writer market_data_service_p184w on 7c71e3af, restarts 0, started 18:30:37Z. Its env view (14 keys)
+      equals the writer of the G12 release parity snapshot p184-g12-v224-final-release-20261016T183459Z. This
+      came from writer_reference() on a live docker inspect, without a new full --parity-snapshot (that would run
+      a Kafka admin container).
+    - 0.10: owner waiver, recorded in v5.2.
+  - Lock "claude P18.4 G13 v5.2 window (packet-g13-v5.2-20261017)" 02:45:39Z-05:15:39Z (150 min), taken by
+    host_measurement_lock.py acquire and released 03:14:19Z (file absent).
+  - Step 2 (read-only): B9 migrations 99/99, pending [] and mismatch []. B16 open native orders {} (expected
+    binding digest 9c6ff115..., 10 accounts). B14 DNS 4/4. INDEX BINANCE:USD_M:BTCUSDT present=false (recorded;
+    FX_PROOF still passed). B10 CA alpha-binance = alpha-okx = TS fc24c047... Bind sources 55 present (8 identity
+    files checked with alpine test -s). No residue.
+  - Step 3: FX seed g13r5fx01 FX_PROOF_SEED_COMMITTED, writes 4. Step 4: preflight_env PASS on both composes;
+    compose config exit 0.
+  - Step 5: ts-p184 up 02:48:33Z with 8 containers, 0 restarts, 7 roles on 7c71e3af. Gateway /v1/health 200 and
+    "Gateway V3 Online". Counts of Traceback, 401, UNAUTHENTICATED, WRITER_NATIVE_ACCOUNT_BINDING_MISMATCH and
+    NATIVE_ACCOUNT_NOT_IN_DURABLE_CANARY are all 0. The Gateway writer scope holds the 4 g13r5wa20261016 accounts.
+  - Step 6: B12 4/4 = 1.
+  - Step 7: alphas up 02:49:05Z, 2 running, 0 restarts. Warmup 700 rows on both venues; no new
+    data-source.jsonl/BLOCKED row; 0 non-200; 0 orders for the BB accounts.
+  - Step 7b: FX snapshot at 02:48:38Z with validated_at_ms set and 1 rate.
+  - Runner (receipts ~/.local/state/qdl-v2/p184-g13-20261017T025058Z/; summary.json 9facfac0..., plan.json
+    95ce8043...), 02:50:58-03:11:06Z, exit 0. Every step has harness_ok and exit codes all 0:
+    - dr01-deployed 7 cells, 27.0 s
+    - dr01-wrong-account 2 cells, 4.7 s (cleanup complete)
+    - dr02-dr03-alpha 14 cells, 506.1 s
+    - dr04-dr06-views 22 cells, 610.1 s
+    - dr05-transport 9 cells, 52.7 s
+    - dr07-reference 12 cells, 4.5 s
+    The sealed export tree is 263bd8ed... and was removed.
+  - W05 verifier in 7c71e3af (--network none), --expect-source-sha 77a6d671, --expect-image-digest 7c71e3af.
+    Inputs: the 6 runtime jsonl, dr08 evidence.jsonl (190623Z, cc51741a...) and dr05-upstream rows (193828Z,
+    f1d288d9...). Output verify/w05-final-76.json 2b2f365e..., exit 1: **74/76 G13 cells closed**.
+    - Per case: DR01 9/9, DR02 8/8, DR03 6/6, DR04 14/14, DR05 15/17, DR06 6/6, DR07 12/12, DR08 4/4.
+    - Per step: dr01-deployed 7/7, dr01-wrong-account 2/2, dr02-dr03 14/14, dr04-dr06 20/22, dr05-transport 9/9,
+      dr07 12/12, dr05-upstream 6/6, dr08 4/4.
+    - Open: DR05.QUIET_TYPED@BINANCE and @OKX, CASE_BELOW_REQUIRED_LEVEL. The rows are level RUNTIME, outcome
+      NOT_OBSERVED, ok true. During the 300 s window every TRADE view stayed LIVE (5 symbols per venue), so no QUIET
+      state appeared. TS scripts/p184_dr_views.py:200-231 defines this as "NOT_OBSERVED, never a pass".
+    - The same NOT_OBSERVED appears in every earlier dr04-dr06 run (20261010T134219Z, 20261011T045533Z,
+      20261011T140432Z). The matrix also notes "TRADE is not granted" for DR05.QUIET_TYPED (p184_case_matrix.py:248).
+    - Not relaxed and not rerun: a liquid live market does not go quiet in 300 s, so this is not an infra fault.
+      Deciding how these 2 cells close is an owner/coordinator matter (e.g. an isolated-fault producer for QUIET,
+      or a case-matrix decision). It is not a window operator's call.
+  - dr05-transport writer lifecycle, all 3 scopes (BINANCE/OKX/OKX_INVERSE):
+    - phase STRICT, strict_resume VERIFIED;
+    - bootstrap exit 0 (bootstrap_env_delta MARKET_DATA_NATIVE_REQUIRE_RESUME 0 -> 1 only);
+    - native_checkpoints non-empty (cursors/fixed-workers-v1/native-4/trading-system.paper.stable.json);
+    - bootstrap_refusals and strict_refusals count 0.
+    Known non-blocking review note: the HANDOFF_RESUME_REQUIRED count reads /tmp/logs (log_tail) only, while native
+    stderr goes to /tmp/writer-stderr/stderr.log. Supplementary: no stderr_tail was kept, because exit_record is
+    written only when the clone writer is no longer running, and the strict clones stayed up. HANDOFF_RESUME_REQUIRED
+    occurs 0 times in dr05-transport receipt.json and harness.log; stderr itself could not be grepped.
+  - Abort watch (30 s polling) during the runner: no writer or DL role restart, no foreign container, no 5-min
+    load1 > 16, 0 QUOTA/RESOURCE_EXHAUSTED lines in the production writer log.
+  - Teardown:
+    - alpha compose down: 2 containers removed.
+    - ts-p184 compose down: 8 containers and network ts-p184-private removed.
+    - FX g13r5fx01 FX_PROOF_SEED_DEACTIVATED (3 x UPDATE 1).
+    - The wrong-account probe's own finally deactivated its rows (4 accounts, 2 alphas, 2 strategies).
+    - DSN env file p1/r2/dr07-postgres.env and p1/r2/ removed.
+    - Afterwards: 0 ts-p184 / p184-g13- / p184-dr05- containers, networks or volumes; 0 /tmp/p184-dr05-*.
+    - Writer 7c71e3af still has 0 restarts, and every DL role has 0 restarts. Disk +58 MB (bind logs/state).
+    - Run worktrees kept, clean.
+  - Status: G13 = 74/76 tested in the runtime window on the release set. NOT complete: 2 QUIET_TYPED cells are open.
+- 2026-10-17 03:20-03:48Z FINAL stage-100 on the v2.2.4 release digests, G4 observer v5 (FINAL_STEPS f; Claude
+  subagent): **protocol_met false**. The guard stopped the driver at 03:43Z (QUOTE OKX BTC-USD-SWAP STALE). No rerun.
+  - Apparatus: DL run worktree data-layer-p184-final-run-d03cd679 (d03cd679). It contains aee0945 and the G9/TS sampler
+    heartbeat dedupe 1e09f87. The data-layer-p184-s100-7285868 worktree (aee0945) does NOT contain 1e09f87, so it is
+    not the FINAL_STEPS pin. Between aee0945 and d03cd679 the campaign tool, the G4 observer, the budget and the G4
+    addendum are byte-equal to #3 (sha256 cf26d6e3 / ff4f5989 v5 / ff85335b / 4ed59dca). Command shape as #3
+    (`run --g11 --base-profile .../profile-stage100-rc4-r16.json`). The dry run blocked only on the expired trace.
+  - Production identity (docker inspect at start): query x2 c21e164a, stream x2 / projector x2 / ingestor x2
+    60f83a51, core x3 rc22 7c848aad, writer 7c71e3af. Every DL role RestartCount 0 before and after.
+  - Lock "claude-s100-final-v224", 03:20:16Z to 03:48:15Z (released; wrapper exit 2 printed RELEASED and the file was
+    absent afterwards). Taint watch, 30 s: no foreign container (only the campaign's own g4obs-1/-2), 0
+    cargo/pytest/rustc/docker-build processes, load1 max 22.05 (production load; no foreign job). Run is not tainted.
+  - Production actions, all inside the protocol:
+    - Writer trace re-arm with rc15/roll_writer_campaign_native.py 7c71e3af 3600 (owner-approved 2026-10-14,
+      same image). Delta exactly TS_DELIVERY_TRACE_UNTIL_UNIX_NS; status OK; 1 not-ready sample; recreated
+      03:21:03Z. Rollback compose: rc15/native-trace-roll/rollback-*. preflight_env PASS in /home/bobby/trading_system.
+    - G11 coordinator restart `docker restart --timeout 35 market_data_service_p184w` at 03:44:36Z (watcher).
+      Writer READY 64/64 afterwards, RestartCount 0, started 03:44:40Z.
+  - Receipts in ~/.local/state/qdl-v2/p184-final-campaign-20261017T032230Z/:
+    - scorecard.json 63330fed...; campaign.json 23dcecd3...; g9g10/g9-g10-summary.json da419770...;
+      g11/g11-summary.json 32e43127...; g4-1-summary.json 67ac1158...; g4-2-summary.json 91e589ad...;
+      guard.log 6fb518b4...; timeline.jsonl aa95a64c....
+    - Next to the dir: .run.log 8f41007b... and .g11-watcher.log 5ae9261a....
+  - protocol_problems: "no driver receipt" and "driver acceptance not PASS: no gates". The guard (guard_v2.sh: 3
+    consecutive non-"READY 64 64" samples) sent SIGINT at 03:43Z. The driver exited code -2 at 03:43:00Z, 20.4 min
+    into the 30 min load. G4 windows 3-5 were skipped.
+  - Verdicts, frozen rules unchanged, nothing upgraded:
+    - G9 FAIL. 7 distinct heartbeats with demanded != session-ready (63/64), all QUOTE STALE:
+      - OKX BTC-USD-SWAP at 03:31:38, 03:36:39, 03:38:39, 03:41:09, 03:42:09 and 03:42:40Z;
+      - OKX BNB-USDT-SWAP at 03:35:38Z.
+      There are 4 data-path eligibility losses, QUOTE EXECUTION_CONTEXT_STALE on BTC-USD-SWAP, component age
+      2517/2664/4435/2546 ms. v1_fallback 0. Legit quiet TRADE refusals 29 (report-only).
+    - G4 FAIL, on two rows. The observed windows are 1 and 2, both outside the protocol, which can FAIL but not PASS.
+      - bar|BINANCE|1m: window-2 p95 258.133 ms (bucket lower bound 258.0) over limit 257.6, n=15.
+      - book_snapshot|OKX_INVERSE (addendum max rule): window-2 max 300.788 ms over limit 300.7, n=182.
+      - Every other row is inside its limit.
+    - G11 PASS (oracle v2). Outage 0.138 s. first_valid_apply / caught_up max 20.096 s, p95 4.615 s, n=64. 0
+      rewinds, 0 future events, 0 cursor-ahead.
+    - NOT_MEASURED: G1/G2/G7/G10 (no load window, so no trace analysis); G3 (inside the rule: p95 1524 ms, max 2907 ms,
+      but outside the protocol); G5 (no driver gates); G6; G8 (no steady window; slowlog 0, PING p99 1.27 ms, core
+      fraction <= 0.08); G14 (no host.json); G12/G13 (not part of this campaign).
+  - Gateway and writer overflow during the run (03:22:50Z to 03:44:35Z, before the G11 restart):
+    - stream_kn_1 cumulative overflow 3 -> 3 and refused 2 -> 2; stream_kn_2 0 -> 0 and 0 -> 0.
+    - hub_live_budget_refused 0; every queue_isolation counter 0.
+    - Every qdl_kn_subscription_closed in the window has outcome "ended".
+    - The pre-existing TRADE BINANCE BTCUSDT RESOURCE_EXHAUSTED pattern did NOT recur. Its 3 closures in the stream_kn_1
+      log are all from 17:34Z on 2026-10-16. The writer docker log had 0 RESOURCE_EXHAUSTED lines.
+    - Native trade_integrity over the bracket: overflow 0, slow_consumer 0, gaps 0, duplicates_applied 0, applied
+      158,893.
+    - Query: 103 RATE_LIMITED refusals (52 + 51). All are on /warmup, about half with REPLICA_LANE_BUSY. None is for
+      instrument 8482b54b (OKX BTC-USD-SWAP, mapped from the gateway physical_key).
+  - Root-cause reading (G9), partly verified:
+    - Verified: the deployed writer contains the QUOTE OBSERVE bound/3 probe fix (TS 1de2a694 is an ancestor of the
+      77a6d671 label).
+    - Verified: no gateway overflow, refusal or abnormal closure.
+    - Verified: no Query refusal for that instrument.
+    - Not verified: probe RTT, and whether Query served the BTC-USD-SWAP QUOTE as eligible in those seconds. The
+      root-owned native summary was not analysed per route, because another agent's lock started at 03:48:38Z.
+    - So the bound/3 margin fix did not remove the STALE in this run, and the 4.4 s component age is beyond what probe
+      cadence alone would explain (inferred).
+    - Also, guard_v2.sh counts each 30 s heartbeat snapshot up to 3 times; 1e09f87 deduped only the G9/TS samplers.
+      The stop here came from two consecutive DEGRADED heartbeats (03:42:09 and 03:42:40Z), so a deduped guard
+      would still have counted 2 bad snapshots. The guard rule is frozen; it is recorded here, not changed.
+  - Lock overlap (AGENTS 34a): at ~03:49Z this subagent ran one --rm --network none container
+    (qdl-v2-python:2.2.4-c7ce7d3, about 2 s, read-only summary key listing) inside the lock "claude P18.4 G13
+    dr05-quiet 20261017" (from 03:48:38Z), before re-reading the lock. No timing claim of that run should rely on that
+    second.
+  - Cleanup: 0 temporary containers left (the 2 g4obs containers were removed by the tool). 0 networks/volumes and
+    0 images created. 2 background watcher scripts in the session scratchpad were stopped. The run worktree was used
+    read-only and has no residue.
+  - Status: FINAL stage-100 = NOT certified (protocol_met false; G4 and G9 FAIL). Next (owner/coordinator): RCA of
+    QUOTE OKX BTC-USD-SWAP staleness from the native summary and Query probe evidence, then a decision on the fix.
+    No rerun under a changed rule.
+- 2026-10-17 03:20-04:27Z G13 DR05.QUIET_TYPED amendment-1 (owner-approved): producer built, one isolated run, STOPPED at
+  NOT_OBSERVED. G13 stays at 74/76 (Claude subagent).
+  - Owner decisions (AskUserQuestion, relayed): ~03:20Z "Amendment ISOLATED_FAULT (Recommended)", and ~03:25Z option A,
+    "map to the real view vocabulary".
+  - Why A was needed (source-verified):
+    - Since 79fd1ffb, the runtime predicate in scripts/p184_dr_views.py quiet_typed() tested
+      `"QUIET" in {event_recency_state, state}`. That can never match.
+    - The writer view has no QUIET state: rust/crates/market-data-writer/src/view.rs STATES, and its quality validation
+      admits event_recency_state LIVE/STALE/NOT_APPLICABLE only.
+    - The Data Layer emits no "QUIET" either (rust/qdl-core/src/quality.rs, qdl/data_quality/binding_decision.py).
+      QUIET_SESSION is a semantics. The view itself says state LIVE + event_recency_state STALE.
+    - QUIET exists only as a slice-health state of the writer. No test covered the matching branch. Recorded as IDR-109.
+  - TS 1401ccb1 (feat/v2-rust-first-okx-demo):
+    - Frozen contracts/baseline/rust-first-v2/p18/p184-r2-case-matrix.v2.amendment-1.quiet-typed.json, sha256 field
+      3d23eb57.... It adds ISOLATED_FAULT for DR05.QUIET_TYPED@BINANCE/@OKX only. Such a row is credited only with
+      detail.predicate_id p184.dr05-quiet-typed.view-vocabulary.v1. v2 is not edited (30dbd037...).
+    - load() applies the amendment; the effective cell digest is 61c292b8.... W05 also checks
+      CASE_MATRIX_AMENDMENT_DRIFT (the verifier changed).
+    - New predicate quiet_view_findings: STALE recency, state LIVE, provider session LIVE within the binding bound,
+      flags subset of {LAST_EVENT_STALE}, not execution eligible. Plus the cross-check quiet_health_findings: the
+      writer heartbeat shows the slice QUIET.
+    - The runtime probe now records such a view as NOT_OBSERVED (no slice identity on the shared writer).
+    - New producer scripts/p184_dr05_quiet.py.
+  - DL 6506d011 (fix/p184-dl-closure):
+    - scripts/p184_dr05_quiet.py:
+      - --seal: one TRADE lane per linear DR05 scope, with the TS paper r10 TRADE requirement (OBSERVE,
+        max_session_liveness_ms 45000).
+      - --query: the DR05 Query reading provider-session liveness from /work/session-liveness.
+      - --channel: a synthetic qdl.provider-session-liveness.v1 heartbeat every 0.5 s plus a trade publisher.
+    - p184_dr05_dl_fault picks that Query only for sealed material.
+    - p184_g13_final adds the isolated step dr05-quiet, the amended second producer of the two cells.
+  - Tests:
+    - TS in 7c71e3af (--network none, pytest-site mounted): 139 passed, 2 skipped (DL repo not mounted). This includes
+      the static W05 verifier test.
+    - DL in qdl-v2-python:2.2.4-c7ce7d3 (--network none): 376 OK, 1 skipped (dr05 quiet / g13 / dr05 / g12 modules).
+    - Host-only failures are missing modules: redis, httpx, qdl_sdk.
+  - Run worktrees (clean, detached): trading-system-final-run-1401ccb1, data-layer-p184-final-run-6506d011.
+  - Lock "claude P18.4 G13 dr05-quiet 20261017": taken 03:48:38Z after the stage-100 lock cleared, renewed at
+    04:20:00Z, released at 04:27Z (file absent).
+  - Run 1, receipt p184-g13-20261017T040244Z: INTERRUPTED, not scored.
+    - The owning session ended at ~04:05:03Z mid-BINANCE case, and the host driver and the channel died with it.
+    - The heartbeat file was last written at 04:05:02.97Z. The rows file holds only the provenance header.
+    - Afterwards the orphan clone's native TRADE worker stopped 6x with DATA_NOT_READY and its restarts were exhausted.
+      That is a consequence of the stopped heartbeat, recorded unscored.
+    - INTERRUPTED.json sha256 832f0684.... Evidence is kept in interrupted/.
+    - Teardown via the harness: --down removed 5 DL roles, plus clone writer/pg/redis 23284b12, its state/log dirs and
+      the dl-source export. 0 networks and 0 volumes from this run.
+  - Run 2, receipt p184-g13-20261017T042015Z (detached setsid run, same pins, 04:20:15-04:26:07Z):
+    - Receipt files: summary.json fa2e5f29..., plan.json bd32dc0c..., dr05-quiet/receipt.json 038de026..., rows
+      960f1102....
+    - Exit codes [0,0,0,0,1,0]: the runner exits 1 unless both cells are OBSERVED ok. harness error none.
+    - Lifecycle per scope: bootstrap exit 0, native checkpoint written, strict_resume VERIFIED, strict refusals 0.
+    - Positive control fresh. Fault: trades stopped (BINANCE 29, OKX 33 published and acked, 0 errors), with the
+      heartbeat kept LIVE.
+    - Both cells ISOLATED_FAULT NOT_OBSERVED, VIEW_NEVER_LEFT_FRESH (90/89 samples over 120 s).
+    - Verbatim last sample, BINANCE (OKX is the same shape):
+      - The view kept the last trade's quality: state LIVE, event_recency_state LIVE, execution_eligible true,
+        freshness_ms 29, provider_session_liveness_ms 29, observed_at = the last trade (116 s old).
+      - The writer slice health typed the TRADE slice STALE, not QUIET: age_seconds 116.4, session_age_seconds 116.4,
+        provider_session_liveness_ms 0, event_recency_state LIVE. quiet_session_v2_slices 0.
+    - So no Query probe renewed the session evidence within the window.
+    - Reading (inferred, not verified): either the native TRADE probe (bound/3 = 15 s cadence) was refused or skipped
+      (e.g. SkippedOffset in session.rs), or the isolated Query did not serve the quiet TRADE snapshot. The clone and
+      the Query logs of run 2 were removed by the harness cleanup, so this cannot be decided from the receipt.
+    - STOPPED as briefed. The predicate was not adjusted and the step was not rerun.
+  - W05 verifier (run-worktree 1401ccb1 code, in 7c71e3af --network none; --expect-source-sha 77a6d671,
+    --expect-image-digest 7c71e3af):
+    - Inputs: the 6 runtime jsonl (025058Z), dr08 evidence (190623Z), dr05-upstream rows (193828Z) and the run-2 quiet
+      rows.
+    - Output verify/w05-final-76-amendment1.json d853d673..., exit 1: 74/76 DR cells closed. The only DR issue is
+      CASE_BELOW_REQUIRED_LEVEL on both QUIET cells.
+  - Production untouched: market_data_service_p184w is on 7c71e3af with 0 restarts (started 03:44:40Z, the stage-100
+    campaign's own restart). Afterwards: 0 p184- containers or networks, 0 /tmp/p184-dr05-*.
+  - Status: amendment and producer implemented and tested locally; the isolated cell is NOT closed.
+  - Next: owner/coordinator decision on a diagnostic rerun that keeps the clone and the DL Query logs (native_probe
+    counters in the worker health, the Query TRADE snapshot reply) to find why no probe renewed the session. This would
+    be an apparatus change, and the predicate stays as amended.
+- 2026-10-17 DR05 quiet producer: opt-in QUOTE lane (`scripts/p184_dr05_quiet.py --seal/--seal-host --with-quote`)
+  for the TS IDR-110 isolated quiet-key proof (TEST_ONLY; TS scripts/p184_idr110_quiet_probe_proof.py).
+  - With the flag, --seal also adds one QUOTE lane per linear scope. It uses the TS paper manifest QUOTE shape:
+    OBSERVE, max_freshness_ms 2000, max_session_liveness_ms 2000. The acquisition is checked equal to the production
+    plan, as for TRADE.
+  - The QUOTE lane uses the same provider session as the TRADE lane (`<ns>.<VENUE>.trade`), so one heartbeat vouches
+    for both. The channel gains quote_run/quote_stop (p184_g12_isolated_fault.quote_frame) and additive quote stats.
+  - Without the flag the material, the core-binding digest, the handoff record and the channel are unchanged. G13
+    dr05-quiet runs without it.
+  - Tests in qdl-v2-python:2.2.4-c7ce7d3 --network none: tests.test_p184_dr05_quiet + tests.test_p184_dr05_dl_fault,
+    46 OK (2 new cases plus argv checks), tested locally.
+- 2026-10-17 05:52-06:44Z G12 and G13 isolated on the IDR-110 writer 734b08f1: SIGNAL ONLY, not final credit (Claude
+  subagent).
+  - Why signal only: the coordinator reported at ~06:35Z that CI "Quality And V1 Contract" run 39008182569 on TS
+    223c0131 failed (ruff only). The final writer image will be rebuilt from a lint-fix commit and rolled again, and
+    the final G12/G13/stage-100 credits will be taken on that image. The earlier credits on 7c71e3af are not inherited.
+  - Pins:
+    - DL b6d21c9e: the g12-image-set-v224.json ts role 7c71e3af -> 734b08f1, regenerated from docker inspect, sha256
+      8acda276.... g13-roles-v224.json is unchanged (31e0716b...).
+    - Run worktrees: data-layer-p184-final-run-b6d21c9e and trading-system-final-run-f60e7fe5. Both were clean when
+      created.
+    - --ts-source-sha e21f6edd (full sha) and writer 734b08f1.
+    - Production: deployed_mismatches == [], and the writer had restarts 0 (started 05:47:54Z).
+  - Harness unit tests in qdl-v2-python:2.2.4-c7ce7d3 (--network none), covering g12, g13, lock, dr08, dr05_verdict,
+    dr05_quiet, dr05_reset and dr05_dl_fault: 422 OK (5 skipped).
+  - G12, lock "claude P18.4 G12 v224 final-idr110 20261017T055259Z" (05:52:59-06:30Z, released):
+    - Run 1, p184-g12-v224-final-idr110-20261017T055259Z: STOPPED before any fault with `ValueError:
+      DR05_CLONE_LIFECYCLE_NEEDS_KEEP_EXITED`.
+      - This is apparatus, not behaviour. Since TS ba096818, WriterClone.__enter__ runs its own lifecycle check
+        (scripts/p184_dr05_isolated.py:385). That check refuses keep_exited=False, which is what the G12 harness
+        passes, because the harness drives its own bootstrap -> strict lifecycle (p184_g12_isolated_fault.py:3905).
+      - Teardown: 11 removed, 0 left.
+    - Rerun, once, as an apparatus fault: p184-g12-v224-final-idr110-20261017T060133Z.
+      - --ts-root was set to trading-system-final-run-77a6d671. That is the WriterClone apparatus of the credited
+        20261016T183459Z run, sha256 3c9a21d8.... The clone schema migrations are identical between 77a6d671 and
+        f60e7fe5.
+      - Result: verdict v3 COMPLETED **pass true**, images.ts = 734b08f1.
+        - caught_up_s BINANCE/OKX: broker_stop_start 0.237/0.238, projector_restart 0.220/0.220, stream_restart
+          0.893/1.155.
+        - Every fault passed G1, G2, G3, monitor and sampler. The integrity layer is report-only (NOT_MEASURED).
+        - Writer clones: precheck ok, Redis UNCAPPED, strict_resume VERIFIED on both venues.
+      - --credit exit 0: creditable true, PASS, production_parity MATCH, cleaner_binding RUN.
+      - Receipt sha256: verdict.json 3f1592a8..., production-parity.json 1a6cf8e6..., credit-snapshot.json
+        f7a2e5eb..., writer-precheck.json 9ecc3d5d..., c-observe.json 052552e8... / c-observe-after.json b27a15d2....
+      - Teardown: 12 removed, 0 left, clone state erased.
+      - SIGNAL_ONLY.json in the receipt records that this is signal only.
+    - Foreign containers (AGENTS 34a): the coordinator reported that 5 short ruff `--rm` containers ran around 06:00Z
+      under this lock. The overlap is **NOT_DETERMINABLE** from the host:
+      - docker events for 05:58-06:10Z returned 0 events, because the daemon keeps 256 events and the oldest one held
+        at query time was 06:14:45Z.
+      - The harness follower filters on its own namespace label.
+      - The docker journal is not readable by this user.
+      - The rerun started at 06:01:34Z. The verdict is not upgraded; the run is signal only anyway.
+  - G13 isolated, lock "claude P18.4 G13 isolated idr110 20261017T063055Z": the lock tool waited out 2 foreign
+    processes and the lock was taken at 06:31:55Z. It was released at 06:44Z.
+    - dr08-isolated, p184-g13-20261017T063201Z: 4 cells, exit [0], harness_ok, 124.5 s. evidence.jsonl 9a706252....
+    - dr05-upstream, p184-g13-20261017T063427Z: 6 cells, exit [0,0,0,0,0], harness_ok, 332.9 s. Rows 71e4bace....
+    - dr05-quiet, p184-g13-20261017T064022Z (amendment-1 predicate unchanged):
+      - Both cells **ISOLATED_FAULT OBSERVED ok**, predicate p184.dr05-quiet-typed.view-vocabulary.v1, health_findings
+        [].
+      - BINANCE: quiet after 15.1 s. The view had state LIVE, event_recency_state STALE, flags [LAST_EVENT_STALE],
+        execution_eligible false, provider_session_state LIVE (liveness 144 ms), freshness 14592 ms. The writer health
+        showed quiet_session_v2_slices 1.
+      - OKX: quiet after 13.6 s, the same shape (liveness 341 ms).
+      - So IDR-110 fixes the run-2 VIEW_NEVER_LEFT_FRESH (042015Z).
+      - Rows 84471c10....
+      - Exit codes [0,0,0,0,0,1], harness_ok false: the last command, `p184_dr05_dl_fault.py --down`, raised
+        CalledProcessError. cleanup() calls owned(..., allow_disappearance=False). A container was listed by
+        `docker ps` but had gone by the time of `docker inspect`, which is a --rm race (p184_dr05_dl_fault.py:330).
+        The runner then removed the 5 DL roles as leftovers.
+      - This was an apparatus defect in teardown. It is fixed in the next commit: --down now treats a container
+        that was listed, then answered docker's exact one-line `no such object/container: <id>` and no longer lists
+        by name, as already gone. Any container that remains and any other docker error still fail. The result
+        records removed vs already_gone counts. No oracle/cell logic changed. Unit tests
+        tests/test_p184_dr05_dl_fault.py 39/39 OK in qdl-v2-python:2.2.4-c7ce7d3 --network none (tested locally).
+    - W05 verifier, in 734b08f1 --network none, --expect-source-sha e21f6edd, --expect-image-digest 734b08f1, over the 3
+      isolated evidence files. Output p184-g13-20261017T064022Z/verify/w05-isolated-idr110.json, b5519639....
+      - DR05 8/17 closed (6 upstream + 2 QUIET) and DR08 4/4.
+      - The only issue is CASE_OPEN on the runtime cells that were not run. No provenance or drift issue.
+  - G13 runtime window NOT run (coordinator), and nothing was seeded.
+    - Draft packet p1/packet-g13-v5.3-20261017.DRAFT.md is parameterised for the final image. It has no sidecar.
+    - Generator p1/g13v53/make_g13v53.py (406daa1d...) uses the new TEST run ids g13r6wa20261017 / g13r6fx01 (owner
+      approval ~06:20Z).
+    - `--check` with 734b08f1: the compose has 26 changed paths, all in allowed keys. The inputs change dr01.ci_*,
+      dr01_wrong_account.run_id, dr07.fx_account and gateway_image_digest. Nothing was written.
+  - After the runs: 0 p184-/ts-p184 containers, networks or volumes, and 0 /tmp/p184-dr05-*. Production writer
+    734b08f1 has restarts 0, and all 17 DL roles have restarts 0. No lock is held.
+  - Status: G12 PASS and G13 isolated 12/12 on 734b08f1, tested as **signal**. Final credit is open on the lint-fixed
+    image.
+  - Next:
+    - DL b6d21c9e+1: re-point the image set to the new digest.
+    - Rerun G12 with --ts-root on a WriterClone that is compatible with the harness lifecycle. Two options: a 77a6d671
+      apparatus pin recorded as inheritance, or a DL harness fix that passes keep_exited=True. This is a coordinator
+      decision.
+    - Rerun G13 isolated, then the v5.3 window after CI is green.
+- 2026-10-17 08:46-09:17Z FINAL chain step 1, G12 final credit on the final writer IDR-110b a44349a1: **PASS, credited**
+  (Claude subagent). Nothing is inherited from 7c71e3af or 734b08f1.
+  - Pins: DL f6db0b82 (fix/p184-dl-closure; 8ae4266 dr05 --down race fix + g12-image-set-v224.json ts role 734b08f1
+    -> a44349a1, regenerated from docker inspect 08:46Z, sha256 4740c995...; g13-roles-v224.json unchanged 31e0716b...).
+    Clean detached run worktrees data-layer-p184-final-run-f6db0b82 and trading-system-final-run-c385aaf6 (TS head
+    c385aaf6). Production by docker inspect: writer market_data_service_p184w a44349a1 (label 6af62a7e), RestartCount 0,
+    started 08:43:06Z; query x2 c21e164a, stream x2 / projector x2 / ingestor x2 60f83a51, core x3 7c848aad, bar_edge
+    08f356a8, all RestartCount 0.
+  - Same shape as 20261017T060133Z: --ts-root trading-system-final-run-77a6d671 (apparatus pin of the credited G12,
+    coordinator decision H1), --auto-leader-rebalance false from a fresh parity snapshot, --lock-owner, --credit.
+  - Lock "claude P18.4 G12 v224 FINAL a44349a1 20261017T084728Z" 08:47:28Z (75 min), released 09:17Z (file absent).
+    df 219 GiB free; load1 12-16 (production load).
+  - Receipt ~/.local/state/qdl-v2/p184-g12-v224-final-a44349a1-20261017T084728Z/ (namespace
+    p184-g12-dl-2e2219b81a8c6dc4), run 08:48:32-09:15:32Z, exit 0.
+    - verdict v3 COMPLETED **pass true**, images.ts = a44349a1. caught_up_s BINANCE/OKX: broker_stop_start
+      0.217/0.218, projector_restart 0.174/0.174, stream_restart 0.759/0.760. Every fault: G1, G2 (TRADE/QUOTE/MARK
+      lost 0), G3 BAR, monitor and sampler PASS. Integrity layer report-only.
+    - Writer clones: precheck ok, Redis UNCAPPED, strict_resume VERIFIED on both venues.
+    - --credit exit 0: creditable true, reason PASS, production_parity MATCH, cleaner_binding RUN, final profile
+      checked. Effective describe sha256 d3d77176... before and after.
+    - sha256: verdict.json 30648759..., production-parity.json e861e762..., credit-snapshot.json 6bb2021a...,
+      writer-precheck.json 092406d9..., c-observe.json f1413c33... / c-observe-after.json 56dd1032...,
+      teardown.json b9e9fccf.... FINAL_CREDIT.json records the pins.
+    - Teardown: 12 removed, 0 left by label/name, 0 networks, 0 volumes, clone state erased (complete).
+  - Foreign-job overlap: no watch ran during this window; the docker daemon keeps only the last events (oldest held at
+    09:16:30Z), so overlap is NOT_DETERMINABLE from the host. No lock was held by anyone else (lock tool acquired
+    without waiting). Production writer and all DL roles RestartCount 0 afterwards.
+- 2026-10-17 09:18-09:36Z FINAL chain step 2, G13 isolated on writer a44349a1: **dr08 4/4, dr05-upstream 6/6 (after one
+  apparatus rerun), dr05-quiet 2/2 OBSERVED, harness_ok true on all three credited runs** (Claude subagent).
+  - Pins: DL run worktree data-layer-p184-final-run-f6db0b82 (--dl-source-sha f6db0b82, contains the 8ae4266 --down
+    race fix), TS run worktree trading-system-final-run-c385aaf6, --ts-source-sha 6af62a7e, --writer-image a44349a1,
+    roles g13-roles-v224.json 31e0716b..., python qdl-v2-python:2.2.4-c7ce7d3, inputs p1/g13v53/inputs-g13v53-ci.json
+    3a302fac.... Dry runs: blocked {} (4/6/2 cells), deployed_mismatches [], checkout_problems [].
+  - Lock "claude P18.4 G13 isolated FINAL a44349a1 20261017T091819Z" 09:18:19Z (70 min), released 09:36:22Z. Taint
+    watch (30 s): 0 foreign containers, 0 cargo/pytest/rustc/docker-build processes, load1 max 15.59.
+  - dr08-isolated p184-g13-20261017T091825Z: 4 cells, exit [0], harness_ok, 124.2 s. evidence.jsonl 5f9f7079....
+  - dr05-upstream run 1 p184-g13-20261017T092050Z: exit [0,0,0,1,0], harness_ok false, NOT SCORED. 5 cells OBSERVED
+    ok; DR05.GENERATION_CHANGE_FENCED@OKX_INVERSE failed its positive anchor (BOOK_VIEW_MISSING,
+    EXECUTION_CONTEXT_BOOK_MISSING).
+    - Verbatim timing: clone writer started 09:26:08.615Z; anchor view sampled at 09:26:12.350Z; the BOOK worker's
+      first Query subscription came after that, at 09:26:12.390Z ("slice disconnected venue=OKX symbol=BTC-USD-SWAP
+      feed=BOOK_DELTA ... code=DATA_NOT_READY retryable=True ... reconnecting in 1.0s"). Heartbeat at sampling:
+      slices STARTING, workers 1-3 REPORT_INVALID_OR_MISSING.
+    - Reading (source-checked): fresh_case() only waits for heartbeat demanded > 0 (TS scripts/p184_dr05_upstream.py
+      189-231), and observe() stops after settle_s 1.0 when the first view differs from None (260-275). So the anchor
+      was judged before the writer had subscribed, and the fence was never exercised. Classified as an apparatus
+      readiness race (harness sequencing), not fence behaviour. The Python BOOK path is unchanged between 734b08f1
+      (6/6 at 063427Z) and a44349a1 except the fixed_workers.py worker_epoch field. Recorded in
+      NOT_SCORED_RERUN.json 61fa2d05...; rows 8482dbbb... kept.
+    - Hardening candidate (not done here): readiness should wait for the target slice to be subscribed (or retry the
+      anchor until the deadline) instead of heartbeat demanded > 0.
+  - dr05-upstream rerun (once, same lock and pins) p184-g13-20261017T093001Z: 6 cells OBSERVED ok, findings [],
+    exit [0,0,0,0,0], harness_ok, 334.9 s. Rows 189de29e....
+  - dr05-quiet p184-g13-20261017T092651Z (amendment-1 predicate unchanged): both QUIET_TYPED cells ISOLATED_FAULT
+    OBSERVED ok, predicate p184.dr05-quiet-typed.view-vocabulary.v1. Exit [0,0,0,0,0,0], **harness_ok true** (the
+    8ae4266 --down fix holds), 139.7 s. Rows 11991a23....
+  - W05 verifier in a44349a1 (--network none), --expect-source-sha 6af62a7e, --expect-image-digest a44349a1, over the
+    three credited isolated files: DR05 8/17 and DR08 4/4 closed. The only issue is CASE_OPEN on the runtime cells
+    not run yet; no provenance or drift issue. Output p184-g13-20261017T092651Z/verify/w05-isolated-final-a44349a1.json.
+  - Teardown: every summary has dl_source.removed true and removed_leftovers {}. Afterwards 0 p184- containers,
+    networks or volumes, 0 /tmp/p184-dr05-*. TS run worktree clean.
+- 2026-10-17 09:37-09:58Z FINAL chain step 3, G13 runtime window packet v5.3 on writer a44349a1: **STOPPED at 67/76**.
+  dr05-transport failed (DR05_CLONE_STRICT_RESUME_NOT_VERIFIED on its first scope), 9 cells open. Not rerun: not a
+  clear infrastructure fault. Stage-100 final (step 4) NOT run (Claude subagent).
+  - Packet p1/packet-g13-v5.3-20261017.md sha256 270c0cfc... (sidecar written 08:50Z, checked OK at the window
+    start). Generated from the DRAFT with make_g13v53.py 406daa1d... (`--image a44349a1 --ci-run 39016064886
+    --out-suffix=-ci`): compose 2a51fd39... (26 changed paths, allowed keys only), FX plan g13r6fx01 21bf3f78...,
+    inputs-ci 3a302fac..., alpha compose v4.3 96225365... unchanged. Records the approvals (~05:45Z, ~06:20Z
+    "Duyệt cả hai", ~08:40Z "Chạy roll"), the gate 0.10 waiver carry-over and the CI delta 6af62a7e..1f324001
+    (e04d66df proof harness + plan/register) and 1f324001..c385aaf6 (plan). CI not independently verified (no gh);
+    the runner passes only the boolean --ci-confirmed (DL scripts/p184_g13_final.py:683).
+  - Gates: dry run exit 0, blocked {}, 6 steps / 66 cells, coverage 76/76 (missing []); deployed_mismatches [];
+    checkout_problems []; writer env view (14 keys) and image equal the G12 credit-snapshot writer; all images present.
+  - Lock "claude P18.4 G13 v5.3 window (packet-g13-v5.3-20261017)" 09:37:15Z (150 min), released 09:58:06Z.
+  - Step 2: B9 migrations 99/99 pending [] mismatch []; B16 open native orders {} (binding digest 037a689d..., 10
+    accounts incl. the 4 g13r6wa20261017); B14 DNS 4/4; INDEX BINANCE:USD_M:BTCUSDT present=false (as v5.2); B10 CA
+    fc24c047... x3; bind sources 55 (8 identity files checked with alpine test -s).
+  - Step 3: FX seed g13r6fx01 FX_PROOF_SEED_COMMITTED, writes 4. Step 4: preflight_env PASS x2, compose config 0 x2.
+  - Step 5: ts-p184 up 09:38:24Z, 8 containers, 0 restarts, 7 roles on a44349a1, Gateway health 200 + "Gateway V3
+    Online", Traceback/401/UNAUTHENTICATED/BINDING_MISMATCH/NOT_IN_DURABLE_CANARY all 0; Gateway writer scope holds the
+    4 g13r6wa20261017 accounts. Step 6: B12 4/4 = 1. Step 7: alphas up 09:39:33Z, 2 running, 0 restarts, warmup 700
+    rows both venues, no new data-source row (last rows 2026-10-12), 0 non-200. Step 7b: FX snapshot 09:38:29Z,
+    validated_at_ms set, 1 rate; 0 BB orders.
+  - Runner p184-g13-20261017T094028Z (09:40:28-09:54:58Z, exit 1; summary.json 2f6b9ddd..., plan.json 625b2cb1...;
+    sealed DL export tree f49811a5..., removed):
+    - dr01-deployed 7 cells, exit [0,0,0,0,0], harness_ok, 25.7 s
+    - dr01-wrong-account 2 cells, [0,0], harness_ok, 4.7 s (cleanup complete true)
+    - dr02-dr03-alpha 14 cells, [0,0,0], harness_ok, 506.9 s
+    - dr04-dr06-views 22 cells, [0,0,0,0], harness_ok, 129.0 s
+    - **dr05-transport 9 cells, exit [1], harness_ok false, 197.3 s, 0 rows** (receipt 8487388f..., harness.log
+      6419efd0...)
+    - dr07-reference 12 cells, [0], harness_ok, 4.2 s
+  - dr05-transport failure, verbatim (harness.log):
+    `RuntimeError: DR05_CLONE_STRICT_RESUME_NOT_VERIFIED:{"alive": true, "ready": false, "refusals": {"count": 0,
+    "last": []}}` from TS scripts/p184_dr05_isolated.py:468 (strict_restart, called at :706). Lifecycle record: phase
+    STRICT, bootstrap exit 0 (09:51:39-09:51:48Z, not OOM), bootstrap_refusals 0, native checkpoint
+    cursors/fixed-workers-v1/native-4/trading-system.paper.stable.json present (4245 B), env delta
+    MARKET_DATA_NATIVE_REQUIRE_RESUME 0 -> 1 only, strict_started_ms 1792230709670 (09:51:49.67Z), strict_refusals 0,
+    strict_resume FAILED. First scope of --venues BINANCE OKX OKX_INVERSE, so no scope produced rows. The clone was
+    removed by the harness cleanup (writer, state, dir, pg, redis, network: all ok); no view, heartbeat or stderr
+    snapshot was kept.
+    - The ready predicate (:698-702) needs every clone view APPROVED **and** observed_at_ms > strict_started_ms within
+      --ready-seconds 180. The writer was alive with zero HANDOFF_RESUME refusals, so it resumed but at least one view
+      did not show a post-restart observed_at in 180 s.
+    - Reading (inferred, NOT verified): IDR-110b R1 renews a restored quiet key by same-record identity after a strict
+      restart, which keeps the old record's observed_at; a quiet route would then never satisfy "observed_at >
+      strict start". On 7c71e3af (v5.2 window 025058Z) the same step was VERIFIED on all 3 scopes. Load1 reached
+      16.85-16.88 at 09:54Z (production load); no writer/DL restart and 0 QUOTA/RESOURCE_EXHAUSTED lines in the
+      production writer log during the window (30 s abort watch).
+  - W05 verifier in a44349a1 (--network none, --expect-source-sha 6af62a7e, --expect-image-digest a44349a1) over the 6
+    runtime jsonl + the 3 final isolated files: **67/76**, exit 1. DR01 9/9, DR02 8/8, DR03 6/6, DR04 14/14, DR05
+    8/17, DR06 6/6, DR07 12/12, DR08 4/4. Only issue CASE_OPEN on the 9 dr05-transport cells
+    (APPROVED_FALLBACK_AND_RETURN_NO_FORBIDDEN_V1, DISCONNECT_RECONNECT, STALE_TYPED x BINANCE/OKX/OKX_INVERSE). No
+    provenance or drift issue. Output verify/w05-final-v53.json 23eeb0e8....
+  - Teardown: alpha compose down (2 removed); ts-p184 down (8 containers + network ts-p184-private removed); FX
+    g13r6fx01 FX_PROOF_SEED_DEACTIVATED (3 x UPDATE 1); wrong-account rows deactivated by the probe (complete true);
+    DSN env file p1/r2/dr07-postgres.env and p1/r2/ removed. Afterwards 0 ts-p184 / p184-g13- / p184-dr05-
+    containers, networks, volumes; 0 /tmp/p184-dr05-*. Writer a44349a1 RestartCount 0 (started 08:43:06Z); all DL
+    roles RestartCount 0. Disk +186 MB. Run worktrees clean (one ignored scripts/__pycache__ pyc in the DL run worktree,
+    from an in-session import, removed).
+  - Taint watch: one foreign container name "priceless_cannon" at 09:55:56Z, after the runner had exited
+    (09:54:58Z) and during teardown; gone at the next poll. Otherwise 0 foreign containers/jobs.
+  - Status: G13 final = 67/76 on a44349a1, NOT complete. Open: the 9 dr05-transport cells. Coordinator decision
+    needed: diagnose the strict-ready miss (keep the clone views/heartbeat before cleanup, compare observed_at of each
+    view with strict_started_ms) and decide whether this is IDR-110b behaviour or a harness predicate that does not
+    fit same-record renewal. Stage-100 final was not started because the chain stops here.
+- 2026-10-17 ~11:10Z v2.2.4 release packaging DRAFTED, nothing run, nothing pushed (Claude subagent; file edits + read-only sha256/docker inspect, no lock needed): releases/v2.2.4/{CERTIFICATE.md,SCORECARD.md,equivalence.json}, RELEASE_NOTES.md rewritten from the skeleton, drafts/{CERTIFICATION_LEDGER_ENTRIES,PR_DL_fix-p184-dl-closure_to_dev,PR_DL_dev_to_main,CLEANUP_CHECKLIST}.md. G12 final is credited; G13 runtime v5.4 and final stage-100 stay as <<PENDING:...>> markers (index at the end of SCORECARD.md / CERTIFICATE.md); every 64-hex value was checked against the files. TS-side PR drafts: TS upgrade/evidence/P184_RELEASE_PR_DRAFTS_20261017.md.
+- 2026-10-17 10:20-11:29Z FINAL chain resumed after IDR-111 (Claude subagent): CI, G13 v5.4 runtime window
+  **76/76**, trace re-arm, FINAL stage-100 on writer a44349a1 **protocol_met true, G4 + G8 FAIL**.
+  - Harness: TS fc644cd1 (IDR-111 fix) + c9ebd619 (journal/register) pushed fast-forward 1f324001..c9ebd619 (owner
+    approval for this branch). CI run 39024582832 "Quality And V1 Contract" success on c9ebd619 (GitHub API: static
+    ratchet, contract drift, full unit suite, compose contract all success).
+  - Packet p1/packet-g13-v5.4-20261017.md sha256 87226559... (= sidecar): v5.3 + run ids g13r7wa20261017 /
+    g13r7fx01 + TS run worktree trading-system-final-run-c9ebd619 + CI 39024582832; owner approval ~10:00Z recorded in
+    the delta header; gate 0.10 apparatus waiver carried over (fc644cd1 self-reviewed only). Generator
+    g13v54/make_g13v54.py 77934d59...: compose 64d4395a... (19 changed paths, run-id substitutions only, image
+    unchanged), FX plan ae88fc10..., inputs-ci 73302004....
+  - Gates: dry run exit 0, blocked {}, 66 cells, coverage 76 missing []; deployed_mismatches []; checkout_problems [];
+    DL run worktree f6db0b82 and TS run worktree c9ebd619 clean before/after; writer a44349a1 rc 0 (started 08:43:06Z,
+    unchanged since v5.3); images present.
+  - Lock "claude P18.4 G13 v5.4 window (packet-g13-v5.4-20261017)" 10:30:07-10:47:10Z (released).
+  - Step 2: B9 99/99 pending [] mismatch []; B16 {} (binding digest c095b977..., 10 accounts incl. the 4
+    g13r7wa20261017); B14 DNS 4/4; INDEX BINANCE:USD_M:BTCUSDT present=false (as v5.2/v5.3); B10 CA fc24c047... x3;
+    bind sources 55 (8 identity files checked with alpine test -s). Step 3 FX g13r7fx01 FX_PROOF_SEED_COMMITTED (4
+    writes). Step 4 preflight_env PASS x2, compose config 0 x2. Step 5 ts-p184 up 10:31:36Z, 8 containers, 0 restarts,
+    7 roles on a44349a1, health 200 + "Gateway V3 Online", Traceback/401/UNAUTHENTICATED/BINDING_MISMATCH/CANARY all 0,
+    gateway writer scope holds the 4 g13r7wa accounts. Step 6 B12 4/4. Step 7 alphas up 10:33:03Z, warmup 700 rows both
+    venues, 0 non-200, no new data-source row (last 2026-10-12). Step 7b FX snapshot 10:31:40Z validated_at_ms set, 1
+    rate.
+  - Runner p184-g13-20261017T103357Z (10:33:57-10:44:35Z, exit 0; summary.json 9d22e111..., plan.json a7e0a78f...;
+    sealed DL export tree f49811a5..., removed): dr01-deployed 7 [0x5] 27.5 s; dr01-wrong-account 2 [0,0] 4.6 s
+    (cleanup complete); dr02-dr03-alpha 14 [0,0,0] 506.1 s; dr04-dr06-views 22 [0x4] 40.8 s; **dr05-transport 9 [0]
+    52.2 s, all 9 OBSERVED ok**; dr07-reference 12 [0] 4.3 s; all harness_ok.
+    - dr05-transport lifecycle: bootstrap 10:43:41-10:43:52Z exit 0; bootstrap_checkpoint_proof complete (routes
+      QUOTE BINANCE:ETHUSDT, OKX:BTC-USD-SWAP, OKX:ETH-USDT-SWAP; items QUOTE 3, TRADE 2; checkpoint 5293 B = 5 routes);
+      strict_resume VERIFIED, strict_refusals 0, strict_heartbeat_refusals 0 over 2 post-start heartbeats; recovery
+      after reconnect 4539 ms, 3 logged control events.
+    - Residual (recorded, not changed mid-chain): at the bootstrap stop the clone heartbeat listed only the QUOTE
+      native routes (TRADE probes at liveness/3 had not reported yet), so the TRADE item count (2) was present but not
+      checked against an enumerated TRADE route set. A TRADE route without a cursor item would still fail closed at
+      the strict start through the new heartbeat refusal count (named HANDOFF_RESUME_REQUIRED), not pass.
+  - W05 verifier in a44349a1 (--network none, --expect-source-sha 6af62a7e, --expect-image-digest a44349a1) over the
+    6 runtime jsonl + dr08 091825Z + dr05-upstream 093001Z + dr05-quiet 092651Z: **G13 76/76** (DR01 9/9, DR02 8/8,
+    DR03 6/6, DR04 14/14, DR05 17/17, DR06 6/6, DR07 12/12, DR08 4/4). Exit 1 only for CASE_OPEN on 260 non-DR matrix
+    cells (BR*, outside G13), 0 DR issues. verify/w05-final-v54.json 5490c21e....
+  - Abort watch (30 s): writer rc 0, DL bad roles [], 0 QUOTA/RESOURCE_EXHAUSTED lines, load1 <= 11.7.
+  - Teardown: alpha down (2), ts-p184 down (8 + network), FX g13r7fx01 FX_PROOF_SEED_DEACTIVATED (3 x UPDATE 1),
+    wrong-account cleanup complete true (probe finally), DSN env file and p1/r2 removed; 0 ts-p184/p184-g13-/p184-dr05-
+    containers, networks, volumes, /tmp/p184-dr05-*; disk +145 MB. Run worktrees kept clean (stage-100 used DL d03cd679).
+  - Trace re-arm (owner-approved same-image re-arm, packet v5.4 approval ~10:00Z): lock "claude-s100-final-a44349a1"
+    10:48:01-11:28:50Z. preflight_env PASS in /home/bobby/trading_system; rc15/roll_writer_campaign_native.py
+    sha256:a44349a1... 3600 --dry-run -> DRY_RUN delta [TS_DELIVERY_TRACE_UNTIL_UNIX_NS]; real -> OK, same delta,
+    not_ready_samples 1, writer recreated 10:48:28Z on a44349a1, rc 0. Rollback compose: rc15/native-trace-roll/.
+  - FINAL stage-100 p184-final-campaign-20261017T105025Z (10:50:25-11:26:14Z, campaign_exit 0; scorecard.json
+    23ed2ef2..., campaign.json 4027a255..., g9-g10-summary 9931f90d..., g11-summary 1eae128d..., guard.log dbc30cfc...,
+    .run.log 5137f912..., .g11-watcher.log c28998f1...). Apparatus DL run worktree d03cd679 (aee0945 + 1e09f87; tool /
+    observer v5 / budget / addendum sha256 cf26d6e3 / ff4f5989 / ff85335b / 4ed59dca, same as 032230Z; dry run
+    problems []). Command `run --g11 --base-profile .../profile-stage100-rc4-r16.json`. Load window 10:51:58-11:21:58Z;
+    G11 coordinator restart 11:22:52Z (watcher), writer READY 64/64 after, rc 0, started 11:22:56Z.
+    - **protocol_met true**, protocol_problems []. Frozen rules, nothing upgraded:
+      PASS G1 G2 G3 G5 G6 G7 G9 G10 G11 G14; **FAIL G4, G8**; NOT_MEASURED G12, G13 (separate evidence: G12 credited
+      08:46-09:17Z, G13 76/76 above).
+    - G9 PASS: 60 samples, demanded 64 = session-ready in every sample (0 mismatches), eligibility_losses_data_path 0,
+      no session/worker-not-live causes, v1_fallback 0; legit quiet TRADE_EVENT_STALE refusals 48 (report-only). The
+      v2.2.4/7c71e3af QUOTE OKX BTC-USD-SWAP STALE of 032230Z did not recur on a44349a1 (guard READY 64 64 throughout).
+    - G4 FAIL (5 windows observed, coverage complete): bar|BINANCE|1m window-3 p95 270.7 ms over 257.6 (n=15);
+      book_delta|OKX_INVERSE (addendum max) 321.8 ms (w2) and 288.5 ms (w3) over 282.5; quote|OKX_INVERSE (addendum max)
+      359.5 ms (w2) over 322.6. Every other row inside. Observer cgroup throttling <= 0.33 % (report-only).
+    - G8 FAIL: one SLOWLOG entry (>= 10 ms) counted as steady: EVAL 27.2 ms at 11:00:02Z from 172.18.0.12 =
+      market_data_service_p184w (script sha1 prefix 1875f518...). The scorecard's window 1 (10:50:32-11:00:22Z) is
+      marked steady=false while the entry is counted in slowlog_new_steady; recorded as an open question for the
+      owner, rule not reinterpreted. PING p99 1.006 ms, core fraction <= 0.065, monitor clients 0.
+    - G11 PASS: outage 0.137 s; first_valid_apply / caught_up max 27.442 s, p95 4.439 s, n=64; 0 future events.
+      G3 pooled p95 2085 ms, max 3371 ms. G14 DL mean 5.57 vCPU, no memory at limit.
+    - Overflow / refused: stream_kn_1 overflow 3 -> 3, refused 2 -> 2; stream_kn_2 0 -> 0, 0 -> 0 (pre-load,
+      pre-G11, post-campaign); hub_live_budget_refused 0; every queue_isolation counter 0; writer log 0
+      RESOURCE_EXHAUSTED / QUOTA lines since 10:48Z.
+    - native_probe: the load epoch's counters were reset by the G11 restart and are not retained by the campaign
+      samplers (not measured for the load). Post-G11 epoch 76595252 (11:22:56-11:27:59Z): QUOTE requested 4872, renewed
+      435, renewed_same_record 992, skipped_offset 3445, failed 0, unavailable 0; TRADE requested 191, renewed 30,
+      renewed_same_record 137, skipped 24, failed 0, unavailable 0. QUOTE OKX BTC-USD-SWAP requested 443 / same-record
+      345 / renewed 25 / skipped 73 / failed 0; BNB-USDT-SWAP 442 / 269 / 27 / 146 / 0.
+    - Taint watch (30 s): only the campaign's own qdl-phase3-target and g4obs-1..5 containers; one unnamed container
+      "charming_ptolemy" seen once at 11:26:11Z (after the load window, unidentified; docker events no longer had it);
+      a foreign ssh session to 178.128.51.255 (another agent's remote python, started 11:14:34Z inside the load window)
+      matched the process pattern in 28 samples; it runs remotely, local CPU effect not measured. load1 max 22.66.
+  - Status: G13 final = 76/76 on a44349a1 (complete). FINAL stage-100 = protocol met, NOT certified (G4, G8 FAIL
+    under frozen rules). Next (owner/coordinator): decide G4 (inverse-instrument addendum max rows and BINANCE bar 1m
+    p95) and G8 (single 27 ms writer EVAL, steady-window attribution) before release closeout.
+- 2026-10-17 ~11:35-11:55Z RCA of the FINAL stage-100 105025Z G4/G8 FAIL (read-only, Claude subagent; criteria unchanged).
+  Reads: receipt files, Kafka log-cleaner/GC logs (docker cp), rust_core progress logs, Redis INFO/CONFIG GET via the
+  apparatus allowlisted client, Codex session logs. No production mutation.
+  - G8 FAIL stands; no scorer defect. Frozen rule (TS upgrade/p184-phase-d-gates.md:36, windows :20): "SLOWLOG (10 ms
+    threshold) count 0 in steady state". Entry 976675 start 11:00:02Z is inside the load window 10:51:57.98-11:21:57.98Z
+    and outside BURST 11:03:58-11:04:08Z / RECONNECT 11:12:58-11:13:13Z. Window 1 steady=false is the 10-min
+    commandstats window flag (p184_g8_redis_sampler.py:170-171, window wholly inside the load window), not the SLOWLOG
+    predicate (:181-184). Latent, no effect here: in_steady also counts the fault windows.
+  - The EVAL is TS 6af62a7e services/market_data/execution_state.py _CAS/_INVALIDATE (:23/:34, same 128-byte prefix
+    sha1 1875f518): the Python BOOK/MARK single-record CAS, not the 16-row APPLY. Redis has save "", total_forks 0,
+    AOF off, 6.5 MB, 0 pattern subscribers, so 27.2 ms is off-CPU time of the main thread (inferred), at the
+    top-of-hour second. Same class as the earlier 10-40 ms writer EVAL/EVALSHA/SETEX entries.
+  - G4 samples: bar|BINANCE|1m w3 270.7 ms = SOLUSDT 1m close 11:00:00Z (venue->DL 33.5, ingest->producer 147.5,
+    producer->observed 89.7 ms); with n=15 the p95 is the max. The OKX_INVERSE w2 maxima (book_delta 321.8, quote 359.5)
+    landed in checkpoint 10:56:54-10:57:24Z together with every linear row of both venues (BINANCE quote 415 ms):
+    common mode, not an inverse-lane mechanism. Inverse rows fail because they are max-gated.
+  - Mechanism (correlation verified, causation inferred): Kafka transactional commit tails. All three cores show
+    commit_ms max 154/162/176 ms at 10:57:25Z. In w3 the md.latest.v2-3 cleaner offset-map phase ran 10:59:41-11:02:21Z
+    on all three brokers, with broker cgroup throttling 0.6-3.0 s per 12.5 s exactly over w3, on top of the 11:00Z
+    boundary. w5 overlapped the md.latest.v2-2 phase without a boundary and passed. Excluded: ingestor_okx_swap
+    throttling (0 ms), venue/WS (27-36 ms), observer (0 throttle), G11 restart (11:22:52Z), trace re-arm (10:48Z), and
+    single GC pauses (max 63 ms).
+  - Earlier 032230Z: same rows and the same common-mode commit stall at its boundary window (03:32:00-03:32:23Z), with
+    no md.latest cleaner and only light foreign reads. Stage-100 #3 was inside. The margin to the frozen limits is thin
+    at boundary windows.
+  - Taint (AGENTS 34a): TAINTED. While lock claude-s100-final-a44349a1 was held, Codex PMA11 ran local work: docker
+    image ls, docker builder du and docker inspect of writer/stream (collect_inventory.py 10:57:08-10:57:24Z, the same
+    seconds as the w2 stall), again ~11:09Z, and local wheel fetch/extract 11:00:02-06Z and source tar 11:00:15Z. The
+    30 s cargo|pytest|rustc|docker-build watch missed all of it. The 11:14:34Z ssh job ran on SGP and overlaps only
+    w4/w5, which passed. This run's PASS gates are not evidence. Its FAILs stay FAIL (scoring_rule,
+    p184_gate_campaign.py:1155). The bar 1m w3 sample had no foreign activity in its second.
+  - Next (owner): a clean rerun is required anyway. Add a foreign watch (1-2 s, any non-campaign docker CLI incl.
+    builder/system du, ssh/scp/tar, per-process CPU) and report-only core commit_ms and cleaner-phase samplers. If G4
+    fails again on a clean host, a measured one-variable fix of the Kafka commit tail goes through an owner packet.
+- 2026-10-17 11:54-12:09Z FINAL stage-100 clean rerun on writer a44349a1 with a foreign-activity guard: **ABORTED,
+  TAINTED** by Codex command executions on this host during the load start (Claude subagent; owner ~12:00Z approved
+  running now while Codex local jobs were paused; frozen rules, tool/observer/budget/addendum untouched).
+  - Guard sidecar (DL, apparatus only, outside the scored metrics): scripts/p184_foreign_activity_guard.py +
+    tests/test_p184_foreign_activity_guard.py, commits 1cd69806 (guard), 323070a2 (keep the tail of long command
+    lines), 5157c8ce (bound and remove the in-container cleaner tails). 50 ms new-PID scan + 1 s per-process CPU on
+    host processes (outside docker-*.scope cgroups); foreign = new host process that is a docker CLI of any kind,
+    ssh/scp/sftp/rsync/tar/curl/wget/pip/uv/cargo/rustc/pytest/python, another agent's command wrapper
+    (codex/codex-linux-sandbox/bwrap), or > 0.2 core in a 1 s sample, outside the campaign tree and the coordinator
+    session; or a new non-campaign container. TAINTED on overlap with driver_started..driver_exit; --abort stops the
+    campaign through its own stop paths (SIGINT driver as guard_v2.sh, SIGINT campaign, SIGTERM own G6 probe by its
+    in-container PID, remove own G4 observer). Report-only followers: rust_core progress (commit_ms / commit_wait_ms /
+    commit_hidden_ms at the core's ~2.6 s progress cadence, not 1 s) and Kafka log-cleaner phase per broker. Output in
+    the sibling dir <campaign>.guard/. Unit tests 8/8 (python3 -B -m unittest). Limits (measured in smoke runs): a
+    docker CLI living < ~50 ms (e.g. `docker version`) can be missed, `docker image ls` was caught; process start
+    times carry up to 1 s error (integer btime); Docker API clients without a CLI are visible only in docker events.
+  - Pre-start: production verified (writer a44349a1 rc 0; query c21e164a x2; stream/projector/ingestors 60f83a51;
+    cores 7c848aad x3, all rc 0); docker ps = the 40 production containers of 105025Z. Smoke runs at 11:59-12:02Z
+    already showed Codex active (codex app-server pid 3348786 spawning codex-linux-sandbox/bwrap execs in
+    .worktrees/trading-system-pm-v1_1 and portal-execution-edge-upgrade-v1_2, ssh to 178.128.51.255, `python3 -B -`);
+    12:02:09-12:03:05Z looked quiet, so the run went ahead.
+  - Lock "claude-s100-final-clean" 12:03:47-12:08:55Z (released). preflight_env PASS; re-arm
+    rc15/roll_writer_campaign_native.py sha256:a44349a1... 3600 --dry-run DRY_RUN, real OK (delta
+    [TS_DELIVERY_TRACE_UNTIL_UNIX_NS], not_ready_samples 1), writer recreated 12:04:20Z on a44349a1, until
+    1792242254290160530 (13:04:14Z). Campaign dry run exit 0, problems [], launch hold 0.
+  - Campaign p184-final-campaign-20261017T120552Z from DL run worktree data-layer-p184-final-run-1cd69806 (source_sha
+    1cd69806, contains aee0945 + 1e09f87; tool/observer/budget/addendum cf26d6e3/ff4f5989/ff85335b/4ed59dca, same
+    command shape as 105025Z). g6_ts_started 12:06:13.56Z, driver_started 12:06:18.53Z. Guard: Codex exec pid 80084
+    (codex-linux-sandbox, --command-cwd .worktrees/trading-system-pm-v1_1, ppid = codex app-server) started 12:06:19.24Z
+    -> TAINTED 12:06:19.87Z -> SIGINT driver, driver_exit -2 at 12:06:20.21Z, SIGINT campaign (KeyboardInterrupt,
+    campaign_exit 130, no scorecard), G6 probe in-container pid 180 SIGTERM rc 0; the G11 watcher exited
+    GUARD_ABORTED_NO_RESTART (writer not restarted). 20 foreign records, 3 overlapping the load (all agent_exec);
+    pre-load Codex execs at 12:06:04-12:06:08Z. No gate was measured: G1-G14 NOT_MEASURED for this run.
+  - Receipts (sha256): campaign.json d1bc5547..., timeline.jsonl f69e2afe..., .run.log ff56cd24..., .guard.log
+    7245e1ae..., guard/summary.json 45d0db52..., guard/processes.jsonl 727ebd52..., guard/ABORTED 0957dda4...,
+    guard/TAINTED 6d256811....
+  - Teardown: 0 campaign containers left, docker ps = baseline 40; writer a44349a1 rc 0 READY 64/64; 9 in-container
+    `tail -F` followers left by the smoke runs and this run in kafka1-3 removed by exact command line (fixed in
+    5157c8ce, verified 0 left); run worktree 1cd69806 removed; new clean run worktree
+    data-layer-p184-final-run-5157c8ce (guard f563d5c9..., campaign hashes unchanged). Trace stays armed until
+    13:04:14Z (same image; expires on its own).
+  - Status: FINAL stage-100 still NOT run on a clean host; 105025Z remains the latest scored run (TAINTED). Next
+    (owner/coordinator): actually stop the Codex app-server sessions on this host (the VS Code ChatGPT/Codex extension
+    is still executing commands), then rerun with a fresh trace re-arm, run worktree 5157c8ce and the same run.sh shape
+    (guard --abort).
+- 2026-10-17 12:22:48-12:24:48Z FINAL stage-100 clean rerun NOT STARTED (Claude subagent): the coordinator's 120 s
+  pre-start watch (owner ~12:22Z said all Codex threads were stopped; start only if no new codex/bwrap/sandbox exec)
+  saw new Codex command executions from the codex app-server (pid 3348786): codex-linux-sandbox pid 137466 at
+  ~12:22:54Z (--command-cwd /home/bobby), pid 138858 + bwrap 138865 at ~12:23:11Z (--command-cwd /), pid 144838 +
+  bwrap 144841 at ~12:24:11Z (--command-cwd /home/bobby/.worktrees). Per the instruction nothing was started: no lock,
+  no trace re-arm, no campaign, no production change. Run worktree data-layer-p184-final-run-5157c8ce stays ready.
+  Next (owner): stop the Codex app-server process itself (the VS Code ChatGPT/Codex extension, or quit the session)
+  rather than its threads, re-check that no codex-linux-sandbox/bwrap exec appears for 120 s, then rerun.
+- 2026-10-17 13:01-13:13Z FINAL stage-100 clean rerun NOT STARTED, second pre-start watch (Claude subagent; owner
+  ~13:00Z: "turned off the Codex extension"; rule: 180 s without a codex-linux-sandbox/bwrap exec, up to 4 attempts).
+  Watch by exact process name (ps comm, not command-line match). 13:01:52-13:05:52Z attempts were invalid (a
+  command-line pattern matched another process, pid 279227); redone 13:06:12-13:10:01Z: every attempt saw a new exec
+  from the codex app-server pid 3348786: codex-linux-sandbox 295529 (+ codex 295533) 13:06:29Z, 301314 13:07:57Z,
+  304948 13:09:01Z, 308277 13:10:01Z; 13:11:28Z pid 313343 (--command-cwd /home/bobby) ran
+  `cat /tmp/pma11-recon-pin-refresh.patch` (Codex PMA11 still working). Nothing started: no lock, no trace re-arm, no
+  campaign, no production change. Run worktree data-layer-p184-final-run-5157c8ce stays ready.
+  Next (owner): the app-server process pid 3348786 keeps executing after the extension was turned off; it has to
+  exit (reload/close the VS Code window or end that process) before a clean window exists.
+- 2026-10-17 13:15-13:22Z FINAL stage-100 clean rerun p184-final-campaign-20261017T131831Z: **ABORTED, TAINTED**
+  by an interactive login during the load (Claude subagent; owner ~13:14Z approved pausing Codex, the coordinator
+  SIGSTOPped app-server 3348786 and 3351236 at 13:14:52Z with a SIGCONT timer for ~15:14Z).
+  - Pre-start: codex_watch 60 s CLEAN (13:15:48-13:16:48Z); lock "claude-s100-final-clean" 13:16:54-13:21:44Z
+    (released); docker ps = baseline 40; preflight_env PASS; re-arm rc15/roll_writer_campaign_native.py
+    sha256:a44349a1... 3600 dry run DRY_RUN, real OK (delta [TS_DELIVERY_TRACE_UNTIL_UNIX_NS], not_ready_samples 0),
+    writer recreated 13:17:14Z on a44349a1, trace until 1792246629297860905 (14:17:09Z); campaign dry run problems [].
+  - Campaign from DL run worktree data-layer-p184-final-run-5157c8ce (tool/observer/budget/addendum cf26d6e3/
+    ff4f5989/ff85335b/4ed59dca, same command shape as 105025Z), guard --abort. g6_ts_started 13:18:49.56Z,
+    driver_started 13:18:54.54Z, G4 window 1 started 13:20:54.54Z. At 13:21:05.4Z an SSM session worker (owner) and
+    sshd login started; the login MOTD ran `/usr/bin/python3 /usr/bin/landscape-sysinfo` (root, pid 354157, 0.32 core)
+    -> TAINTED 13:21:06.30Z -> SIGINT driver (driver_exit -2 at 13:21:07.00Z), SIGINT campaign (exit 130, no
+    scorecard), G6 probe pid 179 SIGTERM rc 0, G4 observer g4-1 removed rc 0 -> ABORTED 13:21:08.995Z; run DONE
+    13:21:29Z; G11 watcher GUARD_ABORTED_NO_RESTART. The login then started a new VS Code extension host
+    (pid 354551) and a NEW Codex app-server pid 355061 (running, not stopped) plus claude processes (post-load).
+    G1-G14 NOT_MEASURED for this run.
+  - Receipts (sha256): campaign.json b4fc5510..., timeline.jsonl f0ecbe2d..., .run.log 788605a1..., .guard.log
+    fd5c3546..., guard/summary.json a8116833..., guard/processes.jsonl de984845..., guard/ABORTED e5f6131f...,
+    guard/TAINTED 527acd09....
+  - Teardown: 0 campaign containers (docker ps = baseline), cleaner tails removed by the guard (0 left), writer
+    a44349a1 rc 0. Not rerun: an operator login is not an infrastructure fault.
+  - Next (owner/coordinator): no interactive logins / VS Code reconnects during the window; the new Codex app-server
+    355061 is not covered by the SIGSTOP or the SIGCONT timer; then rerun with a fresh re-arm (trace until 14:17Z
+    would not fit a full run plus G11 after ~13:25Z).
+- 2026-10-17 ~14:35-14:50Z RCA of the CLEAN final stage-100 run 5 p184-final-campaign-20261017T135719Z G2/G4 FAIL
+  (read-only, Claude subagent; criteria unchanged; host lock held 14:41:58-~14:46Z only for `docker logs` of
+  ingestor_okx_swap and two --rm --network none --read-only reads of the root-0600 trace files; scorecard da30687c).
+  - Verdict: neither the bafbe91 Kafka commit-tail mechanism nor a TS writer IDR-110/110b artefact. The QUOTE|OKX
+    G2 max and the G4 quote|OKX_INVERSE max are one OKX-quote-lane tail located BEFORE the DL receive stamp.
+  - Verified, G4 (observer v5 split, final aggregates): inverse quote max per window 180.8/723.5/711.8/194.7/498.8 ms;
+    its venue->DL part 39.4/669.3/627.8/35.2/446.9 ms, ingest->producer <= 184.6, producer->receipt <= 96.0 ms. The
+    outlier capsules show all six OKX quote symbols (linear and BTC-USD-SWAP) on session okx-public-003 stale together
+    (e.g. src 14:08:17.30-17.35, rcv 14:08:17.99-18.02; also 14:11:16, 14:15:16, 14:31:22), while OKX trade
+    (okx-public-002), OKX book (okx-public-001) and every BINANCE row stay at venue->DL <= 73 ms in the same windows.
+    Run 105025Z on the same images had OKX quote venue->DL max 29-33 ms in all five windows: the tail is new.
+  - Verified, G2 native (summary-native-34b3b991...-91, ack_latency_slices): the 1350.3 ms max is slice 14:16
+    BTC-USDT-SWAP QUOTE (n 846, sdk_to_ack max 39.0, writer_to_ack 8.4 ms), i.e. >= 1311 ms before the SDK receive.
+    Per slice, OKX|QUOTE max spikes (764, 912, 860, 852, 1350, 716, 740, 682, 1282, 810, 900 ms) while OKX|TRADE,
+    BINANCE|QUOTE and BINANCE|TRADE stay <= 564 ms in the same slices: not common mode. Where a G4 window overlaps,
+    G2 equals G4 + writer (ETH 764 vs 762 at 14:08, ETH 912 vs 911 at 14:11, BNB 852 vs 847 at 14:15, ETH 810 vs 807
+    at 14:31). The 14:16 max is after G4 window 4 (its all-event max is 847 ms), so it has no split.
+  - Verified, not a renewal artefact: a probe renewal is a Frame::Probe unit, stream_unit false (TS session.rs:546,
+    :809), counted only in snapshot counters (latency.rs:754); G2 reads only stream APPLIED rows (latency.rs:799).
+    The failing cells have stream.live refreshed 0 (renewals sit in snapshot.refreshed 3-53). Image a44349a1 label
+    revision 6af62a7e = HEAD for rust/crates/market-data-writer/src. The G4 observer reads md.canonical.v2
+    read_committed directly (p184_g4_observer.py): the TS writer is not in its path.
+  - Verified, not Kafka/host: rust_core commit_ms per-sample max over the load n=1315, p50 66, p95 123, max 151 ms,
+    0 samples >= 300 ms; broker cgroup throttling <= 0.19 s per 12.5 s at the tail instants; ingestor_okx_swap
+    nr_throttled unchanged 14:08-14:16; quote lane okx-public-003 inflight_max <= 10 of 512, raw produce max 85 ms,
+    read gap max 398 ms over 204 10 s intervals. The md.latest.v2-2 offset-map phase ran 14:18:29-14:21:47Z; the tail
+    slices are both outside (14:08-14:16) and inside it. Only routine per-minute ~25 ms __consumer_offsets cleans
+    coincide with some tails.
+  - Inferred, not verified: OKX-side late push of bbo-tbt on that connection (frames arriving with ts 0.7-1.3 s old,
+    no read stall in our process). OKX changelog/notices, pcap and a second OKX quote connection were not checked.
+  - MARK|BINANCE 1097.7 ms: DOGEUSDT event 14:30:25.000Z, a different instant from the QUOTE tails. Python path
+    (ADAPTER_REFERENCE_RETURN): upstream 1092.8, writer 4.9 ms. G4 w5 saw the same event read_committed-visible at
+    +265 ms (venue->DL 68 ms), so ~827 ms lies between canonical visibility and the reference-read return (projection
+    / Query / TS MARK wake+250 ms read delay+1 s poll; inferred: a read that returned the previous MARK). The same
+    slice 14:30 shows native QUOTE sdk_to_ack 476-552 ms on both venues (TS-side moment at the 14:30 boundary).
+  - Mitigation packet (G4_MITIGATION_PACKET_DRAFT.md): its own rule applies, "no cleaner phase -> return to RCA".
+    C1 (cleaner throttle 4->3 MiB/s) and C2-C4 act on Kafka commit/broker CPU and do not address this tail. No gate,
+    scorer or apparatus change is warranted: frozen G2 is "venue event -> applied in TS Redis" and G4 is
+    "venue -> canonical" (TS upgrade/p184-phase-d-gates.md:30, :32), so a venue-side delay counts.
+  - Next (owner): decide the OKX quote lane path (read OKX notices; read-only check of a parallel bbo-tbt connection
+    against okx-public-003, or a lane reconnect/rebalance as a one-variable change via packet), and the MARK read path
+    (projection lag vs wake read delay) before another final run.
+- 2026-10-17 ~14:50-15:20Z RCA addendum to the 135719Z entry above (read-only on production, Claude subagent; no
+  restart, no config change; host lock held 14:52:51-15:14:19Z; evidence ~/.local/state/qdl-v2/
+  p184-rca-okx-bbo-20261017T145251Z: probe.jsonl 430f74d2..., host_sampler.jsonl 3857b2e2..., observer/
+  observations.jsonl 0c048e0a..., receipt.json 036bf779...; 0 containers left).
+  - Verified, lane wiring (c7ce7d3 = HEAD for rust/): OKX public bindings split per feed class, then in chunks of
+    max_subscriptions_per_connection 100 (qdl-native-raw-ingestor.rs:289-311, :3793), so okx-public-003 is ONE
+    connection carrying only the 6 bbo-tbt subscriptions (001 books, 002 trades, 004 mark/index, business-001
+    candles). wss://ws.okx.com/ws/v5/public (port 443, no proxy in the container env; ws.okx.com resolves to
+    Cloudflare 172.64.144.82/104.18.43.174). received_at_ns is the wall clock right after the WS read returns
+    (:3551, :3624). The text "ping" goes out only after 1500 ms of inbound silence, dead at 4000 ms (config), so a
+    busy bbo-tbt lane never pings; 64008 notices get make-before-break (:3596-3616). Lane 003 session generation 206
+    has been up since 05:24:00Z (reset by OKX then); it served both the clean 105025Z run and run 5, with no notice
+    and no reconnect. OKX reset lanes 002 (14:24:05, 14:47:12), 001 (14:27:26), 004 (14:42:27) and business-001
+    (14:57:54), each "Connection reset without closing handshake" and reconnected in about 0.3 s.
+  - Verified, ingestor not the cause: stage100/host.json shows ingestor_okx_swap at 0.07-0.11 cores of its 0.5 cap,
+    13 throttle events in 14:01-14:32 (the largest 43 ms per 12.5 s), and 0 in the samples covering 14:08:17,
+    14:11:16, 14:15:16 and 14:31:22. Lane 003 read_gap maxima (186-369 ms at exactly those instants) are smaller
+    than the 0.7-1.3 s staleness, and 105025Z had the same gap distribution (max 360 ms, 10 of 240 intervals
+    > 250 ms) without staleness.
+  - Verified, parallel probe (one read-only WS from a --rm qdl-v2-python:2.2.4-c7ce7d3 container on the default
+    bridge, same host NAT, no proxy, pinned to lane 003's edge IP 172.64.144.82, same 6 instruments, 14:53:01-
+    15:14:01Z, 84,418 frames). Venue ts -> local receive: p50 29.3, p95 32.0, p99 34.2, max 60.2 ms; 0 frames
+    > 200 ms; 0 stale bursts > 500 ms; OKX "ping" RTT p50 56.2 / max 74.9 ms. Over the same window, the production
+    lane (G4 observer v5, quote OKX, sample-ms 1, 51,513 events, read_committed) had venue->DL p50 <= 29, p95 <= 31,
+    p99 <= 35 and max 1554.2 ms, with 152 events > 200 ms, 100 > 500 ms and 58 > 1000 ms. All of them fell in
+    14:54:30-14:57:30; the lane was clean for the remaining 16 minutes. At 14:55:36.27-36.33 (src) the lane's frames
+    reached DL at 14:55:37.68-37.88, after a lane-003 read gap of 1036 ms ending at 14:55:37.272. In the same
+    seconds the probe received 610 frames for all 6 instruments with max lag 40.7 ms (14:54:58-55:03: 397 frames,
+    max 40.5 ms). Kernel side: the lane 003 socket rx_queue was <= 425 B (100 ms sampler), and the ingestor netns
+    TcpExt counters moved TCPOFOQueue 0, TCPToZeroWindowAdv 0, TCPRcvQDrop 0, TCPTimeouts 0. The bytes did not
+    reach the host; the client neither stalled nor closed its window.
+  - Verdict (verified for the 14:53-15:14 window, inferred for run 5 by the identical signature): the OKX quote tail
+    is specific to the connection/session, upstream of our host (on the Cloudflare edge -> OKX gateway path of
+    session okx-public-003-206). It is not a venue-wide bbo-tbt delay (a fresh connection to the same edge IP was
+    clean at the same seconds) and not DL ingestor CPU, read loop or Kafka. OKX docs: bbo-tbt ts is the
+    matching-engine time and pushes every 10 ms on change. The SBE section says that under system overload bbo-tbt
+    data loss "can occur, varying by different connection" (https://www.okx.com/docs-v5/en/). There is no changelog
+    entry or notice for 2026-10-17 (https://www.okx.com/docs-v5/log_en/, https://www.okx.com/status: "No upgrades
+    planned"). The announced port-8443 shutdown on 2026-10-31 "to support a network infrastructure upgrade" does not
+    affect our :443 URL (https://www.okx.com/help/okx-websocket-port-8443-discontinuation-announcement).
+    wsaws.okx.com was retired on 2025-04-28, so no alternative region endpoint exists. Not checked: pcap, and
+    whether a fresh lane-003 session stays clean for an entire run.
+  - Verified, MARK|BINANCE 1097.7 ms (TS worktree feat/v2-rust-first-okx-demo). MARK is not a native feed
+    (services/market_data/native_plan.py:28 NATIVE_FEEDS = TRADE, QUOTE): the value always comes from a reference
+    read, and the stream event is only a wake (data_layer_bridge.py:992-1015). Runtime env (docker inspect
+    market_data_service_p184w, created 13:56Z): MARK_STREAM_WAKE=true, WAKE_READ_DELAY_BY_VENUE=BINANCE=100 (not
+    250), WAKE_MIN_INTERVAL_MS=500, REFRESH_SECONDS=1, batch window 20 ms (shared/config.py:217). After a wake the
+    read waits max(500 ms - time since previous read, 100 ms) (data_layer_bridge.py:964-990). The wake is cleared
+    when that read STARTS. If the read returns the previous event (projector cache ~150 ms behind canonical and the
+    hot view busy or over its 250 ms budget: qdl/runtime/kn_hot_view.py:47, kn_query_backend.py:517-537, hot lane
+    max_active 4 at qdl/query/service.py:257), the new event waits for the next 1 s poll. Design worst case: about
+    265 (visible) + 100-500 (gap) + read + 1000 (poll) = 1.4-1.8 s. So the frozen G2 "QUOTE and MARK max < 1000 ms"
+    (TS upgrade/p184-phase-d-gates.md:30) is NOT guaranteed by design for MARK; this is a product issue, not
+    timing luck. Inferred (subagent, from trace/mark-load.json): no DOGE record carries a previous-event read in
+    25.1-26.1 s, so this event most likely spent about 650-750 ms in one reference read round trip (batch waiting
+    for its slowest item, or hot-lane queueing), not in the miss path. To confirm, read the root-0600 TS delivery
+    records for 14:30:23-27 with DL Query reference_batch latency.
+  - Recommendations. (a) Rerun timing gate: do not rerun yet; a venue-wide transient is refuted. (b) OKX quote
+    lane, one variable via packet: a fresh session for okx-public-003 only. There is no per-lane admin hook, and an
+    ingestor_okx_swap restart also resets the books lane, so this needs an owner decision. The durable product fix
+    is one variable: a venue-ts staleness trigger for latest-state lanes, for example N consecutive frames older
+    than 500 ms recycles that lane through the existing 64008 make-before-break standby path. Before the next final
+    run, declare a report-only 5-min pre-check: a parallel bbo-tbt probe vs lane venue->DL, with criterion "lane
+    max <= 200 ms and probe max <= 200 ms". (c) MARK, product fix, one variable: on a wake-triggered read that
+    returns no newer event, re-arm one re-read after the 100 ms read delay instead of waiting for the 1 s poll
+    (closes the structural > 1 s miss path). If the delivery records confirm the read round trip instead, use
+    DATA_LAYER_V2_MARK_BATCH_WINDOW_MS=0 (quota check first). Criteria, gates and scorer unchanged.
+
+### P18.4 IDR-112 OKX quote-lane venue-timestamp staleness recycle - 2026-10-17 (Claude, owner-approved fix)
+
+Owner approved ~15:20Z ("Sua ca hai, chay lai gate"): the DL product fix for the 135719Z G2/G4 FAIL root cause
+(entries 62a67ee / 27c28bd above: one OKX public session, okx-public-003 bbo-tbt, delivered bursts 0.45-1.5 s late
+while a fresh connection to the same edge saw max 60 ms; the busy socket never pinged). The MARK half of the
+approval is TS-side and not in this entry. Status: implemented, tested locally (unit + production loop against a
+fake venue + live read-only smoke of the production loop); NOT deployed.
+- Design (`rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs`, line numbers at this commit):
+  - Config `latest_state_staleness` (:277, struct :3269, defaults :3292, bounds `validate`): optional object,
+    `#[serde(default, deny_unknown_fields)]`; absent = defaults, enabled. Old binaries reject the field, so the
+    binary ships first and the rendered config needs no change (renderer `qdl/runtime/stable_deployment.py` NOT
+    touched; the kill switch is `{"enabled": false}`).
+  - Scope `staleness_applies` (:3337): only lanes whose every binding is QUOTE + LATEST_STATE (OKX bbo-tbt).
+    Excluded: TRADE/BAR (lossless, every event counts), BOOK (a session change forces a re-snapshot), MARK_INDEX
+    (OKX re-pushes an unchanged mark/index every 10 s, so its ts age is not a delivery delay), Binance (no
+    make-before-break path; no evidence of the defect there).
+  - Measurement: `okx_venue_ts_ms` (:3347) reads the newest `data[*].ts`; lag = host time at the socket read -
+    venue ts. Host time is a monotonic clock anchored once to the wall clock (an NTP step moves nothing).
+  - Detector `StalenessDetector` (:3414, `observe` :3478): baseline = lower median of per-bucket minimum lags over
+    the horizon (constant skew cancels; one bogus future ts moves one bucket, not the median). A frame is stale
+    when lag - baseline >= excess_ms. Trigger = >= min_frames stale frames inside window_ms from >= min_bindings
+    distinct bindings (clamped to the lane size). A trigger clears the window; a new session clears it too.
+  - Decision `decide` (:3573): cooldown since the last recycle start, rolling-hour cap; then the OKX control
+    budget (480/h) is asked without failing the lane on refusal.
+  - Recycle: the 64008 make-before-break path (`run_okx_service` :3822 detector per lane, :4174 measure + start
+    standby, :3997 handover). The standby subscribes while the stale socket keeps publishing; on ready the old
+    session ends `STALENESS_HANDOVER` (handed_over: liveness stays LIVE until the successor's record, lineage
+    `continued: true`, pre-ACK frames of N+1 published after N stops, generation fences unchanged). A standby
+    failure leaves the old session running (`qdl_native_standby_failed` with `cause`). A notice wins over a
+    pending staleness standby.
+  - Evidence lines: `qdl_native_staleness_recycle_armed` (lane start, config), `qdl_native_staleness_triggered`
+    (action RECYCLE / SUPPRESSED_COOLDOWN / SUPPRESSED_CAP / SUPPRESSED_STANDBY_PENDING /
+    SUPPRESSED_CONTROL_BUDGET with trigger stats; suppressed lines at most one per 10 s with a count),
+    `qdl_native_staleness_recycled` (successor generation, standby_ready_ms), `qdl_native_session_disconnected`
+    cause STALENESS_HANDOVER. Progress line per lane adds `venue_lag_ms`, `stale_frames`,
+    `staleness_baseline_ms`, `staleness_recycles_total`.
+- Parameters (defaults) and why, from the 135719Z evidence: healthy lag p50 29 / p99 35 / max 60 ms (parallel
+  probe), production clean windows max 29-39 ms; bad windows' venue->DL max 446.9-1554 ms.
+  excess_ms 250 (> 4x the healthy max, below the smallest bad-window max 446.9); window_ms 2000, min_frames 5,
+  min_bindings 2 (the bad bursts hit all six quote symbols together; one late frame or two never trigger);
+  baseline 10 s buckets x 60 (10 min), armed after 3 buckets (30 s); cooldown 60 s; at most 6 recycles per lane
+  per rolling hour (OKX: 3 connects/s per IP via the shared pacer, 480 subscribe requests/h). Bounds refused by
+  validate: min_frames < 2, excess < 100 ms, cooldown < 10 s, cap 0 or > 60. Known trade-off: a session stale for
+  more than half the horizon (5 min) becomes its own baseline; the evidence shows bursts minutes apart.
+- Test seam: `RawSink` / `RawDelivery` (:930) have one production variant (Kafka); a `#[cfg(test)]` in-memory
+  variant lets the tests drive the production `run_okx_service` against a fake venue without a broker (E7).
+- Tests (builder 551428d9, offline cache, `--network none`; host lock claude-dl-idr112 15:35Z): rustfmt clean
+  (file formatted with rustfmt 1.7.1; HEAD was clean), clippy -D warnings clean for the bin and its tests,
+  `cargo test -p qdl-kafka --bin qdl-native-raw-ingestor` 64 passed (49 existing + 15 new), 1 ignored (live),
+  staleness tests repeated 3x green. New: defaults/bounds, optional/partial/strict config incl. a rendered
+  config without the field, lane scope, ts parse, single + paired late frames never trigger (10 min), lane-wide
+  burst triggers at the 5th stale frame with stats, skew +5 s / -3 s never triggers and a burst on skew still
+  does, one-instrument burst and pre-arm burst do not, bogus future ts, session change, cooldown + hourly cap +
+  log rate limit; production loop vs fake venue: stale session recycled make-before-break (venue log: successor
+  ACK before the old socket closed; generations strictly ordered; all instruments in both; handover gap
+  < 100 ms), skewed + single-outlier sessions never recycled, a lane stale on every connection recycled again
+  only after the cooldown, disabled = no recycle and no measurement. Build-script expectations: 38 unittest OK.
+- Live smoke (TEST_ONLY, read-only OKX public, in-memory sink, no Kafka; the production loop in the test build,
+  not the release binary; 6 instruments of lane okx-public-003; 15:42-15:46Z): defaults 180 s, 17,461 frames,
+  venue lag min 26 / mean 27.0 / max 34 ms, 0 stale, 0 recycles. Forced (excess 5 ms, min_frames 3, cooldown
+  15 s) 90 s: 3 recycles against the real venue, standby ready 268-276 ms, previous last frame -> successor
+  ready 1-15 ms, drain 0 ms, all 6 instruments in all 4 generations, cooldown suppressions logged. Evidence
+  ~/.local/state/qdl-v2/p184-idr112-okx-staleness-20261017/ (cargo-test-1.log 8f1cd556..., cargo-3.log 13e239c8...,
+  live-smoke.log 774e77b2...).
+- Release build script: reference `v224_c7ce7d3` (60f83a51) added; expected DIFFERENT for the ingestor only and
+  EQUAL_LOADED_SECTIONS (whole-file EQUAL satisfies) for the 11 other binaries.
+- Next: rebuild the v2.2.4 rust image at this commit under the host lock, equivalence vs 60f83a51, isolated proof,
+  roll packet for ingestor_okx_swap (not executed). Register row IDR-112 in the TS INTEGRATION_DEFECT_REGISTER.
+- 2026-10-17 15:48-16:05Z IDR-112 release rebuild, equivalence, proofs, roll packet (host lock claude-dl-idr112
+  15:48:39Z, released after the proofs; df 215 GiB free):
+  - `scripts/build_qdl_release_images.py --rev 6d61710 --component rust --build`: PASS, 3 min 15 s.
+    `qdl-v2-rust:2.2.4-6d61710` sha256:5e261809b5046c4ff9de098d5b57eb049287abaabd722ed145701be47d79114b,
+    label 6d61710807d2..., receipt ~/.local/state/qdl-v2/build-v2.2.4-6d61710/receipt.json sha256 6f004ce7...;
+    image == ctx, ldd/uid/env probes ok, no TEST feature markers.
+  - Equivalence vs 60f83a51 (2.2.4-c7ce7d3): 11 of 12 binaries whole-file EQUAL (qdl-stream-gateway,
+    qdl-projector, qdl-realtime-core, qdl-production-core, qdl-kafka-smoke, qdl-parity-replay, qdl-binance-shadow,
+    qdl-venue-core-certify, qdl-authority-rehearsal, qdl-phase91/92 rehearsals); qdl-native-raw-ingestor
+    DIFFERENT (expected). The older rows hold too (core EQUAL rc22, gateway DIFFERENT_BUILD_PATH vs baa72c96,
+    projector EQUAL_LOADED_SECTIONS vs rc22).
+  - Python image not rebuilt: c7ce7d3..6d61710 changes nothing under qdl/ app/ generated/ config/ consumers/
+    qdl_sdk/ Dockerfile pyproject.toml poetry.lock, so c21e164a stays the v2.2.4 python image (its label stays
+    c7ce7d3).
+  - Release binary proof (--rm --network none --read-only, uid 10001, TEST_ONLY Kafka env with no certs): the
+    two production configs (OKX 103 bindings, Binance 27) and a synthetic config without the field start with
+    the defaults; `{"enabled": false}` and a tuned object are applied; `min_frames 1` is refused by validate; an
+    unknown field is refused by serde. Every run then stops at the missing TLS file, before any network.
+  - Release-profile tests (`cargo test --release`): 64 passed, 1 ignored. Release-profile live smoke, defaults,
+    300 s, 6 instruments 15:54-15:59Z: 38,110 frames, venue lag min 27 / mean 27.7 / max 96 ms, 0 stale,
+    0 recycles. The release binary itself cannot connect to a fake venue (wss only, webpki roots) nor run
+    without mTLS Kafka, so the behavioural proofs are the production loop in test builds (debug and release).
+  - Evidence ~/.local/state/qdl-v2/p184-idr112-okx-staleness-20261017/SHA256SUMS (release-binary-config-proof.log
+    793cd921..., cargo-test-release.log 37c74bbb..., live-smoke-release.log 87406d43...).
+  - Roll packet (NOT executed): upgrade/evidence/releases/v2.2.4/drafts/IDR112_INGESTOR_ROLL_PACKET.md, state dir
+    ~/.local/state/qdl-v2/releases/v2.2.4/rollout-idr112/ (inspects, rc17v2 dry runs: both ingestors diff
+    ['image'] 0.5/0.75 cpu, rollback reference composes 60f83a51). Step 1 ingestor_okx_swap is required; step 2
+    ingestor_binance_usdm is recommended for one ingestor binary on the release digests (owner decision);
+    stream_kn/market_projector stay on 60f83a51 (binaries EQUAL). HOLD gates as in the v2.2.4 roll plus IDR-112
+    checks (one armed line for okx-public-003, venue_lag reported, <= 2 recycles in the 5 min watch).
+  - Status: implemented, tested locally, release image built; not deployed, not certified. Open: owner approval
+    of the packet, roll, then the gate rerun (and the TS MARK fix, not in this entry).
+
+### P18.4 RCA - Query instance-wide read stall in 135719Z (query_kn_2 14:30:25Z) - 2026-10-17 (Claude, read-only)
+
+Scope: the ~0.7 s instance-wide stall of query_kn_2 (python 2.2.4-c7ce7d3, c21e164a) at 14:30:25.36-26.17Z in
+the clean final stage-100 run 5, which carried the MARK|BINANCE DOGEUSDT read (upstream 1092.8 ms, G2 max 1097.7).
+File analysis only (stage100/receipt.json + host.json, .guard samplers, the receipts of 22 final campaigns
+10-10..10-17, code at HEAD 8dcbd66 = c7ce7d3 for qdl/). No container command: the host lock of the IDR-112 roll
+session (16:46:39-18:16:39Z) was held, so `docker logs`, Redis SLOWLOG/LATENCY and in-process GC stats were NOT
+checked (one `docker ps` + `docker image inspect` ran at ~16:47Z, seconds after that lock started).
+- Verified, the stall is periodic and per instance. Receipt read outliers (>= 250 ms) form clusters of 3-57 reads
+  across every read type (QUOTE, MARK_INDEX, L2, BAR_LATEST) on ONE replica at a time. In 135719Z query_v2_2 has
+  21 clusters, 17 of 20 gaps a multiple of ~76 s (median 76.5 s, drifting 79 -> 75 s), query_v2_1 22 clusters
+  (median 77.0 s), with independent phases (query_v2_1 had no outlier between 14:29:28.6 and 14:30:45.3). 105025Z
+  shows the same (76.6 / 76.2 s), and every earlier final receipt has clusters at a 71-83 s median period
+  (20261015T075842Z had <= 1 cluster). Routine clusters peak at 263-548 ms (median per run 293-414 ms).
+- Verified, the large stalls coincide with a one-step memory release on the same instance. query_kn_2 MemUsage
+  848 MiB at 14:30:19.2 -> 337 MiB at 14:30:31.7, threads (PIDs) 71 -> 104; query_kn_1 944 -> 366 MiB in
+  14:20:31.6-14:20:44.1 around its 845 ms cluster at 14:20:33.3. Both clusters fall on the regular ~76 s slot.
+  Across the final campaigns, 15 drops > 250 MiB inside load windows; 11 have a cluster in the 12.5 s sample
+  window, and in 10 of them it is that replica's largest stall of the run (536-1140 ms vs 293-378 ms medians).
+  The memory rises 200-450 MiB during the run setup (60 bar series of 2,500/5,000 rows, 127 RATE_LIMITED retries)
+  and stays flat until such a drop (base after a drop mostly 330-400 MiB).
+- Verified, not host / shared backend / harness / Query timer: guard verdict CLEAN, host 14:30:24-27 forks 21-213/s,
+  plumbing <= 0.14 core; query_kn_2 cgroup throttle 177 ms in the sample covering the stall (93-428 ms in every
+  sample 14:29-14:32); a shared backend (market_cache Redis, Kafka, Rust hot view) would stall both replicas;
+  harness polls are 1/5/60/180 s (poll_ledgers), not ~76 s per replica; grep of qdl/runtime/stable.py,
+  qdl/runtime/kn_*.py, qdl/query/*.py, qdl/security/*.py finds no periodic timer. Query logs nothing per request
+  (`access_log=False`, stable.py:967/994), so its docker logs cannot show this.
+- Inferred (strong, not measured in process): CPython 3.12 cyclic GC under the Query settings: thresholds
+  (100_000, 50, 100) (qdl/runtime/stable.py:699, set at :706) and the frozen start-up heap (:710-713). It is the
+  only process-wide, GIL-holding, allocation-paced pause in Query (the cadence drifts with load, unlike a timer),
+  and only a collection can return ~500 MiB in one step. Most likely the routine ~76 s pause is a collection
+  scanning a large young/old set and the rare large one is a full (gen2) collection that also frees the setup
+  backlog (pymalloc arenas released). Which generation each is was not measured. Those thresholds were validated
+  on ONE offline 5,000-row warmup (this plan, 2026-09-23: "2-3 collections, no full sweep, at most 31 ms"), never
+  over a 30-min run at 100 req/s. Candidate cycle sources (unverified): stored exceptions keep their traceback
+  frames alive in a cycle - qdl/runtime/kn_query_backend.py:386-389 (memoised HotViewUnavailable) and :701-703
+  (history_batch per-item `results[requirement] = error`, frames may hold decoded rows).
+- Impact: the MARK DOGEUSDT read at 14:30:26.092 matches the query_kn_2 stall end (26.02-26.17); this refines
+  27c28bd's "one reference read round trip" inference. Even with the TS MARK re-read fix, a 0.3-0.5 s pause every
+  ~76 s per replica (0.5-1.1 s at a full collection) consumes most of the 1000 ms G2 budget for any read in it.
+- Proposal (DL product, one variable at a time, packet + owner approval; nothing executed):
+  (1) Confirm, behaviour-neutral: a `gc.callbacks` hook in `configure_query_interpreter` that logs any collection
+  >= 20 ms (generation, duration, collected, uncollectable, gc.get_count(), RSS) - one log line per event.
+  (2) Fix, chosen by (1): if the large events are full collections freeing exception/frame cycles (confirm
+  offline with gc.DEBUG_SAVEALL on a 5,000-row warmup + a 30-min replay), store tracebackless per-item errors at
+  kn_query_backend.py:389/:703 (`error.with_traceback(None)`; the API renders only the typed code); otherwise tune
+  QUERY_GC_THRESHOLDS on a 30-min kn4 shadow replay with the target metric "per-replica read stall >= 250 ms".
+  Blast radius: Query image only (rebuild python, recreate query_kn_1 then query_kn_2 serially, the other replica
+  serves). Not touched: Stream, projectors, ingestors, Kafka, Redis, TS, alpha, gates, scorer. Rollback: digest
+  c21e164a. Status: RCA only; no code, config or runtime change.
+  - 2026-10-17 16:46-17:06Z PRODUCTION ROLL IDR-112 + IDR-113 (owner-approved "Sửa cả hai, chạy lại gate"; lock claude-dl-roll-idr112; packet upgrade/evidence/releases/v2.2.4/drafts/IDR112_INGESTOR_ROLL_PACKET.md): ingestor_okx_swap 60f83a51 -> 5e261809 (rc17v2 accepted, diff [image], healthy, writer READY 64 64; 5-min watch: exactly one qdl_native_staleness_recycle_armed for okx-public-003 bindings 6 default config, okx-public-003 venue_lag_ms max 33 n 1114 baseline 26, 0 stale, 0 recycles, no runtime retry; HOLD violations [], stream overflow/refused delta 0); ingestor_binance_usdm 60f83a51 -> 5e261809 (accepted, 0 staleness lines as designed, HOLD [] ); TS writer a44349a1 -> 2deb90b0 (IDR-113 MARK re-read, receipt release/30f50a91 PASS; delta TS_DELIVERY_TRACE_UNTIL only; HOLD [], READY 64 64). Receipts ~/.local/state/qdl-v2/releases/v2.2.4/rollout-idr112/ and postchecks/hold-after-writer-2deb90b0.json. Rollback: 60f83a51 compose (ingestors), a44349a1 compose (writer). Query GC stall fix (RCA 507b446) in progress; G12/G13/final stage-100 rerun once on the final image set after it.
+
+### P18.4 IDR-114 - Query per-replica stall: cyclic garbage from in-process httpx MARK/INDEX reads and refusal tracebacks - 2026-10-17 (Claude)
+
+Owner direction 2026-10-17 ("Sửa cả hai, chạy lại gate" + "fix hết"); coordinator task from RCA 507b446; Codex
+review F5 (`ts-codex-p184-review/upgrade/p184-idr112-113-provider-gates-review-20261018.md`) accepted as an addendum.
+Host lock `claude-dl-query-gc-idr114` 17:05:37Z-20:05:37Z. No production container, config or Redis key changed.
+
+- Harness (`scripts/p184_query_gc_isolated.py`, new): two isolated Query replicas of the production image
+  `c21e164a` with the source under test mounted read-only over `/app/qdl`, the production Query container spec
+  (env, read-only mounts, 1.5 CPU, 1536 MiB, uid 10001) except a private quota Redis, a scratch state dir and the
+  instance id; aliases `query_v2_1/_2` on a new `--internal` network; TCP relays to the production Streams for the
+  driver's subscriptions and hot reads. Load = the unchanged stage-100 driver (`phase3_consumer_load_acceptance.py
+  --mode target --sessions 100 --budget config/v2/p184-stage100-budget.json`, 1800 s, profile of 135719Z,
+  scope shadow). Production reads only (market cache, Stream gRPC, rust_core admission). The Stream read view
+  (GetSnapshot bootstraps) and the TS writer still read the production Query, so the isolated pair carries less
+  load than production (gen0 period 104 s vs the 76 s stall period in 135719Z). Every container `--rm`, removed
+  after each run (run.json `removed`).
+  - Attempt A0 (17:10-17:41Z) is invalid as a baseline: the scratch state dir lacked the production symlink
+    `runtime/session-liveness -> /session-liveness`, so every session-checked snapshot was refused DATA_STALE
+    SESSION_STATE (~22/s per replica, driver errors 73,640). Kept only as evidence for the refusal path below.
+- Telemetry (`qdl/runtime/stall_telemetry.py`, new; installed by `configure_query_interpreter` and
+  `create_stable_query_app`), observation only, one `qdl.stall` stderr line per event:
+  `kind=gc` (gc.callbacks: generation, duration, collected, uncollectable, get_count, per-generation counts, RSS;
+  collections >= 10 ms), `kind=loop_lag` (100 ms timer late >= 50 ms) and `kind=slow_request` (outermost ASGI
+  wrapper, >= 250 ms: start, response-start, end, method, path, status). Per F5: the GC callback only appends a
+  dict to a bounded deque; formatting and the write happen on a writer thread. Stream also gets the gc hook
+  (shared `configure_query_interpreter`) when it is next rolled.
+- Measured, baseline A2 (17:42-18:13Z; source = c7ce7d3 qdl + telemetry; DEBUG_SAVEALL probe on replica 2 for
+  120 s at load +~21 min, that replica's window excluded from scoring):
+  - Every logged pause in the load window is a GENERATION 0 collection: replica 1 17 collections p50 196.5 ms,
+    max 248.8 ms, median period 104.3 s, each collecting 86-101k objects, i.e. the whole 100,000 threshold was
+    cyclic garbage; replica 2 the same (17, p50 199.1, max 264.2 ms) plus one gen2 308.5 ms (the probe's forced
+    full collection). No gen1/gen2 collection occurred naturally in 30 min.
+  - Client read stalls >= 250 ms (driver outliers, clusters 3 s gap): replica 1 12 clusters (max 352 ms), 10 of
+    them within [-2.5 s, +1.5 s] of a >= 100 ms collection; replica 2 9 clusters (max 339 ms), 7 aligned. The
+    unaligned ones are 1-3 reads of 259-271 ms with no server-side slow_request, loop_lag or gc record (one at
+    the same instant on both replicas): time spent outside the app. Loop lag records 17/15, max 240/216 ms, each
+    at a collection's wall time.
+  - SAVEALL window (120 s, replica 2): 95,305 cyclic objects, ALL from httpx: 3,531 Response / Request /
+    BoundAsyncStream / ASGIResponseStream / Headers ... = 27 per request. Source:
+    `qdl/reference/local_mark_index.py` `reader_for_view` - the alpha and execution MARK/INDEX reads run the
+    private endpoint in process through `httpx.AsyncClient(transport=httpx.ASGITransport(app))`; every httpx
+    request/response pair is a cycle (Response <-> BoundAsyncStream). Reproduced offline with httpx 0.28.1:
+    25 cyclic objects per request, unchanged by `aclose()`. Forced full collection: 117,893 objects, 308.8 ms,
+    RSS 555 -> 559 MiB (no large old garbage at that point).
+  - A0 SAVEALL (refusal storm): 493,660 cyclic objects in 120 s = ~187 per refused snapshot: QueryServiceError
+    from `V2QueryService._enforce` travelling through the hot thread future, the lane task and the ASGI stack;
+    its traceback holds every frame and the frames hold the future/task that hold the exception. Reproduced
+    in-app: 278 cyclic objects per refused request.
+- Not confirmed: the RCA's candidates `kn_query_backend.py:386-389` (HotViewUnavailable memo) and `:701-703`
+  (history_many per-item error): 0 such frames/exceptions in either SAVEALL window. Left unchanged.
+- Fix (variable (a) only, GC thresholds and `gc.freeze` unchanged; F5 (2): no threshold change, GC not disabled):
+  1. `qdl/reference/local_mark_index.py` `InProcessAsgiClient`: the same app, the same ASGI messages (scope, one
+     `http.request`, `http.disconnect` after the response) and a plain response object (status_code, httpx.Headers,
+     content, json()); app exceptions propagate as with `ASGITransport(raise_app_exceptions=True)`; timeouts stay
+     the caller's `asyncio.wait_for`. `HttpExecutionMarkIndexReader` and the endpoint are unchanged.
+  2. `qdl/query/results.py` `release_exception_frames`: after a refusal is rendered, the four app exception
+     handlers (`qdl/api_v2/router.py`) and the KN read view (`qdl/runtime/kn_read_view.py`) clear `__traceback__`
+     of the exception and its `__cause__`/`__context__` chain (bounded walk). Typed fields, args and the chain
+     links are untouched and no response changes. Deviation from F5 (3) "prefer immutable typed error data /
+     fresh exceptions": the refusal is already a per-request exception at its terminal handler; only the
+     traceback attribute is cleared, and no code on these paths reads tracebacks (grep: no exc_info,
+     logger.exception, format_exc or __traceback__ reader in qdl/query, qdl/api_v2, qdl/warmup, kn_read_view).
+     A chained cause shared by concurrent requests would only lose diagnostic frames.
+- Result, run B (18:14-18:45Z, same harness/protocol, source = A2 + fix): replica 1 0 collections >= 10 ms in
+  the load window, 1 stall cluster (1 read, 305 ms, no server-side record), loop lag records 0; replica 2 0
+  collections (outside the probe window), 0 stall clusters, loop lag 0. SAVEALL window: 0 cyclic objects in
+  120 s; forced full 9,451 objects / 123 ms (residual: 114 QueryServiceError cycles from setup-phase warmup batch
+  items, `service.py` warmup_batch_completed_async work:1035 via the executor's stored per-item errors - not
+  changed, because those exceptions can be shared by singleflight waiters (F5 (3)); ~4 per minute in setup only,
+  freed by a rare full collection). Driver: A2 and B both COMPLETE, 0 errors, 100 hot req/s, host verdict PASS
+  (scope shadow: not gate evidence).
+  | per replica, 30 min load | A2 baseline r1 / r2 | B fix r1 / r2 | 135719Z prod r1 / r2 |
+  | --- | --- | --- | --- |
+  | GC pauses >= 100 ms | 17 / 15 | 0 / 0 | not instrumented |
+  | read stall clusters >= 250 ms | 12 / 9 | 1 / 0 | 27 / 26 |
+  | max stalled read ms | 352 / 339 | 305 / - | 2486 / 694 |
+  | loop lag >= 50 ms records | 17 / 15 | 0 / 0 | - |
+- Mechanism verdict: verified in process (gen0 collections paced by cyclic garbage, GIL-holding 0.2-0.26 s,
+  aligned with 17 of 21 client stall clusters, eliminated with the two cycle sources). Inferred, not measured
+  here: production's larger pauses (0.3-0.5 s, 76 s) come from the same source at higher MARK/refusal rate
+  (production also serves the TS writer's MARK reads and the Stream read view); the 0.5-1.1 s pauses with a
+  ~500 MiB RSS drop were not reproduced in 30 min (no natural gen1/gen2 collection, RSS flat 535-560 MiB).
+  The final stage-100 with the telemetry line in production is the check.
+- Tests (in the image c21e164a, `--network none`, source mounted read-only): new
+  `tests/test_query_refusal_cycles.py` (4; no server frame in DEBUG_SAVEALL garbage after 10 refused snapshot /
+  data-plane refusals, unchanged problem body; chain clearing; negative control: the 2 app tests FAIL on the
+  unfixed router), `tests/test_local_mark_index_inprocess_client.py` (3; status/body/headers equal to
+  httpx.ASGITransport for 200/409/401, exception propagation, 0 cyclic objects per read),
+  `tests/test_query_interpreter.py` (+8 telemetry). Affected suites 131 OK (33 skipped: Redis); with a disposable
+  Redis `test_kn_mark_hot_memo`, `test_execution_mark_index_live_view`, `test_kn_query_backend`,
+  `test_kn_alpha_reference_access` 94 OK.
+- Evidence `~/.local/state/qdl-v2/p184-idr114-query-gc-20261017/` (run-A0-no-liveness, run-A2-baseline,
+  run-B-fix-cycles: receipt 86a8d878 / 47cf15d5 / 010ce791, saveall d05f74b9 / 89a09b8f / b6b87b93, analysis
+  a5059091 / f01182fc / 5d52206c). Status: implemented, tested locally, isolated-replay measured; not deployed.
+- Release image (lock `claude-dl-query-gc-idr114`, `scripts/build_qdl_release_images.py --rev 31a5155 --component
+  python --build`): `qdl-v2-python:2.2.4-31a5155`
+  `sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff`, label revision 31a5155, receipt
+  `~/.local/state/qdl-v2/build-v2.2.4-31a5155/receipt.json` (e1a9bcc5...) PASS (vs rc19 model: unexpected
+  differences [], pip freeze equal). Equivalence vs production `c21e164a`
+  (`equivalence-vs-c21e164a.json`, 2ec87f34...): of 439 hashed /app files exactly the 6 changed python files
+  differ (= `git diff c7ce7d3 31a5155` on qdl/app/generated/config/consumers/qdl_sdk); pip freeze equal. The 17
+  new/changed tests pass against the image's own /app code. Rust unchanged: ingestors `5e261809`,
+  stream_kn/market_projector `60f83a51` (docker inspect 19:08Z).
+- Roll packet (draft, not executed): `upgrade/evidence/releases/v2.2.4/drafts/IDR114_QUERY_ROLL_PACKET.md` -
+  query_kn_1 then query_kn_2 with `rollout_rc15.py` (diff `['image']`), HOLD = v2.2.4 gates (`hold_check.py`,
+  `verify_service.py`) plus a 10 min `qdl.stall` report per step; rollback digest `c21e164a` (tool auto-rollback or
+  the saved compose). The TS register row for IDR-114 is in the packet (section 8): the TS register had another
+  agent's uncommitted edit (IDR-113 row) at 19:00Z, so it was not edited here.
+- Tests on 31a5155 (image c21e164a, `--network none`, read-only rootfs, source mounted): the 61 test modules that
+  import the changed code (api_v2, query results/service, local_mark_index, kn_read_view, runtime.stable,
+  execution_live) 1073 OK, 34 skipped, 847 s. Full `unittest discover` stopped at 2058 tests when the lock window
+  ran short: 1830 ok, the rest skips plus 10 environment errors in modules untouched by 31a5155 (build-images 5:
+  no git in the container; ci_kafka_recovery_controller 3: no docker; crypto_history_contract import: read-only
+  `/app/logs`; migrate_core_batch_size 1 FAIL in the full run, 6/6 OK alone). Logs
+  `~/.local/state/qdl-v2/p184-idr114-query-gc-20261017/{affected-61,full-suite}-31a5155.log`. Host lock released
+  after this; isolated containers/networks 0 (`qdl.p184.gcq` label), image `qdl-v2-python:2.2.4-31a5155` kept for
+  the packet.
+
+### P18.4 IDR-112 Codex review F1-F3 dispositions and ingestor follow-up - 2026-10-17 (Claude)
+
+Review: `/home/bobby/.worktrees/ts-codex-p184-review/upgrade/p184-idr112-113-provider-gates-review-20261018.md`
+(reviewed DL HEAD 7a2bf84, product change 6d61710). Coordinator dispositions, owner wants DL kept lean. Only F1-F3
+are recorded here; F4 is TS (IDR-113), F5 is the Query stall (IDR-114, separate entry above). File
+`rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs`, line numbers at this commit. Status: implemented, tested
+locally; release image NOT rebuilt (the coordinator rebuilds rust together with the python Query fix, one roll).
+- F1 (P2, standby ACK wait had no overall deadline) - ACCEPTED, FIXED. Verified the counterexample in source first:
+  `okx_establish` re-armed `timeout(10 s, reader.next())` per message; ping/pong/notice continued the loop without
+  completing pending ACKs; the three callers (primary, notice standby, staleness standby) had no outer deadline and
+  `standby.is_some()` suppressed later triggers. Fix: one absolute budget `OKX_ESTABLISH_BUDGET` = 15 s (:3024),
+  set once the connect pacer admits the attempt and never extended by progress; connect and the ACK loop both run
+  under `timeout_at(deadline)` (:3767, :3772); expiry = typed `OkxEstablishError::Deadline { phase, budget }`
+  (:3695-3735), the future and its socket are dropped (cancellation). 15 s: above the old 10 s per-read ACK timeout
+  (kept) and well under the 60 s OKX keeps a socket after 64008, so a repeated notice can retry. Standby failure
+  (:4160-4180): only the standby is dropped, the active lane keeps its own checks, `qdl_native_standby_failed`
+  gains additive `reason` STANDBY_DEADLINE / STANDBY_CONNECT_ERROR / STANDBY_SUBSCRIBE_ERROR (`cause` NOTICE /
+  STALENESS unchanged), then the normal cooldown/cap. Primary path keeps its categories (:3955-3970): subscribe
+  phase expiry fails the lane like the old ACK timeout; connect phase expiry is retried with backoff like a refused
+  connect (previously an unbounded hang). Budget is an `OkxServiceShard` field (production = the const, tests
+  shorten it); no config field added.
+- F2 (P2 coverage, ACK is not consumer-usable handover) - option A ACCEPTED (option B deferred). Comments fixed to
+  state exactly what the ACK cutover guarantees: the successor is fully ACKed while the old socket still delivers
+  and the old session stops before any successor frame is published (generation N never after N+1); it does NOT
+  prove a fresh successor frame per binding; in between consumers rely on retained state and their own
+  freshness/eligibility checks (:4115-4128 handover, `OkxSessionEnd::NoticeHandover` doc, lineage doc ~:810).
+  Measurement in the fake-venue tests, per binding, last old-generation frame -> first new-generation frame
+  (receipt time): streaming successor 38 / 28 / 48 ms (asserted < 250 ms); ACK-only successor: NO_SUCCESSOR_FRAME
+  for all 3 bindings, uncovered until stop 2049 / 2069 / 2059 ms (reported, no bound claimed; the test cannot hang:
+  the successor answers the 500/1500 ms liveness ping and the run is stopped).
+- F3 (detector is relative, not an absolute freshness check) - ACCEPTED as documented trade-offs (config doc
+  :3309): startup-already-delayed lane and a > half-horizon stale spell become the baseline; min_bindings 2 never
+  triggers on a one-instrument delay; the downstream validator still refuses unusable data; no absolute-lag recycle
+  added. Accounting fix: `decide` (:3627) is now a pure check; the cooldown/cap slot is taken by `recycle_started`
+  (:3654) only after the OKX control budget admits the attempt (:4325), so SUPPRESSED_CONTROL_BUDGET costs no
+  slot (cap and cooldown still bound attempts, a failed standby still counts). Progress fields (additive):
+  `staleness_suppressed` (window), `staleness_last_action`, `standby_failures_total`, `standby_deadline_total`
+  (:1314-1330, :1376-1379); absolute lag = existing `venue_lag_ms`, baseline validity = `staleness_baseline_ms`
+  null until armed. No Python consumer parses these fields (grep of *.py: none).
+- Tests (builder 551428d9, `--network none`, read-only source, offline cache; host lock
+  claude-dl-idr112-review-f1f3 19:29:17-19:32:00Z, taken after claude-dl-query-gc-idr114 released): rustfmt clean
+  (only new test lines reformatted), clippy -D warnings clean for the bin and for its tests, `cargo test -p
+  qdl-kafka --bin qdl-native-raw-ingestor` 70 passed (64 + 6 new), 1 ignored (live); staleness tests repeated 2x
+  more (21 passed each). New: (pure) a refused recycle takes no cooldown/cap slot; startup-delayed lane becomes its
+  own baseline (929 ms, no trigger, recovery no trigger); sustained single-instrument delay with min_bindings 2 never
+  triggers over 6 min; (production `run_okx_service` vs fake venue) a standby that gets every ACK but one plus a
+  ping and text pong every 100 ms is cancelled at a 600 ms budget (venue-observed lifetime asserted within
+  budget -100/+400 ms), the active generation never paused > 100 ms, generation +1 (cancelled) published nothing,
+  the next recycle after the cooldown succeeded (generation +2, all bindings), standby_deadline_total 1; shutdown
+  while a standby is pending under the 15 s production budget returns < run_for + 0.5 s and drops the standby
+  socket; ACK-only successor measured as above. Existing cooldown test updated for `recycle_started`. Evidence
+  `~/.local/state/qdl-v2/p184-idr112-okx-staleness-20261017/review-f1f3/` (SHA256SUMS: check.log 95986d6b...,
+  test-1.log c51da183..., test-2.log 22344c21..., test-3.log df16dd86...). No container, image or runtime left
+  (`--rm`).
+- Not done (by instruction): release image rebuild, equivalence, roll. Next: coordinator rebuilds the v2.2.4 rust
+  image at this commit together with the python Query image, equivalence (ingestor DIFFERENT, other 11 EQUAL
+  expected), one roll packet.
+
+### P18.4 v2.2.4 final rust rebuild 83bef59 + combined roll packet IDR-112b/IDR-114 - 2026-10-17 (Claude)
+
+- Rebuild (host lock claude-dl-idr112b-rebuild 19:40:48Z, released; free disk 210 GiB): `scripts/build_qdl_release_images.py
+  --build --component rust --rev 83bef59` -> `qdl-v2-rust:2.2.4-83bef59`
+  sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784, receipt
+  ~/.local/state/qdl-v2/build-v2.2.4-83bef59/receipt.json (7e630925..., PASS). Postcheck reference `v224_6d61710`
+  (5e261809) added in 052508d (tests 40 OK). Equivalence: `qdl-native-raw-ingestor` DIFFERENT (expected); the other
+  11 binaries whole-file EQUAL to both 5e261809 and 60f83a51 (gateway, projector, realtime core included); core
+  EQUAL rc22. Release binary config proof on both production configs (`--rm --network none --read-only`): started
+  line with defaults, bindings 103/27, clean SIGTERM stop (review-f1f3/release-binary-config-proof-83bef59.log
+  f69f632d...).
+- Python: not rebuilt, `3e9e4d3a` (31a5155) stays. `git diff 31a5155..052508d` touches no runtime python path (qdl/,
+  app/, generated/, config/, consumers/, qdl_sdk/, Dockerfile, pyproject.toml, poetry.lock).
+- Stream/projector stay `60f83a51`: binaries byte-identical to the new image; per-role digests + equivalence statement
+  in the release record (owner decision noted in the packet).
+- Packet `upgrade/evidence/releases/v2.2.4/drafts/FINAL_ROLL_PACKET_IDR112b_IDR114.md` (NOT executed): ingestor_okx_swap
+  -> ingestor_binance_usdm (rc17v2, 5e261809 -> a9679def) -> query_kn_1 -> query_kn_2 (rc15, c21e164a -> 3e9e4d3a),
+  HOLD per role, rollback per role (ingestors 5e261809 composes, Query c21e164a composes, both checked equal to live).
+  Dry runs: rc17v2 both ingestors diff [image]; rc15 candidate() both Query diff [image], env/volume diff empty.
+  Evidence ~/.local/state/qdl-v2/releases/v2.2.4/rollout-idr112b-idr114/SHA256SUMS; new read-only postchecks
+  rollout/postchecks/ingestor_lane_report.py (d46e971d...), query_stall_report.py (812ae73f...).
+- 2026-10-18 04:10-04:53Z FINAL chain (v5.5, owner-approved ~03:30Z "Duyệt v5.5 + chuỗi cuối (Recommended)") step 1,
+  G12 final credit on the FINAL image set: **PASS, credited** (Claude subagent). Nothing inherited from earlier image sets.
+  - Precondition: coordinator roll driver rollout-idr112b-idr114/driver.log ALL_DONE 04:09:25Z (lock
+    claude-dl-final-roll released). docker inspect 04:10Z: query_kn_1/2 3e9e4d3a (python 2.2.4-31a5155), ingestors x2
+    a9679def (rust 2.2.4-83bef59), stream x2 / projector x2 60f83a51, core x3 7c848aad (rc22), bar_edge 08f356a8, writer
+    market_data_service_p184w 2deb90b0 (label 30f50a91, started 2026-10-17T16:59:41Z); all RestartCount 0. TS release
+    receipt release/30f50a91/receipt.json PASS (7040ba9f...); CI "Quality And V1 Contract" 39048572869 success on
+    30f50a91 (GitHub API, job quality-contract success).
+  - Pins: DL bb054498 (g12-image-set-v224.json python -> 3e9e4d3a, ts -> 2deb90b0, sha256 6303cdcb...; g13-roles-v224.json
+    query -> 3e9e4d3a, ingestors -> a9679def, sha256 984c4566...; regenerated from docker inspect). Clean detached run
+    worktrees data-layer-p184-final-run-bb054498 and trading-system-final-run-aa126794 (TS head). Same shape as
+    20261017T084728Z: --ts-root trading-system-final-run-77a6d671 (coordinator decision H1), --auto-leader-rebalance
+    false from a fresh parity snapshot, --credit.
+  - Lock "claude P18.4 G12 v224 FINAL 2deb90b0 20261018T041107Z": the lock tool waited 04:11-04:24Z on a foreign process
+    (a Codex app-server `ssh ... 178.128.51.255 python3 -c ...` job running on the remote portal host; local CPU ~0),
+    taken 04:24:15Z (75 min), released 04:52:31Z. df 206 GiB free.
+  - Receipt ~/.local/state/qdl-v2/p184-g12-v224-final-2deb90b0-20261018T042415Z/ (namespace
+    p184-g12-dl-202cf867bb6a5628), run 04:25:02-04:51:45Z, exit 0.
+    - verdict v3 COMPLETED **pass true**, images ts 2deb90b0 / python 3e9e4d3a / stream+projector 60f83a51 / core
+      7c848aad. caught_up_s BINANCE/OKX: broker_stop_start 0.095/0.095, projector_restart 0.100/0.046, stream_restart
+      0.572/0.573. Every fault: G1, G2 (TRADE/QUOTE/MARK lost 0, unseen 0), G3 BAR 1m, sampler PASS.
+    - Writer clones: precheck ok, Redis UNCAPPED, strict_resume VERIFIED on both venues.
+    - --credit exit 0: creditable true, reason PASS, production_parity MATCH, cleaner_binding RUN, final profile checked.
+      Effective describe sha256 d3d77176... before and after.
+    - sha256: verdict.json 170af837..., production-parity.json d4e1f82d..., credit-snapshot.json 3aa5db2c...,
+      writer-precheck.json cc448e2d..., c-observe.json 598f05f8... / c-observe-after.json 14f9365e..., teardown.json
+      53691d95..., FINAL_CREDIT.json c6bfaedd....
+    - Teardown: 12 removed, 0 left by label/name, 0 networks, 0 volumes (42/12 before = after), clone state erased
+      (complete), production_guard_breaches {}, production_external_recreates {}.
+  - Foreign-job overlap: none started inside the lock by the lock tool's check; docker events no longer hold the window
+    (oldest 04:53:18Z), so container overlap is NOT_DETERMINABLE from the host.
+- 2026-10-18 04:53-05:05Z FINAL chain (v5.5) step 2, G13 isolated on the final image set (writer 2deb90b0): **dr08 4/4
+  PASS; dr05-upstream 0/6 and dr05-quiet 0/2 FAIL, harness_ok false - apparatus defects of the TS harness fc644cd1
+  (IDR-111 fix), first exercised live in these two steps; no fault or oracle was reached** (Claude subagent). Not rerun:
+  not an infrastructure fault, and both failures are deterministic for the current harness.
+  - Pins: DL run worktree data-layer-p184-final-run-bb054498 (--dl-source-sha bb054498), TS run worktree
+    trading-system-final-run-aa126794 (TS head; contains fc644cd1), --ts-source-sha 30f50a91, --writer-image 2deb90b0,
+    roles g13-roles-v224.json 984c4566..., --python-image-ref qdl-v2-python:2.2.4-31a5155, inputs
+    p1/g13v55/inputs-g13v55-ci.json b86a92e5.... Dry runs: blocked {} (4/6/2 cells), deployed_mismatches [],
+    checkout_problems [].
+  - Lock "claude P18.4 G13 isolated FINAL 2deb90b0 20261018T045322Z": waited 04:53-04:55Z on a foreign process (a Codex
+    app-server ssh job to the remote portal host), taken ~04:55:5xZ (70 min), released 05:04:43Z. Taint watch (30 s,
+    18 samples): 0 foreign containers, load1 max 16.13.
+  - dr08-isolated p184-g13-20261018T045558Z: 4 cells OBSERVED ok, exit [0], harness_ok, 125.4 s. evidence.jsonl
+    7eb4119b....
+  - dr05-upstream p184-g13-20261018T045826Z: exit [0,0,0,1,0], 236.7 s, all 6 cells failed in fresh_case before the
+    anchor, verbatim e.g. `ChannelError:DR05_DEADLINE_EXCEEDED:{"budget_s": 30, "cache_readable_s": 24.05,
+    "clone_started_s": 23.27, "dl_reset_s": 20.423}` (the other 5: dl_reset 19.4-20.4 s, cache_readable 23.0-24.1 s).
+    Rows 3d250ec2....
+    - Reading (source-checked): since fc644cd1, fresh_case waits after cache_readable for `subscription_attempted`
+      (TS scripts/p184_dr05_upstream.py:129, :210-224: every worker LIVE, unreported 0, no slice STARTING) inside the
+      unchanged 30 s per-case budget; ~6 s were left and the wait exhausted it (`_remaining` :201-204). The credited
+      run 093001Z (a44349a1) used the pre-fix readiness (heartbeat demanded > 0). The writer delta a44349a1 -> 2deb90b0
+      in services/rust/domain/adapters is only services/market_data/data_layer_bridge.py (IDR-113 MARK re-read);
+      fixed_workers.py (worker liveness) is identical. The last heartbeat sample is not in the row (not measured).
+  - dr05-quiet p184-g13-20261018T050244Z: exit [0,0,0,0,1,0], 97.4 s, both cells
+    `RuntimeError:DR05_CLONE_BOOTSTRAP_ROUTE_UNCHECKPOINTED:NO_NATIVE_ROUTE_EVIDENCE`. Rows 92f29e27....
+    - Reading (source-checked): the quiet harness calls strict_restart right after the first fresh TRADE view
+      (TS scripts/p184_dr05_quiet.py:192-197); strict_restart (p184_dr05_isolated.py:600-630, fc644cd1) checks the
+      bootstrap heartbeat's native routes ONCE, without the wait loop the dr05-transport path has (:870-886). The clone
+      ran 7.2 s (05:03:54.93-05:04:02.17Z, exit 0); its only native feed is TRADE (native narrowing clone [TRADE]),
+      whose probe reports at max_session_liveness_ms / 3 = 15 s (TS rust/.../session.rs:305), so the heartbeat had no
+      native route yet. Same residual as recorded for the v5.4 dr05-transport bootstrap (TRADE probes not yet
+      reported).
+  - Teardown: every summary has dl_source.removed true and removed_leftovers {}; afterwards 0 p184- containers,
+    networks or volumes, 0 /tmp/p184-dr05-*. summary.json 17e731d6... / 519e09f8... / c12ea80b....
+  - Status: G13 isolated on 2deb90b0 = DR08 4/4 closed, DR05 upstream 6 + quiet 2 OPEN. Proposed apparatus fix (needs
+    coordinator/owner approval; not done here): quiet path waits for checkpoint_proof like the transport path (bounded
+    by ready_s), and dr05-upstream readiness either starts the case budget after clone readiness or keeps the
+    demanded > 0 gate plus an anchor retry until the deadline; then rerun only dr05-upstream + dr05-quiet on the same
+    image set. Chain continues with the runtime window (independent of these 8 cells).
+- 2026-10-18 05:08-05:29Z FINAL chain (v5.5) step 3, G13 runtime window packet v5.5 on writer 2deb90b0: **66/66 runtime
+  cells OBSERVED ok, all 6 steps harness_ok; W05 68/76** (8 DR05 cells open from the step-2 apparatus FAIL, as the packet
+  states; 0 provenance or drift issue) (Claude subagent).
+  - Packet p1/packet-g13-v5.5-20261018.md sha256 507f9096... (= sidecar): v5.4 + image 2deb90b0 (TS 30f50a91) + run ids
+    g13r8wa20261017 / g13r8fx01 + pins DL bb054498 / TS run worktree aa126794 + CI 39048572869; approvals recorded in the
+    delta header (2026-10-17 ~15:20Z "Sửa cả hai, chạy lại gate", "fix hết"; 2026-10-18 ~03:30Z "Duyệt v5.5 + chuỗi
+    cuối"); gate 0.10 waiver carried over. Generator g13v55/make_g13v55.py 2c86ccd8... (`--image 2deb90b0 --ci-run
+    39048572869 --out-suffix=-ci`): compose 4cef60ad... (26 changed paths vs v5.4: 7 role image + run-id substitutions in
+    the allowed env keys), FX plan 615e1add..., inputs-ci b86a92e5..., alpha compose 96225365... unchanged.
+  - Gates: dry run exit 0, blocked {}, 66 cells, coverage 76 missing []; deployed_mismatches []; checkout_problems [];
+    writer env view (14 keys) and image equal the G12 credit-snapshot writer; DL run worktree bb054498 and TS run worktree
+    aa126794 clean before/after.
+  - Lock "claude P18.4 G13 v5.5 window (packet-g13-v5.5-20261018)" 05:09:02-05:29:14Z (released).
+  - Step 2: B9 99/99 pending [] mismatch []; B16 {} (binding digest 450c38a2..., 10 accounts incl. the 4 g13r8wa20261017);
+    B14 DNS 4/4; INDEX BINANCE:USD_M:BTCUSDT present=false (as v5.2-v5.4); B10 CA fc24c047... x3; bind sources 55 (8
+    identity files checked with alpine test -s, 8 ok). Step 3 FX g13r8fx01 FX_PROOF_SEED_COMMITTED (4 writes). Step 4
+    preflight_env PASS x2, compose config 0 x2. Step 5 ts-p184 up 05:10:20Z, 8 containers, 0 restarts, 7 roles on
+    2deb90b0, health 200 + "Gateway V3 Online", Traceback/401/UNAUTHENTICATED/BINDING_MISMATCH/CANARY all 0, gateway
+    writer scope holds the 4 g13r8wa accounts. Step 6 B12 4/4. Step 7 alphas up 05:11:53Z, warmup 700 rows both venues,
+    0 non-200, no new data-source row (last 2026-10-12). Step 7b FX snapshot 05:10:25Z validated_at_ms set, 1 rate.
+  - Runner p184-g13-20261018T051237Z (05:12:37-05:26:46Z, exit 0; summary.json 147a90aa..., plan.json a3c1a819...;
+    sealed DL export tree 05a573c6..., removed): dr01-deployed 7 [0x5] 27.6 s; dr01-wrong-account 2 [0,0] 4.7 s (cleanup
+    complete true); dr02-dr03-alpha 14 [0,0,0] 507.4 s; dr04-dr06-views 22 [0x4] 249.3 s; **dr05-transport 9 [0] 53.0 s,
+    all 9 OBSERVED ok** (bootstrap_checkpoint_proof complete: QUOTE routes BINANCE ETHUSDT, OKX BTC-USD-SWAP, OKX
+    ETH-USDT-SWAP, items QUOTE 3 / TRADE 2, checkpoint 5293 B; strict_resume VERIFIED, strict refusals 0, strict
+    heartbeat refusals 0 over 2 fresh heartbeats); dr07-reference 12 [0] 4.1 s. dr05-transport receipt 7b9a5cd6...,
+    jsonl 1fd303c8....
+  - W05 verifier in 2deb90b0 (--network none, --expect-source-sha 30f50a91, --expect-image-digest 2deb90b0) over the 6
+    runtime jsonl + dr08 045558Z: **68/76** (DR01 9/9, DR02 8/8, DR03 6/6, DR04 14/14, DR05 9/17, DR06 6/6, DR07 12/12,
+    DR08 4/4). Issues: CASE_OPEN on the 6 dr05-upstream cells (+ 260 non-DR BR* matrix cells, outside G13) and
+    CASE_BELOW_REQUIRED_LEVEL on the 2 DR05.QUIET_TYPED cells (no isolated row); no provenance or drift issue.
+    verify/w05-final-v55.json 20f8400f....
+  - Abort watch (30 s, 28 samples): writer rc 0, DL bad roles [], 0 QUOTA/RESOURCE_EXHAUSTED lines, load1 <= 16.52.
+  - Teardown: alpha down (2), ts-p184 down (8 + network), FX g13r8fx01 FX_PROOF_SEED_DEACTIVATED (3 x UPDATE 1),
+    wrong-account cleanup complete true, DSN env file and p1/r2 removed; 0 ts-p184/p184-g13-/p184-dr05- containers,
+    networks, volumes, /tmp/p184-dr05-*; docker ps = baseline 40; disk +48 MiB. Writer 2deb90b0 rc 0 unchanged.
+  - Status: G13 on 2deb90b0 = 68/76; DR05 GAP_REFUSAL x3 / GENERATION_CHANGE_FENCED x3 / QUIET_TYPED x2 open until the
+    harness fix and an isolated rerun on the same image set.
+- 2026-10-18 05:30-06:20Z FINAL chain (v5.5) steps 4-5 (Claude subagent): OKX lane pre-check (report-only) and the
+  FINAL stage-100 on the final image set: **protocol_met true; PASS G1 G2 G3 G5 G6 G7 G8 G9 G10 G11 G14; FAIL G4 (one
+  row: mark_index_price|OKX| window 1 p95 1632 > 1586.6 ms); NOT_MEASURED G12, G13 (separate evidence)**. Frozen rules,
+  nothing reinterpreted, not rerun (a behavioural gate result, not an infrastructure fault).
+  - OKX lane pre-check, declared before the run (DECLARATION.json a8f4ae11..., REPORT_ONLY_NOT_A_GATE, not used to pick
+    the start time); lock claude-okx-lane-precheck 05:30-05:35Z; evidence
+    ~/.local/state/qdl-v2/p184-okx-lane-precheck-20261018T053002Z/ (SHA256SUMS). 300 s, 05:30:18-05:35:18Z:
+    - parallel read-only bbo-tbt probes (--rm qdl-v2-python:2.2.4-31a5155, the 6 lane-003 instruments, one per OKX edge
+      IP seen on the ingestor's sockets): 172.64.144.82 24,218 frames venue->local p50 27.9 / p99 30.7 / max 113.4 ms;
+      104.18.43.174 24,224 frames p50 28.5 / p99 31.5 / max 42.5 ms; 0 frames > 200 ms, 0 stale bursts.
+    - production lane (G4 observer v5 canonical, quote OKX, sample-ms 1): 15,170 events venue->DL p50 <= 29, p99 <= 31,
+      max 43.5 ms; 0 > 200 ms.
+    - IDR-112 counters (ingestor_okx_swap progress, 31 intervals): okx-public-003 venue_lag max 43 ms, stale_frames 0,
+      generation 211, staleness_recycles_total 1 (the only recycle since the roll: 03:48:06Z, trigger max_lag 884 ms,
+      standby ready 274 ms, gen 210 -> 211), standby failures/deadlines 0.
+  - Stage-100 apparatus: DL run worktree data-layer-p184-final-run-bb054498 (tool/observer/budget/addendum sha256
+    cf26d6e3/ff4f5989/ff85335b/4ed59dca, unchanged; guard 75b3067c = aa78df7d + amendments 1+2; Codex pause watcher
+    64b50287), command shape of run 5 135719Z (`run --g11 --base-profile .../profile-stage100-rc4-r16.json`), guard
+    --abort with --own-session-pid = this session's claude process. Read-only additions outside the scored metrics:
+    native_probe heartbeat snapshots pre-load / pre-g11 (after the load window) / post-campaign.
+  - Sequence: Codex pause watcher 05:36:09Z (SIGSTOP app-server 3410356 + code-mode host 3413926; SIGCONT 06:14:09Z on
+    DONE); lock claude-s100-final-2deb90b0 05:36:1xZ-06:19:31Z; preflight_env PASS; trace re-arm
+    rc15/roll_writer_campaign_native.py sha256:2deb90b0... 3600 dry run DRY_RUN, real OK (delta
+    [TS_DELIVERY_TRACE_UNTIL_UNIX_NS], not_ready_samples 1), writer recreated 05:36:35Z on 2deb90b0, rc 0, trace until
+    1792305390760279193 (06:36:30Z); campaign dry run problems []; docker ps baseline 40.
+  - Campaign p184-final-campaign-20261018T053803Z (05:38:06-06:14:09Z, campaign_exit 0): g6_ts_started 05:38:13.8Z,
+    driver_started 05:38:18.8Z, G4 windows 05:40:18 / 05:44:03 / 05:47:48 / 05:51:33 / 05:59:29Z, driver_exit 0
+    06:09:39.9Z, G11 watcher restart 06:10:28Z, g11_exit 0 06:13:33Z. Guard verdict **CLEAN**, aborted false, 0 foreign
+    records, 0 overlapping the load (report-only: VS Code git polling, label owner_ide).
+    - sha256: scorecard.json 8da1c190..., campaign.json 6bb6ff91..., timeline.jsonl 5bd38c5e..., .run.log 241cd012...,
+      .guard.log 174b99c2..., guard/summary.json b6142862..., .g11-watcher.log 70f61f8e...; extras in
+      p184-final-campaign-20261018T053803Z.extra/ (SHA256SUMS).
+    - G4 FAIL (frozen rule: candidate p95 <= baseline p95 x 1.2 per row): mark_index_price|OKX| limit 1586.6 ms, p95 per
+      window 1632 / 1232 / 1504 / 1272 / 1432 ms (bucket upper bound; window 1 bucket lower 1624), max 2177 / 2052 / 2098
+      / 2145 / 2171 ms, n 657-990. Observer split (verified): venue->DL p95 <= 132 ms (max 144) in every window,
+      producer->receipt p95 <= 69 ms; the time is in ingest->producer_ts (p95 1136-1480 ms, max 1923-2043 ms). Same row
+      in 105025Z (a44349a1 / ingestors 60f83a51) p95 1288-1440, in 135719Z 1184-1360: inside but near the limit in every
+      run; cause of the window-1 excess not determined here. Every other row PASS, incl. quote|OKX| p95 159-189 (limit
+      283.3), book_delta|OKX| 138-172, bar|BINANCE|1m 142-157 (limit 257.6), and the inverse addendum rows
+      book_delta / quote OKX_INVERSE PASS (the 105025Z/135719Z G4 failures did not recur).
+    - G2 PASS (native, LOAD_SLICES_SUPERSET): TRADE BINANCE p95 223 / max 406; TRADE OKX 216 / 396; QUOTE BINANCE 159 /
+      471; QUOTE OKX 167 / 432; MARK BINANCE 376 / 911; MARK OKX 339 / 782 ms (the 135719Z QUOTE OKX 1350 ms and MARK
+      DOGEUSDT 1098 ms did not recur).
+    - G3 pooled p95 1565, max 3354 ms; G8 slowlog_new_total 0, PING p99 1.014 ms, monitor clients 0; G9 60 samples,
+      demanded 64 = session-ready in every sample, eligibility_losses_data_path 0, v1_fallback 0, legit quiet
+      TRADE_EVENT_STALE 25; G10 all zero; G11 outage 0.143 s, caught_up max 6.214 s / p95 4.214 s (n 64), 0 future
+      events; G14 DL mean 5.44 vCPU, no memory at limit.
+    - qdl.stall (IDR-114 telemetry, docker logs 05:38:18-06:09:40Z): query_kn_1 / query_kn_2 kind=gc in the load window
+      (>= 05:39:00Z) **0 / 0** (setup only: 1 / 2 gen0 collections, max 141 / 79 ms); loop_lag >= 50 ms in load 3 / 3
+      (max 71 / 76 ms, all at 05:39:0x-05:39:2x warmup tail); slow_request >= 250 ms in load 40 / 57, all warmup /
+      snapshot / reference:batch at 05:39:00-05:39:20Z and in one cluster 05:48:38-05:48:45Z (warmup 2.7-4.5 s), plus
+      reference:batch 252-669 ms at 05:45:08 / 05:50:39 / 06:00:53Z.
+    - native_probe (slot 4, epoch 3abf70e4, pre-load -> pre-g11): QUOTE requested 31,550, renewed 2,660,
+      renewed_same_record 4,241, skipped_offset 24,649, failed 0, unavailable 0; TRADE requested 1,310, renewed 302,
+      same_record 726, skipped 282, failed 0, unavailable 0; unreported_routes 0; OKX BTC-USD-SWAP QUOTE requested 2,867 /
+      renewed 193 / same_record 941 / skipped 1,733 / failed 0. Post-G11 epoch b2e0ab74: failed 0, unavailable 0.
+    - IDR-112 lanes in the load (188 intervals): okx-public-003 venue_lag max 64 ms, stale_frames 0, read_gap max 330 ms,
+      generation 211 unchanged, recycles_total 1 unchanged (0 recycles in the load), standby failures/deadlines 0; no
+      non-progress ingestor line on either ingestor.
+    - Overflow / refused (pre-load / pre-g11 / post-campaign): stream_kn_1 overflow 4/4/4, refused 2/2/2; stream_kn_2
+      overflow 1/1/1, refused 0/0/0; hub_live_budget_refused 0; every queue_isolation counter 0.
+  - Teardown: 0 campaign containers (docker ps = baseline 40), 0 in-container `tail -F` followers in kafka1-3, writer
+    2deb90b0 rc 0 READY 64/64 (started 06:10:32Z by the G11 restart), all DL roles RestartCount 0; Codex servers
+    resumed (SIGCONT x2); lock released 06:19:31Z. Trace expires on its own at 06:36:30Z (same image).
+  - Status: final stage-100 = protocol met, NOT certified (G4 mark_index_price|OKX| window 1). G12 credited, G13 68/76
+    (8 DR05 cells open on the harness defect). Open for the coordinator/owner: (1) the G4 OKX mark/index row
+    (ingest->producer stage), (2) the TS harness fix for dr05-upstream/dr05-quiet + isolated rerun.
+- 2026-10-18 06:20-06:45Z read-only RCA of the final stage-100 G4 FAIL (p184-final-campaign-20261018T053803Z, scorecard
+  8da1c190..., row mark_index_price|OKX| window 1 p95 1632 > 1586.6 ms; Claude subagent). No product, runtime, gate or
+  apparatus change; one --rm probe container under a short own lock (06:26-06:29Z, released). Evidence:
+  ~/.local/state/qdl-v2/p184-g4-okx-mark-rca-20261018T062641Z/ (SHA256SUMS; probe jsonl 3ff32b2a..., scripts, outputs).
+  - Verified (code): the OKX row is a PAIRED event. rust/qdl-realtime-core/src/lib.rs process_mark_index (908-1145) emits
+    immediately on every changed component (no timer, coalescing window or linger in this path); the envelope carries
+    source_event_time = min(mark.ts, index.ts) (1044), received_at_ns = OLDEST component receipt (1042, 1081, "only as
+    fresh as its oldest provider confirmation") and normalized/published_at_ns = NEWEST receipt (1043, 1082-1083).
+    producer_ts is librdkafka CreateTime at the core's transactional send (rust/qdl-kafka/src/lib.rs 1136-1141, no
+    explicit timestamp). So the observer's "ingest->producer_ts" (CreateTime - received_at_ns, observer 341-346) for
+    this row = wait for the OTHER component's next push + internal; it is not an internal DL stage.
+  - Verified (same-event split from raw samples via source_sequence = mark_ts:index_ts:mark_recv:index_recv, bounded
+    stratified subset n=96/window, not the gated population): internal CreateTime - newest receipt p95 81-105 ms (all 5
+    windows; 105025Z 81-120, 135719Z 81-129; baseline 175720Z 88-147); per-component venue lag mark p95 46-49, index
+    p95 129-134 ms; venue-timestamp gap |mark.ts - index.ts| p95 1280-1649 ms, max ~2.0 s; index is the older component
+    in 77-85 % of samples. Window 1 internal p95 80.7 ms is the lowest of the five: no startup/warmup signature in this
+    row; guard cleaner activity is uniform across the windows.
+  - Verified (venue, official docs https://www.okx.com/docs-v5/en/ WebSocket public): mark-price "pushed every 200 ms
+    when the mark price changes, and ... every 10 seconds when the mark price does not change"; index-tickers "Push data
+    every 100ms if there are any changes, otherwise push once a minute"; ts = price/index update time. Direct probe
+    06:26:41-06:29:11Z (6 swaps + 6 indexes, one WS): mark ts interval p50 201 / max 210 ms; index ts interval p50 651 /
+    p95 1727 / max 2070 ms; recv-ts lag mark 38/44, index 104/131 ms (matches the DL venue->DL split); venue-only pair
+    gap at each push p95 1269 / max 2056 ms. Not same-window with 053803Z (inferred comparable, not proven).
+  - Conclusion: (b) venue semantics plus metric definition. The row measures the quiet age of the OKX index (only pushed
+    on change) carried by a pair anchored at its oldest component; window-to-window variance (and baseline 1195-1322 vs
+    candidate 1232-1632) tracks index-change sparsity, i.e. market regime. (a) rejected: no internal composition delay
+    exists to remove; anchoring the pair at max(ts) would only relabel, change a canonical contract and force a rust
+    rebuild + G12/stage-100 re-certification. (c) rejected for this row (internal split flat, lowest in window 1).
+  - Not done / open: no gate relaxation, no rerun. A rerun as-is is a market-regime coin flip, not evidence. Any owner
+    amendment (Codex review p184-idr112-113-provider-gates-review-20261018.md "Gate Amendment Options") would need, for
+    the SAME events and windows: observer per-event split newest-receipt -> CreateTime and component ts gap in the full
+    aggregate (report-only observer addition), the same split re-derived for the frozen baseline, a paired same-window
+    venue-direct mark-price/index-tickers probe, host clock bounds, all outliers retained, and the internal split held to
+    the frozen x1.2 rule against the baseline internal split.
+- 2026-10-18 06:50-07:05Z G4 amendment 1 (G4-A1) frozen BEFORE the run (owner decision 2026-10-18 ~06:45Z, AskUserQuestion
+  "Amendment có bằng chứng + 1 run (Recommended)", decision owner Bobby; Claude subagent). ONE row, mark_index_price|OKX|
+  (paired mark+index event, RCA 44fed4d): verdict quantity = same-event internal split Kafka CreateTime - newest component
+  receipt; PASS per window needs p95 <= 200.9 ms (frozen-table shape, recomputed baseline p95 167.4 x 1.2, bucket
+  straddle unresolved) AND max <= 993.4 ms on windows >= 5 samples (addendum shape, baseline max 827.8 x 1.2) AND a
+  covering venue-direct probe (else attribution UNKNOWN, not EXTERNAL -> NOT_MEASURED). Composite value, component ts gap,
+  per-component venue -> DL and the probe (with chronyc host clock bound) report-only, all outliers kept. Every other row
+  and gate unchanged; old receipts immutable (applies only to a campaign that recorded the amendment sha256).
+  - Frozen file config/v2/p184-stage100-g4-amendment-1.json sha256 1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6
+    (frozen_at 07:00:48Z); rationale upgrade/evidence/releases/v2.2.4/g4-amendment-1-okx-mark-index.md.
+  - Baseline recomputed from the frozen table baseline run p184-d3-baseline-20261009 (summary sha256 = budget sources.g4;
+    composite p95 recomputed per window = 1322.2 / 1289.4 / 1296.2 / 1195.2 exactly; every record parsed, CreateTime
+    present, published_at == newest receipt): internal p95 167.4 / 143.8 / 139.1 / 138.2, max 292.1 / 245.8 / 182.5 /
+    827.8 ms (n 662/662/664/662).
+  - Apparatus (old 44fed4d -> new): scripts/p184_gate_campaign.py cf26d6e3 -> 69c26d72 (amendment scoring, records the
+    amendment, one venue probe per G4 window started 8 s before the observer and stopped off the window path);
+    scripts/p184_g4_observer.py ff4f5989 -> 5d90cc60 (v6: paired_split aggregate for that row only); new
+    scripts/p184_g4_okx_mark_index_probe.py ee835d9c, scripts/p184_freeze_g4_amendment.py d0ec263b; budget ff85335b and
+    addendum 4ed59dca unchanged.
+  - Tests (python3 -B -m unittest): tests.test_p184_g4_amendment (21, incl. negative internal p95/max over limit -> FAIL,
+    UNKNOWN attribution -> NOT_MEASURED, parity: 053803Z/135719Z re-scored G4 gate byte-identical to the stored
+    scorecards and, with the amendment forced, every other row byte-identical) + test_p184_gate_campaign +
+    test_p184_g4_observer: 137 OK.
+  - Smoke in the real path (own lock claude-g4a1-smoke 06:59:15-07:00:3xZ, released): one --rm probe container 56 s + one
+    40 s observer v6 window on production canonical (read-only), containers removed 0 left. Row: composite p95 1384 / max
+    2184 ms (n 223); internal p95 92 / max 187 ms; component ts gap p95 1288 / max 2003 ms; paired_missing 0,
+    published_mismatch 0; probe covered, mark ts interval p50 201, index p50 691 / max 2089 ms, venue pair gap p95 1271 /
+    max 2077 ms, host clock bound 0.35 ms. Not a gate result.
+  - Next: wait for the other agent's G13 dr05 rerun and an absent host lock, then ONE final stage-100 from a clean run
+    worktree at this commit.
+- 2026-10-18 06:43-07:21Z FINAL chain (v5.5) step 2 rerun after the TS apparatus fix a9cf1b41 (IDR-111 follow-up;
+  Claude subagent): **dr05-quiet 2/2 PASS (harness_ok); dr05-upstream 0/6 FAIL again, apparatus, no fault or oracle
+  reached -> STOP, not rerun**. Same image set (writer 2deb90b0 / TS 30f50a91; query 3e9e4d3a; ingestors a9679def;
+  stream/projector 60f83a51; core 7c848aad), production untouched.
+  - Fix commit a9cf1b41 pushed fast-forward (aa126794..a9cf1b41 incl. the 4 journal commits); CI "Quality And V1
+    Contract" run 39104694489 on a9cf1b41: completed success (job quality-contract success, GitHub API).
+  - Pins / shape: DL run worktree data-layer-p184-final-run-bb054498 (clean, bb054498), NEW clean TS run worktree
+    trading-system-final-run-a9cf1b41 (detached a9cf1b41); `p184_g13_final.py --role-images g13-roles-v224.json
+    (984c4566...) --python-image-ref qdl-v2-python:2.2.4-31a5155 --writer-image 2deb90b0 --ts-source-sha 30f50a91
+    --dl-source-sha bb054498 --phase isolated --only <step> --inputs p1/g13v55/inputs-g13v55-ci.json (b86a92e5...)`
+    = the 045826Z/050244Z shape with --ts-root changed. Dry runs: blocked {}, 6 / 2 cells.
+  - Lock "claude P18.4 G13 dr05 rerun FINAL 2deb90b0 a9cf1b41": waited 06:43-07:04Z (a Codex remote ssh job, then the
+    locks codex-pma11-instance-range-hk and epg10-08-manager-notice-port-0701), taken 07:04:38Z, released 07:20:51Z.
+  - dr05-upstream p184-g13-20261018T070444Z: exit [0,0,0,1,0], 779.9 s, rows 4fba03de...; all 6 cells
+    `DR05_SETUP_DEADLINE_EXCEEDED` after the 120 s setup bound, e.g. `{"cache_readable_s": 24.043, "clone_started_s":
+    23.223, "dl_reset_s": 20.428, "ready_budget_s": 120.0}` (others: dl_reset 19.1-20.4 s, cache_readable 22.7-24.0 s).
+    So the setup separation worked, but `subscription_attempted` never held in 96-98 s of 1 s heartbeats.
+    - Reading (verified from the credited 093001Z rows, writer heartbeats recorded in observe()): the DR05 clone has one
+      instrument = 2 BOOK slices on 4 fixed workers; workers 1-3 own no route and stay `REPORT_INVALID_OR_MISSING` for
+      the whole case (worker_liveness {"0": LIVE, "1"-"3": REPORT_INVALID_OR_MISSING} at positive_anchor, gap,
+      still_unanchored and return_anchor; demanded 2, unreported 0). fc644cd1's predicate requires EVERY worker LIVE
+      (scripts/p184_dr05_upstream.py subscription_attempted), which this clone can never satisfy; inside the old 30 s
+      budget this looked like a timeout. Apparatus defect of the readiness predicate, not the fence. The rows do not
+      carry the last heartbeat sample of the setup wait (gap in a9cf1b41's error evidence).
+    - Proposed (needs coordinator approval; not done): count only workers that own demanded routes (or require every
+      demanded slice reported past STARTING with demanded = reported + session-ready), carry the last heartbeat sample
+      in DR05_SETUP_DEADLINE_EXCEEDED, then rerun dr05-upstream only.
+  - dr05-quiet p184-g13-20261018T071750Z: exit [0,0,0,0,0,0], 174.0 s, harness_ok true, rows eb0efbde...; both
+    DR05.QUIET_TYPED cells ISOLATED_FAULT OBSERVED ok, predicate unchanged: BINANCE quiet_after 13706 ms, health lag
+    1323 ms; OKX 13652 / 1346 ms; strict_resume VERIFIED with bootstrap proof routes [BINANCE ETHUSDT TRADE] /
+    [OKX ETH-USDT-SWAP TRADE] (the a9cf1b41 bounded wait), view/health findings [] / [].
+  - W05 verifier in image 2deb90b0 (--network none, TS run worktree a9cf1b41 read-only, --expect-source-sha 30f50a91...,
+    --expect-image-digest sha256:2deb90b0...) over the 6 runtime jsonl of 051237Z + dr08 045558Z + the two new rows
+    files: **70/76** (DR01 9/9, DR02 8/8, DR03 6/6, DR04 14/14, DR05 11/17, DR06 6/6, DR07 12/12, DR08 4/4). DR issues
+    only CASE_FAILED on the 6 dr05-upstream cells (+ CASE_OPEN on 260 non-DR cells outside G13); no provenance or
+    drift issue; QUIET_TYPED closed. Output p184-g13-20261018T071750Z/verify/w05-final-v55-dr05rerun.json a1eaa219....
+  - Teardown: both summaries dl_source.removed true, removed_leftovers {}; DL --down counts removed 5 / 5; clone cleanup
+    upstream 24/24 ok (writer_exits 0), quiet 10/10 ok; afterwards 0 p184-/ts-p184 containers, 0 p184- networks,
+    0 volumes, 0 /tmp/p184-dr05-*; docker ps = 40 before and after; lock absent.
+  - Status: G13 on 2deb90b0 = 70/76; DR05 GAP_REFUSAL x3 / GENERATION_CHANGE_FENCED x3 open on the readiness
+    predicate (apparatus).
+- 2026-10-18 07:44-08:25Z FINAL stage-100 under G4 amendment 1 (G4-A1, 5a70bdf; owner-approved one run; Claude subagent):
+  **protocol_met false** (driver acceptance FAIL `requests:no_failures`, 1 request); **FAIL G4** (addendum row
+  book_delta|OKX_INVERSE| max 388.8 / 412.4 ms > 282.5 ms in windows 2-3; plus bar|BINANCE|8h observed without a frozen
+  baseline); **PASS G11**; G1-G3, G5-G10, G14 inside their rules but NOT_MEASURED (outside the protocol); G12/G13 not part of
+  the campaign. Frozen rules + G4-A1 only; nothing reinterpreted; NOT rerun (guard CLEAN, no infrastructure taint: the
+  failures are behavioural, see below).
+  - Apparatus: started after the other agent's G13 dr05 rerun (DONE 07:20:51Z) and an absent lock; lock
+    claude-s100-final-g4a1-5a70bdf4 07:44:21-08:24:22Z (released); Codex pause watcher SIGSTOP 3410356 + 3413926
+    07:44:41Z, SIGCONT 08:22:30Z; production verified by docker inspect: query 3e9e4d3a x2, ingestors a9679def x2,
+    stream/projector 60f83a51, cores 7c848aad x3, writer 2deb90b0, all RestartCount 0; preflight_env PASS; trace re-arm
+    rc15/roll_writer_campaign_native.py sha256:2deb90b0... 3600 (dry run DRY_RUN, real OK, delta
+    [TS_DELIVERY_TRACE_UNTIL_UNIX_NS], not_ready_samples 0, writer recreated 07:45:02Z, until 08:44:56Z); DL run worktree
+    data-layer-p184-final-run-5a70bdf4 (tool 69c26d72, observer 5d90cc60, probe ee835d9c, budget ff85335b, addendum
+    4ed59dca, amendment 1c8a276f recorded in campaign.json; guard 75b3067c, pause watcher 64b50287); same command shape as
+    053803Z (`run --g11 --base-profile .../profile-stage100-rc4-r16.json`, guard --abort); campaign dry run problems [];
+    docker ps 40 before and after.
+  - Campaign p184-final-campaign-20261018T074624Z: driver 07:46:39-08:18:01Z (exit 1), load window 07:47:57-08:17:57Z,
+    G4 windows at 120/345/570/788.6/1695 s, each with its venue probe (5/5 exit 0, containers removed), G11 restart
+    08:18:48Z, g11_exit 0, campaign_exit 0, guard CLEAN aborted false. sha256: scorecard.json e0a786cb...,
+    campaign.json 7f5f3f65..., timeline.jsonl efb3e11c..., stage100/receipt.json 80eb0b48..., gates.json 31368915...,
+    .run.log afb81111..., .guard.log 12356b39..., guard/summary.json afc62d20..., .g11-watcher.log bf4fa94c...; extras in
+    p184-final-campaign-20261018T074624Z.extra/ (SHA256SUMS 400eb42d...).
+  - The one driver failure (verified from the receipt and the client code): REFERENCE_BATCH FUNDING_RATE OKX
+    SOL-USDT-SWAP at 08:00:13.96Z (served_by query_v2_1, 119 ms), ValueError detail sha256 6397f661... = "reference
+    response exceeds its governed freshness bound" (qdl/certification/reference_l2_acceptance.py 518). 13.96 s after the
+    08:00:00Z OKX funding settlement: the request window is [00:00, 08:01] (_history_bounds 142-146) while the newest
+    observation served was older than max_freshness_ms. Inferred, not proven: the 08:00 settlement was not yet
+    observable from the provider ~14 s after the boundary. A funding-settlement boundary inside the load; 053803Z /
+    135719Z did not cross 00/08/16 UTC. Same boundary also brought bar|BINANCE|8h into the G4 windows (no baseline row).
+  - G4-A1 row mark_index_price|OKX| = **PASS** (internal split, CreateTime - newest receipt): p95 85 / 86 / 86 / 104 / 87 ms
+    (limit 200.9), max 165.2 / 173.3 / 135.4 / 208.2 / 138.4 ms (limit 993.4), n 664/661/662/990/660, paired_missing 0,
+    published_mismatch 0, attribution EXTERNAL_VENUE_COMPONENT_CADENCE in 5/5 windows (probe covered). Report-only:
+    composite p95 1384 / 1536 / 1504 / 1336 / 1328 ms, max 2079-2191 ms (p95 all under the frozen 1586.6 this run); component ts
+    gap p95 1288 / 1432 / 1384 / 1200 / 1200, max 1936-2073 ms; index older in 79-83 %; per-component venue -> DL p95 mark
+    47-49, index 132-134 ms. Probe: mark ts interval p50 201 / max 210-217 ms, index p50 453-583 / p95 1273-1665 / max
+    2021-2107 ms, recv - venue ts p95 mark 44-47, index 130-132 ms, venue-only pair gap at push p95 1106-1266 / max
+    2065-2146 ms, host clock bound <= 0.38 ms. Report-only display defect: the scorecard's paired_split_per_window shows
+    older_component as an empty stats block (the counts are correct in g4-N-summary.json); no verdict reads it.
+  - Every other frozen G4 row PASS (e.g. quote|OKX| 143-180 / 283.3, trade|OKX| 122-158 / 257.4, bar|BINANCE|1m 128-254 /
+    257.6, mark_index_price|BINANCE| 186-216 / 370.9); addendum: book_snapshot / quote / mark_index OKX_INVERSE PASS,
+    book_delta|OKX_INVERSE| FAIL (max 209 / 389 / 412 / 228 / 181 ms vs 282.5).
+  - qdl.stall (load window): query_kn_1 gc 0, loop_lag >= 50 ms 1 (65 ms), slow_request >= 250 ms 71 (cluster 07:56:58Z
+    snapshots, warmups); query_kn_2 gc 0, loop_lag 0, slow_request 3 (warmup 2.1 / 4.5 s at 07:57:0x, reference:batch 307
+    ms 08:12:59Z). native_probe slot 4 (epoch e20d36ec, pre-load -> pre-g11): QUOTE requested 31,506 / renewed 2,885 /
+    same_record 4,586 / skipped 24,035 / failed 0 / unavailable 0; TRADE 1,310 / 318 / 773 / 219 / 0 / 0; unreported_routes
+    0; post-G11 epoch 6d115fc3 failed 0 unavailable 0. IDR-112 lanes (180 intervals): okx-public-003 venue_lag max 76 ms,
+    stale_frames 0, read_gap max 234 ms, generation 211, recycles_total 1 unchanged (0 in load), standby failures /
+    deadlines 0; no non-progress ingestor line. Overflow / refused unchanged pre/post (stream_kn_1 4/2, stream_kn_2 1/0),
+    hub_live_budget_refused 0, queue_isolation 0. G9: demanded 64 = session-ready in 61/61 samples, data-path losses 0,
+    v1_fallback 0; G8 slowlog_new_total 0; G14 DL mean 5.41 vCPU.
+  - Status: final stage-100 NOT certified. G4-A1 row qualified on this run; open (coordinator/owner): (1) the protocol
+    failure at the OKX funding-settlement boundary (harness freshness window vs venue publication; or schedule the load
+    away from 00/08/16 UTC, an apparatus decision), (2) book_delta|OKX_INVERSE| max over the addendum limit in two windows
+    (RCA not done), (3) bar|BINANCE|8h has no baseline row. No rerun made (hard rule: only for infrastructure taint).
+- 2026-10-18 08:26-08:36Z RCA (read-only; lock absent throughout; no container/runtime mutation) of the two time-of-day
+  findings of p184-final-campaign-20261018T074624Z (first campaign since rc8 whose load crossed 00/08/16 UTC: 24 receipts
+  listed, only this one crosses):
+  - A. `requests:no_failures` (frozen: budget requests.max_failed_steady 0, frozen_before_candidate, gate
+    qdl/certification/phase3_consumer_load.py 913). Verified:
+    - Bound: alpha.okx.paper.stable FUNDING_RATE max_freshness_ms 28,800,000 (= the 8 h cadence, zero publication
+      grace; consumers/stable/alpha-okx-paper.yaml 4503 and 4 more rows; reference-l2-stable.yaml OKX rows the same).
+      Binance has 32,400,000 since acf2660 (2026-08-31) because an exact-8 h bound was already found invalid at the
+      Binance boundary; OKX was left at 8 h (pinned by tests/test_phase24315_reference_entitlement_materialization.py 137).
+    - Served: OKX REST /api/v5/public/funding-rate-history only (qdl/adapters/okx/history.py 163-204), on demand per
+      request (FRESH_SNAPSHOT pass-through, per-replica 30 s history cache qdl/reference/batch.py 55); no WS/durable funding
+      ingest (no acquisition binding; rust/qdl-venue-core demand.rs refuses FundingRate subscriptions). observed_at_ns =
+      fundingTime of a settled row (qdl/adapters/okx/reference.py 258) = OKX "Settlement time" (OKX v5 docs, Get funding
+      rate history; settState processing/settled and fundingTime/nextFundingTime of Get funding rate describe the
+      upcoming period, ts = data return time). The anchor is semantically right; it necessarily ages 0 -> 8 h + publication
+      lag every cycle.
+    - At 08:00:13.96Z the newest row served was the 00:00Z settlement (g6 unsafe example age 28,813,838 ms = 8 h + 13.8 s);
+      the request window was [00:00, 08:01] (reference_l2_acceptance.py 139-146). OKX now lists the 08:00 row
+      (fundingTime 1792310400000, interval still 8 h).
+    - Query applied its funding settlement publication allowance (+60 s, qdl/query/service.py 89 and 1841-1857, 2e0de95,
+      the stage-100g fix of 2026-10-10) and returned OK; the driver's verifier reference_quality
+      (reference_l2_acceptance.py 477-518) compares against max_freshness_ms with no allowance and raised. Two
+      implementations of one bound disagree; the 10-10 fix was tested at Query only and never crossed a settlement
+      through the driver until now (E7).
+    - Prior evidence funding-publication-20261010/: SOL-USDT-SWAP history row appeared between +5.4 and +10.0 s
+      (settState processing at +5.4 s); Binance rows flapped until +28.5 s.
+    - Inferred, not proven: at +13.8 s either OKX was slower than on 10-10 or a pre-publication fetch was still in the
+      30 s history cache (within the 60 s allowance the server cannot tell). The driver error record keeps only a detail
+      digest; the response carries cache_hit and received_at_ns (qdl/api_v2/router.py 1051/1072) but they were not saved.
+    - Verdict: not genuinely stale data and not an anchor defect; an apparatus/contract parity defect (verifier stricter than
+      the governed Query rule), rooted in the OKX manifest bound equal to the cadence. G6 does not gate FUNDING_RATE
+      (p184_gate_campaign.py G6_GATED_FEEDS) and defines no settlement handling. Latent (not this failure): OKX documents
+      that funding frequency may change to 6/4/2/1 h; _FUNDING_NS and the 8 h bound are fixed.
+    - Fix options, ranked: (1) apparatus, zero runtime: one shared effective-bound function (max_freshness_ms + the 60 s
+      allowance for FUNDING_RATE history) used by Query and reference_quality; unit tests (8 h + 14 s accepted, 8 h + 61 s
+      refused on both sides, client/server parity) plus a driver-shaped read-only probe across one real settlement
+      recording cache_hit/received_at/newest fundingTime; owner must approve it before any rerun, because it changes
+      the per-request acceptance after a result. (2) contract: OKX FUNDING_RATE max_freshness_ms to 28,860,000 or
+      32,400,000 (Binance parity) and remove the hidden allowance; blast radius manifest revisions (alpha-okx 14,
+      reference-l2) + consumer DATA_LAYER_V2_JWT_MANIFEST_REVISION in the same batch, python image rebuild and recreate of
+      query/stream/projector/bar_edge, test pin 137; release-bundle work, not a closure-run change. (3) scheduling away
+      from 00/08/16: gaming unless declared as a protocol constraint before the run with owner approval; it also hides a
+      behaviour alpha consumers meet every 8 h.
+  - B. bar|BINANCE|8h without a baseline. Verified:
+    - The observer keys rows by feed|venue|interval of whatever closed in the window (scripts/p184_g4_observer.py 199-200);
+      only window 4 (boundary 08:00Z) had 8h (n 5, max 11,698 ms, same as 4h 11,717 ms).
+    - Frozen rule (scripts/p184_gate_campaign.py 796, 813-818): rows observed outside the frozen table and the addendum
+      give the reason "observed rows without a frozen baseline" and verdict NOT_MEASURED (never FAIL); G4 FAIL in this run
+      comes only from book_delta|OKX_INVERSE|.
+    - Baselines never crossed an 8 h close: p184-d3-baseline-20261009 windows 18:25-18:34Z, addendum baseline
+      p184-g4-baseline-20261011T175720Z 17:59-18:19Z. The owner's closed addendum set (G4_ADDENDUM_OWNER_ROWS, line 155)
+      covers bar 5m..6h only; source bindings also hold 8h (Binance), 12h, 1d, 2d, 3d, 1w, so any boundary window at
+      00/08/12/16Z shows unbaselinable rows by construction.
+    - Verdict: apparatus coverage gap (schedule chooses the :00/:30 close from launch time; the row set has no long
+      intervals); not a product defect.
+    - Fix options, ranked: (1) owner rule before the next run: bar intervals >= 8h REPORT_ONLY, same class as 1h-6h
+      (G4_REPORT_ONLY_INTERVALS, line 144); no threshold changes. (2) a new baseline crossing 00/08/16Z plus an owner
+      row-set extension (new frozen addendum). (3) declared schedule constraint (boundary close not at 00/08/12/16Z),
+      allowed only if declared before the run with owner approval.
+  - Files: this plan only. Nothing rerun; nothing rolled.
+- 2026-10-18 ~08:25-08:40Z RCA (read-only; Claude subagent; text first landed inside concurrent commit 53eb546) of open
+  item (2), G4 book_delta|OKX_INVERSE| max 388.8 / 412.4
+  ms (windows 2 / 3) in p184-final-campaign-20261018T074624Z. No production mutation (receipts, source, docker
+  inspect/logs and /proc netns counters only; lock absent).
+  - Verified (observer v6 split of the exact max samples, g4-2/g4-3 final aggregate outliers): both maxima are BTC-USD-SWAP
+    on lane okx-public-001 (OKX `books`, session gen 67018) and the whole tail is venue -> DL: 355.4 ms (src 07:53:11.408Z)
+    and 363.9 ms (src 07:58:09.208Z) vs the row's healthy 28-31 ms; ingest -> producer 11.6 / 34.1 ms, producer -> observed
+    21.8 / 14.4 ms (normal). Every OKX book binding on that lane shows the same ~340-365 ms at the same source instant
+    (BTC/ETH/SOL/DOGE-USDT-SWAP, BTC-USD-270326, ETH-USD-261225 book_snapshot 288 ms). Ingestor progress: okx-public-001
+    read_gap 409.1 ms ending 07:53:11.748Z and 428.5 ms ending 07:58:09.567Z (median per-10 s max 97 ms; inflight_max 9 / 26).
+  - Verified not common mode / not internal: other lanes in the same ingestor process had no gap then (okx-public-003
+    read_gap max 90 / 163 ms, venue_lag max 33 ms; okx-public-004 138 / 114 ms); the window's fresh OKX probe connection
+    received mark-price continuously through both seconds (lag 32-45 ms); no other row has a tail at those seconds (the
+    internal common-mode tails of this run are at 07:54:07Z / 07:57:32Z, OKX book_snapshot max 282 ms, cores commit max
+    87-113 ms there); cores.jsonl at the burst seconds commit_max 40-118 ms (no stall class) and the segments that a commit
+    stall inflates were normal; cleaner: none within +-15 s of 07:58:09Z, nearest 6.6 s before 07:53:11Z (kafka3
+    __consumer_offsets-24); ingestor_okx_swap throttled 0.0 % of wall, cpu max 14.8 % (G13 sampler).
+  - Verified session-specific: okx-public-001 gen 67017 (03:36-07:11:20Z, ~3.6 h) had 1 read gap >= 250 ms (253 ms); venue
+    reset 07:11:28Z (READ_ERROR ECONNRESET) -> gen 67018; gen 67018 (07:11:33-08:32Z, ~1.35 h) had 6 (272, 390, 402, 409,
+    428, 376 ms), 2 of them inside G4 windows. 053803Z (gen 67017) okx-public-001 read_gap_max 130.8 ms over the whole
+    load; there and in 135719Z the OKX book maxima were internal (i2p 100-230 + p2o 80-170 ms, venue -> DL 27-38 ms), so
+    this row's failure mechanism is new in this run, not the bafbe91 commit/cleaner tail.
+  - Code read: the OKX lane loop has no inline blocking await on the read path (publish window cap 512 in
+    qdl/runtime/stable_deployment.py:1121 - deployed file not readable, inferred; book resync hint checkpoint is
+    CommitMode::Async, rust/qdl-kafka/src/lib.rs:1707); the read timestamp is taken on socket return, so a lane-task stall
+    would also look like venue -> DL - excluded only indirectly (other lanes and probe healthy, CPU 0 % throttled).
+  - Inferred, not proven: the delay is upstream of the host TCP receive for this one session (OKX push side or its path):
+    ingestor netns since 03:35Z has TCPOFOQueue 3, TCPRcvQDrop / TCPBacklogDrop / PruneCalled / TCPTimeouts 0 (RetransSegs
+    38,295 = spurious send-side loss probes, TCPDSACKRecv 38,295), which does not fit 7 receive-side loss events. No books
+    probe exists, so under the A1 attribution rule this is UNKNOWN (venue-session suspected), not EXTERNAL.
+  - Ranked follow-ups (no threshold change; owner decides): (1) apparatus, read-only: add a fresh-connection `books`
+    subscription (BTC-USD-SWAP + 2 USDT swaps) to the per-window OKX probe and a 1 Hz ingestor-netns TcpExt sampler, so a
+    book-row tail is attributable (EXTERNAL vs INTERNAL vs TCP path); (2) operational: gen 67018 is still degraded (6
+    bursts / 1.35 h, still serving at 08:32Z); a rerun on it is likely to fail again; a lane reconnect before a rerun
+    (blast radius: ingestor_okx_swap restart = all 5 OKX lanes reconnect + book resnapshot ~0.3 s; core/kafka/writer
+    untouched) re-rolls the session but is not a product fix and must be journaled as such; (3) product: BOOK-lane
+    session-degradation recycle. Not allowed as an IDR-112 scope extension; it needs re-snapshot semantics: detector on
+    books `ts` (valid: 100 ms push with generation time) triggered by repeated lane-wide bursts, make-before-break with the
+    successor's per-instrument snapshot received before the old socket stops, successor snapshot published as the new
+    anchor only after the last gen-N frame, the core L2 book fence (not lane-aware) advancing per binding without
+    SequenceGap / L2_RESNAPSHOT_REQUIRED quarantine, checksum / liveness-proof / resync anchors reset per session; fake-venue
+    BOOK handover + core fence tests + live smoke; blast radius ingestor_okx_swap (all OKX lanes) and possibly rust_core x3;
+    rollback config enabled:false / digests a9679def, 7c848aad. Even then the first burst of a degraded session still
+    lands. Not applicable: G4 mitigation draft C1 (cleaner throttle) and C2-C4 (commit), since the failing samples' internal
+    segments were normal. Items (1) funding boundary and (3) bar|BINANCE|8h remain independent: with no FAIL row the 8h
+    row alone makes G4 NOT_MEASURED (scripts/p184_gate_campaign.py:814-818), so schedule away from 00/08/16 UTC.
+- 2026-10-18 07:25-09:00Z FINAL chain (v5.5) step 2 dr05-upstream rerun after the readiness predicate fix e9ae5484
+  (Claude subagent, coordinator-approved): **dr05-upstream 6/6 PASS, harness_ok; G13 on writer 2deb90b0 = W05 76/76**.
+  Same image set (writer 2deb90b0 / TS 30f50a91; query 3e9e4d3a; ingestors a9679def; stream/projector 60f83a51; core
+  7c848aad); production untouched.
+  - Fix e9ae5484 pushed fast-forward (8d9d84f1..e9ae5484); CI "Quality And V1 Contract" run 39107700887 on e9ae5484:
+    completed success (job quality-contract, GitHub API).
+  - Shape: as 070444Z (`p184_g13_final.py ... --phase isolated --only dr05-upstream`, inputs b86a92e5..., roles
+    984c4566...), DL run worktree data-layer-p184-final-run-bb054498 (clean), NEW clean TS run worktree
+    trading-system-final-run-e9ae5484. Dry run blocked {}, 6 cells.
+  - Lock "claude P18.4 G13 dr05 upstream rerun FINAL 2deb90b0 e9ae5484": waited 07:35-08:53Z (Codex remote ssh jobs and
+    the other agent's lock claude-s100-final-g4a1-5a70bdf4, never overlapped), taken 08:53:11Z, released 08:59:2xZ.
+  - p184-g13-20261018T085316Z: exit [0,0,0,0,0], 363.6 s, harness_ok true, rows 4593442c...; all 6 cells ISOLATED_FAULT
+    OBSERVED ok, findings []. Setup (prepare, outside the budget): dl_reset 19.5-20.4 s, readiness (writer_heartbeat_s)
+    27.9-29.3 s; measured fresh_case re-check 1.01-1.09 s of the 30 s budget; writer_env_overrides
+    MARKET_DATA_HEARTBEAT_INTERVAL_SECONDS=1. OKX / OKX_INVERSE: anchors and controls APPROVED with their quantities,
+    gap / unanchored steps refused EXECUTION_CONTEXT_*, old generation not visible (quantity stays 6), post-fence 7
+    APPROVED; Binance: bootstrap anchors observed, controls 2 / 6 / 7 APPROVED.
+  - W05 verifier in image 2deb90b0 (--network none, TS run worktree e9ae5484 read-only, --expect-source-sha 30f50a91...,
+    --expect-image-digest sha256:2deb90b0...) over 051237Z runtime x6 + dr08 045558Z + dr05-quiet 071750Z + dr05-upstream
+    085316Z: **DR 76/76** (DR01 9/9, DR02 8/8, DR03 6/6, DR04 14/14, DR05 17/17, DR06 6/6, DR07 12/12, DR08 4/4); 0 DR
+    issues, 0 provenance/drift issues; status FAIL only from CASE_OPEN on the 260 non-DR matrix cells outside G13.
+    Output p184-g13-20261018T085316Z/verify/w05-final-v55-76.json 5490c21e....
+  - Teardown: dl_source.removed true, removed_leftovers {}, DL --down removed 5, clone cleanup 24/24 ok (writer_exits 0);
+    afterwards 0 p184-/ts-p184 containers, networks, volumes, /tmp/p184-dr05-*; docker ps 40 before = after; lock
+    absent.
+  - Status: G13 CLOSED on the final image set (76/76). TS run worktrees trading-system-final-run-a9cf1b41 and -e9ae5484
+    are clean detached checkouts (removable).
+- 2026-10-18 08:55-09:12Z apparatus slice for the owner decisions of ~08:50Z (one AskUserQuestion, three answers: A1
+  "dung chung bound", B1 "bar >= 8h REPORT_ONLY", OKX books "Reconnect + probe; tai dien thi limit"); Claude subagent;
+  no runtime / python image / container change (images stay query 3e9e4d3a = qdl-v2-python:2.2.4-31a5155, whose qdl/
+  equals HEAD's: `git diff 31a5155 HEAD -- qdl/` empty before this change).
+  - A1 (RCA 53eb546 item A): qdl/certification/reference_l2_acceptance.py gains reference_freshness_bound_ms /
+    reference_freshness_allowance_ms; reference_quality refuses only above max_freshness_ms + Query's own
+    _FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS (imported from qdl/query/service.py, not copied; FUNDING_RATE history =
+    a request with a time range, Query's is_history). qdl/query/service.py is NOT edited (Query byte-identical). The
+    module is apparatus (no runtime role imports it; importers are scripts/ and tests/ only), but it is baked into the
+    image the driver's client container runs, so scripts/phase3_consumer_load_acceptance.py now bind-mounts the
+    worktree copy read-only over /app/qdl/certification/reference_l2_acceptance.py (same pattern as
+    phase3_consumer_load.py); the allowance it imports comes from the image's own service.py = the deployed Query's.
+    Driver receipt (additive, report-only): `reference_timing` (schema qdl.phase3.reference-timing.v1) per
+    PRODUCT|VENUE|symbol: n / accepted / refused / cache_hits / coalesced / max source and receive age / allowance_used /
+    settlement_crossings, plus <= 64 examples (refused, allowance-used or crossing reads) with cache_hit,
+    received_at_ns, newest_observed_at_ns (= fundingTime of the newest settled row), sent/receipt ns, served_by; a
+    refused read's error record carries the same timing. settlement_crossing = FUNDING_RATE read sent after an 8 h
+    boundary whose newest row predates it by > 60 s. Residual (not fixed, stated): the verifier ages at client receipt,
+    Query at serve time, so a series within the transport time of the +60 s edge can still split (ms-wide).
+  - B1 (RCA 53eb546 item B): new frozen config/v2/p184-stage100-g4-amendment-2.json (G4-A2, schema
+    qdl.p184.stage100-g4-amendment-2.v1, frozen 09:09:24Z by scripts/p184_freeze_g4_amendment_2.py, base ref e80e575):
+    a bar row with a fixed interval >= 8h and no frozen baseline (not in the table, not in the addendum) is REPORT_ONLY;
+    threshold_changes []. Because amendment 1 applies only to the campaign tool it pins and this slice edits the tool,
+    A2 re-pins A1 (file unchanged): applicable_g4_amendment accepts the tool pin of an applicable, recorded A2 that
+    names A1's sha256. Hashes old -> new: gate tool 69c26d72... -> 8f67a861...; amendment 1 1c8a276f... (unchanged);
+    addendum 4ed59dca... and budget ff85335b... unchanged; observer 5d90cc60... and mark/index probe ee835d9c...
+    unchanged; driver 6296505f... -> 91b4423c...; reference verifier 7c0c9054... -> 1b0bf756...; new books probe
+    9670d219...; new freeze tool fcbf9984...; amendment 2 99961c41e08993944d158ae812ca61514271862a2d03e011f5d01ce71a0f9997.
+  - Books probe + TCP sampler (report-only, RCA ccea671 follow-up 1): scripts/p184_g4_okx_books_probe.py, one per G4
+    window of a candidate campaign (started with the mark/index probe, name prefix of the G4 observer so the guard
+    classes it as campaign, --rm, 0.5 CPU / 192m, bridge, read-only rootfs): fresh public WS to the ingestor's URL
+    wss://ws.okx.com/ws/v5/public, channel books, BTC-USD-SWAP + BTC-USDT-SWAP + ETH-USDT-SWAP; per push recv wall clock,
+    action, venue ts, seqId / prevSeqId, frame bytes (frames never JSON-decoded, no price/size kept). TCP sampler in the
+    host launcher (no docker exec, no nsenter): /proc/<ingestor_okx_swap pid>/net/{netstat,snmp} at 1 Hz (deltas of
+    moved TcpExt/Tcp/IpExt counters) and net/tcp{,6} at 10 Hz (ESTABLISHED to :443: per-second max rx/tx queue and the
+    longest run of consecutive samples with unread bytes; RX_QUEUED needs >= 2 consecutive samples). Scorecard G4
+    gets okx_books_probe_per_window_report_only (books / tcp stats and, for every OKX book outlier of the final
+    aggregate with venue -> DL > 150 ms, tail_attribution: EXTERNAL_SESSION_UPSTREAM only with the fresh connection
+    HEALTHY (recv - ts <= 150 ms for venue ts within +-1 s) while the lane is late and a CLEAN host receive queue;
+    COMMON_VENUE_DELAY if the fresh connection is late too; INTERNAL_RECEIVE_QUEUE on RX_QUEUED; else UNKNOWN). Never a
+    verdict input. Smoke (2 x 20-30 s, lock absent, containers removed): recv - ts max 29-32 ms, seq_breaks 0, 5
+    sockets to :443 in the ingestor netns, rx non-empty in 3/28 seconds as single samples only (no RX_QUEUED).
+  - Tests: python3 -B -m unittest (host) test_p184_g4_amendment_2 (14, incl. stored scorecards of 053803Z / 135719Z /
+    074624Z reproduced byte-identically for every gate, and with A2 forced every non-B1 row byte-identical and only
+    074624Z gains bar|BINANCE|8h) + g4_amendment + gate_campaign + g4_observer + foreign_activity_guard + stage100:
+    175 OK; in qdl-v2-python:2.2.4-31a5155 (--network none, source ro, --rm) test_p184_a1_reference_bound (real
+    V2QueryService and the verifier: 8 h + 14 s and + 60 s accepted, + 61 s refused on both sides, 074624Z age 8 h +
+    13.838 s now accepted; driver timing / merge / mount) + reference_l2 / phase113 / g6 / phase105 / phase115 /
+    phase3 driver, target driver, target workload, consumer load: 206 OK. One existing test pinned the old exact
+    bound (test_reference_quality_uses_provider_observation_not_local_receive_time) and now uses the effective bound.
+  - Next: lock, operational reconnect of ingestor_okx_swap (owner-approved, journaled as an operational session
+    change), HOLD, final stage-100 at this commit.
+- 2026-10-18 09:11-10:00Z operational reconnect + FINAL stage-100 under G4-A1 + G4-A2 at DL 1ab4a638 (Claude subagent):
+  **NOT certified; the counted run is INVALID by an apparatus defect of 1ab4a638 (A1), no further rerun made.**
+  - Lock claude-s100-final-a1b1-1ab4a638 09:11:23-09:59:19Z (taken with the lock absent, released). Operational
+    session change (owner-approved ~08:50Z "Reconnect + probe", declared before the run, NOT a product fix):
+    `docker restart --timeout 30 qdl_v2_stable_candidate-ingestor_okx_swap-1` 09:12:22.8Z (rc 0, image a9679def
+    unchanged, same container 34c93a82, RestartCount 0). After: 5 lanes session_ready (okx-public-001 67018 -> 67019,
+    -002 209, -003 212, -004 179, business 160), progress flowing on all 5, IDR-112 armed line okx-public-003 (6
+    bindings, config unchanged), standby failures 0; HOLD check (postchecks/hold_check.py, baseline hold-baseline.json)
+    violations [], writer READY 64 64, stream refusal/overflow deltas 0, cores 0 retry/rebalance; OKX l2_frame_refused 0
+    (Binance REST_AHEAD_OF_STREAM refusals at the usual background rate, unchanged ingestor).
+  - Attempt 1 p184-final-campaign-20261018T091556Z: guard TAINTED + aborted at 09:16:31Z (driver +19 s, before the load
+    window): foreign `ssh ... bobby@178.128.51.255` spawned every 30 s by
+    ~/.local/state/trading-system/pma11-retained-backfill-final-sgp-20261018/launch_sgp.py (pid 612199, child of the
+    Codex IDE app-server 3410356, started 09:09Z, i.e. before the lock; SIGSTOP of the app-server does not stop its
+    children). Clear infrastructure taint -> the one allowed rerun. The launcher was not touched (another agent's job);
+    it ended by itself 09:20:44Z (TERMINAL_REMOTE_JOB_RESULT). Cleanup by the campaign: driver/campaign SIGINT, G6
+    probe SIGTERM, no G11 restart, docker ps 40.
+  - Rerun p184-final-campaign-20261018T092255Z (same shape as 074624Z: new run worktree data-layer-p184-final-run-1ab4a638
+    clean, Codex pause watcher SIGSTOP 09:21:12Z / SIGCONT 09:59:03Z, preflight_env PASS, trace re-arm
+    rc15/roll_writer_campaign_native.py sha256:2deb90b0... 3600 dry DRY_RUN + real OK not_ready_samples 0 (writer
+    recreated 09:21:23Z; first re-arm 09:14:32Z expired with attempt 1), production otherwise unchanged by docker inspect
+    (query 3e9e4d3a x2, ingestors a9679def x2, stream/projector 60f83a51, cores 7c848aad x3, writer 2deb90b0, RestartCount
+    0 everywhere), dry run problems [], campaign.json records A1 1c8a276f + A2 99961c41, tool 8f67a861): driver
+    09:23:10-09:54:32Z exit 1, load 09:24:29-09:54:29Z, 5 G4 windows (boundary 09:30Z), G11 restart 09:55:20Z,
+    campaign_exit 0, guard CLEAN aborted false. Summary: PASS G11; FAIL G2, G4, G9; NOT_MEASURED G1/G3/G5-G8/G10/G14
+    (protocol: driver acceptance requests:no_failures, no_starved_session, streams:no_errors, startup:bounded,
+    ts:ready_60_every_sample, final:burst/reconnect_window_measured); G12/G13 not part of the campaign.
+  - Root cause of the protocol failure (verified): error_count 146,701, every typed error ImportError (SETUP x5,
+    REFERENCE_BATCH, SNAPSHOT, PROBE). The driver's client container runs the PROFILE image qdl-v2-python:2.2.2-d6d2637
+    (phase3_consumer_load_acceptance.py docker_command image_id = profile["image"]), not the deployed 2.2.4 Query image.
+    In 2.2.2 qdl/query/service.py has no _FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS (added 2e0de95, first in v2.2.3;
+    `hasattr` False in that image), so the mounted 1ab4a638 reference_l2_acceptance.py fails to import, and
+    _target_read imports it for every operation -> every client read failed in ~7 ms. My tests ran in
+    qdl-v2-python:2.2.4-31a5155, not in the image the driver runs (E7). Not a product finding, not an infra taint;
+    the rule allows no second rerun. Fix options (not done, coordinator/owner): (a) the bound's allowance is the
+    DEPLOYED Query's, so resolve it host-side from the deployed query image (or the run worktree's service.py, which
+    equals it: `git diff 31a5155 HEAD -- qdl/` empty) and pass it to the client in the inner config, failing closed
+    when absent; (b) run the client on the deployed query image (changes the client environment of every earlier
+    receipt). Both need a new commit + a test executed in the profile image.
+  - Measured anyway (venue -> canonical and writer paths ran with near-zero client load; report-only, not a
+    certification): G4 FAIL addendum book_snapshot|OKX_INVERSE| max 185.8 / 254.5 / 205.0 / 316.2 / 182.1 ms vs 300.7
+    (window 4); book_delta|OKX_INVERSE| PASS 120-213 vs 282.5; G4-A1 mark_index_price|OKX| PASS p95 83-113 (200.9), max
+    170-220 (993.4), EXTERNAL_VENUE_COMPONENT_CADENCE 5/5; G4-A2 applied (no bar >= 8h closed in these windows, no B1 row).
+    Books probe 5/5 covered, fresh connection recv - ts p95 29-33 ms, max 33-185 ms, seq_breaks 0; TCP netns: OFO /
+    RcvQDrop / BacklogDrop / Prune / Timeouts 0, RetransSegs = TCPLossProbes = DSACKRecv (send-side loss probes),
+    RX_QUEUED seconds 1 in windows 2 and 3, ingestor pid stable 5/5. OKX book tails (> 150 ms) on okx-public-001 gen
+    67019 in windows 1-2 (206-212 ms at 09:25:19.40Z, 169-173 ms at 09:32:11.40Z, every binding of the lane at the same
+    source instant): attribution EXTERNAL_SESSION_UPSTREAM (fresh connection HEALTHY, recv - ts max 33.9 / 35.9 ms in
+    those seconds, host receive queue CLEAN). Window-4 max book_snapshot OKX_INVERSE sample not in the top-5 capsule:
+    not attributed. okx-public-001 read_gap max 392 ms in the load (gen 67018 had 409-428 ms).
+  - G2 FAIL TRADE|BINANCE max 5,515 ms, QUOTE / MARK|BINANCE outside; G9 FAIL: 1 sample demanded != session-ready, 10
+    eligibility losses all BINANCE (TRADE_SESSION_UNVERIFIED x5, QUOTE EXECUTION_CONTEXT_NOT_EXECUTION_ELIGIBLE x5,
+    component ages 9.2-12.8 s). Source (verified in ingestor logs): Binance venue session resets 09:32:55-09:33:32Z
+    (trade heartbeat_failed gen 56, 57; quote disconnects gen 64 ECONNRESET, 65 / 66 reset without close handshake;
+    read gaps 1.9-2.0 s, 3.2 s on bar/markindex). Not caused by the driver defect; not re-measured.
+  - Report-only extras: qdl.stall load query_kn_1 slow_request 2 (warmup 1.7 / 2.3 s 09:33:31-34Z), query_kn_2
+    loop_lag 1 (61 ms), slow 2 (warmup); IDR-112 okx-public-003 one staleness recycle in the load (trigger max_lag 305
+    ms, excess 279, 4 bindings, gen 212 -> 213 continued, handover 0 ms), standby failures/deadlines 0; native_probe
+    slot 4 same epoch pre-load -> pre-g11: QUOTE requested 31,258 / failed 0 / unavailable 39, TRADE 1,290 / 0 / 5,
+    unreported_routes 0; post-G11 epoch cfff211e failed 0 unavailable 0; gateway overflow/refused unchanged pre/post
+    (stream_kn_1 4/2, stream_kn_2 1/0), hub_live_budget_refused 0, queue_isolation 0; A1 reference_timing empty (no
+    reference read reached it; no settlement boundary in 09:24-09:54Z anyway).
+  - sha256: 092255Z scorecard.json ffb5b98e..., campaign.json 65ee6a87..., timeline.jsonl 7fcd97d2...,
+    stage100/receipt.json 374f7d12..., gates.json d8972f1d..., .run.log edfca0c3..., .guard.log d1b19a42...,
+    guard/summary.json 8720d7d2..., .g11-watcher.log a1181396..., extras .extra/SHA256SUMS 753d4ddc...; attempt 1
+    .guard/TAINTED 86340a8c..., .extra/SHA256SUMS d241d225....
+  - After: docker ps 40, no qdl-p184-* / qdl-phase3-* leftovers, lock absent, production = before except the
+    owner-approved ingestor_okx_swap restart and the writer recreates (trace re-arm x2, G11 restart 09:55:25Z).
+- 2026-10-18 10:15-12:20Z A1 apparatus fix + Codex tree pause + amendment A3 FROZEN (owner AskUserQuestion ~10:10Z
+  "Amendment A3 quy nguyen nhan (Recommended)"; Claude subagent). implemented + tested locally; no runtime action.
+  - A1 (option a, Codex release-closure review section 1 accepted): the verifier
+    (qdl/certification/reference_l2_acceptance.py) no longer imports Query's private constant; the allowance is
+    configured from the inner config and fails closed while unconfigured. The driver resolves it in the DEPLOYED Query
+    image (`docker run --rm --network none`, name qdl-phase3-target-allowance-*, constant + _reference_problem applies
+    it, replicas must agree) and the campaign preflight writes it as versioned input query-funding-allowance.json
+    (schema qdl.p184.query-funding-allowance.v1, digest, int type, Query image ids re-verified by the driver). Exact-client
+    smoke: driver `--mode target-matrix` (every read once per replica, BAR warmups, NEW one stream subscribe/close per
+    venue) before any sampler or load, failure -> CLIENT_SMOKE_FAILED, exit 3, no load; launch re-planned after it.
+    Fail-fast: ImportError/NameError/SyntaxError in a target worker -> exit 70, coordinator aborts at once.
+    Tests: host tests.test_p184_a1_client_image 4 OK (mounted verifier inside qdl-v2-python:2.2.2-d6d2637 --network
+    none with the driver's own mounts/inner config: unconfigured fail closed, history before/8h+14s/8h+60s accepted,
+    8h+61s refused, latest 8h+14s refused; deployed-image probe 60000, 2.2.2 None -> RuntimeError; campaign input
+    tamper/redeploy refused); in qdl-v2-python:2.2.4-31a5155 (--network none, source ro) 14 modules 226 OK.
+  - Codex pause (scripts/p184_codex_pause_watch.py): roots = IDE Codex argv0 + --also-pid, every descendant by ppid
+    (no session/pgid widening, own ancestors excluded), parents-before-children with rescans to a fixpoint, SIGCONT
+    reverse order with starttime guard, resume on SIGTERM/INT; never kills. tests 18 OK (real process tree test).
+  - A3 apparatus: scripts/p184_a3_attribution.py (pure), scripts/p184_a3_evidence.py (whole-load host sampler:
+    ingestor cgroup throttle, thread run-queue wait, netns socket queues ~10 Hz, chrony every 30 s; post-load lane
+    timeline from docker logs, whitelisted fields incl. OKX cause), observer v7 (every ADMITTED event above the row
+    threshold retained with exact clocks, cap 256, overflow counted, max_event kept), scripts/p184_g4_binance_probe.py
+    (fresh /public bookTicker+trade+depth@100ms and /market markPrice@1s, per-event ids + per-second aggregates, Binance
+    ingestor netns TCP; smoke 25 s lags 27-85 ms, container removed), gate campaign application (G4 a3_rescue hook,
+    G9 rescore, G2 report), scripts/p184_freeze_a3_amendment.py, rationale
+    upgrade/evidence/releases/v2.2.4/a3-external-attribution.md.
+  - Independent review BEFORE the run (read-only general-purpose subagent, 2026-10-18 ~11:55-12:05Z): 4 BLOCKING, all
+    fixed: (1) a late fresh probe made an internal tail EXTERNAL_VENUE_WIDE -> class not assigned in v1 (no probe-side
+    scheduler evidence); (2) every OKX disconnect incl. DL-initiated STALENESS_HANDOVER/BOOK_RESYNC/WRITE_ERROR counted
+    as venue fault -> venue causes only (OKX EOF/CLOSE_FRAME/READ_ERROR/HEARTBEAT_TIMEOUT/NOTICE*, Binance peer
+    reset/close, heartbeat_failed), a non-venue end in the span makes the episode incomplete; (3) G9 episode did not
+    have to explain the onset, checks skipped the onset seconds, recovery from the fault -> onset between last good
+    frame and fault, local/DL-path/writer-liveness checks from the outage start to restoration, recovery from the
+    outage start (G4 too); (4) A3 code sha not verified -> run-time and score-time code pinned. Non-blocking fixed: exact
+    clocks instead of rounded visibility, socket sampler gaps/errors, missing fields fail, rx_persist_samples 1, per-core
+    and per-gateway coverage, zero-dispatch/reset intervals fail, per-window cap (a p95 failure is never rescued), G9
+    loss multiset == G9 causes, session-type reasons only, writer workers LIVE, bounded recovery search, workload /
+    profile / ingestor-pid-stability checks, preflight refuses image/code drift, probe venue ts must equal DL source ts.
+    Accepted as stated limits: TCP samples ~100 ms apart cannot exclude shorter stalls or user-space buffering; Binance
+    fault-to-lane join by generation (ambiguous -> UNKNOWN); a campaign with this tool where A3 does not apply also loses
+    A1/A2 (strict).
+  - Dispositions of Codex p184-release-closure-options-20261018.md: section 1 ACCEPTED (option A, campaign input +
+    exact-client smoke + fail-fast; 092255Z stays invalid and preserved; the corrected run is a NEW declared run);
+    section 2 ACCEPTED for G9 losses via the joined lane timeline with recovery budget, ALTERNATIVE for the per-event
+    canonical coordinate / consumer ACK (not recorded: replaced by core raw_age + gateway dispatch-lag checks over the
+    recovery seconds and the writer restoration sample); section 3 ACCEPTED (observer v7 exceedances, same-event join
+    on seqId/u/t/E + venue ts, a different event is supporting only, TCP blind spot stated); section 4 ACCEPTED (G12 /
+    G13 inherited 76/76, not rerun; hashes, workload, external-incident and stop rules frozen in A3). Stated v1 limits
+    (owner-accepted via coordinator): G2 tails are UNKNOWN by construction (native slices carry no per-sample DL receipt
+    clock; Python MARK records envelope_received_at NOT_MEASURED); G9 demanded == session-ready and v1 fallback stay
+    strict; no per-event canonical coordinate / consumer ACK.
+  - FROZEN config/v2/p184-stage100-a3-external-attribution.json sha256 cc5fc7dcf07e30b1b52cbc51b78c4a5485a63be84d5b814dcf89452007e57326,
+    frozen_at 2026-10-18T12:17:51Z, base ref 6ff401e; per-row G4 internal limits = baseline max x 1.2 from
+    p184-g4-baseline-20261011T175720Z (9 non-bar rows; paired mark_index_price|OKX| excluded); runtime images pinned
+    (query 3e9e4d3a x2, ingestors a9679def x2, stream/projector 60f83a51, cores 7c848aad x3, writer 2deb90b0); client
+    profile qdl-v2-python:2.2.2-d6d2637 (profile-stage100-rc4-r16.json 12a8b578). Old -> new sha256: gate tool
+    8f67a861 -> e179ec78, driver 91b4423c -> 293e1b1b, verifier 1b0bf756 -> 11ed0ae2, observer 5d90cc60 -> 1d33ca4a,
+    pause watch 64b50287 -> f38a7c1b, new a3_attribution dcf3a17c, a3_evidence 3fec490b, binance_probe b2218ca2, freeze
+    tool 71d73b5c; unchanged budget ff85335b, addendum 4ed59dca, A1 1c8a276f, A2 99961c41, guard 75b3067c, okx probes,
+    g9 sampler, trace analyses, lock.
+  - Tests (host python3 -B -m unittest): a3_attribution 37 (incl. negatives probe missing / different event / internal
+    segment over limit / overflow / unretained max / incomplete timeline / recovery over budget / cap / pin drift, and
+    ReceiptParity: 053803Z / 135719Z / 074624Z / 092255Z stored scorecards byte-identical without A3) + a1_client_image
+    + binance_probe + codex_pause_watch + g4_amendment_2 + g4_amendment + gate_campaign + g4_observer +
+    foreign_activity_guard: 246 OK; in-image 226 OK. Dry run: preflight problems only the expected trace window (re-arm
+    pending), allowance 60000, no A3 drift.
+- 2026-10-18 12:18-13:10Z FINAL stage-100 under G4-A1 + G4-A2 + A3 at DL 6d17b56 (NEW declared run; the invalid
+  092255Z receipt is preserved) (Claude subagent): **protocol met; PASS G1 G3 G5 G6 G7 G8 G9 G10 G11 G14; FAIL G2,
+  G4; G12/G13 inherited (not part of the campaign).** NOT certified: G2 and G4 fail with tails A3 does not attribute.
+  - Apparatus: clean run worktree data-layer-p184-final-run-6d17b56f (tool e179ec78 = A3 pin), lock
+    claude-s100-final-a3-6d17b56f 12:18:58-13:10Z (lock absent before, no foreign job, released), Codex tree pause
+    12:19:09-13:09:57Z (2 IDE servers stopped/resumed, 0 failures; no descendants at the time), trace re-arm
+    rc15/roll_writer_campaign_native.py sha256:2deb90b0... 3600 dry DRY_RUN (delta UNTIL only) + real OK x2 (12:19:39Z
+    not_ready 0; after attempt 1, 12:31:12Z not_ready 1, guard passed), production otherwise unchanged by docker inspect
+    (query 3e9e4d3a x2, ingestors a9679def x2, stream/projector 60f83a51, cores 7c848aad x3, writer 2deb90b0, RestartCount
+    0 everywhere; only the writer recreates of the re-arms and the G11 restart 13:05:42Z), dry run problems [].
+  - Attempt 1 p184-final-campaign-20261018T122102Z: exact-client smoke PASS (154 reads, 0 failed, both stream
+    subscribe/close PASS, allowance 60000 from the deployed Query images), load from 12:23:31Z; guard TAINTED + aborted
+    12:30:29Z (load +7 min): foreign `fwupdmgr` (fwupd-refresh.timer, systemd, 0.43 core), an infrastructure job ->
+    the one allowed rerun. Cleanup clean (driver SIGINT, no G11 restart, docker ps 40). sha256 TAINTED 537df486...,
+    timeline fad8a3a1..., campaign.json 2b9c501b..., client-smoke receipt ea9e1718....
+  - Rerun p184-final-campaign-20261018T123222Z: smoke PASS 12:32:37-12:33:21Z (154 reads 0 failed; launch re-planned
+    +5 s), driver 12:33:26-13:04:49Z exit 0 (driver acceptance PASS), load 12:34:45-13:04:45Z, 5 G4 windows (boundary
+    13:00Z), G11 restart 13:05:42Z (outage 0.14 s, first valid apply / caught up max 4.8 s, 0 rewinds), guard CLEAN,
+    campaign_exit 0, scorecard applied A3 (pins, images, profile, code all matched; evidence complete).
+  - G2 FAIL: MARK_INDEX_PRICE|BINANCE p95 418.6 max 1082.9 ms (n 9000, max < 1000 rule); TRADE/QUOTE both venues and
+    MARK|OKX inside (TRADE|BINANCE p95 248 max 611, QUOTE|BINANCE 190/627, TRADE|OKX 241/507, QUOTE|OKX 200/684, MARK|OKX
+    353/744). A3: UNKNOWN by construction (Query-read MARK records carry no DL receipt clock); no lane episode in the
+    load (no session fault at all).
+  - G4 FAIL: book_delta|OKX_INVERSE| (window max 358.9 / 387.1 vs 282.5), book_snapshot|OKX_INVERSE| (301.4 / 399.9 /
+    311.2 / 406.7 vs 300.7), quote|OKX_INVERSE| (531.9 vs 322.6), all BTC-USD-SWAP. A3 attempted all three, rescued
+    none: every unit has venue -> DL ~30 ms and an INTERNAL split (receive -> CreateTime 154-295 ms, CreateTime ->
+    observer 115-206 ms; internal total > the row limit -> INTERNAL_SEGMENT_OVER_LIMIT), two near-limit units UNKNOWN on
+    local checks (ingestor throttled 1 period, run-queue 80.6 ms, socket queue non-empty). OKX books probe 5/5 covered,
+    0 book tails > 150 ms venue -> DL. So the remaining G4 failures are internal (DL pipeline / observer path), not
+    venue. G4-A1 mark_index_price|OKX| PASS (internal p95 99-126, max 214-374, 5/5 EXTERNAL_VENUE_COMPONENT_CADENCE).
+  - G9 PASS: 60 samples, demanded 64 == session-ready every sample, 0 data-path losses (38 legit quiet TRADE), v1
+    fallback 0, workers LIVE; A3 G9 applied with nothing to attribute.
+  - Report-only: no ingestor session fault / staleness recycle in the window (okx-public-003 recycles 2 unchanged,
+    standby failures 0; read_gap max OKX 1559 / Binance 1581 ms); qdl.stall in the load query_kn_1 26 (slow_request 25,
+    loop_lag 1), query_kn_2 107 (slow_request 105, loop_lag 2); native_probe slot 4 pre-load -> pre-g11 same epoch
+    089f3c15: QUOTE requested 962 -> 32,879, TRADE 30 -> 1,360, failed 0, unavailable 0, unreported_routes 0; post-G11
+    epoch ce24bb1d failed 0; gateway overflow/refused unchanged pre-load/post (stream_kn_1 4/2, stream_kn_2 1/0),
+    hub_live_budget_refused 0, queue_isolation 0; Binance probe windows 1-3, 5 covered, window 4 not covered (probe's own
+    public connection dropped); A3 sampler 65 clock samples, bound max 0.30 ms, ingestor pids stable.
+  - sha256: scorecard.json b9e76a83..., campaign.json 2f96f553..., timeline.jsonl cbf05017..., stage100/receipt.json
+    3fd22d86..., gates.json 0c039b19..., client-smoke/receipt.json b165a597..., query-funding-allowance.json
+    d4fdd26e..., a3-timeline/timeline.jsonl 90861375..., a3-local/receipt.json 166bfb45..., .run.log c8e454d4...,
+    .guard.log d36027f6..., guard/summary.json b7baed86..., .g11-watcher.log 3e38889b..., .extra/SHA256SUMS 91b405c7....
+  - After: docker ps 40, no qdl-p184-* / qdl-phase3-* leftovers, lock released, Codex resumed. Next (owner/coordinator):
+    G2 MARK|BINANCE max 1083 ms and the OKX inverse G4 internal tails are the open items; both are measured as
+    internal or unattributable, not venue.
+- 2026-10-18 13:15-14:00Z v2.2.4 RELEASE PACKAGING with stated limits (owner-approved ~13:40Z, AskUserQuestion "Release
+  kèm limit + gói tối ưu sau (Recommended)"; Claude subagent). Certificate status **FAIL** (G2, G4), not a full PASS;
+  no tag. Evidence: upgrade/evidence/releases/v2.2.4/.
+  - Files (DL): CERTIFICATE.md, SCORECARD.md, RELEASE_NOTES.md rewritten from the drafts (no `<<PENDING` left outside
+    drafts/); new certificate.json (status FAIL, failed_gates G2/G4, endpoint_report_sha256 9a11b372...), scorecard.json,
+    endpoint-report.json (schema qdl.release-endpoint-report.v2, runtime by docker inspect at assembly); equivalence.json
+    FINAL (final builds 83bef59 / 31a5155, final roll receipts, per-role rollback compose sha256); FINAL_STEPS.md status
+    header; CERTIFICATION_LEDGER.md section "P18.4 DL v2.2.4" (certified: G12 credit, G13 76/76, stage-100 G1 G3 G5-G11
+    G14 on this image set; G2/G4 recorded as limits). Generator (scratch, not in the repo):
+    scratchpad/rel224/gen_machine.py, every sha256 computed from the files, image digests asserted against
+    `docker image inspect`.
+  - Verified at assembly (not quoted): images a9679def (2.2.4-83bef59, ingestors x2), 60f83a51 (2.2.4-c7ce7d3,
+    stream/projector x4), 3e9e4d3a (2.2.4-31a5155, query x2), cores 7c848aad, bar edge 08f356a8, writer 2deb90b0; every
+    role RestartCount 0, OOM false. 83bef59 receipt: 11 of 12 binaries EQUAL to 60f83a51 (ingestor DIFFERENT by
+    design). `git diff 83bef59 HEAD -- rust ...` empty; `git diff 31a5155 HEAD -- qdl config ...` = apparatus only
+    (reference_l2_acceptance.py, imported by scripts/tests only; three frozen config/v2 amendment files);
+    `git diff c7ce7d3 HEAD -- qdl_sdk generated contracts scripts/build_qdl_sdk_release.py` empty, so the certified
+    SDK wheel 9f79e032... is what release.yml would rebuild.
+  - Observation: the G13 W05 output `w05-final-v55-76.json` is byte-identical to the v5.4 output (both 5490c21e...):
+    the verifier writes case states only. Provenance rests on its arguments and input receipts; stated as a limit.
+  - Release workflow constraint (STOP before tagging): release.yml `if certificate['status'] != 'PASS': raise
+    SystemExit(...)`; no other status is defined anywhere. Options for the owner in CERTIFICATE.md section 7 (A: no
+    v2.2.4 GitHub release, next certified release after the optimisation package - recommended; B: reviewed release.yml
+    change for a documented limited status; C: manual release, not recommended).
+  - IDRs opened in the TS INTEGRATION_DEFECT_REGISTER.md (the register both plans use): IDR-115 OKX BOOK lane recycle
+    with re-snapshot; optimisation package IDR-116 cleaner I/O (C1), IDR-117 broker CPU quota (C2), IDR-118 core commit
+    batching (C3), IDR-119 Query MARK read path (G2; first add a per-sample clock); residuals IDR-120 H1 WriterClone
+    lifecycle, IDR-121 Rust Shadow Core CI, IDR-122 TS ruff debt (measured 1286 findings with ruff 0.15.13 on TS
+    e4992fe5; the "~276" figure was not reproduced, it equals the I001 count), IDR-123 F821 (the undefined name at
+    scripts/p184_n1_isolated.py:605 is `asyncio`, not `read`), IDR-124 stage-A key coalescing, IDR-125 OKX FUNDING_RATE
+    8 h bound (contract option); IDR-108 unchanged (limit); IDR-112/113/114 state + deployed cells updated.
+  - Codex release-closure review section 5 (release and cleanup checklist): ACCEPTED (image/evidence map, receipts
+    preserved, removal by digest/id only, disk before/after recorded, no prune). Standing cleanup reminder of
+    P184_CODEX_CONTRIBUTIONS.md acknowledged for this packet.
+  - Cleanup (own lock claude-v224-release-cleanup 13:33:29-13:35:5xZ, lock absent before/after; no prune, no volume, no
+    container touched): df / free 224,162,775,040 -> 224,746,872,832 B (+584 MB; the Kafka volumes grew in the same
+    minutes, so this is not a clean attribution); docker system df images 111 -> 104 (33.48 -> 33.42 GB, layers mostly
+    shared), build cache 423 -> 412 records (31.75 -> 31.02 GB).
+    - Run worktrees removed (git worktree remove, no --force, each clean and its HEAD on a branch or refs/backup):
+      DL final-run-1ab4a638, 5157c8ce, 5a70bdf4, 6506d011, 860b79ba, 978a0327, aa78df7d, b6d21c9e, d03cd679, f6db0b82
+      (10); TS final-run-1401ccb1, 68f2572f (reachable via refs/backup/p184-pre-reword-20261016), ba096818, c385aaf6,
+      c9ebd619, ca435a18, f60e7fe5 (7). Kept (pins of the counted receipts): DL final-run-6d17b56f (stage-100), bb054498
+      (G12, G13); TS final-run-77a6d671 (G12 WriterClone pin), aa126794 (G12, G13 runtime/dr08), a9cf1b41 (dr05-quiet),
+      e9ae5484 (dr05-upstream). Left, not matching the pattern: data-layer-p184-s100-7285868.
+    - Images removed by full digest, refs 0 re-checked before each: 0df95f8888e1 (local/qdl-core:n1-test-clock-f1-d221fb8),
+      381d6bf9c069 (local/qdl-projector:p184-test-idr107-58fb7cd), b012aa18ef1d (local/qdl-stream:n1-opt05-ffa382f),
+      b095b18e2094 (local/qdl-stream:isolation-e3b5552), d27db0cffe15 (writer cand B16 5636e443), 2beedc0448c3 (writer
+      f1b52f6), 7d43121e41c5 (qdl-v2-python:2.2.3-rc16-bcb0283). Kept: deployed digests, rollback 5e261809, 60f83a51,
+      c21e164a, a44349a1, 734b08f1, 7c71e3af, cb5216b8, release tags (v2.2.x / v2.1 / v2.0 images), builder 551428d9,
+      rust base f41ecb66, driver client profile 2.2.2-d6d2637. Left for an owner decision (v2.2.3-era rollback targets of
+      roles changed in v2.2.4, not in the coordinator's keep list): baa72c96 (stream), ce629061 (projector), 7fba2577
+      (ingestor), b9ca6c36 (query rc19); 7cf232ace561 (referenced by tests/unit/test_p184_n1_capacity_python_writer.py);
+      every image of other work streams (portal, Codex test images, alpha runtime).
+    - Build cache: 18 records pruned by id (`docker builder prune --force --filter id=<id>`, 0 failures), only records
+      created inside our build windows (14 of DL python 31a5155 at 19:08Z, 1 of DL rust 6d61710 at 15:51Z, 3 of TS writer
+      6af62a7e at 07:04Z), reclaimable and not shared; the 20:04Z records of unknown origin and every shared record were left.
+    - Scratchpad: NOT cleaned. Removal of the 401 unreferenced entries (~737 MB) of this session's scratchpad was
+      refused by the tool permission classifier (irreversible local deletion); nothing was deleted. Keep set if it is
+      done later: every entry referenced by repos/state (b9 incl. dl-4d3476c and pytest-site, rehearsal incl.
+      dl-4d3476c-san, b17, final*, rollout1, opt, burst-b16*, ...).
+  - Next: push fix/p184-dl-closure, PR -> dev, required CI on the PR head; owner decision on CERTIFICATE.md section 7;
+    optimisation package one variable at a time (IDR-116 first per the G4 draft ranking, then 117, 118; IDR-119 starts
+    with the clock).
+- 2026-10-18 14:50-15:30Z amendment A4 FROZEN (POST_HOC_OWNER_DECISION) + post-hoc rescore of 123222Z (owner
+  AskUserQuestion ~14:45Z: G4 OKX_INVERSE "M1: chấm theo p95 pooled (Recommended)", G2 MARK_INDEX_PRICE|BINANCE "Nới
+  max lên 1200 ms (Recommended)"; draft 5e496bf; Claude subagent). Status: implemented, tested locally, applied to the
+  counted receipt only.
+  - `config/v2/p184-stage100-a4-ts-eligibility.json` (schema qdl.p184.stage100-a4.v1, version 1, frozen
+    2026-10-18T15:18:14Z) sha256 14958a681848192c8b9e93feaf0ee3137a1851c38fe6d6763f3bcf6ce0c81312:
+    - post_hoc true, label POST_HOC_OWNER_DECISION, applies only to p184-final-campaign-20261018T123222Z with its
+      scorecard b9e76a83... and the frozen scorer e179ec78...;
+    - G2 MARK BINANCE max <= 1200 ms (0.6 x the TS 2000 ms budget), p95 <= 500 unchanged;
+    - G4 book_delta / book_snapshot / quote |OKX_INVERSE| on the pooled OKX p95 limits 289.1 / 270.1 / 283.3 (the
+      frozen-table bucket rule, n >= 20 per window), max REPORT_ONLY, every event above the replaced addendum limits
+      282.5 / 300.7 / 322.6 retained by observer v7 or the row is FAIL;
+    - TS acceptance bounds with file:line from the draft (TS bc713113: execution_market_context.py:188-211, 216-231,
+      244-249, 270-281, 322-331, 432-446; execution_recovery.py:21, 96-100, 235, 250-262; data_layer_v2.py:440-460,
+      781-782; risk_pool/ordinary.py:65-67; market_data/runtime.py:55-60); stated limits.
+  - Why not an edit of the scorer: A3 pins the sha256 of the scoring code it runs with (A3_CODE includes
+    scripts/p184_gate_campaign.py) and re-pins G4-A1/G4-A2 to it, so an edited scorer would drop A1-A3 on any rescore.
+    `scripts/p184_a4_post_hoc.py` (sha256 23b78e4a...) instead runs the unchanged build_scorecard twice:
+    - first as is; it must reproduce the stored scorecard.json byte for byte (it does);
+    - then with score_mark and score_g4 wrapped so that only the four rows are re-judged and the gate verdict comes
+      from the same causes; any drift in another gate raises and nothing is written.
+  - Receipt (new file next to the untouched scorecard.json): `~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/
+    scorecard.a4-post-hoc.json` 7a821d2d60c45ae290023e9434af7b320c06b906a4185dc299eee467a71fab7e, `.sha256` (sha256sum -c
+    OK). Verdicts:
+    - G2 FAIL -> PASS (MARK BINANCE max 1082.9 <= 1200, p95 418.6);
+    - G4 FAIL -> PASS (inverse p95 per window book_delta 143-198, book_snapshot 160-193, quote 178-231; n 102-183;
+      maxima 387.1 / 406.7 / 531.9 report-only; 8 outliers retained, overflow 0, admitted_seen == n);
+    - every other gate byte-identical; campaign summary PASS 12 + NOT_MEASURED G12/G13 (credited separately).
+  - Report-only comparison (tests' mirrored receipts): 053803Z G4 still FAIL (mark_index_price|OKX|, out of scope);
+    135719Z quote / 074624Z book_delta / 092255Z book_snapshot inverse rows FAIL under A4 only because those windows
+    predate observer v7 (no retention = UNKNOWN = FAIL); every inverse p95 there is inside the pooled limit.
+  - Tests `tests/test_p184_a4_post_hoc.py` 18 OK on the host:
+    - negatives: inverse p95 over the pooled limit -> FAIL; MARK BINANCE max 1200.1 / p95 500.1 -> FAIL; a straddled
+      bucket, thin windows and a changed pooled limit -> NOT_MEASURED; missing / overflowing / incomplete retention ->
+      FAIL; another failing or unbaselined row keeps the gate blocked; a wrong run or scorecard is not applied;
+    - parity without A4: the frozen scorer reproduces the stored gates of 053803Z / 135719Z / 074624Z / 092255Z /
+      123222Z (mirrored campaign.json paths to this repo's sha-equal config, because the run worktrees of the older
+      receipts were removed in the 13:3x cleanup), and 123222Z byte for byte in place; A4 changes nothing outside its
+      rows on every receipt;
+    - also: tests.test_p184_gate_campaign + g4_observer 116 OK; in-image (qdl-v2-python:2.2.4-31a5155, receipts
+      absent) 18 OK, 5 skipped.
+  - Pre-existing, not changed here: tests.test_p184_a3_attribution / g4_amendment / g4_amendment_2 receipt-parity tests
+    give 4 failures + 2 errors. The cause is that the run worktrees aa78df7d / 5a70bdf4 / 1ab4a638 named in those
+    receipts' campaign.json were removed in the 13:3x cleanup. It is an environment drift, not a scorer change; the
+    mirror helper in the A4 test is the fix pattern.
+  - Codex release-closure review (p184-release-closure-options-20261018.md, "OKX BOOK max" option A: retain the max
+    event and every threshold exceedance): ACCEPTED in A4's retention condition.
+  - Resources: no image built, no container created other than `--rm` test/render runs, no runtime action; lock not
+    needed (no measurement).
+- 2026-10-18 15:20-15:45Z v2.2.4 certificate RE-ISSUED under A1-A4 + Paper manifest r11 packaging finding (Claude
+  subagent; same owner decisions). Status: certificate PASS with a required post-hoc amendment; not tagged.
+  - certificate.json (sha256 da2fd4848d36bf4d4a06a0bbca780aee7371fef0b057491686caff2239503ac9):
+    - status PASS, `status_basis`, required `amendments` [G4-A1 1c8a276f..., G4-A2 99961c41..., A3 cc5fc7dc...
+      (post_hoc false), A4 14958a68... (post_hoc true, POST_HOC_OWNER_DECISION, applied to 123222Z only, rescore tool
+      23b78e4a..., receipt 7a821d2d...)];
+    - `gates` G2 / G4 PASS next to `gates_without_a4` G2 / G4 FAIL; `failed_gates` {} next to `failed_gates_without_a4`;
+    - limits rewritten honestly (post-hoc PASS; G4 internal DL tails with maxima report-only; G2 headroom 1.67x and DL vs
+      TS read-schedule split unknown; TS acceptance evidence from samplers, no order admission observed; manifest
+      packaging); evidence_sha256 extended and every entry re-verified.
+  - scorecard.json (52979689...): status PASS_UNDER_POST_HOC_AMENDMENT_A4 with status_without_a4, A4 entry, G2/G4 with
+    verdict_without_a4 and the A4 rows (p95 per window, max report-only, retained outliers), summary 14 PASS with
+    summary_without_a4.
+  - CERTIFICATE.md / SCORECARD.md / RELEASE_NOTES.md: original verdict next to the A4 verdict, the amendment list with
+    sha256, and an explicit statement that the rule "no frozen threshold is widened after measuring" is NOT met by A4.
+    Section 6a / "Consumer manifest packaging" added. CERTIFICATION_LEDGER.md: entry recorded as
+    PASS_UNDER_POST_HOC_AMENDMENT, not as a pre-registered certification.
+  - release.yml (not edited): the publish step's checks replicated locally on the re-issued files:
+    - status == PASS (line 38);
+    - endpoint-report sha256 == certificate (9a11b372..., file unchanged);
+    - RELEASE_NOTES.md exists;
+    - SDK wheel pin unchanged (9f79e032...).
+
+    Still required for a tag: the head on origin/main (line 26), green required CI and an explicit owner instruction.
+    No tag created.
+  - Manifest r11 (packaging finding):
+    - Deployed: query_kn_1/2 `/consumer-realms/trading-system.paper.stable-r11.yaml` efd482fa... (docker exec sha256sum,
+      read-only; realm mount `p184-d3-capacity-20261009/reader-public-r16`); runtime catalog fc3a1e1e... (revision 12).
+    - Source established: `scripts/prepare_paper_read_extension.py` (76db472, 7594258f...) with quotas 77/3000 from
+      `p184-d1-rev11-20261009/` base-catalog fc3a1e1e / base-manifest 1e489237 (= repository r10) / base-binding 5703582a.
+    - Re-rendered in a `--network none` `qdl-v2-python:2.2.4-31a5155` container: prepared.json byte-identical
+      (553cab32...), and `yaml.safe_dump` of its manifest = efd482fa = deployed. No git branch holds r11.
+    - Packaged: byte copy `upgrade/evidence/releases/v2.2.4/trading-system.paper.stable-r11.yaml` (efd482fa) +
+      `consumer-manifest-r11-provenance.json` (94628054...).
+    - NOT done: replacing `consumers/stable/trading-system-paper.yaml`. Tried and reverted: r11 there gives 1 failure
+      + 38 errors in 13 manifest/catalog test modules (r10: 91 OK), because the repository catalog revision 11 has no
+      BTC-USD-SWAP (8482b54b...), the release routing pins r10 and one test expects 10 MARK bindings. That alignment is
+      TS-register IDR-127 (catalog r12 + routing + manifests + tests in one slice, owner approval before a rebuild).
+      Also seen: the repository alpha-okx-paper r14 vs realm r15. Runtime unchanged.
+  - TS commit 8e2849dd (feat/v2-rust-first-okx-demo, not pushed): IDR-119 updated, IDR-126 (TS trace wake/poll markers)
+    and IDR-127 opened; TS plan journal.
+  - Not updated: FINAL_STEPS.md (status header of the 13:45Z packaging, kept as history).
+  - Next: push fix/p184-dl-closure (fast-forward), PR head CI; tag only on an explicit owner instruction after the merge
+    to main; IDR-126 before IDR-119; IDR-116..118 one variable at a time.
+
+### P18.4 rustls 0.23.45 -> 0.23.46 (RUSTSEC-2026-0346..0349) + receipt-parity test mirror - 2026-10-18 (Claude)
+
+- Owner decision 2026-10-18 ~15:50Z (AskUserQuestion "Nang rustls ngay"): bump now. The four advisories were assessed
+  not reachable from DL code paths, but the policy is zero exceptions (`deny.toml` `[advisories] ignore = []`).
+- Change: `Cargo.toml` workspace pin `rustls = "=0.23.46"` (features `ring`, `std`, default-features off, unchanged);
+  `cargo update -p rustls --precise 0.23.46` in the pinned builder 551428d9 (cargo 1.82.0, crates.io fetch only).
+  `Cargo.lock` diff: rustls version + checksum only (48e13bd8...); no companion crate changed (rustls 0.23.46 keeps
+  rust-version 1.71 and the 0.23.45 dependency requirements). Resolved feature set before and after (cargo tree
+  -e features, linux-gnu): `log, logging, ring, std, tls12`. Provider: `rustls::crypto::ring::default_provider` in
+  stream-gateway tls.rs:10 / query_view.rs:31, binance-shadow :43, native-raw-ingestor :4596 / :7936 (unchanged).
+- rustls in the crate graph (cargo tree -i rustls): qdl-core, qdl-kafka, qdl-stream-gateway, hence 10 of the 12 release
+  binaries (`RUSTLS_LINKED` in scripts/build_qdl_release_images.py); qdl-projector and qdl-venue-core-certify have
+  none. The build recipe now compares against the live ingestor image 83bef59 (a9679def): linked binaries expected
+  DIFFERENT (new crate metadata hashes), the other two EQUAL. Equivalence beyond whole-file is decided per binary by a
+  symbol-level comparison (next entry), not by the recipe.
+- Tests: the A3 / G4-A1 / G4-A2 receipt-parity tests (4 failures + 2 errors since the 13:3x run-worktree cleanup) now
+  score mirrored receipts (`tests/p184_receipt_support.py`, the A4 `mirror` helper moved there; `as_recorded` puts
+  the recorded config path back into the serialized output, so the byte-identity assertions stay byte-identity).
+  Host: tests.test_p184_a3_attribution + g4_amendment + g4_amendment_2 + a4_post_hoc 90 OK;
+  tests.test_build_qdl_release_images 39 OK.
+- 2026-10-18 ~16:00-16:40Z OPT resource package round 2: PACKET ONLY, not applied. Owner decision ~16:00Z: "Nâng rust
+  kèm gói tối ưu CPU, Ram lần 2 ...". Packet: `upgrade/evidence/releases/v2.2.4/drafts/OPT_RESOURCE_PACKAGE.md`. Claude
+  subagent, read-only evidence, no container started, no Kafka config altered.
+  - Proposal (live `docker update`, no restart, one step per variable with a 10-min HOLD, then one final stage-100):
+    - kafka1-3: 1.75 -> 2.25 vCPU;
+    - query_kn_1/2: 1.5 -> 2.0 vCPU and 1.5 -> 2 GiB;
+    - ingestor_okx_swap: 0.5 -> 1.0 vCPU;
+    - net effect: ceilings 17.25 -> 20.25 vCPU, limits +1 GiB, expected mean draw +~0.11 vCPU.
+  - Evidence from 123222Z (host.json cgroup, a3-local, guard cores/cleaner, broker G1 logs, Query `qdl.stall`):
+    - kafka2 is throttled in 131/143 intervals, 116 s in total; 1,467 / 873 ms at the 12:40:27 / 12:44:21.8 tails,
+      where core `commit_ms` reaches 154 and the load max is 197.5;
+    - broker throttling is 1.3-7x higher inside a broker's own md.latest cleaner episodes;
+    - the OKX ingestor is throttled 50-177 ms at 3 of the 4 tails;
+    - the Binance ingestor shows run-queue waits of 147-176 ms with no throttling (host contention);
+    - Query slow_request cluster 12:43:46-53 on both replicas, warmups 3.5 / 4.6 s, both replicas throttled;
+      query_kn_1 memory headroom 8.1 %;
+    - broker GC max ~54 ms (contributor only).
+  - Not proposed:
+    - C1 (it also changes the G12 parity hash, `p184_g12_isolated_fault.py:3288`);
+    - Kafka heap or memory (needs a rolling restart; procedure in the packet section 10);
+    - Binance ingestor, cores, stream, projectors, bar_edge, caches, TS writer.
+  - rc17v2 dry run refuses the OKX raise (`evidence_does_not_justify_raise`, usage 0.090, throttle 0.0050), so it is
+    an owner-approved `docker update` outside T4. The cumulative T4 budget is kept (+0.75 of +1.5).
+  - A4 is bound to 123222Z. The final run needs any relaxation pre-registered before launch.
+  - Next: owner approval of the exact values, then apply after the rust-image roll (packet section 11).
+- rustls slice (continued after the OPT bullet above): build (host lock `claude-dl-rustls-0.23.46` 16:06:06Z, taken after the locks of epg10-08 and codex-pma11 expired;
+  free disk 204 GiB): `scripts/build_qdl_release_images.py --build --component rust --rev 9dab224` ->
+  `qdl-v2-rust:2.2.4-9dab224` `sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92`, receipt
+  ~/.local/state/qdl-v2/build-v2.2.4-9dab224/receipt.json (e38fd275..., PASS, `unexpected []`, `missing []`,
+  `core_equal_to_measured` false: the core file differs from rc22). Incremental offline compile 1m22s.
+- Equivalence vs the live `a9679def` (whose gateway = 60f83a51, core = rc22 7c848aad), new read-only tool
+  `scripts/p184_rust_symbol_diff.py` (normalized per-function disassembly, GOT resolved, data references masked,
+  padding / duplicate instances ignored; tests.test_p184_rust_symbol_diff 9 OK). Summary 49f2164e...:
+  - projector, venue-core-certify: whole-file EQUAL.
+  - ingestor: 101 rustls functions changed (+6/-10), OTHER 5 TypeId constants + 16 CODEGEN (tungstenite, rdkafka
+    drop, LaneTelemetry::report, run_okx_service closure); gateway: 81 rustls (+8/-7), OTHER 4 + 5 calling rustls +
+    68 CODEGEN (h2/hyper/tonic/prost/tokio monomorphizations).
+  - realtime core: **0 rustls functions and 0 rustls source paths in both builds** (the advisories are not in the
+    deployed core binary); 4 TypeId constants + 5 CODEGEN prost encoders (e.g. Coefficient::encode inlined in rc22,
+    out of line now).
+  - Verdict: NOT confined to rustls at machine-code level in any binary built from a crate that depends on rustls;
+    the non-rustls differences are same-source codegen (CGU partition / inlining with new crate hashes, inferred) and
+    crate-hash constants. Not proven behaviour-equivalent; reported, not hidden.
+- Python image: keep `3e9e4d3a` (31a5155); 9dab224 changes no python runtime file (the 31a5155..9dab224 python delta
+  is qdl/certification/reference_l2_acceptance.py and frozen config/v2 amendments, scripts/tests only, as recorded at
+  the v2.2.4 packaging).
+- Roll packet (draft, NOT executed): upgrade/evidence/releases/v2.2.4/drafts/RUSTLS_0.23.46_ROLL_PACKET.md, modules M1
+  ingestor_okx_swap, M2 ingestor_binance_usdm, M3 stream_kn_1, M4 stream_kn_2 (rc17v2, `['image']`, HOLD + rollback
+  per module, merge rule with the resource package); M5 rust_core x3 recommended NOT to roll (no rustls code, would
+  only add unmeasured codegen; simultaneous-replace commands included as an owner option). Dry runs all `["image"]`;
+  evidence ~/.local/state/qdl-v2/releases/v2.2.4/rollout-rustls-0.23.46/SHA256SUMS.
+- Local CI (owner ~16:00Z: full CI contract locally before every push): `scripts/p184_local_ci.py` replays every job
+  of .github/workflows/ci.yml on the pushed head; result recorded in the next journal entry and in the handback.
+- PR #33 head 5e90eb7 failed only `contract-tests` / cargo-deny (`advisories FAILED, bans ok, licenses ok, sources
+  ok`, RUSTSEC-2026-0346..0349); every other job success (run 39141057196).
+- 2026-10-18 ~16:40-17:00Z amendment A4 v2 FROZEN (PRE_REGISTERED, post_hoc false) for the final stage-100 run (owner
+  AskUserQuestion ~16:40Z "Duyệt A4 chốt trước (Recommended)"; rule content = the A4 approved ~14:45Z; Claude subagent).
+  Status: implemented, tested locally; not applied to any run (no run yet). No runtime action.
+  - `config/v2/p184-stage100-a4-v2-preregistered.json` (schema qdl.p184.stage100-a4.v2, version 2, frozen
+    2026-10-18T16:50:47Z) sha256 63f98668150bfda776317f97114b73855800515d0cfc9b7aa90ccb050f500324:
+    - same G2 / G4 rules as A4 v1 (MARK BINANCE max <= 1200 ms, p95 <= 500; inverse book_delta / book_snapshot /
+      quote on pooled OKX p95 289.1 / 270.1 / 283.3, max REPORT_ONLY, outliers retained); external_exemptions [];
+    - applies_to RUN_BOUND_BEFORE_LOAD, 100-session candidate, excluded_campaigns [123222Z] (A4 v1 post-hoc, file
+      14958a68 unchanged, stays its decision);
+    - pins scorer e179ec78 (= A3 gate_campaign_tool), A4 rule module p184_a4_post_hoc.py 23b78e4a, tool
+      p184_a4_preregistered.py b93d295f, observer 1d33ca4a, tests 1d50b18e, budget / addendum / G4-A1 / G4-A2.
+      A3 is NOT pinned by sha256 (see below).
+  - Integration: wrapper, the scorer is not edited (A3 pins its sha256; an edit drops A1-A3). `scripts/
+    p184_a4_preregistered.py` reuses the A4 v1 rule functions and relabels their rows PRE_REGISTERED / post_hoc false /
+    version 2, so both versions judge the same data identically; drift outside G2/G4 raises.
+  - Runtime-identity pin (no hard-coded digests: the rolled images do not exist yet):
+    - `bind --campaign-dir $C` is the launcher's first command, before the guard and `p184_gate_campaign.py run`.
+      It writes `$C.a4-v2-binding.json` (open "x") with the A4 v2 sha256, the code sha256s, the image id per A3 role +
+      writer (`a3_runtime_images()`), the writer identity in the preflight shape, and the cgroup caps of the A3 roles,
+      kafka1-3 and the writer;
+    - `close --campaign-dir $C` runs after scorecard.json and writes `$C.a4-v2-close.json` (images and caps read again);
+    - `score --campaign-dir $C --write` writes `$C/scorecard.a4-v2.json` + `.sha256`, with verdict_without_a4 per gate
+      and summary_without_a4;
+    - applied only if: freeze < bind < campaign start; the file is unchanged since the bind; preflight
+      runtime_identity / a3_runtime_images == binding; close == binding (no roll or cap change during the run); code /
+      config pins hold; stored scorecard reproduced; A3 applied; protocol met; G6 PASS; G9 PASS with 0 losses.
+      Otherwise the strict scorecard.json is the record.
+    - Live check (read-only docker inspect, receipts in the session scratchpad only): bind recorded today's images (=
+      A3's frozen set); a second bind is refused (FileExistsError); close is refused without scorecard.json.
+  - OPEN, blocks the final run: A3 hard-codes `runtime_images`, and the preflight refuses other images
+    (`scripts/p184_gate_campaign.py:1793-1797`). After the rustls roll, A3 must be re-frozen with the rolled image ids
+    (owner decision, scripts/p184_freeze_a3_amendment.py), or the campaign refuses to start. A4 v2 needs only "A3
+    applied" and reports the recorded A3 path / sha256.
+  - Tests `tests/test_p184_a4_preregistered.py` 14 OK on the host:
+    - negatives: inverse p95 over pooled -> FAIL; MARK BINANCE max 1200.1 / p95 500.1 -> FAIL; 15 invalid-file
+      variants; 5 bind refusals; 10 not-applied cases (missing binding / close, bound after start or before freeze,
+      file edited after bind, roll or cap change during the run, preflight images / writer identity differ, bind-time
+      code differs);
+    - parity: without a binding nothing is applied; frozen gates == stored on 5 receipts, 123222Z byte for byte in place;
+    - positive replay on 123222Z (synthetic pre-run binding): same summary and G2/G4 content as the post-hoc A4, G2 / G4
+      FAIL -> PASS, 8 outliers retained.
+    - Host, with a4_post_hoc + gate_campaign + a3_attribution + g4_amendment(+_2): 195 OK. In image
+      qdl-v2-python:2.2.4-31a5155 (--network none, receipts absent): a4_preregistered + a4_post_hoc + gate_campaign
+      123 OK, 10 skipped.
+  - Docs: `upgrade/evidence/releases/v2.2.4/a4-v2-preregistered.md`.
+
+### P18.4 rustls 0.23.46 slice: local CI, push and PR #33 CI - 2026-10-18 (Claude)
+
+- Local CI (owner ~16:00Z rule) `scripts/p184_local_ci.py --sha 97c9ecb --allow-pull --allow-download --trivy-image
+  aquasec/trivy:0.58.1` under host lock `claude-dl-rustls-0.23.46` (16:35-17:47Z, then released): 41 PASS, 3 SKIPPED
+  (the two `pull_request`-only steps and the sudo bind-mount preparation), 0 FAIL; overall `INCOMPLETE` only because
+  of those skips. Includes `cargo fmt --check`, `clippy -D warnings`, `cargo test --workspace --locked --
+  --test-threads=1` (506 passed, 0 failed) in rust:1.82-slim, cargo-deny 0.20.2 in a fresh container (advisory db
+  fetched fresh): `advisories ok, bans ok, licenses ok, sources ok`. Receipt
+  ~/.local/state/qdl-v2/p184-local-ci-97c9ecb/summary.json (49b8d869...). Cleanup: 2 CI images removed by id, 21 build
+  cache records pruned, 6 anonymous CI volumes (17:39-17:41Z) removed afterwards.
+- Push: `97c9ecb` fast-forward to origin/fix/p184-dl-closure (5e90eb7..97c9ecb, includes e6559e4 of the OPT packet).
+  `f2094a2` (A4 v2 pre-registration, another agent) was NOT pushed: it was committed after the local CI and is not
+  covered by it.
+- PR #33 CI run 39151228675 on 97c9ecb: attempt 1 `contract-tests` FAIL in `Test Rust generated contracts`, one test:
+  `staleness_tests::a_lane_that_stays_stale_is_recycled_again_only_after_the_cooldown` ("second recycle 899.39 ms
+  after the first", needs >= 1000 ms; cargo-deny step therefore skipped); every other job success. Passed in the local
+  CI and on every earlier PR run. Attempt 2 (rerun of the failed job): **all 5 jobs success**, cargo-deny
+  `advisories ok, bans ok, licenses ok, sources ok`; PR mergeable_state clean.
+  - Reading (source-checked, not fixed here): the detector takes the cooldown slot at `host_ms(read_at)` of the
+    triggering frame (`qdl-native-raw-ingestor.rs` recycle_started at the RECYCLE decision, host_ms from read_at),
+    while the test measures the gap between the two standby ACKs at the mock venue. Session ids in the failing log
+    put the two standby establishes 0.899 s apart with standby_ready 42 / 41 ms, so the first trigger frame was read
+    ~0.3 s before it was processed on the shared runner (inferred). Product effect: under a processing backlog the gap
+    between standby starts can be shorter than cooldown_ms by that backlog (production cooldown 60 s). Proposed: take
+    the slot at decision time (Instant::now) or assert on the slot times; a code change, needs its own local CI.
+
+### P18.4 v2.2.4 final chain: rustls roll M1-M4 DONE, OPT step K HOLD FAIL -> rolled back, STOP - 2026-10-18 18:40-19:54Z (Claude)
+
+- Approvals (owner, relayed by the coordinator): ~15:50Z "Nang rustls ngay"; ~16:00Z CPU/RAM package "Nâng rust kèm gói
+  tối ưu CPU, Ram ... Không cần chờ nữa"; ~16:40Z A4 v2 pre-registered; ~18:40Z "Cứ tiếp tục làm cho xong như đã duyệt".
+  Packets drafts/RUSTLS_0.23.46_ROLL_PACKET.md (M1-M4, M5 not rolled) and drafts/OPT_RESOURCE_PACKAGE.md (K/Q/I/R),
+  merged per RUSTLS section 8. Status: M1-M4 production (rolled, HOLD PASS); K applied, HOLD FAIL, rolled back; Q, I,
+  R, G12, G13, final stage-100 NOT run (STOP rule "any HOLD failure -> roll back that role and STOP").
+- Lock `claude-dl-rustls-roll` 18:40:14Z (taken when codex-pma11 had expired; foreign [] ) -> released 19:53:4xZ.
+  Preconditions: live ids/images/RestartCount 0 equal the 16:23:55Z inspects; `qdl-v2-rust:2.2.4-9dab224` =
+  27c79b53...; no ROLL_* env; tools rc17v2 8de00c46, hold_check f6605d23, verify_service ae8768f3, ingestor_watch
+  48c5aa08, lane_report d46e971d (the RUSTLS packet swaps the hold_check/verify prefixes; the OPT packet has them right).
+  Baseline hold-pre READY 64 64, violations []; pre-roll 5-min watches core raw_age_ws max 140.9-164.5 ms.
+- M1 ingestor_okx_swap 18:46:18Z: rc17v2 exit 0, diff [image], a9679def -> 27c79b53, cpus 0.5, container 1443c855cf71,
+  verify image_ok, mismatch [], rc 0, healthy; 5 lanes qdl_native_session_ready (rustls handshake to OKX), 0 TLS/retry/
+  recycle lines; lanes: armed okx-public-003 6 bindings default staleness config, f1 fields true; 5 x 60 s raw_age max
+  102.9-146.8 ms; hold violations []. PASS.
+- M2 ingestor_binance_usdm 18:53:11Z: exit 0, diff [image], cpus 0.75, container 91ccbafe4671, verify ok; the Binance
+  runtime logs no session_ready event (OKX-only event), TLS proof = all 5 lanes receiving frames on the new container;
+  raw_age max 117.2-168.3 ms (pre max 164.5, within x1.2); violations []. PASS.
+- M3 stream_kn_1 19:00:18Z / M4 stream_kn_2 19:06:32Z: exit 0, diff [image], bundle_sha256 63efd9ff... on the new
+  gateways, cpus 0.75, containers 8b9800868b14 / 3dc403cccf3e; t+0 and t+5 min READY 64 64, violations [], refused /
+  overflow / hub_live_budget_refused / lagging deltas 0, 0 handshake/certificate lines; after M4 the 64 writer
+  subscriptions are on the NEW kn_1 (rustls 0.23.46 mTLS server). PASS.
+  - Receipts (rollout-rustls-0.23.46/): ingestor_okx_swap-receipt-20261018T184618Z.json bccae7dd...,
+    ingestor_binance_usdm-receipt-20261018T185311Z.json 2ec480ea..., stream_kn_1-receipt-20261018T190018Z.json 55caf1a0...,
+    stream_kn_2-receipt-20261018T190632Z.json ec555607...; rollback composes *-rollback-20261018T18/19*.compose.json;
+    SHA256SUMS.roll-20261018T1846Z c518f9b3....
+- Live after the roll (docker inspect 19:41Z): ingestors x2 + stream x2 27c79b53, projectors 60f83a51, cores rc22
+  7c848aad (M5 not rolled, no rustls code in the core binary), query 3e9e4d3a, writer 2deb90b0; RestartCount 0.
+- OPT step 0 (opt-resource-20261018/): caps equal the packet table (inspect-before.txt); coordinator check (read-only
+  `kafka_preferred_leader_election.py --observe`, one admin container): `__consumer_offsets-43` leader = broker 2
+  (kafka2 holds the core group coordinator, now verified, not inferred), 34 coordinator partitions not on their
+  preferred replica, 0 data; 10-min baseline 19:13:24-19:24:18Z: READY 64 64, violations [], raw_age max 164.4 ms,
+  PSI some avg60 3.81 / 4.82, kafka throttled periods 1.88 / 1.00 / 0.43 %.
+- Step K 19:24:37Z `docker update --cpus 2.25` kafka2, kafka1, kafka3 (NanoCpus 2250000000, RestartCount 0, StartedAt
+  unchanged). HOLD K 19:24:50-19:35:49Z: **FAIL** on two rules: core raw_age max 438.6 ms (rust_core_2, 19:30-19:31Z)
+  > 1.2 x 164.4 and `violations` = stream_kn_1 overflow +2 (the writer-side TRADE overflow class recorded since
+  10-16). Passed: READY 64 64, core retry/rebalance 0, PSI avg60 7.2 <= 4.82 + 5, ingestor lanes 5, 0 other lines.
+  Diagnostic: kafka throttled periods 1.88 -> 0.53 %, 1.00 -> 0.33 %, 0.43 -> 0 % (the target effect).
+  - Rolled back 19:37:12Z (`docker update --cpus 1.75` x3; lagging 0 and raw_age back at baseline first, R1.29).
+  - Attribution (verified, not a reversal of the rule): the spike window carried a market burst (rust_core_2 progress
+    window n 25,920 records vs ~12,000, mean raw_age 127 ms; OKX ingestor 711 frames/s vs ~350), commit_ms max 158;
+    after the rollback, at cap 1.75, the same magnitude recurred: raw_age max 437.1 ms at 19:39:34Z. So the HOLD rule
+    (one 10-min baseline, x1.2 on the max) tripped on market regime, not demonstrably on K. Recorded, not used to pass.
+  - Post-rollback: READY 64 64, violations [].
+  - Evidence opt-resource-20261018/SHA256SUMS e5f03bfe... (eval-K.json, hold-K.json, cg-K.json, watch-K.jsonl,
+    leaders-observe.json, post-rollback files).
+- Repo-only, done after the STOP (no runtime action): A3 runtime-image pin refresh (unchanged freeze tool 71d73b5c,
+  `--base-ref 6ff401e`, same profile): config/v2/p184-stage100-a3-external-attribution.json cc5fc7dc... -> 384e8512...;
+  JSON diff = frozen_at(_unix) 12:17:51Z -> 19:15:00Z and runtime_images ingestors x2 a9679def -> 27c79b53, stream x2
+  60f83a51 -> 27c79b53, nothing else (rules, limits, pins unchanged; documented in a3-external-attribution.md as a pin
+  refresh, not a criteria change). Preflight equality `gc.a3_runtime_images() == A3` true on the live set; A4 v2 `bind`
+  into the session scratchpad (read-only) records runtime_images equal to the refreshed A3 (binding not used for any
+  run). Pins regenerated from docker inspect: g12-image-set-v224.json stream -> 27c79b53 (284f31ca...),
+  g13-roles-v224.json ingestors + stream -> 27c79b53 (dcecb1bf...).
+  - Tests (host python3 -B -m unittest): a3_attribution + a4_preregistered + a4_post_hoc + gate_campaign + g4_amendment
+    + g4_amendment_2 + g13_final 266 OK. Discover tests/test_p184_*.py: 971, failures 1 + errors 58, all host-environment
+    (ModuleNotFoundError google / redis / confluent_kafka / pydantic) plus
+    test_p184_g12_isolated_fault test_core_request_starts_a_new_generation_with_a_snapshot, which fails identically in
+    the clean run worktree data-layer-p184-final-run-6d17b56f (pre-existing, unrelated).
+  - Step R (compose record) NOT done (K/Q/I not kept); docker-compose.v2-stable.yml unchanged.
+  - Not mine, untouched: the uncommitted rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs edit (another agent,
+    18:40:43Z, staleness test fix; it waited on the lock as claude-dl-flaky-test).
+- Open for the coordinator/owner: (1) K re-run decision (the HOLD rule vs market regime: e.g. a longer baseline, or
+  judging raw_age p99 / commit_ms instead of a single max); then Q, I, R; (2) G12 final, G13 (dr08 / dr05-upstream /
+  dr05-quiet + runtime window, run ids g13r9wa20261018 / g13r9fx01; generator p1/g13v56/make_g13v56.py prepared, check
+  mode only, compose 5051892c..., nothing written) and the final stage-100 on the rolled images, none started.
+- 2026-10-18 ~19:56Z coordinator decision (owner rule one-variable-target-metric-tuning; package approved, "Cứ tiếp tục
+  làm cho xong"): the K HOLD criterion "max <= 1.2 x one 10-min baseline" is replaced, for K/Q/I, by (a) the step's
+  target metric (K: broker throttled-period share must drop), (b) rust_core raw_age p99 and commit_ms p99 not worse
+  than the baseline by > 20 % over the same window length, (c) READY 64 64, RestartCount 0, no new error lines, no NEW
+  overflow class (the known writer TRADE overflow reported, not gating); max values report-only. Evidence: burst
+  window 25,920 vs ~12,000 records, the 437 ms spike recurring at 1.75 after the rollback, throttle 1.88/1.00/0.43 % ->
+  0.53/0.33/0 %. Push of TS f2229d7a approved.
+  - Applied to the first K attempt (read-only evaluator, p99 = nearest rank over the per-progress-line maxima of the 3
+    cores): target PASS, commit_ms p99 124.7 vs 116.7 (<= 1.2x) PASS, (c) PASS (overflow +2 reported), raw_age p99
+    229.4 vs 1.2 x 139.6 = 167.5 FAIL. At cap 1.75 with nothing changed, 19:43-19:53Z: raw_age p99 171.7, commit p99
+    129.4, i.e. the 19:13Z baseline's raw_age limit is already exceeded without any step (market regime drift).
+  - K NOT re-applied: whether the baseline for the re-applied K (and Q/I) may be re-taken immediately before the step
+    is a criterion choice not covered by the decision; edits implementing a per-step baseline in the scratch evaluator
+    were refused by the tool permission classifier -> STOP, question to the coordinator.
+- 2026-10-19 00:09-00:59Z OPT resource steps K -> Q -> I applied, all HOLDs PASS under the owner-approved adjacent-baseline
+  method (AskUserQuestion ~20:05Z "Baseline ngay trước mỗi bước (Recommended)", packet section 14); step R recorded.
+  Lock claude-dl-opt-resource 00:09:35-00:59Z (absent before, released). Evaluator
+  opt-resource-20261018/eval_hold2.py 0822f890... (rewritten with the approved method; docstring = rule).
+  - Baseline preK2 00:10:48-00:20:48Z (caps unchanged, READY 64 64, violations []): raw_age p99 156.3, commit p99 122.8;
+    throttled kafka 1.25 / 3.72 / 1.98 %.
+  - K 00:20:57Z kafka2, kafka1, kafka3 --cpus 2.25 (RestartCount 0, StartedAt unchanged). HOLD K2 vs preK2: PASS; throttled
+    1.25 -> 0.48, 3.72 -> 3.57, 1.98 -> 0.12 %; raw_age p99 147.6 (<= 187.6), commit p99 110.6 (<= 147.4); max 174.0 /
+    124.8 report-only; violations []. eval2-K2.json 50089929....
+  - Q 00:32:44Z query_kn_1/2 --cpus 2.0 --memory 2g --memory-swap 4g (usage before 1.156 GiB / 990.9 MiB; RestartCount 0).
+    HOLD Q vs the K2 window: PASS; Query throttled 0 / 0.02 -> 0 / 0 %; raw_age p99 149.9, commit p99 118.8; max 376.7 /
+    140.9 report-only; stream_kn_1 overflow +1 reported (known writer TRADE class); query_stall_report both replicas 0
+    Traceback / refusal / stall lines. eval2-Q.json 6365479c....
+  - I 00:44:10Z ingestor_okx_swap --cpus 1.0 (no recreate). HOLD I vs the Q window: PASS; OKX ingestor throttled 0.18 ->
+    0 %; raw_age p99 147.8, commit p99 120.8; max 305.5 / 153.5 report-only; violations []. One lane event: okx-public-004
+    `qdl_native_session_disconnected` cause READ_ERROR "Connection reset without closing handshake" at 00:44:20Z (peer
+    reset), session ready gen 181 after 304 ms; a CPU-quota change does not reset a TCP session (inferred venue-side),
+    recorded. eval2-I.json 768e638f....
+  - Live after (docker inspect 00:58Z, inspect-after.txt): kafka1-3 2.25 vCPU (mem 1.5 / 2 / 1.5 GiB), query_kn_1/2 2.0 vCPU
+    / 2 GiB / swap 4 GiB, ingestor_okx_swap 1.0 vCPU / 256 MiB; RestartCount 0 everywhere. Evidence SHA256SUMS ba5e465e....
+  - Step R: docker-compose.v2-stable.yml records the live caps (the 10-16 drift draft applied: kafka 1.75 -> now 2.25
+    x3, kafka2 mem 2g, ingestor_binance_usdm 0.75; plus query_v2_1/2 2.00 / 2g, ingestor_okx_swap 1.00), each with its
+    packet/time comment; drafts/compose-v2-stable-release-draft.diff regenerated (= this diff vs d74f9fc). Tests in
+    qdl-v2-python:2.2.4-31a5155 (--network none): phaseb_stable_deployment, verify_runtime_generations,
+    capability_coverage, runtime_readiness_recovery, phase105_handoff, phaseb_stable_rebuild, pass_through_wiring 112 OK.
+  - Rollback (packet section 12): docker update back to 1.75 / 1.5 + 1536m/3g (memory only while usage <= 1.3 GiB) / 0.5,
+    plus a revert of the compose record. Rollback composes saved before these steps carry the old caps (packet section 8).
+- 2026-10-19 00:59-02:08Z G12 final + G13 on the rolled DL set (stream/ingestors 27c79b53; core rc22 7c848aad, projector
+  60f83a51, query 3e9e4d3a, writer 2deb90b0) + OPT caps (Claude subagent; owner chain approval ~18:40Z, coordinator
+  ~20:05Z "start G12/G13 ... never overlap measurement windows"). Clean DL run worktree data-layer-p184-final-run-b58e40dd
+  (detached b58e40dd = origin head, dirty 0 before/after); launchers in the session scratchpad final6/.
+  - G12 (lock "claude P18.4 G12 v224 FINAL rustls 27c79b53 20261019T005946Z" 00:59:46-01:28:35Z): same shape as 042415Z
+    (--ts-root trading-system-final-run-77a6d671 per H1, fresh parity snapshot, --auto-leader-rebalance false, --image-set
+    g12-image-set-v224.json 284f31ca... = stream 27c79b53, --query-code image, --credit). Receipt
+    p184-g12-v224-final-27c79b53-20261019T005952Z (namespace in `namespace`): run exit 0, verdict COMPLETED **pass true**;
+    caught_up_s BINANCE/OKX broker_stop_start 0.245/0.245, projector_restart 0.313/0.314, stream_restart 0.984/0.985;
+    writer clones Redis UNCAPPED, strict restart both venues; --credit: creditable true, reason PASS, production_parity
+    MATCH, cleaner_binding RUN, final profile checked. Teardown 12 removed, 0 left, volumes 52 = 52, networks 12 = 12,
+    clone state erased, production_guard_breaches {}, production_external_recreates {}. sha256: verdict.json 87386ad0...,
+    production-parity.json a6da20df..., credit-snapshot.json 17f9f46a..., writer-precheck.json 4fbd4b32...,
+    teardown.json 724b1671..., FINAL_CREDIT.json eb9d1e29..., SHA256SUMS 61dc4d64....
+  - G13 isolated (lock "claude P18.4 G13 isolated rustls 27c79b53 ..." 01:28:35-01:41:07Z; roles g13-roles-v224.json
+    dcecb1bf..., TS run worktree trading-system-final-run-e9ae5484, --dl-source-sha b58e40dd, inputs
+    g13v56/inputs-g13v56-ci.json 0b98e64d...; dry runs blocked {}):
+    - dr08-isolated p184-g13-20261019T012840Z: 4/4 OBSERVED ok, harness_ok, 129.9 s (summary 1f2dc105..., evidence
+      3ff8b279...).
+    - dr05-upstream p184-g13-20261019T013112Z: 5/6; DR05.GAP_REFUSAL@OKX ok false at its POSITIVE ANCHOR (precondition,
+      before any fault): findings BOOK_VIEW_MISSING / EXECUTION_CONTEXT_BOOK_MISSING, writer clone OKX BOOK slices
+      DISCONNECTED (reconnect_count 2, DATA_NOT_READY) at the anchor sample; the fault and oracle were never reached. The
+      same clone state (DISCONNECTED at the anchor) appears in the Binance cells of this run and of the credited 085316Z
+      (which pass on the bootstrap anchor); the next OKX case on the same harness passed. Classified as a harness
+      readiness race (precondition not established), not a GAP-refusal result; receipt kept (summary 1e7d4aaf..., rows
+      4a238fa7...). One rerun (lock 01:41:19-01:47:52Z) p184-g13-20261019T014124Z: **6/6 OBSERVED ok**, exit
+      [0,0,0,0,0], harness_ok, 366.1 s.
+    - dr05-quiet p184-g13-20261019T013746Z: 2/2 ISOLATED_FAULT OBSERVED ok, harness_ok, 178.7 s (summary d68f866a...,
+      rows 8a9e7ce6...).
+  - G13 runtime window packet v5.6 (p1/packet-g13-v5.6-20261019.md 44bdecd4... = sidecar; generator g13v56/make_g13v56.py
+    2211d1a5..., run ids g13r9wa20261018 / g13r9fx01, compose 5051892c..., FX plan a65329f3..., inputs 0b98e64d...; lock
+    "claude P18.4 G13 v5.6 window (packet-g13-v5.6-20261019)" 01:48:19-02:08:39Z):
+    - Step 2: B9 99/99 pending [] mismatch []; binding digest 397f1d20... (4 g13r9wa accounts); B16 {}; DNS 4/4; B10 CA
+      fc24c047... x3; identity files 8/8 ok; leftovers 0. Step 3 FX g13r9fx01 FX_PROOF_SEED_COMMITTED (4 writes). Step 4
+      preflight_env PASS x2, compose config 0 x2. Step 5 ts-p184 up 01:49:00Z, 8 containers rc 0, 7 roles on 2deb90b0,
+      health 200, "Gateway V3 Online", Traceback/401/UNAUTHENTICATED/BINDING_MISMATCH/CANARY 0, writer scope holds the 4
+      g13r9wa accounts; B12 1 1 1 1. Step 7 alphas up 01:49:48Z, warmup 700 rows both venues, non-200 0. FX snapshot
+      validated, 1 rate.
+    - Runner p184-g13-20261019T015047Z (01:50:47-02:06:11Z, exit 0; summary 5b897eaf..., plan 69226e05...): dr01-deployed 7,
+      dr01-wrong-account 2 (cleanup complete true), dr02-dr03-alpha 14, dr04-dr06-views 22, dr05-transport 9, dr07-reference
+      12; every step harness_ok, removed_leftovers {}, dl_source removed. Abort watch: writer rc 0, DL bad [], 0 QUOTA lines.
+    - W05 in 2deb90b0 (--network none, TS e9ae5484 ro, --expect-source-sha 30f50a91, --expect-image-digest 2deb90b0) over
+      the 6 runtime jsonl + dr08 012840Z + dr05-upstream 014124Z + dr05-quiet 013746Z: **DR 76/76** (DR01 9/9, DR02 8/8,
+      DR03 6/6, DR04 14/14, DR05 17/17, DR06 6/6, DR07 12/12, DR08 4/4); issues only CASE_OPEN on the 260 non-DR cells
+      outside G13. verify/w05-final-v56.json 5490c21e... (byte-identical to the v5.5 output: the verifier writes case
+      states only; provenance rests on its arguments and input receipts, as recorded on 10-18).
+    - Teardown: alpha down, ts-p184 down (+ network), FX g13r9fx01 FX_PROOF_SEED_DEACTIVATED (3 x UPDATE 1), DSN env
+      file and p1/r2 removed; 0 ts-p184 / p184-g13- / p184-dr05- containers, networks, volumes, /tmp/p184-dr05-*; docker
+      ps 41 = before; writer 2deb90b0 rc 0; DL roles rc 0; run worktrees dirty 0.
+- 2026-10-19 02:08-02:50Z FINAL stage-100 on the rolled DL set + OPT caps, A1 + A2 + A3 (refreshed 384e8512) + A4 v2
+  (Claude subagent): **protocol_met true; PASS G1 G2 G3 G5 G6 G7 G9 G10 G11 G14; FAIL G4, G8; G12 / G13 separate
+  (credited / 76/76 above). Verdict identical with and without A4 v2** (A4 v2 applied; it rescues two inverse rows but
+  G4 keeps failing rows outside its scope). NOT certified.
+  - Apparatus: run worktree data-layer-p184-final-run-b58e40dd (tool e179ec78 = A3 pin), lock
+    claude-s100-final-rustls-b58e40dd 02:08:56-02:50:30Z (absent before; released), Codex tree pause 02:09:01-02:48:31Z
+    (4 processes stopped / resumed, incl. a python launcher + ssh child; 0 failures), trace re-arm
+    rc15/roll_writer_campaign_native.py 2deb90b0 3600 (dry DRY_RUN, real OK, delta UNTIL only, not_ready 1, writer
+    recreated 02:09:17Z), preflight_env PASS, campaign dry run problems [] (A3 images = live), launcher
+    final6/s100/run.sh: A4 v2 `bind` first (binding 02b22959..., bound 02:10:45Z < campaign start 02:11:00Z), guard
+    --abort --own-session-pid 3412097, campaign `run --g11 --base-profile .../profile-stage100-rc4-r16.json`, then
+    `close` (071c731c...) and `score --write`.
+  - Campaign p184-final-campaign-20261019T021044Z: driver 02:11:28-02:42:57Z exit 0, 5 G4 windows (02:13:28, 02:17:13,
+    02:20:58, 02:24:43, 02:29:29Z), G11 restart 02:43:50Z (outage 0.128 s), campaign_exit 0, guard CLEAN aborted false;
+    A3 applied (pins, images, profile, code matched). Load crossed no 00/08/16 UTC boundary.
+  - G2 PASS (without A4): TRADE BINANCE p95 292 / max 584; TRADE OKX 274 / 567; QUOTE BINANCE 210 / 601; QUOTE OKX 224 /
+    626; MARK BINANCE 442.7 / 961.3; MARK OKX 376.5 / 731.8 ms.
+  - G4 FAIL. Without A4: bar|BINANCE|1m, book_snapshot|BINANCE|, book_delta / book_snapshot / quote |OKX_INVERSE|. With
+    A4 v2 (pooled OKX p95, max report-only): book_delta and quote OKX_INVERSE PASS; still failing:
+    - bar|BINANCE|1m: frozen p95 limit 257.6; per window (n 10-15, p95 = max) 193.7 / 270.8 / 362.9 / 178.8 / 332.9 ms.
+      A3 UNKNOWN by construction (bars have no frozen internal-segment limit).
+    - book_snapshot|BINANCE|: limit 260.0; p95 195 / 226 / 233 / 252 / 292 (window 5 over; rising through the run;
+      n 1419-1469, window 5 2234); A3: INTERNAL_SEGMENT_OVER_LIMIT (e.g. ETHUSDT receive -> CreateTime 341.3 ms,
+      CreateTime -> observer 185.0, internal total 526.4).
+    - book_snapshot|OKX_INVERSE| (A4 v2 pooled limit 270.1): p95 197 / 237 / 217 / 213 / 276 (window 5 over), max 420.5
+      report-only, every admitted event over the replaced 300.7 ms limit retained; A3: UNKNOWN (ingestor socket receive
+      queue held unread bytes, INTERNAL_RECEIVE_QUEUE).
+    - A3 rescued no row (0 EXTERNAL units). G4-A1 mark_index_price|OKX| PASS.
+  - G8 FAIL: one Redis SLOWLOG entry in steady state: EVAL (script sha1-prefix 1875f518...) 12.25 ms > 10 ms threshold,
+    client 172.18.0.12 = market_data_service_p184w (TS writer), at 02:30:26Z (G4 window 5); PING steady p99 1.34 ms,
+    monitor clients 0. Earlier final runs had 0 new entries.
+  - G9 PASS (60 samples, demanded 64 = session-ready every sample, 0 data-path losses, v1 fallback 0); G3 pooled p95
+    1585 / max 2846 ms; G11 outage 0.128 s; G14 DL mean 5.98 vCPU (123222Z 5.63), no role at its memory limit
+    (query_kn_1 mem_max 1,762 MiB of 2,048: it would have exceeded the old 1,536 MiB limit).
+  - Load and resources vs 123222Z (verified from the two scorecards and guard host.jsonl): DL throttling gone (kafka1/2/3
+    2.2 / 6.3 / 0.7 -> 0.1 / 0.0 / 0.0 % of wall, query 0.4 / 1.5 -> 0 / 0); market volume higher (ingestor CPU 8.8 ->
+    12.5 / 8.1 -> 11.0 %, core +20 %, writer 135 -> 151 %, G4 window 5 +55 % samples); host load1 p50 21.4 / max 29.4
+    (123222Z 17.3 / 22.5) on 16 vCPU.
+  - RCA (A3 attribution evidence): every remaining G4 tail is INTERNAL_SEGMENT_OVER_LIMIT or UNKNOWN (internal receive
+    queue; bars unattributable by construction); none is EXTERNAL per A3, so the owner's "external -> relax and release"
+    rule does not apply as frozen. The tails sit in the DL receive -> CreateTime segment and the observer path while the
+    host ran at load1 21-29 with the caps no longer binding (inferred: CPU contention moved from cgroup throttling to the
+    host run queue, OPT packet risk 13.1); the G8 entry falls in the same window. Not proven beyond that.
+  - sha256: scorecard.json c0504f4b..., scorecard.a4-v2.json 92ef1e7a..., campaign.json c4c2d7d6..., timeline.jsonl
+    68335655..., stage100/receipt.json 19c8d227..., client-smoke/receipt.json d561afe1..., .run.log 385c3a6d...,
+    .guard.log bbacb3e6..., guard/summary.json 7dde0cd1..., .g11-watcher.log ddd0eb70....
+  - After: docker ps = baseline (41), 0 qdl-p184-* / qdl-phase3-* leftovers, writer 2deb90b0 rc 0 (restarted by G11), all
+    DL roles rc 0, Codex resumed, lock released. Trace expires on its own at ~03:09Z.
+  - Next (coordinator/owner): G4 bar|BINANCE|1m, book_snapshot|BINANCE| and book_snapshot|OKX_INVERSE| window 5, and G8
+    (one writer EVAL 12.25 ms) are internal / unattributed under host contention; release decision per the owner rules.
+- 2026-10-19 02:57-04:40Z FINAL stage-100 low-load rerun on the same DL set + OPT caps + A1/A2/A3/A4 v2 (Claude
+  subagent): **p184-final-campaign-20261019T040311Z protocol_met true; PASS G1-G10, G14; FAIL G11 only (one slice,
+  verdict EXTERNAL_QUIET, see below); G12 / G13 separate (credited / 76/76 above). Identical with and without A4 v2.**
+  NOT certified until the owner rules on G11.
+  - Load reduction (host-only, reversible): 15 portal containers `docker pause`d by id (portal-execution-edge{,-live,
+    -sandbox}-{execution-edge,source-proxy,manager-projection-worker}-1, portal-execution-edge{,-live,-sandbox}-
+    projection-postgres-1, portal-manager-read-paper-v2-portal_manager_{read,issuer}-1,
+    portal-native-manager-read-native-manager-read-1; ids 131c8c7e 73cd3e85 510a0fa2 ed97b30e e5895351 8113bdc7
+    8c7913cc cfbd5942 9a222eec 1f2f7796 dadf1c61 ffdcbdeb 30c3a81d 2a87918c 3a4b35c1), all rc 0, unpaused by the
+    watcher at the end of each attempt (03:26:59Z, 04:40:18-19Z, rc 0); Codex tree SIGSTOP/SIGCONT by
+    p184_codex_pause_watch.py (2 processes, stopped 2 / resumed 2 / 0 failures each attempt). Apparatus otherwise as
+    021044Z (run worktree data-layer-p184-final-run-b58e40dd, trace re-arm OK, A4 v2 bind, guard --abort).
+  - Attempt 1 p184-final-campaign-20261019T030130Z (lock claude-s100-final-lowload-b58e40dd 02:57:58Z): guard
+    TAINTED + aborted at 03:26:54Z: foreign `(mandb)` (man-db.timer, uid 0) 03:26:26.6-03:26:28.1Z at 0.34 core inside
+    the load phase (rule > 0.2 core); campaign_exit 130; not scored, not evidence (guard summary c3d551ba...).
+  - Attempt 2 040311Z (lock claude-s100-final-lowload-rerun-b58e40dd 03:57:44Z, released): driver 04:03:52-04:35:22Z,
+    5 G4 windows (04:05:52, 04:09:37, 04:13:22, 04:17:07, 04:29:30Z), G11 restart 04:36:21Z, guard CLEAN aborted false
+    (one foreign `package-data-downloader` = update-notifier-download.timer 04:37:04Z, 0.06 core, phase post_load_g11,
+    after the G11 slice in question applied; not in the load window).
+  - Load (guard host.jsonl phase=load, same basis for both): load1 p50 16.2 / p95 20.6 / max 25.1 (n 1864) vs 021044Z
+    22.0 / 26.6 / 29.4 (n 1861; the 021044Z entry above quotes 21.4 on another window). G11 phase load1 p50 12.0.
+  - Gates (scorecard.json ebe11b8c..., scorecard.a4-v2.json 7fffb04e...): the 021044Z failures all pass at the lower
+    load: G4 bar|BINANCE|1m p95 per window 106 / 105 / 142 / 146 / 225 ms (limit 257.6); book_snapshot|BINANCE| 144 /
+    141 / 135 / 141 / 173 (limit 260); book_snapshot|OKX_INVERSE| max 187-276 (addendum limit 300.7); G8 0 new SLOWLOG
+    entries, PING steady p99 1.05 ms. G3 pooled p95 1641 / max 3208 ms; G9 60 samples, demanded 64 = session-ready,
+    legit quiet refusals TRADE_EVENT_STALE 26; G14 DL mean 5.75 vCPU, no role at its memory limit.
+  - G11 FAIL "first valid apply max 36.415 s > 30 s": exactly OKX|BNB-USDT-SWAP|TRADE (caught_up 36.415 s, within 60 s);
+    the other 63 slices <= 4.93 s; outage 0.113 s (outage_start 04:36:21.076Z, fault cleared 04:36:21.189Z); 0
+    rewinds; cursor never ahead (3 samples, 21 compared, 0 unmatched) (g11-summary.json 77cac9b6...,
+    g11-observations.jsonl 01eddf13...).
+  - G11 RCA (read-only; evidence in ~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.g11-forensic/):
+    - md.canonical.v2, read_committed, assign only, no group join / commit, by offsets_for_times 04:35:20Z ->
+      04:38:00Z over all 6 partitions (64,589 records, every partition done), reader in a --rm read-only container
+      on the query_kn_1 image with the observer's ro TLS mounts (reader.py 5fcc088a..., canonical.jsonl cf96554e...).
+      OKX BNB-USDT-SWAP trades are on partition 2, one connection_generation (210) throughout: last before the restart
+      trade id 241971262 src 04:36:15.209Z (offset 235684298); the next one is trade id 241971263 src 04:36:57.139Z,
+      DL received +28 ms, published 04:36:57.167Z, Kafka CreateTime 04:36:57.191Z (offset 235686122). **No OKX
+      BNB-USDT-SWAP trade exists in Kafka between 04:36:15.209Z and 04:36:57.139Z (41.9 s).** In the same window other
+      OKX trade slices were active (ETH 856, BTC 885, SOL 222, DOGE 209 trades vs BNB 49).
+    - Venue confirmation: OKX public REST /api/v5/market/history-trades?instId=BNB-USDT-SWAP&type=1&after=241971264
+      returns 241971263 at 04:36:57.139Z, then 241971262 at 04:36:15.209Z (same ids/timestamps as the canonical topic;
+      okx-history-trades-after-241971264.json b579fdb9...). The trade ids are adjacent, so the venue printed no trade on
+      that instrument between them.
+    - Writer side: the TS cache execution_trade key was rewritten at 04:36:57.604Z (G11 poll, upper bound one 500 ms
+      poll) carrying event 04:36:57.139Z, i.e. <= 0.437 s after DL publish. No trade was delivered earlier and left
+      unapplied (none existed). During the 36.4 s the key was readable but NOT_EXECUTION_ELIGIBLE on all 78 POST polls:
+      quiet-TRADE renewals keep the session LIVE but carry DL quality LAST_EVENT_STALE / execution_eligible false (same
+      shape on the live key read at 04:47Z), which is the correct at-use semantics of a stale last trade. Native probe
+      counters (heartbeat, new worker epoch c644bb68) for that route: 11 requested / 4 renewed / 7 renewed_same_record
+      / 0 skipped / 0 failed / 0 unavailable by 04:39:44Z (30 / 11 / 19 / 0 / 0 / 0 by 04:43:54Z); TRADE probe cadence
+      15 s (TS session.rs probe_cadence_ms, bound 45000 / 3). Per-probe timestamps are not recorded, so the exact
+      renewal times inside the 36 s are not measured.
+    - **Verdict EXTERNAL_QUIET**: the venue had no trade until +36.0 s after the fault cleared; DL and the writer
+      applied the first one within ~0.47 s of its source time. Not a DL or writer defect.
+  - G11 first-valid-apply max in earlier final runs (g11-summary.json of each): 021044Z 4.385 s (OKX DOGE BOOK_*,
+    tie); 123222Z 4.822 (OKX SOL BOOK_SNAPSHOT); 053803Z 6.214 (OKX DOGE TRADE, tie with OKX BNB TRADE); 135719Z 8.798
+    (OKX BNB TRADE); 105025Z 27.442 (OKX BNB TRADE, 154 NOT_EXECUTION_ELIGIBLE polls); also 074624Z 25.927 and 032230Z
+    20.096 (OKX BNB TRADE). OKX BNB-USDT-SWAP TRADE set the max in 15 of 28 measured G11 runs since 10-10 (one tie):
+    the frozen rule times the next venue print on the least liquid demanded slice, so a quiet stretch > 30 s fails it
+    without any internal delay.
+  - After: docker ps = baseline, 15 portal containers running again, Codex resumed, lock absent (checked 04:42Z), writer
+    2deb90b0 running (restarted by G11 04:36:21Z). One deviation in this RCA: the forensic reader container ran
+    ~12 s at 04:45:40-04:45:51Z without the host lock (acquire was called with --wait-hours 0, which returns
+    WINDOW_NOT_SCHEDULED at once; lock was ABSENT, no foreign job, no measurement running).
+  - Next (owner): rule on G11 for this run: accept OKX BNB TRADE as EXTERNAL_QUIET under the owner's external rule,
+    and/or a prospective oracle amendment (TRADE first-valid-apply clock starts at max(fault cleared, first
+    DL-committed trade of that slice after the fault), with the cursor/no-rewind checks unchanged). Re-running for a
+    luckier market is not a fix.
+- 2026-10-19 04:55-06:30Z amendment A5 + v2.2.4 release documents re-issued on the final counted run 040311Z (Claude
+  subagent; owner rule 2026-10-18 ~16:00Z "nếu gate không đạt xác định là lỗi external thì nới gate rồi release gọn
+  nhé" and "duyệt hết theo recommend của bạn, k hỏi lại"). Status: implemented, tested locally; the certificate is PASS
+  under amendments (A5 post hoc); no tag, no merge, no runtime action (only read-only docker inspect).
+  - A5 `config/v2/p184-stage100-a5-g11-trade-clock.json` (schema qdl.p184.stage100-a5.v1, frozen 2026-10-19T05:03:03Z)
+    c5b46c5faefe20e31061a3bd647b9e60537b982eee43b484715ec9cdcc5aae78:
+    - G11, TRADE slices only: the clock starts at max(fault_cleared, Kafka CreateTime of the slice's first canonical
+      TRADE event with CreateTime > outage_start - 3000 ms). The 3 s guard is the TRADE live bound, so an event
+      committed just before the stop keeps the frozen clock.
+    - Requires a md.canonical.v2 read by the pinned reader: complete (every partition done, no error), coverage from
+      <= outage_start - guard to >= first apply on the slice's partitions, and the probe's first applied event_ms
+      among the canonical post-fault events. Otherwise the slice keeps the frozen clock.
+    - Unchanged: caught up <= 60 s from fault cleared, no rewind, cursor never ahead / roster, other slices, other gates.
+    - post_hoc_applications: 040311Z only (POST_HOC_OWNER_DECISION), pinned by scorecard ebe11b8c..., g11-summary
+      77cac9b6..., observations 01eddf13..., canonical.jsonl cf96554e..., reader 5fcc088a.... pre_registered: campaigns
+      started after the freeze, evidence in `<campaign>.g11-canonical/` (reader.py, canonical.jsonl, a5-evidence.json).
+  - Wrapper `scripts/p184_a5_g11_trade_clock.py` 4892abd1... (the frozen scorer e179ec78 is not edited: A3 pins it).
+    It reproduces the stored scorecard, re-runs build_scorecard with the probe's verdict() wrapped, raises on drift
+    outside G11, and writes scorecard.a5.json open("x").
+  - Tests `tests/test_p184_a5_g11_trade_clock.py` 3211f1ff..., 16 OK on the host (96 s):
+    - negatives: an earlier unapplied post-fault event -> FAIL 34.415 s; an outage / guard-window event -> frozen
+      clock; 7 incomplete-evidence cases + a non-matching applied event + changed / missing pinned evidence or reader
+      -> not applied; 11 invalid A5 files; unnamed pre-freeze runs refused;
+    - caught-up, rewind, cursor and a 31 s BOOK slice still FAIL;
+    - parity: 29 stored g11-summary.json give the frozen verdict and recovery without evidence; 6 mirrored receipts
+      (053803Z, 135719Z, 074624Z, 092255Z, 123222Z, 021044Z) unchanged in every gate and summary; 040311Z reproduced in
+      place, only G11 / the BNB TRADE slice change.
+  - Rescore 040311Z `--write`: scorecard.a5.json b1c2e7b450363f094c25adb34988f9356da327ef3d0b6a863a001dab2692d08d
+    (+ .sha256). G11 FAIL -> PASS. OKX|BNB-USDT-SWAP|TRADE|None 36.415 -> 0.413 s: clock start 04:36:57.191Z
+    (trade 241971263, offset 235686122), first apply 04:36:57.604Z, 0.465 s from venue time. First valid apply over 64
+    slices: max 36.415 -> 4.928, p95 4.928 -> 4.407. Summary PASS 12 + NOT_MEASURED G12/G13 (campaign). The stored
+    scorecard.json is untouched.
+  - Release documents re-issued (upgrade/evidence/releases/v2.2.4/): CERTIFICATE.md, certificate.json (status PASS;
+    amendments G4-A1, G4-A2, A3 384e8512, A4 v2 applied-not-needed, A5 post_hoc true; gates_without_a5 G11 FAIL;
+    supersedes da2fd484...), SCORECARD.md, scorecard.json, RELEASE_NOTES.md, endpoint-report.json (013b66e6...),
+    equivalence.json (rustls_roll, resource_caps, rust_9dab224 build), a5-g11-trade-clock.md; CERTIFICATION_LEDGER.md
+    new section. JSON assembled by a scratch tool (not in the repo) that recomputes every sha256 and asserts the live
+    images = the A4 v2 binding of 040311Z = the documented set, caps = K/Q/I, RestartCount 0.
+  - IDR-128 opened in the TS register (host workload isolation): 021044Z with the portal stack running, load1 p50 22.0,
+    FAIL G4 + G8; 040311Z with 15 portal containers paused, load1 p50 16.2, PASS. Production DL must not share CPU
+    with unrelated heavy stacks.
+  - Correction (E6): the 040311Z entry above says OKX BNB-USDT-SWAP TRADE "set the max in 15 of 28 measured G11 runs
+    (one tie)". A recount from the 28 stored g11-summary.json files with a restart gives 19 of 28 at the max (13 alone,
+    6 tied). The earlier figure was not reproduced; the release documents use the recount.
+  - Local preflight for 25f9502 (owner CI/CD rule 2026-10-19: impact-based, not full; GitHub CI on the PR is the
+    authoritative full run): a full `scripts/p184_local_ci.py` run was started at 05:24Z under lock
+    claude-dl-a5-local-ci-25f9502 and stopped on the new rule at ~05:32Z (SIGINT during unit-tests step 7; no result
+    recorded). Its leftovers were removed: 1 anonymous volume, 15 BuildKit records created 05:29-05:31Z (pruned by
+    id), the CI output directory; no CI image remained. Lock released.
+    - Impact (`git diff --name-only 288a580..HEAD`, 288a580 = last green PR run 39201550345): docs / JSON evidence +
+      one new script, its test and its config; the only importer of the script is its test (grep).
+    - Checks run: JSON parse of the A5 config and every v2.2.4 JSON; the release.yml certificate checks (status PASS,
+      endpoint sha256 = file, notes present) and all 72 certificate `evidence_sha256` entries recomputed (0
+      mismatches); the receipt `.sha256` files; `tests.test_p184_a5_g11_trade_clock` on the host (16 OK) and in
+      `qdl-v2-python:2.2.4-31a5155` (--network none, repo ro: 16 run, 11 OK, 5 receipt tests skipped as in CI).
+    - Not run (unaffected): rust fmt / clippy / test, cargo-deny, contract and SDK jobs, the rest of the unit suite.
+  - Deviation: the A5 host tests at ~05:05Z ran without reading the host lock first (34a); the lock was absent then
+    (and at 05:23Z), and no measurement was running.

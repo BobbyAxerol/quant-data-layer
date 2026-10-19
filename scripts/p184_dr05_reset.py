@@ -21,8 +21,24 @@ from scripts import p184_dr05_dl_fault as dr
 from scripts.p184_dr05_case import _deadline, _remaining, _packet, _reset_preflight
 
 
+def _kafka_code(error):
+    """KafkaError code carried by a KafkaException, or None for anything else."""
+    from confluent_kafka import KafkaException
+    if isinstance(error, KafkaException) and error.args and hasattr(error.args[0], "code"):
+        return error.args[0].code()
+    return None
+
+
 def reset_topics(work, timeout):
-    from confluent_kafka import KafkaError, KafkaException, TopicCollection
+    """Delete and recreate the three owned TEST_ONLY topics, then verify the post-state.
+
+    Idempotent on absence: a topic the broker reports UNKNOWN_TOPIC_OR_PART for at
+    delete time is already deleted (recorded in ``already_absent``). Every other
+    Kafka error is raised. After create, all three topics must be described with
+    exactly one partition and one replica; UNKNOWN_TOPIC_OR_PART from describe is
+    metadata propagation after CreateTopics and is retried only until the deadline.
+    """
+    from confluent_kafka import KafkaError, TopicCollection
     from confluent_kafka.admin import AdminClient, NewTopic
     from scripts.p184_dr08_isolated import kafka_security
 
@@ -32,21 +48,42 @@ def reset_topics(work, timeout):
         raise ValueError("isolated namespace attestation required")
     topics = [ns + suffix for suffix in (".raw", ".canonical", ".quarantine")]
     admin = AdminClient(kafka_security(packet))
-    for future in admin.delete_topics(topics, operation_timeout=min(5, _remaining(deadline))).values():
-        future.result(_remaining(deadline))
+    absent = []
+    for name, future in admin.delete_topics(topics, operation_timeout=min(5, _remaining(deadline))).items():
+        try:
+            future.result(_remaining(deadline))
+        except Exception as error:
+            if _kafka_code(error) != KafkaError.UNKNOWN_TOPIC_OR_PART:
+                raise
+            absent.append(name)
     while any(name in admin.list_topics(timeout=min(2, _remaining(deadline))).topics for name in topics):
         time.sleep(min(.1, _remaining(deadline)))
     for future in admin.delete_consumer_groups([ns, "kn-" + ns], request_timeout=_remaining(deadline)).values():
         try:
             future.result(_remaining(deadline))
-        except KafkaException as error:
-            if error.args[0].code() != KafkaError.GROUP_ID_NOT_FOUND:
+        except Exception as error:
+            if _kafka_code(error) != KafkaError.GROUP_ID_NOT_FOUND:
                 raise
     for future in admin.create_topics([NewTopic(name, 1, 1) for name in topics],
                                       operation_timeout=min(5, _remaining(deadline))).values():
         future.result(_remaining(deadline))
-    desc = admin.describe_topics(TopicCollection([ns + ".canonical"]), request_timeout=_remaining(deadline))
-    new_id = str(desc[ns + ".canonical"].result(_remaining(deadline)).topic_id)
+    described = {}
+    while len(described) < len(topics):
+        pending = [name for name in topics if name not in described]
+        futures = admin.describe_topics(TopicCollection(pending), request_timeout=_remaining(deadline))
+        for name in pending:
+            try:
+                described[name] = futures[name].result(_remaining(deadline))
+            except Exception as error:
+                if _kafka_code(error) != KafkaError.UNKNOWN_TOPIC_OR_PART:
+                    raise
+        if len(described) < len(topics):
+            time.sleep(min(.1, _remaining(deadline)))
+    for name in topics:
+        partitions = described[name].partitions
+        if len(partitions) != 1 or any(len(p.replicas) != 1 for p in partitions):
+            raise RuntimeError("recreated topic shape mismatch: " + name)
+    new_id = str(described[ns + ".canonical"].topic_id)
     old_id = packet["slice"]["topic_id"]
     if not new_id or new_id == old_id:
         raise RuntimeError("topic incarnation did not change")
@@ -54,7 +91,7 @@ def reset_topics(work, timeout):
     temp = work / "packet.reset.tmp"
     temp.write_text(json.dumps(packet))
     temp.replace(work / "packet.json")
-    return {"topic_id": new_id, "previous_topic_id": old_id, "topics": topics}
+    return {"topic_id": new_id, "previous_topic_id": old_id, "topics": topics, "already_absent": absent}
 
 
 class ResetStageError(RuntimeError):

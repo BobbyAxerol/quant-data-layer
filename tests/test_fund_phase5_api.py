@@ -701,6 +701,176 @@ class Phase5ApiTests(unittest.TestCase):
             with self.subTest(text=text), self.assertRaises(ValidationError):
                 router_module._market_item_json(bad)
 
+    def test_bar_fast_render_is_byte_identical_for_every_bar_shape_and_defers_the_rest(self):
+        # P18.4 G5 cold: a BAR row proven valid field by field is encoded
+        # without pydantic. Bytes (first, second and spliced renders) and the
+        # kept layout must equal the model path's; any row outside the proven
+        # shapes takes the model path and fails or renders exactly as before.
+        import itertools
+        from dataclasses import replace
+        from qdl.query.row_cache import RenderSlot
+        from qdl.warmup.handoff import ResampleLineage
+
+        base = self.backend.history(self.requirement).items[-1]
+        odd = "é\x00\x1f\x7f\"\\/\t\u2028😀"
+
+        def reference(item):
+            dump = router_module._market_item(item).model_dump(mode="json", by_alias=True)
+            body = router_module._encode_json(dump)
+            self.assertEqual(router_module._market_item(item).model_dump_json(by_alias=True).encode(), body)
+            return body, router_module._view_layout(dump)
+
+        def payload(**changes):
+            return {**base.payload, **changes}
+
+        lifecycles = (
+            dict(bar_lifecycle=BarLifecycle.FINAL),
+            dict(bar_lifecycle=BarLifecycle.IN_PROGRESS),
+            dict(bar_lifecycle=BarLifecycle.REVISED, revision=3, supersedes_event_id="ab" * 16),
+            dict(bar_lifecycle=BarLifecycle.CANCELLED),
+        )
+        shapes = [
+            dict(interval=interval) for interval in ("1s", "1h", "3d", "1w", "1M", "x" * 20)
+        ] + [
+            dict(source=SourceMetadata(venue, provider, source_id, role, authoritative))
+            for venue, provider, source_id, role, authoritative in (
+                ("OKX", "OKX_DIRECT", "OKX_DIRECT", "SECONDARY", False),
+                ("V" * 40, "p" * 80, "s" * 120, "BACKFILL", True),
+                ("BINANCE", "prov" + odd, "src" + odd, "REFERENCE", True),
+            )
+        ] + [
+            dict(payload=payload(volume_unit=unit, origin=origin))
+            for unit, origin in zip(("BASE_ASSET", "QUOTE_ASSET", "CONTRACT", "SHARE"),
+                                    ("VENUE_NATIVE", "AGGREGATED", "BACKFILLED", "RECONCILED"))
+        ] + [
+            dict(payload=payload(base_volume="1.5", quote_volume="0.000", contract_volume="-7")),
+            dict(payload=payload(base_volume=None, quote_volume="2", trade_count=0)),
+            dict(payload={key: value for key, value in base.payload.items() if key != "trade_count"}),
+            dict(payload=payload(open="-0.000", high="000.10", low="9" * 28, close="0." + "0" * 30 + "1" * 8,
+                                 volume="-" + "9" * 27 + ".5")),
+            dict(received_at_ns=None), dict(received_at_ns=base.observed_at_ns + 1),
+            dict(event_id="00"), dict(event_id="0f" * 64), dict(event_id=None),
+            dict(cursor=None, snapshot_id=None), dict(cursor="c" + odd, snapshot_id=odd + "s"),
+            dict(watermark_offset=0), dict(watermark_offset=2**62),
+            dict(instrument_uid="uid" + odd, instrument_id="id" + odd, instrument_revision=7),
+            dict(contract=replace(base.contract, correlation_id="c" * 200, adapter_version="a" + odd,
+                                  normalizer_version="n" * 80, contract_version="v" * 40, config_revision=9)),
+        ] + [
+            dict(quality=QualityMetadata(state, freshness, gap, complete, eligible, policy, flags, recency, session,
+                                         liveness, proof))
+            for state, freshness, gap, complete, eligible, policy, flags, recency, session, liveness, proof in (
+                ("LIVE", 0, False, True, True, "p", (), "LIVE", "NOT_APPLICABLE", None, None),
+                ("STALE", 61_000, True, False, False, "p" * 200, ("STALE", "GAP" + odd), "STALE", "LIVE", 0, 1),
+                ("MARKET_CLOSED", 5, False, True, False, "q", ("MARKET_CLOSED",), "NOT_APPLICABLE",
+                 "DISCONNECTED", 12_345, None),
+            )
+        ]
+        cases = [{**lifecycle, **shape} for lifecycle, shape in itertools.product(lifecycles, shapes)]
+        for index, changes in enumerate(cases):
+            if changes["bar_lifecycle"] is BarLifecycle.IN_PROGRESS:
+                changes["payload"] = {**changes.get("payload", base.payload), "is_final": False}
+            item = replace(base, **changes)
+            with self.subTest(case=index, changes=changes):
+                self.assertIsNotNone(router_module._bar_view_parts(item), "fast path proven")
+                expected, layout = reference(item)
+                self.assertEqual(router_module._market_item_json(item), expected)
+                slot = RenderSlot()
+                slotted = replace(item, render_slot=slot)
+                for render in ("first", "second", "spliced"):
+                    self.assertEqual(router_module._market_item_json(slotted), expected, render)
+                    if render == "first":
+                        self.assertIs(slot.value, router_module._RENDERED_ONCE)
+                    else:
+                        self.assertEqual(slot.value, layout, "the kept layout is the model path's")
+        # Outside the proven shapes: the model path decides (same bytes or same failure).
+        lineage = ResampleLineage("1m", 60, 1, 60, "c" * 64)
+        deferred = [
+            dict(payload=payload(close="1" * 29)), dict(payload=payload(close="1e-5")),
+            dict(payload=payload(close="0." + "1" * 39)), dict(payload=payload(close=" 1.5")),
+            dict(payload=payload(close="1" * 129)), dict(payload=payload(close=12)),
+            dict(payload=payload(volume_unit="LOTS")), dict(payload=payload(origin="GUESSED")),
+            dict(payload=payload(trade_count=-1)), dict(payload=payload(open_time_ns=float(base.payload["open_time_ns"]))),
+            dict(payload=payload(close_time_ns=base.payload["open_time_ns"])),
+            dict(resample_lineage=lineage), dict(interval="x" * 21),
+            dict(source=SourceMetadata("V" * 41, "p", "s", "PRIMARY", True)),
+            dict(source=SourceMetadata("V", "p", "s", "OWNER", True)),
+            dict(source=SourceMetadata("V", "p", "s", "PRIMARY", 1)),
+            lambda: dict(quality=replace(base.quality, state="BOGUS")), lambda: dict(quality=replace(base.quality, policy_id="p" * 201)),
+            lambda: dict(quality=replace(base.quality, flags=("ok", 3))), lambda: dict(quality=replace(base.quality, complete=1)),
+            lambda: dict(contract=replace(base.contract, schema_digest="A" * 64)),
+            lambda: dict(contract=replace(base.contract, correlation_id="c" * 201)),
+            dict(cursor="a\ud800b"), dict(cursor=7),
+        ]
+        for changes in deferred:
+            try:
+                changes = changes() if callable(changes) else changes
+                item = replace(base, **changes)
+            except (TypeError, ValueError):
+                continue  # the internal item already refuses it
+            with self.subTest(deferred=changes):
+                self.assertIsNone(router_module._bar_view_parts(item))
+                try:
+                    expected = reference(item)[0]
+                except ValueError:  # ValidationError, unencodable text: refused on the served path too
+                    with self.assertRaises(ValueError):
+                        router_module._market_item_json(item)
+                else:
+                    self.assertEqual(router_module._market_item_json(item), expected)
+
+    def test_history_eligibility_authorizes_once_per_source_and_keeps_unchanged_rows(self):
+        # P18.4 G5 cold: one INTERNAL_EXECUTION decision per source for the
+        # whole view; verdicts equal the per-row ones and a row whose verdict
+        # is unchanged is served as is (frozen), a changed one is a copy.
+        from dataclasses import replace
+
+        history = self.backend.history(self.requirement)
+        first = history.items[0]
+        degraded = replace(first, quality=replace(first.quality, state="DEGRADED"))
+        history = replace(history, items=(degraded, *history.items[1:]))
+        calls = []
+        authorize = self.service.entitlements.authorize
+
+        def counted(**kwargs):
+            calls.append(kwargs)
+            return authorize(**kwargs)
+
+        with patch.object(self.service.entitlements, "authorize", side_effect=counted):
+            served = self.service._warmup_from_history(
+                self.requirement, history, purpose=AccessPurpose.INTERNAL_ALPHA, request_id="r").history.items
+        self.assertEqual(sum(1 for call in calls if call["purpose"] is AccessPurpose.INTERNAL_EXECUTION
+                             and call["product"] is DataProduct.CANONICAL_HISTORY), 1)
+        expected = tuple(self.service._with_execution_eligibility(
+            self.requirement, item, DataProduct.CANONICAL_HISTORY) for item in history.items)
+        self.assertEqual(served, expected)
+        self.assertEqual([item.quality for item in served], [item.quality for item in expected])
+        self.assertFalse(served[0].quality.execution_eligible)
+        self.assertIsNot(served[0], degraded)
+        self.assertTrue(served[-1].quality.execution_eligible)
+        self.assertIs(served[-1], history.items[-1])
+
+    def test_bar_fast_render_bounds_match_the_public_schema(self):
+        # The fast render's hard-coded string bounds and patterns are the models'.
+        from qdl.api_v2.models import BarPayload, ContractView, QualityView, SourceView
+
+        pinned = {
+            (SourceView, "venue"): (1, 40), (SourceView, "provider"): (1, 80),
+            (SourceView, "source_id"): (1, 120), (QualityView, "policy_id"): (1, 200),
+            (BarPayload, "interval"): (1, 20), (ContractView, "contract_version"): (1, 40),
+            (ContractView, "normalizer_version"): (1, 80), (ContractView, "adapter_version"): (1, 80),
+            (ContractView, "correlation_id"): (1, 200),
+        }
+        for (model, name), (low, high) in pinned.items():
+            schema = model.model_json_schema()["properties"][name]
+            self.assertEqual((schema.get("minLength"), schema.get("maxLength")), (low, high), (model, name))
+        self.assertEqual(ContractView.model_json_schema()["properties"]["schema_digest"]["pattern"],
+                         "^[0-9a-f]{64}$")
+        self.assertEqual(BarPayload.model_json_schema()["$defs"]["DecimalValue"]["properties"]["source_text"]
+                         ["maxLength"], 128)
+        self.assertEqual(list(router_module.MarketDataView.model_fields), [
+            "instrument_uid", "instrument_id", "instrument_revision", "feed", "interval", "observed_at_ns",
+            "received_at_ns", "revision", "payload", "source", "quality", "contract", "cursor", "snapshot_id",
+            "watermark_offset", "event_id"])
+
     def test_view_field_copy_equals_replace_and_changes_only_view_fields(self):
         from dataclasses import replace
 

@@ -1,0 +1,18 @@
+[package]
+name = "qdl-test-data-clock"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+isolated-replay-clock = ["dep:libc", "dep:ring", "dep:serde", "dep:serde_json"]
+# Explicit dev-dependency feature. Does not enable replay in default-feature tests.
+test-support = []
+
+[dependencies]
+libc = { version = "=0.2.189", optional = true }
+ring = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }

@@ -34,6 +34,50 @@ class QueryBackendError(RuntimeError):
         self.problem = problem
 
 
+def release_exception_frames(error: BaseException, *, limit: int = 32) -> None:
+    """Drop the traceback of a handled refusal and of its ``__cause__``/``__context__`` chain.
+
+    IDR-114: a typed refusal raised inside a Query read travels up through the
+    hot-thread future, the lane task and the whole ASGI stack. Its traceback
+    references every frame on the way, and those frames reference the future
+    and task that hold the exception: one reference cycle of ~250 objects per
+    refused request (measured 278 per refusal in-app, 2026-10-17), which only
+    the cyclic GC can free while holding the GIL. Called once the refusal has
+    been rendered into its typed response, this frees the frames by reference
+    counting instead. The exception keeps its type, args and attributes; only
+    the traceback (diagnostic data no response carries) is cleared, so a
+    concurrent holder of the same exception sees the same typed fields.
+    """
+
+    pending: list[BaseException | None] = [error]
+    seen: set[int] = set()
+    while pending and len(seen) < limit:
+        current = pending.pop()
+        if current is None or id(current) in seen:
+            continue
+        seen.add(id(current))
+        current.__traceback__ = None
+        pending.append(current.__cause__)
+        pending.append(current.__context__)
+
+
+CANONICAL_LINEAGE_MISMATCH = "CANONICAL_LINEAGE_MISMATCH"
+
+
+class CanonicalLineageMismatch(ValueError):
+    """A canonical event whose identity/lineage (instrument, provider, role, authority,
+    adapter or normalizer version) differs from its stable catalog binding.
+
+    A ``ValueError`` subclass, so every existing ``except ValueError`` keeps its
+    decision (MARK ``INTEGRITY``, ``HOT_BACKUP_LINEAGE_INVALID``); ``reason`` is the
+    typed token a Query edge may expose additively (IDR-099). Typical production
+    trigger: an ingestor adapter/normalizer/authority bump deployed before the
+    catalog baked into the python image is rebuilt.
+    """
+
+    reason = CANONICAL_LINEAGE_MISMATCH
+
+
 @dataclass(frozen=True)
 class SourceMetadata:
     venue: str

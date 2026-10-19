@@ -822,6 +822,61 @@ def evaluate_latency(values_ms: Sequence[float], target: Mapping[str, object],
     return result
 
 
+# A heartbeat snapshot is republished about every 30 s; one reader samples it every ~10 s, so the same snapshot is
+# read several times. Identity of a read: (heartbeat key, publication time). The publication time is the published
+# last_seen_unix when the sampler recorded it, else derived as at_ns - age_s (age_s rounded to 0.1 s; the TS
+# driver's at_ns is stamped after `docker exec` returns, so a derived time carries that latency). The tolerance only
+# applies to derived times and stays far below the heartbeat interval.
+HEARTBEAT_IDENTITY_TOLERANCE_S = 5.0
+
+
+def heartbeat_identity(*, at_ns: object, age_s: object, last_seen_unix: object = None,
+                       key: object = None) -> tuple[object, float, bool] | None:
+    """(key, publication seconds, exact) of one heartbeat read, or None when the read carries no identity."""
+    def finite(value: object) -> bool:
+        return type(value) in (int, float) and math.isfinite(value)
+    if finite(last_seen_unix):
+        return key, float(last_seen_unix), True
+    if type(at_ns) is int and finite(age_s):
+        return key, at_ns / 1e9 - float(age_s), False
+    return None
+
+
+def distinct_heartbeat_reads(items: Sequence[object], identity, content, *,
+                             tolerance_s: float = HEARTBEAT_IDENTITY_TOLERANCE_S) -> list[object]:
+    """Reads in order, keeping the first read of each heartbeat snapshot (one snapshot counts once).
+
+    A read repeats the previously kept snapshot only when its identity matches (same key; equal publication time
+    when both are exact, else within tolerance_s) AND its scored content is equal, so a merge can never hide a
+    different verdict. A read without identity (unreadable) is always kept and does not reset the comparison.
+    """
+    kept: list[object] = []
+    last = None  # (identity, content) of the last kept identified read
+    for item in items:
+        ident = identity(item)
+        if ident is None:
+            kept.append(item)
+            continue
+        body = content(item)
+        if last is not None:
+            (key, seconds, exact), previous_body = last
+            same_time = (seconds == ident[1]) if (exact and ident[2]) else abs(seconds - ident[1]) <= tolerance_s
+            if key == ident[0] and same_time and body == previous_body:
+                continue
+        kept.append(item)
+        last = (ident, body)
+    return kept
+
+
+def _ts_sample_identity(item: Mapping[str, object]):
+    return heartbeat_identity(at_ns=item.get("at_ns"), age_s=item.get("age_s"),
+                              last_seen_unix=item.get("last_seen_unix"), key=item.get("key_tail"))
+
+
+def _ts_sample_content(item: Mapping[str, object]):
+    return {k: v for k, v in item.items() if k not in ("at_ns", "age_s")}
+
+
 def _gate(name: str, passed: bool, **evidence: object) -> dict[str, object]:
     return {"gate": name, "status": "PASS" if passed else "FAIL", **evidence}
 
@@ -906,14 +961,17 @@ def evaluate_target_acceptance(
                 and (item.get("fallback") or 0) <= ts_budget["max_fallback"]
                 and not item.get("unhealthy"))
 
-    not_ready = [item for item in samples if not sample_ready(item)]
-    # Lost observation is a failure, never a skipped sample (Codex review 2026-10-10).
+    # Every heartbeat snapshot must be ready; one snapshot read several times counts once.
+    distinct = distinct_heartbeat_reads(samples, _ts_sample_identity, _ts_sample_content)
+    not_ready = [item for item in distinct if not sample_ready(item)]
+    # Lost observation is a failure, never a skipped sample (Codex review 2026-10-10). Coverage counts raw reads.
     unreadable = len(trading_system.get("unreadable_samples", []))
     expected = trading_system.get("expected_samples")
     covered = isinstance(expected, int) and expected > 0 and len(samples) == expected
     gates.append(_gate("ts:ready_60_every_sample", bool(samples) and not not_ready and not unreadable and covered,
-                       samples=len(samples), not_ready=len(not_ready), unreadable=unreadable,
-                       expected=expected))
+                       samples=len(samples), distinct_heartbeats=len(distinct),
+                       duplicate_reads=len(samples) - len(distinct), not_ready=len(not_ready),
+                       unreadable=unreadable, expected=expected))
     errors = [item.get("v2_error") for item in samples if isinstance(item.get("v2_error"), int)]
     gates.append(_gate("ts:v2_error_not_increased",
                        bool(errors) and max(errors) - min(errors) <= ts_budget["max_v2_error_increase"],

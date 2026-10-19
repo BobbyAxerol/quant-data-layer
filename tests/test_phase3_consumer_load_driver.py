@@ -63,6 +63,7 @@ class Phase3ConsumerLoadDriverTests(unittest.TestCase):
                 mode="load",
                 sessions=5,
                 duration_seconds=60,
+                query_funding_allowance_ms=60_000,
             )
         self.assertIn("--read-only", command)
         self.assertIn("--security-opt", command)
@@ -93,7 +94,7 @@ class Phase3ConsumerLoadDriverTests(unittest.TestCase):
                 raw["sdk_from_source"] = flag
                 command, _ = _MODULE.docker_command(
                     _MODULE.validate_profile(raw), name="qdl-phase3-load-unit", image_id="sha256:" + "a" * 64,
-                    mode="load", sessions=1, duration_seconds=60)
+                    mode="load", sessions=1, duration_seconds=60, query_funding_allowance_ms=60_000)
                 mounts = [value for value in command if value.startswith("type=bind,")]
                 self.assertEqual(any(m.endswith("dst=/app/qdl_sdk,readonly") for m in mounts), expected)
                 self.assertEqual(
@@ -123,7 +124,8 @@ class Phase3ConsumerLoadDriverTests(unittest.TestCase):
     def test_the_kn4_matrix_inner_config_carries_the_target_budget(self):
         config = {"mode": "kn4-matrix", "logical_sessions": 50, "duration_seconds": 0, "catalog": "c",
                   "acquisition": "a", "queries": [], "stream_targets": [], "identities": [],
-                  "budget": {}, "final": False, "oracle_bootstrap": "kn4-kafka:9092"}
+                  "budget": {}, "final": False, "oracle_bootstrap": "kn4-kafka:9092",
+                  "query_funding_allowance_ms": 60_000}
         with mock.patch.dict(_MODULE.os.environ, {"QDL_PHASE3_LOAD_CONFIG": json.dumps(config)}):
             self.assertEqual(_MODULE._inside_config()["mode"], "kn4-matrix")
         # A target mode never carries an oracle.

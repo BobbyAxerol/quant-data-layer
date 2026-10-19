@@ -20,6 +20,7 @@ from qdl.certification.reference_l2_acceptance import (
     build_reference_l2_acceptance_scope,
     reference_acceptance_batches,
     reference_evidence,
+    reference_freshness_bound_ms,
     reference_quality,
     reference_request_for_requirement,
 )
@@ -42,6 +43,11 @@ NOW_NS = 1_787_000_000_000_000_000
 
 class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
     def setUp(self) -> None:
+        # A1: the driver configures the DEPLOYED Query's funding allowance; in-process that is this Query's constant.
+        from qdl.certification.reference_l2_acceptance import configure_query_funding_allowance_ms
+        from qdl.query import service as query_service
+        configure_query_funding_allowance_ms(query_service._FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS)
+        self.addCleanup(configure_query_funding_allowance_ms, None)
         self.catalog = StableSourceCatalog.load(CATALOG)
         self.acquisition = StableAcquisitionPlan.load(ACQUISITION, catalog=self.catalog)
         self.scope = build_reference_l2_acceptance_scope(
@@ -65,7 +71,7 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
             replace(self.scope, references=())
 
     def test_scope_is_exact_v2_only_reference_and_book_product_set(self):
-        self.assertEqual(len(self.scope.references), 70)
+        self.assertEqual(len(self.scope.references), 75)
         self.assertEqual(len(self.scope.books), 20)
         retired = {"f1228887-3053-5b61-9aea-11d3833f8a62",
                    "9e24d8dd-e74b-5f9b-a770-2556bbc89d37"}
@@ -102,7 +108,7 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
                     self.assertIsNotNone(request.start_time_ns)
                     self.assertIsNotNone(request.end_time_ns)
                 else:
-                    self.assertEqual(item.venue, "OKX")
+                    self.assertIn(item.venue, ("BINANCE", "OKX"))
                     self.assertIsNone(request.interval)
                     self.assertIsNone(request.start_time_ns)
                     self.assertIsNone(request.end_time_ns)
@@ -401,7 +407,9 @@ class ReferenceL2ConsumerAcceptanceTests(unittest.TestCase):
             item for item in self.scope.references
             if item.requirement.feed is FeedType.FUNDING_RATE
         )
-        freshness_ms = product.sdk_requirement.max_freshness_ms
+        # The effective bound is Query's (max_freshness_ms + its FUNDING_RATE history publication allowance, A1
+        # 2026-10-18): one bound on both sides, see tests/test_p184_a1_reference_bound.py.
+        freshness_ms = reference_freshness_bound_ms(product.sdk_requirement)
         self.assertIsNotNone(freshness_ms)
         field = SimpleNamespace(
             name="funding_rate",

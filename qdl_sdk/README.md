@@ -70,6 +70,15 @@ gRPC message. The session still yields one event per record with its own
 resume token; against an older gateway, or with `max_records_per_response=1`,
 every message carries one record as before.
 
+Each `StreamEvent` from a 2.4.0 gateway also carries the gateway's wall clocks
+for that record (Unix ns, gateway host clock, diagnostics only):
+`gateway_dispatch_wall_ns` (the live hub queued it for this subscription),
+`gateway_dequeue_wall_ns` (the subscription task took it) and
+`gateway_send_wall_ns` (the gRPC transport took its response). They are `None`
+when absent (an older gateway, controls, Replay records; dispatch also for a
+replayed record) and are not part of `StreamEvent` equality. Across hosts,
+compare them with client clocks only within the hosts' clock offset.
+
 ## Universal BAR warmup and closed-bar handoff
 
 BAR consumers declare either an exact row count or an exact half-open time
@@ -152,7 +161,7 @@ Build the standalone artifact with:
 python scripts/build_qdl_sdk_release.py --output-dir dist/qdl-sdk
 ```
 
-The output contains a reproducible `qdl_sdk-2.3.0-py3-none-any.whl`, a release
+The output contains a reproducible `qdl_sdk-2.4.1-py3-none-any.whl`, a release
 manifest with the wheel/source/generated-contract SHA-256 digests, and a
 CycloneDX SBOM. The wheel contains only the public SDK plus generated Protobuf
 contracts; it does not package `qdl.api_v2`, runtime adapters, provider code or

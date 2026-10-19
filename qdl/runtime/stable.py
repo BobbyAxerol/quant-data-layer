@@ -38,6 +38,7 @@ from qdl.runtime.readiness import (
     MeasuredRuntimeReadiness,
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
+from qdl.runtime.stall_telemetry import install_gc_pause_telemetry, install_request_stall_telemetry
 from qdl.runtime.stable_capacity import STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW
 from qdl.runtime.stable_deployment import (
     StableAcquisitionPlan,
@@ -700,10 +701,14 @@ QUERY_GC_THRESHOLDS = (100_000, 50, 100)
 
 
 def configure_query_interpreter() -> None:
-    """Process-wide interpreter settings for a Query reader."""
+    """Process-wide interpreter settings for a Query reader.
+
+    IDR-114: every collection >= 10 ms is reported as one ``qdl.stall`` line
+    (observation only, ``qdl/runtime/stall_telemetry.py``)."""
 
     sys.setswitchinterval(QUERY_GIL_SWITCH_INTERVAL_SECONDS)
     gc.set_threshold(*QUERY_GC_THRESHOLDS)
+    install_gc_pause_telemetry()
 
 
 def freeze_query_startup_heap() -> None:
@@ -800,6 +805,8 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
     )
     app.state.runtime_manifest = config.public_manifest()
     app.state.stable_query_backend = query_backend
+    # IDR-114: slow requests and event-loop lag on the replica itself (observation only).
+    install_request_stall_telemetry(app)
     read_view_secret_file = os.environ.get(READ_VIEW_SECRET_FILE_ENV, "").strip()
     if kn_backend is not None and read_view_secret_file:
         # D29: the native Stream's GetSnapshot/GetFeedStatus read view.

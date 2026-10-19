@@ -659,5 +659,24 @@
    "partition": 0,
    "topic_id": 5
   }
- ]
+ ],
+ "state_topic_invariants": {
+  "schema": "qdl.kn.v220.golden.state-topic-invariants.v1",
+  "topics": {
+   "md.bars.v2": {
+    "carries_tombstones": true,
+    "frame_kinds": [
+     "BAR_REVISION",
+     "LEGACY_BAR",
+     "RETENTION_FLOOR"
+    ]
+   },
+   "md.latest.v2": {
+    "carries_tombstones": false,
+    "frame_kinds": [
+     "LATEST"
+    ]
+   }
+  }
+ }
 }

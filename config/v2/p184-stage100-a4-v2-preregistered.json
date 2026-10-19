@@ -1,0 +1,142 @@
+{
+ "schema": "qdl.p184.stage100-a4.v2",
+ "amendment_id": "A4",
+ "version": 2,
+ "label": "PRE_REGISTERED",
+ "post_hoc": false,
+ "statement": "A4 v2 pre-registers, for the final stage-100 run after the rustls + resource roll, exactly the A4 rules the owner approved at ~14:45Z. It is frozen before that run, bound to the run's runtime identity before load by scripts/p184_a4_preregistered.py bind, and applies to no earlier run. A4 v1 (config/v2/p184-stage100-a4-ts-eligibility.json, POST_HOC_OWNER_DECISION) is unchanged and stays the decision for p184-final-campaign-20261018T123222Z only.",
+ "decision_owner": "Bobby (owner)",
+ "approval_reference": "AskUserQuestion 2026-10-18 ~16:40Z",
+ "owner_answer_verbatim": "Duyệt A4 chốt trước (Recommended)",
+ "rule_content_approval_reference": "AskUserQuestion 2026-10-18 ~14:45Z (two answers)",
+ "rule_content_owner_answers_verbatim": {
+  "G4 OKX_INVERSE": "M1: chấm theo p95 pooled (Recommended)",
+  "G2 MARK_INDEX_PRICE|BINANCE": "Nới max lên 1200 ms (Recommended)"
+ },
+ "frozen_at": "2026-10-18T16:50:47Z",
+ "frozen_at_unix": 1792342247.4824326,
+ "rationale_doc": "upgrade/evidence/releases/v2.2.4/a4-v2-preregistered.md",
+ "a4_v1": {
+  "path": "config/v2/p184-stage100-a4-ts-eligibility.json",
+  "sha256": "14958a681848192c8b9e93feaf0ee3137a1851c38fe6d6763f3bcf6ce0c81312",
+  "relation": "same rules; A4 v1 is post-hoc for 123222Z only and is not edited; its ts_acceptance_bounds and limits_stated are the basis of A4 v2"
+ },
+ "rules": {
+  "G2": {
+   "row": "MARK_INDEX_PRICE|BINANCE",
+   "statistic": "new-event transit, venue event -> TS execution Redis APPLY reply (scripts/p184_g2_mark_trace_transit.py)",
+   "max_le_ms": 1200.0,
+   "p95_le_ms": 500.0,
+   "replaced_rule": "max < 1000 ms and p95 <= 500 ms (frozen 2026-10-09, TS upgrade/p184-phase-d-gates.md G2 row: 2x headroom under D3 MARK 2000 ms)",
+   "basis": "0.6 x the TS 2000 ms MARK use-time budget (1.67x headroom instead of 2x)",
+   "unchanged": "p95 limit; every other G2 row (TRADE p95 <= 500 / max < 1500; QUOTE p95 <= 500 / max < 1000; MARK|OKX p95 <= 500 / max < 1000)"
+  },
+  "G4": {
+   "statistic": "per-window delivery visibility, venue -> canonical (read_committed upper bound), observer v7",
+   "rows": {
+    "book_delta|OKX_INVERSE|": {
+     "pooled_row": "book_delta|OKX|",
+     "p95_limit_ms": 289.1,
+     "replaced_addendum_max_limit_ms": 282.5
+    },
+    "book_snapshot|OKX_INVERSE|": {
+     "pooled_row": "book_snapshot|OKX|",
+     "p95_limit_ms": 270.1,
+     "replaced_addendum_max_limit_ms": 300.7
+    },
+    "quote|OKX_INVERSE|": {
+     "pooled_row": "quote|OKX|",
+     "p95_limit_ms": 283.3,
+     "replaced_addendum_max_limit_ms": 322.6
+    }
+   },
+   "p95_rule": "the frozen-table rule of the pooled row: per window with n >= 20, FAIL when the p95 bucket lower edge is over the limit; a p95 bucket straddling the limit is unresolved (NOT_MEASURED, never PASS); no window with n >= 20 -> NOT_MEASURED; the pooled limit must equal the frozen budget table value at score time",
+   "min_samples_per_window": 20,
+   "max": "REPORT_ONLY",
+   "retention": "every window whose max is over the replaced addendum max limit needs observer v7 exceedance retention for the row with threshold_ms <= that limit, overflow 0, admitted_seen == the window n and the window maximum among the retained events; otherwise the row is FAIL (UNKNOWN = FAIL). Every retained event is listed in the rescore receipt.",
+   "unchanged": "every frozen-table row and its p95 rule, the mark_index_price|OKX_INVERSE| addendum row, every other addendum row, G4-A1, G4-A2, A3 and the window schedule"
+  }
+ },
+ "external_exemptions": [],
+ "external_exemption_statement": "A4 v2 adds no external exemption: it changes the statistic of three G4 rows and one G2 max limit only. External attribution stays exactly A3 (whichever A3 the campaign recorded and applied).",
+ "applies_to": {
+  "selection": "RUN_BOUND_BEFORE_LOAD",
+  "role": "candidate",
+  "sessions": 100,
+  "excluded_campaigns": [
+   "p184-final-campaign-20261018T123222Z"
+  ],
+  "binding_receipt": "<campaign_dir>.a4-v2-binding.json (scripts/p184_a4_preregistered.py bind, the launcher's first command, before the guard and p184_gate_campaign.py run)",
+  "close_receipt": "<campaign_dir>.a4-v2-close.json (scripts/p184_a4_preregistered.py close, after the campaign wrote scorecard.json)",
+  "score_receipt": "<campaign_dir>/scorecard.a4-v2.json (scripts/p184_a4_preregistered.py score --write)"
+ },
+ "runtime_identity_pin": {
+  "basis": "no digest is hard-coded here: the image ids of the final run do not exist at freeze time (rustls + resource roll pending)",
+  "bound_by": "the binding receipt records, before the campaign directory exists, docker inspect .Image of every A3 runtime role and the writer (gc.a3_runtime_images()), the writer identity in the preflight runtime_identity shape, and the cgroup caps (NanoCpus, CpuQuota, CpuPeriod, CpusetCpus, Memory, MemorySwap) of the A3 roles, kafka1-3 and the writer",
+  "checked_at_score": [
+   "A4 v2 frozen_at_unix < binding created_unix < campaign started_unix",
+   "the A4 v2 file sha256 equals the one the binding recorded",
+   "campaign.json runtime_identity and a3_runtime_images (recorded by the campaign preflight) equal the binding's",
+   "the close receipt names the binding sha256 and its images and caps equal the binding's (no roll and no cap change during the run; a G11 writer restart keeps image and caps)"
+  ],
+  "a3_relation": "A3 pins hard-coded runtime_images at its own freeze and the campaign preflight refuses other images, so A3 has to be re-frozen for the rolled images before the final run; A4 v2 therefore does not pin the A3 file sha256 and requires only that the campaign applied the A3 it recorded"
+ },
+ "conditions": [
+  "the unchanged frozen scorer (scripts/p184_gate_campaign.py, sha256 pinned here and by A3) reproduces the stored scorecard.json, and A3 was applied",
+  "protocol_met true",
+  "G6 PASS and G9 PASS with 0 data-path eligibility losses",
+  "the campaign recorded the pinned budget, G4 addendum, G4-A1 and G4-A2 sha256 and the pinned scorer as tool_sha256",
+  "every gate other than G2 and G4 byte-identical with and without A4 v2 (checked by the rescore tool)",
+  "anything missing or different: A4 v2 is not applied and the stored scorecard.json (strict) is the record"
+ ],
+ "verdict_reporting": "every G2/G4 gate of the A4 v2 receipt carries verdict_without_a4 and reason_without_a4; the receipt carries summary_without_a4 and the sha256 of the untouched scorecard.json",
+ "unchanged": [
+  "G1, G3, G5-G14 rules and verdicts",
+  "every other G2 and G4 row",
+  "the frozen budget, the G4 addendum, G4-A1, G4-A2, A3 and A4 v1 files",
+  "the stored scorecard.json of every run"
+ ],
+ "limits_stated": [
+  "Pre-registered before the final run, but its content was chosen after observing 123222Z (A4 v1 is the post-hoc decision); A4 v2 makes the rule binding for a new run, it is not evidence that the original frozen rule would pass.",
+  "G4: the inverse window maximum is report-only; no max limit applies to these three rows under A4 v2.",
+  "G2: the split of the MARK BINANCE tail between DL Query and TS writer read scheduling is unknown (A4 v1 limits_stated)."
+ ],
+ "pinned": {
+  "scorer": {
+   "path": "scripts/p184_gate_campaign.py",
+   "sha256": "e179ec784621089795516ed25b2ea1f2e2ba30c86eea0de852ed4728aa6d104b"
+  },
+  "a4_rules": {
+   "path": "scripts/p184_a4_post_hoc.py",
+   "sha256": "23b78e4ae7a367252cf8033aa64ee6357987c2117e7f6516679fd4c6efafba26"
+  },
+  "rescore_tool": {
+   "path": "scripts/p184_a4_preregistered.py",
+   "sha256": "b93d295f75f0b62f268ec39f65d28b7f60e64daa97e3ee737a371f42f7d90181"
+  },
+  "g4_observer": {
+   "path": "scripts/p184_g4_observer.py",
+   "sha256": "1d33ca4a567c665d60d30476a3c2617f85600786450b21aa02ecee7d4020939e"
+  },
+  "tests": {
+   "path": "tests/test_p184_a4_preregistered.py",
+   "sha256": "1d50b18ec7b7962e41e6ad33890714ae161d4a6a43bd8904bfef19c2184c1e9b"
+  },
+  "budget": {
+   "path": "config/v2/p184-stage100-budget.json",
+   "sha256": "ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541"
+  },
+  "g4_addendum": {
+   "path": "config/v2/p184-stage100-g4-addendum.json",
+   "sha256": "4ed59dca0212566d3ff03c5a4c23eed3d252d0150844b9a4fd6fa543333d78b5"
+  },
+  "g4_amendment_1": {
+   "path": "config/v2/p184-stage100-g4-amendment-1.json",
+   "sha256": "1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6"
+  },
+  "g4_amendment_2": {
+   "path": "config/v2/p184-stage100-g4-amendment-2.json",
+   "sha256": "99961c41e08993944d158ae812ca61514271862a2d03e011f5d01ce71a0f9997"
+  }
+ }
+}

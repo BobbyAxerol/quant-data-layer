@@ -293,7 +293,8 @@ class LifecycleTests(unittest.TestCase):
                             raise subprocess.CalledProcessError(1, argv, stderr="daemon unavailable")
                     return self.call(argv)
                 if case == "absent":
-                    self.assertEqual(dr.cleanup(NS, call)["removed"], ["query"])
+                    result = dr.cleanup(NS, call)
+                    self.assertEqual((result["removed"], result["already_gone"]), ([], ["query"]))
                     self.assertIn(["docker", "ps", "-aq", "--no-trunc", "--filter", "id=query-id"], self.calls)
                 else:
                     with self.assertRaisesRegex(RuntimeError, "cleanup incomplete"):
@@ -378,6 +379,71 @@ class LifecycleTests(unittest.TestCase):
         with patch.object(dr.time, "sleep") as sleep:
             self.assertEqual(dr.cleanup(NS, call)["removed"], list(reversed(dr.ROLES)))
             self.assertEqual(sleep.call_count, 5)
+
+    def test_cleanup_preflight_listed_then_gone_is_already_removed(self):
+        # G13 p184-g13-20261017T064022Z: a --rm container finished between the
+        # exact-name listing and inspection; --down must not fail on it.
+        original = self.call
+        def call(argv):
+            if argv[1] == "inspect" and argv[-1] == "query-id":
+                del self.rows["query"]
+                raise subprocess.CalledProcessError(1, argv, stderr="error: no such object: query-id\n")
+            return original(argv)
+        result = dr.cleanup(NS, call)
+        self.assertEqual(result["already_gone"], ["query"])
+        self.assertEqual(result["removed"], [r for r in reversed(dr.ROLES) if r != "query"])
+        self.assertEqual(result["counts"], {"removed": len(dr.ROLES) - 1, "already_gone": 1})
+        self.assertNotIn(["docker", "stop", "--time", "5", "query-id"], self.calls)
+
+    def test_cleanup_preflight_absence_reply_but_name_still_listed_fails(self):
+        original = self.call
+        for stderr in ("error: no such object: query-id", "Error response from daemon: No such container: query-id"):
+            with self.subTest(stderr=stderr):
+                self.calls = []
+                def call(argv):
+                    if argv[1] == "inspect" and argv[-1] == "query-id":
+                        raise subprocess.CalledProcessError(1, argv, stderr=stderr)
+                    return original(argv)
+                with self.assertRaises(subprocess.CalledProcessError):
+                    dr.cleanup(NS, call)
+                self.assertFalse(any(cmd[1] == "stop" for cmd in self.calls))
+
+    def test_cleanup_preflight_absence_for_other_id_or_daemon_error_fails(self):
+        original = self.call
+        for stderr in ("error: no such object: other-id", "Cannot connect to the Docker daemon",
+                       "error: no such object: query-id\nadditional failure"):
+            with self.subTest(stderr=stderr):
+                self.rows, self.calls = copy.deepcopy(self.rows), []
+                saved = copy.deepcopy(self.rows["query"])
+                def call(argv):
+                    if argv[1] == "inspect" and argv[-1] == "query-id":
+                        self.rows.pop("query", None)
+                        raise subprocess.CalledProcessError(1, argv, stderr=stderr)
+                    return original(argv)
+                with self.assertRaises(subprocess.CalledProcessError):
+                    dr.cleanup(NS, call)
+                self.assertFalse(any(cmd[1] == "stop" for cmd in self.calls))
+                self.rows["query"] = saved
+
+    def test_cleanup_post_stop_inspect_absence_counts_as_removed(self):
+        self.rows = {"query": self.rows["query"]}
+        stopped = False
+        original = self.call
+        def call(argv):
+            nonlocal stopped
+            if argv[1] == "stop":
+                self.calls.append(argv)
+                stopped = True
+                self.rows["query"]["State"]["Running"] = False
+                return ""
+            if stopped and argv[1] == "inspect":
+                self.rows.pop("query", None)
+                raise subprocess.CalledProcessError(1, argv, stderr="error: no such object: query-id")
+            if stopped and argv[1] == "ps" and argv[-1].startswith("name=") and "query" in self.rows:
+                return "query-id"
+            return original(argv)
+        result = dr.cleanup(NS, call)
+        self.assertEqual((result["removed"], result["already_gone"]), (["query"], []))
 
     def test_disappeared_between_list_and_inspect(self):
         import subprocess

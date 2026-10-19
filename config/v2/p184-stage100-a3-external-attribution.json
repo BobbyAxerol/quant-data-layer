@@ -1,0 +1,343 @@
+{
+ "amendment_id": "A3",
+ "approval_reference": "AskUserQuestion 2026-10-18 ~10:10Z, option \"Amendment A3 quy nguyen nhan (Recommended)\": frozen versioned external-attribution amendment A3 + one final stage-100",
+ "attribution_module": {
+  "path": "scripts/p184_a3_attribution.py",
+  "schema": "qdl.p184.stage100-a3.v1",
+  "sha256": "dcf3a17c103dfeb3a1417e09b9863395c188ddb107fa825ad44e4751b8519ea4"
+ },
+ "base_addendum_sha256": "4ed59dca0212566d3ff03c5a4c23eed3d252d0150844b9a4fd6fa543333d78b5",
+ "base_budget_sha256": "ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541",
+ "classes": {
+  "EXTERNAL_SESSION_INTERRUPTION": "a session-type G9 loss (TRADE_SESSION_UNVERIFIED / EXECUTION_CONTEXT_NOT_EXECUTION_ELIGIBLE) whose onset lies between the lane's last good frame and its first venue fault, writer workers LIVE and local/DL-path checks clean from the onset to restoration, restored within recovery_budget_s counted from the outage start",
+  "EXTERNAL_SESSION_UPSTREAM": "the SAME venue event (channel, symbol, venue id) on a fresh connection was on time (<= probe_healthy_ms) while the production lane received it >= lane_late_margin_ms later",
+  "EXTERNAL_VENUE_RESET": "a G4 event in flight across a complete VENUE-originated session-fault episode of its own lane (OKX cause EOF/CLOSE_FRAME/READ_ERROR/HEARTBEAT_TIMEOUT/NOTICE*, Binance peer reset/close or heartbeat failure; no DL-initiated end such as STALENESS_HANDOVER/BOOK_RESYNC/WRITE_ERROR or connect failure in the episode)",
+  "EXTERNAL_VENUE_WIDE": "NOT assigned in v1: a late fresh probe can be the probe's own scheduling on this host and no probe-side scheduler evidence is recorded (review finding 1)",
+  "UNKNOWN": "anything else, including a different probe event in the same second (supporting only), missing coverage, retention overflow, an ambiguous lane: counts as FAIL"
+ },
+ "codex_guidance": [
+  "/home/bobby/.worktrees/ts-codex-p184-review/upgrade/p184-idr112-113-provider-gates-review-20261018.md section \"Gate Amendment Options\"",
+  "/home/bobby/.worktrees/ts-codex-p184-review/upgrade/p184-release-closure-options-20261018.md sections 1-4"
+ ],
+ "conditions": {
+  "caps": "per G4 row AND per window: EXTERNAL units <= max_external_fraction x the admitted samples (so a p95 failure, >= 5 % of a window over the limit, is never rescued); G9: EXTERNAL losses <= max_external_fraction x demanded x readable samples and <= max_external_episodes_per_venue episodes per venue; any recovery > recovery_budget_s -> FAIL",
+  "clock": "host clock bound sampled every 30 s by the A3 sampler; samples within clock_bracket_s on both sides of the unit, each <= host_clock_bound_ms",
+  "internal_segments": "G4: Kafka CreateTime - DL receipt <= row limit receive_to_canonical_ms, observer receipt - CreateTime <= canonical_to_consumer_ms, receipt->observer total <= the row limit; G9: core raw_age and gateway dispatch lag within limits over the recovery seconds",
+  "lane_timeline": "last good frame (progress last_frame_age), fault event (heartbeat_failed / disconnected / connect_failed), first frame of a newer generation (progress), eligibility restoration (writer heartbeat, ~30 s resolution); canonical coordinate and consumer ACK per event are not recorded and replaced by the DL-path checks and the restoration sample",
+  "local_checks": "the ingestor of the unit: cgroup throttled periods 0, worst thread run-queue wait <= limit, no socket sample with unread bytes, continuous coverage (gap <= 2 s) and no sampler error; samples ~100 ms apart cannot exclude a shorter stall nor frames read into user space but processed late (stated, not over-claimed); another lane of the same ingestor reading (progress interval after each fault)",
+  "retention": "EXTERNAL units stay in every distribution and in the receipt (count, durations, recovery); verdicts are recomputed on the remaining units with the unchanged thresholds",
+  "same_event_or_same_seconds": "probe evidence joins on the venue id DL keeps as source_sequence; lane faults on the event's/slice's own lane in its seconds (+- reset_pad_s)"
+ },
+ "decision_owner": "Bobby (owner)",
+ "frozen_at": "2026-10-18T19:15:00Z",
+ "frozen_at_unix": 1792350900.7545927,
+ "frozen_before_candidate": true,
+ "inherits": {
+  "g4_amendment_1_sha256": "1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6",
+  "g4_amendment_2_sha256": "99961c41e08993944d158ae812ca61514271862a2d03e011f5d01ce71a0f9997",
+  "note": "amendments 1 and 2 (files unchanged) are re-pinned to gate_campaign_tool.new_sha256"
+ },
+ "limits": {
+  "clock_bracket_s": 60.0,
+  "core_raw_age_ms_max": 500.0,
+  "episode_merge_s": 60.0,
+  "g4_internal_segment_ms_by_row": {
+   "book_delta|BINANCE|": {
+    "baseline_max_ms": {
+     "canonical_to_consumer": 153.2,
+     "receive_to_canonical": 241.4
+    },
+    "baseline_samples": 3126,
+    "canonical_to_consumer_ms": 183.8,
+    "receive_to_canonical_ms": 289.7
+   },
+   "book_delta|OKX|": {
+    "baseline_max_ms": {
+     "canonical_to_consumer": 173.7,
+     "receive_to_canonical": 252.0
+    },
+    "baseline_samples": 4283,
+    "canonical_to_consumer_ms": 208.4,
+    "receive_to_canonical_ms": 302.4
+   },
+   "book_snapshot|BINANCE|": {
+    "baseline_max_ms": {
+     "canonical_to_consumer": 169.8,
+     "receive_to_canonical": 257.1
+    },
+    "baseline_samples": 5506,
+    "canonical_to_consumer_ms": 203.8,
+    "receive_to_canonical_ms": 308.5
+   },
+   "book_snapshot|OKX|": {
+    "baseline_max_ms": {
+     "canonical_to_consumer": 155.1,
+     "receive_to_canonical": 252.8
+    },
+    "baseline_samples": 8000,
+    "canonical_to_consumer_ms": 186.1,
+    "receive_to_canonical_ms": 303.4
+   },
+   "mark_index_price|BINANCE|": {
+    "baseline_max_ms": {
+     "canonical_to_consumer": 132.8,
+     "receive_to_canonical": 208.2
+    },
+    "baseline_samples": 1532,
+    "canonical_to_consumer_ms": 159.4,
+    "receive_to_canonical_ms": 249.8
+   },
+   "quote|BINANCE|": {
+    "baseline_max_ms": {
+     "canonical_to_consumer": 182.0,
+     "receive_to_canonical": 250.8
+    },
+    "baseline_samples": 2275,
+    "canonical_to_consumer_ms": 218.4,
+    "receive_to_canonical_ms": 301.0
+   },
+   "quote|OKX|": {
+    "baseline_max_ms": {
+     "canonical_to_consumer": 145.9,
+     "receive_to_canonical": 239.4
+    },
+    "baseline_samples": 2529,
+    "canonical_to_consumer_ms": 175.1,
+    "receive_to_canonical_ms": 287.3
+   },
+   "trade|BINANCE|": {
+    "baseline_max_ms": {
+     "canonical_to_consumer": 152.0,
+     "receive_to_canonical": 210.1
+    },
+    "baseline_samples": 1756,
+    "canonical_to_consumer_ms": 182.4,
+    "receive_to_canonical_ms": 252.1
+   },
+   "trade|OKX|": {
+    "baseline_max_ms": {
+     "canonical_to_consumer": 149.2,
+     "receive_to_canonical": 242.9
+    },
+    "baseline_samples": 1242,
+    "canonical_to_consumer_ms": 179.0,
+    "receive_to_canonical_ms": 291.5
+   }
+  },
+  "gateway_dispatch_lag_ms_max": 500.0,
+  "gateway_lag_bounds_ms": [
+   1,
+   2,
+   5,
+   10,
+   20,
+   50,
+   100,
+   200,
+   500,
+   1000,
+   2000,
+   5000
+  ],
+  "host_clock_bound_ms": 10.0,
+  "ingestor_runq_wait_ms_max_thread": 50.0,
+  "lane_late_margin_ms": 50.0,
+  "max_external_episodes_per_venue": 3,
+  "max_external_fraction": 0.01,
+  "probe_healthy_ms": 150.0,
+  "recovery_budget_s": 60.0,
+  "reset_pad_s": 2.0,
+  "rx_persist_samples": 1
+ },
+ "limits_sources": {
+  "baseline_campaign": "/home/bobby/.local/state/qdl-v2/p184-g4-baseline-20261011T175720Z",
+  "baseline_observations_sha256": {
+   "g4-1/observations.jsonl": "ab5bfc43a722f565bc2221d7344a881dd69ccc161432bd0e0322b2116a7e9f4e",
+   "g4-2/observations.jsonl": "6d5bb9a09e560c3a4fb913b9a5f34f7bf2db7459efa7cff5030afcc669945061",
+   "g4-3/observations.jsonl": "436b80808273c09dbcacbc8b746785cdbebd7c4c624656ebace99bf87166ee4f",
+   "g4-4/observations.jsonl": "1be43f6582c02dd23a0a3fa567c0401eba579b9ba3b385f2eec5af5119bfed75"
+  },
+  "factor": 1.2,
+  "note": "per-row internal limits from the addendum's frozen baseline run only (never a candidate); OKX inverse rows use their pooled OKX row"
+ },
+ "pinned": {
+  "a3_attribution": {
+   "new_sha256": "dcf3a17c103dfeb3a1417e09b9863395c188ddb107fa825ad44e4751b8519ea4",
+   "old_sha256": null,
+   "path": "scripts/p184_a3_attribution.py"
+  },
+  "a3_evidence": {
+   "new_sha256": "3fec490be0027d10787f65f2ea8a88fe9939ee815a955072fdf4f9b400785d25",
+   "old_sha256": null,
+   "path": "scripts/p184_a3_evidence.py"
+  },
+  "base_ref": "6ff401e",
+  "binance_probe": {
+   "new_sha256": "b2218ca22b7beec1236ecf65e48974827a933a3e7953bb33e3f17bcb7f38bbbc",
+   "old_sha256": null,
+   "path": "scripts/p184_g4_binance_probe.py"
+  },
+  "budget": {
+   "new_sha256": "ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541",
+   "old_sha256": "ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541",
+   "path": "config/v2/p184-stage100-budget.json"
+  },
+  "codex_pause_watch": {
+   "new_sha256": "f38a7c1bd762108641879724641a73a3e870ac1a59728a236f27a274fda01226",
+   "old_sha256": "64b50287c8b857665b3e4251c43d71ef1a91fefbb2a699420b79ec5e11e8f95f",
+   "path": "scripts/p184_codex_pause_watch.py"
+  },
+  "driver": {
+   "new_sha256": "293e1b1b99a7cb19cf35b7a62f267ea93cb0fb0b606f683301e32c4cd1b11e63",
+   "old_sha256": "91b4423c27f8f8f03a1bb45520a70c341d20101b49be22af143eeb44942afa4c",
+   "path": "scripts/phase3_consumer_load_acceptance.py"
+  },
+  "driver_bootstrap": {
+   "new_sha256": "4c18e904c80193655b99301c1ca69d22191cf6a62a1122de484fbfba546e12b8",
+   "old_sha256": "4c18e904c80193655b99301c1ca69d22191cf6a62a1122de484fbfba546e12b8",
+   "path": "scripts/phase3_consumer_load_bootstrap.sh"
+  },
+  "foreign_activity_guard": {
+   "new_sha256": "75b3067cb38916c905ebc89cb6871e83a8703ac8a8179870000d9d449de3edd8",
+   "old_sha256": "75b3067cb38916c905ebc89cb6871e83a8703ac8a8179870000d9d449de3edd8",
+   "path": "scripts/p184_foreign_activity_guard.py"
+  },
+  "freeze_tool": {
+   "new_sha256": "71d73b5cfc834a607879ab30dfd6d67287742e9b3c0a31df28a76e7226c185c2",
+   "old_sha256": null,
+   "path": "scripts/p184_freeze_a3_amendment.py"
+  },
+  "g4_addendum": {
+   "new_sha256": "4ed59dca0212566d3ff03c5a4c23eed3d252d0150844b9a4fd6fa543333d78b5",
+   "old_sha256": "4ed59dca0212566d3ff03c5a4c23eed3d252d0150844b9a4fd6fa543333d78b5",
+   "path": "config/v2/p184-stage100-g4-addendum.json"
+  },
+  "g4_amendment_1": {
+   "new_sha256": "1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6",
+   "old_sha256": "1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6",
+   "path": "config/v2/p184-stage100-g4-amendment-1.json"
+  },
+  "g4_amendment_2": {
+   "new_sha256": "99961c41e08993944d158ae812ca61514271862a2d03e011f5d01ce71a0f9997",
+   "old_sha256": "99961c41e08993944d158ae812ca61514271862a2d03e011f5d01ce71a0f9997",
+   "path": "config/v2/p184-stage100-g4-amendment-2.json"
+  },
+  "g4_observer": {
+   "new_sha256": "1d33ca4a567c665d60d30476a3c2617f85600786450b21aa02ecee7d4020939e",
+   "old_sha256": "5d90cc60cc1ebad783d6bec848fe7017918f783e3ad0dfcfaa2aed1f47fcba74",
+   "path": "scripts/p184_g4_observer.py"
+  },
+  "g9_g10_sampler": {
+   "new_sha256": "05c1bcfe3c1b342b7f330517701eb58fbf3e9895d95318f8b0cc0a4b09c05bfb",
+   "old_sha256": "05c1bcfe3c1b342b7f330517701eb58fbf3e9895d95318f8b0cc0a4b09c05bfb",
+   "path": "scripts/p184_g9_g10_writer_counters.py"
+  },
+  "gate_campaign_tool": {
+   "new_sha256": "e179ec784621089795516ed25b2ea1f2e2ba30c86eea0de852ed4728aa6d104b",
+   "old_sha256": "8f67a861ef3f1f18d7ec8d30b09665bc546a9155d47ac30a8d275e34f1cd9bde",
+   "path": "scripts/p184_gate_campaign.py"
+  },
+  "host_measurement_lock": {
+   "new_sha256": "df3fb48e3864e2c4929d7d1481ad80baf183df44f7749c90320f6cd899fca411",
+   "old_sha256": "df3fb48e3864e2c4929d7d1481ad80baf183df44f7749c90320f6cd899fca411",
+   "path": "scripts/host_measurement_lock.py"
+  },
+  "mark_trace_transit": {
+   "new_sha256": "fe4c703b531191037964ad1036536c987d941c3da5c9319cb72e235e9b807eaf",
+   "old_sha256": "fe4c703b531191037964ad1036536c987d941c3da5c9319cb72e235e9b807eaf",
+   "path": "scripts/p184_g2_mark_trace_transit.py"
+  },
+  "note": "old = at the pre-amendment base ref, new = frozen with this amendment; the scorer applies A3 (and amendments 1/2 through it) only when the campaign tool sha256 equals gate_campaign_tool.new_sha256",
+  "okx_books_probe": {
+   "new_sha256": "9670d21998b62dd268f51c0009ce92440c74dfc84f74dabe93ac76d18dc12485",
+   "old_sha256": "9670d21998b62dd268f51c0009ce92440c74dfc84f74dabe93ac76d18dc12485",
+   "path": "scripts/p184_g4_okx_books_probe.py"
+  },
+  "okx_mark_index_probe": {
+   "new_sha256": "ee835d9c38bf6fe7b3410a21e32cadddd154af048156797efdce0cbd68a91e41",
+   "old_sha256": "ee835d9c38bf6fe7b3410a21e32cadddd154af048156797efdce0cbd68a91e41",
+   "path": "scripts/p184_g4_okx_mark_index_probe.py"
+  },
+  "reference_verifier": {
+   "new_sha256": "11ed0ae2e0d4afbe2bdc300a1ced54b1daf182d4bd1c17ce4556ae93f7f8afec",
+   "old_sha256": "1b0bf756340e406ab209454bf16ea9fa31b8ee11b43a079b8087a62e7cd1cd4c",
+   "path": "qdl/certification/reference_l2_acceptance.py"
+  },
+  "trace_transit": {
+   "new_sha256": "1260a4db88104db328aa040ca63b23af59d9b5b5a2c90cbb479ea1cbeedafc5e",
+   "old_sha256": "1260a4db88104db328aa040ca63b23af59d9b5b5a2c90cbb479ea1cbeedafc5e",
+   "path": "scripts/p184_trace_feed_transit.py"
+  }
+ },
+ "profile": {
+  "image": "qdl-v2-python:2.2.2-d6d2637",
+  "image_id": "sha256:514506122111df8992a5dfac9dc9a3db7ccae202a398424f4dd5a033d2ddf9a9",
+  "profile_path": "/home/bobby/.local/state/qdl-v2/p184-d3-capacity-20261009/profile-stage100-rc4-r16.json",
+  "profile_sha256": "12a8b57891d57d4e9d4aeb6851e9b92ba1500a45a7d3c36b20fe52626f85726b"
+ },
+ "rationale_doc": "upgrade/evidence/releases/v2.2.4/a3-external-attribution.md",
+ "runtime_images": {
+  "basis": "docker inspect .Image at freeze time (read-only)",
+  "images": {
+   "ingestor_binance_usdm": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+   "ingestor_okx_swap": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+   "market_projector_1": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+   "market_projector_2": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+   "query_kn_1": "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff",
+   "query_kn_2": "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff",
+   "rust_core": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+   "rust_core_2": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+   "rust_core_3": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+   "stream_kn_1": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+   "stream_kn_2": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+   "writer": "sha256:2deb90b0cc52eae7610fa44692f90df077e9db100ca259e38fd652a2dc1c5dc5"
+  }
+ },
+ "schema": "qdl.p184.stage100-a3.v1",
+ "scope": {
+  "G2": "latency tails: in scope, but NO G2 unit is attributable in this version: the native writer's slices carry no per-sample receive/canonical/dispatch clock and the Python MARK records have envelope_received_at NOT_MEASURED (Query reference basis); every G2 tail is UNKNOWN = FAIL as before (reported with the lane episodes)",
+  "G4": "a failing row-window (frozen-table p95 rule or GATED addendum max rule) is re-scored when every ADMITTED event above the row limit is retained (observer v7, no overflow, the window maximum among them) and EXTERNAL; amendment 1's row keeps its own rule; REPORT_ONLY rows unchanged",
+  "G9": "data-path eligibility losses only; demanded == session-ready, v1 fallback and internal-caused losses stay strict",
+  "gates": [
+   "G2",
+   "G4",
+   "G9"
+  ],
+  "inherited_not_rerun": {
+   "G12": "PASS on the final image set (inherited)",
+   "G13": "76/76 on writer 2deb90b0 (DL e80e575 / TS 8d481760, inherited)"
+  },
+  "old_receipts": "immutable: a campaign that did not record this file's sha256 at run time scores exactly as before (053803Z / 135719Z / 074624Z / 092255Z); the invalid 092255Z receipt is kept",
+  "strict_unchanged": [
+   "G1",
+   "G3",
+   "G5",
+   "G6",
+   "G7",
+   "G8",
+   "G10",
+   "G11",
+   "G9 demanded==session-ready",
+   "G9 v1 fallback",
+   "G9 internal-caused losses",
+   "every threshold"
+  ]
+ },
+ "stop_rules": [
+  "one declared run (a NEW run after the invalid 092255Z, not its infrastructure rerun)",
+  "exact-client smoke failure, unresolved A1 allowance or a preflight problem: refused, no load",
+  "an apparatus fault in the client (ImportError/NameError/SyntaxError) aborts the driver at once",
+  "a foreign job before or early in the load window (guard TAINTED): one rerun allowed (infra fault)",
+  "any other failure is a result: no rerun until green",
+  "runtime images must equal runtime_images below (else A3 is not applied and scoring is strict)"
+ ],
+ "version": 1,
+ "workload": {
+  "budget_sha256": "ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541",
+  "client_smoke": "target-matrix (exact client image, mounts, user, bootstrap) before any load",
+  "g4_rows_frozen_table": 17,
+  "g4_schedule_version": "qdl.p184.g4-schedule.v2",
+  "load_seconds": 1800,
+  "sessions": 100
+ }
+}

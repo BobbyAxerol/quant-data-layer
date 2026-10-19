@@ -626,6 +626,130 @@ mod tests {
         assert_eq!(compared, 2, "the golden LATEST and BAR_REVISION frames");
     }
 
+    /// Every payload kind, with a compile-time exhaustiveness check: a new
+    /// canonical feed fails to compile here until it is added, so the
+    /// md.latest.v2 no-tombstone guard below always covers every feed.
+    fn every_payload() -> Vec<Payload> {
+        use qdl_contracts::qdl::marketdata::v2::{
+            Basis, ContractMetadata, FundingRate, LongShortRatio, OpenInterest, Quote, TakerFlow,
+            Ticker, Trade,
+        };
+        use qdl_contracts::qdl::quality::v1::{DataQualityEvent, FeedStateEvent};
+        let all = vec![
+            Payload::Trade(Trade::default()),
+            Payload::Quote(Quote::default()),
+            final_bar(),
+            Payload::BookSnapshot(OrderBookSnapshot::default()),
+            Payload::BookDelta(OrderBookDelta::default()),
+            Payload::FundingRate(FundingRate::default()),
+            Payload::OpenInterest(OpenInterest::default()),
+            Payload::MarkIndexPrice(MarkIndexPrice::default()),
+            Payload::Ticker(Ticker::default()),
+            Payload::FeedState(FeedStateEvent::default()),
+            Payload::QualityEvent(DataQualityEvent::default()),
+            Payload::LongShortRatio(LongShortRatio::default()),
+            Payload::TakerFlow(TakerFlow::default()),
+            Payload::Basis(Basis::default()),
+            Payload::ContractMetadata(ContractMetadata::default()),
+        ];
+        for payload in &all {
+            match payload {
+                Payload::Trade(_)
+                | Payload::Quote(_)
+                | Payload::Bar(_)
+                | Payload::BookSnapshot(_)
+                | Payload::BookDelta(_)
+                | Payload::FundingRate(_)
+                | Payload::OpenInterest(_)
+                | Payload::MarkIndexPrice(_)
+                | Payload::Ticker(_)
+                | Payload::FeedState(_)
+                | Payload::QualityEvent(_)
+                | Payload::LongShortRatio(_)
+                | Payload::TakerFlow(_)
+                | Payload::Basis(_)
+                | Payload::ContractMetadata(_) => {}
+            }
+        }
+        all
+    }
+
+    /// A' (P18.4 G4, 2026-10-16): `md.latest.v2` carries no tombstones, so
+    /// its `delete.retention.ms` is only the transaction-marker lifetime
+    /// (budget `retention.state_topic_tombstones`, golden
+    /// `state_topic_invariants`). The one md.latest.v2 writer is this
+    /// transform (expiry and the bars cleaner write `bars_topic` only): for
+    /// every feed and for the real golden records it emits a non-empty LATEST
+    /// value on the latest topic and never a null value. A feature that
+    /// tombstones a latest product (e.g. delisting) breaks this test and must
+    /// flip the invariant and restore the tombstone lifetime on the topic.
+    #[test]
+    fn md_latest_writer_never_emits_a_tombstone() {
+        let golden: Value = serde_json::from_str(include_str!(
+            "../../../contracts/golden/kn_v220/state_contract.json"
+        ))
+        .unwrap();
+        let invariants = &golden["state_topic_invariants"];
+        assert_eq!(
+            invariants["schema"],
+            json!("qdl.kn.v220.golden.state-topic-invariants.v1")
+        );
+        assert_eq!(
+            invariants["topics"]["md.latest.v2"]["carries_tombstones"],
+            json!(false),
+            "the guard below asserts the declared invariant"
+        );
+        assert_eq!(
+            invariants["topics"]["md.latest.v2"]["frame_kinds"],
+            json!(["LATEST"])
+        );
+
+        let payloads = every_payload();
+        let mut bindings = Vec::new();
+        let mut records = Vec::new();
+        for payload in payloads {
+            let feed = payload_feed(Some(&payload)).to_owned();
+            let interval = (feed == "BAR").then_some("1m");
+            let physical = format!("{UID}/{}/guard", feed.to_lowercase());
+            bindings.push(binding(&feed, interval, &physical));
+            records.push((feed, physical, encoded(UID, payload)));
+        }
+        let mut transform = ProductTransform::new(
+            ProductMap::from_bundle(&bundle_of(bindings, vec![])).unwrap(),
+            TransformSettings {
+                source_topic_id: "ljfjPYApRpWQd79McfTtZg".into(),
+                latest_topic: "md.latest.v2".into(),
+                bars_topic: "md.bars.v2".into(),
+                latest_partitions: 6,
+                bars_partitions: 6,
+                materializer_epoch: 3,
+            },
+        );
+        let mut latest = 0;
+        for (offset, (feed, physical, payload)) in records.into_iter().enumerate() {
+            let outputs = transform
+                .transform(&record(&physical, payload, offset as i64))
+                .unwrap_or_else(|error| panic!("{feed}: {error:?}"));
+            assert_eq!(outputs.len(), 1, "{feed}");
+            for output in outputs {
+                let value = output
+                    .value
+                    .as_deref()
+                    .unwrap_or_else(|| panic!("{feed}: tombstone on {}", output.topic));
+                assert!(!value.is_empty(), "{feed}: empty value");
+                let frame = StateFrame::decode(value).unwrap();
+                if feed == "BAR" {
+                    assert_eq!(output.topic, "md.bars.v2");
+                } else {
+                    assert_eq!(output.topic, "md.latest.v2", "{feed}");
+                    assert_eq!(frame.kind, FrameKind::Latest, "{feed}");
+                    latest += 1;
+                }
+            }
+        }
+        assert_eq!(latest, 14, "every non-BAR feed is a LATEST product");
+    }
+
     #[test]
     fn retained_cap_is_the_largest_demand_plus_headroom() {
         let bars = vec![

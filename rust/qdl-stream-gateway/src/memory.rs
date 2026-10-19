@@ -12,7 +12,9 @@
 //!   live record decoded once for N subscribers is charged once, plus a
 //!   small overhead per queue entry and a full charge per transport copy;
 //!   one subscription may reference at most a fair share of the live
-//!   budget ([`default_queue_bytes_per_subscription`]);
+//!   budget ([`default_queue_bytes_per_subscription`]), and a reserve of it
+//!   is kept for subscriptions at or under a small floor
+//!   ([`LIVE_RESERVE_DIVISOR`]);
 //! - librdkafka's prefetch per consumer;
 //! - the transport of each admitted stream (Subscribe or Replay): tonic's
 //!   encode buffer yields at 32 KiB and hyper holds one chunk until the peer's
@@ -37,6 +39,30 @@ pub const TRANSPORT_STREAM_BYTES: u64 = 96 * 1024;
 /// held 15.85 MB of BOOK_DELTA in one subscription during a stall
 /// (2026-10-10 14:28Z), so a tighter cap would close a healthy consumer.
 pub const SUBSCRIPTION_SHARE_DIVISOR: u64 = 2;
+
+/// Isolation inside the live budget (2026-10-15 stage-100: 2-3 deep lossless
+/// TRADE subscriptions held 28.5 MB of the 32 MiB budget, and 358 streams,
+/// most of them idle QUOTE/BOOK/MARK readers with empty queues, were closed).
+/// A per-subscription cap alone cannot keep the contract above once two or
+/// more subscriptions are deep, so `1 / LIVE_RESERVE_DIVISOR` of the live
+/// budget is headroom that only a subscription at or under its floor may use
+/// (`subscription::ByteBudget::live`). A subscription over its floor may fill
+/// at most the rest; when that is exhausted ITS push fails and it alone is
+/// closed with BACKPRESSURE and a resume token. Derived, not configured: the
+/// replica budget, the per-subscription cap and queue depths are unchanged.
+pub const LIVE_RESERVE_DIVISOR: u64 = 8;
+
+/// A subscription is at or under its floor while the full weight it holds
+/// (queue plus the record offered) is at most `reserve / LIVE_FLOOR_SLOTS`
+/// (256 KiB of the default 4 MiB reserve; deep writers held 5-10 MB), or it
+/// holds at most `subscription::LIVE_FLOOR_ENTRIES` other record, of any size.
+pub const LIVE_FLOOR_SLOTS: u64 = 16;
+
+/// `(reserve, floor)` of a live budget of `queue_total` bytes.
+pub fn live_reserve_and_floor(queue_total: u64) -> (u64, u64) {
+    let reserve = queue_total / LIVE_RESERVE_DIVISOR;
+    (reserve, reserve / LIVE_FLOOR_SLOTS)
+}
 
 /// `QDL_KN_QUEUE_BYTES_PER_SUBSCRIPTION` when unset: a fair share of the
 /// replica live budget (16 MiB of the default 32 MiB).
@@ -193,6 +219,15 @@ mod tests {
         assert_eq!(default_queue_bytes_per_subscription(32 * MIB), 16 * MIB);
         assert!(default_queue_bytes_per_subscription(32 * MIB) < plan(None).queue_total);
         assert_eq!(default_queue_bytes_per_subscription(0), 1);
+    }
+
+    #[test]
+    fn the_live_reserve_is_derived_from_the_unchanged_budget() {
+        assert_eq!(live_reserve_and_floor(32 * MIB), (4 * MIB, 256 * 1024));
+        // Deep subscriptions keep 28 MiB; the writer's measured 15.85 MB
+        // stall still fits its unchanged 16 MiB per-subscription cap.
+        assert!(32 * MIB - live_reserve_and_floor(32 * MIB).0 > 16 * MIB);
+        assert_eq!(live_reserve_and_floor(0), (0, 0));
     }
 
     #[test]

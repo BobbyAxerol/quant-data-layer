@@ -366,6 +366,12 @@ class WarmupStreamSession:
         self._max_buffer_events = max_buffer_events
         self._max_reconnect_attempts = max_reconnect_attempts
         self._reconnect_attempts = 0
+        # Highest offset this session generation has yielded. A reconnect
+        # replays from the confirmed cursor, so re-delivered events at or below
+        # it are not progress and must not renew the reconnect budget; else a
+        # retryable replay budget (RESOURCE_EXHAUSTED REPLAY_*_LIMIT) that
+        # re-delivers the same unacknowledged window would retry forever.
+        self._delivered_high = starting_offset
         self._telemetry = telemetry
         self.state_restored = state_restored
         self._checkpoint_generation_started = state_restored
@@ -387,6 +393,7 @@ class WarmupStreamSession:
             async with self._ack_lock:
                 self.warmup = await self._fresh_snapshot()
                 self._last_seen_offset = self.warmup.watermark_offset
+                self._delivered_high = self.warmup.watermark_offset
                 self._checkpoint_generation_started = False
                 self._events = self._subscribe(
                     self.warmup.stream_cursor
@@ -437,7 +444,9 @@ class WarmupStreamSession:
         self._observed[event.resume_token] = event.logical_offset
         while len(self._observed) > self._max_buffer_events:
             self._observed.popitem(last=False)
-        self._reconnect_attempts = 0
+        if event.logical_offset > self._delivered_high:
+            self._delivered_high = event.logical_offset
+            self._reconnect_attempts = 0
         return event
 
     async def acknowledge_async(self, event: StreamEvent) -> None:

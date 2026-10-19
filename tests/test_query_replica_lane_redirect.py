@@ -14,6 +14,7 @@ import importlib
 import threading
 from types import SimpleNamespace
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
@@ -29,11 +30,12 @@ from qdl.query import (
     QueryProblem,
     V2QueryService,
 )
-from qdl.query.lanes import BoundedReadLane, ReadLaneBusy, ReadLaneRejected
+from qdl.query.lanes import BoundedReadLane, ReadLaneAtCapacity, ReadLaneBusy, ReadLaneRejected
 from qdl.query.service import (
     REPLICA_LANE_BUSY_REASON,
     QueryServiceError,
     _LocalBatchAdmission,
+    _QUEUED_LOCAL_BATCH_RETRY_AFTER_MS,
     _queued_local_batch_lane_policy,
 )
 from qdl.warmup import WarmupSpecification
@@ -208,6 +210,113 @@ class ServiceLaneBusyRedirectTests(unittest.IsolatedAsyncioTestCase):
         await large
 
 
+class QueuedLaneCapacityRetryHintTests(unittest.IsolatedAsyncioTestCase):
+    """A full large-warmup queue tells the client when to come back.
+
+    Stage 100 (2026-10-11, s74 ``startup:bounded``): capacity refusals carried
+    no ``retry_after_ms``, so the SDK retried after 250/500 ms into the same
+    full queue and a session spent its fixed 10-attempt startup budget in
+    about 25 s while the fleet's 60 large warmups needed about 65 s.
+    """
+
+    async def _refusal(self, service, consumer, requirement):
+        # The test executor surfaces an item's typed error as the raise.
+        with self.assertRaises(QueryServiceError) as raised:
+            await _warm(service, consumer, requirement)
+        self.assertEqual(raised.exception.problem.code, CanonicalErrorCode.RATE_LIMITED)
+        self.assertTrue(raised.exception.problem.retryable)
+        return raised.exception.problem
+
+    async def _fill_one_identity(self, service):
+        large = asyncio.create_task(_warm(service, "alpha.okx", _requirement("okx-0", 5000)))
+        await asyncio.wait_for(asyncio.to_thread(service.backend.large_started.wait, 2), 3)
+        lane = service._local_batch_admission_for((_requirement("okx-0", 5000),))
+        queued = [asyncio.create_task(_warm(service, "alpha.okx", _requirement(f"okx-{i}", 2500)))
+                  for i in range(1, 8)]
+        while lane.stats()["pending"] < 8:
+            await asyncio.sleep(0)
+        return lane, [large, *queued]
+
+    async def test_lane_capacity_refusal_is_typed_and_deadline_is_not(self):
+        lane = BoundedReadLane(_queued_local_batch_lane_policy())
+        hold = asyncio.Event()
+        held = [asyncio.create_task(lane.run(hold.wait, consumer_id="a", reserved_bytes=1))
+                for _ in range(8)]
+        while lane.stats()["pending"] < 8:
+            await asyncio.sleep(0)
+        with self.assertRaises(ReadLaneAtCapacity) as full:
+            await lane.run(_ok, consumer_id="a", reserved_bytes=1)
+        self.assertIsInstance(full.exception, ReadLaneRejected)
+        self.assertEqual(str(full.exception), "read lane consumer is at its finite pending bound")
+        with self.assertRaises(ReadLaneRejected) as late:
+            await lane.run(_ok, consumer_id="b", reserved_bytes=1, wait_timeout_ms=1)
+        self.assertNotIsInstance(late.exception, ReadLaneAtCapacity)
+        self.assertEqual(str(late.exception), "read lane admission wait exceeded the declared deadline")
+        hold.set()
+        await asyncio.gather(*held)
+
+    async def test_full_queue_refusal_carries_the_retry_hint_and_unchanged_detail(self):
+        service = _service()
+        lane, held = await self._fill_one_identity(service)
+        problem = await self._refusal(service, "alpha.okx", _requirement("okx-8", 2500))
+        self.assertEqual(problem.retry_after_ms, _QUEUED_LOCAL_BATCH_RETRY_AFTER_MS)
+        # The detail (and so its detail_sha256 in refusal logs/receipts) is unchanged.
+        self.assertEqual(problem.detail, "local canonical-cache batch admission "
+                         "read lane consumer is at its finite pending bound")
+        self.assertEqual(lane.stats()["pending"], 8)  # nothing queued for the refusal
+        service.backend.gate.set()
+        self.assertTrue(all(r.results[0].status == "OK" for r in await asyncio.gather(*held)))
+
+    async def test_queue_wait_deadline_and_redirect_refusals_keep_their_hints(self):
+        service = _service()
+        large = asyncio.create_task(_warm(service, "alpha.okx", _requirement("okx-0", 5000)))
+        await asyncio.wait_for(asyncio.to_thread(service.backend.large_started.wait, 2), 3)
+        short = DataRequirement(
+            instrument_uid="bin", feed=FeedType.BAR, consumer_grade=ConsumerGrade.ALPHA,
+            source_policy_id="crypto_primary_v2", interval="1m",
+            warmup=WarmupSpecification.for_rows(2500, deadline_ms=100),
+        )
+        problem = await self._refusal(service, "alpha.binance", short)
+        self.assertEqual(problem.detail, "local canonical-cache batch admission "
+                         "read lane admission wait exceeded the declared deadline")
+        self.assertIsNone(problem.retry_after_ms)
+        with self.assertRaises(QueryServiceError) as busy:
+            await _warm(service, "alpha.binance", _requirement("bin", 2500), redirect_when_busy=True)
+        self.assertEqual(busy.exception.problem.retry_after_ms, 0)
+        service.backend.gate.set()
+        await large
+
+    async def test_unqueued_default_lane_capacity_refusal_has_no_hint(self):
+        service = _service()
+        service._queued_local_batch_lane = False
+        service._local_batch_admission = _LocalBatchAdmission()
+        large = asyncio.create_task(_warm(service, "alpha.okx", _requirement("okx-0", 5000)))
+        await asyncio.wait_for(asyncio.to_thread(service.backend.large_started.wait, 2), 3)
+        problem = await self._refusal(service, "alpha.okx", _requirement("okx-1", 2500))
+        self.assertIsNone(problem.retry_after_ms)
+        service.backend.gate.set()
+        await large
+
+    async def test_sdk_cold_read_honours_the_hint_without_giving_up(self):
+        from qdl_sdk.client import AsyncDataLayerClient
+        from qdl_sdk.errors import DataLayerError
+
+        sdk = AsyncDataLayerClient(query_transport=SimpleNamespace(), stream_transport=SimpleNamespace(),
+                                   consumer_id="test-only")
+        calls = []
+
+        async def fetch():
+            calls.append(1)
+            if len(calls) < 3:
+                raise DataLayerError("RATE_LIMITED", "full", retryable=True,
+                                     retry_after_ms=_QUEUED_LOCAL_BATCH_RETRY_AFTER_MS)
+            return "ok"
+
+        with patch("qdl_sdk.client.asyncio.sleep", new_callable=AsyncMock) as sleep:
+            self.assertEqual(await sdk._cold_read(fetch), "ok")
+        self.assertEqual([c.args[0] for c in sleep.call_args_list], [2.0, 2.0])
+
+
 class _Access(SimpleNamespace):
     def __getattr__(self, name):
         if name.startswith("require_"):
@@ -281,6 +390,19 @@ class RouterReplicaRedirectHeaderTests(unittest.TestCase):
         self.assertEqual(response.status_code, 429)
         self.assertNotIn("X-QDL-Refusal-Reason", response.headers)
         self.assertNotIn("Retry-After", response.headers)
+
+    def test_capacity_refusal_body_carries_retry_after_ms_for_the_sdk(self):
+        async def refuse(batch, *, purpose, completion, **kwargs):
+            raise QueryServiceError(
+                QueryProblem(CanonicalErrorCode.RATE_LIMITED, "read lane is full", True,
+                             _QUEUED_LOCAL_BATCH_RETRY_AFTER_MS),
+                request_id="req-3",
+            )
+        self.service.warmup_batch_completed_async = refuse
+        response = self._get({"X-QDL-Replica-Redirect": "0"})
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.json()["retry_after_ms"], _QUEUED_LOCAL_BATCH_RETRY_AFTER_MS)
+        self.assertNotIn("X-QDL-Refusal-Reason", response.headers)
 
 
 if __name__ == "__main__":

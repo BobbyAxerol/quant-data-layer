@@ -1,0 +1,88 @@
+{
+ "schema": "qdl.p184.consumer-manifest-packaging.v1",
+ "consumer_id": "trading-system.paper.stable",
+ "finding": "The deployed Paper consumer manifest is revision 11 (sha256 efd482fa...) while consumers/stable/trading-system-paper.yaml in the repository is revision 10 (sha256 1e489237..., 61 requirements, no BTC-USD-SWAP). r11 has 65 requirements (+4 OKX_INVERSE BTC-USD-SWAP QUOTE / MARK_INDEX_PRICE / BOOK_SNAPSHOT / BOOK_DELTA) and quotas max_streams 77 / requests_per_minute 3000.",
+ "packaged_file": {
+  "path": "upgrade/evidence/releases/v2.2.4/trading-system.paper.stable-r11.yaml",
+  "sha256": "efd482fa4ffe7f9176387324f47d47d7e1c801bae6afb2c0747c3ce43652b8fc",
+  "note": "byte copy of the deployed file; release evidence, not a loaded manifest path"
+ },
+ "deployed": {
+  "basis": "docker exec <query> sha256sum, read-only, 2026-10-18 ~15:00Z",
+  "query_kn_1": {
+   "path": "/consumer-realms/trading-system.paper.stable-r11.yaml",
+   "sha256": "efd482fa4ffe7f9176387324f47d47d7e1c801bae6afb2c0747c3ce43652b8fc"
+  },
+  "query_kn_2": {
+   "path": "/consumer-realms/trading-system.paper.stable-r11.yaml",
+   "sha256": "efd482fa4ffe7f9176387324f47d47d7e1c801bae6afb2c0747c3ce43652b8fc"
+  },
+  "realm_mount_source": "~/.local/state/qdl-v2/p184-d3-capacity-20261009/reader-public-r16 -> /consumer-realms",
+  "baked_in_image_unused_for_paper": {
+   "path": "/app/consumers/stable/trading-system-paper.yaml",
+   "sha256": "1e489237ad73fa3eeafdbd9decd0fbbbf9eefdee1a99a21c9b1409651fc6fe28",
+   "revision": 10
+  },
+  "runtime_catalog": {
+   "path": "/runtime/stable-source-bindings.yaml",
+   "sha256": "fc3a1e1ec283e6c49b671f55cc270bd8f0241d595b241e6c7f5c87f5dc686cc5",
+   "catalog_revision": 12
+  }
+ },
+ "source": {
+  "status": "ESTABLISHED_AND_REPRODUCED",
+  "renderer": {
+   "path": "scripts/prepare_paper_read_extension.py",
+   "commit": "76db472",
+   "sha256": "7594258f79a0c9d6b0beb8cc65e9e454ae0f3527e6211af4c06b87509067351d"
+  },
+  "rendered_at": "2026-10-09 (DL plan section 'D1 rev11 rendered by Claude'; applied 2026-10-09 15:47:40-15:50:02Z, section 'D1 rev11 APPLIED')",
+  "inputs": {
+   "catalog": {
+    "path": "~/.local/state/qdl-v2/p184-d1-rev11-20261009/base-catalog.yaml",
+    "sha256": "fc3a1e1ec283e6c49b671f55cc270bd8f0241d595b241e6c7f5c87f5dc686cc5",
+    "note": "= the deployed runtime catalog (revision 12)"
+   },
+   "manifest": {
+    "path": "~/.local/state/qdl-v2/p184-d1-rev11-20261009/base-manifest.yaml",
+    "sha256": "1e489237ad73fa3eeafdbd9decd0fbbbf9eefdee1a99a21c9b1409651fc6fe28",
+    "note": "= the repository r10 file"
+   },
+   "binding": {
+    "path": "~/.local/state/qdl-v2/p184-d1-rev11-20261009/base-binding.json",
+    "sha256": "5703582ac3c1105789f8fe2c29839d9c20c247bcdfe33254182c495f4581c568",
+    "note": "writer binding r22 (rev 10)"
+   },
+   "quotas": {
+    "max_streams": 77,
+    "requests_per_minute": 3000
+   }
+  },
+  "outputs_at_render": {
+   "prepared_json": {
+    "path": "~/.local/state/qdl-v2/p184-d1-rev11-20261009/prepared.json",
+    "sha256": "553cab32b270ee37808697d1c742a6eac50ed0cf776dd070a514f94bdb5c6b9e"
+   },
+   "manifest_yaml": {
+    "path": "~/.local/state/qdl-v2/p184-d1-rev11-20261009/trading-system-paper-r11.yaml",
+    "sha256": "efd482fa4ffe7f9176387324f47d47d7e1c801bae6afb2c0747c3ce43652b8fc"
+   },
+   "consumer_manifest_sha256_canonical_json": "2d661d46262b1a8f5bdbbf631e5bc53426476db0a10c49c063173fa3da1b58c5"
+  },
+  "reproduction_2026_10_18": {
+   "command": "docker run --rm --network none --user 1001:1001 --entrypoint python -v <render dir>:/in:ro -v <scratch>:/out qdl-v2-python:2.2.4-31a5155 -B /app/scripts/prepare_paper_read_extension.py --catalog /in/base-catalog.yaml --manifest /in/base-manifest.yaml --binding /in/base-binding.json --output /out/prepared.json --max-streams 77 --requests-per-minute 3000",
+   "image": "qdl-v2-python:2.2.4-31a5155 sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff (script inside = repo script, sha256 7594258f...)",
+   "prepared_json_sha256": "553cab32b270ee37808697d1c742a6eac50ed0cf776dd070a514f94bdb5c6b9e",
+   "prepared_json_identical": true,
+   "yaml_safe_dump_of_prepared_manifest_sha256": "efd482fa4ffe7f9176387324f47d47d7e1c801bae6afb2c0747c3ce43652b8fc",
+   "matches_deployed": true
+  }
+ },
+ "repository_loadable_path": {
+  "path": "consumers/stable/trading-system-paper.yaml",
+  "kept_at_revision": 10,
+  "why_not_replaced": "Tried in the worktree and reverted: with r11 in that path 13 manifest/catalog test modules give 1 failure and 38 errors (74 tests; r10 baseline 91 tests OK) in the qdl-v2-python:2.2.4-31a5155 image. Causes: the repository catalog (config/v2/stable-source-bindings.yaml, catalog revision 11, deliberately baked for the bar edge checkpoint, coupling C.19) does not declare instrument 8482b54b-6d9d-5aad-abe8-e22447d183a1 (BTC-USD-SWAP); config/v2/stable-v2-release-routing.yaml pins the r10 manifest/demand binding; tests/test_execution_mark_index_consumer_latency.py expects exactly 10 MARK bindings (r11 has 11). Moving the loadable path to r11 therefore needs the catalog revision 12, the release routing and those tests in one change, and changes what a future python image bakes; that is a separate owner-approved slice (IDR-127), not part of this packaging. The runtime is unchanged by this packaging.",
+  "test_commands": "docker run --rm --network none ... qdl-v2-python:2.2.4-31a5155 -B -m unittest tests.test_kn_gateway_bundle tests.test_trading_consumer_scope tests.test_phase103_consumer_acceptance tests.test_phase24315_reference_entitlement_materialization tests.test_kn_products tests.test_sandbox_extension tests.test_execution_mark_index_consumer_latency tests.test_kn_alpha_reference_access tests.test_phase533_alpha_runtime_entitlements tests.test_p184_dr05_quiet tests.test_catalog_demand_consistency tests.test_phaseb_stable_release tests.test_paper_read_extension"
+ },
+ "other_drift_seen_not_resolved": "consumers/stable/alpha-okx-paper.yaml is revision 14 (sha256 e8fb3ea7...) while the deployed realm holds alpha.okx.paper.stable-r15.yaml (sha256 33b9cfd4...); alpha-binance-paper r16 matches the realm. Not investigated in this slice (IDR-127)."
+}

@@ -63,8 +63,8 @@ class Phase533AlphaRuntimeEntitlementTests(unittest.TestCase):
                 FeedType.QUOTE: 5,
                 FeedType.BOOK_SNAPSHOT: 5,
                 FeedType.BOOK_DELTA: 5,
-                "reference": 35,
-                "total": 125 + UNIVERSE_PER_VENUE["BINANCE"],
+                "reference": 40,  # + current OI x5 (IDR-090)
+                "total": 130 + UNIVERSE_PER_VENUE["BINANCE"],
             },
             "alpha.okx.paper.stable": {
                 FeedType.BAR: 70 + UNIVERSE_PER_VENUE["OKX"],

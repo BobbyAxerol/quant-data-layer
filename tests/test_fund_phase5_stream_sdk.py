@@ -1418,6 +1418,72 @@ class Phase5StreamSdkTests(unittest.IsolatedAsyncioTestCase):
             [1, 1, 1],
         )
 
+    def _replay_budget_error(self):
+        # What the transport raises for the 2.2.x gateway's retryable replay
+        # budget (RESOURCE_EXHAUSTED "RATE_LIMITED:REPLAY_MATCHED_LIMIT:...").
+        return SlowConsumerError(
+            "RATE_LIMITED",
+            "RATE_LIMITED:REPLAY_MATCHED_LIMIT:replay reached its matched-record bound",
+            retryable=True,
+        )
+
+    async def test_replay_budget_redelivering_same_window_is_bounded(self):
+        """A non-acknowledging session replays the same window on every
+        reconnect; re-delivered events must not renew the reconnect budget."""
+        requirement = DataRequirement(
+            self.record.instrument_uid, Feed.BAR, Grade.ALPHA, "alpha_binance_v1",
+            interval="1m", warmup_limit=1,
+        )
+        window = lambda: (  # noqa: E731
+            StreamEvent(6, "token-6", envelope(self.record, 6)),
+            StreamEvent(7, "token-7", envelope(self.record, 7)),
+            self._replay_budget_error(),
+        )
+        stream = ScriptedStreamTransport((window(), window(), window()))
+        client = AsyncDataLayerClient(
+            query_transport=FakeQueryTransport("snapshot-token", watermark=5),
+            stream_transport=stream, consumer_id="alpha-shadow",
+            cursor_store=MemoryCursorStore(), max_reconnect_attempts=2,
+        )
+        codes = []
+        async with client.warmup_then_stream(requirement) as session:
+            with self.assertRaises(SlowConsumerError):
+                async for event in session:
+                    codes.append(event.code if isinstance(event, ControlEvent) else event.logical_offset)
+        self.assertEqual(codes, [6, 7, "RECONNECTED", 6, 7, "RECONNECTED", 6, 7])
+        self.assertEqual(stream.tokens, ["snapshot-token"] * 3)
+
+    async def test_replay_budget_pages_with_progress_continue_past_attempt_cap(self):
+        """An acknowledging consumer advances the cursor on each bounded replay
+        page; forward progress renews the budget, so it is not capped."""
+        requirement = DataRequirement(
+            self.record.instrument_uid, Feed.BAR, Grade.ALPHA, "alpha_binance_v1",
+            interval="1m", warmup_limit=1,
+        )
+        pages = [
+            (StreamEvent(offset, f"token-{offset}", envelope(self.record, offset)),
+             self._replay_budget_error())
+            for offset in (6, 7, 8, 9)
+        ]
+        pages.append((StreamEvent(10, "token-10", envelope(self.record, 10)),))
+        stream = ScriptedStreamTransport(pages)
+        client = AsyncDataLayerClient(
+            query_transport=FakeQueryTransport("snapshot-token", watermark=5),
+            stream_transport=stream, consumer_id="alpha-shadow",
+            cursor_store=MemoryCursorStore(), max_reconnect_attempts=1,
+        )
+        offsets = []
+        async with client.warmup_then_stream(requirement) as session:
+            async for event in session:
+                if isinstance(event, StreamEvent):
+                    offsets.append(event.logical_offset)
+                    session.acknowledge(event)
+        self.assertEqual(offsets, [6, 7, 8, 9, 10])
+        self.assertEqual(
+            stream.tokens,
+            ["snapshot-token", "token-6", "token-7", "token-8", "token-9"],
+        )
+
     async def test_warmup_applies_realtime_quality_only_to_tail_watermark(self):
         requirement = DataRequirement(
             self.record.instrument_uid, Feed.BAR, Grade.EXECUTION,

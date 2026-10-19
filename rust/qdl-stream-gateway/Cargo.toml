@@ -10,7 +10,14 @@ description = "Kafka-native V2 stream gateway (KN-2): the public MarketDataStrea
 name = "qdl-stream-gateway"
 path = "src/main.rs"
 
+[features]
+default = []
+isolated-replay-clock = ["qdl-test-data-clock/isolated-replay-clock"]
+# TEST_ONLY partition-lock wait/hold histograms (N1-OPT OPT-01); never in images.
+lock-profile = []
+
 [dependencies]
+qdl-test-data-clock.workspace = true
 base64.workspace = true
 # KN-4 D29 read-view client: the workspace pin (rustls, no default features);
 # TLS is a preconfigured rustls ClientConfig built in `query_view.rs`.
@@ -32,3 +39,6 @@ tokio-stream = "=0.1.17"
 # No `tls` feature: it pulls the unmaintained `rustls-pemfile` (RUSTSEC-2025-0134);
 # mutual TLS is built in `tls.rs` with rustls + tokio-rustls.
 tonic = { version = "=0.12.3", default-features = false, features = ["transport", "codegen", "prost"] }
+
+[dev-dependencies]
+qdl-test-data-clock = { workspace = true, features = ["test-support"] }

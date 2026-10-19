@@ -1,5 +1,38 @@
 # SDK Changelog
 
+## 2.4.1 (replay budget status opt-in, progress-bounded reconnects; IDR-096)
+
+`GrpcStreamTransport` sets the additive `SubscribeRequest.replay_budget_status_v2 = 8`
+(bool). A stream gateway built from f5cd787 or later (Data Layer v2.2.4) then ends a Subscribe catch-up that reaches a replay
+work budget (`REPLAY_MATCHED_LIMIT`, in-scan `REPLAY_SCAN_LIMIT`, `REPLAY_BYTE_LIMIT`)
+with retryable `RESOURCE_EXHAUSTED "RATE_LIMITED:{reason}:..."` instead of
+`OUT_OF_RANGE "CURSOR_EXPIRED:..."`. An older gateway ignores field 8 and keeps the
+`CURSOR_EXPIRED` mapping; both are handled. A range refused at submit (its offset span
+alone exceeds the scan budget) stays `OUT_OF_RANGE CURSOR_EXPIRED:REPLAY_SCAN_LIMIT`
+for every client. `WarmupStreamSession` renews its reconnect budget only when a
+delivered offset exceeds the highest offset this session generation has yielded, so
+a retryable replay budget that re-delivers the same unacknowledged window cannot retry
+forever. Clients that do not set field 8 (2.1.x-2.4.0) see no change. Public models
+and positional `StreamEvent` construction are unchanged.
+
+## 2.4.0 (Subscribe gateway clocks)
+
+`StreamEvent` gains three optional diagnostic fields, `gateway_dispatch_wall_ns`,
+`gateway_dequeue_wall_ns` and `gateway_send_wall_ns` (int Unix ns or `None`),
+read from the additive protobuf fields `StreamRecord.gateway_dispatch_wall_ns = 3`,
+`gateway_dequeue_wall_ns = 4` and `gateway_send_wall_ns = 5`. A 2.4.0 stream
+gateway sets them on every Subscribe event record, each record of a batched
+response with its own dispatch and dequeue clocks: dispatch = the live hub
+queued the record for the subscription (0/`None` for replayed records), dequeue
+= the subscription task took it, send = the gRPC transport took the response
+from the gateway's bounded handoff to encode it. They split the Data Layer
+ingest -> SDK segment into hub backlog, subscription queue wait, transport
+pull (client flow control) and network + client buffers. Controls and Replay
+records carry none; an older gateway sends none (all `None`). The fields are
+not part of `StreamEvent` equality and are never delivery authority;
+positional construction `StreamEvent(offset, token, event)` is unchanged, and
+2.1.x-2.3.x clients ignore the new wire fields.
+
 ## 2.3.0 (batched Subscribe)
 
 `GrpcStreamTransport` asks the stream gateway for up to

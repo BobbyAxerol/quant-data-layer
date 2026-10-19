@@ -1,0 +1,1228 @@
+{
+ "schema": "qdl.release-scorecard.v1",
+ "release": "2.2.4",
+ "status": "PASS_UNDER_AMENDMENTS_WITH_POST_HOC_A5",
+ "status_without_post_hoc": "FAIL_G11_ONE_SLICE_EXTERNAL_QUIET",
+ "gate_table": {
+  "path": "trading-system upgrade/p184-phase-d-gates.md (FROZEN 2026-10-09)",
+  "sha256": "c67bf69bb921c992964eb8ff8b2e1bb17085a943fdf756d55526b6269641d5c4"
+ },
+ "frozen_budget": {
+  "path": "config/v2/p184-stage100-budget.json",
+  "sha256": "ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541"
+ },
+ "frozen_addendum": {
+  "path": "config/v2/p184-stage100-g4-addendum.json",
+  "sha256": "4ed59dca0212566d3ff03c5a4c23eed3d252d0150844b9a4fd6fa543333d78b5"
+ },
+ "amendments": {
+  "G4-A1": {
+   "id": "G4-A1",
+   "alias": "A1",
+   "path": "config/v2/p184-stage100-g4-amendment-1.json",
+   "sha256": "1c8a276f6cc6c03cdf768cdc9d31b65902bd849a1f3b7df56cda07ea47e6efa6",
+   "post_hoc": false,
+   "frozen": "before the counted run (recorded in campaign.json g4_amendment_sha256)",
+   "scope": "G4 row mark_index_price|OKX|: same-event internal split"
+  },
+  "G4-A2": {
+   "id": "G4-A2",
+   "alias": "A2",
+   "path": "config/v2/p184-stage100-g4-amendment-2.json",
+   "sha256": "99961c41e08993944d158ae812ca61514271862a2d03e011f5d01ce71a0f9997",
+   "post_hoc": false,
+   "frozen": "before the counted run (recorded in campaign.json g4_amendment_2_sha256)",
+   "scope": "G4 bar rows >= 8h without a frozen baseline REPORT_ONLY; no threshold change"
+  },
+  "A3": {
+   "id": "A3",
+   "path": "config/v2/p184-stage100-a3-external-attribution.json",
+   "sha256": "384e85121c7c4c2fec06de12dd031a78550ac199fe9b6da9771dec118df5cec9",
+   "post_hoc": false,
+   "frozen": "before the counted run (recorded in campaign.json a3_sha256; runtime-image pin refresh of 2026-10-18 19:15Z for the rustls roll, rules unchanged; cc5fc7dc... -> 384e8512...)",
+   "applied_in_run": true,
+   "rescued_units": 0
+  },
+  "A4v2": {
+   "id": "A4",
+   "version": 2,
+   "path": "config/v2/p184-stage100-a4-v2-preregistered.json",
+   "sha256": "63f98668150bfda776317f97114b73855800515d0cfc9b7aa90ccb050f500324",
+   "post_hoc": false,
+   "label": "PRE_REGISTERED",
+   "frozen_at": "2026-10-18T16:50:47Z",
+   "binding": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.a4-v2-binding.json",
+    "sha256": "f08b594a07a1f213ce0710b93c0d853a1c62848786f7f6a40ccf908597f55f73"
+   },
+   "close": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.a4-v2-close.json",
+    "sha256": "ba3325230063fef5f1c89be75b6ee06a5a447ada12b62ef2ef14a20d7b12ed3a"
+   },
+   "rescore_receipt": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/scorecard.a4-v2.json",
+    "sha256": "7fffb04e3d06fb6dfbe32d749f59de64aa951bbd71d1ffe4b3284a1b8e4fceee"
+   },
+   "rescore_tool": {
+    "path": "scripts/p184_a4_preregistered.py",
+    "sha256": "b93d295f75f0b62f268ec39f65d28b7f60e64daa97e3ee737a371f42f7d90181"
+   },
+   "rules_module": {
+    "path": "scripts/p184_a4_post_hoc.py",
+    "sha256": "23b78e4ae7a367252cf8033aa64ee6357987c2117e7f6516679fd4c6efafba26"
+   },
+   "applied_in_run": true,
+   "needed": false,
+   "note": "applied (bound before load, close equal) but not needed: G2 and G4 PASS without it; the scorecard with A4 v2 equals the frozen one on every verdict"
+  },
+  "A5": {
+   "id": "A5",
+   "version": 1,
+   "path": "config/v2/p184-stage100-a5-g11-trade-clock.json",
+   "sha256": "c5b46c5faefe20e31061a3bd647b9e60537b982eee43b484715ec9cdcc5aae78",
+   "post_hoc": true,
+   "label": "POST_HOC_OWNER_DECISION",
+   "frozen_at": "2026-10-19T05:03:03Z",
+   "adopted": "after the counted run was scored (scorecard.json 2026-10-19 04:39Z)",
+   "applied_to": "p184-final-campaign-20261019T040311Z only (post hoc); pre-registered for campaigns started after the freeze",
+   "classification": "EXTERNAL_QUIET (venue printed no trade on OKX BNB-USDT-SWAP for 41.9 s; adjacent trade ids 241971262 / 241971263)",
+   "decision": "owner rule 2026-10-18 ~16:00Z 'n\u1ebfu gate kh\u00f4ng \u0111\u1ea1t x\u00e1c \u0111\u1ecbnh l\u00e0 l\u1ed7i external th\u00ec n\u1edbi gate r\u1ed3i release g\u1ecdn nh\u00e9' + 'duy\u1ec7t h\u1ebft theo recommend c\u1ee7a b\u1ea1n, k h\u1ecfi l\u1ea1i'",
+   "rationale": "upgrade/evidence/releases/v2.2.4/a5-g11-trade-clock.md",
+   "rescore_tool": {
+    "path": "scripts/p184_a5_g11_trade_clock.py",
+    "sha256": "4892abd1630eff84c1a3b6eb0b57b3c57912883cbd354378d686e67ab89af7e7"
+   },
+   "rescore_receipt": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/scorecard.a5.json",
+    "sha256": "b1c2e7b450363f094c25adb34988f9356da327ef3d0b6a863a001dab2692d08d"
+   },
+   "evidence": {
+    "reader.py": {
+     "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.g11-forensic/reader.py",
+     "sha256": "5fcc088a053a058a882174daa3b24adc1edbcf455869d138006c3de1ecd25d7c"
+    },
+    "canonical.jsonl": {
+     "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.g11-forensic/canonical.jsonl",
+     "sha256": "cf96554ec3d9affa646a9be4dd2fb8f64fbb2dd9751a3f37b54b178ffc1f80e8"
+    },
+    "okx-history-trades-after-241971264.json": {
+     "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.g11-forensic/okx-history-trades-after-241971264.json",
+     "sha256": "b579fdb9f13fe17844e6c266f97e03e10adffb924a145fb96da07ff0589da4d6"
+    }
+   }
+  }
+ },
+ "scoring_rule": "steady state >= 30 min at the stage-100 workload plus one burst window; a measurement outside the protocol can FAIL a gate but cannot PASS it; NOT_MEASURED is never upgraded",
+ "campaign": {
+  "dir": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z",
+  "load_window_utc": "2026-10-19T04:05:17Z..2026-10-19T04:35:17Z",
+  "load_window_unix_s": [
+   1792382717.1841352,
+   1792384517.1841352
+  ],
+  "protocol_met": true,
+  "protocol_problems": [],
+  "runtime_identity": {
+   "writer_image": "sha256:2deb90b0cc52eae7610fa44692f90df077e9db100ca259e38fd652a2dc1c5dc5",
+   "writer_restarts": 0,
+   "writer_started": "2026-10-19T04:01:37.796004849Z"
+  },
+  "files": {
+   "scorecard.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/scorecard.json",
+    "sha256": "ebe11b8c10145bb92b7a850c4134d81101aaf7000a210f198b175316b20acbbf"
+   },
+   "scorecard.a5.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/scorecard.a5.json",
+    "sha256": "b1c2e7b450363f094c25adb34988f9356da327ef3d0b6a863a001dab2692d08d"
+   },
+   "scorecard.a4-v2.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/scorecard.a4-v2.json",
+    "sha256": "7fffb04e3d06fb6dfbe32d749f59de64aa951bbd71d1ffe4b3284a1b8e4fceee"
+   },
+   "campaign.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/campaign.json",
+    "sha256": "6f6098cb950c177237cd663cc36b6891c85d12f19aaa8b1b35a84c174e9b3ee0"
+   },
+   "timeline.jsonl": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/timeline.jsonl",
+    "sha256": "a6b69e7f725316c3a3ed247285c9edfd41cad6af69bc0acbdc1d76b20c5f2bda"
+   },
+   "stage100/receipt.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/stage100/receipt.json",
+    "sha256": "b0c1674cfc72f813ced6875cd5ff08b3c871ad3548d9403d3ded5f9884301700"
+   },
+   "stage100/gates.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/stage100/gates.json",
+    "sha256": "f4895f43cb700489205fd6c32f837d7a3afd73d89f4f38fc5a50829bf60cba84"
+   },
+   "stage100/host.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/stage100/host.json",
+    "sha256": "2a0f2da4185e714bb297982037c9221c92981362d6bcc0d6068f47cd92bc8bf7"
+   },
+   "client-smoke/receipt.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/client-smoke/receipt.json",
+    "sha256": "d22d7bbdec57603c3596a69613b742ae39c88328b097652b4b013704315ff318"
+   },
+   "query-funding-allowance.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/query-funding-allowance.json",
+    "sha256": "ebd852fd6156710eba6def5a9a4557ff2d15f97165cf61902f61dabd83e80da3"
+   },
+   "a3-timeline/timeline.jsonl": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/a3-timeline/timeline.jsonl",
+    "sha256": "c9f042d04198179c1f4e3a4be9f5d143439eca490428ce76e20af6ee737078f5"
+   },
+   "a3-local/receipt.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/a3-local/receipt.json",
+    "sha256": "8b3faad7a45a1dd472467da36fbf3d858da4565efbc962fa9d55e211d20b4e53"
+   },
+   "g11/g11-summary.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/g11/g11-summary.json",
+    "sha256": "77cac9b625bd1729cd46f7b003b40b397fd5d4de2f29dee7f8da79cc4b59253f"
+   },
+   "g11/g11-observations.jsonl": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/g11/g11-observations.jsonl",
+    "sha256": "01eddf13fbe0802f1ecc32fff1c0da73517ee68a024524786450e86be1385adf"
+   },
+   "trace/transit-load.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/trace/transit-load.json",
+    "sha256": "003c42a9dc338e444e7435ffd59be5e7fb7cf68032afce3e100c25aa932edc44"
+   },
+   "trace/mark-load.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/trace/mark-load.json",
+    "sha256": "b7e0c582b97786da88f04b463d8fe6fae2a3ce1354d79c0eec56636c623b9b8e"
+   }
+  },
+  "logs": {
+   ".run.log": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.run.log",
+    "sha256": "872e1abc27d90f156df4d723f6c6cb1bbd5a16cf10c57dd2233f2b3002b4f97e"
+   },
+   ".guard.log": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.guard.log",
+    "sha256": "54b3caa445ab46770f6fcd23d96f93297f454bf9aa2e7b99e33a9e23e8ef02f3"
+   },
+   ".guard/summary.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.guard/summary.json",
+    "sha256": "8593cbeaf986d89bf22e36a3d225a3b0b35ea1f2d13f60e815f85e03aebded01"
+   },
+   ".guard/host.jsonl": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.guard/host.jsonl",
+    "sha256": "a18a6bf80414829b9a9b0ce326308573acea278aecc323e2f2f8b77340d6007c"
+   },
+   ".g11-watcher.log": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.g11-watcher.log",
+    "sha256": "54582015613317b3ea8ddc291dda40aa477b854844a9381d13b9b1f6c5bb2933"
+   },
+   ".a4-v2-binding.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.a4-v2-binding.json",
+    "sha256": "f08b594a07a1f213ce0710b93c0d853a1c62848786f7f6a40ccf908597f55f73"
+   },
+   ".a4-v2-close.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.a4-v2-close.json",
+    "sha256": "ba3325230063fef5f1c89be75b6ee06a5a447ada12b62ef2ef14a20d7b12ed3a"
+   }
+  }
+ },
+ "gates": {
+  "G1": {
+   "verdict": "PASS",
+   "reason": "every BOOK row inside",
+   "rule": "p95 <= 500 ms, p99 <= 1000 ms (n >= 100), max < 2000 ms per feed/venue",
+   "rows": [
+    {
+     "feed_venue": "BOOK_DELTA|BINANCE",
+     "p95": 164.8,
+     "p99": 223.6,
+     "max": 617.7,
+     "n": 84460
+    },
+    {
+     "feed_venue": "BOOK_DELTA|OKX",
+     "p95": 171.6,
+     "p99": 231.4,
+     "max": 589.3,
+     "n": 93546
+    },
+    {
+     "feed_venue": "BOOK_SNAPSHOT|BINANCE",
+     "p95": 180.9,
+     "p99": 256.5,
+     "max": 583.1,
+     "n": 9253
+    },
+    {
+     "feed_venue": "BOOK_SNAPSHOT|OKX",
+     "p95": 181.5,
+     "p99": 253.1,
+     "max": 609.5,
+     "n": 11222
+    }
+   ]
+  },
+  "G2": {
+   "verdict": "PASS",
+   "reason": "every row inside; native scope LOAD_SLICES_SUPERSET: LOAD_SLICES_SUPERSET [1792382700000000000, 1792384560000000000) (every 60 s slice intersecting the load window, edge slices in full)",
+   "rule": "TRADE p95 <= 500 ms and max < 1500 ms; QUOTE and MARK p95 <= 500 ms and max < 1000 ms",
+   "rows": [
+    {
+     "feed_venue": "TRADE|BINANCE",
+     "p50": 109.0,
+     "p95": 196.0,
+     "p99": 260.0,
+     "max": 376.803913,
+     "n": 113269,
+     "observed": "INSIDE"
+    },
+    {
+     "feed_venue": "TRADE|OKX",
+     "p50": 96.0,
+     "p95": 180.0,
+     "p99": 234.0,
+     "max": 388.413164,
+     "n": 28687,
+     "observed": "INSIDE"
+    },
+    {
+     "feed_venue": "QUOTE|BINANCE",
+     "p50": 98.0,
+     "p95": 153.0,
+     "p99": 193.0,
+     "max": 405.820118,
+     "n": 120117,
+     "observed": "INSIDE"
+    },
+    {
+     "feed_venue": "QUOTE|OKX",
+     "p50": 106.0,
+     "p95": 162.0,
+     "p99": 205.0,
+     "max": 409.994639,
+     "n": 107398,
+     "observed": "INSIDE"
+    },
+    {
+     "feed_venue": "MARK_INDEX_PRICE|BINANCE",
+     "p50": 297.1,
+     "p95": 350.2,
+     "p99": 400.1,
+     "max": 515.5,
+     "n": 9000,
+     "observed": "INSIDE"
+    },
+    {
+     "feed_venue": "MARK_INDEX_PRICE|OKX",
+     "p50": 225.2,
+     "p95": 332.9,
+     "p99": 373.6,
+     "max": 586.8,
+     "n": 21529,
+     "observed": "INSIDE"
+    }
+   ],
+   "a4_v2": {
+    "verdict": "PASS",
+    "needed": false
+   }
+  },
+  "G3": {
+   "verdict": "PASS",
+   "reason": "g3 probe",
+   "rule": "p95 <= 5 s, max < 60 s",
+   "measured": {
+    "max": 3208,
+    "min": 136,
+    "n": 320,
+    "p50": 780,
+    "p95": 1641,
+    "p99": 3135
+   }
+  },
+  "G4": {
+   "verdict": "PASS",
+   "reason": "every row inside",
+   "rule": "candidate p95 <= frozen baseline p95 x 1.2 per row; missing coverage blocks the gate; amendment G4-A1 row mark_index_price|OKX|: same-event internal split (CreateTime - newest component receipt) p95 <= 200.9 ms and max <= 993.4 ms on windows with >= 5 samples (recomputed baseline x 1.2); composite, component gap and venue probe report-only; a window without probe coverage is UNKNOWN, not EXTERNAL; amendment G4-A2: bar rows with interval >= 8h and no frozen baseline report-only (owner B1), no threshold changes; addendum rows: candidate max <= baseline max x 1.2 on windows with >= 5 samples, 1h/2h/4h/6h and thin-baseline rows report-only",
+   "rows": [
+    {
+     "row": "bar|BINANCE|15m",
+     "basis": null,
+     "verdict": "PASS",
+     "limit_p95_ms": 40728.7,
+     "limit_max_ms": null,
+     "n_per_window": [
+      0,
+      0,
+      5,
+      0,
+      5
+     ],
+     "p95_ms_per_window": [
+      null,
+      null,
+      8007.62,
+      null,
+      8036.952
+     ],
+     "max_ms_per_window": [
+      null,
+      null,
+      8007.62,
+      null,
+      8036.952
+     ]
+    },
+    {
+     "row": "bar|BINANCE|1m",
+     "basis": null,
+     "verdict": "PASS",
+     "limit_p95_ms": 257.6,
+     "limit_max_ms": null,
+     "n_per_window": [
+      10,
+      10,
+      10,
+      10,
+      15
+     ],
+     "p95_ms_per_window": [
+      105.956,
+      104.834,
+      142.303,
+      146.452,
+      224.615
+     ],
+     "max_ms_per_window": [
+      105.956,
+      104.834,
+      142.303,
+      146.452,
+      224.615
+     ]
+    },
+    {
+     "row": "bar|BINANCE|30m",
+     "basis": null,
+     "verdict": "PASS",
+     "limit_p95_ms": 25836.6,
+     "limit_max_ms": null,
+     "n_per_window": [
+      0,
+      0,
+      0,
+      0,
+      5
+     ],
+     "p95_ms_per_window": [
+      null,
+      null,
+      null,
+      null,
+      8037.403
+     ],
+     "max_ms_per_window": [
+      null,
+      null,
+      null,
+      null,
+      8037.403
+     ]
+    },
+    {
+     "row": "bar|BINANCE|3m",
+     "basis": null,
+     "verdict": "PASS",
+     "limit_p95_ms": 27273.2,
+     "limit_max_ms": null,
+     "n_per_window": [
+      5,
+      0,
+      5,
+      5,
+      5
+     ],
+     "p95_ms_per_window": [
+      6860.79,
+      null,
+      8008.377,
+      6873.546,
+      8037.137
+     ],
+     "max_ms_per_window": [
+      6860.79,
+      null,
+      8008.377,
+      6873.546,
+      8037.137
+     ]
+    },
+    {
+     "row": "bar|OKX|1m",
+     "basis": null,
+     "verdict": "PASS",
+     "limit_p95_ms": 73817.2,
+     "limit_max_ms": null,
+     "n_per_window": [
+      10,
+      10,
+      10,
+      10,
+      15
+     ],
+     "p95_ms_per_window": [
+      61213.096,
+      61296.045,
+      61387.889,
+      61369.923,
+      61542.171
+     ],
+     "max_ms_per_window": [
+      61213.096,
+      61296.045,
+      61387.889,
+      61369.923,
+      61542.171
+     ]
+    },
+    {
+     "row": "bar|OKX|30m",
+     "basis": null,
+     "verdict": "PASS",
+     "limit_p95_ms": 2160788.8,
+     "limit_max_ms": null,
+     "n_per_window": [
+      0,
+      0,
+      0,
+      0,
+      5
+     ],
+     "p95_ms_per_window": [
+      null,
+      null,
+      null,
+      null,
+      1801549.683
+     ],
+     "max_ms_per_window": [
+      null,
+      null,
+      null,
+      null,
+      1801549.683
+     ]
+    },
+    {
+     "row": "bar|OKX|3m",
+     "basis": null,
+     "verdict": "PASS",
+     "limit_p95_ms": 217582.1,
+     "limit_max_ms": null,
+     "n_per_window": [
+      5,
+      0,
+      5,
+      5,
+      5
+     ],
+     "p95_ms_per_window": [
+      181268.819,
+      null,
+      181413.842,
+      181381.196,
+      181566.568
+     ],
+     "max_ms_per_window": [
+      181268.819,
+      null,
+      181413.842,
+      181381.196,
+      181566.568
+     ]
+    },
+    {
+     "row": "book_delta|BINANCE|",
+     "basis": null,
+     "verdict": "PASS",
+     "limit_p95_ms": 263.3,
+     "limit_max_ms": null,
+     "n_per_window": [
+      777,
+      775,
+      762,
+      765,
+      1159
+     ],
+     "p95_ms_per_window": [
+      135.0,
+      134.0,
+      128.0,
+      128.0,
+      159.0
+     ],
+     "max_ms_per_window": [
+      238.877,
+      220.914,
+      198.205,
+      195.124,
+      333.973
+     ]
+    },
+    {
+     "row": "book_delta|OKX|",
+     "basis": null,
+     "verdict": "PASS",
+     "limit_p95_ms": 289.1,
+     "limit_max_ms": null,
+     "n_per_window": [
+      1070,
+      1050,
+      1045,
+      1033,
+      1573
+     ],
+     "p95_ms_per_window": [
+      141.0,
+      136.0,
+      137.0,
+      140.0,
+      157.0
+     ],
+     "max_ms_per_window": [
+      259.984,
+      205.334,
+      219.115,
+      217.872,
+      393.066
+     ]
+    },
+    {
+     "row": "book_snapshot|BINANCE|",
+     "basis": null,
+     "verdict": "PASS",
+     "limit_p95_ms": 260.0,
+     "limit_max_ms": null,
+     "n_per_window": [
+      1194,
+      1112,
+      939,
+      998,
+      1586
+     ],
+     "p95_ms_per_window": [
+      144.0,
+      141.0,
+      135.0,
+      141.0,
+      173.0
+     ],
+     "max_ms_per_window": [
+      251.564,
+      227.097,
+      240.697,
+      207.352,
+      324.506
+     ]
+    },
+    {
+     "row": "book_snapshot|OKX|",
+     "basis": null,
+     "verdict": "PASS",
+     "limit_p95_ms": 270.1,
+     "limit_max_ms": null,
+     "n_per_window": [
+      2405,
+      2035,
+      1972,
+      1738,
+      2933
+     ],
+     "p95_ms_per_window": [
+      143.0,
+      145.0,
+      137.0,
+      146.0,
+      171.0
+     ],
+     "max_ms_per_window": [
+      260.87,
+      199.6,
+      229.694,
+      219.378,
+      393.197
+     ]
+    },
+    {
+     "row": "mark_index_price|BINANCE|",
+     "basis": null,
+     "verdict": "PASS",
+     "limit_p95_ms": 370.9,
+     "limit_max_ms": null,
+     "n_per_window": [
+      378,
+      386,
+      381,
+      392,
+      572
+     ],
+     "p95_ms_per_window": [
+      197.0,
+      193.0,
+      191.0,
+      206.0,
+      210.0
+     ],
+     "max_ms_per_window": [
+      260.928,
+      219.118,
+      227.959,
+      286.287,
+      296.291
+     ]
+    },
+    {
+     "row": "mark_index_price|OKX|",
+     "basis": "amendment",
+     "verdict": "PASS",
+     "limit_p95_ms": 200.9,
+     "limit_max_ms": 993.4,
+     "n_per_window": [
+      659,
+      662,
+      663,
+      661,
+      991
+     ],
+     "p95_ms_per_window": [
+      92.0,
+      92.0,
+      89.0,
+      90.0,
+      101.0
+     ],
+     "max_ms_per_window": [
+      175.974,
+      144.034,
+      133.669,
+      158.185,
+      243.89
+     ]
+    },
+    {
+     "row": "quote|BINANCE|",
+     "basis": null,
+     "verdict": "PASS",
+     "limit_p95_ms": 292.7,
+     "limit_max_ms": null,
+     "n_per_window": [
+      568,
+      561,
+      565,
+      565,
+      848
+     ],
+     "p95_ms_per_window": [
+      160.0,
+      158.0,
+      148.0,
+      158.0,
+      171.0
+     ],
+     "max_ms_per_window": [
+      235.686,
+      210.924,
+      208.113,
+      237.074,
+      287.828
+     ]
+    },
+    {
+     "row": "quote|OKX|",
+     "basis": null,
+     "verdict": "PASS",
+     "limit_p95_ms": 283.3,
+     "limit_max_ms": null,
+     "n_per_window": [
+      610,
+      623,
+      628,
+      651,
+      964
+     ],
+     "p95_ms_per_window": [
+      160.0,
+      152.0,
+      158.0,
+      159.0,
+      181.0
+     ],
+     "max_ms_per_window": [
+      277.886,
+      230.304,
+      267.874,
+      241.088,
+      347.652
+     ]
+    },
+    {
+     "row": "trade|BINANCE|",
+     "basis": null,
+     "verdict": "PASS",
+     "limit_p95_ms": 269.3,
+     "limit_max_ms": null,
+     "n_per_window": [
+      420,
+      386,
+      385,
+      387,
+      551
+     ],
+     "p95_ms_per_window": [
+      136.0,
+      132.0,
+      132.0,
+      137.0,
+      148.0
+     ],
+     "max_ms_per_window": [
+      240.113,
+      175.074,
+      207.97,
+      204.313,
+      291.21
+     ]
+    },
+    {
+     "row": "trade|OKX|",
+     "basis": null,
+     "verdict": "PASS",
+     "limit_p95_ms": 257.4,
+     "limit_max_ms": null,
+     "n_per_window": [
+      282,
+      287,
+      261,
+      255,
+      468
+     ],
+     "p95_ms_per_window": [
+      133.0,
+      135.0,
+      124.0,
+      136.0,
+      143.0
+     ],
+     "max_ms_per_window": [
+      212.101,
+      208.325,
+      173.926,
+      213.592,
+      276.844
+     ]
+    },
+    {
+     "row": "book_delta|OKX_INVERSE|",
+     "basis": "addendum",
+     "verdict": "PASS",
+     "limit_p95_ms": null,
+     "limit_max_ms": 282.5,
+     "n_per_window": [
+      110,
+      110,
+      111,
+      113,
+      168
+     ],
+     "p95_ms_per_window": null,
+     "max_ms_per_window": [
+      183.415,
+      205.334,
+      211.998,
+      194.861,
+      215.813
+     ]
+    },
+    {
+     "row": "book_snapshot|OKX_INVERSE|",
+     "basis": "addendum",
+     "verdict": "PASS",
+     "limit_p95_ms": null,
+     "limit_max_ms": 300.7,
+     "n_per_window": [
+      120,
+      119,
+      121,
+      119,
+      183
+     ],
+     "p95_ms_per_window": null,
+     "max_ms_per_window": [
+      186.997,
+      186.987,
+      212.316,
+      195.057,
+      276.283
+     ]
+    },
+    {
+     "row": "mark_index_price|OKX_INVERSE|",
+     "basis": "addendum",
+     "verdict": "PASS",
+     "limit_p95_ms": null,
+     "limit_max_ms": 2597.8,
+     "n_per_window": [
+      109,
+      111,
+      110,
+      110,
+      165
+     ],
+     "p95_ms_per_window": null,
+     "max_ms_per_window": [
+      2005.918,
+      1816.581,
+      2018.749,
+      2168.862,
+      2174.882
+     ]
+    },
+    {
+     "row": "quote|OKX_INVERSE|",
+     "basis": "addendum",
+     "verdict": "PASS",
+     "limit_p95_ms": null,
+     "limit_max_ms": 322.6,
+     "n_per_window": [
+      71,
+      89,
+      100,
+      109,
+      147
+     ],
+     "p95_ms_per_window": null,
+     "max_ms_per_window": [
+      221.042,
+      177.539,
+      177.091,
+      241.088,
+      320.025
+     ]
+    }
+   ],
+   "report_only_rows": [
+    "bar|BINANCE|1h",
+    "bar|BINANCE|2h",
+    "bar|BINANCE|4h",
+    "bar|BINANCE|5m",
+    "bar|BINANCE|6h",
+    "bar|OKX|15m",
+    "bar|OKX|1h",
+    "bar|OKX|2h",
+    "bar|OKX|4h",
+    "bar|OKX|5m",
+    "bar|OKX|6h"
+   ],
+   "a3": {
+    "applied": true
+   },
+   "a4_v2": {
+    "verdict": "PASS",
+    "needed": false
+   }
+  },
+  "G5": {
+   "verdict": "PASS",
+   "reason": "11 latency/cold gates",
+   "rule": "certified stage-50 p95/p99 per class and venue; frozen cold-shape limits"
+  },
+  "G6": {
+   "verdict": "PASS",
+   "reason": "every required D3 binding measured, 0 unsafe",
+   "rule": "per-binding D3 policy of the TS EXECUTION consumer (TRADE 3000, QUOTE/MARK/BOOK_DELTA 2000, BOOK_SNAPSHOT 60000, BAR1m 180000 ms, min with the requirement); zero unsafe eligibility; decided by D3_EXECUTION rows only"
+  },
+  "G7": {
+   "verdict": "PASS",
+   "reason": "every feed inside; native scope LOAD_SLICES_SUPERSET: LOAD_SLICES_SUPERSET [1792382700000000000, 1792384560000000000) (every 60 s slice intersecting the load window, edge slices in full)",
+   "rule": "SDK -> writer p95 <= 100 ms; writer -> Redis reply p95 <= 50 ms per feed"
+  },
+  "G8": {
+   "verdict": "PASS",
+   "reason": "inside",
+   "rule": "commandstats <= 60 % of one core per 10-min window; SLOWLOG (10 ms) 0 in steady state; PING p99 <= 5 ms",
+   "measured": {
+    "slowlog_new_total": 0,
+    "slowlog_new_steady": 0,
+    "ping_steady_ms": {
+     "max": 6.333,
+     "min": 0.091,
+     "n": 3599,
+     "p50": 0.154,
+     "p95": 0.489,
+     "p99": 1.048
+    },
+    "monitor_clients_max": 0,
+    "ping_failures": 0
+   }
+  },
+  "G9": {
+   "verdict": "PASS",
+   "reason": "inside",
+   "rule": "demanded == session-ready; 0 data-path eligibility losses (legitimate quiet TRADE refusals counted, excluded); v1 fallback 0",
+   "measured": {
+    "samples": 60,
+    "demanded_values": [
+     64
+    ],
+    "demanded_ne_session_ready_samples": 0,
+    "eligibility_losses_data_path": 0,
+    "legit_quiet_refusals": {
+     "TRADE:TRADE_EVENT_STALE": 26
+    },
+    "v1_fallback_delta": 0
+   }
+  },
+  "G10": {
+   "verdict": "PASS",
+   "reason": "all zero",
+   "rule": "0 gaps, 0 duplicates applied, 0 replay-expired, 0 overflow",
+   "measured": {
+    "gaps": 0,
+    "duplicates_applied": 0,
+    "replay_expired": 0,
+    "overflow": 0
+   }
+  },
+  "G11": {
+   "verdict": "PASS",
+   "reason": "restart probe",
+   "rule": "fault cleared -> first valid apply per slice <= 30 s, -> caught up <= 60 s; no rewind; cursor never ahead",
+   "verdict_without_a5": "FAIL",
+   "reason_without_a5": "first valid apply max 36.415 s > 30 s",
+   "a5_rule": "max(fault_cleared_ms, first canonical TRADE kafka_create_time_ms > outage_start_ms - pre_fault_guard_ms); first valid apply <= 30 s; evidence: canonical read",
+   "first_valid_apply_s_without_a5": {
+    "max": 36.415,
+    "min": 2.408,
+    "n": 64,
+    "p50": 3.927,
+    "p95": 4.928,
+    "p99": null
+   },
+   "first_valid_apply_s_with_a5": {
+    "max": 4.928,
+    "min": 0.413,
+    "n": 64,
+    "p50": 3.927,
+    "p95": 4.407,
+    "p99": null
+   },
+   "caught_up_s": {
+    "max": 36.415,
+    "min": 2.408,
+    "n": 64,
+    "p50": 3.927,
+    "p95": 4.928,
+    "p99": null
+   },
+   "rewinds_total": 0,
+   "outage_seconds": 0.113,
+   "cursor_samples": [
+    {
+     "compared": 21,
+     "unmatched": 0,
+     "ahead": [],
+     "missing_expected": []
+    },
+    {
+     "compared": 21,
+     "unmatched": 0,
+     "ahead": [],
+     "missing_expected": []
+    },
+    {
+     "compared": 21,
+     "unmatched": 0,
+     "ahead": [],
+     "missing_expected": []
+    }
+   ],
+   "a5_slice": {
+    "applied": true,
+    "clock_start_basis": "first_trade_event",
+    "clock_start_ms": 1792384617191,
+    "fault_cleared_ms": 1792384581189,
+    "first_applied_event_ms": 1792384617139,
+    "first_apply_ms": 1792384617604,
+    "first_post_fault_event": {
+     "conn_gen": 210,
+     "kafka_ts_ms": 1792384617191,
+     "offset": 235686122,
+     "partition": 2,
+     "pub_ns": 1792384617167542780,
+     "recv_ns": 1792384617167542780,
+     "seq": "241971263",
+     "src_ns": 1792384617139000000,
+     "trade_id": "241971263"
+    },
+    "first_valid_apply_from_venue_time_s_report_only": 0.465,
+    "first_valid_apply_s": 0.413,
+    "frozen_first_valid_apply_s": 36.415,
+    "last_pre_fault_event": {
+     "kafka_ts_ms": 1792384575273,
+     "offset": 235684298,
+     "partition": 2,
+     "src_ns": 1792384575209000000,
+     "trade_id": "241971262"
+    },
+    "outage_start_ms": 1792384581076,
+    "post_fault_events_before_first_apply": 1,
+    "pre_fault_guard_ms": 3000,
+    "problems": [],
+    "slice": "OKX|BNB-USDT-SWAP|TRADE|None",
+    "venue_trade_ids_adjacent_report_only": true
+   }
+  },
+  "G14": {
+   "verdict": "PASS",
+   "reason": "18 roles recorded",
+   "rule": "CPU/RAM per role recorded with headroom; budget set by the owner",
+   "dl_cpu_mean_sum_vcpu": 5.75,
+   "mem_at_or_over_limit": []
+  },
+  "G12": {
+   "verdict": "PASS",
+   "reason": "credited isolated run on the final image set",
+   "receipt_dir": "~/.local/state/qdl-v2/p184-g12-v224-final-27c79b53-20261019T005952Z",
+   "files": {
+    "evidence/verdict.json": {
+     "path": "~/.local/state/qdl-v2/p184-g12-v224-final-27c79b53-20261019T005952Z/evidence/verdict.json",
+     "sha256": "87386ad0f34423136132b4abb83077decd3573a382694b145b515cec3055449e"
+    },
+    "FINAL_CREDIT.json": {
+     "path": "~/.local/state/qdl-v2/p184-g12-v224-final-27c79b53-20261019T005952Z/FINAL_CREDIT.json",
+     "sha256": "eb9d1e29a7b4769d4d5e9a2e96be3e0397bf24b3d56f695fb096116c25874dbf"
+    },
+    "production-parity.json": {
+     "path": "~/.local/state/qdl-v2/p184-g12-v224-final-27c79b53-20261019T005952Z/production-parity.json",
+     "sha256": "a6da20dfdf04553c6f18d7b732a751a53d1b7e757ab3edddaf6255063ad5afff"
+    },
+    "credit-snapshot.json": {
+     "path": "~/.local/state/qdl-v2/p184-g12-v224-final-27c79b53-20261019T005952Z/credit-snapshot.json",
+     "sha256": "17f9f46ab2171686072d2d6a21f5bf15004183e3382649f25782e6db3f76e9a3"
+    },
+    "evidence/writer-precheck.json": {
+     "path": "~/.local/state/qdl-v2/p184-g12-v224-final-27c79b53-20261019T005952Z/evidence/writer-precheck.json",
+     "sha256": "4fbd4b32921402596b80abe0db36743cf8d057daed9294bdfbec2a4c9e6d917f"
+    },
+    "evidence/teardown.json": {
+     "path": "~/.local/state/qdl-v2/p184-g12-v224-final-27c79b53-20261019T005952Z/evidence/teardown.json",
+     "sha256": "724b16718ec1f0aa32e9659a7b45945fd40d1071a263797e23112b89ff894252"
+    },
+    "SHA256SUMS": {
+     "path": "~/.local/state/qdl-v2/p184-g12-v224-final-27c79b53-20261019T005952Z/SHA256SUMS",
+     "sha256": "61dc4d641862674e1da06d405f294091c9769bf63a3dd7ca40c9c373e1874291"
+    }
+   }
+  },
+  "G13": {
+   "verdict": "PASS",
+   "reason": "DR 76/76 on writer 2deb90b0 (packet v5.6)",
+   "files": {
+    "runtime_v5.6": {
+     "path": "~/.local/state/qdl-v2/p184-g13-20261019T015047Z/summary.json",
+     "sha256": "5b897eaf105b5bcdf8ae3723e43ec11dc3ec0c35abfae25007e211ff5befb747"
+    },
+    "dr08": {
+     "path": "~/.local/state/qdl-v2/p184-g13-20261019T012840Z/summary.json",
+     "sha256": "1f2dc10526cc913e452392a807cf8ab2ae8961897ca1c7c908b381e5c2eb4240"
+    },
+    "dr05_upstream": {
+     "path": "~/.local/state/qdl-v2/p184-g13-20261019T014124Z/summary.json",
+     "sha256": "0bb783ed4c663044b2e86c14e60f13a0b4407334137447bfaabc652cb7bc3294"
+    },
+    "dr05_quiet": {
+     "path": "~/.local/state/qdl-v2/p184-g13-20261019T013746Z/summary.json",
+     "sha256": "d68f866afd408f7a62e536f83946037c1a60a04673b269af7bcdc368d7d56897"
+    },
+    "w05": {
+     "path": "~/.local/state/qdl-v2/p184-g13-20261019T015047Z/verify/w05-final-v56.json",
+     "sha256": "5490c21e66bf33bae326f2ea2051677f70cf95372b13b823d4c2912835da9895"
+    },
+    "packet_v5.6": {
+     "path": "~/.local/state/trading-system/p184-20261005/runtime/p1/packet-g13-v5.6-20261019.md",
+     "sha256": "44bdecd4201e53592b2b520d040c9e0fd9a9a43e70fe85916eae4f4e382fb3da"
+    }
+   }
+  }
+ },
+ "summary": {
+  "PASS": [
+   "G1",
+   "G2",
+   "G3",
+   "G4",
+   "G5",
+   "G6",
+   "G7",
+   "G8",
+   "G9",
+   "G10",
+   "G11",
+   "G14",
+   "G12",
+   "G13"
+  ],
+  "FAIL": [],
+  "NOT_MEASURED": [],
+  "DEFERRED": []
+ },
+ "summary_without_a5": {
+  "PASS": [
+   "G1",
+   "G2",
+   "G3",
+   "G4",
+   "G5",
+   "G6",
+   "G7",
+   "G8",
+   "G9",
+   "G10",
+   "G14",
+   "G12",
+   "G13"
+  ],
+  "FAIL": [
+   "G11"
+  ],
+  "NOT_MEASURED": [],
+  "DEFERRED": []
+ },
+ "a4_v2_effect": "none on any verdict (G2 and G4 PASS without it)",
+ "superseded": {
+  "counted_run": "p184-final-campaign-20261018T123222Z",
+  "scorecard_sha256": "52979689b18ac14f47c6aa210a88ab473c22f36643a20d3795b5957be7fc3052",
+  "status": "PASS_UNDER_POST_HOC_AMENDMENT_A4",
+  "why": "measured the pre-rustls image set (ingestors a9679def, stream 60f83a51) before the OPT caps; the deployed set changed after it"
+ },
+ "attempts_after_superseded": [
+  {
+   "run": "p184-final-campaign-20261019T021044Z",
+   "protocol_met": true,
+   "scorecard_sha256": "c0504f4bb6fa039b372803cebb1849140f9ecf1faadab71c96f854492f0b05de",
+   "outcome": "FAIL G4 (bar|BINANCE|1m, book_snapshot|BINANCE|, book_snapshot|OKX_INVERSE| window 5), FAIL G8 (one writer EVAL 12.25 ms); host load1 p50 22.0; internal / unattributed under host contention",
+   "status": "HISTORY (led to the low-load rerun and IDR-128)"
+  },
+  {
+   "run": "p184-final-campaign-20261019T030130Z",
+   "protocol_met": null,
+   "guard_summary_sha256": "c3d551ba566c86dc457df5e9fe7ae4569d2fe6f2e566e96a5924678c99e99b7b",
+   "outcome": "guard TAINTED + aborted at 03:26:54Z (foreign (mandb) 0.34 core in the load)",
+   "status": "TAINTED"
+  },
+  {
+   "run": "p184-final-campaign-20261019T040311Z",
+   "protocol_met": true,
+   "outcome": "PASS G1-G10 G14; G11 FAIL frozen / PASS under A5",
+   "status": "COUNTED"
+  }
+ ]
+}

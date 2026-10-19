@@ -168,8 +168,20 @@
     "bar_revision_audit": "append-only revision facts kept for every open inside the retained window; below the durable retention floor a tombstone is published",
     "tombstone_lifetime_ms": 604800000,
     "rebuild_horizon": "a cache generation offline longer than the tombstone lifetime never overlays a cache that may have missed deletes: every product is rebuilt from the state topics into a fresh generation and swapped one at a time (Astra KN-3 R1 D21; a partition with no served product is built as a whole)",
+    "state_topic_tombstones": {
+      "schema": "qdl.kn.v220.state-topic-tombstones.v1",
+      "decision": "A' (P18.4 G4, 2026-10-16): the md.latest.v2 transaction-marker lifetime is decoupled from the md.bars.v2 tombstone contract",
+      "tombstone_lifetime_ms_applies_to": ["md.bars.v2"],
+      "rebuild_horizon_applies_to": ["md.bars.v2"],
+      "rebuild_horizon_code_note": "StageBLimits.rebuild_horizon (6 d, stage_b.rs) still guards every owned partition; on md.latest.v2 it is only conservative (no delete can be missed), so the code is unchanged",
+      "topics": {
+        "md.bars.v2": {"carries_tombstones": true, "writers": ["expiry (rust/qdl-projector/src/expiry.rs)", "bars cleaner (rust/qdl-projector/src/cleaner.rs)"], "delete_retention_basis": "tombstone_lifetime_ms: a reader offline shorter than it never misses a delete; delete.retention.ms >= tombstone_lifetime_ms"},
+        "md.latest.v2": {"carries_tombstones": false, "writers": ["stage A ProductTransform (rust/qdl-projector/src/products.rs), always a LATEST frame value"], "guard": "rust/qdl-projector/src/products.rs test md_latest_writer_never_emits_a_tombstone (reads this block)", "delete_retention_basis": "transaction-marker lifetime only (there is no delete to miss); bound by D21: one read_committed replay pass of a partition from its earliest offset must finish well inside delete.retention.ms", "d21_replay_pass_upper_bound_s": 1300, "d21_min_margin": 4, "d21_evidence": "inferred 2026-10-16: largest partition (kafka2 md.latest.v2-2) ~12.4 M records (~11 M markers + ~1.35 M data) at the isolated warm-rebuild replay rate ~9.6 k records/s (kn3-20260924-r1: 206 products, 2,747 s, ~256 k frames per pass at 0.5 vCPU) = 1,290 s even if every marker cost a data record; production rebuild of md.latest never observed"}
+      },
+      "rule": "a writer that publishes a null value to md.latest.v2 breaks the Rust guard; flip carries_tombstones, restore delete.retention.ms >= tombstone_lifetime_ms and extend rebuild_horizon_applies_to in the same change"
+    },
     "state_topics": {
-      "md.latest.v2": {"cleanup.policy": "compact", "key": "logical product key", "partitions": 6, "replication_factor": 3, "min.insync.replicas": 2, "delete.retention.ms": 604800000, "segment.ms": 3600000, "segment.bytes": 134217728},
+      "md.latest.v2": {"cleanup.policy": "compact", "key": "logical product key", "partitions": 6, "replication_factor": 3, "min.insync.replicas": 2, "delete.retention.ms": 21600000, "segment.ms": 3600000, "segment.bytes": 134217728},
       "md.bars.v2": {"cleanup.policy": "compact", "key": "binding|open_time_ms|revision", "partitions": 6, "replication_factor": 3, "min.insync.replicas": 2, "delete.retention.ms": 604800000, "min.compaction.lag.ms": 3600000, "segment.ms": 3600000, "segment.bytes": 134217728},
       "segments": "Owner decision, Astra KN-3 review R1 (2026-09-24), state topics only (never md.canonical.v2): segment.ms 3,600,000 (= md.bars.v2 min.compaction.lag.ms) and segment.bytes 134,217,728. The active segment is never compacted; with the broker defaults (7 d / 1 GiB) a partition could hold up to 1 GiB of superseded facts and tombstones. KN-3 slice 10 (kn3-20260924/evidence/compaction-slope.txt) measured md.bars.v2 1,414,806,714 B after expiry tombstones -> 545,833,261 B once segments rolled and compacted. Cleaner lag and disk are still measured, not certified by this setting.",
       "approval": "topic creation and ACLs are a separate KN-3 runtime packet"

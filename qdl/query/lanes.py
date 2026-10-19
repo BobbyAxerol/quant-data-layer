@@ -21,6 +21,16 @@ class ReadLaneRejected(RuntimeError):
     """A finite in-process read lane cannot accept more work."""
 
 
+class ReadLaneAtCapacity(ReadLaneRejected):
+    """The lane's finite queue cannot hold this request; nothing was queued.
+
+    Raised at admission, before any wait: a count, byte or class reserve
+    bound is full now but frees as queued work drains. A request larger than
+    the whole byte budget, or whose deadline expired while queued (it has
+    already waited), stays a plain ``ReadLaneRejected``.
+    """
+
+
 class ReadLaneBusy(ReadLaneRejected):
     """The lane would queue this request; the caller asked not to wait here.
 
@@ -248,17 +258,17 @@ class BoundedReadLane:
             raise ReadLaneRejected("read lane request exceeds its byte reservation budget")
         if pending >= self._class_pending_limit(consumer_id):
             self._rejected += 1
-            raise ReadLaneRejected("read lane retains finite capacity for another consumer class")
+            raise ReadLaneAtCapacity("read lane retains finite capacity for another consumer class")
         if self._pending_bytes + reserved_bytes > self.policy.max_pending_bytes:
             self._rejected += 1
             self._rejected_bytes += 1
-            raise ReadLaneRejected("read lane is at byte reservation capacity")
+            raise ReadLaneAtCapacity("read lane is at byte reservation capacity")
         if (
             self._pending_by_consumer.get(consumer_id, 0)
             >= self._consumer_pending_limit(consumer_id)
         ):
             self._rejected += 1
-            raise ReadLaneRejected("read lane consumer is at its finite pending bound")
+            raise ReadLaneAtCapacity("read lane consumer is at its finite pending bound")
 
     def _consumer_pending_limit(self, consumer_id: str) -> int:
         if (

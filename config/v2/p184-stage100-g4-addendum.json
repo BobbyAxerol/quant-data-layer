@@ -1,0 +1,315 @@
+{
+ "base_budget_path": "config/v2/p184-stage100-budget.json",
+ "base_budget_sha256": "ff85335b3c8762d9acd8e7230f3c81ee1ec8403aff34cf2fb8f67714521c2541",
+ "baseline": {
+  "campaign_dir": "/home/bobby/.local/state/qdl-v2/p184-g4-baseline-20261011T175720Z",
+  "role": "baseline",
+  "runtime_identity": {
+   "writer_image": "sha256:44baacc0a3ff95f71029d230e48e1b7282627f26de9bd99e13d1148862e09068",
+   "writer_restarts": 0,
+   "writer_started": "2026-10-11T13:44:14.494194887Z"
+  },
+  "sessions": 100,
+  "source_sha": "84713b04b5b5ab6d94beef3f82895159cf18b5e3",
+  "started_unix": 1791741440.2211447,
+  "tool_sha256": "309f68bfeb0e155eef514bff6f39c9ab922ebd33ec3c5a3eb4637806db81f2da",
+  "windows": [
+   {
+    "boundary": null,
+    "index": 1
+   },
+   {
+    "boundary": null,
+    "index": 2
+   },
+   {
+    "boundary": null,
+    "index": 3
+   },
+   {
+    "boundary": null,
+    "index": 4
+   }
+  ]
+ },
+ "excluded_already_in_frozen_table": [
+  "bar|BINANCE|15m",
+  "bar|BINANCE|30m",
+  "bar|OKX|30m"
+ ],
+ "frozen_at": "2026-10-11T18:30:06Z",
+ "frozen_at_unix": 1791743406.4213512,
+ "frozen_before_candidate": true,
+ "note": "Owner decision 2026-10-11. Rows outside the frozen G4 table, from a dedicated baseline run only. A missed limit is an open exit to optimize, never a threshold edited after results.",
+ "rows": {
+  "bar|BINANCE|1h": {
+   "baseline_max_ms_windows": [
+    10633.8,
+    null,
+    null,
+    null
+   ],
+   "baseline_n_windows": [
+    1,
+    0,
+    0,
+    0
+   ],
+   "reason": "interval report-only by owner rule",
+   "status": "REPORT_ONLY"
+  },
+  "bar|BINANCE|2h": {
+   "baseline_max_ms_windows": [
+    null,
+    null,
+    null,
+    null
+   ],
+   "baseline_n_windows": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "reason": "interval report-only by owner rule",
+   "status": "REPORT_ONLY"
+  },
+  "bar|BINANCE|4h": {
+   "baseline_max_ms_windows": [
+    null,
+    null,
+    null,
+    null
+   ],
+   "baseline_n_windows": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "reason": "interval report-only by owner rule",
+   "status": "REPORT_ONLY"
+  },
+  "bar|BINANCE|5m": {
+   "baseline_max_ms_windows": [
+    null,
+    null,
+    null,
+    null
+   ],
+   "baseline_n_windows": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "reason": "baseline < 5 samples per window",
+   "status": "REPORT_ONLY"
+  },
+  "bar|BINANCE|6h": {
+   "baseline_max_ms_windows": [
+    null,
+    null,
+    null,
+    null
+   ],
+   "baseline_n_windows": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "reason": "interval report-only by owner rule",
+   "status": "REPORT_ONLY"
+  },
+  "bar|OKX|15m": {
+   "baseline_max_ms_windows": [
+    900485.1,
+    null,
+    null,
+    null
+   ],
+   "baseline_n_windows": [
+    1,
+    0,
+    0,
+    0
+   ],
+   "reason": "baseline < 5 samples per window",
+   "status": "REPORT_ONLY"
+  },
+  "bar|OKX|1h": {
+   "baseline_max_ms_windows": [
+    null,
+    null,
+    null,
+    null
+   ],
+   "baseline_n_windows": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "reason": "interval report-only by owner rule",
+   "status": "REPORT_ONLY"
+  },
+  "bar|OKX|2h": {
+   "baseline_max_ms_windows": [
+    null,
+    null,
+    null,
+    null
+   ],
+   "baseline_n_windows": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "reason": "interval report-only by owner rule",
+   "status": "REPORT_ONLY"
+  },
+  "bar|OKX|4h": {
+   "baseline_max_ms_windows": [
+    null,
+    null,
+    null,
+    null
+   ],
+   "baseline_n_windows": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "reason": "interval report-only by owner rule",
+   "status": "REPORT_ONLY"
+  },
+  "bar|OKX|5m": {
+   "baseline_max_ms_windows": [
+    null,
+    null,
+    null,
+    null
+   ],
+   "baseline_n_windows": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "reason": "baseline < 5 samples per window",
+   "status": "REPORT_ONLY"
+  },
+  "bar|OKX|6h": {
+   "baseline_max_ms_windows": [
+    21601260.9,
+    null,
+    null,
+    null
+   ],
+   "baseline_n_windows": [
+    1,
+    0,
+    0,
+    0
+   ],
+   "reason": "interval report-only by owner rule",
+   "status": "REPORT_ONLY"
+  },
+  "book_delta|OKX_INVERSE|": {
+   "baseline_max_ms": 235.4,
+   "baseline_max_ms_windows": [
+    235.4,
+    132.4,
+    126.3,
+    131.5
+   ],
+   "baseline_n_windows": [
+    112,
+    111,
+    112,
+    112
+   ],
+   "candidate_max_limit_ms": 282.5,
+   "status": "GATED"
+  },
+  "book_snapshot|OKX_INVERSE|": {
+   "baseline_max_ms": 250.6,
+   "baseline_max_ms_windows": [
+    250.6,
+    136.2,
+    141.8,
+    152.3
+   ],
+   "baseline_n_windows": [
+    141,
+    122,
+    122,
+    131
+   ],
+   "candidate_max_limit_ms": 300.7,
+   "status": "GATED"
+  },
+  "mark_index_price|OKX_INVERSE|": {
+   "baseline_max_ms": 2164.8,
+   "baseline_max_ms_windows": [
+    1948.9,
+    1972.1,
+    1738.9,
+    2164.8
+   ],
+   "baseline_n_windows": [
+    111,
+    111,
+    111,
+    111
+   ],
+   "candidate_max_limit_ms": 2597.8,
+   "status": "GATED"
+  },
+  "quote|OKX_INVERSE|": {
+   "baseline_max_ms": 268.8,
+   "baseline_max_ms_windows": [
+    268.8,
+    225.5,
+    157.3,
+    181.3
+   ],
+   "baseline_n_windows": [
+    93,
+    81,
+    74,
+    86
+   ],
+   "candidate_max_limit_ms": 322.6,
+   "status": "GATED"
+  }
+ },
+ "rule": {
+  "factor": 1.2,
+  "min_samples_per_window": 5,
+  "report_only_intervals": [
+   "1h",
+   "2h",
+   "4h",
+   "6h"
+  ],
+  "statistic": "max",
+  "text": "GATED rows: candidate window max <= baseline max x 1.2, scored on windows with >= 5 samples; no such window -> NOT_MEASURED. REPORT_ONLY rows (bar 1h/2h/4h/6h, or a baseline without a window of >= 5 samples) never pass, fail or block G4."
+ },
+ "schema": "qdl.p184.stage100-g4-addendum.v1",
+ "sources": {
+  "baseline.json": "3b85e01fd046d11e8f30ecb3172d5e2f7954fb49146355f36cf078e90f8b8f25",
+  "campaign.json": "a3a37870047832b1e1621c1550b9dce7ca2f4e53d5fac752b2812a1ed3f24307",
+  "g4-1-summary.json": "8772852c42726e0aaf407f27cb6d9a59d3f3b193903fb32fa08b33fd0dd5d0b0",
+  "g4-1/observations.jsonl": "ab5bfc43a722f565bc2221d7344a881dd69ccc161432bd0e0322b2116a7e9f4e",
+  "g4-2-summary.json": "371e694ee921629ebf05054b6e47fc23647fe1f7621103d9481a51df2533c075",
+  "g4-2/observations.jsonl": "6d5bb9a09e560c3a4fb913b9a5f34f7bf2db7459efa7cff5030afcc669945061",
+  "g4-3-summary.json": "9b14cb950b715d112ab5f4ef0b7bfc33777f8274692a7ef33816f0e13e4cf388",
+  "g4-3/observations.jsonl": "436b80808273c09dbcacbc8b746785cdbebd7c4c624656ebace99bf87166ee4f",
+  "g4-4-summary.json": "73bbe79d81e89ed4ff17d37b487e08ff68e3ab097b3cf67365791c155700082c",
+  "g4-4/observations.jsonl": "1be43f6582c02dd23a0a3fa567c0401eba579b9ba3b385f2eec5af5119bfed75"
+ }
+}

@@ -635,5 +635,357 @@ class ImageParameters(unittest.TestCase):
                               image_digest="sha256:" + "0" * 64, images=OVERRIDES, query_image_ref=FINAL_REF)
 
 
+def deployed(symbol, channel, uid="u"):
+    return {"venue": "BINANCE", "market": "USDM", "native_symbol": symbol, "native_channel": channel,
+            "instrument_uid": uid + symbol, "source_id": symbol.lower() + "-" + channel}
+
+
+def deployed_set():
+    rows = []
+    for symbol in R.ISOLATION_DEEP + R.ISOLATION_IDLE:
+        lower = symbol.lower()
+        rows += [deployed(symbol, lower + "@trade"), deployed(symbol, lower + "@bookTicker"),
+                 deployed(symbol, lower + "@markPrice@1s"), deployed(symbol, lower + "@depth@100ms")]
+    rows.append({**deployed("BTC-USDT-SWAP", "trades"), "venue": "OKX", "market": "SWAP"})
+    return rows
+
+
+def outcome(**overrides):
+    base = {"observed": True, "idle_readers": 32, "idle_client_terminals": 0,
+            "idle_stream_abnormal_closures": 0, "idle_not_progressed": 0,
+            "deep_stream_abnormal_closures": 3, "other_abnormal_closures": 0,
+            "reserve_exhausted": 0, "over_floor_refused": 5, "reserve_admitted": 9,
+            "idle_marker_by": {"raw_capture_id": 24, "source_sequence": 8}, "idle_subscription_reports": 32,
+            "idle_handoff_refused": 0, "idle_handoff_timeouts": 0, "handoff_refused_within_floor": 0,
+            "handoff_timeout_within_floor": 0, "handoff_refused_over_floor": 2, "handoff_timeout_over_floor": 1,
+            "deep_resume_lossless": True, "deep_resumed": 3,
+            "peak_queue_bytes": 30 << 20, "peak_reserve_bytes_used": 1 << 20, "trade_rate_per_s": 5000.0}
+    base.update(overrides)
+    return base
+
+
+class LiveBudgetIsolation(unittest.TestCase):
+    def test_selects_one_deployed_binding_per_route_in_route_order(self):
+        rows = R.isolation_bindings(deployed_set())
+        self.assertEqual([(r["native_symbol"], R.isolation_feed(r["native_channel"])) for r in rows],
+                         R.isolation_binding_keys())
+        # Trade x3; per idle symbol QUOTE, MARK and ONE book binding for BOOK_DELTA + BOOK_SNAPSHOT.
+        self.assertEqual(len(rows), 3 + 2 * 3)
+        self.assertEqual(len(R.isolation_routes()), 3 + 2 * 4)
+
+    def test_a_book_binding_gives_delta_and_snapshot_routes_with_its_depth(self):
+        from types import SimpleNamespace as NS
+        book = {**deployed("BNBUSDT", "bnbusdt@depth@100ms"), "l2": {"depth_per_side": 100}}
+        catalog = NS(bindings=[NS(instrument=NS(instrument_uid=book["instrument_uid"]), feed=NS(value=feed),
+                                  source_id=book["source_id"], source_policy_id="p-" + feed)
+                               for feed in R.ISOLATION_BOOK_FEEDS])
+        rows = R.isolation_route_rows([book], catalog)
+        self.assertEqual([(r["feed"], r["payload"], r["book_depth"], r["source_policy_id"]) for r in rows],
+                         [("BOOK_DELTA", "book_delta", 100, "p-BOOK_DELTA"),
+                          ("BOOK_SNAPSHOT", "book_snapshot", 100, "p-BOOK_SNAPSHOT")])
+        self.assertIs(rows[0]["binding"], rows[1]["binding"])
+
+    def test_book_frames_bootstrap_then_bridge_then_stay_contiguous(self):
+        snapshot, transport = R.book_frame("BNBUSDT", 1, 100, 2_000_000_000)
+        self.assertEqual((transport, snapshot["lastUpdateId"], len(snapshot["bids"]), len(snapshot["asks"])),
+                         (2, R.BOOK_BASE_UPDATE_ID, 100, 100))
+        bridge, transport = R.book_frame("BNBUSDT", 2, 100, 2_000_000_000)
+        last = snapshot["lastUpdateId"]
+        self.assertEqual(transport, 1)
+        self.assertTrue(bridge["U"] <= last + 1 <= bridge["u"])
+        previous = bridge
+        for index in range(3, 8):
+            frame, _ = R.book_frame("BNBUSDT", index, 100, 2_000_000_000)
+            self.assertEqual((frame["pu"], frame["U"], frame["u"]), (previous["u"],) + (previous["u"] + 1,) * 2)
+            self.assertEqual((frame["s"], len(frame["b"]), len(frame["a"])),
+                             ("BNBUSDT", R.BOOK_DELTA_LEVELS_PER_SIDE, R.BOOK_DELTA_LEVELS_PER_SIDE))
+            self.assertEqual((frame["b"][0][0], frame["a"][0][0]), (snapshot["bids"][0][0], snapshot["asks"][0][0]))
+            previous = frame
+
+    def test_marker_is_matched_by_identity_not_by_time(self):
+        marker = "ab" * 16
+        self.assertEqual(R.marker_match(marker, marker, "x"), "raw_capture_id")
+        self.assertEqual(R.marker_match(marker, "00" * 16, "1:2:3:4:" + marker + ":" + marker), "source_sequence")
+        self.assertIsNone(R.marker_match(marker, "00" * 16, "1:2:3:4"))
+        self.assertIsNone(R.marker_match("", "", ""))
+
+    def test_handoff_counters_are_summed_per_identity_and_absent_on_old_streams(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stream.log"
+            path.write_text("\n".join(json.dumps(row) for row in (
+                {"event": "qdl_kn_subscription_closed", "consumer_id": "i", "handoff_refused": 0,
+                 "handoff_timeouts": 0},
+                {"event": "qdl_kn_subscription_closed", "consumer_id": "i", "handoff_refused": 2,
+                 "handoff_timeouts": 1},
+                {"event": "qdl_kn_subscription_closed", "consumer_id": "old"})) + "\n")
+            self.assertEqual(R.isolation_handoff(path), {
+                "i": {"reports": 2, "handoff_refused": 2, "handoff_timeouts": 1},
+                "old": {"reports": 1, "handoff_refused": None, "handoff_timeouts": None}})
+
+    def test_refuses_missing_or_ambiguous_routes(self):
+        rows = [r for r in deployed_set() if r["native_channel"] != "dogeusdt@markPrice@1s"]
+        with self.assertRaisesRegex(ValueError, "lacks isolation routes"):
+            R.isolation_bindings(rows)
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            R.isolation_bindings(deployed_set() + [deployed("BTCUSDT", "btcusdt@trade")])
+
+    def test_frames_carry_the_fields_the_core_normalizer_requires(self):
+        trade = R.isolation_frame("TRADE", "BTCUSDT", 7, 1_000_000_000)
+        self.assertEqual((trade["e"], trade["s"], trade["t"]), ("trade", "BTCUSDT", 7))
+        quote = R.isolation_frame("QUOTE", "BNBUSDT", 8, 1_000_000_000)
+        self.assertEqual(quote["e"], "bookTicker")
+        self.assertTrue(all(field in quote for field in ("u", "b", "B", "a", "A", "T")))
+        mark = R.isolation_frame("MARK_INDEX_PRICE", "DOGEUSDT", 9, 1_000_000_000)
+        self.assertEqual((mark["e"], mark["E"]), ("markPriceUpdate", 1000))
+        self.assertNotEqual(mark["p"], R.isolation_frame("MARK_INDEX_PRICE", "DOGEUSDT", 10, 1)["p"])
+        with self.assertRaises(ValueError):
+            R.isolation_frame("BAR", "BTCUSDT", 1, 1)
+
+    def test_manifests_split_deep_trade_and_idle_quote_mark(self):
+        routes = [{"feed": feed, "instrument_uid": sym, "source_policy_id": "p"}
+                  for sym, feed in R.isolation_routes()]
+        def mapping():
+            return {"spec": {"quotas": {"max_streams": 10, "max_buffer_events": 1000},
+                             "requirements": [{"feed": "TRADE", "instrument_uid": "x", "warmup_limit": 1}]}}
+        deep = R.isolation_manifest(mapping(), "deep", routes)
+        idle = R.isolation_manifest(mapping(), "idle", routes)
+        self.assertEqual({r["feed"] for r in deep["spec"]["requirements"]}, {"TRADE"})
+        self.assertEqual(len(deep["spec"]["requirements"]), 3)
+        self.assertEqual(deep["spec"]["quotas"]["max_buffer_events"], R.DEEP_BUFFER)
+        self.assertEqual({r["feed"] for r in idle["spec"]["requirements"]}, set(R.ISOLATION_IDLE_FEEDS))
+        self.assertGreaterEqual(idle["spec"]["quotas"]["max_streams"], 4 * R.IDLE_READERS_PER_ROUTE)
+        self.assertEqual(idle["spec"]["requirements"][0]["warmup_limit"], 1)
+
+    def test_verdict_passes_only_a_discriminating_isolating_pair(self):
+        baseline = outcome(idle_stream_abnormal_closures=20, idle_client_terminals=20,
+                           reserve_exhausted=None, over_floor_refused=None)
+        self.assertEqual(R.isolation_verdict(outcome(), baseline)["verdict"], "PASS")
+        for broken in (outcome(idle_client_terminals=1), outcome(idle_stream_abnormal_closures=1),
+                       outcome(idle_not_progressed=1), outcome(reserve_exhausted=1),
+                       outcome(reserve_exhausted=None), outcome(over_floor_refused=0),
+                       outcome(other_abnormal_closures=1), outcome(deep_stream_abnormal_closures=0),
+                       outcome(deep_resume_lossless=False), {"observed": False},
+                       # SR4: identity, handoff counters and complete reports.
+                       outcome(idle_marker_by={"raw_capture_id": 31, "None": 1}),
+                       outcome(handoff_refused_within_floor=1), outcome(handoff_timeout_within_floor=1),
+                       outcome(handoff_refused_within_floor=None), outcome(idle_handoff_refused=1),
+                       outcome(idle_handoff_timeouts=1), outcome(idle_handoff_refused=None),
+                       outcome(idle_subscription_reports=31)):
+            self.assertEqual(R.isolation_verdict(broken, baseline)["verdict"], "FAIL", broken)
+        # A baseline without idle overflow cannot discriminate...
+        self.assertEqual(R.isolation_verdict(outcome(), outcome())["verdict"], "FAIL")
+        # ...unless it is a prior candidate: D1 is then report-only.
+        prior = R.isolation_verdict(outcome(), outcome(), "prior_candidate")
+        self.assertEqual(prior["verdict"], "PASS")
+        self.assertNotIn("D1_baseline_discriminates", prior["checks"])
+        self.assertEqual(prior["report_only"]["D1_baseline_discriminates"], False)
+        with self.assertRaises(ValueError):
+            R.isolation_verdict(outcome(), baseline, "anything")
+
+    def test_outcome_counts_abnormal_closures_per_identity(self):
+        facts = {"observed": True, "deep_identity": "d", "idle_identity": "i",
+                 "idle": [{"terminal": None, "progressed": True}, {"terminal": "RESOURCE_EXHAUSTED",
+                          "progressed": False}],
+                 "closures": {"d": {"ended": 1, "Some resource has been exhausted": 3},
+                              "i": {"ended": 30, "Some resource has been exhausted": 1}},
+                 "resume": {"BTCUSDT/TRADE": {"needed": True, "lossless": True}},
+                 "metrics": {"queue_isolation": {"reserve_exhausted": 0, "over_floor_refused": 4,
+                                                 "reserve_admitted": 2},
+                             "peak_queue_bytes": 33554000, "peak_reserve_bytes_used": 4193616},
+                 "burst": {"trade_rate_per_s": 1.0}}
+        result = R.isolation_outcome(facts)
+        self.assertEqual((result["idle_client_terminals"], result["idle_stream_abnormal_closures"],
+                          result["deep_stream_abnormal_closures"], result["idle_not_progressed"]), (1, 1, 3, 1))
+        self.assertEqual(R.isolation_outcome({"observed": False}), {"observed": False})
+
+    def test_metric_summary_reports_reserve_use_above_the_shared_part(self):
+        shared = R.QUEUE_BYTES - R.LIVE_RESERVE_BYTES
+        summary = R.isolation_metric_summary([{"queue_bytes": shared - 5}, {"queue_bytes": shared + 1234,
+                                               "queue_isolation": {"reserve_exhausted": 0}}])
+        self.assertEqual(summary["peak_reserve_bytes_used"], 1234)
+        self.assertEqual(R.isolation_metric_summary([{"queue_bytes": 10}])["peak_reserve_bytes_used"], 0)
+
+    def test_closures_are_parsed_from_the_stream_log(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stream.log"
+            path.write_text("text\n" + "\n".join(json.dumps(row) for row in (
+                {"event": "qdl_kn_subscription_closed", "consumer_id": "a", "outcome": "ended"},
+                {"event": "qdl_kn_subscription_closed", "consumer_id": "a", "outcome": "x"},
+                {"event": "qdl_kn_gateway_metrics", "queue_bytes": 1})) + "\n")
+            self.assertEqual(R.isolation_closures(path), {"a": {"ended": 1, "x": 1}})
+
+    def test_preregistration_fixes_the_ab_variable_and_acceptance(self):
+        a, b = "sha256:" + "a" * 64, "sha256:" + "b" * 64
+        prereg = R.isolation_prereg(candidate=a, baseline=b, images={"core": "sha256:" + "c" * 64},
+            query_image_ref="q", source_sha="1" * 40, now_utc="t")
+        self.assertEqual(prereg["acceptance"], R.ISOLATION_ACCEPTANCE)
+        self.assertEqual((prereg["schema"], prereg["baseline_kind"]),
+                         ("p184.dl.live-budget-isolation.prereg.v2", "pre_reserve"))
+        self.assertEqual(prereg["scenario"]["idle_readers"], 64)
+        self.assertIn("BOOK_DELTA", prereg["scenario"]["idle_feeds"])
+        self.assertEqual(prereg["scenario"]["live_budget_bytes"], 32 << 20)
+        self.assertEqual((prereg["scenario"]["idle_hold_seconds"], prereg["scenario"]["idle_hold_rate_hz_per_route"]),
+                         (R.IDLE_HOLD_SECONDS, R.IDLE_HOLD_RATE_HZ))
+        for kwargs in ({"candidate": a, "baseline": a}, {"candidate": "latest", "baseline": b}):
+            with self.assertRaises(ValueError):
+                R.isolation_prereg(images={}, query_image_ref="q", source_sha="1" * 40, now_utc="t", **kwargs)
+        with self.assertRaisesRegex(ValueError, "A/B variable"):
+            R.isolation_prereg(candidate=a, baseline=b, images={"stream": a}, query_image_ref="q",
+                               source_sha="1" * 40, now_utc="t")
+        with self.assertRaisesRegex(ValueError, "baseline kind"):
+            R.isolation_prereg(candidate=a, baseline=b, images={}, query_image_ref="q",
+                               source_sha="1" * 40, now_utc="t", baseline_kind="x")
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class StarvationPredicateV2(unittest.TestCase):
+    """OF-G13-1 (inheritance audit 2026-10-16): NO_CROSS_CONSUMER_STARVATION failed identically on both A/B arms
+    because the slow consumer was resumed only if an overflow metrics sample landed inside the publish loop. The
+    predicate now awaits the overflow after the burst and judges an identity-matched marker."""
+
+    def simulate(self, *, overflow_after=None, marker_lands=True, slow_runs=False):
+        """run_faults over fakes. overflow_after: the overflow counter rises once this many events were published
+        after the baseline (None: never). The fast consumer reports every 100 events (the child's real cadence)."""
+        from unittest.mock import AsyncMock
+        log, state = [], {"published": 0}
+
+        class Producer:
+            next_id = 1
+
+            def __init__(self, _packet):
+                pass
+
+            def publish(self, count):
+                Producer.next_id += count
+                state["published"] += count
+                log.append(("publish", count))
+
+        baseline = {}
+
+        class Child:
+            def __init__(self, _packet, consumer, token, stop_after=0, stall=False):
+                self.consumer, self.stall, self.progress = consumer, stall, 0
+                self.process = type("P", (), {"pid": 4242 if stall else 4343})()
+                self.reported = 0
+
+            def wait(self, kind, timeout=60):
+                if kind == "live":
+                    if self.consumer == "fast":
+                        baseline["id"] = Producer.next_id - 1
+                        baseline["published"] = state["published"]
+                    return {"count": 0}
+                if kind == "progress":
+                    seen = state["published"] - baseline["published"]
+                    if not marker_lands:
+                        seen = min(seen, R.REPLAY - 1)
+                    self.reported = max(self.reported + 100, 0)
+                    if seen < self.reported:
+                        raise TimeoutError("consumer did not reach progress")
+                    return {"kind": "progress", "count": self.reported, "last": baseline["id"] + self.reported}
+                if self.stall:
+                    return {"code": "RESOURCE_EXHAUSTED", "controls": ["RATE_LIMITED"], "count": 0}
+                if self.consumer == "fast":
+                    return {"code": "OK", "count": R.REPLAY + 1, "last": baseline["id"] + R.REPLAY + 1}
+                return {"code": "OUT_OF_RANGE", "detail": "backlog expired", "controls": []}
+
+            def resume(self):
+                log.append(("resume", self.consumer))
+
+            def close(self):
+                pass
+
+        def metrics(_path, since_ns):
+            published = state["published"] - baseline.get("published", 10**9)
+            rises = overflow_after is not None and published >= overflow_after
+            return [{"overflow": 1 if rises else 0, "expired": 1, "queue_bytes": 10, "rss_bytes": 1,
+                     "cpu_seconds": 2, "subscriptions_opened": 0}]
+
+        stopped = lambda pid: slow_runs is False and ("resume", "slow") not in log  # noqa: E731
+        with patch.object(R, "RawProducer", Producer), patch.object(R, "Consumer", Child), \
+                patch.object(R, "wait_metrics", return_value=[{"overflow": 0, "expired": 0, "queue_bytes": 0,
+                                                               "rss_bytes": 1, "cpu_seconds": 1,
+                                                               "subscriptions_opened": 0}]), \
+                patch.object(R, "read_metrics", side_effect=metrics), \
+                patch.object(R, "wait_seed", return_value={}), \
+                patch.object(R, "snapshot", new_callable=AsyncMock, return_value=("token", 5)), \
+                patch.object(R, "replay_boundary", return_value={"replay_count_at_live": R.REPLAY}), \
+                patch.object(R, "measure_restarts", return_value={"restart_samples": [{"first_event_ns": 1}]}), \
+                patch.object(R, "slow_queue_observation", return_value={"queued": R.QUEUE}), \
+                patch.object(R, "process_stopped", side_effect=stopped), \
+                patch.object(R, "STARVATION_OVERFLOW_WAIT_S", 0.3), \
+                patch.object(R.time, "sleep"):
+            facts = R.run_faults(packet())
+        return facts[R.CELLS[2]], log
+
+    def test_overflow_seen_only_after_the_burst_still_measures(self):
+        # The 2026-10-15 shape: no overflow sample inside the publish loop (both arms failed on it).
+        fact, log = self.simulate(overflow_after=R.REPLAY - 1)
+        self.assertTrue(fact["observed"], fact)
+        self.assertTrue(fact["passed"], fact)
+        self.assertEqual(fact["marker"]["fast_last"], fact["expected_marker_trade_id"])
+        self.assertEqual(fact["measurement_n"], R.REPLAY // 100 - 1)
+        # The slow consumer is resumed only after the marker landed; REPLAY events in total before it.
+        resume = log.index(("resume", "slow"))
+        self.assertEqual(sum(n for kind, n in log[:resume] if kind == "publish") - 2, R.REPLAY)
+        self.assertEqual(log[resume - 1], ("publish", 1))
+
+    def test_early_overflow_is_the_same_verdict(self):
+        fact, _ = self.simulate(overflow_after=200)
+        self.assertTrue(fact["passed"], fact)
+
+    def test_no_overflow_is_not_observed_never_a_pass(self):
+        fact, log = self.simulate(overflow_after=None)
+        self.assertFalse(fact["observed"])
+        self.assertFalse(fact["passed"])
+        self.assertEqual(fact["failure_stage"], "slow_overflow_not_observed")
+        self.assertIn(("resume", "slow"), log)  # the run still terminates the slow consumer
+
+    def test_marker_not_delivered_or_slow_running_fails(self):
+        fact, _ = self.simulate(overflow_after=R.REPLAY - 1, slow_runs=True)
+        self.assertTrue(fact["observed"])
+        self.assertFalse(fact["passed"])
+        fact, _ = self.simulate(overflow_after=R.REPLAY - 1, marker_lands=False)
+        self.assertFalse(fact["passed"])
+
+    def test_fact_requires_identity_count_and_stopped_slow(self):
+        base = 10
+        fast_end = {"code": "OK", "count": R.REPLAY + 1, "last": base + R.REPLAY + 1}
+        samples = [{"count": 100 * (i + 1)} for i in range(R.REPLAY // 100 - 1)]
+        marker = {"trade_id": base + R.REPLAY, "fast_last": base + R.REPLAY, "fast_count": R.REPLAY,
+                  "slow_stopped": True}
+        overflow = {"overflow_delta": 3, "waited_ms": 900}
+        self.assertTrue(R.starvation_fact(fast_end, samples, overflow, marker, base)["passed"])
+        for change in ({"fast_last": base + R.REPLAY - 1}, {"trade_id": base + R.REPLAY + 1},
+                       {"fast_count": R.REPLAY - 100}, {"slow_stopped": None}, {"slow_stopped": False}):
+            with self.subTest(change=change):
+                self.assertFalse(R.starvation_fact(fast_end, samples, overflow, {**marker, **change}, base)["passed"])
+        self.assertFalse(R.starvation_fact(fast_end, samples[:-1], overflow, marker, base)["passed"])
+        cancelled = {**fast_end, "code": "CANCELLED"}
+        self.assertFalse(R.starvation_fact(cancelled, samples, overflow, marker, base)["passed"])
+        self.assertFalse(R.starvation_fact(fast_end, samples, None, marker, base)["observed"])
+
+    def test_wait_overflow_is_bounded(self):
+        clock = iter(range(100)).__next__
+        rows = iter([[{"overflow": 0}], ValueError("empty"), [{"overflow": 2}]])
+
+        def read(_path, since_ns):
+            row = next(rows)
+            if isinstance(row, Exception):
+                raise row
+            return row
+        with patch.object(R, "read_metrics", side_effect=read):
+            got = R.wait_overflow("/x", since_ns=1, before={"overflow": 0}, timeout=10, clock=clock, pause=lambda s: 0)
+        self.assertEqual(got["overflow_delta"], 2)
+        with patch.object(R, "read_metrics", return_value=[{"overflow": 0}]):
+            clock = iter(range(100)).__next__
+            self.assertIsNone(R.wait_overflow("/x", since_ns=1, before={"overflow": 0}, timeout=5, clock=clock,
+                                              pause=lambda s: 0))
+
+    def test_process_stopped_reads_proc_state(self):
+        self.assertFalse(R.process_stopped(os.getpid()))
+        self.assertIsNone(R.process_stopped(2**22 + 12345))
+        with patch.object(R.Path, "read_text", return_value="77 (py (x)) T 1 2 3"):
+            self.assertTrue(R.process_stopped(77))

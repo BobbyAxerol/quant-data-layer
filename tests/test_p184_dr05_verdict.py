@@ -1,4 +1,5 @@
 import copy
+import sys
 import unittest
 
 from scripts.p184_dr05_dl_fault import schedule
@@ -12,7 +13,7 @@ def observation(venue="OKX", fault="GAP_REFUSAL"):
         negative = phase in {"gap", "new_generation_unanchored"}
         matches = [] if phase == "old_generation" else [{
             "kind": "quarantine" if negative else "canonical", "venue": venue,
-            "capture_id": phase, "generation": 8,
+            "capture_id": phase, "generation": step["generation"],
             "reason": "QUARANTINE_REASON_SEQUENCE_GAP"}]
         rows.append({"phase": phase, "publication": {"offset": 1, "capture_id": phase},
             "canonical": {"raw_committed_next": 2, "matched": matches},
@@ -90,3 +91,43 @@ class VerdictTests(unittest.TestCase):
         ]:
             step = next(s for s in schedule(venue, fault) if s["phase"] == "return_control")
             self.assertEqual(step["previous"], expected)
+
+    def test_post_fence_generation_is_derived_from_the_run_not_a_constant(self):
+        """OF-G13-2: the expected generation is the one this run's schedule published (re-anchor), not 8."""
+        from unittest.mock import patch
+        import scripts.p184_dr05_dl_fault as dl
+        original = dl.schedule
+
+        def shifted(venue, fault):  # the same cell published with generations 12 / 13 (e.g. after a core rewind)
+            return [dict(step, generation=step["generation"] + 5) for step in original(venue, fault)]
+        with patch.object(dl, "schedule", shifted), patch.object(sys.modules[__name__], "schedule", shifted):
+            value = observation()
+            self.assertTrue(evaluate(value)["ok"])  # observations carry the shifted generations
+            stale = observation()
+            for row in stale["observations"]:
+                for match in row["canonical"]["matched"]:
+                    match["generation"] = 8  # the old hard-coded value is no longer accepted
+            result = evaluate(stale)
+            self.assertFalse(result["checks"]["post_fence_generation"])
+            self.assertFalse(result["ok"])
+
+    def test_post_fence_control_must_be_identity_matched_in_the_reanchored_generation(self):
+        value = observation()
+        row = next(r for r in value["observations"] if r["phase"] == "post_fence_control")
+        row["canonical"]["matched"][0]["capture_id"] = "someone-else"  # a generation-8 row of another frame
+        self.assertFalse(evaluate(value)["checks"]["post_fence_generation"])
+        value = observation()
+        row = next(r for r in value["observations"] if r["phase"] == "post_fence_control")
+        row["canonical"]["matched"][0]["generation"] = 7  # canonical in the fenced generation
+        result = evaluate(value)
+        self.assertFalse(result["checks"]["post_fence_generation"])
+        self.assertFalse(result["checks"]["post_fence_control.canonical_match"])
+
+    def test_control_canonical_generation_must_match_the_published_frame(self):
+        for phase in ("positive_control", "return_control"):
+            with self.subTest(phase=phase):
+                value = observation()
+                row = next(r for r in value["observations"] if r["phase"] == phase)
+                row["canonical"]["matched"][0]["generation"] += 1
+                self.assertFalse(evaluate(value)["checks"][phase + ".canonical_match"])
+                self.assertFalse(evaluate(value)["ok"])

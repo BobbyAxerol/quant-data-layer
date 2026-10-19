@@ -2172,3 +2172,194 @@ manifest/JWT11,bindingV3r23/64products; runtime10/r22. Fourinversefeeds addedonl
 topreparedartifacts, linearINDEX alreadyexists. Pairedruntimepreflight, DR01-08/
 brokerreceipts, releaseattestation/CI and approvedrollout remain gates. No new
 build/push/merge/tag or further runtime mutation. See mainplan for cleanup.
+
+
+### 2026-10-12 - DL takeover reconciliation; no new certification
+
+Status: DOCS_REVIEWED / RUNTIME_ACCEPTANCE_OPEN. This is a dated status reconciliation,
+not a replacement for historical certificates or permission to deploy. See the
+[focused takeover guide](upgrade/evidence/p184-codex-n1-takeover-20261012.md) and the main plan's
+"P18.4 DL-only N1 takeover documentation" entry. Older candidate/release statuses above remain historical.
+
+- Step-1 source is committed at 98b421f798fca70e82188e30e8fbe4cc8bce5721 on fix/p184-dl-closure. Earlier local
+  tests remain scoped to their recorded runs; none were repeated here. rc17 Rust build canceled, no rc17 rollout;
+  the incomplete packet is not execution or certification evidence. Tool repair is authorized under the takeover
+  but outside this delegated docs slice; proposed tests remain NOT_EXECUTED until testing begins.
+- G13 v4.2 receipt p184-g13-20261012T130309Z (summary sha256
+  e3663d6e1442707937fc43cb3d501257ea195599e696a2e2624e315e306082fd) records successful harness groups for
+  wrong-account, DR02/03 and DR07; the TS journal records 28/35 closed. dr01-deployed's seven cells remain pending
+  under v4.3. A successful subset rerun would yield 35/35 for those groups, not closure of the 336-cell matrix.
+- Retain all earlier failed/tainted receipts. No new final-image inheritance, release, shadow certification,
+  production readiness or production authority is asserted. Bar edge and trace-rearm scope gates remain open.
+- The bounded stall observation specification is NOT_EXECUTED. REST/non-WebSocket batching age must be separated
+  from WebSocket transit before attributing a periodic stall. No latency/capacity improvement is certified.
+
+The user approved takeover broadly; the parent delegated this slice to only the linked guide, Unified Plan and
+this ledger and owns review/commit. This slice performs no runtime/tests/builds, tool/packet changes, secrets,
+cleanup or Git staging/commit/push/merge. Authorized source/tool repair and versioned tools/tests may follow
+without a new owner-approval gate; runtime remains separately exact-packet scoped. Runtime provenance and
+rollback retention are recorded in the guide from existing packets, not re-probed; canonical DL main@5bf5cd5
+is unchanged.
+
+
+## P18.4 DL v2.2.4 - 2026-10-18 (package with stated limits; certificate FAIL at 13:40Z, re-issued PASS under post-hoc amendment A4 at ~15:30Z; SUPERSEDED 2026-10-19 by the re-issue on 040311Z, below)
+
+Rule of this ledger: read before re-testing; re-run only when a "Pinned at" commit, image or config changes. Only
+items that passed are recorded as certified below; G2 and G4 are recorded as limits, not as certifications. Full
+evidence: `upgrade/evidence/releases/v2.2.4/` (CERTIFICATE.md, SCORECARD.md, certificate.json, scorecard.json,
+endpoint-report.json, equivalence.json). Earlier release-preparation text is in that directory's
+`drafts/CERTIFICATION_LEDGER_ENTRIES.md` (draft of 2026-10-17, superseded by this section).
+
+### 2026-10-16..18 - v2.2.4 images built and rolled (tested locally / deployed)
+
+Pinned at: rust `qdl-v2-rust:2.2.4-83bef59` `sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784`
+(ingestors x2), rust `qdl-v2-rust:2.2.4-c7ce7d3` `sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e`
+(stream x2, projector x2), python `qdl-v2-python:2.2.4-31a5155`
+`sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff` (query x2); cores rc22 `7c848aad` (binary
+equality); bar edge rc14 `08f356a8` (held); TS writer `2deb90b0` (TS `30f50a91`); Kafka effective describe
+`d3d77176c3dfca46e7f44cba465d271afe2709a1fc9d97f75e808808fa959094`.
+
+- Build receipts: 83bef59 PASS `7e630925462e5cac3de7423c36b964834eeacba9f8c3e94cb9bfbd49d40e5671` (11 of 12 binaries
+  whole-file EQUAL to 60f83a51, ingestor DIFFERENT by design); 31a5155 PASS `e1a9bcc57847a83ea1425dfc66ed3598322a46e46948375bb47f97bbe1c93e38`
+  (exactly the 6 IDR-114 files differ from c21e164a, pip freeze equal); c7ce7d3 status FAIL kept, resolved by addendum
+  `dad31fe8dc7f768de72e7577951af61d726689d8b32fcf5153046fd9bb190260`.
+- Rolls: 2026-10-16 17:14-17:53Z (8 roles to c7ce7d3), 2026-10-17 16:46-17:06Z (ingestors to 6d61710, writer to
+  2deb90b0), 2026-10-18 03:35-04:09Z (ingestors to 83bef59, query to 31a5155; driver.log
+  `6b6173e563812703b2a54ad3bdb76ea69bedb3538790f1baf7789696381d22f2`). Each role diff `['image']`, HOLD per role,
+  RestartCount 0.
+
+### 2026-10-18 - G12 final credit on the final image set: CERTIFIED (shadow-certified, isolated TEST_ONLY harness)
+
+Pinned at: image set `g12-image-set-v224.json` `6303cdcb57eaefa16cdd33de2d010ac05e5944ee887ca0b9938e8f79afb4e2f9`; DL run
+worktree `bb054498`; TS WriterClone apparatus `77a6d671` (H1); Kafka effective `d3d77176...`.
+
+- `p184-g12-v224-final-2deb90b0-20261018T042415Z`: verdict v3 `pass: true`
+  (`evidence/verdict.json` `170af83797df3309d4c9778042ee5b4e8f4c7ec5fca89fede22d9d1d0eeadc27`); `--credit` exit 0,
+  production_parity MATCH (`FINAL_CREDIT.json` `c6bfaedd1edefdcc76de1095e012b87fa85ce57c79fb43f645e2d272171dc8fc`);
+  caught_up_s BINANCE/OKX broker 0.095/0.095, projector 0.100/0.046, Stream 0.572/0.573 (bound 600 s).
+- Inherited from other image sets: nothing. Re-run only if a pinned image, the Kafka describe or the apparatus pins change.
+
+### 2026-10-18 - G13 76/76 on writer 2deb90b0: CERTIFIED (shadow-certified, one host)
+
+Pinned at: roles `g13-roles-v224.json` `984c4566223b196f05abe8b76c88de4127c91be0caebc33168f79457b9a471a2`; writer
+`2deb90b0` / TS `30f50a91`; packet v5.5 `507f9096ba8fba76d97441484d4c0d2146a9388aed298a1f01af47d3ca7320fc`; TS run
+worktrees `aa126794`, `a9cf1b41`, `e9ae5484`; DL run worktree `bb054498`.
+
+- Runtime v5.5 `p184-g13-20261018T051237Z` 66/66 + dr08 `045558Z` 4/4 + dr05-quiet `071750Z` 2/2 + dr05-upstream
+  `085316Z` 6/6; W05 DR 76/76, 0 DR / provenance / drift issues
+  (`w05-final-v55-76.json` `5490c21e66bf33bae326f2ea2051677f70cf95372b13b823d4c2912835da9895`; the file holds case states only
+  and equals the v5.4 output byte for byte).
+
+### 2026-10-18 - final stage-100 under G4-A1 + G4-A2 + A3: protocol met; G2 and G4 FAIL (LIMITS, not certified)
+
+Pinned at: run worktree `data-layer-p184-final-run-6d17b56f` (DL `6d17b56`, gate tool `e179ec78`); budget
+`ff85335b...`, addendum `4ed59dca...`, A1 `1c8a276f...`, A2 `99961c41...`, A3 `cc5fc7dc...`; the image set above.
+
+- `p184-final-campaign-20261018T123222Z` (load 12:34:45-13:04:45Z, guard CLEAN), scorecard
+  `b9e76a83795f1af8f64b802b22ff1f410087a8f87ee4ef5d23b26a1d39cb4964`: PASS G1 G3 G5 G6 G7 G8 G9 G10 G11 G14 (certified
+  for this image set at the stage-100 workload, one host).
+- **Limit G2**: MARK_INDEX_PRICE BINANCE max 1082.9 ms > 1000 (p95 418.6); cause of the sample not determined.
+- **Limit G4**: OKX_INVERSE BTC-USD-SWAP book_delta / book_snapshot / quote maxima over the addendum limits; venue -> DL
+  ~30 ms, the excess is internal (A3 rescued none).
+- Earlier attempts (TAINTED / INVALID / FAIL) are listed in SCORECARD.md; their receipts are immutable.
+
+### 2026-10-18 - v2.2.4 certificate: status FAIL; not published
+
+`upgrade/evidence/releases/v2.2.4/certificate.json` status FAIL (failed_gates G2, G4), `endpoint_report_sha256`
+`9a11b3725c261041d7311b4497b0ab24a21d2e100def8c5192f142c0870c48aa`. Owner decision 2026-10-18 ~13:40Z: package with these
+limits; optimisation package IDR-116..IDR-119 one variable at a time with A/B in a later release. `release.yml` refuses a
+non-PASS certificate, so no `v2.2.4` tag was created (options in CERTIFICATE.md section 7). Next certification run: only
+after a product change in that package (new image digest = new "Pinned at").
+
+### 2026-10-18 ~15:30Z - amendment A4 (POST_HOC_OWNER_DECISION) rescore of 123222Z; certificate re-issued status PASS
+
+Pinned at: A4 `config/v2/p184-stage100-a4-ts-eligibility.json` `14958a681848192c8b9e93feaf0ee3137a1851c38fe6d6763f3bcf6ce0c81312`
+(frozen 2026-10-18T15:18:14Z, after the run was scored); rescore tool `scripts/p184_a4_post_hoc.py`
+`23b78e4ae7a367252cf8033aa64ee6357987c2117e7f6516679fd4c6efafba26`; frozen scorer `e179ec78...` unchanged (A3 pin);
+the stored scorecard `b9e76a83...` (untouched); pre-run amendments A1 (G4-A1) `1c8a276f...`, A2 (G4-A2) `99961c41...`,
+A3 `cc5fc7dc...`.
+
+- Owner answers (AskUserQuestion ~14:45Z): G4 OKX_INVERSE "M1: chấm theo p95 pooled (Recommended)", G2 MARK BINANCE
+  "Nới max lên 1200 ms (Recommended)".
+- Receipt `~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/scorecard.a4-post-hoc.json`
+  `7a821d2d60c45ae290023e9434af7b320c06b906a4185dc299eee467a71fab7e`:
+  - G2 **PASS under A4**: MARK BINANCE max 1082.9 <= 1200, p95 418.6.
+  - G4 **PASS under A4**: OKX_INVERSE p95 per window <= 198 / 193 / 231 against 289.1 / 270.1 / 283.3; maxima
+    report-only; 8 outliers retained.
+  - Every other gate is byte-identical to the scorecard without A4.
+- Recorded as **PASS_UNDER_POST_HOC_AMENDMENT, not as a pre-registered certification**. Without A4, G2 and G4 stay FAIL
+  and are kept as the record of the frozen rule. The latency is unchanged:
+  - G4 inverse tails are internal to DL (IDR-116..118 open);
+  - the G2 split between DL Query and TS read scheduling is unknown (IDR-126, then IDR-119).
+- certificate.json status PASS with a required `amendments` list (A4 `post_hoc: true`); `release.yml` unchanged (it
+  accepts PASS). No tag.
+- Tests: `tests.test_p184_a4_post_hoc` 18 OK (host). Parity on 053803Z / 135719Z / 074624Z / 092255Z / 123222Z without A4;
+  negatives for an inverse p95 over the pooled limit and for MARK BINANCE max 1200.1 ms.
+- Re-run only if the stored scorecard, the frozen scorer, A4 or the rescore tool changes. A new campaign is not scored
+  by A4: it applies to 123222Z only.
+
+## P18.4 DL v2.2.4 - 2026-10-19 re-issue on the final counted run 040311Z (certificate PASS under post-hoc A5)
+
+The 2026-10-18 entries above stay as the record of that set. The deployed set then changed: the rustls 0.23.46 roll and
+the OPT caps. The certificate is re-issued on the final counted run on the deployed set; the 2026-10-18 counted run
+`123222Z` and its post-hoc A4 are superseded. Evidence: `upgrade/evidence/releases/v2.2.4/` (CERTIFICATE.md,
+SCORECARD.md, certificate.json, scorecard.json, endpoint-report.json `013b66e6...`, equivalence.json,
+a5-g11-trade-clock.md).
+
+### 2026-10-18..19 - rustls roll M1-M4 and OPT caps K/Q/I (deployed)
+
+Pinned at:
+- rust `qdl-v2-rust:2.2.4-9dab224` `sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92`
+  (ingestors x2, stream x2);
+- projectors `60f83a51` (c7ce7d3), cores rc22 `7c848aad`, query `3e9e4d3a` (31a5155), bar edge rc14 `08f356a8` (held),
+  writer `2deb90b0`;
+- caps: kafka1-3 2.25 vCPU, query_kn_1/2 2.0 vCPU / 2 GiB / swap 4 GiB, ingestor_okx_swap 1.0 vCPU,
+  ingestor_binance_usdm 0.75 vCPU.
+
+- Build 9dab224 PASS (`receipt.json` `e38fd275...`). Symbol diff vs `a9679def` (`summary.json` `49f2164e...`):
+  projector / venue-core-certify EQUAL; ingestor / gateway NOT_CONFINED (rustls functions plus same-source codegen);
+  realtime core 0 rustls functions in either build.
+- Roll 2026-10-18 18:46-19:06Z: each role diff `['image']`, HOLD PASS, RestartCount 0 (`SHA256SUMS.roll-20261018T1846Z`
+  `c518f9b3...`).
+- Caps 2026-10-19 00:20-00:44Z, each HOLD PASS under the adjacent-baseline method (`SHA256SUMS` `ba5e465e...`). The
+  first K attempt on 10-18 (single-baseline HOLD FAIL, rolled back) is kept.
+
+### 2026-10-19 - G12 credit and G13 76/76 on the rolled set: CERTIFIED (shadow-certified)
+
+- G12: `p184-g12-v224-final-27c79b53-20261019T005952Z` verdict `pass: true` (`evidence/verdict.json` `87386ad0...`),
+  credit MATCH (`FINAL_CREDIT.json` `eb9d1e29...`). caught_up_s broker 0.245 / 0.245, projector 0.313 / 0.314, Stream
+  0.984 / 0.985 (bound 600 s).
+- G13: runtime v5.6 `015047Z` + dr08 `012840Z` + dr05-upstream `014124Z` + dr05-quiet `013746Z`. W05 DR 76/76
+  (`w05-final-v56.json` `5490c21e...`; case states only, byte-identical to v5.5). The dr05-upstream attempt `013112Z`
+  failed a precondition (harness readiness race); it is kept, not scored.
+
+### 2026-10-19 - final stage-100 040311Z: protocol met; G1-G10 G14 CERTIFIED; G11 FAIL frozen, PASS under post-hoc A5
+
+Pinned at:
+- run worktree `data-layer-p184-final-run-b58e40dd` (gate tool `e179ec78`);
+- budget `ff85335b...`, addendum `4ed59dca...`, A1 (G4-A1) `1c8a276f...`, A2 (G4-A2) `99961c41...`, A3 `384e8512...`;
+- A4 v2 `63f98668...` (bound before load, not needed);
+- the set above; host load1 p50 16.2 with 15 portal containers paused.
+
+- Scorecard `ebe11b8c10145bb92b7a850c4134d81101aaf7000a210f198b175316b20acbbf` (frozen rule, untouched): PASS G1-G10,
+  G14, the same with A4 v2 (`7fffb04e...`). Certified for this set at the stage-100 workload on one host, **with the
+  host isolation limit** (IDR-128).
+- G11 under the frozen rule: FAIL, first valid apply 36.415 s on OKX BNB-USDT-SWAP TRADE only. The venue printed no
+  trade on it for 41.9 s (EXTERNAL_QUIET; canonical topic and OKX history agree).
+- A5 `config/v2/p184-stage100-a5-g11-trade-clock.json` `c5b46c5f...` (POST_HOC_OWNER_DECISION for this run;
+  pre-registered for later runs), tool `scripts/p184_a5_g11_trade_clock.py` `4892abd1...`, receipt `scorecard.a5.json`
+  `b1c2e7b450363f094c25adb34988f9356da327ef3d0b6a863a001dab2692d08d`:
+  - G11 **PASS under A5**: that slice 0.413 s from its first post-fault event; every other gate byte-identical.
+  - Recorded as **PASS_UNDER_POST_HOC_AMENDMENT**, not as a pre-registered certification of G11.
+- Tests: `tests.test_p184_a5_g11_trade_clock` 16 OK (host), including parity on 29 stored G11 summaries and on 6
+  stored receipts.
+- Not certified, recorded: 021044Z (the same set with the portal stack running) FAIL G4 and G8 -> IDR-128; 030130Z
+  TAINTED.
+- Re-run only if a pinned image, a cap, the scorer, A3 / A4 v2 / A5 or their tools change. Later runs are scored by A5
+  only through its pre-registration, with evidence in `<campaign>.g11-canonical/`.
+
+### 2026-10-19 - v2.2.4 certificate re-issued: status PASS (amendments required); not tagged
+
+`certificate.json` status PASS, `amendments` = G4-A1, G4-A2, A3 (refreshed), A4 v2 (pre-registered, not needed), A5
+(`post_hoc: true`); `gates_without_a5` G11 FAIL. It supersedes the 2026-10-18 certificate (`da2fd484...`).
+`release.yml` is unchanged. No tag, no merge.

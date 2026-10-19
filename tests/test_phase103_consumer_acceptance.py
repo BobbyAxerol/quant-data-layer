@@ -94,7 +94,7 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
                 "binance-usdm-solusdt-bar-15m",
             },
         )
-        self.assertEqual(len(scope.excluded), 76)
+        self.assertEqual(len(scope.excluded), 81)
         excluded = next(
             item for item in scope.excluded
             if item.reason == "VENUE_NOT_IN_PHASE103_CRYPTO_SCOPE"
@@ -106,7 +106,7 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             item for item in scope.excluded
             if item.reason == "LATER_PHASE_PRODUCT"
         ]
-        self.assertEqual(len(later_phase), 75)
+        self.assertEqual(len(later_phase), 80)
         self.assertEqual(
             {item.consumer_id for item in later_phase},
             {"trading-system.paper.stable", "alpha.binance.paper.stable"},

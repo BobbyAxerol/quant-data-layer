@@ -346,6 +346,105 @@ class BinanceReferenceBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.coverage.complete_left)
         self.assertTrue(result.coverage.complete_right)
 
+    # IDR-092: live-shaped rolling 3-day window from the 2026-10-12 DR07
+    # repro (requested 1791525235542..1791784435542, Binance BTCUSDT 8h
+    # settlements 1791532800000..1791763200006 with provider clock jitter).
+    _ROLLING_START_MS = 1_791_525_235_542
+    _ROLLING_END_MS = 1_791_784_435_542
+    _EIGHT_HOURS_MS = 28_800_000
+
+    def _grid_funding(self, times_ms):
+        calls = []
+
+        def funding(symbol, *, start_time, end_time, limit, **kwargs):
+            del kwargs
+            calls.append((start_time, end_time))
+            rows = [
+                {"symbol": symbol, "fundingRate": "0.0001", "markPrice": "60000", "fundingTime": str(value)}
+                for value in times_ms
+                if start_time <= value <= end_time
+            ]
+            return {"data": rows[:limit]}
+
+        return funding, calls
+
+    async def _rolling_funding(self, times_ms, *, start_ms=None, end_ms=None):
+        funding, _calls = self._grid_funding(times_ms)
+        return await ReferenceBatch({("BINANCE", "USDM"): BinanceUsdmReferenceAdapter(
+            funding_fetcher=funding, max_attempts=1, sleep=no_sleep,
+        )}).fetch_one(ReferenceRequest(
+            instrument=self.btc,
+            product=ReferenceProduct.FUNDING_RATE,
+            start_ms=self._ROLLING_START_MS if start_ms is None else start_ms,
+            end_ms=self._ROLLING_END_MS if end_ms is None else end_ms,
+            limit=1000,
+        ))
+
+    def _live_rolling_times(self):
+        first = 1_791_532_800_000
+        times = [first + index * self._EIGHT_HOURS_MS for index in range(9)]
+        times[-1] += 6  # provider clock jitter seen live on the last settlement
+        self.assertEqual(times[-1], 1_791_763_200_006)
+        return times
+
+    async def test_funding_rolling_window_is_complete_on_settlement_grid(self):
+        result = await self._rolling_funding(self._live_rolling_times())
+
+        self.assertEqual(result.status, ReferenceStatus.OK)
+        coverage = result.coverage
+        self.assertEqual(coverage.observed_min_ms, 1_791_532_800_000)
+        self.assertEqual(coverage.observed_max_ms, 1_791_763_200_006)
+        self.assertTrue(coverage.complete_left)
+        self.assertTrue(coverage.complete_right)
+        self.assertFalse(coverage.truncated)
+        # Raw provider timestamps are never rewritten onto the grid.
+        self.assertEqual(result.observations[-1].observed_at_ns // 1_000_000, 1_791_763_200_006)
+
+    async def test_funding_rolling_window_four_hour_symbol_is_complete(self):
+        four_hours = self._EIGHT_HOURS_MS // 2
+        # 4h settlements across and beyond the window; the fake provider only
+        # returns those inside the requested provider window.
+        first = 1_791_532_800_000 - 2 * four_hours
+        times = list(range(first, self._ROLLING_END_MS + four_hours, four_hours))
+
+        result = await self._rolling_funding(times)
+
+        self.assertTrue(result.coverage.complete_left)
+        self.assertTrue(result.coverage.complete_right)
+        self.assertFalse(result.coverage.truncated)
+
+    async def test_funding_rolling_window_interior_gap_still_fails(self):
+        times = self._live_rolling_times()
+        del times[4]
+
+        result = await self._rolling_funding(times)
+
+        self.assertTrue(result.coverage.truncated)
+        self.assertEqual(result.coverage.terminal_reason, "INTERNAL_GAP")
+
+    async def test_funding_rolling_window_missing_edge_settlements_still_fail(self):
+        times = self._live_rolling_times()
+
+        left = await self._rolling_funding(times[1:])
+        right = await self._rolling_funding(times[:-1])
+
+        self.assertFalse(left.coverage.complete_left)
+        self.assertTrue(left.coverage.complete_right)
+        self.assertFalse(left.coverage.truncated)
+        self.assertTrue(right.coverage.complete_left)
+        self.assertFalse(right.coverage.complete_right)
+        self.assertFalse(right.coverage.truncated)
+
+    async def test_funding_single_settlement_does_not_infer_an_interval(self):
+        settlement = 1_791_532_800_000
+
+        result = await self._rolling_funding(
+            [settlement], start_ms=settlement - 3_600_000, end_ms=settlement + 3_600_000
+        )
+
+        self.assertFalse(result.coverage.complete_left)
+        self.assertFalse(result.coverage.complete_right)
+
     async def test_retry_exhaustion_is_isolated_error_not_zero(self):
         calls = {"count": 0}
 
@@ -585,6 +684,85 @@ class BinanceReferenceBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.coverage.complete_right)
         self.assertTrue(result.coverage.truncated)
         self.assertEqual(result.coverage.terminal_reason, "INTERNAL_GAP")
+
+    async def test_daily_statistics_cover_a_window_not_aligned_to_utc_midnight(self):
+        """IDR-091: a rolling [now - 3d, now] window must not read as INTERNAL_GAP.
+
+        Rows are the live 2026-10-12 Binance ETHUSDT 1d samples (UTC midnight);
+        the caller's window edges sit mid-day, as alpha_sdk ReferenceReader sends.
+        """
+        day_ms = 86_400_000
+        midnights = [1_791_590_400_000, 1_791_676_800_000, 1_791_763_200_000]
+        start_ms, end_ms = 1_791_524_390_396, 1_791_783_590_396
+
+        def metric(endpoint, symbol, period, limit, start_time, end_time, **kwargs):
+            del endpoint, period, limit, start_time, end_time, kwargs
+            return {"data": [{"symbol": symbol, "sumOpenInterest": "1", "sumOpenInterestValue": "2",
+                              "timestamp": str(value)} for value in midnights]}
+
+        def long_short(kind, symbol, period, limit, start_time, end_time, **kwargs):
+            del kind, period, limit, start_time, end_time, kwargs
+            return {"data": [{"symbol": symbol, "longShortRatio": "1.5", "longAccount": "0.6",
+                              "shortAccount": "0.4", "timestamp": str(value)} for value in midnights]}
+
+        def taker(symbol, period, limit, start_time, end_time, **kwargs):
+            del period, limit, start_time, end_time, kwargs
+            # Period-start rows: the 2026-10-12 period is still open and absent.
+            return {"data": [{"symbol": symbol, "buySellRatio": "1", "buyVol": "2", "sellVol": "2",
+                              "timestamp": str(value)} for value in midnights[:2]]}
+
+        adapter = BinanceUsdmReferenceAdapter(
+            metric_history_fetcher=metric, long_short_fetcher=long_short, taker_fetcher=taker,
+            max_attempts=1, sleep=no_sleep,
+        )
+        common = dict(instrument=self.eth, start_ms=start_ms, end_ms=end_ms, interval="1d", limit=100)
+        oi, ratio, flow = await ReferenceBatch({("BINANCE", "USDM"): adapter}).fetch((
+            ReferenceRequest(product=ReferenceProduct.OPEN_INTEREST, **common),
+            ReferenceRequest(product=ReferenceProduct.LONG_SHORT_RATIO,
+                             long_short_kind=LongShortKind.GLOBAL_ACCOUNT, **common),
+            ReferenceRequest(product=ReferenceProduct.TAKER_FLOW, **common),
+        ))
+        for result in (oi, ratio, flow):
+            self.assertEqual(result.status, ReferenceStatus.OK)
+            self.assertFalse(result.coverage.truncated, result.coverage)
+            self.assertNotEqual(result.coverage.terminal_reason, "INTERNAL_GAP")
+            self.assertTrue(result.coverage.complete_left, result.coverage)
+            self.assertTrue(result.coverage.complete_right, result.coverage)
+        self.assertEqual(len(ratio.observations), 3)
+        self.assertEqual(
+            [item.observed_at_ns // 1_000_000 for item in flow.observations],
+            [midnights[0] + day_ms - 1, midnights[1] + day_ms - 1],
+        )
+
+    async def test_daily_statistics_still_report_off_grid_rows_and_missing_edges(self):
+        start_ms, end_ms = 1_791_524_390_396, 1_791_783_590_396
+        cases = {
+            # A missing middle sample is a real gap.
+            "gap": [1_791_590_400_000, 1_791_763_200_000],
+            # A row off the provider's UTC grid is not a 1d sample.
+            "off_grid": [1_791_590_400_000, 1_791_676_800_000 + 1, 1_791_763_200_000 + 1],
+            # The newest completed sample is missing: the right edge is not covered.
+            "stale_right": [1_791_590_400_000, 1_791_676_800_000],
+        }
+        for name, stamps in cases.items():
+            with self.subTest(name):
+                def long_short(kind, symbol, period, limit, start_time, end_time, _stamps=stamps, **kwargs):
+                    del kind, period, limit, start_time, end_time, kwargs
+                    return {"data": [{"symbol": symbol, "longShortRatio": "1.5", "longAccount": "0.6",
+                                      "shortAccount": "0.4", "timestamp": str(value)} for value in _stamps]}
+
+                adapter = BinanceUsdmReferenceAdapter(long_short_fetcher=long_short, max_attempts=1, sleep=no_sleep)
+                result = await ReferenceBatch({("BINANCE", "USDM"): adapter}).fetch_one(ReferenceRequest(
+                    instrument=self.eth, product=ReferenceProduct.LONG_SHORT_RATIO, start_ms=start_ms,
+                    end_ms=end_ms, interval="1d", limit=100, long_short_kind=LongShortKind.GLOBAL_ACCOUNT,
+                ))
+                if name == "stale_right":
+                    self.assertFalse(result.coverage.truncated)
+                    self.assertFalse(result.coverage.complete_right)
+                    self.assertTrue(result.coverage.complete_left)
+                else:
+                    self.assertTrue(result.coverage.truncated)
+                    self.assertEqual(result.coverage.terminal_reason, "INTERNAL_GAP")
 
     async def test_cross_instrument_provider_row_is_rejected(self):
         def wrong_symbol(*args, **kwargs):

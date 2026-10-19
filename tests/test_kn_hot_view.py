@@ -227,6 +227,37 @@ class HotQuerySelectionTests(unittest.TestCase):
         self.assertEqual(rejected.exception.problem.code,CanonicalErrorCode.INTERNAL_ERROR)
         self.assertIn("HOT_BACKUP_LINEAGE_INVALID",str(rejected.exception))
 
+    def test_backup_adapter_lineage_mismatch_keeps_code_and_adds_typed_reason(self):
+        # IDR-099: same INTERNAL_ERROR / non-retryable refusal, first reason unchanged, typed cause appended.
+        from dataclasses import replace
+        from qdl.marketdata.v2 import market_data_pb2
+        from qdl.runtime.kn_market_cache import CacheRow
+        from qdl.query.results import QueryBackendError
+        from qdl.query.contracts import CanonicalErrorCode
+        from qdl.runtime.refusal_log import reason_tokens
+        envelope=market_data_pb2.EventEnvelope.FromString(self.backup.rows[0].canonical)
+        envelope.adapter_version="p184-synthetic-test-only"
+        self.backup=replace(self.backup,rows=(CacheRow(envelope.SerializeToString(),30),))
+        with self.assertRaises(QueryBackendError) as rejected:self.backend.latest(self.requirement)
+        problem=rejected.exception.problem
+        self.assertEqual((problem.code,problem.retryable),(CanonicalErrorCode.INTERNAL_ERROR,False))
+        self.assertEqual(reason_tokens(problem.detail),("HOT_BACKUP_LINEAGE_INVALID","CANONICAL_LINEAGE_MISMATCH"))
+
+    def test_primary_adapter_lineage_mismatch_is_a_typed_value_error_on_the_warmup_path(self):
+        # RCA 2026-10-14: the isolated catalog's adapter_version differed from the real raws'. The warmup batch
+        # (history_many) keeps the exception as the item outcome; it is now typed, still a ValueError.
+        from qdl.marketdata.v2 import market_data_pb2
+        from qdl.runtime.kn_market_cache import CacheRow,ProductView
+        from qdl.query.results import CanonicalLineageMismatch
+        envelope=market_data_pb2.EventEnvelope.FromString(self.original)
+        envelope.adapter_version="p184-synthetic-test-only"
+        self.primary=ProductView(self.lpk,1,1,(CacheRow(envelope.SerializeToString(),10),),self.primary.boundary)
+        outcome=self.backend.history_many((self.requirement,))[self.requirement]
+        self.assertIsInstance(outcome,CanonicalLineageMismatch)
+        self.assertIsInstance(outcome,ValueError)
+        self.assertEqual(outcome.reason,"CANONICAL_LINEAGE_MISMATCH")
+        self.assertIn("identity/lineage differs",str(outcome))
+
 
     def _quiet_primary(self):
         # Selection-layer fixture: the separate quality oracle has admitted an

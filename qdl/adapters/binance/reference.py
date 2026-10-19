@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections.abc import Awaitable, Callable, Mapping
 import hashlib
 import json
@@ -46,6 +47,12 @@ _ADAPTER_VERSION = "qdl-binance-reference/1"
 # boundary, so coverage must not manufacture a gap from that clock jitter.
 # This does not alter the raw observation timestamp or relax any other product.
 _FUNDING_BOUNDARY_TOLERANCE_MS = 60_000
+# Binance funding settles on a per-symbol UTC grid (``fundingIntervalHours``:
+# 8h by default, 4h/1h for adjusted symbols). The adapter does not hold that
+# per-symbol value, so funding coverage infers the grid only from the
+# provider's own observations: whole-hour spacing that divides one UTC day.
+_FUNDING_INTERVAL_UNIT_MS = 3_600_000
+_FUNDING_GRID_DAY_MS = 86_400_000
 _NATIVE_BASIS_TRANSIENT_ATTEMPTS = 4
 _NATIVE_BASIS_TRANSIENT_BACKOFF_SECONDS = 0.5
 _NATIVE_BASIS_MIN_START_INTERVAL_NS = 500_000_000
@@ -169,7 +176,7 @@ class BinanceUsdmReferenceAdapter:
                 end_time=end_ms,
             )
 
-        return await self._paginate(
+        fetch = await self._paginate(
             request,
             capability,
             endpoint="/fapi/v1/fundingRate",
@@ -178,6 +185,82 @@ class BinanceUsdmReferenceAdapter:
             page_limit=1000,
             boundary_tolerance_ms=_FUNDING_BOUNDARY_TOLERANCE_MS,
         )
+        return self._funding_grid_coverage(request, fetch)
+
+    def _funding_grid_coverage(
+        self, request: ReferenceRequest, fetch: ReferenceFetch
+    ) -> ReferenceFetch:
+        """Judge funding coverage on the settlement grid, not raw window edges (IDR-092).
+
+        Funding exists only at settlement times. A rolling window such as
+        ``[now - 3d, now]`` almost never starts or ends on one, so comparing
+        observations against the raw request edges reported every such window
+        PARTIAL_RESULT. The window is complete when the first settlement at or
+        after ``start`` and the last at or before ``end`` are present and no
+        settlement between them is missing.
+
+        The per-symbol interval is not known to this adapter, so it is inferred
+        from the returned rows only: the smallest spacing, rounded to whole
+        hours, must divide one UTC day, every row must sit on that epoch grid
+        within the existing boundary tolerance, and consecutive rows must be
+        exactly one interval apart. A missing interior settlement, or a
+        mid-window interval change, therefore reports ``INTERNAL_GAP`` and the
+        request stays partial (fail closed). With fewer than two rows, or a
+        spacing that is not a whole-hour divisor of a day, nothing is inferred
+        and the raw-edge coverage from ``_paginate`` stands unchanged.
+        """
+
+        coverage = fetch.coverage
+        assert request.start_ms is not None and request.end_ms is not None
+        times = sorted(self._pagination_time_ms(item) for item in fetch.observations)
+        interval_ms = self._observed_funding_interval_ms(times)
+        if interval_ms is None:
+            return fetch
+        nominal = [
+            (value + interval_ms // 2) // interval_ms * interval_ms for value in times
+        ]
+        on_grid = all(
+            abs(value - grid) <= _FUNDING_BOUNDARY_TOLERANCE_MS
+            for value, grid in zip(times, nominal)
+        )
+        contiguous = all(
+            right - left == interval_ms for left, right in zip(nominal, nominal[1:])
+        )
+        if not (on_grid and contiguous):
+            return dataclasses.replace(
+                fetch,
+                coverage=dataclasses.replace(
+                    coverage, truncated=True, terminal_reason="INTERNAL_GAP"
+                ),
+            )
+        # The settlement before the first row lies before the window, and the
+        # settlement after the last row lies after it: both edges are covered.
+        grid_left = nominal[0] - interval_ms < request.start_ms
+        grid_right = nominal[-1] + interval_ms > request.end_ms
+        return dataclasses.replace(
+            fetch,
+            coverage=dataclasses.replace(
+                coverage,
+                complete_left=coverage.complete_left or grid_left,
+                complete_right=coverage.complete_right or grid_right,
+            ),
+        )
+
+    @staticmethod
+    def _observed_funding_interval_ms(times: list[int]) -> int | None:
+        if len(times) < 2:
+            return None
+        smallest = min(right - left for left, right in zip(times, times[1:]))
+        interval_ms = (
+            (smallest + _FUNDING_INTERVAL_UNIT_MS // 2)
+            // _FUNDING_INTERVAL_UNIT_MS
+            * _FUNDING_INTERVAL_UNIT_MS
+        )
+        if interval_ms <= 0 or _FUNDING_GRID_DAY_MS % interval_ms:
+            return None
+        if abs(smallest - interval_ms) > 2 * _FUNDING_BOUNDARY_TOLERANCE_MS:
+            return None
+        return interval_ms
 
     async def _open_interest_history(
         self, request: ReferenceRequest, capability: FeedCapability
@@ -714,6 +797,17 @@ class BinanceUsdmReferenceAdapter:
         ):
             raise ValueError("Binance reference provider time offset exceeds the expected interval")
         per_page = min(request.page_size or request.limit, page_limit)
+        # Binance sampled statistics (5m..1d) sit on the provider's UTC epoch
+        # grid, not on the caller's window edges. A window such as
+        # [now - 3d, now] therefore starts covered at its first grid point
+        # and ends covered at its last grid point; the cadence and coverage
+        # checks below use that grid instead of request.start_ms (IDR-091).
+        if expected_interval_ms is not None:
+            grid_start_ms = -(-request.start_ms // expected_interval_ms) * expected_interval_ms
+            grid_end_ms = (request.end_ms // expected_interval_ms) * expected_interval_ms
+        else:
+            grid_start_ms = request.start_ms
+            grid_end_ms = request.end_ms
         cursor_start = request.start_ms
         cursor_end = request.end_ms
         selected: dict[int, ReferenceObservation] = {}
@@ -798,7 +892,7 @@ class BinanceUsdmReferenceAdapter:
         observed = tuple(key for key in sorted(selected))
         if expected_interval_ms is not None and observed:
             cadence_ok = (
-                all((value - request.start_ms) % expected_interval_ms == 0 for value in observed)
+                all(value % expected_interval_ms == 0 for value in observed)
                 and all(
                     right - left == expected_interval_ms
                     for left, right in zip(observed, observed[1:])
@@ -817,12 +911,12 @@ class BinanceUsdmReferenceAdapter:
             observed_max_ms=max(observed) if observed else None,
             complete_left=(
                 bool(observed)
-                and min(observed) <= request.start_ms + boundary_tolerance_ms
+                and min(observed) <= grid_start_ms + boundary_tolerance_ms
             ),
             complete_right=(
                 bool(observed)
                 and right_observed_ms is not None
-                and right_observed_ms >= request.end_ms - boundary_tolerance_ms
+                and right_observed_ms >= grid_end_ms - boundary_tolerance_ms
             ),
             truncated=truncated,
             terminal_reason=terminal_reason,
