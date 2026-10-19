@@ -76716,3 +76716,13 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
     public certificates 0444, directories 0750. Applied to gen-20261019T084200Z: 112 files, bytes unchanged
     (sha256 before == after), perms PASS. The rehearsal above ran before hardening; a hardened-permission re-run is
     queued behind the IDR-128 host lock (until ~13:57Z) and is a pre-window check in the packet.
+
+### DL v2.2.5 window packet: IDR-129 slot - 2026-10-19 (Claude)
+
+- Coordinator 12:16Z: production IDR-129 (Query KN keeps RSS after warmup bursts; query_kn_1 2045/2048 MiB restart
+  12:02:55Z, query_kn_2 controlled restart 12:07:25Z, owner-approved; fix by another agent on
+  fix/idr129-query-rss). v2.2.5 must include the fix. Drafts updated (docs only): the Query image row becomes a slot
+  (b7056141 = IDR-127-only candidate, superseded by the rebuild with the fix); packet section 1b: the window's two
+  writer starts (BOOTSTRAP, STRICT) are two warmup bursts -> fixed Query first (W9 before W12), RSS watch with a
+  1.8 GiB hold rule, acceptance RSS < 1.6 GiB 10 min after STRICT; certificate scope: Query code changed -> G5/G6
+  need a delta proof (isolated 64-warmup burst A/B + IDR-129 tests), not inheritance.
