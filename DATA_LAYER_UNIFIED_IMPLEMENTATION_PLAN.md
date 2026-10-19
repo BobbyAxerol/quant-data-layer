@@ -76585,3 +76585,27 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   alpha-okx r15 + the tests that pin r10 counts), which changes what the next python image bakes; R6 tag decision.
 - Canonical checkout `/home/bobby/data_layer` was not fast-forwarded: it is on main 5bf5cd5, 347 commits behind
   origin/main, with an uncommitted edit of this plan dated 2026-10-02 (2 stray lines) that is not this session's.
+
+### F3 KN reboot runbook and legacy boot unit retirement - 2026-10-19 (Claude)
+
+- Owner approval 2026-10-19 (F3): retire the legacy boot unit, write a KN reboot runbook, measure the market_cache
+  rebuild on an isolated stack. Branch `docs/kn-reboot-runbook` from origin/dev 3afd932 (worktree
+  `/home/bobby/.worktrees/data-layer-kn-reboot-runbook`). Docs only; no code, image, compose or role change.
+- Runbook: `docs/runbooks/kn-host-reboot-recovery.md` - docker-start-only rule, what an unattended reboot does
+  (all roles and TS infra `unless-stopped`, started in no order; market_cache/stable_redis come back empty; stage B
+  builds from partition start, `stage_b.rs:8-13`; projector exits if market_cache is unreachable), inventory with
+  digests and healthchecks, ordered steps with checks (Kafka URP/min-ISR, core group 3 members, projector status file,
+  Query `/health/ready` and `ready_products`, writer heartbeat V2_PRIMARY 64/0), rollback/fallback (no data fallback:
+  V1 BLOCKED), and the proposed KN boot unit packet (observe/receipt only via `kn_recovery_runner.py`, not installed;
+  needs a production probe, packet, canonical checkout on the released line, and one real reboot drill).
+- Order deviation from the requested sequence, with evidence: market_cache/stable_redis start before the projector
+  because `run_stage_b` treats an unreachable cache as fatal (`main.rs`, `Cache::connect` -> `fatal`).
+- Legacy unit retired on the host: `/etc/systemd/system/qdl-v2-stable-boot-recovery.service` (disabled, never ran on
+  KN; sha256 565ccc27...) moved to `~/.local/state/qdl-v2/boot-recovery/retired/qdl-v2-stable-boot-recovery.service.20261019`,
+  `systemctl daemon-reload`; `systemctl status` now reports the unit not found. Rollback: move it back and reload.
+- Rebuild measurement: not yet run. Production stage B hard-codes group `kn-projector-v3-b`, so the read-only
+  "separate consumer group" option is not available with the production binary; the drill copies the state topics
+  read-only (assign mode, no group join/commit, kn-projector identity) into an isolated broker. Queued behind the
+  host measurement lock held by `claude-dl-v225` until 11:58Z.
+- Found while reading: the 2026-08-22 cert-material directory (mounted into the brokers) has world-readable private
+  keys (`-rw-r--r--`); recorded for the v2.2.5 rotation, not changed here.
