@@ -76229,3 +76229,47 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
     and/or a prospective oracle amendment (TRADE first-valid-apply clock starts at max(fault cleared, first
     DL-committed trade of that slice after the fault), with the cursor/no-rewind checks unchanged). Re-running for a
     luckier market is not a fix.
+- 2026-10-19 04:55-06:30Z amendment A5 + v2.2.4 release documents re-issued on the final counted run 040311Z (Claude
+  subagent; owner rule 2026-10-18 ~16:00Z "nếu gate không đạt xác định là lỗi external thì nới gate rồi release gọn
+  nhé" and "duyệt hết theo recommend của bạn, k hỏi lại"). Status: implemented, tested locally; the certificate is PASS
+  under amendments (A5 post hoc); no tag, no merge, no runtime action (only read-only docker inspect).
+  - A5 `config/v2/p184-stage100-a5-g11-trade-clock.json` (schema qdl.p184.stage100-a5.v1, frozen 2026-10-19T05:03:03Z)
+    c5b46c5faefe20e31061a3bd647b9e60537b982eee43b484715ec9cdcc5aae78:
+    - G11, TRADE slices only: the clock starts at max(fault_cleared, Kafka CreateTime of the slice's first canonical
+      TRADE event with CreateTime > outage_start - 3000 ms). The 3 s guard is the TRADE live bound, so an event
+      committed just before the stop keeps the frozen clock.
+    - Requires a md.canonical.v2 read by the pinned reader: complete (every partition done, no error), coverage from
+      <= outage_start - guard to >= first apply on the slice's partitions, and the probe's first applied event_ms
+      among the canonical post-fault events. Otherwise the slice keeps the frozen clock.
+    - Unchanged: caught up <= 60 s from fault cleared, no rewind, cursor never ahead / roster, other slices, other gates.
+    - post_hoc_applications: 040311Z only (POST_HOC_OWNER_DECISION), pinned by scorecard ebe11b8c..., g11-summary
+      77cac9b6..., observations 01eddf13..., canonical.jsonl cf96554e..., reader 5fcc088a.... pre_registered: campaigns
+      started after the freeze, evidence in `<campaign>.g11-canonical/` (reader.py, canonical.jsonl, a5-evidence.json).
+  - Wrapper `scripts/p184_a5_g11_trade_clock.py` 4892abd1... (the frozen scorer e179ec78 is not edited: A3 pins it).
+    It reproduces the stored scorecard, re-runs build_scorecard with the probe's verdict() wrapped, raises on drift
+    outside G11, and writes scorecard.a5.json open("x").
+  - Tests `tests/test_p184_a5_g11_trade_clock.py` 3211f1ff..., 16 OK on the host (96 s):
+    - negatives: an earlier unapplied post-fault event -> FAIL 34.415 s; an outage / guard-window event -> frozen
+      clock; 7 incomplete-evidence cases + a non-matching applied event + changed / missing pinned evidence or reader
+      -> not applied; 11 invalid A5 files; unnamed pre-freeze runs refused;
+    - caught-up, rewind, cursor and a 31 s BOOK slice still FAIL;
+    - parity: 29 stored g11-summary.json give the frozen verdict and recovery without evidence; 6 mirrored receipts
+      (053803Z, 135719Z, 074624Z, 092255Z, 123222Z, 021044Z) unchanged in every gate and summary; 040311Z reproduced in
+      place, only G11 / the BNB TRADE slice change.
+  - Rescore 040311Z `--write`: scorecard.a5.json b1c2e7b450363f094c25adb34988f9356da327ef3d0b6a863a001dab2692d08d
+    (+ .sha256). G11 FAIL -> PASS. OKX|BNB-USDT-SWAP|TRADE|None 36.415 -> 0.413 s: clock start 04:36:57.191Z
+    (trade 241971263, offset 235686122), first apply 04:36:57.604Z, 0.465 s from venue time. First valid apply over 64
+    slices: max 36.415 -> 4.928, p95 4.928 -> 4.407. Summary PASS 12 + NOT_MEASURED G12/G13 (campaign). The stored
+    scorecard.json is untouched.
+  - Release documents re-issued (upgrade/evidence/releases/v2.2.4/): CERTIFICATE.md, certificate.json (status PASS;
+    amendments G4-A1, G4-A2, A3 384e8512, A4 v2 applied-not-needed, A5 post_hoc true; gates_without_a5 G11 FAIL;
+    supersedes da2fd484...), SCORECARD.md, scorecard.json, RELEASE_NOTES.md, endpoint-report.json (013b66e6...),
+    equivalence.json (rustls_roll, resource_caps, rust_9dab224 build), a5-g11-trade-clock.md; CERTIFICATION_LEDGER.md
+    new section. JSON assembled by a scratch tool (not in the repo) that recomputes every sha256 and asserts the live
+    images = the A4 v2 binding of 040311Z = the documented set, caps = K/Q/I, RestartCount 0.
+  - IDR-128 opened in the TS register (host workload isolation): 021044Z with the portal stack running, load1 p50 22.0,
+    FAIL G4 + G8; 040311Z with 15 portal containers paused, load1 p50 16.2, PASS. Production DL must not share CPU
+    with unrelated heavy stacks.
+  - Correction (E6): the 040311Z entry above says OKX BNB-USDT-SWAP TRADE "set the max in 15 of 28 measured G11 runs
+    (one tie)". A recount from the 28 stored g11-summary.json files with a restart gives 19 of 28 at the max (13 alone,
+    6 tied). The earlier figure was not reproduced; the release documents use the recount.

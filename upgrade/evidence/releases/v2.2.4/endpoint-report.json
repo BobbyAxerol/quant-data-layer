@@ -1,11 +1,64 @@
 {
  "after_rollout": {
+  "images": {
+   "sha256:08f356a84151c6e865fbdc4a2efe6924df9336d15353254c2b2da684261794f5": {
+    "revision_label": "a388537c897de909257c7f45db44c9ac44a62ccc",
+    "tags": [
+     "qdl-v2-python:2.2.3-rc14-a388537"
+    ]
+   },
+   "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92": {
+    "revision_label": "9dab22429ea44566587f31d9f56f8b059933c795",
+    "tags": [
+     "qdl-v2-rust:2.2.4-9dab224"
+    ]
+   },
+   "sha256:2deb90b0cc52eae7610fa44692f90df077e9db100ca259e38fd652a2dc1c5dc5": {
+    "revision_label": "30f50a91dbd67ce2a482480be598cf509b25333e",
+    "tags": [
+     "local/trading-system:p184-writer-release-30f50a91"
+    ]
+   },
+   "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff": {
+    "revision_label": "31a515522aff3f6e5e7791aa21500cfa570ccb41",
+    "tags": [
+     "qdl-v2-python:2.2.4-31a5155"
+    ]
+   },
+   "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e": {
+    "revision_label": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
+    "tags": [
+     "qdl-v2-rust:2.2.4-c7ce7d3"
+    ]
+   },
+   "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb": {
+    "revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e",
+    "tags": [
+     "qdl-v2-rust:2.2.3-rc22-a4e7b3b"
+    ]
+   },
+   "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9": {
+    "revision_label": null,
+    "tags": [
+     "apache/kafka@sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9"
+    ]
+   },
+   "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8": {
+    "revision_label": null,
+    "tags": [
+     "redis@sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8"
+    ]
+   }
+  },
   "latency_remeasured_after_final_roll": true,
-  "note": "final roll 2026-10-18 03:35-04:09Z; G12, G13 and the counted stage-100 all ran after it on this exact set",
+  "note": "rustls 0.23.46 roll 2026-10-18 18:46-19:06Z (ingestors x2, stream x2 -> 27c79b53) and OPT caps K/Q/I 2026-10-19 00:20-00:44Z; G12 (005952Z), G13 (10-19 01:28-02:06Z) and the counted stage-100 040311Z all ran after them on this exact set",
   "runtime_at_assembly": [
    {
+    "cpus": 2.0,
     "health": "healthy",
     "image": "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff",
+    "memory_mib": 2048,
+    "memory_swap_mib": 4096,
     "oom": false,
     "restart": 0,
     "revision_label": "31a515522aff3f6e5e7791aa21500cfa570ccb41",
@@ -14,8 +67,11 @@
     "status": "running"
    },
    {
+    "cpus": 2.0,
     "health": "healthy",
     "image": "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff",
+    "memory_mib": 2048,
+    "memory_swap_mib": 4096,
     "oom": false,
     "restart": 0,
     "revision_label": "31a515522aff3f6e5e7791aa21500cfa570ccb41",
@@ -24,48 +80,63 @@
     "status": "running"
    },
    {
+    "cpus": 1.0,
     "health": "healthy",
-    "image": "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784",
+    "image": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+    "memory_mib": 256,
+    "memory_swap_mib": 512,
     "oom": false,
     "restart": 0,
-    "revision_label": "83bef596a3cf0e21b423330fd58060afa3a9b1c1",
+    "revision_label": "9dab22429ea44566587f31d9f56f8b059933c795",
     "service": "qdl_v2_stable_candidate-ingestor_okx_swap-1",
-    "started": "2026-10-18T09:12:23.463316698Z",
+    "started": "2026-10-18T18:46:19.924991172Z",
     "status": "running"
    },
    {
+    "cpus": 0.75,
     "health": "healthy",
-    "image": "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784",
+    "image": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+    "memory_mib": 256,
+    "memory_swap_mib": 512,
     "oom": false,
     "restart": 0,
-    "revision_label": "83bef596a3cf0e21b423330fd58060afa3a9b1c1",
+    "revision_label": "9dab22429ea44566587f31d9f56f8b059933c795",
     "service": "qdl_v2_stable_candidate-ingestor_binance_usdm-1",
-    "started": "2026-10-18T03:41:43.507579433Z",
+    "started": "2026-10-18T18:53:12.695455921Z",
     "status": "running"
    },
    {
+    "cpus": 0.75,
     "health": null,
-    "image": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+    "image": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+    "memory_mib": 512,
+    "memory_swap_mib": 1024,
     "oom": false,
     "restart": 0,
-    "revision_label": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
+    "revision_label": "9dab22429ea44566587f31d9f56f8b059933c795",
     "service": "qdl_v2_stable_candidate-stream_kn_1-1",
-    "started": "2026-10-16T17:20:00.02548465Z",
+    "started": "2026-10-18T19:00:22.050959139Z",
     "status": "running"
    },
    {
+    "cpus": 0.75,
     "health": null,
-    "image": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+    "image": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+    "memory_mib": 512,
+    "memory_swap_mib": 1024,
     "oom": false,
     "restart": 0,
-    "revision_label": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
+    "revision_label": "9dab22429ea44566587f31d9f56f8b059933c795",
     "service": "qdl_v2_stable_candidate-stream_kn_2-1",
-    "started": "2026-10-16T17:23:02.850735421Z",
+    "started": "2026-10-18T19:07:18.365016713Z",
     "status": "running"
    },
    {
+    "cpus": 0.75,
     "health": null,
     "image": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+    "memory_mib": 512,
+    "memory_swap_mib": 1024,
     "oom": false,
     "restart": 0,
     "revision_label": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
@@ -74,8 +145,11 @@
     "status": "running"
    },
    {
+    "cpus": 0.75,
     "health": null,
     "image": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+    "memory_mib": 512,
+    "memory_swap_mib": 1024,
     "oom": false,
     "restart": 0,
     "revision_label": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
@@ -84,8 +158,11 @@
     "status": "running"
    },
    {
+    "cpus": 1.0,
     "health": null,
     "image": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+    "memory_mib": 256,
+    "memory_swap_mib": 512,
     "oom": false,
     "restart": 0,
     "revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e",
@@ -94,8 +171,11 @@
     "status": "running"
    },
    {
+    "cpus": 1.0,
     "health": null,
     "image": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+    "memory_mib": 256,
+    "memory_swap_mib": 512,
     "oom": false,
     "restart": 0,
     "revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e",
@@ -104,8 +184,11 @@
     "status": "running"
    },
    {
+    "cpus": 0.5,
     "health": null,
     "image": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+    "memory_mib": 256,
+    "memory_swap_mib": 512,
     "oom": false,
     "restart": 0,
     "revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e",
@@ -114,8 +197,11 @@
     "status": "running"
    },
    {
+    "cpus": 0.75,
     "health": "healthy",
     "image": "sha256:08f356a84151c6e865fbdc4a2efe6924df9336d15353254c2b2da684261794f5",
+    "memory_mib": 512,
+    "memory_swap_mib": 1024,
     "oom": false,
     "restart": 0,
     "revision_label": "a388537c897de909257c7f45db44c9ac44a62ccc",
@@ -124,8 +210,11 @@
     "status": "running"
    },
    {
+    "cpus": 2.25,
     "health": "healthy",
     "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+    "memory_mib": 1536,
+    "memory_swap_mib": 3072,
     "oom": false,
     "restart": 0,
     "revision_label": null,
@@ -134,8 +223,11 @@
     "status": "running"
    },
    {
+    "cpus": 2.25,
     "health": "healthy",
     "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+    "memory_mib": 2048,
+    "memory_swap_mib": 4096,
     "oom": false,
     "restart": 0,
     "revision_label": null,
@@ -144,8 +236,11 @@
     "status": "running"
    },
    {
+    "cpus": 2.25,
     "health": "healthy",
     "image": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+    "memory_mib": 1536,
+    "memory_swap_mib": 3072,
     "oom": false,
     "restart": 0,
     "revision_label": null,
@@ -154,8 +249,11 @@
     "status": "running"
    },
    {
+    "cpus": 1.0,
     "health": "healthy",
     "image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+    "memory_mib": 9216,
+    "memory_swap_mib": 18432,
     "oom": false,
     "restart": 0,
     "revision_label": null,
@@ -164,8 +262,11 @@
     "status": "running"
    },
    {
+    "cpus": 0.5,
     "health": "healthy",
     "image": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+    "memory_mib": 160,
+    "memory_swap_mib": 320,
     "oom": false,
     "restart": 0,
     "revision_label": null,
@@ -174,13 +275,16 @@
     "status": "running"
    },
    {
+    "cpus": null,
     "health": null,
     "image": "sha256:2deb90b0cc52eae7610fa44692f90df077e9db100ca259e38fd652a2dc1c5dc5",
+    "memory_mib": null,
+    "memory_swap_mib": null,
     "oom": false,
     "restart": 0,
     "revision_label": "30f50a91dbd67ce2a482480be598cf509b25333e",
     "service": "market_data_service_p184w",
-    "started": "2026-10-18T13:05:46.664345483Z",
+    "started": "2026-10-19T04:36:21.189014418Z",
     "status": "running"
    }
   ]
@@ -195,11 +299,13 @@
    "ingestor_binance_usdm": {
     "measured_digest_pre_release": "sha256:7fba25779f72a3adffc88f195935a316ac94acbfcb362996fafbff89f62c9103 (rc18)",
     "release_digest": "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784",
+    "release_digest_after_rustls_roll": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
     "verdict": "OTHER_11_BINARIES_EQUAL_INGESTOR_DIFFERENT_BY_DESIGN"
    },
    "ingestor_okx_swap": {
     "measured_digest_pre_release": "sha256:7fba25779f72a3adffc88f195935a316ac94acbfcb362996fafbff89f62c9103 (rc18)",
     "release_digest": "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784",
+    "release_digest_after_rustls_roll": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
     "verdict": "OTHER_11_BINARIES_EQUAL_INGESTOR_DIFFERENT_BY_DESIGN"
    },
    "kafka1-3": {
@@ -250,81 +356,120 @@
    "stream_kn_1": {
     "measured_digest_pre_release": "sha256:baa72c96d5255cbfc0e332f893c470ff293d88fde4e20ea4c7c94ba5ea09a38b (TEST overlay, qdl.test.only, gateway c934c1e)",
     "release_digest": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+    "release_digest_after_rustls_roll": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
     "verdict": "DIFFERENT_BUILD_PATH_WITH_BEHAVIOURAL_PROOF"
    },
    "stream_kn_2": {
     "measured_digest_pre_release": "sha256:baa72c96d5255cbfc0e332f893c470ff293d88fde4e20ea4c7c94ba5ea09a38b (TEST overlay, qdl.test.only, gateway c934c1e)",
     "release_digest": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+    "release_digest_after_rustls_roll": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
     "verdict": "DIFFERENT_BUILD_PATH_WITH_BEHAVIOURAL_PROOF"
    }
   },
-  "note": "the final stage-100 measured the deployed v2.2.4 set directly; this section records the per-role equivalence used for roles certified by equality (cores) or classification (gateway)"
+  "note": "the final stage-100 measured the deployed v2.2.4 set directly; this section records the per-role equivalence used for roles certified by equality (cores) or classification (gateway)",
+  "note_2026_10_19": "measurement_identity above is the 2026-10-18 record; the rustls roll replaced ingestors x2 and stream x2 by 27c79b53 (see equivalence.json rustls_roll)"
  },
  "campaign": {
-  "dir": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z",
+  "dir": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z",
   "files": {
    "a3-local/receipt.json": {
-    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/a3-local/receipt.json",
-    "sha256": "166bfb4536d714a2998695c7ea8242368f067896a59df23626da6a1e6b56323d"
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/a3-local/receipt.json",
+    "sha256": "8b3faad7a45a1dd472467da36fbf3d858da4565efbc962fa9d55e211d20b4e53"
    },
    "a3-timeline/timeline.jsonl": {
-    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/a3-timeline/timeline.jsonl",
-    "sha256": "90861375ce6d996d419faa42b1bc7cdfff907781030cdaa79e404a168e8e6974"
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/a3-timeline/timeline.jsonl",
+    "sha256": "c9f042d04198179c1f4e3a4be9f5d143439eca490428ce76e20af6ee737078f5"
    },
    "campaign.json": {
-    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/campaign.json",
-    "sha256": "2f96f55347dfd69e090436416364685f0479c3801c466ff5d3418af99ed8b7fc"
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/campaign.json",
+    "sha256": "6f6098cb950c177237cd663cc36b6891c85d12f19aaa8b1b35a84c174e9b3ee0"
    },
    "client-smoke/receipt.json": {
-    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/client-smoke/receipt.json",
-    "sha256": "b165a597be86de271ede2293e01712d7806dcae8e65c1afd7b8cd60c9a55daef"
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/client-smoke/receipt.json",
+    "sha256": "d22d7bbdec57603c3596a69613b742ae39c88328b097652b4b013704315ff318"
+   },
+   "g11/g11-observations.jsonl": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/g11/g11-observations.jsonl",
+    "sha256": "01eddf13fbe0802f1ecc32fff1c0da73517ee68a024524786450e86be1385adf"
+   },
+   "g11/g11-summary.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/g11/g11-summary.json",
+    "sha256": "77cac9b625bd1729cd46f7b003b40b397fd5d4de2f29dee7f8da79cc4b59253f"
    },
    "query-funding-allowance.json": {
-    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/query-funding-allowance.json",
-    "sha256": "d4fdd26ef2fb9473e47f34b5b7d0e6046c3032594a9cda4fffdd3c05734858b5"
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/query-funding-allowance.json",
+    "sha256": "ebd852fd6156710eba6def5a9a4557ff2d15f97165cf61902f61dabd83e80da3"
+   },
+   "scorecard.a4-v2.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/scorecard.a4-v2.json",
+    "sha256": "7fffb04e3d06fb6dfbe32d749f59de64aa951bbd71d1ffe4b3284a1b8e4fceee"
+   },
+   "scorecard.a5.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/scorecard.a5.json",
+    "sha256": "b1c2e7b450363f094c25adb34988f9356da327ef3d0b6a863a001dab2692d08d"
    },
    "scorecard.json": {
-    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/scorecard.json",
-    "sha256": "b9e76a83795f1af8f64b802b22ff1f410087a8f87ee4ef5d23b26a1d39cb4964"
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/scorecard.json",
+    "sha256": "ebe11b8c10145bb92b7a850c4134d81101aaf7000a210f198b175316b20acbbf"
    },
    "stage100/gates.json": {
-    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/stage100/gates.json",
-    "sha256": "0c039b197546e3c77ba83712aa65d4cc3c219faf75ba431013580c78170d5aa4"
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/stage100/gates.json",
+    "sha256": "f4895f43cb700489205fd6c32f837d7a3afd73d89f4f38fc5a50829bf60cba84"
    },
    "stage100/host.json": {
-    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/stage100/host.json",
-    "sha256": "97e1a89372e5a4a5c609ecbc2e6ff1bc46176effb0c5f18597a5acbacdbd701d"
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/stage100/host.json",
+    "sha256": "2a0f2da4185e714bb297982037c9221c92981362d6bcc0d6068f47cd92bc8bf7"
    },
    "stage100/receipt.json": {
-    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/stage100/receipt.json",
-    "sha256": "3fd22d861ae434c7f7e0e29ce21d3430b0982f376a50f06c8a0ee1a8b8f64ea0"
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/stage100/receipt.json",
+    "sha256": "b0c1674cfc72f813ced6875cd5ff08b3c871ad3548d9403d3ded5f9884301700"
    },
    "timeline.jsonl": {
-    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z/timeline.jsonl",
-    "sha256": "cbf05017242feed6925c4c921fabcc924ced313933e6b736e543bdfe5eb54f1e"
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/timeline.jsonl",
+    "sha256": "a6b69e7f725316c3a3ed247285c9edfd41cad6af69bc0acbdc1d76b20c5f2bda"
+   },
+   "trace/mark-load.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/trace/mark-load.json",
+    "sha256": "b7e0c582b97786da88f04b463d8fe6fae2a3ce1354d79c0eec56636c623b9b8e"
+   },
+   "trace/transit-load.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z/trace/transit-load.json",
+    "sha256": "003c42a9dc338e444e7435ffd59be5e7fb7cf68032afce3e100c25aa932edc44"
    }
   },
-  "load_window_utc": "2026-10-18T12:34:45Z..13:04:45Z",
+  "load_window_unix_s": [
+   1792382717.1841352,
+   1792384517.1841352
+  ],
+  "load_window_utc": "2026-10-19T04:05:17Z..2026-10-19T04:35:17Z",
   "logs": {
-   ".extra/SHA256SUMS": {
-    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z.extra/SHA256SUMS",
-    "sha256": "91b405c7fa3523303f6aede3c609c0f5e449314a1998dd9cab22d92291d9e4c2"
+   ".a4-v2-binding.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.a4-v2-binding.json",
+    "sha256": "f08b594a07a1f213ce0710b93c0d853a1c62848786f7f6a40ccf908597f55f73"
+   },
+   ".a4-v2-close.json": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.a4-v2-close.json",
+    "sha256": "ba3325230063fef5f1c89be75b6ee06a5a447ada12b62ef2ef14a20d7b12ed3a"
    },
    ".g11-watcher.log": {
-    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z.g11-watcher.log",
-    "sha256": "3e38889ba15b2b70b1239be6fc4156b63924592b5c3567a62af40d692b0c4bed"
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.g11-watcher.log",
+    "sha256": "54582015613317b3ea8ddc291dda40aa477b854844a9381d13b9b1f6c5bb2933"
    },
    ".guard.log": {
-    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z.guard.log",
-    "sha256": "d36027f6367257c5cd576e7895b94ef0166a32bef1f22019f0a24bcd241db1e1"
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.guard.log",
+    "sha256": "54b3caa445ab46770f6fcd23d96f93297f454bf9aa2e7b99e33a9e23e8ef02f3"
+   },
+   ".guard/host.jsonl": {
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.guard/host.jsonl",
+    "sha256": "a18a6bf80414829b9a9b0ce326308573acea278aecc323e2f2f8b77340d6007c"
    },
    ".guard/summary.json": {
-    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z.guard/summary.json",
-    "sha256": "b7baed86956012fb9479dccbe7070b175f39e14f9f46742d2dd0b3343efda887"
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.guard/summary.json",
+    "sha256": "8593cbeaf986d89bf22e36a3d225a3b0b35ea1f2d13f60e815f85e03aebded01"
    },
    ".run.log": {
-    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z.run.log",
-    "sha256": "c8e454d44fdb7387c6c7e5caf82491764cb9293e725ea932e33820915f4aadde"
+    "path": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z.run.log",
+    "sha256": "872e1abc27d90f156df4d723f6c6cb1bbd5a16cf10c57dd2233f2b3002b4f97e"
    }
   },
   "protocol_met": true,
@@ -332,157 +477,729 @@
   "runtime_identity": {
    "writer_image": "sha256:2deb90b0cc52eae7610fa44692f90df077e9db100ca259e38fd652a2dc1c5dc5",
    "writer_restarts": 0,
-   "writer_started": "2026-10-18T12:31:12.464483074Z"
+   "writer_started": "2026-10-19T04:01:37.796004849Z"
   }
  },
  "limits": [
-  "G2 FAIL: MARK_INDEX_PRICE BINANCE max 1082.9 ms (> 1000; p95 418.6 inside); per-sample cause not determined (no DL receipt clock on the Query-read MARK path).",
-  "G4 FAIL: OKX_INVERSE BTC-USD-SWAP book_delta / book_snapshot / quote maxima over the addendum limits in some windows; venue -> DL ~30 ms, excess internal (A3 rescued none).",
+  "G11 PASS only under the post-hoc A5 (EXTERNAL_QUIET OKX BNB-USDT-SWAP TRADE, 36.415 s frozen clock, 0.413 s from its first post-fault canonical event); without A5 G11 FAILs.",
+  "Measured with 15 portal containers paused and the Codex tree stopped (host load1 p50 16.2); at load1 p50 22.0 (021044Z) G4 and G8 failed. Production must not run unrelated heavy workloads beside DL (open IDR-128).",
   "Single host; no HA, no independent failure domains.",
-  "rust_core x3 on rc22 (binary equality); binance_bar_edge held on rc14 (scoped out).",
-  "G14 DL mean CPU sum 5.63 vCPU above the owner's 5 vCPU budget (recorded, not a gate).",
+  "rust_core x3 on rc22 (binary equality, no rustls code); binance_bar_edge held on rc14 (scoped out).",
+  "G14 DL mean CPU sum 5.75 vCPU above the owner's 5 vCPU budget (recorded, not a gate).",
   "IDR-108 open (Stream accepts before its hot view serves)."
  ],
  "measured": {
+  "G11": {
+   "a5_slice": {
+    "clock_start_ms": 1792384617191,
+    "first_apply_ms": 1792384617604,
+    "first_post_fault_event": {
+     "conn_gen": 210,
+     "kafka_ts_ms": 1792384617191,
+     "offset": 235686122,
+     "partition": 2,
+     "pub_ns": 1792384617167542780,
+     "recv_ns": 1792384617167542780,
+     "seq": "241971263",
+     "src_ns": 1792384617139000000,
+     "trade_id": "241971263"
+    },
+    "first_valid_apply_s": 0.413,
+    "frozen_first_valid_apply_s": 36.415,
+    "last_pre_fault_event": {
+     "kafka_ts_ms": 1792384575273,
+     "offset": 235684298,
+     "partition": 2,
+     "src_ns": 1792384575209000000,
+     "trade_id": "241971262"
+    },
+    "slice": "OKX|BNB-USDT-SWAP|TRADE|None"
+   },
+   "caught_up_s": {
+    "max": 36.415,
+    "min": 2.408,
+    "n": 64,
+    "p50": 3.927,
+    "p95": 4.928,
+    "p99": null
+   },
+   "outage_seconds": 0.113,
+   "with_a5": {
+    "max": 4.928,
+    "min": 0.413,
+    "n": 64,
+    "p50": 3.927,
+    "p95": 4.407,
+    "p99": null
+   },
+   "without_a5": {
+    "max": 36.415,
+    "min": 2.408,
+    "n": 64,
+    "p50": 3.927,
+    "p95": 4.928,
+    "p99": null
+   }
+  },
+  "G14_dl_cpu_mean_sum_vcpu": 5.75,
   "G1_rows": [
    {
     "feed_venue": "BOOK_DELTA|BINANCE",
-    "max": 780.7,
-    "n": 83901,
-    "p95": 197.5,
-    "p99": 273.4
+    "max": 617.7,
+    "n": 84460,
+    "p95": 164.8,
+    "p99": 223.6
    },
    {
     "feed_venue": "BOOK_DELTA|OKX",
-    "max": 829.4,
-    "n": 94211,
-    "p95": 205.4,
-    "p99": 278.0
+    "max": 589.3,
+    "n": 93546,
+    "p95": 171.6,
+    "p99": 231.4
    },
    {
     "feed_venue": "BOOK_SNAPSHOT|BINANCE",
-    "max": 702.2,
-    "n": 9344,
-    "p95": 215.1,
-    "p99": 340.4
+    "max": 583.1,
+    "n": 9253,
+    "p95": 180.9,
+    "p99": 256.5
    },
    {
     "feed_venue": "BOOK_SNAPSHOT|OKX",
-    "max": 814.0,
-    "n": 11223,
-    "p95": 213.2,
-    "p99": 315.3
+    "max": 609.5,
+    "n": 11222,
+    "p95": 181.5,
+    "p99": 253.1
    }
   ],
-  "G2_inside": [
+  "G2_rows": [
    {
     "feed_venue": "TRADE|BINANCE",
-    "max": 611.3495,
-    "n": 100331,
-    "p95": 248.0
+    "max": 376.803913,
+    "n": 113269,
+    "observed": "INSIDE",
+    "p50": 109.0,
+    "p95": 196.0,
+    "p99": 260.0
    },
    {
     "feed_venue": "TRADE|OKX",
-    "max": 507.3048,
-    "n": 22352,
-    "p95": 241.0
+    "max": 388.413164,
+    "n": 28687,
+    "observed": "INSIDE",
+    "p50": 96.0,
+    "p95": 180.0,
+    "p99": 234.0
    },
    {
     "feed_venue": "QUOTE|BINANCE",
-    "max": 627.294057,
-    "n": 103965,
-    "p95": 190.0
+    "max": 405.820118,
+    "n": 120117,
+    "observed": "INSIDE",
+    "p50": 98.0,
+    "p95": 153.0,
+    "p99": 193.0
    },
    {
     "feed_venue": "QUOTE|OKX",
-    "max": 684.438684,
-    "n": 92799,
-    "p95": 200.0
+    "max": 409.994639,
+    "n": 107398,
+    "observed": "INSIDE",
+    "p50": 106.0,
+    "p95": 162.0,
+    "p99": 205.0
+   },
+   {
+    "feed_venue": "MARK_INDEX_PRICE|BINANCE",
+    "max": 515.5,
+    "n": 9000,
+    "observed": "INSIDE",
+    "p50": 297.1,
+    "p95": 350.2,
+    "p99": 400.1
    },
    {
     "feed_venue": "MARK_INDEX_PRICE|OKX",
-    "max": 743.9,
-    "n": 21516,
-    "p95": 353.2
+    "max": 586.8,
+    "n": 21529,
+    "observed": "INSIDE",
+    "p50": 225.2,
+    "p95": 332.9,
+    "p99": 373.6
    }
   ],
-  "G2_outside": [
+  "G3": {
+   "max": 3208,
+   "min": 136,
+   "n": 320,
+   "p50": 780,
+   "p95": 1641,
+   "p99": 3135
+  },
+  "G4_rows": [
    {
-    "feed_venue": "MARK_INDEX_PRICE|BINANCE",
-    "max": 1082.9,
-    "n": 9000,
-    "p50": 328.5,
-    "p95": 418.6,
-    "p99": 488.5
-   }
-  ],
-  "G4_failing_rows": [
-   {
-    "a3_attributions": [
-     "INTERNAL_SEGMENT_OVER_LIMIT"
-    ],
-    "a3_rescued": false,
-    "limit_max_ms": 282.5,
+    "basis": null,
+    "limit_max_ms": null,
+    "limit_p95_ms": 40728.7,
     "max_ms_per_window": [
-     234.987,
-     358.892,
-     258.978,
-     170.984,
-     387.114
+     null,
+     null,
+     8007.62,
+     null,
+     8036.952
     ],
     "n_per_window": [
-     113,
-     114,
-     114,
-     113,
-     169
+     0,
+     0,
+     5,
+     0,
+     5
     ],
-    "row": "book_delta|OKX_INVERSE|"
+    "p95_ms_per_window": [
+     null,
+     null,
+     8007.62,
+     null,
+     8036.952
+    ],
+    "row": "bar|BINANCE|15m",
+    "verdict": "PASS"
    },
    {
-    "a3_attributions": [
-     "INTERNAL_SEGMENT_OVER_LIMIT",
-     "UNKNOWN"
-    ],
-    "a3_rescued": false,
-    "limit_max_ms": 300.7,
+    "basis": null,
+    "limit_max_ms": null,
+    "limit_p95_ms": 257.6,
     "max_ms_per_window": [
-     301.419,
-     399.916,
-     311.241,
-     277.296,
-     406.674
+     105.956,
+     104.834,
+     142.303,
+     146.452,
+     224.615
+    ],
+    "n_per_window": [
+     10,
+     10,
+     10,
+     10,
+     15
+    ],
+    "p95_ms_per_window": [
+     105.956,
+     104.834,
+     142.303,
+     146.452,
+     224.615
+    ],
+    "row": "bar|BINANCE|1m",
+    "verdict": "PASS"
+   },
+   {
+    "basis": null,
+    "limit_max_ms": null,
+    "limit_p95_ms": 25836.6,
+    "max_ms_per_window": [
+     null,
+     null,
+     null,
+     null,
+     8037.403
+    ],
+    "n_per_window": [
+     0,
+     0,
+     0,
+     0,
+     5
+    ],
+    "p95_ms_per_window": [
+     null,
+     null,
+     null,
+     null,
+     8037.403
+    ],
+    "row": "bar|BINANCE|30m",
+    "verdict": "PASS"
+   },
+   {
+    "basis": null,
+    "limit_max_ms": null,
+    "limit_p95_ms": 27273.2,
+    "max_ms_per_window": [
+     6860.79,
+     null,
+     8008.377,
+     6873.546,
+     8037.137
+    ],
+    "n_per_window": [
+     5,
+     0,
+     5,
+     5,
+     5
+    ],
+    "p95_ms_per_window": [
+     6860.79,
+     null,
+     8008.377,
+     6873.546,
+     8037.137
+    ],
+    "row": "bar|BINANCE|3m",
+    "verdict": "PASS"
+   },
+   {
+    "basis": null,
+    "limit_max_ms": null,
+    "limit_p95_ms": 73817.2,
+    "max_ms_per_window": [
+     61213.096,
+     61296.045,
+     61387.889,
+     61369.923,
+     61542.171
+    ],
+    "n_per_window": [
+     10,
+     10,
+     10,
+     10,
+     15
+    ],
+    "p95_ms_per_window": [
+     61213.096,
+     61296.045,
+     61387.889,
+     61369.923,
+     61542.171
+    ],
+    "row": "bar|OKX|1m",
+    "verdict": "PASS"
+   },
+   {
+    "basis": null,
+    "limit_max_ms": null,
+    "limit_p95_ms": 2160788.8,
+    "max_ms_per_window": [
+     null,
+     null,
+     null,
+     null,
+     1801549.683
+    ],
+    "n_per_window": [
+     0,
+     0,
+     0,
+     0,
+     5
+    ],
+    "p95_ms_per_window": [
+     null,
+     null,
+     null,
+     null,
+     1801549.683
+    ],
+    "row": "bar|OKX|30m",
+    "verdict": "PASS"
+   },
+   {
+    "basis": null,
+    "limit_max_ms": null,
+    "limit_p95_ms": 217582.1,
+    "max_ms_per_window": [
+     181268.819,
+     null,
+     181413.842,
+     181381.196,
+     181566.568
+    ],
+    "n_per_window": [
+     5,
+     0,
+     5,
+     5,
+     5
+    ],
+    "p95_ms_per_window": [
+     181268.819,
+     null,
+     181413.842,
+     181381.196,
+     181566.568
+    ],
+    "row": "bar|OKX|3m",
+    "verdict": "PASS"
+   },
+   {
+    "basis": null,
+    "limit_max_ms": null,
+    "limit_p95_ms": 263.3,
+    "max_ms_per_window": [
+     238.877,
+     220.914,
+     198.205,
+     195.124,
+     333.973
+    ],
+    "n_per_window": [
+     777,
+     775,
+     762,
+     765,
+     1159
+    ],
+    "p95_ms_per_window": [
+     135.0,
+     134.0,
+     128.0,
+     128.0,
+     159.0
+    ],
+    "row": "book_delta|BINANCE|",
+    "verdict": "PASS"
+   },
+   {
+    "basis": null,
+    "limit_max_ms": null,
+    "limit_p95_ms": 289.1,
+    "max_ms_per_window": [
+     259.984,
+     205.334,
+     219.115,
+     217.872,
+     393.066
+    ],
+    "n_per_window": [
+     1070,
+     1050,
+     1045,
+     1033,
+     1573
+    ],
+    "p95_ms_per_window": [
+     141.0,
+     136.0,
+     137.0,
+     140.0,
+     157.0
+    ],
+    "row": "book_delta|OKX|",
+    "verdict": "PASS"
+   },
+   {
+    "basis": null,
+    "limit_max_ms": null,
+    "limit_p95_ms": 260.0,
+    "max_ms_per_window": [
+     251.564,
+     227.097,
+     240.697,
+     207.352,
+     324.506
+    ],
+    "n_per_window": [
+     1194,
+     1112,
+     939,
+     998,
+     1586
+    ],
+    "p95_ms_per_window": [
+     144.0,
+     141.0,
+     135.0,
+     141.0,
+     173.0
+    ],
+    "row": "book_snapshot|BINANCE|",
+    "verdict": "PASS"
+   },
+   {
+    "basis": null,
+    "limit_max_ms": null,
+    "limit_p95_ms": 270.1,
+    "max_ms_per_window": [
+     260.87,
+     199.6,
+     229.694,
+     219.378,
+     393.197
+    ],
+    "n_per_window": [
+     2405,
+     2035,
+     1972,
+     1738,
+     2933
+    ],
+    "p95_ms_per_window": [
+     143.0,
+     145.0,
+     137.0,
+     146.0,
+     171.0
+    ],
+    "row": "book_snapshot|OKX|",
+    "verdict": "PASS"
+   },
+   {
+    "basis": null,
+    "limit_max_ms": null,
+    "limit_p95_ms": 370.9,
+    "max_ms_per_window": [
+     260.928,
+     219.118,
+     227.959,
+     286.287,
+     296.291
+    ],
+    "n_per_window": [
+     378,
+     386,
+     381,
+     392,
+     572
+    ],
+    "p95_ms_per_window": [
+     197.0,
+     193.0,
+     191.0,
+     206.0,
+     210.0
+    ],
+    "row": "mark_index_price|BINANCE|",
+    "verdict": "PASS"
+   },
+   {
+    "basis": "amendment",
+    "limit_max_ms": 993.4,
+    "limit_p95_ms": 200.9,
+    "max_ms_per_window": [
+     175.974,
+     144.034,
+     133.669,
+     158.185,
+     243.89
+    ],
+    "n_per_window": [
+     659,
+     662,
+     663,
+     661,
+     991
+    ],
+    "p95_ms_per_window": [
+     92.0,
+     92.0,
+     89.0,
+     90.0,
+     101.0
+    ],
+    "row": "mark_index_price|OKX|",
+    "verdict": "PASS"
+   },
+   {
+    "basis": null,
+    "limit_max_ms": null,
+    "limit_p95_ms": 292.7,
+    "max_ms_per_window": [
+     235.686,
+     210.924,
+     208.113,
+     237.074,
+     287.828
+    ],
+    "n_per_window": [
+     568,
+     561,
+     565,
+     565,
+     848
+    ],
+    "p95_ms_per_window": [
+     160.0,
+     158.0,
+     148.0,
+     158.0,
+     171.0
+    ],
+    "row": "quote|BINANCE|",
+    "verdict": "PASS"
+   },
+   {
+    "basis": null,
+    "limit_max_ms": null,
+    "limit_p95_ms": 283.3,
+    "max_ms_per_window": [
+     277.886,
+     230.304,
+     267.874,
+     241.088,
+     347.652
+    ],
+    "n_per_window": [
+     610,
+     623,
+     628,
+     651,
+     964
+    ],
+    "p95_ms_per_window": [
+     160.0,
+     152.0,
+     158.0,
+     159.0,
+     181.0
+    ],
+    "row": "quote|OKX|",
+    "verdict": "PASS"
+   },
+   {
+    "basis": null,
+    "limit_max_ms": null,
+    "limit_p95_ms": 269.3,
+    "max_ms_per_window": [
+     240.113,
+     175.074,
+     207.97,
+     204.313,
+     291.21
+    ],
+    "n_per_window": [
+     420,
+     386,
+     385,
+     387,
+     551
+    ],
+    "p95_ms_per_window": [
+     136.0,
+     132.0,
+     132.0,
+     137.0,
+     148.0
+    ],
+    "row": "trade|BINANCE|",
+    "verdict": "PASS"
+   },
+   {
+    "basis": null,
+    "limit_max_ms": null,
+    "limit_p95_ms": 257.4,
+    "max_ms_per_window": [
+     212.101,
+     208.325,
+     173.926,
+     213.592,
+     276.844
+    ],
+    "n_per_window": [
+     282,
+     287,
+     261,
+     255,
+     468
+    ],
+    "p95_ms_per_window": [
+     133.0,
+     135.0,
+     124.0,
+     136.0,
+     143.0
+    ],
+    "row": "trade|OKX|",
+    "verdict": "PASS"
+   },
+   {
+    "basis": "addendum",
+    "limit_max_ms": 282.5,
+    "limit_p95_ms": null,
+    "max_ms_per_window": [
+     183.415,
+     205.334,
+     211.998,
+     194.861,
+     215.813
+    ],
+    "n_per_window": [
+     110,
+     110,
+     111,
+     113,
+     168
+    ],
+    "p95_ms_per_window": null,
+    "row": "book_delta|OKX_INVERSE|",
+    "verdict": "PASS"
+   },
+   {
+    "basis": "addendum",
+    "limit_max_ms": 300.7,
+    "limit_p95_ms": null,
+    "max_ms_per_window": [
+     186.997,
+     186.987,
+     212.316,
+     195.057,
+     276.283
     ],
     "n_per_window": [
      120,
-     124,
-     124,
-     125,
+     119,
+     121,
+     119,
      183
     ],
-    "row": "book_snapshot|OKX_INVERSE|"
+    "p95_ms_per_window": null,
+    "row": "book_snapshot|OKX_INVERSE|",
+    "verdict": "PASS"
    },
    {
-    "a3_attributions": [
-     "INTERNAL_SEGMENT_OVER_LIMIT"
-    ],
-    "a3_rescued": false,
-    "limit_max_ms": 322.6,
+    "basis": "addendum",
+    "limit_max_ms": 2597.8,
+    "limit_p95_ms": null,
     "max_ms_per_window": [
-     264.863,
-     310.493,
-     288.111,
-     221.921,
-     531.927
+     2005.918,
+     1816.581,
+     2018.749,
+     2168.862,
+     2174.882
     ],
     "n_per_window": [
-     107,
-     112,
-     114,
-     102,
-     167
+     109,
+     111,
+     110,
+     110,
+     165
     ],
-    "row": "quote|OKX_INVERSE|"
+    "p95_ms_per_window": null,
+    "row": "mark_index_price|OKX_INVERSE|",
+    "verdict": "PASS"
+   },
+   {
+    "basis": "addendum",
+    "limit_max_ms": 322.6,
+    "limit_p95_ms": null,
+    "max_ms_per_window": [
+     221.042,
+     177.539,
+     177.091,
+     241.088,
+     320.025
+    ],
+    "n_per_window": [
+     71,
+     89,
+     100,
+     109,
+     147
+    ],
+    "p95_ms_per_window": null,
+    "row": "quote|OKX_INVERSE|",
+    "verdict": "PASS"
    }
   ],
   "gates": {
@@ -505,13 +1222,57 @@
     "verdict": "PASS"
    },
    "G2": {
-    "verdict": "FAIL"
+    "verdict": "PASS"
    },
    "G3": {
     "verdict": "PASS"
    },
    "G4": {
+    "verdict": "PASS"
+   },
+   "G5": {
+    "verdict": "PASS"
+   },
+   "G6": {
+    "verdict": "PASS"
+   },
+   "G7": {
+    "verdict": "PASS"
+   },
+   "G8": {
+    "verdict": "PASS"
+   },
+   "G9": {
+    "verdict": "PASS"
+   }
+  },
+  "gates_without_a5": {
+   "G1": {
+    "verdict": "PASS"
+   },
+   "G10": {
+    "verdict": "PASS"
+   },
+   "G11": {
     "verdict": "FAIL"
+   },
+   "G12": {
+    "verdict": "PASS"
+   },
+   "G13": {
+    "verdict": "PASS"
+   },
+   "G14": {
+    "verdict": "PASS"
+   },
+   "G2": {
+    "verdict": "PASS"
+   },
+   "G3": {
+    "verdict": "PASS"
+   },
+   "G4": {
+    "verdict": "PASS"
    },
    "G5": {
     "verdict": "PASS"
@@ -530,7 +1291,13 @@
    }
   }
  },
+ "reissued": "2026-10-19 on the final counted run p184-final-campaign-20261019T040311Z (supersedes the 2026-10-18 report on p184-final-campaign-20261018T123222Z)",
  "release": "v2.2.4",
  "schema": "qdl.release-endpoint-report.v2",
- "scope": "Data Layer P18.4 closure on the Kafka-native stack at the stage-100 workload: 64 demanded TS Paper slices, BINANCE and OKX (incl. OKX_INVERSE), one TS writer on the same host. Numbers are copied from the final campaign files cited below; nothing is re-measured here. Not a TS order/accounting/alpha certification, not HA."
+ "scope": "Data Layer P18.4 closure on the Kafka-native stack at the stage-100 workload: 64 demanded TS Paper slices, BINANCE and OKX (incl. OKX_INVERSE), one TS writer on the same host. Numbers are copied from the final campaign files cited below; nothing is re-measured here. Not a TS order/accounting/alpha certification, not HA.",
+ "superseded": {
+  "git_ref": "endpoint-report.json at 288a5805 (unchanged since 6909f71)",
+  "report_on": "p184-final-campaign-20261018T123222Z",
+  "sha256": "9a11b3725c261041d7311b4497b0ab24a21d2e100def8c5192f142c0870c48aa"
+ }
 }

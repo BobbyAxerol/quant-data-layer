@@ -2,12 +2,14 @@
  "schema": "qdl.release-equivalence.v1",
  "release": "2.2.4",
  "status": "FINAL",
- "status_note": "Updated 2026-10-18 at packaging from files and docker inspect. The deployed v2.2.4 set spans three image revisions (rust 83bef59 for the ingestors, rust c7ce7d3 for stream/projector, python 31a5155 for Query); the c7ce7d3 entries below record the first roll and stay valid for stream/projector. Not a certificate.",
+ "status_note": "Updated 2026-10-19 at the re-issue on p184-final-campaign-20261019T040311Z from files and docker inspect. The deployed v2.2.4 set spans four image revisions: rust 9dab224 (rustls 0.23.46, 27c79b53) on ingestors x2 and stream x2, rust c7ce7d3 (60f83a51) on projectors x2, rust rc22 a4e7b3b (7c848aad) on the cores, python 31a5155 (3e9e4d3a) on Query x2. Entries for 83bef59 / c7ce7d3 / 31a5155 record the earlier rolls and stay the provenance chain. Not a certificate.",
  "source_rev": {
   "rust_ingestors": "83bef596a3cf0e21b423330fd58060afa3a9b1c1",
   "rust_stream_projector": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
   "python_query": "31a515522aff3f6e5e7791aa21500cfa570ccb41",
-  "first_release_build": "c7ce7d3087cb8a2daf82ba941982bd296d488f45"
+  "first_release_build": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
+  "rust_ingestors_stream_rustls": "9dab22429ea44566587f31d9f56f8b059933c795",
+  "rust_projector": "c7ce7d3087cb8a2daf82ba941982bd296d488f45"
  },
  "images": {
   "rust_ingestors": {
@@ -29,6 +31,20 @@
   "python_superseded_c7ce7d3_rollback": {
    "tag": "qdl-v2-python:2.2.4-c7ce7d3",
    "digest": "sha256:c21e164ac4db14af498b73104e344f003fa7117fdae2e465f50df8668cdca252"
+  },
+  "rust_rustls_9dab224": {
+   "tag": "qdl-v2-rust:2.2.4-9dab224",
+   "digest": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+   "roles": [
+    "ingestor_okx_swap",
+    "ingestor_binance_usdm",
+    "stream_kn_1",
+    "stream_kn_2"
+   ]
+  },
+  "rust_ingestor_rollback_83bef59": {
+   "tag": "qdl-v2-rust:2.2.4-83bef59",
+   "digest": "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784"
   }
  },
  "build_receipt": {
@@ -56,13 +72,12 @@
   }
  },
  "measured_in_final_stage100": {
-  "dir": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z",
-  "scorecard_sha256": "b9e76a83795f1af8f64b802b22ff1f410087a8f87ee4ef5d23b26a1d39cb4964",
+  "dir": "~/.local/state/qdl-v2/p184-final-campaign-20261019T040311Z",
+  "scorecard_sha256": "ebe11b8c10145bb92b7a850c4134d81101aaf7000a210f198b175316b20acbbf",
   "protocol_met": true,
   "summary": {
    "FAIL": [
-    "G2",
-    "G4"
+    "G11"
    ],
    "NOT_MEASURED": [
     "G12",
@@ -70,7 +85,28 @@
    ],
    "PASS": [
     "G1",
+    "G2",
     "G3",
+    "G4",
+    "G5",
+    "G6",
+    "G7",
+    "G8",
+    "G9",
+    "G10",
+    "G14"
+   ]
+  },
+  "summary_with_a5": {
+   "NOT_MEASURED": [
+    "G12",
+    "G13"
+   ],
+   "PASS": [
+    "G1",
+    "G2",
+    "G3",
+    "G4",
     "G5",
     "G6",
     "G7",
@@ -80,7 +116,8 @@
     "G11",
     "G14"
    ]
-  }
+  },
+  "a5_receipt_sha256": "b1c2e7b450363f094c25adb34988f9356da327ef3d0b6a863a001dab2692d08d"
  },
  "roles": [
   {
@@ -125,7 +162,14 @@
     },
     "old_image": "sha256:c21e164ac4db14af498b73104e344f003fa7117fdae2e465f50df8668cdca252"
    },
-   "verdict": "FILES_EQUAL_EXCEPT_IDR114_SET"
+   "verdict": "FILES_EQUAL_EXCEPT_IDR114_SET",
+   "live_2026_10_19": {
+    "image": "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff",
+    "revision_label": "31a515522aff3f6e5e7791aa21500cfa570ccb41",
+    "restart": 0,
+    "cpus": 2.0,
+    "memory_mib": 2048
+   }
   },
   {
    "role": "query_kn_2",
@@ -169,12 +213,19 @@
     },
     "old_image": "sha256:c21e164ac4db14af498b73104e344f003fa7117fdae2e465f50df8668cdca252"
    },
-   "verdict": "FILES_EQUAL_EXCEPT_IDR114_SET"
+   "verdict": "FILES_EQUAL_EXCEPT_IDR114_SET",
+   "live_2026_10_19": {
+    "image": "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff",
+    "revision_label": "31a515522aff3f6e5e7791aa21500cfa570ccb41",
+    "restart": 0,
+    "cpus": 2.0,
+    "memory_mib": 2048
+   }
   },
   {
    "role": "stream_kn_1",
    "measured_digest_pre_release": "sha256:baa72c96d5255cbfc0e332f893c470ff293d88fde4e20ea4c7c94ba5ea09a38b (TEST overlay, qdl.test.only, gateway c934c1e)",
-   "release_digest": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+   "release_digest": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
    "verdict": "DIFFERENT_BUILD_PATH_WITH_BEHAVIOURAL_PROOF",
    "basis": "qdl-stream-gateway whole-file hash differs from baa72c96 (CARGO_HOME path strings, 986 registry paths each, same .text size 8202831); source diff c934c1e..REV over the gateway tree is empty; DR08 live-budget isolation A/B PASS (prereg d22561fe..., verdict sha256 137ab779...)",
    "binaries": [
@@ -196,12 +247,38 @@
    "roll_receipt_sha256": "d5ed0dbae0fe943eb0d764103cd0286dc0fab6b487133e313b213206897f00fe",
    "rollback_compose_sha256": "c8300d58dc9510f637b13beb1f85a57adc1312ebc8a187bbadd2e89326f4d0c9",
    "old_image": "sha256:baa72c96d5255cbfc0e332f893c470ff293d88fde4e20ea4c7c94ba5ea09a38b",
-   "restart_count_at_roll": 0
+   "restart_count_at_roll": 0,
+   "release_digest_before_rustls_roll": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+   "rustls_roll": {
+    "receipt": {
+     "path": "~/.local/state/qdl-v2/releases/v2.2.4/rollout-rustls-0.23.46/stream_kn_1-receipt-20261018T190018Z.json",
+     "sha256": "55caf1a04e53df684b46cc663c40487d4f91392814983afed4c1e76474015fd5"
+    },
+    "rollback_compose": {
+     "path": "~/.local/state/qdl-v2/releases/v2.2.4/rollout-rustls-0.23.46/stream_kn_1-rollback-20261018T190018Z.compose.json",
+     "sha256": "ee9bdac7aa17e1ba468b6161e98ab7d8ca6308e1c0408e3e8585b45c8e5f455e"
+    },
+    "old_image": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+    "new_image": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+    "diff": [
+     "image"
+    ],
+    "restart_count": 0,
+    "writer": "READY 64 64"
+   },
+   "verdict_rustls": "RUSTLS_0.23.46_SYMBOL_DIFF_RECORDED_HOLD_PASS",
+   "live_2026_10_19": {
+    "image": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+    "revision_label": "9dab22429ea44566587f31d9f56f8b059933c795",
+    "restart": 0,
+    "cpus": 0.75,
+    "memory_mib": 512
+   }
   },
   {
    "role": "stream_kn_2",
    "measured_digest_pre_release": "sha256:baa72c96d5255cbfc0e332f893c470ff293d88fde4e20ea4c7c94ba5ea09a38b (TEST overlay, qdl.test.only, gateway c934c1e)",
-   "release_digest": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+   "release_digest": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
    "verdict": "DIFFERENT_BUILD_PATH_WITH_BEHAVIOURAL_PROOF",
    "basis": "qdl-stream-gateway whole-file hash differs from baa72c96 (CARGO_HOME path strings, 986 registry paths each, same .text size 8202831); source diff c934c1e..REV over the gateway tree is empty; DR08 live-budget isolation A/B PASS (prereg d22561fe..., verdict sha256 137ab779...)",
    "binaries": [
@@ -223,7 +300,33 @@
    "roll_receipt_sha256": "bc6a234a508045dd296c6c9e6a9e0ca19249c11ea31f3c475f741bd0231bcacc",
    "rollback_compose_sha256": "27ac83a284243f24caec7f94338ead66aed5c17188d38ec69a5bb8517bab5d4a",
    "old_image": "sha256:baa72c96d5255cbfc0e332f893c470ff293d88fde4e20ea4c7c94ba5ea09a38b",
-   "restart_count_at_roll": 0
+   "restart_count_at_roll": 0,
+   "release_digest_before_rustls_roll": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+   "rustls_roll": {
+    "receipt": {
+     "path": "~/.local/state/qdl-v2/releases/v2.2.4/rollout-rustls-0.23.46/stream_kn_2-receipt-20261018T190632Z.json",
+     "sha256": "ec555607b7f49b218ca4965b85079d926caee7a65cf5c79de81eeb699bf06893"
+    },
+    "rollback_compose": {
+     "path": "~/.local/state/qdl-v2/releases/v2.2.4/rollout-rustls-0.23.46/stream_kn_2-rollback-20261018T190632Z.compose.json",
+     "sha256": "38e2f1a02f8b63337c86110cff58ccfd2034beb2e16da179f4a6f93030e5233a"
+    },
+    "old_image": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+    "new_image": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+    "diff": [
+     "image"
+    ],
+    "restart_count": 0,
+    "writer": "READY 64 64"
+   },
+   "verdict_rustls": "RUSTLS_0.23.46_SYMBOL_DIFF_RECORDED_HOLD_PASS",
+   "live_2026_10_19": {
+    "image": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+    "revision_label": "9dab22429ea44566587f31d9f56f8b059933c795",
+    "restart": 0,
+    "cpus": 0.75,
+    "memory_mib": 512
+   }
   },
   {
    "role": "market_projector_1",
@@ -251,7 +354,14 @@
    "roll_receipt_sha256": "dfe23b427f357b9aba52ccd0670ca2739b38a65eaad89cf1770fb1f591ba2225",
    "rollback_compose_sha256": "85e97c32ee26115d915fe5746fb3ec9b68bcd8553b19041d9016e1523c4c7185",
    "old_image": "sha256:ce629061a8c180ae7e6cf88e32ebaddcf965ffe3924c88a3f1b942fc1623d4f9",
-   "restart_count_at_roll": 0
+   "restart_count_at_roll": 0,
+   "live_2026_10_19": {
+    "image": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+    "revision_label": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
+    "restart": 0,
+    "cpus": 0.75,
+    "memory_mib": 512
+   }
   },
   {
    "role": "market_projector_2",
@@ -279,7 +389,14 @@
    "roll_receipt_sha256": "35393d2b012a23a92ddc10fc009529801adb23a7f3ea2ec1e48d79dec55e76f6",
    "rollback_compose_sha256": "cd308049ebb17ac5ef51c8201bd4e140d039b360eb033df5473c3279016c5ea8",
    "old_image": "sha256:ce629061a8c180ae7e6cf88e32ebaddcf965ffe3924c88a3f1b942fc1623d4f9",
-   "restart_count_at_roll": 0
+   "restart_count_at_roll": 0,
+   "live_2026_10_19": {
+    "image": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+    "revision_label": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
+    "restart": 0,
+    "cpus": 0.75,
+    "memory_mib": 512
+   }
   },
   {
    "role": "ingestor_okx_swap",
@@ -310,7 +427,7 @@
     "rollback_compose_sha256": "51b21d86dafe7022095eff1093fac80852454fa2c5951129fc9490e5d940ab60",
     "old_image": "sha256:7fba25779f72a3adffc88f195935a316ac94acbfcb362996fafbff89f62c9103"
    },
-   "release_digest": "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784",
+   "release_digest": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
    "final_roll": {
     "receipt": {
      "path": "~/.local/state/qdl-v2/releases/v2.2.4/rollout-idr112b-idr114/ingestor_okx_swap-receipt-20261018T033554Z.json",
@@ -322,7 +439,33 @@
     },
     "old_image": "sha256:5e261809b5046c4ff9de098d5b57eb049287abaabd722ed145701be47d79114b"
    },
-   "verdict": "OTHER_11_BINARIES_EQUAL_INGESTOR_DIFFERENT_BY_DESIGN"
+   "verdict": "OTHER_11_BINARIES_EQUAL_INGESTOR_DIFFERENT_BY_DESIGN",
+   "release_digest_before_rustls_roll": "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784",
+   "rustls_roll": {
+    "receipt": {
+     "path": "~/.local/state/qdl-v2/releases/v2.2.4/rollout-rustls-0.23.46/ingestor_okx_swap-receipt-20261018T184618Z.json",
+     "sha256": "bccae7dd4b489e59c081a4e7447e84b42c277eab408187bd36d345e242849f47"
+    },
+    "rollback_compose": {
+     "path": "~/.local/state/qdl-v2/releases/v2.2.4/rollout-rustls-0.23.46/ingestor_okx_swap-rollback-20261018T184618Z.compose.json",
+     "sha256": "e06a8b38f73efa22306ac1acb00961ee30ff976d669ea5ec55ebd0300988ab2f"
+    },
+    "old_image": "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784",
+    "new_image": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+    "diff": [
+     "image"
+    ],
+    "restart_count": 0,
+    "writer": "READY 64 64"
+   },
+   "verdict_rustls": "RUSTLS_0.23.46_SYMBOL_DIFF_RECORDED_HOLD_PASS",
+   "live_2026_10_19": {
+    "image": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+    "revision_label": "9dab22429ea44566587f31d9f56f8b059933c795",
+    "restart": 0,
+    "cpus": 1.0,
+    "memory_mib": 256
+   }
   },
   {
    "role": "ingestor_binance_usdm",
@@ -353,7 +496,7 @@
     "rollback_compose_sha256": "df0770b1010228c95dd16a90fc5690769ae6b3a0702d4f9bcd69eec3b7cc3039",
     "old_image": "sha256:7fba25779f72a3adffc88f195935a316ac94acbfcb362996fafbff89f62c9103"
    },
-   "release_digest": "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784",
+   "release_digest": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
    "final_roll": {
     "receipt": {
      "path": "~/.local/state/qdl-v2/releases/v2.2.4/rollout-idr112b-idr114/ingestor_binance_usdm-receipt-20261018T034142Z.json",
@@ -365,7 +508,33 @@
     },
     "old_image": "sha256:5e261809b5046c4ff9de098d5b57eb049287abaabd722ed145701be47d79114b"
    },
-   "verdict": "OTHER_11_BINARIES_EQUAL_INGESTOR_DIFFERENT_BY_DESIGN"
+   "verdict": "OTHER_11_BINARIES_EQUAL_INGESTOR_DIFFERENT_BY_DESIGN",
+   "release_digest_before_rustls_roll": "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784",
+   "rustls_roll": {
+    "receipt": {
+     "path": "~/.local/state/qdl-v2/releases/v2.2.4/rollout-rustls-0.23.46/ingestor_binance_usdm-receipt-20261018T185311Z.json",
+     "sha256": "2ec480ea48f7ae40ed8992641b765c120683e22b9572bf314e0431cecd21e84a"
+    },
+    "rollback_compose": {
+     "path": "~/.local/state/qdl-v2/releases/v2.2.4/rollout-rustls-0.23.46/ingestor_binance_usdm-rollback-20261018T185311Z.compose.json",
+     "sha256": "015f0820bfdf7387505db7a844a205a1d4ff4ad9f68c1a933edd23cd55edd6f3"
+    },
+    "old_image": "sha256:a9679defdd970aaa961736d414cf8c443c2ead2f26ebf2e68eb481dda6725784",
+    "new_image": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+    "diff": [
+     "image"
+    ],
+    "restart_count": 0,
+    "writer": "READY 64 64"
+   },
+   "verdict_rustls": "RUSTLS_0.23.46_SYMBOL_DIFF_RECORDED_HOLD_PASS",
+   "live_2026_10_19": {
+    "image": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+    "revision_label": "9dab22429ea44566587f31d9f56f8b059933c795",
+    "restart": 0,
+    "cpus": 0.75,
+    "memory_mib": 256
+   }
   },
   {
    "role": "rust_core",
@@ -389,7 +558,14 @@
      "observed": "EQUAL"
     }
    ],
-   "running_revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e (docker inspect 2026-10-17)"
+   "running_revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e (docker inspect 2026-10-17)",
+   "live_2026_10_19": {
+    "image": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+    "revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e",
+    "restart": 0,
+    "cpus": 1.0,
+    "memory_mib": 256
+   }
   },
   {
    "role": "rust_core_2",
@@ -413,7 +589,14 @@
      "observed": "EQUAL"
     }
    ],
-   "running_revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e (docker inspect 2026-10-17)"
+   "running_revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e (docker inspect 2026-10-17)",
+   "live_2026_10_19": {
+    "image": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+    "revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e",
+    "restart": 0,
+    "cpus": 1.0,
+    "memory_mib": 256
+   }
   },
   {
    "role": "rust_core_3",
@@ -437,14 +620,28 @@
      "observed": "EQUAL"
     }
    ],
-   "running_revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e (docker inspect 2026-10-17)"
+   "running_revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e (docker inspect 2026-10-17)",
+   "live_2026_10_19": {
+    "image": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+    "revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e",
+    "restart": 0,
+    "cpus": 0.5,
+    "memory_mib": 256
+   }
   },
   {
    "role": "binance_bar_edge",
    "measured_digest_pre_release": "sha256:08f356a84151c6e865fbdc4a2efe6924df9336d15353254c2b2da684261794f5 (rc14)",
    "release_digest": "unchanged",
    "verdict": "SCOPED_OUT_NOT_ON_RELEASE_REVISION",
-   "basis": "HELD; stated as a limit in the certificate; running revision label a388537c897de909257c7f45db44c9ac44a62ccc (docker inspect 2026-10-17)"
+   "basis": "HELD; stated as a limit in the certificate; running revision label a388537c897de909257c7f45db44c9ac44a62ccc (docker inspect 2026-10-17)",
+   "live_2026_10_19": {
+    "image": "sha256:08f356a84151c6e865fbdc4a2efe6924df9336d15353254c2b2da684261794f5",
+    "revision_label": "a388537c897de909257c7f45db44c9ac44a62ccc",
+    "restart": 0,
+    "cpus": 0.75,
+    "memory_mib": 512
+   }
   },
   {
    "role": "kafka1-3",
@@ -586,6 +783,23 @@
     "qdl/runtime/stall_telemetry.py"
    ],
    "pip_freeze_equal": true
+  },
+  "rust_9dab224": {
+   "receipt": {
+    "path": "~/.local/state/qdl-v2/build-v2.2.4-9dab224/receipt.json",
+    "sha256": "e38fd27548f7482621d5ed1e7d2e6bc2225fd14aa39d365696d2eef0ab86674c"
+   },
+   "status": "PASS",
+   "symbol_diff_vs_a9679def": {
+    "path": "~/.local/state/qdl-v2/build-v2.2.4-9dab224/symbol-diff-vs-a9679def/summary.json",
+    "sha256": "49f2164e88972600a1a80903f8b724c33f9bc23c83f6e362201636707c8762ef"
+   },
+   "tool": {
+    "path": "scripts/p184_rust_symbol_diff.py",
+    "sha256": "b1df2da54b6a69e6880d131a9494241e6df1104e39a7d72374d5dc0c1d147643"
+   },
+   "verdict": "rustls 0.23.45 -> 0.23.46 only (Cargo.toml / Cargo.lock); qdl-projector and qdl-venue-core-certify whole-file EQUAL to a9679def; ingestor and gateway NOT_CONFINED (rustls functions plus same-source codegen); qdl-realtime-core has 0 rustls functions in either build (cores not rolled)",
+   "packet": "upgrade/evidence/releases/v2.2.4/drafts/RUSTLS_0.23.46_ROLL_PACKET.md"
   }
  },
  "final_roll": {
@@ -600,5 +814,69 @@
   "window_utc": "2026-10-18T03:35:54Z..04:09:25Z",
   "lock_owner": "claude-dl-final-roll",
   "packet": "upgrade/evidence/releases/v2.2.4/drafts/FINAL_ROLL_PACKET_IDR112b_IDR114.md"
+ },
+ "rustls_roll": {
+  "sha256sums": {
+   "path": "~/.local/state/qdl-v2/releases/v2.2.4/rollout-rustls-0.23.46/SHA256SUMS.roll-20261018T1846Z",
+   "sha256": "c518f9b307bec97190f504a40b6d429b238d1feab4f7d77169a6a03f68d95ddc"
+  },
+  "window_utc": "2026-10-18T18:46:18Z..19:06:32Z",
+  "lock_owner": "claude-dl-rustls-roll",
+  "modules": "M1 ingestor_okx_swap, M2 ingestor_binance_usdm, M3 stream_kn_1, M4 stream_kn_2; M5 rust_core x3 NOT rolled (no rustls code in qdl-realtime-core)"
+ },
+ "resource_caps": {
+  "evidence": {
+   "path": "~/.local/state/qdl-v2/releases/v2.2.4/opt-resource-20261018/SHA256SUMS",
+   "sha256": "ba5e465e014138bb1b529859d04f97a238b6b478352a27d3ee6e3ebeebf4cdd1"
+  },
+  "packet": "upgrade/evidence/releases/v2.2.4/drafts/OPT_RESOURCE_PACKAGE.md",
+  "method": "owner-approved adjacent-baseline HOLD (AskUserQuestion ~20:05Z 'Baseline ngay truoc moi buoc')",
+  "K": {
+   "roles": [
+    "kafka1",
+    "kafka2",
+    "kafka3"
+   ],
+   "cpus": 2.25,
+   "from": 1.75,
+   "applied_utc": "2026-10-19T00:20:57Z",
+   "hold": {
+    "path": "~/.local/state/qdl-v2/releases/v2.2.4/opt-resource-20261018/eval2-K2.json",
+    "sha256": "500899296617a7e723f5e4912bbe77c9608142a6ad8e3211a6198e16b2eb32df"
+   }
+  },
+  "Q": {
+   "roles": [
+    "query_kn_1",
+    "query_kn_2"
+   ],
+   "cpus": 2.0,
+   "memory": "2g",
+   "memory_swap": "4g",
+   "from": "1.5 cpu / 1536m / 3g",
+   "applied_utc": "2026-10-19T00:32:44Z",
+   "hold": {
+    "path": "~/.local/state/qdl-v2/releases/v2.2.4/opt-resource-20261018/eval2-Q.json",
+    "sha256": "6365479cfcb5b90f3ef7cf798e9599bfcda853910dbb82c1b6c16531344491e7"
+   }
+  },
+  "I": {
+   "roles": [
+    "ingestor_okx_swap"
+   ],
+   "cpus": 1.0,
+   "from": 0.5,
+   "applied_utc": "2026-10-19T00:44:10Z",
+   "hold": {
+    "path": "~/.local/state/qdl-v2/releases/v2.2.4/opt-resource-20261018/eval2-I.json",
+    "sha256": "768e638fd70fbe1ee2c021b92f4ec963b3a157cc7a9ac73ee482f0b58aec0185"
+   }
+  },
+  "compose_record": "docker-compose.v2-stable.yml (commit b58e40d)",
+  "first_K_attempt": "HOLD FAIL 2026-10-18 19:24-19:35Z (single-baseline rule), rolled back 19:37:12Z; kept in eval-K.json"
+ },
+ "measured_in_final_stage100_superseded": {
+  "dir": "~/.local/state/qdl-v2/p184-final-campaign-20261018T123222Z",
+  "note": "counted for the 2026-10-18 certificate (PASS under post-hoc A4); measured the pre-rustls set, superseded"
  }
 }

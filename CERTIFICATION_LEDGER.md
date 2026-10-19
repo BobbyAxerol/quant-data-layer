@@ -2202,7 +2202,7 @@ rollback retention are recorded in the guide from existing packets, not re-probe
 is unchanged.
 
 
-## P18.4 DL v2.2.4 - 2026-10-18 (package with stated limits; certificate FAIL at 13:40Z, re-issued PASS under post-hoc amendment A4 at ~15:30Z)
+## P18.4 DL v2.2.4 - 2026-10-18 (package with stated limits; certificate FAIL at 13:40Z, re-issued PASS under post-hoc amendment A4 at ~15:30Z; SUPERSEDED 2026-10-19 by the re-issue on 040311Z, below)
 
 Rule of this ledger: read before re-testing; re-run only when a "Pinned at" commit, image or config changes. Only
 items that passed are recorded as certified below; G2 and G4 are recorded as limits, not as certifications. Full
@@ -2297,3 +2297,69 @@ A3 `cc5fc7dc...`.
   negatives for an inverse p95 over the pooled limit and for MARK BINANCE max 1200.1 ms.
 - Re-run only if the stored scorecard, the frozen scorer, A4 or the rescore tool changes. A new campaign is not scored
   by A4: it applies to 123222Z only.
+
+## P18.4 DL v2.2.4 - 2026-10-19 re-issue on the final counted run 040311Z (certificate PASS under post-hoc A5)
+
+The 2026-10-18 entries above stay as the record of that set. The deployed set then changed: the rustls 0.23.46 roll and
+the OPT caps. The certificate is re-issued on the final counted run on the deployed set; the 2026-10-18 counted run
+`123222Z` and its post-hoc A4 are superseded. Evidence: `upgrade/evidence/releases/v2.2.4/` (CERTIFICATE.md,
+SCORECARD.md, certificate.json, scorecard.json, endpoint-report.json `013b66e6...`, equivalence.json,
+a5-g11-trade-clock.md).
+
+### 2026-10-18..19 - rustls roll M1-M4 and OPT caps K/Q/I (deployed)
+
+Pinned at:
+- rust `qdl-v2-rust:2.2.4-9dab224` `sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92`
+  (ingestors x2, stream x2);
+- projectors `60f83a51` (c7ce7d3), cores rc22 `7c848aad`, query `3e9e4d3a` (31a5155), bar edge rc14 `08f356a8` (held),
+  writer `2deb90b0`;
+- caps: kafka1-3 2.25 vCPU, query_kn_1/2 2.0 vCPU / 2 GiB / swap 4 GiB, ingestor_okx_swap 1.0 vCPU,
+  ingestor_binance_usdm 0.75 vCPU.
+
+- Build 9dab224 PASS (`receipt.json` `e38fd275...`). Symbol diff vs `a9679def` (`summary.json` `49f2164e...`):
+  projector / venue-core-certify EQUAL; ingestor / gateway NOT_CONFINED (rustls functions plus same-source codegen);
+  realtime core 0 rustls functions in either build.
+- Roll 2026-10-18 18:46-19:06Z: each role diff `['image']`, HOLD PASS, RestartCount 0 (`SHA256SUMS.roll-20261018T1846Z`
+  `c518f9b3...`).
+- Caps 2026-10-19 00:20-00:44Z, each HOLD PASS under the adjacent-baseline method (`SHA256SUMS` `ba5e465e...`). The
+  first K attempt on 10-18 (single-baseline HOLD FAIL, rolled back) is kept.
+
+### 2026-10-19 - G12 credit and G13 76/76 on the rolled set: CERTIFIED (shadow-certified)
+
+- G12: `p184-g12-v224-final-27c79b53-20261019T005952Z` verdict `pass: true` (`evidence/verdict.json` `87386ad0...`),
+  credit MATCH (`FINAL_CREDIT.json` `eb9d1e29...`). caught_up_s broker 0.245 / 0.245, projector 0.313 / 0.314, Stream
+  0.984 / 0.985 (bound 600 s).
+- G13: runtime v5.6 `015047Z` + dr08 `012840Z` + dr05-upstream `014124Z` + dr05-quiet `013746Z`. W05 DR 76/76
+  (`w05-final-v56.json` `5490c21e...`; case states only, byte-identical to v5.5). The dr05-upstream attempt `013112Z`
+  failed a precondition (harness readiness race); it is kept, not scored.
+
+### 2026-10-19 - final stage-100 040311Z: protocol met; G1-G10 G14 CERTIFIED; G11 FAIL frozen, PASS under post-hoc A5
+
+Pinned at:
+- run worktree `data-layer-p184-final-run-b58e40dd` (gate tool `e179ec78`);
+- budget `ff85335b...`, addendum `4ed59dca...`, A1 (G4-A1) `1c8a276f...`, A2 (G4-A2) `99961c41...`, A3 `384e8512...`;
+- A4 v2 `63f98668...` (bound before load, not needed);
+- the set above; host load1 p50 16.2 with 15 portal containers paused.
+
+- Scorecard `ebe11b8c10145bb92b7a850c4134d81101aaf7000a210f198b175316b20acbbf` (frozen rule, untouched): PASS G1-G10,
+  G14, the same with A4 v2 (`7fffb04e...`). Certified for this set at the stage-100 workload on one host, **with the
+  host isolation limit** (IDR-128).
+- G11 under the frozen rule: FAIL, first valid apply 36.415 s on OKX BNB-USDT-SWAP TRADE only. The venue printed no
+  trade on it for 41.9 s (EXTERNAL_QUIET; canonical topic and OKX history agree).
+- A5 `config/v2/p184-stage100-a5-g11-trade-clock.json` `c5b46c5f...` (POST_HOC_OWNER_DECISION for this run;
+  pre-registered for later runs), tool `scripts/p184_a5_g11_trade_clock.py` `4892abd1...`, receipt `scorecard.a5.json`
+  `b1c2e7b450363f094c25adb34988f9356da327ef3d0b6a863a001dab2692d08d`:
+  - G11 **PASS under A5**: that slice 0.413 s from its first post-fault event; every other gate byte-identical.
+  - Recorded as **PASS_UNDER_POST_HOC_AMENDMENT**, not as a pre-registered certification of G11.
+- Tests: `tests.test_p184_a5_g11_trade_clock` 16 OK (host), including parity on 29 stored G11 summaries and on 6
+  stored receipts.
+- Not certified, recorded: 021044Z (the same set with the portal stack running) FAIL G4 and G8 -> IDR-128; 030130Z
+  TAINTED.
+- Re-run only if a pinned image, a cap, the scorer, A3 / A4 v2 / A5 or their tools change. Later runs are scored by A5
+  only through its pre-registration, with evidence in `<campaign>.g11-canonical/`.
+
+### 2026-10-19 - v2.2.4 certificate re-issued: status PASS (amendments required); not tagged
+
+`certificate.json` status PASS, `amendments` = G4-A1, G4-A2, A3 (refreshed), A4 v2 (pre-registered, not needed), A5
+(`post_hoc: true`); `gates_without_a5` G11 FAIL. It supersedes the 2026-10-18 certificate (`da2fd484...`).
+`release.yml` is unchanged. No tag, no merge.
