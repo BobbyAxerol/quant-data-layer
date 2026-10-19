@@ -76273,3 +76273,17 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   - Correction (E6): the 040311Z entry above says OKX BNB-USDT-SWAP TRADE "set the max in 15 of 28 measured G11 runs
     (one tie)". A recount from the 28 stored g11-summary.json files with a restart gives 19 of 28 at the max (13 alone,
     6 tied). The earlier figure was not reproduced; the release documents use the recount.
+  - Local preflight for 25f9502 (owner CI/CD rule 2026-10-19: impact-based, not full; GitHub CI on the PR is the
+    authoritative full run): a full `scripts/p184_local_ci.py` run was started at 05:24Z under lock
+    claude-dl-a5-local-ci-25f9502 and stopped on the new rule at ~05:32Z (SIGINT during unit-tests step 7; no result
+    recorded). Its leftovers were removed: 1 anonymous volume, 15 BuildKit records created 05:29-05:31Z (pruned by
+    id), the CI output directory; no CI image remained. Lock released.
+    - Impact (`git diff --name-only 288a580..HEAD`, 288a580 = last green PR run 39201550345): docs / JSON evidence +
+      one new script, its test and its config; the only importer of the script is its test (grep).
+    - Checks run: JSON parse of the A5 config and every v2.2.4 JSON; the release.yml certificate checks (status PASS,
+      endpoint sha256 = file, notes present) and all 72 certificate `evidence_sha256` entries recomputed (0
+      mismatches); the receipt `.sha256` files; `tests.test_p184_a5_g11_trade_clock` on the host (16 OK) and in
+      `qdl-v2-python:2.2.4-31a5155` (--network none, repo ro: 16 run, 11 OK, 5 receipt tests skipped as in CI).
+    - Not run (unaffected): rust fmt / clippy / test, cargo-deny, contract and SDK jobs, the rest of the unit suite.
+  - Deviation: the A5 host tests at ~05:05Z ran without reading the host lock first (34a); the lock was absent then
+    (and at 05:23Z), and no measurement was running.
