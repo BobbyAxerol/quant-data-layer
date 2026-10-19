@@ -76035,3 +76035,30 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   - K NOT re-applied: whether the baseline for the re-applied K (and Q/I) may be re-taken immediately before the step
     is a criterion choice not covered by the decision; edits implementing a per-step baseline in the scratch evaluator
     were refused by the tool permission classifier -> STOP, question to the coordinator.
+- 2026-10-19 00:09-00:59Z OPT resource steps K -> Q -> I applied, all HOLDs PASS under the owner-approved adjacent-baseline
+  method (AskUserQuestion ~20:05Z "Baseline ngay trước mỗi bước (Recommended)", packet section 14); step R recorded.
+  Lock claude-dl-opt-resource 00:09:35-00:59Z (absent before, released). Evaluator
+  opt-resource-20261018/eval_hold2.py 0822f890... (rewritten with the approved method; docstring = rule).
+  - Baseline preK2 00:10:48-00:20:48Z (caps unchanged, READY 64 64, violations []): raw_age p99 156.3, commit p99 122.8;
+    throttled kafka 1.25 / 3.72 / 1.98 %.
+  - K 00:20:57Z kafka2, kafka1, kafka3 --cpus 2.25 (RestartCount 0, StartedAt unchanged). HOLD K2 vs preK2: PASS; throttled
+    1.25 -> 0.48, 3.72 -> 3.57, 1.98 -> 0.12 %; raw_age p99 147.6 (<= 187.6), commit p99 110.6 (<= 147.4); max 174.0 /
+    124.8 report-only; violations []. eval2-K2.json 50089929....
+  - Q 00:32:44Z query_kn_1/2 --cpus 2.0 --memory 2g --memory-swap 4g (usage before 1.156 GiB / 990.9 MiB; RestartCount 0).
+    HOLD Q vs the K2 window: PASS; Query throttled 0 / 0.02 -> 0 / 0 %; raw_age p99 149.9, commit p99 118.8; max 376.7 /
+    140.9 report-only; stream_kn_1 overflow +1 reported (known writer TRADE class); query_stall_report both replicas 0
+    Traceback / refusal / stall lines. eval2-Q.json 6365479c....
+  - I 00:44:10Z ingestor_okx_swap --cpus 1.0 (no recreate). HOLD I vs the Q window: PASS; OKX ingestor throttled 0.18 ->
+    0 %; raw_age p99 147.8, commit p99 120.8; max 305.5 / 153.5 report-only; violations []. One lane event: okx-public-004
+    `qdl_native_session_disconnected` cause READ_ERROR "Connection reset without closing handshake" at 00:44:20Z (peer
+    reset), session ready gen 181 after 304 ms; a CPU-quota change does not reset a TCP session (inferred venue-side),
+    recorded. eval2-I.json 768e638f....
+  - Live after (docker inspect 00:58Z, inspect-after.txt): kafka1-3 2.25 vCPU (mem 1.5 / 2 / 1.5 GiB), query_kn_1/2 2.0 vCPU
+    / 2 GiB / swap 4 GiB, ingestor_okx_swap 1.0 vCPU / 256 MiB; RestartCount 0 everywhere. Evidence SHA256SUMS ba5e465e....
+  - Step R: docker-compose.v2-stable.yml records the live caps (the 10-16 drift draft applied: kafka 1.75 -> now 2.25
+    x3, kafka2 mem 2g, ingestor_binance_usdm 0.75; plus query_v2_1/2 2.00 / 2g, ingestor_okx_swap 1.00), each with its
+    packet/time comment; drafts/compose-v2-stable-release-draft.diff regenerated (= this diff vs d74f9fc). Tests in
+    qdl-v2-python:2.2.4-31a5155 (--network none): phaseb_stable_deployment, verify_runtime_generations,
+    capability_coverage, runtime_readiness_recovery, phase105_handoff, phaseb_stable_rebuild, pass_through_wiring 112 OK.
+  - Rollback (packet section 12): docker update back to 1.75 / 1.5 + 1536m/3g (memory only while usage <= 1.3 GiB) / 0.5,
+    plus a revert of the compose record. Rollback composes saved before these steps carry the old caps (packet section 8).

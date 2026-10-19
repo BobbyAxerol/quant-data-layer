@@ -628,3 +628,27 @@ On a breach: `docker update --cpus 0.5`, then STOP.
 5. **One measurement, no attribution.** The bundle's effect is not split per step (section 7).
 6. **Inferred coordinator placement.** Kafka2 as the core group coordinator is inferred from the 10-16 record. The
    uniform plan does not depend on it, and step 0.6 records the fact.
+
+## 14. HOLD method amendment (owner-approved 2026-10-18 ~20:05Z), replaces the pass rules of section 11 K/Q/I
+
+History. The first K application (2026-10-18 19:24:37Z) failed the section-11 rule "core raw_age max <= 1.2 x the
+step-0 baseline max" (438.6 vs 197.3 ms) and showed stream_kn_1 overflow +2; it was rolled back at 19:37:12Z. Evidence
+that the failure was market state, not K: the spike window held 25,920 core records against ~12,000 in a normal
+window; the same 437 ms spike recurred at cap 1.75 after the rollback (19:39:34Z); at 1.75 with nothing changed the
+19:43-19:53Z raw_age p99 (171.7 ms) already exceeded 1.2 x the 19:13Z baseline p99 (167.5 ms). K's target metric did
+improve: broker throttled-period share 1.88 / 1.00 / 0.43 % -> 0.53 / 0.33 / 0 %.
+
+Decisions:
+- Coordinator ~19:56Z (owner rule "one variable, target metric decides"): judge on the target metric, rust_core
+  raw_age p99 and commit_ms p99 (not worse by > 20 %), READY 64 64, no restart, no new error lines, no new overflow
+  class (the known writer-side TRADE overflow is reported, not gating); max values report-only.
+- Owner, AskUserQuestion ~20:05Z, answer "Baseline ngay trước mỗi bước (Recommended)": each step is compared with a
+  fresh 10-minute baseline taken immediately before that step under the same configuration (nothing changed during it).
+
+Implementation: `~/.local/state/qdl-v2/releases/v2.2.4/opt-resource-20261018/eval_hold2.py` (read-only; docstring holds
+the exact rule): (a) K every broker's throttled share <= baseline and the sum strictly lower; Q both replicas at 2 GiB
+and each throttled share <= baseline (strictly lower when > 0); I OKX ingestor throttled share <= baseline (strictly
+lower when > 0); (b) p99 = nearest rank over the per-progress-line maxima of rust_core x3 in the 600 s window,
+<= 1.2 x the adjacent baseline; (c) hold_check: READY 64 64, no restart, no core retry/rebalance, no error line, no
+violation other than the gateway overflow counter. The window after a step serves as the next step's baseline when the
+next step follows it directly (same configuration, nothing changed during it). Rollback rules unchanged (section 12).
