@@ -328,6 +328,11 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertIn("hashFiles('Cargo.lock'", cache["with"]["key"])
         self.assertIn("rust-1.82-slim", cache["with"]["key"])
         self.assertNotIn("restore-keys", cache["with"])
+        rust = next(s["run"] for s in JOBS["rust-workspace"]["steps"] if s.get("name") == "Test Rust generated contracts")
+        # The cache tar runs as the runner user; the container must hand ownership back but keep cargo's exit status.
+        self.assertIn('chown -R "$CACHE_OWNER" target /usr/local/cargo/registry /usr/local/cargo/git', rust)
+        self.assertIn("status=$?;", rust)
+        self.assertTrue(rust.rstrip().endswith("exit $status'"))
 
 
 if __name__ == "__main__":

@@ -76378,3 +76378,27 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   each) and at ~06:01Z one 0.04 s host unittest ran inside foreign host-lock windows (Codex PMA11 05:56:52-06:01:52Z,
   then epg10-08 from 05:59:31Z): the lock was read but not honoured at that moment. Any measurement in those windows
   should treat them as foreign activity. Afterwards every run waited for the lock to clear.
+- GitHub proof run 1: run 39208370362 on b1023f3 (PR #34 opened as a draft into dev; event pull_request; scope
+  full because the PR changes .github/workflows/ci.yml, docker-compose.v2-stable.yml from PR #33 and the two CI
+  scripts). Wall 1011 s (16.9 min) against 30 min before. Per job: changes 13 s (29 classifier tests OK on the runner,
+  git and yaml present), consolidated-source-preflight 10 s, repository-scan 21 s, contract-tests 14 s, sdk-python310
+  13 s, rust-workspace 260 s (Rust step 239 s, cold), release-gates 256 s, kn-native-integration 363 s, unit-tests
+  shard 1 642 s / 2 629 s / 3 983 s / 4 359 s (image build 49-57 s per shard), ci-result 7 s.
+  - Shards by test count (1026/1026/1026/1025) were unbalanced in time: suite seconds 550 / 540 / 894 / 262, sum
+    2246 s over 336 modules. Shard 3 set the wall time.
+  - Shard 4 FAILED one test: `test_fund_phase6_capacity` (synthetic sustained-load gate, burst window 405.5 events/s
+    against the >= 450 floor = 0.9 x 500). It is a wall-clock throughput threshold on a shared 2-vCPU runner. Its
+    predecessor module in the shard (`test_fund_phase5_stream_sdk`) is also its predecessor in the full discovery
+    order, so this is not a new ordering. Not fixed here; watched in the next runs. `ci-result` FAILED as designed
+    ("unit-tests: in scope, result failure").
+  - Cargo cache save FAILED (warning, the job stayed green): `tar` as the runner user could not read crate sources
+    that root extracted in the container. Fixed: the Rust step now runs `chown -R $CACHE_OWNER target
+    /usr/local/cargo/registry /usr/local/cargo/git` inside the container after cargo, and exits with cargo's status.
+- Shard balance: `scripts/ci_test_shard_weights.json` holds the per-module seconds of run 39208370362 (336 modules).
+  With these weights the greedy partition gives 561.5 s per shard (84 modules each). A module missing from the file
+  weighs its test-case count. Refresh the file from the `shard-timing` lines when the shards drift.
+- Scoped path on GitHub: it cannot be shown on PR #34 itself. `changes` diffs the whole PR (merge base...head), as it
+  must, and the PR contains ci.yml, so every push to it runs full. The first PR into dev after this merges is the
+  GitHub proof. Locally: `p184_local_ci.py --changed-since <ci commit> --dry-run` on a docs-only commit selects only
+  consolidated-source-preflight + repository-scan, and the classifier / `--verify-needs` tests cover the docs-only
+  PASS and the skip rules.
