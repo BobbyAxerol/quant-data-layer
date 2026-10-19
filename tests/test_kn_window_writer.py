@@ -135,6 +135,7 @@ class SoakArithmeticTest(unittest.TestCase):
             "handshake failed: CERTIFICATE_VERIFY_FAILED unable to get local issuer certificate",
             "native slice refused: HANDOFF_RESUME_REQUIRED",
             "market active scope refresh failed reason=ConnectError",
+            "2026-10-19 18:31:02,401 - market_data_worker-1 - x - INFO - applied offset=14016 lag=0.401",
         ]
         counts = tool.count_log_lines(lines)
         self.assertEqual(counts["auth_protocol"], {"CERTIFICATE_VERIFY_FAILED": 1, "HANDOFF_RESUME_REQUIRED": 1})

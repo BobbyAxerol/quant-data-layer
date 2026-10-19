@@ -76993,3 +76993,45 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
 - Cleanup: every `qdl-rss-*` container `--rm` and removed (cache, quota, sync, query, driver, unit-test
   containers; 0 left), network `qdl-rss-net` removed, no volume created; host lock released 16:43:34Z. Kept: the
   image `qdl-v2-python:2.2.5-84512ab` (v2.2.5 candidate) and the evidence dirs above.
+
+### DL v2.2.5: python image from dev with IDR-129, re-pin, final isolated rehearsal, packet additions - 2026-10-19 (Claude)
+
+- Coordinator 2026-10-19: PR #45 merged (9aab887); IDR-129 fix PR #46 merged at 17:53Z (9b6747f). Branch
+  `docs/v225-final-rehearsal` from origin/dev 9b6747f (worktree `/home/bobby/.worktrees/data-layer-v225-final`).
+  Production untouched (only the read-only DR snapshot check below and docker inspect).
+- Host lock `claude-dl-v225-final` 17:54:01-18:42:29Z (acquired free; no foreign test container).
+- Python image: `scripts/build_qdl_release_images.py --rev 9b6747f --component python --build` ->
+  `qdl-v2-python:2.2.5-9b6747f` = sha256:753604f8abaa866e2de30c7ccaf36168986bc6991550ee326d53e51b83d1550a, receipt
+  PASS (`~/.local/state/qdl-v2/build-v2.2.5-9b6747f/receipt.json`, copy `upgrade/evidence/releases/v2.2.5/
+  python-image-build-receipt.json`): label revision 9b6747f, 446 vs 439 files against 3e9e4d3a, 20 different = exactly
+  git diff 31a5155..9b6747f (the 16 IDR-127/apparatus files of b7056141 + qdl/api_v2/router.py, qdl/query/service.py,
+  qdl/runtime/memory_maintenance.py, qdl/runtime/stable.py), unexpected 0, pip freeze equal. Not reused: 69304bd4
+  (84512ab, pre-#44/#45 base). `QDL_QUERY_MEMORY_SOFT_LIMIT_MIB` has a code default (448): no compose change.
+- Re-pin: `deploy/compose/qdl-v2-stable-kn.v2.2.5.env` QDL_IMAGE_QUERY -> 753604f8. DataRequirement check in the new
+  image (`--network none`): the 12 ETH requirements of TS manifest r11 build (BAR 1000, others 0).
+- Final rehearsal, run once (`--burst --expect-query-image 753604f8 --ts-root ts-src-v2.0.0`, hardened generation,
+  writer clone 2deb90b0): PASS, receipt `upgrade/evidence/releases/v2.2.5/rehearsal-final-20261019T175600Z.json`
+  (events `~/.local/state/qdl-v2/releases/v2.2.5/rehearsal-final-20261019T175600Z/evidence/events.jsonl`).
+  Outage B 312.5 / C 519.0 / D 353.1 s (DL Query READY 145-162 s after the broker recreate; spread = writer clone
+  BOOTSTRAP 68-251 s at 0.35 vCPU). Offsets continuous, cursors unchanged, trust anchor moved both ways, URP 0,
+  writer READY 12/12. Burst gate PASS (baseline 133.4, peaks 160-172, settled 156.8 MiB, last step -2.4, no restart /
+  OOM); every 200 warmup returned <= 1 row (near-zero volume; cause not investigated); 14-15 of 64 slices unresolved
+  per burst after 4 rounds, RATE_LIMITED retries ~105 (driver shares the TS identity quota with the clone; writer
+  clone READY 5/6, 1/7, 6/6 samples during the bursts; cause not verified). Open observation: phase D writer clone
+  counted one bare substring "401" (not attributable, line removed at teardown; Query/Stream 401 = 0, all other
+  auth/protocol counters 0). Fixed after the run: whole-token match + matching lines kept (rehearsal tool), same
+  whole-token pattern in `kn_window_writer.py` (test added) and the packet R1 grep (`\b401\b` also matched the
+  millisecond field of log timestamps).
+- Cleanup: 13 containers, 4 networks, 4 volumes, 5 dirs, 0 left; images b7056141 (2.2.5-601c3d8) and 69304bd4
+  (2.2.5-84512ab) deleted by id after a pin grep (0 references outside their build/evidence dirs), free space
+  242.76 -> 243.74 GB. Kept: image 753604f8 (window target), build dirs (36 MB each), TS v2.0.0 archive (44 MB).
+- Packet additions (coordinator): checklist row 17 + W0.5 TS DR equivalence "before" snapshot from TS dev 57c94e1b
+  (`scripts/p184_dr_equivalence.py snapshot --dl-release v2.2.4`, mandatory before W1; command verified read-only
+  17:11Z: OK, 12 roles, writer 2deb90b0); W14 monitor on TS v2.0.1 (main 875aeeb1, digest 3aaa1a79...; not on the
+  host yet: pull by digest before T-0, else W14 alone deferred); decision: v2.0.1 rather than the later v2.0.2.
+  Outage expectation updated to 5-6 min, up to ~9 min; rollback 4.5-8.7 min.
+- Owner decision ~18:00Z recorded: IDR-128 supported-load limitation (envelope measured with unrelated heavy stacks
+  paused; mixed portal workload outside the certified scope; IDR-128 OPEN for host split / IO isolation; no new
+  tuning campaign) in `CERTIFICATE_SCOPE.md` section 3b and the new `drafts/RELEASE_NOTES.md`.
+- Status: the window is ready for go once this PR is merged (CI green); production-ready only after the window's
+  R1-R4. Next: coordinator schedules the window per packet section 9.

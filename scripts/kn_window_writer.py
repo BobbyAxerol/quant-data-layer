@@ -276,8 +276,9 @@ DATA_POLICY = ("DATA_STALE", "SESSION_STATE", "EVENT_AGE", "SOURCE_UNAVAILABLE",
 # market-data-writer health.rs PROBE_LATENCY_BOUNDS_MS (inclusive upper bounds, one overflow bucket after)
 PROBE_BOUNDS_MS = (10, 25, 50, 100, 250, 500, 750, 1000, 1250, 1500, 2000)
 DISCONNECT = re.compile(r"venue=(\S+) symbol=(\S+) feed=(\S+).* code=(\S+)")
-AUTH_RE = re.compile(r"\b(401|UNAUTHENTICATED|CERTIFICATE_VERIFY_FAILED|SSLError|STRICT_RESUME_REFUSAL|"
-                     r"HANDOFF_RESUME_REQUIRED)\b")
+# whole tokens only: not inside numbers, decimals or log timestamps ("05:43:03,401" is a millisecond field)
+AUTH_RE = re.compile(r"(?<![0-9A-Za-z_,.:])(401|UNAUTHENTICATED|CERTIFICATE_VERIFY_FAILED|SSLError|STRICT_RESUME_REFUSAL|"
+                     r"HANDOFF_RESUME_REQUIRED)(?![0-9A-Za-z_.])")
 SOAK_SQL = ("select status, details->>'demanded_v2_slices', details->>'ready_v2_slices', "
             "details->>'execution_ready_v2_slices', details->>'unhealthy_v2_slices', details->>'consumer_mode', "
             "extract(epoch from last_seen_at), details->'native_probe' from service_heartbeats "
