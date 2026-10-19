@@ -76729,3 +76729,46 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
 - 12:40Z: the queued hardened-permission rehearsal re-run (waiting behind the IDR-128 A/B lock, no lock held, no
   container started) was cancelled on purpose: the IDR-129 Query rebuild changes the window image again, so the
   hardened generation and the final Query image are rehearsed once together before the window (packet item 2.5a).
+
+### Host cleanup record (AGENTS rule 34) - 2026-10-19 (Claude)
+
+- Owner approval 2026-10-19 (cleanup set of the post-v2.2.4 approvals): disk and Docker cleanup by digest, canonical
+  checkout to the released line, V1 as rollback image only. Executed 08:28-08:58Z; journaled late here (it was not
+  recorded the same day). Evidence (pre/post `df` + `docker system df`, `delete_list.tsv`, `delete_reasons.txt`,
+  step logs): session scratchpad `cleanup-20261019/` (outside Git, transient).
+- Disk: `/` used 303.89 GB (59 %) at 08:32:40Z -> 267.44 GB (52 %) at 08:49:17Z.
+- Images: 13 removed by id (`docker image rm sha256:...`, no prune), 1.41 GB, every one `containers=0` and with a
+  per-image reason: 7 superseded TS v1.2.4/v1.2.5 images (06e99200, 0983912997, 7d410919, 4dba0ac1, 5b66c2cd,
+  7e7e2d02, dba741eb), DL `qdl-v2-rust:2.2.1-855c914` (0f6876e1), DL `qdl-v2-python:2.2.2-d6d2637` (51450612),
+  TS native-builder p18-deb56ca (98d4ecec), TS compat native-writer-guard (1cc8cf69) and b898b2f-listener (e0eb71fb),
+  TS writer dr07-452955f (5849d716). Retention set: every image referenced by a container, the v2.2.4 rollback set,
+  v2.2.3 until 2026-10-25.
+- BuildKit: test cache 1.015 GB pruned (428 -> 291 records). Session scratchpad: 122.7 MB removed (1.436 -> 1.313 GB);
+  writer harness inputs kept.
+- TS delivery trace `p184-20261005/runtime/mark-cutover/logs/dr07-delivery-20261007`: 39.84 GB -> 0.73 GB. The 13
+  windows still referenced by state/evidence files are retained as `retained/window-<ns>.tar.zst` (zstd), each tar
+  member verified against `SHA256SUMS.originals`: 1402/1402 match; the rest deleted.
+- Canonical checkout `/home/bobby/data_layer`: fast-forwarded main 5bf5cd5 -> b5ab3c2 (v2.2.4) after saving the 2
+  stray 2026-10-02 plan lines as a patch in the session scratchpad
+  (`data_layer-canonical-stray-lines-20261002.patch`, sha256 b8adf709...; a duplicated heading and a stray `raw-h`
+  token, no content). Worktrees `data-layer-runtime-reconcile` and `data-layer-p184-closure` removed (merged);
+  `/home/bobby/.worktrees/data-layer-dev` created for dev work.
+- V1: tag `v1.2.4` (annotated c7db86dd) on 2b0dcf7 = source of `qdl-v1-fallback:v1.2.4-2b0dcf7`. Owner: V1 is a
+  rollback image only. `data_layer_service` stopped 2026-10-19 08:58:14Z (container kept). Rollback:
+  `docker start data_layer_service`.
+- Not done: the dead spool `canonical-cache.sqlite3` (3.97 GB) - backup then delete after a reader check, pending
+  behind the host measurement lock. No volume, network, source, runtime state or running container was removed.
+- INCIDENT (cleanup lesson): the image step deleted `qdl-v2-python:2.2.2-d6d2637` (id 51450612...) although the
+  stage-100 profile and amendment A3 (`config/v2/p184-stage100-a3-external-attribution.json`) pin it; the
+  pre-delete reference scan did not catch those pins. Impact: the IDR-128 A/B arm A of 11:10Z refused in 11 s
+  (campaign_exit=3 at 11:12:03Z, nothing measured, no runtime effect). Repair: rebuilt from d6d2637 at 11:13:56Z
+  as id 2ed4d697..., which is NOT equal to the A3 pin; runs that need A3 identity must treat it as a rebuild.
+  Lesson: before deleting an image, grep the campaign profiles and amendments (`config/v2/*.json`) for its tag/id.
+
+### IDR-129 Query KN RSS retention after warmup bursts - 2026-10-19 (Claude)
+
+- Production: Query KN keeps RSS after warmup bursts. `query_kn_1` reached 2045/2048 MiB and restarted at 12:02:55Z;
+  `query_kn_2` got a controlled restart at 12:07:25Z (owner-approved). Registered as IDR-129 in the TS
+  INTEGRATION_DEFECT_REGISTER (cross-system register).
+- Fix in progress on `fix/idr129-query-rss` for v2.2.5 (window packet slot recorded in the entry above). Until the
+  fix ships, the Query memory watch (monitor F2 / window RSS hold rule) is the mitigation.
