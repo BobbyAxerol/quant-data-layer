@@ -76813,3 +76813,75 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   50 ms = -19 % commits/write IO, +59 ms ACK p50, +12.5 ms BOOK_DELTA apply p50; full-writer A/B not done.
 - Host lock `claude-w12-writer-proof` 13:19:58-13:50:05Z, released on completion; containers `--rm`; no production
   mutation. Status: proposal; owner/TS go needed only for a later W12-B.
+
+### IDR-129 root cause and fix: Query RSS kept after warmup bursts - 2026-10-19 (Claude)
+
+- Scope: coordinator task (owner-approved fixes 2026-10-19), branch `fix/idr129-query-rss` from dev cd272f8, for
+  DL v2.2.5. Production read-only (docker logs/inspect/stats, one read-only key copy); host lock
+  `claude-idr129-query-rss` from 14:15:25Z.
+- Production evidence (docker logs, qdl.stall lines): `query_kn_1` RSS stepped up per burst from 270 MiB
+  (10-18 05Z) to 2045 MiB (10-19 12:02Z, restart); after the restarts 190 MiB -> 871 MiB peak at 12:38Z (IDR-128
+  arm B stage-100) -> 558/650 MiB at 14:12Z (docker stats). GC telemetry over 32 h: collections `[16, 0, 1]`
+  (16 generation-0, 0 generation-1, 1 start-up full). The bursts are 2,500/5,000/10,000-row alpha warmups
+  (stage-100 cold role) and 1,000-row TS BAR warmups on the single-active large-warmup lane.
+- Harness `scripts/idr129_query_rss_isolated.py` (new): one Query replica of the production image 3e9e4d3a with the
+  production container spec except private market-cache and quota Redis, `--cpus 1.0 --memory 2g`, isolated
+  `--internal` network, every container `--rm`. The private cache is a read-only copy (DUMP/HMGET/HGETALL) of the
+  64 burst products' keys (10,200 rows each, 218 MB) plus a 15 s tail re-copy so the 1m freshness holds. Driver =
+  SDK 2.4 shape (redirect 1, queued retry on REPLICA_LANE_BUSY, cold-read retry, 10 s client timeout), 64
+  concurrent warmups per burst: TS 10 x 1,000 rows, alpha 54 x 2,500/5,000/10,000. A sitecustomize probe reports
+  RSS, mallinfo2, gc generations, row cache, and runs gc.collect (with DEBUG_SAVEALL summary) and malloc_trim(0).
+  Evidence `~/.local/state/qdl-v2/idr129-query-rss-20261019{,b,c}/` (arm dirs: run.json, driver.out, query.log,
+  work/result.json).
+- Measured, production image (arm A-stage, 12 bursts): RSS 195 (start) -> 472 (burst 1) -> 683 MiB (burst 12),
+  malloc in use (uordblks) 155 -> 398 MiB, Python blocks flat (1.49-1.52 M), row cache at its 20,000 bound.
+  At idle: gc.collect freed 15,917 objects and uordblks 398 -> 90 MiB (fordblks 218 -> 526); malloc_trim(0) then
+  RSS 716 -> 368 MiB. Arm with 1,000-row warmups only (A-baseline): RSS plateau 380-400 MiB (no growth).
+  So: cyclic garbage holding malloc memory, plus glibc free memory not returned.
+- What the garbage is (arms D/E, DEBUG_SAVEALL at idle after 6 bursts): ~9,000 objects; freeing them released
+  130 MiB of malloc memory (uordblks 310 -> 180, 265 -> 136) although their Python-visible payload was 20-30 MiB.
+  Holders: 39 closed client connections (uvicorn HttpToolsProtocol/RequestResponseCycle, asyncio
+  _SelectorSocketTransport/_SSLProtocolTransport, 78 ssl.MemoryBIO) and 137 refused-item cycles
+  (QueryServiceError traceback -> `service.py` work:1035 / executor `_one`:301 / `_run_with_policy`:406).
+- Cost lines (E4):
+  1. `qdl/api_v2/router.py` `_warmup_json_off_loop` / `_warmup_batch_json_off_loop`: the whole warmup body (2-20 MB)
+     is one `http.response.body` message -> one `transport.write`; asyncio `sslproto._do_write` encrypts it into
+     the connection's outgoing `ssl.MemoryBIO` in one call. A drained MemoryBIO keeps the capacity of its largest
+     write until the SSL object is freed: host check, 8 TLS pairs x one 10 MiB write, RSS 27 -> 107 MiB with the
+     BIOs drained, 37 MiB once the connections were freed. So every client connection pins its largest warmup body,
+     and a closed connection pins it until a collection frees the connection's cycle.
+  2. `qdl/runtime/stable.py` `QUERY_GC_THRESHOLDS = (100_000, 50, 100)` (IDR-114 era, set by
+     `configure_query_interpreter`): a generation-1 collection needs 50 generation-0 ones; production made 16 in
+     32 h, so connection cycles and refused-item cycles that survive one generation-0 collection stay until
+     restart. Not changed here (it is the GC pause control of IDR-114/F5).
+  3. glibc arenas (MALLOC_ARENA_MAX=2) keep freed memory: 150-350 MiB returned only by malloc_trim.
+  4. `qdl/query/service.py` assemble_batch kept each refused item's traceback (the IDR-114 residual).
+  Not the cause (measured): row cache (bounded 20,000), threads (41-55), SQLite (KN backend has no spool),
+  stall telemetry (bounded deque), refusal log (bounded keys).
+- Fix (tested locally + isolated replay):
+  1. `SlicedBodyResponse` (`qdl/api_v2/router.py`): warmup and warmup:batch bodies go out as 256 KiB `more_body`
+     slices; bytes, Content-Length (no chunked encoding) and status unchanged. Bounds each connection's MemoryBIO to
+     ~256 KiB.
+  2. `service.py` assemble_batch: `release_exception_frames(error)` after the typed problem is taken.
+  3. `qdl/runtime/memory_maintenance.py` (new), installed by `create_stable_query_app`: when RSS >= soft limit
+     (`QDL_QUERY_MEMORY_SOFT_LIMIT_MIB`, default 448, 0 disables), the large-warmup lane idle >= 3 s
+     (`V2QueryService.large_warmup_lane_busy`) and >= 120 s since the last run: one gc.collect() + malloc_trim(0)
+     on the loop thread, one `qdl.stall kind=memory_maintenance` line. Measured cost of that pair at idle:
+     gc 133-233 ms, trim 12-55 ms. GC thresholds and the start-up gc.freeze unchanged.
+- Results (same harness and bursts, source mounted read-only over the production image):
+  | arm | RSS burst 1 / 6 / 10 / 12 MiB | uordblks burst 1 -> last | collect frees (idle) | collect+trim RSS |
+  | --- | --- | --- | --- | --- |
+  | A-stage production image | 472 / 574 / 652 / 683 | 155 -> 398 | 308 MiB | 716 -> 368 |
+  | F sliced body + frame release | 395 / 457 / 427 / - | 100 -> 146 | 52 MiB | 438 -> 360 |
+  | G F + maintenance (512 then) | 391 / 408 / 468 / 458 | 99 -> 161 | 68 MiB | 464 -> 377 |
+  Garbage after the fix holds no QueryServiceError/work frames (0 vs 137) and only the 256 KiB read buffers of
+  closed TLS connections (asyncio sslproto). G never reached its 512 MiB limit; default lowered to 448 MiB so the
+  bounded behaviour is the default one (final proof on the built image below). Client warmup latency (200s):
+  p50 6.4-8.7 s / p95 9.3-10.2 s on A-stage vs 6.4-8.7 s / 9.0-10.2 s on G (queue-dominated; G overlapped the
+  affected-suite run on another CPU, so H is the latency comparison).
+- Tests (production image 3e9e4d3a, `--network none`, source mounted read-only): new
+  `tests/test_query_idr129_memory.py` 12 OK (sliced body bytes/length/slices, HTTP identity, TLS MemoryBIO bound,
+  refused-item no-cycle, maintenance policy, lane-busy signal, lifespan install); negative control: the
+  refused-item test FAILS on the unfixed service. Affected 37 modules (api_v2, query service, runtime.stable,
+  warmup, stall telemetry): 552 tests, 1 failure `test_phaseb_stable_edge` catalog L2 count 32 != 34 = the image's
+  baked config predates dev's IDR-127 catalog (environment, not this change), 36 skipped.

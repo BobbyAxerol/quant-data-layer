@@ -786,6 +786,43 @@ async def _json_off_loop(build) -> JSONResponse:
     )
 
 
+# IDR-129: a large body is handed to the server in slices of this size. asyncio's TLS
+# transport encrypts each ``transport.write`` into the connection's OpenSSL output
+# buffer (``ssl.MemoryBIO``), and that buffer keeps the capacity of the largest
+# single write for the connection's whole life (a drained MemoryBIO that carried
+# a 10 MiB write still holds 10 MiB until the SSL object is freed; measured
+# 2026-10-19). One write per warmup therefore pinned up to the largest warmup
+# body (2-20 MB) per client connection, and a closed connection's objects are
+# cyclic garbage that only a rare full collection frees: the isolated 64-warmup
+# burst freed 130 MiB of malloc memory from 39 closed connections. Slices bound
+# that buffer to ~256 KiB; the bytes, ``Content-Length`` and status are unchanged.
+_RESPONSE_SLICE_BYTES = 256 * 1024
+
+
+class SlicedBodyResponse(Response):
+    """``Response`` whose body goes to the ASGI server as bounded ``more_body`` slices."""
+
+    slice_bytes = _RESPONSE_SLICE_BYTES
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await super().__call__(scope, receive, send)
+            return
+        await send({"type": "http.response.start", "status": self.status_code, "headers": self.raw_headers})
+        body, size, step = self.body, len(self.body), self.slice_bytes
+        if size <= step:
+            await send({"type": "http.response.body", "body": body})
+        else:
+            view = memoryview(body)
+            for start in range(0, size, step):
+                stop = min(size, start + step)
+                await send({"type": "http.response.body", "body": bytes(view[start:stop]),
+                            "more_body": stop < size})
+            view.release()
+        if self.background is not None:
+            await self.background()
+
+
 _RENDER_CHUNK_ROWS = 250
 # Large responses render on two fixed threads, not on the loop's default
 # executor (up to cpu_count + 4 threads): each thread that renders a 10k-row
@@ -871,7 +908,7 @@ async def _warmup_json_off_loop(build) -> Response:
     body = await await_in_thread(
         _RENDER_EXECUTOR, lambda: _render_warmup_result(build()), cold=True
     )
-    return Response(content=body, media_type="application/json")
+    return SlicedBodyResponse(content=body, media_type="application/json")
 
 
 async def _single_warmup_response(
@@ -1036,7 +1073,7 @@ def _render_warmup_batch(request, access, result, requirements) -> bytes:
 async def _warmup_batch_json_off_loop(request, access, result, requirements) -> Response:
     body = await await_in_thread(_RENDER_EXECUTOR,
         lambda: _render_warmup_batch(request, access, result, requirements), cold=True)
-    return Response(content=body, media_type="application/json")
+    return SlicedBodyResponse(content=body, media_type="application/json")
 
 
 def _reference_data(result) -> dict:

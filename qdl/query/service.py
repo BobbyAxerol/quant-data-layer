@@ -55,6 +55,7 @@ from qdl.query.results import (
     MarketDataQueryBackend,
     QualityMetadata,
     QueryBackendError,
+    release_exception_frames,
     CANONICAL_LINEAGE_MISMATCH,
     CanonicalLineageMismatch,
 )
@@ -817,6 +818,15 @@ class V2QueryService:
                 )
         return BatchQueryResult(request_id, tuple(results))
 
+    def large_warmup_lane_busy(self) -> bool:
+        """IDR-129: True while the large-warmup lane runs or queues a batch (memory maintenance waits)."""
+
+        admission = getattr(self, "_local_batch_admission", None)
+        if admission is None:
+            return False
+        stats = admission.stats()
+        return bool(stats.get("active", 0) or stats.get("pending", 0))
+
     def _local_batch_admission_for(
         self, requirements: tuple[DataRequirement, ...] = (),
     ) -> _LocalBatchAdmission:
@@ -1114,6 +1124,11 @@ class V2QueryService:
                         "warmup batch item failed inside the bounded executor",
                         False,
                     )
+                # IDR-129 (the IDR-114 residual): the item error's traceback holds the
+                # frames of ``work`` and the executor, which hold the error again -
+                # a cycle per refused item that only a full collection frees. The
+                # batch keeps the typed problem; the frames are no longer needed.
+                release_exception_frames(error)
                 results.append(
                     BatchItemResult(
                         requirement.instrument_uid,
