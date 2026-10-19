@@ -76062,3 +76062,102 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
     capability_coverage, runtime_readiness_recovery, phase105_handoff, phaseb_stable_rebuild, pass_through_wiring 112 OK.
   - Rollback (packet section 12): docker update back to 1.75 / 1.5 + 1536m/3g (memory only while usage <= 1.3 GiB) / 0.5,
     plus a revert of the compose record. Rollback composes saved before these steps carry the old caps (packet section 8).
+- 2026-10-19 00:59-02:08Z G12 final + G13 on the rolled DL set (stream/ingestors 27c79b53; core rc22 7c848aad, projector
+  60f83a51, query 3e9e4d3a, writer 2deb90b0) + OPT caps (Claude subagent; owner chain approval ~18:40Z, coordinator
+  ~20:05Z "start G12/G13 ... never overlap measurement windows"). Clean DL run worktree data-layer-p184-final-run-b58e40dd
+  (detached b58e40dd = origin head, dirty 0 before/after); launchers in the session scratchpad final6/.
+  - G12 (lock "claude P18.4 G12 v224 FINAL rustls 27c79b53 20261019T005946Z" 00:59:46-01:28:35Z): same shape as 042415Z
+    (--ts-root trading-system-final-run-77a6d671 per H1, fresh parity snapshot, --auto-leader-rebalance false, --image-set
+    g12-image-set-v224.json 284f31ca... = stream 27c79b53, --query-code image, --credit). Receipt
+    p184-g12-v224-final-27c79b53-20261019T005952Z (namespace in `namespace`): run exit 0, verdict COMPLETED **pass true**;
+    caught_up_s BINANCE/OKX broker_stop_start 0.245/0.245, projector_restart 0.313/0.314, stream_restart 0.984/0.985;
+    writer clones Redis UNCAPPED, strict restart both venues; --credit: creditable true, reason PASS, production_parity
+    MATCH, cleaner_binding RUN, final profile checked. Teardown 12 removed, 0 left, volumes 52 = 52, networks 12 = 12,
+    clone state erased, production_guard_breaches {}, production_external_recreates {}. sha256: verdict.json 87386ad0...,
+    production-parity.json a6da20df..., credit-snapshot.json 17f9f46a..., writer-precheck.json 4fbd4b32...,
+    teardown.json 724b1671..., FINAL_CREDIT.json eb9d1e29..., SHA256SUMS 61dc4d64....
+  - G13 isolated (lock "claude P18.4 G13 isolated rustls 27c79b53 ..." 01:28:35-01:41:07Z; roles g13-roles-v224.json
+    dcecb1bf..., TS run worktree trading-system-final-run-e9ae5484, --dl-source-sha b58e40dd, inputs
+    g13v56/inputs-g13v56-ci.json 0b98e64d...; dry runs blocked {}):
+    - dr08-isolated p184-g13-20261019T012840Z: 4/4 OBSERVED ok, harness_ok, 129.9 s (summary 1f2dc105..., evidence
+      3ff8b279...).
+    - dr05-upstream p184-g13-20261019T013112Z: 5/6; DR05.GAP_REFUSAL@OKX ok false at its POSITIVE ANCHOR (precondition,
+      before any fault): findings BOOK_VIEW_MISSING / EXECUTION_CONTEXT_BOOK_MISSING, writer clone OKX BOOK slices
+      DISCONNECTED (reconnect_count 2, DATA_NOT_READY) at the anchor sample; the fault and oracle were never reached. The
+      same clone state (DISCONNECTED at the anchor) appears in the Binance cells of this run and of the credited 085316Z
+      (which pass on the bootstrap anchor); the next OKX case on the same harness passed. Classified as a harness
+      readiness race (precondition not established), not a GAP-refusal result; receipt kept (summary 1e7d4aaf..., rows
+      4a238fa7...). One rerun (lock 01:41:19-01:47:52Z) p184-g13-20261019T014124Z: **6/6 OBSERVED ok**, exit
+      [0,0,0,0,0], harness_ok, 366.1 s.
+    - dr05-quiet p184-g13-20261019T013746Z: 2/2 ISOLATED_FAULT OBSERVED ok, harness_ok, 178.7 s (summary d68f866a...,
+      rows 8a9e7ce6...).
+  - G13 runtime window packet v5.6 (p1/packet-g13-v5.6-20261019.md 44bdecd4... = sidecar; generator g13v56/make_g13v56.py
+    2211d1a5..., run ids g13r9wa20261018 / g13r9fx01, compose 5051892c..., FX plan a65329f3..., inputs 0b98e64d...; lock
+    "claude P18.4 G13 v5.6 window (packet-g13-v5.6-20261019)" 01:48:19-02:08:39Z):
+    - Step 2: B9 99/99 pending [] mismatch []; binding digest 397f1d20... (4 g13r9wa accounts); B16 {}; DNS 4/4; B10 CA
+      fc24c047... x3; identity files 8/8 ok; leftovers 0. Step 3 FX g13r9fx01 FX_PROOF_SEED_COMMITTED (4 writes). Step 4
+      preflight_env PASS x2, compose config 0 x2. Step 5 ts-p184 up 01:49:00Z, 8 containers rc 0, 7 roles on 2deb90b0,
+      health 200, "Gateway V3 Online", Traceback/401/UNAUTHENTICATED/BINDING_MISMATCH/CANARY 0, writer scope holds the 4
+      g13r9wa accounts; B12 1 1 1 1. Step 7 alphas up 01:49:48Z, warmup 700 rows both venues, non-200 0. FX snapshot
+      validated, 1 rate.
+    - Runner p184-g13-20261019T015047Z (01:50:47-02:06:11Z, exit 0; summary 5b897eaf..., plan 69226e05...): dr01-deployed 7,
+      dr01-wrong-account 2 (cleanup complete true), dr02-dr03-alpha 14, dr04-dr06-views 22, dr05-transport 9, dr07-reference
+      12; every step harness_ok, removed_leftovers {}, dl_source removed. Abort watch: writer rc 0, DL bad [], 0 QUOTA lines.
+    - W05 in 2deb90b0 (--network none, TS e9ae5484 ro, --expect-source-sha 30f50a91, --expect-image-digest 2deb90b0) over
+      the 6 runtime jsonl + dr08 012840Z + dr05-upstream 014124Z + dr05-quiet 013746Z: **DR 76/76** (DR01 9/9, DR02 8/8,
+      DR03 6/6, DR04 14/14, DR05 17/17, DR06 6/6, DR07 12/12, DR08 4/4); issues only CASE_OPEN on the 260 non-DR cells
+      outside G13. verify/w05-final-v56.json 5490c21e... (byte-identical to the v5.5 output: the verifier writes case
+      states only; provenance rests on its arguments and input receipts, as recorded on 10-18).
+    - Teardown: alpha down, ts-p184 down (+ network), FX g13r9fx01 FX_PROOF_SEED_DEACTIVATED (3 x UPDATE 1), DSN env
+      file and p1/r2 removed; 0 ts-p184 / p184-g13- / p184-dr05- containers, networks, volumes, /tmp/p184-dr05-*; docker
+      ps 41 = before; writer 2deb90b0 rc 0; DL roles rc 0; run worktrees dirty 0.
+- 2026-10-19 02:08-02:50Z FINAL stage-100 on the rolled DL set + OPT caps, A1 + A2 + A3 (refreshed 384e8512) + A4 v2
+  (Claude subagent): **protocol_met true; PASS G1 G2 G3 G5 G6 G7 G9 G10 G11 G14; FAIL G4, G8; G12 / G13 separate
+  (credited / 76/76 above). Verdict identical with and without A4 v2** (A4 v2 applied; it rescues two inverse rows but
+  G4 keeps failing rows outside its scope). NOT certified.
+  - Apparatus: run worktree data-layer-p184-final-run-b58e40dd (tool e179ec78 = A3 pin), lock
+    claude-s100-final-rustls-b58e40dd 02:08:56-02:50:30Z (absent before; released), Codex tree pause 02:09:01-02:48:31Z
+    (4 processes stopped / resumed, incl. a python launcher + ssh child; 0 failures), trace re-arm
+    rc15/roll_writer_campaign_native.py 2deb90b0 3600 (dry DRY_RUN, real OK, delta UNTIL only, not_ready 1, writer
+    recreated 02:09:17Z), preflight_env PASS, campaign dry run problems [] (A3 images = live), launcher
+    final6/s100/run.sh: A4 v2 `bind` first (binding 02b22959..., bound 02:10:45Z < campaign start 02:11:00Z), guard
+    --abort --own-session-pid 3412097, campaign `run --g11 --base-profile .../profile-stage100-rc4-r16.json`, then
+    `close` (071c731c...) and `score --write`.
+  - Campaign p184-final-campaign-20261019T021044Z: driver 02:11:28-02:42:57Z exit 0, 5 G4 windows (02:13:28, 02:17:13,
+    02:20:58, 02:24:43, 02:29:29Z), G11 restart 02:43:50Z (outage 0.128 s), campaign_exit 0, guard CLEAN aborted false;
+    A3 applied (pins, images, profile, code matched). Load crossed no 00/08/16 UTC boundary.
+  - G2 PASS (without A4): TRADE BINANCE p95 292 / max 584; TRADE OKX 274 / 567; QUOTE BINANCE 210 / 601; QUOTE OKX 224 /
+    626; MARK BINANCE 442.7 / 961.3; MARK OKX 376.5 / 731.8 ms.
+  - G4 FAIL. Without A4: bar|BINANCE|1m, book_snapshot|BINANCE|, book_delta / book_snapshot / quote |OKX_INVERSE|. With
+    A4 v2 (pooled OKX p95, max report-only): book_delta and quote OKX_INVERSE PASS; still failing:
+    - bar|BINANCE|1m: frozen p95 limit 257.6; per window (n 10-15, p95 = max) 193.7 / 270.8 / 362.9 / 178.8 / 332.9 ms.
+      A3 UNKNOWN by construction (bars have no frozen internal-segment limit).
+    - book_snapshot|BINANCE|: limit 260.0; p95 195 / 226 / 233 / 252 / 292 (window 5 over; rising through the run;
+      n 1419-1469, window 5 2234); A3: INTERNAL_SEGMENT_OVER_LIMIT (e.g. ETHUSDT receive -> CreateTime 341.3 ms,
+      CreateTime -> observer 185.0, internal total 526.4).
+    - book_snapshot|OKX_INVERSE| (A4 v2 pooled limit 270.1): p95 197 / 237 / 217 / 213 / 276 (window 5 over), max 420.5
+      report-only, every admitted event over the replaced 300.7 ms limit retained; A3: UNKNOWN (ingestor socket receive
+      queue held unread bytes, INTERNAL_RECEIVE_QUEUE).
+    - A3 rescued no row (0 EXTERNAL units). G4-A1 mark_index_price|OKX| PASS.
+  - G8 FAIL: one Redis SLOWLOG entry in steady state: EVAL (script sha1-prefix 1875f518...) 12.25 ms > 10 ms threshold,
+    client 172.18.0.12 = market_data_service_p184w (TS writer), at 02:30:26Z (G4 window 5); PING steady p99 1.34 ms,
+    monitor clients 0. Earlier final runs had 0 new entries.
+  - G9 PASS (60 samples, demanded 64 = session-ready every sample, 0 data-path losses, v1 fallback 0); G3 pooled p95
+    1585 / max 2846 ms; G11 outage 0.128 s; G14 DL mean 5.98 vCPU (123222Z 5.63), no role at its memory limit
+    (query_kn_1 mem_max 1,762 MiB of 2,048: it would have exceeded the old 1,536 MiB limit).
+  - Load and resources vs 123222Z (verified from the two scorecards and guard host.jsonl): DL throttling gone (kafka1/2/3
+    2.2 / 6.3 / 0.7 -> 0.1 / 0.0 / 0.0 % of wall, query 0.4 / 1.5 -> 0 / 0); market volume higher (ingestor CPU 8.8 ->
+    12.5 / 8.1 -> 11.0 %, core +20 %, writer 135 -> 151 %, G4 window 5 +55 % samples); host load1 p50 21.4 / max 29.4
+    (123222Z 17.3 / 22.5) on 16 vCPU.
+  - RCA (A3 attribution evidence): every remaining G4 tail is INTERNAL_SEGMENT_OVER_LIMIT or UNKNOWN (internal receive
+    queue; bars unattributable by construction); none is EXTERNAL per A3, so the owner's "external -> relax and release"
+    rule does not apply as frozen. The tails sit in the DL receive -> CreateTime segment and the observer path while the
+    host ran at load1 21-29 with the caps no longer binding (inferred: CPU contention moved from cgroup throttling to the
+    host run queue, OPT packet risk 13.1); the G8 entry falls in the same window. Not proven beyond that.
+  - sha256: scorecard.json c0504f4b..., scorecard.a4-v2.json 92ef1e7a..., campaign.json c4c2d7d6..., timeline.jsonl
+    68335655..., stage100/receipt.json 19c8d227..., client-smoke/receipt.json d561afe1..., .run.log 385c3a6d...,
+    .guard.log bbacb3e6..., guard/summary.json 7dde0cd1..., .g11-watcher.log ddd0eb70....
+  - After: docker ps = baseline (41), 0 qdl-p184-* / qdl-phase3-* leftovers, writer 2deb90b0 rc 0 (restarted by G11), all
+    DL roles rc 0, Codex resumed, lock released. Trace expires on its own at ~03:09Z.
+  - Next (coordinator/owner): G4 bar|BINANCE|1m, book_snapshot|BINANCE| and book_snapshot|OKX_INVERSE| window 5, and G8
+    (one writer EVAL 12.25 ms) are internal / unattributed under host contention; release decision per the owner rules.
