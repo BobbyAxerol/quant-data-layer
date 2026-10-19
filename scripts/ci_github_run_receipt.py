@@ -3,21 +3,23 @@
 
 Purpose: GitHub CI is the authoritative full run of the Data Layer, while a local replay (scripts/p184_local_ci.py)
 is always INCOMPLETE on this host (its sudo step is skipped). This script turns one GitHub run into a receipt
-(schema qdl.ci.github-run-receipt.v1) that scripts/p184_consolidated_build.py accepts as the DL CI gate when the
-receipt shows a full, successful run of exactly the source commit.
+(schema qdl.ci.github-run-receipt.v1) that scripts/p184_consolidated_build.py accepts as the DL CI gate when it
+shows a full green run on exactly the source tree (owner rule CI6, /home/bobby/CLAUDE.md section 7b).
 
-Sources (all read-only GitHub REST calls; the token from ~/.config/data-layer/github/token.env is never printed):
+Sources (read-only GitHub REST calls through scripts/ci_change_scope.GitHubAPI; the token from
+~/.config/data-layer/github/token.env is never printed):
 * the run (`/actions/runs/{id}`): attempt, workflow path, event, head_sha, status, conclusion;
-* the jobs of the latest attempt (`/actions/runs/{id}/jobs`, filter=latest): every job name and conclusion;
-* the workflow file at head_sha (`/contents/.github/workflows/ci.yml?ref=head_sha`): the expected job names, matrix
-  jobs named as GitHub names them (`unit-tests (1)`);
-* the scope: the log of the `changes` job, i.e. the `full=` / `python=` / `rust=` / `contracts=` lines that
-  scripts/ci_change_scope.py prints to stdout, and the `"event"` / `"base"` / `"head"` fields of its JSON summary.
-  The step summary is not exposed by the REST API; the job outputs are not either. The log lines are corroborated
-  by the job conclusions: in a full run every expected job ran and none was skipped.
+* the jobs of the latest attempt: every job name and conclusion;
+* the workflow file at head_sha: the expected job names, matrix jobs named as GitHub names them (`unit-tests (1)`);
+* the `changes` job log: the stdout lines of scripts/ci_change_scope.py (`full=`, `python=`, `rust=`,
+  `contracts=`, `base_check=`, `tree=`, `reuse_run=`) and the `"event"` / `"base"` / `"head"` fields of its JSON
+  summary. The REST API exposes neither the step summary nor job outputs; the log is corroborated by the job
+  conclusions.
 
-`scope` is `full` only when the classifier said full=true (every flag true) AND every expected job is present with
-conclusion success. The consolidated build re-derives this from the raw fields instead of trusting `scope`.
+Inheritance (CI1): when the run inherited a full run on the identical tree (`reuse_run=<id>`), the receipt records
+`inherited_from_run` and embeds that original run's own receipt as `inherited_receipt` (one level only; an
+inherited run is never an origin). `scope` is `full`, `inherited` or `partial`; the consolidated build re-derives it
+from the raw fields instead of trusting it.
 
 Boundary: read-only; no rerun, no comment, no status write. The receipt holds identifiers and conclusions only.
 
@@ -32,18 +34,20 @@ import hashlib
 import itertools
 import json
 import os
-import re
 import sys
-import urllib.parse
-import urllib.request
 from pathlib import Path
 
+try:  # imported as scripts.ci_github_run_receipt (tests) or run as scripts/ci_github_run_receipt.py
+    from scripts import ci_change_scope as scope
+except ImportError:
+    import ci_change_scope as scope
+
 SCHEMA = "qdl.ci.github-run-receipt.v1"
-WORKFLOW = ".github/workflows/ci.yml"
+WORKFLOW = scope.WORKFLOW_PATH
 TOKEN_FILE = Path.home() / ".config/data-layer/github/token.env"
-FLAGS = ("full", "python", "rust", "contracts")
-LOG_LINE = re.compile(r"^\S+Z (full|python|rust|contracts)=(true|false)\s*$", re.M)
-LOG_FIELD = re.compile(r'^\S+Z\s+"(event|base|head|base_ref)": "([^"]*)",?\s*$', re.M)
+FLAGS = scope.FLAGS
+parse_changes_log = scope.parse_changes_log
+_DropAuthOnRedirect = scope._DropAuthOnRedirect
 
 
 def load_token(path=TOKEN_FILE):
@@ -56,49 +60,10 @@ def load_token(path=TOKEN_FILE):
     return values
 
 
-class _DropAuthOnRedirect(urllib.request.HTTPRedirectHandler):
-    """Job logs redirect to a signed blob URL that rejects a forwarded Authorization header."""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        new = super().redirect_request(req, fp, code, msg, headers, newurl)
-        if new is not None and urllib.parse.urlsplit(newurl).netloc != urllib.parse.urlsplit(req.full_url).netloc:
-            new.remove_header("Authorization")
-        return new
-
-
-class GitHub:
-    def __init__(self, token, repo):
-        self.token, self.repo = token, repo
-        self.opener = urllib.request.build_opener(_DropAuthOnRedirect)
-
-    def request(self, path, accept="application/vnd.github+json"):
-        url = f"https://api.github.com/repos/{self.repo}{path}"
-        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {self.token}", "Accept": accept,
-                                                   "X-GitHub-Api-Version": "2022-11-28"})
-        with self.opener.open(req, timeout=60) as response:
-            return response.read()
-
-    def json(self, path):
-        return json.loads(self.request(path))
-
-    def run(self, run_id):
-        return self.json(f"/actions/runs/{run_id}")
-
-    def jobs(self, run_id):
-        jobs, page = [], 1
-        while True:
-            data = self.json(f"/actions/runs/{run_id}/jobs?filter=latest&per_page=100&page={page}")
-            jobs += data["jobs"]
-            if len(jobs) >= data["total_count"] or not data["jobs"]:
-                return jobs
-            page += 1
-
+class GitHub(scope.GitHubAPI):
     def workflow(self, sha, path=WORKFLOW):
         data = self.json(f"/contents/{path}?ref={sha}")
         return base64.b64decode(data["content"]).decode()
-
-    def job_log(self, job_id):
-        return self.request(f"/actions/jobs/{job_id}/logs").decode(errors="replace")
 
 
 def expected_job_names(workflow_text):
@@ -119,19 +84,6 @@ def expected_job_names(workflow_text):
     return names
 
 
-def parse_changes_log(text):
-    """Classifier outputs and identity fields from the changes job log; a value must be consistent if repeated."""
-    outputs, fields = {}, {}
-    for target, pattern in ((outputs, LOG_LINE), (fields, LOG_FIELD)):
-        for key, value in pattern.findall(text):
-            if target.setdefault(key, value) != value:
-                raise ValueError(f"changes log has conflicting {key} values")
-    missing = [flag for flag in FLAGS if flag not in outputs]
-    if missing:
-        raise ValueError(f"changes log lacks classifier outputs {missing}")
-    return outputs, fields
-
-
 def build_receipt(run, jobs, workflow_text, changes_log, repo):
     expected = expected_job_names(workflow_text)
     outputs, fields = parse_changes_log(changes_log)
@@ -140,7 +92,12 @@ def build_receipt(run, jobs, workflow_text, changes_log, repo):
                       key=lambda row: row["name"])
     by_name = {row["name"]: row["conclusion"] for row in job_rows}
     all_success = bool(expected) and all(by_name.get(name) == "success" for name in expected)
-    full = all(outputs[flag] == "true" for flag in FLAGS)
+    if all(outputs[flag] == "true" for flag in FLAGS) and all_success and not outputs.get("reuse_run"):
+        kind = "full"
+    elif outputs.get("reuse_run") and by_name.get("ci-result") == "success":
+        kind = "inherited"
+    else:
+        kind = "partial"
     return {
         "schema": SCHEMA,
         "repo": repo,
@@ -157,10 +114,29 @@ def build_receipt(run, jobs, workflow_text, changes_log, repo):
         "expected_jobs": expected,
         "changes_outputs": outputs,
         "changes_fields": fields,
-        "scope": "full" if full and all_success else "partial",
+        "tested_tree": outputs.get("tree") or None,
+        "scope": kind,
         "scope_source": "changes job log (scripts/ci_change_scope.py stdout) + job conclusions",
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
     }
+
+
+def receipt_for(client, run_id, repo, allow_inherited=True):
+    run = client.run(run_id)
+    if run.get("status") != "completed":
+        raise SystemExit(f"run {run_id} is {run.get('status')}, not completed")
+    jobs = client.jobs(run_id)
+    changes = [j for j in jobs if j["name"] == "changes"]
+    if len(changes) != 1:
+        raise SystemExit(f"run {run_id} has no single `changes` job (workflow predates change scoping)")
+    receipt = build_receipt(run, jobs, client.workflow(run["head_sha"]), client.job_log(changes[0]["id"]), repo)
+    origin = receipt["changes_outputs"].get("reuse_run")
+    if origin:
+        if not allow_inherited:
+            raise SystemExit(f"run {run_id} inherited run {origin}; an inherited run is never an origin")
+        receipt["inherited_from_run"] = int(origin)
+        receipt["inherited_receipt"] = receipt_for(client, int(origin), repo, allow_inherited=False)
+    return receipt
 
 
 def main(argv=None, client=None):
@@ -174,19 +150,13 @@ def main(argv=None, client=None):
         repo = args.repo or env.get("GITHUB_REPO") or os.environ.get("GITHUB_REPO", "")
         client = GitHub(env.get("GITHUB_TOKEN") or os.environ.get("GITHUB_TOKEN", ""), repo)
     repo = args.repo or client.repo
-    run = client.run(args.run_id)
-    if run.get("status") != "completed":
-        raise SystemExit(f"run {args.run_id} is {run.get('status')}, not completed")
-    jobs = client.jobs(args.run_id)
-    changes = [j for j in jobs if j["name"] == "changes"]
-    if len(changes) != 1:
-        raise SystemExit("run has no single `changes` job (workflow predates change scoping)")
-    receipt = build_receipt(run, jobs, client.workflow(run["head_sha"]), client.job_log(changes[0]["id"]), repo)
+    receipt = receipt_for(client, args.run_id, repo)
     data = json.dumps(receipt, indent=2, sort_keys=True) + "\n"
     args.out.write_text(data)
     print(json.dumps({"receipt": str(args.out), "sha256": hashlib.sha256(data.encode()).hexdigest(),
                       "head_sha": receipt["head_sha"], "event": receipt["event"],
-                      "conclusion": receipt["conclusion"], "scope": receipt["scope"]}))
+                      "conclusion": receipt["conclusion"], "scope": receipt["scope"],
+                      "inherited_from_run": receipt.get("inherited_from_run")}))
     return 0
 
 

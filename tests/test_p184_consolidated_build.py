@@ -340,3 +340,69 @@ class GitHubRunReceiptTests(NoProcessTests):
     def test_digest_mismatch_is_refused(self):
         with self.assertRaisesRegex(ValueError, "does not match"):
             self.prepare(GH_RECEIPT, dl_ci_receipt="0" * 64)
+
+
+TREE = "d" * 40
+
+
+def inherited_receipt(**changes):
+    origin = {**GH_RECEIPT, "run_id": 7, "event": "pull_request", "head_sha": "b" * 40,
+              "changes_outputs": {**GH_RECEIPT["changes_outputs"], "tree": TREE, "reuse_run": ""}}
+    receipt = {**GH_RECEIPT, "run_id": 8, "inherited_from_run": 7, "inherited_receipt": origin, "scope": "inherited",
+               "changes_outputs": {"full": "false", "python": "false", "rust": "false", "contracts": "false",
+                                   "base_check": "false", "tree": TREE, "reuse_run": "7"},
+               "jobs": [{"name": n, "conclusion": "skipped" if n.startswith(("unit-tests", "rust")) else "success"}
+                        for n in GH_JOBS]}
+    receipt.update(changes)
+    return receipt
+
+
+class TreeIdentityReceiptTests(NoProcessTests):
+    """CI1 / CI6: the tested tree must equal the commit's tree; an inherited run must embed a full original run on
+    the same tree. git rev-parse is mocked."""
+
+    def verify(self, receipt, tree=TREE):
+        with patch.object(build, "git", return_value=tree):
+            return build.verify_github_run_receipt(receipt, SHA, ROOT)
+
+    def test_full_run_with_matching_tree_is_accepted_and_mismatch_refused(self):
+        receipt = {**GH_RECEIPT, "changes_outputs": {**GH_RECEIPT["changes_outputs"], "tree": TREE}}
+        self.assertIs(self.verify(receipt), receipt)
+        with self.assertRaisesRegex(ValueError, "differs from the commit's tree"):
+            self.verify(receipt, tree="e" * 40)
+
+    def test_inherited_run_is_accepted(self):
+        receipt = inherited_receipt()
+        self.assertIs(self.verify(receipt), receipt)
+
+    def test_inherited_refusals(self):
+        origin = inherited_receipt()["inherited_receipt"]
+        cases = {
+            "does not match its changes job": inherited_receipt(inherited_from_run=6),
+            "never a workflow_dispatch": inherited_receipt(event="workflow_dispatch", changes_fields={
+                **GH_RECEIPT["changes_fields"], "event": "workflow_dispatch"}),
+            "failed or cancelled": inherited_receipt(jobs=[{"name": "changes", "conclusion": "success"},
+                                                           {"name": "ci-result", "conclusion": "success"},
+                                                           {"name": "repository-scan", "conclusion": "failure"}]),
+            "needs changes and ci-result": inherited_receipt(jobs=[{"name": "changes", "conclusion": "success"}]),
+            "does not embed": inherited_receipt(inherited_receipt={**origin, "run_id": 6}),
+            "tested a different tree": inherited_receipt(inherited_receipt={
+                **origin, "changes_outputs": {**origin["changes_outputs"], "tree": "e" * 40}}),
+            "scope is not full": inherited_receipt(inherited_receipt={
+                **origin, "changes_outputs": {**origin["changes_outputs"], "rust": "false"}}),
+            "itself inherited": inherited_receipt(inherited_receipt={
+                **origin, "changes_outputs": {**origin["changes_outputs"], "reuse_run": "3"}}),
+            "jobs not success": inherited_receipt(inherited_receipt={
+                **origin, "jobs": [dict(j, conclusion="skipped") if j["name"] == "release-gates" else j
+                                   for j in origin["jobs"]]}),
+        }
+        for message, receipt in cases.items():
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                self.verify(receipt)
+
+    def test_scoped_run_without_inheritance_is_refused(self):
+        receipt = inherited_receipt()
+        del receipt["inherited_from_run"]
+        receipt["changes_outputs"] = {**receipt["changes_outputs"], "reuse_run": ""}
+        with self.assertRaisesRegex(ValueError, "scope is not full"):
+            self.verify(receipt)

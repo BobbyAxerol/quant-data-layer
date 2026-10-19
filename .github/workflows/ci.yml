@@ -1,14 +1,21 @@
 name: CI
 
-# Scope (scripts/ci_change_scope.py): a pull request into dev runs only the suites its changed paths need; a pull
-# request into main, a push to dev, workflow_dispatch, the `ci:full` label (read on the next push) and any change to
-# a CI-defining file run everything. `ci-result` is the single status to look at: it fails when an in-scope job did
-# not succeed and passes when the other jobs were skipped by scope. A release receipt always needs a full run.
+# Owner rules CI1-CI8 (/home/bobby/CLAUDE.md section 7b, 2026-10-19), implemented by scripts/ci_change_scope.py:
+# - a pull request into dev runs only the suites its changed paths need, counted from the nearest ancestor of the
+#   PR head with a green full run (CI2), else from the PR base;
+# - a pull request into main, a push to dev or main, workflow_dispatch, the `ci:full` label (read on the next push)
+#   and any change to a CI-defining file run everything (CI5);
+# - tree-identity reuse (CI1): when an earlier full, all-green run tested the byte-identical git tree (the PR merge
+#   ref, then the push of that merge, then the dev->main PR), the suites are skipped and ci-result reports
+#   "inherited full CI run <id>"; workflow_dispatch and ci:full always run fresh; contract-tests (PR-base
+#   `buf breaking`) still runs on every pull_request;
+# - `ci-result` is the single status: it fails when an in-scope job did not succeed and passes when the other jobs
+#   were skipped by scope. A release receipt needs a full run on the exact tree, direct or inherited (CI6).
 on:
   pull_request:
     branches: ["dev", "main"]
   push:
-    branches: ["dev"]
+    branches: ["dev", "main"]  # CI3: push runs only on the integration and release branches
   workflow_dispatch:
 
 # A newer push to a pull request cancels its older run. Every other event gets its own group: GitHub keeps one
@@ -22,11 +29,15 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read  # tree-identity reuse: list earlier CI runs and read their `changes` logs
     outputs:
       full: ${{ steps.scope.outputs.full }}
       python: ${{ steps.scope.outputs.python }}
       rust: ${{ steps.scope.outputs.rust }}
       contracts: ${{ steps.scope.outputs.contracts }}
+      base_check: ${{ steps.scope.outputs.base_check }}
+      tree: ${{ steps.scope.outputs.tree }}
+      reuse_run: ${{ steps.scope.outputs.reuse_run }}
       reason: ${{ steps.scope.outputs.reason }}
     steps:
       - name: Checkout with history for the change diff
@@ -46,10 +57,11 @@ jobs:
           CI_EVENT: ${{ github.event_name }}
           CI_BASE_REF: ${{ github.base_ref }}
           CI_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           python3 -B scripts/ci_change_scope.py --base "$CI_BASE" --head "$CI_HEAD" --event "$CI_EVENT" \
             --base-ref "$CI_BASE_REF" --labels "$CI_LABELS" --github-output "$GITHUB_OUTPUT" \
-            --summary-file "$RUNNER_TEMP/ci-scope.json"
+            --summary-file "$RUNNER_TEMP/ci-scope.json" --reuse-lookup
           {
             echo '### CI scope'
             echo '```json'
@@ -149,7 +161,7 @@ jobs:
 
   contract-tests:
     needs: changes
-    if: needs.changes.outputs.contracts == 'true'
+    if: needs.changes.outputs.contracts == 'true' || needs.changes.outputs.base_check == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

@@ -6,11 +6,13 @@ A passing DL CI gate needs the receipt file itself (`--dl-ci-receipt`), not only
   workflow job present. A scoped preflight (`scope: affected`, from `--changed-since` or `--jobs`) or a receipt
   without a scope is refused, so a quick affected-only run can never stand in for the release CI;
 * scripts/ci_github_run_receipt.py (qdl.ci.github-run-receipt.v1), GitHub CI being the authoritative full run:
-  head_sha = source commit, workflow .github/workflows/ci.yml, run completed / success, the `changes` job said
-  full=true (every flag true) for this head, every expected job (ci-result and changes included) concluded success
-  and no job was skipped. A pull_request run tests GitHub's merge of head into base, so it is accepted only when that
-  base is an ancestor of the source commit (the merge tree then equals the commit's tree); push and
-  workflow_dispatch runs test the commit itself. The scope is re-derived from these fields, not read from `scope`.
+  head_sha = source commit, workflow .github/workflows/ci.yml, run completed / success, and the tested tree (the
+  `changes` job's `tree=`; a pull_request run tests GitHub's merge ref) equals the commit's tree. Either the run is
+  full itself (classifier full, every expected job success, none skipped), or it inherited (CI1) a full run on the
+  identical tree: then `inherited_from_run` = its `reuse_run`, its own jobs did not fail, and the embedded
+  `inherited_receipt` passes the full-run rules with the same tree. Legacy receipts without a tree fall back to the
+  ancestor rule for pull_request runs. The scope is re-derived from these fields, not read from `scope`
+  (owner rules CI1 / CI6, /home/bobby/CLAUDE.md section 7b).
 """
 
 import argparse
@@ -100,8 +102,34 @@ def source_contract(repo, commit):
     return hashes
 
 
+def _verify_full_github_run(receipt, label):
+    """The run itself ran every suite green: classifier full, not inherited, every expected job success."""
+    if receipt.get("schema") != GITHUB_RUN_RECEIPT_SCHEMA:
+        raise ValueError(f"{label} schema must be {GITHUB_RUN_RECEIPT_SCHEMA}")
+    if receipt.get("workflow_path") != CI_WORKFLOW:
+        raise ValueError(f"{label} must be of {CI_WORKFLOW}")
+    if (receipt.get("status"), receipt.get("conclusion")) != ("completed", "success"):
+        raise ValueError(f"{label} conclusion must be success")
+    outputs = receipt.get("changes_outputs") or {}
+    if any(outputs.get(flag) != "true" for flag in ("full", "python", "rust", "contracts")):
+        raise ValueError(f"{label} scope is not full: changes outputs {outputs}")
+    if outputs.get("reuse_run"):
+        raise ValueError(f"{label} itself inherited run {outputs['reuse_run']}")
+    jobs = {row.get("name"): row.get("conclusion") for row in receipt.get("jobs") or []}
+    expected = receipt.get("expected_jobs") or []
+    if not {"changes", "ci-result"} <= set(expected):
+        raise ValueError(f"{label} expected jobs must include changes and ci-result")
+    missing = [name for name in expected if name not in jobs]
+    if missing:
+        raise ValueError(f"{label} does not cover every workflow job: missing {missing}")
+    not_success = sorted(name for name, conclusion in jobs.items() if conclusion != "success")
+    if not_success:
+        raise ValueError(f"{label} has jobs not success (skipped or failed): {not_success}")
+
+
 def verify_github_run_receipt(receipt, commit, repo):
-    """Refuse a GitHub run receipt that is not a full, successful CI run of exactly `commit`."""
+    """Refuse a GitHub run receipt unless it is a full green run on exactly `commit`'s tree, directly or by
+    inheriting (CI1) a full green run on the byte-identical tree (owner rule CI6)."""
     if receipt.get("head_sha") != commit:
         raise ValueError("DL CI GitHub run is for a different commit")
     if receipt.get("workflow_path") != CI_WORKFLOW:
@@ -110,14 +138,19 @@ def verify_github_run_receipt(receipt, commit, repo):
         raise ValueError("DL CI GitHub run conclusion must be success")
     outputs = receipt.get("changes_outputs") or {}
     fields = receipt.get("changes_fields") or {}
-    if any(outputs.get(flag) != "true" for flag in ("full", "python", "rust", "contracts")):
-        raise ValueError(f"DL CI GitHub run scope is not full: changes outputs {outputs}")
     if fields.get("head") != commit:
         raise ValueError("DL CI GitHub run changes job classified a different head")
     event = receipt.get("event")
     if fields.get("event") != event:
         raise ValueError("DL CI GitHub run event differs from its changes job")
-    if event == "pull_request":
+    if event not in ("push", "workflow_dispatch", "pull_request"):
+        raise ValueError(f"DL CI GitHub run event {event!r} not accepted")
+    tested_tree = outputs.get("tree") or ""
+    if tested_tree:
+        # The tested checkout (a pull_request merge ref included) must hold exactly the commit's bytes.
+        if git(repo, "rev-parse", commit + "^{tree}") != tested_tree:
+            raise ValueError("DL CI GitHub run tested a tree that differs from the commit's tree")
+    elif event == "pull_request":
         base = fields.get("base") or ""
         full_sha(base, "pull-request base of the DL CI GitHub run")
         try:
@@ -125,18 +158,26 @@ def verify_github_run_receipt(receipt, commit, repo):
         except subprocess.CalledProcessError as exc:
             raise ValueError("DL CI GitHub pull_request run tested a merge that differs from the commit "
                              "(base is not an ancestor); use a push or workflow_dispatch run") from exc
-    elif event not in ("push", "workflow_dispatch"):
-        raise ValueError(f"DL CI GitHub run event {event!r} not accepted")
+    origin_id = receipt.get("inherited_from_run")
+    if not origin_id and not outputs.get("reuse_run"):
+        _verify_full_github_run(receipt, "DL CI GitHub run")
+        return receipt
+    if str(origin_id) != str(outputs.get("reuse_run")):
+        raise ValueError("DL CI GitHub run inheritance does not match its changes job (reuse_run)")
+    if event == "workflow_dispatch" or not tested_tree:
+        raise ValueError("DL CI GitHub inherited run needs a recorded tree and is never a workflow_dispatch run")
     jobs = {row.get("name"): row.get("conclusion") for row in receipt.get("jobs") or []}
-    expected = receipt.get("expected_jobs") or []
-    if not {"changes", "ci-result"} <= set(expected):
-        raise ValueError("DL CI GitHub run expected jobs must include changes and ci-result")
-    missing = [name for name in expected if name not in jobs]
-    if missing:
-        raise ValueError(f"DL CI GitHub run does not cover every workflow job: missing {missing}")
-    not_success = sorted(name for name, conclusion in jobs.items() if conclusion != "success")
-    if not_success:
-        raise ValueError(f"DL CI GitHub run has jobs not success (skipped or failed): {not_success}")
+    if jobs.get("changes") != "success" or jobs.get("ci-result") != "success":
+        raise ValueError("DL CI GitHub inherited run needs changes and ci-result success")
+    bad = sorted(name for name, conclusion in jobs.items() if conclusion not in ("success", "skipped"))
+    if bad:
+        raise ValueError(f"DL CI GitHub inherited run has failed or cancelled jobs: {bad}")
+    origin = receipt.get("inherited_receipt") or {}
+    if str(origin.get("run_id")) != str(origin_id):
+        raise ValueError("DL CI GitHub inherited run does not embed the receipt of its original run")
+    _verify_full_github_run(origin, f"DL CI GitHub original run {origin_id}")
+    if (origin.get("changes_outputs") or {}).get("tree") != tested_tree:
+        raise ValueError(f"DL CI GitHub original run {origin_id} tested a different tree")
     return receipt
 
 

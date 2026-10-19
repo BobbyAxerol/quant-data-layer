@@ -319,7 +319,8 @@ class DryRunScopeTests(unittest.TestCase):
         self.assertEqual(plan["scope"], "affected")
         self.assertEqual(plan["scope_basis"]["changed_since"], self.base)
         self.assertEqual(plan["scope_basis"]["classifier"]["changed_files"], 1)
-        self.assertEqual(sorted(plan["jobs"]), ["consolidated-source-preflight", "repository-scan"])
+        # PR semantics: docs only => preflight + secret scan + contract-tests (PR-base buf breaking, CI5).
+        self.assertEqual(sorted(plan["jobs"]), ["consolidated-source-preflight", "contract-tests", "repository-scan"])
         (self.repo / "qdl").mkdir()
         (self.repo / "qdl/x.py").write_text("x = 1\n")
         head = self.commit("code")

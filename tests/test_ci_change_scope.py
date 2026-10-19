@@ -209,7 +209,8 @@ def needs(outputs, **results):
     return data
 
 
-OUT = {"full": "false", "python": "true", "rust": "false", "contracts": "false", "reason": "scoped"}
+OUT = {"full": "false", "python": "true", "rust": "false", "contracts": "false", "base_check": "false",
+       "tree": "c" * 40, "reuse_run": "", "reason": "scoped"}
 
 
 class VerifyNeedsTests(unittest.TestCase):
@@ -248,12 +249,211 @@ class VerifyNeedsTests(unittest.TestCase):
             self.assertEqual(scope.main(["--verify-needs"]), 1)
 
 
+class VerifyInheritedNeedsTests(unittest.TestCase):
+    INHERITED = dict(OUT, python="false", base_check="true", reuse_run="123")
+
+    def test_inherited_run_passes_with_suites_skipped_and_writes_summary(self):
+        data = needs(self.INHERITED, contract_tests="success")
+        self.assertEqual(scope.verify_needs(data), [])
+        with tempfile.TemporaryDirectory() as tmp:
+            summary = Path(tmp) / "summary.md"
+            env = {"NEEDS_JSON": json.dumps(data), "GITHUB_STEP_SUMMARY": str(summary)}
+            with patch.dict(os.environ, env), patch("sys.stdout"):
+                self.assertEqual(scope.main(["--verify-needs"]), 0)
+            self.assertIn("inherited full CI run 123 on identical tree " + "c" * 40, summary.read_text())
+
+    def test_base_check_keeps_contract_tests_required(self):
+        self.assertTrue(scope.verify_needs(needs(self.INHERITED)))  # contract-tests skipped although base_check
+
+    def test_inconsistent_or_invalid_reuse_outputs_fail(self):
+        for outputs in (dict(self.INHERITED, python="true"), dict(self.INHERITED, reuse_run="x1"),
+                        dict(self.INHERITED, tree="short"), {k: v for k, v in OUT.items() if k != "reuse_run"},
+                        {k: v for k, v in OUT.items() if k != "base_check"}):
+            with self.subTest(outputs=outputs):
+                self.assertTrue(scope.verify_needs(needs(outputs, contract_tests="success", sdk_python310="success",
+                                                         unit_tests="success", release_gates="success")))
+
+
+def full_jobs(conclusion="success"):
+    names = ["changes", "consolidated-source-preflight", "repository-scan", "contract-tests", "rust-workspace",
+             "sdk-python310", "unit-tests (1)", "unit-tests (2)", "release-gates", "kn-native-integration",
+             "ci-result"]
+    return [{"id": index, "name": name, "conclusion": conclusion} for index, name in enumerate(names)]
+
+
+def changes_log(tree, full=True, reuse=""):
+    value = "true" if full else "false"
+    lines = [f"{flag}={value}" for flag in scope.FLAGS] + ["base_check=false", f"tree={tree}", f"reuse_run={reuse}"]
+    return "\n".join(f"2026-10-19T07:00:00.0000000Z {line}" for line in lines) + "\n"
+
+
+class FakeAPI:
+    """Recorded-shape GitHub API: runs newest first; job and log lookups by run id."""
+
+    def __init__(self, runs, fail=False):
+        self.runs, self.fail = runs, fail
+
+    def successful_runs(self, limit=20):
+        if self.fail:
+            raise OSError("api down")
+        return [dict(run["run"]) for run in self.runs]
+
+    def jobs(self, run_id):
+        return next(run["jobs"] for run in self.runs if run["run"]["id"] == run_id)
+
+    def job_log(self, job_id):
+        for run in self.runs:
+            if any(job["id"] == job_id for job in run["jobs"]):
+                return run["log"]
+        raise KeyError(job_id)
+
+
+def candidate(run_id, head_sha, tree, *, full=True, reuse="", attempt=1, event="pull_request", jobs=None):
+    return {"run": {"id": run_id, "path": scope.WORKFLOW_PATH, "conclusion": "success", "run_attempt": attempt,
+                    "event": event, "head_sha": head_sha},
+            "jobs": jobs if jobs is not None else full_jobs(), "log": changes_log(tree, full, reuse)}
+
+
+class CandidateTests(unittest.TestCase):
+    def test_full_inherited_and_rejected_candidates(self):
+        tree = "d" * 40
+        self.assertEqual(scope.classify_candidate(candidate(1, "a" * 40, tree)["run"], full_jobs(),
+                                                  scope.parse_changes_log(changes_log(tree))[0]), "full")
+        skipped = [dict(job, conclusion="skipped") if job["name"] in ("rust-workspace", "release-gates") else job
+                   for job in full_jobs()]
+        outputs = scope.parse_changes_log(changes_log(tree, full=False, reuse="9"))[0]
+        self.assertEqual(scope.classify_candidate(candidate(2, "a" * 40, tree)["run"], skipped, outputs), "inherited")
+        scoped = scope.parse_changes_log(changes_log(tree, full=False))[0]
+        self.assertIsNone(scope.classify_candidate(candidate(3, "a" * 40, tree)["run"], skipped, scoped))
+        self.assertIsNone(scope.classify_candidate(candidate(4, "a" * 40, tree, attempt=2)["run"], full_jobs(),
+                                                   scope.parse_changes_log(changes_log(tree))[0]))
+        cancelled = [dict(job, conclusion="cancelled") if job["name"] == "unit-tests (2)" else job
+                     for job in full_jobs()]
+        self.assertTrue(scope.full_run_problems(cancelled, scope.parse_changes_log(changes_log(tree))[0]))
+
+
+@unittest.skipUnless(shutil.which("git"), "git binary required (CI images carry none)")
+class ReuseAndIncrementalTests(unittest.TestCase):
+    """CI1 tree reuse and CI2 incremental base on a temporary repository with a fake GitHub API."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = Path(self.tmp.name)
+        self.git("init", "-q", "-b", "dev")
+        self.write({"NOTES.md": "x\n", "qdl/a.py": "a = 1\n"})
+        self.base = self.commit("base")
+        self.git("checkout", "-q", "-b", "feature")
+        self.write({"rust/qdl-core/src/lib.rs": "// x\n"})
+        self.green = self.commit("rust change, green full run")
+
+    def git(self, *args):
+        return subprocess.run(["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@invalid",
+                               *args], check=True, capture_output=True, text=True).stdout.strip()
+
+    def write(self, files):
+        for name, text in files.items():
+            path = self.repo / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+
+    def commit(self, message, files=None):
+        self.write(files or {})
+        self.git("add", "-A")
+        self.git("commit", "-q", "--allow-empty", "-m", message)
+        return self.git("rev-parse", "HEAD")
+
+    def tree(self, rev="HEAD"):
+        return self.git("rev-parse", f"{rev}^{{tree}}")
+
+    def decide(self, api, head=None, **kw):
+        head = head or self.git("rev-parse", "HEAD")
+        args = dict(repo=self.repo, base=self.base, head=head, event="pull_request", base_ref="dev", labels=set(),
+                    tree=self.tree(head), reuse_api=api, current_run_id="999")
+        args.update(kw)
+        return scope.decide(**args)
+
+    def flags(self, result):
+        return {flag: result[flag] for flag in scope.FLAGS}
+
+    def test_identical_tree_inherits_the_full_run(self):
+        api = FakeAPI([candidate(500, self.green, self.tree())])
+        for event, base_ref in (("pull_request", "dev"), ("pull_request", "main"), ("push", "")):
+            with self.subTest(event=event, base_ref=base_ref):
+                result = self.decide(api, event=event, base_ref=base_ref)
+                self.assertEqual(result["reuse_run"], "500")
+                self.assertEqual(self.flags(result), dict.fromkeys(scope.FLAGS, False))
+                self.assertEqual(result["base_check"], event == "pull_request")
+                self.assertIn("inherited full CI run 500 on identical tree", result["reason"])
+
+    def test_no_reuse_on_tree_mismatch_not_full_rerun_dispatch_label_or_api_failure(self):
+        tree = self.tree()
+        cases = {
+            "tree differs": (FakeAPI([candidate(1, self.green, "e" * 40)]), {}),
+            "candidate scoped": (FakeAPI([candidate(2, self.green, tree, full=False, jobs=[
+                dict(j, conclusion="skipped") if j["name"] == "rust-workspace" else j for j in full_jobs()])]), {}),
+            "candidate inherited": (FakeAPI([candidate(3, self.green, tree, full=False, reuse="1", jobs=[
+                dict(j, conclusion="skipped") if j["name"] == "rust-workspace" else j for j in full_jobs()])]), {}),
+            "candidate re-run": (FakeAPI([candidate(4, self.green, tree, attempt=2)]), {}),
+            "candidate failed job": (FakeAPI([candidate(5, self.green, tree, jobs=full_jobs("failure"))]), {}),
+            "own run": (FakeAPI([candidate(999, self.green, tree)]), {}),
+            "dispatch": (FakeAPI([candidate(6, self.green, tree)]), {"event": "workflow_dispatch"}),
+            "label": (FakeAPI([candidate(7, self.green, tree)]), {"labels": {"ci:full"}}),
+            "api failure": (FakeAPI([candidate(8, self.green, tree)], fail=True), {}),
+        }
+        for name, (api, kw) in cases.items():
+            with self.subTest(name=name):
+                self.assertEqual(self.decide(api, **kw)["reuse_run"], "")
+
+    def test_incremental_docs_only_after_green_is_scoped_to_nothing(self):
+        head = self.commit("journal", {"NOTES.md": "y\n"})
+        result = self.decide(FakeAPI([candidate(600, self.green, self.tree(self.green))]), head=head)
+        self.assertEqual(self.flags(result), dict.fromkeys(scope.FLAGS, False))
+        self.assertEqual((result["scope_base"], result["scope_base_run"]), (self.green, 600))
+        self.assertTrue(result["base_check"])  # PR-base buf breaking still runs (CI5)
+
+    def test_incremental_code_change_after_green_runs_that_suite(self):
+        head = self.commit("python change", {"qdl/a.py": "a = 2\n"})
+        result = self.decide(FakeAPI([candidate(601, self.green, self.tree(self.green))]), head=head)
+        self.assertEqual(self.flags(result), {"full": False, "python": True, "rust": False, "contracts": False})
+
+    def test_inherited_full_ancestor_counts_and_ci_defining_change_forces_full(self):
+        jobs = [dict(j, conclusion="skipped") if j["name"] == "rust-workspace" else j for j in full_jobs()]
+        api = FakeAPI([candidate(602, self.green, self.tree(self.green), full=False, reuse="1", jobs=jobs)])
+        head = self.commit("ci change", {".github/workflows/ci.yml": "x\n"})
+        result = self.decide(api, head=head)
+        self.assertEqual(result["scope_base"], self.green)
+        self.assertTrue(result["full"])
+
+    def test_no_green_ancestor_or_api_failure_diffs_from_the_base(self):
+        head = self.commit("journal", {"NOTES.md": "y\n"})
+        expected = {"full": False, "python": False, "rust": True, "contracts": False}
+        for name, api in (("no candidate", FakeAPI([])), ("api failure", FakeAPI([], fail=True)),
+                          ("scoped ancestor", FakeAPI([candidate(603, self.green, self.tree(self.green), full=False,
+                                                                 jobs=[dict(j, conclusion="skipped") if j["name"] ==
+                                                                       "rust-workspace" else j
+                                                                       for j in full_jobs()])])),
+                          ("not an ancestor", FakeAPI([candidate(604, "f" * 40, "e" * 40)]))):
+            with self.subTest(name=name):
+                result = self.decide(api, head=head)
+                self.assertEqual(result["scope_base"], self.base)
+                self.assertEqual(self.flags(result), expected)
+
+    def test_nearest_ancestor_wins(self):
+        middle = self.commit("python change", {"qdl/a.py": "a = 3\n"})
+        head = self.commit("journal", {"NOTES.md": "z\n"})
+        api = FakeAPI([candidate(700, self.green, self.tree(self.green)), candidate(701, middle, self.tree(middle))])
+        result = self.decide(api, head=head)
+        self.assertEqual((result["scope_base"], result["scope_base_run"]), (middle, 701))
+        self.assertFalse(any(self.flags(result).values()))
+
+
 @unittest.skipIf(yaml is None, "PyYAML not installed")
 class WorkflowWiringTests(unittest.TestCase):
     def test_triggers_concurrency_and_dispatch(self):
         triggers = WORKFLOW.get("on", WORKFLOW.get(True))
         self.assertEqual(triggers["pull_request"]["branches"], ["dev", "main"])
-        self.assertEqual(triggers["push"]["branches"], ["dev"])
+        self.assertEqual(triggers["push"]["branches"], ["dev", "main"])  # CI3
         self.assertIn("workflow_dispatch", triggers)
         group = WORKFLOW["concurrency"]["group"]
         self.assertIn("format('pr-{0}', github.event.pull_request.number)", group)
@@ -274,11 +474,14 @@ class WorkflowWiringTests(unittest.TestCase):
                 self.assertIn(step_ref, [s.get("id") for s in job["steps"]], f"{name}: unknown step id {step_ref}")
 
     def test_changes_outputs_are_the_classifier_flags(self):
-        self.assertEqual(set(JOBS["changes"]["outputs"]), {*scope.FLAGS, "reason"})
+        self.assertEqual(set(JOBS["changes"]["outputs"]), {*scope.OUTPUT_FLAGS, "tree", "reuse_run", "reason"})
+        self.assertEqual(JOBS["changes"]["permissions"], {"contents": "read", "actions": "read"})
         self.assertEqual(JOBS["changes"]["steps"][0]["with"]["fetch-depth"], 0)
         classify = next(s for s in JOBS["changes"]["steps"] if s.get("id") == "scope")
         self.assertEqual(classify["shell"], "bash")  # -eo pipefail: a classifier crash fails the job
         self.assertIn('--github-output "$GITHUB_OUTPUT"', classify["run"])
+        self.assertIn("--reuse-lookup", classify["run"])
+        self.assertEqual(classify["env"]["GH_TOKEN"], "${{ github.token }}")
         self.assertIn("tests.test_ci_change_scope", JOBS["changes"]["steps"][1]["run"])
 
     def test_job_level_if_matches_job_scope(self):

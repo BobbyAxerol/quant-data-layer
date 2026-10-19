@@ -76462,3 +76462,56 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
     refused for another commit, another workflow, failure, full=false, another classified head, an event mismatch,
     an unsupported event, expected jobs without ci-result, a missing job, a skipped job, `scope` saying full over a
     failed shard, and a digest mismatch.
+- GitHub run 4: run 39213849110 on 73f62e7 (receipt fix, after merging dev 789bfa6). All 13 jobs success, wall
+  795 s. Shards 687 / 447 / 676 / 770 s (suite 581 / 360 / 584 / 676 s; dev added modules since the weights).
+  - Its receipt (`ci_github_run_receipt.py --run-id 39213849110`, sha256 3d9af2ac...) is ACCEPTED for 73f62e7:
+    pull_request base 789bfa6 is an ancestor.
+- Owner standing rules CI1-CI8 (/home/bobby/CLAUDE.md section 7b, 2026-10-19). Trigger: the v2.2.4 promotion ran
+  the full CI three times on the same bytes (PR #33 merge ref, push to dev 789bfa6, PR #35 dev->main merge ref),
+  ~30 min each, with no added assurance. Implemented in this slice:
+  - CI1 tree-identity reuse (`changes` job, `--reuse-lookup`, `actions: read`, GH_TOKEN = workflow token):
+    - Rule: identical git tree => identical bytes, `.github` included. A full green run of that tree is the evidence.
+      Running it again adds nothing; flake detection is not a reason to rerun (CI7: rerun only the failed job).
+    - The job prints `tree=` (`git rev-parse HEAD^{tree}` of the tested checkout: the merge ref for a pull_request,
+      the pushed commit for a push). It then reads the last 20 successful ci.yml runs.
+    - The API reports a pull_request run's head_sha as the PR head, not the merge commit it tested (checked: run
+      39211947957 reports 6bfca83, the branch head). A candidate's tree therefore comes from its own `changes` log
+      (`tree=`). Runs from before this change have no such line and are never reused.
+    - Reuse only from a run that: is attempt 1; had every job success (none skipped / cancelled / failed); had the
+      classifier say full; did not itself inherit; and has a byte-identical tree. Then every suite flag is false,
+      `reuse_run=<id>`, and ci-result writes "inherited full CI run <id> on identical tree <tree>" to the step
+      summary.
+    - Never for workflow_dispatch or `ci:full`. An API error, missing token or the 90 s deadline means no reuse
+      (fail toward running).
+  - CI2 incremental base: for a pull_request, the scope diff starts at the nearest strict ancestor of the PR head
+    with a green full or inherited-full run (its head_sha, nearest by `rev-list --count`). With no such ancestor or a
+    failed lookup it starts at the PR base. A CI-defining file changed since that ancestor still forces full.
+  - CI3: push triggers only `dev` and `main` (main added); pull requests cancel their older run.
+  - CI5: `base_check` is true on every pull_request, so contract-tests (PR-base `buf breaking`) still runs on
+    inherited and docs-only PR runs.
+  - CI6: the GitHub receipt records `tested_tree`; for an inherited run it also records `inherited_from_run` and
+    embeds the original run's receipt (one level; an inherited origin is refused). `p184_consolidated_build.py`
+    checks:
+    - tested tree = `git rev-parse <commit>^{tree}` (this replaces the ancestor rule whenever a tree is recorded);
+    - for an inherited run: reuse_run = inherited_from_run, no failed or cancelled job, changes and ci-result
+      success, not workflow_dispatch, and the embedded original passes every full-run rule on the same tree;
+    - a scoped (incremental) run is never accepted.
+  - Expected saving for a promotion like v2.2.4: 3 full runs -> 1 full + 2 inherited, about 12 min + 2 x ~1 min
+    (changes lookup, preflight, secret scan, contract-tests) instead of 3 x 12-30 min.
+  - Live read-only check of the lookup (host token): 24.9 s for the 20 candidates.
+    - Only 39213849110 and 39211947957 qualify as full (no `tree=` yet, so they serve CI2 but not CI1); older runs
+      have no `changes` job; re-run attempts are excluded.
+    - The nearest green ancestor of 73f62e7 is 6bfca83 (run 39211947957).
+- Tests (host, lock checked, absent; impact-based): `tests.test_ci_github_run_receipt tests.test_p184_consolidated_build
+  tests.test_ci_change_scope tests.test_ci_test_shard tests.test_p184_local_ci` 121 OK; in qdl-v2-python:2.2.4-31a5155
+  (--network none, ro) OK, 14 skipped (git-dependent). New cases:
+  - CI1: match (pull_request into dev and main, push), and no reuse on tree mismatch, scoped / inherited /
+    re-run / failed candidate, own run, workflow_dispatch, ci:full and API failure;
+  - CI2: docs-only after green => no suite (base_check only); a code change after green => that suite only;
+    inherited-full ancestor counts; a CI-defining change since the ancestor => full; no green ancestor, API failure,
+    scoped ancestor and non-ancestor => PR base; the nearest of two green ancestors wins;
+  - ci-result: inherited PASS with summary line; contract-tests still required by base_check; inconsistent or
+    invalid reuse outputs FAIL;
+  - receipts: inherited receipt embeds a full origin and is accepted; an origin that inherited itself is refused;
+    the consolidated build refuses a tree mismatch and nine inherited-run defects, and accepts a full run and an
+    inherited run on the matching tree.

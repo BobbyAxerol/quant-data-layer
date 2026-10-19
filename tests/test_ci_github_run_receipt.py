@@ -132,6 +132,54 @@ class ReceiptTests(unittest.TestCase):
             gh.main(["--run-id", "1", "--out", str(Path(tmp) / "r.json")], client=Running())
 
 
+@unittest.skipIf(yaml is None, "PyYAML not installed")
+class InheritanceTests(unittest.TestCase):
+    """CI1: an inherited run's receipt embeds its original full run; the consolidated build follows it by tree."""
+    NAMES = ReceiptTests.NAMES
+    TREE = "d" * 40
+
+    def client(self, origin_reuse=""):
+        tree = self.TREE
+        full_log = LOG + f"\n2026-10-19T06:47:31.8Z tree={tree}\n2026-10-19T06:47:31.8Z reuse_run={origin_reuse}\n"
+        inherited_log = (LOG.replace("=true", "=false") + f"\n2026-10-19T06:47:31.8Z tree={tree}\n"
+                         "2026-10-19T06:47:31.8Z reuse_run=7\n")
+        skipped = jobs(self.NAMES)
+        for row in skipped[1:3]:
+            row["conclusion"] = "skipped"
+        runs = {7: (dict(RUN, id=7, run_attempt=1, event="pull_request", head_sha="b" * 40), jobs(self.NAMES),
+                    full_log),
+                8: (dict(RUN, id=8, run_attempt=1, event="push"), skipped, inherited_log)}
+
+        class Fake:
+            repo = "owner/repo"
+
+            def run(self, run_id):
+                return runs[run_id][0]
+
+            def jobs(self, run_id):
+                return [dict(job, id=run_id * 100 + job["id"]) for job in runs[run_id][1]]
+
+            def workflow(self, sha):
+                return WORKFLOW
+
+            def job_log(self, job_id):
+                return runs[job_id // 100][2]
+        return Fake()
+
+    def test_inherited_receipt_embeds_origin_and_is_accepted(self):
+        receipt = gh.receipt_for(self.client(), 8, "owner/repo")
+        self.assertEqual((receipt["scope"], receipt["inherited_from_run"]), ("inherited", 7))
+        self.assertEqual(receipt["inherited_receipt"]["scope"], "full")
+        with patch.object(build, "git", return_value=self.TREE):
+            self.assertIs(build.verify_github_run_receipt(receipt, SHA, ROOT), receipt)
+        with patch.object(build, "git", return_value="e" * 40), self.assertRaisesRegex(ValueError, "tree"):
+            build.verify_github_run_receipt(receipt, SHA, ROOT)
+
+    def test_origin_that_inherited_itself_is_refused(self):
+        with self.assertRaises(SystemExit):
+            gh.receipt_for(self.client(origin_reuse="5"), 8, "owner/repo")
+
+
 class RedirectTests(unittest.TestCase):
     def test_authorization_is_dropped_on_cross_host_redirect(self):
         handler = gh._DropAuthOnRedirect()

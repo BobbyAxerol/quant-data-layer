@@ -183,7 +183,7 @@ def job_in_scope(condition, outputs):
     values = []
     for term in terms:
         match = SCOPE_TERM_RE.fullmatch(term)
-        if not match or match.group(1) not in ci_change_scope.FLAGS:
+        if not match or match.group(1) not in ci_change_scope.OUTPUT_FLAGS:
             raise ValueError(f"unsupported job-level condition: {expr}")
         values.append(outputs.get(match.group(1)) is True)
     return any(values)
@@ -733,7 +733,7 @@ def main(argv=None):
             raise SystemExit(f"cannot resolve --changed-since {args.changed_since}")
         decision = ci_change_scope.decide(repo=args.repo, base=base, head=sha, event="pull_request",
                                           base_ref="dev", labels=set())
-        outputs = {flag: decision[flag] for flag in ci_change_scope.FLAGS}
+        outputs = {flag: decision[flag] for flag in ci_change_scope.OUTPUT_FLAGS}
         scope_basis.update(changed_since=base, classifier=decision)
     selected = select_jobs(args.workflow_data, jobs_filter, outputs)
     scope = "affected" if (jobs_filter or args.changed_since) else "full"
