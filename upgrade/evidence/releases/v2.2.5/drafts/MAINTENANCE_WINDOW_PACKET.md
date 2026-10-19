@@ -67,7 +67,12 @@ STRICT), i.e. two warmup bursts right after the Query replicas were recreated. T
    Any problem = a role changed since 2026-10-19: stop and re-render; never apply over drift.
 4. Save rollback composes for every role from docker inspect (`kn_production_packet.service_from_inspect`, existing
    practice) into `<window dir>/rollback/`, plus the TS writer's own create compose.
-5. TS release image ready with its closure-equivalence proof (section 5); TS owner go.
+5. TS writer branch decided (section 5): W12-A (default) or W12-B with its proof; TS owner go.
+5a. One final isolated rehearsal with the window's exact inputs (IDR-129 Query image, the hardened generation
+    gen-20261019T084200Z, the window env), `scripts/kn_mesh_rotation_rehearsal.py` A->B->C->D, receipt next to
+    `rehearsal-20261019.json`. The 2026-10-19 run used the IDR-127-only Query image and the generation before the
+    permission hardening (bytes unchanged); a re-run was queued and then cancelled deliberately so that the
+    IDR-129 rebuild and the hardened permissions are rehearsed once together (no duplicate run).
 6. Baseline: writer heartbeat demanded/ready (64/64), Query ready products, consumer-group lag, URP 0, no
    restarts; `docker ps` shows no foreign test containers.
 7. Host measurement lock taken by the window owner (3 h); portal stacks paused as for the certified run (IDR-128).
