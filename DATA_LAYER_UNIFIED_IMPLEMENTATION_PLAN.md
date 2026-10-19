@@ -76772,3 +76772,30 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   INTEGRATION_DEFECT_REGISTER (cross-system register).
 - Fix in progress on `fix/idr129-query-rss` for v2.2.5 (window packet slot recorded in the entry above). Until the
   fix ships, the Query memory watch (monitor F2 / window RSS hold rule) is the mitigation.
+
+### IDR-128 A/B result: portal CPU weight - 2026-10-19 (Claude)
+
+- Owner-approved A/B, one variable (cpu.weight of the 15 portal containers), one stage-100 per arm, under host lock
+  `claude-idr128-ab-3afd932` (11:07:56Z, released 13:11Z). Apparatus: stage-100 campaign tool e179ec78 at DL dev
+  3afd932, same budget and A1/A2/A3 pins as 040311Z, except the load-client image `qdl-v2-python:2.2.2-d6d2637`
+  was rebuilt from the same source as id 2ed4d697 (A3 pin 51450612; deleted by the cleanup, see the cleanup record).
+  Codex paused in both arms; V1 stopped; G11 excluded.
+- Arm A (portal cpu.weight 100, default): `~/.local/state/qdl-v2/p184-idr128-A-20261019T111458Z` (scorecard
+  bab9f8e5...). Protocol met, guard CLEAN, load1 p50/p95 20.35/26.77. FAIL G4 (bar|BINANCE|1m p95 per window
+  179/185/173/198/271 vs 257.6; book_delta / book_snapshot / quote OKX_INVERSE); PASS G1 G3 G5 G6 G8 G9 G14
+  (G8 SLOWLOG 0, PING p99 1.36 ms); G2 not measured.
+- Arm B (cpu-shares 256 = cpu.weight 35): valid attempt 4 `~/.local/state/qdl-v2/p184-idr128-B-20261019T123515Z`
+  (scorecard 0fc8241a...). Attempts 1-3 invalid: 1 (115951Z) query_kn_1 restart 12:02:55Z (IDR-129); 2 (121759Z)
+  the coordinator's own docker-stats sampler tainted the guard; 3 (122234Z) an external scp into
+  /home/bobby/secure tainted the guard. Protocol met, guard CLEAN, load1 p50/p95 19.72/24.15. FAIL G4 on more rows
+  (bar|BINANCE|1m 281/206/154/294/276; book_snapshot|BINANCE| w5 288 > 260; book_snapshot OKX; trade OKX; the 3
+  OKX_INVERSE rows) and G2 (without A4); PASS G1 G3 G5 G6 G8 G9 G14.
+- Portal guardrail held in both arms (p95 <= 0.104 s, 0 5xx). CPU by group similar in both arms: DL Kafka 3.1-3.3,
+  DL other 2.7, writer 1.45-1.47, portal 0.72-0.75 vCPU; PSI cpu some 17-18 %, io some ~13 % / full ~6 %.
+- Decision (pre-registered rule): A FAIL and B FAIL -> the hypothesis "portal CPU share causes the G4/G8 failures"
+  is NOT supported. Rollback done: cpu-shares back to 1024 (cpu.weight 100 read back on all 15) at 13:10Z.
+- Hypothesis, not measured: the 040311Z PASS had the portal paused, which also removed its disk IO (portal Postgres
+  seq scans ~370k tuples/s); disk IO pressure is the next candidate. Packet order: user.slice CPUWeight -> cpuset ->
+  io.weight. No new campaign now (Codex review E).
+- Unchanged: the v2.2.4 certificate's operational condition (measure and run with unrelated heavy stacks paused);
+  IDR-128 stays OPEN.
