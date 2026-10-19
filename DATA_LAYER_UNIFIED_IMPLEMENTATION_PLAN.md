@@ -76402,3 +76402,24 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   GitHub proof. Locally: `p184_local_ci.py --changed-since <ci commit> --dry-run` on a docs-only commit selects only
   consolidated-source-preflight + repository-scan, and the classifier / `--verify-needs` tests cover the docs-only
   PASS and the skip rules.
+- GitHub proof run 2: run 39210279457 on 139d23f (weights + cache ownership fix; scope full for the same reason).
+  **All 12 jobs success, ci-result PASS, wall 720 s (12.0 min)** against 30 min before and 16.9 min in run 1.
+  - Per job: changes 12 s, consolidated-source-preflight 13 s, repository-scan 17 s, contract-tests 13 s,
+    sdk-python310 10 s, rust-workspace 291 s (cold, Rust step 259 s), release-gates 201 s, kn-native-integration
+    335 s, unit-tests shard 1 517 s / 2 688 s / 3 661 s / 4 695 s, ci-result 5 s.
+  - Partition check PASS: 336 modules, loads 561 s each by run-1 seconds. Measured suite seconds per shard:
+    574 / 592 / 426 / 596 (runner variance against the run-1 weights).
+  - `test_fund_phase6_capacity` passed in this run.
+  - Cargo cache saved: key `rust-workspace-Linux-rust-1.82-slim-5df2c155...`, 740 MB, scoped to refs/pull/34/merge.
+    GitHub lets a PR read caches of its own merge ref and of the base branch. After merge, a push to dev saves the
+    cache every PR into dev reads.
+  - Cache-hit measurement (attempt 2: rerun of rust-workspace only): restore 12 s, Rust fmt/clippy/test 154 s against
+    259 s cold, job 182 s against 291 s.
+- Status: implemented, tested locally, GitHub full path proven (run 39210279457 green). The scoped / docs-only path
+  is proven locally only, until the first PR into dev after merge. Not merged; PR #34 stays a draft.
+- Open:
+  - `test_fund_phase6_capacity` throughput floor is wall-clock sensitive on shared runners (1 failure in 2 runs here).
+    Proposed: own slice, if it recurs.
+  - The weights file needs a refresh when modules grow.
+  - `scripts/p184_local_ci.py` full replay now builds the CI image once per shard plus once for release-gates.
+    Local cost is higher; the receipt stays exact.
