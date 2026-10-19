@@ -76536,3 +76536,52 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
 - CI2 proof: this journal entry is pushed alone as a docs-only commit. Its run is recorded in the PR #34 report;
   expected: base dc25b79 (run 39217653087), docs only => consolidated-source-preflight, repository-scan,
   contract-tests (base_check); suites skipped.
+
+### P18.4 Data Layer v2.2.4 published - 2026-10-19 (Claude)
+
+- Owner approval: closeout plan 2026-10-16 (merge `fix/p184-dl-closure` -> dev -> main, then tag); the auto-mode
+  classifier blocked the first merge call, and the owner re-approved the whole chain via AskUserQuestion on 2026-10-19
+  ("Duyệt cả chuỗi").
+- PR #33 (`fix/p184-dl-closure` -> dev) merged at head 33797dd as 789bfa6 after CI run 39206402498 was green (5/5 jobs).
+- PR #35 (dev -> main) merged as b5ab3c2 after CI runs 39210158182 (pull_request) and 39210138010 (push to dev) were
+  both green on 789bfa6.
+- Annotated tag `v2.2.4` (object 1d26848f, tagger BobbyAxerol) on b5ab3c2. `release.yml` run 39214746630 succeeded:
+  ancestry on main, certificate status PASS, endpoint report sha256, SDK 2.4.1 wheel rebuilt and matched
+  `sdk.wheel_sha256` 9f79e032. The release https://github.com/BobbyAxerol/quant-data-layer/releases/tag/v2.2.4 carries
+  certificate.json, endpoint-report.json, qdl_sdk-2.4.1 wheel, CycloneDX SBOM and release.json.
+- Classification unchanged from the certificate: scoped Data Layer stage-100 PASS under amendments G4-A1, G4-A2, A3,
+  A4 v2 (applied, not needed) and post-hoc A5 (G11 TRADE clock; without A5, G11 FAILs on one slice from venue
+  silence); G12 credited; G13 76/76; single host, not HA; measured with unrelated stacks paused (IDR-128).
+- Runtime unchanged by the publication (no container recreated): rust 27c79b53 (ingestors, stream), core rc22
+  7c848aad, projector 60f83a51, query 3e9e4d3a; TS writer 2deb90b0.
+- Open after the release: PR #34 (change-scoped CI with sharded unit suite; full run 30 -> 12 min) is under review
+  with one blocking finding (the consolidated build had no accepted DL CI receipt form); IDR-115..128 per the TS
+  register; v2.2.3 rollback images are removed by digest after 2026-10-25.
+
+### Runtime vs repository reconciliation after v2.2.4 - 2026-10-19 (Claude)
+
+- Owner request 2026-10-19: "đảm bảo remote khớp với bản runtime stable trên nhánh main của từng DL hay TS". Scope:
+  read-only runtime inspection (docker ps / inspect only), a docs-only record on branch `docs/v224-runtime-reconcile`
+  (worktree `/home/bobby/.worktrees/data-layer-runtime-reconcile`, from origin/dev ba2bffe), PR into dev; no merge,
+  no tag, no container, image, compose, Redis, Postgres or Kafka change.
+- This branch also carries the v2.2.4 publication journal (cherry-pick of 407adac from `fix/p184-dl-closure`; the
+  append conflict with the PR #34 entry was resolved by keeping both). Since that entry: PR #34 merged into dev as
+  ba2bffe; main is unchanged (b5ab3c2, tag v2.2.4), and dev differs from main only by the CI files and this journal.
+- Record: `upgrade/evidence/p184-v224-runtime-reconciliation-20261019.md` (tables + the machine-readable record).
+  Result: every running DL image's source revision is on origin/main (rust 9dab224 / c7ce7d3 / a4e7b3b, python
+  31a5155, bar edge a388537, V1 2b0dcf7); all 18 certificate.json runtime rows equal the live containers in image id,
+  cpus, memory and StartedAt; live caps equal docker-compose.v2-stable.yml on main where the compose defines the role.
+  No code or image change is needed for main to describe the running binaries.
+- Drift (details and fixes in the record): R1 medium - the stable compose on main still defines the pre-KN roles;
+  query_kn / stream_kn / market_projector / market_cache exist only as inspect-generated composes under
+  ~/.local/state/qdl-v2. R2 medium - IDR-127 made concrete: Paper r11 vs repository r10, alpha-okx r15 vs r14 (r15 not
+  in the repository), runtime catalog r12 (716 bindings, +4 OKX BTC-USD-SWAP book_delta / book_snapshot /
+  mark_index_price / quote) vs config/v2/stable-source-bindings.yaml r11 (712); 6 live/sandbox realm manifests are
+  not in the repository by sha256. R3 low - bar edge rc14 bakes alpha-binance r14 / reference-l2 r6 (held). R4 low -
+  the create-composes of kafka1-3, query_kn_1/2 and ingestor_okx_swap hold pre-OPT caps (docker update); a recreate
+  must build its compose from docker inspect. R5 low - stable_redis / V1 created from composes of deleted worktrees
+  (docker start only). R6 low - no git tag v1.2.4 for the V1 fallback image. R7/R8 info.
+- Next (owner approval): one release slice for R1 + R2 (KN roles into a versioned compose; catalog r12 + Paper r11 +
+  alpha-okx r15 + the tests that pin r10 counts), which changes what the next python image bakes; R6 tag decision.
+- Canonical checkout `/home/bobby/data_layer` was not fast-forwarded: it is on main 5bf5cd5, 347 commits behind
+  origin/main, with an uncommitted edit of this plan dated 2026-10-02 (2 stray lines) that is not this session's.
