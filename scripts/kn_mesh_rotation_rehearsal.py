@@ -523,17 +523,28 @@ class Rehearsal:
         for m in self.clone.inspect["Mounts"]:
             if m["Destination"] == "/run/secrets/qdl-v2":
                 m["Source"] = gen_env["QDL_TLS_TS_IDENTITY_DIR"]
-        self.clone.lifecycle["phase"] = phase_label
+        # The writer's execution surfaces in its own Redis expire 120 s after the last market row (debug run
+        # 2026-10-19: every TRADE/QUOTE slice refused the STRICT resume, HANDOFF_RESUME_REQUIRED, terminal per
+        # IDR-101). An outage longer than that recovers through the deployed lifecycle: BOOTSTRAP start
+        # (MARKET_DATA_NATIVE_REQUIRE_RESUME=0) until ready, then a clean restart in STRICT (the deployed env).
+        self.clone.lifecycle["phase"] = "BOOTSTRAP"
         self.clone.run(*self.clone.writer_args())
         t_writer_started = now_ns()
         timeline = self.route_timeline(LIMITS["writer_s"], t_writer_started)
-        ready = self.writer_beat() if timeline["ready"] else None
+        t_bootstrap_ready = now_ns()
+        strict = None
+        if timeline["ready"] and phase_label == "STRICT":
+            self.restart_writer(gen_env["QDL_TLS_TS_IDENTITY_DIR"], "STRICT")
+            t_strict = now_ns()
+            strict = self.route_timeline(LIMITS["writer_s"], t_strict)
+        ready = self.writer_beat() if timeline["ready"] and (strict is None or strict["ready"]) else None
         t_ready = now_ns()
         self.current_gen_env = gen_env
         offsets_after = self.group_offsets(gen_env)
         cursors_after = self.clone.checkpoint_items()
         return self.note(f"{name}_measured", generation=gen_env["QDL_TLS_GENERATION"],
                          writer_ready=bool(ready), writer=ready or self.writer_beat(), route_recovery=timeline,
+                         strict_restart=strict, bootstrap_ready_after_stop_s=round((t_bootstrap_ready - t0) / 1e9, 2),
                          kafka_offset_continuity=self.offset_continuity(offsets_before, offsets_after),
                          writer_cursor_items={"before": cursors_before, "after": cursors_after},
                          consumer_visible_downtime_s=round((t_ready - t0) / 1e9, 2),
