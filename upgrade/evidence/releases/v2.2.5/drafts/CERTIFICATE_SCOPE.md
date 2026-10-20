@@ -20,6 +20,11 @@ each latency quantity named with its clock or marked NOT_MEASURED.
 | D5 K6 (`__consumer_offsets` dirty ratio) | observed 2026-10-19 10:35Z: the temporary override is already ABSENT (removed 2026-10-16 14:12Z, plan 73687); decision C keys unchanged | none: K6 is a no-op in the window (re-observed in W5) |
 | D6 TS writer: W12-A (decided) keeps 2deb90b0 and switches only its identity mount | rehearsal (same image, BOOTSTRAP -> STRICT lifecycle, cursor items unchanged) + window W12 receipts (`kn_window_writer.py render` deltas, `ready`) | none for DL; W12-B is a later TS roll with its own proof |
 
+TS side (outside this DL certificate, recorded for the window): TS v2.0.1 (main 875aeeb1, image digest 3aaa1a79...)
+is released and runs only the monitor in this window (W14); the writer stays 2deb90b0 (W12-A). The TS DR inheritance
+after v2.2.5 is decided by TS `scripts/p184_dr_equivalence.py` (TS dev 57c94e1b) from the pre-window snapshot taken in
+packet step W0.5, the post-window snapshot, this release's image build receipt and `semantic-parity.json`.
+
 Unchanged by digest: core 7c848aad, ingestors/stream 27c79b53, projectors 60f83a51, Kafka 9516fb76, Redis
 dfa18828, bar edge 08f356a8 (held; still scoped out).
 
@@ -67,6 +72,17 @@ otherwise; nothing here claims capacity beyond v2.2.4.
 
 Not proposed: a stage-50/100 re-run. It re-measures byte-identical binaries on a host whose contention (IDR-128)
 dominates; the owner may still request it.
+
+## 3b. Supported-load limitation (owner decision 2026-10-19 ~18:00Z; same operational condition as v2.2.4)
+
+- The v2.2.4 latency envelope that v2.2.5 inherits (and the R4 comparison uses) was measured with unrelated heavy
+  stacks paused (15 portal containers paused, Codex tree stopped). A mixed portal workload on the same host is
+  **outside the certified scope**: with the portal running, stage-100 021044Z FAILed G4 and G8, and the 2026-10-19
+  portal cpu.weight A/B (arms 111458Z / 123515Z) FAILed G4 in both arms, so CPU weight alone does not restore the
+  envelope.
+- IDR-128 stays OPEN for a later host split or IO isolation (owner); no new tuning campaign in v2.2.5.
+- Production runbook condition: no unrelated heavy workload on the DL host while the certified envelope is claimed;
+  the window soak (R4) and any v2.2.5 latency statement name whether the portal was running.
 
 ## 4. Deferred, not in v2.2.5
 

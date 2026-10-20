@@ -31,7 +31,7 @@ Related: `docs/runbooks/kn-host-reboot-recovery.md` (start order, market_cache r
 | bar edge | qdl-v2-python:2.2.3-rc14-a388537 (08f356a8), held | **unchanged image** (held: a new python image bakes catalog r12 / acquisition r20 and would refuse the r11/r19 checkpoint, section 6) | recreated for mounts only |
 | Kafka topic config (K6) | temporary `min.cleanable.dirty.ratio` 0.05 on `__consumer_offsets` removed 2026-10-16 14:12Z; ABSENT at the 2026-10-19 10:35Z observation | unchanged (no-op; W0.4 records the exact pre-window state, W5 compares) | no |
 | TS writer | `market_data_service_p184w`, image 2deb90b0 (TS 30f50a91), identity 2026-08-22 | W12-A: same image 2deb90b0, identity of the new generation; JWT key, binding, env unchanged (`DATA_LAYER_V2_JWT_MANIFEST_REVISION=11`) | yes (BOOTSTRAP, then STRICT) |
-| TS monitor (F2) | `monitor_service` exited (image v1.2.3-f317fe3: alert storm, no DL platform checks) | TS v2.0.1 release image with TS PR #21 (cert expiry, Query memory, Kafka throttle), env `MONITOR_REQUIRED_SERVICES=market_data,monitor`, `MONITOR_COPY_DELIVERY_ENABLED=false` (section 5b). **Deferred** if TS v2.0.1 is not published by the window | monitor only |
+| TS monitor (F2) | `monitor_service` exited (image v1.2.3-f317fe3: alert storm, no DL platform checks) | TS v2.0.1 release image (main 875aeeb1, digest `sha256:3aaa1a79c6e847cd78bc0e0e4c78e8fe9a8d8507c14c87dcb50aca154441b638`) with TS PR #21 (cert expiry, Query memory, Kafka throttle), env `MONITOR_REQUIRED_SERVICES=market_data,monitor`, `MONITOR_COPY_DELIVERY_ENABLED=false` (section 5b) | monitor only |
 
 Not touched: market_cache (projection cache; never recreated for a certificate change), Kafka data volumes, topics,
 consumer-group offsets, KRaft metadata (the brokers' dynamic listener truststore path is kept; the new generation
@@ -75,8 +75,9 @@ origin/dev`), never from a feature worktree.
 | 12 | K6 pre-window state (exact) | W0.4 below | `__consumer_offsets` `temp_state` ABSENT, `c_state` APPLIED (`delete.retention.ms` 600000, `segment.ms` 60000), `__transaction_state` `c_state` APPLIED (`segment.ms` 600000), no drift |
 | 13 | Writer composes rendered | W0.2 below | `render.json` deltas exactly as intended, `label_compose_deltas` [] |
 | 14 | Rollback trigger and deadline agreed | section 7b | recorded in `$WIN/decision.txt` before W1 |
-| 15 | TS v2.0.1 for the monitor | published tag + GHCR digest, or "monitor deferred" | either recorded |
+| 15 | TS v2.0.1 image present for W14 | released 2026-10-19 (tag v2.0.1 = main 875aeeb1). The image is not on the host yet (checked 2026-10-19 17:12Z): `docker pull ghcr.io/bobbyaxerol/executorbroker@sha256:3aaa1a79c6e847cd78bc0e0e4c78e8fe9a8d8507c14c87dcb50aca154441b638` with a TS read credential before T-0 | pulled by digest; without it W14 alone is deferred, the DL window is not |
 | 16 | No open order path | `docker ps` shows no running TS order service (executor, risk, paper_execution, order_group, listener: exited since 2026-10-06); stopping the writer does not cancel orders, so any running order path needs its own TS plan | none running, or a TS plan |
+| 17 | **TS DR equivalence "before" snapshot (mandatory, before W1)** | W0.5 below; without it the TS DR equivalence after v2.2.5 cannot be evaluated (TS plan E-5) | `status OK`, 12 roles, `writer_image` 2deb90b0, file `$WIN/dr-equivalence-before.json` (0600) |
 
 5a. **Final isolated rehearsal** (one run, before the window, with the window's exact inputs: the IDR-129 Query
 image, the hardened generation gen-20261019T084200Z, the window env, writer clone of 2deb90b0):
@@ -99,7 +100,7 @@ image, the hardened generation gen-20261019T084200Z, the window env, writer clon
 | binance_bar_edge | qdl-v2-python@sha256:08f356a8... | same (held) |
 | market_cache, stable_redis | redis@sha256:dfa18828... | same |
 | TS writer | 2deb90b0 (old identity) | 2deb90b0 (new identity) |
-| TS monitor | exited, tradingsystem-image:v1.2.3-f317fe3 (5cd22b4e) | TS v2.0.1 GHCR image by digest, or deferred |
+| TS monitor | exited, tradingsystem-image:v1.2.3-f317fe3 (5cd22b4e) | TS v2.0.1 `ghcr.io/bobbyaxerol/executorbroker@sha256:3aaa1a79...` |
 
 The env files `deploy/compose/qdl-v2-stable-kn.v2.2.4.env` and `.v2.2.5.env` pin every DL digest.
 
@@ -126,6 +127,7 @@ Pre-window steps (T-0, writer and mesh still serving):
 | W0.2 | Writer composes: `python3 -B scripts/kn_window_writer.py render --new-identity-dir $NEW/identities/trading-system --out-dir $WIN/writer` | exit 0; `render.json` deltas: bootstrap = identity source + REQUIRE_RESUME, strict = identity source, rollback-bootstrap = REQUIRE_RESUME, rollback = none; `label_compose_deltas` [] (verified read-only 2026-10-19 15:14Z) |
 | W0.3 | Writer log offsets for the R1 counts: `for f in ~/.local/state/trading-system/p184-20261005/runtime/mark-cutover/logs/market_data*.log; do echo "$f $(stat -c %s $f)"; done > $WIN/writer-log-offsets-pre.txt` | file written |
 | W0.4 | K6 exact pre-window state: `python3 -B scripts/kafka_internal_topic_compaction.py --observe --cert-dir ~/.local/state/qdl-v2/655d2106d01f/cert-material-rotate-20260822T144323Z > $WIN/k6-pre.json` | checklist item 12 |
+| W0.5 | **TS DR equivalence "before" snapshot (read-only, mandatory before W1):** `mkdir -p $WIN/ts-src-57c94e1b && git -C /home/bobby/trading_system archive 57c94e1b \| tar -x -C $WIN/ts-src-57c94e1b && (cd $WIN/ts-src-57c94e1b && python3 -B scripts/p184_dr_equivalence.py snapshot --dl-release v2.2.4 --out $WIN/dr-equivalence-before.json)` (TS dev 57c94e1b; docker inspect of the DL roles and the writer, digests only, output 0600 O_EXCL). After the window the TS Phase E owner runs the `after` snapshot and `evaluate` | `{"status": "OK", "roles": 12, "writer_image": "sha256:2deb90b0..."}` (command verified read-only 2026-10-19 17:11Z) |
 
 Outage (W1 = T_W1; the deadlines of section 7b run from here):
 
@@ -146,7 +148,7 @@ Outage (W1 = T_W1; the deadlines of section 7b run from here):
 | W12 burst | Expected on Query during W12a and W12b: one warmup burst per writer start (64 concurrent `/warmup`: 10 BAR 1m x 1,000 rows + 54 latest-only slices of the TS manifest r11), ~8 s per large warmup, 429 `REPLICA_LANE_BUSY` redirects between the two replicas (SDK replica redirect), memory step per burst | neither replica above 1.8 GiB; otherwise hold W12b (section 1b) |
 | W12b | Writer STRICT: `docker stop -t 30 market_data_service_p184w` (clean stop first; compose's own stop timeout is 10 s), note `T_S=$(date -u +%Y-%m-%dT%H:%M:%SZ)` and new log offsets (`... > $WIN/writer-log-offsets-strict.txt`, as W0.3), then the `strict` command of `render.json`, then `python3 -B scripts/kn_window_writer.py ready --expect-demanded 64 --deadline-s 900 > $WIN/w12b-ready.json` | exit 0 as W12a; 0 lines of 401 / UNAUTHENTICATED / CERTIFICATE_VERIFY_FAILED / STRICT_RESUME_REFUSAL / HANDOFF_RESUME_REQUIRED since `T_S` (R1 item 3) |
 | W13 | Acceptance R1 (section 8) | all PASS -> consumer-visible outage ends at W12b ready |
-| W14 | TS monitor (section 5b), only when TS v2.0.1 is published | monitor running, no alert storm |
+| W14 | TS monitor (section 5b) on TS v2.0.1 | monitor running, no alert storm |
 | W15 | R2 parity, R4 60-min passive soak (section 8) | PASS; then release the host lock |
 
 Writer continuity across BOOTSTRAP (Codex final-phase review section 3): BOOTSTRAP does not delete or rewrite
@@ -170,9 +172,13 @@ directory (root 0750) is readable by it; the rehearsal probes run as root for th
 
 ### 5b. TS monitor_service (F2, TS PR #21 merged into TS dev f7d19f47)
 
-Image: the TS v2.0.1 GHCR image (main after PR #21 and the phase E slices; another agent is releasing it). If v2.0.1
-is not published by the window, W14 is **deferred** (monitor stays exited; the window does not depend on it). TS
-v2.0.0 (9a251870) does not contain PR #21. Read-only facts checked 2026-10-19: the current `monitor_service` was
+Image: TS v2.0.1 (released 2026-10-19, tag v2.0.1 = main 875aeeb1, GHCR digest
+`sha256:3aaa1a79c6e847cd78bc0e0e4c78e8fe9a8d8507c14c87dcb50aca154441b638`; its `docker-compose.release.yml` carries
+the monitor inventory mounts). W14 is in the window; it is deferred only if the image cannot be pulled by digest
+before T-0 (checklist row 15; the DL window does not depend on it). TS v2.0.0 (9a251870) does not contain PR #21.
+Decision (2026-10-19): W14 uses TS v2.0.1, not the later v2.0.2 (image W of the Paper window, which adds latency
+clocks): the monitor ships now on a released image; moving it to v2.0.2 later is the same recreate (steps 5-7) in the
+Paper window if the owner wants one TS image line. Read-only facts checked 2026-10-19: the current `monitor_service` was
 created from `/home/bobby/trading_system` (project `trading_system`, compose + release override) on 5cd22b4e; the
 canonical TS checkout is on a feature branch with uncommitted compose edits, so the window takes the compose files
 from the release tag instead.
@@ -197,8 +203,7 @@ from the release tag instead.
    `MONITOR_REQUIRED_SERVICES=market_data,monitor` and `MONITOR_COPY_DELIVERY_ENABLED=false` to
    `/home/bobby/trading_system/.env`; `python3 -B $TSC/scripts/preflight_env.py --env /home/bobby/trading_system/.env
    --compose $TSC/docker-compose.yml $TSC/docker-compose.release.yml` -> PASS (CLAUDE.md section 4.9).
-5. Recreate the monitor only: `TRADING_SYSTEM_RELEASE_IMAGE=ghcr.io/bobbyaxerol/executorbroker@sha256:<v2.0.1
-   digest> docker compose -p trading_system --project-directory /home/bobby/trading_system -f
+5. Recreate the monitor only: `TRADING_SYSTEM_RELEASE_IMAGE=ghcr.io/bobbyaxerol/executorbroker@sha256:3aaa1a79c6e847cd78bc0e0e4c78e8fe9a8d8507c14c87dcb50aca154441b638 docker compose -p trading_system --project-directory /home/bobby/trading_system -f
    $TSC/docker-compose.yml -f $TSC/docker-compose.release.yml up -d --no-deps --force-recreate monitor`
    (`TRADING_SYSTEM_RELEASE_IMAGE` set for this service only, CLAUDE.md section 4.8).
 6. Check after 10 min: `docker inspect -f '{{.Image}} {{.RestartCount}} {{.State.Status}}' monitor_service`;
@@ -297,21 +302,45 @@ concurrent TS-manifest warmups (the 12 ETH requirements cycled; 2 BAR 1m x 1,000
 against the rehearsal Query with the new TS identity; predeclared gate: no Query restart or OOM kill, memory after the
 settle <= baseline + 128 MiB and < 1.6 GiB, no step > 32 MiB between the last two bursts. Data volume is the
 rehearsal's (minutes of ETH history), so this checks the window configuration, not the production-volume retention
-(that is the IDR-129 isolated A/B, `CERTIFICATE_SCOPE.md` R3). Result: see the receipt `rehearsal-final-*.json`.
+(that is the IDR-129 isolated A/B, `CERTIFICATE_SCOPE.md` R3).
+
+**Final rehearsal result (2026-10-19 17:56-18:41Z, receipt `rehearsal-final-20261019T175600Z.json`, lock
+claude-dl-v225-final, tool at DL dev 9b6747f, Query `qdl-v2-python:2.2.5-9b6747f` 753604f8, hardened generation,
+writer clone 2deb90b0): PASS.**
+
+| Phase | Mesh stop | Brokers answer | DL roles healthy | Query READY (mTLS) | Writer BOOTSTRAP ready | STRICT ready | **Consumer-visible outage** |
+|---|---|---|---|---|---|---|---|
+| B rotate | 19.4 s | 74.3 s | 154.1 s | 156.5 s | 68.4 s after its start | 35.4 s | **312.5 s** |
+| C rollback | 18.1 s | 59.7 s | 142.5 s | 145.0 s | 251.1 s | 69.9 s | **519.0 s** |
+| D re-roll | 21.9 s | 80.1 s | 159.6 s | 161.9 s | 97.7 s | 35.9 s | **353.1 s** |
+
+- Every phase: writer clean stop exit 0, cursor items unchanged (TRADE 2 / QUOTE 2), offsets of every group
+  continuous, URP 0, both Streams verify the current TS identity, Query/Stream/Kafka refuse the other generation,
+  writer READY 12/12 at the steady check. Hardened permissions worked for every role (Kafka uid 1000, KN roles 10001,
+  writer root); the probes ran as root.
+- Burst check (3 x 64 concurrent warmups on the rehearsal Query, 2 GiB cap): baseline 133.4 MiB, peaks 160-172 MiB,
+  settled 156.8 MiB, last step -2.4 MiB, no restart, no OOM kill: PASS. Every 200 warmup returned at most 1 row
+  (near-zero row volume; cause not investigated), so this checks the window configuration under 64 concurrent
+  requests, not retention at production volume (IDR-129 A/B: 361-445 MiB over 12 bursts vs 472 -> 683 before).
+- Open observation: phase D writer clone counted one bare substring "401" in its log (substring count, also matching
+  numbers/timestamps; the line was removed with the clone, not attributable). Query/Stream " 401" = 0 and every other
+  auth/protocol counter 0 in every phase. The tool and the R1 command now match whole tokens only.
+- Cleanup: 13 containers, 4 networks, 4 volumes, 5 dirs removed, 0 left; superseded images b7056141 (2.2.5-601c3d8)
+  and 69304bd4 (2.2.5-84512ab) deleted by id after a pin grep (0.98 GB); host lock released 18:42:29Z.
 
 ## 7b. Outage, recovery and deadlines
 
 | Quantity | Value | Source |
 |---|---|---|
-| Expected consumer-visible outage (W1 -> W12b ready) | **about 4-5 min** | rehearsal B/C/D 251-291 s (ETH-only data, 2.99 vCPU caps) |
+| Expected consumer-visible outage (W1 -> W12b ready) | **about 5-6 min, up to ~9 min** | rehearsals: first run 251-291 s, final run 312-519 s (ETH-only data, 2.99 vCPU caps); the DL part (Query READY over mTLS) was 140-162 s after the broker recreate in all 6 phases, the spread is the writer BOOTSTRAP (68-251 s, clone at 0.35 vCPU; production writer has no cap) |
 | Planning budget | 10 min | production has 64 writer slices, 3 cores, 2 projectors, 2 Query replicas (more start-up work than the rehearsal; not measured) |
 | market_cache rebuild if the cache is lost (not part of the plan: the window never stops market_cache) | +494 s (bars READY at 389 s, latest at 494 s) plus Query warm-up and the writer start | F3 drill 2026-10-19 (isolated, one projector at 0.75 CPU; production splits the topics over two projectors) |
-| Rollback outage | about 4.5 min (rehearsal C 267.8 s) | rehearsal |
+| Rollback outage | 4.5-8.7 min (rehearsal C 267.8 s / 519.0 s) | rehearsals |
 
 One total deadline (Codex final-phase review section 3, agreed before W1 and never extended after a failure is
 observed): **if the writer is not STRICT READY 64/64 by T_W1 + 25 min, start the rollback** (section 6). A step that
 fails its pass condition starts the rollback at once; per-step waits consume the same 25 min. Reserve 20 min after
-the trigger for the rollback (4.5 min rehearsed + BOOTSTRAP/STRICT + margin); if market_cache was lost, add 494 s.
+the trigger for the rollback (4.5-8.7 min rehearsed + margin); if market_cache was lost, add 494 s.
 Book the window as 15 min pre-window checks + 25 min forward + 20 min rollback reserve + 60 min soak, inside one 3 h
 host lock.
 
@@ -345,9 +374,9 @@ OLD_KAFKA=~/.local/state/qdl-v2/655d2106d01f/cert-material-rotate-20260822T14432
    -> 3; `KA $OLD_KAFKA kafka-broker-api-versions.sh` -> fails (SSL handshake).
 3. Writer: `$WIN/w12b-ready.json` ready true (READY slices and execution-ready slices reported as two numbers);
    auth/protocol lines since the STRICT start = 0:
-   `while read f off; do tail -c +$((off+1)) "$f"; done < $WIN/writer-log-offsets-strict.txt | grep -c -E
-   '\b(401|UNAUTHENTICATED|CERTIFICATE_VERIFY_FAILED|SSLError|STRICT_RESUME_REFUSAL|HANDOFF_RESUME_REQUIRED)\b'` and
-   `docker logs --since $T_S market_data_service_p184w 2>&1 | grep -c -E '<same pattern>'` -> 0 and 0; data-policy
+   `while read f off; do tail -c +$((off+1)) "$f"; done < $WIN/writer-log-offsets-strict.txt | grep -c -P
+   '(?<![0-9A-Za-z_,.:])(401|UNAUTHENTICATED|CERTIFICATE_VERIFY_FAILED|SSLError|STRICT_RESUME_REFUSAL|HANDOFF_RESUME_REQUIRED)(?![0-9A-Za-z_.])'` and
+   `docker logs --since $T_S market_data_service_p184w 2>&1 | grep -c -P '<same pattern>'` -> 0 and 0; data-policy
    refusals counted apart, per code and feed: `while read f off; do tail -c +$((off+1)) "$f"; done <
    $WIN/writer-log-offsets-strict.txt | grep 'slice disconnected' | sed -E 's/.*venue=([^ ]+) symbol=([^ ]+)
    feed=([^ ]+).* code=([^ ]+).*/\4 \1 \2 \3/' | sort | uniq -c` (quiet-venue staleness is legitimate; never
@@ -385,11 +414,14 @@ per code/venue/symbol/feed. PASS = writer READY in every sample, 0 auth/protocol
 ## 9. Owner go / no-go
 
 - [ ] Date/time of the window (before 2026-11-06) and the window owner.
-- [ ] v2.2.5 merged in dev, CI green; IDR-129 fix merged, python image rebuilt from dev, digest recorded and pinned.
-- [ ] Final rehearsal (2.5a) PASS including the burst check.
+- [x] IDR-129 fix merged (#46, 9b6747f); python image `qdl-v2-python:2.2.5-9b6747f` 753604f8 built from dev, receipt
+      PASS (20 files = git diff, unexpected 0), pinned in `qdl-v2-stable-kn.v2.2.5.env` (this PR; CI green and merged
+      before the window).
+- [x] Final rehearsal (2.5a) PASS including the burst check (2026-10-19 17:56-18:41Z; one open observation above).
 - [ ] W12-A (decided, `W12_DECISION.md`).
-- [ ] Section 2 checklist rows 3-16 PASS on the day.
+- [ ] Section 2 checklist rows 3-17 PASS on the day.
 - [ ] Total deadline T_W1 + 25 min and the rollback reserve (section 7b) agreed.
-- [ ] TS v2.0.1 digest for W14, or the monitor deferred.
+- [ ] TS v2.0.1 image pulled by digest for W14 (else W14 alone deferred).
+- [ ] TS DR equivalence "before" snapshot written (W0.5) before W1.
 - [ ] After acceptance: certificate scope per `CERTIFICATE_SCOPE.md` (same folder), then tag v2.2.5; old-identity
       cleanup (section 5c) as a separate owner approval.

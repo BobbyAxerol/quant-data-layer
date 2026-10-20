@@ -47,6 +47,7 @@ import datetime as dt
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -533,10 +534,16 @@ class Rehearsal:
             tail = self.clone.run("docker", "exec", self.clone.name, "sh", "-c",
                                   "cat /tmp/logs/*.log 2>/dev/null | tail -c 4000000", check=False, timeout=60)
             # auth/protocol failures and legitimate data-policy refusals are counted apart (never merged)
+            # whole-word matches (a bare substring count also hit numbers such as "...401..." in the 2026-10-19 final
+            # run), with up to 3 matching lines kept for attribution
+            auth = {k: re.findall(rf"(?<![0-9A-Za-z_,.:]){k}(?![0-9A-Za-z_.])", tail) for k in (
+                "401", "UNAUTHENTICATED", "CERTIFICATE_VERIFY_FAILED", "SSLError", "STRICT_RESUME_REFUSAL",
+                "HANDOFF_RESUME_REQUIRED")}
+            pattern = re.compile(r"(?<![0-9A-Za-z_,.:])(401|UNAUTHENTICATED|CERTIFICATE_VERIFY_FAILED|SSLError|"
+                                 r"STRICT_RESUME_REFUSAL|HANDOFF_RESUME_REQUIRED)(?![0-9A-Za-z_.])")
             counts["ts_writer"] = {
-                "auth_protocol": {k: tail.count(k) for k in ("401", "UNAUTHENTICATED", "CERTIFICATE_VERIFY_FAILED",
-                                                              "SSLError", "STRICT_RESUME_REFUSAL",
-                                                              "HANDOFF_RESUME_REQUIRED")},
+                "auth_protocol": {k: len(v) for k, v in auth.items()},
+                "auth_protocol_lines": [line[:300] for line in tail.splitlines() if pattern.search(line)][:3],
                 "data_policy": {k: tail.count(k) for k in ("DATA_STALE", "SESSION_STATE", "EVENT_AGE",
                                                             "SOURCE_UNAVAILABLE", "OPEN_SEQUENCE_GAP")}}
         return counts
