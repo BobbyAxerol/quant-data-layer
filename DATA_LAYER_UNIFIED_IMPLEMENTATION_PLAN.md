@@ -77125,3 +77125,13 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   docker logs.
 - Status: v2.2.5 certificate PASS, not tagged. Next: PR #48 CI and merge (coordinator), then the dev -> main
   release PR.
+- P1b (coordinator, owner-approved DR delta proof): the BC rule was extended to the TS DR02/DR03 alpha read shapes
+  (`--alpha`, harness `4e87da2b`). The shapes:
+  - alpha-binance r16 with its new-generation leaf and the registered r135 JWT;
+  - alpha-okx r15 with its r135 leaf and JWT;
+  - per consumer: instrument pages, warmup 5 x 5 symbols, 700, 10,000, a 10,001 refusal, a universe batch of 200 and
+    a mixed batch of 10.
+
+  Same session, 06:10-06:13Z, 24 shapes x 2 passes: **PASS**. Statuses: 44 x 200 and 4 x 400 typed refusals, equal on
+  both images. Receipt `byte-compare-alpha.json` `c884e495...`, copied to the release folder. 0 `qdl-hr-*` containers
+  and networks left.

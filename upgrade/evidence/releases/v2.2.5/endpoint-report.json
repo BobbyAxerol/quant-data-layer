@@ -82,6 +82,27 @@
      "('stream_cursor',)"
     ]
    },
+   "byte_compare_alpha": {
+    "requirements": 24,
+    "scope": "P1b: alpha DR02/DR03 read shapes (TS scripts/p184_dr_alpha_reads.py:99-138) at the Data Layer request level; alpha-binance r16 + alpha-okx r15 BAR 1m",
+    "sha256": "c884e495ee2bc2f9ac6414b77d7fc1479c1ca1dc84a838308da15bcd41063b0f",
+    "status_counts": {
+     "200": 44,
+     "400": 4
+    },
+    "triples": 48,
+    "verdict": "PASS",
+    "volatile_paths": [
+     "('data', *, 'cursor')",
+     "('data', *, 'quality', 'freshness_ms')",
+     "('request_id',)",
+     "('results', *, 'data', 'data', *, 'cursor')",
+     "('results', *, 'data', 'data', *, 'quality', 'freshness_ms')",
+     "('results', *, 'data', 'request_id')",
+     "('results', *, 'data', 'stream_cursor')",
+     "('stream_cursor',)"
+    ]
+   },
    "byte_compare_sha256": "41ebcc3c575e3fb1cb37ee069cd5eff156bb0ed7ef0dd4b0b5becc51e22ae7e4",
    "concurrency": {
     "foreign_test_like_containers_seen": [

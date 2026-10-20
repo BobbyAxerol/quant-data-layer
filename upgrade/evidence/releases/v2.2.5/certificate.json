@@ -3,7 +3,7 @@
  "release": "v2.2.5",
  "previous_published_release": "v2.2.4",
  "status": "PASS",
- "status_basis": "PASS: every gate inherited from v2.2.4 with its delta proof, or measured; G5 delta proof D3 (a)-(d) complete, D3 (b) concurrent hot-read latency measured by the pre-registered isolated A/B of 2026-10-20 (query-ab-20261020, verdict PASS: paired p95/p99 deltas new-old mean -41.9 / -19.5 ms; 2 maintenance runs 131/147 ms inside the scored windows; DR warmup byte compare PASS 65/65)",
+ "status_basis": "PASS: every gate inherited from v2.2.4 with its delta proof, or measured; G5 delta proof D3 (a)-(d) complete, D3 (b) concurrent hot-read latency measured by the pre-registered isolated A/B of 2026-10-20 (query-ab-20261020, verdict PASS: paired p95/p99 deltas new-old mean -41.9 / -19.5 ms; 2 maintenance runs 131/147 ms inside the scored windows; DR warmup byte compare PASS 65/65; alpha DR02/DR03 byte compare PASS 24 shapes x 2)",
  "post_hoc_decisions": [],
  "status_rule": "PASS only with no FAIL gate, every inherited gate's delta proof met, R1/R2/R3/R4 PASS, no NOT_MEASURED item upgraded, and required CI green on the PR head (CERTIFICATE.md section 1; inheritance matrix fixed before the window in CERTIFICATE_SCOPE.md).",
  "classification": "SCOPED_DATA_LAYER_CONFIG_CERT_QUERY_DELTA_RELEASE_INHERITING_V224_GATES_PASS_SINGLE_HOST_NOT_HA",
@@ -179,7 +179,7 @@
   "G13": "INHERITED 76/76 (writer 2deb90b0 unchanged); window BOOTSTRAP -> STRICT READY 64/64",
   "G14": "INHERITED; no R4 CPU sample recorded (predeclared not a gate)"
  },
- "endpoint_report_sha256": "aece31e4814a4aa52caced2ffef55e1d892cfa73ae0bc9ecbae360cc776b8cb4",
+ "endpoint_report_sha256": "72cdd0c99915dfc180c44d83588929ec84d42b33986a0536a4e973c787f68781",
  "sdk": {
   "name": "qdl-sdk",
   "version": "2.4.1",
@@ -215,7 +215,7 @@
   "writer": "unchanged image; identity mount follows the generation (render.json rollback commands in the window dir)"
  },
  "evidence_sha256": {
-  "upgrade/evidence/releases/v2.2.5/CERTIFICATE.md": "f190e2de86087c21810a0f4d7f71813df549f0cf567b3b6dc549acc4a2d7a483",
+  "upgrade/evidence/releases/v2.2.5/CERTIFICATE.md": "4cc9b2b65213ba0209336f830eb855cebc28c5083f8bcaaf3e95662befc274c9",
   "upgrade/evidence/releases/v2.2.5/RELEASE_NOTES.md": "bb3a7c700aa5ece1a6b93eb2910bebf61305ab3d1fa7986a8ec0bafd15f45615",
   "upgrade/evidence/releases/v2.2.5/CERTIFICATE_SCOPE.md": "0bbdec1ecdb267b1a0f3c8518bac26f5a776c31f774e90d068a2491fe864cd5b",
   "upgrade/evidence/releases/v2.2.5/MAINTENANCE_WINDOW_PACKET.md": "eadb4fe727aabeb9912570dd044770191f9f0c7bf061d21a8ac312bf1ad288bf",
@@ -250,13 +250,15 @@
   "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/tls-verify.out": "d271178827e273c9702735c97a4e8c961cffb8c1305878525a2b98f5b583dd1b",
   "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/w12a-ready.json": "452c464de3727e0fc3c4ca5fac194ae6781be9c39ba3e7781277f20f27c3cdd4",
   "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/w12b-ready.json": "3879b063cb2aaffcac13eb519cb9ec8e7f2f1062af85e21492acc8990461c2dd",
-  "upgrade/evidence/releases/v2.2.5/query-ab-20261020/SHA256SUMS": "e8052f803714089ccea2f98ef32b1aee89f8fa03240b54871b89ab60cad01c40",
+  "upgrade/evidence/releases/v2.2.5/query-ab-20261020/SHA256SUMS": "2591909b1f4463028d0823111fcc9d8ca759a29d23a91609b1365f29d7c8da18",
   "upgrade/evidence/releases/v2.2.5/query-ab-20261020/byte-compare.json": "41ebcc3c575e3fb1cb37ee069cd5eff156bb0ed7ef0dd4b0b5becc51e22ae7e4",
   "upgrade/evidence/releases/v2.2.5/query-ab-20261020/compare-rerun.json": "188e5a1ef6efb181d80da873437bbe723c4c11dde9ebfc808996c8902d1031c9",
-  "upgrade/evidence/releases/v2.2.5/query-ab-20261020/foreign.jsonl": "ca9aaf2ce46204739820d6fd73ac7d67599e9b0debd6218242d334be4db10ab3",
+  "upgrade/evidence/releases/v2.2.5/query-ab-20261020/foreign.jsonl": "000e4804f61c91e05a1ad381dde1bd1218e6346867afc02fba5c5bfe6af65971",
   "upgrade/evidence/releases/v2.2.5/query-ab-20261020/prereg.json": "0f2f00b43f1a1e28fedd055d90ca9f01dcd2376eb5e9d2053936b5cec081d924",
   "upgrade/evidence/releases/v2.2.5/query-ab-20261020/receipt.json": "d3899b2232c8cf874924d5d825a47e3e24fb9c8ee95ec70b62e9df3e73609d74",
-  "scripts/v225_query_hot_read_ab.py": "1d6aa8e6003ea7e0f73dcab136d03843cf7bda65c2577fbcaecdc0b081ef6836"
+  "scripts/v225_query_hot_read_ab.py": "c34be13752d56cc989da132de835b3a090b138f39a6a6a5e8525091a79faf85e",
+  "upgrade/evidence/releases/v2.2.5/query-ab-20261020/byte-compare-alpha.json": "c884e495ee2bc2f9ac6414b77d7fc1479c1ca1dc84a838308da15bcd41063b0f",
+  "upgrade/evidence/releases/v2.2.5/query-ab-20261020/compare-alpha.json": "aafe1e9d5ab48c983e93f51667af4f7cc59a8bcd867768e01d0acd0c2ea86f3f"
  },
  "evidence_sha256_note": "the .md entries are the files as committed with this certificate; certificate.json cannot list its own sha256",
  "superseded_proposals": [
@@ -292,8 +294,10 @@
   "prereg_commit": "0bba638525ee0f3353196add403a39db3fc8a59b",
   "session_tool_commits": [
    "543ddf1810713b198713549f669bd93e4ea996df (arms + first BC)",
-   "b5b36e7272de06bc5e230d22eef7c96e64bf0374 (BC re-run)"
+   "b5b36e7272de06bc5e230d22eef7c96e64bf0374 (BC re-run)",
+   "4e87da2ba32ec0dad8722a7e97adfe9665eeebd4 (P1b alpha BC)"
   ],
-  "session": "~/.local/state/qdl-v2/releases/v2.2.5/query-ab-20261020c (attempts 1 query-ab-20261020 and 2 query-ab-20261020b measured nothing: harness mount defects, stopped)"
+  "session": "~/.local/state/qdl-v2/releases/v2.2.5/query-ab-20261020c (attempts 1 query-ab-20261020 and 2 query-ab-20261020b measured nothing: harness mount defects, stopped)",
+  "byte_compare_alpha_sha256": "c884e495ee2bc2f9ac6414b77d7fc1479c1ca1dc84a838308da15bcd41063b0f"
  }
 }

@@ -2431,3 +2431,6 @@ Pinned at:
   nothing.
 - Certificate re-issued: G5 PASS by complete delta proof; P1 superseded (never used); `gates_without_a5` keeps G11
   FAIL as in v2.2.4. Re-run only if either Query image, the warmup/snapshot code path or the TS r11 manifest changes.
+- P1b (coordinator, same session 06:10-06:13Z): alpha DR02/DR03 read shapes (alpha-binance r16 + alpha-okx r15 BAR 1m:
+  instrument pages, warmup 5/700/10,000, 10,001 typed refusal, universe batch 200, mixed batch 10), 24 shapes x 2
+  passes: PASS, byte-identical outside per-request paths (`byte-compare-alpha.json` `c884e495...`).

@@ -76,7 +76,7 @@ digests.
 | IDR-127 semantic parity | [semantic-parity.json](semantic-parity.json) | `0d8e3a3bbc0096691b10cfc0a172779968f5dc68bdc7f301cc00492b536b4861` |
 | Inherited certificate / endpoint report / scorecard | `../v2.2.4/certificate.json`, `endpoint-report.json`, `scorecard.json` | `42412548...`, `013b66e6...`, `2dc2f8d1...` |
 | Inherited G12/G13 | `../v2.2.4/g12-g13-inheritance.json` | `95088c9c...` |
-| Query A/B (D3 (b) hot reads + DR warmup byte compare), pre-registered | [query-ab-20261020/](query-ab-20261020/): `prereg.json`, `receipt.json`, `byte-compare.json`, `foreign.jsonl`, `compare-rerun.json`; raw files (hot reads, Query logs, bodies) under `~/.local/state/qdl-v2/releases/v2.2.5/query-ab-20261020c/` | `SHA256SUMS` in that folder; receipt `d3899b22...`, byte compare `41ebcc3c575e3fb1cb37ee069cd5eff156bb0ed7ef0dd4b0b5becc51e22ae7e4` |
+| Query A/B (D3 (b) hot reads + DR warmup byte compare), pre-registered | [query-ab-20261020/](query-ab-20261020/): `prereg.json`, `receipt.json`, `byte-compare.json`, `foreign.jsonl`, `compare-rerun.json`; raw files (hot reads, Query logs, bodies) under `~/.local/state/qdl-v2/releases/v2.2.5/query-ab-20261020c/` | `SHA256SUMS` in that folder; receipt `d3899b22...`, byte compare `41ebcc3c575e3fb1cb37ee069cd5eff156bb0ed7ef0dd4b0b5becc51e22ae7e4`, alpha byte compare `c884e495ee2bc2f9ac6414b77d7fc1479c1ca1dc84a838308da15bcd41063b0f` |
 | Endpoint report | [endpoint-report.json](endpoint-report.json) | in certificate.json `endpoint_report_sha256` |
 
 ## 4. Gates
@@ -148,6 +148,21 @@ sync paused), every triple valid at the first attempt:
 - old and new differ only at paths that also differ between two requests to the same old replica (`request_id`,
   `stream_cursor`, per-row `cursor`, `quality.freshness_ms`, `quality.provider_session_liveness_ms`), and the
   bodies are byte-identical after masking exactly those values (10 BAR 1m x 1,000 rows each included).
+
+**Alpha DR warmup byte compare (P1b, same session 06:10-06:13Z, `query-ab-20261020/byte-compare-alpha.json`
+`c884e495ee2bc2f9ac6414b77d7fc1479c1ca1dc84a838308da15bcd41063b0f`): PASS.** The Data Layer requests of the TS
+DR02/DR03 alpha read probe (`scripts/p184_dr_alpha_reads.py:99-138`) for alpha-binance r16 and alpha-okx r15, BAR 1m,
+2 passes, 48 triples, all valid at the first attempt:
+- per consumer: the instrument listing the resolver pages through (2 pages); warmup limit 5 for each of the 5
+  symbols, 700 and 10,000 for the first; limit 10,001 (typed refusal: 400 on both images, bodies equal outside
+  `request_id`); the universe batch (5 x 200 rows, `require_all` false) and the mixed batch (limit 10; the unknown
+  symbol fails at client-side resolution, so the Data Layer sees one item);
+- statuses 44 x 200 and 4 x 400, equal on both images; Content-Length equals the body length (up to 29.3 MB for
+  10,000 rows) and no Transfer-Encoding; bodies byte-identical after masking the same per-request paths (also
+  inside batch items).
+- alpha-binance used its new-generation leaf (same CN/SAN as r135) with the registered r135 JWT key; alpha-okx its
+  r135 leaf and JWT. The requirement fields are the manifests' (the server-admitted form); the alpha runtime's own
+  resolve/projection code is not exercised.
 
 **P1 superseded.** The first issue of this certificate proposed P1 (scope D3 (b) out as NOT_MEASURED). It is not
 part of this certificate; the measurement above replaced it.
