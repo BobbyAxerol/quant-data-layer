@@ -771,17 +771,26 @@ def run(args) -> int:
     else:
         require_lock(args.lock_owner)
     output = args.output.resolve()
-    output.mkdir(mode=0o700, parents=True, exist_ok=False)
+    compare_only = bool(getattr(args, "compare_only", False))
+    output.mkdir(mode=0o700, parents=True, exist_ok=compare_only)
     stop_sampler = threading.Event()
     threading.Thread(target=sampler, args=(output / "foreign.jsonl", stop_sampler), daemon=True).start()
     head = sh("git", "-C", str(ROOT), "rev-parse", "HEAD")
     prereg = {**PREREG, "written_utc": utc(), "tool": "scripts/v225_query_hot_read_ab.py", "tool_commit": head,
               "concurrent_mode": bool(args.concurrent),
               "tool_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
-    (output / "prereg.json").write_text(json.dumps(prereg, indent=1) + "\n")
+    if compare_only:
+        # re-run of the BC phase in the session dir of the arms (the first BC output was lost: /out not writable)
+        if not (output / "prereg.json").exists():
+            raise SystemExit("compare-only needs the session's prereg.json")
+        (output / "compare-rerun.json").write_text(json.dumps({**prereg, "rerun_reason": args.compare_only_reason},
+                                                              indent=1) + "\n")
+    else:
+        (output / "prereg.json").write_text(json.dumps(prereg, indent=1) + "\n")
     print(json.dumps({"prereg_sha256": hashlib.sha256((output / "prereg.json").read_bytes()).hexdigest()}), flush=True)
     env, mounts, cmd = prod_spec()
-    work_root = writable_dir(output / "work")
+    work_root = writable_dir(output / ("work-cmp-rerun" if compare_only else "work"))
+    writable_dir(output / "cmp-out")
     bodies = writable_dir(output / "cmp-out" / "bodies")
     sync = None
     try:
@@ -808,7 +817,7 @@ def run(args) -> int:
         (output / "products.json").write_text(json.dumps({"bars": products, "latest": latest, "copied_utc": utc()},
                                                          indent=1) + "\n")
         # 1. byte compare: A and B side by side on the same cache, sync paused per triple
-        cmp_dir = output / "cmp"
+        cmp_dir = output / ("cmp-rerun" if compare_only else "cmp")
         cmp_dir.mkdir(mode=0o700)
         qa = start_query("q-cmp-a", "query_v2_1", OLD_IMAGE, cmp_dir, env, mounts, cmd)
         qb = start_query("q-cmp-b", "query_v2_2", NEW_IMAGE, cmp_dir, env, mounts, cmd)
@@ -823,7 +832,7 @@ def run(args) -> int:
             stop_query(qa, cmp_dir)
             stop_query(qb, cmp_dir)
         # 2. interleaved arms (paired deltas): A1 B1 A2 B2
-        for label, image in (("A1", OLD_IMAGE), ("B1", NEW_IMAGE), ("A2", OLD_IMAGE), ("B2", NEW_IMAGE)):
+        for label, image in (() if compare_only else (("A1", OLD_IMAGE), ("B1", NEW_IMAGE), ("A2", OLD_IMAGE), ("B2", NEW_IMAGE))):
             run_arm(label, image, output, work_root, env, mounts, cmd, plan, products)
     finally:
         stop_sampler.set()
@@ -906,8 +915,64 @@ def arm_summary(arm_dir: Path) -> dict:
             "schedule_lag_ms_p99": pct([r[1] - r[0] for r in rows], 0.99)}
 
 
+_TOKEN = None
+
+
+def raw_mask(raw: bytes, paths: set) -> bytes:
+    """Replace the raw JSON scalar token at each path in ``paths`` by ``"<V>"`` (path-exact, bytes elsewhere kept).
+
+    The BC rule masks the values at the volatile paths V only; a global value replace would also hit equal numbers
+    elsewhere (the driver's own mask therefore skipped small integers, which made per-request age fields unmasked).
+    """
+    import re
+    global _TOKEN
+    if _TOKEN is None:
+        _TOKEN = re.compile(rb'"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null|[{}\[\]:,]|\s+')
+    out, pos, stack = [], 0, []  # stack items: ["obj", key, expecting_key] or ["arr", index]
+    for match in _TOKEN.finditer(raw):
+        token = match.group()
+        if token[:1].isspace():
+            continue
+        if token in (b"{", b"["):
+            stack.append(["obj", None, True] if token == b"{" else ["arr", 0])
+            continue
+        if token in (b"}", b"]"):
+            stack.pop()
+            continue
+        if token == b":":
+            stack[-1][2] = False
+            continue
+        if token == b",":
+            if stack and stack[-1][0] == "obj":
+                stack[-1][2] = True
+            elif stack:
+                stack[-1][1] += 1
+            continue
+        if stack and stack[-1][0] == "obj" and stack[-1][2]:
+            stack[-1][1] = json.loads(token)
+            continue
+        path = tuple(item[1] for item in stack)
+        if path in paths:
+            out.append(raw[pos:match.start()])
+            out.append(b'"<V>"')
+            pos = match.end()
+    out.append(raw[pos:])
+    return b"".join(out)
+
+
 def byte_compare(output: Path) -> dict:
+    import ast
     raw = json.loads((output / "cmp-out/byte-compare-raw.json").read_text())
+    bodies = output / "cmp-out/bodies"
+    for record in raw:
+        final = record["attempts"][-1]
+        paths = {ast.literal_eval(p) for p in final["volatile_paths"] if p.startswith("(")}
+        a = (bodies / f'{final["A_sha256"]}.json').read_bytes()
+        b = (bodies / f'{final["B_sha256"]}.json').read_bytes()
+        na, nb = raw_mask(a, paths), raw_mask(b, paths)
+        final["driver_string_mask_equal"] = final["normalized_equal"]
+        final["normalized_equal"] = na == nb
+        final["normalized_sha256"] = {"A": hashlib.sha256(na).hexdigest(), "B": hashlib.sha256(nb).hexdigest()}
     per_req, problems = {}, []
     for record in raw:
         final = record["attempts"][-1]
@@ -1036,6 +1101,8 @@ def main() -> int:
     p.add_argument("--lock-owner", default="claude-v225-query-ab")
     p.add_argument("--concurrent", action="store_true",
                    help="owner-instructed run beside another agent's correctness-only lock (never touches the lock)")
+    p.add_argument("--compare-only", action="store_true", help="re-run only the BC phase inside an existing session dir")
+    p.add_argument("--compare-only-reason", default="")
     p.set_defaults(func=run)
     p = sub.add_parser("analyze")
     p.add_argument("--output", type=Path, required=True)
