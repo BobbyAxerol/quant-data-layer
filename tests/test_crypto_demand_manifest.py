@@ -124,13 +124,14 @@ class CommittedDemandManifestTests(unittest.TestCase):
             item for item in self.manifest.demands
             if item.feed in {FeedType.BOOK_SNAPSHOT, FeedType.BOOK_DELTA}
         ]
-        self.assertEqual(len(books), 20)
+        self.assertEqual(len(books), 22)
         self.assertEqual(
             {
                 (item.venue, item.market, item.native_symbol)
                 for item in books
             },
             {
+                ("OKX", "SWAP", "BTC-USD-SWAP"),  # inverse Paper extension (revision 8)
                 ("BINANCE", "USDM", "BTCUSDT"),
                 ("BINANCE", "USDM", "ETHUSDT"),
                 ("BINANCE", "USDM", "SOLUSDT"),

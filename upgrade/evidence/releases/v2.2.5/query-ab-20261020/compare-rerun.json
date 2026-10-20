@@ -1,0 +1,45 @@
+{
+ "schema": "qdl.v225.query-ab-prereg.v2",
+ "revision_note": "v2 (before any run) replaces v1 of commit 7d28d9cb: owner 2026-10-20 ~04:30Z: run concurrently with a foreign correctness-only lock, interleave arms, judge paired old-vs-new deltas, record foreign activity",
+ "images": {
+  "A_old": "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff",
+  "B_new": "sha256:753604f8abaa866e2de30c7ccaf36168986bc6991550ee326d53e51b83d1550a"
+ },
+ "replica": "one Query replica per arm, production container spec of query_kn_1 except private cache/quota Redis, --cpus 1.0 --memory 2g (the IDR-129 arm shape)",
+ "order": "byte compare (A and B side by side), then interleaved arms A1 B1 A2 B2 (A = old, B = new), each a fresh replica",
+ "concurrency": "runs beside another agent's correctness-only job under its host lock (owner instruction); foreign activity sampled every 30 s",
+ "burst": {
+  "slices": 64,
+  "bursts": 6,
+  "gap_s": 10,
+  "settle_s": 5,
+  "rounds": 4,
+  "mix": "TS r11 BAR 1m x 1,000 rows (10 slices) + alpha-okx BAR 1m..1h cycled to 54 slices with rows 2500/5000/2500/5000/2500/5000/2500/10000 (the IDR-129 stage ladder); SDK 2.4 redirect/queued retry shape",
+  "note": "alpha-binance identities belong to the rotated CA, so alpha slices are alpha-okx only"
+ },
+ "hot_reads": {
+  "driver": "open loop, fixed schedule (no coordinated omission), TS identity",
+  "request": "GET /v2/market-data/{uid}/snapshot, TS r11 QUOTE and TRADE requirements (EXECUTION), round robin",
+  "rate_hz": 10.0,
+  "rate_note": "4x the production rate so that a ~150 ms maintenance run overlaps reads (about 1.5 expected per run)",
+  "production_reference": "R4 soak 2026-10-20: 7261 QUOTE + 1800 TRADE in 60 min = 2.5/s over two replicas",
+  "phases": "pre (60 s before burst 1), scored (first burst start .. last burst end), post (60 s)"
+ },
+ "maintenance": "the new image's default QDL_QUERY_MEMORY_SOFT_LIMIT_MIB (448); no manual gc/trim in any scored arm",
+ "rules": {
+  "HR1": "paired deltas over the pairs (A1,B1) and (A2,B2), scored hot reads (any HTTP status; transport errors counted apart): mean(p95_Bi - p95_Ai) <= max(0.10*mean(p95_Ai), 10 ms) and mean(p99_Bi - p99_Ai) <= max(0.10*mean(p99_Ai), 25 ms); each pair is reported",
+  "HR2": "coverage: the B arms together have >= 1 memory_maintenance run inside a scored window with >= 1 hot read overlapping it; otherwise INCONCLUSIVE (never PASS)",
+  "HR3": "bounded pause: every hot read overlapping a maintenance run has latency <= run_ms + p99 of that arm's non-overlapping scored reads + 50 ms, and every run_ms <= 500",
+  "HR4": "transport errors + HTTP 5xx summed over B arms <= summed over A arms + max(2, 0.5 % of the B arms' scored reads)",
+  "HR5": "non-200 share of scored reads over the B arms <= over the A arms + 1 percentage point",
+  "BC": "for every TS r11 requirement, in each of 2 passes, a valid triple (A, B, A' = second request to A, issued together with the sync paused) exists within 3 attempts; valid = A and A' differ only in scalar leaves (V); PASS when for every valid triple: status A == B, content-type A == B, Content-Length header == body length on A and B, no Transfer-Encoding, the JSON leaf paths where A and B differ are a subset of V, and the bodies are byte-equal after replacing the raw values at V by one placeholder",
+  "verdict": "PASS only when HR1-HR5 and BC all PASS; INCONCLUSIVE when HR2 is not met; FAIL otherwise",
+  "secondary": "RSS per burst, warmup latency, 429 counts and failed slices are reported, not gated"
+ },
+ "written_utc": "2026-10-20T05:44:47Z",
+ "tool": "scripts/v225_query_hot_read_ab.py",
+ "tool_commit": "b5b36e7272de06bc5e230d22eef7c96e64bf0374",
+ "concurrent_mode": true,
+ "tool_sha256": "48b7f80b5e679b5506178bdd0b25ef19264fee97c783aa2a0b41accd9686b01f",
+ "rerun_reason": "attempt-3 BC raw record lost: /out not writable for the capped root driver (harness b5b36e72 fix)"
+}

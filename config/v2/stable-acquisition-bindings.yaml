@@ -1,5 +1,5 @@
 schema: qdl.v2.stable-acquisition-bindings.v1
-revision: 19
+revision: 20
 topics:
   raw: md.raw.realtime.v2
   canonical: md.canonical.v2
@@ -6653,4 +6653,58 @@ bindings:
   sequence_policy: NONE
   websocket_url: null
   business_websocket_url: null
+  market_websocket_url: null
+- binding_id: okx-swap-btc-usd-swap-book_delta
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_book
+  native_channel: books
+  sequence_policy: CONTIGUOUS
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  l2:
+    provider_protocol: OKX_PUBLIC_BOOKS
+    depth_per_side: 100
+    rest_snapshot_url: null
+    snapshot_refresh_seconds: 30
+    materialized_snapshot_interval_ms: 1000
+  market_websocket_url: null
+- binding_id: okx-swap-btc-usd-swap-book_snapshot
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_book
+  native_channel: books
+  sequence_policy: CONTIGUOUS
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  l2:
+    provider_protocol: OKX_PUBLIC_BOOKS
+    depth_per_side: 100
+    rest_snapshot_url: null
+    snapshot_refresh_seconds: 30
+    materialized_snapshot_interval_ms: 1000
+  market_websocket_url: null
+- binding_id: okx-swap-btc-usd-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: BTC-USD
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+- binding_id: okx-swap-btc-usd-swap-quote
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_bbo
+  native_channel: bbo-tbt
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
   market_websocket_url: null

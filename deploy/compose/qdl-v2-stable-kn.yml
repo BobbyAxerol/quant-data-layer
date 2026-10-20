@@ -1,0 +1,1358 @@
+# Data Layer V2 production KN topology - versioned compose (rendered by scripts/kn_versioned_compose.py).
+#
+# One file for the 17 runtime roles of project qdl_v2_stable_candidate, rendered from the live docker inspect of
+# 2026-10-19T08:48:21Z and proven equal to it by `scripts/kn_versioned_compose.py parity` (intended deltas: see
+# INTENDED_DELTAS in that script). Variables:
+#   images + host paths  deploy/compose/qdl-v2-stable-kn.v<release>.env   (committed, no secret)
+#   mesh TLS generation  <tls root>/<generation>/generation.env            (scripts/rotate_mesh_tls.py)
+#   env-only secrets     ~/.local/state/qdl-v2/releases/<release>/kn-secrets.env (0600, host only)
+#
+# Apply ONLY per role and only inside an approved window:
+#   docker compose -p qdl_v2_stable_candidate -f deploy/compose/qdl-v2-stable-kn.yml \
+#     --env-file <release env> --env-file <generation.env> --env-file <secrets env> up -d --no-deps <service>
+# Never a project-wide `up`, never `--remove-orphans` (the exited one-shot init containers share the project), and
+# never recreate market_cache or stable_redis for a certificate change (both are ephemeral caches: CLAUDE.md 4.4).
+name: qdl_v2_stable_candidate
+networks:
+  stable_internal:
+    name: qdl_v2_stable_candidate_stable_internal
+    external: true
+  stable_egress:
+    name: qdl_v2_stable_candidate_stable_egress
+    external: true
+  kn_consumer:
+    name: qdl_v2_native_consumer
+    external: true
+  executor_network:
+    name: executor_network
+    external: true
+volumes:
+  kafka1_data:
+    name: qdl_v2_stable_candidate_kafka1_data
+    external: true
+  kafka2_data:
+    name: qdl_v2_stable_candidate_kafka2_data
+    external: true
+  kafka3_data:
+    name: qdl_v2_stable_candidate_kafka3_data
+    external: true
+  stable_state:
+    name: qdl_v2_stable_candidate_stable_state
+    external: true
+services:
+  kafka1:
+    image: ${QDL_IMAGE_KAFKA:?set QDL_IMAGE_KAFKA}
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_ADVERTISED_LISTENERS: SSL://kafka1:9092
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: 'false'
+      KAFKA_AUTHORIZER_CLASS_NAME: org.apache.kafka.metadata.authorizer.StandardAuthorizer
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+      KAFKA_AUTO_LEADER_REBALANCE_ENABLE: 'false'
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka1:9093,2@kafka2:9093,3@kafka3:9093
+      KAFKA_DEFAULT_REPLICATION_FACTOR: '3'
+      KAFKA_HEAP_OPTS: -Xms512m -Xmx768m
+      KAFKA_INTER_BROKER_LISTENER_NAME: SSL
+      KAFKA_JVM_PERFORMANCE_OPTS: -XX:+UseG1GC -XX:MaxGCPauseMillis=100
+      KAFKA_LISTENERS: CONTROLLER://:9093,SSL://:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:SSL,SSL:SSL
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_LOG_RETENTION_MS: '86400000'
+      KAFKA_LOG_SEGMENT_BYTES: '16777216'
+      KAFKA_MIN_INSYNC_REPLICAS: '2'
+      KAFKA_NODE_ID: '1'
+      KAFKA_NUM_PARTITIONS: '6'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: '3'
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_SSL_CLIENT_AUTH: required
+      KAFKA_SSL_ENABLED_PROTOCOLS: TLSv1.3,TLSv1.2
+      KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: HTTPS
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: store.password
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka1.keystore.p12
+      KAFKA_SSL_KEYSTORE_TYPE: PKCS12
+      KAFKA_SSL_KEY_CREDENTIALS: key.password
+      KAFKA_SSL_PRINCIPAL_MAPPING_RULES: RULE:^CN=([^,]+).*$$/$$1/,DEFAULT
+      KAFKA_SSL_PROTOCOL: TLSv1.3
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: truststore.password
+      KAFKA_SSL_TRUSTSTORE_FILENAME: truststore.jks
+      KAFKA_SSL_TRUSTSTORE_TYPE: JKS
+      KAFKA_SUPER_USERS: User:phase8-admin;User:kafka1;User:kafka2;User:kafka3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: '2'
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: '3'
+      KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE: 'false'
+    cpus: 2.25
+    mem_limit: 1610612736
+    memswap_limit: 3221225472
+    read_only: false
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,nosuid,nodev,exec,size=32m
+    logging:
+      driver: json-file
+      options:
+        max-file: '3'
+        max-size: 50m
+    volumes:
+    - type: bind
+      source: ${QDL_TLS_KAFKA_DIR:?set QDL_TLS_KAFKA_DIR}
+      target: /etc/kafka/secrets
+      read_only: true
+    - type: volume
+      source: kafka1_data
+      target: /var/lib/kafka/data
+      read_only: false
+    networks:
+      stable_internal: {}
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - timeout 2 bash -c '</dev/tcp/127.0.0.1/9092'
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+      start_interval: 2s
+  kafka2:
+    image: ${QDL_IMAGE_KAFKA:?set QDL_IMAGE_KAFKA}
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_ADVERTISED_LISTENERS: SSL://kafka2:9092
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: 'false'
+      KAFKA_AUTHORIZER_CLASS_NAME: org.apache.kafka.metadata.authorizer.StandardAuthorizer
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+      KAFKA_AUTO_LEADER_REBALANCE_ENABLE: 'false'
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka1:9093,2@kafka2:9093,3@kafka3:9093
+      KAFKA_DEFAULT_REPLICATION_FACTOR: '3'
+      KAFKA_HEAP_OPTS: -Xms512m -Xmx768m
+      KAFKA_INTER_BROKER_LISTENER_NAME: SSL
+      KAFKA_JVM_PERFORMANCE_OPTS: -XX:+UseG1GC -XX:MaxGCPauseMillis=100
+      KAFKA_LISTENERS: CONTROLLER://:9093,SSL://:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:SSL,SSL:SSL
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_LOG_RETENTION_MS: '86400000'
+      KAFKA_LOG_SEGMENT_BYTES: '16777216'
+      KAFKA_MIN_INSYNC_REPLICAS: '2'
+      KAFKA_NODE_ID: '2'
+      KAFKA_NUM_PARTITIONS: '6'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: '3'
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_SSL_CLIENT_AUTH: required
+      KAFKA_SSL_ENABLED_PROTOCOLS: TLSv1.3,TLSv1.2
+      KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: HTTPS
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: store.password
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka2.keystore.p12
+      KAFKA_SSL_KEYSTORE_TYPE: PKCS12
+      KAFKA_SSL_KEY_CREDENTIALS: key.password
+      KAFKA_SSL_PRINCIPAL_MAPPING_RULES: RULE:^CN=([^,]+).*$$/$$1/,DEFAULT
+      KAFKA_SSL_PROTOCOL: TLSv1.3
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: truststore.password
+      KAFKA_SSL_TRUSTSTORE_FILENAME: truststore.jks
+      KAFKA_SSL_TRUSTSTORE_TYPE: JKS
+      KAFKA_SUPER_USERS: User:phase8-admin;User:kafka1;User:kafka2;User:kafka3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: '2'
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: '3'
+      KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE: 'false'
+    cpus: 2.25
+    mem_limit: 2147483648
+    memswap_limit: 4294967296
+    read_only: false
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,nosuid,nodev,exec,size=32m
+    logging:
+      driver: json-file
+      options:
+        max-file: '3'
+        max-size: 50m
+    volumes:
+    - type: bind
+      source: ${QDL_TLS_KAFKA_DIR:?set QDL_TLS_KAFKA_DIR}
+      target: /etc/kafka/secrets
+      read_only: true
+    - type: volume
+      source: kafka2_data
+      target: /var/lib/kafka/data
+      read_only: false
+    networks:
+      stable_internal: {}
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - timeout 2 bash -c '</dev/tcp/127.0.0.1/9092'
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+      start_interval: 2s
+  kafka3:
+    image: ${QDL_IMAGE_KAFKA:?set QDL_IMAGE_KAFKA}
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_ADVERTISED_LISTENERS: SSL://kafka3:9092
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: 'false'
+      KAFKA_AUTHORIZER_CLASS_NAME: org.apache.kafka.metadata.authorizer.StandardAuthorizer
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+      KAFKA_AUTO_LEADER_REBALANCE_ENABLE: 'false'
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka1:9093,2@kafka2:9093,3@kafka3:9093
+      KAFKA_DEFAULT_REPLICATION_FACTOR: '3'
+      KAFKA_HEAP_OPTS: -Xms512m -Xmx768m
+      KAFKA_INTER_BROKER_LISTENER_NAME: SSL
+      KAFKA_JVM_PERFORMANCE_OPTS: -XX:+UseG1GC -XX:MaxGCPauseMillis=100
+      KAFKA_LISTENERS: CONTROLLER://:9093,SSL://:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:SSL,SSL:SSL
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_LOG_RETENTION_MS: '86400000'
+      KAFKA_LOG_SEGMENT_BYTES: '16777216'
+      KAFKA_MIN_INSYNC_REPLICAS: '2'
+      KAFKA_NODE_ID: '3'
+      KAFKA_NUM_PARTITIONS: '6'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: '3'
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_SSL_CLIENT_AUTH: required
+      KAFKA_SSL_ENABLED_PROTOCOLS: TLSv1.3,TLSv1.2
+      KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: HTTPS
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: store.password
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka3.keystore.p12
+      KAFKA_SSL_KEYSTORE_TYPE: PKCS12
+      KAFKA_SSL_KEY_CREDENTIALS: key.password
+      KAFKA_SSL_PRINCIPAL_MAPPING_RULES: RULE:^CN=([^,]+).*$$/$$1/,DEFAULT
+      KAFKA_SSL_PROTOCOL: TLSv1.3
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: truststore.password
+      KAFKA_SSL_TRUSTSTORE_FILENAME: truststore.jks
+      KAFKA_SSL_TRUSTSTORE_TYPE: JKS
+      KAFKA_SUPER_USERS: User:phase8-admin;User:kafka1;User:kafka2;User:kafka3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: '2'
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: '3'
+      KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE: 'false'
+    cpus: 2.25
+    mem_limit: 1610612736
+    memswap_limit: 3221225472
+    read_only: false
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,nosuid,nodev,exec,size=32m
+    logging:
+      driver: json-file
+      options:
+        max-file: '3'
+        max-size: 50m
+    volumes:
+    - type: bind
+      source: ${QDL_TLS_KAFKA_DIR:?set QDL_TLS_KAFKA_DIR}
+      target: /etc/kafka/secrets
+      read_only: true
+    - type: volume
+      source: kafka3_data
+      target: /var/lib/kafka/data
+      read_only: false
+    networks:
+      stable_internal: {}
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - timeout 2 bash -c '</dev/tcp/127.0.0.1/9092'
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+      start_interval: 2s
+  rust_core:
+    image: ${QDL_IMAGE_CORE:?set QDL_IMAGE_CORE}
+    pull_policy: never
+    restart: unless-stopped
+    entrypoint:
+    - /usr/local/bin/qdl-realtime-core
+    command:
+    - /runtime/core.json
+    environment:
+      QDL_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
+      QDL_KAFKA_CERT_ROOT: /stable-certs/core
+      QDL_KAFKA_CLIENT_ID: qdl-v2-realtime-core-001
+      QDL_KAFKA_GROUP_ID: qdl-v2-realtime-core-v2
+      QDL_KAFKA_REQUEST_TIMEOUT_SECONDS: '30'
+      QDL_PROVIDER_ADMISSION_ENABLED: 'true'
+      QDL_PROVIDER_ADMISSION_LISTEN_ADDR: 0.0.0.0:8300
+      QDL_PROVIDER_ADMISSION_POLICY_PATH: /runtime/admission-policy.json
+      QDL_PROVIDER_ADMISSION_POLICY_SHA256: 32791d2815147db81fd6debecea8f937fb381cbc34a956526ac016df119823c3
+      QDL_PROVIDER_ADMISSION_REDIS_PREFIX: qdl:stable:v2:provider-admission:v1
+      QDL_PROVIDER_ADMISSION_REDIS_URL: redis://stable_redis:6379/0
+      QDL_PROVIDER_ADMISSION_SECRET: ${QDL_PROVIDER_ADMISSION_SECRET:?set QDL_PROVIDER_ADMISSION_SECRET (host-only secrets
+        env)}
+    cpus: 1.0
+    mem_limit: 268435456
+    memswap_limit: 536870912
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,nosuid,nodev,noexec,size=32m
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-file: '3'
+        max-size: 50m
+    volumes:
+    - type: bind
+      source: ${QDL_KN_RELEASE_DIR:?set QDL_KN_RELEASE_DIR}/runtime/admission-policy.json
+      target: /runtime/admission-policy.json
+      read_only: true
+    - type: bind
+      source: ${QDL_CORE_CONFIG_DIR:?set QDL_CORE_CONFIG_DIR}/rust_core.json
+      target: /runtime/core.json
+      read_only: true
+    - type: bind
+      source: ${QDL_TLS_STABLE_CERTS_DIR:?set QDL_TLS_STABLE_CERTS_DIR}
+      target: /stable-certs
+      read_only: true
+    networks:
+      stable_internal: {}
+    healthcheck: &id001
+      test:
+      - CMD
+      - bash
+      - -c
+      - exec 3<>/dev/tcp/127.0.0.1/8300
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
+  rust_core_2:
+    image: ${QDL_IMAGE_CORE:?set QDL_IMAGE_CORE}
+    pull_policy: never
+    restart: unless-stopped
+    entrypoint:
+    - /usr/local/bin/qdl-realtime-core
+    command:
+    - /runtime/core-002.json
+    environment:
+      QDL_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
+      QDL_KAFKA_CERT_ROOT: /stable-certs/core
+      QDL_KAFKA_CLIENT_ID: qdl-v2-realtime-core-002
+      QDL_KAFKA_GROUP_ID: qdl-v2-realtime-core-v2
+      QDL_KAFKA_REQUEST_TIMEOUT_SECONDS: '30'
+      QDL_PROVIDER_ADMISSION_ENABLED: 'true'
+      QDL_PROVIDER_ADMISSION_LISTEN_ADDR: 0.0.0.0:8300
+      QDL_PROVIDER_ADMISSION_POLICY_PATH: /runtime/admission-policy.json
+      QDL_PROVIDER_ADMISSION_POLICY_SHA256: 32791d2815147db81fd6debecea8f937fb381cbc34a956526ac016df119823c3
+      QDL_PROVIDER_ADMISSION_REDIS_PREFIX: qdl:stable:v2:provider-admission:v1
+      QDL_PROVIDER_ADMISSION_REDIS_URL: redis://stable_redis:6379/0
+      QDL_PROVIDER_ADMISSION_SECRET: ${QDL_PROVIDER_ADMISSION_SECRET:?set QDL_PROVIDER_ADMISSION_SECRET (host-only secrets
+        env)}
+    cpus: 1.0
+    mem_limit: 268435456
+    memswap_limit: 536870912
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,nosuid,nodev,noexec,size=32m
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-file: '3'
+        max-size: 50m
+    volumes:
+    - type: bind
+      source: ${QDL_KN_RELEASE_DIR:?set QDL_KN_RELEASE_DIR}/runtime/admission-policy.json
+      target: /runtime/admission-policy.json
+      read_only: true
+    - type: bind
+      source: ${QDL_CORE_CONFIG_DIR:?set QDL_CORE_CONFIG_DIR}/rust_core_2.json
+      target: /runtime/core-002.json
+      read_only: true
+    - type: bind
+      source: ${QDL_TLS_STABLE_CERTS_DIR:?set QDL_TLS_STABLE_CERTS_DIR}
+      target: /stable-certs
+      read_only: true
+    networks:
+      stable_internal: {}
+    healthcheck: *id001
+  rust_core_3:
+    image: ${QDL_IMAGE_CORE:?set QDL_IMAGE_CORE}
+    pull_policy: never
+    restart: unless-stopped
+    entrypoint:
+    - /usr/local/bin/qdl-realtime-core
+    command:
+    - /runtime/core-003.json
+    environment:
+      QDL_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
+      QDL_KAFKA_CERT_ROOT: /stable-certs/core
+      QDL_KAFKA_CLIENT_ID: qdl-v2-realtime-core-003
+      QDL_KAFKA_GROUP_ID: qdl-v2-realtime-core-v2
+      QDL_KAFKA_REQUEST_TIMEOUT_SECONDS: '30'
+      QDL_PROVIDER_ADMISSION_ENABLED: 'true'
+      QDL_PROVIDER_ADMISSION_LISTEN_ADDR: 0.0.0.0:8300
+      QDL_PROVIDER_ADMISSION_POLICY_PATH: /runtime/admission-policy.json
+      QDL_PROVIDER_ADMISSION_POLICY_SHA256: 32791d2815147db81fd6debecea8f937fb381cbc34a956526ac016df119823c3
+      QDL_PROVIDER_ADMISSION_REDIS_PREFIX: qdl:stable:v2:provider-admission:v1
+      QDL_PROVIDER_ADMISSION_REDIS_URL: redis://stable_redis:6379/0
+      QDL_PROVIDER_ADMISSION_SECRET: ${QDL_PROVIDER_ADMISSION_SECRET:?set QDL_PROVIDER_ADMISSION_SECRET (host-only secrets
+        env)}
+    cpus: 0.5
+    mem_limit: 268435456
+    memswap_limit: 536870912
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,nosuid,nodev,noexec,size=32m
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-file: '3'
+        max-size: 50m
+    volumes:
+    - type: bind
+      source: ${QDL_KN_RELEASE_DIR:?set QDL_KN_RELEASE_DIR}/runtime/admission-policy.json
+      target: /runtime/admission-policy.json
+      read_only: true
+    - type: bind
+      source: ${QDL_CORE_CONFIG_DIR:?set QDL_CORE_CONFIG_DIR}/rust_core_3.json
+      target: /runtime/core-003.json
+      read_only: true
+    - type: bind
+      source: ${QDL_TLS_STABLE_CERTS_DIR:?set QDL_TLS_STABLE_CERTS_DIR}
+      target: /stable-certs
+      read_only: true
+    networks:
+      stable_internal: {}
+    healthcheck: *id001
+  ingestor_binance_usdm:
+    image: ${QDL_IMAGE_INGESTOR:?set QDL_IMAGE_INGESTOR}
+    pull_policy: never
+    restart: unless-stopped
+    entrypoint:
+    - /usr/local/bin/qdl-native-raw-ingestor
+    command:
+    - /runtime/config.json
+    environment:
+      QDL_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
+      QDL_KAFKA_CERT_ROOT: /stable-certs/producer
+      QDL_KAFKA_CLIENT_ID: qdl-v2-stable-producer
+      QDL_KAFKA_GROUP_ID: qdl-v2-stable-producer
+      QDL_KAFKA_REQUEST_TIMEOUT_SECONDS: '30'
+    cpus: 0.75
+    mem_limit: 268435456
+    memswap_limit: 536870912
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,nosuid,nodev,noexec,size=32m
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-file: '3'
+        max-size: 50m
+    volumes:
+    - type: bind
+      source: ${QDL_INGESTOR_CONFIG_DIR:?set QDL_INGESTOR_CONFIG_DIR}/ingestor_binance_usdm.json
+      target: /runtime/config.json
+      read_only: true
+    - type: bind
+      source: ${QDL_TLS_STABLE_CERTS_DIR:?set QDL_TLS_STABLE_CERTS_DIR}
+      target: /stable-certs
+      read_only: true
+    - type: volume
+      source: stable_state
+      target: /var/lib/qdl-stable
+      read_only: false
+    networks:
+      stable_egress: {}
+      stable_internal: {}
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - F=$$(find /var/lib/qdl-stable/runtime/session-liveness/binance-usdm -name '*.json' -newermt '-30 seconds' 2>/dev/null
+        | head -1); [ -n "$$F" ] && grep -q '"state":"LIVE"' "$$F"
+      interval: 20s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+  ingestor_okx_swap:
+    image: ${QDL_IMAGE_INGESTOR:?set QDL_IMAGE_INGESTOR}
+    pull_policy: never
+    restart: unless-stopped
+    entrypoint:
+    - /usr/local/bin/qdl-native-raw-ingestor
+    command:
+    - /runtime/config.json
+    environment:
+      QDL_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
+      QDL_KAFKA_CERT_ROOT: /stable-certs/producer
+      QDL_KAFKA_CLIENT_ID: qdl-v2-stable-producer
+      QDL_KAFKA_GROUP_ID: qdl-v2-stable-producer
+      QDL_KAFKA_REQUEST_TIMEOUT_SECONDS: '30'
+    cpus: 1.0
+    mem_limit: 268435456
+    memswap_limit: 536870912
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,nosuid,nodev,noexec,size=32m
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-file: '3'
+        max-size: 50m
+    volumes:
+    - type: bind
+      source: ${QDL_INGESTOR_CONFIG_DIR:?set QDL_INGESTOR_CONFIG_DIR}/ingestor_okx_swap.json
+      target: /runtime/config.json
+      read_only: true
+    - type: bind
+      source: ${QDL_TLS_STABLE_CERTS_DIR:?set QDL_TLS_STABLE_CERTS_DIR}
+      target: /stable-certs
+      read_only: true
+    - type: volume
+      source: stable_state
+      target: /var/lib/qdl-stable
+      read_only: false
+    networks:
+      stable_egress: {}
+      stable_internal: {}
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - F=$$(find /var/lib/qdl-stable/runtime/session-liveness/okx-swap -name '*.json' -newermt '-30 seconds' 2>/dev/null
+        | head -1); [ -n "$$F" ] && grep -q '"state":"LIVE"' "$$F"
+      interval: 20s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+  market_projector_1:
+    image: ${QDL_IMAGE_PROJECTOR:?set QDL_IMAGE_PROJECTOR}
+    pull_policy: never
+    restart: unless-stopped
+    entrypoint:
+    - /usr/local/bin/qdl-projector
+    command:
+    - run
+    environment:
+      QDL_KN_BUNDLE_PATH: /kn/bundle.json
+      QDL_KN_KAFKA_BOOTSTRAP: kafka1:9092,kafka2:9092,kafka3:9092
+      QDL_KN_KAFKA_CA: /kn/tls/broker-ca.crt
+      QDL_KN_KAFKA_CERT: /kn/tls/kn-projector.crt
+      QDL_KN_KAFKA_KEY: /kn/tls/kn-projector.key
+      QDL_KN_MARKET_CACHE_URL: redis://market_cache:6379/0
+      QDL_KN_MATERIALIZER_EPOCH: '1'
+      QDL_KN_REPLICA: production-1
+      QDL_KN_STATUS_INTERVAL_S: '5'
+      QDL_KN_STATUS_PATH: /status/status.json
+      QDL_KN_TOPIC_ID: ljfjPYApRpWQd79McfTtZg
+    cpus: 0.75
+    mem_limit: 536870912
+    memswap_limit: 1073741824
+    pids_limit: 256
+    init: true
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=67108864
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-file: '3'
+        max-size: 20m
+    volumes:
+    - type: bind
+      source: ${QDL_KN_RELEASE_DIR:?set QDL_KN_RELEASE_DIR}
+      target: /kn
+      read_only: true
+    - type: bind
+      source: ${QDL_KN_STATE_DIR:?set QDL_KN_STATE_DIR}/projector-1
+      target: /status
+      read_only: false
+    - type: bind
+      source: ${QDL_TLS_KN_DIR:?set QDL_TLS_KN_DIR}
+      target: /kn/tls
+      read_only: true
+    networks:
+      stable_internal: {}
+    healthcheck: &id002
+      test:
+      - CMD-SHELL
+      - find /status/status.json -newermt '-30 seconds' 2>/dev/null | grep -q .
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+      start_interval: 5s
+  market_projector_2:
+    image: ${QDL_IMAGE_PROJECTOR:?set QDL_IMAGE_PROJECTOR}
+    pull_policy: never
+    restart: unless-stopped
+    entrypoint:
+    - /usr/local/bin/qdl-projector
+    command:
+    - run
+    environment:
+      QDL_KN_BUNDLE_PATH: /kn/bundle.json
+      QDL_KN_KAFKA_BOOTSTRAP: kafka1:9092,kafka2:9092,kafka3:9092
+      QDL_KN_KAFKA_CA: /kn/tls/broker-ca.crt
+      QDL_KN_KAFKA_CERT: /kn/tls/kn-projector.crt
+      QDL_KN_KAFKA_KEY: /kn/tls/kn-projector.key
+      QDL_KN_MARKET_CACHE_URL: redis://market_cache:6379/0
+      QDL_KN_MATERIALIZER_EPOCH: '1'
+      QDL_KN_REPLICA: production-2
+      QDL_KN_STATUS_INTERVAL_S: '5'
+      QDL_KN_STATUS_PATH: /status/status.json
+      QDL_KN_TOPIC_ID: ljfjPYApRpWQd79McfTtZg
+    cpus: 0.75
+    mem_limit: 536870912
+    memswap_limit: 1073741824
+    pids_limit: 256
+    init: true
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=67108864
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-file: '3'
+        max-size: 20m
+    volumes:
+    - type: bind
+      source: ${QDL_KN_RELEASE_DIR:?set QDL_KN_RELEASE_DIR}
+      target: /kn
+      read_only: true
+    - type: bind
+      source: ${QDL_KN_STATE_DIR:?set QDL_KN_STATE_DIR}/projector-2
+      target: /status
+      read_only: false
+    - type: bind
+      source: ${QDL_TLS_KN_DIR:?set QDL_TLS_KN_DIR}
+      target: /kn/tls
+      read_only: true
+    networks:
+      stable_internal: {}
+    healthcheck: *id002
+  market_cache:
+    image: ${QDL_IMAGE_REDIS:?set QDL_IMAGE_REDIS}
+    pull_policy: never
+    restart: unless-stopped
+    command:
+    - redis-server
+    - --save
+    - ''
+    - --appendonly
+    - 'no'
+    - --maxmemory
+    - '8000000000'
+    - --maxmemory-policy
+    - noeviction
+    - --hash-max-listpack-entries
+    - '128'
+    - --hash-max-listpack-value
+    - '2048'
+    user: 10001:10001
+    environment: {}
+    cpus: 1.0
+    mem_limit: 9663676416
+    memswap_limit: 19327352832
+    pids_limit: 256
+    init: true
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=67108864
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-file: '3'
+        max-size: 20m
+    volumes: []
+    networks:
+      kn_consumer: {}
+      stable_internal: {}
+    healthcheck:
+      test:
+      - CMD
+      - redis-cli
+      - ping
+      interval: 10s
+      timeout: 3s
+      retries: 3
+  stable_redis:
+    image: ${QDL_IMAGE_REDIS:?set QDL_IMAGE_REDIS}
+    pull_policy: never
+    restart: unless-stopped
+    command:
+    - redis-server
+    - --appendonly
+    - 'no'
+    - --save
+    - ''
+    - --maxmemory
+    - 128mb
+    - --maxmemory-policy
+    - noeviction
+    user: 999:1000
+    environment: {}
+    cpus: 0.5
+    mem_limit: 167772160
+    memswap_limit: 335544320
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /data:rw,nosuid,nodev,noexec,uid=999,gid=1000,mode=0700,size=160m
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: '3'
+    volumes: []
+    networks:
+      stable_internal: {}
+    healthcheck:
+      test:
+      - CMD
+      - redis-cli
+      - ping
+      interval: 15s
+      timeout: 3s
+      retries: 4
+      start_period: 10s
+      start_interval: 1s
+  query_kn_1:
+    image: ${QDL_IMAGE_QUERY:?set QDL_IMAGE_QUERY}
+    pull_policy: never
+    restart: unless-stopped
+    command:
+    - python
+    - -m
+    - app.entrypoints.query_v2_stable
+    user: 10001:10001
+    environment:
+      MALLOC_ARENA_MAX: '2'
+      QDL_CONFIG_REVISION: phasec36-reference-l2-r14
+      QDL_DATA_JWT_ALGORITHMS: RS256
+      QDL_DATA_JWT_AUDIENCE: qdl-v2-stable
+      QDL_DATA_JWT_ISSUER: https://identity.qdl.stable.internal
+      QDL_DATA_JWT_KEYS_JSON: '{"stable-alpha-binance-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAiNU1rv24Zpbbnh7mIa6E\n0i8PXjajBwFxEAiMhyF0b7LQ/Of0Q66MuwvUgcNCb+8kdOTfYVIHbp81isUouDnD\nSEC7PYIGguE+kf9Keu2ThMZ/DdMdvKsCAqUFZ7j7pnMYDCJZ4+zy/++zQ098BKKZ\nqujkdwEYxU5WJDhSTfX9kvm+9PKhb/snaOb1rZVhgK45BQl2UgSYagy+cUheToC8\nGfwDH/wm/jpBPEvpVTfqaM4+j4F0u6jXZLP3tu9AwGNWHbI81GdqMhRK1USEpt9C\nqykzsuk11WTjhNzZ+R8FyAIipJQmlxvymEW8gUVrAcQbVXbT7M/X/YV8IWpkuV6p\nYwIDAQAB\n-----END
+        PUBLIC KEY-----\n","stable-alpha-okx-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAxlG6kL2X9t7phyJYLwt2\nD1Jdmtlz9jYpDEShbKHqZu3TYVEXGZjVHSc34TtAPJBCv3j1sDqpadWu7X0ZgVkN\n6uoF/C+10GoLwTLguo8LMHzQIbi/T1AfRW4XrsctYJ5hldh8ynOiPbj/QawXT2XK\nLAqtahZ3NmB2uQCzncuc1muSogGELXMbsQT5rNT1K3kA97EYiZsdKXZmWge80JSt\nYnOxJsz/BDMwN6KEqwnjt5Rq6f7w/VbjVVcWeeVUIgcCOUb4J5dC469lGOJO2Qjg\nGgREXE55QzdzwdHEvFhG61bY9oG+jbPkEIi9MrrAqMloC7p/wQmvGgZeH1bsZRRz\n67QMsiB3jD+Z+AZln9HIb52Umxu84zyx19oGw8UOCsiSsl7GyQMFnwXCfdkiKxls\nETQ4s8ieK7UvImrhGMARkuYk5BOUI471RQPwgE1/yyk/MUfw+uC7bnHfBfaoHWlm\nooed8curkN4kEZfO31x8IIPzSnygGhmXR2TJUpCGlM/lAgMBAAE=\n-----END
+        PUBLIC KEY-----\n","stable-monitoring-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAzpj8nsaHh9U0s7UaIeCL\n8TSvMMqwPogAeRIrn1/0ErdjSYDiFrWfn/QwlmLELRRvoIAUjLq9sgiY3xJP2LMT\nR71GvM6UUwQQkmNmFUvXtC5e/5W7+/PLoSWRBsJ4CB8eKgRE5/Qeob+Qr5T5r3L/\nQwBOUdIs/nQlPoJJ4vKm+hZZllwidV/L5W6pYT8b9KSkgLpgh18RnC+WpduFv8WV\nvegzmjuaZDLn4zK/nRTJAmeK2mOmucCSVTUTG7c3JaRtWsUhfumrplDULsX4ZLPN\naHiVkC3rRxQ3du2/CmBD6nZNvMusZ48mIT4QRZjwiKTxk+mQkAmV0IVTbyWj8y7S\nI/2w7xIaREkyjnUO6eto9GOcdiab4IyK3o3Zk/JBW/A1oDzTHENbs2Q7AUcGiBFE\n+J/0GJZHiKHO4KOUGSTP7H3bGTDKN8zYD/Q+Qv3JCY2XPFzBHluk8qc2RRqa7AKm\nUyFibZGUqiaiIrOQyYWrGOuAq9AOP1KyZRBmmwK6vpG9AgMBAAE=\n-----END
+        PUBLIC KEY-----\n","stable-reference-l2-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAhgGxvNv/ytUpY+fMvV+A\ny8HKk2IuHxhkFno8bBATsPAWSabJe9Mr2kQLKmd+KP4o3vU/ApNGez42h/Lh58ET\nwrQc+CupoJxFWdSasHwEEcwQ1RBjTR36ZVNEJmOy3PRJ3Ak1ATd8RF1TVs9oyXXX\ngsqz8E64TGgza0nVX/A67ciyWkYey0xEVAK2/NX89T6pQQ6pdC+cdjaoQITGsnNn\nYsVOXqZHq1DvNTDAz7+l+UlJPovEKbaVxcgq6V3HBVlbHASoRafHmHRdlqUGDByJ\nfH9CMzVfwJS9o7nTEEMhdw2EK6RkLW2J4SKDWQFcNVN8XKiz6lzY3EiRfZk6HOeF\neSuCXgLH8Tc44yunaH/j7KSewGx7rQRmP/CO+LzteufVv7rzgmUl6LETgNszG3lF\nuS4zG3lP+oA3HipHiQYW7QfsoJkWlkZkAq6p5HgtWpk6DeNPebfSlkmH8d0P5LbC\n4rkUsHaOw3/u+YrqPnbA00ZDayrbfpIz9OXChcoBX0p7AgMBAAE=\n-----END
+        PUBLIC KEY-----\n","stable-trading-system-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmni4QBr1C5dmijOFxnOn\nYque2MP8Z8bSSRWrROPOw0k8ASHCZPtoSCx76bwsJdCLJK1KYGBwFmP7UJ84VqfK\nrFGNUhpcIBY6tFzMTIlKU0JNTts/WRr359xI5SYwe7YMAhG/BHzIZd5hpbAMG/yS\n11ct/i8VNL5yxT9XMcMTFPrWVPYiY8V8vzBGRlnMw8Wt1hsX1QNqSoRilRJRGkGJ\nuiJp584j47ANRp7y+BTgwrL1wK7kDuvRYUSs/Av4eYx3mwVBByaL34Ul11Y0u+g6\n2//e7p29OFu2WSmJhQZyTcL5ns1OAbu2qdHVLJExEbCRbrHhlgsjoeauhTdvaCm7\nbwIDAQAB\n-----END
+        PUBLIC KEY-----\n","alpha.binance.live.stable-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyZQOK7oe6Eq2d5t45Sju\nH+f26aJGMEnCROyeF2GCunqASwxG/ZEu6lA7l7sPaohxuUWSohjGFoFIkeqdUhOY\n1U12w0twHtSNjtzMkTqi80e70QwF90PZx4KfEHC47qWIUbxfeHJUP8BuQt5rJcMi\nbS0VodoZEc89lBYl8wwAWxv4j2PmGpVXtB9U2f8sOsgJPb+CX9Am3ppQTbJCAul8\njRrK2BOo/E+5YfpHI/f5fyvZoaTSyHqnErt+ntfN2ZvROc9IlYP6nwGY4n7wWdyr\nUwpatyZZbZfHEMjXGLzyfqPp4RrOOmd1iKk58dh2r01NIVbCLEaZ3dyRX+Y/wJSb\nJwIDAQAB\n-----END
+        PUBLIC KEY-----\n","alpha.binance.sandbox.stable-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0cuUcA6PSBH806v/CL6o\nLrP4wtDub3bnQV66mE6YzEXXtTWYUBEGPqx789rUHRkBGVYZeOhvPi1HyEN7jTzZ\naHBxi6aJKyUe0vgCQddUbpm2QMN+/zqqzRm/Gc0MBsg5ganTTAaWZARvjiuc5K7m\nI8S2dGxmRf58zhQAvTmTm/SU66P6VWISZrG9iFpmdRqD3IQtrzymp2fWF+s+WI2f\no8H32ht+9U/TY/O0uyn50SC61ns1WJJSn19d/NxycXpGMU5AsgeWVKLvt9SoYP2E\nlGR+PtrWMF7MfIURAAJQue2p/2Gvt6V0U7iDYJA/7qUWLv3LEHtzJed4gooVBXzg\ngwIDAQAB\n-----END
+        PUBLIC KEY-----\n","alpha.okx.live.stable-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq4u6Vme8trzX4IJKvRRM\nbp44+K+KS/SKCB97OzI4MENp+hZkce8bKJxUA+66HJIoIdLerhBhNp69EeYZxFWs\nXMoYYehIZHPjQP2yHUmF85Oa7wQzp+dJTOfcTCey2mTfbDBL6+vECLFiT1dxt2TJ\niNjovYnOjGrEHNplWA9J08SPwIJo465QDxmXaPuH2b9l2PA7mgzEjF4DGd7imkJ+\ntdi69DJDD6zlydse/2vnsC1HQ+mC7x1ZXd9J44sN6QB80vbDJ4jUgZoKu6MzevEe\nwdjv46bzS5b0sBrhQlI7jkJgI/cMSIcoYDcRx40M/7ufm+RSwZ3HhzqO0PwMTBku\n5QIDAQAB\n-----END
+        PUBLIC KEY-----\n","alpha.okx.sandbox.stable-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA29C5ndxOUixDmaXWiz+h\nQGdgd2pL1sDKWpezck2sCQVBjTCdvku4EUqG7gB6QAWr2IL6dxlGFHltBSwS8ovQ\nEAPtSAGIWze/2Jo1weIK9MvklWgJLV/TselIE2TpjL8JwCkQDI1+wws2rUMaO5lo\nvsjEvGIv+zn9mAgAc+vic4hkKREYMsVGBwe7nstOv6yyXsqgEc/bjHLFc0gMuGK5\nued5YDb478eDA8kxyMpK7i29qKwVsIvduRat4QBQyUsqesrclDjYUMSu9xWMJV9P\n3/vPXMMxyzckn8ypvoJCoN7G0eas6Cd4FFgCbKFf/7t7EWuh03nLAZk8rigqJqIM\neQIDAQAB\n-----END
+        PUBLIC KEY-----\n","trading-system.live.stable-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3H+NFsJz7TxqkmkPiLRi\n1DE0W2Ti+Bd7/sJe195YpqH+83VjY5wvfwZxnSzk8Xm0LZd9pW6pImuggFJHTdD3\nSSmefWI1g75f3dobyjnH4uhxiSYfHUgfMsLL4z6hYkodmJINa41e4Bcm0TTfZmdL\nLe1CcTTAzQZrP60/S/0ipVYET/iHqWZu9H3fXyX3jk1y3kN0uqxykP8vd9z/ACV9\nxm+su4HOnzdOBV6CIVN3bp7gMDAwW0i9UFKaqzEAp2Cz6N+ANq577rwFMzizq0xn\nE1JAFtjs8LzVVnDS8bXjR50Xwptsk621PCcONoJOzUdNPRnot+nOsqTrPIWYybYe\nTwIDAQAB\n-----END
+        PUBLIC KEY-----\n","trading-system.sandbox.stable-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq7tavpc95CkC181QzCFI\nOPT9ioITXuIxv7nnu3ZZquz16lthItMgkinROKHXCgSw5kBLZUvBe6hVTdrBhKoY\nurvyoGh2x3JJS6SPFqkSsow0yhp+eIoHN8Zo30LjsRHAGF0UJ0ZkbXqUfLbPesdM\ndhhd+utDgKMcvu8+KbUOmXpl+eKMN8lQK/TT4SKTCk2IJWr2+ZzESUsfK5ZwLNts\nVjha+NzOaw8W0ekoZ95mnhW3vXgbZQ+bk4PacQzrwDM+upX64KkqvT7OjSjoieut\nWWJ2ED+eoFeSXi2n+8YqezZ2HAEKOY3HxClNvTdGVDqA1cWPc0fOvJtFB6uDJTbZ\nvQIDAQAB\n-----END
+        PUBLIC KEY-----\n"}'
+      QDL_DATA_JWT_KEY_ENVIRONMENTS_JSON: '{"stable-alpha-binance-rs256-v1":"paper","stable-alpha-okx-rs256-v1":"paper","stable-monitoring-rs256-v1":"paper","stable-reference-l2-rs256-v1":"paper","stable-trading-system-rs256-v1":"paper","alpha.binance.live.stable-rs256-v1":"live","alpha.binance.sandbox.stable-rs256-v1":"sandbox","alpha.okx.live.stable-rs256-v1":"live","alpha.okx.sandbox.stable-rs256-v1":"sandbox","trading-system.live.stable-rs256-v1":"live","trading-system.sandbox.stable-rs256-v1":"sandbox"}'
+      QDL_DATA_JWT_KEY_SUBJECTS_JSON: '{"stable-alpha-binance-rs256-v1":"spiffe://qdl/paper/alpha-binance-stable","stable-alpha-okx-rs256-v1":"spiffe://qdl/paper/alpha-okx-stable","stable-monitoring-rs256-v1":"spiffe://qdl/paper/monitoring-multivenue-stable","stable-reference-l2-rs256-v1":"spiffe://qdl/paper/reference-l2-stable","stable-trading-system-rs256-v1":"spiffe://qdl/paper/trading-system-stable","alpha.binance.live.stable-rs256-v1":"spiffe://qdl/live/alpha-binance-stable","alpha.binance.sandbox.stable-rs256-v1":"spiffe://qdl/sandbox/alpha-binance-stable","alpha.okx.live.stable-rs256-v1":"spiffe://qdl/live/alpha-okx-stable","alpha.okx.sandbox.stable-rs256-v1":"spiffe://qdl/sandbox/alpha-okx-stable","trading-system.live.stable-rs256-v1":"spiffe://qdl/live/trading-system-stable","trading-system.sandbox.stable-rs256-v1":"spiffe://qdl/sandbox/trading-system-stable"}'
+      QDL_DATA_JWT_MAX_LIFETIME_SECONDS: '900'
+      QDL_ENVIRONMENT: paper
+      QDL_KN3_ENVIRONMENT: paper
+      QDL_KN3_MARKET_CACHE_URL: redis://market_cache:6379/0
+      QDL_KN_CURSOR_ACTIVE_KEY_ID: kn-v220-k1
+      QDL_KN_CURSOR_KEYS_FILE: /kn/cursor-keys.json
+      QDL_KN_HOT_READ_TARGETS: qdl-v2-stream-a:8210,qdl-v2-stream-b:8210
+      QDL_KN_READ_VIEW_SECRET_FILE: /kn/read-view.secret
+      QDL_KN_ROUTE_GENERATION: v220-02cd827
+      QDL_KN_TOPIC_ID: ljfjPYApRpWQd79McfTtZg
+      QDL_STABLE_ACQUISITION_BINDINGS: /runtime/stable-acquisition-bindings.yaml
+      QDL_STABLE_AUDIT_PATH: /var/lib/qdl-kn/runtime/query-1-audit.jsonl
+      QDL_STABLE_AUTHORITY_MODE: RUST_PRIMARY
+      QDL_STABLE_AUTHORITY_REVISION: '1'
+      QDL_STABLE_CONSUMER_GROUP: stable-query-1
+      QDL_STABLE_CONSUMER_MANIFESTS: /app/consumers/stable/monitoring-multivenue.yaml:/consumer-realms/alpha.binance.paper.stable-r16.yaml:/consumer-realms/alpha.okx.paper.stable-r15.yaml:/app/consumers/stable/alpha-vn-paper.yaml:/consumer-realms/trading-system.paper.stable-r11.yaml:/app/consumers/stable/reference-l2-stable.yaml:/consumer-realms/alpha.binance.live.stable.yaml:/consumer-realms/alpha.binance.sandbox.stable.yaml:/consumer-realms/alpha.okx.live.stable.yaml:/consumer-realms/alpha.okx.sandbox.stable.yaml:/consumer-realms/trading-system.live.stable.yaml:/consumer-realms/trading-system.sandbox.stable.yaml
+      QDL_STABLE_CURSOR_ACTIVE_KEY_ID: stable-k1
+      QDL_STABLE_CURSOR_KEYS_JSON: ${QDL_STABLE_CURSOR_KEYS_JSON:?set QDL_STABLE_CURSOR_KEYS_JSON (host-only secrets env)}
+      QDL_STABLE_CURSOR_TTL_SECONDS: '3600'
+      QDL_STABLE_DURABLE_STATE_DIR: /var/lib/qdl-kn/shared
+      QDL_STABLE_EXECUTION_MARK_INDEX_URLS_JSON: '[]'
+      QDL_STABLE_GRPC_PORT: '8210'
+      QDL_STABLE_HTTP_PORT: '8200'
+      QDL_STABLE_INSTANCE_ID: stable-kn-query-1
+      QDL_STABLE_INTERNAL_INGEST_SECRET: ${QDL_STABLE_INTERNAL_INGEST_SECRET:?set QDL_STABLE_INTERNAL_INGEST_SECRET (host-only
+        secrets env)}
+      QDL_STABLE_LEASE_RENEW_SECONDS: '5'
+      QDL_STABLE_LEASE_SHARD_ID: stable-stream-v2
+      QDL_STABLE_LEASE_TTL_SECONDS: '15'
+      QDL_STABLE_MAX_BUFFER_EVENTS: '2000'
+      QDL_STABLE_MAX_CONCURRENT_REQUESTS: '200'
+      QDL_STABLE_MAX_CONCURRENT_RPCS: '200'
+      QDL_STABLE_MAX_REPLAY_EVENTS: '5000'
+      QDL_STABLE_MAX_REQUEST_BYTES: '4194304'
+      QDL_STABLE_MAX_STREAMS: '1000'
+      QDL_STABLE_PASS_THROUGH_ENABLED: 'true'
+      QDL_STABLE_PROVIDER_ADMISSION_URL: http://rust_core:8300
+      QDL_STABLE_QUERY_BACKEND: kn3
+      QDL_STABLE_REDIS_PREFIX: qdl:stable:v2:paper:candidate
+      QDL_STABLE_REDIS_URL: redis://stable_redis:6379/0
+      QDL_STABLE_REFERENCE_DATA_ENABLED: 'true'
+      QDL_STABLE_REQUEST_DEADLINE_SECONDS: '90'
+      QDL_STABLE_RUNTIME_DIR: /runtime
+      QDL_STABLE_SCHEMA_DIGEST: 100966435a30367dfa20dd8f9d94af15fb0c27f684aeedbd3ac9511bb757d13b
+      QDL_STABLE_SOURCE_BINDINGS: /runtime/stable-source-bindings.yaml
+      QDL_STABLE_STATE_DIR: /var/lib/qdl-kn/runtime
+      QDL_STABLE_TLS_CA_FILE: /stable-certs/query/ca.crt
+      QDL_STABLE_TLS_CERT_FILE: /stable-certs/query/server.crt
+      QDL_STABLE_TLS_CLIENT_CA_FILE: /consumer-realms/query-client-ca-bundle.crt
+      QDL_STABLE_TLS_KEY_FILE: /stable-certs/query/server.key
+    cpus: 2.0
+    mem_limit: 2147483648
+    memswap_limit: 4294967296
+    pids_limit: 256
+    init: true
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=67108864
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-file: '3'
+        max-size: 20m
+    ports:
+    - 127.0.0.1:18301:8200
+    volumes:
+    - type: bind
+      source: ${QDL_CONSUMER_REALM_DIR:?set QDL_CONSUMER_REALM_DIR}
+      target: /consumer-realms
+      read_only: true
+    - type: bind
+      source: ${QDL_KN_RELEASE_DIR:?set QDL_KN_RELEASE_DIR}
+      target: /kn
+      read_only: true
+    - type: bind
+      source: ${QDL_KN_RELEASE_DIR:?set QDL_KN_RELEASE_DIR}/runtime
+      target: /runtime
+      read_only: true
+    - type: volume
+      source: stable_state
+      target: /session-liveness
+      read_only: true
+      volume:
+        subpath: runtime/session-liveness
+    - type: bind
+      source: ${QDL_TLS_STABLE_CERTS_DIR:?set QDL_TLS_STABLE_CERTS_DIR}
+      target: /stable-certs
+      read_only: true
+    - type: bind
+      source: ${QDL_KN_STATE_DIR:?set QDL_KN_STATE_DIR}/query-1
+      target: /var/lib/qdl-kn
+      read_only: false
+    - type: bind
+      source: ${QDL_TLS_QUERY_CLIENT_CA_FILE:?set QDL_TLS_QUERY_CLIENT_CA_FILE}
+      target: /consumer-realms/query-client-ca-bundle.crt
+      read_only: true
+    networks:
+      executor_network:
+        aliases:
+        - qdl-v2-query
+        - query_v2_1
+      kn_consumer:
+        aliases:
+        - qdl-v2-query
+        - query_v2_1
+      stable_egress: {}
+      stable_internal: {}
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import ssl,urllib.request; c=ssl.create_default_context(cafile='/stable-certs/query/ca.crt'); c.load_cert_chain('/stable-certs/query/server.crt','/stable-certs/query/server.key');
+        urllib.request.urlopen('https://localhost:8200/health/ready',context=c,timeout=2)
+      interval: 15s
+      timeout: 5s
+      retries: 7
+      start_period: 60s
+      start_interval: 5s
+  query_kn_2:
+    image: ${QDL_IMAGE_QUERY:?set QDL_IMAGE_QUERY}
+    pull_policy: never
+    restart: unless-stopped
+    command:
+    - python
+    - -m
+    - app.entrypoints.query_v2_stable
+    user: 10001:10001
+    environment:
+      MALLOC_ARENA_MAX: '2'
+      QDL_CONFIG_REVISION: phasec36-reference-l2-r14
+      QDL_DATA_JWT_ALGORITHMS: RS256
+      QDL_DATA_JWT_AUDIENCE: qdl-v2-stable
+      QDL_DATA_JWT_ISSUER: https://identity.qdl.stable.internal
+      QDL_DATA_JWT_KEYS_JSON: '{"stable-alpha-binance-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAiNU1rv24Zpbbnh7mIa6E\n0i8PXjajBwFxEAiMhyF0b7LQ/Of0Q66MuwvUgcNCb+8kdOTfYVIHbp81isUouDnD\nSEC7PYIGguE+kf9Keu2ThMZ/DdMdvKsCAqUFZ7j7pnMYDCJZ4+zy/++zQ098BKKZ\nqujkdwEYxU5WJDhSTfX9kvm+9PKhb/snaOb1rZVhgK45BQl2UgSYagy+cUheToC8\nGfwDH/wm/jpBPEvpVTfqaM4+j4F0u6jXZLP3tu9AwGNWHbI81GdqMhRK1USEpt9C\nqykzsuk11WTjhNzZ+R8FyAIipJQmlxvymEW8gUVrAcQbVXbT7M/X/YV8IWpkuV6p\nYwIDAQAB\n-----END
+        PUBLIC KEY-----\n","stable-alpha-okx-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAxlG6kL2X9t7phyJYLwt2\nD1Jdmtlz9jYpDEShbKHqZu3TYVEXGZjVHSc34TtAPJBCv3j1sDqpadWu7X0ZgVkN\n6uoF/C+10GoLwTLguo8LMHzQIbi/T1AfRW4XrsctYJ5hldh8ynOiPbj/QawXT2XK\nLAqtahZ3NmB2uQCzncuc1muSogGELXMbsQT5rNT1K3kA97EYiZsdKXZmWge80JSt\nYnOxJsz/BDMwN6KEqwnjt5Rq6f7w/VbjVVcWeeVUIgcCOUb4J5dC469lGOJO2Qjg\nGgREXE55QzdzwdHEvFhG61bY9oG+jbPkEIi9MrrAqMloC7p/wQmvGgZeH1bsZRRz\n67QMsiB3jD+Z+AZln9HIb52Umxu84zyx19oGw8UOCsiSsl7GyQMFnwXCfdkiKxls\nETQ4s8ieK7UvImrhGMARkuYk5BOUI471RQPwgE1/yyk/MUfw+uC7bnHfBfaoHWlm\nooed8curkN4kEZfO31x8IIPzSnygGhmXR2TJUpCGlM/lAgMBAAE=\n-----END
+        PUBLIC KEY-----\n","stable-monitoring-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAzpj8nsaHh9U0s7UaIeCL\n8TSvMMqwPogAeRIrn1/0ErdjSYDiFrWfn/QwlmLELRRvoIAUjLq9sgiY3xJP2LMT\nR71GvM6UUwQQkmNmFUvXtC5e/5W7+/PLoSWRBsJ4CB8eKgRE5/Qeob+Qr5T5r3L/\nQwBOUdIs/nQlPoJJ4vKm+hZZllwidV/L5W6pYT8b9KSkgLpgh18RnC+WpduFv8WV\nvegzmjuaZDLn4zK/nRTJAmeK2mOmucCSVTUTG7c3JaRtWsUhfumrplDULsX4ZLPN\naHiVkC3rRxQ3du2/CmBD6nZNvMusZ48mIT4QRZjwiKTxk+mQkAmV0IVTbyWj8y7S\nI/2w7xIaREkyjnUO6eto9GOcdiab4IyK3o3Zk/JBW/A1oDzTHENbs2Q7AUcGiBFE\n+J/0GJZHiKHO4KOUGSTP7H3bGTDKN8zYD/Q+Qv3JCY2XPFzBHluk8qc2RRqa7AKm\nUyFibZGUqiaiIrOQyYWrGOuAq9AOP1KyZRBmmwK6vpG9AgMBAAE=\n-----END
+        PUBLIC KEY-----\n","stable-reference-l2-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAhgGxvNv/ytUpY+fMvV+A\ny8HKk2IuHxhkFno8bBATsPAWSabJe9Mr2kQLKmd+KP4o3vU/ApNGez42h/Lh58ET\nwrQc+CupoJxFWdSasHwEEcwQ1RBjTR36ZVNEJmOy3PRJ3Ak1ATd8RF1TVs9oyXXX\ngsqz8E64TGgza0nVX/A67ciyWkYey0xEVAK2/NX89T6pQQ6pdC+cdjaoQITGsnNn\nYsVOXqZHq1DvNTDAz7+l+UlJPovEKbaVxcgq6V3HBVlbHASoRafHmHRdlqUGDByJ\nfH9CMzVfwJS9o7nTEEMhdw2EK6RkLW2J4SKDWQFcNVN8XKiz6lzY3EiRfZk6HOeF\neSuCXgLH8Tc44yunaH/j7KSewGx7rQRmP/CO+LzteufVv7rzgmUl6LETgNszG3lF\nuS4zG3lP+oA3HipHiQYW7QfsoJkWlkZkAq6p5HgtWpk6DeNPebfSlkmH8d0P5LbC\n4rkUsHaOw3/u+YrqPnbA00ZDayrbfpIz9OXChcoBX0p7AgMBAAE=\n-----END
+        PUBLIC KEY-----\n","stable-trading-system-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmni4QBr1C5dmijOFxnOn\nYque2MP8Z8bSSRWrROPOw0k8ASHCZPtoSCx76bwsJdCLJK1KYGBwFmP7UJ84VqfK\nrFGNUhpcIBY6tFzMTIlKU0JNTts/WRr359xI5SYwe7YMAhG/BHzIZd5hpbAMG/yS\n11ct/i8VNL5yxT9XMcMTFPrWVPYiY8V8vzBGRlnMw8Wt1hsX1QNqSoRilRJRGkGJ\nuiJp584j47ANRp7y+BTgwrL1wK7kDuvRYUSs/Av4eYx3mwVBByaL34Ul11Y0u+g6\n2//e7p29OFu2WSmJhQZyTcL5ns1OAbu2qdHVLJExEbCRbrHhlgsjoeauhTdvaCm7\nbwIDAQAB\n-----END
+        PUBLIC KEY-----\n","alpha.binance.live.stable-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyZQOK7oe6Eq2d5t45Sju\nH+f26aJGMEnCROyeF2GCunqASwxG/ZEu6lA7l7sPaohxuUWSohjGFoFIkeqdUhOY\n1U12w0twHtSNjtzMkTqi80e70QwF90PZx4KfEHC47qWIUbxfeHJUP8BuQt5rJcMi\nbS0VodoZEc89lBYl8wwAWxv4j2PmGpVXtB9U2f8sOsgJPb+CX9Am3ppQTbJCAul8\njRrK2BOo/E+5YfpHI/f5fyvZoaTSyHqnErt+ntfN2ZvROc9IlYP6nwGY4n7wWdyr\nUwpatyZZbZfHEMjXGLzyfqPp4RrOOmd1iKk58dh2r01NIVbCLEaZ3dyRX+Y/wJSb\nJwIDAQAB\n-----END
+        PUBLIC KEY-----\n","alpha.binance.sandbox.stable-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0cuUcA6PSBH806v/CL6o\nLrP4wtDub3bnQV66mE6YzEXXtTWYUBEGPqx789rUHRkBGVYZeOhvPi1HyEN7jTzZ\naHBxi6aJKyUe0vgCQddUbpm2QMN+/zqqzRm/Gc0MBsg5ganTTAaWZARvjiuc5K7m\nI8S2dGxmRf58zhQAvTmTm/SU66P6VWISZrG9iFpmdRqD3IQtrzymp2fWF+s+WI2f\no8H32ht+9U/TY/O0uyn50SC61ns1WJJSn19d/NxycXpGMU5AsgeWVKLvt9SoYP2E\nlGR+PtrWMF7MfIURAAJQue2p/2Gvt6V0U7iDYJA/7qUWLv3LEHtzJed4gooVBXzg\ngwIDAQAB\n-----END
+        PUBLIC KEY-----\n","alpha.okx.live.stable-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq4u6Vme8trzX4IJKvRRM\nbp44+K+KS/SKCB97OzI4MENp+hZkce8bKJxUA+66HJIoIdLerhBhNp69EeYZxFWs\nXMoYYehIZHPjQP2yHUmF85Oa7wQzp+dJTOfcTCey2mTfbDBL6+vECLFiT1dxt2TJ\niNjovYnOjGrEHNplWA9J08SPwIJo465QDxmXaPuH2b9l2PA7mgzEjF4DGd7imkJ+\ntdi69DJDD6zlydse/2vnsC1HQ+mC7x1ZXd9J44sN6QB80vbDJ4jUgZoKu6MzevEe\nwdjv46bzS5b0sBrhQlI7jkJgI/cMSIcoYDcRx40M/7ufm+RSwZ3HhzqO0PwMTBku\n5QIDAQAB\n-----END
+        PUBLIC KEY-----\n","alpha.okx.sandbox.stable-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA29C5ndxOUixDmaXWiz+h\nQGdgd2pL1sDKWpezck2sCQVBjTCdvku4EUqG7gB6QAWr2IL6dxlGFHltBSwS8ovQ\nEAPtSAGIWze/2Jo1weIK9MvklWgJLV/TselIE2TpjL8JwCkQDI1+wws2rUMaO5lo\nvsjEvGIv+zn9mAgAc+vic4hkKREYMsVGBwe7nstOv6yyXsqgEc/bjHLFc0gMuGK5\nued5YDb478eDA8kxyMpK7i29qKwVsIvduRat4QBQyUsqesrclDjYUMSu9xWMJV9P\n3/vPXMMxyzckn8ypvoJCoN7G0eas6Cd4FFgCbKFf/7t7EWuh03nLAZk8rigqJqIM\neQIDAQAB\n-----END
+        PUBLIC KEY-----\n","trading-system.live.stable-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3H+NFsJz7TxqkmkPiLRi\n1DE0W2Ti+Bd7/sJe195YpqH+83VjY5wvfwZxnSzk8Xm0LZd9pW6pImuggFJHTdD3\nSSmefWI1g75f3dobyjnH4uhxiSYfHUgfMsLL4z6hYkodmJINa41e4Bcm0TTfZmdL\nLe1CcTTAzQZrP60/S/0ipVYET/iHqWZu9H3fXyX3jk1y3kN0uqxykP8vd9z/ACV9\nxm+su4HOnzdOBV6CIVN3bp7gMDAwW0i9UFKaqzEAp2Cz6N+ANq577rwFMzizq0xn\nE1JAFtjs8LzVVnDS8bXjR50Xwptsk621PCcONoJOzUdNPRnot+nOsqTrPIWYybYe\nTwIDAQAB\n-----END
+        PUBLIC KEY-----\n","trading-system.sandbox.stable-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq7tavpc95CkC181QzCFI\nOPT9ioITXuIxv7nnu3ZZquz16lthItMgkinROKHXCgSw5kBLZUvBe6hVTdrBhKoY\nurvyoGh2x3JJS6SPFqkSsow0yhp+eIoHN8Zo30LjsRHAGF0UJ0ZkbXqUfLbPesdM\ndhhd+utDgKMcvu8+KbUOmXpl+eKMN8lQK/TT4SKTCk2IJWr2+ZzESUsfK5ZwLNts\nVjha+NzOaw8W0ekoZ95mnhW3vXgbZQ+bk4PacQzrwDM+upX64KkqvT7OjSjoieut\nWWJ2ED+eoFeSXi2n+8YqezZ2HAEKOY3HxClNvTdGVDqA1cWPc0fOvJtFB6uDJTbZ\nvQIDAQAB\n-----END
+        PUBLIC KEY-----\n"}'
+      QDL_DATA_JWT_KEY_ENVIRONMENTS_JSON: '{"stable-alpha-binance-rs256-v1":"paper","stable-alpha-okx-rs256-v1":"paper","stable-monitoring-rs256-v1":"paper","stable-reference-l2-rs256-v1":"paper","stable-trading-system-rs256-v1":"paper","alpha.binance.live.stable-rs256-v1":"live","alpha.binance.sandbox.stable-rs256-v1":"sandbox","alpha.okx.live.stable-rs256-v1":"live","alpha.okx.sandbox.stable-rs256-v1":"sandbox","trading-system.live.stable-rs256-v1":"live","trading-system.sandbox.stable-rs256-v1":"sandbox"}'
+      QDL_DATA_JWT_KEY_SUBJECTS_JSON: '{"stable-alpha-binance-rs256-v1":"spiffe://qdl/paper/alpha-binance-stable","stable-alpha-okx-rs256-v1":"spiffe://qdl/paper/alpha-okx-stable","stable-monitoring-rs256-v1":"spiffe://qdl/paper/monitoring-multivenue-stable","stable-reference-l2-rs256-v1":"spiffe://qdl/paper/reference-l2-stable","stable-trading-system-rs256-v1":"spiffe://qdl/paper/trading-system-stable","alpha.binance.live.stable-rs256-v1":"spiffe://qdl/live/alpha-binance-stable","alpha.binance.sandbox.stable-rs256-v1":"spiffe://qdl/sandbox/alpha-binance-stable","alpha.okx.live.stable-rs256-v1":"spiffe://qdl/live/alpha-okx-stable","alpha.okx.sandbox.stable-rs256-v1":"spiffe://qdl/sandbox/alpha-okx-stable","trading-system.live.stable-rs256-v1":"spiffe://qdl/live/trading-system-stable","trading-system.sandbox.stable-rs256-v1":"spiffe://qdl/sandbox/trading-system-stable"}'
+      QDL_DATA_JWT_MAX_LIFETIME_SECONDS: '900'
+      QDL_ENVIRONMENT: paper
+      QDL_KN3_ENVIRONMENT: paper
+      QDL_KN3_MARKET_CACHE_URL: redis://market_cache:6379/0
+      QDL_KN_CURSOR_ACTIVE_KEY_ID: kn-v220-k1
+      QDL_KN_CURSOR_KEYS_FILE: /kn/cursor-keys.json
+      QDL_KN_HOT_READ_TARGETS: qdl-v2-stream-a:8210,qdl-v2-stream-b:8210
+      QDL_KN_READ_VIEW_SECRET_FILE: /kn/read-view.secret
+      QDL_KN_ROUTE_GENERATION: v220-02cd827
+      QDL_KN_TOPIC_ID: ljfjPYApRpWQd79McfTtZg
+      QDL_STABLE_ACQUISITION_BINDINGS: /runtime/stable-acquisition-bindings.yaml
+      QDL_STABLE_AUDIT_PATH: /var/lib/qdl-kn/runtime/query-2-audit.jsonl
+      QDL_STABLE_AUTHORITY_MODE: RUST_PRIMARY
+      QDL_STABLE_AUTHORITY_REVISION: '1'
+      QDL_STABLE_CONSUMER_GROUP: stable-query-1
+      QDL_STABLE_CONSUMER_MANIFESTS: /app/consumers/stable/monitoring-multivenue.yaml:/consumer-realms/alpha.binance.paper.stable-r16.yaml:/consumer-realms/alpha.okx.paper.stable-r15.yaml:/app/consumers/stable/alpha-vn-paper.yaml:/consumer-realms/trading-system.paper.stable-r11.yaml:/app/consumers/stable/reference-l2-stable.yaml:/consumer-realms/alpha.binance.live.stable.yaml:/consumer-realms/alpha.binance.sandbox.stable.yaml:/consumer-realms/alpha.okx.live.stable.yaml:/consumer-realms/alpha.okx.sandbox.stable.yaml:/consumer-realms/trading-system.live.stable.yaml:/consumer-realms/trading-system.sandbox.stable.yaml
+      QDL_STABLE_CURSOR_ACTIVE_KEY_ID: stable-k1
+      QDL_STABLE_CURSOR_KEYS_JSON: ${QDL_STABLE_CURSOR_KEYS_JSON:?set QDL_STABLE_CURSOR_KEYS_JSON (host-only secrets env)}
+      QDL_STABLE_CURSOR_TTL_SECONDS: '3600'
+      QDL_STABLE_DURABLE_STATE_DIR: /var/lib/qdl-kn/shared
+      QDL_STABLE_EXECUTION_MARK_INDEX_URLS_JSON: '[]'
+      QDL_STABLE_GRPC_PORT: '8210'
+      QDL_STABLE_HTTP_PORT: '8200'
+      QDL_STABLE_INSTANCE_ID: stable-kn-query-2
+      QDL_STABLE_INTERNAL_INGEST_SECRET: ${QDL_STABLE_INTERNAL_INGEST_SECRET:?set QDL_STABLE_INTERNAL_INGEST_SECRET (host-only
+        secrets env)}
+      QDL_STABLE_LEASE_RENEW_SECONDS: '5'
+      QDL_STABLE_LEASE_SHARD_ID: stable-stream-v2
+      QDL_STABLE_LEASE_TTL_SECONDS: '15'
+      QDL_STABLE_MAX_BUFFER_EVENTS: '2000'
+      QDL_STABLE_MAX_CONCURRENT_REQUESTS: '200'
+      QDL_STABLE_MAX_CONCURRENT_RPCS: '200'
+      QDL_STABLE_MAX_REPLAY_EVENTS: '5000'
+      QDL_STABLE_MAX_REQUEST_BYTES: '4194304'
+      QDL_STABLE_MAX_STREAMS: '1000'
+      QDL_STABLE_PASS_THROUGH_ENABLED: 'true'
+      QDL_STABLE_PROVIDER_ADMISSION_URL: http://rust_core:8300
+      QDL_STABLE_QUERY_BACKEND: kn3
+      QDL_STABLE_REDIS_PREFIX: qdl:stable:v2:paper:candidate
+      QDL_STABLE_REDIS_URL: redis://stable_redis:6379/0
+      QDL_STABLE_REFERENCE_DATA_ENABLED: 'true'
+      QDL_STABLE_REQUEST_DEADLINE_SECONDS: '90'
+      QDL_STABLE_RUNTIME_DIR: /runtime
+      QDL_STABLE_SCHEMA_DIGEST: 100966435a30367dfa20dd8f9d94af15fb0c27f684aeedbd3ac9511bb757d13b
+      QDL_STABLE_SOURCE_BINDINGS: /runtime/stable-source-bindings.yaml
+      QDL_STABLE_STATE_DIR: /var/lib/qdl-kn/runtime
+      QDL_STABLE_TLS_CA_FILE: /stable-certs/query/ca.crt
+      QDL_STABLE_TLS_CERT_FILE: /stable-certs/query/server.crt
+      QDL_STABLE_TLS_CLIENT_CA_FILE: /consumer-realms/query-client-ca-bundle.crt
+      QDL_STABLE_TLS_KEY_FILE: /stable-certs/query/server.key
+    cpus: 2.0
+    mem_limit: 2147483648
+    memswap_limit: 4294967296
+    pids_limit: 256
+    init: true
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=67108864
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-file: '3'
+        max-size: 20m
+    ports:
+    - 127.0.0.1:18302:8200
+    volumes:
+    - type: bind
+      source: ${QDL_CONSUMER_REALM_DIR:?set QDL_CONSUMER_REALM_DIR}
+      target: /consumer-realms
+      read_only: true
+    - type: bind
+      source: ${QDL_KN_RELEASE_DIR:?set QDL_KN_RELEASE_DIR}
+      target: /kn
+      read_only: true
+    - type: bind
+      source: ${QDL_KN_RELEASE_DIR:?set QDL_KN_RELEASE_DIR}/runtime
+      target: /runtime
+      read_only: true
+    - type: volume
+      source: stable_state
+      target: /session-liveness
+      read_only: true
+      volume:
+        subpath: runtime/session-liveness
+    - type: bind
+      source: ${QDL_TLS_STABLE_CERTS_DIR:?set QDL_TLS_STABLE_CERTS_DIR}
+      target: /stable-certs
+      read_only: true
+    - type: bind
+      source: ${QDL_KN_STATE_DIR:?set QDL_KN_STATE_DIR}/query-2
+      target: /var/lib/qdl-kn
+      read_only: false
+    - type: bind
+      source: ${QDL_TLS_QUERY_CLIENT_CA_FILE:?set QDL_TLS_QUERY_CLIENT_CA_FILE}
+      target: /consumer-realms/query-client-ca-bundle.crt
+      read_only: true
+    networks:
+      executor_network:
+        aliases:
+        - qdl-v2-query
+        - query_v2_2
+      kn_consumer:
+        aliases:
+        - qdl-v2-query
+        - query_v2_2
+      stable_egress: {}
+      stable_internal: {}
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import ssl,urllib.request; c=ssl.create_default_context(cafile='/stable-certs/query/ca.crt'); c.load_cert_chain('/stable-certs/query/server.crt','/stable-certs/query/server.key');
+        urllib.request.urlopen('https://localhost:8200/health/ready',context=c,timeout=2)
+      interval: 15s
+      timeout: 5s
+      retries: 7
+      start_period: 60s
+      start_interval: 5s
+  stream_kn_1:
+    image: ${QDL_IMAGE_STREAM:?set QDL_IMAGE_STREAM}
+    pull_policy: never
+    restart: unless-stopped
+    entrypoint:
+    - /usr/local/bin/qdl-stream-gateway
+    command:
+    - serve
+    environment:
+      QDL_ENVIRONMENT: paper
+      QDL_KN_BUNDLE_FILE: /consumer-realms/bundle.json
+      QDL_KN_CURSOR_ACTIVE_KEY_ID: kn-v220-k1
+      QDL_KN_CURSOR_KEYS_FILE: /kn/cursor-keys.json
+      QDL_KN_HOT_READ_ENABLED: 'true'
+      QDL_KN_JWT_CONFIG_FILE: /consumer-realms/jwt-config.json
+      QDL_KN_KAFKA_BOOTSTRAP: kafka1:9092,kafka2:9092,kafka3:9092
+      QDL_KN_KAFKA_CA: /kn/tls/broker-ca.crt
+      QDL_KN_KAFKA_CERT: /kn/tls/kn-stream.crt
+      QDL_KN_KAFKA_CLIENT_ID: kn-stream-production-1
+      QDL_KN_KAFKA_GROUP: kn-stream-production-1
+      QDL_KN_KAFKA_KEY: /kn/tls/kn-stream.key
+      QDL_KN_MAX_REPLAY_RPCS: '32'
+      QDL_KN_MAX_SUBSCRIPTIONS: '1024'
+      QDL_KN_QUOTA_PREFIX: qdl:stable:v2:paper:candidate:identity
+      QDL_KN_QUOTA_REDIS_URL: redis://stable_redis:6379/0
+      QDL_KN_READ_VIEW_CA_FILE: /stable-certs/stream/ca.crt
+      QDL_KN_READ_VIEW_SECRET_FILE: /kn/read-view.secret
+      QDL_KN_READ_VIEW_URLS: https://qdl-v2-query:8200
+      QDL_KN_ROUTE_GENERATION: v220-02cd827
+      QDL_KN_TLS_CERT_FILE: /stable-certs/stream/server.crt
+      QDL_KN_TLS_CLIENT_CA_FILE: /consumer-realms/stream-client-ca-bundle.crt
+      QDL_KN_TLS_KEY_FILE: /stable-certs/stream/server.key
+      QDL_KN_TOPIC_ID: ljfjPYApRpWQd79McfTtZg
+    cpus: 0.75
+    mem_limit: 536870912
+    memswap_limit: 1073741824
+    pids_limit: 256
+    init: true
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=67108864
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-file: '3'
+        max-size: 20m
+    ports:
+    - 127.0.0.1:18320:8210
+    volumes:
+    - type: bind
+      source: ${QDL_CONSUMER_REALM_DIR:?set QDL_CONSUMER_REALM_DIR}
+      target: /consumer-realms
+      read_only: true
+    - type: bind
+      source: ${QDL_KN_RELEASE_DIR:?set QDL_KN_RELEASE_DIR}
+      target: /kn
+      read_only: true
+    - type: bind
+      source: ${QDL_TLS_STABLE_CERTS_DIR:?set QDL_TLS_STABLE_CERTS_DIR}
+      target: /stable-certs
+      read_only: true
+    - type: bind
+      source: ${QDL_TLS_KN_DIR:?set QDL_TLS_KN_DIR}
+      target: /kn/tls
+      read_only: true
+    - type: bind
+      source: ${QDL_TLS_STREAM_CLIENT_CA_FILE:?set QDL_TLS_STREAM_CLIENT_CA_FILE}
+      target: /consumer-realms/stream-client-ca-bundle.crt
+      read_only: true
+    networks:
+      executor_network:
+        aliases:
+        - qdl-v2-stream-a
+      kn_consumer:
+        aliases:
+        - qdl-v2-stream-a
+      stable_internal: {}
+    healthcheck: &id003
+      test:
+      - CMD
+      - bash
+      - -c
+      - exec 3<>/dev/tcp/127.0.0.1/8210
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 120s
+      start_interval: 2s
+  stream_kn_2:
+    image: ${QDL_IMAGE_STREAM:?set QDL_IMAGE_STREAM}
+    pull_policy: never
+    restart: unless-stopped
+    entrypoint:
+    - /usr/local/bin/qdl-stream-gateway
+    command:
+    - serve
+    environment:
+      QDL_ENVIRONMENT: paper
+      QDL_KN_BUNDLE_FILE: /consumer-realms/bundle.json
+      QDL_KN_CURSOR_ACTIVE_KEY_ID: kn-v220-k1
+      QDL_KN_CURSOR_KEYS_FILE: /kn/cursor-keys.json
+      QDL_KN_HOT_READ_ENABLED: 'true'
+      QDL_KN_JWT_CONFIG_FILE: /consumer-realms/jwt-config.json
+      QDL_KN_KAFKA_BOOTSTRAP: kafka1:9092,kafka2:9092,kafka3:9092
+      QDL_KN_KAFKA_CA: /kn/tls/broker-ca.crt
+      QDL_KN_KAFKA_CERT: /kn/tls/kn-stream.crt
+      QDL_KN_KAFKA_CLIENT_ID: kn-stream-production-2
+      QDL_KN_KAFKA_GROUP: kn-stream-production-2
+      QDL_KN_KAFKA_KEY: /kn/tls/kn-stream.key
+      QDL_KN_MAX_REPLAY_RPCS: '32'
+      QDL_KN_MAX_SUBSCRIPTIONS: '1024'
+      QDL_KN_QUOTA_PREFIX: qdl:stable:v2:paper:candidate:identity
+      QDL_KN_QUOTA_REDIS_URL: redis://stable_redis:6379/0
+      QDL_KN_READ_VIEW_CA_FILE: /stable-certs/stream/ca.crt
+      QDL_KN_READ_VIEW_SECRET_FILE: /kn/read-view.secret
+      QDL_KN_READ_VIEW_URLS: https://qdl-v2-query:8200
+      QDL_KN_ROUTE_GENERATION: v220-02cd827
+      QDL_KN_TLS_CERT_FILE: /stable-certs/stream/server.crt
+      QDL_KN_TLS_CLIENT_CA_FILE: /consumer-realms/stream-client-ca-bundle.crt
+      QDL_KN_TLS_KEY_FILE: /stable-certs/stream/server.key
+      QDL_KN_TOPIC_ID: ljfjPYApRpWQd79McfTtZg
+    cpus: 0.75
+    mem_limit: 536870912
+    memswap_limit: 1073741824
+    pids_limit: 256
+    init: true
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,noexec,nosuid,size=67108864
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-file: '3'
+        max-size: 20m
+    ports:
+    - 127.0.0.1:18321:8210
+    volumes:
+    - type: bind
+      source: ${QDL_CONSUMER_REALM_DIR:?set QDL_CONSUMER_REALM_DIR}
+      target: /consumer-realms
+      read_only: true
+    - type: bind
+      source: ${QDL_KN_RELEASE_DIR:?set QDL_KN_RELEASE_DIR}
+      target: /kn
+      read_only: true
+    - type: bind
+      source: ${QDL_TLS_STABLE_CERTS_DIR:?set QDL_TLS_STABLE_CERTS_DIR}
+      target: /stable-certs
+      read_only: true
+    - type: bind
+      source: ${QDL_TLS_KN_DIR:?set QDL_TLS_KN_DIR}
+      target: /kn/tls
+      read_only: true
+    - type: bind
+      source: ${QDL_TLS_STREAM_CLIENT_CA_FILE:?set QDL_TLS_STREAM_CLIENT_CA_FILE}
+      target: /consumer-realms/stream-client-ca-bundle.crt
+      read_only: true
+    networks:
+      executor_network:
+        aliases:
+        - qdl-v2-stream-b
+      kn_consumer:
+        aliases:
+        - qdl-v2-stream-b
+      stable_internal: {}
+    healthcheck: *id003
+  binance_bar_edge:
+    image: ${QDL_IMAGE_BAR_EDGE:?set QDL_IMAGE_BAR_EDGE}
+    pull_policy: never
+    restart: unless-stopped
+    command:
+    - python
+    - -m
+    - app.entrypoints.binance_bar_v2_stable
+    user: 10001:10001
+    environment:
+      QDL_CONFIG_REVISION: phasec36-reference-l2-r14
+      QDL_DATA_JWT_ALGORITHMS: RS256
+      QDL_DATA_JWT_AUDIENCE: qdl-v2-stable
+      QDL_DATA_JWT_ISSUER: https://identity.qdl.stable.internal
+      QDL_DATA_JWT_KEYS_JSON: '{"stable-alpha-binance-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAiNU1rv24Zpbbnh7mIa6E\n0i8PXjajBwFxEAiMhyF0b7LQ/Of0Q66MuwvUgcNCb+8kdOTfYVIHbp81isUouDnD\nSEC7PYIGguE+kf9Keu2ThMZ/DdMdvKsCAqUFZ7j7pnMYDCJZ4+zy/++zQ098BKKZ\nqujkdwEYxU5WJDhSTfX9kvm+9PKhb/snaOb1rZVhgK45BQl2UgSYagy+cUheToC8\nGfwDH/wm/jpBPEvpVTfqaM4+j4F0u6jXZLP3tu9AwGNWHbI81GdqMhRK1USEpt9C\nqykzsuk11WTjhNzZ+R8FyAIipJQmlxvymEW8gUVrAcQbVXbT7M/X/YV8IWpkuV6p\nYwIDAQAB\n-----END
+        PUBLIC KEY-----\n","stable-alpha-okx-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAxCz6D/XAaSQaMbYEywE7\nr9QbYz3L5xommdngXVQZLLHY45KWOF7hRggf3pphkXvt6HAWr5HAbLZTKXdKBNOu\n0fsrwsOscco/2dlKop0KDs6G8igavzewvQ9aDj+v4psGKxHOXWt6cjK955dgU7P9\ncncamHE48gVQNGhCuBUGfr2bXBCbJsBngTa3hVTahyl9D5hnYsIJMXpZYWYHoJQ2\nPp2uIrjgcwTnyJMXzjG4RokoTIRRCNU0wtEPqjqYuRUNpR+KSTo8u6D78VJUYZsG\n7xWk+FmjxmorhTTnQpnbKcCVWmr56WvifhXkMnYM/0NagvNlZozdhjv/ikbtak0x\np94PTj3/2dLE8MJMOsXQTqnhp6ugWplCeaNpQEDhdQ3lg+1Zyd3hyuUk98v1qU1x\nl6jrcEK2+uOGBTTaRrDqszE+OaSWuI8H8d+59lR4sf6sI6RnQ0RYXbcEID4zO6Gm\n7WiffvRxWtcMFA16g+nHmX5h3EzW7IHkNL2tB4UtlRIFAgMBAAE=\n-----END
+        PUBLIC KEY-----\n","stable-monitoring-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAtT3q/6/JAwn9A9Cq3TOH\nTC9RxHvK4zNvSAAQxFtbWelmWv2W/yKUYbPwiJ1Q+QbjL/BRwVJjabioTFGVhlZv\nAfb0ohy1QAGYJgrkqt+JqeVfrGzoTs9v7uGbxjltTvOUiaxPtzzVLsTrccN0tohi\nFjYebYK1CimiIZM5CkgsxdcGS66mOwnLCt/hk5kSPTAJEjlWtzO1icY7OATILZqJ\n3uNbRWrgMyuqvtIDtWjW2PLHTFkZmlaV1v/5CtsyPVFfCtWjG6IQusHya5pWU3oY\nyHjJIJ3cez/OBSndl3yvJst6eBsyPS4eTKbAviTlI7ZLP3ORY1E7miFYW47c8Xwj\nRgwm+nhH9aegsvJ9+jROsoGyEMhEj18UwpzHUtALAFI0NvTGOSoexakKlU1+BoYX\ni/HLXDnNSQoGm62ce4MtWb4LQhhfe8O8ChOTbOTpIgppiCrH4K7ok6fALicnOL+Z\npXyhW0GKO8fQWMIcXnAM4yetZP87Hq7zvXjMXYcVeSqfAgMBAAE=\n-----END
+        PUBLIC KEY-----\n","stable-reference-l2-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAhgGxvNv/ytUpY+fMvV+A\ny8HKk2IuHxhkFno8bBATsPAWSabJe9Mr2kQLKmd+KP4o3vU/ApNGez42h/Lh58ET\nwrQc+CupoJxFWdSasHwEEcwQ1RBjTR36ZVNEJmOy3PRJ3Ak1ATd8RF1TVs9oyXXX\ngsqz8E64TGgza0nVX/A67ciyWkYey0xEVAK2/NX89T6pQQ6pdC+cdjaoQITGsnNn\nYsVOXqZHq1DvNTDAz7+l+UlJPovEKbaVxcgq6V3HBVlbHASoRafHmHRdlqUGDByJ\nfH9CMzVfwJS9o7nTEEMhdw2EK6RkLW2J4SKDWQFcNVN8XKiz6lzY3EiRfZk6HOeF\neSuCXgLH8Tc44yunaH/j7KSewGx7rQRmP/CO+LzteufVv7rzgmUl6LETgNszG3lF\nuS4zG3lP+oA3HipHiQYW7QfsoJkWlkZkAq6p5HgtWpk6DeNPebfSlkmH8d0P5LbC\n4rkUsHaOw3/u+YrqPnbA00ZDayrbfpIz9OXChcoBX0p7AgMBAAE=\n-----END
+        PUBLIC KEY-----\n","stable-trading-system-rs256-v1":"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmni4QBr1C5dmijOFxnOn\nYque2MP8Z8bSSRWrROPOw0k8ASHCZPtoSCx76bwsJdCLJK1KYGBwFmP7UJ84VqfK\nrFGNUhpcIBY6tFzMTIlKU0JNTts/WRr359xI5SYwe7YMAhG/BHzIZd5hpbAMG/yS\n11ct/i8VNL5yxT9XMcMTFPrWVPYiY8V8vzBGRlnMw8Wt1hsX1QNqSoRilRJRGkGJ\nuiJp584j47ANRp7y+BTgwrL1wK7kDuvRYUSs/Av4eYx3mwVBByaL34Ul11Y0u+g6\n2//e7p29OFu2WSmJhQZyTcL5ns1OAbu2qdHVLJExEbCRbrHhlgsjoeauhTdvaCm7\nbwIDAQAB\n-----END
+        PUBLIC KEY-----\n"}'
+      QDL_DATA_JWT_KEY_SUBJECTS_JSON: '{"stable-alpha-binance-rs256-v1":"spiffe://qdl/paper/alpha-binance-stable","stable-alpha-okx-rs256-v1":"spiffe://qdl/paper/alpha-okx-stable","stable-monitoring-rs256-v1":"spiffe://qdl/paper/monitoring-multivenue-stable","stable-reference-l2-rs256-v1":"spiffe://qdl/paper/reference-l2-stable","stable-trading-system-rs256-v1":"spiffe://qdl/paper/trading-system-stable"}'
+      QDL_DATA_JWT_MAX_LIFETIME_SECONDS: '900'
+      QDL_ENVIRONMENT: paper
+      QDL_KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9092,kafka3:9092
+      QDL_KAFKA_CERT_ROOT: /stable-certs/producer
+      QDL_KAFKA_CLIENT_ID: qdl-v2-stable-binance-bars
+      QDL_KN3_ENVIRONMENT: paper
+      QDL_KN3_MARKET_CACHE_URL: redis://market_cache:6379/0
+      QDL_STABLE_ACQUISITION_BINDINGS: /app/config/v2/stable-acquisition-bindings.yaml
+      QDL_STABLE_AUTHORITY_MODE: RUST_PRIMARY
+      QDL_STABLE_AUTHORITY_REVISION: '1'
+      QDL_STABLE_BAR_BACKPRESSURE_BOOTSTRAP: kafka1:9092,kafka2:9092,kafka3:9092
+      QDL_STABLE_BAR_BACKPRESSURE_STAGES: core:qdl-v2-realtime-core-v2:md.raw.realtime.v2:20000,a:kn-projector-v3-a:md.canonical.v2:50000,b:kn-projector-v3-b:md.bars.v2:50000
+      QDL_STABLE_BAR_DEMAND_BUNDLE: /kn/bundle.json
+      QDL_STABLE_BAR_MAX_CATCHUP_ROWS: '10000'
+      QDL_STABLE_BAR_MAX_CONCURRENT_REQUESTS: '32'
+      QDL_STABLE_BAR_PROVIDER_ADMISSION_SECRET_FILE: /kn/admission.secret
+      QDL_STABLE_BAR_PROVIDER_ADMISSION_URL: http://rust_core:8300
+      QDL_STABLE_BAR_READBACK: kn3
+      QDL_STABLE_BAR_RETRY_INITIAL_SECONDS: '0.10'
+      QDL_STABLE_BAR_RETRY_MAX_SECONDS: '1.0'
+      QDL_STABLE_BAR_SETTLEMENT_DELAY_SECONDS: '0.10'
+      QDL_STABLE_BAR_STATE_PATH: /var/lib/qdl-kn/crypto-bar-checkpoint.json
+      QDL_STABLE_BAR_WARMUP_ROWS: '10000'
+      QDL_STABLE_CONSUMER_GROUP: stable-binance-bar-edge
+      QDL_STABLE_CONSUMER_MANIFESTS: /app/consumers/stable/monitoring-multivenue.yaml:/app/consumers/stable/alpha-binance-paper.yaml:/app/consumers/stable/alpha-okx-paper.yaml:/app/consumers/stable/alpha-vn-paper.yaml:/app/consumers/stable/trading-system-paper.yaml:/app/consumers/stable/reference-l2-stable.yaml
+      QDL_STABLE_CURSOR_ACTIVE_KEY_ID: stable-k1
+      QDL_STABLE_CURSOR_KEYS_JSON: ${QDL_STABLE_CURSOR_KEYS_JSON:?set QDL_STABLE_CURSOR_KEYS_JSON (host-only secrets env)}
+      QDL_STABLE_CURSOR_TTL_SECONDS: '3600'
+      QDL_STABLE_DURABLE_STATE_DIR: /var/lib/qdl-stable/shared
+      QDL_STABLE_HEARTBEAT_PATH: /var/lib/qdl-kn/heartbeat/bar-edge.json
+      QDL_STABLE_INSTANCE_ID: stable-binance-bar-edge
+      QDL_STABLE_INTERNAL_INGEST_SECRET: ${QDL_STABLE_INTERNAL_INGEST_SECRET:?set QDL_STABLE_INTERNAL_INGEST_SECRET (host-only
+        secrets env)}
+      QDL_STABLE_LEASE_RENEW_SECONDS: '5'
+      QDL_STABLE_LEASE_SHARD_ID: stable-stream-v2
+      QDL_STABLE_LEASE_TTL_SECONDS: '15'
+      QDL_STABLE_MAX_BUFFER_EVENTS: '2000'
+      QDL_STABLE_MAX_CONCURRENT_REQUESTS: '200'
+      QDL_STABLE_MAX_CONCURRENT_RPCS: '200'
+      QDL_STABLE_MAX_REPLAY_EVENTS: '5000'
+      QDL_STABLE_MAX_REQUEST_BYTES: '4194304'
+      QDL_STABLE_MAX_STREAMS: '1000'
+      QDL_STABLE_REDIS_PREFIX: qdl:stable:v2:paper:candidate
+      QDL_STABLE_REDIS_URL: redis://stable_redis:6379/0
+      QDL_STABLE_REFERENCE_DATA_ENABLED: 'true'
+      QDL_STABLE_REQUEST_DEADLINE_SECONDS: '90'
+      QDL_STABLE_RUNTIME_DIR: /runtime
+      QDL_STABLE_SCHEMA_DIGEST: 100966435a30367dfa20dd8f9d94af15fb0c27f684aeedbd3ac9511bb757d13b
+      QDL_STABLE_SOURCE_BINDINGS: /app/config/v2/stable-source-bindings.yaml
+      QDL_STABLE_STATE_DIR: /var/lib/qdl-stable/runtime
+    cpus: 0.75
+    mem_limit: 536870912
+    memswap_limit: 1073741824
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp:rw,nosuid,nodev,noexec,size=64m
+    logging:
+      driver: json-file
+      options:
+        max-file: '3'
+        max-size: 50m
+    volumes:
+    - type: bind
+      source: ${QDL_KN_RELEASE_DIR:?set QDL_KN_RELEASE_DIR}
+      target: /kn
+      read_only: true
+    - type: bind
+      source: ${QDL_KN_RELEASE_DIR:?set QDL_KN_RELEASE_DIR}/runtime
+      target: /runtime
+      read_only: true
+    - type: bind
+      source: ${QDL_TLS_STABLE_CERTS_DIR:?set QDL_TLS_STABLE_CERTS_DIR}
+      target: /stable-certs
+      read_only: true
+    - type: bind
+      source: ${QDL_KN_STATE_DIR:?set QDL_KN_STATE_DIR}/bar-edge
+      target: /var/lib/qdl-kn
+      read_only: false
+    networks:
+      stable_egress: {}
+      stable_internal: {}
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - find /var/lib/qdl-kn/heartbeat/bar-edge.json -newermt '-180 seconds' 2>/dev/null | grep -q .
+      interval: 30s
+      timeout: 5s
+      start_period: 120s
+      retries: 3

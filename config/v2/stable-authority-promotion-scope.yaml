@@ -1,5 +1,5 @@
 schema: qdl.v2.authority-promotion-scope.v1
-revision: 10
+revision: 11
 binding_ids:
 - binance-usdm-0gusdt-bar-1d
 - binance-usdm-1000bonkusdt-bar-1d
@@ -427,6 +427,10 @@ binding_ids:
 - okx-swap-brett-usdt-swap-bar-1d
 - okx-swap-brev-usdt-swap-bar-1d
 - okx-swap-bsb-usdt-swap-bar-1d
+- okx-swap-btc-usd-swap-book_delta
+- okx-swap-btc-usd-swap-book_snapshot
+- okx-swap-btc-usd-swap-mark_index_price
+- okx-swap-btc-usd-swap-quote
 - okx-swap-btc-usdt-swap-bar-12h
 - okx-swap-btc-usdt-swap-bar-15m
 - okx-swap-btc-usdt-swap-bar-1d

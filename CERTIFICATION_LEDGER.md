@@ -2363,3 +2363,74 @@ Pinned at:
 `certificate.json` status PASS, `amendments` = G4-A1, G4-A2, A3 (refreshed), A4 v2 (pre-registered, not needed), A5
 (`post_hoc: true`); `gates_without_a5` G11 FAIL. It supersedes the 2026-10-18 certificate (`da2fd484...`).
 `release.yml` is unchanged. No tag, no merge.
+
+## DL v2.2.5 - 2026-10-20 production window + certificate (PASS under post-hoc P1; owner confirmation pending)
+
+Compact release on top of v2.2.4: IDR-127 configuration, versioned KN compose + healthchecks, mesh mTLS generation
+`20261019T084200Z`, Query image with the IDR-129 fix. Rust digests unchanged; TS writer unchanged (W12-A). Evidence:
+`upgrade/evidence/releases/v2.2.5/` (CERTIFICATE.md, certificate.json, endpoint-report.json, RELEASE_NOTES.md,
+MAINTENANCE_WINDOW_PACKET.md section 10, window receipts `window-20261020T0128Z/` with `SHA256SUMS`).
+
+### 2026-10-20 - maintenance window (production, coordinator-run, owner GO): R1 R2 R4 PASS, W14 deferred
+
+Pinned at:
+- Query `qdl-v2-python:2.2.5-9b6747f` `sha256:753604f8abaa866e2de30c7ccaf36168986bc6991550ee326d53e51b83d1550a`
+  (query_kn_1/2); every other DL role on its v2.2.4 digest (rust `27c79b53` / `60f83a51` / `7c848aad`, Kafka
+  `9516fb76`, Redis `dfa18828`, bar edge rc14 `08f356a8` held);
+- compose `deploy/compose/qdl-v2-stable-kn.yml` `50c1f014...` + `qdl-v2-stable-kn.v2.2.5.env` `c6770d5d...`;
+- TLS generation `20261019T084200Z` (CA `610c0c6f...`, notAfter 2027-10-19); writer `2deb90b0` with the new identity,
+  STRICT.
+
+- Outage 545 s (writer stop 01:31:04Z -> STRICT READY 64/64 01:40:09Z, incl. ~2 min coordinator wait-loop bug);
+  execution-ready 53 = baseline; K6 no-op (topics equal); Query max 188.3 MiB during both writer starts.
+- R1 PASS (`r1.json` `eb47296d...`): 17 roles healthy, RestartCount 0, trust anchor moved (old identity refused by
+  Query rc 60 / Stream num=20), Kafka 3 brokers, URP 0, core 3 members.
+- R2: window run FAIL only on kafka1-3 `cpus` (compose float32: 2249999872 vs 2.25); tool fixed (1e-6 vCPU tolerance,
+  `tests.test_kn_stable_compose` 12 OK, negative control fails on the old code); re-run read-only 03:00:55Z **PASS**,
+  863 checks, 0 problems (`r2-parity-rerun.json` `15415306...`).
+- R4 60-min passive soak PASS (`r4-soak.jsonl` `82a4e9aa...`): READY 59/59, 0 auth/protocol, 0 restarts, Query
+  plateau 260-277 MiB; QUOTE p95 <=25 ms n=7261, TRADE p95 <=25 ms n=1800 (writer native_probe); served age
+  NOT_MEASURED. Portal running, Codex read-only: a regression sample, not a certification of the IDR-128 envelope.
+- W14 monitor DEFERRED (GHCR read:packages missing).
+- Re-run only if a pinned digest, the compose/env, the TLS generation or the writer image changes.
+
+### 2026-10-20 - v2.2.5 certificate: status PASS under P1 (POST_HOC_PACKAGING_DECISION); not tagged
+
+- Inherited from v2.2.4 (`certificate.json` `42412548...`, counted run 040311Z): G1-G4, G7-G10, G12-G14; G11 as in
+  v2.2.4 (PASS under A5, FAIL without). G6 PASS by delta proof (no eligibility code in the IDR-129 diff; execution-ready
+  53 = baseline).
+- G5: the predeclared delta item "concurrent hot-read latency" (CERTIFICATE_SCOPE.md D3 (b)) was **not measured**.
+  P1 splits G5 by code path (hot path unchanged + maintenance hook ran 0 times in production; warmup path PASS by the
+  IDR-129 A/B) and records hot reads during a maintenance run (136-160 ms loop block, <= 1 per 120 s, only >= 448 MiB)
+  as NOT_MEASURED. `gates_without_p1` G5 NOT_MEASURED. **Owner confirmation of P1 is required before the tag**; the
+  alternative is the isolated hot-read A/B.
+- SDK 2.4.1 wheel `9f79e032...` (same as v2.2.4, rebuilt byte-identical). `release.yml` unchanged. No tag.
+
+### 2026-10-20 - Query A/B (G5 D3 (b) hot reads + DR warmup byte compare): CERTIFIED (isolated); v2.2.5 certificate PASS without P1
+
+Pinned at:
+- old Query `sha256:3e9e4d3a...` (v2.2.4), new Query `sha256:753604f8...` (v2.2.5); harness
+  `scripts/v225_query_hot_read_ab.py` with PREREG v2 committed at `0bba6385` before the run (session tool `543ddf18`,
+  BC re-run `b5b36e72`); one replica per arm at 1 vCPU / 2 GiB, private read-only copy of the market cache.
+
+- Owner 2026-10-20: "Đo luôn rồi tag" (measure, then tag), then (~04:30Z) run without waiting for the foreign
+  correctness-only lock, interleave arms, judge paired deltas, record foreign activity. Session
+  `~/.local/state/qdl-v2/releases/v2.2.5/query-ab-20261020c` 05:04-05:50Z: verdict **PASS**
+  (`query-ab-20261020/receipt.json` `d3899b22...`).
+  - Hot reads (TS EXECUTION QUOTE/TRADE snapshots, open loop 10/s) during 6 x 64-warmup bursts per arm, A1 B1 A2 B2:
+    p95 186.0 / 122.9 / 173.1 / 152.4 ms, p99 437.8 / 391.7 / 399.4 / 406.6 ms; paired mean d_p95 -41.9 ms, d_p99
+    -19.5 ms (bounds +18.0 / +41.9).
+  - New image maintenance runs 131 / 147 ms inside the scored windows; overlapping reads 7.9 / 44.7 ms.
+  - Non-200 only 503 DATA_NOT_READY (HNX TRADE without a latest entry), 5.1 % vs 5.0 %.
+  - Concurrency: other agents' test containers running, no lock file present, load1 8.2-13.3.
+- DR warmup byte compare: 65 TS r11 requirements x 2 passes, 130 valid triples; status, content-type and
+  Content-Length equal; bodies byte-identical after masking the per-request paths that also differ between two
+  requests to the same old replica. `byte-compare.json` `41ebcc3c575e3fb1cb37ee069cd5eff156bb0ed7ef0dd4b0b5becc51e22ae7e4`
+  PASS.
+- Not counted: attempts 1 (04:50Z, nested client-CA bind dropped) and 2 (05:02Z, volume subpath ignored) measured
+  nothing.
+- Certificate re-issued: G5 PASS by complete delta proof; P1 superseded (never used); `gates_without_a5` keeps G11
+  FAIL as in v2.2.4. Re-run only if either Query image, the warmup/snapshot code path or the TS r11 manifest changes.
+- P1b (coordinator, same session 06:10-06:13Z): alpha DR02/DR03 read shapes (alpha-binance r16 + alpha-okx r15 BAR 1m:
+  instrument pages, warmup 5/700/10,000, 10,001 typed refusal, universe batch 200, mixed batch 10), 24 shapes x 2
+  passes: PASS, byte-identical outside per-request paths (`byte-compare-alpha.json` `c884e495...`).

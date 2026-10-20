@@ -388,6 +388,9 @@ class StableCatalogContractTests(unittest.TestCase):
             + 5 * (2 + len(OKX_NATIVE_INTERVALS))
             # D48: one daily BAR per universe symbol and venue.
             + UNIVERSE_TOTAL
+            # Catalog revision 12: the inverse BTC-USD-SWAP QUOTE (its MARK and
+            # BOOK rows are counted with the families below).
+            + 1
         )
         l2_bindings = [
             item for item in catalog.bindings
@@ -397,11 +400,11 @@ class StableCatalogContractTests(unittest.TestCase):
             item for item in catalog.bindings
             if item.feed.value == "MARK_INDEX_PRICE"
         ]
-        self.assertEqual(len(l2_bindings), 32)
+        self.assertEqual(len(l2_bindings), 34)
         self.assertTrue({"BTCUSDT_260925", "ETHUSDT_260925"}.isdisjoint(
             item.instrument.native_symbol for item in l2_bindings
         ))
-        self.assertEqual(len(mark_index_bindings), 10)
+        self.assertEqual(len(mark_index_bindings), 11)
         self.assertEqual(
             len(catalog.bindings),
             baseline + len(l2_bindings) + len(mark_index_bindings),
@@ -435,6 +438,7 @@ class StableCatalogContractTests(unittest.TestCase):
                 ("OKX", "SOL-USDT-SWAP"),
                 ("OKX", "DOGE-USDT-SWAP"),
                 ("OKX", "BNB-USDT-SWAP"),
+                ("OKX", "BTC-USD-SWAP"),
             },
         )
         for binding in catalog.bindings:

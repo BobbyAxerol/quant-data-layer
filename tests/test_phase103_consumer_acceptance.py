@@ -65,10 +65,12 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             {item.consumer_id for item in scope.products},
             PHASE103_CONSUMER_IDS,
         )
-        self.assertEqual(len(scope.products), 110 + UNIVERSE_PER_VENUE["BINANCE"])
+        # +1: the inverse BTC-USD-SWAP QUOTE of Trading System manifest r11; its
+        # MARK/INDEX and BOOK rows are later-phase products below (+3).
+        self.assertEqual(len(scope.products), 111 + UNIVERSE_PER_VENUE["BINANCE"])
         self.assertEqual(
             sum(item.delivery is DeliveryClass.DURABLE for item in scope.products),
-            110 + UNIVERSE_PER_VENUE["BINANCE"],
+            111 + UNIVERSE_PER_VENUE["BINANCE"],
         )
         pass_through = [
             item
@@ -94,7 +96,7 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
                 "binance-usdm-solusdt-bar-15m",
             },
         )
-        self.assertEqual(len(scope.excluded), 81)
+        self.assertEqual(len(scope.excluded), 84)
         excluded = next(
             item for item in scope.excluded
             if item.reason == "VENUE_NOT_IN_PHASE103_CRYPTO_SCOPE"
@@ -106,7 +108,7 @@ class Phase103ConsumerAcceptanceScopeTests(unittest.TestCase):
             item for item in scope.excluded
             if item.reason == "LATER_PHASE_PRODUCT"
         ]
-        self.assertEqual(len(later_phase), 80)
+        self.assertEqual(len(later_phase), 83)
         self.assertEqual(
             {item.consumer_id for item in later_phase},
             {"trading-system.paper.stable", "alpha.binance.paper.stable"},

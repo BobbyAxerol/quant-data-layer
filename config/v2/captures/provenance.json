@@ -40,13 +40,22 @@
           "note": "verbatim rows of new universe symbols appended; earlier rows unchanged",
           "symbols_added": 250,
           "universe_revision": 1
+        },
+        {
+          "captured_at_utc": "2026-09-30T01:58:16Z",
+          "demand_revision": 8,
+          "endpoint": "https://www.okx.com/api/v5/public/instruments?instType=SWAP&instId=BTC-USD-SWAP",
+          "full_response_bytes": 1192,
+          "full_response_sha256": "82517a7c7f54f80673476046de2a74e21854a83b455905d5175aa68083ffa666",
+          "note": "verbatim row of BTC-USD-SWAP appended (IDR-127: inverse scope of deployed catalog r12 / TS paper manifest r11); source is the data list of the 2026-09-30 single-instrument public capture (receipt okx-btc-usd-swap-instrument.receipt.json, P18.3E dependencies); earlier rows unchanged",
+          "symbols_added": 1
         }
       ],
       "captured_at_utc": "2026-08-29T05:06:21Z",
       "endpoint": "https://www.okx.com/api/v5/public/instruments?instType=SWAP",
       "filtered_capture": "config/v2/captures/okx-instruments-swap.filtered.json",
-      "filtered_capture_bytes": 274835,
-      "filtered_capture_sha256": "1f2f3a040600d175ca61bdb1b4b7fe5f5121a0e67e7077948368b43c1392ed38",
+      "filtered_capture_bytes": 275916,
+      "filtered_capture_sha256": "52e3bc85fb18f401c9706528d41ee2aab186184031baa07be4d7a811752872c6",
       "full_response_bytes": 483705,
       "full_response_sha256": "afa3702b14306fe75c5616259a758836dc236927a6d6c178df64247cdbc9f3f7",
       "market": "SWAP",

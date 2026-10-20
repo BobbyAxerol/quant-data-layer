@@ -23,6 +23,9 @@ EXPECTED_SOURCE_IDS = frozenset({
     "binance-usdm-ethusdt-book-primary-v2",
     "binance-usdm-solusdt-book-primary-v2",
     "okx-swap-bnb-usdt-swap-book-primary-v2",
+    # Inverse Paper extension (demand revision 8); the running core already
+    # materializes it (v2.2.3-rc18 rust_core.json).
+    "okx-swap-btc-usd-swap-book-primary-v2",
     "okx-swap-btc-usdt-swap-book-primary-v2",
     "okx-swap-doge-usdt-swap-book-primary-v2",
     "okx-swap-eth-usdt-swap-book-primary-v2",
@@ -42,7 +45,7 @@ class ExecutionL2MaterializationTests(unittest.TestCase):
             acquisition=self.acquisition,
         )
         self.assertEqual(set(plan.source_ids), EXPECTED_SOURCE_IDS)
-        self.assertEqual(len(plan.binding_ids), 20)
+        self.assertEqual(len(plan.binding_ids), 22)
         self.assertEqual(plan.materialized_snapshot_interval_ms, 1_000)
 
         catalog_by_binding = {

@@ -156,13 +156,13 @@ class Phase105ReleaseObservationTests(unittest.TestCase):
         values = parse_release_observation_bundle(
             self.plan, bundle, now_ms=self.captured_at_ms
         )
-        self.assertEqual(len(values), 323 + UNIVERSE_TOTAL)
+        self.assertEqual(len(values), 327 + UNIVERSE_TOTAL)  # +4 inverse TS routes (r11)
         v1_values = [item for item in values if item.route == "V1_PRIMARY"]
         self.assertEqual(len(v1_values), 4)
         self.assertTrue(all(item.reason == "VN_REAL_PROVIDER_GATE_UNEXERCISED" for item in v1_values))
         self.assertTrue(all(item.v1_source_age_ms is None for item in v1_values))
         v2_values = [item for item in values if item.route == "V2_PRIMARY"]
-        self.assertEqual(len(v2_values), 319 + UNIVERSE_TOTAL)
+        self.assertEqual(len(v2_values), 323 + UNIVERSE_TOTAL)
         self.assertTrue(all(item.v2_source_age_ms == 11 for item in v2_values))
         deliveries = self.expected_deliveries()
         self.assertEqual(

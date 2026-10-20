@@ -1,14 +1,14 @@
 schema: qdl.v2.stable-release-routing.v1
-revision: 28
+revision: 29
 contract_version: 2.0.0
 source_catalog:
   path: /app/config/v2/stable-source-bindings.yaml
-  sha256: 9d4ab51e4880a3615e4171fe4cebc244c02522a20bbd3273973478ef32ec275d
-  revision: 11
+  sha256: fc3a1e1ec283e6c49b671f55cc270bd8f0241d595b241e6c7f5c87f5dc686cc5
+  revision: 12
 crypto_demand:
   path: /app/config/v2/stable-crypto-demand.yaml
-  sha256: be49571c31c6de515e1d47bbdaa47bf17e4fc233928cb463c21db0539619358b
-  revision: 7
+  sha256: 8f1c97d2c6756a3529fcf7fe98da372798f463a5b858e5fa124b841fad59c42b
+  revision: 8
 capability_matrix:
   path: /app/config/v2/stable-capabilities.yaml
   sha256: 81347a88866a54ed99cfbf25979d8e5912c98084f97f8a997a608dc9e03af6bf
@@ -29,7 +29,7 @@ consumers:
   manifest: /app/consumers/stable/monitoring-multivenue.yaml
   manifest_revision: 2
   manifest_sha256: eaf828db40cac3b256fee087fa4cb7730fcb4894c9300ce4a319433aec4d88ea
-  demand_revision: 7
+  demand_revision: 8
   products:
   - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:TRADE::crypto_primary_v2
     route: V2_PRIMARY
@@ -55,7 +55,7 @@ consumers:
   manifest: /app/consumers/stable/alpha-binance-paper.yaml
   manifest_revision: 16
   manifest_sha256: 6e049e756e7b37753139bf4958fbf872944b81d310dbd988b41f0f08a56f9031
-  demand_revision: 7
+  demand_revision: 8
   products:
   - requirement_key: 00d1d68e-45b0-5cbf-9825-15ba00cb6a66:BAR:1d:crypto_primary_v2
     route: V2_PRIMARY
@@ -1579,9 +1579,9 @@ consumers:
     reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
 - consumer_id: alpha.okx.paper.stable
   manifest: /app/consumers/stable/alpha-okx-paper.yaml
-  manifest_revision: 14
-  manifest_sha256: 9e48000e26c1283dd6e786c17d51a79e812bfa2bb97e122f8b944641b8329cdf
-  demand_revision: 7
+  manifest_revision: 15
+  manifest_sha256: b2ba5729f2b5c80ccd42e93b4c8e5367ac9fec2d08fca8f2b394916dbf58985a
+  demand_revision: 8
   products:
   - requirement_key: 00014941-4c7d-5d7a-92cc-00a83d5cf499:BAR:1d:crypto_primary_v2
     route: V2_PRIMARY
@@ -3087,7 +3087,7 @@ consumers:
   manifest: /app/consumers/stable/alpha-vn-paper.yaml
   manifest_revision: 1
   manifest_sha256: f2f03f87bfeb775d90099e0bdb38ee9b158ee1506dd333581ef54635e20d3e2a
-  demand_revision: 7
+  demand_revision: 8
   products:
   - requirement_key: d0ac3d4c-2374-5690-8af5-b970448f91d3:BAR:1m:vn_primary_v2
     route: V1_PRIMARY
@@ -3099,9 +3099,9 @@ consumers:
     reason: VN_REAL_PROVIDER_GATE_UNEXERCISED
 - consumer_id: trading-system.paper.stable
   manifest: /app/consumers/stable/trading-system-paper.yaml
-  manifest_revision: 10
-  manifest_sha256: 5ca9aff1960883f59827e3a34ed709f4c30cf5db96c4e1253dd6f1116fb20cdf
-  demand_revision: 7
+  manifest_revision: 11
+  manifest_sha256: 2d661d46262b1a8f5bdbbf631e5bc53426476db0a10c49c063173fa3da1b58c5
+  demand_revision: 8
   products:
   - requirement_key: a953e16e-7138-5562-b5e8-c337a44d0b65:TRADE::crypto_primary_v2
     route: V2_PRIMARY
@@ -3347,3 +3347,19 @@ consumers:
     route: V1_PRIMARY
     fallback: NONE
     reason: VN_REAL_PROVIDER_GATE_UNEXERCISED
+  - requirement_key: 8482b54b-6d9d-5aad-abe8-e22447d183a1:BOOK_DELTA::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8482b54b-6d9d-5aad-abe8-e22447d183a1:BOOK_SNAPSHOT::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_L2_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8482b54b-6d9d-5aad-abe8-e22447d183a1:MARK_INDEX_PRICE::crypto_liquid_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_MARK_INDEX_EQUIVALENCE_UNPROVEN
+  - requirement_key: 8482b54b-6d9d-5aad-abe8-e22447d183a1:QUOTE::crypto_primary_v2
+    route: V2_PRIMARY
+    fallback: BLOCKED
+    reason: V1_OKX_BBO_EQUIVALENCE_UNPROVEN

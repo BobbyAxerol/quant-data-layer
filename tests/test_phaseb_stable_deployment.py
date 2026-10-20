@@ -199,7 +199,7 @@ class StableDeploymentContractTests(unittest.TestCase):
         quote_requirements = tuple(
             item for item in manifest.requirements if item.feed is FeedType.QUOTE
         )
-        self.assertEqual(len(quote_requirements), 10)
+        self.assertEqual(len(quote_requirements), 11)
         expected = {
             ("BINANCE", symbol)
             for symbol in ("BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "BNBUSDT")
@@ -208,6 +208,7 @@ class StableDeploymentContractTests(unittest.TestCase):
             for symbol in (
                 "BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP",
                 "DOGE-USDT-SWAP", "BNB-USDT-SWAP",
+                "BTC-USD-SWAP",  # inverse Paper extension (manifest r11)
             )
         }
         observed = set()
@@ -318,6 +319,7 @@ class StableDeploymentContractTests(unittest.TestCase):
                 for symbol in (
                     "BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP",
                     "DOGE-USDT-SWAP", "BNB-USDT-SWAP",
+                    "BTC-USD-SWAP",  # inverse Paper extension (demand revision 8)
                 )
             },
         )
@@ -581,6 +583,7 @@ class StableDeploymentContractTests(unittest.TestCase):
             {
                 "okx-spot-btcusdt-quote": "NONE",
                 "okx-swap-bnb-usdt-swap-quote": "NONE",
+                "okx-swap-btc-usd-swap-quote": "NONE",
                 "okx-swap-btcusdt-quote": "NONE",
                 "okx-swap-doge-usdt-swap-quote": "NONE",
                 "okx-swap-eth-usdt-swap-quote": "NONE",
@@ -1395,7 +1398,9 @@ class StableDeploymentContractTests(unittest.TestCase):
             if item.get("l2", {}).get("materialized_snapshot_interval_ms") == 1_000
         }
         self.assertEqual(set(hot), set(execution_l2.source_ids))
-        self.assertEqual(len(hot), 10)
+        # 10 linear execution books + inverse BTC-USD-SWAP; the running core
+        # (v2.2.3-rc18 rust_core.json) materializes the same 11.
+        self.assertEqual(len(hot), 11)
         self.assertTrue(all(
             item["depth_per_side"] == 100
             and item["snapshot_refresh_seconds"] == 30

@@ -1,5 +1,6 @@
 """Contract fixtures only; these tests do not activate a broker or consumer."""
 from pathlib import Path
+from copy import deepcopy
 from dataclasses import replace
 import tempfile
 import yaml
@@ -16,12 +17,34 @@ DEMAND = ROOT / "config/v2/okx-inverse-sandbox-demand.yaml"
 class InverseSandboxDemandTests(unittest.TestCase):
     def test_additive_scope_preserves_existing_demand(self):
         path = ROOT / "config/v2/stable-crypto-demand.yaml"
-        old = ProductionDemandManifest.load_many([path])
+        payload = yaml.safe_load(path.read_text())
+        # Since demand revision 8 (IDR-127) the stable demand carries the same
+        # four inverse rows for the Paper consumer; the additive property is
+        # checked against the stable demand without them.
+        before = deepcopy(payload)
+        for consumer in before["consumers"]:
+            consumer["requirements"] = [
+                r for r in consumer["requirements"] if r["native_symbol"] != "BTC-USD-SWAP"]
+        removed = sum(map(len, (c["requirements"] for c in payload["consumers"]))) - sum(
+            map(len, (c["requirements"] for c in before["consumers"])))
+        self.assertEqual(removed, 4)
+        with tempfile.TemporaryDirectory() as directory:
+            before_path = Path(directory) / "demand.yaml"
+            before_path.write_text(yaml.safe_dump(before))
+            old = ProductionDemandManifest.load_many([before_path])
+            merged = ProductionDemandManifest.load_many([before_path, DEMAND])
         inverse = ProductionDemandManifest.load_many([DEMAND])
-        merged = ProductionDemandManifest.load_many([path, DEMAND])
         self.assertEqual(len(inverse.demands), 4)
         self.assertEqual(len(merged.demands), len(old.demands) + 4)
         self.assertTrue(all(row in merged.demands for row in old.demands))
+        # The committed stable demand equals that merge in requirement scope:
+        # same keys, and EXECUTION grade for the inverse rows.
+        current = ProductionDemandManifest.load_many([path])
+        self.assertEqual({r.requirement_key for r in current.demands},
+                         {r.requirement_key for r in merged.demands})
+        self.assertEqual(
+            {r.requirement_key: r.consumer_grade for r in current.demands if r.native_symbol == "BTC-USD-SWAP"},
+            {r.requirement_key: ConsumerGrade.EXECUTION for r in inverse.demands})
         for row in inverse.demands:
             self.assertEqual(row.consumer_id, "trading-system.sandbox.stable")
             self.assertEqual(row.native_symbol, "BTC-USD-SWAP")

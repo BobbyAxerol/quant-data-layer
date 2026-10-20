@@ -930,11 +930,12 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
                 )
             },
             {
-                "global_release_route_count": 323 + UNIVERSE_TOTAL,
-                "global_v2_primary_product_count": 319 + UNIVERSE_TOTAL,
+                # +4: the inverse BTC-USD-SWAP routes of Trading System r11.
+                "global_release_route_count": 327 + UNIVERSE_TOTAL,
+                "global_v2_primary_product_count": 323 + UNIVERSE_TOTAL,
                 "global_v1_primary_route_count": 4,
-                "selected_release_route_count": 321 + UNIVERSE_TOTAL,
-                "selected_v2_primary_product_count": 319 + UNIVERSE_TOTAL,
+                "selected_release_route_count": 325 + UNIVERSE_TOTAL,
+                "selected_v2_primary_product_count": 323 + UNIVERSE_TOTAL,
                 "selected_v1_primary_excluded_count": 2,
                 # ceil(pacing + native-basis deferral 600 + tail 75). The pacing
                 # floor is the slowest identity's opening operations at its sealed
@@ -943,8 +944,11 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
                 # D48 adds the daily universe's BAR products to alpha.binance, so
                 # its opening operations and the minimum grow to 768.0. Rev 16
                 # (IDR-090) carries the deployed rev 15 quota (4,950 rpm) and five
-                # current-OI reads: faster pacing outweighs them, 766.0.
-                "minimum_deadline_seconds": 766.0,
+                # current-OI reads: faster pacing outweighs them, 766.0. IDR-127
+                # brings alpha.okx to its deployed rev 15 quota (2,400 -> 4,950
+                # rpm, 90.9 s -> 44.0 s), so alpha.binance (44.7 s) is now the
+                # slowest: ceil(44.693 + 600 + 75) = 720.0.
+                "minimum_deadline_seconds": 720.0,
             },
         )
         self.assertEqual(
@@ -957,7 +961,9 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
             plan["consumers"]["trading-system.paper.stable"][
                 "opening_operation_budget"
             ],
-            {"QUERY_READ": 300, "REFERENCE_BATCH": 20, "STREAM_SUBSCRIBE": 100},
+            # r11: +18 reads, +2 reference batches, +6 subscribes for the inverse
+            # QUOTE / MARK_INDEX_PRICE / BOOK_SNAPSHOT / BOOK_DELTA.
+            {"QUERY_READ": 318, "REFERENCE_BATCH": 22, "STREAM_SUBSCRIBE": 106},
         )
         self.assertEqual(
             plan["consumers"]["alpha.binance.paper.stable"][

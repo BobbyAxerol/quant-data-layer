@@ -7,9 +7,9 @@ import yaml
 
 from qdl.consumer.manifest import ConsumerManifestLoader
 from qdl.consumer.universal_release import ConsumerRouteBinding
-from qdl.runtime.production_catalog import ProductionCatalogBuilder, ProductionDemandManifest
 from scripts.phase115_render_consumer_route_binding import binding_from_stable_release
 from scripts.prepare_paper_read_extension import digest, prepare_paper_extension
+from tests.inverse_extension_support import pre_inverse_paper_manifest, without_inverse_products
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -17,20 +17,16 @@ ROOT = Path(__file__).resolve().parents[1]
 class PaperReadExtensionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        # Production inputs of the 2026-10-09 render: the deployed catalog r12
+        # (= the committed catalog, which already declares BTC-USD-SWAP) and the
+        # pre-extension Paper manifest r10 and its binding (recovered, pinned).
         catalog = yaml.safe_load((ROOT / "config/v2/stable-source-bindings.yaml").read_text())
-        inverse = ProductionCatalogBuilder(catalog_revision=catalog["catalog_revision"],
-            source_policy_revision=catalog["source_policy_revision"],
-            authority_revision=catalog["authority_revision"]).build(
-                demand=ProductionDemandManifest.load_many([ROOT / "config/v2/okx-inverse-sandbox-demand.yaml"]),
-                binance_usdm=None, okx_rows=[dict(instId="BTC-USD-SWAP", instType="SWAP",
-                    instFamily="BTC-USD", ctType="inverse", ctValCcy="USD", settleCcy="BTC",
-                    ctVal="100", ctMult="1", lotSz="0.1", tickSz="0.1", state="live")])
-        for field in ("instruments", "bindings"):
-            catalog[field].extend(inverse.source_catalog[field])
-        cls.inputs = dict(catalog=catalog,
-            manifest=yaml.safe_load((ROOT / "consumers/stable/trading-system-paper.yaml").read_text()),
-            binding=binding_from_stable_release(ROOT / "config/v2/stable-v2-release-routing.yaml",
-                ROOT, "trading-system.paper.stable").canonical_mapping())
+        manifest = pre_inverse_paper_manifest()
+        binding = without_inverse_products(
+            binding_from_stable_release(ROOT / "config/v2/stable-v2-release-routing.yaml",
+                ROOT, "trading-system.paper.stable").canonical_mapping(),
+            manifest_revision=manifest["metadata"]["revision"], reseal=digest)
+        cls.inputs = dict(catalog=catalog, manifest=manifest, binding=binding)
 
     def setUp(self):
         self.source = deepcopy(self.inputs)
@@ -158,3 +154,13 @@ class PaperReadExtensionTests(unittest.TestCase):
                     {"max_batch_items": 100}, {"max_streams": "77"}):
             with self.assertRaisesRegex(ValueError, "quota change"):
                 prepare_paper_extension(**self.source, quotas=bad)
+
+    def test_committed_r11_manifest_is_the_reproduced_d1_render(self):
+        # IDR-127: consumers/stable/trading-system-paper.yaml is the deployed
+        # realm file (sha256 efd482fa...), rendered on 2026-10-09 by this script
+        # from these inputs with the D1 quota raise and written by yaml.safe_dump.
+        raised = prepare_paper_extension(**self.source, quotas={"max_streams": 77, "requests_per_minute": 3000})
+        committed = (ROOT / "consumers/stable/trading-system-paper.yaml").read_bytes()
+        self.assertEqual(yaml.safe_dump(raised["manifest"]).encode(), committed)
+        self.assertEqual(raised["provenance"]["consumer_manifest_sha256"],
+                         ConsumerManifestLoader.load(ROOT / "consumers/stable/trading-system-paper.yaml").manifest_sha256)

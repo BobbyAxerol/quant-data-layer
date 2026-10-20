@@ -1,0 +1,111 @@
+{
+ "alpha_okx_paper": {
+  "added": [],
+  "other_spec_keys_changed": [],
+  "quotas": [
+   {
+    "max_batch_items": 50,
+    "max_buffer_events": 2000,
+    "max_streams": 60,
+    "max_warmup_rows": 10000,
+    "requests_per_minute": 2400
+   },
+   {
+    "max_batch_items": 50,
+    "max_buffer_events": 2000,
+    "max_streams": 300,
+    "max_warmup_rows": 10000,
+    "requests_per_minute": 4950
+   }
+  ],
+  "removed": 0,
+  "requirements": [
+   375,
+   375
+  ],
+  "revision": [
+   14,
+   15
+  ]
+ },
+ "base": "3afd932",
+ "catalog": {
+  "added": [
+   "okx-swap-btc-usd-swap-book_delta",
+   "okx-swap-btc-usd-swap-book_snapshot",
+   "okx-swap-btc-usd-swap-mark_index_price",
+   "okx-swap-btc-usd-swap-quote"
+  ],
+  "bindings": [
+   712,
+   716
+  ],
+  "changed": [],
+  "instruments": [
+   522,
+   523
+  ],
+  "instruments_added": [
+   "OKX.SWAP.PERPETUAL.BTC-USD"
+  ],
+  "instruments_changed": [],
+  "instruments_removed": [],
+  "removed": [],
+  "revision": [
+   11,
+   12
+  ]
+ },
+ "head_files": "working tree at commit 3915a76",
+ "schema": "qdl.v225.semantic-parity.v1",
+ "trading_system_paper": {
+  "added": [
+   {
+    "consumer_grade": "EXECUTION",
+    "feed": "BOOK_DELTA",
+    "instrument_uid": "8482b54b-6d9d-5aad-abe8-e22447d183a1"
+   },
+   {
+    "consumer_grade": "EXECUTION",
+    "feed": "MARK_INDEX_PRICE",
+    "instrument_uid": "8482b54b-6d9d-5aad-abe8-e22447d183a1"
+   },
+   {
+    "consumer_grade": "EXECUTION",
+    "feed": "QUOTE",
+    "instrument_uid": "8482b54b-6d9d-5aad-abe8-e22447d183a1"
+   },
+   {
+    "consumer_grade": "EXECUTION",
+    "feed": "BOOK_SNAPSHOT",
+    "instrument_uid": "8482b54b-6d9d-5aad-abe8-e22447d183a1"
+   }
+  ],
+  "other_spec_keys_changed": [],
+  "quotas": [
+   {
+    "max_batch_items": 50,
+    "max_buffer_events": 2000,
+    "max_streams": 50,
+    "max_warmup_rows": 2000,
+    "requests_per_minute": 1500
+   },
+   {
+    "max_batch_items": 50,
+    "max_buffer_events": 2000,
+    "max_streams": 77,
+    "max_warmup_rows": 2000,
+    "requests_per_minute": 3000
+   }
+  ],
+  "removed": 0,
+  "requirements": [
+   61,
+   65
+  ],
+  "revision": [
+   10,
+   11
+  ]
+ }
+}

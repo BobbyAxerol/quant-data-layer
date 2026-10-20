@@ -60,6 +60,13 @@ done
 for client in phase8-admin phase8-producer phase8-consumer phase8-core phase8-unauthorized stable-authority-dispatcher stable-monitoring stable-trading-system stable-alpha-binance stable-alpha-okx stable-reference-l2; do
   issue_certificate "${client}" "${client}"
 done
+# The KN projector and Stream gateway Kafka principals (User:kn-projector,
+# User:kn-stream; their ACLs are keyed by CN). KN 2026-09-27 issued them under
+# a separate client-only CA; issuing them here keeps one trust anchor for the
+# whole mesh so a rotation is one generation, not two.
+for client in kn-projector kn-stream; do
+  issue_certificate "${client}" "${client}"
+done
 issue_certificate stable-trading-system-jwt stable-trading-system-jwt
 openssl pkey -in "${OUTPUT_DIR}/stable-trading-system-jwt.key" -pubout \
   -out "${OUTPUT_DIR}/stable-trading-system-jwt.public.pem" >/dev/null 2>&1
@@ -147,6 +154,8 @@ find "${OUTPUT_DIR}" -maxdepth 1 -name '*.key' \
   ! -name 'stable-alpha-okx-jwt.key' \
   ! -name 'stable-reference-l2.key' \
   ! -name 'stable-reference-l2-jwt.key' \
+  ! -name 'kn-projector.key' \
+  ! -name 'kn-stream.key' \
   -delete
 rm -f "${OUTPUT_DIR}"/*.csr "${OUTPUT_DIR}"/*.ext "${OUTPUT_DIR}"/*.srl
 

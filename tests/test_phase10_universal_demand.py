@@ -530,6 +530,7 @@ class UniversalDemandTests(unittest.TestCase):
                 ("OKX", "SWAP", "SOL-USDT-SWAP"),
                 ("OKX", "SWAP", "DOGE-USDT-SWAP"),
                 ("OKX", "SWAP", "BNB-USDT-SWAP"),
+                ("OKX", "SWAP", "BTC-USD-SWAP"),  # inverse Paper scope (demand revision 8)
             }
             # D48: the daily market-cap universe's bar-only symbols.
             | {("BINANCE", "USDM", symbol) for symbol in UNIVERSE_SYMBOLS["BINANCE"]}

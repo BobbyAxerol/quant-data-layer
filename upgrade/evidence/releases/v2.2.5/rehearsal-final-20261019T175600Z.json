@@ -1,0 +1,1047 @@
+{
+ "burst": {
+  "baseline": {
+   "distinct_requirements": 12,
+   "feeds": [
+    "BAR",
+    "BOOK_DELTA",
+    "BOOK_SNAPSHOT",
+    "MARK_INDEX_PRICE",
+    "QUOTE",
+    "TRADE"
+   ],
+   "image": "qdl-v2-python@sha256:753604f8abaa866e2de30c7ccaf36168986bc6991550ee326d53e51b83d1550a",
+   "query": {
+    "anon_mib": 128.3,
+    "oom_kill": 0,
+    "restart_count": 0,
+    "started_at": "2026-10-19T18:30:33.155938359Z",
+    "usage_mib": 133.4
+   },
+   "slices": 64
+  },
+  "bursts": [
+   {
+    "after": {
+     "anon_mib": 141.6,
+     "oom_kill": 0,
+     "restart_count": 0,
+     "started_at": "2026-10-19T18:30:33.155938359Z",
+     "usage_mib": 146.9
+    },
+    "burst": 1,
+    "driver": {
+     "failed_slices": 14,
+     "refused": [],
+     "req200_ms_max": 3601,
+     "req200_ms_p50": 588,
+     "rows_max": 1,
+     "rows_total": 50,
+     "slices": 64,
+     "statuses": {
+      "200": 50,
+      "OPEN_SEQUENCE_GAP": 25,
+      "RATE_LIMITED": 109
+     },
+     "wall_s": 12.8
+    },
+    "peak_usage_mib": 160.3,
+    "samples": 6,
+    "writer_ready_samples": "5/6"
+   },
+   {
+    "after": {
+     "anon_mib": 153.3,
+     "oom_kill": 0,
+     "restart_count": 0,
+     "started_at": "2026-10-19T18:30:33.155938359Z",
+     "usage_mib": 159.2
+    },
+    "burst": 2,
+    "driver": {
+     "failed_slices": 14,
+     "refused": [],
+     "req200_ms_max": 2694,
+     "req200_ms_p50": 1075,
+     "rows_max": 1,
+     "rows_total": 50,
+     "slices": 64,
+     "statuses": {
+      "200": 50,
+      "DATA_NOT_READY": 1,
+      "OPEN_SEQUENCE_GAP": 23,
+      "RATE_LIMITED": 103
+     },
+     "wall_s": 14.0
+    },
+    "peak_usage_mib": 160.0,
+    "samples": 7,
+    "writer_ready_samples": "1/7"
+   },
+   {
+    "after": {
+     "anon_mib": 150.5,
+     "oom_kill": 0,
+     "restart_count": 0,
+     "started_at": "2026-10-19T18:30:33.155938359Z",
+     "usage_mib": 156.8
+    },
+    "burst": 3,
+    "driver": {
+     "failed_slices": 15,
+     "refused": [],
+     "req200_ms_max": 2613,
+     "req200_ms_p50": 397,
+     "rows_max": 1,
+     "rows_total": 49,
+     "slices": 64,
+     "statuses": {
+      "200": 49,
+      "DATA_NOT_READY": 6,
+      "OPEN_SEQUENCE_GAP": 23,
+      "RATE_LIMITED": 108
+     },
+     "wall_s": 11.9
+    },
+    "peak_usage_mib": 172.2,
+    "samples": 6,
+    "writer_ready_samples": "6/6"
+   }
+  ],
+  "check": {
+   "baseline_usage_mib": 133.4,
+   "checks": {
+    "below_ceiling": true,
+    "no_oom_kill": true,
+    "no_per_burst_step": true,
+    "no_restart": true,
+    "settled_near_baseline": true
+   },
+   "last_step_mib": -2.4,
+   "scope": "window-config check at rehearsal data volume; production-volume proof = IDR-129 A/B",
+   "settled_usage_mib": 156.8,
+   "thresholds": {
+    "bursts": 3,
+    "ceiling_mib": 1638,
+    "gap_s": 30,
+    "rounds": 4,
+    "sample_s": 2.0,
+    "settle_s": 120,
+    "slices": 64,
+    "step_mib": 32,
+    "tolerance_mib": 128
+   },
+   "verdict": "PASS"
+  },
+  "refusals_after_burst": {
+   "query_kn_1": {
+    " 401": 0,
+    "PERMISSION_DENIED": 0,
+    "UNAUTHENTICATED": 0,
+    "certificate": 0,
+    "manifest_revision": 0
+   },
+   "stream_kn_1": {
+    " 401": 0,
+    "PERMISSION_DENIED": 0,
+    "UNAUTHENTICATED": 0,
+    "certificate": 0,
+    "manifest_revision": 0
+   },
+   "stream_kn_2": {
+    " 401": 0,
+    "PERMISSION_DENIED": 0,
+    "UNAUTHENTICATED": 0,
+    "certificate": 0,
+    "manifest_revision": 0
+   },
+   "ts_writer": {
+    "auth_protocol": {
+     "401": 1,
+     "CERTIFICATE_VERIFY_FAILED": 0,
+     "HANDOFF_RESUME_REQUIRED": 0,
+     "SSLError": 0,
+     "STRICT_RESUME_REFUSAL": 0,
+     "UNAUTHENTICATED": 0
+    },
+    "data_policy": {
+     "DATA_STALE": 0,
+     "EVENT_AGE": 0,
+     "OPEN_SEQUENCE_GAP": 0,
+     "SESSION_STATE": 0,
+     "SOURCE_UNAVAILABLE": 92
+    }
+   }
+  }
+ },
+ "classification": "ISOLATED_REHEARSAL (same host, <=3 vCPU caps, ETH-only live public venue data); not production evidence",
+ "complete": true,
+ "failed": null,
+ "image_build": {
+  "files_vs_3e9e4d3a": "20 different = git diff 31a5155..9b6747f (16 IDR-127/apparatus + qdl/api_v2/router.py, qdl/query/service.py, qdl/runtime/memory_maintenance.py, qdl/runtime/stable.py), unexpected 0, pip freeze equal",
+  "image": "sha256:753604f8abaa866e2de30c7ccaf36168986bc6991550ee326d53e51b83d1550a",
+  "receipt": "upgrade/evidence/releases/v2.2.5/python-image-build-receipt.json",
+  "tag": "qdl-v2-python:2.2.5-9b6747f"
+ },
+ "notes": [
+  "Verdict PASS = every phase writer READY 12/12 with offsets continuous and cursor items unchanged, trust anchor moved both ways (Query/Stream/Kafka refuse the other generation), burst gate PASS, teardown 0 left.",
+  "OPEN OBSERVATION: phase D writer clone 'auth_protocol' shows 401 = 1 (also after the burst). The tool counted the bare substring '401' in the clone's log tail (it also matches numbers and millisecond timestamps); the line was removed with the clone at teardown, so it is not attributable. Query/Stream ' 401' = 0, UNAUTHENTICATED / CERTIFICATE_VERIFY_FAILED / STRICT_RESUME_REFUSAL / HANDOFF_RESUME_REQUIRED = 0 in every phase, writer READY 12/12 at the D steady check. Tool fixed after the run (whole-token match, matching lines kept); the window's R1 command uses the same whole-token pattern.",
+  "Burst data volume: every 200 warmup returned at most 1 row (the isolated stack holds minutes of ETH data; why BAR warmups returned at most 1 row was not investigated), so the burst exercised admission/lanes/TLS/JWT under 64 concurrent requests at near-zero row volume; production-volume retention is the IDR-129 isolated A/B (361-445 MiB over 12 bursts vs 472 -> 683).",
+  "Burst statuses per burst: ~50 x 200, 23-25 OPEN_SEQUENCE_GAP, 0-6 DATA_NOT_READY, 103-109 RATE_LIMITED retries; 14-15 of 64 slices unresolved after 4 rounds (reported, not gated). The driver uses the TS consumer identity, so it shares that identity's quota with the writer clone; the writer clone was READY in 5/6, 1/7, 6/6 samples during the bursts (cause not verified; quota sharing is the likely one). In production the burst is the writer's own.",
+  "Steady ready_all_samples false in C and D: the first samples fall into the STRICT start-up (as in the 2026-10-19 first run); last sample READY 12/12.",
+  "Outage longer than the first run (251-291 s): B 312 s, C 519 s, D 353 s; the DL part (Query READY over mTLS) was 145-162 s after the broker recreate in every phase; the spread is the writer clone BOOTSTRAP (68-251 s to READY) under its 0.35 vCPU cap."
+ ],
+ "phase_A_baseline": {
+  "dl_up": {
+   "all_healthy": {
+    "ingestor_binance_usdm": "running|healthy",
+    "ingestor_okx_swap": "running|healthy",
+    "kafka1": "running|healthy",
+    "kafka2": "running|healthy",
+    "kafka3": "running|healthy",
+    "market_cache": "running|healthy",
+    "market_projector_1": "running|healthy",
+    "query_kn_1": "running|healthy",
+    "rust_core": "running|healthy",
+    "stable_redis": "running|healthy",
+    "stream_kn_1": "running|healthy",
+    "stream_kn_2": "running|healthy"
+   },
+   "brokers_s": 57.44,
+   "canonical_topic_id": "BDhaQhXyRsCZMhPo6AXJRw",
+   "dl_healthy_s": 512.08,
+   "dynamic_truststore_override": {
+    "1": 2,
+    "2": 2,
+    "3": 2
+   },
+   "generation": "20260822T144323Z",
+   "healthy_after_s": {
+    "ingestor_binance_usdm": 437.8,
+    "ingestor_okx_swap": 437.8,
+    "kafka1": 446.5,
+    "kafka2": 446.5,
+    "kafka3": 446.5,
+    "market_cache": 446.5,
+    "market_projector_1": 444.0,
+    "query_kn_1": 512.1,
+    "rust_core": 434.7,
+    "stable_redis": 446.5,
+    "stream_kn_1": 449.8,
+    "stream_kn_2": 449.8
+   },
+   "ingest_healthy": true,
+   "query": {
+    "body_status": "READY",
+    "keys": [
+     "authority",
+     "config_revision",
+     "ready",
+     "role",
+     "status"
+    ],
+    "ok": true,
+    "status": 200
+   },
+   "query_ready_s": 514.45,
+   "release": "deploy/compose/qdl-v2-stable-kn.v2.2.4.env",
+   "streams": {
+    "qdl-v2-stream-a": {
+     "ok": true,
+     "rc": 0,
+     "tail": "12:RSA-PSS+SHA384:RSA-PSS+SHA256:RSA+SHA512:RSA+SHA384:RSA+SHA256 Peer certificate: CN = stable-stream Hash used: SHA512 Signature type: RSA-PSS Verification: OK Server Temp Key: X25519, 253 bits DONE"
+    },
+    "qdl-v2-stream-b": {
+     "ok": true,
+     "rc": 0,
+     "tail": "12:RSA-PSS+SHA384:RSA-PSS+SHA256:RSA+SHA512:RSA+SHA384:RSA+SHA256 Peer certificate: CN = stable-stream Hash used: SHA512 Signature type: RSA-PSS Verification: OK Server Temp Key: X25519, 253 bits DONE"
+    }
+   },
+   "urp": 0
+  },
+  "refusals": {
+   "query_kn_1": {
+    " 401": 0,
+    "PERMISSION_DENIED": 0,
+    "UNAUTHENTICATED": 0,
+    "certificate": 0,
+    "manifest_revision": 0
+   },
+   "stream_kn_1": {
+    " 401": 0,
+    "PERMISSION_DENIED": 0,
+    "UNAUTHENTICATED": 0,
+    "certificate": 0,
+    "manifest_revision": 0
+   },
+   "stream_kn_2": {
+    " 401": 0,
+    "PERMISSION_DENIED": 0,
+    "UNAUTHENTICATED": 0,
+    "certificate": 0,
+    "manifest_revision": 0
+   },
+   "ts_writer": {
+    "auth_protocol": {
+     "401": 0,
+     "CERTIFICATE_VERIFY_FAILED": 0,
+     "HANDOFF_RESUME_REQUIRED": 0,
+     "SSLError": 0,
+     "STRICT_RESUME_REFUSAL": 0,
+     "UNAUTHENTICATED": 0
+    },
+    "data_policy": {
+     "DATA_STALE": 0,
+     "EVENT_AGE": 0,
+     "OPEN_SEQUENCE_GAP": 0,
+     "SESSION_STATE": 0,
+     "SOURCE_UNAVAILABLE": 4
+    }
+   }
+  },
+  "steady": {
+   "last": {
+    "alive": true,
+    "demanded": 12,
+    "ready": true,
+    "status": "DEGRADED",
+    "unhealthy": 0,
+    "unhealthy_rows": []
+   },
+   "query": {
+    "body_status": "READY",
+    "keys": [
+     "authority",
+     "config_revision",
+     "ready",
+     "role",
+     "status"
+    ],
+    "ok": true,
+    "status": 200
+   },
+   "ready_all_samples": true,
+   "samples": 9
+  },
+  "strict_restart": {
+   "first_heartbeat_s": 11.2,
+   "ready": true,
+   "ready_after_s": 68.9,
+   "route_last_unhealthy_s": {
+    "BINANCE|ETHUSDT|BAR|None": 62.2,
+    "BINANCE|ETHUSDT|BAR|WORKER_UNAVAILABLE": 26.2,
+    "BINANCE|ETHUSDT|BOOK_DELTA|None": 62.2,
+    "BINANCE|ETHUSDT|BOOK_DELTA|WORKER_UNAVAILABLE": 26.2,
+    "BINANCE|ETHUSDT|BOOK_SNAPSHOT|None": 62.2,
+    "BINANCE|ETHUSDT|BOOK_SNAPSHOT|WORKER_UNAVAILABLE": 26.2,
+    "BINANCE|ETHUSDT|MARK_INDEX_PRICE|None": 62.2,
+    "BINANCE|ETHUSDT|MARK_INDEX_PRICE|WORKER_UNAVAILABLE": 26.2,
+    "BINANCE|ETHUSDT|QUOTE|None": 62.2,
+    "BINANCE|ETHUSDT|QUOTE|WORKER_UNAVAILABLE": 26.2,
+    "BINANCE|ETHUSDT|TRADE|WORKER_UNAVAILABLE": 26.2,
+    "OKX|ETH-USDT-SWAP|BAR|None": 62.2,
+    "OKX|ETH-USDT-SWAP|BAR|WORKER_UNAVAILABLE": 26.2,
+    "OKX|ETH-USDT-SWAP|BOOK_DELTA|None": 62.2,
+    "OKX|ETH-USDT-SWAP|BOOK_DELTA|WORKER_UNAVAILABLE": 26.2,
+    "OKX|ETH-USDT-SWAP|BOOK_SNAPSHOT|None": 62.2,
+    "OKX|ETH-USDT-SWAP|BOOK_SNAPSHOT|WORKER_UNAVAILABLE": 26.2,
+    "OKX|ETH-USDT-SWAP|MARK_INDEX_PRICE|None": 62.2,
+    "OKX|ETH-USDT-SWAP|MARK_INDEX_PRICE|WORKER_UNAVAILABLE": 26.2,
+    "OKX|ETH-USDT-SWAP|QUOTE|None": 62.2,
+    "OKX|ETH-USDT-SWAP|QUOTE|WORKER_UNAVAILABLE": 26.2,
+    "OKX|ETH-USDT-SWAP|TRADE|WORKER_UNAVAILABLE": 26.2
+   },
+   "samples": 8
+  },
+  "writer_ready": {
+   "writer": {
+    "alive": true,
+    "demanded": 12,
+    "ready": true,
+    "status": "DEGRADED",
+    "unhealthy": 0,
+    "unhealthy_rows": []
+   }
+  }
+ },
+ "phases": {
+  "B": {
+   "brokers_answer_s": 74.33,
+   "consumer_visible_outage_s": 312.46,
+   "dl_all_healthy_s": 154.14,
+   "dl_query_ready_after_stop_s": 200.09,
+   "generation": "gen-20261019T084200Z",
+   "kafka_offset_continuity": {
+    "groups": [
+     "kn-projector-v3-a",
+     "kn-projector-v3-b",
+     "qdl-v2-book-resync-ingestor_binance_usdm-binance-public-book-001",
+     "qdl-v2-book-resync-ingestor_okx_swap-okx-public-001",
+     "qdl-v2-realtime-core-v2"
+    ],
+    "missing_after": [],
+    "ok": true,
+    "partitions_after": 22,
+    "partitions_before": 22,
+    "regressed": {}
+   },
+   "mesh_stop_s": 19.44,
+   "negative_probes": {
+    "kafka_admin_with_current_generation": true,
+    "kafka_admin_with_other_generation": false,
+    "query_with_other_identity": {
+     "detail": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate in certificate chain (_ssl.c:1010)>",
+     "error": "URLError",
+     "ok": false
+    },
+    "stream_with_other_identity": {
+     "ok": false,
+     "rc": 1,
+     "tail": " verify error:num=20:unable to get local issuer certificate 404712FACA750000:error:0A000086:SSL routines:tls_post_process_server_certificate:certificate verify failed:../ssl/statem/statem_clnt.c:1889:"
+    }
+   },
+   "query_ready_mtls_s": 156.5,
+   "refusals": {
+    "query_kn_1": {
+     " 401": 0,
+     "PERMISSION_DENIED": 0,
+     "UNAUTHENTICATED": 0,
+     "certificate": 0,
+     "manifest_revision": 0
+    },
+    "stream_kn_1": {
+     " 401": 0,
+     "PERMISSION_DENIED": 0,
+     "UNAUTHENTICATED": 0,
+     "certificate": 0,
+     "manifest_revision": 0
+    },
+    "stream_kn_2": {
+     " 401": 0,
+     "PERMISSION_DENIED": 0,
+     "UNAUTHENTICATED": 0,
+     "certificate": 0,
+     "manifest_revision": 0
+    },
+    "ts_writer": {
+     "auth_protocol": {
+      "401": 0,
+      "CERTIFICATE_VERIFY_FAILED": 0,
+      "HANDOFF_RESUME_REQUIRED": 0,
+      "SSLError": 0,
+      "STRICT_RESUME_REFUSAL": 0,
+      "UNAUTHENTICATED": 0
+     },
+     "data_policy": {
+      "DATA_STALE": 0,
+      "EVENT_AGE": 0,
+      "OPEN_SEQUENCE_GAP": 0,
+      "SESSION_STATE": 0,
+      "SOURCE_UNAVAILABLE": 48
+     }
+    }
+   },
+   "roles_healthy_after_s": {
+    "ingestor_binance_usdm": 82.9,
+    "ingestor_okx_swap": 82.9,
+    "kafka1": 92.1,
+    "kafka2": 92.1,
+    "kafka3": 92.1,
+    "market_cache": 92.1,
+    "market_projector_1": 89.1,
+    "query_kn_1": 154.1,
+    "rust_core": 79.9,
+    "stable_redis": 92.1,
+    "stream_kn_1": 95.3,
+    "stream_kn_2": 95.3
+   },
+   "route_recovery_bootstrap": {
+    "first_heartbeat_s": 10.4,
+    "ready": true,
+    "ready_after_s": 68.4,
+    "route_last_unhealthy_s": {
+     "BINANCE|ETHUSDT|BAR|None": 62.8,
+     "BINANCE|ETHUSDT|BAR|WORKER_UNAVAILABLE": 25.6,
+     "BINANCE|ETHUSDT|BOOK_DELTA|None": 62.8,
+     "BINANCE|ETHUSDT|BOOK_DELTA|WORKER_UNAVAILABLE": 25.6,
+     "BINANCE|ETHUSDT|BOOK_SNAPSHOT|None": 62.8,
+     "BINANCE|ETHUSDT|BOOK_SNAPSHOT|WORKER_UNAVAILABLE": 25.6,
+     "BINANCE|ETHUSDT|MARK_INDEX_PRICE|None": 62.8,
+     "BINANCE|ETHUSDT|MARK_INDEX_PRICE|WORKER_UNAVAILABLE": 25.6,
+     "BINANCE|ETHUSDT|QUOTE|WORKER_UNAVAILABLE": 25.6,
+     "BINANCE|ETHUSDT|TRADE|WORKER_UNAVAILABLE": 25.6,
+     "OKX|ETH-USDT-SWAP|BAR|WORKER_UNAVAILABLE": 25.6,
+     "OKX|ETH-USDT-SWAP|BOOK_DELTA|None": 62.8,
+     "OKX|ETH-USDT-SWAP|BOOK_DELTA|WORKER_UNAVAILABLE": 25.6,
+     "OKX|ETH-USDT-SWAP|BOOK_SNAPSHOT|None": 62.8,
+     "OKX|ETH-USDT-SWAP|BOOK_SNAPSHOT|WORKER_UNAVAILABLE": 25.6,
+     "OKX|ETH-USDT-SWAP|MARK_INDEX_PRICE|None": 62.8,
+     "OKX|ETH-USDT-SWAP|MARK_INDEX_PRICE|WORKER_UNAVAILABLE": 25.6,
+     "OKX|ETH-USDT-SWAP|QUOTE|WORKER_UNAVAILABLE": 25.6,
+     "OKX|ETH-USDT-SWAP|TRADE|WORKER_UNAVAILABLE": 25.6
+    },
+    "samples": 9
+   },
+   "steady": {
+    "last": {
+     "alive": true,
+     "demanded": 12,
+     "ready": true,
+     "status": "DEGRADED",
+     "unhealthy": 0,
+     "unhealthy_rows": []
+    },
+    "query": {
+     "body_status": "READY",
+     "keys": [
+      "authority",
+      "config_revision",
+      "ready",
+      "role",
+      "status"
+     ],
+     "ok": true,
+     "status": 200
+    },
+    "ready_all_samples": true,
+    "samples": 9
+   },
+   "stream_tls": {
+    "qdl-v2-stream-a": {
+     "ok": true,
+     "rc": 0,
+     "tail": "12:RSA-PSS+SHA384:RSA-PSS+SHA256:RSA+SHA512:RSA+SHA384:RSA+SHA256 Peer certificate: CN = stable-stream Hash used: SHA512 Signature type: RSA-PSS Verification: OK Server Temp Key: X25519, 253 bits DONE"
+    },
+    "qdl-v2-stream-b": {
+     "ok": true,
+     "rc": 0,
+     "tail": "12:RSA-PSS+SHA384:RSA-PSS+SHA256:RSA+SHA512:RSA+SHA384:RSA+SHA256 Peer certificate: CN = stable-stream Hash used: SHA512 Signature type: RSA-PSS Verification: OK Server Temp Key: X25519, 253 bits DONE"
+    }
+   },
+   "strict_restart": {
+    "first_heartbeat_s": 10.3,
+    "ready": true,
+    "ready_after_s": 35.4,
+    "route_last_unhealthy_s": {
+     "BINANCE|ETHUSDT|BAR|WORKER_UNAVAILABLE": 35.4,
+     "BINANCE|ETHUSDT|BOOK_DELTA|WORKER_UNAVAILABLE": 35.4,
+     "BINANCE|ETHUSDT|BOOK_SNAPSHOT|WORKER_UNAVAILABLE": 35.4,
+     "BINANCE|ETHUSDT|MARK_INDEX_PRICE|WORKER_UNAVAILABLE": 35.4,
+     "BINANCE|ETHUSDT|QUOTE|WORKER_UNAVAILABLE": 35.4,
+     "BINANCE|ETHUSDT|TRADE|WORKER_UNAVAILABLE": 35.4,
+     "OKX|ETH-USDT-SWAP|BAR|WORKER_UNAVAILABLE": 35.4,
+     "OKX|ETH-USDT-SWAP|BOOK_DELTA|WORKER_UNAVAILABLE": 35.4,
+     "OKX|ETH-USDT-SWAP|BOOK_SNAPSHOT|WORKER_UNAVAILABLE": 35.4,
+     "OKX|ETH-USDT-SWAP|MARK_INDEX_PRICE|WORKER_UNAVAILABLE": 35.4,
+     "OKX|ETH-USDT-SWAP|QUOTE|WORKER_UNAVAILABLE": 35.4,
+     "OKX|ETH-USDT-SWAP|TRADE|WORKER_UNAVAILABLE": 35.4
+    },
+    "samples": 4
+   },
+   "urp": 0,
+   "writer": {
+    "alive": true,
+    "demanded": 12,
+    "ready": true,
+    "status": "DEGRADED",
+    "unhealthy": 0,
+    "unhealthy_rows": []
+   },
+   "writer_bootstrap_ready_after_stop_s": 270.23,
+   "writer_cursor_items": {
+    "after": {
+     "by_feed": {
+      "QUOTE": 2,
+      "TRADE": 2
+     },
+     "files": 1,
+     "invalid_files": 0
+    },
+    "before": {
+     "by_feed": {
+      "QUOTE": 2,
+      "TRADE": 2
+     },
+     "files": 1,
+     "invalid_files": 0
+    }
+   },
+   "writer_exit_code": "0",
+   "writer_ready": true,
+   "writer_recovery_after_restart_s": 112.37,
+   "writer_stop_s": 3.91
+  },
+  "C": {
+   "brokers_answer_s": 59.66,
+   "consumer_visible_outage_s": 519.04,
+   "dl_all_healthy_s": 142.45,
+   "dl_query_ready_after_stop_s": 187.82,
+   "generation": "20260822T144323Z",
+   "kafka_offset_continuity": {
+    "groups": [
+     "kn-projector-v3-a",
+     "kn-projector-v3-b",
+     "qdl-v2-book-resync-ingestor_binance_usdm-binance-public-book-001",
+     "qdl-v2-book-resync-ingestor_okx_swap-okx-public-001",
+     "qdl-v2-realtime-core-v2"
+    ],
+    "missing_after": [],
+    "ok": true,
+    "partitions_after": 25,
+    "partitions_before": 23,
+    "regressed": {}
+   },
+   "mesh_stop_s": 18.13,
+   "negative_probes": {
+    "kafka_admin_with_current_generation": true,
+    "kafka_admin_with_other_generation": false,
+    "query_with_other_identity": {
+     "detail": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate in certificate chain (_ssl.c:1010)>",
+     "error": "URLError",
+     "ok": false
+    },
+    "stream_with_other_identity": {
+     "ok": false,
+     "rc": 1,
+     "tail": " verify error:num=20:unable to get local issuer certificate 40E730A611770000:error:0A000086:SSL routines:tls_post_process_server_certificate:certificate verify failed:../ssl/statem/statem_clnt.c:1889:"
+    }
+   },
+   "query_ready_mtls_s": 145.0,
+   "refusals": {
+    "query_kn_1": {
+     " 401": 0,
+     "PERMISSION_DENIED": 0,
+     "UNAUTHENTICATED": 0,
+     "certificate": 0,
+     "manifest_revision": 0
+    },
+    "stream_kn_1": {
+     " 401": 0,
+     "PERMISSION_DENIED": 0,
+     "UNAUTHENTICATED": 0,
+     "certificate": 0,
+     "manifest_revision": 0
+    },
+    "stream_kn_2": {
+     " 401": 0,
+     "PERMISSION_DENIED": 0,
+     "UNAUTHENTICATED": 0,
+     "certificate": 0,
+     "manifest_revision": 0
+    },
+    "ts_writer": {
+     "auth_protocol": {
+      "401": 0,
+      "CERTIFICATE_VERIFY_FAILED": 0,
+      "HANDOFF_RESUME_REQUIRED": 0,
+      "SSLError": 0,
+      "STRICT_RESUME_REFUSAL": 0,
+      "UNAUTHENTICATED": 0
+     },
+     "data_policy": {
+      "DATA_STALE": 0,
+      "EVENT_AGE": 0,
+      "OPEN_SEQUENCE_GAP": 0,
+      "SESSION_STATE": 0,
+      "SOURCE_UNAVAILABLE": 52
+     }
+    }
+   },
+   "roles_healthy_after_s": {
+    "ingestor_binance_usdm": 68.2,
+    "ingestor_okx_swap": 68.2,
+    "kafka1": 77.3,
+    "kafka2": 77.3,
+    "kafka3": 77.3,
+    "market_cache": 77.3,
+    "market_projector_1": 74.3,
+    "query_kn_1": 142.5,
+    "rust_core": 65.1,
+    "stable_redis": 77.3,
+    "stream_kn_1": 80.6,
+    "stream_kn_2": 80.6
+   },
+   "route_recovery_bootstrap": {
+    "first_heartbeat_s": 5.4,
+    "ready": true,
+    "ready_after_s": 251.1,
+    "route_last_unhealthy_s": {
+     "BINANCE|ETHUSDT|MARK_INDEX_PRICE|SOURCE_UNAVAILABLE": 125.8,
+     "BINANCE|ETHUSDT|MARK_INDEX_PRICE|UNCLASSIFIED": 64.7,
+     "BINANCE|ETHUSDT|QUOTE|None": 186.7,
+     "OKX|ETH-USDT-SWAP|MARK_INDEX_PRICE|SOURCE_UNAVAILABLE": 157.3,
+     "OKX|ETH-USDT-SWAP|QUOTE|DATA_NOT_READY": 217.6,
+     "OKX|ETH-USDT-SWAP|QUOTE|None": 243.8
+    },
+    "samples": 37
+   },
+   "steady": {
+    "last": {
+     "alive": true,
+     "demanded": 12,
+     "ready": true,
+     "status": "DEGRADED",
+     "unhealthy": 0,
+     "unhealthy_rows": []
+    },
+    "query": {
+     "body_status": "READY",
+     "keys": [
+      "authority",
+      "config_revision",
+      "ready",
+      "role",
+      "status"
+     ],
+     "ok": true,
+     "status": 200
+    },
+    "ready_all_samples": false,
+    "samples": 9
+   },
+   "stream_tls": {
+    "qdl-v2-stream-a": {
+     "ok": true,
+     "rc": 0,
+     "tail": "12:RSA-PSS+SHA384:RSA-PSS+SHA256:RSA+SHA512:RSA+SHA384:RSA+SHA256 Peer certificate: CN = stable-stream Hash used: SHA512 Signature type: RSA-PSS Verification: OK Server Temp Key: X25519, 253 bits DONE"
+    },
+    "qdl-v2-stream-b": {
+     "ok": true,
+     "rc": 0,
+     "tail": "12:RSA-PSS+SHA384:RSA-PSS+SHA256:RSA+SHA512:RSA+SHA384:RSA+SHA256 Peer certificate: CN = stable-stream Hash used: SHA512 Signature type: RSA-PSS Verification: OK Server Temp Key: X25519, 253 bits DONE"
+    }
+   },
+   "strict_restart": {
+    "first_heartbeat_s": 10.4,
+    "ready": true,
+    "ready_after_s": 69.9,
+    "route_last_unhealthy_s": {
+     "BINANCE|ETHUSDT|BAR|None": 62.9,
+     "BINANCE|ETHUSDT|BAR|WORKER_UNAVAILABLE": 26.0,
+     "BINANCE|ETHUSDT|BOOK_DELTA|None": 62.9,
+     "BINANCE|ETHUSDT|BOOK_DELTA|WORKER_UNAVAILABLE": 26.0,
+     "BINANCE|ETHUSDT|BOOK_SNAPSHOT|None": 62.9,
+     "BINANCE|ETHUSDT|BOOK_SNAPSHOT|WORKER_UNAVAILABLE": 26.0,
+     "BINANCE|ETHUSDT|MARK_INDEX_PRICE|None": 62.9,
+     "BINANCE|ETHUSDT|MARK_INDEX_PRICE|WORKER_UNAVAILABLE": 26.0,
+     "BINANCE|ETHUSDT|QUOTE|None": 62.9,
+     "BINANCE|ETHUSDT|QUOTE|WORKER_UNAVAILABLE": 26.0,
+     "BINANCE|ETHUSDT|TRADE|WORKER_UNAVAILABLE": 26.0,
+     "OKX|ETH-USDT-SWAP|BAR|None": 62.9,
+     "OKX|ETH-USDT-SWAP|BAR|WORKER_UNAVAILABLE": 26.0,
+     "OKX|ETH-USDT-SWAP|BOOK_DELTA|None": 62.9,
+     "OKX|ETH-USDT-SWAP|BOOK_DELTA|WORKER_UNAVAILABLE": 26.0,
+     "OKX|ETH-USDT-SWAP|BOOK_SNAPSHOT|None": 62.9,
+     "OKX|ETH-USDT-SWAP|BOOK_SNAPSHOT|WORKER_UNAVAILABLE": 26.0,
+     "OKX|ETH-USDT-SWAP|MARK_INDEX_PRICE|None": 62.9,
+     "OKX|ETH-USDT-SWAP|MARK_INDEX_PRICE|WORKER_UNAVAILABLE": 26.0,
+     "OKX|ETH-USDT-SWAP|QUOTE|None": 62.9,
+     "OKX|ETH-USDT-SWAP|QUOTE|WORKER_UNAVAILABLE": 26.0,
+     "OKX|ETH-USDT-SWAP|TRADE|WORKER_UNAVAILABLE": 26.0
+    },
+    "samples": 9
+   },
+   "urp": 0,
+   "writer": {
+    "alive": true,
+    "demanded": 12,
+    "ready": true,
+    "status": "DEGRADED",
+    "unhealthy": 0,
+    "unhealthy_rows": []
+   },
+   "writer_bootstrap_ready_after_stop_s": 441.87,
+   "writer_cursor_items": {
+    "after": {
+     "by_feed": {
+      "QUOTE": 2,
+      "TRADE": 2
+     },
+     "files": 1,
+     "invalid_files": 0
+    },
+    "before": {
+     "by_feed": {
+      "QUOTE": 2,
+      "TRADE": 2
+     },
+     "files": 1,
+     "invalid_files": 0
+    }
+   },
+   "writer_exit_code": "0",
+   "writer_ready": true,
+   "writer_recovery_after_restart_s": 331.22,
+   "writer_stop_s": 3.63
+  },
+  "D": {
+   "brokers_answer_s": 80.11,
+   "consumer_visible_outage_s": 353.14,
+   "dl_all_healthy_s": 159.63,
+   "dl_query_ready_after_stop_s": 207.39,
+   "generation": "gen-20261019T084200Z",
+   "kafka_offset_continuity": {
+    "groups": [
+     "kn-projector-v3-a",
+     "kn-projector-v3-b",
+     "qdl-v2-book-resync-ingestor_binance_usdm-binance-public-book-001",
+     "qdl-v2-book-resync-ingestor_okx_swap-okx-public-001",
+     "qdl-v2-realtime-core-v2"
+    ],
+    "missing_after": [],
+    "ok": true,
+    "partitions_after": 27,
+    "partitions_before": 25,
+    "regressed": {}
+   },
+   "mesh_stop_s": 21.87,
+   "negative_probes": {
+    "kafka_admin_with_current_generation": true,
+    "kafka_admin_with_other_generation": false,
+    "query_with_other_identity": {
+     "detail": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate in certificate chain (_ssl.c:1010)>",
+     "error": "URLError",
+     "ok": false
+    },
+    "stream_with_other_identity": {
+     "ok": false,
+     "rc": 1,
+     "tail": " verify error:num=20:unable to get local issuer certificate 40D79FAD8B770000:error:0A000086:SSL routines:tls_post_process_server_certificate:certificate verify failed:../ssl/statem/statem_clnt.c:1889:"
+    }
+   },
+   "query_ready_mtls_s": 161.85,
+   "refusals": {
+    "query_kn_1": {
+     " 401": 0,
+     "PERMISSION_DENIED": 0,
+     "UNAUTHENTICATED": 0,
+     "certificate": 0,
+     "manifest_revision": 0
+    },
+    "stream_kn_1": {
+     " 401": 0,
+     "PERMISSION_DENIED": 0,
+     "UNAUTHENTICATED": 0,
+     "certificate": 0,
+     "manifest_revision": 0
+    },
+    "stream_kn_2": {
+     " 401": 0,
+     "PERMISSION_DENIED": 0,
+     "UNAUTHENTICATED": 0,
+     "certificate": 0,
+     "manifest_revision": 0
+    },
+    "ts_writer": {
+     "auth_protocol": {
+      "401": 1,
+      "CERTIFICATE_VERIFY_FAILED": 0,
+      "HANDOFF_RESUME_REQUIRED": 0,
+      "SSLError": 0,
+      "STRICT_RESUME_REFUSAL": 0,
+      "UNAUTHENTICATED": 0
+     },
+     "data_policy": {
+      "DATA_STALE": 0,
+      "EVENT_AGE": 0,
+      "OPEN_SEQUENCE_GAP": 0,
+      "SESSION_STATE": 0,
+      "SOURCE_UNAVAILABLE": 44
+     }
+    }
+   },
+   "roles_healthy_after_s": {
+    "ingestor_binance_usdm": 88.6,
+    "ingestor_okx_swap": 88.6,
+    "kafka1": 97.7,
+    "kafka2": 97.7,
+    "kafka3": 97.7,
+    "market_cache": 97.7,
+    "market_projector_1": 94.8,
+    "query_kn_1": 159.6,
+    "rust_core": 85.5,
+    "stable_redis": 97.7,
+    "stream_kn_1": 101.0,
+    "stream_kn_2": 101.0
+   },
+   "route_recovery_bootstrap": {
+    "first_heartbeat_s": 8.3,
+    "ready": true,
+    "ready_after_s": 97.7,
+    "route_last_unhealthy_s": {
+     "BINANCE|ETHUSDT|BAR|WORKER_UNAVAILABLE": 36.1,
+     "BINANCE|ETHUSDT|BOOK_DELTA|WORKER_UNAVAILABLE": 36.1,
+     "BINANCE|ETHUSDT|BOOK_SNAPSHOT|WORKER_UNAVAILABLE": 36.1,
+     "BINANCE|ETHUSDT|MARK_INDEX_PRICE|WORKER_UNAVAILABLE": 36.1,
+     "BINANCE|ETHUSDT|QUOTE|DATA_NOT_READY": 61.7,
+     "BINANCE|ETHUSDT|QUOTE|WORKER_UNAVAILABLE": 36.1,
+     "BINANCE|ETHUSDT|TRADE|WORKER_UNAVAILABLE": 36.1,
+     "OKX|ETH-USDT-SWAP|BAR|None": 61.7,
+     "OKX|ETH-USDT-SWAP|BAR|WORKER_UNAVAILABLE": 36.1,
+     "OKX|ETH-USDT-SWAP|BOOK_DELTA|None": 61.7,
+     "OKX|ETH-USDT-SWAP|BOOK_DELTA|WORKER_UNAVAILABLE": 36.1,
+     "OKX|ETH-USDT-SWAP|BOOK_SNAPSHOT|None": 61.7,
+     "OKX|ETH-USDT-SWAP|BOOK_SNAPSHOT|WORKER_UNAVAILABLE": 36.1,
+     "OKX|ETH-USDT-SWAP|MARK_INDEX_PRICE|None": 61.7,
+     "OKX|ETH-USDT-SWAP|MARK_INDEX_PRICE|WORKER_UNAVAILABLE": 36.1,
+     "OKX|ETH-USDT-SWAP|QUOTE|DATA_NOT_READY": 89.9,
+     "OKX|ETH-USDT-SWAP|QUOTE|WORKER_UNAVAILABLE": 36.1,
+     "OKX|ETH-USDT-SWAP|TRADE|WORKER_UNAVAILABLE": 36.1
+    },
+    "samples": 13
+   },
+   "steady": {
+    "last": {
+     "alive": true,
+     "demanded": 12,
+     "ready": true,
+     "status": "DEGRADED",
+     "unhealthy": 0,
+     "unhealthy_rows": []
+    },
+    "query": {
+     "body_status": "READY",
+     "keys": [
+      "authority",
+      "config_revision",
+      "ready",
+      "role",
+      "status"
+     ],
+     "ok": true,
+     "status": 200
+    },
+    "ready_all_samples": false,
+    "samples": 9
+   },
+   "stream_tls": {
+    "qdl-v2-stream-a": {
+     "ok": true,
+     "rc": 0,
+     "tail": "12:RSA-PSS+SHA384:RSA-PSS+SHA256:RSA+SHA512:RSA+SHA384:RSA+SHA256 Peer certificate: CN = stable-stream Hash used: SHA512 Signature type: RSA-PSS Verification: OK Server Temp Key: X25519, 253 bits DONE"
+    },
+    "qdl-v2-stream-b": {
+     "ok": true,
+     "rc": 0,
+     "tail": "12:RSA-PSS+SHA384:RSA-PSS+SHA256:RSA+SHA512:RSA+SHA384:RSA+SHA256 Peer certificate: CN = stable-stream Hash used: SHA512 Signature type: RSA-PSS Verification: OK Server Temp Key: X25519, 253 bits DONE"
+    }
+   },
+   "strict_restart": {
+    "first_heartbeat_s": 9.9,
+    "ready": true,
+    "ready_after_s": 35.9,
+    "route_last_unhealthy_s": {
+     "BINANCE|ETHUSDT|BAR|WORKER_UNAVAILABLE": 35.9,
+     "BINANCE|ETHUSDT|BOOK_DELTA|WORKER_UNAVAILABLE": 35.9,
+     "BINANCE|ETHUSDT|BOOK_SNAPSHOT|WORKER_UNAVAILABLE": 35.9,
+     "BINANCE|ETHUSDT|MARK_INDEX_PRICE|WORKER_UNAVAILABLE": 35.9,
+     "BINANCE|ETHUSDT|QUOTE|WORKER_UNAVAILABLE": 35.9,
+     "BINANCE|ETHUSDT|TRADE|WORKER_UNAVAILABLE": 35.9,
+     "OKX|ETH-USDT-SWAP|BAR|WORKER_UNAVAILABLE": 35.9,
+     "OKX|ETH-USDT-SWAP|BOOK_DELTA|WORKER_UNAVAILABLE": 35.9,
+     "OKX|ETH-USDT-SWAP|BOOK_SNAPSHOT|WORKER_UNAVAILABLE": 35.9,
+     "OKX|ETH-USDT-SWAP|MARK_INDEX_PRICE|WORKER_UNAVAILABLE": 35.9,
+     "OKX|ETH-USDT-SWAP|QUOTE|WORKER_UNAVAILABLE": 35.9,
+     "OKX|ETH-USDT-SWAP|TRADE|WORKER_UNAVAILABLE": 35.9
+    },
+    "samples": 4
+   },
+   "urp": 0,
+   "writer": {
+    "alive": true,
+    "demanded": 12,
+    "ready": true,
+    "status": "DEGRADED",
+    "unhealthy": 0,
+    "unhealthy_rows": []
+   },
+   "writer_bootstrap_ready_after_stop_s": 307.35,
+   "writer_cursor_items": {
+    "after": {
+     "by_feed": {
+      "QUOTE": 2,
+      "TRADE": 2
+     },
+     "files": 1,
+     "invalid_files": 0
+    },
+    "before": {
+     "by_feed": {
+      "QUOTE": 2,
+      "TRADE": 2
+     },
+     "files": 1,
+     "invalid_files": 0
+    }
+   },
+   "writer_exit_code": "0",
+   "writer_ready": true,
+   "writer_recovery_after_restart_s": 145.75,
+   "writer_stop_s": 3.81
+  }
+ },
+ "run": {
+  "compose": "deploy/compose/qdl-v2-stable-kn.yml @ 9b6747f",
+  "ended": "2026-10-19T18:40:56.846Z",
+  "events_sha256": "0dff2c68ae54c9faf62f48fb549ffe4f379c0718e7d3c4b3aa3f3e2a09811db0",
+  "flags": "--burst --expect-query-image",
+  "generation_new": "gen-20261019T084200Z (permission-hardened)",
+  "host_lock_owner": "claude-dl-v225-final",
+  "project": "qdl-v225-reh",
+  "query_image_new": "qdl-v2-python:2.2.5-9b6747f sha256:753604f8abaa866e2de30c7ccaf36168986bc6991550ee326d53e51b83d1550a",
+  "started": "2026-10-19T17:56:06.494Z",
+  "tool": "scripts/kn_mesh_rotation_rehearsal.py @ 9b6747f",
+  "ts_root": "git archive TS v2.0.0 (loader sha256 dc339c2d...)",
+  "writer_image": "2deb90b0"
+ },
+ "schema": "qdl.v225.window-rehearsal-receipt.v2",
+ "setup": {
+  "cpu_caps": {
+   "ingestor_binance_usdm": 0.12,
+   "ingestor_okx_swap": 0.12,
+   "kafka1": 0.29,
+   "kafka2": 0.29,
+   "kafka3": 0.29,
+   "market_cache": 0.07,
+   "market_projector_1": 0.2,
+   "query_kn_1": 0.25,
+   "rust_core": 0.3,
+   "stable_redis": 0.05,
+   "stream_kn_1": 0.12,
+   "stream_kn_2": 0.12
+  },
+  "cpu_total": 2.99,
+  "narrowed_ingestors": {
+   "ingestor_binance_usdm.json": {
+    "bindings_after": 5,
+    "bindings_before": 27,
+    "feeds": [
+     "BAR",
+     "BOOK",
+     "MARK_INDEX",
+     "QUOTE",
+     "TRADE"
+    ]
+   },
+   "ingestor_okx_swap.json": {
+    "bindings_after": 19,
+    "bindings_before": 103,
+    "feeds": [
+     "BAR",
+     "BOOK",
+     "MARK_INDEX",
+     "QUOTE",
+     "TRADE"
+    ]
+   }
+  }
+ },
+ "teardown": {
+  "containers": 13,
+  "dirs": 5,
+  "left_containers": 0,
+  "networks": 4,
+  "volumes": 4
+ },
+ "verdict": "PASS"
+}

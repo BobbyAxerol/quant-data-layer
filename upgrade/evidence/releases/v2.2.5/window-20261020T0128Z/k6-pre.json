@@ -1,0 +1,79 @@
+{
+ "mode": "observe",
+ "at_utc": "2026-10-20T01:30:17.936658+00:00",
+ "runner": {
+  "backend": "admin-container",
+  "image": "apache/kafka@sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+  "network": "qdl_v2_stable_candidate_stable_internal",
+  "bootstrap": "kafka1:9092,kafka2:9092,kafka3:9092",
+  "command_config": "/etc/kafka/secrets/admin.properties",
+  "cert_dir_mount": "ro"
+ },
+ "plan_status": "MEASURED",
+ "topics": {
+  "__transaction_state": {
+   "planned_keys": {
+    "segment.ms": "600000"
+   },
+   "c_state": "APPLIED",
+   "temp_keys": {},
+   "temp_state": "NONE",
+   "other_overrides_match_frozen": true,
+   "drift": {}
+  },
+  "__consumer_offsets": {
+   "planned_keys": {
+    "delete.retention.ms": "600000",
+    "segment.ms": "60000"
+   },
+   "c_state": "APPLIED",
+   "temp_keys": {
+    "min.cleanable.dirty.ratio": null
+   },
+   "temp_state": "ABSENT",
+   "other_overrides_match_frozen": true,
+   "drift": {}
+  }
+ },
+ "partitions": {
+  "__consumer_offsets-43": {
+   "size_bytes_by_broker": {
+    "1": 12753176,
+    "2": 22883248,
+    "3": 22883147
+   },
+   "observation_problems": [],
+   "log_start_offset": 0,
+   "log_end_offset": 428459264,
+   "offset_span": 428459264,
+   "assigned_replicas": [
+    "3",
+    "2",
+    "1"
+   ]
+  }
+ },
+ "temp_removal": {
+  "present": false,
+  "watch_partition": "__consumer_offsets-43",
+  "assigned_replicas": [
+   "1",
+   "2",
+   "3"
+  ],
+  "observed_replicas": [
+   "1",
+   "2",
+   "3"
+  ],
+  "observation_complete": true,
+  "observation_problems": [],
+  "max_size_bytes": 22883248,
+  "observed_max_size_bytes": 22883248,
+  "threshold_bytes": 33554432,
+  "status": "TEMP_NOT_PRESENT",
+  "remove_recommended": false,
+  "remove_command": "kafka_internal_topic_compaction.py --remove-temp --apply --cert-dir <cert>"
+ },
+ "note": "offset_span is not a record count; replayed records = broker 'Finished loading' line"
+}

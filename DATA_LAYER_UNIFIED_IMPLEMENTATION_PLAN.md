@@ -76287,3 +76287,851 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
     - Not run (unaffected): rust fmt / clippy / test, cargo-deny, contract and SDK jobs, the rest of the unit suite.
   - Deviation: the A5 host tests at ~05:05Z ran without reading the host lock first (34a); the lock was absent then
     (and at 05:23Z), and no measurement was running.
+
+### CI/CD: change-scoped jobs and sharded unit suite - 2026-10-19 (Claude)
+
+- Owner request 2026-10-19: "tối ưu CI/CD, đừng sửa 1 tí lại chạy CI toàn bộ thì lâu lắm; chạy thông minh nhưng vẫn hiệu
+  quả và đúng quy trình". Branch `ci/change-scope-and-shards` (worktree `/home/bobby/.worktrees/data-layer-ci-scope`),
+  based on `fix/p184-dl-closure` 33797dd; draft PR into dev, it shrinks to this commit once PR #33 merges.
+  Status: implemented, tested locally; GitHub proof runs below.
+- Measured baseline (GitHub run 39201550345, docs-only commit 288a580, 30 min wall): `unit-tests` 30 min, of which
+  the single "Run unit tests" step (`python -m unittest discover -s tests` in `test_runner`) took 1583 s and every other
+  step < 60 s; `contract-tests` 4 min (Rust fmt / clippy / test 260 s); `kn-native-integration` 5 min;
+  `sdk-python310` and `consolidated-source-preflight` < 1 min. No readable required checks on the repo; ruleset
+  NO-FORCE disabled. A docs-only journal commit cost the full 30 min.
+- Design (`.github/workflows/ci.yml`):
+  - `changes` job (checkout with full history) self-tests and runs `scripts/ci_change_scope.py`, outputs `full`,
+    `python`, `rust`, `contracts`, `reason` and writes the JSON summary to the step summary.
+  - Job gates (job-level `needs: changes` + `if:`; a job skipped by `if` reports Skipped):
+    `contract-tests` (buf format / lint / breaking, generated code current, python generated contracts) if contracts;
+    new `rust-workspace` (Rust fmt / clippy / test + cargo-deny, moved out of contract-tests) if rust, with
+    `actions/cache@5a3ec84e` (v4.2.3) of `.cargo-ci/registry`, `.cargo-ci/git`, `target` mounted into rust:1.82-slim,
+    exact key `rust-workspace-<os>-rust-1.82-slim-<hashFiles(Cargo.lock, rust-toolchain.toml)>`, no restore-keys,
+    saved only on success, `CARGO_INCREMENTAL=0`; `sdk-python310` if python; `unit-tests` = matrix of 4 shards
+    (fail-fast false) running `python -B -m scripts.ci_test_shard --shard N --of 4` in `test_runner`, if python;
+    `release-gates` = every other step of the former unit-tests job, unchanged and in order (image build, runtime
+    audit, KN Redis readback, Phase 5/6/7 named gates, beta topology, migration, load, Redis rebuild, Rust replay tool
+    + fixtures, durability perf, trivy image scan, SBOM rehearsal, cleanup), if python or rust; `kn-native-integration`
+    if rust; `repository-scan` (trivy fs secret + misconfig, split out) and `consolidated-source-preflight` always.
+  - `ci-result` (needs all, `if: always()`) runs `ci_change_scope.py --verify-needs` on `toJSON(needs)`: FAIL when
+    `changes` did not succeed or lacks an output, when an in-scope job is not `success` (failure, cancelled or
+    skipped), or when an out-of-scope job failed; PASS when the rest were skipped by scope. It is the single status.
+  - `workflow_dispatch` added; concurrency: a pull request cancels its older run; every other event has its own
+    group (`run-<run_id>`). Deviation from the requested `github.ref` group: GitHub keeps one pending run per group and
+    cancels older pending ones even with cancel-in-progress false, which would drop the full run of an intermediate
+    dev push.
+- Process rule (recorded here and in the workflow header): a PR into dev runs only its scoped suites; a PR into
+  `main`, a push to dev, `workflow_dispatch`, the `ci:full` label (read from the payload on the next push / reopen) and
+  any change to a CI-defining file (`.github/**`, `Dockerfile*`, `docker-compose*.yml`, `.dockerignore`,
+  `.trivyignore`, `pyproject.toml`, `poetry.lock`, `requirements*`, `scripts/ci_change_scope.py`,
+  `scripts/ci_test_shard.py`, `scripts/prepare_nonroot_runtime.sh`) run everything. A release receipt requires a
+  full run.
+- Path rules (`scripts/ci_change_scope.py`), with two adjustments the code required:
+  - docs (`*.md`, `docs/**`, `LICENSE`) set no suite, except (adjustment 1) a doc whose exact path appears in a tracked
+    file under `tests/` as a whole path (`qdl_sdk/README.md` does not name `README.md`; tests read
+    docs/runbooks/phase93-hold-close-expand.md and
+    docs/runbooks/phase103-shared-rust-primary-handoff.md) and markdown under `qdl_sdk/` (README/CHANGELOG ship in the
+    wheel, tests/test_qdl_sdk_release.py reads them) or `tests/`, which run python;
+  - Rust: `rust/**` (all 9 Cargo workspace members are under rust/), `Cargo.toml`, `Cargo.lock`, `deny.toml`,
+    `rust-toolchain*`, `.cargo/**`; (adjustment 2) `tests/fixtures/**` sets python + rust because Rust tests read
+    tests/fixtures/phase2, phase9 and phase104 (rust/qdl-core/src/canonical.rs, l2_book.rs, l2_adapter.rs,
+    okx_simulator.rs, rust/qdl-venue-core/src/authority.rs);
+  - `contracts/**`, `generated/**` set contracts + python + rust (Rust reads contracts/golden and generated/rust);
+    anything else, unknown included, sets python; a classifier crash fails `changes`, hence `ci-result`.
+- Sharding (`scripts/ci_test_shard.py`): `unittest.defaultTestLoader.discover("tests")` from the same cwd as before
+  (run as a module so sys.path[0] is the cwd, as with `python -m unittest`; the requested
+  `python -B scripts/ci_test_shard.py` would put scripts/ first on sys.path and let tests import scripts modules by bare
+  name), grouped by top-level module, greedy longest-first balance by test count (or seconds from an optional
+  `scripts/ci_test_shard_weights.json`, not checked in yet), runner settings of `unittest.main` (warnings "default").
+  Import failures stay `_FailedTest` and fail their shard; shard 1 verifies that the 4 shards cover every module once
+  and none is empty; each shard prints per-module seconds (`shard-timing`). Discovery in qdl-v2-python:2.2.4-31a5155
+  (--network none, worktree ro): 334 modules, weight 4040 (test cases, minimum 1 per module), 1010 per shard.
+- Release receipt: `scripts/p184_local_ci.py` expands `strategy.matrix` (`unit-tests[shard=1..4]`, `${{ matrix.* }}`
+  substituted), ignores job-level `needs`/`if` (local = push semantics = full), does not replay the routing jobs
+  `changes` / `ci-result`, treats `actions/cache` as a no-op (cold build), and writes `scope`, `scope_basis` and
+  `workflow_jobs` into summary.json. `--changed-since BASE` runs only the jobs the classifier selects for BASE...SHA
+  (job-level `if:` evaluated; unsupported conditions fail closed) and, like any `--jobs` subset, marks the receipt
+  `scope: affected`. `scripts/p184_consolidated_build.py` now needs the receipt file for a DL CI pass
+  (`--dl-ci-receipt`): sha256 = `--dl-ci-receipt-sha256`, schema, sha = source commit, scope `full`, status PASS and
+  jobs = workflow_jobs, else it refuses; a digest-only attestation is refused.
+- Tests (host python 3.12.3, after the host lock was released): `python3 -B -m unittest tests.test_ci_change_scope
+  tests.test_ci_test_shard tests.test_p184_local_ci tests.test_p184_consolidated_build` 89 OK, 0 skipped; the same
+  modules in `qdl-v2-python:2.2.4-31a5155` (--network none, worktree ro) 89 run, OK, 7 skipped (git-dependent
+  classifier and dry-run tests: the image has no git; the `changes` job runs tests.test_ci_change_scope on the runner
+  where git exists). Covered: path rules (CI-defining, docs, test-read docs, Rust incl. every Cargo member and every
+  file Rust reads outside rust/, contracts / generated / fixtures fan-out, unknown -> python), forced-full cases (push,
+  dispatch, PR into main, `ci:full`, zero / empty / unknown base), merge-base diff, GITHUB_OUTPUT format,
+  `--verify-needs` (scoped skips pass; failure, cancelled, in-scope skip, changes failure, missing output or missing
+  need fail), workflow wiring (every `needs` / `needs.*.outputs.*` / `steps.*.outputs` reference exists, job-level
+  `if:` == JOB_SCOPE, ci-result needs every job, shard count, cache pin and key), partition properties (complete,
+  disjoint, non-empty, deterministic, greedy bound), discovery shards on a temp tree (an import failure and a failing
+  test each fail their shard), local-CI matrix expansion / scope selection / dry-run scope marking, consolidated build
+  refusing affected, unscoped, INCOMPLETE, other-commit, other-schema, partial-job, digest-only and mismatched
+  receipts. A guard test asserts that no tests/ file names the plan, the certification ledger or the root README as
+  a path: the first local `--changed-since` dry run showed the new test file itself naming the plan, which would have
+  made every journal commit run python (fixed before push; AGENTS.md stays test-read via
+  tests/test_host_measurement_lock.py). Found while testing: `unittest.defaultTestLoader` keeps `_top_level_dir` across discover calls in Python
+  3.12, so the shard runner uses a fresh `TestLoader()` (same class and behaviour on a first discover).
+- Not run locally: the full unit suite and the shards themselves (no whole-suite run on the shared host; GitHub is the
+  proof), the Rust job and its cache, ruff (not installed on the host or in the image; syntax checked only).
+- Deviation (34a): at ~05:57-05:58Z four import-only discovery containers (`--list`, --network none, a few seconds
+  each) and at ~06:01Z one 0.04 s host unittest ran inside foreign host-lock windows (Codex PMA11 05:56:52-06:01:52Z,
+  then epg10-08 from 05:59:31Z): the lock was read but not honoured at that moment. Any measurement in those windows
+  should treat them as foreign activity. Afterwards every run waited for the lock to clear.
+- GitHub proof run 1: run 39208370362 on b1023f3 (PR #34 opened as a draft into dev; event pull_request; scope
+  full because the PR changes .github/workflows/ci.yml, docker-compose.v2-stable.yml from PR #33 and the two CI
+  scripts). Wall 1011 s (16.9 min) against 30 min before. Per job: changes 13 s (29 classifier tests OK on the runner,
+  git and yaml present), consolidated-source-preflight 10 s, repository-scan 21 s, contract-tests 14 s, sdk-python310
+  13 s, rust-workspace 260 s (Rust step 239 s, cold), release-gates 256 s, kn-native-integration 363 s, unit-tests
+  shard 1 642 s / 2 629 s / 3 983 s / 4 359 s (image build 49-57 s per shard), ci-result 7 s.
+  - Shards by test count (1026/1026/1026/1025) were unbalanced in time: suite seconds 550 / 540 / 894 / 262, sum
+    2246 s over 336 modules. Shard 3 set the wall time.
+  - Shard 4 FAILED one test: `test_fund_phase6_capacity` (synthetic sustained-load gate, burst window 405.5 events/s
+    against the >= 450 floor = 0.9 x 500). It is a wall-clock throughput threshold on a shared 2-vCPU runner. Its
+    predecessor module in the shard (`test_fund_phase5_stream_sdk`) is also its predecessor in the full discovery
+    order, so this is not a new ordering. Not fixed here; watched in the next runs. `ci-result` FAILED as designed
+    ("unit-tests: in scope, result failure").
+  - Cargo cache save FAILED (warning, the job stayed green): `tar` as the runner user could not read crate sources
+    that root extracted in the container. Fixed: the Rust step now runs `chown -R $CACHE_OWNER target
+    /usr/local/cargo/registry /usr/local/cargo/git` inside the container after cargo, and exits with cargo's status.
+- Shard balance: `scripts/ci_test_shard_weights.json` holds the per-module seconds of run 39208370362 (336 modules).
+  With these weights the greedy partition gives 561.5 s per shard (84 modules each). A module missing from the file
+  weighs its test-case count. Refresh the file from the `shard-timing` lines when the shards drift.
+- Scoped path on GitHub: it cannot be shown on PR #34 itself. `changes` diffs the whole PR (merge base...head), as it
+  must, and the PR contains ci.yml, so every push to it runs full. The first PR into dev after this merges is the
+  GitHub proof. Locally: `p184_local_ci.py --changed-since <ci commit> --dry-run` on a docs-only commit selects only
+  consolidated-source-preflight + repository-scan, and the classifier / `--verify-needs` tests cover the docs-only
+  PASS and the skip rules.
+- GitHub proof run 2: run 39210279457 on 139d23f (weights + cache ownership fix; scope full for the same reason).
+  **All 12 jobs success, ci-result PASS, wall 720 s (12.0 min)** against 30 min before and 16.9 min in run 1.
+  - Per job: changes 12 s, consolidated-source-preflight 13 s, repository-scan 17 s, contract-tests 13 s,
+    sdk-python310 10 s, rust-workspace 291 s (cold, Rust step 259 s), release-gates 201 s, kn-native-integration
+    335 s, unit-tests shard 1 517 s / 2 688 s / 3 661 s / 4 695 s, ci-result 5 s.
+  - Partition check PASS: 336 modules, loads 561 s each by run-1 seconds. Measured suite seconds per shard:
+    574 / 592 / 426 / 596 (runner variance against the run-1 weights).
+  - `test_fund_phase6_capacity` passed in this run.
+  - Cargo cache saved: key `rust-workspace-Linux-rust-1.82-slim-5df2c155...`, 740 MB, scoped to refs/pull/34/merge.
+    GitHub lets a PR read caches of its own merge ref and of the base branch. After merge, a push to dev saves the
+    cache every PR into dev reads.
+  - Cache-hit measurement (attempt 2: rerun of rust-workspace only): restore 12 s, Rust fmt/clippy/test 154 s against
+    259 s cold, job 182 s against 291 s.
+- Status: implemented, tested locally, GitHub full path proven (run 39210279457 green). The scoped / docs-only path
+  is proven locally only, until the first PR into dev after merge. Not merged; PR #34 stays a draft.
+- Open:
+  - `test_fund_phase6_capacity` throughput floor is wall-clock sensitive on shared runners (1 failure in 2 runs here).
+    Proposed: own slice, if it recurs.
+  - The weights file needs a refresh when modules grow.
+  - `scripts/p184_local_ci.py` full replay now builds the CI image once per shard plus once for release-gates.
+    Local cost is higher; the receipt stays exact.
+- GitHub run 3: run 39211947957 on 6bfca83 (journal commit; still full because the PR contains ci.yml). All 13 jobs
+  success, ci-result PASS, wall 723 s. Per job: changes 9 s, consolidated-source-preflight 10 s, repository-scan
+  14 s, contract-tests 16 s, sdk-python310 10 s, rust-workspace 179 s (cargo cache hit across pushes of the same PR),
+  release-gates 265 s, kn-native-integration 348 s, unit-tests shard 1 700 s / 2 665 s / 3 635 s / 4 651 s,
+  ci-result 7 s.
+- Coordinator review of PR #34 (blocking, fixed): change 7 made `p184_consolidated_build.py --dl-ci-status pass`
+  unreachable. Every local receipt is INCOMPLETE because its sudo step is skipped, and GitHub CI, now the
+  authoritative full run, had no accepted receipt form.
+  - New `scripts/ci_github_run_receipt.py --run-id N [--repo R] --out FILE` writes schema
+    `qdl.ci.github-run-receipt.v1`. Token from ~/.config/data-layer/github/token.env, never printed; read-only REST
+    calls. Contents: run id, attempt, html_url, workflow path, event, head branch / sha, status, conclusion; every
+    job of the latest attempt (name, conclusion, times); the expected job names from the workflow file at head_sha
+    (matrix as `unit-tests (1)`).
+  - Scope source: the `changes` job log, i.e. the `full=` / `python=` / `rust=` / `contracts=` stdout lines of
+    ci_change_scope.py and the `"event"` / `"base"` / `"head"` fields of its JSON summary. Repeated values must
+    agree. The REST API exposes neither the step summary nor the job outputs. The log is corroborated by the job
+    conclusions. Job-log downloads redirect to a signed blob URL, so the client drops the Authorization header on a
+    cross-host redirect (the first live try failed with 401 without that).
+  - `p184_consolidated_build.py` accepts either receipt; the local-receipt rules are unchanged. A GitHub receipt is
+    refused unless all of the following hold, checked from the raw fields (`scope` is not trusted):
+    - sha256 = `--dl-ci-receipt-sha256`;
+    - head_sha = commit; workflow `.github/workflows/ci.yml`; run completed / success;
+    - the changes job said full / python / rust / contracts = true for this head and this event;
+    - every expected job, `changes` and `ci-result` included, is present with conclusion success, and no job is
+      skipped or failed;
+    - event push or workflow_dispatch; or pull_request only when the classifier's base is an ancestor of the commit
+      (GitHub tests the merge of head into base; the merge tree equals the commit's tree only then).
+  - Live check: the receipt of run 39211947957 (sha256 57e0be8c...) is REFUSED for 6bfca83. Its pull_request base
+    5c51a42 (dev before #33) is not an ancestor of 6bfca83, so that run tested a merged tree different from the commit.
+- Branch updated by merging origin/dev 789bfa6 (PR #33 merged) into it, no force-push: the PR diff against dev is
+  now only the CI commits.
+- Tests (host, lock checked and absent): `tests.test_ci_github_run_receipt tests.test_p184_consolidated_build
+  tests.test_ci_change_scope tests.test_ci_test_shard tests.test_p184_local_ci` 104 OK. New cases:
+  - receipt script: log parsing, including echoed command text, conflicts and missing flags; GitHub job naming; full
+    vs partial scope; CLI with a fake client; refusal of a run that is not completed; auth dropped on redirect;
+  - consolidated build: push / dispatch accepted without git; pull_request accepted only with an ancestor base;
+    refused for another commit, another workflow, failure, full=false, another classified head, an event mismatch,
+    an unsupported event, expected jobs without ci-result, a missing job, a skipped job, `scope` saying full over a
+    failed shard, and a digest mismatch.
+- GitHub run 4: run 39213849110 on 73f62e7 (receipt fix, after merging dev 789bfa6). All 13 jobs success, wall
+  795 s. Shards 687 / 447 / 676 / 770 s (suite 581 / 360 / 584 / 676 s; dev added modules since the weights).
+  - Its receipt (`ci_github_run_receipt.py --run-id 39213849110`, sha256 3d9af2ac...) is ACCEPTED for 73f62e7:
+    pull_request base 789bfa6 is an ancestor.
+- Owner standing rules CI1-CI8 (/home/bobby/CLAUDE.md section 7b, 2026-10-19). Trigger: the v2.2.4 promotion ran
+  the full CI three times on the same bytes (PR #33 merge ref, push to dev 789bfa6, PR #35 dev->main merge ref),
+  ~30 min each, with no added assurance. Implemented in this slice:
+  - CI1 tree-identity reuse (`changes` job, `--reuse-lookup`, `actions: read`, GH_TOKEN = workflow token):
+    - Rule: identical git tree => identical bytes, `.github` included. A full green run of that tree is the evidence.
+      Running it again adds nothing; flake detection is not a reason to rerun (CI7: rerun only the failed job).
+    - The job prints `tree=` (`git rev-parse HEAD^{tree}` of the tested checkout: the merge ref for a pull_request,
+      the pushed commit for a push). It then reads the last 20 successful ci.yml runs.
+    - The API reports a pull_request run's head_sha as the PR head, not the merge commit it tested (checked: run
+      39211947957 reports 6bfca83, the branch head). A candidate's tree therefore comes from its own `changes` log
+      (`tree=`). Runs from before this change have no such line and are never reused.
+    - Reuse only from a run that: is attempt 1; had every job success (none skipped / cancelled / failed); had the
+      classifier say full; did not itself inherit; and has a byte-identical tree. Then every suite flag is false,
+      `reuse_run=<id>`, and ci-result writes "inherited full CI run <id> on identical tree <tree>" to the step
+      summary.
+    - Never for workflow_dispatch or `ci:full`. An API error, missing token or the 90 s deadline means no reuse
+      (fail toward running).
+  - CI2 incremental base: for a pull_request, the scope diff starts at the nearest strict ancestor of the PR head
+    with a green full or inherited-full run (its head_sha, nearest by `rev-list --count`). With no such ancestor or a
+    failed lookup it starts at the PR base. A CI-defining file changed since that ancestor still forces full.
+  - CI3: push triggers only `dev` and `main` (main added); pull requests cancel their older run.
+  - CI5: `base_check` is true on every pull_request, so contract-tests (PR-base `buf breaking`) still runs on
+    inherited and docs-only PR runs.
+  - CI6: the GitHub receipt records `tested_tree`; for an inherited run it also records `inherited_from_run` and
+    embeds the original run's receipt (one level; an inherited origin is refused). `p184_consolidated_build.py`
+    checks:
+    - tested tree = `git rev-parse <commit>^{tree}` (this replaces the ancestor rule whenever a tree is recorded);
+    - for an inherited run: reuse_run = inherited_from_run, no failed or cancelled job, changes and ci-result
+      success, not workflow_dispatch, and the embedded original passes every full-run rule on the same tree;
+    - a scoped (incremental) run is never accepted.
+  - Expected saving for a promotion like v2.2.4: 3 full runs -> 1 full + 2 inherited, about 12 min + 2 x ~1 min
+    (changes lookup, preflight, secret scan, contract-tests) instead of 3 x 12-30 min.
+  - Live read-only check of the lookup (host token): 24.9 s for the 20 candidates.
+    - Only 39213849110 and 39211947957 qualify as full (no `tree=` yet, so they serve CI2 but not CI1); older runs
+      have no `changes` job; re-run attempts are excluded.
+    - The nearest green ancestor of 73f62e7 is 6bfca83 (run 39211947957).
+- Tests (host, lock checked, absent; impact-based): `tests.test_ci_github_run_receipt tests.test_p184_consolidated_build
+  tests.test_ci_change_scope tests.test_ci_test_shard tests.test_p184_local_ci` 121 OK; in qdl-v2-python:2.2.4-31a5155
+  (--network none, ro) OK, 14 skipped (git-dependent). New cases:
+  - CI1: match (pull_request into dev and main, push), and no reuse on tree mismatch, scoped / inherited /
+    re-run / failed candidate, own run, workflow_dispatch, ci:full and API failure;
+  - CI2: docs-only after green => no suite (base_check only); a code change after green => that suite only;
+    inherited-full ancestor counts; a CI-defining change since the ancestor => full; no green ancestor, API failure,
+    scoped ancestor and non-ancestor => PR base; the nearest of two green ancestors wins;
+  - ci-result: inherited PASS with summary line; contract-tests still required by base_check; inconsistent or
+    invalid reuse outputs FAIL;
+  - receipts: inherited receipt embeds a full origin and is accepted; an origin that inherited itself is refused;
+    the consolidated build refuses a tree mismatch and nine inherited-run defects, and accepts a full run and an
+    inherited run on the matching tree.
+- GitHub run 5: run 39216183450 on 59b90c5.
+  - CI2 picked the nearest green full ancestor 73f62e7 (run 39213849110); the diff since it has ci.yml and
+    ci_change_scope.py, so the run was full; tree 48cd872b. Every suite job success. Wall 749 s; shards
+    714 / 670 / 536 / 569 s; rust-workspace 196 s (cache hit).
+  - ci-result FAILED: "changes output 'reuse_run' invalid: None". GitHub omits a job output whose value is empty,
+    so `needs.changes.outputs` had no reuse_run. Fixed: an absent reuse_run means no reuse (tree, flags and
+    base_check are never empty); test added. Tests 122 OK on the host.
+- GitHub run 6: run 39217653087 on dc25b79. Full: CI2 base 73f62e7, the diff has CI-defining files. All 13 jobs
+  success, wall 713 s; shards 473 / 435 / 676 / 669 s; rust-workspace 189 s; tree 1ee31417. This is the first full
+  run that records `tree=`.
+- CI1 proof, run 39219019908: PR #34 closed and reopened with the same head dc25b79 and the same dev 789bfa6, so the
+  merge ref has the identical tree 1ee31417. The `changes` job printed "inherited full CI run 39217653087 on
+  identical tree 1ee31417...".
+  - Ran: changes 24 s, repository-scan 16 s, consolidated-source-preflight 11 s, contract-tests 13 s (base_check).
+  - Skipped: unit-tests, sdk-python310, release-gates, rust-workspace, kn-native-integration.
+  - ci-result success; **wall 52 s instead of 713 s**.
+  - CI6: its receipt (scope inherited, inherited_from_run 39217653087, sha256 9e694bf2...) is ACCEPTED by
+    `p184_consolidated_build.verify_dl_ci_receipt` for dc25b79 (`git rev-parse dc25b79^{tree}` = 1ee31417).
+- CI2 proof: this journal entry is pushed alone as a docs-only commit. Its run is recorded in the PR #34 report;
+  expected: base dc25b79 (run 39217653087), docs only => consolidated-source-preflight, repository-scan,
+  contract-tests (base_check); suites skipped.
+
+### P18.4 Data Layer v2.2.4 published - 2026-10-19 (Claude)
+
+- Owner approval: closeout plan 2026-10-16 (merge `fix/p184-dl-closure` -> dev -> main, then tag); the auto-mode
+  classifier blocked the first merge call, and the owner re-approved the whole chain via AskUserQuestion on 2026-10-19
+  ("Duyệt cả chuỗi").
+- PR #33 (`fix/p184-dl-closure` -> dev) merged at head 33797dd as 789bfa6 after CI run 39206402498 was green (5/5 jobs).
+- PR #35 (dev -> main) merged as b5ab3c2 after CI runs 39210158182 (pull_request) and 39210138010 (push to dev) were
+  both green on 789bfa6.
+- Annotated tag `v2.2.4` (object 1d26848f, tagger BobbyAxerol) on b5ab3c2. `release.yml` run 39214746630 succeeded:
+  ancestry on main, certificate status PASS, endpoint report sha256, SDK 2.4.1 wheel rebuilt and matched
+  `sdk.wheel_sha256` 9f79e032. The release https://github.com/BobbyAxerol/quant-data-layer/releases/tag/v2.2.4 carries
+  certificate.json, endpoint-report.json, qdl_sdk-2.4.1 wheel, CycloneDX SBOM and release.json.
+- Classification unchanged from the certificate: scoped Data Layer stage-100 PASS under amendments G4-A1, G4-A2, A3,
+  A4 v2 (applied, not needed) and post-hoc A5 (G11 TRADE clock; without A5, G11 FAILs on one slice from venue
+  silence); G12 credited; G13 76/76; single host, not HA; measured with unrelated stacks paused (IDR-128).
+- Runtime unchanged by the publication (no container recreated): rust 27c79b53 (ingestors, stream), core rc22
+  7c848aad, projector 60f83a51, query 3e9e4d3a; TS writer 2deb90b0.
+- Open after the release: PR #34 (change-scoped CI with sharded unit suite; full run 30 -> 12 min) is under review
+  with one blocking finding (the consolidated build had no accepted DL CI receipt form); IDR-115..128 per the TS
+  register; v2.2.3 rollback images are removed by digest after 2026-10-25.
+
+### Runtime vs repository reconciliation after v2.2.4 - 2026-10-19 (Claude)
+
+- Owner request 2026-10-19: "đảm bảo remote khớp với bản runtime stable trên nhánh main của từng DL hay TS". Scope:
+  read-only runtime inspection (docker ps / inspect only), a docs-only record on branch `docs/v224-runtime-reconcile`
+  (worktree `/home/bobby/.worktrees/data-layer-runtime-reconcile`, from origin/dev ba2bffe), PR into dev; no merge,
+  no tag, no container, image, compose, Redis, Postgres or Kafka change.
+- This branch also carries the v2.2.4 publication journal (cherry-pick of 407adac from `fix/p184-dl-closure`; the
+  append conflict with the PR #34 entry was resolved by keeping both). Since that entry: PR #34 merged into dev as
+  ba2bffe; main is unchanged (b5ab3c2, tag v2.2.4), and dev differs from main only by the CI files and this journal.
+- Record: `upgrade/evidence/p184-v224-runtime-reconciliation-20261019.md` (tables + the machine-readable record).
+  Result: every running DL image's source revision is on origin/main (rust 9dab224 / c7ce7d3 / a4e7b3b, python
+  31a5155, bar edge a388537, V1 2b0dcf7); all 18 certificate.json runtime rows equal the live containers in image id,
+  cpus, memory and StartedAt; live caps equal docker-compose.v2-stable.yml on main where the compose defines the role.
+  No code or image change is needed for main to describe the running binaries.
+- Drift (details and fixes in the record): R1 medium - the stable compose on main still defines the pre-KN roles;
+  query_kn / stream_kn / market_projector / market_cache exist only as inspect-generated composes under
+  ~/.local/state/qdl-v2. R2 medium - IDR-127 made concrete: Paper r11 vs repository r10, alpha-okx r15 vs r14 (r15 not
+  in the repository), runtime catalog r12 (716 bindings, +4 OKX BTC-USD-SWAP book_delta / book_snapshot /
+  mark_index_price / quote) vs config/v2/stable-source-bindings.yaml r11 (712); 6 live/sandbox realm manifests are
+  not in the repository by sha256. R3 low - bar edge rc14 bakes alpha-binance r14 / reference-l2 r6 (held). R4 low -
+  the create-composes of kafka1-3, query_kn_1/2 and ingestor_okx_swap hold pre-OPT caps (docker update); a recreate
+  must build its compose from docker inspect. R5 low - stable_redis / V1 created from composes of deleted worktrees
+  (docker start only). R6 low - no git tag v1.2.4 for the V1 fallback image. R7/R8 info.
+- Next (owner approval): one release slice for R1 + R2 (KN roles into a versioned compose; catalog r12 + Paper r11 +
+  alpha-okx r15 + the tests that pin r10 counts), which changes what the next python image bakes; R6 tag decision.
+- Canonical checkout `/home/bobby/data_layer` was not fast-forwarded: it is on main 5bf5cd5, 347 commits behind
+  origin/main, with an uncommitted edit of this plan dated 2026-10-02 (2 stray lines) that is not this session's.
+
+### F3 KN reboot runbook and legacy boot unit retirement - 2026-10-19 (Claude)
+
+- Owner approval 2026-10-19 (F3): retire the legacy boot unit, write a KN reboot runbook, measure the market_cache
+  rebuild on an isolated stack. Branch `docs/kn-reboot-runbook` from origin/dev 3afd932 (worktree
+  `/home/bobby/.worktrees/data-layer-kn-reboot-runbook`). Docs only; no code, image, compose or role change.
+- Runbook: `docs/runbooks/kn-host-reboot-recovery.md` - docker-start-only rule, what an unattended reboot does
+  (all roles and TS infra `unless-stopped`, started in no order; market_cache/stable_redis come back empty; stage B
+  builds from partition start, `stage_b.rs:8-13`; projector exits if market_cache is unreachable), inventory with
+  digests and healthchecks, ordered steps with checks (Kafka URP/min-ISR, core group 3 members, projector status file,
+  Query `/health/ready` and `ready_products`, writer heartbeat V2_PRIMARY 64/0), rollback/fallback (no data fallback:
+  V1 BLOCKED), and the proposed KN boot unit packet (observe/receipt only via `kn_recovery_runner.py`, not installed;
+  needs a production probe, packet, canonical checkout on the released line, and one real reboot drill).
+- Order deviation from the requested sequence, with evidence: market_cache/stable_redis start before the projector
+  because `run_stage_b` treats an unreachable cache as fatal (`main.rs`, `Cache::connect` -> `fatal`).
+- Legacy unit retired on the host: `/etc/systemd/system/qdl-v2-stable-boot-recovery.service` (disabled, never ran on
+  KN; sha256 565ccc27...) moved to `~/.local/state/qdl-v2/boot-recovery/retired/qdl-v2-stable-boot-recovery.service.20261019`,
+  `systemctl daemon-reload`; `systemctl status` now reports the unit not found. Rollback: move it back and reload.
+- Rebuild measurement: not yet run. Production stage B hard-codes group `kn-projector-v3-b`, so the read-only
+  "separate consumer group" option is not available with the production binary; the drill copies the state topics
+  read-only (assign mode, no group join/commit, kn-projector identity) into an isolated broker. Queued behind the
+  host measurement lock held by `claude-dl-v225` until 11:58Z.
+- Found while reading: the 2026-08-22 cert-material directory (mounted into the brokers) has world-readable private
+  keys (`-rw-r--r--`); recorded for the v2.2.5 rotation, not changed here.
+### DL v2.2.5 slice: IDR-127 config, versioned KN compose, healthchecks, mesh TLS rotation tooling - 2026-10-19 (Claude)
+
+- Owner approvals 2026-10-19: one maintenance window before ~2026-11-06 for DL v2.2.5 (IDR-127 + versioned compose
+  for the KN roles + healthchecks) together with the atomic mesh mTLS rotation (every deployed mesh certificate
+  expires 2026-11-20 14:43Z) and the TS writer roll; full isolated rehearsal first; rollback = old certificates +
+  old digests. Owner 09:00Z: keep v2.2.5 compact ("phải gọn lại"); healthcheck cadence relaxed (C1); K6 approved;
+  K2 deferred; K3/K4 only if config-level and measurable in the rehearsal (they are not: deferred). No production
+  container, Kafka, Redis or Postgres was touched in this slice.
+- Branch `fix/v225-config-certs` from origin/dev 3afd932, worktree `/home/bobby/.worktrees/data-layer-v225`.
+- IDR-127 (repository carries what production runs):
+  - `consumers/stable/alpha-okx-paper.yaml` = deployed realm r15 bytes (sha256 33b9cfd4...96fa);
+    `consumers/stable/trading-system-paper.yaml` = deployed r11 bytes (efd482fa...b8fc).
+  - `config/v2/stable-source-bindings.yaml` = deployed catalog r12 bytes (fc3a1e1e...6cc5, JSON form, valid YAML).
+    Semantic parity against r11: 712 -> 716 bindings, exactly the four OKX BTC-USD-SWAP inverse bindings
+    (book_delta, book_snapshot, mark_index_price, quote) and one instrument added, 0 removed, 0 changed. TS manifest
+    r10 -> r11: 61 -> 65 requirements, 0 removed, 4 added (the same inverse instrument), quotas 50/1500 -> 77/3000;
+    alpha-okx r14 -> r15: quotas only (60/2400 -> 300/4950).
+  - `config/v2/stable-acquisition-bindings.yaml` r20 = deployed r20 bindings with the port-less OKX URLs (6674d0b;
+    OKX stops :8443 on 2026-10-31) plus `materialized_snapshot_interval_ms: 1000` on the two inverse L2 rows, which
+    the running core config already applies (`releases/v2.2.3-rc18-core-batch1024/rust_core.json`, 11 hot books).
+    Its identity_digest therefore differs from the deployed r20 file; equal without those two rows. Open decision:
+    keep r20 (chosen: bar edge stays on its image, Query reads the mounted runtime file) or bump to r21.
+  - Routing r28 -> r29, crypto demand r7 -> r8, authority promotion scope r10 -> r11 (the four inverse bindings the
+    core already runs), capture row for OKX BTC-USD-SWAP appended with provenance; the six live/sandbox realm
+    manifests are compiled runtime outputs (scripts/compile_consumer_realms.py, reproduced byte-identical in the image)
+    and are kept as evidence under `upgrade/evidence/releases/v2.2.5/consumer-realms/` (not baked: .dockerignore).
+  - Tests pinned to r10/r11 counts updated to the deployed truth; paper/sandbox extension tests rebased on the
+    committed pre-inverse inputs (`tests/inverse_extension_support.py`). Affected modules locally (CI8, image
+    qdl-v2-python:2.2.4-31a5155): 128 modules / 2168 tests first pass -> 28 slice-caused failures fixed, re-run of
+    the 13 affected modules 215 OK (1 skip). Full suite = GitHub CI.
+- Versioned compose: `deploy/compose/qdl-v2-stable-kn.yml` + `qdl-v2-stable-kn.v2.2.4.env` (images by digest, host
+  paths), rendered by `scripts/kn_versioned_compose.py` from live docker inspect; TLS sources are the generation
+  variables, env-only secrets come from a host-only 0600 env (`~/.local/state/qdl-v2/releases/v2.2.5/kn-secrets.env`,
+  copied from the live containers, never regenerated). Parity against live (v2.2.4 env + deployed generation):
+  PASS, 847 field checks, only intended deltas (healthchecks added on stream_kn x2 / market_projector x2 /
+  rust_core x3; cadence 15 s on Kafka / Query / stable_redis; stable_redis log rotation; stable_tls volume -> byte-equal
+  generation dir; nested /kn/tls and client-CA binds; session-liveness as volume subpath). CI5: `deploy/compose/**`
+  forces a full CI run.
+- Mesh TLS: `scripts/phase80_generate_tls.sh` also issues kn-projector / kn-stream (one trust anchor);
+  `scripts/rotate_mesh_tls.py` export / generate / verify. Deployed generation exported read-only to
+  `~/.local/state/qdl-v2/tls/gen-20260822T144323Z` (stable_tls volume byte copy); new generation
+  `~/.local/state/qdl-v2/tls/gen-20261019T084200Z` (365 days, notAfter 2027-10-19; the 90-day default of 2026-08-22
+  only replaced the 2-day bug, no policy names 90; each renewal is a full-mesh outage, so 365 + expiry alert).
+  Verify old vs new: PASS 118/118 (CN/SAN per identity, EKU/KU, key match, chain only to the new CA, keystores,
+  truststores = exactly the new CA incl. the brokers' dynamic `truststore-kn-v220.jks`, passwords unchanged).
+- Python release image tool retargeted to v2.2.5 (reference = production Query image 3e9e4d3a, tree 31a5155); rust
+  images are not rebuilt (rust diff since the running revisions is the cfg(test) ingestor commit 539d28c only).
+- Isolated rehearsal tool `scripts/kn_mesh_rotation_rehearsal.py` (project qdl-v225-reh, <= 3 vCPU, host lock
+  claude-dl-v225): debug runs found and fixed rehearsal-only setup gaps (stable_state ownership, Query state symlink
+  runtime/session-liveness -> /session-liveness, OKX ETH-USDT index lane, clone Postgres CPU). Results, window packet
+  and certificate scope: `upgrade/evidence/releases/v2.2.5/drafts/` (status: DRAFT, rehearsal in progress).
+- 2026-10-19 10:00-11:07Z (continued, same slice):
+  - CI: PR #38 (fix/v225-config-certs -> dev) full run 39238627766 on 3915a76 (merge of origin/dev 51387a2 included):
+    all 13 jobs green (unit-tests 1-4, release-gates, rust-workspace, kn-native-integration, contract-tests,
+    sdk-python310, repository-scan, consolidated-source-preflight).
+  - Python image `qdl-v2-python:2.2.5-601c3d8` = sha256:b7056141ec26661edbf0566fe93ab2c6ac9f27749fd550db5062ca841a639c05
+    (build receipt `~/.local/state/qdl-v2/build-v2.2.5-601c3d8/receipt.json`, copy in the evidence folder): label
+    revision 601c3d8, files vs production Query image 3e9e4d3a: 16 different = exactly the git-expected set (IDR-127
+    config/consumers, stage-100 amendment JSONs, apparatus `qdl/certification/reference_l2_acceptance.py`),
+    unexpected 0, pip freeze equal. Rust images not rebuilt. Pinned in `deploy/compose/qdl-v2-stable-kn.v2.2.5.env`.
+  - bar edge offline probe (--network none): image a388537 bakes catalog 11 / acquisition 19 = its checkpoint;
+    image 2.2.5 bakes 12 / 20 and its restore would refuse (catalog_revision, acquisition_revision). Bar edge stays
+    on a388537 in the window (mounts only).
+  - K6: production observed read-only 10:35Z (`kafka_internal_topic_compaction.py --observe`): the temporary
+    `min.cleanable.dirty.ratio` on `__consumer_offsets` is already ABSENT (removed 2026-10-16 14:12Z), decision C
+    APPLIED, no drift. K6 is a no-op; W5 re-observes only.
+  - Isolated rehearsal (receipt `upgrade/evidence/releases/v2.2.5/rehearsal-20261019.json`, lock claude-dl-v225, 2.99
+    vCPU caps, ETH-only live venue data, TS writer clone 2deb90b0): A deployed generation/v2.2.4 -> B new
+    generation/v2.2.5 -> C rollback -> D re-roll, all PASS. Consumer-visible outage 251.3 / 267.8 / 290.7 s; DL
+    Query READY over mTLS 139.6-161.4 s after the broker recreate; offsets of every group continuous, URP 0; writer
+    cursor items unchanged, BOOTSTRAP then STRICT 12/12 READY, 0 auth/protocol failures; the other generation refused
+    by Query, both Streams and Kafka in every phase. Teardown 13 containers / 4 networks / 4 volumes / 4 dirs, 0 left.
+    Debug runs before it found: stable_state ownership and the Query `runtime/session-liveness` symlink (rehearsal
+    setup only), and a real window finding: a STRICT writer start after > 120 s outage parks TRADE/QUOTE in
+    HANDOFF_RESUME_REQUIRED (writer execution-surface TTL 120 s, IDR-101) -> W12 = BOOTSTRAP then STRICT.
+    Tool fix after the run: readiness needs a heartbeat newer than the restart (the run's STRICT timer was a false
+    positive; STRICT readiness is shown by the steady sample).
+  - Cleanup: rehearsal resources 0 left; host lock released 11:07Z; kept: python image b7056141 (window target), TLS
+    generations under ~/.local/state/qdl-v2/tls, secrets env ~/.local/state/qdl-v2/releases/v2.2.5/kn-secrets.env
+    (0600), build dir build-v2.2.5-601c3d8 (36 MB). Disk / 53 % used before and after.
+  - Codex review `p184-v225-bounded-window-review-20261019.md` dispositions (coordinator relayed 2026-10-19):
+    A (CI classification): ACCEPTED - this slice ran only affected modules locally (CI8); GitHub full run green.
+    B (config/TLS evidence): ACCEPTED - packet states the full-mesh outage with measured duration; rehearsal receipt
+    carries the A->B->C->D trust/role map, offset and cursor continuity, per-route recovery, outage and cleanup;
+    semantic catalog/manifest parity recorded (`semantic-parity.json`: 712 -> 716, exactly the four inverse
+    bindings, 0 removed / 0 changed; TS r11 adds only the inverse requirements, quotas 77/3000; alpha-okx r15 quotas
+    only); old-identity rejection proven; wrong-realm rejection: ALTERNATIVE - not re-tested in the rehearsal (the
+    realm/subject binding code is unchanged; covered by tests/test_consumer_key_realms.py); quotas after the
+    stable_redis recreate: writer admitted in B/C/D. K6: exact pre-window state recorded (absent) with the exact
+    restore command; no-op. BAR on its current image; no inactive credential renewal: ACCEPTED.
+    C (writer): ACCEPTED - W12-A default (2deb90b0, identity mount only), W12-B only with its full proof.
+    D (inheritance): ACCEPTED - `CERTIFICATE_SCOPE.md` is a per-gate matrix, inheritance conditional on W12-A and
+    K6 no-op; data-policy refusals counted apart; READY vs execution-eligible reported apart; latency quantities
+    3 and 4 NOT_MEASURED passively (inherited); passive soak = regression only; IDR-128 limit stays.
+    E (finite closeout): ACCEPTED - no duplicate run, K2/K3/K4 deferred, then window, then TS phase E.
+  - Open decisions (owner): window date; acquisition r20 vs r21 (repository r20 carries the inverse L2
+    materialization the core already runs); W12-A vs W12-B; certificate scope as proposed.
+  - Status: implemented and tested locally (rehearsal isolated); NOT production-ready until the window executes and
+    its acceptance passes. Packet: `upgrade/evidence/releases/v2.2.5/drafts/MAINTENANCE_WINDOW_PACKET.md`; scope:
+    `upgrade/evidence/releases/v2.2.5/drafts/CERTIFICATE_SCOPE.md`.
+  - Permissions (F2/F3 finding relayed 11:15Z: the deployed broker cert dir has world-readable private keys; not
+    changed live): `rotate_mesh_tls.py` gains `harden` / `perms` (and `verify` fails on them): private material
+    0400/0440 owned by its consumer (kafka/ uid 1000 = appuser of the pinned Kafka image, from /proc of the live
+    broker; stable-certs/ and kn-tls/ 10001 (cap_drop ALL, no DAC override); identities/ root for the TS writer),
+    public certificates 0444, directories 0750. Applied to gen-20261019T084200Z: 112 files, bytes unchanged
+    (sha256 before == after), perms PASS. The rehearsal above ran before hardening; a hardened-permission re-run is
+    queued behind the IDR-128 host lock (until ~13:57Z) and is a pre-window check in the packet.
+
+### DL v2.2.5 window packet: IDR-129 slot - 2026-10-19 (Claude)
+
+- Coordinator 12:16Z: production IDR-129 (Query KN keeps RSS after warmup bursts; query_kn_1 2045/2048 MiB restart
+  12:02:55Z, query_kn_2 controlled restart 12:07:25Z, owner-approved; fix by another agent on
+  fix/idr129-query-rss). v2.2.5 must include the fix. Drafts updated (docs only): the Query image row becomes a slot
+  (b7056141 = IDR-127-only candidate, superseded by the rebuild with the fix); packet section 1b: the window's two
+  writer starts (BOOTSTRAP, STRICT) are two warmup bursts -> fixed Query first (W9 before W12), RSS watch with a
+  1.8 GiB hold rule, acceptance RSS < 1.6 GiB 10 min after STRICT; certificate scope: Query code changed -> G5/G6
+  need a delta proof (isolated 64-warmup burst A/B + IDR-129 tests), not inheritance.
+- 12:40Z: the queued hardened-permission rehearsal re-run (waiting behind the IDR-128 A/B lock, no lock held, no
+  container started) was cancelled on purpose: the IDR-129 Query rebuild changes the window image again, so the
+  hardened generation and the final Query image are rehearsed once together before the window (packet item 2.5a).
+
+### Host cleanup record (AGENTS rule 34) - 2026-10-19 (Claude)
+
+- Owner approval 2026-10-19 (cleanup set of the post-v2.2.4 approvals): disk and Docker cleanup by digest, canonical
+  checkout to the released line, V1 as rollback image only. Executed 08:28-08:58Z; journaled late here (it was not
+  recorded the same day). Evidence (pre/post `df` + `docker system df`, `delete_list.tsv`, `delete_reasons.txt`,
+  step logs): session scratchpad `cleanup-20261019/` (outside Git, transient).
+- Disk: `/` used 303.89 GB (59 %) at 08:32:40Z -> 267.44 GB (52 %) at 08:49:17Z.
+- Images: 13 removed by id (`docker image rm sha256:...`, no prune), 1.41 GB, every one `containers=0` and with a
+  per-image reason: 7 superseded TS v1.2.4/v1.2.5 images (06e99200, 0983912997, 7d410919, 4dba0ac1, 5b66c2cd,
+  7e7e2d02, dba741eb), DL `qdl-v2-rust:2.2.1-855c914` (0f6876e1), DL `qdl-v2-python:2.2.2-d6d2637` (51450612),
+  TS native-builder p18-deb56ca (98d4ecec), TS compat native-writer-guard (1cc8cf69) and b898b2f-listener (e0eb71fb),
+  TS writer dr07-452955f (5849d716). Retention set: every image referenced by a container, the v2.2.4 rollback set,
+  v2.2.3 until 2026-10-25.
+- BuildKit: test cache 1.015 GB pruned (428 -> 291 records). Session scratchpad: 122.7 MB removed (1.436 -> 1.313 GB);
+  writer harness inputs kept.
+- TS delivery trace `p184-20261005/runtime/mark-cutover/logs/dr07-delivery-20261007`: 39.84 GB -> 0.73 GB. The 13
+  windows still referenced by state/evidence files are retained as `retained/window-<ns>.tar.zst` (zstd), each tar
+  member verified against `SHA256SUMS.originals`: 1402/1402 match; the rest deleted.
+- Canonical checkout `/home/bobby/data_layer`: fast-forwarded main 5bf5cd5 -> b5ab3c2 (v2.2.4) after saving the 2
+  stray 2026-10-02 plan lines as a patch in the session scratchpad
+  (`data_layer-canonical-stray-lines-20261002.patch`, sha256 b8adf709...; a duplicated heading and a stray `raw-h`
+  token, no content). Worktrees `data-layer-runtime-reconcile` and `data-layer-p184-closure` removed (merged);
+  `/home/bobby/.worktrees/data-layer-dev` created for dev work.
+- V1: tag `v1.2.4` (annotated c7db86dd) on 2b0dcf7 = source of `qdl-v1-fallback:v1.2.4-2b0dcf7`. Owner: V1 is a
+  rollback image only. `data_layer_service` stopped 2026-10-19 08:58:14Z (container kept). Rollback:
+  `docker start data_layer_service`.
+- Not done: the dead spool `canonical-cache.sqlite3` (3.97 GB) - backup then delete after a reader check, pending
+  behind the host measurement lock. No volume, network, source, runtime state or running container was removed.
+- INCIDENT (cleanup lesson): the image step deleted `qdl-v2-python:2.2.2-d6d2637` (id 51450612...) although the
+  stage-100 profile and amendment A3 (`config/v2/p184-stage100-a3-external-attribution.json`) pin it; the
+  pre-delete reference scan did not catch those pins. Impact: the IDR-128 A/B arm A of 11:10Z refused in 11 s
+  (campaign_exit=3 at 11:12:03Z, nothing measured, no runtime effect). Repair: rebuilt from d6d2637 at 11:13:56Z
+  as id 2ed4d697..., which is NOT equal to the A3 pin; runs that need A3 identity must treat it as a rebuild.
+  Lesson: before deleting an image, grep the campaign profiles and amendments (`config/v2/*.json`) for its tag/id.
+
+### IDR-129 Query KN RSS retention after warmup bursts - 2026-10-19 (Claude)
+
+- Production: Query KN keeps RSS after warmup bursts. `query_kn_1` reached 2045/2048 MiB and restarted at 12:02:55Z;
+  `query_kn_2` got a controlled restart at 12:07:25Z (owner-approved). Registered as IDR-129 in the TS
+  INTEGRATION_DEFECT_REGISTER (cross-system register).
+- Fix in progress on `fix/idr129-query-rss` for v2.2.5 (window packet slot recorded in the entry above). Until the
+  fix ships, the Query memory watch (monitor F2 / window RSS hold rule) is the mitigation.
+
+### IDR-128 A/B result: portal CPU weight - 2026-10-19 (Claude)
+
+- Owner-approved A/B, one variable (cpu.weight of the 15 portal containers), one stage-100 per arm, under host lock
+  `claude-idr128-ab-3afd932` (11:07:56Z, released 13:11Z). Apparatus: stage-100 campaign tool e179ec78 at DL dev
+  3afd932, same budget and A1/A2/A3 pins as 040311Z, except the load-client image `qdl-v2-python:2.2.2-d6d2637`
+  was rebuilt from the same source as id 2ed4d697 (A3 pin 51450612; deleted by the cleanup, see the cleanup record).
+  Codex paused in both arms; V1 stopped; G11 excluded.
+- Arm A (portal cpu.weight 100, default): `~/.local/state/qdl-v2/p184-idr128-A-20261019T111458Z` (scorecard
+  bab9f8e5...). Protocol met, guard CLEAN, load1 p50/p95 20.35/26.77. FAIL G4 (bar|BINANCE|1m p95 per window
+  179/185/173/198/271 vs 257.6; book_delta / book_snapshot / quote OKX_INVERSE); PASS G1 G3 G5 G6 G8 G9 G14
+  (G8 SLOWLOG 0, PING p99 1.36 ms); G2 not measured.
+- Arm B (cpu-shares 256 = cpu.weight 35): valid attempt 4 `~/.local/state/qdl-v2/p184-idr128-B-20261019T123515Z`
+  (scorecard 0fc8241a...). Attempts 1-3 invalid: 1 (115951Z) query_kn_1 restart 12:02:55Z (IDR-129); 2 (121759Z)
+  the coordinator's own docker-stats sampler tainted the guard; 3 (122234Z) an external scp into
+  /home/bobby/secure tainted the guard. Protocol met, guard CLEAN, load1 p50/p95 19.72/24.15. FAIL G4 on more rows
+  (bar|BINANCE|1m 281/206/154/294/276; book_snapshot|BINANCE| w5 288 > 260; book_snapshot OKX; trade OKX; the 3
+  OKX_INVERSE rows) and G2 (without A4); PASS G1 G3 G5 G6 G8 G9 G14.
+- Portal guardrail held in both arms (p95 <= 0.104 s, 0 5xx). CPU by group similar in both arms: DL Kafka 3.1-3.3,
+  DL other 2.7, writer 1.45-1.47, portal 0.72-0.75 vCPU; PSI cpu some 17-18 %, io some ~13 % / full ~6 %.
+- Decision (pre-registered rule): A FAIL and B FAIL -> the hypothesis "portal CPU share causes the G4/G8 failures"
+  is NOT supported. Rollback done: cpu-shares back to 1024 (cpu.weight 100 read back on all 15) at 13:10Z.
+- Hypothesis, not measured: the 040311Z PASS had the portal paused, which also removed its disk IO (portal Postgres
+  seq scans ~370k tuples/s); disk IO pressure is the next candidate. Packet order: user.slice CPUWeight -> cpuset ->
+  io.weight. No new campaign now (Codex review E).
+- Unchanged: the v2.2.4 certificate's operational condition (measure and run with unrelated heavy stacks paused);
+  IDR-128 stays OPEN.
+
+### DL v2.2.5 window: W12 decision (TS writer proof package) - 2026-10-19 (Claude)
+
+- Decision record `upgrade/evidence/releases/v2.2.5/drafts/W12_DECISION.md` (+ `W12_DECISION_EVIDENCE.json`).
+  **Verdict W12-A** (writer 2deb90b0, identity mount only; packet section 5 and rollback unchanged).
+- Proof items: (1) writer binary main vs deployed: function-level only `LatencyAggregates::observe` (reviewed
+  latency.rs change) + alignment padding; Python closure diff fully classified; GHCR image NOT verified (registry
+  unauthorized in this session) -> not complete. (2) T1 runtime routes PASS: Python store = BAR/BOOK_DELTA/
+  BOOK_SNAPSHOT (101 commits/s, ~14 ms each, errors 0), TRADE/QUOTE = native Rust checkpoints. (3) T1 failure-step
+  and cancellation tests added on TS `test/writer-t1-proof` 0c5148e1 (18 passed x3 locally); PR not opened (TS repo
+  not visible to the available token), CI not run. (4) component-level isolated A/B ABBA on the production trace:
+  50 ms = -19 % commits/write IO, +59 ms ACK p50, +12.5 ms BOOK_DELTA apply p50; full-writer A/B not done.
+- Host lock `claude-w12-writer-proof` 13:19:58-13:50:05Z, released on completion; containers `--rm`; no production
+  mutation. Status: proposal; owner/TS go needed only for a later W12-B.
+
+### F3 KN market_cache rebuild drill (isolated) - 2026-10-19 (Claude)
+
+- Owner approval 2026-10-19 (F3): measure the stage-B market_cache rebuild on an isolated stack. Follows the entry
+  "F3 KN reboot runbook and legacy boot unit retirement" (measurement was pending there). Branch
+  `docs/f3-kn-rebuild-drill` from origin/dev cd272f8, worktree `/home/bobby/.worktrees/data-layer-f3-drill`. Docs
+  only; no production container, Kafka write, consumer group, Redis or Postgres touched.
+- Host lock `claude-f3-knrd` 13:50:24-14:15:21Z (queued behind IDR-128 A/B and W12 writer proof).
+- Copy (13:52:35-14:04:11Z): production state topics copied read-only into the drill broker (python image 31a5155,
+  kn-projector identity read-only, assign mode, `OFFSET_BEGINNING`, read_committed, no commit; unique never-joined
+  group id - the client requires one - and the production ACL refused even its coordinator lookup,
+  `GROUP_AUTHORIZATION_FAILED`). 5,163,467 records (latest 2,479,903 / bars 2,683,564), 858,545 tombstones, 6.0 GiB
+  values, 2.6 GiB on the drill broker. Production broker eth0 tx (3 brokers) 10.46 MiB/s baseline -> 18.96 MiB/s
+  average during 693 s (+8.5), peak 5-s interval 54.6 MiB/s; broker CPU +0.01-0.04 cores each. The 10 MiB/s token
+  bucket bounded the average, not bursts (28.5 MiB/s into the copy in one 10-s window); next time cap bursts too.
+- Build (projector `qdl-v2-rust:2.2.4-c7ce7d3` with stage A and cleaner off, 0.75 CPU; drill Redis with production
+  args, 0.5 CPU; drill broker 0.25 CPU): **all 12 partitions published 494 s after projector start** (bars READY at
+  389 s, latest at 494 s), 706 products published, 0 unpublished, 47,728 keys / 1.16 GiB (production 47,751 /
+  1.16 GiB), errors empty. Projector 234.9 CPU-s (about 0.48 cores avg), memory peak 108 MiB; Redis peak 1,187 MiB.
+  One projector owned both topics here (production splits latest/bars over two projectors), so the shared CPU was
+  the constraint; production should not be slower for the same data, which was not measured.
+- Drill fixes found on the way: the rust image's default entrypoint is not the projector (production sets
+  `/usr/local/bin/qdl-projector`); `kafka-get-offsets.sh` range `0-5` excluded partition 5 (listed explicitly);
+  sampler died with the parent session 14:09:13-14:12:29Z, so the per-partition times come from each checkpoint's
+  `at_ms` (static drill topics -> written at the boundary), and no data was lost.
+- Cleanup: 4 containers, 1 volume (copied data), 1 network removed; 0 `knrd-*` left; disk 232.9 GiB free before,
+  230.8 GiB minimum, 233 GiB after. Receipts (no data, 144 KiB) `~/.local/state/qdl-v2/f3-drill/`.
+- Runbook `docs/runbooks/kn-host-reboot-recovery.md` section 5 carries the result, the per-partition table and
+  what the number does not include (Kafka unclean-shutdown recovery, restart back-off, all-roles-at-once contention,
+  Query/Stream warm-up, writer session). Status: tested locally (isolated drill); a real reboot drill is still open.
+
+### DL v2.2.5 window packet: go-readiness slice (W12-A steps, monitor, old identities, K6, F3, R1-R4, go/no-go) - 2026-10-19 (Claude)
+
+- Coordinator 2026-10-19 ~15:00Z: bring the v2.2.5 window to "ready for go" (owner approvals of 2026-10-19: one
+  window before ~11-06, cert rotation + v2.2.5, W12-A, rehearsal first; DL PRs into dev merged when CI is green).
+  Branch `docs/v225-window-ready` from origin/dev e9a7ed9, worktree `/home/bobby/.worktrees/data-layer-v225-final`.
+  No production container, Kafka, Redis or Postgres write; production reads only (docker inspect/stats/logs, one
+  heartbeat SELECT, mTLS GET `/health/ready` and TLS handshakes on 18301/18302/18320/18321 with the deployed TS
+  identity). Host lock held by `claude-idr129-query-rss` during this slice: no container, build or test run started.
+- `MAINTENANCE_WINDOW_PACKET.md` completed:
+  (a) W12-A as W12a BOOTSTRAP -> W12b STRICT with exact commands from `scripts/kn_window_writer.py render` (new tool:
+  the writer's effective config from docker inspect -> four 0600 composes bootstrap / strict / rollback-bootstrap /
+  rollback; refuses unless the deltas are exactly identity source and/or REQUIRE_RESUME; read-only dry run on the live
+  writer 15:14Z: deltas as intended, `label_compose_deltas` [] = equal to the compose it was created from,
+  `docker compose config` valid for all four) and `ready` (three consecutive heartbeats of THIS container after its
+  StartedAt, READY/V2_PRIMARY/64/64/0, RestartCount 0; live read: ready, execution-ready 53 of 64), the clean
+  `docker stop -t 30` before the STRICT recreate, and the expected warmup burst per writer start with the 1.8 GiB hold.
+  (b) monitor (TS PR #21, f7d19f47) as W14 on the TS v2.0.1 image or deferred; finding: `monitor_inventory_refresh.py`
+  copies only certificates directly in a source dir, its default glob does not match the new generation layout, the
+  hardened dirs are unreadable for the host user, and the client CA bundles carry the inactive phase105b /
+  consumer-realms CAs (notAfter 2026-11-24..12-26) that would alert from 11-03 -> stage the mesh public certificates
+  (no bundles) into `~/.local/state/trading-system/monitor-cert-sources/gen-20261019T084200Z` and run the refresh
+  with `--cert-glob '' --cert-source`; compose files from `git archive v2.0.1` (the canonical TS checkout is on a
+  feature branch with uncommitted compose edits); `.env` backup + the two keys + preflight; recreate monitor only.
+  (c) old-identity holders: correction of the brief - V1 `data_layer_service` carries NO mesh identity (binds .env,
+  data, logs; no TLS/CERT/KAFKA/V2 key in its env or .env), so the rotation does not affect it; the TS containers
+  `market_data_service`, `-dr07-rollback`, `-r49-rollback` mount the 2026-08-22 identity and are usable only with a
+  full rollback until 2026-11-20 14:43Z; cleanup step (owner approval, rule 34) keeps the `*-jwt` keys (JWT is not
+  rotated). (d) K6 exact pre-window state recorded at T-0 (W0.4) and compared after W4 (W5); topic configs live in
+  KRaft metadata, so no restore is expected; exact restore commands for both directions. (e) section 7b: outage
+  4-5 min expected (rehearsal 251-291 s), 10 min budget, market_cache loss contingency +494 s (F3), rollback 4.5 min;
+  one total deadline T_W1 + 25 min, 20 min rollback reserve. (f) see the certificate scope below. (g) R1-R4 with
+  exact commands; the Query/Stream probe helpers were run read-only on production with the deployed identity (READY,
+  Verification OK) and the new one (curl rc 60 / verify error, as expected before the window). R4 =
+  `kn_window_writer.py soak` (writer READY samples and execution-ready as two numbers, native_probe request latency
+  differenced over the soak with the writer's bucket bounds, served age NOT_MEASURED, Query memory growth, restarts,
+  auth/protocol vs data-policy counts per code/venue/symbol/feed); live 6 s smoke read-only OK. (h) go/no-go
+  checklist rows 1-16 incl. host lock, foreign containers, Codex pause decision, disk >= 50 GB, a root tar + sha256 of
+  the old generation directories, baseline, open-order-path check. W0.1 rollback capture of the 17 roles verified
+  read-only (0600 because env-only secrets are in it).
+- `CERTIFICATE_SCOPE.md`: D3 is a delta proof with four named items (IDR-129 PR tests incl. failed/cancelled requests;
+  isolated production-volume A/B 3e9e4d3a vs fixed without manual gc/trim in scored arms, incl. hot-read latency;
+  the final rehearsal burst; build receipt); G5/G6 are not inherited in any branch; G1-G3 inherit only for the
+  Stream-delivered feeds; W12-A decided; R4 served age NOT_MEASURED.
+- Rehearsal tool for the final run (`scripts/kn_mesh_rotation_rehearsal.py`): probes run as root (the hardened
+  `identities/` is root 0750; the writer itself runs as root), rehearsal Query memory cap = production 2 GiB, CPU caps
+  rebalanced to fit a 0.2 vCPU burst driver (total still 2.99), `--expect-query-image`, `--burst`: after phase D,
+  3 bursts of 64 concurrent TS-manifest r11 warmups (the 12 ETH requirements of the deployed binding cycled) with the
+  new TS identity, cgroup memory sampled every 2 s; predeclared gate no restart / no OOM kill / settled <= baseline +
+  128 MiB and < 1.6 GiB / last step <= 32 MiB; latency, statuses and writer readiness reported, not gated.
+  `--ts-root`: the writer clone loader/schema come from a frozen `git archive v2.0.0` of TS
+  (`~/.local/state/qdl-v2/releases/v2.2.5/ts-src-v2.0.0`, loader sha256 dc339c2d...; identical to the former default
+  worktree for the loader and migrations), so the run does not depend on another agent's worktree.
+- Tests: `tests/test_kn_window_writer.py` 12 passed locally (`python3 -B -m unittest`, pure functions; Docker parts
+  exercised by the read-only dry runs above). Rehearsal changes: syntax checked; exercised only by the final run.
+- Codex `p184-final-phase-closure-review-20261019.md` dispositions: 1 (IDR-129 acceptance: 1.8 GiB hold, < 1.6 GiB
+  after 10 min, repeated-burst plateau, no OOM/restart; diagnostic gc/trim runs labelled and not scored) ACCEPTED, in
+  the certificate scope; the fix itself belongs to the IDR-129 owner. 2 (IDR-128 restart overlap) CHECKED: query_kn_1
+  12:02:55Z and query_kn_2 12:07:25Z fall after arm A (run log closed 11:49:28Z) and before the valid arm B attempt 4
+  (123515Z); attempt 1 (115951Z) was already invalidated for that restart; cpu.weight != isolation ACCEPTED (IDR-128
+  stays open). 3 (bootstrap continuity, process-epoch readiness, total deadline, order path) ACCEPTED: packet sections
+  4, 7b, checklist row 16, `kn_window_writer.py ready`. 4 (W12-A, per-path proof, rolled digests in the receipt)
+  ACCEPTED. 5 (TS Phase E ledger) DEFERRED to the TS Phase E owner (not DL scope). 6 (keep old TLS rollback material
+  until the rollback period ends; scoped cleanup) ACCEPTED: section 5c.
+- Status: implemented and tested locally (docs, tools); the window is NOT ready for go until the IDR-129 fix is
+  merged, the python image rebuilt and re-pinned, and the final rehearsal passes (next entries).
+### IDR-129 root cause and fix: Query RSS kept after warmup bursts - 2026-10-19 (Claude)
+
+- Scope: coordinator task (owner-approved fixes 2026-10-19), branch `fix/idr129-query-rss` from dev cd272f8, for
+  DL v2.2.5. Production read-only (docker logs/inspect/stats, one read-only key copy); host lock
+  `claude-idr129-query-rss` from 14:15:25Z.
+- Production evidence (docker logs, qdl.stall lines): `query_kn_1` RSS stepped up per burst from 270 MiB
+  (10-18 05Z) to 2045 MiB (10-19 12:02Z, restart); after the restarts 190 MiB -> 871 MiB peak at 12:38Z (IDR-128
+  arm B stage-100) -> 558/650 MiB at 14:12Z (docker stats). GC telemetry over 32 h: collections `[16, 0, 1]`
+  (16 generation-0, 0 generation-1, 1 start-up full). The bursts are 2,500/5,000/10,000-row alpha warmups
+  (stage-100 cold role) and 1,000-row TS BAR warmups on the single-active large-warmup lane.
+- Harness `scripts/idr129_query_rss_isolated.py` (new): one Query replica of the production image 3e9e4d3a with the
+  production container spec except private market-cache and quota Redis, `--cpus 1.0 --memory 2g`, isolated
+  `--internal` network, every container `--rm`. The private cache is a read-only copy (DUMP/HMGET/HGETALL) of the
+  64 burst products' keys (10,200 rows each, 218 MB) plus a 15 s tail re-copy so the 1m freshness holds. Driver =
+  SDK 2.4 shape (redirect 1, queued retry on REPLICA_LANE_BUSY, cold-read retry, 10 s client timeout), 64
+  concurrent warmups per burst: TS 10 x 1,000 rows, alpha 54 x 2,500/5,000/10,000. A sitecustomize probe reports
+  RSS, mallinfo2, gc generations, row cache, and runs gc.collect (with DEBUG_SAVEALL summary) and malloc_trim(0).
+  Evidence `~/.local/state/qdl-v2/idr129-query-rss-20261019{,b,c}/` (arm dirs: run.json, driver.out, query.log,
+  work/result.json).
+- Measured, production image (arm A-stage, 12 bursts): RSS 195 (start) -> 472 (burst 1) -> 683 MiB (burst 12),
+  malloc in use (uordblks) 155 -> 398 MiB, Python blocks flat (1.49-1.52 M), row cache at its 20,000 bound.
+  At idle: gc.collect freed 15,917 objects and uordblks 398 -> 90 MiB (fordblks 218 -> 526); malloc_trim(0) then
+  RSS 716 -> 368 MiB. Arm with 1,000-row warmups only (A-baseline): RSS plateau 380-400 MiB (no growth).
+  So: cyclic garbage holding malloc memory, plus glibc free memory not returned.
+- What the garbage is (arms D/E, DEBUG_SAVEALL at idle after 6 bursts): ~9,000 objects; freeing them released
+  130 MiB of malloc memory (uordblks 310 -> 180, 265 -> 136) although their Python-visible payload was 20-30 MiB.
+  Holders: 39 closed client connections (uvicorn HttpToolsProtocol/RequestResponseCycle, asyncio
+  _SelectorSocketTransport/_SSLProtocolTransport, 78 ssl.MemoryBIO) and 137 refused-item cycles
+  (QueryServiceError traceback -> `service.py` work:1035 / executor `_one`:301 / `_run_with_policy`:406).
+- Cost lines (E4):
+  1. `qdl/api_v2/router.py` `_warmup_json_off_loop` / `_warmup_batch_json_off_loop`: the whole warmup body (2-20 MB)
+     is one `http.response.body` message -> one `transport.write`; asyncio `sslproto._do_write` encrypts it into
+     the connection's outgoing `ssl.MemoryBIO` in one call. A drained MemoryBIO keeps the capacity of its largest
+     write until the SSL object is freed: host check, 8 TLS pairs x one 10 MiB write, RSS 27 -> 107 MiB with the
+     BIOs drained, 37 MiB once the connections were freed. So every client connection pins its largest warmup body,
+     and a closed connection pins it until a collection frees the connection's cycle.
+  2. `qdl/runtime/stable.py` `QUERY_GC_THRESHOLDS = (100_000, 50, 100)` (IDR-114 era, set by
+     `configure_query_interpreter`): a generation-1 collection needs 50 generation-0 ones; production made 16 in
+     32 h, so connection cycles and refused-item cycles that survive one generation-0 collection stay until
+     restart. Not changed here (it is the GC pause control of IDR-114/F5).
+  3. glibc arenas (MALLOC_ARENA_MAX=2) keep freed memory: 150-350 MiB returned only by malloc_trim.
+  4. `qdl/query/service.py` assemble_batch kept each refused item's traceback (the IDR-114 residual).
+  Not the cause (measured): row cache (bounded 20,000), threads (41-55), SQLite (KN backend has no spool),
+  stall telemetry (bounded deque), refusal log (bounded keys).
+- Fix (tested locally + isolated replay):
+  1. `SlicedBodyResponse` (`qdl/api_v2/router.py`): warmup and warmup:batch bodies go out as 256 KiB `more_body`
+     slices; bytes, Content-Length (no chunked encoding) and status unchanged. Bounds each connection's MemoryBIO to
+     ~256 KiB.
+  2. `service.py` assemble_batch: `release_exception_frames(error)` after the typed problem is taken.
+  3. `qdl/runtime/memory_maintenance.py` (new), installed by `create_stable_query_app`: when RSS >= soft limit
+     (`QDL_QUERY_MEMORY_SOFT_LIMIT_MIB`, default 448, 0 disables), the large-warmup lane idle >= 3 s
+     (`V2QueryService.large_warmup_lane_busy`) and >= 120 s since the last run: one gc.collect() + malloc_trim(0)
+     on the loop thread, one `qdl.stall kind=memory_maintenance` line. Measured cost of that pair at idle:
+     gc 133-233 ms, trim 12-55 ms. GC thresholds and the start-up gc.freeze unchanged.
+- Results (same harness and bursts, source mounted read-only over the production image):
+  | arm | RSS burst 1 / 6 / 10 / 12 MiB | uordblks burst 1 -> last | collect frees (idle) | collect+trim RSS |
+  | --- | --- | --- | --- | --- |
+  | A-stage production image | 472 / 574 / 652 / 683 | 155 -> 398 | 308 MiB | 716 -> 368 |
+  | F sliced body + frame release | 395 / 457 / 427 / - | 100 -> 146 | 52 MiB | 438 -> 360 |
+  | G F + maintenance (512 then) | 391 / 408 / 468 / 458 | 99 -> 161 | 68 MiB | 464 -> 377 |
+  | H built image 84512ab (default 448) | 361 / 374 / 426 / 445 | 103 -> 116 | 22 MiB | 448 -> 410 |
+  Garbage after the fix holds no QueryServiceError/work frames (0 vs 137) and only the 256 KiB read buffers of
+  closed TLS connections (asyncio sslproto). G never reached its 512 MiB limit; default lowered to 448 MiB so the
+  bounded behaviour is the default one (final proof on the built image below). Client warmup latency (200s):
+  p50 6.4-8.7 s / p95 9.3-10.2 s on A-stage vs 6.4-8.7 s / 9.0-10.2 s on G (queue-dominated; G overlapped the
+  affected-suite run on another CPU, so H is the latency comparison).
+- Tests (production image 3e9e4d3a, `--network none`, source mounted read-only): new
+  `tests/test_query_idr129_memory.py` 12 OK (sliced body bytes/length/slices, HTTP identity, TLS MemoryBIO bound,
+  refused-item no-cycle, maintenance policy, lane-busy signal, lifespan install); negative control: the
+  refused-item test FAILS on the unfixed service. Affected 37 modules (api_v2, query service, runtime.stable,
+  warmup, stall telemetry): 552 tests, 1 failure `test_phaseb_stable_edge` catalog L2 count 32 != 34 = the image's
+  baked config predates dev's IDR-127 catalog (environment, not this change), 36 skipped.
+- Final proof on the built image (arm H, 16:28-16:43Z): `scripts/build_qdl_release_images.py --rev 84512ab
+  --component python --build` -> `qdl-v2-python:2.2.5-84512ab`
+  `sha256:69304bd478ee7822625c21e8573354c0a24c2baf1f16cc317d216c227f38ef27`, receipt
+  `~/.local/state/qdl-v2/build-v2.2.5-84512ab/receipt.json` PASS. Same 64-warmup bursts x 12, no source mount,
+  default soft limit: RSS 197 (start) / 361 (burst 1) / 361-445 over bursts 1-12, malloc in use flat 94-116 MiB
+  (production image: 155 -> 398). Maintenance ran 3 times: RSS 450 -> 378, 451 -> 374, 454 -> 406 MiB, gc
+  128-152 ms, trim 8-12 ms. Client warmup latency (200s) p50 6.6-8.3 s / p95 9.3-10.0 s vs production image
+  6.4-8.7 s / 9.3-10.2 s: not worse. Status: implemented, tested locally, isolated-replay measured; not deployed
+  (ships in v2.2.5; window acceptance = the packet's RSS rule).
+- Cleanup: every `qdl-rss-*` container `--rm` and removed (cache, quota, sync, query, driver, unit-test
+  containers; 0 left), network `qdl-rss-net` removed, no volume created; host lock released 16:43:34Z. Kept: the
+  image `qdl-v2-python:2.2.5-84512ab` (v2.2.5 candidate) and the evidence dirs above.
+
+### DL v2.2.5: python image from dev with IDR-129, re-pin, final isolated rehearsal, packet additions - 2026-10-19 (Claude)
+
+- Coordinator 2026-10-19: PR #45 merged (9aab887); IDR-129 fix PR #46 merged at 17:53Z (9b6747f). Branch
+  `docs/v225-final-rehearsal` from origin/dev 9b6747f (worktree `/home/bobby/.worktrees/data-layer-v225-final`).
+  Production untouched (only the read-only DR snapshot check below and docker inspect).
+- Host lock `claude-dl-v225-final` 17:54:01-18:42:29Z (acquired free; no foreign test container).
+- Python image: `scripts/build_qdl_release_images.py --rev 9b6747f --component python --build` ->
+  `qdl-v2-python:2.2.5-9b6747f` = sha256:753604f8abaa866e2de30c7ccaf36168986bc6991550ee326d53e51b83d1550a, receipt
+  PASS (`~/.local/state/qdl-v2/build-v2.2.5-9b6747f/receipt.json`, copy `upgrade/evidence/releases/v2.2.5/
+  python-image-build-receipt.json`): label revision 9b6747f, 446 vs 439 files against 3e9e4d3a, 20 different = exactly
+  git diff 31a5155..9b6747f (the 16 IDR-127/apparatus files of b7056141 + qdl/api_v2/router.py, qdl/query/service.py,
+  qdl/runtime/memory_maintenance.py, qdl/runtime/stable.py), unexpected 0, pip freeze equal. Not reused: 69304bd4
+  (84512ab, pre-#44/#45 base). `QDL_QUERY_MEMORY_SOFT_LIMIT_MIB` has a code default (448): no compose change.
+- Re-pin: `deploy/compose/qdl-v2-stable-kn.v2.2.5.env` QDL_IMAGE_QUERY -> 753604f8. DataRequirement check in the new
+  image (`--network none`): the 12 ETH requirements of TS manifest r11 build (BAR 1000, others 0).
+- Final rehearsal, run once (`--burst --expect-query-image 753604f8 --ts-root ts-src-v2.0.0`, hardened generation,
+  writer clone 2deb90b0): PASS, receipt `upgrade/evidence/releases/v2.2.5/rehearsal-final-20261019T175600Z.json`
+  (events `~/.local/state/qdl-v2/releases/v2.2.5/rehearsal-final-20261019T175600Z/evidence/events.jsonl`).
+  Outage B 312.5 / C 519.0 / D 353.1 s (DL Query READY 145-162 s after the broker recreate; spread = writer clone
+  BOOTSTRAP 68-251 s at 0.35 vCPU). Offsets continuous, cursors unchanged, trust anchor moved both ways, URP 0,
+  writer READY 12/12. Burst gate PASS (baseline 133.4, peaks 160-172, settled 156.8 MiB, last step -2.4, no restart /
+  OOM); every 200 warmup returned <= 1 row (near-zero volume; cause not investigated); 14-15 of 64 slices unresolved
+  per burst after 4 rounds, RATE_LIMITED retries ~105 (driver shares the TS identity quota with the clone; writer
+  clone READY 5/6, 1/7, 6/6 samples during the bursts; cause not verified). Open observation: phase D writer clone
+  counted one bare substring "401" (not attributable, line removed at teardown; Query/Stream 401 = 0, all other
+  auth/protocol counters 0). Fixed after the run: whole-token match + matching lines kept (rehearsal tool), same
+  whole-token pattern in `kn_window_writer.py` (test added) and the packet R1 grep (`\b401\b` also matched the
+  millisecond field of log timestamps).
+- Cleanup: 13 containers, 4 networks, 4 volumes, 5 dirs, 0 left; images b7056141 (2.2.5-601c3d8) and 69304bd4
+  (2.2.5-84512ab) deleted by id after a pin grep (0 references outside their build/evidence dirs), free space
+  242.76 -> 243.74 GB. Kept: image 753604f8 (window target), build dirs (36 MB each), TS v2.0.0 archive (44 MB).
+- Packet additions (coordinator): checklist row 17 + W0.5 TS DR equivalence "before" snapshot from TS dev 57c94e1b
+  (`scripts/p184_dr_equivalence.py snapshot --dl-release v2.2.4`, mandatory before W1; command verified read-only
+  17:11Z: OK, 12 roles, writer 2deb90b0); W14 monitor on TS v2.0.1 (main 875aeeb1, digest 3aaa1a79...; not on the
+  host yet: pull by digest before T-0, else W14 alone deferred); decision: v2.0.1 rather than the later v2.0.2.
+  Outage expectation updated to 5-6 min, up to ~9 min; rollback 4.5-8.7 min.
+- Owner decision ~18:00Z recorded: IDR-128 supported-load limitation (envelope measured with unrelated heavy stacks
+  paused; mixed portal workload outside the certified scope; IDR-128 OPEN for host split / IO isolation; no new
+  tuning campaign) in `CERTIFICATE_SCOPE.md` section 3b and the new `drafts/RELEASE_NOTES.md`.
+- Status: the window is ready for go once this PR is merged (CI green); production-ready only after the window's
+  R1-R4. Next: coordinator schedules the window per packet section 9.
+
+### DL v2.2.5: window result, R2 parity tolerance fix, certificate and release packaging - 2026-10-20 (Claude)
+
+- Coordinator 2026-10-20: package v2.2.5 after the production maintenance window (coordinator-run, owner GO,
+  2026-10-20 01:28-02:54:45Z, forward path, no rollback). Branch `docs/v225-release-package` from origin/dev aa89d83
+  (worktree `/home/bobby/.worktrees/data-layer-dev`). Production read-only in this slice (docker inspect/logs/stats,
+  one compose-parity run); no host lock taken (none needed: docs, a unit test, a read-only parity check).
+- Window facts (receipts copied, non-secret only, to `upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/`, 19
+  files, `SHA256SUMS`; each file grepped for keys/passwords/tokens: none; `rollback/` and `writer/*.compose.json`
+  not copied): outage 545 s (writer stop 01:31:04Z -> STRICT READY 64/64 01:40:09Z, incl. ~2 min coordinator
+  wait-loop bug at W10); Query READY with the new TS identity 01:33:03Z, old identity refused; K6 topics pre == post;
+  Query max 188.3 MiB during both writer starts; R1 PASS; R4 60-min passive soak PASS; W14 DEFERRED (GHCR
+  read:packages missing); portal running, Codex read-only.
+- R2 fix: `scripts/kn_versioned_compose.py` `parity` compared `cpus` exactly; compose passes `cpus: 2.25` through
+  float32 to NanoCpus 2249999872, so kafka1-3 failed with 1.3e-7 vCPU. New `CPUS_TOLERANCE = 1e-6` + `cpus_equal`,
+  `same(..., equal=...)` for that field only. Tests: `tests/test_kn_stable_compose.py` new class
+  `KnComposeParityCpusTest` (parity() against a faked docker inspect: float32 cap PASS; 2.24/2.26/2.0 vs 2.25 FAIL
+  with exactly one problem; tolerance bounds). `python3 -B -m unittest tests.test_kn_stable_compose`: 12 OK. Negative
+  control: the float32 test FAILS against `git show HEAD:scripts/kn_versioned_compose.py`. Re-run read-only against
+  live 2026-10-20T03:00:55Z with the v2.2.5 env + new generation + kn-secrets: **PASS, 863 checks, 0 problems, 6
+  intended deltas** (`r2-parity-rerun.json` `15415306...`).
+- SDK: `scripts/build_qdl_sdk_release.py` rebuilt into the scratchpad: wheel `9f79e032...`, `.cdx.json`, `.release.json`
+  byte-identical to v2.2.4 (`git diff b5ab3c2 -- qdl_sdk generated contracts scripts/build_qdl_sdk_release.py`
+  empty), so `release.yml`'s wheel check holds with the v2.2.4 sha.
+- Certificate (`upgrade/evidence/releases/v2.2.5/CERTIFICATE.md`, `certificate.json`, `endpoint-report.json`):
+  status **PASS under P1 (POST_HOC_PACKAGING_DECISION, owner confirmation required before the tag)**. Finding (E2):
+  the predeclared G5 delta item D3 (b) "concurrent hot-read latency" was never measured (the IDR-129 harness drives
+  warmups only; arm H `H.out` `643dcc60...`). P1 splits G5: hot path INHERITED (request path unchanged by the
+  IDR-129 diff; the maintenance hook ran 0 times in production since the window: `docker logs --since
+  2026-10-20T01:33:00Z` grep `kind=memory_maintenance` 0/0, RSS 228/234 MiB), warmup path PASS by the A/B (RSS
+  361-445 vs 472-743 MiB, warmup p50 6.6-8.3 vs 6.4-8.7 s, 429 991-1118 vs 992-1135 per burst), hot reads during a
+  maintenance run NOT_MEASURED (136-160 ms loop block per run, <= 1 per 120 s, only >= 448 MiB). Without P1:
+  `gates_without_p1` G5 NOT_MEASURED -> not PASS. Other gates: G1-G4, G7-G10, G12-G14 INHERITED from v2.2.4
+  (certificate `42412548...`); G11 inherited with A5 (FAIL without); G6 PASS by delta proof (no eligibility code in
+  the diff, execution-ready 53 = baseline).
+- Limits recorded: P1; IDR-128 supported load (envelope measured with heavy stacks paused; window ran with the portal
+  running); inherited G11/A5, G14, IDR-108; served age / delivery lag / end-to-end NOT_MEASURED passively; W14
+  deferred (no watchdog); single host; old-identity containers (packet 5c) pending owner cleanup approval; R2 window
+  FAIL was a tool defect; R4 memory "first 10 min" wording not met literally (plateau 260-277 MiB from ~02:02Z).
+- Files: drafts moved to `upgrade/evidence/releases/v2.2.5/` (CERTIFICATE_SCOPE.md, MAINTENANCE_WINDOW_PACKET.md
+  + section 10 window result, RELEASE_NOTES.md final, W12_DECISION.md/.json); docstring paths in
+  `scripts/kn_window_writer.py` and `scripts/kn_mesh_rotation_rehearsal.py`; CERTIFICATION_LEDGER.md v2.2.5 entry.
+- Status: implemented and tested locally (tool fix); v2.2.5 runtime production-deployed, certificate PASS under P1,
+  NOT tagged. Open: owner confirmation of P1 (or the hot-read A/B under the host lock), W14 (TS read:packages token),
+  old-identity cleanup approval, PR CI. Next: PR into dev (coordinator merges), then the dev -> main release PR;
+  the coordinator creates the tag.
+
+### DL v2.2.5: G5 D3 (b) measured by an isolated Query A/B; DR warmup byte compare; P1 superseded - 2026-10-20 (Claude)
+
+- Owner via the coordinator: option (b) "Đo luôn rồi tag". At ~04:30Z the owner also said: do not wait for the
+  Codex lock, because it is correctness only. Run concurrently, interleave the arms, judge on paired old-vs-new
+  deltas, record foreign activity, and touch nothing of theirs.
+- Waiting: from 03:49Z I queued an acquire behind the Codex lock. Codex extended that lock twice, to 05:14:50Z. The
+  acquire was stopped at 04:49Z on the owner instruction, after which no lock was taken or touched by me. The lock
+  file was absent during the counted session.
+- Tool: `scripts/v225_query_hot_read_ab.py` (new; reuses the IDR-129 harness probe).
+  - PREREG v1 `7d28d9cb` was never run. PREREG v2 `0bba6385` is the concurrent, interleaved, paired version and was
+    committed before any run.
+  - Rules:
+    - HR1: paired mean d_p95 <= max(10 % of A, 10 ms); paired mean d_p99 <= max(10 % of A, 25 ms).
+    - HR2: >= 1 maintenance run overlapped by reads; if not, the verdict is INCONCLUSIVE.
+    - HR3: overlapping reads <= run + p99 + 50 ms.
+    - HR4: transport and 5xx errors on B no higher than A beyond the prereg allowance.
+    - HR5: non-200 share on B <= A + 1 pp.
+    - BC: A/B/A' triples.
+  - Fixes during the session, rules unchanged:
+    - `543ddf18`: keep nested binds and volume subpaths of the production Query spec. Attempts 1 and 2 measured
+      nothing.
+    - `b5b36e72`: compare-only re-run mode and path-exact masking in the analysis. The BC driver could not write its
+      raw record, so the BC phase was re-run in the same session after the arms.
+- Result (session `query-ab-20261020c`, 05:04-05:50Z): **PASS**.
+  - Paired mean d_p95 -41.9 ms, d_p99 -19.5 ms.
+  - Maintenance runs 131 / 147 ms; 2 overlapping reads.
+  - 503 DATA_NOT_READY 5.1 % vs 5.0 %.
+  - BC: 65/65 requirements x 2 passes, byte-identical outside the per-request paths (request_id, stream_cursor,
+    per-row cursor, freshness_ms, provider_session_liveness_ms).
+  - Receipts are in `upgrade/evidence/releases/v2.2.5/query-ab-20261020/` (`SHA256SUMS`). `byte-compare.json`
+    `41ebcc3c...` is the DR delta-proof input for TS.
+- Certificate re-issued: G5 PASS by complete delta proof; P1 removed and recorded as superseded. Updated:
+  - `CERTIFICATE.md`
+  - `certificate.json`
+  - `endpoint-report.json`
+  - `RELEASE_NOTES.md`
+  - `CERTIFICATE_SCOPE.md` header
+  - `CERTIFICATION_LEDGER.md`
+- Cleanup: every `qdl-hr-*` container (`--rm`) and network `qdl-hr-net` removed; 0 left (`docker ps -a` / `network
+  ls` by label). No image was built. Production was read-only: docker inspect, the read-only cache copy and
+  docker logs.
+- Status: v2.2.5 certificate PASS, not tagged. Next: PR #48 CI and merge (coordinator), then the dev -> main
+  release PR.
+- P1b (coordinator, owner-approved DR delta proof): the BC rule was extended to the TS DR02/DR03 alpha read shapes
+  (`--alpha`, harness `4e87da2b`). The shapes:
+  - alpha-binance r16 with its new-generation leaf and the registered r135 JWT;
+  - alpha-okx r15 with its r135 leaf and JWT;
+  - per consumer: instrument pages, warmup 5 x 5 symbols, 700, 10,000, a 10,001 refusal, a universe batch of 200 and
+    a mixed batch of 10.
+
+  Same session, 06:10-06:13Z, 24 shapes x 2 passes: **PASS**. Statuses: 44 x 200 and 4 x 400 typed refusals, equal on
+  both images. Receipt `byte-compare-alpha.json` `c884e495...`, copied to the release folder. 0 `qdl-hr-*` containers
+  and networks left.
