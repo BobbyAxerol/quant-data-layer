@@ -1,0 +1,1 @@
+{"verdict": "FAIL", "checked": 863, "problems": ["kafka1.cpus: live=2.249999872 compose=2.25", "kafka2.cpus: live=2.249999872 compose=2.25", "kafka3.cpus: live=2.249999872 compose=2.25"], "deltas": 6}

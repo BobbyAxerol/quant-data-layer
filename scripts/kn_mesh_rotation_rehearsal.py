@@ -2,7 +2,7 @@
 """Isolated rehearsal of the v2.2.5 maintenance window: atomic mesh mTLS rotation + versioned-compose roll.
 
 Purpose
-    Run the window procedure of ``upgrade/evidence/releases/v2.2.5/drafts/MAINTENANCE_WINDOW_PACKET.md`` on a
+    Run the window procedure of ``upgrade/evidence/releases/v2.2.5/MAINTENANCE_WINDOW_PACKET.md`` on a
     disposable copy of the KN topology before production sees it, and measure it:
 
     A  bring the mini-stack up from the committed compose (``deploy/compose/qdl-v2-stable-kn.yml``) on the OLD

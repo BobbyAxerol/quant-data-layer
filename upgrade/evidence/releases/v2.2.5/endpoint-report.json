@@ -1,0 +1,227 @@
+{
+ "idr129_delta_proof": {
+  "isolated_ab": {
+   "arm_A_production_image_3e9e4d3a": {
+    "bursts": 12,
+    "evidence": {
+     "path": "~/.local/state/qdl-v2/idr129-query-rss-20261019b/A-stage.out",
+     "sha256": "d758dbff687a7446d5267bce4715014406fbbbc3f8609dfacf0315238a92c3e2"
+    },
+    "failed_slices_per_burst_range": [
+     27,
+     37
+    ],
+    "rss_mib_burst1": 471.8,
+    "rss_mib_last": 683.0,
+    "rss_mib_range": [
+     471.8,
+     743.7
+    ],
+    "status_429_per_burst_range": [
+     992,
+     1135
+    ],
+    "warmup_200_p50_ms_range": [
+     6400,
+     8681.5
+    ]
+   },
+   "arm_H_fixed_image_84512ab": {
+    "bursts": 12,
+    "evidence": {
+     "path": "~/.local/state/qdl-v2/idr129-query-rss-20261019c/H.out",
+     "sha256": "643dcc60d45a48dffbc4cc7bf6979a560315f12d8b794e2f227c208385faabbd"
+    },
+    "failed_slices_per_burst_range": [
+     26,
+     35
+    ],
+    "rss_mib_burst1": 361.1,
+    "rss_mib_last": 445.0,
+    "rss_mib_range": [
+     361.1,
+     445.0
+    ],
+    "status_429_per_burst_range": [
+     991,
+     1118
+    ],
+    "warmup_200_p50_ms_range": [
+     6596.0,
+     8306
+    ]
+   },
+   "concurrent_hot_read_latency": "NOT_MEASURED (the harness drives warmups only)",
+   "harness": "scripts/idr129_query_rss_isolated.py",
+   "image_equivalence": "84512ab and the released 9b6747f carry identical qdl/api_v2/router.py, qdl/query/service.py, qdl/runtime/memory_maintenance.py, qdl/runtime/stable.py (git diff empty); 9b6747f adds the IDR-127 config",
+   "shape": "one Query replica, 1 vCPU / 2 GiB, private copy of the 64 burst products (production volume), 64 concurrent SDK-shaped warmups per burst x 12, no manual gc/trim during bursts"
+  },
+  "production_after_window": {
+   "basis": "docker logs --since 2026-10-20T01:33:00Z query_kn_1/2 | grep -c kind=memory_maintenance (read-only)",
+   "checked_utc": "2026-10-20T03:00Z",
+   "memory_maintenance_runs_since_window": 0,
+   "query_mem_mib_at_check": {
+    "query_kn_1": 227.8,
+    "query_kn_2": 233.6
+   }
+  },
+  "rehearsal_burst": {
+   "receipt": "upgrade/evidence/releases/v2.2.5/rehearsal-final-20261019T175600Z.json",
+   "result": "3 x 64 warmups on image 753604f8, baseline 133.4 MiB, peaks 160-172, settled 156.8, no restart/OOM: PASS (near-zero row volume)",
+   "sha256": "410e0c37229e877a6019099b9b3f37322273667b45f7568f4033355eb10f6096"
+  }
+ },
+ "inherited": {
+  "certificate": {
+   "path": "upgrade/evidence/releases/v2.2.4/certificate.json",
+   "sha256": "424125483c3e7e97a78503111919eb0df9bd257965c84b44221b3cd41fd70f5f"
+  },
+  "counted_run": "p184-final-campaign-20261019T040311Z",
+  "endpoint_report": {
+   "path": "upgrade/evidence/releases/v2.2.4/endpoint-report.json",
+   "sha256": "013b66e683a9ed6846a82d8b858a5a5bc5dcb28cebf80688eb7c099fae4740b7"
+  },
+  "note": "G1-G4, G7-G14 numbers are those of the v2.2.4 report (same rust digests, same TS writer image); G5/G6 per CERTIFICATE.md section 4",
+  "release": "v2.2.4"
+ },
+ "limits": [
+  "Stage-100 latency/capacity numbers are inherited from v2.2.4, measured with unrelated heavy stacks paused (IDR-128 OPEN); mixed portal workload is outside the certified scope. The window ran with the portal running.",
+  "G5: hot-read latency concurrent with a Query memory-maintenance run (RSS >= 448 MiB) is NOT_MEASURED (CERTIFICATE.md section 4).",
+  "Served event age, delivery lag and end-to-end latency were not measured passively in the window.",
+  "Single host; no HA.",
+  "W14 monitor deferred: no DATA_LAYER watchdog runs.",
+  "Containers still holding the 2026-08-22 identity (packet section 5c) await owner cleanup approval."
+ ],
+ "release": "v2.2.5",
+ "schema": "qdl.release-endpoint-report.v2",
+ "scope": "Data Layer v2.2.5 on the Kafka-native stack after the 2026-10-20 maintenance window: mesh mTLS generation 20261019T084200Z, versioned KN compose with healthchecks, IDR-127 configuration, Query image with the IDR-129 fix. Rust binaries unchanged. Stage-100 workload numbers are INHERITED from v2.2.4 (not re-measured); the numbers measured for v2.2.5 are the window receipts (passive production, no load added) and the IDR-129 isolated A/B. Not a TS order/accounting/alpha certification.",
+ "window": {
+  "conditions": {
+   "codex": "running read-only (not paused)",
+   "load_added": "none (passive)",
+   "note": "IDR-128: the v2.2.4 envelope was measured with unrelated heavy stacks paused; these window numbers were not",
+   "portal": "running (not paused)"
+  },
+  "consumer_visible_outage_s": 545,
+  "dir": "~/.local/state/qdl-v2/releases/v2.2.5/window-20261020T0128Z",
+  "outage_note": "includes ~2 min of a coordinator wait-loop bug at W10 (operator script)",
+  "r1": {
+   "certs_notafter": "2027-10-19",
+   "core_members": 3,
+   "images_match_v225_env": true,
+   "k6": "pre == post",
+   "kafka_brokers": 3,
+   "projector_lag_sum": {
+    "kn-projector-v3-a": 277,
+    "kn-projector-v3-b": 56
+   },
+   "query_mem_max_mib": 188.3,
+   "query_new_identity": "READY x2",
+   "query_old_identity": "refused rc=60",
+   "restart_count": 0,
+   "roles_up_healthy": 17,
+   "stream_new_identity": "Verification OK x2",
+   "stream_old_identity": "verify error num=20",
+   "under_min_isr": 0,
+   "urp": 0,
+   "verdict": "PASS",
+   "writer_auth_protocol_lines_since_T_S": {
+    "files": 0,
+    "stdout": 0
+   },
+   "writer_ready": "64/64 STRICT, execution_ready 53"
+  },
+  "r2_compose_parity": {
+   "rerun_after_tool_fix": {
+    "checked": 863,
+    "intended_deltas": 6,
+    "problems": [],
+    "sha256": "15415306d81a76cc8a82dad3fb7b073ec75abeabbcc472492ae9097ced0de70c",
+    "utc": "2026-10-20T03:00:55Z",
+    "verdict": "PASS"
+   },
+   "window_run": {
+    "problems": "kafka1-3 cpus live 2.249999872 vs compose 2.25 (float32 rounding)",
+    "sha256": "83f98eb60bed0dc50fc3f12fb6718498bc4b3a684f12eb6b41315ca9150c7709",
+    "verdict": "FAIL"
+   }
+  },
+  "r4_soak": {
+   "auth_protocol": {
+    "dl_roles": {
+     "query_kn_1": {},
+     "query_kn_2": {},
+     "stream_kn_1": {},
+     "stream_kn_2": {}
+    },
+    "writer_files": {},
+    "writer_stdout": {}
+   },
+   "data_policy_refusals": {},
+   "execution_ready_min_max": [
+    48,
+    53
+   ],
+   "latency": {
+    "delivery_lag_venue_to_canonical": "NOT_MEASURED passively; inherited from v2.2.4 G4",
+    "end_to_end_venue_to_ts_cache": "NOT_MEASURED passively; inherited from v2.2.4 G2",
+    "request_latency": {
+     "basis": "QUERY_REQUEST_START_TO_REDIS_APPLY_DECISION_MONOTONIC (writer native_probe histograms differenced over the soak; bucket upper bounds)",
+     "by_feed": {
+      "QUOTE": {
+       "failed": 0,
+       "max_ms_since_start": 193.76,
+       "mean_ms": 9.37,
+       "p50_le_ms": 10,
+       "p95_le_ms": 25,
+       "p99_le_ms": 25,
+       "requests": 7261,
+       "unavailable": 6
+      },
+      "TRADE": {
+       "failed": 0,
+       "max_ms_since_start": 37.703,
+       "mean_ms": 11.99,
+       "p50_le_ms": 25,
+       "p95_le_ms": 25,
+       "p99_le_ms": 50,
+       "requests": 1800,
+       "unavailable": 0
+      }
+     }
+    },
+    "served_event_age": "NOT_MEASURED (no passive counter); inherited from v2.2.4 G5/G6"
+   },
+   "minutes": 60,
+   "query_mem_mib": {
+    "query_kn_1": {
+     "first": 188.5,
+     "growth_last_10min": -3.3,
+     "last": 265.0,
+     "max": 270.4
+    },
+    "query_kn_2": {
+     "first": 183.2,
+     "growth_last_10min": -5.9,
+     "last": 263.3,
+     "max": 277.2
+    }
+   },
+   "restarts": {},
+   "samples": 59,
+   "sha256": {
+    "r4-soak.jsonl": "82a4e9aa61cb7289dfd29cee679863d1dc9a1f292ac83c53c5518c7172635dbe",
+    "r4-soak.out": "d4301a18a6e26c1ca5f971d52efa0f8de7fab05c3b2675e171073e28e828bddf"
+   },
+   "started": "2026-10-20T01:41:23Z",
+   "verdict": "PASS",
+   "writer_ready_samples": "59/59"
+  },
+  "repo_copy": "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z (SHA256SUMS)",
+  "strict_ready_utc": "2026-10-20T01:40:09Z",
+  "strict_restart_utc": "2026-10-20T01:38:31Z",
+  "t_w1_marker_utc": "2026-10-20T01:31:00Z",
+  "w14_monitor": "DEFERRED (GHCR read:packages missing)",
+  "writer_stop_utc": "2026-10-20T01:31:04Z"
+ }
+}

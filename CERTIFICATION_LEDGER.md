@@ -2363,3 +2363,45 @@ Pinned at:
 `certificate.json` status PASS, `amendments` = G4-A1, G4-A2, A3 (refreshed), A4 v2 (pre-registered, not needed), A5
 (`post_hoc: true`); `gates_without_a5` G11 FAIL. It supersedes the 2026-10-18 certificate (`da2fd484...`).
 `release.yml` is unchanged. No tag, no merge.
+
+## DL v2.2.5 - 2026-10-20 production window + certificate (PASS under post-hoc P1; owner confirmation pending)
+
+Compact release on top of v2.2.4: IDR-127 configuration, versioned KN compose + healthchecks, mesh mTLS generation
+`20261019T084200Z`, Query image with the IDR-129 fix. Rust digests unchanged; TS writer unchanged (W12-A). Evidence:
+`upgrade/evidence/releases/v2.2.5/` (CERTIFICATE.md, certificate.json, endpoint-report.json, RELEASE_NOTES.md,
+MAINTENANCE_WINDOW_PACKET.md section 10, window receipts `window-20261020T0128Z/` with `SHA256SUMS`).
+
+### 2026-10-20 - maintenance window (production, coordinator-run, owner GO): R1 R2 R4 PASS, W14 deferred
+
+Pinned at:
+- Query `qdl-v2-python:2.2.5-9b6747f` `sha256:753604f8abaa866e2de30c7ccaf36168986bc6991550ee326d53e51b83d1550a`
+  (query_kn_1/2); every other DL role on its v2.2.4 digest (rust `27c79b53` / `60f83a51` / `7c848aad`, Kafka
+  `9516fb76`, Redis `dfa18828`, bar edge rc14 `08f356a8` held);
+- compose `deploy/compose/qdl-v2-stable-kn.yml` `50c1f014...` + `qdl-v2-stable-kn.v2.2.5.env` `c6770d5d...`;
+- TLS generation `20261019T084200Z` (CA `610c0c6f...`, notAfter 2027-10-19); writer `2deb90b0` with the new identity,
+  STRICT.
+
+- Outage 545 s (writer stop 01:31:04Z -> STRICT READY 64/64 01:40:09Z, incl. ~2 min coordinator wait-loop bug);
+  execution-ready 53 = baseline; K6 no-op (topics equal); Query max 188.3 MiB during both writer starts.
+- R1 PASS (`r1.json` `eb47296d...`): 17 roles healthy, RestartCount 0, trust anchor moved (old identity refused by
+  Query rc 60 / Stream num=20), Kafka 3 brokers, URP 0, core 3 members.
+- R2: window run FAIL only on kafka1-3 `cpus` (compose float32: 2249999872 vs 2.25); tool fixed (1e-6 vCPU tolerance,
+  `tests.test_kn_stable_compose` 12 OK, negative control fails on the old code); re-run read-only 03:00:55Z **PASS**,
+  863 checks, 0 problems (`r2-parity-rerun.json` `15415306...`).
+- R4 60-min passive soak PASS (`r4-soak.jsonl` `82a4e9aa...`): READY 59/59, 0 auth/protocol, 0 restarts, Query
+  plateau 260-277 MiB; QUOTE p95 <=25 ms n=7261, TRADE p95 <=25 ms n=1800 (writer native_probe); served age
+  NOT_MEASURED. Portal running, Codex read-only: a regression sample, not a certification of the IDR-128 envelope.
+- W14 monitor DEFERRED (GHCR read:packages missing).
+- Re-run only if a pinned digest, the compose/env, the TLS generation or the writer image changes.
+
+### 2026-10-20 - v2.2.5 certificate: status PASS under P1 (POST_HOC_PACKAGING_DECISION); not tagged
+
+- Inherited from v2.2.4 (`certificate.json` `42412548...`, counted run 040311Z): G1-G4, G7-G10, G12-G14; G11 as in
+  v2.2.4 (PASS under A5, FAIL without). G6 PASS by delta proof (no eligibility code in the IDR-129 diff; execution-ready
+  53 = baseline).
+- G5: the predeclared delta item "concurrent hot-read latency" (CERTIFICATE_SCOPE.md D3 (b)) was **not measured**.
+  P1 splits G5 by code path (hot path unchanged + maintenance hook ran 0 times in production; warmup path PASS by the
+  IDR-129 A/B) and records hot reads during a maintenance run (136-160 ms loop block, <= 1 per 120 s, only >= 448 MiB)
+  as NOT_MEASURED. `gates_without_p1` G5 NOT_MEASURED. **Owner confirmation of P1 is required before the tag**; the
+  alternative is the isolated hot-read A/B.
+- SDK 2.4.1 wheel `9f79e032...` (same as v2.2.4, rebuilt byte-identical). `release.yml` unchanged. No tag.

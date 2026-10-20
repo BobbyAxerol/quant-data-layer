@@ -77035,3 +77035,49 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   tuning campaign) in `CERTIFICATE_SCOPE.md` section 3b and the new `drafts/RELEASE_NOTES.md`.
 - Status: the window is ready for go once this PR is merged (CI green); production-ready only after the window's
   R1-R4. Next: coordinator schedules the window per packet section 9.
+
+### DL v2.2.5: window result, R2 parity tolerance fix, certificate and release packaging - 2026-10-20 (Claude)
+
+- Coordinator 2026-10-20: package v2.2.5 after the production maintenance window (coordinator-run, owner GO,
+  2026-10-20 01:28-02:54:45Z, forward path, no rollback). Branch `docs/v225-release-package` from origin/dev aa89d83
+  (worktree `/home/bobby/.worktrees/data-layer-dev`). Production read-only in this slice (docker inspect/logs/stats,
+  one compose-parity run); no host lock taken (none needed: docs, a unit test, a read-only parity check).
+- Window facts (receipts copied, non-secret only, to `upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/`, 19
+  files, `SHA256SUMS`; each file grepped for keys/passwords/tokens: none; `rollback/` and `writer/*.compose.json`
+  not copied): outage 545 s (writer stop 01:31:04Z -> STRICT READY 64/64 01:40:09Z, incl. ~2 min coordinator
+  wait-loop bug at W10); Query READY with the new TS identity 01:33:03Z, old identity refused; K6 topics pre == post;
+  Query max 188.3 MiB during both writer starts; R1 PASS; R4 60-min passive soak PASS; W14 DEFERRED (GHCR
+  read:packages missing); portal running, Codex read-only.
+- R2 fix: `scripts/kn_versioned_compose.py` `parity` compared `cpus` exactly; compose passes `cpus: 2.25` through
+  float32 to NanoCpus 2249999872, so kafka1-3 failed with 1.3e-7 vCPU. New `CPUS_TOLERANCE = 1e-6` + `cpus_equal`,
+  `same(..., equal=...)` for that field only. Tests: `tests/test_kn_stable_compose.py` new class
+  `KnComposeParityCpusTest` (parity() against a faked docker inspect: float32 cap PASS; 2.24/2.26/2.0 vs 2.25 FAIL
+  with exactly one problem; tolerance bounds). `python3 -B -m unittest tests.test_kn_stable_compose`: 12 OK. Negative
+  control: the float32 test FAILS against `git show HEAD:scripts/kn_versioned_compose.py`. Re-run read-only against
+  live 2026-10-20T03:00:55Z with the v2.2.5 env + new generation + kn-secrets: **PASS, 863 checks, 0 problems, 6
+  intended deltas** (`r2-parity-rerun.json` `15415306...`).
+- SDK: `scripts/build_qdl_sdk_release.py` rebuilt into the scratchpad: wheel `9f79e032...`, `.cdx.json`, `.release.json`
+  byte-identical to v2.2.4 (`git diff b5ab3c2 -- qdl_sdk generated contracts scripts/build_qdl_sdk_release.py`
+  empty), so `release.yml`'s wheel check holds with the v2.2.4 sha.
+- Certificate (`upgrade/evidence/releases/v2.2.5/CERTIFICATE.md`, `certificate.json`, `endpoint-report.json`):
+  status **PASS under P1 (POST_HOC_PACKAGING_DECISION, owner confirmation required before the tag)**. Finding (E2):
+  the predeclared G5 delta item D3 (b) "concurrent hot-read latency" was never measured (the IDR-129 harness drives
+  warmups only; arm H `H.out` `643dcc60...`). P1 splits G5: hot path INHERITED (request path unchanged by the
+  IDR-129 diff; the maintenance hook ran 0 times in production since the window: `docker logs --since
+  2026-10-20T01:33:00Z` grep `kind=memory_maintenance` 0/0, RSS 228/234 MiB), warmup path PASS by the A/B (RSS
+  361-445 vs 472-743 MiB, warmup p50 6.6-8.3 vs 6.4-8.7 s, 429 991-1118 vs 992-1135 per burst), hot reads during a
+  maintenance run NOT_MEASURED (136-160 ms loop block per run, <= 1 per 120 s, only >= 448 MiB). Without P1:
+  `gates_without_p1` G5 NOT_MEASURED -> not PASS. Other gates: G1-G4, G7-G10, G12-G14 INHERITED from v2.2.4
+  (certificate `42412548...`); G11 inherited with A5 (FAIL without); G6 PASS by delta proof (no eligibility code in
+  the diff, execution-ready 53 = baseline).
+- Limits recorded: P1; IDR-128 supported load (envelope measured with heavy stacks paused; window ran with the portal
+  running); inherited G11/A5, G14, IDR-108; served age / delivery lag / end-to-end NOT_MEASURED passively; W14
+  deferred (no watchdog); single host; old-identity containers (packet 5c) pending owner cleanup approval; R2 window
+  FAIL was a tool defect; R4 memory "first 10 min" wording not met literally (plateau 260-277 MiB from ~02:02Z).
+- Files: drafts moved to `upgrade/evidence/releases/v2.2.5/` (CERTIFICATE_SCOPE.md, MAINTENANCE_WINDOW_PACKET.md
+  + section 10 window result, RELEASE_NOTES.md final, W12_DECISION.md/.json); docstring paths in
+  `scripts/kn_window_writer.py` and `scripts/kn_mesh_rotation_rehearsal.py`; CERTIFICATION_LEDGER.md v2.2.5 entry.
+- Status: implemented and tested locally (tool fix); v2.2.5 runtime production-deployed, certificate PASS under P1,
+  NOT tagged. Open: owner confirmation of P1 (or the hot-read A/B under the host lock), W14 (TS read:packages token),
+  old-identity cleanup approval, PR CI. Next: PR into dev (coordinator merges), then the dev -> main release PR;
+  the coordinator creates the tag.

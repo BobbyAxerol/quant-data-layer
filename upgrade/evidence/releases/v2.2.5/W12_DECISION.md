@@ -1,6 +1,6 @@
 # DL v2.2.5 window: W12 decision record (TS writer slot)
 
-Status: proposal for the window owner, 2026-10-19 (Claude). **Verdict: W12-A**: keep writer image 2deb90b0 and switch
+Status: decided and applied in the 2026-10-20 window (writer 2deb90b0 with the new identity, BOOTSTRAP then STRICT, READY 64/64). Written 2026-10-19 (Claude). **Verdict: W12-A**: keep writer image 2deb90b0 and switch
 only its TLS identity mount, as in `MAINTENANCE_WINDOW_PACKET.md` section 5. W12-B (roll the writer to the TS
 v2.0.0 release image) needs every proof item below to PASS. Item 2 passes. Items 1 and 3 are incomplete and item 4
 has only a component-level measurement, so W12-B is not taken in this window.

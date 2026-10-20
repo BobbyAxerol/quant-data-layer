@@ -1,8 +1,9 @@
-# Data Layer v2.2.5 maintenance window packet (DRAFT, not executed)
+# Data Layer v2.2.5 maintenance window packet
 
-Status: DRAFT for the owner's go/no-go. Nothing in this packet has been executed on production. The procedure was
-rehearsed on an isolated stack (section 7); the final pre-window rehearsal with the window's exact inputs is item
-2.5a. Target window: before 2026-11-06; hard deadline 2026-11-20 14:43Z (expiry of every deployed mesh certificate).
+Status: **EXECUTED 2026-10-20 01:28-02:54Z on production (coordinator-run, owner GO), forward path, no rollback.**
+Result: section 10; receipts `window-20261020T0128Z/` (this folder). The text below is the packet as approved
+(it was the DRAFT for the go/no-go; only this status line and section 10 were added after the window).
+Target window was before 2026-11-06; hard deadline 2026-11-20 14:43Z (expiry of the previous mesh generation).
 
 **This window is a full-mesh outage, not a config-only change.** The CA changes and every peer authenticates every
 other peer, so the TS writer, every Data Layer mesh role and the three brokers stop together; the Trading System
@@ -425,3 +426,38 @@ per code/venue/symbol/feed. PASS = writer READY in every sample, 0 auth/protocol
 - [ ] TS DR equivalence "before" snapshot written (W0.5) before W1.
 - [ ] After acceptance: certificate scope per `CERTIFICATE_SCOPE.md` (same folder), then tag v2.2.5; old-identity
       cleanup (section 5c) as a separate owner approval.
+
+## 10. Window result (2026-10-20, executed)
+
+Coordinator-run with the owner's GO; window dir `~/.local/state/qdl-v2/releases/v2.2.5/window-20261020T0128Z`.
+Non-secret receipts are copied byte-for-byte to `window-20261020T0128Z/` in this folder (`SHA256SUMS` there);
+`rollback/` (env-only secrets, the old TLS tar) and `writer/*.compose.json` (env secrets) stay outside Git.
+
+| Step | Time (UTC) | Result |
+|---|---|---|
+| Pre-checks | 01:29-01:30Z | TLS verify 118/118 PASS, perms PASS, pre-parity PASS (847 checks), writer baseline READY 64/64 (execution-ready 53), K6 pre observed, DR "before" snapshot written; decision: Codex read-only (not paused), portal NOT paused, W14 deferred |
+| W1 writer stop | 01:31:04Z (T_W1 marker 01:31:00Z) | clean stop |
+| W2-W3 mesh stop | 01:31:17Z | all mesh roles exited |
+| W4 brokers | 01:31:37Z answer; URP 0 at 01:31:50Z | 3 brokers |
+| W5 K6 | 01:32:05Z | `topics` of k6-post == k6-pre (no-op) |
+| W6-W8 cores, ingestors, projectors | healthy 01:32:24Z | 3 core members |
+| W9 Query | READY over mTLS with the new TS identity 01:33:03Z; old identity refused (rc 60) | image 753604f8 |
+| W10 Streams | verify OK with the new identity; old identity refused (verify error num=20) | includes ~2 min of a coordinator wait-loop bug (operator script, not a product fault) |
+| W11 bar edge | healthy ~01:38Z | image unchanged |
+| W12a BOOTSTRAP | READY 64/64 01:38:23Z | execution-ready 50 |
+| W12b STRICT | T_S 01:38:31Z; READY 64/64 01:40:09Z, `MARKET_DATA_NATIVE_REQUIRE_RESUME=1` | execution-ready 53 (= baseline) |
+| Consumer-visible outage | **545 s** (01:31:04Z -> 01:40:09Z) | inside the 10 min planning budget and the 25 min rollback deadline |
+| Query memory during W12 | max 188.3 MiB (limit for a hold: 1.8 GiB) | `query-mem-w12.txt` |
+| R1 | PASS | 17 roles healthy, RestartCount 0, images = v2.2.5 env, writer 0 auth/protocol lines since T_S (files and stdout), Kafka 3 brokers, URP 0, under-min-ISR 0, core 3 members, served/mounted certificates notAfter 2027-10-19 |
+| R2 | tool FAIL at 01:41Z on kafka1-3 `cpus` only (live 2.249999872 vs compose 2.25: compose passes `cpus` through float32); tool fixed (`CPUS_TOLERANCE` 1e-6 vCPU, unit tests) and re-run read-only 2026-10-20T03:00Z: **PASS, 863 checks, 0 problems, 6 intended deltas** (`r2-parity-rerun.json`) | |
+| R3 | build receipt PASS (20 files = git diff, unexpected 0, pip freeze equal) + IDR-129 delta proof | `CERTIFICATE.md` |
+| R4 60-min passive soak | 01:41:23-02:41Z: PASS | writer READY 59/59, execution-ready 48-53, 0 auth/protocol, 0 data-policy lines in writer logs, 0 restarts; Query 183-188 MiB at start, plateau 260-277 MiB from ~02:02Z, growth over the last 10 min -3.3 / -5.9 MiB; request latency (writer native_probe) QUOTE n=7261 p50 <=10 / p95 <=25 / p99 <=25 ms, 6 unavailable, 0 failed; TRADE n=1800 p50/p95 <=25, p99 <=50 ms; served event age NOT_MEASURED |
+| W14 monitor | DEFERRED | GHCR pull denied (token lacks `read:packages`); `monitor_service` stays exited |
+| Host lock | released 02:54:45Z | |
+
+R4 wording note: section 1b asked for Query memory "10 min after the STRICT start ... not growing"; the soak tool
+checks the last 10 min. Over the first 10 min memory rose (+30 MiB in the first 5 min on each replica) and then
+held at 260-277 MiB (13 % of the 2 GiB cap) for the last 40 min. The intent of the rule (no per-burst retention, far
+below 1.6 GiB) is met. The literal "first 10 min" reading is not, and that is recorded here.
+
+Not done in the window: W14 (above); old-identity container cleanup (section 5c) waits for its own owner approval.

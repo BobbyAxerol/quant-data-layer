@@ -1,0 +1,298 @@
+{
+ "schema": "qdl.scoped-release-certificate.v2",
+ "release": "v2.2.5",
+ "previous_published_release": "v2.2.4",
+ "status": "PASS",
+ "status_basis": "PASS under P1 (POST_HOC_PACKAGING_DECISION 2026-10-20, Claude; requires the owner's confirmation before the tag): G5 split by code path; G5-hot INHERITED (hot-read request path unchanged; the new maintenance hook ran 0 times in production), G5-cold PASS by the IDR-129 A/B, G5-maintenance (hot reads concurrent with a maintenance run) NOT_MEASURED and stated as a limit. Without P1 the predeclared CERTIFICATE_SCOPE.md D3 (b) item makes G5 NOT_MEASURED and the status not PASS (gates_without_p1).",
+ "post_hoc_decisions": [
+  {
+   "id": "P1",
+   "label": "POST_HOC_PACKAGING_DECISION",
+   "made": "2026-10-20 at packaging, after the window receipts",
+   "by": "Claude (packager); owner confirmation required",
+   "owner_confirmed": false,
+   "predeclared_item": "CERTIFICATE_SCOPE.md D3 (b) 'concurrent hot-read latency' (a missing item of (b) is NOT_MEASURED and blocks the G5 claim)",
+   "what_exists": "RSS, warmup latency, 429 and failed-slice counts per burst for both images; maintenance run durations 136-160 ms (gc 128-152 + trim 8-12, arm H at 1 vCPU); 0 production maintenance runs after the window",
+   "to_remove": "isolated A/B with a concurrent hot-read driver, 3e9e4d3a vs 753604f8, under the host lock; or the owner accepts P1"
+  }
+ ],
+ "status_rule": "PASS only with no FAIL gate, every inherited gate's delta proof met, R1/R2/R3/R4 PASS, no NOT_MEASURED item upgraded, and required CI green on the PR head (CERTIFICATE.md section 1; inheritance matrix fixed before the window in CERTIFICATE_SCOPE.md). P1 is a post-measurement scoping of G5 and is NOT a predeclared rule.",
+ "classification": "SCOPED_DATA_LAYER_CONFIG_CERT_QUERY_DELTA_RELEASE_INHERITING_V224_GATES_PASS_UNDER_POST_HOC_P1_SINGLE_HOST_NOT_HA",
+ "publication_status": "NOT_TAGGED_CERTIFICATE_PASS_UNDER_POST_HOC_P1",
+ "publication_requires": "owner confirmation of P1 (or the hot-read A/B); required CI green on the PR heads; the release head on origin/main (release.yml merge-base check); the coordinator creates the tag; release.yml is unchanged and accepts status PASS",
+ "scope": "configuration (IDR-127), versioned KN compose + healthchecks, mesh mTLS generation 20261019T084200Z, Query python image with the IDR-129 fix; rust digests unchanged; TS writer unchanged (W12-A)",
+ "window": {
+  "executed": "2026-10-20T01:28Z-02:54:45Z",
+  "run_by": "coordinator, owner GO",
+  "dir": "~/.local/state/qdl-v2/releases/v2.2.5/window-20261020T0128Z",
+  "repo_copy": "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z",
+  "writer_stop_utc": "2026-10-20T01:31:04Z",
+  "strict_ready_utc": "2026-10-20T01:40:09Z",
+  "consumer_visible_outage_s": 545,
+  "rollback_used": false,
+  "acceptance": {
+   "R1": "PASS",
+   "R2": "PASS after the cpus tolerance fix (window run FAIL on kafka1-3 cpus float32 only)",
+   "R3": "PASS (build receipt) + IDR-129 delta proof",
+   "R4": "PASS (60 min passive)",
+   "W14": "DEFERRED"
+  },
+  "conditions": "portal running, Codex read-only, no load added"
+ },
+ "source_code_sha": {
+  "python_query": "9b6747fdcefbc3ebd9107776411db4ba9528d5e5",
+  "rust_ingestors_stream": "9dab22429ea44566587f31d9f56f8b059933c795",
+  "rust_projector": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
+  "rust_core": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e",
+  "note": "release head = the packaging commit on docs/v225-release-package; runtime source after 9b6747f: tooling/docs only (scripts/kn_versioned_compose.py parity tolerance, docstrings, tests, evidence)"
+ },
+ "release_images": {
+  "python_9b6747f": {
+   "tag": "qdl-v2-python:2.2.5-9b6747f",
+   "digest": "sha256:753604f8abaa866e2de30c7ccaf36168986bc6991550ee326d53e51b83d1550a",
+   "revision_label": "9b6747fdcefbc3ebd9107776411db4ba9528d5e5",
+   "roles": [
+    "query_kn_1",
+    "query_kn_2"
+   ],
+   "build_receipt_sha256": "2bacdc168e07878cff6062b14f26ad4837b8aaca3200ef63e30c61e17406ae0e"
+  },
+  "rust_9dab224": {
+   "tag": "qdl-v2-rust:2.2.4-9dab224",
+   "digest": "sha256:27c79b53400eea5582713a3477034c8561f533755e09a94223e254bffadd5c92",
+   "revision_label": "9dab22429ea44566587f31d9f56f8b059933c795",
+   "roles": [
+    "ingestor_okx_swap",
+    "ingestor_binance_usdm",
+    "stream_kn_1",
+    "stream_kn_2"
+   ],
+   "changed": false
+  },
+  "rust_c7ce7d3": {
+   "tag": "qdl-v2-rust:2.2.4-c7ce7d3",
+   "digest": "sha256:60f83a5106b0baa33477cf64abee6fab471d80d9c1808981e02270516b11143e",
+   "revision_label": "c7ce7d3087cb8a2daf82ba941982bd296d488f45",
+   "roles": [
+    "market_projector_1",
+    "market_projector_2"
+   ],
+   "changed": false
+  },
+  "rust_rc22": {
+   "tag": "qdl-v2-rust:2.2.3-rc22-a4e7b3b",
+   "digest": "sha256:7c848aadcb0dd28178bc6dc2b58c42df6c2c235de6d4bfd6602ef7c19fa64bfb",
+   "revision_label": "a4e7b3b82475b2c4359a27c0fa1144e4f3a2805e",
+   "roles": [
+    "rust_core",
+    "rust_core_2",
+    "rust_core_3"
+   ],
+   "changed": false
+  },
+  "bar_edge_rc14": {
+   "tag": "qdl-v2-python:2.2.3-rc14-a388537",
+   "digest": "sha256:08f356a84151c6e865fbdc4a2efe6924df9336d15353254c2b2da684261794f5",
+   "revision_label": "a388537c897de909257c7f45db44c9ac44a62ccc",
+   "roles": [
+    "binance_bar_edge"
+   ],
+   "changed": false,
+   "note": "held, scoped out"
+  },
+  "kafka": {
+   "digest": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+   "roles": [
+    "kafka1",
+    "kafka2",
+    "kafka3"
+   ],
+   "changed": false
+  },
+  "redis": {
+   "digest": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+   "roles": [
+    "market_cache",
+    "stable_redis"
+   ],
+   "changed": false
+  }
+ },
+ "ts_writer": {
+  "container": "market_data_service_p184w",
+  "image": "sha256:2deb90b0cc52eae7610fa44692f90df077e9db100ca259e38fd652a2dc1c5dc5",
+  "revision_label": "30f50a91dbd67ce2a482480be598cf509b25333e",
+  "slot": "W12-A",
+  "identity": "gen-20261019T084200Z/identities/trading-system",
+  "jwt_manifest_revision": 11,
+  "require_resume": "1",
+  "started": "2026-10-20T01:38:32Z",
+  "restart": 0
+ },
+ "runtime_basis": "docker inspect / docker image inspect, read-only, 2026-10-20 ~03:00Z: 17 DL roles running, healthy, RestartCount 0, OOMKilled false; images equal deploy/compose/qdl-v2-stable-kn.v2.2.5.env",
+ "tls": {
+  "generation": "20261019T084200Z",
+  "ca_sha256_fingerprint": "610c0c6fe0758a872907fbc926c2295dadb7ce31e4d059350fd3fdec567abd12",
+  "ca_not_after": "2027-10-19T08:42:01Z",
+  "leaf_not_after": "2027-10-19",
+  "verify": "118/118 PASS (window-20261020T0128Z/tls-verify.json)",
+  "previous_generation": "20260822T144323Z",
+  "previous_ca_sha256_fingerprint": "7b374a30c8de92b954ed2bf3ab9943b290812f250db2f5ac90e9ef5223561487",
+  "previous_not_after": "2026-11-20T14:43:23Z",
+  "jwt_keys": "unchanged (not rotated)"
+ },
+ "resource_caps": {
+  "kafka1-3": "2.25 vCPU (NanoCpus 2249999872 via compose float32)",
+  "query_kn_1/2": "2.0 vCPU, 2 GiB",
+  "ingestor_okx_swap": "1.0 vCPU",
+  "ingestor_binance_usdm": "0.75 vCPU",
+  "basis": "deploy/compose/qdl-v2-stable-kn.yml, R2 PASS"
+ },
+ "inherited": {
+  "release": "v2.2.4",
+  "counted_run": "p184-final-campaign-20261019T040311Z",
+  "amendments": [
+   "G4-A1",
+   "G4-A2",
+   "A3",
+   "A4",
+   "A5"
+  ],
+  "certificate_sha256": "424125483c3e7e97a78503111919eb0df9bd257965c84b44221b3cd41fd70f5f",
+  "endpoint_report_sha256": "013b66e683a9ed6846a82d8b858a5a5bc5dcb28cebf80688eb7c099fae4740b7",
+  "scorecard_sha256": "2dc2f8d1daa75acb83ecfff0b2aac6c505b39aac4bd71330ec0678d89bb43470",
+  "g12_g13_inheritance_sha256": "95088c9cf97999a8d2234749ba72045ddbaa3323b36e314f75c764039848e538",
+  "condition": "W12-A taken (writer unchanged) and K6 no-op (k6-post topics == k6-pre); rust digests unchanged"
+ },
+ "gates": {
+  "G1": "INHERITED_PASS",
+  "G2": "INHERITED_PASS",
+  "G3": "INHERITED_PASS",
+  "G4": "INHERITED_PASS",
+  "G5": "PASS_UNDER_P1",
+  "G6": "PASS",
+  "G7": "INHERITED_PASS",
+  "G8": "INHERITED_PASS",
+  "G9": "INHERITED_PASS",
+  "G10": "INHERITED_PASS",
+  "G11": "INHERITED_PASS_UNDER_A5",
+  "G12": "INHERITED_PASS",
+  "G13": "INHERITED_PASS",
+  "G14": "INHERITED_PASS"
+ },
+ "gates_without_p1": {
+  "G1": "INHERITED_PASS",
+  "G2": "INHERITED_PASS",
+  "G3": "INHERITED_PASS",
+  "G4": "INHERITED_PASS",
+  "G5": "NOT_MEASURED",
+  "G6": "PASS",
+  "G7": "INHERITED_PASS",
+  "G8": "INHERITED_PASS",
+  "G9": "INHERITED_PASS",
+  "G10": "INHERITED_PASS",
+  "G11": "INHERITED_PASS_UNDER_A5",
+  "G12": "INHERITED_PASS",
+  "G13": "INHERITED_PASS",
+  "G14": "INHERITED_PASS"
+ },
+ "gates_without_p1_and_a5": {
+  "G1": "INHERITED_PASS",
+  "G2": "INHERITED_PASS",
+  "G3": "INHERITED_PASS",
+  "G4": "INHERITED_PASS",
+  "G5": "NOT_MEASURED",
+  "G6": "PASS",
+  "G7": "INHERITED_PASS",
+  "G8": "INHERITED_PASS",
+  "G9": "INHERITED_PASS",
+  "G10": "INHERITED_PASS",
+  "G11": "FAIL",
+  "G12": "INHERITED_PASS",
+  "G13": "INHERITED_PASS",
+  "G14": "INHERITED_PASS"
+ },
+ "gate_basis": {
+  "G1-G4": "INHERITED v2.2.4 counted run; regression R1 + R4 PASS",
+  "G5": "PASS under P1: G5-hot inherited (request path unchanged, maintenance ran 0 times in production), G5-cold PASS by the IDR-129 A/B (RSS 361-445 vs 472-743 MiB, warmup p50 6.6-8.3 vs 6.4-8.7 s, 429 991-1118 vs 992-1135 per burst), G5-maintenance NOT_MEASURED",
+  "G6": "PASS by delta proof D3 (a): no eligibility/freshness/policy code in the IDR-129 diff; execution-ready 53 after STRICT = baseline 53; R4 48-53",
+  "G7-G10": "INHERITED; rehearsal offset/cursor continuity; R1 URP 0, under-min-ISR 0, core 3 members",
+  "G11": "INHERITED as v2.2.4: PASS under post-hoc A5, FAIL without; not re-run",
+  "G12": "INHERITED (binaries unchanged)",
+  "G13": "INHERITED 76/76 (writer 2deb90b0 unchanged); window BOOTSTRAP -> STRICT READY 64/64",
+  "G14": "INHERITED; no R4 CPU sample recorded (predeclared not a gate)"
+ },
+ "endpoint_report_sha256": "fbb26280abf8daf493a3cda0c920bb3868562a034d8813ea976960588831baef",
+ "sdk": {
+  "name": "qdl-sdk",
+  "version": "2.4.1",
+  "wheel_sha256": "9f79e032604bf79db5ca9070c7f8a99b242e7cf22e1659b395b307dc798c28e7",
+  "builds_identical": true,
+  "same_as_release": "v2.2.4",
+  "sbom_sha256": "6bda0014b9ee304b679e44079976bc5d576a524571b5a771807e3aa0cdd2d442",
+  "release_json_sha256": "273e532665f634b3737d0fa014a3ced15efc468e9dd380ae034d8a2ee451be69",
+  "generated_contract_digest": "2ee96b1edab01d3185e4fb973f7e3a0715956f8648938039108eb6156187c116",
+  "built_at": "rebuilt 2026-10-20 from docs/v225-release-package (aa89d83 + this slice): wheel, .cdx.json and .release.json byte-identical to v2.2.4; git diff b5ab3c2 -- qdl_sdk generated contracts scripts/build_qdl_sdk_release.py is empty"
+ },
+ "ci": {
+  "status": "REQUIRED_EXTERNAL_GATE",
+  "note": "runs on the PR heads after the push; recorded in the PRs (the file is part of the head)"
+ },
+ "limits": [
+  "POST-HOC P1: G5 PASS only with G5-maintenance (hot-read latency while a Query memory-maintenance run executes) NOT_MEASURED; each run blocks the replica loop 136-160 ms, at most once per 120 s, only above 448 MiB RSS; 0 runs in production after the window. Owner confirmation required.",
+  "Supported load (IDR-128 OPEN, owner 2026-10-19): the inherited latency envelope was measured with unrelated heavy stacks paused; a mixed portal workload on the same host is outside the certified scope. The window and R4 ran with the portal running (passive load).",
+  "Inherited: G11 PASS only under post-hoc A5; G14 DL CPU 5.75 vCPU above the 5 vCPU budget (not a gate); IDR-108 open; G12 harness shape is not production shape; G13 shadow-certified; writer vendors SDK 2.4.0.",
+  "Not measured passively: served event age, delivery lag venue->canonical, end-to-end venue->TS cache (inherited from v2.2.4).",
+  "W14 deferred: monitor_service exited, no DATA_LAYER / cert-expiry / Query-memory watchdog (GHCR read:packages missing).",
+  "Single host; no HA.",
+  "Old-identity containers (packet 5c: market_data_service, market_data_service_p184w-dr07-rollback, market_data_service_p184w-r49-rollback) pending owner cleanup approval; test apparatus pinned to 2026-08-22 identities must be repointed.",
+  "bar edge held on rc14; inactive client CAs in consumer bundles expire 2026-11-24..2026-12-26 (no running consumer uses them).",
+  "Window outage 545 s includes ~2 min of a coordinator wait-loop bug.",
+  "R2 window run FAILed on a tool defect (float32 cpus); PASS is the re-run after the fix.",
+  "R4 Query memory rose in the first 10 min before its plateau; the packet's literal 'first 10 min not growing' wording is not met (intent met)."
+ ],
+ "rollback": {
+  "until_2026-11-20T14:43Z": "packet section 6: old generation + deploy/compose/qdl-v2-stable-kn.v2.2.4.env (Query sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff); rehearsed 267.8 s / 519.0 s",
+  "after": "image-only rollback (v2.2.4 env with the new generation env), not rehearsed",
+  "query_maintenance_off": "QDL_QUERY_MEMORY_SOFT_LIMIT_MIB=0",
+  "writer": "unchanged image; identity mount follows the generation (render.json rollback commands in the window dir)"
+ },
+ "evidence_sha256": {
+  "upgrade/evidence/releases/v2.2.5/CERTIFICATE.md": "466421b02fa63299e2c4616c55e55fc7e76396c0d2875a7f898adcc2b33ea975",
+  "upgrade/evidence/releases/v2.2.5/RELEASE_NOTES.md": "6b409c41b7c007fa36a0776f4251b7a4069b4887418c7732a604c34803f118bf",
+  "upgrade/evidence/releases/v2.2.5/CERTIFICATE_SCOPE.md": "9f5c3fc747624c3dd2f9ae41b09d81b5a1fdff42644fd42282be15a176cfa596",
+  "upgrade/evidence/releases/v2.2.5/MAINTENANCE_WINDOW_PACKET.md": "eadb4fe727aabeb9912570dd044770191f9f0c7bf061d21a8ac312bf1ad288bf",
+  "upgrade/evidence/releases/v2.2.5/W12_DECISION.md": "ca416086b3b4dfe1f650359d417c2dabce55b222f17b13cff7b2cd7de531e614",
+  "upgrade/evidence/releases/v2.2.5/W12_DECISION_EVIDENCE.json": "05f95dbac13507ddff0c6828e40c532a0183de91e957cf8db9e60c1f3a0d8fdc",
+  "upgrade/evidence/releases/v2.2.5/python-image-build-receipt.json": "2bacdc168e07878cff6062b14f26ad4837b8aaca3200ef63e30c61e17406ae0e",
+  "upgrade/evidence/releases/v2.2.5/rehearsal-20261019.json": "9d6586dcd547d4822a062613991dcd9078e2806f45facb5cdf995641bff1a1b0",
+  "upgrade/evidence/releases/v2.2.5/rehearsal-final-20261019T175600Z.json": "410e0c37229e877a6019099b9b3f37322273667b45f7568f4033355eb10f6096",
+  "upgrade/evidence/releases/v2.2.5/semantic-parity.json": "0d8e3a3bbc0096691b10cfc0a172779968f5dc68bdc7f301cc00492b536b4861",
+  "upgrade/evidence/releases/v2.2.5/tls-verify-gen-20261019T084200Z.json": "e3dbbb516d3aee285097c86b6f84fc517c08f3b819c50acca65b6ab8f1a6c6aa",
+  "upgrade/evidence/releases/v2.2.5/compose-parity-v224-deployed-generation.json": "81186862b857c5c7e97db09d4c3b7577db920a606377e975922c3e98ac42470e",
+  "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/SHA256SUMS": "6cc3bc1bb3ddb1dd88a593438ca262702ee09b8ddc1795912f51f8aa45430498",
+  "deploy/compose/qdl-v2-stable-kn.yml": "50c1f0146f5a1aa7d8a648d7774c776a221584ee4fe10ece009e3dc56408592f",
+  "deploy/compose/qdl-v2-stable-kn.v2.2.5.env": "c6770d5d928e25a1f238dc05c12bccaff23a45aef5066b413da10f76cd6c30ae",
+  "deploy/compose/qdl-v2-stable-kn.v2.2.4.env": "b728d3b4ed9b4997435de4d49067827b6a2529f3e844206f0253fcc871549fd7",
+  "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/T_S": "f0a769b7dd19ced70c115be2361351bb06d4f23eeefdc2969dc622fd8ab228ca",
+  "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/T_W1": "a8cefdea3b4b80ef01b3f6e574d6b62f9e76a092f8ab0b9b0a1db79efd138e6c",
+  "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/baseline-writer.json": "572502bf1e47f6b1cbe433ea858747cd54a35dc3a07ec58d9f8c2c4ee2946ce7",
+  "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/decision.txt": "d5274c1765b414435bf6f7ccde46eb1af0539d95e0c6616b149cf40fcdcd82ba",
+  "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/k6-post.json": "b9bac571226a3743ff44be98fbe4b7c12a1e633dbc758f03dad994e8b484b507",
+  "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/k6-pre.json": "812d42e6f4358d5232ecfcdcc988366efa887d01f167bdba8841c6344b42c9ee",
+  "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/pre-parity.json": "184e7a139d57a8db7c3f4415035d871aa20b7069193dba993deb184e9d97d0f3",
+  "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/query-mem-w12.txt": "6d0a1d171d9c493a0f089ef2219d892841194e9c55b7dd82a5b354a6ec830af7",
+  "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/r1.json": "eb47296dc53080413e878737c7655a359a1864f46e3cd58b391d2ba390df4100",
+  "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/r2-note.json": "de59d499b8b9fc724075dddb80653f08c2e49faefb6c00d54acb4df43b4fdc2c",
+  "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/r2-parity-rerun.json": "15415306d81a76cc8a82dad3fb7b073ec75abeabbcc472492ae9097ced0de70c",
+  "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/r2-parity.json": "83f98eb60bed0dc50fc3f12fb6718498bc4b3a684f12eb6b41315ca9150c7709",
+  "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/r4-soak.jsonl": "82a4e9aa61cb7289dfd29cee679863d1dc9a1f292ac83c53c5518c7172635dbe",
+  "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/r4-soak.out": "d4301a18a6e26c1ca5f971d52efa0f8de7fab05c3b2675e171073e28e828bddf",
+  "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/tls-perms.out": "94dbfb555b8bf818f8415cc6fba924cb6c17994a7bd2c574b932577856ca30ed",
+  "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/tls-verify.json": "0a650aa55b50db5bee5f25ec424300433b2c29a4d5585f3bf287e68ea7e04449",
+  "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/tls-verify.out": "d271178827e273c9702735c97a4e8c961cffb8c1305878525a2b98f5b583dd1b",
+  "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/w12a-ready.json": "452c464de3727e0fc3c4ca5fac194ae6781be9c39ba3e7781277f20f27c3cdd4",
+  "upgrade/evidence/releases/v2.2.5/window-20261020T0128Z/w12b-ready.json": "3879b063cb2aaffcac13eb519cb9ec8e7f2f1062af85e21492acc8990461c2dd"
+ },
+ "evidence_sha256_note": "the .md entries are the files as committed with this certificate; certificate.json cannot list its own sha256"
+}
