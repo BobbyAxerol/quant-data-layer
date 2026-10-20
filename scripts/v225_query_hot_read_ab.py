@@ -60,6 +60,9 @@ TS_TLS = STATE / "tls/gen-20261019T084200Z/identities/trading-system"
 TS_JWT = STATE / "655d2106d01f/bundle/identities-rotate-20260822T144323Z/trading-system-jwt"
 OKX_TLS = STATE / "r135-local-batch-fair-e905747-20260920T135150Z/identities/alpha-okx"
 OKX_JWT = STATE / "r135-local-batch-fair-e905747-20260920T135150Z/identities/alpha-okx-jwt"
+# alpha-binance: new-generation leaf (same CN/SAN as r135, issued for the TS G13 v2.2.5 run), registered r135 JWT key
+BINANCE_TLS = Path.home() / ".local/state/trading-system/p184-20261005/runtime/phase-e/g13v225/identities/alpha-binance"
+BINANCE_JWT = STATE / "r135-local-batch-fair-e905747-20260920T135150Z/identities/alpha-binance-jwt"
 MOUNTS = harness.MOUNTS
 TS = "trading-system.paper.stable"
 OKX = "alpha.okx.paper.stable"
@@ -110,7 +113,12 @@ bars = [{"consumer": "trading-system.paper.stable", "requirement": r} for r in t
 bars += sorted(({"consumer": "alpha.okx.paper.stable", "requirement": r} for r in okx
                 if r["feed"] == "BAR" and r.get("interval") in order),
                key=lambda e: (order[e["requirement"]["interval"]], e["requirement"]["instrument_uid"]))
-json.dump({"ts_r11": ts, "bars": bars}, sys.stdout)
+binance = yaml.safe_load(open(realm + "alpha.binance.paper.stable-r16.yaml"))["spec"]["requirements"]
+alpha_1m = [{"consumer": "alpha.binance.paper.stable", "requirement": r} for r in binance
+            if r["feed"] == "BAR" and r.get("interval") == "1m"]
+alpha_1m += [{"consumer": "alpha.okx.paper.stable", "requirement": r} for r in okx
+             if r["feed"] == "BAR" and r.get("interval") == "1m"]
+json.dump({"ts_r11": ts, "bars": bars, "alpha_1m": alpha_1m}, sys.stdout)
 '''
 
 SYNC = r'''
@@ -247,7 +255,9 @@ ISSUER, AUDIENCE = "https://identity.qdl.stable.internal", "qdl-v2-stable"
 ROLES = ("historical_reader", "market_data_reader", "stream_consumer")
 IDS = {"trading-system.paper.stable": ("trading-system", "stable-trading-system-rs256-v1",
                                        "spiffe://qdl/paper/trading-system-stable", 11),
-       "alpha.okx.paper.stable": ("alpha-okx", "stable-alpha-okx-rs256-v1", "spiffe://qdl/paper/alpha-okx-stable", 15)}
+       "alpha.okx.paper.stable": ("alpha-okx", "stable-alpha-okx-rs256-v1", "spiffe://qdl/paper/alpha-okx-stable", 15),
+       "alpha.binance.paper.stable": ("alpha-binance", "stable-alpha-binance-rs256-v1",
+                                      "spiffe://qdl/paper/alpha-binance-stable", 16)}
 ENUMS = {"feed": Feed, "consumer_grade": Grade, "stale_policy": StalePolicy, "gap_policy": GapPolicy,
          "recovery": RecoveryPolicy, "bar_revision_policy": BarRevisionPolicy, "event_recency_policy": StalePolicy}
 
@@ -409,6 +419,90 @@ async def main():
 asyncio.run(main())
 '''
 
+CMP_ALPHA_DRIVER = COMMON + r'''
+"""DR02/DR03 alpha read shapes (TS scripts/p184_dr_alpha_reads.py probe, at the Data Layer request level):
+A (old), B (new) and A' (second request to A) per shape, sync paused; instrument pages follow each side's cursor."""
+cfg = json.load(open("/work/cmp-alpha.json"))
+exec(open("/work/cmp_helpers.py").read())
+
+async def request(t, consumer, shape, cursor=None):
+    if shape["kind"] == "warmup":
+        limit = shape["limit"]
+        req = requirement(shape["item"], min(limit, 10000))
+        params = req.query_params()
+        if limit > 10000:
+            params["limit"] = limit  # the probe's over-bound read; the SDK type would refuse it client-side
+        headers = await t._headers(req, consumer)
+        return await t._client.get(f"/v2/market-data/{req.instrument_uid}/warmup", params=params, headers=headers)
+    if shape["kind"] == "batch":
+        reqs = [requirement(item, shape["limit"]) for item in shape["items"]]
+        headers = await t._identity_headers(reqs[0].consumer_grade, consumer)
+        return await t._client.post("/v2/market-data/warmup:batch", headers=headers, json={
+            "consumer_id": consumer, "require_all": False, "requirements": [r.to_mapping() for r in reqs]})
+    headers = await t._identity_headers(Grade.ALPHA, consumer)
+    params = {"limit": 500, **({"cursor": cursor} if cursor else {})}
+    return await t._client.get("/v2/instruments", params=params, headers=headers)
+
+async def fetch(t, consumer, shape, cursor=None):
+    t0 = time.perf_counter()
+    response = await request(t, consumer, shape, cursor)
+    body = response.content
+    return {"status": response.status_code, "ms": round((time.perf_counter() - t0) * 1e3, 1),
+            "content_length": response.headers.get("content-length"),
+            "transfer_encoding": response.headers.get("transfer-encoding"),
+            "content_type": response.headers.get("content-type"), "body": body}
+
+async def main():
+    consumers = sorted({s["consumer"] for s in cfg["shapes"]})
+    ta = {c: transport(c, cfg["urls"]["A"], timeout=60.0) for c in consumers}
+    tb = {c: transport(c, cfg["urls"]["B"], timeout=60.0) for c in consumers}
+    await wait_live(ta[consumers[0]])
+    await wait_live(tb[consumers[0]])
+    await asyncio.sleep(5)
+    out = []
+    index = 0
+    for pass_no in range(1, cfg["passes"] + 1):
+        index = 0  # stable per shape/page across passes
+        for shape in cfg["shapes"]:
+            c = shape["consumer"]
+            cursors = {"A": None, "B": None, "A2": None}
+            page = 0
+            while True:
+                page += 1
+                label = shape["label"] + (f":p{page}" if shape["kind"] == "instruments" else "")
+                record = {"pass": pass_no, "index": index, "label": label, "consumer": c,
+                          "instrument_uid": shape.get("item", {}).get("instrument_uid", label),
+                          "feed": label, "attempts": []}
+                parsed = {}
+                for attempt in range(1, 4):
+                    await pause()
+                    try:
+                        a, b, a2 = await asyncio.gather(fetch(ta[c], c, shape, cursors["A"]),
+                                                        fetch(tb[c], c, shape, cursors["B"]),
+                                                        fetch(ta[c], c, shape, cursors["A2"]))
+                    finally:
+                        resume()
+                    entry, parsed = triple_entry(a, b, a2, attempt)
+                    record["attempts"].append(entry)
+                    if entry["valid"]:
+                        break
+                    await asyncio.sleep(1.0)
+                out.append(record)
+                index += 1
+                print(json.dumps({"pass": pass_no, "label": label, "status": [entry["A_status"], entry["B_status"]],
+                                  "valid": entry["valid"]}), flush=True)
+                await asyncio.sleep(0.5)
+                nxt = {k: (v or {}).get("next_cursor") if isinstance(v, dict) else None for k, v in parsed.items()}
+                if shape["kind"] != "instruments" or not nxt.get("A") or page >= 100:
+                    break
+                cursors = {"A": nxt["A"], "B": nxt["B"], "A2": nxt["A2"]}
+    json.dump(out, open("/out/byte-compare-alpha-raw.json", "w"), indent=1)
+    for t in list(ta.values()) + list(tb.values()):
+        await t.close()
+
+asyncio.run(main())
+'''
+
 BURST_DRIVER = COMMON + r'''
 cfg = json.load(open("/work/burst.json"))
 seq = 0
@@ -554,6 +648,93 @@ asyncio.run(main())
 '''
 
 
+CMP_HELPERS = r'''
+CONSUMER = None
+
+def atomic(path, text):
+    with open(path + ".tmp", "w") as handle:
+        handle.write(text)
+    os.replace(path + ".tmp", path)
+
+async def pause():
+    if os.path.exists("/work/paused"):
+        os.unlink("/work/paused")
+    atomic("/work/pause", "1")
+    deadline = time.monotonic() + 10
+    while not os.path.exists("/work/paused"):
+        if time.monotonic() > deadline:
+            raise RuntimeError("sync did not acknowledge the pause")
+        await asyncio.sleep(0.02)
+
+def resume():
+    for path in ("/work/pause", "/work/paused"):
+        if os.path.exists(path):
+            os.unlink(path)
+
+def leaves(value, path=()):
+    if isinstance(value, dict):
+        out = {("__keys__",) + path: sorted(value)}
+        for k, v in value.items():
+            out.update(leaves(v, path + (k,)))
+        return out
+    if isinstance(value, list):
+        out = {("__len__",) + path: len(value)}
+        for i, v in enumerate(value):
+            out.update(leaves(v, path + (i,)))
+        return out
+    return {path: value}
+
+def diff(a, b):
+    la, lb = leaves(a), leaves(b)
+    return sorted({repr(k) for k in set(la) | set(lb) if la.get(k, "<absent>") != lb.get(k, "<absent>")})
+
+def triple_entry(a, b, a2, attempt):
+    parsed = {}
+    for name, r in (("A", a), ("B", b), ("A2", a2)):
+        try:
+            parsed[name] = json.loads(r["body"])
+        except ValueError:
+            parsed[name] = None
+        digest = hashlib.sha256(r["body"]).hexdigest()
+        path = f"/out/bodies/{digest}.json"
+        if not os.path.exists(path):
+            with open(path, "wb") as handle:
+                handle.write(r["body"])
+        r["sha256"], r["length"] = digest, len(r["body"])
+    v_paths = diff(parsed["A"], parsed["A2"]) if None not in (parsed["A"], parsed["A2"]) else ["<unparsed>"]
+    structural = [p for p in v_paths if "__len__" in p or "__keys__" in p or p == "<unparsed>"]
+    ab_paths = diff(parsed["A"], parsed["B"]) if None not in (parsed["A"], parsed["B"]) else ["<unparsed>"]
+    entry = {"attempt": attempt,
+             **{f"{n}_{k}": r[k] for n, r in (("A", a), ("B", b), ("A2", a2))
+                for k in ("status", "ms", "content_length", "transfer_encoding", "content_type", "sha256", "length")},
+             "volatile_paths": v_paths, "a_vs_b_paths": ab_paths, "valid": not structural,
+             "normalized_equal": None, "normalized_sha256": None,
+             "rows": len(parsed["A"].get("data") or []) if isinstance(parsed["A"], dict) and isinstance(parsed["A"].get("data"), list) else None}
+    return entry, parsed
+'''
+
+
+def alpha_shapes(plan: dict) -> list:
+    """The DR02/DR03 probe's Data Layer requests per alpha consumer (TS scripts/p184_dr_alpha_reads.py:99-138)."""
+    shapes = []
+    for consumer in ("alpha.binance.paper.stable", "alpha.okx.paper.stable"):
+        items = [e["requirement"] for e in plan["alpha_1m"] if e["consumer"] == consumer]
+        short = consumer.split(".")[1]
+        first = items[0]
+        shapes.append({"consumer": consumer, "kind": "instruments", "label": f"{short}:instruments"})
+        for item in items:
+            shapes.append({"consumer": consumer, "kind": "warmup", "item": item, "limit": 5,
+                           "label": f"{short}:warmup5:{item['instrument_uid']}"})
+        for limit in (700, 10000, 10001):
+            shapes.append({"consumer": consumer, "kind": "warmup", "item": first, "limit": limit,
+                           "label": f"{short}:warmup{limit}:{first['instrument_uid']}"})
+        shapes.append({"consumer": consumer, "kind": "batch", "items": items, "limit": 200,
+                       "label": f"{short}:batch-universe200"})
+        shapes.append({"consumer": consumer, "kind": "batch", "items": [first], "limit": 10,
+                       "label": f"{short}:batch-mixed10 (the unknown symbol fails at resolve, client side)"})
+    return shapes
+
+
 def sh(*args, check=True, timeout=180):
     result = subprocess.run(list(args), capture_output=True, text=True, timeout=timeout)
     if check and result.returncode != 0:
@@ -602,18 +783,20 @@ def writable_dir(path: Path) -> Path:
     return path
 
 
-def driver_identities(okx: bool) -> list[str]:
+def driver_identities(okx: bool, binance: bool = False) -> list[str]:
     items = {"trading-system": TS_TLS, "trading-system-jwt": TS_JWT}
     if okx:
         items.update({"alpha-okx": OKX_TLS, "alpha-okx-jwt": OKX_JWT})
+    if binance:
+        items.update({"alpha-binance": BINANCE_TLS, "alpha-binance-jwt": BINANCE_JWT})
     return ro({f"/identities/{k}": v for k, v in items.items()})
 
 
-def driver_cmd(name: str, work: Path, code: str, *, okx=False, cpus="1.0", extra=()) -> list[str]:
+def driver_cmd(name: str, work: Path, code: str, *, okx=False, binance=False, cpus="1.0", extra=()) -> list[str]:
     return ["docker", "run", "--rm", "--name", PREFIX + name, "--label", LABEL, "--network", NETWORK,
             "--user", "0:0", "--cap-drop", "ALL", "--cap-add", "DAC_READ_SEARCH", "--read-only",
             "--security-opt", "no-new-privileges:true", "--cpus", cpus, "--memory", "1g",
-            "-e", "PYTHONPATH=/app", *driver_identities(okx), "--mount", f"type=bind,src={work},dst=/work",
+            "-e", "PYTHONPATH=/app", *driver_identities(okx, binance), "--mount", f"type=bind,src={work},dst=/work",
             *extra, OLD_IMAGE, "python", "-c", code]
 
 
@@ -771,7 +954,8 @@ def run(args) -> int:
     else:
         require_lock(args.lock_owner)
     output = args.output.resolve()
-    compare_only = bool(getattr(args, "compare_only", False))
+    alpha = bool(getattr(args, "alpha", False))
+    compare_only = bool(getattr(args, "compare_only", False)) or alpha
     output.mkdir(mode=0o700, parents=True, exist_ok=compare_only)
     stop_sampler = threading.Event()
     threading.Thread(target=sampler, args=(output / "foreign.jsonl", stop_sampler), daemon=True).start()
@@ -783,13 +967,15 @@ def run(args) -> int:
         # re-run of the BC phase in the session dir of the arms (the first BC output was lost: /out not writable)
         if not (output / "prereg.json").exists():
             raise SystemExit("compare-only needs the session's prereg.json")
-        (output / "compare-rerun.json").write_text(json.dumps({**prereg, "rerun_reason": args.compare_only_reason},
-                                                              indent=1) + "\n")
+        (output / ("compare-alpha.json" if alpha else "compare-rerun.json")).write_text(json.dumps(
+            {**prereg, "rerun_reason": args.compare_only_reason,
+             **({"alpha_scope": "P1b (coordinator 2026-10-20): DR02/DR03 alpha read shapes, alpha-binance r16 + alpha-okx r15 BAR 1m, same BC rule"} if alpha else {})},
+            indent=1) + "\n")
     else:
         (output / "prereg.json").write_text(json.dumps(prereg, indent=1) + "\n")
     print(json.dumps({"prereg_sha256": hashlib.sha256((output / "prereg.json").read_bytes()).hexdigest()}), flush=True)
     env, mounts, cmd = prod_spec()
-    work_root = writable_dir(output / ("work-cmp-rerun" if compare_only else "work"))
+    work_root = writable_dir(output / ("work-cmp-alpha" if alpha else "work-cmp-rerun" if compare_only else "work"))
     writable_dir(output / "cmp-out")
     bodies = writable_dir(output / "cmp-out" / "bodies")
     sync = None
@@ -802,6 +988,8 @@ def run(args) -> int:
         plan = json.loads(sh("docker", "run", "--rm", "--network", "none", "--user", "10001:10001", "--read-only",
                              "--cpus", "0.5", *ro({"/consumer-realms": mounts["/consumer-realms"]}), OLD_IMAGE,
                              "python", "-c", PLAN))
+        if alpha:
+            plan = {**plan, "bars": plan["alpha_1m"], "ts_r11": []}
         (work_root / "plan.json").write_text(json.dumps(plan))
         sh("docker", "create", "--rm", "--name", PREFIX + "sync", "--label", LABEL, "--network", NETWORK,
            "--user", "10001:10001", "--read-only", "--cpus", "0.5", "--memory", "512m", "-e", "PYTHONPATH=/app",
@@ -814,18 +1002,24 @@ def run(args) -> int:
         wait_file(work_root / "sync-ready", 900)
         products = json.loads((work_root / "products.json").read_text())
         latest = json.loads((work_root / "latest.json").read_text())
-        (output / "products.json").write_text(json.dumps({"bars": products, "latest": latest, "copied_utc": utc()},
-                                                         indent=1) + "\n")
+        (output / ("products-alpha.json" if alpha else "products.json")).write_text(
+            json.dumps({"bars": products, "latest": latest, "copied_utc": utc()}, indent=1) + "\n")
         # 1. byte compare: A and B side by side on the same cache, sync paused per triple
-        cmp_dir = output / ("cmp-rerun" if compare_only else "cmp")
+        cmp_dir = output / ("cmp-alpha" if alpha else "cmp-rerun" if compare_only else "cmp")
         cmp_dir.mkdir(mode=0o700)
         qa = start_query("q-cmp-a", "query_v2_1", OLD_IMAGE, cmp_dir, env, mounts, cmd)
         qb = start_query("q-cmp-b", "query_v2_2", NEW_IMAGE, cmp_dir, env, mounts, cmd)
         (work_root / "cmp.json").write_text(json.dumps({"urls": {"A": "https://query_v2_1:8200",
                                                                   "B": "https://query_v2_2:8200"},
                                                          "requirements": plan["ts_r11"], "passes": 2}))
+        if alpha:
+            (work_root / "cmp-alpha.json").write_text(json.dumps({"urls": {"A": "https://query_v2_1:8200",
+                                                                            "B": "https://query_v2_2:8200"},
+                                                                   "shapes": alpha_shapes(plan), "passes": 2}))
+            (work_root / "cmp_helpers.py").write_text(CMP_HELPERS)
         try:
-            cmp_run = subprocess.run(driver_cmd("cmp", work_root, CMP_DRIVER, extra=(
+            cmp_run = subprocess.run(driver_cmd("cmp", work_root, CMP_ALPHA_DRIVER if alpha else CMP_DRIVER,
+                                                okx=alpha, binance=alpha, extra=(
                 "--mount", f"type=bind,src={bodies.parent},dst=/out")), capture_output=True, text=True, timeout=1800)
             (cmp_dir / "driver.out").write_text(cmp_run.stdout[-200000:] + "\n--stderr--\n" + cmp_run.stderr[-20000:])
         finally:
@@ -960,9 +1154,9 @@ def raw_mask(raw: bytes, paths: set) -> bytes:
     return b"".join(out)
 
 
-def byte_compare(output: Path) -> dict:
+def byte_compare(output: Path, raw_name: str = "byte-compare-raw.json") -> dict:
     import ast
-    raw = json.loads((output / "cmp-out/byte-compare-raw.json").read_text())
+    raw = json.loads((output / "cmp-out" / raw_name).read_text())
     bodies = output / "cmp-out/bodies"
     for record in raw:
         final = record["attempts"][-1]
@@ -1083,6 +1277,19 @@ def analyze(args) -> int:
     return 0
 
 
+def analyze_alpha(args) -> int:
+    output = args.output.resolve()
+    bc = byte_compare(output, "byte-compare-alpha-raw.json")
+    prereg_sha = hashlib.sha256((output / "prereg.json").read_bytes()).hexdigest()
+    (output / "byte-compare-alpha.json").write_text(json.dumps({
+        "schema": "qdl.v225.query-warmup-byte-compare.v1", "scope": "P1b: alpha DR02/DR03 read shapes (TS scripts/p184_dr_alpha_reads.py:99-138) at the Data Layer request level; alpha-binance r16 + alpha-okx r15 BAR 1m",
+        "old_image": OLD_IMAGE, "new_image": NEW_IMAGE, "prereg_rule": PREREG["rules"]["BC"], "prereg_sha256": prereg_sha,
+        **bc}, indent=1) + "\n")
+    print(json.dumps({k: bc[k] for k in ("requirements", "triples", "status_counts_A", "volatile_paths_seen", "verdict")}
+                     | {"problems": bc["problems"][:8]}, indent=1))
+    return 0
+
+
 def cleanup(_args) -> int:
     names = [n for n in sh("docker", "ps", "-a", "--filter", f"label={LABEL}", "--format", "{{.Names}}",
                            check=False).splitlines() if n.startswith(PREFIX)]
@@ -1106,10 +1313,14 @@ def main() -> int:
                    help="owner-instructed run beside another agent's correctness-only lock (never touches the lock)")
     p.add_argument("--compare-only", action="store_true", help="re-run only the BC phase inside an existing session dir")
     p.add_argument("--compare-only-reason", default="")
+    p.add_argument("--alpha", action="store_true", help="P1b: BC of the DR02/DR03 alpha read shapes (implies compare-only)")
     p.set_defaults(func=run)
     p = sub.add_parser("analyze")
     p.add_argument("--output", type=Path, required=True)
     p.set_defaults(func=analyze)
+    p = sub.add_parser("analyze-alpha")
+    p.add_argument("--output", type=Path, required=True)
+    p.set_defaults(func=analyze_alpha)
     p = sub.add_parser("cleanup")
     p.set_defaults(func=cleanup)
     args = parser.parse_args()
