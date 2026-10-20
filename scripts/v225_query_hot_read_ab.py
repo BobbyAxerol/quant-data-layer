@@ -580,6 +580,12 @@ def prod_spec():
     # /consumer-realms (attempt 1 of 2026-10-20 dropped it and the replica refused the new TS client certificate)
     mounts = {m["Destination"]: m["Source"] for m in raw["Mounts"]
               if m["Destination"] in MOUNTS or any(m["Destination"].startswith(top + "/") for top in MOUNTS)}
+    # a volume mount with a subpath (v2.2.5 compose: /session-liveness = stable_state:runtime/session-liveness) shows
+    # only the volume root in .Mounts; attempt 2 bound the root and every QUOTE/TRADE read was SESSION_STATE stale
+    for spec in raw["HostConfig"].get("Mounts") or []:
+        subpath = (spec.get("VolumeOptions") or {}).get("Subpath")
+        if subpath and spec.get("Target") in mounts:
+            mounts[spec["Target"]] = mounts[spec["Target"]].rstrip("/") + "/" + subpath
     if not set(MOUNTS) <= set(mounts):
         raise RuntimeError(f"production Query mounts differ: {sorted(mounts)}")
     env = dict(item.split("=", 1) for item in raw["Config"]["Env"])
