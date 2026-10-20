@@ -1,0 +1,2 @@
+Codex: running read-only, not paused (owner chose window at 02:00Z, not a latency measurement). Portal: not paused.
+T_W1=2026-10-20T01:31:00Z deadline=T_W1+25min rollback trigger; W14 deferred (GHCR read:packages missing)

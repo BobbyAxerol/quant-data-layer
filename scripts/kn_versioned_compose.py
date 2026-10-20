@@ -385,6 +385,17 @@ def image_id(ref: str) -> str:
     return json.loads(sh(["docker", "image", "inspect", ref]))[0]["Id"]
 
 
+# docker compose hands ``cpus`` to the engine through a float32, so 2.25 arrives as NanoCpus 2249999872
+# (1.3e-7 vCPU short; DL v2.2.5 window R2, 2026-10-20). Any real cap change is >= 0.01 vCPU.
+CPUS_TOLERANCE = 1e-6
+
+
+def cpus_equal(live_nano_cpus: int, compose_cpus) -> bool:
+    """True when the live NanoCpus and the compose ``cpus`` value are the same cap within CPUS_TOLERANCE."""
+
+    return abs(live_nano_cpus / 1e9 - float(compose_cpus or 0)) <= CPUS_TOLERANCE
+
+
 def parity(compose: Path, env_files: list[Path]) -> dict:
     cfg = compose_config(compose, env_files)
     problems, deltas, checked = [], [], 0
@@ -393,10 +404,10 @@ def parity(compose: Path, env_files: list[Path]) -> dict:
         live_env_clear = dict(e.split("=", 1) for e in json.loads(sh(["docker", "inspect", f"{PROJECT}-{role}-1"]))[0]["Config"]["Env"])
         svc = cfg["services"][role]
 
-        def same(field, a, b):
+        def same(field, a, b, equal=None):
             nonlocal checked
             checked += 1
-            if a != b:
+            if not (equal(a, b) if equal else a == b):
                 problems.append(f"{role}.{field}: live={_short(a)} compose={_short(b)}")
 
         same("image", live["image_id"], image_id(svc["image"]))
@@ -413,7 +424,8 @@ def parity(compose: Path, env_files: list[Path]) -> dict:
              svc.get("command"))
         same("user", live["user"] if live["user"] != live["image_user"] else None, svc.get("user"))
         h = live["host"]
-        same("cpus", h["NanoCpus"] / 1e9, float(svc.get("cpus", 0)))
+        same("cpus", h["NanoCpus"] / 1e9, float(svc.get("cpus", 0)),
+             equal=lambda _a, b: cpus_equal(h["NanoCpus"], b))
         same("mem_limit", h["Memory"], int(svc.get("mem_limit", 0)))
         same("memswap_limit", h["MemorySwap"], int(svc.get("memswap_limit", 0)))
         same("read_only", bool(h["ReadonlyRootfs"]), bool(svc.get("read_only", False)))

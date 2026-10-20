@@ -1,0 +1,59 @@
+{
+  "dl_roles_auth_protocol": {
+    "query_kn_1": {},
+    "query_kn_2": {},
+    "stream_kn_1": {},
+    "stream_kn_2": {}
+  },
+  "execution_ready_min_max": [
+    48,
+    53
+  ],
+  "query_mem_mib": {
+    "query_kn_1": {
+      "first": 188.5,
+      "growth_last_10min": -3.3,
+      "last": 265.0,
+      "max": 270.4
+    },
+    "query_kn_2": {
+      "first": 183.2,
+      "growth_last_10min": -5.9,
+      "last": 263.3,
+      "max": 277.2
+    }
+  },
+  "request_latency_native_probe": {
+    "QUOTE": {
+      "failed": 0,
+      "max_ms_since_start": 193.76,
+      "mean_ms": 9.37,
+      "p50_le_ms": 10,
+      "p95_le_ms": 25,
+      "p99_le_ms": 25,
+      "requests": 7261,
+      "unavailable": 6
+    },
+    "TRADE": {
+      "failed": 0,
+      "max_ms_since_start": 37.703,
+      "mean_ms": 11.99,
+      "p50_le_ms": 25,
+      "p95_le_ms": 25,
+      "p99_le_ms": 50,
+      "requests": 1800,
+      "unavailable": 0
+    }
+  },
+  "restarts_during": {},
+  "samples": 59,
+  "served_event_age": "NOT_MEASURED (no passive counter in the writer heartbeat)",
+  "started": "2026-10-20T01:41:23Z",
+  "summary": true,
+  "writer_logs": {
+    "auth_protocol": {},
+    "data_policy_by_code_venue_symbol_feed": {}
+  },
+  "writer_ready_samples": "59/59",
+  "writer_stdout_auth_protocol": {}
+}

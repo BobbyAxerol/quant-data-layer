@@ -1,0 +1,2 @@
+# Byte-for-byte copies of window receipts (sha256 in SHA256SUMS): no whitespace normalisation.
+* -whitespace -text

@@ -1,0 +1,7 @@
+{
+ "schema": "qdl.v225.window-r2-note.v1",
+ "tool_verdict": "FAIL",
+ "problems": ["kafka1.cpus live=2.249999872 compose=2.25", "kafka2.cpus live=2.249999872 compose=2.25", "kafka3.cpus live=2.249999872 compose=2.25"],
+ "assessment": "docker compose converts cpus 2.25 through float32 to NanoCpus 2249999872; not a configuration drift (difference 1.3e-7 vCPU); every other role and field matches. Tool tolerance fix pending (kn_versioned_compose.py parity: compare cpus with a 1e-6 tolerance).",
+ "recorded_utc": "2026-10-20T01:41:30Z"
+}

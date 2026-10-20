@@ -3,14 +3,17 @@
 Static checks only (no Docker): the 17 production roles, images by variable with every release env pinning a
 digest, the v2.2.4 env equal to the certified runtime images and caps, healthcheck/logging/restart on every role,
 loopback-only ports, the consumer aliases, external networks/volumes, TLS sources only from the generation
-variables, and no secret literal in any committed file. Live parity is ``scripts/kn_versioned_compose.py parity``.
+variables, and no secret literal in any committed file. Live parity is ``scripts/kn_versioned_compose.py parity``;
+its field comparison (cpus tolerance) is proven here against a faked ``docker inspect``.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 import re
 import unittest
+from unittest import mock
 
 import yaml
 
@@ -139,6 +142,56 @@ class KnStableComposeTest(unittest.TestCase):
                 if re.search(r"SECRET(?!_FILE)|PASSWORD|CURSOR_KEYS_JSON", key) and not key.endswith("_CREDENTIALS"):
                     with self.subTest(role=role, key=key):
                         self.assertTrue(str(value).startswith("${"), key)
+
+
+SPEC = importlib.util.spec_from_file_location("kn_versioned_compose", ROOT / "scripts/kn_versioned_compose.py")
+compose_tool = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(compose_tool)
+
+
+class KnComposeParityCpusTest(unittest.TestCase):
+    """DL v2.2.5 window R2: compose ``cpus: 2.25`` reaches the engine as NanoCpus 2249999872 (float32)."""
+
+    def run_parity(self, live_nano_cpus: int, compose_cpus) -> dict:
+        live = {
+            "image_id": "sha256:kafka", "image_env": {}, "entrypoint": None, "image_entrypoint": None,
+            "cmd": None, "image_cmd": None, "user": None, "image_user": None, "stop_timeout": 60,
+            "healthcheck": {"Test": ["CMD", "true"]}, "mounts": [], "networks": {},
+            "host": {"NanoCpus": live_nano_cpus, "Memory": 0, "MemorySwap": 0, "ReadonlyRootfs": False,
+                     "Init": False, "PidsLimit": None, "CapDrop": None, "SecurityOpt": None, "Tmpfs": None,
+                     "RestartPolicy": {"Name": "unless-stopped"}, "PortBindings": None,
+                     "LogConfig": {"Type": "json-file", "Config": {"max-size": "50m"}}},
+        }
+        svc = {"image": "kafka@sha256:x", "cpus": compose_cpus, "restart": "unless-stopped",
+               "stop_grace_period": "60s", "healthcheck": {"test": ["CMD", "true"]},
+               "logging": {"driver": "json-file", "options": {"max-size": "50m"}}}
+        inspect = json.dumps([{"Config": {"Env": []}}])
+        with mock.patch.object(compose_tool, "ROLES", ("kafka1",)), \
+                mock.patch.object(compose_tool, "compose_config", return_value={"services": {"kafka1": svc}}), \
+                mock.patch.object(compose_tool, "inspect_role", return_value=live), \
+                mock.patch.object(compose_tool, "image_id", return_value="sha256:kafka"), \
+                mock.patch.object(compose_tool, "sh", return_value=inspect):
+            return compose_tool.parity(Path("compose.yml"), [])
+
+    def test_float32_rounding_of_the_compose_cap_is_not_drift(self):
+        result = self.run_parity(2_249_999_872, 2.25)
+        self.assertEqual(result["verdict"], "PASS", result["problems"])
+        self.assertEqual(result["problems"], [])
+
+    def test_a_real_cap_difference_still_fails(self):
+        for live in (2_240_000_000, 2_260_000_000, 2_000_000_000):
+            with self.subTest(live=live):
+                result = self.run_parity(live, 2.25)
+                self.assertEqual(result["verdict"], "FAIL")
+                self.assertEqual(len(result["problems"]), 1)
+                self.assertTrue(result["problems"][0].startswith("kafka1.cpus: live="), result["problems"])
+
+    def test_tolerance_bounds(self):
+        self.assertTrue(compose_tool.cpus_equal(2_249_999_872, 2.25))
+        self.assertTrue(compose_tool.cpus_equal(2_000_000_000, "2.0"))
+        self.assertTrue(compose_tool.cpus_equal(0, None))
+        self.assertFalse(compose_tool.cpus_equal(2_249_998_000, 2.25))  # 2e-6 vCPU: beyond the 1e-6 tolerance
+        self.assertFalse(compose_tool.cpus_equal(1_000_000_000, None))
 
 
 if __name__ == "__main__":

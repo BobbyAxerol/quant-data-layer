@@ -1,0 +1,1 @@
+{"container_started_unix": 1792413321.8591151, "execution_ready_slices": "53", "heartbeat": {"consumer_mode": "V2_PRIMARY", "demanded": "64", "execution_ready": "53", "last_seen_unix": 1792459788.457978, "ready": "64", "status": "READY", "unhealthy": "0", "v1_fallback": "0"}, "ready": true, "ready_slices": "64", "samples": 2}

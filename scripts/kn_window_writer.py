@@ -2,7 +2,7 @@
 """W12-A of the v2.2.5 window: TS writer composes for the TLS identity switch, readiness check, passive soak.
 
 Purpose
-    The v2.2.5 window (``upgrade/evidence/releases/v2.2.5/drafts/MAINTENANCE_WINDOW_PACKET.md`` W12) keeps the
+    The v2.2.5 window (``upgrade/evidence/releases/v2.2.5/MAINTENANCE_WINDOW_PACKET.md`` W12) keeps the
     production TS writer image (2deb90b0) and changes exactly one thing for good: the host source of its mesh TLS
     identity mount ``/run/secrets/qdl-v2`` moves to the new generation. Because the window outage exceeds the
     writer's 120 s execution-surface TTL, the writer first starts once with ``MARKET_DATA_NATIVE_REQUIRE_RESUME=0``
