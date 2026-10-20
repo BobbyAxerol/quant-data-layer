@@ -576,8 +576,11 @@ def require_lock(owner: str):
 
 def prod_spec():
     raw = json.loads(sh("docker", "inspect", PROD_QUERY))[0]
-    mounts = {m["Destination"]: m["Source"] for m in raw["Mounts"] if m["Destination"] in MOUNTS}
-    if set(mounts) != set(MOUNTS):
+    # nested binds count too: the v2.2.5 compose binds the new generation's query-client-ca-bundle.crt inside
+    # /consumer-realms (attempt 1 of 2026-10-20 dropped it and the replica refused the new TS client certificate)
+    mounts = {m["Destination"]: m["Source"] for m in raw["Mounts"]
+              if m["Destination"] in MOUNTS or any(m["Destination"].startswith(top + "/") for top in MOUNTS)}
+    if not set(MOUNTS) <= set(mounts):
         raise RuntimeError(f"production Query mounts differ: {sorted(mounts)}")
     env = dict(item.split("=", 1) for item in raw["Config"]["Env"])
     return env, mounts, raw["Config"]["Cmd"]
