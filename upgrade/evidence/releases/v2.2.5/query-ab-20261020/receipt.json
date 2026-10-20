@@ -1,0 +1,2742 @@
+{
+ "schema": "qdl.v225.query-ab-receipt.v2",
+ "verdict": "PASS",
+ "rules": {
+  "HR1": {
+   "pairs": [
+    {
+     "pair": [
+      "A1",
+      "B1"
+     ],
+     "p95": [
+      186.017,
+      122.887
+     ],
+     "p99": [
+      437.8,
+      391.721
+     ],
+     "p50": [
+      17.344,
+      16.752
+     ],
+     "max": [
+      787.944,
+      738.39
+     ],
+     "d_p95": -63.129999999999995,
+     "d_p99": -46.07900000000001
+    },
+    {
+     "pair": [
+      "A2",
+      "B2"
+     ],
+     "p95": [
+      173.093,
+      152.42
+     ],
+     "p99": [
+      399.425,
+      406.579
+     ],
+     "p50": [
+      17.287,
+      16.893
+     ],
+     "max": [
+      837.189,
+      761.381
+     ],
+     "d_p95": -20.673000000000002,
+     "d_p99": 7.153999999999996
+    }
+   ],
+   "mean_d_p95": -41.9015,
+   "bound_p95": 17.9555,
+   "mean_d_p99": -19.462500000000006,
+   "bound_p99": 41.861250000000005,
+   "pass": true
+  },
+  "HR2": {
+   "runs_total": 2,
+   "runs_covered": 1,
+   "pass": true
+  },
+  "HR3": {
+   "runs": [
+    {
+     "arm": "B1",
+     "run_ms": 130.709,
+     "worst_overlapping_ms": 44.7,
+     "bound_ms": 572.4300000000001,
+     "pass": true
+    },
+    {
+     "arm": "B2",
+     "run_ms": 147.166,
+     "worst_overlapping_ms": 0,
+     "bound_ms": 603.745,
+     "pass": true
+    }
+   ],
+   "pass": true
+  },
+  "HR4": {
+   "A": 387,
+   "B": 376,
+   "allowed": 424.9,
+   "pass": true
+  },
+  "HR5": {
+   "A": 0.05104867431737238,
+   "B": 0.049604221635883905,
+   "pass": true
+  },
+  "BC": {
+   "verdict": "PASS",
+   "problems": [],
+   "pass": true
+  }
+ },
+ "concurrency": {
+  "mode": "CONCURRENT_WITH_FOREIGN_LOCK",
+  "samples": 93,
+  "load1_min_max": [
+   8.22,
+   13.26
+  ],
+  "psi_cpu_some_avg10_min_max": [
+   1.34,
+   7.74
+  ],
+  "locks_seen": [
+   "null"
+  ],
+  "foreign_test_like_containers_seen": [
+   "contracts-test-node",
+   "control-api-test-node-2756921",
+   "control-api-test-node-epg08-final-20261020-0510",
+   "control-api-test-postgres-2756921",
+   "control-api-test-postgres-epg08-final-20261020-0510",
+   "live_data_executor",
+   "redis_marketdata",
+   "redis_service",
+   "trading-system-manager-read-live-portal_manager_issuer-1",
+   "trading-system-manager-read-live-portal_manager_read-1",
+   "trading-system-manager-read-sandbox-portal_manager_issuer-1",
+   "trading-system-manager-read-sandbox-portal_manager_read-1",
+   "ts35-impact-unit"
+  ]
+ },
+ "prereg_sha256": "0f2f00b43f1a1e28fedd055d90ca9f01dcd2376eb5e9d2053936b5cec081d924",
+ "prereg_written_utc": "2026-10-20T05:04:20Z",
+ "tool_commit": "543ddf1810713b198713549f669bd93e4ea996df",
+ "arms": {
+  "A1": {
+   "image": "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff",
+   "scored_window_ms": [
+    1792473024893.6301,
+    1792473422137.0098
+   ],
+   "pre": {
+    "n": 604,
+    "statuses": {
+     "200": 575,
+     "503": 29
+    },
+    "p50_ms": 8.057,
+    "p95_ms": 9.763,
+    "p99_ms": 11.451,
+    "max_ms": 71.855,
+    "ok200": {
+     "n": 575,
+     "p50_ms": 8.103,
+     "p95_ms": 9.844,
+     "p99_ms": 11.674,
+     "max_ms": 71.855
+    }
+   },
+   "scored": {
+    "n": 3972,
+    "statuses": {
+     "200": 3773,
+     "503": 199
+    },
+    "p50_ms": 17.344,
+    "p95_ms": 186.017,
+    "p99_ms": 437.8,
+    "max_ms": 787.944,
+    "ok200": {
+     "n": 3773,
+     "p50_ms": 17.47,
+     "p95_ms": 186.312,
+     "p99_ms": 437.8,
+     "max_ms": 787.944
+    }
+   },
+   "post": {
+    "n": 765,
+    "statuses": {
+     "200": 731,
+     "503": 34
+    },
+    "p50_ms": 8.428,
+    "p95_ms": 9.83,
+    "p99_ms": 10.882,
+    "max_ms": 24.625,
+    "ok200": {
+     "n": 731,
+     "p50_ms": 8.447,
+     "p95_ms": 9.84,
+     "p99_ms": 10.76,
+     "max_ms": 12.651
+    }
+   },
+   "scored_non_overlap": {
+    "n": 3972,
+    "statuses": {
+     "200": 3773,
+     "503": 199
+    },
+    "p50_ms": 17.344,
+    "p95_ms": 186.017,
+    "p99_ms": 437.8,
+    "max_ms": 787.944,
+    "ok200": {
+     "n": 3773,
+     "p50_ms": 17.47,
+     "p95_ms": 186.312,
+     "p99_ms": 437.8,
+     "max_ms": 787.944
+    }
+   },
+   "transport_or_5xx": 199,
+   "non200_share": 0.050100704934541794,
+   "maintenance_runs": [],
+   "bursts": [
+    {
+     "burst": 1,
+     "wall_s": 58.8,
+     "statuses": {
+      "429": 1141,
+      "200": 25,
+      "TRANSPORT": 5
+     },
+     "failed_slices": 39,
+     "req200_ms_p50": 6213,
+     "rss_mib": 464.5,
+     "uordblks_mib": null
+    },
+    {
+     "burst": 2,
+     "wall_s": 48.9,
+     "statuses": {
+      "429": 1175,
+      "200": 25,
+      "TRANSPORT": 3
+     },
+     "failed_slices": 39,
+     "req200_ms_p50": 6386,
+     "rss_mib": 531.3,
+     "uordblks_mib": null
+    },
+    {
+     "burst": 3,
+     "wall_s": 56.8,
+     "statuses": {
+      "429": 1159,
+      "200": 25,
+      "TRANSPORT": 5
+     },
+     "failed_slices": 39,
+     "req200_ms_p50": 6399,
+     "rss_mib": 516.3,
+     "uordblks_mib": null
+    },
+    {
+     "burst": 4,
+     "wall_s": 51.8,
+     "statuses": {
+      "429": 1108,
+      "200": 26,
+      "TRANSPORT": 5
+     },
+     "failed_slices": 38,
+     "req200_ms_p50": 7489,
+     "rss_mib": 489.1,
+     "uordblks_mib": null
+    },
+    {
+     "burst": 5,
+     "wall_s": 49.9,
+     "statuses": {
+      "429": 1132,
+      "200": 26,
+      "TRANSPORT": 5
+     },
+     "failed_slices": 38,
+     "req200_ms_p50": 5385,
+     "rss_mib": 599.1,
+     "uordblks_mib": null
+    },
+    {
+     "burst": 6,
+     "wall_s": 54.9,
+     "statuses": {
+      "429": 1077,
+      "200": 29,
+      "TRANSPORT": 5
+     },
+     "failed_slices": 35,
+     "req200_ms_p50": 6659,
+     "rss_mib": 608.1,
+     "uordblks_mib": null
+    }
+   ],
+   "schedule_lag_ms_p99": 2.0
+  },
+  "B1": {
+   "image": "sha256:753604f8abaa866e2de30c7ccaf36168986bc6991550ee326d53e51b83d1550a",
+   "scored_window_ms": [
+    1792473574027.611,
+    1792473949049.7458
+   ],
+   "pre": {
+    "n": 605,
+    "statuses": {
+     "200": 578,
+     "503": 27
+    },
+    "p50_ms": 8.112,
+    "p95_ms": 9.453,
+    "p99_ms": 10.3,
+    "max_ms": 72.174,
+    "ok200": {
+     "n": 578,
+     "p50_ms": 8.139,
+     "p95_ms": 9.497,
+     "p99_ms": 10.399,
+     "max_ms": 72.174
+    }
+   },
+   "scored": {
+    "n": 3750,
+    "statuses": {
+     "200": 3558,
+     "503": 192
+    },
+    "p50_ms": 16.752,
+    "p95_ms": 122.887,
+    "p99_ms": 391.721,
+    "max_ms": 738.39,
+    "ok200": {
+     "n": 3558,
+     "p50_ms": 16.848,
+     "p95_ms": 123.309,
+     "p99_ms": 396.016,
+     "max_ms": 738.39
+    }
+   },
+   "post": {
+    "n": 768,
+    "statuses": {
+     "200": 728,
+     "503": 40
+    },
+    "p50_ms": 8.262,
+    "p95_ms": 9.796,
+    "p99_ms": 11.163,
+    "max_ms": 11.93,
+    "ok200": {
+     "n": 728,
+     "p50_ms": 8.295,
+     "p95_ms": 9.831,
+     "p99_ms": 11.163,
+     "max_ms": 11.93
+    }
+   },
+   "scored_non_overlap": {
+    "n": 3748,
+    "statuses": {
+     "200": 3556,
+     "503": 192
+    },
+    "p50_ms": 16.752,
+    "p95_ms": 122.887,
+    "p99_ms": 391.721,
+    "max_ms": 738.39,
+    "ok200": {
+     "n": 3556,
+     "p50_ms": 16.848,
+     "p95_ms": 123.309,
+     "p99_ms": 396.016,
+     "max_ms": 738.39
+    }
+   },
+   "transport_or_5xx": 192,
+   "non200_share": 0.0512,
+   "maintenance_runs": [
+    {
+     "wall_ms": 1792473755128,
+     "rss_before_mib": 460.8,
+     "rss_after_mib": 370.3,
+     "gc_ms": 121.054,
+     "trim_ms": 9.655,
+     "run_ms": 130.709,
+     "collected": 1466,
+     "in_scored_window": true,
+     "overlapping_reads": 2,
+     "overlapping_latency_ms": [
+      7.9,
+      44.7
+     ]
+    }
+   ],
+   "bursts": [
+    {
+     "burst": 1,
+     "wall_s": 45.6,
+     "statuses": {
+      "429": 1067,
+      "200": 30,
+      "TRANSPORT": 3
+     },
+     "failed_slices": 34,
+     "req200_ms_p50": 6638,
+     "rss_mib": 389.6,
+     "uordblks_mib": null
+    },
+    {
+     "burst": 2,
+     "wall_s": 51.4,
+     "statuses": {
+      "429": 1117,
+      "200": 27,
+      "TRANSPORT": 5
+     },
+     "failed_slices": 37,
+     "req200_ms_p50": 6413,
+     "rss_mib": 403.4,
+     "uordblks_mib": null
+    },
+    {
+     "burst": 3,
+     "wall_s": 52.8,
+     "statuses": {
+      "429": 1115,
+      "200": 25,
+      "TRANSPORT": 3
+     },
+     "failed_slices": 39,
+     "req200_ms_p50": 6940,
+     "rss_mib": 370.3,
+     "uordblks_mib": null
+    },
+    {
+     "burst": 4,
+     "wall_s": 53.0,
+     "statuses": {
+      "429": 1135,
+      "200": 31,
+      "TRANSPORT": 1
+     },
+     "failed_slices": 33,
+     "req200_ms_p50": 7120,
+     "rss_mib": 450.3,
+     "uordblks_mib": null
+    },
+    {
+     "burst": 5,
+     "wall_s": 47.1,
+     "statuses": {
+      "429": 1052,
+      "200": 32,
+      "TRANSPORT": 1
+     },
+     "failed_slices": 32,
+     "req200_ms_p50": 7247,
+     "rss_mib": 400.8,
+     "uordblks_mib": null
+    },
+    {
+     "burst": 6,
+     "wall_s": 49.3,
+     "statuses": {
+      "429": 1127,
+      "200": 30
+     },
+     "failed_slices": 34,
+     "req200_ms_p50": 7334,
+     "rss_mib": 428.2,
+     "uordblks_mib": null
+    }
+   ],
+   "schedule_lag_ms_p99": 2.0
+  },
+  "A2": {
+   "image": "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff",
+   "scored_window_ms": [
+    1792474099320.129,
+    1792474460208.8894
+   ],
+   "pre": {
+    "n": 606,
+    "statuses": {
+     "200": 573,
+     "503": 33
+    },
+    "p50_ms": 8.291,
+    "p95_ms": 9.763,
+    "p99_ms": 10.613,
+    "max_ms": 62.245,
+    "ok200": {
+     "n": 573,
+     "p50_ms": 8.331,
+     "p95_ms": 9.779,
+     "p99_ms": 11.253,
+     "max_ms": 62.245
+    }
+   },
+   "scored": {
+    "n": 3609,
+    "statuses": {
+     "200": 3421,
+     "503": 188
+    },
+    "p50_ms": 17.287,
+    "p95_ms": 173.093,
+    "p99_ms": 399.425,
+    "max_ms": 837.189,
+    "ok200": {
+     "n": 3421,
+     "p50_ms": 17.439,
+     "p95_ms": 172.016,
+     "p99_ms": 399.425,
+     "max_ms": 837.189
+    }
+   },
+   "post": {
+    "n": 761,
+    "statuses": {
+     "200": 725,
+     "503": 36
+    },
+    "p50_ms": 8.423,
+    "p95_ms": 9.813,
+    "p99_ms": 10.803,
+    "max_ms": 15.44,
+    "ok200": {
+     "n": 725,
+     "p50_ms": 8.446,
+     "p95_ms": 9.86,
+     "p99_ms": 10.803,
+     "max_ms": 15.44
+    }
+   },
+   "scored_non_overlap": {
+    "n": 3609,
+    "statuses": {
+     "200": 3421,
+     "503": 188
+    },
+    "p50_ms": 17.287,
+    "p95_ms": 173.093,
+    "p99_ms": 399.425,
+    "max_ms": 837.189,
+    "ok200": {
+     "n": 3421,
+     "p50_ms": 17.439,
+     "p95_ms": 172.016,
+     "p99_ms": 399.425,
+     "max_ms": 837.189
+    }
+   },
+   "transport_or_5xx": 188,
+   "non200_share": 0.052091992241618174,
+   "maintenance_runs": [],
+   "bursts": [
+    {
+     "burst": 1,
+     "wall_s": 45.0,
+     "statuses": {
+      "429": 1074,
+      "200": 30,
+      "TRANSPORT": 1
+     },
+     "failed_slices": 34,
+     "req200_ms_p50": 6853,
+     "rss_mib": 487.1,
+     "uordblks_mib": null
+    },
+    {
+     "burst": 2,
+     "wall_s": 48.6,
+     "statuses": {
+      "429": 1109,
+      "200": 27,
+      "TRANSPORT": 3
+     },
+     "failed_slices": 37,
+     "req200_ms_p50": 5739,
+     "rss_mib": 465.2,
+     "uordblks_mib": null
+    },
+    {
+     "burst": 3,
+     "wall_s": 50.0,
+     "statuses": {
+      "429": 1096,
+      "200": 31,
+      "TRANSPORT": 2
+     },
+     "failed_slices": 33,
+     "req200_ms_p50": 7544,
+     "rss_mib": 556.0,
+     "uordblks_mib": null
+    },
+    {
+     "burst": 4,
+     "wall_s": 50.3,
+     "statuses": {
+      "429": 1155,
+      "200": 21,
+      "TRANSPORT": 5
+     },
+     "failed_slices": 43,
+     "req200_ms_p50": 6032,
+     "rss_mib": 678.0,
+     "uordblks_mib": null
+    },
+    {
+     "burst": 5,
+     "wall_s": 45.9,
+     "statuses": {
+      "429": 1029,
+      "200": 33,
+      "TRANSPORT": 1
+     },
+     "failed_slices": 31,
+     "req200_ms_p50": 7474,
+     "rss_mib": 639.5,
+     "uordblks_mib": null
+    },
+    {
+     "burst": 6,
+     "wall_s": 44.9,
+     "statuses": {
+      "429": 1141,
+      "200": 25,
+      "TRANSPORT": 3
+     },
+     "failed_slices": 39,
+     "req200_ms_p50": 6785,
+     "rss_mib": 630.0,
+     "uordblks_mib": null
+    }
+   ],
+   "schedule_lag_ms_p99": 2.0
+  },
+  "B2": {
+   "image": "sha256:753604f8abaa866e2de30c7ccaf36168986bc6991550ee326d53e51b83d1550a",
+   "scored_window_ms": [
+    1792474609818.901,
+    1792474992751.4663
+   ],
+   "pre": {
+    "n": 606,
+    "statuses": {
+     "200": 579,
+     "503": 27
+    },
+    "p50_ms": 8.154,
+    "p95_ms": 9.666,
+    "p99_ms": 10.579,
+    "max_ms": 70.462,
+    "ok200": {
+     "n": 579,
+     "p50_ms": 8.193,
+     "p95_ms": 9.71,
+     "p99_ms": 10.708,
+     "max_ms": 70.462
+    }
+   },
+   "scored": {
+    "n": 3830,
+    "statuses": {
+     "200": 3646,
+     "503": 184
+    },
+    "p50_ms": 16.893,
+    "p95_ms": 152.42,
+    "p99_ms": 406.579,
+    "max_ms": 761.381,
+    "ok200": {
+     "n": 3646,
+     "p50_ms": 17.007,
+     "p95_ms": 153.997,
+     "p99_ms": 401.219,
+     "max_ms": 761.381
+    }
+   },
+   "post": {
+    "n": 765,
+    "statuses": {
+     "200": 728,
+     "503": 37
+    },
+    "p50_ms": 8.303,
+    "p95_ms": 9.812,
+    "p99_ms": 11.3,
+    "max_ms": 111.305,
+    "ok200": {
+     "n": 728,
+     "p50_ms": 8.333,
+     "p95_ms": 9.821,
+     "p99_ms": 11.3,
+     "max_ms": 111.305
+    }
+   },
+   "scored_non_overlap": {
+    "n": 3830,
+    "statuses": {
+     "200": 3646,
+     "503": 184
+    },
+    "p50_ms": 16.893,
+    "p95_ms": 152.42,
+    "p99_ms": 406.579,
+    "max_ms": 761.381,
+    "ok200": {
+     "n": 3646,
+     "p50_ms": 17.007,
+     "p95_ms": 153.997,
+     "p99_ms": 401.219,
+     "max_ms": 761.381
+    }
+   },
+   "transport_or_5xx": 184,
+   "non200_share": 0.04804177545691906,
+   "maintenance_runs": [
+    {
+     "wall_ms": 1792474995340,
+     "rss_before_mib": 490.5,
+     "rss_after_mib": 381.2,
+     "gc_ms": 131.179,
+     "trim_ms": 15.987,
+     "run_ms": 147.166,
+     "collected": 3024,
+     "in_scored_window": true,
+     "overlapping_reads": 0,
+     "overlapping_latency_ms": []
+    }
+   ],
+   "bursts": [
+    {
+     "burst": 1,
+     "wall_s": 55.7,
+     "statuses": {
+      "429": 1061,
+      "200": 32,
+      "TRANSPORT": 2
+     },
+     "failed_slices": 32,
+     "req200_ms_p50": 6768,
+     "rss_mib": 403.5,
+     "uordblks_mib": null
+    },
+    {
+     "burst": 2,
+     "wall_s": 52.5,
+     "statuses": {
+      "429": 1104,
+      "200": 29,
+      "TRANSPORT": 4
+     },
+     "failed_slices": 35,
+     "req200_ms_p50": 7954,
+     "rss_mib": 407.6,
+     "uordblks_mib": null
+    },
+    {
+     "burst": 3,
+     "wall_s": 49.6,
+     "statuses": {
+      "429": 1065,
+      "200": 32,
+      "TRANSPORT": 2
+     },
+     "failed_slices": 32,
+     "req200_ms_p50": 7023,
+     "rss_mib": 412.8,
+     "uordblks_mib": null
+    },
+    {
+     "burst": 4,
+     "wall_s": 52.3,
+     "statuses": {
+      "429": 1078,
+      "200": 30,
+      "TRANSPORT": 1
+     },
+     "failed_slices": 34,
+     "req200_ms_p50": 6983,
+     "rss_mib": 430.2,
+     "uordblks_mib": null
+    },
+    {
+     "burst": 5,
+     "wall_s": 48.1,
+     "statuses": {
+      "429": 1124,
+      "200": 28,
+      "TRANSPORT": 3
+     },
+     "failed_slices": 36,
+     "req200_ms_p50": 7225,
+     "rss_mib": 436.4,
+     "uordblks_mib": null
+    },
+    {
+     "burst": 6,
+     "wall_s": 48.7,
+     "statuses": {
+      "429": 1026,
+      "200": 33,
+      "TRANSPORT": 2
+     },
+     "failed_slices": 31,
+     "req200_ms_p50": 7050,
+     "rss_mib": 381.2,
+     "uordblks_mib": null
+    }
+   ],
+   "schedule_lag_ms_p99": 2.0
+  }
+ },
+ "products": {
+  "bars": [
+   {
+    "consumer": "trading-system.paper.stable",
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "feed": "BAR",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "a953e16e-7138-5562-b5e8-c337a44d0b65",
+     "interval": "1m",
+     "max_freshness_ms": 180000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 1000
+    },
+    "binding_id": "binance-usdm-btcusdt-bar-1m",
+    "retained_rows": 12131,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "trading-system.paper.stable",
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "feed": "BAR",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "ee93fabf-68df-5b50-8924-51bf25a5a757",
+     "interval": "1m",
+     "max_freshness_ms": 180000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 1000
+    },
+    "binding_id": "binance-usdm-ethusdt-bar-1m",
+    "retained_rows": 12155,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "trading-system.paper.stable",
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "feed": "BAR",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+     "interval": "1m",
+     "max_freshness_ms": 180000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 1000
+    },
+    "binding_id": "okx-swap-btcusdt-bar-1m",
+    "retained_rows": 12130,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "trading-system.paper.stable",
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "feed": "BAR",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+     "interval": "1m",
+     "max_freshness_ms": 180000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 1000
+    },
+    "binding_id": "okx-swap-eth-usdt-swap-bar-1m",
+    "retained_rows": 12129,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "trading-system.paper.stable",
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "feed": "BAR",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "e4ce7249-a4e8-5073-beb8-dab908596c34",
+     "interval": "1m",
+     "max_freshness_ms": 180000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 1000
+    },
+    "binding_id": "binance-usdm-solusdt-bar-1m",
+    "retained_rows": 12133,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "trading-system.paper.stable",
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "feed": "BAR",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "8aedd349-6999-5874-b0dd-34c6451c0b3a",
+     "interval": "1m",
+     "max_freshness_ms": 180000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 1000
+    },
+    "binding_id": "binance-usdm-dogeusdt-bar-1m",
+    "retained_rows": 12131,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "trading-system.paper.stable",
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "feed": "BAR",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "b2d78145-b541-58e2-941b-06c44c65e45f",
+     "interval": "1m",
+     "max_freshness_ms": 180000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 1000
+    },
+    "binding_id": "binance-usdm-bnbusdt-bar-1m",
+    "retained_rows": 12161,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "trading-system.paper.stable",
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "feed": "BAR",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+     "interval": "1m",
+     "max_freshness_ms": 180000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 1000
+    },
+    "binding_id": "okx-swap-sol-usdt-swap-bar-1m",
+    "retained_rows": 12089,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "trading-system.paper.stable",
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "feed": "BAR",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+     "interval": "1m",
+     "max_freshness_ms": 180000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 1000
+    },
+    "binding_id": "okx-swap-doge-usdt-swap-bar-1m",
+    "retained_rows": 12087,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "trading-system.paper.stable",
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "feed": "BAR",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+     "interval": "1m",
+     "max_freshness_ms": 180000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 1000
+    },
+    "binding_id": "okx-swap-bnb-usdt-swap-bar-1m",
+    "retained_rows": 12082,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "1m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 180000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-doge-usdt-swap-bar-1m",
+    "retained_rows": 12087,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "1m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 180000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-sol-usdt-swap-bar-1m",
+    "retained_rows": 12089,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "1m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 180000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-eth-usdt-swap-bar-1m",
+    "retained_rows": 12129,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "1m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 180000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-bnb-usdt-swap-bar-1m",
+    "retained_rows": 12082,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "1m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 180000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-btcusdt-bar-1m",
+    "retained_rows": 12130,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "3m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 540000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-doge-usdt-swap-bar-3m",
+    "retained_rows": 12102,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "3m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 540000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-sol-usdt-swap-bar-3m",
+    "retained_rows": 12099,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "3m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 540000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-eth-usdt-swap-bar-3m",
+    "retained_rows": 12100,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "3m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 540000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-bnb-usdt-swap-bar-3m",
+    "retained_rows": 12100,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "3m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 540000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-btc-usdt-swap-bar-3m",
+    "retained_rows": 12100,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "5m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 900000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-doge-usdt-swap-bar-5m",
+    "retained_rows": 12098,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "5m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 900000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-sol-usdt-swap-bar-5m",
+    "retained_rows": 12098,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "5m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 900000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-eth-usdt-swap-bar-5m",
+    "retained_rows": 12098,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "5m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 900000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-bnb-usdt-swap-bar-5m",
+    "retained_rows": 12098,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "5m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 900000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-btc-usdt-swap-bar-5m",
+    "retained_rows": 12098,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "15m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 2700000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-doge-usdt-swap-bar-15m",
+    "retained_rows": 12093,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "15m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 2700000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-sol-usdt-swap-bar-15m",
+    "retained_rows": 12093,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "15m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 2700000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-eth-usdt-swap-bar-15m",
+    "retained_rows": 12093,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "15m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 2700000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-bnb-usdt-swap-bar-15m",
+    "retained_rows": 12093,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "15m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 2700000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-btc-usdt-swap-bar-15m",
+    "retained_rows": 12093,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "30m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 5400000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-doge-usdt-swap-bar-30m",
+    "retained_rows": 11103,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "30m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 5400000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-sol-usdt-swap-bar-30m",
+    "retained_rows": 11103,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "30m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 5400000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-eth-usdt-swap-bar-30m",
+    "retained_rows": 11103,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "30m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 5400000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-bnb-usdt-swap-bar-30m",
+    "retained_rows": 11103,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "30m",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 5400000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-btc-usdt-swap-bar-30m",
+    "retained_rows": 11103,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "1h",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 10800000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-doge-usdt-swap-bar-1h",
+    "retained_rows": 10551,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "1h",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 10800000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-sol-usdt-swap-bar-1h",
+    "retained_rows": 10551,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "1h",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 10800000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-eth-usdt-swap-bar-1h",
+    "retained_rows": 10551,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "1h",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 10800000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-bnb-usdt-swap-bar-1h",
+    "retained_rows": 10551,
+    "copied_rows": 10000
+   },
+   {
+    "consumer": "alpha.okx.paper.stable",
+    "requirement": {
+     "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+     "feed": "BAR",
+     "consumer_grade": "ALPHA",
+     "source_policy_id": "crypto_primary_v2",
+     "interval": "1h",
+     "warmup_limit": 10000,
+     "max_freshness_ms": 10800000,
+     "require_full_coverage": true,
+     "require_final_bars": true,
+     "stale_policy": "BLOCK",
+     "gap_policy": "BLOCK",
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "bar_revision_policy": "EMIT_REVISIONS"
+    },
+    "binding_id": "okx-swap-btc-usdt-swap-bar-1h",
+    "retained_rows": 10551,
+    "copied_rows": 10000
+   }
+  ],
+  "latest": [
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "TRADE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "a953e16e-7138-5562-b5e8-c337a44d0b65",
+     "max_freshness_ms": 3000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|a953e16e-7138-5562-b5e8-c337a44d0b65|TRADE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "TRADE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "ee93fabf-68df-5b50-8924-51bf25a5a757",
+     "max_freshness_ms": 3000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|ee93fabf-68df-5b50-8924-51bf25a5a757|TRADE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "QUOTE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "a953e16e-7138-5562-b5e8-c337a44d0b65",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 2000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|a953e16e-7138-5562-b5e8-c337a44d0b65|QUOTE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "QUOTE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "ee93fabf-68df-5b50-8924-51bf25a5a757",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 2000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|ee93fabf-68df-5b50-8924-51bf25a5a757|QUOTE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "TRADE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+     "max_freshness_ms": 3000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|fb26214c-7b9b-5961-95b2-55154755af0f|TRADE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "TRADE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+     "max_freshness_ms": 3000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|e49b54ae-c23d-5351-9e64-47934aac28f8|TRADE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "QUOTE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 2000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|fb26214c-7b9b-5961-95b2-55154755af0f|QUOTE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "QUOTE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 2000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|e49b54ae-c23d-5351-9e64-47934aac28f8|QUOTE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "TRADE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "e4ce7249-a4e8-5073-beb8-dab908596c34",
+     "max_freshness_ms": 3000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|e4ce7249-a4e8-5073-beb8-dab908596c34|TRADE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "QUOTE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "e4ce7249-a4e8-5073-beb8-dab908596c34",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 2000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|e4ce7249-a4e8-5073-beb8-dab908596c34|QUOTE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "TRADE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "8aedd349-6999-5874-b0dd-34c6451c0b3a",
+     "max_freshness_ms": 3000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|8aedd349-6999-5874-b0dd-34c6451c0b3a|TRADE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "QUOTE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "8aedd349-6999-5874-b0dd-34c6451c0b3a",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 2000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|8aedd349-6999-5874-b0dd-34c6451c0b3a|QUOTE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "TRADE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "b2d78145-b541-58e2-941b-06c44c65e45f",
+     "max_freshness_ms": 3000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|b2d78145-b541-58e2-941b-06c44c65e45f|TRADE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "QUOTE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "b2d78145-b541-58e2-941b-06c44c65e45f",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 2000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|b2d78145-b541-58e2-941b-06c44c65e45f|QUOTE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "TRADE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+     "max_freshness_ms": 3000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|a6884fb3-1fa0-53e0-9621-d01ba5f9a2de|TRADE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "QUOTE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 2000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|a6884fb3-1fa0-53e0-9621-d01ba5f9a2de|QUOTE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "TRADE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+     "max_freshness_ms": 3000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|6c7c9256-2905-5c75-a149-fa0ac36bbbc7|TRADE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "QUOTE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 2000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|6c7c9256-2905-5c75-a149-fa0ac36bbbc7|QUOTE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "TRADE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+     "max_freshness_ms": 3000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3|TRADE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "QUOTE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 2000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3|QUOTE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "MARK_INDEX_PRICE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "a953e16e-7138-5562-b5e8-c337a44d0b65",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "FRESH_SNAPSHOT",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|a953e16e-7138-5562-b5e8-c337a44d0b65|MARK_INDEX_PRICE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "feed": "BOOK_SNAPSHOT",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "a953e16e-7138-5562-b5e8-c337a44d0b65",
+     "max_freshness_ms": 60000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|a953e16e-7138-5562-b5e8-c337a44d0b65|BOOK_SNAPSHOT|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "BOOK_DELTA",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "a953e16e-7138-5562-b5e8-c337a44d0b65",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|a953e16e-7138-5562-b5e8-c337a44d0b65|BOOK_DELTA|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "MARK_INDEX_PRICE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "ee93fabf-68df-5b50-8924-51bf25a5a757",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "FRESH_SNAPSHOT",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|ee93fabf-68df-5b50-8924-51bf25a5a757|MARK_INDEX_PRICE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "feed": "BOOK_SNAPSHOT",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "ee93fabf-68df-5b50-8924-51bf25a5a757",
+     "max_freshness_ms": 60000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|ee93fabf-68df-5b50-8924-51bf25a5a757|BOOK_SNAPSHOT|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "BOOK_DELTA",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "ee93fabf-68df-5b50-8924-51bf25a5a757",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|ee93fabf-68df-5b50-8924-51bf25a5a757|BOOK_DELTA|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "MARK_INDEX_PRICE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "FRESH_SNAPSHOT",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|fb26214c-7b9b-5961-95b2-55154755af0f|MARK_INDEX_PRICE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "feed": "BOOK_SNAPSHOT",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+     "max_freshness_ms": 60000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|fb26214c-7b9b-5961-95b2-55154755af0f|BOOK_SNAPSHOT|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "BOOK_DELTA",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "fb26214c-7b9b-5961-95b2-55154755af0f",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|fb26214c-7b9b-5961-95b2-55154755af0f|BOOK_DELTA|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "MARK_INDEX_PRICE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "FRESH_SNAPSHOT",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|e49b54ae-c23d-5351-9e64-47934aac28f8|MARK_INDEX_PRICE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "feed": "BOOK_SNAPSHOT",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+     "max_freshness_ms": 60000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|e49b54ae-c23d-5351-9e64-47934aac28f8|BOOK_SNAPSHOT|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "BOOK_DELTA",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "e49b54ae-c23d-5351-9e64-47934aac28f8",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|e49b54ae-c23d-5351-9e64-47934aac28f8|BOOK_DELTA|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "MARK_INDEX_PRICE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "e4ce7249-a4e8-5073-beb8-dab908596c34",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "FRESH_SNAPSHOT",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|e4ce7249-a4e8-5073-beb8-dab908596c34|MARK_INDEX_PRICE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "feed": "BOOK_SNAPSHOT",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "e4ce7249-a4e8-5073-beb8-dab908596c34",
+     "max_freshness_ms": 60000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|e4ce7249-a4e8-5073-beb8-dab908596c34|BOOK_SNAPSHOT|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "BOOK_DELTA",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "e4ce7249-a4e8-5073-beb8-dab908596c34",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|e4ce7249-a4e8-5073-beb8-dab908596c34|BOOK_DELTA|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "MARK_INDEX_PRICE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "8aedd349-6999-5874-b0dd-34c6451c0b3a",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "FRESH_SNAPSHOT",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|8aedd349-6999-5874-b0dd-34c6451c0b3a|MARK_INDEX_PRICE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "feed": "BOOK_SNAPSHOT",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "8aedd349-6999-5874-b0dd-34c6451c0b3a",
+     "max_freshness_ms": 60000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|8aedd349-6999-5874-b0dd-34c6451c0b3a|BOOK_SNAPSHOT|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "BOOK_DELTA",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "8aedd349-6999-5874-b0dd-34c6451c0b3a",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|8aedd349-6999-5874-b0dd-34c6451c0b3a|BOOK_DELTA|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "MARK_INDEX_PRICE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "b2d78145-b541-58e2-941b-06c44c65e45f",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "FRESH_SNAPSHOT",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|b2d78145-b541-58e2-941b-06c44c65e45f|MARK_INDEX_PRICE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "feed": "BOOK_SNAPSHOT",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "b2d78145-b541-58e2-941b-06c44c65e45f",
+     "max_freshness_ms": 60000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|b2d78145-b541-58e2-941b-06c44c65e45f|BOOK_SNAPSHOT|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "BOOK_DELTA",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "b2d78145-b541-58e2-941b-06c44c65e45f",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|BINANCE|USDM|b2d78145-b541-58e2-941b-06c44c65e45f|BOOK_DELTA|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "MARK_INDEX_PRICE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "FRESH_SNAPSHOT",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|a6884fb3-1fa0-53e0-9621-d01ba5f9a2de|MARK_INDEX_PRICE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "feed": "BOOK_SNAPSHOT",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+     "max_freshness_ms": 60000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|a6884fb3-1fa0-53e0-9621-d01ba5f9a2de|BOOK_SNAPSHOT|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "BOOK_DELTA",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "a6884fb3-1fa0-53e0-9621-d01ba5f9a2de",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|a6884fb3-1fa0-53e0-9621-d01ba5f9a2de|BOOK_DELTA|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "MARK_INDEX_PRICE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "FRESH_SNAPSHOT",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|6c7c9256-2905-5c75-a149-fa0ac36bbbc7|MARK_INDEX_PRICE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "feed": "BOOK_SNAPSHOT",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+     "max_freshness_ms": 60000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|6c7c9256-2905-5c75-a149-fa0ac36bbbc7|BOOK_SNAPSHOT|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "BOOK_DELTA",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "6c7c9256-2905-5c75-a149-fa0ac36bbbc7",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|6c7c9256-2905-5c75-a149-fa0ac36bbbc7|BOOK_DELTA|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "MARK_INDEX_PRICE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "FRESH_SNAPSHOT",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3|MARK_INDEX_PRICE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "feed": "BOOK_SNAPSHOT",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+     "max_freshness_ms": 60000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3|BOOK_SNAPSHOT|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "BOOK_DELTA",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|f2e37e2b-1386-5a32-9b79-0fd39ec7a5a3|BOOK_DELTA|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "feed": "TRADE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "d0ac3d4c-2374-5690-8af5-b970448f91d3",
+     "max_freshness_ms": 30000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "vn_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|HNX|VN_DERIVATIVES|d0ac3d4c-2374-5690-8af5-b970448f91d3|TRADE|-",
+    "copied": false
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "BOOK_DELTA",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "8482b54b-6d9d-5aad-abe8-e22447d183a1",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|8482b54b-6d9d-5aad-abe8-e22447d183a1|BOOK_DELTA|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "feed": "BOOK_SNAPSHOT",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "8482b54b-6d9d-5aad-abe8-e22447d183a1",
+     "max_freshness_ms": 60000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|8482b54b-6d9d-5aad-abe8-e22447d183a1|BOOK_SNAPSHOT|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "MARK_INDEX_PRICE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "8482b54b-6d9d-5aad-abe8-e22447d183a1",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 45000,
+     "recovery": "FRESH_SNAPSHOT",
+     "require_final_bars": false,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_liquid_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|8482b54b-6d9d-5aad-abe8-e22447d183a1|MARK_INDEX_PRICE|-",
+    "copied": true
+   },
+   {
+    "requirement": {
+     "bar_revision_policy": "LATEST",
+     "consumer_grade": "EXECUTION",
+     "event_recency_policy": "OBSERVE",
+     "feed": "QUOTE",
+     "gap_policy": "BLOCK",
+     "instrument_uid": "8482b54b-6d9d-5aad-abe8-e22447d183a1",
+     "max_freshness_ms": 2000,
+     "max_session_liveness_ms": 2000,
+     "recovery": "SNAPSHOT_AND_REPLAY",
+     "require_final_bars": true,
+     "require_full_coverage": true,
+     "source_policy_id": "crypto_primary_v2",
+     "stale_policy": "BLOCK",
+     "warmup_limit": 0
+    },
+    "lpk": "lpk1|paper|OKX|SWAP|8482b54b-6d9d-5aad-abe8-e22447d183a1|QUOTE|-",
+    "copied": true
+   }
+  ],
+  "copied_utc": "2026-10-20T05:45:02Z"
+ },
+ "analyzed_utc": "2026-10-20T05:51:07Z"
+}

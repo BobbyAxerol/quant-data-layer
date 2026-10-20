@@ -51,7 +51,7 @@
      8306
     ]
    },
-   "concurrent_hot_read_latency": "NOT_MEASURED (the harness drives warmups only)",
+   "concurrent_hot_read_latency": "measured 2026-10-20 in the pre-registered A/B below (query_ab_20261020)",
    "harness": "scripts/idr129_query_rss_isolated.py",
    "image_equivalence": "84512ab and the released 9b6747f carry identical qdl/api_v2/router.py, qdl/query/service.py, qdl/runtime/memory_maintenance.py, qdl/runtime/stable.py (git diff empty); 9b6747f adds the IDR-127 config",
    "shape": "one Query replica, 1 vCPU / 2 GiB, private copy of the 64 burst products (production volume), 64 concurrent SDK-shaped warmups per burst x 12, no manual gc/trim during bursts"
@@ -64,6 +64,146 @@
     "query_kn_1": 227.8,
     "query_kn_2": 233.6
    }
+  },
+  "query_ab_20261020": {
+   "byte_compare": {
+    "requirements": 65,
+    "status_counts": {
+     "200": 128,
+     "503": 2
+    },
+    "triples": 130,
+    "verdict": "PASS",
+    "volatile_paths": [
+     "('data', *, 'cursor')",
+     "('data', *, 'quality', 'freshness_ms')",
+     "('data', *, 'quality', 'provider_session_liveness_ms')",
+     "('request_id',)",
+     "('stream_cursor',)"
+    ]
+   },
+   "byte_compare_sha256": "41ebcc3c575e3fb1cb37ee069cd5eff156bb0ed7ef0dd4b0b5becc51e22ae7e4",
+   "concurrency": {
+    "foreign_test_like_containers_seen": [
+     "contracts-test-node",
+     "control-api-test-node-2756921",
+     "control-api-test-node-epg08-final-20261020-0510",
+     "control-api-test-postgres-2756921",
+     "control-api-test-postgres-epg08-final-20261020-0510",
+     "live_data_executor",
+     "redis_marketdata",
+     "redis_service",
+     "trading-system-manager-read-live-portal_manager_issuer-1",
+     "trading-system-manager-read-live-portal_manager_read-1",
+     "trading-system-manager-read-sandbox-portal_manager_issuer-1",
+     "trading-system-manager-read-sandbox-portal_manager_read-1",
+     "ts35-impact-unit"
+    ],
+    "load1_min_max": [
+     8.22,
+     13.26
+    ],
+    "locks_seen": [
+     "null"
+    ],
+    "mode": "CONCURRENT_WITH_FOREIGN_LOCK",
+    "psi_cpu_some_avg10_min_max": [
+     1.34,
+     7.74
+    ],
+    "samples": 93
+   },
+   "maintenance_runs_new_image": [
+    {
+     "arm": "B1",
+     "gc_ms": 121.054,
+     "overlapping_latency_ms": [
+      7.9,
+      44.7
+     ],
+     "overlapping_reads": 2,
+     "rss_after_mib": 370.3,
+     "rss_before_mib": 460.8,
+     "run_ms": 130.709,
+     "trim_ms": 9.655
+    },
+    {
+     "arm": "B2",
+     "gc_ms": 131.179,
+     "overlapping_latency_ms": [],
+     "overlapping_reads": 0,
+     "rss_after_mib": 381.2,
+     "rss_before_mib": 490.5,
+     "run_ms": 147.166,
+     "trim_ms": 15.987
+    }
+   ],
+   "note": "A/B numbers of one 1-vCPU replica under back-to-back bursts; not a production latency claim",
+   "paired_deltas": {
+    "bound_p95_ms": 17.9555,
+    "bound_p99_ms": 41.861250000000005,
+    "mean_d_p95_ms": -41.9015,
+    "mean_d_p99_ms": -19.462500000000006
+   },
+   "path": "upgrade/evidence/releases/v2.2.5/query-ab-20261020/",
+   "prereg_sha256": "0f2f00b43f1a1e28fedd055d90ca9f01dcd2376eb5e9d2053936b5cec081d924",
+   "receipt_sha256": "d3899b2232c8cf874924d5d825a47e3e24fb9c8ee95ec70b62e9df3e73609d74",
+   "rules": {
+    "BC": true,
+    "HR1": true,
+    "HR2": true,
+    "HR3": true,
+    "HR4": true,
+    "HR5": true
+   },
+   "scored_hot_reads": {
+    "A1": {
+     "max_ms": 787.944,
+     "n": 3972,
+     "p50_ms": 17.344,
+     "p95_ms": 186.017,
+     "p99_ms": 437.8,
+     "statuses": {
+      "200": 3773,
+      "503": 199
+     }
+    },
+    "A2": {
+     "max_ms": 837.189,
+     "n": 3609,
+     "p50_ms": 17.287,
+     "p95_ms": 173.093,
+     "p99_ms": 399.425,
+     "statuses": {
+      "200": 3421,
+      "503": 188
+     }
+    },
+    "B1": {
+     "max_ms": 738.39,
+     "n": 3750,
+     "p50_ms": 16.752,
+     "p95_ms": 122.887,
+     "p99_ms": 391.721,
+     "statuses": {
+      "200": 3558,
+      "503": 192
+     }
+    },
+    "B2": {
+     "max_ms": 761.381,
+     "n": 3830,
+     "p50_ms": 16.893,
+     "p95_ms": 152.42,
+     "p99_ms": 406.579,
+     "statuses": {
+      "200": 3646,
+      "503": 184
+     }
+    }
+   },
+   "shape": "one Query replica per arm, 1 vCPU / 2 GiB, private read-only cache copy, arms A1 B1 A2 B2 (A=3e9e4d3a, B=753604f8), 6 x 64-warmup bursts each, open-loop TS EXECUTION QUOTE/TRADE snapshots at 10/s",
+   "verdict": "PASS"
   },
   "rehearsal_burst": {
    "receipt": "upgrade/evidence/releases/v2.2.5/rehearsal-final-20261019T175600Z.json",
@@ -86,7 +226,7 @@
  },
  "limits": [
   "Stage-100 latency/capacity numbers are inherited from v2.2.4, measured with unrelated heavy stacks paused (IDR-128 OPEN); mixed portal workload is outside the certified scope. The window ran with the portal running.",
-  "G5: hot-read latency concurrent with a Query memory-maintenance run (RSS >= 448 MiB) is NOT_MEASURED (CERTIFICATE.md section 4).",
+  "G5 D3 (b) rests on an isolated A/B (one 1-vCPU replica, private cache copy, run beside other agents' test containers without the host lock by owner instruction, judged on paired deltas); not a production latency figure.",
   "Served event age, delivery lag and end-to-end latency were not measured passively in the window.",
   "Single host; no HA.",
   "W14 monitor deferred: no DATA_LAYER watchdog runs.",

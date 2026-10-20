@@ -995,14 +995,17 @@ def byte_compare(output: Path) -> dict:
                                             "status": [final["A_status"], final["B_status"]],
                                             "length": [final["A_length"], final["B_length"]],
                                             "content_length": [final["A_content_length"], final["B_content_length"]],
-                                            "rows": final["rows"], "volatile_paths": final["volatile_paths"],
+                                            "rows": final["rows"],
+                                            "volatile_path_count": len(final["volatile_paths"]),
+                                            "volatile_path_patterns": sorted({__import__("re").sub(r", \d+", ", *", v)
+                                                                              for v in final["volatile_paths"]}),
                                             "sha256": {"A": final["A_sha256"], "B": final["B_sha256"]},
                                             "normalized_sha256": final["normalized_sha256"]})
     statuses = {}
     for entries in per_req.values():
         for e in entries:
             statuses[str(e["status"][0])] = statuses.get(str(e["status"][0]), 0) + 1
-    volatile = sorted({p for entries in per_req.values() for e in entries for p in e["volatile_paths"]})
+    volatile = sorted({p for entries in per_req.values() for e in entries for p in e["volatile_path_patterns"]})
     return {"requirements": len(per_req), "triples": len(raw), "status_counts_A": statuses,
             "volatile_paths_seen": volatile, "problems": problems,
             "verdict": "PASS" if not problems and len(per_req) == len({r["index"] for r in raw}) else "FAIL",

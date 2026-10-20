@@ -77081,3 +77081,47 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   NOT tagged. Open: owner confirmation of P1 (or the hot-read A/B under the host lock), W14 (TS read:packages token),
   old-identity cleanup approval, PR CI. Next: PR into dev (coordinator merges), then the dev -> main release PR;
   the coordinator creates the tag.
+
+### DL v2.2.5: G5 D3 (b) measured by an isolated Query A/B; DR warmup byte compare; P1 superseded - 2026-10-20 (Claude)
+
+- Owner via the coordinator: option (b) "Đo luôn rồi tag". At ~04:30Z the owner also said: do not wait for the
+  Codex lock, because it is correctness only. Run concurrently, interleave the arms, judge on paired old-vs-new
+  deltas, record foreign activity, and touch nothing of theirs.
+- Waiting: from 03:49Z I queued an acquire behind the Codex lock. Codex extended that lock twice, to 05:14:50Z. The
+  acquire was stopped at 04:49Z on the owner instruction, after which no lock was taken or touched by me. The lock
+  file was absent during the counted session.
+- Tool: `scripts/v225_query_hot_read_ab.py` (new; reuses the IDR-129 harness probe).
+  - PREREG v1 `7d28d9cb` was never run. PREREG v2 `0bba6385` is the concurrent, interleaved, paired version and was
+    committed before any run.
+  - Rules:
+    - HR1: paired mean d_p95 <= max(10 % of A, 10 ms); paired mean d_p99 <= max(10 % of A, 25 ms).
+    - HR2: >= 1 maintenance run overlapped by reads; if not, the verdict is INCONCLUSIVE.
+    - HR3: overlapping reads <= run + p99 + 50 ms.
+    - HR4: transport and 5xx errors on B no higher than A beyond the prereg allowance.
+    - HR5: non-200 share on B <= A + 1 pp.
+    - BC: A/B/A' triples.
+  - Fixes during the session, rules unchanged:
+    - `543ddf18`: keep nested binds and volume subpaths of the production Query spec. Attempts 1 and 2 measured
+      nothing.
+    - `b5b36e72`: compare-only re-run mode and path-exact masking in the analysis. The BC driver could not write its
+      raw record, so the BC phase was re-run in the same session after the arms.
+- Result (session `query-ab-20261020c`, 05:04-05:50Z): **PASS**.
+  - Paired mean d_p95 -41.9 ms, d_p99 -19.5 ms.
+  - Maintenance runs 131 / 147 ms; 2 overlapping reads.
+  - 503 DATA_NOT_READY 5.1 % vs 5.0 %.
+  - BC: 65/65 requirements x 2 passes, byte-identical outside the per-request paths (request_id, stream_cursor,
+    per-row cursor, freshness_ms, provider_session_liveness_ms).
+  - Receipts are in `upgrade/evidence/releases/v2.2.5/query-ab-20261020/` (`SHA256SUMS`). `byte-compare.json`
+    `41ebcc3c...` is the DR delta-proof input for TS.
+- Certificate re-issued: G5 PASS by complete delta proof; P1 removed and recorded as superseded. Updated:
+  - `CERTIFICATE.md`
+  - `certificate.json`
+  - `endpoint-report.json`
+  - `RELEASE_NOTES.md`
+  - `CERTIFICATE_SCOPE.md` header
+  - `CERTIFICATION_LEDGER.md`
+- Cleanup: every `qdl-hr-*` container (`--rm`) and network `qdl-hr-net` removed; 0 left (`docker ps -a` / `network
+  ls` by label). No image was built. Production was read-only: docker inspect, the read-only cache copy and
+  docker logs.
+- Status: v2.2.5 certificate PASS, not tagged. Next: PR #48 CI and merge (coordinator), then the dev -> main
+  release PR.

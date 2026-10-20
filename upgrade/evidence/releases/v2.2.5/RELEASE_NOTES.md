@@ -2,8 +2,10 @@
 
 Compact release: configuration, container definitions, mesh certificates and one Query fix. No Rust binary changed.
 Deployed to production in the maintenance window of 2026-10-20 (01:28-02:54Z, forward path, no rollback).
-Certificate: [CERTIFICATE.md](CERTIFICATE.md) / [certificate.json](certificate.json): **PASS under P1**, a post-hoc
-packaging decision on how G5 is scoped that the owner must confirm before the tag (CERTIFICATE.md section 4).
+Certificate: [CERTIFICATE.md](CERTIFICATE.md) / [certificate.json](certificate.json): **PASS**. G5 includes the
+pre-registered isolated A/B of old vs new Query (hot reads during warmup bursts and memory-maintenance runs: paired
+p95/p99 deltas -41.9 / -19.5 ms; warmup responses byte-identical for all 65 TS r11 requirements outside per-request
+fields), [query-ab-20261020/](query-ab-20261020/).
 
 ## Contents
 
@@ -49,8 +51,9 @@ SDK: `qdl-sdk 2.4.1`, the same wheel as v2.2.4 (`9f79e032...`, byte-identical re
 
 ## Limits
 
-- **P1 / G5**: hot-read latency while a Query memory-maintenance run executes is NOT_MEASURED (each run blocks that
-  replica's loop 136-160 ms; it ran 0 times in production after the window). Owner confirmation needed.
+- The G5 A/B is isolated (one 1-vCPU replica, private cache copy, beside other agents' test containers) and judged on
+  paired deltas; it is not a production latency figure. A maintenance run blocks its replica's loop ~130-150 ms, at
+  most once per 120 s and only above 448 MiB RSS (it ran 0 times in production after the window).
 - **Supported load (IDR-128 OPEN)**: the inherited latency envelope was measured with unrelated heavy stacks paused;
   a mixed portal workload on the same host is outside the certified scope. The window ran with the portal running.
 - Inherited from v2.2.4: G11 PASS only under post-hoc A5; G14 CPU above budget (not a gate); IDR-108 open.

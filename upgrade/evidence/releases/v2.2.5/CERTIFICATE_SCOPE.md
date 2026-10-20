@@ -1,8 +1,8 @@
 # Data Layer v2.2.5 certificate scope
 
 Status: applied. This was the DRAFT proposal used for the window; the issued certificate is `CERTIFICATE.md` /
-`certificate.json` (same folder), which records where the evidence met, or did not meet, each item below
-(notably D3 (b) "concurrent hot-read latency": NOT_MEASURED, see `CERTIFICATE.md` section 4).
+`certificate.json` (same folder), which records how the evidence met each item below (D3 (b) "concurrent hot-read
+latency" by the pre-registered A/B of 2026-10-20, `query-ab-20261020/`, see `CERTIFICATE.md` section 4).
 
 v2.2.5 is a compact release (owner 2026-10-19 ~09:00Z: "phải gọn lại"; TS is the main work). It changes
 configuration, container definitions, the mesh certificates and the Query python image (IDR-127 configuration files

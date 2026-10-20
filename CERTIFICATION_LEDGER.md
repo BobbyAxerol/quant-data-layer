@@ -2405,3 +2405,29 @@ Pinned at:
   as NOT_MEASURED. `gates_without_p1` G5 NOT_MEASURED. **Owner confirmation of P1 is required before the tag**; the
   alternative is the isolated hot-read A/B.
 - SDK 2.4.1 wheel `9f79e032...` (same as v2.2.4, rebuilt byte-identical). `release.yml` unchanged. No tag.
+
+### 2026-10-20 - Query A/B (G5 D3 (b) hot reads + DR warmup byte compare): CERTIFIED (isolated); v2.2.5 certificate PASS without P1
+
+Pinned at:
+- old Query `sha256:3e9e4d3a...` (v2.2.4), new Query `sha256:753604f8...` (v2.2.5); harness
+  `scripts/v225_query_hot_read_ab.py` with PREREG v2 committed at `0bba6385` before the run (session tool `543ddf18`,
+  BC re-run `b5b36e72`); one replica per arm at 1 vCPU / 2 GiB, private read-only copy of the market cache.
+
+- Owner 2026-10-20: "Đo luôn rồi tag" (measure, then tag), then (~04:30Z) run without waiting for the foreign
+  correctness-only lock, interleave arms, judge paired deltas, record foreign activity. Session
+  `~/.local/state/qdl-v2/releases/v2.2.5/query-ab-20261020c` 05:04-05:50Z: verdict **PASS**
+  (`query-ab-20261020/receipt.json` `d3899b22...`).
+  - Hot reads (TS EXECUTION QUOTE/TRADE snapshots, open loop 10/s) during 6 x 64-warmup bursts per arm, A1 B1 A2 B2:
+    p95 186.0 / 122.9 / 173.1 / 152.4 ms, p99 437.8 / 391.7 / 399.4 / 406.6 ms; paired mean d_p95 -41.9 ms, d_p99
+    -19.5 ms (bounds +18.0 / +41.9).
+  - New image maintenance runs 131 / 147 ms inside the scored windows; overlapping reads 7.9 / 44.7 ms.
+  - Non-200 only 503 DATA_NOT_READY (HNX TRADE without a latest entry), 5.1 % vs 5.0 %.
+  - Concurrency: other agents' test containers running, no lock file present, load1 8.2-13.3.
+- DR warmup byte compare: 65 TS r11 requirements x 2 passes, 130 valid triples; status, content-type and
+  Content-Length equal; bodies byte-identical after masking the per-request paths that also differ between two
+  requests to the same old replica. `byte-compare.json` `41ebcc3c575e3fb1cb37ee069cd5eff156bb0ed7ef0dd4b0b5becc51e22ae7e4`
+  PASS.
+- Not counted: attempts 1 (04:50Z, nested client-CA bind dropped) and 2 (05:02Z, volume subpath ignored) measured
+  nothing.
+- Certificate re-issued: G5 PASS by complete delta proof; P1 superseded (never used); `gates_without_a5` keeps G11
+  FAIL as in v2.2.4. Re-run only if either Query image, the warmup/snapshot code path or the TS r11 manifest changes.
