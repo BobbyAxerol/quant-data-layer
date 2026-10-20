@@ -15,12 +15,16 @@ The pass rules are pre-registered (PREREG below) and written to ``prereg.json`` 
 Boundary: production is read-only. The only production contact is a read-only copy of market-cache keys
 (DUMP/HMGET/HGETALL, the IDR-129 harness method) by the ``sync`` container and ``docker inspect`` of query_kn_1 for
 its container spec. Every container is ``--rm``, CPU-capped, on one ``--internal`` network (prefix ``qdl-hr-``,
-label ``qdl.v225.hotread=true``); ``cleanup`` removes all of them and the network. Needs the host measurement lock
-(AGENTS.md 34a) held by ``--lock-owner``. TS identity = the new mesh generation (root-only files, so the drivers
+label ``qdl.v225.hotread=true``); ``cleanup`` removes all of them and the network. Host lock: by the owner's
+instruction of 2026-10-20 ~04:30Z this session runs CONCURRENTLY with another agent's correctness-only lock
+(``--concurrent``): the lock file is never written or removed, foreign activity (other containers, load, CPU PSI,
+the lock content) is sampled every 30 s into ``foreign.jsonl``, and the arms are interleaved (A1 B1 A2 B2) so the
+rules are judged on paired old-vs-new deltas, not on absolute numbers. Without ``--concurrent`` the lock must be
+held by ``--lock-owner``. TS identity = the new mesh generation (root-only files, so the drivers
 run as root with DAC_READ_SEARCH only); alpha-okx identity = its phase105b client certificate (still trusted).
 
 Usage (host python):
-  v225_query_hot_read_ab.py run --output DIR [--lock-owner O]
+  v225_query_hot_read_ab.py run --output DIR [--lock-owner O | --concurrent]
   v225_query_hot_read_ab.py analyze --output DIR
   v225_query_hot_read_ab.py cleanup
 """
@@ -61,11 +65,15 @@ TS = "trading-system.paper.stable"
 OKX = "alpha.okx.paper.stable"
 
 PREREG = {
-    "schema": "qdl.v225.query-ab-prereg.v1",
+    "schema": "qdl.v225.query-ab-prereg.v2",
+    "revision_note": ("v2 (before any run) replaces v1 of commit 7d28d9cb: owner 2026-10-20 ~04:30Z: run concurrently "
+                      "with a foreign correctness-only lock, interleave arms, judge paired old-vs-new deltas, record "
+                      "foreign activity"),
     "images": {"A_old": OLD_IMAGE, "B_new": NEW_IMAGE},
     "replica": "one Query replica per arm, production container spec of query_kn_1 except private cache/quota Redis, --cpus 1.0 --memory 2g (the IDR-129 arm shape)",
-    "order": "byte compare (A and B side by side), then arm B, then arm A",
-    "burst": {"slices": 64, "bursts": 12, "gap_s": 10, "settle_s": 5, "rounds": 4,
+    "order": "byte compare (A and B side by side), then interleaved arms A1 B1 A2 B2 (A = old, B = new), each a fresh replica",
+    "concurrency": "runs beside another agent's correctness-only job under its host lock (owner instruction); foreign activity sampled every 30 s",
+    "burst": {"slices": 64, "bursts": 6, "gap_s": 10, "settle_s": 5, "rounds": 4,
               "mix": "TS r11 BAR 1m x 1,000 rows (10 slices) + alpha-okx BAR 1m..1h cycled to 54 slices with rows "
                      "2500/5000/2500/5000/2500/5000/2500/10000 (the IDR-129 stage ladder); SDK 2.4 redirect/queued "
                      "retry shape",
@@ -78,11 +86,11 @@ PREREG = {
                   "phases": "pre (60 s before burst 1), scored (first burst start .. last burst end), post (60 s)"},
     "maintenance": "the new image's default QDL_QUERY_MEMORY_SOFT_LIMIT_MIB (448); no manual gc/trim in any scored arm",
     "rules": {
-        "HR1": "scored hot reads (any HTTP status; transport errors counted apart): p95_B <= max(1.10*p95_A, p95_A+10 ms) and p99_B <= max(1.10*p99_A, p99_A+25 ms)",
-        "HR2": "coverage: arm B has >= 1 memory_maintenance run inside its scored window with >= 1 hot read overlapping it; otherwise INCONCLUSIVE (never PASS)",
-        "HR3": "bounded pause: every hot read overlapping a maintenance run has latency <= run_ms + p99 of B's non-overlapping scored reads + 50 ms, and every run_ms <= 500",
-        "HR4": "transport errors + HTTP 5xx in B <= A + max(2, 0.5 % of B's scored reads)",
-        "HR5": "non-200 share of scored reads in B <= A + 1 percentage point",
+        "HR1": "paired deltas over the pairs (A1,B1) and (A2,B2), scored hot reads (any HTTP status; transport errors counted apart): mean(p95_Bi - p95_Ai) <= max(0.10*mean(p95_Ai), 10 ms) and mean(p99_Bi - p99_Ai) <= max(0.10*mean(p99_Ai), 25 ms); each pair is reported",
+        "HR2": "coverage: the B arms together have >= 1 memory_maintenance run inside a scored window with >= 1 hot read overlapping it; otherwise INCONCLUSIVE (never PASS)",
+        "HR3": "bounded pause: every hot read overlapping a maintenance run has latency <= run_ms + p99 of that arm's non-overlapping scored reads + 50 ms, and every run_ms <= 500",
+        "HR4": "transport errors + HTTP 5xx summed over B arms <= summed over A arms + max(2, 0.5 % of the B arms' scored reads)",
+        "HR5": "non-200 share of scored reads over the B arms <= over the A arms + 1 percentage point",
         "BC": "for every TS r11 requirement, in each of 2 passes, a valid triple (A, B, A' = second request to A, issued "
               "together with the sync paused) exists within 3 attempts; valid = A and A' differ only in scalar leaves "
               "(V); PASS when for every valid triple: status A == B, content-type A == B, Content-Length header == body "
@@ -712,12 +720,54 @@ def run_arm(label: str, image: str, output: Path, work_root: Path, env, mounts, 
     return meta
 
 
+def foreign_sample() -> dict:
+    names = sh("docker", "ps", "--format", "{{.Names}}|{{.Status}}", check=False).splitlines()
+    ours = [n for n in names if n.startswith(PREFIX)]
+    sample = {"utc": utc(), "unix_ms": time.time_ns() / 1e6, "loadavg": Path("/proc/loadavg").read_text().strip(),
+              "running_containers": len(names), "ours": len(ours),
+              "foreign_test_like": sorted(n.split("|")[0] for n in names if not n.startswith(PREFIX)
+                                          and not n.startswith(STACK) and not n.startswith(("market_data_service",
+                                                                                            "portal", "monitor")))}
+    for kind in ("cpu", "memory", "io"):
+        try:
+            sample[f"psi_{kind}"] = Path(f"/proc/pressure/{kind}").read_text().splitlines()[0]
+        except OSError:
+            pass
+    try:
+        sample["lock"] = json.loads(LOCK.read_text())
+    except (OSError, ValueError):
+        sample["lock"] = None
+    return sample
+
+
+def sampler(path: Path, stop) -> None:
+    with open(path, "a") as handle:
+        while not stop.is_set():
+            try:
+                handle.write(json.dumps(foreign_sample()) + "\n")
+                handle.flush()
+            except Exception as error:  # sampling never breaks the run
+                handle.write(json.dumps({"utc": utc(), "sampler_error": type(error).__name__}) + "\n")
+            stop.wait(30)
+
+
 def run(args) -> int:
-    require_lock(args.lock_owner)
+    import threading
+    if args.concurrent:
+        try:
+            lock = json.loads(LOCK.read_text())
+        except (OSError, ValueError):
+            lock = None
+        print(json.dumps({"concurrent_with_lock": lock}), flush=True)
+    else:
+        require_lock(args.lock_owner)
     output = args.output.resolve()
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
+    stop_sampler = threading.Event()
+    threading.Thread(target=sampler, args=(output / "foreign.jsonl", stop_sampler), daemon=True).start()
     head = sh("git", "-C", str(ROOT), "rev-parse", "HEAD")
     prereg = {**PREREG, "written_utc": utc(), "tool": "scripts/v225_query_hot_read_ab.py", "tool_commit": head,
+              "concurrent_mode": bool(args.concurrent),
               "tool_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
     (output / "prereg.json").write_text(json.dumps(prereg, indent=1) + "\n")
     print(json.dumps({"prereg_sha256": hashlib.sha256((output / "prereg.json").read_bytes()).hexdigest()}), flush=True)
@@ -763,10 +813,11 @@ def run(args) -> int:
         finally:
             stop_query(qa, cmp_dir)
             stop_query(qb, cmp_dir)
-        # 2. arms: B (new) then A (old)
-        run_arm("B", NEW_IMAGE, output, work_root, env, mounts, cmd, plan, products)
-        run_arm("A", OLD_IMAGE, output, work_root, env, mounts, cmd, plan, products)
+        # 2. interleaved arms (paired deltas): A1 B1 A2 B2
+        for label, image in (("A1", OLD_IMAGE), ("B1", NEW_IMAGE), ("A2", OLD_IMAGE), ("B2", NEW_IMAGE)):
+            run_arm(label, image, output, work_root, env, mounts, cmd, plan, products)
     finally:
+        stop_sampler.set()
         (work_root / "stop").write_text("1")
         if sync is not None:
             try:
@@ -774,6 +825,8 @@ def run(args) -> int:
             except subprocess.TimeoutExpired:
                 pass
         cleanup(None)
+        with open(output / "foreign.jsonl", "a") as handle:
+            handle.write(json.dumps({**foreign_sample(), "phase": "after_cleanup"}) + "\n")
     return 0
 
 
@@ -885,43 +938,71 @@ def byte_compare(output: Path) -> dict:
 def analyze(args) -> int:
     output = args.output.resolve()
     prereg = json.loads((output / "prereg.json").read_text())
-    a, b = arm_summary(output / "arm-A"), arm_summary(output / "arm-B")
-    sa, sb = a["scored"], b["scored"]
+    arms = {label: arm_summary(output / f"arm-{label}") for label in ("A1", "B1", "A2", "B2")}
+    pairs = [("A1", "B1"), ("A2", "B2")]
     rules = {}
-    rules["HR1"] = {"p95": [sa["p95_ms"], sb["p95_ms"], max(1.10 * sa["p95_ms"], sa["p95_ms"] + 10)],
-                    "p99": [sa["p99_ms"], sb["p99_ms"], max(1.10 * sa["p99_ms"], sa["p99_ms"] + 25)]}
-    rules["HR1"]["pass"] = (sb["p95_ms"] <= rules["HR1"]["p95"][2] and sb["p99_ms"] <= rules["HR1"]["p99"][2])
-    covered = [r for r in b["maintenance_runs"] if r["in_scored_window"] and r["overlapping_reads"] > 0]
-    rules["HR2"] = {"runs_total": len(b["maintenance_runs"]), "runs_covered": len(covered), "pass": bool(covered)}
-    bound_extra = b["scored_non_overlap"]["p99_ms"] + 50
-    hr3 = all(max(r["overlapping_latency_ms"], default=0) <= r["run_ms"] + bound_extra and r["run_ms"] <= 500
-              for r in b["maintenance_runs"])
-    rules["HR3"] = {"bound_extra_ms": bound_extra, "pass": hr3 and bool(b["maintenance_runs"])}
-    allowed = a["transport_or_5xx"] + max(2, 0.005 * sb["n"])
-    rules["HR4"] = {"A": a["transport_or_5xx"], "B": b["transport_or_5xx"], "allowed": allowed,
-                    "pass": b["transport_or_5xx"] <= allowed}
-    rules["HR5"] = {"A": a["non200_share"], "B": b["non200_share"], "pass": b["non200_share"] <= a["non200_share"] + 0.01}
+    per_pair = [{"pair": [a, b],
+                 "p95": [arms[a]["scored"]["p95_ms"], arms[b]["scored"]["p95_ms"]],
+                 "p99": [arms[a]["scored"]["p99_ms"], arms[b]["scored"]["p99_ms"]],
+                 "p50": [arms[a]["scored"]["p50_ms"], arms[b]["scored"]["p50_ms"]],
+                 "max": [arms[a]["scored"]["max_ms"], arms[b]["scored"]["max_ms"]],
+                 "d_p95": arms[b]["scored"]["p95_ms"] - arms[a]["scored"]["p95_ms"],
+                 "d_p99": arms[b]["scored"]["p99_ms"] - arms[a]["scored"]["p99_ms"]} for a, b in pairs]
+    mean = lambda xs: sum(xs) / len(xs)
+    d95, d99 = mean([p["d_p95"] for p in per_pair]), mean([p["d_p99"] for p in per_pair])
+    a95, a99 = mean([p["p95"][0] for p in per_pair]), mean([p["p99"][0] for p in per_pair])
+    rules["HR1"] = {"pairs": per_pair, "mean_d_p95": d95, "bound_p95": max(0.10 * a95, 10.0),
+                    "mean_d_p99": d99, "bound_p99": max(0.10 * a99, 25.0)}
+    rules["HR1"]["pass"] = d95 <= rules["HR1"]["bound_p95"] and d99 <= rules["HR1"]["bound_p99"]
+    b_runs = [dict(r, arm=label) for label in ("B1", "B2") for r in arms[label]["maintenance_runs"]]
+    covered = [r for r in b_runs if r["in_scored_window"] and r["overlapping_reads"] > 0]
+    rules["HR2"] = {"runs_total": len(b_runs), "runs_covered": len(covered), "pass": bool(covered)}
+    hr3 = []
+    for label in ("B1", "B2"):
+        extra = arms[label]["scored_non_overlap"]["p99_ms"] + 50
+        for r in arms[label]["maintenance_runs"]:
+            worst = max(r["overlapping_latency_ms"], default=0)
+            hr3.append({"arm": label, "run_ms": r["run_ms"], "worst_overlapping_ms": worst, "bound_ms": r["run_ms"] + extra,
+                        "pass": worst <= r["run_ms"] + extra and r["run_ms"] <= 500})
+    rules["HR3"] = {"runs": hr3, "pass": bool(hr3) and all(x["pass"] for x in hr3)}
+    errs = {g: sum(arms[l]["transport_or_5xx"] for l in labels) for g, labels in (("A", ("A1", "A2")), ("B", ("B1", "B2")))}
+    n_b = sum(arms[l]["scored"]["n"] for l in ("B1", "B2"))
+    allowed = errs["A"] + max(2, 0.005 * n_b)
+    rules["HR4"] = {**errs, "allowed": allowed, "pass": errs["B"] <= allowed}
+    def share(labels):
+        n = sum(arms[l]["scored"]["n"] for l in labels)
+        bad = sum(arms[l]["non200_share"] * arms[l]["scored"]["n"] for l in labels)
+        return bad / n if n else None
+    rules["HR5"] = {"A": share(("A1", "A2")), "B": share(("B1", "B2"))}
+    rules["HR5"]["pass"] = rules["HR5"]["B"] <= rules["HR5"]["A"] + 0.01
     bc = byte_compare(output)
     rules["BC"] = {"verdict": bc["verdict"], "problems": bc["problems"], "pass": bc["verdict"] == "PASS"}
     if not rules["HR2"]["pass"]:
         verdict = "INCONCLUSIVE"
     else:
         verdict = "PASS" if all(rules[k]["pass"] for k in ("HR1", "HR2", "HR3", "HR4", "HR5", "BC")) else "FAIL"
-    receipt = {"schema": "qdl.v225.query-ab-receipt.v1", "verdict": verdict, "rules": rules,
+    foreign = [json.loads(line) for line in (output / "foreign.jsonl").read_text().splitlines() if line.strip()] \
+        if (output / "foreign.jsonl").exists() else []
+    loads = [float(x["loadavg"].split()[0]) for x in foreign if "loadavg" in x]
+    psi = [float(x["psi_cpu"].split("avg10=")[1].split()[0]) for x in foreign if "psi_cpu" in x]
+    concurrency = {"mode": "CONCURRENT_WITH_FOREIGN_LOCK" if prereg.get("concurrent_mode") else "EXCLUSIVE_LOCK",
+                   "samples": len(foreign), "load1_min_max": [min(loads, default=None), max(loads, default=None)],
+                   "psi_cpu_some_avg10_min_max": [min(psi, default=None), max(psi, default=None)],
+                   "locks_seen": sorted({json.dumps(x.get("lock"), sort_keys=True) for x in foreign}),
+                   "foreign_test_like_containers_seen": sorted({n for x in foreign for n in x.get("foreign_test_like", [])})}
+    receipt = {"schema": "qdl.v225.query-ab-receipt.v2", "verdict": verdict, "rules": rules, "concurrency": concurrency,
                "prereg_sha256": hashlib.sha256((output / "prereg.json").read_bytes()).hexdigest(),
                "prereg_written_utc": prereg["written_utc"], "tool_commit": prereg["tool_commit"],
-               "arms": {"A_old": {"image": OLD_IMAGE, **a}, "B_new": {"image": NEW_IMAGE, **b}},
+               "arms": {label: {"image": OLD_IMAGE if label.startswith("A") else NEW_IMAGE, **arms[label]} for label in arms},
                "products": json.loads((output / "products.json").read_text()) if (output / "products.json").exists() else None,
                "analyzed_utc": utc()}
     (output / "receipt.json").write_text(json.dumps(receipt, indent=1, default=str) + "\n")
     (output / "byte-compare.json").write_text(json.dumps({"schema": "qdl.v225.query-warmup-byte-compare.v1",
         "old_image": OLD_IMAGE, "new_image": NEW_IMAGE, "manifest": "trading-system.paper.stable r11",
         "prereg_rule": PREREG["rules"]["BC"], "prereg_sha256": receipt["prereg_sha256"], **bc}, indent=1) + "\n")
-    print(json.dumps({"verdict": verdict, **{k: v["pass"] for k, v in rules.items()},
-                      "A": {k: sa[k] for k in ("n", "p50_ms", "p95_ms", "p99_ms", "max_ms")},
-                      "B": {k: sb[k] for k in ("n", "p50_ms", "p95_ms", "p99_ms", "max_ms")},
-                      "maintenance_B": b["maintenance_runs"], "bc": bc["verdict"], "bc_problems": bc["problems"][:5]},
-                     indent=1, default=str))
+    print(json.dumps({"verdict": verdict, **{k: v["pass"] for k, v in rules.items()}, "HR1": rules["HR1"],
+                      "maintenance_B": b_runs, "bc": bc["verdict"], "bc_problems": bc["problems"][:5],
+                      "concurrency": concurrency}, indent=1, default=str))
     return 0
 
 
@@ -944,6 +1025,8 @@ def main() -> int:
     p = sub.add_parser("run")
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--lock-owner", default="claude-v225-query-ab")
+    p.add_argument("--concurrent", action="store_true",
+                   help="owner-instructed run beside another agent's correctness-only lock (never touches the lock)")
     p.set_defaults(func=run)
     p = sub.add_parser("analyze")
     p.add_argument("--output", type=Path, required=True)
