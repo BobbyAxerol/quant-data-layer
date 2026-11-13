@@ -207,17 +207,28 @@ Build receipt: `~/.local/state/qdl-v2/v230-rcert2/images-832c02c4.json`. Both im
       - **Retry backstop.** A recorded gap is rechecked every 30 s and healed if the parents arrive, for 6 h after
         close (`_DERIVED_GAP_RETRY_SECONDS`, `:104`; heal at `:2025-2034`). After that it is logged
         `derived BAR gap kept` (`:1986-1988`).
-      - **Retained 1m parents.** A demand increase alone does not re-bootstrap them: the watermark is dropped only
-        on a product generation change (`_rebase_changed_products`, `:1441-1479`), and depth is not in the series
-        digest (`qdl/runtime/bar_edge_checkpoint.py:50-80`). This is safe for the window: they have run live
-        continuously, and the projector retains demand + 2064 rows (at least 1440).
-    - **Gate D6b, at bootstrap end + 15 min and again at bootstrap end + 6 h** (the second read is the
-      derived-retry backstop and is recorded in the receipt):
-      - the derived gap list for the 94 (every derived binding) is EMPTY;
-      - evidence: zero `stable derived BAR gap ... no bar published` and zero `derived BAR gap kept` lines, and
-        `derived_gaps_recorded` = 0;
-      - any gap FAILS D6 and is never accepted silently. Roll back per section 5, or, if only D6 fails, roll back
-        bar_edge alone.
+      - **Retained 1m parents (corrected by the final review).**
+        - At restore, `_checkpoint_history_gaps` (`stable_bar_edge.py:788`) checks each retained binding's cache for
+          `_bootstrap_rows_for(source)` opens, which include the demand.
+        - A retained binding whose raised demand is not yet cached is popped and re-bootstrapped (log `stable BAR
+          checkpoint history incomplete; bounded repair required`, `:730`). For the 5 majors' 1m this is the safe
+          direction: at most 5 x 34 extra requests, about +1.1 min, so the bootstrap is about 74 min.
+        - The whole-checkpoint path is different. `stable BAR checkpoint cache generation changed; bounded bootstrap
+          required` (`:719-723`, decided by `canonical_cache_id`) would re-bootstrap all 640 retained bindings,
+          which takes hours at 10000. The D6 gate requires that line to be absent.
+    - **Gate D6b (wording fixed by the final review).**
+      - **FAIL** if any of these holds:
+        - the outstanding derived gap set for the 94 is not empty at bootstrap end + 15 min (open `stable derived
+          BAR gap` lines without a matching `gap healed` line, `:2050-2060` / `:2057`);
+        - any `stable derived BAR gap kept` line appears (`:1986-1988`) by bootstrap end + 6 h.
+      - **RECORD**, not gate: the recorded and healed counts (`derived_gaps_recorded`, healed lines). A transient
+        gap healed by the retry is correct behaviour; it can come from parent latency under the 2000 backpressure
+        stage, or from the D5 ingestor restart.
+      - A kept gap still fails D6. It is never accepted silently. Roll back per section 5, or bar_edge alone if
+        only D6 fails.
+      - The + 6 h read is at about 02:00Z (2026-11-14) for a 19:00Z start. The DL integration agent reads it and
+        reports it to the coordinator. A FAIL then means the section 5 rollback after midnight, under the same GO
+        and the same packet; the owner is informed.
     - Not verified: running this path end-to-end in a rehearsal. The proof is code tracing plus the rc2 unit tests.
 
   - **How bootstrap and native gap repair share HISTORY_CANDLES** (verified read-only on rc2 `832c02c4`).
@@ -271,6 +282,11 @@ Build receipt: `~/.local/state/qdl-v2/v230-rcert2/images-832c02c4.json`. Both im
       why W waits for the measured W-gate (section 4): websocket raw_age p99 < 1 s and core lag < 2,000 for 5
       min.
     - Record core `raw_age_websocket_ms` and the group lag every minute from D6 to the bootstrap end.
+    - Expectation (final review): the lag oscillates up to the stage plus one binding's burst, so the 5-minute
+      W-gate will rarely hold mid-bootstrap. Plan for the worst-case path: W after the bootstrap, about 110 min
+      of Paper fail-closed.
+    - Live readers that stay up (the hosted alpha if running, Sandbox G1 if running) will see second-scale QUOTE
+      delays on each burst for about 74 min. This is recorded, not gated.
     - The lower stage makes the bootstrap slower when it bites; the 72.7 min estimate is a lower bound.
 
   - **Deeper or shallower history later** is a declaration-only step using the v2.3.0 mechanism: a config
@@ -383,7 +399,7 @@ labels.
 | D4 | query_kn_1, then _2 | rc2 python image, mounted manifests, new catalogue | `/health/dependencies` declaration `image_files=0`. A sampled retained record's contract lineage equals its pre-window value. DR02/DR03 byte compare |
 | W-pre | writer | Stop the writer (section W) before the ingestor step, as in stage A (review H1) | Writer stopped; outage bound per section W |
 | D5 | ingestor_okx_swap, then ingestor_binance_usdm | rc2 image, lane pins = today's, linger unset | started event: `lane_plan: PINNED`, `producer.linger_ms: null`, timeout 30. Retained lane names in session-liveness unchanged, plus exactly one new lane `okx-business-002` (BAR, 59 subscriptions); retained: public-001 BOOK 10, public-002 TRADE 5, public-003 QUOTE 26, public-004 MARK_INDEX 52, business-001 BAR 70 -> 100; 252 subscriptions; no lane over 100; OKX config_revision 21 -> 22. Binance lanes unchanged (27 subscriptions) (M3). 0 subscription rejected. Book resync complete |
-| D6 | binance_bar_edge | Stop bar_edge, THEN copy its checkpoint to `.pre-v230` (M3: a D0 copy would be stale), then rc2 python image, bar-edge pinned pair `/runtime/bar-edge-*-bindings.yaml`, migration record env, and `QDL_STABLE_BAR_BACKPRESSURE_STAGES` core stage 20000 -> 2000 (env only, M2; see section 3) | Log `checkpoint crosses catalog 11->R acquisition 19->R' crossed=True retained=640 added=<derived> dropped=0 migration_record=True`. Heartbeat `declaration` image_files=0. Derived bars appear on md.bars.v2 and in the market cache for all 94 x {1h, 12h} and the covered 25 x {3m..1D}. Parity auditor: 0 mismatches on the first closes. Then D6b (derived gap list EMPTY) and the pre-W gate |
+| D6 | binance_bar_edge | Stop bar_edge, THEN copy its checkpoint to `.pre-v230` (M3: a D0 copy would be stale), then rc2 python image, bar-edge pinned pair `/runtime/bar-edge-*-bindings.yaml`, migration record env, and `QDL_STABLE_BAR_BACKPRESSURE_STAGES` core stage 20000 -> 2000 (env only, M2; see section 3) | Log `checkpoint crosses catalog 11->R acquisition 19->R' crossed=True retained=640 added=<derived> dropped=0 migration_record=True`. Heartbeat `declaration` image_files=0. No `stable BAR checkpoint cache generation changed; bounded bootstrap required` line (`stable_bar_edge.py:719-723`). Derived bars appear on md.bars.v2 and in the market cache for all 94 x {1h, 12h} and the covered 25 x {3m..1D}. Parity auditor: 0 mismatches on the first closes. Then D6b (derived gap list EMPTY) and the pre-W gate |
 | W-gate | none | Pre-W freshness gate (review M2) | For 5 consecutive minutes: core `raw_age_websocket_ms` p99 < 1000 ms on every core (`rust/qdl-kafka/src/bin/qdl-realtime-core.rs:405-412,458`; the REST bootstrap frames are counted separately in `raw_age_rest_ms`), and core group `qdl-v2-realtime-core-v2` lag on `md.raw.realtime.v2` < 2,000 records. If it is not green, W waits (correctness over speed), at the latest until bootstrap end + gap drain |
 | W | writer (section W) | W-B2 image | Section W gates |
 
