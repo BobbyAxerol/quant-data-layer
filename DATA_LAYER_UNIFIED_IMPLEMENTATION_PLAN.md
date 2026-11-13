@@ -78173,3 +78173,40 @@ restored to the 3d8ccd7 baseline. The live declaration is carried as evidence in
 
 Follow-up for v2.3.1: make the repo-default loaders and those tests selector- and DERIVED_FINAL-aware, so that the
 repo config can track the live declaration.
+
+### DL v2.3.0 release fill: certificate PASS with noted limits, SDK 2.5.0, rollback amendments - 2026-11-13 (Claude)
+
+The release track was handed over by the coordinator after the release agent was lost. Overnight package approved
+by the owner; recommended options taken.
+
+- **Certificate:** `upgrade/evidence/releases/v2.3.0/certificate.json` (`qdl.scoped-release-certificate.v2`, status
+  PASS) and `endpoint-report.json`, both built from the receipts.
+  - R-cert 1 PASS.
+  - R-cert 2 run 2: PASS_WITH_NOTED_LIMITS (receipt copied to `rcert2/`, sha256 `1c469205`).
+  - R-cert 3 = offline F1-F9 + live S1-S6.
+  - R-cert 4 by the window substitute.
+  - Window A green; D6b + 6 h PASS at 23:01:09Z (22/22 healed, 0 kept).
+  - Two post-hoc decisions, recorded in the certificate:
+    - the shortened run is accepted; the Monday boundary gates only the 1W/2D/3D derived declarations, which stay
+      off;
+    - G2.2 is attributed to the harness.
+- **SDK 2.5.0:** the wheel bundles `generated/python/qdl`, and `market_data_pb2.py` changed (`Bar.aggregation = 19`).
+  Keeping 2.4.1 would have published different bytes under the v2.2.5 asset's version. The wheel was built twice,
+  byte-identical (`ec3ce349`).
+- **Release-image tests:** they now follow `RELEASE` (they hard-coded 2.2.5 and broke on the 2.3.0 bump).
+  SDK-impacted suite: 925 ran; the 3 failures were fixed and the re-run gave 50 OK.
+- **Runtime after the arms** (docker inspect 21:55Z):
+  - linger UNSET;
+  - broker fetch FAIL, rolled back to Kafka defaults;
+  - the broker compose-hash now drifts from the repo render (effective config equal), so the K1 tool is used for
+    any broker recreate;
+  - compose and env byte-equal to the host copies.
+- **Rollback:** amendments 4'/6' from the RCA (the old projector `60f83a51` refuses derived bars, so the projectors
+  stay on rc3 while derived records exist), plus the rollback-receipt gate. A dated amendment was added to the
+  window-A packet. Known issue IDR-285 (one projector restart on a broker leadership move).
+- **Notes location:** the release notes moved to `upgrade/evidence/releases/v2.3.0/RELEASE_NOTES.md` (required by
+  `release.yml`).
+- **Next:** one PR to dev, one full CI run, local `--no-ff` merge (G7), PR dev -> main inherited by tree, tag
+  `v2.3.0`.
+
+Guide delta: `upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md`, "Delta 2026-11-13: v2.3.0 release fill".

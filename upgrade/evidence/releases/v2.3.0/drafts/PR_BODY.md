@@ -21,13 +21,15 @@ pass the offline gate, ordered restart; no campaign, image or tag. DL-side deriv
 - v2.2.6 stage A configuration (catalogue r13, TS Paper r13 with model quotas).
 - SDK 2.5.0: additive; the bundled generated contract gains `Bar.aggregation` (no SDK source change).
 
-Release notes: `upgrade/evidence/releases/v2.3.0/RELEASE_NOTES.md`; certificate: `.../certificate.json` (TBD PASS).
+Release notes: `upgrade/evidence/releases/v2.3.0/RELEASE_NOTES.md`; certificate: `.../certificate.json` (PASS, noted limits).
 
 ## Validation
 
 - R-cert 1 offline derived-bar parity: PASS, 740,350 records, 0 mismatches (receipt `6814e25c`).
-- R-cert 2 live shadow: TBD final verdict; run 2 is a weekend run on the rc3 images (started 2026-11-13 15:51Z).
-- R-cert 3 fault matrix: TBD. R-cert 4 capacity envelope: not run; window substitute (owner delta gate) PASS, 6.54 <= D0 6.97 + 0.3.
+- R-cert 2 live shadow: PASS_WITH_NOTED_LIMITS (run 2, rc3 images, 15:51-22:48Z): 0 mismatches over 3190 targets; 150
+  MISSING attributed to the S5 harness; Monday burst covered offline by R-cert 1.
+- D6b + 6 h: PASS 23:01:09Z (22 recorded / 22 healed / 0 kept).
+- R-cert 3: offline F1-F9 + live S1-S6. R-cert 4 capacity envelope: not run; window substitute (owner delta gate) PASS, 6.54 <= D0 6.97 + 0.3.
 - Combined production window (rc2 `832c02c4` + TS writer W-B2), 2026-11-13: D1-D6 PASS, W1 VERIFY_FAILED, rolled
   back (`window-20261113T1237Z/`). rc3 window A (DL only, Python `a235c0a1`): GREEN, receipt `window-A-20261113T1444Z/` (D1-D6, D5a, writer W1/W2, D6b + 15 min, CPU gate 6.54 <= 7.27).
 - rc2 full suite on `269fc9c8`: 4,296 tests, 4 environment-only errors (non-root log permission; 15 OK as root).

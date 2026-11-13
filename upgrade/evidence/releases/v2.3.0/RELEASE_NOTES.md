@@ -1,10 +1,8 @@
-# Quant Data Layer v2.3.0 (DRAFT)
+# Quant Data Layer v2.3.0
 
-Status: **DRAFT, not certified, not tagged.** Prepared 2026-11-13 on `release/v2.3.0-final-prep`, rebased onto the rc3 integration
-tip `3d8ccd7` (rc3 code `7cd4fc36`, window A packet `60a97a18`, run-sheet rule `7e12b08`). The tree carries the
-deployed compose and the out6 configuration (see "Release tree = runtime"). Every `TBD` is filled after the rc3
-window A receipt and the R-cert 2 final verdict (list: [RELEASE_FILL_LIST.md](RELEASE_FILL_LIST.md)). When the certificate is PASS this file
-moves to `upgrade/evidence/releases/v2.3.0/RELEASE_NOTES.md`, which the tag workflow requires (`release.yml`).
+Status: **certificate PASS with noted limits** (`certificate.json`, `endpoint-report.json`). Release tree
+`release/v2.3.0-final-prep`, based on the rc3 integration tip `3d8ccd7` (rc3 code `7cd4fc36`). The tree carries the
+deployed compose and env byte for byte, and the live declaration out6 as evidence (see "Release tree = runtime").
 
 v2.3.0 makes coverage a **declaration**: after this release, adding instruments or intervals is "render a declaration,
 pass the offline gate, ordered restart". It needs no certification campaign, no image and no tag. It also adds DL-side
@@ -139,20 +137,26 @@ gate 18/18 (render out6, packet section 3).
   - D6b at bootstrap end + 15 min: 0 derived gaps recorded, healed or kept; 76 derived ACK lines. The + 6 h read is
     at 23:01Z: FILL.
 
-## Certification (TBD final)
+## Certification
 
 | Item | Status |
 |---|---|
 | R-cert 1 offline derived-bar parity | **PASS**: 740,350 records compared, 0 mismatches; receipt `6814e25c` |
-| R-cert 2 live shadow (>= 24 h + Monday 00:00Z) | TBD. Run 2 is a weekend run on the rc3 images (namespace `qdl-v230-rcert2-20261113t1551z`, started 2026-11-13 15:51Z). Run 1 interim 840/840 MATCH on rc1 images (12:03Z) does not count for the final verdict |
-| R-cert 3 fault matrix | TBD |
+| R-cert 2 live shadow | **PASS_WITH_NOTED_LIMITS**, run 2 on the rc3 images 15:51-22:48Z (soak after the last fault 20:41-22:42Z; receipt `rcert2/RCERT2_RECEIPT.json`). G2.1: 0 mismatches over 3190 matched targets, 0 lineage mismatches. G2.2: 150 MISSING, all attributed to the S5 harness (the v2.2.4 projector shared the stage-A group), with every row present at the venue. G2.4 Monday burst: not covered live, covered offline by R-cert 1. G2.5 lineage and G2.6 isolation PASS. S5: the v2.2.4 projector refuses derived bars (rollback constraint below). Teardown: 8 containers and 1 network, 0 leftovers |
+| R-cert 3 fault matrix | Part A: offline FaultMatrixTests F1-F9 (`tests/test_v230_derived_bars.py`); part B: live S1-S6 of R-cert 2 run 2 (S1 16:00, S2 16:30, S3 17:33, S4 18:05 with recheck, S5 20:36:50 rerun 4, S6 19:07Z). No separate receipt |
 | R-cert 4 capacity envelope | Not run. Window substitute, owner delta gate: median at bootstrap end + 30 min <= D0 median + 0.3. Window A: D0 6.97, gate median **6.54** over 11 samples, PASS. DL was above the 6.0 cap before the window (Kafka F1 leader balancing and stage A; the lever is the linger work) |
 | Window R-gates | rc2 combined window 2026-11-13: D1-D6 PASS, W1 VERIFY_FAILED, rolled back (receipt `window-20261113T1237Z/`). rc3 window A (DL only, writer 7332e85a): **GREEN**. D1-D6, D5a (the W1 defect class) PASS on both Query instances, writer W1/W2 VERIFIED (46.7 s / 47.9 s), 10 min soak, D6b + 15 min and CPU gate PASS; Paper outage about 12 min (receipt `window-A-20261113T1444Z/`) |
-| Full CI on the release tree (CI6) | TBD, one run (CI plan in [CI_PLAN.md](CI_PLAN.md)) |
+| D6b + 6 h | **PASS** 23:01:09Z: 22 derived gaps recorded, 22 healed, 0 outstanding, 0 kept, 0 cache-generation lines; bar_edge RestartCount 0 since 14:52:35Z (`window-A-20261113T1444Z-d6b-6h.txt`) |
+| Full CI on the release tree (CI6) | Required: one full run on the release PR head tree; the run id is recorded in the dev merge commit and the GitHub release |
 
 ## Limits (carried and new)
 
 - Single host, not HA.
+- Post-hoc decisions (2, recommended options under the owner-approved overnight package): the shortened R-cert 2 run
+  is accepted, the Monday boundary gating only the 1W/2D/3D derived declarations, which stay off; the G2.2 MISSING set
+  is accepted as harness-attributed (open item: the 20:26Z offset restore did not make the shadow re-project).
+- kafka2 runs hot because of group-coordinator placement (kafka1 led 0 of the `__consumer_offsets` /
+  `__transaction_state` partitions after the rolls), not because of v2.3.0.
 - A broker leadership move can restart a projector once, about 45 s, exactly-once kept (IDR-285, fix in v2.3.1).
 - The IDR-128 supported-load envelope is still open.
 - Live funding events and contract metadata are not bound. They are served as reference data through `FRESH_SNAPSHOT`

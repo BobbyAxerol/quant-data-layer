@@ -2435,7 +2435,7 @@ Pinned at:
   instrument pages, warmup 5/700/10,000, 10,001 typed refusal, universe batch 200, mixed batch 10), 24 shapes x 2
   passes: PASS, byte-identical outside per-request paths (`byte-compare-alpha.json` `c884e495...`).
 
-## DL v2.3.0 - declaration-only coverage + derived bars (release package in preparation; NOT certified, NOT tagged)
+## DL v2.3.0 - declaration-only coverage + derived bars (certificate PASS with noted limits; tag after the full CI run)
 
 Release candidate rc3 on `release/v2.3.0-rc2-integration` (tip `3d8ccd7`; rc3 code `7cd4fc36`; Rust code `832c02c4`;
 tool `5a42ba01` merged as `f9444aa`).
@@ -2448,12 +2448,18 @@ filled after the window and the R-cert 2 final verdict (`drafts/RELEASE_FILL_LIS
 - Re-run only if the derivation code (`qdl/runtime/derived_bars.py`, `rust/qdl-core/src/derived_bar.rs`,
   `qdl/adapters/intervals.py` bucket rule) or the parity input set changes.
 
-### PLACEHOLDER - R-cert 2: live derived-vs-native shadow (>= 24 h + Monday 00:00Z)
+### 2026-11-13 - R-cert 2: live derived-vs-native shadow - PASS_WITH_NOTED_LIMITS
 
-- Run 1 interim: 840/840 MATCH at 12:03Z 2026-11-13 on the rc1 images (`7af599de`); not counted for the verdict.
-- Run 2: weekend run on the rc3 images (namespace `qdl-v230-rcert2-20261113t1551z`, started 15:51Z 2026-11-13); it
-  must cross Monday 00:00Z. Pinned at: TBD (images rust `58bdd282` / python `a235c0a1`, shadow topology, receipt
-  sha256).
+- Run 1 (rc1 images, 10:12-15:44Z): S1-S3 PASS; S4 ended the run on a harness defect (fixed `fece05d`); not counted.
+- Run 2 (rc3 images, namespace `qdl-v230-rcert2-20261113t1551z`, 15:51-22:48Z; soak after the last fault 20:41-22:42Z):
+  G2.1 0 mismatches over 3190 matched targets; G2.2 150 MISSING all attributed to the S5 harness (venue holds every
+  row); G2.4 Monday burst not covered live (R-cert 1 covers it offline); G2.5/G2.6 PASS; S1-S6 PASS (S5 rerun 4:
+  v2.2.4 projector refuses derived bars, `ENVELOPE_NOT_CANONICAL`).
+- Pinned at: rust `58bdd282`, python `a235c0a1`, kafka `9516fb76`, old projector `60f83a51`. Receipt
+  `upgrade/evidence/releases/v2.3.0/rcert2/RCERT2_RECEIPT.json` sha256 `1c4692057908293f5520b84cb692ad0eede134917afe3771957582886efcc458`
+  (harness branch `feat/v2.3.0-derived-bars` `a546b62`). Teardown: 8 containers, 1 network, 0 leftovers.
+- Re-run only if the derivation code, the projector stage B, or the images change. A Monday-crossing run is still
+  required before 1W/2D/3D derived declarations are enabled.
 
 ### 2026-11-13 - combined production window (DL v2.3.0 rc2 + TS writer W-B2) - ROLLED BACK at W1
 
@@ -2461,16 +2467,20 @@ filled after the window and the R-cert 2 final verdict (`drafts/RELEASE_FILL_LIS
   rollback complete. Receipt `upgrade/evidence/releases/v2.3.0/window-20261113T1237Z/`. The rc2 Python image
   `03de529a` is not part of the release.
 
-### PLACEHOLDER - rc3 window A (DL only, writer 7332e85a)
+### 2026-11-13 - rc3 window A (DL only, writer 7332e85a) - GREEN
 
 - Pinned at: rust `sha256:58bdd28216139f0c1a40abeee3077834f1cf922cf6412e7fb1ce8845591a0512`, python
-  `sha256:a235c0a18cdeb112ea0b49627eaf02f2a68ab878298ebba07884461ee5709d0b` (docker inspect about 16:10Z 2026-11-13;
-  reconfirm at fill), compose `deploy/compose/qdl-v2-stable-kn.yml` sha256 `5b1381e062d97a7a...` + env
+  `sha256:a235c0a18cdeb112ea0b49627eaf02f2a68ab878298ebba07884461ee5709d0b` (docker inspect 21:55Z 2026-11-13), compose `deploy/compose/qdl-v2-stable-kn.yml` sha256 `5b1381e062d97a7a...` + env
   `deploy/compose/qdl-v2-stable-kn.v2.3.0.env` sha256 `2b1b4b8db699721f...` (both byte-equal to the host copies),
   first declaration render out6 (gate 18/18, tool `5a42ba01`; carried as evidence `upgrade/evidence/releases/v2.3.0/declaration-out6/`, `SHA256SUMS`).
-- R-gates, D5a, bootstrap duration, D6b gap gate, section 7a CPU gate: TBD (receipts `window-<UTC>/SHA256SUMS`).
+- D1-D6 PASS, D5a PASS x2, W1/W2 PASS, soak PASS; bootstrap end 17:00:54Z (1042/1047, 5 suspended); D6b + 15 min PASS
+  and + 6 h PASS 23:01:09Z (22 recorded / 22 healed / 0 kept); CPU gate PASS 6.54 <= 7.27. Receipt
+  `window-A-20261113T1444Z/` (SHA256SUMS) and `window-A-20261113T1444Z-d6b-6h.txt`.
 
-### PLACEHOLDER - v2.3.0 certificate
+### 2026-11-13 - v2.3.0 certificate - PASS (noted limits)
 
-- `certificate.json` status TBD; R-cert 3 and R-cert 4 (or the window substitute) TBD; the full CI run on the release
-  tree (CI6) TBD (plan `drafts/CI_PLAN.md`).
+- `upgrade/evidence/releases/v2.3.0/certificate.json` sha256 `88da4f2a3b597c42f2ffc1fcc5b4bb910d221d735455257593974ed50586f7c8`, `endpoint-report.json` sha256 `9eb32cb6532062413748c29cd9fec74a5933b2f0ffde36955e1a4e14d0dd494a`.
+- R-cert 1 PASS; R-cert 2 PASS_WITH_NOTED_LIMITS; R-cert 3 = offline F1-F9 + live S1-S6; R-cert 4 by the window
+  substitute (CPU gate 6.54 <= 7.27). Post-hoc decisions 2 (overnight package, recommended options).
+- SDK 2.5.0 wheel `ec3ce3491b14db9e6dd4c835996c3aa43737d0dceb958fdb82017b2ea066b456` (two builds identical).
+- Full CI (CI6): one run on the release PR head tree; run id recorded in the dev merge commit and the plan journal.

@@ -1,0 +1,99 @@
+{
+ "arms": {
+  "broker_fetch": "FAIL, rolled back to Kafka defaults 21:25-21:30Z; kafka1 OOMKilled false",
+  "linger": "UNSET (no proven saving; reverted 21:31Z, config-hash b5d33acd = repo render)",
+  "receipts": "~/.local/state/qdl-v2/v230-arms-20261113T1753Z/ (outside Git)"
+ },
+ "evidence_sha256": {
+  "declaration-out6/SHA256SUMS": "df13de9bc5f469dd281aea59352aedfd39836f25494685ccb0ec8abea3ccbd53",
+  "rcert2/RCERT2_RECEIPT.json": "1c4692057908293f5520b84cb692ad0eede134917afe3771957582886efcc458",
+  "window-20261113T1237Z/SHA256SUMS": "6a4ec87bdbc6ed652aa54ee028d9d42d1ce4add7b81d7eedaabfab68ff99d039",
+  "window-A-20261113T1444Z-d6b-6h.txt": "c73180041f9721bc6b6bae9e12cf7f61222740389c7503fff4bb3e069f081b38",
+  "window-A-20261113T1444Z/SHA256SUMS": "5ca08d1870a751d72b8edadba7517638451cc49fdfbfa4d25ed61a8a0fde0f64"
+ },
+ "local_tests": {
+  "impacted_suite_79bbfb79": "1352 OK (63 skipped), 96 modules, rc3 image",
+  "rc3_full_suite": "4304 tests, 4 environment-only errors (packet section 0b)",
+  "ruff": "0.15.13 clean on changed files",
+  "sdk_impacted_06aec48": "925 ran, 3 failures fixed in 06aec48; re-run 50 OK (5 skipped)"
+ },
+ "rc2_window": {
+  "executed": "2026-11-13T12:37Z-13:05Z",
+  "repo_copy": "upgrade/evidence/releases/v2.3.0/window-20261113T1237Z",
+  "result": "D1-D6 PASS, W1 VERIFY_FAILED (session liveness refused pinned revisions; fixed in rc3), coupled rollback complete"
+ },
+ "rcert1": {
+  "mismatches": 0,
+  "receipt": "6814e25c",
+  "records": 740350,
+  "status": "PASS"
+ },
+ "rcert2": {
+  "gates": {
+   "G2.1_parity": "PASS: 0 mismatches over 3190 matched targets (latest record per target); 0 LINEAGE_MISMATCH",
+   "G2.2_completeness": "PASS with attribution: 150 MISSING, 0 venue gaps; all 150 are OKX 1m 19:40-19:41Z and 20:16-20:25Z plus the derived buckets over them, lost by the S5 harness (v2.2.4 projector shared the fixed stage-A group kn-projector-v3-a and committed past the shadow); OKX REST has every constituent (verify_missing MISSING_UNEXPLAINED=150, i.e. not venue gaps). Not a product defect. Open item: the stage-A offset restore at 20:26:38Z did not make the shadow re-project.",
+   "G2.3_latency": "REPORTED (latency_ms by lane/interval). In-fault outliers: 3m 20:36 (150.6 s) and 5m 20:35 (86.3 s) while S5 rerun 4 held the shadow projector down 20:36:50-20:40:50Z",
+   "G2.4_monday_burst": "NOT COVERED: the approved shortened run ended 2026-11-13; 1w/1d/12h closes were not exercised live (R-cert 1 offline parity covers them: 740,350 compared, 0 mismatches)",
+   "G2.5_lineage": "PASS: every derived row AGGREGATED with constituent count = interval/base (S5 probe 770/770 with lineage at 19:5xZ; comparator LINEAGE_MISMATCH 0)",
+   "G2.6_isolation": "PASS: production diff since 15:51Z = 4 rows, all in named windows (OKX ingestor linger arms 18:50-21:32Z, kafka1-3 broker arm + rollback 20:44-21:30Z); 0 unexpected",
+   "G2.7_rest_final": "PASS outside fault windows: REST_FINAL/1m p99 2990 ms (<= 20 s); REST_FINAL derived p99 4828 ms, max 9272 ms over 452 targets (<= 30 s). The summary's whole-run gate reads FAIL only because of the 10 S5-window rows above (48 rows inside fault windows excluded)"
+  },
+  "images": {
+   "holder": "alpine:3.20",
+   "kafka": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+   "old_projector": "qdl-v2-rust:2.2.4-c7ce7d3",
+   "python": "sha256:a235c0a18cdeb112ea0b49627eaf02f2a68ab878298ebba07884461ee5709d0b",
+   "redis": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+   "rust": "sha256:58bdd28216139f0c1a40abeee3077834f1cf922cf6412e7fb1ce8845591a0512"
+  },
+  "mismatches": 0,
+  "missing": {
+   "attributed_to_s5_harness_gaps": 150,
+   "attributed_venue_has_rows": 150,
+   "total": 150,
+   "unattributed": [],
+   "venue_confirmed_gaps": 0
+  },
+  "production_diff": {
+   "changed": [
+    "qdl_v2_stable_candidate-ingestor_okx_swap-1",
+    "qdl_v2_stable_candidate-kafka1-1",
+    "qdl_v2_stable_candidate-kafka2-1",
+    "qdl_v2_stable_candidate-kafka3-1"
+   ],
+   "unexpected": [],
+   "verdict": "PASS"
+  },
+  "receipt": "upgrade/evidence/releases/v2.3.0/rcert2/RCERT2_RECEIPT.json",
+  "rollback_constraint": "A v2.2.4 projector over a bars topic that already holds derived (AGGREGATED) records stops its stage B (ENVELOPE_NOT_CANONICAL, whole batch). Rolling the projector back to v2.2.4 after bar_edge has published derived bars is not clean; rollout order projector/stream/query/core before bar_edge stands (packet S5).",
+  "targets": 3345,
+  "teardown": {
+   "at": "2026-11-13T22:47Z",
+   "caps_released": "1.15 CPU / 2336 MiB",
+   "containers_removed": 8,
+   "disk_reclaimed": "114M -> 1.7M work dir (Kafka log dirs, broker keystore, client key removed)",
+   "images_kept": "rust 58bdd282, python a235c0a1, v2.2.4 projector 60f83a51 (production or release images; packet: kept until the release decision)",
+   "leftovers_forced": 0,
+   "network_removed": 1,
+   "ram_released_mib_in_use": 807
+  },
+  "verdict": "PASS_WITH_NOTED_LIMITS"
+ },
+ "rcert3": "No separate R-cert 3 receipt. R-cert 3 = part A offline FaultMatrixTests F1-F9 (tests/test_v230_derived_bars.py) + part B the S1-S6 live cases of this receipt (packet section 2).",
+ "rcert4": "not run; window substitute: CPU gate PASS 6.54 <= D0 6.97 + 0.3 (owner delta gate for this window)",
+ "release": "v2.3.0",
+ "schema": "qdl.release-endpoint-report.v1",
+ "scope": "declaration-only coverage, DL-side DERIVED_FINAL bars, contract lineage; rc3 runtime (rust 58bdd282, python a235c0a1)",
+ "window_a": {
+  "d6b_6h": "D6b +6h PASS at 2026-11-13T23:01:09Z",
+  "d6b_6h_detail": [
+   "container qdl_v2_stable_candidate-binance_bar_edge-1: 2026-11-13T14:52:35.316066858Z 0 sha256:a235c0a18cdeb112ea0b49627eaf02f2a68ab878298ebba07884461ee5709d0b",
+   "log since 14:52:00Z, first line 2026-11-13 14:52:47,142, 65764 lines",
+   "gap recorded 22, healed 22, outstanding 0, kept 0, cache-gen lines 0"
+  ],
+  "executed": "2026-11-13T14:44Z-17:30:55Z",
+  "gates": "D1-D6 PASS, D5a PASS x2 (OKX session 22 accepts 21,22), W1/W2 PASS (writer 7332e85a), soak PASS, bootstrap end 17:00:54Z (1042/1047, 5 suspended), D6b +15 min PASS (0 gaps), CPU gate PASS 6.54 <= 7.27 (owner delta gate)",
+  "repo_copy": "upgrade/evidence/releases/v2.3.0/window-A-20261113T1444Z"
+ },
+ "window_b_writer": "TS writer W-B2 9dfef8a8 STRICT about 17:51Z (TS release; not part of this tag)"
+}

@@ -3366,3 +3366,13 @@ The mounted runtime documents are derived from the live runtime base. They stay 
 in the window packet. The reason they differ from the repo form is written into the release notes.
 
 Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, "DL v2.3.0 final package refreshed (pre-flight F1/F2)".
+
+### Delta 2026-11-13: v2.3.0 release fill
+
+- **SDK version follows the generated contract.** The SDK wheel's bytes include the generated Python contract, so
+  any proto change bumps the SDK version, even when `qdl_sdk/` is unchanged. v2.3.0 therefore ships SDK 2.5.0.
+- **Projector rollback after derived bars.** Once derived (AGGREGATED) bars exist on `md.bars.v2`, a projector older
+  than v2.3.0 cannot be put back in front of the topic: it refuses the envelope and crash-loops from its checkpoint.
+  Rollback keeps the v2.3.0 projectors.
+
+Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, "DL v2.3.0 release fill".

@@ -1,0 +1,332 @@
+{
+ "evidence_sha256": {
+  "compare-summary.json": "1a140fa32d98a1e1b766818e81ecbcdb855e5b230c3caaf844bcb764ba0e8e6b",
+  "compared.jsonl": "b8708f49595f4b0ddba9d931da9938394a929d228cfbc2d4a9e115a50d924988",
+  "driver.jsonl": "242dcb3507084f8ef6fa0ebdae5486f67f1d32a8d4c2afc8516047059ab49b52",
+  "production-after-close.json": "b8a19ac010337ccf86ea48a49b97e75d969092b5806bafeab3174d006dc598fb",
+  "production-before.json": "d73f561a3a220698c1d99d72846e5acbf1a31acf9227d3a57600d22ff72cf9f1",
+  "s5-missing-attribution.json": "62413290cfa457d7d0d1c58158e933b5f37c1f01af6596c00251f4bf76e07a56",
+  "s5-old-projector.log": "a96cf1a47d37c18caadee9b914eacb51f3063d523f64d83cdf9b37f1a0e6ae20",
+  "s5-verdict.json": "d3d106ffe5c8a10b1c2198bceeaa97822cacaa2bddbdee698c912179e9fdf515"
+ },
+ "fault_events": [
+  {
+   "at": "2026-11-13T16:00:11Z",
+   "case": "S1",
+   "event": "fault_start"
+  },
+  {
+   "at": "2026-11-13T16:00:18Z",
+   "case": "S1",
+   "event": "fault_done"
+  },
+  {
+   "at": "2026-11-13T16:30:03Z",
+   "case": "S2",
+   "event": "fault_start"
+  },
+  {
+   "at": "2026-11-13T16:33:04Z",
+   "case": "S2",
+   "event": "fault_done"
+  },
+  {
+   "at": "2026-11-13T17:33:01Z",
+   "case": "S3",
+   "event": "fault_start"
+  },
+  {
+   "at": "2026-11-13T17:33:07Z",
+   "case": "S3",
+   "event": "fault_done"
+  },
+  {
+   "at": "2026-11-13T18:05:04Z",
+   "case": "S4",
+   "event": "fault_start"
+  },
+  {
+   "at": "2026-11-13T18:05:10Z",
+   "case": "S4",
+   "event": "fault_done"
+  },
+  {
+   "at": "2026-11-13T18:36:02Z",
+   "case": "S5",
+   "event": "fault_start"
+  },
+  {
+   "at": "2026-11-13T18:38:03Z",
+   "event": "s5_result",
+   "refused": false
+  },
+  {
+   "at": "2026-11-13T18:38:03Z",
+   "case": "S5",
+   "event": "fault_done"
+  },
+  {
+   "at": "2026-11-13T19:07:05Z",
+   "case": "S6",
+   "event": "fault_start"
+  },
+  {
+   "at": "2026-11-13T19:07:10Z",
+   "case": "S6",
+   "event": "fault_done"
+  },
+  {
+   "at": "2026-11-13T19:40:00Z",
+   "case": "S5",
+   "event": "fault_start"
+  },
+  {
+   "at": "2026-11-13T19:42:11Z",
+   "container_state": "running 0",
+   "event": "s5_result",
+   "log_bytes": 18114,
+   "refused": false
+  },
+  {
+   "at": "2026-11-13T19:42:12Z",
+   "case": "S5",
+   "event": "fault_done"
+  },
+  {
+   "at": "2026-11-13T20:16:04Z",
+   "case": "S5",
+   "event": "fault_start"
+  },
+  {
+   "at": "2026-11-13T20:26:28Z",
+   "event": "s5_probe",
+   "met": null
+  },
+  {
+   "at": "2026-11-13T20:26:28Z",
+   "container_state": "running 0",
+   "event": "s5_result",
+   "log_bytes": 76472,
+   "refused": false
+  },
+  {
+   "at": "2026-11-13T20:26:38Z",
+   "event": "s5_offsets_restored"
+  },
+  {
+   "at": "2026-11-13T20:26:39Z",
+   "case": "S5",
+   "event": "fault_done"
+  },
+  {
+   "at": "2026-11-13T20:36:50Z",
+   "case": "S5",
+   "event": "fault_start"
+  },
+  {
+   "at": "2026-11-13T20:40:40Z",
+   "event": "s5_probe",
+   "met": "refused"
+  },
+  {
+   "at": "2026-11-13T20:40:40Z",
+   "container_state": "running 0",
+   "event": "s5_result",
+   "log_bytes": 7147,
+   "refused": true
+  },
+  {
+   "at": "2026-11-13T20:40:50Z",
+   "event": "s5_offsets_restored"
+  },
+  {
+   "at": "2026-11-13T20:40:50Z",
+   "case": "S5",
+   "event": "fault_done"
+  }
+ ],
+ "gates": {
+  "G2.1_parity": "PASS: 0 mismatches over 3190 matched targets (latest record per target); 0 LINEAGE_MISMATCH",
+  "G2.2_completeness": "PASS with attribution: 150 MISSING, 0 venue gaps; all 150 are OKX 1m 19:40-19:41Z and 20:16-20:25Z plus the derived buckets over them, lost by the S5 harness (v2.2.4 projector shared the fixed stage-A group kn-projector-v3-a and committed past the shadow); OKX REST has every constituent (verify_missing MISSING_UNEXPLAINED=150, i.e. not venue gaps). Not a product defect. Open item: the stage-A offset restore at 20:26:38Z did not make the shadow re-project.",
+  "G2.3_latency": "REPORTED (latency_ms by lane/interval). In-fault outliers: 3m 20:36 (150.6 s) and 5m 20:35 (86.3 s) while S5 rerun 4 held the shadow projector down 20:36:50-20:40:50Z",
+  "G2.4_monday_burst": "NOT COVERED: the approved shortened run ended 2026-11-13; 1w/1d/12h closes were not exercised live (R-cert 1 offline parity covers them: 740,350 compared, 0 mismatches)",
+  "G2.5_lineage": "PASS: every derived row AGGREGATED with constituent count = interval/base (S5 probe 770/770 with lineage at 19:5xZ; comparator LINEAGE_MISMATCH 0)",
+  "G2.6_isolation": "PASS: production diff since 15:51Z = 4 rows, all in named windows (OKX ingestor linger arms 18:50-21:32Z, kafka1-3 broker arm + rollback 20:44-21:30Z); 0 unexpected",
+  "G2.7_rest_final": "PASS outside fault windows: REST_FINAL/1m p99 2990 ms (<= 20 s); REST_FINAL derived p99 4828 ms, max 9272 ms over 452 targets (<= 30 s). The summary's whole-run gate reads FAIL only because of the 10 S5-window rows above (48 rows inside fault windows excluded)"
+ },
+ "harness_commits": [
+  "fece05d",
+  "bd3d292",
+  "d061345",
+  "07df773",
+  "7c600b7",
+  "5c62371"
+ ],
+ "images": {
+  "holder": "alpine:3.20",
+  "kafka": "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+  "old_projector": "qdl-v2-rust:2.2.4-c7ce7d3",
+  "python": "sha256:a235c0a18cdeb112ea0b49627eaf02f2a68ab878298ebba07884461ee5709d0b",
+  "redis": "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+  "rust": "sha256:58bdd28216139f0c1a40abeee3077834f1cf922cf6412e7fb1ce8845591a0512"
+ },
+ "latency": {
+  "NATIVE_WS/15m": {
+   "n": 75,
+   "p50": 1759,
+   "p99": 3194
+  },
+  "NATIVE_WS/1h": {
+   "n": 15,
+   "p50": 2987,
+   "p99": 4193
+  },
+  "NATIVE_WS/1m": {
+   "n": 1167,
+   "p50": 798,
+   "p99": 1540
+  },
+  "NATIVE_WS/2h": {
+   "n": 6,
+   "p50": 3324,
+   "p99": 4698
+  },
+  "NATIVE_WS/30m": {
+   "n": 36,
+   "p50": 2221,
+   "p99": 3691
+  },
+  "NATIVE_WS/3m": {
+   "n": 381,
+   "p50": 1187,
+   "p99": 4673
+  },
+  "NATIVE_WS/4h": {
+   "n": 3,
+   "p50": 4213,
+   "p99": 5203
+  },
+  "NATIVE_WS/5m": {
+   "n": 231,
+   "p50": 1259,
+   "p99": 86298
+  },
+  "NATIVE_WS/6h": {
+   "n": 3,
+   "p50": 3364,
+   "p99": 3827
+  },
+  "REST_FINAL/15m": {
+   "n": 50,
+   "p50": 2787,
+   "p99": 4166
+  },
+  "REST_FINAL/1h": {
+   "n": 10,
+   "p50": 3994,
+   "p99": 4693
+  },
+  "REST_FINAL/1m": {
+   "n": 778,
+   "p50": 1839,
+   "p99": 2990
+  },
+  "REST_FINAL/2h": {
+   "n": 4,
+   "p50": 4702,
+   "p99": 5199
+  },
+  "REST_FINAL/30m": {
+   "n": 24,
+   "p50": 3606,
+   "p99": 4218
+  },
+  "REST_FINAL/3m": {
+   "n": 254,
+   "p50": 2112,
+   "p99": 9272
+  },
+  "REST_FINAL/4h": {
+   "n": 2,
+   "p50": 5711,
+   "p99": 5711
+  },
+  "REST_FINAL/5m": {
+   "n": 154,
+   "p50": 2181,
+   "p99": 86294
+  },
+  "REST_FINAL/6h": {
+   "n": 2,
+   "p50": 4831,
+   "p99": 4831
+  }
+ },
+ "latency_gates": {
+  "REST_FINAL/1m": "PASS",
+  "REST_FINAL/derived": "FAIL",
+  "limits_ms": {
+   "REST_FINAL/1m": 20000,
+   "REST_FINAL/derived": 30000
+  }
+ },
+ "mismatches": 0,
+ "missing": {
+  "attributed_to_s5_harness_gaps": 150,
+  "attributed_venue_has_rows": 150,
+  "total": 150,
+  "unattributed": [],
+  "venue_confirmed_gaps": 0
+ },
+ "namespace": "qdl-v230-rcert2-20261113t1551z",
+ "production_diff": {
+  "changed": [
+   "qdl_v2_stable_candidate-ingestor_okx_swap-1",
+   "qdl_v2_stable_candidate-kafka1-1",
+   "qdl_v2_stable_candidate-kafka2-1",
+   "qdl_v2_stable_candidate-kafka3-1"
+  ],
+  "unexpected": [],
+  "verdict": "PASS"
+ },
+ "rcert3": "No separate R-cert 3 receipt. R-cert 3 = part A offline FaultMatrixTests F1-F9 (tests/test_v230_derived_bars.py) + part B the S1-S6 live cases of this receipt (packet section 2).",
+ "rollback_constraint": "A v2.2.4 projector over a bars topic that already holds derived (AGGREGATED) records stops its stage B (ENVELOPE_NOT_CANONICAL, whole batch). Rolling the projector back to v2.2.4 after bar_edge has published derived bars is not clean; rollout order projector/stream/query/core before bar_edge stands (packet S5).",
+ "run_1": {
+  "faults": "S1 12:15Z, S2 13:09Z, S3 13:43Z PASS; S4 15:43Z ended the run (comparator died on the flushed cache, harness; fixed fece05d)",
+  "images": "rc1 7af599de (rust sha256:24ebc4fc..., python sha256:bdc450e9...)",
+  "namespace": "qdl-v230-rcert2-20261113t1012z",
+  "window": "2026-11-13T10:12:49Z..15:44:37Z (5.5 h)"
+ },
+ "run_2": {
+  "fault_gate": "each next fault only after a clean comparator summary (0 mismatches, 0 unattributed missing)",
+  "faults": {
+   "S1": "16:00:11Z PASS (comparator clean after the fault; role-level expectations such as S1 duplicate counts not separately asserted)",
+   "S2": "16:30:03Z PASS (comparator clean after the fault; role-level expectations such as S1 duplicate counts not separately asserted)",
+   "S3": "17:33:01Z PASS (comparator clean after the fault; role-level expectations such as S1 duplicate counts not separately asserted)",
+   "S4": "18:05:04Z PASS (11 MISSING in the flush gap all MATCH on --recheck)",
+   "S5": "20:36:50Z PASS on rerun 4: v2.2.4 projector (sha256:60f83a51...) stage_b STATE_CODEC:ENVELOPE_NOT_CANONICAL, bars_applied 0. Runs 18:36Z/19:40Z/20:16Z inconclusive (harness)",
+   "S6": "19:07:05Z PASS (comparator clean after the fault; role-level expectations such as S1 duplicate counts not separately asserted)"
+  },
+  "soak_after_last_fault": "20:40:50Z..22:42Z (2.0 h)",
+  "window": "2026-11-13T15:51:22Z..22:48:05Z (6.9 h)"
+ },
+ "schema": "qdl.v230.rcert2-receipt.v1",
+ "state_dir": "~/.local/state/qdl-v2/v230-rcert2/qdl-v230-rcert2-20261113t1551z/ (outside Git)",
+ "targets": 3345,
+ "teardown": {
+  "at": "2026-11-13T22:47Z",
+  "caps_released": "1.15 CPU / 2336 MiB",
+  "containers_removed": 8,
+  "disk_reclaimed": "114M -> 1.7M work dir (Kafka log dirs, broker keystore, client key removed)",
+  "images_kept": "rust 58bdd282, python a235c0a1, v2.2.4 projector 60f83a51 (production or release images; packet: kept until the release decision)",
+  "leftovers_forced": 0,
+  "network_removed": 1,
+  "ram_released_mib_in_use": 807
+ },
+ "verdict": "PASS_WITH_NOTED_LIMITS",
+ "verdicts_latest_per_target": {
+  "BOOTSTRAP_NATIVE": 5,
+  "MATCH": 3190,
+  "MISSING": 150
+ }
+}
