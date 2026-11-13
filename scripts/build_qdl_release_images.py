@@ -45,9 +45,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.host_measurement_lock import MAX_MINUTES as MAX_LOCK_MINUTES, lock_state  # noqa: E402
 
 
-# v2.2.5 (IDR-127 + versioned compose + mesh TLS rotation) rebuilds only the python image: no rust source changed
-# since the v2.2.4 runtime binaries (the rust images keep their v2.2.4 digests; see the v2.2.5 plan entry).
-RELEASE = "2.2.5"
+# v2.3.0 (derived bars, declaration mechanism, contract lineage) changes rust and python: both images are built
+# (rc2 `qdl-v2-rust:2.3.0-rc2-832c02c4` 58bdd282.., `qdl-v2-python:2.3.0-rc2-832c02c4` 03de529a..). The v2.2.5 note:
+# python-only, rust images kept their v2.2.4 digests.
+RELEASE = "2.3.0"
 SDK_VERSION = "2.4.1"
 REPO = Path(__file__).resolve().parents[1]
 HOME = Path.home()

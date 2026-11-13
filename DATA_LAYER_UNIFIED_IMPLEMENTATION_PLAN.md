@@ -78056,3 +78056,22 @@ container has been started.
   Built from a git archive of `7cd4fc36`, dependency 753604f8. Rust is unchanged (`58bdd282`, an empty Rust diff
   against 832c02c4). The focused review gave GO-ready for window A. D5a now also fails when no LIVE Binance lane is
   checked.
+
+
+<a id="dl-v230-final-prep-20261113"></a>
+### DL v2.3.0 final release package prepared offline (not certified, not tagged) - 2026-11-13 (Claude)
+
+- Branch `release/v2.3.0-final-prep` from `release/v2.3.0-rc2-integration` `e724712`, worktree
+  `.worktrees/dl-v230-final-prep`. The live-window packet files are not touched.
+- Drafts in `upgrade/evidence/releases/v2.3.0/drafts/`:
+  - `RELEASE_NOTES.md` (contents since v2.2.5, runtime, certification, limits, rollback; TBD fields);
+  - `CI_PLAN.md` (classifier dry run against `098c94b`: full, forced by CI-defining paths; one full run on the final
+    tree; dev/main inherit by tree identity; `release.yml` once);
+  - `PR_BODY.md`;
+  - `RELEASE_FILL_LIST.md`.
+- `CERTIFICATION_LEDGER.md`: v2.3.0 section with R-cert 1 PASS (`6814e25c`) and placeholders for R-cert 2, the window
+  and the certificate.
+- `scripts/build_qdl_release_images.py` `RELEASE = "2.3.0"`. The SDK stays 2.4.1 (no `qdl_sdk/` diff since v2.2.5).
+- No root CHANGELOG exists; per-release `RELEASE_NOTES.md` is the repository's changelog (the SDK changelog is
+  unchanged).
+- Status: prepared; the fills wait for the window and the R-cert 2 verdict. Not pushed.
