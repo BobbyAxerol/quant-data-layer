@@ -27,13 +27,13 @@ Release notes: `upgrade/evidence/releases/v2.3.0/RELEASE_NOTES.md`; certificate:
 
 - R-cert 1 offline derived-bar parity: PASS, 740,350 records, 0 mismatches (receipt `6814e25c`).
 - R-cert 2 live shadow: TBD final verdict; run 2 is a weekend run on the rc3 images (started 2026-11-13 15:51Z).
-- R-cert 3 fault matrix: TBD. R-cert 4 capacity envelope: TBD.
+- R-cert 3 fault matrix: TBD. R-cert 4 capacity envelope: not run; window substitute (owner delta gate) PASS, 6.54 <= D0 6.97 + 0.3.
 - Combined production window (rc2 `832c02c4` + TS writer W-B2), 2026-11-13: D1-D6 PASS, W1 VERIFY_FAILED, rolled
-  back (`window-20261113T1237Z/`). rc3 window A (DL only, Python `a235c0a1`): TBD receipt.
+  back (`window-20261113T1237Z/`). rc3 window A (DL only, Python `a235c0a1`): GREEN, receipt `window-A-20261113T1444Z/` (D1-D6, D5a, writer W1/W2, D6b + 15 min, CPU gate 6.54 <= 7.27).
 - rc2 full suite on `269fc9c8`: 4,296 tests, 4 environment-only errors (non-root log permission; 15 OK as root).
 - rc3 full suite: 4,304 tests, 4 environment-only errors, root re-run 15 OK (packet section 0b, `3d8ccd7`).
 - Release tree = runtime (F2): the deployed compose and rc3 env byte-equal; the live declaration out6 as evidence
-  (`upgrade/evidence/releases/v2.3.0/declaration-out6/`); `config/v2` stays the test baseline. Impacted suite on this tree: TBD.
+  (`upgrade/evidence/releases/v2.3.0/declaration-out6/`); `config/v2` stays the test baseline. Impacted suite on this tree: 1352 OK (63 skipped), 96 modules, 79bbfb79, rc3 image, 1 CPU (3369 s).
 - Delta tests on tool `5a42ba01`:
   - `test_v230_declaration_tool`, `test_v230_bar_source`, `test_v230_lineage`: 47 OK, including the env-gated stage A
     goldens;
