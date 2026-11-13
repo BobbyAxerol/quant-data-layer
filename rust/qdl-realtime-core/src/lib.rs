@@ -13,6 +13,9 @@ use qdl_core::canonical::{
     canonicalize_l2_recovery_snapshot, canonicalize_mark_index, canonicalize_trade, MarkIndexInput,
     TradeContext, TradeFixture,
 };
+use qdl_core::derived_bar::{
+    canonicalize_derived_bar, DerivedBarSpec, DERIVED_BAR_KIND, DERIVED_BAR_SCHEMA,
+};
 use qdl_core::l2_adapter::{BookPublication, BookTransition, BookTransitionKind, L2BookAdapter};
 use qdl_core::l2_book::{BookIdentity, BookOutcome, BookStatus, ExactDecimal};
 use qdl_core::okx::expand_data_frame;
@@ -142,6 +145,12 @@ pub struct CoreBinding {
     pub l2: Option<L2Binding>,
     #[serde(default)]
     pub mark_index: Option<MarkIndexBinding>,
+    /// `DERIVED_FINAL` only: the binding also accepts `qdl_derived_bar`
+    /// records from the bar edge and canonicalizes them as AGGREGATED bars.
+    /// Venue-shaped rows on the same key (the edge's native history
+    /// bootstrap) keep their venue canonicalizer.
+    #[serde(default)]
+    pub derived_bar: Option<DerivedBarSpec>,
 }
 
 impl CoreBinding {
@@ -210,6 +219,20 @@ impl CoreBinding {
             return Err(CoreError::Configuration(
                 "binding source role is invalid".into(),
             ));
+        }
+        if let Some(derived) = &self.derived_bar {
+            derived.durations().map_err(CoreError::Configuration)?;
+            if self.l2.is_some()
+                || self.mark_index.is_some()
+                || !self.require_final_bar
+                || self.sequence_policy != SequencePolicy::None
+                || !self.provider_kind.ends_with("_bar")
+            {
+                return Err(CoreError::Configuration(
+                    "derived bar binding must be a final BAR without L2, mark/index or sequence"
+                        .into(),
+                ));
+            }
         }
         if let Some(mark_index) = &self.mark_index {
             if self.l2.is_some()
@@ -695,7 +718,23 @@ impl RealtimeCore {
                 transport_offset,
             ));
         }
-        let frames = expand_frames(&binding, payload).map_err(CoreError::Decode)?;
+        let derived_record = binding.derived_bar.is_some()
+            && payload.get("schema").and_then(Value::as_str) == Some(DERIVED_BAR_SCHEMA);
+        if derived_record && raw.transport_protocol != TransportProtocol::FileReplay as i32 {
+            // A derived record is read back from the durable cache, never off
+            // a venue socket or REST call.
+            return Ok(self.quarantine(
+                &raw,
+                QuarantineReason::SemanticInvalid,
+                "derived bar record must be a durable-cache replay",
+                materialized_at_ns,
+            ));
+        }
+        let frames = if derived_record {
+            vec![(DERIVED_BAR_KIND.to_owned(), payload)]
+        } else {
+            expand_frames(&binding, payload).map_err(CoreError::Decode)?
+        };
         if transport_offset.is_some() && frames.len() as u64 >= TRANSPORT_SEQUENCE_STRIDE {
             return Err(CoreError::Configuration(
                 "expanded provider frame exceeds transport sequence stride".into(),
@@ -776,7 +815,11 @@ impl RealtimeCore {
                 },
                 raw: frame,
             };
-            let canonical = match canonicalize_trade(&fixture) {
+            let canonicalized = match (&binding.derived_bar, fixture.provider_kind.as_str()) {
+                (Some(spec), DERIVED_BAR_KIND) => canonicalize_derived_bar(&fixture, spec),
+                _ => canonicalize_trade(&fixture),
+            };
+            let canonical = match canonicalized {
                 Ok(value) => value,
                 Err(_) => {
                     failure = Some((QuarantineReason::SemanticInvalid, "canonicalization failed"));
@@ -2192,6 +2235,7 @@ mod tests {
             sequence_policy: policy,
             l2: None,
             mark_index: None,
+            derived_bar: None,
         }
     }
 
@@ -4589,5 +4633,154 @@ mod tests {
             result,
             Err(CoreError::Configuration(message)) if message == "duplicate realtime core source ID"
         ));
+    }
+
+    fn okx_derived_binding() -> CoreBinding {
+        let mut value = binding((
+            "OKX_DIRECT",
+            "OKX",
+            "SWAP",
+            "PERPETUAL",
+            "BTC-USDT-SWAP",
+            "candle3m",
+            "okx_bar",
+            "PRIMARY",
+            SequencePolicy::None,
+        ));
+        value.derived_bar = Some(qdl_core::derived_bar::DerivedBarSpec {
+            interval: "3m".into(),
+            base_interval: "1m".into(),
+            base_source_id: "okx-swap-btc-usdt-swap-bar-1m-primary-v2".into(),
+            anchor_ms: 0,
+        });
+        value
+    }
+
+    fn derived_record(open_ms: i64) -> Vec<u8> {
+        let constituents: Vec<serde_json::Value> = (0..3)
+            .map(|index| {
+                let open = open_ms + index * 60_000;
+                serde_json::json!({
+                    "event_id": format!("{:032x}", open),
+                    "open_time_ns": open * 1_000_000,
+                    "close_time_ns": (open + 59_999) * 1_000_000,
+                    "open": "100", "high": format!("{}", 101 + index), "low": "99",
+                    "close": "100.5", "volume": "2", "base_volume": "0.02",
+                    "quote_volume": "200.1", "contract_volume": "2",
+                    "trade_count": 0, "revision": 0,
+                    "lifecycle": qdl_contracts::qdl::marketdata::v2::BarLifecycle::Final as i32,
+                    "is_final": true, "volume_unit": QuantityUnit::Contract as i32,
+                    "quality_flags": [], "source_offset": 10 + index as u64,
+                })
+            })
+            .collect();
+        let identities: Vec<(String, i64, u32)> = constituents
+            .iter()
+            .map(|item| {
+                (
+                    item["event_id"].as_str().unwrap().to_owned(),
+                    item["open_time_ns"].as_i64().unwrap(),
+                    0,
+                )
+            })
+            .collect();
+        serde_json::to_vec(&serde_json::json!({
+            "schema": "qdl.derived-bar.v1",
+            "interval": "3m",
+            "base_interval": "1m",
+            "base_source_id": "okx-swap-btc-usdt-swap-bar-1m-primary-v2",
+            "native_symbol": "BTC-USDT-SWAP",
+            "open_time_ms": open_ms,
+            "constituent_sha256": hex::encode(qdl_core::derived_bar::constituent_sha256(&identities)),
+            "constituents": constituents,
+        }))
+        .unwrap()
+    }
+
+    fn replayed(binding: &CoreBinding, frame: &[u8]) -> RawProviderEnvelope {
+        let mut value = raw(binding, frame, 1);
+        value.transport_protocol = TransportProtocol::FileReplay as i32;
+        value.capture_boundary = CaptureBoundary::ReplayBytes as i32;
+        value
+    }
+
+    #[test]
+    fn derived_binding_accepts_history_rows_and_aggregates_derived_records() {
+        let binding = okx_derived_binding();
+        let mut core = core(binding.clone(), true);
+        let open_ms = 1_794_441_600_000_i64;
+        // The edge's native history bootstrap of the same binding: venue rows.
+        let history = format!(
+            r#"{{"arg":{{"channel":"candle3m","instId":"BTC-USDT-SWAP"}},"data":[["{open_ms}","1","2","0.5","1.5","3","0.03","4.5","1"]]}}"#
+        );
+        let batch = core
+            .process(raw(&binding, history.as_bytes(), 1), 1)
+            .unwrap();
+        assert_eq!(batch.canonical.len(), 1);
+        let native = EventEnvelope::decode(batch.canonical[0].payload.as_slice()).unwrap();
+        let Some(event_envelope::Payload::Bar(native_bar)) = native.payload else {
+            panic!("history row must stay a venue bar");
+        };
+        assert_eq!(
+            native_bar.origin,
+            qdl_contracts::qdl::common::v1::BarOrigin::VenueNative as i32
+        );
+
+        let later = open_ms + 180_000;
+        let batch = core
+            .process(replayed(&binding, &derived_record(later)), 2)
+            .unwrap();
+        assert_eq!(batch.canonical.len(), 1, "{:?}", batch.quarantines);
+        let event = EventEnvelope::decode(batch.canonical[0].payload.as_slice()).unwrap();
+        assert_eq!(event.source_id, binding.source_id);
+        let Some(event_envelope::Payload::Bar(bar)) = event.payload else {
+            panic!("derived record must canonicalize to a bar");
+        };
+        assert_eq!(
+            bar.origin,
+            qdl_contracts::qdl::common::v1::BarOrigin::Aggregated as i32
+        );
+        assert_eq!(bar.high.unwrap().source_text, "103");
+        assert_eq!(bar.volume.unwrap().source_text, "6");
+        assert_eq!(bar.quote_volume.unwrap().source_text, "600.3");
+        assert_eq!(bar.aggregation.unwrap().last_constituent_offset, 12);
+
+        // The same record again is a duplicate, not a second bar.
+        let batch = core
+            .process(replayed(&binding, &derived_record(later)), 3)
+            .unwrap();
+        assert_eq!((batch.canonical.len(), batch.duplicates), (0, 1));
+    }
+
+    #[test]
+    fn derived_records_need_a_derived_binding_and_a_cache_replay_transport() {
+        let binding = okx_derived_binding();
+        let mut core = core(binding.clone(), true);
+        let open_ms = 1_794_441_600_000_i64;
+        let batch = core
+            .process(raw(&binding, &derived_record(open_ms), 1), 1)
+            .unwrap();
+        assert!(batch.canonical.is_empty());
+        assert_eq!(batch.quarantines.len(), 1);
+
+        let mut plain = binding.clone();
+        plain.derived_bar = None;
+        let mut core = core_many(vec![plain.clone()], true);
+        let batch = core
+            .process(replayed(&plain, &derived_record(open_ms)), 1)
+            .unwrap();
+        assert!(batch.canonical.is_empty());
+        assert_eq!(batch.quarantines.len(), 1);
+
+        let mut misconfigured = binding;
+        misconfigured.sequence_policy = SequencePolicy::Monotonic;
+        assert!(RealtimeCore::new(RealtimeCoreConfig {
+            canonical_stream: "qdl.test.canonical.v2".into(),
+            quarantine_stream: "qdl.test.quarantine.v1".into(),
+            allow_test_provenance: true,
+            dedup_capacity: 16,
+            bindings: vec![misconfigured],
+        })
+        .is_err());
     }
 }

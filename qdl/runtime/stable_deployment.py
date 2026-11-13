@@ -9,6 +9,11 @@ from urllib.parse import urlsplit
 
 import yaml
 
+from qdl.adapters.intervals import (
+    canonical_interval_ms,
+    okx_candle_channel,
+    provider_bar_calendar_anchor_ms,
+)
 from qdl.adapters.okx_endpoints import require_okx_websocket_url
 from qdl.query import FeedType
 from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
@@ -42,7 +47,10 @@ def binance_route_for_channel(channel: str) -> str | None:
     return None
 
 
-_MODES = frozenset({"RUST_NATIVE", "PYTHON_REST", "PYTHON_VENDOR_SDK"})
+_MODES = frozenset({"RUST_NATIVE", "PYTHON_REST", "PYTHON_VENDOR_SDK", "DERIVED_FINAL"})
+# Final BAR acquisitions a DERIVED_FINAL binding may be built from. A derived
+# parent is allowed, which is what makes the chain (3m<-1m ... 1w<-1d).
+_DERIVED_PARENT_MODES = frozenset({"RUST_NATIVE", "PYTHON_REST", "DERIVED_FINAL"})
 _SEQUENCE_POLICIES = frozenset({"NONE", "MONOTONIC", "CONTIGUOUS"})
 STABLE_TOPIC_PARTITIONS = 6
 STABLE_CORE_WORKER_COUNT = 3
@@ -264,6 +272,75 @@ class StableMarkIndexAcquisition:
 
 
 @dataclass(frozen=True, slots=True)
+class StableDerivedBarAcquisition:
+    """A final BAR the Data Layer builds from the next finer final BAR.
+
+    ``interval`` (the YAML ``derived_from.interval``) names the parent binding of the same instrument and
+    source role. The bar edge reads the parent's durable final bars from the
+    market cache and publishes their identities and values as one raw derived
+    record; the Rust core recomputes the aggregate and is its only canonical
+    writer (``BAR_ORIGIN_AGGREGATED``). History bootstrap of the derived
+    binding still reads the venue's native interval, which is why the binding
+    keeps the venue BAR provider kind and native channel.
+    """
+
+    interval: str
+
+    def validate(
+        self,
+        source: StableSourceBinding,
+        acquisition: "StableAcquisitionBinding",
+    ) -> None:
+        identity = source.instrument.identity
+        if (
+            source.feed is not FeedType.BAR
+            or not source.require_final_bar
+            or not source.interval
+            or acquisition.mode != "DERIVED_FINAL"
+            or acquisition.runtime not in {"BINANCE", "OKX"}
+            or acquisition.runtime != identity.venue
+            or acquisition.sequence_policy != "NONE"
+            or acquisition.websocket_url is not None
+            or acquisition.business_websocket_url is not None
+            or acquisition.market_websocket_url is not None
+            or acquisition.l2 is not None
+            or acquisition.mark_index is not None
+        ):
+            raise ValueError(
+                "DERIVED_FINAL is a socketless final BAR of a Binance/OKX venue"
+            )
+        target_ms = canonical_interval_ms(source.interval)
+        base_ms = canonical_interval_ms(self.interval)
+        if base_ms >= target_ms or target_ms % base_ms:
+            raise ValueError(
+                "DERIVED_FINAL base interval must be finer and divide the target exactly"
+            )
+        target_anchor = provider_bar_calendar_anchor_ms(
+            source.interval, provider=identity.venue
+        )
+        base_anchor = provider_bar_calendar_anchor_ms(
+            self.interval, provider=identity.venue
+        )
+        if (target_anchor - base_anchor) % base_ms:
+            raise ValueError(
+                "DERIVED_FINAL target calendar does not start on a base bar open"
+            )
+        # The history channel the bar edge bootstraps on: the venue-native
+        # interval, exactly as a REST/native binding of that interval names it.
+        if acquisition.runtime == "OKX":
+            expected = ("okx_bar", okx_candle_channel(source.interval))
+        else:
+            expected = (
+                f"binance_{identity.market.lower()}_rest_bar",
+                f"rest-klines/{source.interval}",
+            )
+        if (acquisition.provider_kind, acquisition.native_channel) != expected:
+            raise ValueError(
+                "DERIVED_FINAL history channel differs from the venue-native interval"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class StablePhysicalEntry:
     """A physical provider subscription projected into one logical binding."""
 
@@ -406,6 +483,8 @@ class StableAcquisitionBinding:
     # the only way to stop acquiring a feed was to delete it from the catalog,
     # which deleted the capability the rule says to keep.
     enabled: bool = True
+    # DERIVED_FINAL only: the finer interval this final BAR is built from.
+    derived_from: StableDerivedBarAcquisition | None = None
 
     def validate(self, source: StableSourceBinding) -> None:
         if (
@@ -452,6 +531,11 @@ class StableAcquisitionBinding:
             self.mark_index.validate(source, self)
         elif source.feed is FeedType.MARK_INDEX_PRICE:
             raise ValueError("MARK_INDEX binding requires an explicit acquisition contract")
+        if (self.mode == "DERIVED_FINAL") != (self.derived_from is not None):
+            raise ValueError("DERIVED_FINAL requires derived_from, and only it may carry one")
+        if self.derived_from is not None:
+            self.derived_from.validate(source, self)
+            return
         if self.provider_kind == "okx_bbo" and self.sequence_policy != "NONE":
             raise ValueError("OKX bbo-tbt is replace-only and cannot require sequence continuity")
         if self.mode == "RUST_NATIVE":
@@ -587,6 +671,10 @@ class StableAcquisitionPlan:
             payload = asdict(item)
             for field in self.TRANSPORT_FIELDS:
                 payload.pop(field)
+            # An absent derivation is not an identity field: plans written
+            # before DERIVED_FINAL keep the digest they were certified with.
+            if payload.get("derived_from") is None:
+                payload.pop("derived_from", None)
             bindings.append(payload)
         payload = {
             "schema": self.schema,
@@ -623,7 +711,7 @@ class StableAcquisitionPlan:
                 "market_websocket_url",
             }
             if not isinstance(value, dict) or not required <= set(value) or (
-                set(value) - required - {"enabled", "l2", "mark_index"}
+                set(value) - required - {"enabled", "l2", "mark_index", "derived_from"}
             ):
                 raise ValueError("stable acquisition binding fields are incomplete or unknown")
             enabled = value.get("enabled", True)
@@ -711,6 +799,19 @@ class StableAcquisitionPlan:
                 )
             else:
                 mark_index = None
+            derived_raw = value.get("derived_from")
+            if derived_raw is not None:
+                if (
+                    not isinstance(derived_raw, dict)
+                    or set(derived_raw) != {"interval"}
+                    or not isinstance(derived_raw["interval"], str)
+                ):
+                    raise ValueError("stable DERIVED_FINAL fields are incomplete or unknown")
+                derived_from = StableDerivedBarAcquisition(
+                    interval=str(derived_raw["interval"]),
+                )
+            else:
+                derived_from = None
             bindings.append(StableAcquisitionBinding(
                 binding_id=str(value["binding_id"]),
                 mode=str(value["mode"]).upper(),
@@ -732,6 +833,7 @@ class StableAcquisitionPlan:
                 l2=l2,
                 mark_index=mark_index,
                 enabled=enabled,
+                derived_from=derived_from,
             ))
         result = cls(
             schema=str(payload["schema"]),
@@ -747,6 +849,7 @@ class StableAcquisitionPlan:
         for item in result.bindings:
             item.validate(source_by_id[item.binding_id])
         result._validate_l2_aliases(source_by_id)
+        result.derived_parents(source_by_id)
         if result.canonical_topic != catalog.canonical_stream:
             raise ValueError("stable acquisition canonical topic differs from catalog")
         return result
@@ -781,6 +884,55 @@ class StableAcquisitionPlan:
                     "stable L2 source aliases must be one complete equivalent book pair: "
                     + source_id
                 )
+
+    def derived_parents(
+        self, source_by_id: Mapping[str, StableSourceBinding]
+    ) -> dict[str, str]:
+        """Return ``derived binding id -> parent binding id`` for the whole plan.
+
+        The parent is the one final BAR binding of the same instrument, venue,
+        market, provider and source role at ``derived_from.interval``. An
+        enabled derived binding needs an enabled parent; the chain cannot
+        cycle because every step is strictly finer.
+        """
+        bars: dict[tuple, list[StableAcquisitionBinding]] = {}
+        for item in self.bindings:
+            source = source_by_id[item.binding_id]
+            if source.feed is FeedType.BAR and source.interval:
+                key = (
+                    source.instrument.instrument_uid,
+                    source.provider,
+                    source.source_role,
+                    source.interval,
+                )
+                bars.setdefault(key, []).append(item)
+        result: dict[str, str] = {}
+        for item in self.bindings:
+            if item.derived_from is None:
+                continue
+            source = source_by_id[item.binding_id]
+            candidates = bars.get((
+                source.instrument.instrument_uid,
+                source.provider,
+                source.source_role,
+                item.derived_from.interval,
+            ), [])
+            if len(candidates) != 1:
+                raise ValueError(
+                    "DERIVED_FINAL needs exactly one parent BAR binding: "
+                    + item.binding_id
+                )
+            parent = candidates[0]
+            if parent.mode not in _DERIVED_PARENT_MODES:
+                raise ValueError(
+                    "DERIVED_FINAL parent is not a final BAR acquisition: " + item.binding_id
+                )
+            if item.enabled and not parent.enabled:
+                raise ValueError(
+                    "enabled DERIVED_FINAL binding has a disabled parent: " + item.binding_id
+                )
+            result[item.binding_id] = parent.binding_id
+        return result
 
     @staticmethod
     def _runtime_lane(
@@ -884,6 +1036,7 @@ class StableAcquisitionPlan:
         selected_ids = selected_ids - frozenset(excluded_binding_ids)
         if not selected_ids or not selected_ids.issubset(source_by_id):
             raise ValueError("stable core binding selection is empty or unknown")
+        derived_parents = self.derived_parents(source_by_id)
         bindings = []
         for entry in self._physical_entries(
             source_by_id=source_by_id, selected_ids=selected_ids
@@ -911,6 +1064,19 @@ class StableAcquisitionPlan:
             }
             if acquisition.l2 is not None:
                 item["l2"] = acquisition.l2.core_mapping()
+            if acquisition.derived_from is not None:
+                parent = source_by_id[derived_parents[acquisition.binding_id]]
+                # The core recomputes the aggregate from the constituents the
+                # edge sends and checks them against this, never against the
+                # record's own claims (`qdl_realtime_core` DerivedBarBinding).
+                item["derived_bar"] = {
+                    "interval": source.interval,
+                    "base_interval": acquisition.derived_from.interval,
+                    "base_source_id": parent.source_id,
+                    "anchor_ms": provider_bar_calendar_anchor_ms(
+                        source.interval or "", provider=identity.venue
+                    ),
+                }
             if entry.mark_index_component is not None:
                 item["physical_native_symbol"] = entry.physical_native_symbol
                 item["physical_native_channel"] = entry.physical_native_channel

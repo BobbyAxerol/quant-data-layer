@@ -32,6 +32,7 @@ from qdl.adapters.okx.bar_edge import (
 )
 from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
+from qdl.runtime import derived_bars
 from qdl.runtime.heartbeat import write_heartbeat
 from qdl.runtime.kn_bar_readback import KnBarReadbackError
 from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
@@ -76,6 +77,18 @@ _NATIVE_RECOVERY_MAX_CONCURRENT_REQUESTS = 4
 _SERVE_OVERDUE_SECONDS = 900.0
 # Bindings whose serving is verified per loop turn (bounded cache reads).
 _SERVE_VERIFY_PER_TURN = 8
+# DERIVED_FINAL (v2.3.0). A target whose constituents are still missing this
+# long after its close is a visible gap (no bar); it is rechecked for
+# `_DERIVED_GAP_RETRY_SECONDS` (native gap repair may still fill the base),
+# at most `_DERIVED_GAP_LIMIT` per binding. While a target waits on its base
+# the edge rechecks it every `_DERIVED_POLL_SECONDS`.
+_DERIVED_GAP_GRACE_SECONDS = 120.0
+_DERIVED_GAP_RETRY_SECONDS = 6 * 3600.0
+_DERIVED_GAP_RECHECK_SECONDS = 30.0
+_DERIVED_GAP_LIMIT = 256
+_DERIVED_POLL_SECONDS = 0.5
+_DERIVED_SETTLE_SECONDS = 0.5
+_DERIVED_PARENT_WAIT_SECONDS = 5.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -410,6 +423,26 @@ class StableBinanceBarEdge:
                 self.native_recovery_bindings + self.native_recovery_okx_bindings
             )
         }
+        # DERIVED_FINAL: built here from the parent's durable final bars, in
+        # chain order (finer first) so one pass can climb several levels once
+        # each level is durable. Bootstrap and checkpoint are the ordinary
+        # history-binding ones (`last_open_ms`); only live bars are derived.
+        parents = acquisition.derived_parents(source_by_id)
+        self.derived_bindings = tuple(sorted(
+            (pair for pair in pairs if pair[1].enabled and pair[1].mode == "DERIVED_FINAL"),
+            key=lambda pair: (_bar_interval_ms(pair[0].interval or ""), pair[0].binding_id),
+        ))
+        self._derived_parent = {
+            source.binding_id: source_by_id[parents[source.binding_id]]
+            for source, _acquisition in self.derived_bindings
+        }
+        self._derived_active = bool(self.derived_bindings) and not history_only and not repair_only
+        if self._derived_active and bar_readback is None:
+            raise ValueError("DERIVED_FINAL BARs need the KN market-cache readback")
+        self._derived_next_at: dict[str, float] = {}
+        self._derived_gaps: dict[str, dict[int, float]] = {}
+        self.derived_published = 0
+        self.derived_gaps_recorded = 0
         self._heartbeat_path = os.environ.get("QDL_STABLE_HEARTBEAT_PATH") or None
         # Keyed by binding id so a capture can ask what channel the core has this
         # binding registered under; see `_binance_binding`.
@@ -1806,6 +1839,157 @@ class StableBinanceBarEdge:
                 )
         return published
 
+    # ------------------------------------------------------------ DERIVED_FINAL
+
+    def _derived_session_id(self) -> str:
+        return f"qdl-v2-stable-derived-r{self._authority_revision}-g{self.connection_generation}"
+
+    def _derived_ready_at(self, source: StableSourceBinding) -> float:
+        """When the next target of ``source`` closes, plus a settle offset."""
+        interval_ms = _bar_interval_ms(source.interval or "")
+        next_open = self._last_open_ms[source.binding_id] + interval_ms
+        return (next_open + interval_ms) / 1000 + _DERIVED_SETTLE_SECONDS
+
+    def run_derived_cycle(self) -> int:
+        """Publish due DERIVED_FINAL bars; returns the number of ACKed records.
+
+        Per binding: targets after the live watermark (bounded by
+        ``max_catchup_rows``) plus recorded gaps. Each target is decided from
+        durable rows only (`derived_bars.decide`). The watermark moves over
+        published, skipped and gap targets after the Kafka ACK, and stops at
+        the first target still waiting on its base.
+        """
+        if not getattr(self, "_derived_active", False):
+            return 0
+        now = self.clock()
+        now_ms = int(now * 1000)
+        grace_ms = int(_DERIVED_GAP_GRACE_SECONDS * 1000)
+        acknowledged_total = 0
+        moved = False
+        for source, acquisition in self.derived_bindings:
+            binding_id = source.binding_id
+            gaps = self._derived_gaps.setdefault(binding_id, {})
+            due_gaps = bool(gaps) and min(gaps.values()) <= now
+            if self._derived_next_at.get(binding_id, 0.0) > now and not due_gaps:
+                continue
+            parent = self._derived_parent[binding_id]
+            if not (self._live_history_ready(binding_id)
+                    and self._live_history_ready(parent.binding_id)
+                    and binding_id in self._last_open_ms):
+                self._derived_next_at[binding_id] = now + _DERIVED_PARENT_WAIT_SECONDS
+                continue
+            interval_ms = _bar_interval_ms(source.interval or "")
+            for open_ms in [key for key in gaps if now_ms > key + interval_ms + _DERIVED_GAP_RETRY_SECONDS * 1000]:
+                gaps.pop(open_ms)
+                logger.error("stable derived BAR gap kept binding=%s open_ms=%s", binding_id, open_ms)
+            last = self._last_open_ms[binding_id]
+            boundary = _latest_source_closed_boundary_ms(source, now_ms)
+            new_opens = list(range(last + interval_ms, boundary, interval_ms))[: self.max_catchup_rows]
+            retry = sorted(key for key, at in gaps.items() if at <= now)
+            targets = frozenset(new_opens) | frozenset(retry)
+            if not targets:
+                self._derived_next_at[binding_id] = self._derived_ready_at(source)
+                continue
+            base_interval = acquisition.derived_from.interval
+            existing = self.bar_readback.final_bar_rows(source, targets)
+            parent_rows = self.bar_readback.final_bar_rows(parent, frozenset(
+                item for open_ms in targets for item in derived_bars.constituent_opens(
+                    open_ms, interval=source.interval, base_interval=base_interval)
+            ))
+
+            def decide(open_ms: int) -> derived_bars.DerivedDecision:
+                return derived_bars.decide(
+                    open_ms=open_ms, interval=source.interval, base_interval=base_interval,
+                    parent_rows=parent_rows, existing=existing.get(open_ms),
+                    now_ms=now_ms, gap_grace_ms=grace_ms,
+                )
+
+            publish: list[derived_bars.DerivedDecision] = []
+            watermark = last
+            waiting = False
+            new_gaps: list[int] = []
+            for open_ms in new_opens:
+                decision = decide(open_ms)
+                if decision.action == derived_bars.WAIT:
+                    waiting = True
+                    break
+                if decision.action == derived_bars.PUBLISH:
+                    publish.append(decision)
+                elif decision.action == derived_bars.GAP:
+                    new_gaps.append(open_ms)
+                watermark = open_ms
+            healed: list[int] = []
+            for open_ms in retry:
+                decision = decide(open_ms)
+                if decision.action == derived_bars.PUBLISH:
+                    publish.append(decision)
+                    healed.append(open_ms)
+                elif decision.action == derived_bars.SKIP:
+                    healed.append(open_ms)
+                else:
+                    gaps[open_ms] = now + _DERIVED_GAP_RECHECK_SECONDS
+            if publish:
+                envelopes = [
+                    derived_bars.derived_raw_envelope(
+                        source=source, acquisition=acquisition, base_source=parent,
+                        decision=decision, source_session_id=self._derived_session_id(),
+                        connection_generation=self.connection_generation,
+                        authority_revision=int(self.authority["revision"]),
+                        config_revision=self.acquisition.revision,
+                        instrument_catalog_revision=self.catalog.catalog_revision,
+                        received_at_ns=time.time_ns(),
+                    )
+                    for decision in publish
+                ]
+                acknowledgements = self.publisher.publish_many(envelopes)
+                if len(acknowledgements) != len(envelopes):
+                    raise RuntimeError(
+                        f"stable derived BAR publish missed a Kafka ACK binding={binding_id}"
+                    )
+                acknowledged_total += len(acknowledgements)
+                self.derived_published += len(acknowledgements)
+            for open_ms in healed:
+                gaps.pop(open_ms, None)
+                logger.info("stable derived BAR gap healed binding=%s open_ms=%s", binding_id, open_ms)
+            for open_ms in new_gaps:
+                gaps[open_ms] = now + _DERIVED_GAP_RECHECK_SECONDS
+                self.derived_gaps_recorded += 1
+                logger.warning(
+                    "stable derived BAR gap binding=%s open_ms=%s base=%s: no bar published",
+                    binding_id, open_ms, parent.binding_id,
+                )
+            while len(gaps) > _DERIVED_GAP_LIMIT:
+                dropped = min(gaps)
+                gaps.pop(dropped)
+                logger.error("stable derived BAR gap kept binding=%s open_ms=%s", binding_id, dropped)
+            if watermark != last:
+                self._last_open_ms[binding_id] = watermark
+                moved = True
+            # Poll again soon while a target waits on its base or the
+            # catch-up quantum left closed targets behind the watermark.
+            behind = watermark < boundary - interval_ms
+            self._derived_next_at[binding_id] = (
+                now + _DERIVED_POLL_SECONDS if waiting or behind
+                else self._derived_ready_at(source)
+            )
+        if moved:
+            self._persist_state()
+        if acknowledged_total:
+            logger.info("stable derived BAR ACK count=%s", acknowledged_total)
+        return acknowledged_total
+
+    def _derived_next_wake(self, now: float) -> float | None:
+        if not getattr(self, "_derived_active", False):
+            return None
+        candidates = list(self._derived_next_at.values())
+        candidates.extend(
+            min(gaps.values()) for gaps in self._derived_gaps.values() if gaps
+        )
+        unscheduled = len(self._derived_next_at) < len(self.derived_bindings)
+        if unscheduled or not candidates:
+            return now
+        return min(candidates)
+
     def _next_ready_at(self, now: float) -> float:
         """Wake for a due target retry or the next provider BAR boundary."""
         candidates = []
@@ -2027,6 +2211,9 @@ class StableBinanceBarEdge:
         delay = 60.0
         if self._rest_fallback_active or getattr(self, "_native_recovery_active", False):
             delay = max(0.01, self._next_ready_at(now) - now)
+        derived_at = self._derived_next_wake(now)
+        if derived_at is not None:
+            delay = min(delay, max(0.01, derived_at - now))
         history_delay = self._history_loop_delay(now)
         return delay if history_delay is None else min(delay, history_delay)
 
@@ -2072,6 +2259,8 @@ class StableBinanceBarEdge:
                     self.run_cycle()
                 if getattr(self, "_native_recovery_active", False):
                     self.run_native_recovery_cycle()
+                if getattr(self, "_derived_active", False):
+                    self.run_derived_cycle()
                 failures = 0
             except Exception:
                 failures += 1

@@ -50,6 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         sequence_policy: SequencePolicy::Monotonic,
         l2: None,
         mark_index: None,
+        derived_bar: None,
     };
     let mut core = RealtimeCore::new(RealtimeCoreConfig {
         canonical_stream: "benchmark.canonical".into(),

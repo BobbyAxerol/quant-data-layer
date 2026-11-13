@@ -77135,3 +77135,129 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   Same session, 06:10-06:13Z, 24 shapes x 2 passes: **PASS**. Statuses: 44 x 200 and 4 x 400 typed refusals, equal on
   both images. Receipt `byte-compare-alpha.json` `c884e495...`, copied to the release folder. 0 `qdl-hr-*` containers
   and networks left.
+
+### DL v2.3.0 slice 1: DERIVED_FINAL bar aggregation (tested locally) - 2026-11-13 (Claude)
+
+**Scope.** Owner-approved design (coordinator, 2026-11-13): BAR intervals above 1m are aggregated from 1m inside the
+standard DL structure, so adding an interval later is a declaration only.
+
+**Status.** `implemented`, `tested locally`.
+- No runtime change, no image, no push.
+- Branch `feat/v2.3.0-derived-bars`, worktree `/home/bobby/.worktrees/dl-v230-derived-bars`, cut from `origin/dev` `098c94b`.
+- Sibling slice: `feat/v2.3.0-declaration-mechanism` (mounted bar edge config, checkpoint superset, token revision
+  ranges, selectors, lane names, per-feed coalescing). This slice does not touch those concerns.
+- Guide delta: `upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md`, "Delta 2026-11-13: DL v2.3.0 slice 1".
+
+**Implemented.**
+- **Contract (additive).**
+  - `Bar.aggregation = 19` (`BarAggregation`): base interval and source, constituent count, first and last
+    constituent event ids and offsets, constituent SHA-256.
+  - Regenerated with `buf generate` (Python and Rust). `buf lint`, `format` and `breaking` pass against
+    `qdl-v2-phase1` and `qdl-v2-phase7-beta`.
+  - `qdl-contracts` allows `clippy::large_enum_variant` on `marketdata.v2`, as it already does for `query.v2`. The
+    BAR variant is now 688 bytes; the in-memory cost goes into R-cert 4.
+- **Interval anchors.**
+  - New `intervals.bar_bucket_open_ms` is the one grouping rule.
+  - `resample_final_bars` (warmup `EXACT_FINAL_RESAMPLE`) groups on provider anchors (Monday weeks, Binance Monday 3d)
+    instead of the Unix grid.
+  - Its revision is now the sum of constituent revisions (was the maximum).
+  - Zero-volume rule, see the finding below.
+- **Acquisition.**
+  - New mode `DERIVED_FINAL` with `derived_from: {interval}` (`StableDerivedBarAcquisition`).
+  - Validator: socketless; base finer and dividing the target; target anchor on a base open; venue history channel of
+    the target interval.
+  - `StableAcquisitionPlan.derived_parents`: exactly one parent per derived binding; an enabled child needs an enabled
+    parent.
+  - `core_config` emits `derived_bar` {interval, base_interval, base_source_id, anchor_ms}.
+  - `identity_digest` is unchanged for plans without derivations (tested).
+  - The universal planner treats the mode as socketless.
+- **Rust core.**
+  - `qdl-core/src/derived_bar.rs` recomputes the aggregate from the constituents with exact i128 decimals and checks:
+    - the spec, symbol and calendar anchor;
+    - the constituents are complete, contiguous, final, of one unit and non-repeating;
+    - the digest;
+    - supersedes only with revision > 0.
+  - It emits `BAR_ORIGIN_AGGREGATED` with lineage, `FINAL`, or `REVISED` with `supersedes_event_id`.
+  - Event identity is `open:close:r<revision>`, so the same constituents give the same event.
+  - `qdl-realtime-core`: `CoreBinding.derived_bar`. A `qdl.derived-bar.v1` record is accepted only on a
+    `DERIVED_FINAL` binding and only over `FILE_REPLAY`; otherwise it is quarantined. Venue history rows on the same
+    key keep the venue canonicalizer.
+- **Bar edge.**
+  - `KnBarReadback.final_bar_rows` returns proven final rows with their offsets.
+  - New `qdl/runtime/derived_bars.py` holds the decision (publish/skip/wait/gap) and the raw record.
+  - `StableBinanceBarEdge.run_derived_cycle` runs in chain order:
+    - targets after the `last_open_ms` watermark, plus recorded gaps;
+    - a wait stops the watermark;
+    - gap after 120 s, rechecked every 30 s for 6 h, at most 256 per binding;
+    - ACK before the watermark moves;
+    - the parent must be bootstrapped first.
+  - Derived bindings bootstrap native history like every BAR binding; checkpoint and config loading are unchanged.
+- **Query.** `bar_item_fields` maps `aggregation` to `resample_lineage`.
+- **Cross-slice name.** The Python attribute is `StableDerivedBarAcquisition.interval`, the same as the YAML
+  `derived_from.interval`. It was agreed with the declaration slice, whose `binding_series_digest` reads it
+  (`feat/v2.3.0-declaration-mechanism` `b71b45e`).
+- **R-cert 1 tool.** `scripts/v230_derived_bar_parity.py` captures OKX public candles for N days per
+  instrument and compares them through `resample_final_bars`. The ignored Rust test
+  `qdl-core derived_bar::tests::okx_parity_directory` (`QDL_DERIVED_PARITY_DIR`) runs the core path on the same
+  files. Smoke on the committed fixture: 988 / 988.
+
+**Finding (measured): the study's "exact naive aggregation" claim does not hold.**
+- New public capture, LDO-USDT-SWAP, 2026-11-12 UTC: 1,440 x 1m plus every native interval, and 28 days of
+  1Dutc/2Dutc/3Dutc/1Wutc. Committed as `tests/fixtures/okx_derived_bar_parity_ldo_20261112.json`, 206 KB.
+- Naive OHLC differed on 3 of 480 native 3m bars. OKX zero-volume 1m bars repeat the previous close, and native candles
+  exclude them from open/high/low.
+- The rule is now: OHLC from constituents with volume > 0, all constituents if none traded; volumes summed. With it:
+  - 1,949 / 1,949 bars equal in the offline Python check (each interval directly from 1m and through the chain, plus
+    2D/3D/1W from 1D);
+  - 988 / 988 through the repo's `resample_final_bars`;
+  - 988 / 988 through the Rust core.
+- The anchors were confirmed: 2Dutc and 3Dutc on the Unix grid, 1Wutc on Monday.
+- The 132-bar sample in the study missed this because 1H/4H/12H/1D buckets rarely start on an untraded minute.
+
+**Tests (all `--rm`; Python 2 CPU, last Rust run 1 CPU).**
+- `tests.test_v230_derived_bars`: 20 pass.
+- R-cert 1 tool: `scripts/v230_derived_bar_parity.py` (public capture plus warmup-path compare). In `--compare-only`
+  mode on the committed fixture: 988 compared, 0 mismatches.
+  - Covers: anchors, warmup parity, schema and loader, chain and core mapping, digest stability, deriver
+    publish/wait/gap/heal/revision/native-kept, parent wait, shared record golden, cache codec, query lineage.
+- Impacted Python suites: the 76 modules that import intervals, handoff, stable_deployment, universal_realtime,
+  stable_bar_edge, kn_bar_readback, stable_source, provider_history or kn_query_backend, run on this tree:
+  1,268 tests OK, 42 skipped, 2,405 s on a host at load ~30 (`qdl-v2-python:2.2.5-9b6747f`, no network).
+  The base run at `098c94b` was stopped unfinished, because nothing failed that needed comparing.
+- Contract and golden modules not in that set (46 modules: generated code, descriptors, codec goldens, sizing):
+  807 tests, 83 skipped, 1 error. The error was `test_kn_resource_sizing` refusing the unmapped
+  `bar.aggregation` field, as it is designed to. Fixed by mapping the field in `scripts/kn_resource_sizing.py`,
+  so the KN row sizing counts lineage bytes. That module then reran: 13 OK.
+- Contract/golden modules not in that set (46 modules that use pb2 descriptors, `contracts/golden` or `generated/python`):
+  807 tests, 83 skipped, 1 error. The error was correct: `tests.test_kn_resource_sizing` refuses a proto field that
+  the contract-complete BAR sizing row does not map (`bar.aggregation`).
+  `scripts/kn_resource_sizing._complete_bar` now maps `aggregation`. Rerun of that module plus the new module: 33 OK.
+- Rust (builder image `qdl-rust-builder:r134-test`, rust 1.82): `cargo fmt --check`, then `clippy -D warnings` and
+  `test` for `qdl-core`, `qdl-realtime-core` and `qdl-contracts`: 63 + 58 + 31 pass. Ignored: 1 in `qdl-core`
+  (`okx_parity_directory`, the R-cert 1 runner) and 1 already present in `qdl-realtime-core`. Rust tests include:
+  - full-chain and calendar parity on the fixture;
+  - the zero-volume rule;
+  - refusals;
+  - revision sum and supersede;
+  - identity;
+  - the Python golden `tests/fixtures/derived_bar_record_v1.json`;
+  - the cache row codec round trip;
+  - core routing and transport.
+- No ruff step exists in DL CI (`grep ruff .github` is empty), so none was run.
+- The certification ledger is unaffected. The certified pass-through rows are native intervals; resample only runs for
+  non-native targets.
+
+**Open (decision or next slice).**
+- Parity auditor in the bar edge: sampled native REST comparison per close. Deferred to the R slice.
+- R-cert 1-4 are not run.
+- Merge with the declaration slice: expected overlap is `stable_deployment.py` (`derived_from` field and loader key)
+  and `stable_bar_edge.py` (`__init__` derived pairs, new methods, run loop hook). A per-binding digest there must drop
+  `derived_from` when it is `None`, as `identity_digest` does.
+- Late 1m corrections: DL native canonicalizers emit revision 0 only, and the projector treats a same-open content
+  change as a conflict (`state_contract.rs` `bar_revision_decision`). A venue correction is therefore not a revision
+  today. Derived revisions only propagate from derived parents.
+
+**Rollout constraint.** Projector, stream, query and core must run the v2.3.0 contracts before any bar edge publishes a
+derived bar. An older projector drops field 19, then refuses the row (`ENVELOPE_NOT_CANONICAL`).
+
+**Rollback.** Revert the commit. Plans without `DERIVED_FINAL` are byte-identical in identity digest and core config.

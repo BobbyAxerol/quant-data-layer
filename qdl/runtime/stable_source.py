@@ -146,10 +146,25 @@ def bar_item_fields(
     origin = common_pb2.BarOrigin.Name(envelope.bar.origin).removeprefix(
         "BAR_ORIGIN_"
     )
+    lineage = None
+    if envelope.bar.HasField("aggregation"):
+        # DERIVED_FINAL (v2.3.0): the canonical core's own lineage record, in
+        # the shape the warmup resample already exposes.
+        from qdl.warmup.handoff import ResampleLineage
+
+        aggregation = envelope.bar.aggregation
+        lineage = ResampleLineage(
+            base_interval=aggregation.base_interval,
+            constituent_count=int(aggregation.constituent_count),
+            first_watermark=int(aggregation.first_constituent_offset),
+            last_watermark=int(aggregation.last_constituent_offset),
+            constituent_sha256=bytes(aggregation.constituent_sha256).hex(),
+        )
     return {
         "feed": FeedType.BAR,
         "interval": envelope.bar.interval,
         "revision": int(envelope.bar.revision),
+        "resample_lineage": lineage,
         "bar_lifecycle": BarLifecycle(lifecycle),
         "supersedes_event_id": (
             bytes(envelope.bar.supersedes_event_id).hex()
