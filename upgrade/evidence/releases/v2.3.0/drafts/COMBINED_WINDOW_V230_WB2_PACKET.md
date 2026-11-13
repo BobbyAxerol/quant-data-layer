@@ -38,7 +38,7 @@ final DL v2.3.0 release and tag happen only after the R-cert 2 final verdict and
 | R-cert 4 (capacity envelope) | **Not run** | The window's measured substitute is the D0 median and the bootstrap-end + 30 min gate, DL vCPU <= 6.0 (section 7a) |
 | rc2 full suite | PASS (environment errors only) | Run on `269fc9c8`: 4296 tests, 4 errors, all `/app/logs/app.log` permission errors for the non-root user; those modules re-run as root: 15 OK |
 | rc2 delta after the full suite | PASS | `269fc9c8..832c02c4` changes only `qdl/runtime/lineage.py`, `scripts/dl_declaration.py`, 2 fixtures and 2 test files (no Rust, no runtime role code). Delta tests: `test_v230_lineage` 14 OK on `c7fe877`; tool + bar_source + lineage 47 OK (8 skipped) on `832c02c4` |
-| Declaration render | Gate 18/18 PASS | Tool `832c02c4` + page-size fix (uncommitted, tool agent), out5 = out4 runtime files byte-identical (section 3) |
+| Declaration render | Gate 18/18 PASS | Tool `5a42ba01` (= `832c02c4` + `scripts/dl_declaration.py` only: page size, lineage gate; merged into rc2 as `f9444aa`), render out6 (section 3). Images are unaffected: the tool runs offline |
 
 **rc2 vs rc1 (`7af599de..832c02c4`), by commit**, and how each is covered:
 - `0f20d8f`, slice 2d: per-binding contract lineage, cursor lineage, contract-line schema_digest. Python + Rust
@@ -93,19 +93,20 @@ Build receipt: `~/.local/state/qdl-v2/v230-rcert2/images-832c02c4.json`. Both im
 - Kafka and Redis images are unchanged.
 - Digests come from `docker inspect` of the built images. No retag of an existing tag.
 
-## 3. The first v2.3.0 declaration (`scripts/dl_declaration.py`, tool `832c02c4`; full crossec scope)
+## 3. The first v2.3.0 declaration (`scripts/dl_declaration.py`, tool `5a42ba01`; full crossec scope)
 
-- **Render.** Output `scratchpad/dlv230tool/first/out4`, declaration `../declaration-first-v230-full.yaml`
-  (declaration_revision 5), gate `../gate4.json`. Read-only against the live base; every live input is recorded with
-  its sha256. Earlier renders `out`..`out3` are superseded.
+- **Render.** Output `scratchpad/dlv230tool/first/out6`, declaration `../declaration-first-v230-full-1m.yaml`
+  (declaration_revision 5), gate `../gate6.json` (18/18 PASS), tool `5a42ba01d64e5cb931c122332633e545faa227bf`. Read-only against the live base; every live input is recorded with
+  its sha256. Earlier renders `out`..`out5` are superseded. out6 differs from out4/out5 only in the alpha manifest
+  (1m rows) and the two bundles.
 - **Scope** (owner decision: the full crossec signal universe in this window):
   - **`okx-swap-crossec-94`** (crossec 96; FET and LUNA BLOCKED, NOT_IN_CATALOG):
     - native candle1m for 89 new instruments (RUST_NATIVE); the 5 majors already have it;
     - DERIVED_FINAL 1h and 12h from 1m;
-    - alpha grants 1h and 12h (1m is a parent and is not granted);
+    - alpha grants 1m, 1h and 12h (1m granted so the parents bootstrap history; review H1);
     - FUNDING_RATE and CONTRACT_METADATA on their existing reference path (no live funding stream exists; that would
       be a code release).
-  - **`okx-swap-covered-25`:** derived 3m..1D from native 1m, granted.
+  - **`okx-swap-covered-25`:** 1m granted, derived 3m..1D from native 1m, granted.
   - Not declared: 1W, 2D, 3D (after R-cert 2 passes the Monday boundary), and the 4-contract price_tick refresh
     (non-additive, needs its own migration record).
   - TS QUOTE/MARK for the other 69 is **stage B**, right after this window: about +1.40 vCPU, which with stage A puts
@@ -139,15 +140,15 @@ Build receipt: `~/.local/state/qdl-v2/v230-rcert2/images-832c02c4.json`. Both im
   | bar-edge pair | `9154bf1a` / `ba7bd0f4` |
   | migration record | `cd15ee73` |
   | universes | `b40826c7`, `a131d737` |
-  | realm r16 | `b998bdce` |
-  | kn bundle | `1ae1d908` |
-  | realm bundle | `aaf12392` |
+  | realm r16 | `be43ca2461e2132fc8bc03610d6914f5876f1e7d9b024c56eb9dfd7fd82c291b` (960 requirements, min_token_revision 15, additive) |
+  | kn bundle | `924951cd` |
+  | realm bundle | `c5e21bb7` |
   | cores | `ff105182` / `348f2c70` / `dfab3186` |
   | OKX ingestor | `4cb59e29` |
   | Binance ingestor | `021dd5dc` |
 
-- **Bootstrap (one-off). Decision R-H2 = option A (coordinator, 2026-11-13): quota 10000 as rendered, about 52.5
-  min; the owner said warmup latency does not matter. The 3m-30m grants stay (no scope cut). Depth 1000 cannot be declared for the new selectors alone.** The depth is
+- **Bootstrap (one-off). Decision R-H2 = option A (coordinator, 2026-11-13, re-confirmed): quota 10000 as rendered,
+  about 72.7 min with the 1m parents; the owner said warmup latency does not matter. The 3m-30m grants stay (no scope cut). Depth 1000 cannot be declared for the new selectors alone.** The depth is
   a manifest-wide quota, not a per-row setting (verified):
   - bar_edge (`qdl/runtime/bar_history_demand.py:20-37`) and the projector `retained_caps`
     (`rust/qdl-projector/src/products.rs:118-143`, plus BAR_HEADROOM) both take, per BAR binding, the largest
@@ -156,13 +157,16 @@ Build receipt: `~/.local/state/qdl-v2/v230-rcert2/images-832c02c4.json`. Both im
 
     | Option | Cost | Verdict |
     |---|---|---|
-    | (A) Keep `alpha.okx.paper.stable` `max_warmup_rows` 10000 (this render) | Bootstrap about **52.5 min** | **Decided** |
+    | (A) Keep `alpha.okx.paper.stable` `max_warmup_rows` 10000 (this render) | Bootstrap about **72.7 min** with the 1m parents (52.5 without) | **Decided** |
     | (B) Lower that quota to 1000 | Not additive: the accept-set floor resets to 16, a same-window JWT bump is needed, and the projector trims the cached history of every existing alpha BAR product (255 x 1d at 10000) to 3064 | Rejected |
     | (C) Make depth follow the row's `warmup_limit` in both places | Python + Rust change, not in rc2 | v2.3.x backlog DL-BL-2026-11-13-C (DL plan); bootstrap about 9 min |
 
-  - Estimate (A), render out5 (tool page size corrected to OKX history-candles 300 rows/page,
+  - Estimate (A), render out6 (tool page size corrected to OKX history-candles 300 rows/page,
     `qdl/adapters/okx/history.py:105`):
-    - 407 bindings, about 2.30M rows, 7,878 requests on OKX/SWAP/HISTORY_CANDLES at 150/min: about 52.5 min.
+    - 407 bindings, about 3.19M rows, 10,904 requests on OKX/SWAP/HISTORY_CANDLES at 150/min: about 72.7 min.
+    - Kafka during the bootstrap: about 732 BAR records/s on average into `md.raw.realtime.v2`. The canonical and
+      bar topics follow at the same rate. Live traffic today is about 1,000 records/s on the same raw topic and
+      core group (review M2).
     - By interval:
 
       | Interval | Bindings | Rows each | Requests |
@@ -172,9 +176,50 @@ Build receipt: `~/.local/state/qdl-v2/v230-rcert2/images-832c02c4.json`. Both im
       | 3m, 5m, 15m, 30m, 2h | 20 each | 10000 | 680 each |
       | 4h | 20 | 6570 | 440 |
       | 6h | 20 | 4380 | 300 |
-      | 1m | 89 | 0 (not granted) | 0 |
+      | 1m | 89 (added; H1 fix below) | 10000 | 3,026 |
 
-    - Dropping the 3m-30m grants for the covered 25 would bring it to about 34 min.
+    - The 3m-30m grants are kept (coordinator: no scope cut).
+  - **1m parents get history (review H1, coordinator decision option a).**
+    - Problem: without 1m demand the 89 new native 1m parents bootstrap one bar, while live 1m starts at D5. The
+      first derived 1h/12h/1D target after each derived binding's bootstrap would then miss constituents, giving
+      `derived_bars.decide` -> GAP.
+    - Fix: the declaration adds `alpha.okx.paper.stable` BAR 1m rows for all 94, with the same row shape as the
+      bound 1m rows. The 1m demand then equals the manifest quota of 10000 rows, which is at least 1440 (the 1D
+      window). The manifest stays additive and the accept-set stays 15..16.
+    - Rendered as out6 from the committed tool `5a42ba01` (M4). 1m rows use the r15 bound-1m template (recovery
+      SNAPSHOT_AND_REPLAY). 10000 1m rows is about 6.9 days, which covers the 1440-row 1D window.
+    - Verified read-only on `832c02c4`:
+      - **Every enabled OKX BAR binding, native included, is bootstrapped.** `history_okx_bindings` filters on
+        enabled + OKX + BAR only (`stable_bar_edge.py:425-432`). Rows = min(`QDL_STABLE_BAR_WARMUP_ROWS`, interval
+        capacity, demand) (`:1317-1338`). Live and rc2 compose set `QDL_STABLE_BAR_WARMUP_ROWS=10000`
+        (compose `:1295`), so the 1m parents bootstrap 10000 rows.
+      - **The derived decision reads parents from the KN market cache.** `run_derived_cycle` reads parent rows
+        with `self.bar_readback.final_bar_rows(parent, constituent opens)` (`stable_bar_edge.py:1995-1999`), which
+        is the kn3 market-cache readback (`qdl/runtime/kn_bar_readback.py:283`). `derived_bars.decide`
+        (`qdl/runtime/derived_bars.py:133-167`) PUBLISHes when every constituent row is present, and returns GAP
+        only after close + 120 s grace with constituents missing.
+      - **A derived target is never decided before its parent's history exists.** The cycle skips a binding until
+        the parent is `_live_history_ready` (`stable_bar_edge.py:1979-1984`: in kn3 mode, the parent is in
+        `_last_open_ms`, which only a bootstrap or REST publish sets). So the 1m bootstrap lands before the first
+        post-window derived decision by construction; no 1h/12h/1D target is decided early.
+      - Native repair does not falsely complete a parent: `apply_history_repair` uses `advance_watermark=False`
+        (`:1140-1155`), so repair never sets `_last_open_ms`.
+      - **Retry backstop.** A recorded gap is rechecked every 30 s and healed if the parents arrive, for 6 h after
+        close (`_DERIVED_GAP_RETRY_SECONDS`, `:104`; heal at `:2025-2034`). After that it is logged
+        `derived BAR gap kept` (`:1986-1988`).
+      - **Retained 1m parents.** A demand increase alone does not re-bootstrap them: the watermark is dropped only
+        on a product generation change (`_rebase_changed_products`, `:1441-1479`), and depth is not in the series
+        digest (`qdl/runtime/bar_edge_checkpoint.py:50-80`). This is safe for the window: they have run live
+        continuously, and the projector retains demand + 2064 rows (at least 1440).
+    - **Gate D6b, at bootstrap end + 15 min and again at bootstrap end + 6 h** (the second read is the
+      derived-retry backstop and is recorded in the receipt):
+      - the derived gap list for the 94 (every derived binding) is EMPTY;
+      - evidence: zero `stable derived BAR gap ... no bar published` and zero `derived BAR gap kept` lines, and
+        `derived_gaps_recorded` = 0;
+      - any gap FAILS D6 and is never accepted silently. Roll back per section 5, or, if only D6 fails, roll back
+        bar_edge alone.
+    - Not verified: running this path end-to-end in a rehearsal. The proof is code tracing plus the rc2 unit tests.
+
   - **How bootstrap and native gap repair share HISTORY_CANDLES** (verified read-only on rc2 `832c02c4`).
     - Both call `fetch_okx_history` -> `/api/v5/market/history-candles` with BATCH priority:
       - bootstrap via `_fetch_history`, `qdl/runtime/stable_bar_edge.py:1055-1083`;
@@ -214,6 +259,20 @@ Build receipt: `~/.local/state/qdl-v2/v230-rcert2/images-832c02c4.json`. Both im
         within 15 min after the bootstrap ends, else roll back per section 5.
       - A hole older than 10 min contradicts the one-binding quantum above. It is recorded as a defect either
         way.
+  - **Live freshness during the bootstrap (review M2).**
+    - bar_edge pauses history, never live, while a downstream Kafka backlog is above its stage limit:
+      - `_history_gate_open`, `stable_bar_edge.py:1344-1360`, checked before each binding at `:1560`;
+      - the stages are parsed from env at `:2480-2488`. Today the rc2 compose has
+        `core:qdl-v2-realtime-core-v2:md.raw.realtime.v2:20000` (`deploy/compose/qdl-v2-stable-kn.yml:1283`).
+    - The window sets the core stage to **2000**. This is an env-only change in the D6 bar_edge env; the canonical
+      and bars stages stay at 50000. It is kept in the rc2 release env, so no extra recreate is needed later.
+    - Limit: the gate is checked per binding, and one binding publishes up to 10000 rows at once. So the core lag
+      can overshoot by up to one binding's rows. How fast the cores drain that burst is **not measured**. That is
+      why W waits for the measured W-gate (section 4): websocket raw_age p99 < 1 s and core lag < 2,000 for 5
+      min.
+    - Record core `raw_age_websocket_ms` and the group lag every minute from D6 to the bootstrap end.
+    - The lower stage makes the bootstrap slower when it bites; the 72.7 min estimate is a lower bound.
+
   - **Deeper or shallower history later** is a declaration-only step using the v2.3.0 mechanism: a config
     revision, the coverage gate and an ordered restart, with no image and no tag. It runs off-window and outside
     23:30-00:05Z. Per-row depth (option C) is a v2.3.x code change.
@@ -226,7 +285,7 @@ Build receipt: `~/.local/state/qdl-v2/v230-rcert2/images-832c02c4.json`. Both im
 
   | Manifest | Live (query_kn_1 mount) | Render |
   |---|---|---|
-  | `alpha.okx.paper.stable` | r15 `/consumer-realms/alpha.okx.paper.stable-r15.yaml` sha256 `33b9cfd4ff19fee2...` | **r16**, `metadata.min_token_revision: 15`; sha256 `b998bdce7be0c1c7...` (out4 = out5, byte-identical) |
+  | `alpha.okx.paper.stable` | r15 `/consumer-realms/alpha.okx.paper.stable-r15.yaml` sha256 `33b9cfd4ff19fee2...` | **r16**, `metadata.min_token_revision: 15`; sha256 `be43ca2461e2132f...` (out6; 960 requirements; `additive_problems(r15, r16)` empty) |
   | `trading-system.paper.stable` | r13 `/consumer-realms/trading-system.paper.stable-r13.yaml` sha256 `cfc20e29b18d35c9...` | r13, byte-identical (`cfc20e29...`), no accept-set: exact 13 as today |
   | alpha-binance-paper r16, alpha-vn-paper r1, monitoring-multivenue r2, reference-l2-stable r7 | as today | byte-identical |
   | sandbox / live realm files | as today | not rendered, not touched |
@@ -323,8 +382,9 @@ labels.
 | D3 | stream_kn_1, then _2 | rc2 image + new bundle (per-binding lineage) | Health OK. A retained-product cursor from before the window still verifies (writer heartbeat: no CURSOR_EXPIRED) |
 | D4 | query_kn_1, then _2 | rc2 python image, mounted manifests, new catalogue | `/health/dependencies` declaration `image_files=0`. A sampled retained record's contract lineage equals its pre-window value. DR02/DR03 byte compare |
 | W-pre | writer | Stop the writer (section W) before the ingestor step, as in stage A (review H1) | Writer stopped; outage bound per section W |
-| D5 | ingestor_okx_swap, then ingestor_binance_usdm | rc2 image, lane pins = today's, linger unset | started event: `lane_plan: PINNED`, `producer.linger_ms: null`, timeout 30. Lane names in session-liveness unchanged. 0 subscription rejected. Book resync complete |
-| D6 | binance_bar_edge | Stop bar_edge, THEN copy its checkpoint to `.pre-v230` (M3: a D0 copy would be stale), then rc2 python image, bar-edge pinned pair `/runtime/bar-edge-*-bindings.yaml`, migration record env | Log `checkpoint crosses catalog 11->R acquisition 19->R' crossed=True retained=640 added=<derived> dropped=0 migration_record=True`. Heartbeat `declaration` image_files=0. Derived bars for the 25 appear on md.bars.v2 and in the market cache. Parity auditor: 0 mismatches on the first closes |
+| D5 | ingestor_okx_swap, then ingestor_binance_usdm | rc2 image, lane pins = today's, linger unset | started event: `lane_plan: PINNED`, `producer.linger_ms: null`, timeout 30. Retained lane names in session-liveness unchanged, plus exactly one new lane `okx-business-002` (BAR, 59 subscriptions); retained: public-001 BOOK 10, public-002 TRADE 5, public-003 QUOTE 26, public-004 MARK_INDEX 52, business-001 BAR 70 -> 100; 252 subscriptions; no lane over 100; OKX config_revision 21 -> 22. Binance lanes unchanged (27 subscriptions) (M3). 0 subscription rejected. Book resync complete |
+| D6 | binance_bar_edge | Stop bar_edge, THEN copy its checkpoint to `.pre-v230` (M3: a D0 copy would be stale), then rc2 python image, bar-edge pinned pair `/runtime/bar-edge-*-bindings.yaml`, migration record env, and `QDL_STABLE_BAR_BACKPRESSURE_STAGES` core stage 20000 -> 2000 (env only, M2; see section 3) | Log `checkpoint crosses catalog 11->R acquisition 19->R' crossed=True retained=640 added=<derived> dropped=0 migration_record=True`. Heartbeat `declaration` image_files=0. Derived bars appear on md.bars.v2 and in the market cache for all 94 x {1h, 12h} and the covered 25 x {3m..1D}. Parity auditor: 0 mismatches on the first closes. Then D6b (derived gap list EMPTY) and the pre-W gate |
+| W-gate | none | Pre-W freshness gate (review M2) | For 5 consecutive minutes: core `raw_age_websocket_ms` p99 < 1000 ms on every core (`rust/qdl-kafka/src/bin/qdl-realtime-core.rs:405-412,458`; the REST bootstrap frames are counted separately in `raw_age_rest_ms`), and core group `qdl-v2-realtime-core-v2` lag on `md.raw.realtime.v2` < 2,000 records. If it is not green, W waits (correctness over speed), at the latest until bootstrap end + gap drain |
 | W | writer (section W) | W-B2 image | Section W gates |
 
 - **Why this order.** Cores, projectors, stream and Query run the new contracts before bar_edge (D6) publishes any
@@ -342,11 +402,11 @@ labels.
 
 ## 4a. Window plan (estimates; T = start of D0)
 
-- **Start.** Any time 14:00-20:30Z today (2026-11-13), with the owner's GO; proposed 19:00Z (ends about 21:20Z).
-  - Latest start 20:30Z, so that D6, the 52.5 min bootstrap and the CPU gate end before 23:30Z with margin.
+- **Start.** Any time 14:00-20:00Z today (2026-11-13), with the owner's GO; proposed 19:00Z (ends about 21:40Z).
+  - Latest start 20:00Z, so that D6, the ~73 min bootstrap, W and the CPU gate end before 23:30Z with margin.
   - Otherwise start after 00:05Z.
   - The 23:30-00:05Z band is avoided: daily 1d close, HISTORY_CANDLES contention.
-- **Duration.** About 2 h 20 min, from D0 to the end of the CPU gate. Timings are estimates, not measured.
+- **Duration.** About 2 h 40 min, from D0 to the end of the CPU gate. Timings are estimates, not measured.
 
   | Step | Time |
   |---|---|
@@ -357,12 +417,18 @@ labels.
   | D4 (Query) | T+38 to T+43 |
   | W-pre | T+43 |
   | D5 (ingestors) | T+43 to T+50 |
-  | D6 (bar_edge recreate and its gates; the bootstrap then runs in the background, about 52.5 min) | T+50 to T+60; bootstrap T+55 to about T+108 |
-  | W (W1 + W2 + 10 min soak; starts after the D6 gates, not after the bootstrap) | T+60 to T+80 |
-  | CPU gate: bootstrap end + 30 min, steady state, median <= 6.0; the bootstrap burst is also recorded | about T+108 to T+140 |
+  | D6 (bar_edge recreate and its gates; the bootstrap then runs in the background, about 73 min with the 1m parents) | T+50 to T+60; bootstrap T+55 to about T+128 |
+  | W-gate, then W (W1 + W2 + 10 min soak) | best case T+65 to T+85 (gate green during the bootstrap); worst case T+133 to T+153 (W only after the bootstrap ends) |
+  | D6b derived gap list EMPTY | bootstrap end + 15 min, about T+143; again at + 6 h (receipt) |
+  | CPU gate: bootstrap end + 30 min, steady state, median <= 6.0; the bootstrap burst is also recorded | about T+128 to T+158 |
 
-- **Writer outage.** Paper fails closed from W-pre to W2 VERIFIED, about 30 min. Bound: 30 min from W-pre to D5 + D6
-  green, else roll back (section W).
+- **Writer outage (stated honestly).** Paper fails closed from W-pre (T+43) to W2 VERIFIED.
+  - Best case about 42 min: the W-gate is green during the bootstrap.
+  - Worst case about 110 min: W only after the bootstrap ends at about T+128, then the W-gate, then W.
+  - Coordinator: correctness over speed, so the longer outage is accepted.
+  - Bounds:
+    - D5 + D6 green within 30 min of W-pre, else roll back (section W);
+    - the W-gate green by bootstrap end + 20 min, else roll back.
 - **Blast radius.** Recreated:
   - DL: rust_core x3, market_projector x2, stream_kn x2, query_kn x2, ingestor_okx_swap, ingestor_binance_usdm,
     binance_bar_edge (11 containers, `qdl_v2_stable_candidate`);
@@ -379,7 +445,7 @@ labels.
 2. **D6:** stop bar_edge, restore `crypto-bar-checkpoint.json.pre-v230` (taken at D6 after the stop), recreate it with image 08f356a8 and the
    v2.2.5 compose (image config r11/r19). Derived bars stop. Already-published derived bars stay in Kafka/cache as
    final bars of products no consumer is entitled to after rollback.
-3. **D5:** ingestors back to 27c79b53 with their recorded compose/env (lane names never changed).
+3. **D5:** ingestors back to 27c79b53 with their recorded compose/env. Retained lane names never changed; the new lane `okx-business-002` disappears with the old plan.
 4. **D4 to D1:** each role back to its recorded image and compose/env, in the order Query, stream, projectors, cores.
    - Cores use the simultaneous-replace method.
    - The old bundle and catalogue carry no lineage pins, so records go back to the global values. These equal the
@@ -416,9 +482,12 @@ labels.
   only.
 - REST visibility: last 1m read +6.1 s after the boundary. At 00:00Z the 1m and 250 D48 1d reads queue together:
   last at +106 s (today about +98 s).
-- Bootstrap: quota 10000 (R-H2 option A, section 3), about 52.5 min, bounded by the 150/min HISTORY_CANDLES lane.
-- DL vCPU today: ~4.75-5.16 after Kafka F1 (coordinator). Expected steady delta about 0 vCPU (+0.2 records/s); the bootstrap burst is bounded by the 150/min lane.
-- Disk: the bootstrap adds about 2.30M bar rows once (about 0.7 GB at an assumed 300 B/row, not measured). Floor at D0 and D6: free >= 100 GiB AND >= 20% of `/`; 109 GiB / 22.5% at review time; 118 GiB / 24% free after the rc2 Rust build (12:08Z). Abort below.
+- Bootstrap: quota 10000 (R-H2 option A, section 3), about 72.7 min, bounded by the 150/min HISTORY_CANDLES lane;
+  about 732 records/s on average on the raw, canonical and bar topics during it.
+- DL vCPU today: ~4.75-5.16 after Kafka F1 (coordinator). Steady delta: the +47 records/s and +0.085 vCPU above
+  (the earlier "about 0 vCPU, +0.2 records/s" was the 25-instrument scope and is withdrawn). The bootstrap burst is
+  bounded by the 150/min lane and the core backpressure stage.
+- Disk: the bootstrap adds about 3.19M bar rows once (about 1.0 GB at an assumed 300 B/row, not measured). Floor at D0 and D6: free >= 100 GiB AND >= 20% of `/`; 109 GiB / 22.5% at review time; 118 GiB / 24% free after the rc2 Rust build (12:08Z). Abort below.
 
 ## 7a. CPU budget (owner rule 2026-11-13)
 
