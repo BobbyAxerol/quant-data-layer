@@ -512,3 +512,31 @@ class ReleaseRoutePlanSelectorTests(unittest.TestCase):
             ROOT / "config/v2/stable-v2-release-routing.yaml", manifest_root=ROOT,
         )
         self.assertTrue(plan.consumers)
+
+
+class SeriesDigestDerivedTests(unittest.TestCase):
+    """A DERIVED_FINAL acquisition (derived-bars slice) fingerprints its base interval."""
+
+    def test_derived_from_base_interval_is_part_of_the_series_identity(self):
+        from types import SimpleNamespace
+
+        from qdl.runtime.bar_edge_checkpoint import binding_series_digest
+
+        catalog = StableSourceCatalog.load(CATALOG)
+        acquisition = StableAcquisitionPlan.load(ACQUISITION, catalog=catalog)
+        source = next(item for item in catalog.bindings if item.feed.value == "BAR")
+        native = next(item for item in acquisition.bindings if item.binding_id == source.binding_id)
+        plain = binding_series_digest(source, native)
+        self.assertEqual(plain, binding_series_digest(source, SimpleNamespace(**{
+            name: getattr(native, name) for name in ("runtime", "mode", "provider_kind", "native_channel")
+        }, derived_from=None)), "no derived_from keeps the existing digest")
+        derived = SimpleNamespace(runtime=native.runtime, mode="DERIVED_FINAL",
+                                  provider_kind=native.provider_kind, native_channel=native.native_channel,
+                                  derived_from=SimpleNamespace(base_interval="1m"))
+        first = binding_series_digest(source, derived)
+        self.assertNotEqual(first, plain)
+        derived.derived_from = SimpleNamespace(base_interval="5m")
+        self.assertNotEqual(binding_series_digest(source, derived), first)
+        derived.derived_from = SimpleNamespace(other="1m")
+        with self.assertRaisesRegex(ValueError, "no base_interval"):
+            binding_series_digest(source, derived)

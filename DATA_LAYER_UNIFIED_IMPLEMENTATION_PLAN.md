@@ -77270,3 +77270,11 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   - status file `qdl.execution-binding-status.v1` (item 3);
   - merge with the derived-bars slice;
   - v2.3.0 images, certificate, window (draft packet).
+- Fix 2026-11-13 (cross-slice defect reported by the declaration-tool agent, reproduced with an overlay of 7eb58c5 +
+  the derived-bars python files: 1716 DERIVED_FINAL rows -> `TypeError: Object of type StableDerivedBarAcquisition is
+  not JSON serializable` in `binding_series_digest`). The digest read `derived_from.interval`, but the derived-bars
+  slice names the field `StableDerivedBarAcquisition.base_interval`, so the dataclass itself reached `json.dumps`.
+  The digest now reads `base_interval` (or a plain string) and refuses anything else with a typed ValueError; a
+  binding without `derived_from` keeps its digest. Test `SeriesDigestDerivedTests` (no-derived digest unchanged,
+  base interval changes the identity, a missing base interval refused); `tests.test_v230_declaration_mechanism`
+  22 OK; ruff clean.
