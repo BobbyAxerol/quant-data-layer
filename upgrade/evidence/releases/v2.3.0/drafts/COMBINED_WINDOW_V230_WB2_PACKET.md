@@ -157,6 +157,53 @@ Build receipt: `~/.local/state/qdl-v2/v230-rcert2/images-832c02c4.json`. Both im
     outside the 23:30-00:05Z band. The alpha's 1h depth beyond 1000 h follows that path if they ask.
   - Not verified: whether native gap repair shares the HISTORY_CANDLES bucket.
 
+## 3c. Consumer manifest revisions and JWTs (verified read-only 2026-11-13 ~12:40Z)
+
+- **(a) What changes.** The render changes one consumer manifest. The other five render byte-identical to the rc2
+  repo.
+
+  | Manifest | Live (query_kn_1 mount) | Render |
+  |---|---|---|
+  | `alpha.okx.paper.stable` | r15 `/consumer-realms/alpha.okx.paper.stable-r15.yaml` sha256 `33b9cfd4ff19fee2...` | **r16**, `metadata.min_token_revision: 15`; out4 sha256 `b998bdce7be0c1c7...`, replaced by the depth-1000 render (out5) |
+  | `trading-system.paper.stable` | r13 `/consumer-realms/trading-system.paper.stable-r13.yaml` sha256 `cfc20e29b18d35c9...` | r13, byte-identical (`cfc20e29...`), no accept-set: exact 13 as today |
+  | alpha-binance-paper r16, alpha-vn-paper r1, monitoring-multivenue r2, reference-l2-stable r7 | as today | byte-identical |
+  | sandbox / live realm files | as today | not rendered, not touched |
+
+- **Why r15 tokens keep working.**
+  - r16 passes `additive_problems(r15, r16) == []`: same identity; purposes, permissions, requirement rows and
+    quotas are a superset. So the renderer keeps the floor at 15 (`qdl/consumer/manifest_compat.py`
+    `next_min_token_revision`).
+  - rc2 Query (`qdl/security/data_plane.py:391`) and stream (`authority.rs:116`, `auth.rs:546`) accept a token
+    revision in 15..16. Grants always come from the active manifest.
+  - Before D3/D4 the old roles still compare exactly against r15, and after a rollback they compare exactly
+    against r15 again. An r15 token is valid in every state of the window and of the rollback.
+- **(b) Who holds a JWT for it now.**
+  - Read-only `docker inspect` of every running container found no live consumer of `alpha.okx.paper.stable`.
+    No container sets an `alpha.okx` consumer id or JWT revision, and no hosted-alpha container runs.
+  - The only references are the server side: query_kn_1/2 `QDL_STABLE_CONSUMER_MANIFESTS` and the JWT key maps.
+  - The `ts-sbx-executor-*` matches are `COMMAND_JOURNAL_CANARY_SCOPES`, not DL tokens.
+  - Containers holding a DL consumer JWT revision, all `trading-system.paper.stable`:
+
+    | Container | JWT revision |
+    |---|---|
+    | `market_data_service_p184w` | 13 |
+    | `w5d-ts-gateway`, `w5d-ts-paper`, `w5d-ts-performance`, `w5d-ts-risk` | 11 |
+
+  - The w5d rev-11 value is pre-existing and is not changed by this window, since the TS manifest is byte-identical.
+    Whether those services call DL directly with it is **not verified** here.
+- **(c) Consumer-side plan.**
+  - No bump is needed in the window.
+  - The hosted alpha can start on a JWT r15 for `alpha.okx.paper.stable`. It is accepted both before and after the
+    window and after a rollback.
+  - Issue a JWT r16 only after the DL v2.3.0 final (R-cert 2 final + S1-S6), because the rollback roles (v2.2.6
+    stage-A r13) refuse r16.
+  - Hosted-alpha start gate: `alpha.okx.paper.stable` token revision in {15, 16} on rc2, 15 while rollback is
+    possible. This is separate from the TS writer's JWT 13 / binding r25 gate.
+- **(d) TS writer.**
+  - `trading-system.paper.stable` stays r13 (byte-identical) with an exact compare.
+  - The render writes no TS file, so consumer binding r25 is untouched.
+  - W-B2 keeps `DATA_LAYER_V2_JWT_MANIFEST_REVISION=13` and binding r25 (section W env row).
+
 ## 3a. Two catalogue lineages (verified read-only 2026-11-13) and how the declaration keeps both
 
 - The live core rows carry a per-binding raw `instrument_catalog_revision`, the revision at which the binding was
@@ -298,7 +345,8 @@ labels.
 - Sandbox G1 and W05 are NOT untouched: `ts-sbx-market-data` reads both streams and both Queries, and W05 relays `redis_marketdata`. D1/D3/D4/D5 interrupt them briefly. Checks per section W (G1 health and W05 relay health before and after, as in the stage A v3 runbook);
 - CPU and memory caps (unless section 7 says so);
 - monitor, Portal, every TS service other than the writer (Sandbox G1 / W05: see above);
-- the consumer manifests' JWT revisions (unless the declaration requires an additive bump, see section 3).
+- every consumer manifest except `alpha.okx.paper.stable` (r15 -> r16, additive, accept-set 15..16; section 3c).
+  No consumer JWT is changed or reissued in the window. The TS writer keeps JWT 13 and binding r25.
 
 ## 7. CPU / disk impact
 
