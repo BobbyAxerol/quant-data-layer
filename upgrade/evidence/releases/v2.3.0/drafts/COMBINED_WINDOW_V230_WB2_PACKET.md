@@ -309,7 +309,7 @@ labels.
 - **Rollback.** Section 5: reverse order, about 1 min per role, to the section 1 images. Writer back to `7332e85a`
   via BOOTSTRAP then STRICT. M4 offset guard; no offset reset or seek. Shadow-tied criteria in section 0a.
 - **Not touched.** Section 6: Kafka brokers and config, topics and retention, market_cache and stable_redis, the
-  cert mesh, CPU and memory caps, monitor, Portal, every TS service other than the writer, JWT revisions.
+  cert mesh, CPU and memory caps, monitor, Portal, every TS service other than the writer, every consumer JWT (no reissue; the only manifest change is alpha.okx.paper.stable r15 -> r16 with accept-set 15..16, section 3c).
 
 ## 5. Rollback (coupled, reverse order; each about 1 min per role)
 
