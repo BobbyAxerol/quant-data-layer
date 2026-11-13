@@ -77308,3 +77308,26 @@ The cases that need real roles are S1–S6 in the R-cert 2 packet:
 - what is not touched, teardown and rollback.
 
 It needs owner approval. The driver `scripts/v230_rcert2_shadow.py` is not written yet.
+
+### DL v2.3.0 R-cert 2 shadow driver (offline parts tested) - 2026-11-13 (Claude)
+
+The owner approved the packet as written at e30392b9, with an early start (relayed by the coordinator). The run starts
+once the v2.3.0 rc images exist and keeps going through Monday 2026-11-16 12:00Z, with S1–S6.
+
+Driver: `scripts/v230_rcert2_shadow.py`.
+- `--render`, using the code under test:
+  - catalog subset of 70 BAR bindings;
+  - acquisition with 5 native 1m bindings and 65 DERIVED_FINAL bindings on the chain;
+  - `core_config` and the `native_ingestor_configs` OKX SWAP lane (candle1m x 5 only);
+  - consumer manifest, `compile_bundle`, authority record;
+  - single-node KRaft properties and a throwaway TLS CA valid 120 h.
+- `--plan` / `--up`: one holder on a new bridge network; every other role shares its network. Every role is `--rm`,
+  `--cpu-shares 256`, capped (1.15 CPU and 2,336 MiB in total) and labelled.
+- `--create-topics`.
+- `--compare`: derived cache rows against public OKX REST at 2 req/s or less. Evidence is restart-safe; `summarize` is
+  rebuilt from `compared.jsonl`.
+- `--fault S1..S6`, `--teardown`.
+- G2.6: a production compose identity hash is taken before and after the run.
+
+Tests: `tests.test_v230_rcert2_shadow`, 7 OK (render, caps, isolation argv, verdicts, comparator idempotence). No
+container has been started.
