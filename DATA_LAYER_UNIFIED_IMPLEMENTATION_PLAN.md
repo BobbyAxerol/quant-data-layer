@@ -77936,3 +77936,18 @@ container has been started.
 - **Status:** rc2 = `832c02c4` cleared for images (Rust from `c7fe877`, identical Rust inputs). Combined window
   packet: `upgrade/evidence/releases/v2.3.0/drafts/COMBINED_WINDOW_V230_WB2_PACKET.md` (reviewed; final pass
   pending image digests).
+- **Backlog, registered here (not in rc2). DL-BL-2026-11-13-C: per-row BAR history depth.**
+  - Today bar_edge (`qdl/runtime/bar_history_demand.py:20-37`) and the projector `retained_caps`
+    (`rust/qdl-projector/src/products.rs:118-143`) size bootstrap and retained history per binding from the largest
+    manifest-wide `quotas.max_warmup_rows`, ignoring each requirement row's `warmup_limit`.
+  - Change, in both places at once: depth = max over granting rows of `min(row.warmup_limit, quotas.max_warmup_rows)`.
+  - Purpose: a new selector can declare a shallow depth without lowering the quota, because lowering it is not
+    additive: the accept-set floor resets and existing products are trimmed.
+  - Estimate for the crossec-94 declaration: bootstrap about 9 min instead of about 52.5 min.
+  - Target v2.3.x. It needs Python + Rust tests plus a projector cap-migration check: existing caps must never
+    shrink below the cached rows without a declaration.
+- **Combined window R-H2 = option A** (coordinator 2026-11-13): quota 10000 as rendered (out4 = out5), bootstrap
+  about 52.5 min at 300 rows/page.
+  - Bootstrap and native gap repair interleave per binding in the single kn3 loop (packet section 3).
+  - Correction: the rc2 full suite ran on `269fc9c8`; the packet's earlier `3f45a315` was wrong, and the delta
+    file set is the same.

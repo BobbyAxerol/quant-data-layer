@@ -36,8 +36,8 @@ final DL v2.3.0 release and tag happen only after the R-cert 2 final verdict and
 | R-cert 1 | PASS | 740,350 records compared, 0 mismatches; receipt `6814e25c` |
 | R-cert 2 (shadow) | **Interim only** | 840/840 MATCH at 12:03Z on the **rc1** images (`7af599de`). S1-S6 run Monday 06:00Z; final verdict after 12:30Z |
 | R-cert 4 (capacity envelope) | **Not run** | The window's measured substitute is the D0 median and the bootstrap-end + 30 min gate, DL vCPU <= 6.0 (section 7a) |
-| rc2 full suite | PASS (environment errors only) | Run on `3f45a315`: 4296 tests, 4 errors, all `/app/logs/app.log` permission errors for the non-root user; those modules re-run as root: 15 OK |
-| rc2 delta after the full suite | PASS | `3f45a315..832c02c4` changes only `qdl/runtime/lineage.py`, `scripts/dl_declaration.py`, 2 fixtures and 2 test files (no Rust, no runtime role code). Delta tests: `test_v230_lineage` 14 OK on `c7fe877`; tool + bar_source + lineage 47 OK (8 skipped) on `832c02c4` |
+| rc2 full suite | PASS (environment errors only) | Run on `269fc9c8`: 4296 tests, 4 errors, all `/app/logs/app.log` permission errors for the non-root user; those modules re-run as root: 15 OK |
+| rc2 delta after the full suite | PASS | `269fc9c8..832c02c4` changes only `qdl/runtime/lineage.py`, `scripts/dl_declaration.py`, 2 fixtures and 2 test files (no Rust, no runtime role code). Delta tests: `test_v230_lineage` 14 OK on `c7fe877`; tool + bar_source + lineage 47 OK (8 skipped) on `832c02c4` |
 | Declaration render | Gate 18/18 PASS | Tool `832c02c4` + page-size fix (uncommitted, tool agent), out5 = out4 runtime files byte-identical (section 3) |
 
 **rc2 vs rc1 (`7af599de..832c02c4`), by commit**, and how each is covered:
@@ -146,7 +146,8 @@ Build receipt: `~/.local/state/qdl-v2/v230-rcert2/images-832c02c4.json`. Both im
   | OKX ingestor | `4cb59e29` |
   | Binance ingestor | `021dd5dc` |
 
-- **Bootstrap (one-off). Decision R-H2: depth 1000 cannot be declared for the new selectors alone.** The depth is
+- **Bootstrap (one-off). Decision R-H2 = option A (coordinator, 2026-11-13): quota 10000 as rendered, about 52.5
+  min; the owner said warmup latency does not matter. The 3m-30m grants stay (no scope cut). Depth 1000 cannot be declared for the new selectors alone.** The depth is
   a manifest-wide quota, not a per-row setting (verified):
   - bar_edge (`qdl/runtime/bar_history_demand.py:20-37`) and the projector `retained_caps`
     (`rust/qdl-projector/src/products.rs:118-143`, plus BAR_HEADROOM) both take, per BAR binding, the largest
@@ -155,9 +156,9 @@ Build receipt: `~/.local/state/qdl-v2/v230-rcert2/images-832c02c4.json`. Both im
 
     | Option | Cost | Verdict |
     |---|---|---|
-    | (A) Keep `alpha.okx.paper.stable` `max_warmup_rows` 10000 (this render) | Bootstrap about **52.5 min** | **Recommended, pending coordinator re-confirmation** |
+    | (A) Keep `alpha.okx.paper.stable` `max_warmup_rows` 10000 (this render) | Bootstrap about **52.5 min** | **Decided** |
     | (B) Lower that quota to 1000 | Not additive: the accept-set floor resets to 16, a same-window JWT bump is needed, and the projector trims the cached history of every existing alpha BAR product (255 x 1d at 10000) to 3064 | Rejected |
-    | (C) Make depth follow the row's `warmup_limit` in both places | Python + Rust change, not in rc2 | v2.3.x candidate; bootstrap about 9 min |
+    | (C) Make depth follow the row's `warmup_limit` in both places | Python + Rust change, not in rc2 | v2.3.x backlog DL-BL-2026-11-13-C (DL plan); bootstrap about 9 min |
 
   - Estimate (A), render out5 (tool page size corrected to OKX history-candles 300 rows/page,
     `qdl/adapters/okx/history.py:105`):
@@ -174,16 +175,45 @@ Build receipt: `~/.local/state/qdl-v2/v230-rcert2/images-832c02c4.json`. Both im
       | 1m | 89 | 0 (not granted) | 0 |
 
     - Dropping the 3m-30m grants for the covered 25 would bring it to about 34 min.
-  - **Shared bucket (verified by the tool agent; Rust BATCH lease ordering not verified).**
-    - Bootstrap (`stable_bar_edge.py:1081`) and native gap repair (`:1713`) both use
-      `/api/v5/market/history-candles` on the HISTORY_CANDLES lane (`qdl/adapters/okx/admitted_rest.py:39`), at
-      the same BATCH priority.
-    - `reserved_realtime_inflight: 1` protects only the live final reads on the separate CANDLES lane
-      (`stable_bar_edge.py:2165`).
-    - Risk: gap repair can be delayed for up to about 52 min while the bootstrap runs. Live 1m finals are not
-      affected.
-    - D6 gate addition: record the gap-repair backlog at D6 and at the bootstrap end; it must drain within 15 min
-      after the bootstrap ends.
+  - **How bootstrap and native gap repair share HISTORY_CANDLES** (verified read-only on rc2 `832c02c4`).
+    - Both call `fetch_okx_history` -> `/api/v5/market/history-candles` with BATCH priority:
+      - bootstrap via `_fetch_history`, `qdl/runtime/stable_bar_edge.py:1055-1083`;
+      - native repair via `_pending_for_binding`, `:1662-1713`, called from `run_native_recovery_cycle`
+        `:1810`.
+    - Both go through one shared `AdmittedOkxRestClient` (`:1037-1039`), on lane OKX/SWAP/HISTORY_CANDLES
+      (`qdl/adapters/okx/admitted_rest.py:37-40,66-69`).
+    - **Rust admission has no queue and no ordering.**
+      - `rust/qdl-core/src/provider_admission.rs:380-446`: a request is granted at once if cooldown, inflight and
+        token bucket allow; otherwise it is DEFERRED with a `retry_after`.
+      - `has_inflight_capacity` (`:533-543`): BATCH may use `max_inflight - reserved_realtime_inflight`; BATCH
+        leases among themselves are first-come.
+      - The client waits out deferrals by polling within a deadline (`qdl/admission/edge.py:101-117`, default
+        30 s).
+    - **They never contend with each other in bar_edge.**
+      - The live bar_edge runs `QDL_STABLE_BAR_READBACK=kn3` (`docker inspect`; rc2 compose
+        `deploy/compose/qdl-v2-stable-kn.yml:1289`).
+      - In kn3 mode, `run_forever` (`stable_bar_edge.py:2323-2370`) runs one thread, in this order per loop turn:
+        `bootstrap_history(max_bindings=1)` (one binding, at most 34 pages at 300 rows), then
+        `run_native_recovery_cycle()`, then `run_derived_cycle()`.
+      - So repair waits at most one binding's bootstrap: at most 34 requests, about 14 s at 150/min, plus HTTP
+        time.
+      - Repair is not starved by design. The full-run starvation case would be `bootstrap_history()` without a
+        quantum, which is the non-kn3 path and is not deployed.
+    - **Other lane users.**
+      - Query's admission client serves reference lanes only (`qdl/runtime/stable_source.py:1742-1750`,
+        native basis), not HISTORY_CANDLES.
+      - The live final reads use the separate CANDLES lane at REALTIME (`stable_bar_edge.py:2165`).
+      - Not verified: whether any non-admitted caller hits history-candles from the same IP.
+    - **Hold rule during the bootstrap (does not weaken the D6 gate).**
+      - Every 5 min from D6 to the bootstrap end, read the market cache (the same read-only readback as the D6
+        parity check) for every native 1m binding.
+      - Record any binding whose newest durable final 1m open lags the expected closed open by more than 10 min
+        (a native hole older than 10 min). Also record the `native final BAR recovery ACK` log lines
+        (`stable_bar_edge.py:1932`).
+      - Nothing is aborted mid-bootstrap on this alone. The D6 gate decides: the gap-repair backlog must drain
+        within 15 min after the bootstrap ends, else roll back per section 5.
+      - A hole older than 10 min contradicts the one-binding quantum above. It is recorded as a defect either
+        way.
   - **Deeper or shallower history later** is a declaration-only step using the v2.3.0 mechanism: a config
     revision, the coverage gate and an ordered restart, with no image and no tag. It runs off-window and outside
     23:30-00:05Z. Per-row depth (option C) is a v2.3.x code change.
