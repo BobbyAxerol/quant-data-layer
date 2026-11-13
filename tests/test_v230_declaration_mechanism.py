@@ -532,11 +532,15 @@ class SeriesDigestDerivedTests(unittest.TestCase):
         }, derived_from=None)), "no derived_from keeps the existing digest")
         derived = SimpleNamespace(runtime=native.runtime, mode="DERIVED_FINAL",
                                   provider_kind=native.provider_kind, native_channel=native.native_channel,
-                                  derived_from=SimpleNamespace(base_interval="1m"))
+                                  derived_from=SimpleNamespace(interval="1m"))
         first = binding_series_digest(source, derived)
         self.assertNotEqual(first, plain)
-        derived.derived_from = SimpleNamespace(base_interval="5m")
+        derived.derived_from = SimpleNamespace(interval="5m")
         self.assertNotEqual(binding_series_digest(source, derived), first)
-        derived.derived_from = SimpleNamespace(other="1m")
-        with self.assertRaisesRegex(ValueError, "no base_interval"):
+        derived.derived_from = "1m"
+        self.assertEqual(binding_series_digest(source, derived), first, "a plain string hashes the same")
+        derived.derived_from = SimpleNamespace(interval="5m")
+        self.assertNotEqual(binding_series_digest(source, derived), first)
+        derived.derived_from = SimpleNamespace(base_interval="1m")
+        with self.assertRaisesRegex(ValueError, "no base interval"):
             binding_series_digest(source, derived)

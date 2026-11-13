@@ -75,18 +75,19 @@ def binding_series_digest(source: Any, acquisition: Any) -> str:
         "native_channel": acquisition.native_channel,
     }
     # DL v2.3.0 DERIVED_FINAL bindings name their base interval
-    # (``StableDerivedBarAcquisition.base_interval``); included only when present
-    # so every existing binding keeps its digest. A plain string is accepted for
-    # a parsed mapping; anything else is refused rather than silently hashed.
+    # (``StableDerivedBarAcquisition.interval``, YAML ``derived_from.interval``,
+    # settled with the derived-bars slice); included only when present so every
+    # existing binding keeps its digest. Only the string is hashed: a plain
+    # string is accepted, anything without one is refused rather than hashed.
     derived_from = getattr(acquisition, "derived_from", None)
     if derived_from is not None:
         base_interval = (
             derived_from if isinstance(derived_from, str)
-            else getattr(derived_from, "base_interval", None)
+            else getattr(derived_from, "interval", None)
         )
         if not isinstance(base_interval, str) or not base_interval.strip():
             raise ValueError(
-                f"derived acquisition of {source.binding_id} has no base_interval to fingerprint"
+                f"derived acquisition of {source.binding_id} has no base interval to fingerprint"
             )
         body["derived_from"] = base_interval
     return hashlib.sha256(

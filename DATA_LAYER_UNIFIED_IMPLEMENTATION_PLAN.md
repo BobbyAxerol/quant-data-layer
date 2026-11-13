@@ -77278,3 +77278,7 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   binding without `derived_from` keeps its digest. Test `SeriesDigestDerivedTests` (no-derived digest unchanged,
   base interval changes the identity, a missing base interval refused); `tests.test_v230_declaration_mechanism`
   22 OK; ruff clean.
+- Follow-up 2026-11-13: the derived-bars slice settled the field as `StableDerivedBarAcquisition.interval` (YAML
+  `derived_from.interval`, worktree `dl-v230-derived-bars`). The digest now reads `interval` and still hashes only
+  the string; a plain string hashes the same, `derived_from: None` leaves the key out, and anything else is refused.
+  `tests.test_v230_declaration_mechanism` 22 OK.
