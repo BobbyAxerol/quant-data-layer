@@ -49,6 +49,8 @@ recreate below needs the owner's GO for this exact blast radius and rollback (CL
 | QDL_IMAGE_QUERY | `qdl-v2-python:2.3.0-rc2-832c02c4` = `sha256:03de529acc4f59ba2637f289aa196f544944f92fdcf719390cdf9aacbdfd441b` (label revision 832c02c4) | query_kn_1/2 |
 | QDL_IMAGE_BAR_EDGE | same python image `sha256:03de529a…441b` | binance_bar_edge |
 
+Build receipt: `~/.local/state/qdl-v2/v230-rcert2/images-832c02c4.json`. Both images come from a git-archive context of `832c02c4`; the Python dependency image is `qdl-v2-python@sha256:753604f8…`, and `verify_runtime_dependencies` PASS.
+
 - Kafka and Redis images are unchanged.
 - Digests come from `docker inspect` of the built images. No retag of an existing tag.
 
