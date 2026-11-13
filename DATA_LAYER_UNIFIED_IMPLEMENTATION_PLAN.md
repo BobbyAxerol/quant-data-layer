@@ -78116,3 +78116,7 @@ Guide delta: `upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md`, "Delta
 reproduces the runtime".
 
 Status: docs and configuration only; not pushed, no runtime action.
+
+Owner correction (2026-11-13, via coordinator) to the stage B precondition above: the disk floor for stage B and later
+packets is >= 20% free and >= 90 GiB absolute, not >= 25% (about 22% / 108 GB at the time). If a step would go below
+it, flag it so the owner can add disk; it does not block.

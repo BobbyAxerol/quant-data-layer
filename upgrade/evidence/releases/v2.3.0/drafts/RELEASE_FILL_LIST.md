@@ -50,7 +50,8 @@ Fill everything before the single release CI run (CI_PLAN.md step 1). Each item 
 ## Not part of v2.3.0 (do not fill here)
 
 - Stage B (S1-S4, TS QUOTE/MARK for the remaining 69 crossec swaps): after the v2.3.0 release, as a later declaration.
-  Re-render it on the measured post-arm baseline, with disk >= 25% free and its own packet that includes the
+  Re-render it on the measured post-arm baseline, with the owner disk floor (>= 20% free and >= 90 GiB absolute;
+  flag, do not block, if a step would go below it so the owner can add disk) and its own packet that includes the
   multi-member group proof.
 - The 4-contract `price_tick` refresh: a later declaration with its own migration record.
 - Live funding binding (v2.3.1), DL-BL-2026-11-13-E (v2.3.1), per-row bootstrap depth (DL-BL-2026-11-13-C).
