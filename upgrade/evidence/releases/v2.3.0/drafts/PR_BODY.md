@@ -54,8 +54,12 @@ Release notes: `upgrade/evidence/releases/v2.3.0/RELEASE_NOTES.md`; certificate:
   composes, restoring the pre-rollout bar-edge checkpoint backup (v4; the old image cannot read v5). The writer goes
   BOOTSTRAP then STRICT (W.5).
 - A declaration rollback is a forward declaration, so revisions stay monotonic.
-- A projector-only rollback to v2.2.4 after derived bars are published stops stage B (`ENVELOPE_NOT_CANONICAL`,
-  R-cert 2 S5): roll back coupled, or remove derived bindings first.
+- Projector rollback constraint (packet amendment 4'/6'): the target projector `60f83a51` refuses derived bars
+  (`ENVELOPE_NOT_CANONICAL`, R-cert 2 S5) and would crash-loop, so the projectors stay on rc3 `58bdd282` while any
+  derived record exists on `md.bars.v2`; only Query, stream, cores, bar_edge and the ingestors roll back. New
+  rollback-receipt gate: no `ENVELOPE_NOT_CANONICAL`, RestartCount unchanged 10 min, `bars_applied` rising.
+- Known issue: a broker leadership move can restart a projector once, about 45 s, exactly-once kept (IDR-285, fix in
+  v2.3.1).
 - Known limits: single host; IDR-128 open; funding is reference-only here (live binding in v2.3.1); bootstrap depth is
   manifest-wide; bootstrap and gap repair share the HISTORY_CANDLES lane; 1W/2D/3D derived bars off until R-cert 2
   passes a Monday boundary.

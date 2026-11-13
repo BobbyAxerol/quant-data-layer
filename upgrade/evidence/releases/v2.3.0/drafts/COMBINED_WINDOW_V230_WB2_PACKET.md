@@ -818,3 +818,33 @@ python3 -B scripts/p184_writer_recreate.py --expect-image sha256:9dfef8a8a548be2
   - image-label hygiene
   - the TEST-only scoped verify
   - the rehearsal scoring
+
+## Amendment 2026-11-13 (after window A): section 5 items 4 and 6 replaced (RCA ac3ccee, R-cert 2 S5)
+
+Source: `RCA_PROJECTOR_BROKER_ROLL_AND_S5_ROLLBACK.md` (coordinator scratchpad, archopt/rca). The rollback target
+projector `60f83a51` (= `qdl-v2-rust:2.2.4-c7ce7d3`) REFUSES derived bars: R-cert 2 S5 run 4, 20:40:40Z,
+`errors.stage_b = Source("STATE_CODEC:ENVELOPE_NOT_CANONICAL")`, `bars_applied 0` for the whole batch. Section 5
+item 6's "restarted old projectors resume past those offsets, so this is safe" is wrong: a restart resumes at the
+Redis checkpoint (`state.next`, c7ce7d3 `stage_b.rs:487-497`), before the derived record, and fails again. After 30
+consecutive errors the supervisor calls `fatal()` (`main.rs:419-427`), so it crash-loops.
+
+> **4'. Projectors are NOT rolled back once any derived (AGGREGATED, `origin = BAR_ORIGIN_AGGREGATED`) record exists
+> in `md.bars.v2`.** Check before the rollback: the offset guard of item 7 shows a last derived offset on any
+> `md.bars.v2` partition. If one exists, `market_projector_1/2` stay on the rc3 image `58bdd282…` with their rc3
+> bundle and catalog. Only the other roles roll back, in the order Query, stream, cores; then bar_edge (item 2) and
+> the ingestors (item 3). The rc3 projector reads both native and derived bars (it is a superset reader, R-cert G2.x).
+> A rollback to `60f83a51` is allowed only when the guard shows no derived record on any `md.bars.v2` partition, i.e.
+> D6 never published or retention has expired past the last derived offset.
+>
+> **6'. Replace the M4 paragraph:** "The old projector `60f83a51` refuses a DERIVED_FINAL bars envelope
+> (`STATE_CODEC:ENVELOPE_NOT_CANONICAL`, c7ce7d3 `stage_b.rs:1240-1246`; R-cert 2 S5 REFUSED 20:40:40Z). A restart
+> resumes at the Redis checkpoint, before the derived record, and fails again. So it is never put in front of a bars
+> topic holding derived records (4'). No offset reset or seek of projector groups."
+>
+> **Gate added to the rollback receipt:** after the rollback, both projectors' `errors.stage_b` contain no
+> `ENVELOPE_NOT_CANONICAL`, `RestartCount` is unchanged for 10 min, and stage-B `bars_applied` rises.
+
+Open item: the rc3 projector together with the rolled-back (r13) consumer bundle was not tested. Item 4' keeps the rc3
+bundle with the rc3 projectors, so that combination is avoided. Not checked here: whether the rc2-window rollback
+of 13:00-13:05Z ran over derived records. This amendment governs every rollback from now on; window A's D6 (14:52Z)
+published derived bars.

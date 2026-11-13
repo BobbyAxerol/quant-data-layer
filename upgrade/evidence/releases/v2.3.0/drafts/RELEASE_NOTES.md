@@ -139,6 +139,7 @@ gate 18/18 (render out6, packet section 3).
 ## Limits (carried and new)
 
 - Single host, not HA.
+- A broker leadership move can restart a projector once, about 45 s, exactly-once kept (IDR-285, fix in v2.3.1).
 - The IDR-128 supported-load envelope is still open.
 - Live funding events and contract metadata are not bound. They are served as reference data through `FRESH_SNAPSHOT`
   (`qdl/reference/runtime.py:44-80`); the live OKX funding binding is in v2.3.1.
@@ -156,10 +157,19 @@ and v2.2.5 for the Binance ingestor/bar_edge. Capture logs and inspect before ev
 restored BOOTSTRAP then STRICT, never with `docker start`. The pre-rollout bar-edge checkpoint backup restores
 the v4 checkpoint, because the old image cannot read v5. A declaration rollback is a forward declaration.
 
-**Projector rollback after derived bars are published (R-cert 2 S5).** Once DERIVED_FINAL bars carrying
-`BAR_ORIGIN_AGGREGATED` / `Bar.aggregation` are on `md.bars.v2`, rolling the projectors back to the v2.2.4 image
-stops stage B: the old projector rejects those records with `ENVELOPE_NOT_CANONICAL`, so bars stop flowing to the
-cache. A projector-only rollback is therefore not a safe partial rollback after the first derived bar. Roll back
-coupled (section 5), with bar_edge's derived bindings removed first by a forward declaration, or keep the projectors
-on the v2.3.0 image. TBD: the regression verdict on the real v2.2.6 r13 rollback target and on the projector
-stage-B `BrokerTransportFailure` exit seen during the broker roll (it gates the tag).
+**Projector rollback constraint (amendments 4' / 6', RCA 2026-11-13, R-cert 2 S5).** Window A's D6 published
+DERIVED_FINAL bars (`BAR_ORIGIN_AGGREGATED`, `Bar.aggregation`) on `md.bars.v2`. The rollback-target projector
+`60f83a51` (= `qdl-v2-rust:2.2.4-c7ce7d3`) refuses them (`STATE_CODEC:ENVELOPE_NOT_CANONICAL`, c7ce7d3
+`stage_b.rs:1240-1246`; S5 REFUSED 20:40:40Z). A restart resumes at its Redis checkpoint before the derived record,
+so it crash-loops. Therefore:
+- **4'.** Projectors are not rolled back while any derived record exists on any `md.bars.v2` partition (offset guard,
+  packet section 5 item 7). `market_projector_1/2` stay on rc3 `58bdd282` with their rc3 bundle and catalogue; only
+  Query, stream and cores roll back, in that order, then bar_edge and the ingestors. The rc3 projector reads both
+  native and derived bars. Rolling back to `60f83a51` is allowed only when no derived record remains (D6 never
+  published, or retention has expired past the last derived offset).
+- **6'.** The old projector is never put in front of a bars topic holding derived records. No offset reset or seek of
+  projector groups.
+- **Rollback receipt gate:** after the rollback, both projectors' `errors.stage_b` contain no `ENVELOPE_NOT_CANONICAL`,
+  `RestartCount` is unchanged for 10 min, and stage-B `bars_applied` rises.
+- Open: the rc3 projector with the rolled-back r13 consumer bundle was not tested; 4' avoids that combination.
+- Dated amendment: `drafts/COMBINED_WINDOW_V230_WB2_PACKET.md`, "Amendment 2026-11-13 (after window A)".
