@@ -3307,3 +3307,8 @@ Rules the tool enforces:
 - sticky lanes: existing lane names and members never move;
 - a row DL cannot serve is BLOCKED with a reason, never dropped.
 It never mounts, restarts or edits a deployed file.
+
+Update (same day): EXECUTION quotas are derived by `qdl.consumer.quota_model` and never hand-picked; a declared
+quota below the model is refused. The gate's `consumer_quota_model` check guards it, and the report carries the
+modelled Query request load (`capacity.query_requests`). Alpha quotas are `MODEL_PENDING`. A retired revision is
+skipped through the declaration's `revision` / `release_revision`, never reused.

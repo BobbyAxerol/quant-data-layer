@@ -20,7 +20,7 @@ consumers:
 - consumer_id: trading-system.paper.stable
   class: EXECUTION
   manifest: consumers/stable/trading-system-paper.yaml
-  quotas: {max_streams: 400, requests_per_minute: 9000}
+  # quotas: derived by qdl.consumer.quota_model from the declared products (never hand-picked)
   ts_requirements: [ts-declared-requirements-crossec96.json]
   instruments:
   - venue: OKX

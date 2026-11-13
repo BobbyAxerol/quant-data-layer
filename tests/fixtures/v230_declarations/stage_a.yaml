@@ -1,6 +1,8 @@
-# DL v2.2.6 stage A expressed as a v2.3.0 declaration (golden: reproduces the pinned stage A set).
-# Base = the repository revision set (catalog r12 / acquisition r20 / Paper manifest r11).
-# Runtime inputs (deployed role files) are added by the golden test when the pinned set is available.
+# DL v2.2.6 stage A expressed as a v2.3.0 declaration. Golden: rendered against the pre-stage-A revision set
+# (catalog r12 / acquisition r20 / Paper manifest r11, DL 098c94b) it reproduces commit c29c216 and its pinned
+# runtime set; rendered against this tree (which carries stage A) it is a no-op.
+# Quotas are not declared: qdl.consumer.quota_model derives them (r13: 10,000 requests/min, 160 streams).
+# Revision 12 of the Paper manifest (deployed ~7 min on 2026-11-13, rolled back) is retired: target r13, binding r25.
 schema: qdl.v2.declaration.v1
 declaration_revision: 1
 environment: paper
@@ -17,7 +19,8 @@ consumers:
 - consumer_id: trading-system.paper.stable
   class: EXECUTION
   manifest: consumers/stable/trading-system-paper.yaml
-  quotas: {max_streams: 150, requests_per_minute: 4500}
+  revision: 13
+  release_revision: 25
   instruments:
   - venue: OKX
     market: SWAP
