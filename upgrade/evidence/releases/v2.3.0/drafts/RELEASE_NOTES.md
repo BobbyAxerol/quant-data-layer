@@ -78,15 +78,23 @@ The release tree reproduces the deployed runtime (pre-flight F2, 2026-11-13):
   `QDL_STABLE_BAR_CHECKPOINT_MIGRATION`.
 - `deploy/compose/qdl-v2-stable-kn.v2.3.0.env` is byte-equal to the deployed rc3 env (sha256 `2b1b4b8db699721f...`; image
   digests and host paths only, no secrets).
-- `config/v2/` and `consumers/stable/` are the out6 `repo/` set: acquisition r22 with every one of the 1,163 rows
-  pinned (`lineage_config_revision`: 722 at 21, 407 at 22, 34 at 19), catalogue r14, demand r10, scope r13, routing r31, the two new universes, and
-  `alpha-okx-paper.yaml` r16. All six consumer manifests are equal as documents to the mounted realm files.
+- The live declaration is carried as evidence in `upgrade/evidence/releases/v2.3.0/declaration-out6/` (with `SHA256SUMS`), byte-identical to render out6:
+  - the repo-form set `repo/`: acquisition r22 with all 1,163 rows pinned (722 at 21, 407 at 22, 34 at 19),
+    catalogue r14, demand r10, scope r13, routing r31, two universes, and `alpha-okx-paper.yaml` r16;
+  - the mounted renders `runtime/`, `cores/`, `ingestor/`, `consumer-realms/`;
+  - `render-inputs.json` and `report.json`.
+  All six consumer manifests are equal as documents to the mounted realm files.
+- It is not carried as `config/v2` / `consumers/stable`: those stay at the pre-declaration r21/r13 baseline that
+  the test suite and the repo-default loaders use. With the out6 set in `config/v2`, 110 of 1,270 impacted tests
+  fail (18 failures, 92 errors). The causes: selector manifests loaded without universe context (54);
+  DERIVED_FINAL rows on SQLite readback (35); goldens pinned to r21/r13 (about 20). Making those loaders and tests
+  selector- and DERIVED_FINAL-aware is a v2.3.1 slice.
 - What stays different, and why:
   - the mounted Query/bar_edge documents (`runtime/*.yaml`) are rendered from the live runtime base, not from
-    `config/v2`. They carry the live config-lineage stamps (H2, e.g. 19 on rows the repo pins at 21), the live
+    the repo form. They carry the live config-lineage stamps (H2, e.g. 19 on rows the repo form pins at 21), the live
     `:8443` OKX URLs on 110 rows, and lack `l2.materialized_snapshot_interval_ms` on 2 rows. They are recorded by
     sha256 in packet section 3 (acquisition `81d001aa`, bar-edge pair `9154bf1a` / `ba7bd0f4`, migration `cd15ee73`,
-    kn bundle `924951cd`, ingestors `4cb59e29` / `021dd5dc`), and the scratch render `out6` keeps them.
+    kn bundle `924951cd`, ingestors `4cb59e29` / `021dd5dc`), and the copies are in `upgrade/evidence/releases/v2.3.0/declaration-out6/`.
   - `v2.3.0-rc2` and `v2.3.0-rc2-ingestor` are root-only (`0750 root:10001`), so the files there were not read back
     byte for byte without sudo. The cores (`rust_core*.json`) and the realm (`alpha.okx.paper.stable-r16.yaml`,
     `bundle.json`) were read back and are byte-equal to out6.

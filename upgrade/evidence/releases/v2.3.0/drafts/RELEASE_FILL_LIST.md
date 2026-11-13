@@ -20,9 +20,9 @@ Fill everything before the single release CI run (CI_PLAN.md step 1). Each item 
    (= host `qdl-v2-stable-kn.v2.3.0-rc3.env`) sha256 `2b1b4b8d...`. Still to do: record both in the ledger row, and
    re-diff against the host copies at fill time (any later recreate that changes them invalidates this).
 4. The declaration that went live:
-   - DONE (F2): out6 `repo/` set committed (`config/v2` acquisition r22 with pins, catalogue r14, demand r10, scope
-     r13, routing r31, two universes; `consumers/stable/alpha-okx-paper.yaml` r16). The mounted `runtime/*`
-     documents stay host-only, with the reason recorded in RELEASE_NOTES "Release tree = runtime";
+   - DONE (F2, corrected): out6 carried as evidence in `upgrade/evidence/releases/v2.3.0/declaration-out6/` (repo form, runtime renders, cores, ingestor,
+     realm, render inputs; `SHA256SUMS`). `config/v2` / `consumers/stable` stay at the 3d8ccd7 baseline (reason in
+     RELEASE_NOTES "Release tree = runtime");
    - out6 digests (packet section 3); byte readback of the root-only `v2.3.0-rc2` and `v2.3.0-rc2-ingestor` dirs needs
      sudo (an operator step);
    - keep the render inputs record (`render-inputs.json`);

@@ -2467,7 +2467,7 @@ filled after the window and the R-cert 2 final verdict (`drafts/RELEASE_FILL_LIS
   `sha256:a235c0a18cdeb112ea0b49627eaf02f2a68ab878298ebba07884461ee5709d0b` (docker inspect about 16:10Z 2026-11-13;
   reconfirm at fill), compose `deploy/compose/qdl-v2-stable-kn.yml` sha256 `5b1381e062d97a7a...` + env
   `deploy/compose/qdl-v2-stable-kn.v2.3.0.env` sha256 `2b1b4b8db699721f...` (both byte-equal to the host copies),
-  first declaration render out6 (gate 18/18, tool `5a42ba01`; `config/v2` + `consumers/stable` in the tree).
+  first declaration render out6 (gate 18/18, tool `5a42ba01`; carried as evidence `upgrade/evidence/releases/v2.3.0/declaration-out6/`, `SHA256SUMS`).
 - R-gates, D5a, bootstrap duration, D6b gap gate, section 7a CPU gate: TBD (receipts `window-<UTC>/SHA256SUMS`).
 
 ### PLACEHOLDER - v2.3.0 certificate

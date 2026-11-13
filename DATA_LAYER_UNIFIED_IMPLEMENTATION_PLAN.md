@@ -78158,3 +78158,18 @@ flow; the owner adds disk on 2026-11-14/15.
   - Coordinator decision: window B (W-B2), executed by the TS writer agent. DL stays hands-off on the writer.
 - **Open:** the D6b +6 h read at 23:01Z (detached checker writes `runA/D6B_6H`); the v2.3.0 release after the
   R-cert 2 final verdict.
+
+Correction to F2 (same day, Claude), agreed with the coordinator and the release owner.
+
+The impacted suite on the F2 tree: 96 modules, rc3 image, 1 CPU. Ran 1,270: 18 failures, 92 errors, 63 skipped. All
+of them come from the out6 config in `config/v2` / `consumers/stable`:
+- selector manifests loaded without universe context: 54;
+- DERIVED_FINAL rows on SQLite readback: 35;
+- goldens pinned to r21/r13: about 20.
+
+The compose and env stay as committed; `test_kn_stable_compose` passes. `config/v2` and `consumers/stable` are
+restored to the 3d8ccd7 baseline. The live declaration is carried as evidence in
+`upgrade/evidence/releases/v2.3.0/declaration-out6/` (with `SHA256SUMS`; bundles omitted).
+
+Follow-up for v2.3.1: make the repo-default loaders and those tests selector- and DERIVED_FINAL-aware, so that the
+repo config can track the live declaration.

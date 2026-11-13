@@ -32,8 +32,8 @@ Release notes: `upgrade/evidence/releases/v2.3.0/RELEASE_NOTES.md`; certificate:
   back (`window-20261113T1237Z/`). rc3 window A (DL only, Python `a235c0a1`): TBD receipt.
 - rc2 full suite on `269fc9c8`: 4,296 tests, 4 environment-only errors (non-root log permission; 15 OK as root).
 - rc3 full suite: 4,304 tests, 4 environment-only errors, root re-run 15 OK (packet section 0b, `3d8ccd7`).
-- Release tree = runtime (F2): the deployed compose and rc3 env byte-equal; out6 `config/v2` + `consumers/stable`
-  committed. TBD: impacted-suite count on this tree.
+- Release tree = runtime (F2): the deployed compose and rc3 env byte-equal; the live declaration out6 as evidence
+  (`upgrade/evidence/releases/v2.3.0/declaration-out6/`); `config/v2` stays the test baseline. Impacted suite on this tree: TBD.
 - Delta tests on tool `5a42ba01`:
   - `test_v230_declaration_tool`, `test_v230_bar_source`, `test_v230_lineage`: 47 OK, including the env-gated stage A
     goldens;

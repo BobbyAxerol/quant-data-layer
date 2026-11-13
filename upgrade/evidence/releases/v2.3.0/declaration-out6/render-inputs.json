@@ -1,0 +1,99 @@
+{
+  "accept_set": true,
+  "bar_edge_config_lineage": 19,
+  "bar_edge_live_checkpoint": "/s/live-ro/crypto-bar-checkpoint.json",
+  "base_repo": "/src",
+  "base_runtime": {
+    "authority": "/s/first/authority.json",
+    "bundles": {
+      "kn": "/s/first/kn-bundle.json",
+      "realm": "/live/realm-bundle.json"
+    },
+    "cores": [
+      "/live/cores/rust_core.json",
+      "/live/cores/rust_core_2.json",
+      "/live/cores/rust_core_3.json"
+    ],
+    "ingestors": {
+      "ingestor-binance-usdm.json": "/s/live-ro/ingestor_binance_usdm.json",
+      "ingestor-okx-swap.json": "/s/first/ingestor-okx-swap.json"
+    },
+    "query_acquisition": "/s/first/query-stable-acquisition-bindings.yaml",
+    "route_bindings": {}
+  },
+  "base_sha256": {
+    "config/v2/stable-acquisition-bindings.yaml": "4533da057ce2e521c998657fb19e89c5549746b9e084002cd9fff698bf73f4e7",
+    "config/v2/stable-authority-promotion-scope.yaml": "65d21991e61f0d8831b77ea0a156bd3089b18644420b39f66b7d6fd1de6b80ba",
+    "config/v2/stable-crypto-demand.yaml": "f0736d7bdc3c54f43c24a9a9563a3162f0e6fe6b869e96eaa79db59975dab975",
+    "config/v2/stable-source-bindings.yaml": "f51ef5c44e46e04a319f1e8e1e59362cee165abbf1da659fa427c811e57bd926",
+    "config/v2/stable-v2-release-routing.yaml": "144af5609981329d4930d5f1ff0ff4e8abd6e927bb4a42080c0a1284870e0534",
+    "runtime:authority": "33b3ff2509b30217598737002e8cec052d2abcf83170324997dd943a463c49de",
+    "runtime:bundles:kn": "9136beba5280c6852240c8473dfb6976c3280b93f047d8c61125694c18fa1267",
+    "runtime:bundles:realm": "5180a904971e50ea3e1ac21ad63f6ec91ab597920a14ae417f0792ae7313c339",
+    "runtime:cores:rust_core.json": "22e139ffbaa2e49843867fcf93c79ae0232ba23f3171f08a4c5dd06026c3769c",
+    "runtime:cores:rust_core_2.json": "26d6dad9ee9c3e5ecb2d35e66b52bc4d540cc11995411d62c9de3ba1e2416493",
+    "runtime:cores:rust_core_3.json": "c962191bf8a2374f71662f512de007735871c378ed8e9b6c4697245ab9e1e4fa",
+    "runtime:ingestors:ingestor-binance-usdm.json": "5833bc4ea35cb4558a931288d34b61a94e99d260f1ba6b0e56596423995930ed",
+    "runtime:ingestors:ingestor-okx-swap.json": "d62f36b4927dbf2c7b5966654033dd320f8f130bafd608f2ea172e1ed988dbbb",
+    "runtime:query_acquisition": "bf9fbad47242e62229f43ea1bc8445b21cee4b3eac7e55e401b39acb333c7659"
+  },
+  "declaration_revision": 5,
+  "live_sources": {
+    "authority (embedded in every ingestor and core config)": {
+      "live_runtime_authority_json": {
+        "note": "not read; no role mounts it",
+        "path": "/home/bobby/.local/state/qdl-v2/releases/v2.2.6-stage-a/runtime/authority.json",
+        "sha256": "db00040f1aca925bfa732903378c5729ee4d4ae7811435b16474b9121bc4e5c0"
+      },
+      "rendered_from": "scratch copy 33b3ff25, equal to the embedded authority objects"
+    },
+    "bar_edge checkpoint": {
+      "live": "/home/bobby/.local/state/qdl-v2/releases/v2.2.0-02cd827/state/bar-edge/crypto-bar-checkpoint.json",
+      "note": "live file changes with watermarks; integration agent read d179ca89 earlier",
+      "sha256_at_copy": "9dcd0dcd42effa9f518f7bca9d925c1a0db1455761837fc7c66bee407f42db73"
+    },
+    "ingestor_binance_usdm /runtime/config.json": {
+      "live": "/home/bobby/.local/state/qdl-v2/releases/v2.2.3-rc7-ingestor-liveness/ingestor_binance_usdm.json",
+      "rendered_from": "coordinator read-only copy dlv230tool/live-ro",
+      "sha256": "5833bc4ea35cb4558a931288d34b61a94e99d260f1ba6b0e56596423995930ed"
+    },
+    "ingestor_okx_swap /runtime/config.json": {
+      "live": "/home/bobby/.local/state/qdl-v2/releases/v2.2.6-stage-a-ingestor/ingestor_okx_swap.json",
+      "rendered_from": "scratch dlcov/stageA-pinned-r13 copy",
+      "sha256": "d62f36b4927dbf2c7b5966654033dd320f8f130bafd608f2ea172e1ed988dbbb"
+    },
+    "projector /kn/bundle.json": {
+      "live": "/home/bobby/.local/state/qdl-v2/releases/v2.2.6-stage-a/bundle.json",
+      "rendered_from": "scratch dlcov/stageA-pinned-r13/kn-bundle.json copy",
+      "sha256": "9136beba5280c6852240c8473dfb6976c3280b93f047d8c61125694c18fa1267"
+    },
+    "query /runtime/stable-acquisition-bindings.yaml": {
+      "live": "/home/bobby/.local/state/qdl-v2/releases/v2.2.6-stage-a/runtime/stable-acquisition-bindings.yaml",
+      "rendered_from": "scratch dlcov/stageA-pinned-r13/query-runtime copy",
+      "sha256": "bf9fbad47242e62229f43ea1bc8445b21cee4b3eac7e55e401b39acb333c7659"
+    },
+    "query /runtime/stable-source-bindings.yaml": {
+      "live": "/home/bobby/.local/state/qdl-v2/releases/v2.2.6-stage-a/runtime/stable-source-bindings.yaml",
+      "rendered_from": "repo config/v2/stable-source-bindings.yaml (same sha)",
+      "sha256": "f51ef5c44e46e04a319f1e8e1e59362cee165abbf1da659fa427c811e57bd926"
+    },
+    "rust_core x3": {
+      "live": "/home/bobby/.local/state/qdl-v2/releases/v2.2.6-stage-a-cores/rust_core{,_2,_3}.json",
+      "rendered_from": "live files, read-only mount",
+      "sha256": [
+        "22e139ffbaa2e49843867fcf93c79ae0232ba23f3171f08a4c5dd06026c3769c",
+        "26d6dad9ee9c3e5ecb2d35e66b52bc4d540cc11995411d62c9de3ba1e2416493",
+        "c962191bf8a2374f71662f512de007735871c378ed8e9b6c4697245ab9e1e4fa"
+      ]
+    },
+    "stream/query /consumer-realms/bundle.json": {
+      "live": "/home/bobby/.local/state/qdl-v2/releases/v2.2.6-stage-a-realm-r13/bundle.json",
+      "rendered_from": "live file, read-only mount",
+      "sha256": "5180a904971e50ea3e1ac21ad63f6ec91ab597920a14ae417f0792ae7313c339"
+    }
+  },
+  "manifests": {
+    "alpha.okx.paper.stable": "consumers/stable/alpha-okx-paper.yaml"
+  },
+  "schema": "qdl.v2.declaration-render-inputs.v1"
+}
