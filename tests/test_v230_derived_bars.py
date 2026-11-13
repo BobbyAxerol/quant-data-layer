@@ -41,7 +41,12 @@ from qdl.query import FeedType
 from qdl.query.lifecycle import BarLifecycle
 from qdl.query.results import ContractMetadata, MarketDataItem, QualityMetadata, SourceMetadata
 from qdl.runtime import derived_bars
-from qdl.runtime.kn_bar_readback import DurableBarRow, KnBarReadback
+from qdl.runtime.kn_bar_readback import (
+    DurableBarRow,
+    KnBarReadback,
+    KnBarReadbackError,
+    binding_product_key,
+)
 from qdl.runtime.stable_bar_edge import StableBinanceBarEdge
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import (
@@ -363,8 +368,8 @@ class _Publisher:
         return tuple(range(len(values)))
 
 
-class DeriverTests(unittest.TestCase):
-    """`run_derived_cycle` on a lightweight edge over the real catalog."""
+class _DeriverBase(unittest.TestCase):
+    """A lightweight edge over the real catalog and an in-process market cache."""
 
     PARENT = "okx-swap-eth-usdt-swap-bar-1m"
     CHILD = "okx-swap-eth-usdt-swap-bar-3m"
@@ -421,6 +426,17 @@ class DeriverTests(unittest.TestCase):
 
     def published_records(self):
         return [json.loads(item.raw_frame_bytes) for item in self.publisher.published]
+
+    def derived(self, binding_id: str, base: str):
+        acquisition = next(item for item in self.plan.bindings if item.binding_id == binding_id)
+        value = replace(acquisition, mode="DERIVED_FINAL", websocket_url=None,
+                        business_websocket_url=None, derived_from=StableDerivedBarAcquisition(base))
+        value.validate(self.sources[binding_id])
+        return value
+
+
+class DeriverTests(_DeriverBase):
+    """`run_derived_cycle`: publish, wait, gap, heal, revisions."""
 
     def test_publishes_complete_buckets_and_moves_the_watermark(self):
         self.put_minutes(range(6))
@@ -526,6 +542,134 @@ class DeriverTests(unittest.TestCase):
         self.assertEqual((lineage.first_watermark, lineage.last_watermark), (5, 9))
         self.assertIsNone(bar_item_fields(market_data_pb2.EventEnvelope.FromString(
             _envelope(self.child, self.START, self.minutes[0])))["resample_lineage"])
+
+
+class FaultMatrixTests(_DeriverBase):
+    """R-cert 3, offline cases (fakes only). Cases that need real roles (old
+    projector refusing field 19, restart under load, Redis rebuild end to end,
+    the live Monday boundary, checkpoint/JWT/lane items of the declaration
+    slice) run in the R-cert 2 shadow."""
+
+    def test_f1_restart_after_ack_before_checkpoint_republishes_identical_bytes(self):
+        self.put_minutes(range(6))
+        self.assertEqual(self.edge.run_derived_cycle(), 2)
+        first = [item.raw_frame_bytes for item in self.publisher.published]
+        # Crash after the ACK, before the watermark was persisted, and before
+        # the projector made the derived rows durable: a fresh edge re-derives.
+        self.setUp()
+        self.put_minutes(range(6))
+        self.assertEqual(self.edge.run_derived_cycle(), 2)
+        self.assertEqual([item.raw_frame_bytes for item in self.publisher.published], first,
+                         "same bytes -> same core event id -> projector Duplicate")
+
+    def test_f2_restart_after_durable_rows_publishes_nothing(self):
+        self.put_minutes(range(6))
+        rows = [_envelope(self.child, self.START + k * 180_000, self.minutes[0],
+                          origin=common_pb2.BAR_ORIGIN_AGGREGATED) for k in range(2)]
+        put_rows(self.redis, ENVIRONMENT, self.child, 1, rows)
+        self.assertEqual(self.edge.run_derived_cycle(), 0)
+        self.assertEqual(self.edge._last_open_ms[self.CHILD], self.START + 180_000)
+
+    def test_f3_missing_ack_keeps_the_watermark_and_records_no_gap(self):
+        self.put_minutes(range(6))
+        self.publisher.publish_many = lambda values: (list(values), ())[1]
+        with self.assertRaisesRegex(RuntimeError, "missed a Kafka ACK"):
+            self.edge.run_derived_cycle()
+        self.assertEqual(self.edge._last_open_ms[self.CHILD], self.START - 180_000)
+        self.assertEqual(self.edge._derived_gaps.get(self.CHILD, {}), {})
+        self.assertEqual(self.edge.persisted, 0)
+
+    def test_f4_cache_generation_change_during_read_fails_closed(self):
+        self.put_minutes(range(6))
+        pointer = f"kn3:{ENVIRONMENT}:ptr:{binding_product_key(self.parent, ENVIRONMENT).encode()}"
+
+        def bump(client):
+            reads = sum(1 for kind, key, _ in client.commands if kind == "HMGET" and key == pointer)
+            if reads == 2:  # the parent's "after" pointer read sees a new READY generation
+                client.hashes[pointer]["ready"] = b"2"
+
+        self.redis.on_pointer_read = bump
+        with self.assertRaisesRegex(KnBarReadbackError, "generation changed"):
+            self.edge.run_derived_cycle()
+        self.assertEqual(self.publisher.published, [])
+        self.assertEqual(self.edge._last_open_ms[self.CHILD], self.START - 180_000)
+
+    def test_f5_chain_climbs_only_when_the_finer_level_is_durable(self):
+        five = self.sources["okx-swap-eth-usdt-swap-bar-5m"]
+        fifteen = self.sources["okx-swap-eth-usdt-swap-bar-15m"]
+        self.edge.derived_bindings = ((five, self.derived(five.binding_id, "1m")),
+                                      (fifteen, self.derived(fifteen.binding_id, "5m")))
+        self.edge._derived_parent = {five.binding_id: self.parent, fifteen.binding_id: five}
+        self.edge._last_open_ms = {five.binding_id: self.START - 300_000,
+                                   fifteen.binding_id: self.START - 900_000,
+                                   self.PARENT: self.START + 14 * 60_000}
+        self.now = (self.START + 15 * 60_000) / 1000 + 1.0
+        self.put_minutes(range(15))
+        self.assertEqual(self.edge.run_derived_cycle(), 3, "three 5m bars; 15m waits")
+        self.assertEqual(self.edge._last_open_ms[fifteen.binding_id], self.START - 900_000)
+        # The core and projector make the 5m bars durable.
+        put_rows(self.redis, ENVIRONMENT, five, 1, [
+            _envelope(five, self.START + k * 300_000, self.minutes[0], origin=common_pb2.BAR_ORIGIN_AGGREGATED)
+            for k in range(3)])
+        self.now += 1.0
+        self.edge._derived_next_at.clear()
+        self.assertEqual(self.edge.run_derived_cycle(), 1)
+        (record,) = self.published_records()[-1:]
+        self.assertEqual((record["interval"], record["base_interval"]), ("15m", "5m"))
+        self.assertEqual(len(record["constituents"]), 3)
+
+    def test_f6_weekly_targets_open_on_monday(self):
+        week = self.sources["okx-swap-eth-usdt-swap-bar-1w"]
+        day = self.sources["okx-swap-eth-usdt-swap-bar-1d"]
+        doc = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        start, monday = doc["calendar_window_ms"]
+        self.edge.derived_bindings = ((week, self.derived(week.binding_id, "1d")),)
+        self.edge._derived_parent = {week.binding_id: day}
+        self.edge._last_open_ms = {week.binding_id: start - 7 * DAY, day.binding_id: monday - DAY}
+        put_rows(self.redis, ENVIRONMENT, day, 1, [
+            _envelope(day, int(row[0]), row) for row in doc["candles"]["1Dutc_calendar"]])
+        self.now = monday / 1000 + 1.0
+        self.assertEqual(self.edge.run_derived_cycle(), 4)
+        opens = [item["open_time_ms"] for item in self.published_records()]
+        self.assertEqual(opens, [int(row[0]) for row in doc["candles"]["1Wutc"]])
+        self.assertTrue(all((value - MONDAY) % (7 * DAY) == 0 for value in opens))
+        self.assertTrue(all(len(item["constituents"]) == 7 for item in self.published_records()))
+
+    def test_f7_gap_set_is_bounded_and_expires(self):
+        self.edge._last_open_ms[self.CHILD] = self.START - 301 * 180_000
+        self.now = self.START / 1000 + 200.0  # START itself is still inside its grace
+        self.assertEqual(self.edge.run_derived_cycle(), 0)
+        gaps = self.edge._derived_gaps[self.CHILD]
+        self.assertEqual(len(gaps), 256, "oldest gaps beyond the bound are dropped (logged)")
+        self.assertEqual(self.edge.derived_gaps_recorded, 300)
+        self.assertEqual(min(gaps), self.START - 256 * 180_000)
+        self.assertEqual(self.edge._last_open_ms[self.CHILD], self.START - 180_000)
+        self.now += 7 * 3600
+        self.edge._derived_next_at.clear()
+        self.edge.run_derived_cycle()
+        self.assertTrue(all(key >= self.START for key in self.edge._derived_gaps[self.CHILD]),
+                        "gaps older than the 6 h recheck horizon expire")
+
+    def test_f8_catch_up_is_bounded_per_cycle(self):
+        self.put_minutes(range(6))
+        self.edge.max_catchup_rows = 1
+        self.assertEqual(self.edge.run_derived_cycle(), 1)
+        self.assertLess(self.edge._derived_next_at[self.CHILD], self.now + 1.0, "behind -> poll soon")
+        self.edge._derived_next_at.clear()
+        self.assertEqual(self.edge.run_derived_cycle(), 1)
+        self.assertEqual(self.edge._last_open_ms[self.CHILD], self.START + 180_000)
+
+    def test_f9_provisional_or_foreign_rows_never_count_as_constituents(self):
+        # An in-progress parent row is not final, so the bucket waits.
+        envelope = market_data_pb2.EventEnvelope.FromString(
+            _envelope(self.parent, int(self.minutes[1][0]), self.minutes[1]))
+        envelope.bar.is_final = False
+        envelope.bar.lifecycle = market_data_pb2.BAR_LIFECYCLE_IN_PROGRESS
+        self.put_minutes([0, 2])
+        put_rows(self.redis, ENVIRONMENT, self.parent, 1, [envelope.SerializeToString()])
+        self.now = (self.START + 3 * 60_000) / 1000 + 10.0
+        self.assertEqual(self.edge.run_derived_cycle(), 0)
+        self.assertEqual(self.edge._last_open_ms[self.CHILD], self.START - 180_000)
 
 
 if __name__ == "__main__":

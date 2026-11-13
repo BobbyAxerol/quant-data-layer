@@ -77261,3 +77261,50 @@ standard DL structure, so adding an interval later is a declaration only.
 derived bar. An older projector drops field 19, then refuses the row (`ENVELOPE_NOT_CANONICAL`).
 
 **Rollback.** Revert the commit. Plans without `DERIVED_FINAL` are byte-identical in identity digest and core config.
+
+### DL v2.3.0 slice 1: R-cert 1 run, R-cert 3 offline cases, R-cert 2 packet - 2026-11-13 (Claude)
+
+**Scope.** The coordinator asked to close v2.3.0 quickly, in parallel with the stage A retry.
+Status: R-cert 3 offline cases are `tested locally`; R-cert 1 is `in progress`; R-cert 2 is a draft packet, not approved.
+Guide delta: the 2026-11-13 v2.3.0 slice 1 section in `upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md`.
+
+**R-cert 1 (offline parity).**
+- Scope: the 25 stage-A instruments (the 5 existing plus `symbols-stageA20`) x 30 UTC days (2026-10-14..2026-11-12) x 13 intervals.
+- Each day covers every intraday native interval from 1m, plus 2D/3D/1W from the 28 days of 1D before that day's Monday.
+- Tool: `scripts/v230_derived_bar_parity.py`.
+  - Now backs off on OKX `50011` and on transport errors instead of failing the run.
+  - Runs in one `--rm` container: `--cpus 1`, `--cpu-shares 256`, 4 req/s (below the per-IP budget it shares with production).
+- State, outside Git: `~/.local/state/qdl-v2/v230-rcert1/` (`captures/`, `rcert1.log`, `summary.json`).
+- The core-path half is the ignored Rust test `okx_parity_directory` on the same directory. It runs once host load allows.
+- Gate: 0 mismatches. Gaps are reported, never filled.
+- The result is recorded in a follow-up entry.
+
+**R-cert 3 (offline part).** `tests.test_v230_derived_bars.FaultMatrixTests`, 9 cases:
+- F1: restart after the ACK but before the checkpoint republishes byte-identical records.
+- F2: restart after the rows are durable publishes nothing.
+- F3: a missing ACK keeps the watermark and records no gap.
+- F4: a cache generation change during a read fails closed.
+- F5: the chain climbs only after the finer level is durable.
+- F6: weekly targets open on Monday, with 7 constituents.
+- F7: the gap set is bounded (256) and expires after 6 h.
+- F8: catch-up is bounded per cycle.
+- F9: a provisional parent row never counts as a constituent.
+
+Module total: 29 tests OK (`--rm`, 1 CPU).
+
+The cases that need real roles are S1–S6 in the R-cert 2 packet:
+- bar_edge restart mid-chain;
+- ingestor outage, then native repair;
+- projector restart;
+- cache flush and rebuild;
+- refusal by a v2.2.4 projector (the rollout-order rule);
+- core restart.
+
+**R-cert 2 packet.** Draft: `upgrade/evidence/releases/v2.3.0/drafts/RCERT2_DERIVED_BARS_SHADOW_PACKET.md`. It covers:
+- an isolated namespace in the G12 pattern, with a single KRaft node, Redis and one instance of each role;
+- 5 symbols x 13 derived intervals, compared with native OKX REST over at least 24 h across Monday 2026-11-16 00:00Z;
+- caps of 1.15 vCPU and 2.3 GiB; expected use +0.2 to +0.35 vCPU against measured DL use of about 4.9 vCPU;
+- two v2.3.0 images built from the merged tree;
+- what is not touched, teardown and rollback.
+
+It needs owner approval. The driver `scripts/v230_rcert2_shadow.py` is not written yet.

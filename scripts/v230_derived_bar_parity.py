@@ -49,8 +49,21 @@ def fetch(client, inst: str, bar: str, start: int, end: int, pause: float) -> li
     rows: dict[int, list[str]] = {}
     after = end
     for _ in range(2_000):
-        reply = client.get(BASE, params={"instId": inst, "bar": bar, "after": str(after), "limit": "100"}).json()
-        time.sleep(pause)
+        reply = None
+        for attempt in range(6):
+            try:
+                reply = client.get(
+                    BASE, params={"instId": inst, "bar": bar, "after": str(after), "limit": "100"}
+                ).json()
+            except Exception as error:  # transport error: bounded retry, then fail
+                reply = {"code": "transport", "msg": str(error)}
+            time.sleep(pause)
+            # 50011 = OKX rate limit. Back off instead of competing with the
+            # production edge for the shared per-IP budget.
+            if reply.get("code") in {"50011", "transport"}:
+                time.sleep(2 ** attempt)
+                continue
+            break
         if reply.get("code") != "0":
             raise RuntimeError(f"{inst} {bar}: {reply}")
         data = reply.get("data") or []
