@@ -931,11 +931,11 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
             },
             {
                 # +4: the inverse BTC-USD-SWAP routes of Trading System r11.
-                "global_release_route_count": 327 + UNIVERSE_TOTAL,
-                "global_v2_primary_product_count": 323 + UNIVERSE_TOTAL,
+                "global_release_route_count": 367 + UNIVERSE_TOTAL,  # +40 stage A (r12)
+                "global_v2_primary_product_count": 363 + UNIVERSE_TOTAL,
                 "global_v1_primary_route_count": 4,
-                "selected_release_route_count": 325 + UNIVERSE_TOTAL,
-                "selected_v2_primary_product_count": 323 + UNIVERSE_TOTAL,
+                "selected_release_route_count": 365 + UNIVERSE_TOTAL,
+                "selected_v2_primary_product_count": 363 + UNIVERSE_TOTAL,
                 "selected_v1_primary_excluded_count": 2,
                 # ceil(pacing + native-basis deferral 600 + tail 75). The pacing
                 # floor is the slowest identity's opening operations at its sealed
@@ -963,7 +963,9 @@ class Phase105ConcurrentConsumerGroupTests(unittest.IsolatedAsyncioTestCase):
             ],
             # r11: +18 reads, +2 reference batches, +6 subscribes for the inverse
             # QUOTE / MARK_INDEX_PRICE / BOOK_SNAPSHOT / BOOK_DELTA.
-            {"QUERY_READ": 318, "REFERENCE_BATCH": 22, "STREAM_SUBSCRIBE": 106},
+            # r12 (v2.2.6 stage A): +120 reads, +40 reference batches, +40 subscribes for the
+            # 20 QUOTE + 20 MARK_INDEX_PRICE products (at 4,500 rpm still far below alpha.binance's pacing).
+            {"QUERY_READ": 438, "REFERENCE_BATCH": 62, "STREAM_SUBSCRIBE": 146},
         )
         self.assertEqual(
             plan["consumers"]["alpha.binance.paper.stable"][

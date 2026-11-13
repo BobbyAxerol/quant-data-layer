@@ -16,6 +16,7 @@ from typing import Any, Mapping
 import yaml
 
 from qdl.consumer import ConsumerManifestLoader, requirement_key
+from qdl.runtime.universal_demand import bar_family_symbols
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -313,11 +314,8 @@ def _universe_templates(
     )
     if consumer is None:
         return []
-    execution = {
-        str(row["native_symbol"]).upper()
-        for item in demand.get("consumers", []) for row in item.get("requirements", [])
-        if str(row.get("feed", "")).upper() != "BAR"
-    }
+    # Full-bar-family (signal) symbols are not universe rows; the shared predicate ignores execution-only demand.
+    execution = {symbol.upper() for _venue, symbol in bar_family_symbols(demand)}
     rows = []
     for row in consumer.get("requirements", []):
         symbol = str(row.get("native_symbol", "")).upper()
