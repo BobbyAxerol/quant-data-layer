@@ -476,14 +476,22 @@ class QueryDeclarationTests(unittest.TestCase):
         from qdl.consumer import ConsumerManifestRegistry
         from qdl.runtime.stable import _declaration_probe, stable_effective_declaration
 
-        path = ROOT / "consumers/stable/trading-system-paper.yaml"
+        # Mounted copies outside the image root: CI runs the suite from /app (= IMAGE_ROOT), where the repository
+        # files themselves would count as image files.
+        mounted = Path(tempfile.mkdtemp(prefix="qdl-declaration-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(mounted, ignore_errors=True))
+        path = mounted / "trading-system-paper.yaml"
+        path.write_bytes((ROOT / "consumers/stable/trading-system-paper.yaml").read_bytes())
+        catalog_path, acquisition_path = mounted / CATALOG.name, mounted / ACQUISITION.name
+        catalog_path.write_bytes(CATALOG.read_bytes())
+        acquisition_path.write_bytes(ACQUISITION.read_bytes())
         manifest = ConsumerManifestLoader.load(path)
         registry = ConsumerManifestRegistry((manifest,))
         registry.declaration_records = (config_file_record(
             path, kind="manifest", revision=manifest.manifest_revision, identity=manifest.consumer_id,
         ),)
-        config = SimpleNamespace(role="query_v2", source_bindings_path=CATALOG,
-                                 acquisition_bindings_path=ACQUISITION)
+        config = SimpleNamespace(role="query_v2", source_bindings_path=catalog_path,
+                                 acquisition_bindings_path=acquisition_path)
         declaration = stable_effective_declaration(
             config, catalog=SimpleNamespace(catalog_revision=12),
             acquisition=SimpleNamespace(revision=20), manifests=registry,
