@@ -7,15 +7,17 @@ Status: dry run only. Prepared 2026-11-13; no push and no workflow run.
 - Base: the last full-green tree on the release path, `098c94b43cd7f83767f25c9f80190583fe29bc60`.
   - That is the push to dev, run `39380601966` (2026-10-20, attempt 1, every job success).
   - Its tree `1e621911...` equals the tree of v2.2.5 main `c578cba`; the main push run `39382027281` inherited it.
-- Head: `release/v2.3.0-final-prep` at preparation time (tree `3d25c827...`; rc2 tip `e724712` plus this package).
+- Head: `release/v2.3.0-final-prep` `495e3b96` (tree `926f91a1...`; rc3 integration tip `3d8ccd7` plus this package and
+  the F2 compose/env/config). Earlier dry run: tree `3d25c827...` on rc2 `e724712`, superseded.
 - Command: `--base 098c94b4... --head <head> --event pull_request --base-ref dev`.
 - Result:
 
 ```
 full=true python=true rust=true contracts=true base_check=true reuse_run=
 reason=full: ci-defining path .github/workflows/ci.yml; ci-defining path
-       deploy/compose/qdl-v2-stable-kn.v2.2.6-stage-a.env; ci-defining path deploy/compose/qdl-v2-stable-kn.yml
-changed_files=126
+       deploy/compose/qdl-v2-stable-kn.v2.2.6-stage-a.env; ci-defining path
+       deploy/compose/qdl-v2-stable-kn.v2.3.0.env; ci-defining path deploy/compose/qdl-v2-stable-kn.yml
+changed_files=152
 ```
 
 - So nothing can be inherited. The diff changes CI-defining files (CI5): `ci.yml` gains the `schema_line.py check`
