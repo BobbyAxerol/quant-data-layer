@@ -77511,3 +77511,17 @@ window plan: scratchpad `dlcov/PACKET.md`; window runbook `dlcov/WINDOW_STAGE_A.
       +75 records/s.
     - REST_FINAL for the 150 tier therefore needs a larger bar-edge OKX CANDLES admission lane (a config change
       within OKX's per-IP limit, not verified here) or native 1m. Owner decision.
+- Decision 2026-11-13 (coordinator): the 150-tier declaration sets `bar_1m_source: native`.
+  - R-cert 2 measured native 1m visibility p99 at 1.2 s.
+  - REST_FINAL stays declarable for small, stage-A-sized sets, held by `okx_rest_budget`.
+  - The bar-edge admission lane is NOT widened.
+  - Open item: verify OKX's documented market-candles per-IP limit from OKX docs before any future widening. The
+    host IP is shared and the figure is unverified.
+  - 150 on r13, native, deployed base role files:
+    - 143 RUST_NATIVE candle1m bindings; the REST lane carries only the 1d polls (0.2/min), okx_rest_budget PASS;
+    - ingest estimate +1,147 records/s, about 6.1 vCPU against 5.0, so the gate fails on capacity only.
+  - Sticky OKX lanes, max_subscriptions_per_connection 100. Retained lanes keep name and feed:
+    - public: 001 BOOK 10, 002 TRADE 5, 003 QUOTE 100, 004 MARK_INDEX 100;
+    - business: 001 BAR 100.
+    New lanes: public-005 MARK_INDEX 100, public-006 MARK_INDEX 98, public-007 QUOTE 49, business-002 BAR 100,
+    business-003 BAR 13. 675 subscriptions in all; no lane above 100.
