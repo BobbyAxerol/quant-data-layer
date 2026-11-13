@@ -42,12 +42,12 @@ recreate below needs the owner's GO for this exact blast radius and rollback (CL
 
 | Variable | rc2 image | Roles |
 |---|---|---|
-| QDL_IMAGE_CORE | **TBD** `qdl-v2-rust:2.3.0-rc2-<sha8>` | rust_core x3 |
-| QDL_IMAGE_PROJECTOR | **TBD** (same rust image) | market_projector_1/2 |
-| QDL_IMAGE_STREAM | **TBD** (same rust image) | stream_kn_1/2 |
-| QDL_IMAGE_INGESTOR | **TBD** (same rust image) | ingestor_okx_swap, ingestor_binance_usdm |
-| QDL_IMAGE_QUERY | **TBD** `qdl-v2-python:2.3.0-rc2-<sha8>` | query_kn_1/2 |
-| QDL_IMAGE_BAR_EDGE | **TBD** (same python image) | binance_bar_edge |
+| QDL_IMAGE_CORE | `qdl-v2-rust:2.3.0-rc2-832c02c4` = `sha256:58bdd28216139f0c1a40abeee3077834f1cf922cf6412e7fb1ce8845591a0512` (label revision 832c02c4) | rust_core x3 |
+| QDL_IMAGE_PROJECTOR | same rust image `sha256:58bdd282…0512` | market_projector_1/2 |
+| QDL_IMAGE_STREAM | same rust image `sha256:58bdd282…0512` | stream_kn_1/2 |
+| QDL_IMAGE_INGESTOR | same rust image `sha256:58bdd282…0512` | ingestor_okx_swap, ingestor_binance_usdm |
+| QDL_IMAGE_QUERY | `qdl-v2-python:2.3.0-rc2-832c02c4` = `sha256:03de529acc4f59ba2637f289aa196f544944f92fdcf719390cdf9aacbdfd441b` (label revision 832c02c4) | query_kn_1/2 |
+| QDL_IMAGE_BAR_EDGE | same python image `sha256:03de529a…441b` | binance_bar_edge |
 
 - Kafka and Redis images are unchanged.
 - Digests come from `docker inspect` of the built images. No retag of an existing tag.
@@ -234,9 +234,9 @@ labels.
   only.
 - REST visibility: last 1m read +6.1 s after the boundary. At 00:00Z the 1m and 250 D48 1d reads queue together:
   last at +106 s (today about +98 s).
-- Bootstrap: see history depth in section 3 (decided 1000).
+- Bootstrap: see history depth in section 3. Decision R-H2 is open; the recommendation is 1000. The section 3 render digests are at depth 10000 and are re-rendered if 1000 is chosen.
 - DL vCPU today: ~4.75-5.16 after Kafka F1 (coordinator). Expected steady delta about 0 vCPU (+0.2 records/s); the bootstrap burst is bounded by the 150/min lane.
-- Disk: the bootstrap adds about 200k bar rows once at depth 1000 (bytes not verified). Floor at D0 and D6: free >= 100 GiB AND >= 20% of `/`; 109 GiB / 22.5% at review time. Abort below.
+- Disk: the bootstrap adds about 200k bar rows once at depth 1000 (bytes not verified). Floor at D0 and D6: free >= 100 GiB AND >= 20% of `/`; 109 GiB / 22.5% at review time; 118 GiB / 24% free after the rc2 Rust build (12:08Z). Abort below.
 
 ## 7a. CPU budget (owner rule 2026-11-13)
 
