@@ -376,6 +376,26 @@ class Okx150DryRenderTests(unittest.TestCase):
         queries = self.report["capacity"]["query_requests"]
         self.assertEqual(queries["execution_steady_requests_per_minute_after"], evidence["steady_requests_per_minute"])
 
+    def test_rest_final_1m_is_the_default_and_its_okx_rest_budget_is_gated(self):
+        self.assertEqual(self.report["summary"]["acquisition"]["base_bar_modes"], {"1m:PYTHON_REST": 143})
+        rest = self.report["capacity"]["okx_rest"]
+        self.assertEqual(rest["rest_final_bindings_by_interval"]["1m"], 143)
+        self.assertAlmostEqual(rest["bar_edge_requests_per_minute_avg"], 143.2, places=1)
+        # the bar-edge OKX/SWAP/CANDLES admission lane refills 5 tokens per 2 s (150/min)
+        self.assertEqual(rest["admission_lane"]["requests_per_minute"], 150.0)
+        self.assertEqual(rest["status"], "EXCEEDS_ENVELOPE")
+        visibility = rest["final_1m_visibility_ms"]
+        self.assertEqual(visibility["first_read_after_boundary"], 100)
+        self.assertGreater(visibility["last_read_after_boundary"], 50_000)
+
+    def test_declared_native_1m_uses_the_candle_lane(self):
+        document = _fixture("okx150.yaml")
+        document["consumers"][1]["universes"][0]["bar_1m_source"] = "native"
+        report = tool.render(_write_declaration(Path(self.tmp.name), document, "native.yaml"), None, dry_run=True)
+        self.assertEqual(report["summary"]["acquisition"]["base_bar_modes"], {"1m:RUST_NATIVE": 143})
+        self.assertEqual(report["capacity"]["okx_rest"]["status"], "WITHIN_ENVELOPE")
+        self.assertIsNone(report["capacity"]["okx_rest"]["final_1m_visibility_ms"])
+
     def test_capacity_is_reported_against_the_envelope(self):
         capacity = self.report["capacity"]
         self.assertEqual(capacity["mark_index_flush_ms"], 500)
@@ -441,7 +461,8 @@ class StageARuntimeGoldenTests(unittest.TestCase):
         pinned = json.loads((out / "ingestor/ingestor-okx-swap.json").read_text())
         self.assertTrue(all(isinstance(b.get("lane_shard"), int) for b in pinned["bindings"]))
         gate = tool.gate(out)
-        self.assertEqual(gate["failing"], ["capacity_envelope"])  # quota model PASS; ingest estimate > 5.0 vCPU
+        # quota model PASS; REST final 1m saturates the bar-edge OKX lane; ingest estimate > 5.0 vCPU
+        self.assertEqual(gate["failing"], ["okx_rest_budget", "capacity_envelope"])
 
 
 if __name__ == "__main__":

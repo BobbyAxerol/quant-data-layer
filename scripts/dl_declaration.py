@@ -140,7 +140,7 @@ REPO_FILES = {
     "scope": CONFIG / "stable-authority-promotion-scope.yaml",
     "routing": CONFIG / "stable-v2-release-routing.yaml",
 }
-REPO_COPIED = (CONFIG / "stable-capabilities.yaml",)
+REPO_COPIED = (CONFIG / "stable-capabilities.yaml", CONFIG / "provider-admission-policy-kn-bar-edge-v1.json")
 CAPTURES = {
     "binance_usdm": CONFIG / "captures/binance-usdm-exchangeinfo.filtered.json",
     "binance_spot": CONFIG / "captures/binance-spot-exchangeinfo.filtered.json",
@@ -540,7 +540,8 @@ class Render:
         self.accepted_execution: list[dict[str, Any]] = []
         self.accepted_signal: list[dict[str, Any]] = []
 
-        def admit(consumer_id, venue, market, symbol, feed, interval, template_symbol, *, index_rule):
+        def admit(consumer_id, venue, market, symbol, feed, interval, template_symbol, *, index_rule,
+                  bar_source=None):
             product = PRODUCT_TYPES.get((venue, market))
             template = self._demand_template(consumer_id, feed, interval, template_symbol)
             if template is None:
@@ -549,6 +550,9 @@ class Render:
             row.update(native_symbol=symbol, product_type=product)
             if feed == "BAR":
                 row["interval"] = interval
+                row.pop("bar_source", None)
+                if bar_source is not None:
+                    row["bar_source"] = bar_source
             if "index_native_symbol" in row:
                 if not index_rule:
                     return "INDEX_SYMBOL_UNPROVEN"
@@ -607,9 +611,14 @@ class Render:
                                                  universe_id=universe["universe_id"], members=len(members)))
                     continue
                 intervals.append(interval)
+            declared_source = universe.get("bar_1m_source")
+            if declared_source is not None and str(declared_source).lower() not in {"native", "rest_final"}:
+                raise DeclarationRefused(f"{cid} {universe['universe_id']}: bar_1m_source is native or rest_final")
+            source = None if declared_source is None else str(declared_source).upper()
             for symbol in members:
                 for interval in intervals:
-                    reason = admit(cid, venue, market, symbol, "BAR", interval, "SOL-USDT-SWAP", index_rule=False)
+                    reason = admit(cid, venue, market, symbol, "BAR", interval, "SOL-USDT-SWAP", index_rule=False,
+                                   bar_source=source if interval in native and interval not in derived else None)
                     if reason:
                         raise DeclarationRefused(f"{cid} BAR {interval}: {reason}")
             self.accepted_signal.append({**universe, "venue": venue, "market": market, "members": members,
@@ -678,18 +687,12 @@ class Render:
         acq_by_id = {row["binding_id"]: row for row in generated_acq["bindings"]}
         new_acq = [deepcopy(acq_by_id[binding_id]) for binding_id in new_ids]
         derived_ids = self._derive(new_bindings, new_acq)
-        # Declared-native signal intervals keep the builder's acquisition mode (ProductionCatalogBuilder decides
-        # the lane; since c29c216 a symbol with only EXECUTION QUOTE/MARK demand stays on the REST final lane).
+        # Base (non-derived) signal intervals: the builder decides the lane from the declared ``bar_1m_source``
+        # (demand ``bar_source``) or, without one, the bar-family rule (qdl.runtime.universal_demand).
         native_intervals = {i for u in self.accepted_signal for i in (u.get("bars") or {}).get("native") or []}
         interval_of = {row["binding_id"]: row.get("interval") for row in new_bindings if row["feed"] == "BAR"}
         native_modes = Counter(f"{interval_of[row['binding_id']]}:{row['mode']}" for row in new_acq
                                if interval_of.get(row["binding_id"]) in native_intervals)
-        rest = sum(n for key, n in native_modes.items() if key.endswith(":PYTHON_REST"))
-        if rest:
-            self.notes.append(
-                f"{rest} declared-native signal BAR bindings render as PYTHON_REST (REST final lane via the bar "
-                "edge, one poll per boundary): the builder admits the native OKX candle lane only for symbols with "
-                "non-BAR demand other than EXECUTION QUOTE/MARK (production_catalog execution_symbols)")
         catalog_doc = deepcopy(base_catalog_doc)
         acq_doc = deepcopy(base_acq_doc)
         if new_bindings or new_instruments:
@@ -715,7 +718,7 @@ class Render:
             "revision": [int(base_acq_doc["revision"]), int(acq_doc["revision"])],
             "new_rows_by_mode": dict(sorted(Counter(row["mode"] for row in new_acq).items())),
             "derived_final": len(derived_ids),
-            "declared_native_bar_modes": dict(sorted(native_modes.items())),
+            "base_bar_modes": dict(sorted(native_modes.items())),
         }
         return catalog_doc, acq_doc, new_ids, new_acq
 
@@ -1329,6 +1332,83 @@ class Render:
             "query_requests": self._query_requests(),
         }
 
+    def okx_rest_budget(self, catalog_bytes: bytes, acquisition_bytes: bytes) -> dict[str, Any]:
+        """OKX public REST used by the bar edge's REST final lane, and the final-bar visibility it implies.
+
+        Every enabled OKX SWAP PYTHON_REST BAR binding is read once per boundary at boundary + settlement delay
+        (``QDL_STABLE_BAR_SETTLEMENT_DELAY_SECONDS``, compose 0.10 s), through the bar-edge provider admission
+        lane OKX/SWAP/CANDLES (``config/v2/provider-admission-policy-kn-bar-edge-v1.json``: a token bucket). All
+        reads of one boundary queue on that bucket, so the last one waits (N - burst) / refill rate. Not
+        modelled: OKX's own confirm lag, not-yet-final retries (0.1 s doubling to 1 s), and the
+        core/projector pipeline after publication; R-cert 2 measures those.
+        """
+        config = self.declaration["capacity"]
+        catalog = _with_tempfile(catalog_bytes, "catalog.yaml", StableSourceCatalog.load)
+        plan = _with_tempfile(acquisition_bytes, "acquisition.yaml",
+                              lambda path: StableAcquisitionPlan.load(path, catalog=catalog))
+        sources = {item.binding_id: item for item in catalog.bindings}
+        by_interval: Counter = Counter()
+        for item in plan.bindings:
+            source = sources[item.binding_id]
+            identity = source.instrument.identity
+            if (item.enabled and item.mode == "PYTHON_REST" and item.runtime == "OKX"
+                    and (identity.venue, identity.market) == ("OKX", "SWAP") and source.feed.value == "BAR"):
+                by_interval[source.interval] += 1
+        policy_path = self.base.path(CONFIG / "provider-admission-policy-kn-bar-edge-v1.json")
+        lane = next(item["policy"] for item in json.loads(policy_path.read_text(encoding="utf-8"))["lanes"]
+                    if item["lane"] == {"provider": "OKX", "market": "SWAP", "endpoint_family": "CANDLES"})
+        rate_per_s = lane["refill_tokens"] / (lane["refill_interval_ns"] / 1e9)
+        burst = int(lane["token_capacity"])
+        delay_ms = int(float(config.get("bar_settlement_delay_seconds", 0.10)) * 1000)
+        reads = float(config.get("rest_reads_per_boundary", 1.0))
+        avg_rpm = sum(n * 60_000 / canonical_interval_ms(interval) for interval, n in by_interval.items()) * reads
+        other = float(config.get("okx_rest_other_requests_per_minute", 0))
+        ip_limit = float(config.get("okx_rest_ip_limit_per_minute", 1200))
+        max_util = float(config.get("okx_rest_max_utilization", 0.8))
+
+        def drain_ms(count: int) -> int:
+            return delay_ms + int(max(0, count * reads - burst) / rate_per_s * 1000)
+
+        minute = by_interval.get("1m", 0)
+        worst = sum(by_interval.values())
+        lane_util = avg_rpm / (rate_per_s * 60)
+        ip_util = (avg_rpm + other) / ip_limit
+        limit_ms = config.get("rest_final_max_visibility_ms")
+        problems = []
+        if lane_util > max_util:
+            problems.append(f"bar-edge OKX CANDLES lane utilisation {lane_util:.2f} > {max_util}")
+        if ip_util > max_util:
+            problems.append(f"host-IP OKX REST utilisation {ip_util:.2f} > {max_util}")
+        if minute and drain_ms(minute) >= 60_000:
+            problems.append("one minute's 1m polls do not drain within the minute (backlog)")
+        if limit_ms is not None and minute and drain_ms(minute) > int(limit_ms):
+            problems.append(f"last 1m final read at +{drain_ms(minute)} ms > declared {int(limit_ms)} ms")
+        return {
+            "status": "WITHIN_ENVELOPE" if not problems else "EXCEEDS_ENVELOPE",
+            "problems": problems,
+            "rest_final_bindings_by_interval": dict(sorted(by_interval.items(),
+                                                           key=lambda kv: canonical_interval_ms(kv[0]))),
+            "bar_edge_requests_per_minute_avg": round(avg_rpm, 1),
+            "other_requests_per_minute_declared": other,
+            "admission_lane": {"family": "OKX/SWAP/CANDLES", "refill_per_s": rate_per_s, "burst": burst,
+                               "max_inflight": lane["max_inflight"], "requests_per_minute": rate_per_s * 60},
+            "lane_utilisation": round(lane_util, 3),
+            "host_ip_limit_per_minute_declared": ip_limit,
+            "host_ip_utilisation": round(ip_util, 3),
+            "max_utilisation": max_util,
+            "final_1m_visibility_ms": None if not minute else {
+                "first_read_after_boundary": delay_ms,
+                "last_read_after_boundary": drain_ms(minute),
+                "worst_boundary_reads": worst,
+                "worst_boundary_last_read_after_boundary": drain_ms(worst),
+                "excludes": "OKX confirm lag, not-yet-final retries, core/projector pipeline (R-cert 2 measures)",
+            },
+            "declared_max_visibility_ms": limit_ms,
+            "basis": "model: one read per REST final binding per boundary through the bar-edge admission token "
+                     "bucket; host-IP limit as declared (OKX docs give 40 requests/2 s per IP for market "
+                     "candles; not re-verified here)",
+        }
+
     def _query_requests(self) -> dict[str, Any]:
         """Modelled Query request load (shared per-consumer calendar-minute quota counter in stable_redis)."""
         consumers = {}
@@ -1430,6 +1510,8 @@ class Render:
                         yaml.safe_load(Path(self.base.runtime["query_acquisition"]).read_bytes())["bindings"]}
             deployed_delta = [row for row in acq_doc["bindings"] if row["binding_id"] not in deployed]
         capacity = self.capacity(deployed_delta, ingestors)
+        capacity["okx_rest"] = self.okx_rest_budget(
+            catalog_bytes, self.files.get("runtime/stable-acquisition-bindings.yaml", acq_bytes))
         capacity["basis_rows"] = ("rows absent from the deployed runtime acquisition"
                                   if deployed_delta is not new_acq else "rows added by this render")
         self.summary.update(
@@ -1755,8 +1837,12 @@ def gate(rendered: Path) -> dict[str, Any]:
         if keys != sorted(set(keys)):
             chain.append(f"{scope_path.name}: instruments not strictly sorted/unique")
     check("coverage_chain", not chain, chain)
-    # 6. capacity envelope (estimate from the render report)
+    # 6. OKX REST budget of the REST final lane, then the ingest capacity envelope (estimates from the report)
     capacity = report["capacity"]
+    rest = capacity.get("okx_rest") or {"status": "WITHIN_ENVELOPE", "problems": []}
+    check("okx_rest_budget", rest["status"] == "WITHIN_ENVELOPE",
+          {k: rest.get(k) for k in ("problems", "bar_edge_requests_per_minute_avg", "lane_utilisation",
+                                     "host_ip_utilisation", "final_1m_visibility_ms")})
     check("capacity_envelope", capacity["status"] == "WITHIN_ENVELOPE", capacity,
           status=None if capacity["status"] in {"WITHIN_ENVELOPE", "EXCEEDS_ENVELOPE"} else
           f"FAIL_{capacity['status']}")

@@ -368,6 +368,11 @@ class StableReleaseRoutePlan:
                     expected = required | book_fields
                 elif feed == "MARK_INDEX_PRICE":
                     expected = required | mark_fields
+                elif feed == "BAR" and "bar_source" in requirement:
+                    # DL v2.3.0 declared final-BAR source (qdl.runtime.universal_demand.BAR_SOURCES).
+                    if requirement["bar_source"] not in {"NATIVE", "REST_FINAL"}:
+                        raise ValueError("stable release crypto BAR demand bar_source is invalid")
+                    expected = required | {"bar_source"}
                 else:
                     expected = required
                 if set(requirement) != expected:

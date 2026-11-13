@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import hashlib
 import json
 from pathlib import Path
@@ -18,6 +18,7 @@ from qdl.adapters.intervals import (
 )
 from qdl.adapters.okx.instruments import parse_public_instrument
 from qdl.adapters.okx_endpoints import OKX_BUSINESS_WS, OKX_PUBLIC_WS
+from qdl.runtime.universal_demand import BAR_SOURCES, NATIVE_BAR_MARKETS, resolve_bar_source
 from qdl.domain.instrument import InstrumentRecord, InstrumentStatus
 from qdl.query import ConsumerGrade, FeedType
 from qdl.runtime.stable_catalog import StableSourceCatalog
@@ -104,6 +105,9 @@ class ProductionDemand:
     # An OKX index ticker is a separate, explicitly declared physical
     # subscription. Keeping it in demand avoids runtime symbol inference.
     index_native_symbol: str | None = None
+    # DL v2.3.0: declared final-BAR source (qdl.runtime.universal_demand.resolve_bar_source); None keeps the
+    # bar-family rule. Not part of the requirement identity or ordering.
+    bar_source: str | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         if (self.venue, self.market, self.product_type) not in _SUPPORTED_MARKETS:
@@ -145,6 +149,11 @@ class ProductionDemand:
             or self.index_native_symbol is not None
         ):
             raise ValueError("non-BOOK demand cannot carry BOOK acquisition fields")
+        if self.bar_source is not None:
+            if self.feed is not FeedType.BAR or self.bar_source not in BAR_SOURCES:
+                raise ValueError("bar_source is a NATIVE/REST_FINAL field of BAR demand only")
+            if (self.venue, self.market) not in NATIVE_BAR_MARKETS:
+                raise ValueError("bar_source is declarable only where the native final-bar lane is certified")
         if not self.consumer_id.strip() or not self.native_symbol.strip() or not self.source_policy_id.strip():
             raise ValueError("production demand identity/source policy is incomplete")
 
@@ -206,9 +215,17 @@ class ProductionDemandManifest:
             current = deduped.get(key)
             if current is not None and current.source_policy_id != item.source_policy_id:
                 raise ValueError("one feed requirement cannot use conflicting source policies")
+            if (
+                current is not None
+                and None not in (current.bar_source, item.bar_source)
+                and current.bar_source != item.bar_source
+            ):
+                raise ValueError("one BAR requirement cannot declare conflicting bar sources")
             deduped.setdefault(key, item)
             if current is not None and item.consumer_grade is ConsumerGrade.EXECUTION:
-                deduped[key] = replace(current, consumer_grade=ConsumerGrade.EXECUTION)
+                deduped[key] = replace(deduped[key], consumer_grade=ConsumerGrade.EXECUTION)
+            if current is not None and item.bar_source is not None and deduped[key].bar_source is None:
+                deduped[key] = replace(deduped[key], bar_source=item.bar_source)
             consumers_by_key.setdefault(key, set()).add(item.consumer_id)
         # Consumer IDs are audit inputs but do not alter a canonical source binding.
         del consumers_by_key
@@ -244,6 +261,8 @@ class ProductionDemandManifest:
             if feed in _BOOK_FEEDS
             else (required | mark_index_fields if feed is FeedType.MARK_INDEX_PRICE else required)
         )
+        if feed is FeedType.BAR and "bar_source" in raw:
+            expected = required | {"bar_source"}
         if set(raw) != expected:
             raise ValueError("production demand requirement fields are invalid")
         if feed in _BOOK_FEEDS:
@@ -297,6 +316,7 @@ class ProductionDemandManifest:
                 if index_native_symbol is not None
                 else None
             ),
+            bar_source=None if raw.get("bar_source") is None else str(raw["bar_source"]).strip().upper(),
         )
 
 
@@ -798,7 +818,9 @@ class ProductionCatalogBuilder:
                 mode, kind, channel, sequence = (
                     "RUST_NATIVE", "okx_mark_index", "mark-price", "NONE"
                 )
-            elif item.feed is FeedType.BAR and item.market == "SWAP" and execution_symbol:
+            elif item.feed is FeedType.BAR and item.market == "SWAP" and resolve_bar_source(
+                item.bar_source, bar_family=execution_symbol
+            ) == "NATIVE":
                 # A bounded real-provider gate proved the shared OKX business
                 # candle lane emits ``confirm=1`` final rows with canonical
                 # OHLCV parity and lower first-final latency than REST. The

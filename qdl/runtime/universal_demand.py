@@ -328,6 +328,28 @@ class UniversalDemandPlanner:
 
 
 PRICING_ONLY_FEEDS = frozenset({"QUOTE", "MARK_INDEX_PRICE"})
+# Declarable acquisition source of one final BAR (DL v2.3.0, demand row field ``bar_source``):
+# NATIVE = the shared native OKX candle lane (RUST_NATIVE, confirm=1 rows, ingestor subscription);
+# REST_FINAL = the bar edge's REST final lane (PYTHON_REST, one provider read per boundary).
+BAR_SOURCES = frozenset({"NATIVE", "REST_FINAL"})
+# The only market whose native final-bar lane passed the real-provider gate (production_catalog).
+NATIVE_BAR_MARKETS = frozenset({("OKX", "SWAP")})
+
+
+def resolve_bar_source(declared: str | None, *, bar_family: bool) -> str:
+    """Acquisition source of one OKX SWAP final BAR.
+
+    An explicit declaration wins (``bar_source`` on the BAR demand row, e.g. a SIGNAL consumer that needs
+    native 1m). Without one, the ``bar_family_symbols`` rule decides: a symbol with non-BAR demand other
+    than Trading System QUOTE/MARK pricing gets the native candle lane, every other symbol the REST final
+    lane (v2.2.6 stage A). A DERIVED_FINAL bar consumes only FINAL parents, so REST_FINAL is sufficient for
+    derivation; NATIVE trades provider REST budget for WS subscriptions and Kafka records.
+    """
+    if declared is not None:
+        if declared not in BAR_SOURCES:
+            raise ValueError(f"bar_source must be one of {sorted(BAR_SOURCES)}")
+        return declared
+    return "NATIVE" if bar_family else "REST_FINAL"
 
 
 def bar_family_symbols(demand: Mapping[str, Any]) -> set[tuple[str, str]]:
