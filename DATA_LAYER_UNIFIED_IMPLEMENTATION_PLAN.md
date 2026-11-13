@@ -77691,3 +77691,35 @@ container has been started.
     final lane. The 143 declared-native signal BAR 1m bindings therefore render as `PYTHON_REST`, polled by the bar
     edge, not as native OKX candles. The report says so. Native candles would need the builder rule to count SIGNAL
     BAR demand (open question).
+
+### DL v2.3.0 rc1 integration branch `release/v2.3.0-rc1-integration` - 2026-11-13 (Claude)
+
+- **Scope.** The coordinator asked for this branch (owner approved an early start of the R-cert 2 shadow).
+  Worktree `.worktrees/dl-v230-rc1`. Local `git merge --no-ff`, author BobbyAxerol, nothing pushed.
+- **Merge order:**
+  1. base: stage A `c29c216` (v2.2.6);
+  2. mechanism `d0976ed` (2a/2b plus fixes), merge `e88d7e8`;
+  3. derived bars `a6bc112a`, merge `3a9b6e1`;
+  4. tool `0ba4d35`, merge `c899d44`;
+  5. tool quota model `72f35cf`, merge `34a354f`;
+  6. derived bars G2.7 `a562e469`, merge `b231c2d`.
+- **Conflicts:**
+  - `stable_bar_edge.py`: imports only (both kept); `run_forever` auto-merged, heartbeat before
+    `run_derived_cycle()`.
+  - compose: rerere reused the tool agent's resolution, which I verified: stage A `${QDL_PAPER_REALM_MANIFEST:-...}`
+    plus the mechanism's `/consumer-realms` manifests.
+  - plan and guide: append-only, both kept; the G2.7 bullet was moved back under its own entry.
+- **Tests.**
+  - Rust: the tree is identical to rehearsal tree `81ac924` (`git diff 81ac924 HEAD -- rust Cargo.lock generated
+    contracts` is empty). On that tree, `qdl-rust-builder:r134-test` at 2 CPU, cpu-shares 256:
+    - `cargo fmt --check` OK;
+    - clippy `-D warnings` on contracts/core/kafka/realtime-core/stream-gateway/projector OK;
+    - tests: contracts 34, core 63, kafka lib 47, ingestor 78, production-core 7, realtime-core bin 30,
+      realtime-core lib 58, gateway lib 69, hot_lookup 1, native_stream 56;
+    - `cargo check --workspace` OK.
+  - Python on the final tree: `tests.test_v230_declaration_tool`, `tests.test_v230_rcert2_shadow` and
+    `tests.test_v230_derived_bars` give 60 OK (7 skipped).
+  - The combined impacted run (127 modules) started on `c899d44` and was still running at this entry; its result
+    goes in the next entry.
+- **Next.** The derived-bars agent builds `qdl-v2-rust:2.3.0-rc1-<sha8>` and `qdl-v2-python:2.3.0-rc1-<sha8>` from
+  this branch head for the isolated R-cert 2 shadow. rc2 adds slice 2d (lineage).
