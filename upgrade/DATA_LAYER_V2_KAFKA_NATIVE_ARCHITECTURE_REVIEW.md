@@ -3349,3 +3349,10 @@ ordering authority, resume markers and cursors on that lineage (the TS writer: `
 5. **What still changes lineage, and is therefore a release or a migration:** a binding's own change; an authority
    or source-policy revision; a new contract line. Consumers hand those over explicitly (TS writer IDR-289
    revision-only handoff for authority, config, source-policy and catalogue revisions).
+
+6. **Session liveness under pinned lineage (delta 2026-11-13, v2.3.0 rc3; DL plan "DL v2.3.0 rc3").**
+   - A lane's session record carries the ingestor's global config revision. An event carries its binding's pinned
+     revision, which can be lower.
+   - Readers accept an event whose revision is at or below its session's, and refuse one above it
+     (`qdl/runtime/session_liveness.py`).
+   - Exact equality broke the 2026-11-13 window (W1). Class sweep: packet section 0c.

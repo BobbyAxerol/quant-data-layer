@@ -108,7 +108,7 @@ class HeartbeatReadClockTests(unittest.TestCase):
         other_generation = self.status(self.reader(), now_ns=1_000_000_000, generation=6)
         self.assertEqual((other_generation.state, other_generation.flags),
                          ("UNKNOWN", ("SOURCE_SESSION_UNAVAILABLE",)))
-        other_config = self.status(self.reader(), now_ns=1_000_000_000, config_revision=16)
+        other_config = self.status(self.reader(), now_ns=1_000_000_000, config_revision=18)
         self.assertEqual((other_config.state, other_config.flags),
                          ("UNKNOWN", ("SOURCE_SESSION_CONFIG_MISMATCH",)))
 

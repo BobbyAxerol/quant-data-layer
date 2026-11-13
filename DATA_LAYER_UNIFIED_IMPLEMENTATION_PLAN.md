@@ -78012,3 +78012,34 @@ container has been started.
   Future windows must `docker logs` each role before its rollback recreate.
 - **Next:** RCA on an isolated stack: rc2 OKX ingestor with the pinned lanes -> rc2 cores -> stream / Query
   session state. No new window until it is fixed and rehearsed.
+
+### DL v2.3.0 rc3: session liveness accepts pinned (lower) event revisions - 2026-11-13 (Claude)
+
+- **Defect** (W1 of the 2026-11-13 window).
+  - RCA by the TS writer agent ab9ce296, confirmed against the code.
+  - The OKX ingestor stamps lane session records with the global config revision
+    (`rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs:897`, written at `:999`).
+  - Since slice 2d, envelopes carry the pinned per-binding revision (`:1320`).
+  - `qdl/runtime/session_liveness.py:300` required equality, so every retained OKX binding pinned at 21 under
+    session 22 got SOURCE_SESSION_CONFIG_MISMATCH, then SESSION_STATE. This hit both the Query/stream path
+    (`stable_source.py:1087-1093`) and the MARK/INDEX path (`execution_mark_index.py:497-503`).
+  - The slice 2d review checked contracts, cursor and checkpoint, but not this consumer.
+- **Fix:** refuse only `record.config_revision < event revision`. An event newer than its session is still refused.
+  Python only: no Rust reader of the session file exists.
+- **Class sweep:** packet section 0c. One real hit, this one; every other equality site compares like with like.
+- **Tests** (rc3 Python image, 1 CPU, cpu-shares 256, `--rm`, no network):
+  - Delta, 7 modules: 189 OK (34 skipped). They include the new `test_pinned_event_revision_below_the_session_revision_is_live`
+    (Query path) and `test_pinned_lineage_revision_below_the_session_revision_is_live` (MARK/INDEX path); both ran
+    and passed explicitly.
+  - Two existing equality oracles were updated to the new rule (`test_session_liveness_lineage`,
+    `test_session_liveness_read_clock`).
+  - ruff 0.15.13 F (`--isolated`) is clean on the changed code. The one finding is pre-existing: the unused
+    `UNIVERSE_PER_VENUE` import in `test_phaseb_stable_edge.py`.
+- **New window gate D5a:** `scripts/v230_session_revision_check.py` runs the deployed reader against the live
+  session files.
+  - On a fixture (session 22, pinned 21): PASS on the fixed code; FAIL on the rc2 image `03de529a` ("refused pinned
+    revision 21").
+  - Read-only run on the live Query at about 13:12Z: PASS.
+- **Packet:** section 0b, the split retry (window A = rc3 DL with the old writer 7332e85a; window B = W-B2 alone),
+  plus the D5a row and the rule to capture logs and inspect before every recreate. The run sheet has the window A
+  changes.

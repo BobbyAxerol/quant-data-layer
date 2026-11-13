@@ -8,6 +8,36 @@ packet's (sections 4, 4a, 5, 6, W). It adds only the exact commands.
 - Any gate FAIL means the section 5 rollback, without asking again.
 - Every shell: `source /tmp/claude-1001/-home-bobby/178e5b10-f053-4be7-9cc5-bcb710dcc977/scratchpad/v230/window-rc2/env.sh`.
 
+> **Retry as window A (rc3, packet section 0b).**
+> - Same commands as below, with these changes:
+>   - the rc3 env (Python image = the rc3 digest; Rust unchanged);
+>   - D5a after D5;
+>   - `capture <role>` before every recreate, including rollback recreates;
+>   - the writer step uses the OLD image (section 2a).
+> - W-B2 runs later, alone, as window B.
+>
+> ```bash
+> capture() { mkdir -p -m 700 $WIN/pre-recreate; for r in "$@"; do ts=$(date -u +%Y%m%dT%H%M%SZ); \
+>   docker logs --timestamps $P-$r-1 > $WIN/pre-recreate/$r-$ts.log 2>&1; \
+>   docker inspect $P-$r-1 | python3 -c 'import sys,json,re;d=json.load(sys.stdin);[c["Config"].__setitem__("Env",[e.split("=",1)[0]+"=<masked>" if re.search("SECRET|TOKEN|PASSWORD|KEY",e.split("=",1)[0]) else e for e in c["Config"]["Env"]]) for c in d];json.dump(d,sys.stdout)' > $WIN/pre-recreate/$r-$ts.inspect.json; done; }
+> ```
+>
+> **D5a** (60 s after the OKX ingestor step; on both Query instances; PASS required):
+> ```bash
+> for q in query_kn_1 query_kn_2; do docker exec -i $P-$q-1 python -B - --min-pinned 21 < $REPO/scripts/v230_session_revision_check.py \
+>   | tee $WIN/d5a-$q.json | python3 -c 'import sys,json;d=json.load(sys.stdin);print("'$q'",d["verdict"],d["failures"])'; done
+> ```
+>
+> **2a. Writer in window A** (after the D6 crossing, D5a PASS and the W-gate; same image, the path proven
+> 13:04-13:05Z on 2026-11-13):
+> ```bash
+> cd $TT && python3 -B scripts/p184_writer_recreate.py --expect-image $IMG_W_OLD --allow-stopped --require-resume 0 --min-execution-ready <PRE exec> --deadline 180 --convergence-s 120 --dry-run
+> cd $TT && python3 -B scripts/p184_writer_recreate.py --expect-image $IMG_W_OLD --allow-stopped --require-resume 0 --min-execution-ready <PRE exec> --deadline 180 --convergence-s 120 | tee $WIN/w1.txt
+> cd $TT && python3 -B scripts/p184_writer_recreate.py --expect-image $IMG_W_OLD --require-resume 1 --min-execution-ready <PRE exec> --deadline 180 --convergence-s 120 | tee $WIN/w2.txt
+> ```
+> Pass: both VERIFIED, plus packet W.4 items 2-3 (continuity == PRE within 5 min, 10 min soak clean).
+> `$REPO` = `/home/bobby/.worktrees/dl-v230-rc2`.
+
 ## 0. Prepared before T-30 (done 2026-11-13 ~12:27Z; no running container reads any of it)
 
 **Pinned set** `$A`: 21 files with `SHA256SUMS`.

@@ -65,6 +65,62 @@ final DL v2.3.0 release and tag happen only after the R-cert 2 final verdict and
 - The DL roles go back to their section 1 images and recorded compose: stage-A r13 for query/stream/OKX ingestor,
   stage-A for cores/projectors, v2.2.5 for Binance ingestor/bar_edge.
 
+## 0b. Retry after the 2026-11-13 W1 failure: rc3 and a SPLIT window (coordinator 2026-11-13)
+
+- **What failed.** In the window of 2026-11-13 12:37-13:05Z (journal, receipt `window-20261113T1237Z`), the rc2
+  Query refused every retained OKX binding pinned at config revision 21 under the ingestor's session revision 22.
+  - `qdl/runtime/session_liveness.py:300` required exact equality, giving SOURCE_SESSION_CONFIG_MISMATCH and then
+    SESSION_STATE.
+  - Writer side: the ingestor stamps the lane session with the global revision (`qdl-native-raw-ingestor.rs:897`),
+    while slice 2d stamps each envelope with the pinned revision (`:1320`).
+  - The RCA was by the TS writer agent and confirmed against the code.
+- **rc3 = rc2 + one reader fix.**
+  - The reader refuses only `record.config_revision < event revision`, so an event newer than its session is still
+    refused.
+  - Tests cover the reader, the Query/stream path (`stable_source.py:1087-1093`) and the MARK/INDEX path
+    (`execution_mark_index.py:497-503`).
+  - Python image only: no Rust reader of the session file exists. The Rust image `58bdd282` is unchanged.
+  - Class sweep: section 0c.
+- **Window A = DL rc3 with the OLD writer `7332e85a`.**
+  - Steps D1-D6 as in section 4, with the rc3 Python image for Query and bar_edge, and the new gate D5a.
+  - W-pre stops the writer before D5, as before.
+  - After the D6 crossing, D5a and the W-gate, the writer restarts on the SAME image `7332e85a`, BOOTSTRAP then
+    STRICT, with the committed tool:
+    - `--expect-image 7332e85a --allow-stopped --require-resume 0`, verify;
+    - then `--expect-image 7332e85a --require-resume 1`, verify.
+    - This is the path proven at 13:04-13:05Z today: 52 s and 54 s, 104/104/93, continuity 11/11.
+  - No writer image change in window A.
+- **Window B = W-B2 alone, later.** Section W is unchanged, run against a DL already on rc3.
+- **Rollback procedure amendment.** Before ANY recreate, including each rollback recreate, capture
+  `docker logs --timestamps` and the masked `docker inspect` of that role into `$WIN/pre-recreate/<role>-<ts>.*`.
+  The 2026-11-13 rollback lost the rc2 role logs because `--force-recreate` removed the containers.
+
+## 0c. Class sweep: equality on config/catalog revisions after per-binding pinning (rc3, 2026-11-13)
+
+- **Method.**
+  - Python: an AST scan of `qdl/` for `==` / `!=` compares that mention `config_revision`, `catalog_revision`,
+    `instrument_catalog_revision`, `lineage_revision` or `lineage_config_revision` (zero/None checks excluded).
+  - Rust: `grep` of `rust/*/src` for the same names next to `==` / `!=` (asserts and tests excluded).
+  - Plus every reader of the session-liveness file and of `SOURCE_SESSION_CONFIG_MISMATCH`.
+- **Verdict:** one real hit, fixed in rc3 (the first row). Every other site compares like with like.
+
+| Site | Compares | Verdict |
+|---|---|---|
+| `qdl/runtime/session_liveness.py:300` | lane session record (global ingestor revision) vs event revision (pinned since 2d) | **WRONG, fixed in rc3**: refuse only record < event. Tests: `test_session_liveness_lineage`, `test_session_liveness_read_clock`, `test_phaseb_stable_edge` (Query/stream path), `test_execution_mark_index_live_view` (MARK/INDEX path) |
+| `qdl/runtime/session_liveness.py:364` | lane record vs lineage file revision | OK: both are written by the same ingestor session with the global revision |
+| `qdl/runtime/stable_source.py:1146`, `qdl/runtime/execution_mark_index.py:536` | `config_matches` derived from the reader flag | OK after the reader fix (no own compare) |
+| `qdl/runtime/universal_demand.py:294` | plan catalogue revision vs loaded catalogue revision | OK: global vs global, same file family |
+| `qdl/runtime/lineage.py:120` | tool-side plan lineage vs live stamp | OK: tool gate, intended equality |
+| `qdl/certification/phase105c_final_bar.py:247` | certification script | OK: not a runtime path |
+| `rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs:2478-2479` | raw frame vs binding (`lineage_config_revision`) | OK: per binding (2d) |
+| `rust/qdl-realtime-core/src/lib.rs:577`, `:698` | raw `instrument_catalog_revision` vs core binding row | OK: per binding (raw add-time lineage; packet section 3a) |
+| `rust/qdl-stream-gateway/src/hot_view.rs:116` | hot-read request `catalog_revision` (Query `catalog.catalog_revision`, `kn_hot_view.py:179`) vs stream authority | OK: global vs global |
+| `rust/qdl-contracts/src/cursor_v3.rs:418` | cursor claim vs `catalog_revision_for(product)` | OK: per product (2d) |
+
+- No Rust reader of the session-liveness file exists. The stream gateway uses `max_session_liveness_ms` only as a
+  requirement field. So the fix is Python only.
+- Not covered by this sweep: the TS writer's own revision handoff (IDR-289, writer agent scope).
+
 ## 1. Live state the packet starts from (read-only docker inspect, 2026-11-13 ~10:40Z; re-read at T-0)
 
 | Role | Image | Created from (compose labels) |
@@ -399,6 +455,7 @@ labels.
 | D4 | query_kn_1, then _2 | rc2 python image, mounted manifests, new catalogue | `/health/dependencies` declaration `image_files=0`. A sampled retained record's contract lineage equals its pre-window value. DR02/DR03 byte compare |
 | W-pre | writer | Stop the writer (section W) before the ingestor step, as in stage A (review H1) | Writer stopped; outage bound per section W |
 | D5 | ingestor_okx_swap, then ingestor_binance_usdm | rc2 image, lane pins = today's, linger unset | started event: `lane_plan: PINNED`, `producer.linger_ms: null`, timeout 30. Retained lane names in session-liveness unchanged, plus exactly one new lane `okx-business-002` (BAR, 59 subscriptions); retained: public-001 BOOK 10, public-002 TRADE 5, public-003 QUOTE 26, public-004 MARK_INDEX 52, business-001 BAR 70 -> 100; 252 subscriptions; no lane over 100; OKX config_revision 21 -> 22. Binance lanes unchanged (27 subscriptions) (M3). 0 subscription rejected. Book resync complete |
+| D5a | none (read-only) | Session revision gate, writer-independent (section 0b) | `docker exec -i <query_kn_1 and _2> python -B - --min-pinned 21 < scripts/v230_session_revision_check.py` gives verdict PASS on both Query instances. Every LIVE OKX and Binance lane accepts every revision from 21 up to its own (22 for OKX), and refuses its own revision + 1. Run 60 s after the OKX ingestor step. On the rc2 code this gate FAILs, which is the W1 defect |
 | D6 | binance_bar_edge | Stop bar_edge, THEN copy its checkpoint to `.pre-v230` (M3: a D0 copy would be stale), then rc2 python image, bar-edge pinned pair `/runtime/bar-edge-*-bindings.yaml`, migration record env, and `QDL_STABLE_BAR_BACKPRESSURE_STAGES` core stage 20000 -> 2000 (env only, M2; see section 3) | Log `checkpoint crosses catalog 11->R acquisition 19->R' crossed=True retained=640 added=<derived> dropped=0 migration_record=True`. Heartbeat `declaration` image_files=0. No `stable BAR checkpoint cache generation changed; bounded bootstrap required` line (`stable_bar_edge.py:719-723`). If one appears: HOLD (W does not start) and decide before W, either continue (about hours of re-bootstrap of 640 bindings) or roll back bar_edge. Derived bars appear on md.bars.v2 and in the market cache for all 94 x {1h, 12h} and the covered 25 x {3m..1D}. Parity auditor: 0 mismatches on the first closes. Then D6b (derived gap list EMPTY) and the pre-W gate |
 | W-gate | none | Pre-W freshness gate (review M2) | For 5 consecutive minutes: core `raw_age_websocket_ms` p99 < 1000 ms on every core (`rust/qdl-kafka/src/bin/qdl-realtime-core.rs:405-412,458`; the REST bootstrap frames are counted separately in `raw_age_rest_ms`), and core group `qdl-v2-realtime-core-v2` lag on `md.raw.realtime.v2` < 2,000 records. If it is not green, W waits (correctness over speed), at the latest until bootstrap end + gap drain |
 | W | writer (section W) | W-B2 image | Section W gates |

@@ -965,6 +965,61 @@ class ExecutionMarkIndexLiveViewTests(unittest.IsolatedAsyncioTestCase):
                 "COMPONENT_STALE",
             )
 
+    async def test_pinned_lineage_revision_below_the_session_revision_is_live(self):
+        """DL v2.3.0 W1 (2026-11-13): a retained binding pinned at its add-time config revision
+        runs under a session at the ingestor's newer global revision. That is LIVE; only an
+        envelope newer than its session is refused (SESSION_STATE)."""
+
+        record = _record(
+            venue="OKX", market="SWAP", native_symbol="DOGE-USDT-SWAP", base="DOGE"
+        )
+        binding = _binding(record)
+        envelope = _paired_envelope(
+            binding,
+            sequence=1,
+            generation=3,
+            mark_received_at_ns=NOW_NS - 10_000_000_000,
+            index_received_at_ns=NOW_NS - 60_000_000_000,
+        )
+        pinned = int(envelope.config_revision)
+        with tempfile.TemporaryDirectory() as raw_root:
+            root = Path(raw_root)
+            view = ExecutionMarkIndexLiveView(
+                frozenset({record.instrument_uid}),
+                quiet_policies={
+                    record.instrument_uid: ExecutionMarkIndexQuietPolicy((
+                        ("MARK", 15_000), ("INDEX", 70_000),
+                    )),
+                },
+                session_liveness_reader=StableSessionLivenessReader(root),
+            )
+            await view.remember(
+                binding=binding,
+                envelope=envelope,
+                stored=_stored(envelope, offset=31),
+                gateway_epoch=5,
+            )
+
+            async def read():
+                return await view.read(
+                    instrument_uid=record.instrument_uid,
+                    instrument_revision=record.metadata_revision,
+                    source_policy_id="crypto_liquid_v2",
+                    max_freshness_ms=2_000,
+                    gateway_epoch=5,
+                    event_recency_policy=StalePolicy.OBSERVE,
+                    max_session_liveness_ms=45_000,
+                    now_ns=NOW_NS,
+                )
+
+            for session_revision in (pinned + 1, pinned):
+                _write_session(root, envelope, config_revision=session_revision)
+                result = await read()
+                self.assertIsNotNone(result.record, session_revision)
+                self.assertEqual(result.recency_mode, "COMPONENT_SESSION_LIVE")
+            _write_session(root, envelope, config_revision=pinned - 1)
+            self.assertEqual((await read()).reason, "SESSION_STATE")
+
     async def test_pre_spool_record_is_readable_then_withdrawn_or_promoted_exactly(self):
         first = _envelope(self.binding, sequence=1, generation=2)
         await self.view.remember(

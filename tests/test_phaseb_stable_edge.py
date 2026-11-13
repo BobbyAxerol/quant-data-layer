@@ -2167,6 +2167,18 @@ class StableSessionLivenessQualityTests(unittest.TestCase):
         self.assertEqual(status.state, "UNKNOWN")
         self.assertEqual(status.flags, ("SOURCE_SESSION_MALFORMED",))
 
+    def test_pinned_event_revision_below_the_session_revision_is_live(self):
+        # DL v2.3.0 W1 (2026-11-13): a retained binding pinned at revision 7 under a session at
+        # the ingestor's newer global revision 8 is LIVE (was SOURCE_SESSION_CONFIG_MISMATCH ->
+        # SESSION_STATE); an event newer than its session (session 6) stays UNKNOWN.
+        requirement = self._requirement()
+        for revision, expected in ((8, "LIVE"), (7, "LIVE"), (6, "UNKNOWN")):
+            with self.subTest(session_revision=revision):
+                self._write_session(revision=revision)
+                item = self._backend().latest(requirement)
+                assert item is not None
+                self.assertEqual(item.quality.provider_session_state, expected)
+
     def test_block_policy_remains_strict_with_a_live_session(self):
         self._write_session()
         requirement = self._requirement(policy=StalePolicy.BLOCK)
