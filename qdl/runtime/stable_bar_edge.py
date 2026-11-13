@@ -32,6 +32,19 @@ from qdl.adapters.okx.bar_edge import (
 )
 from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
+from qdl.runtime.bar_edge_checkpoint import (
+    MIGRATION_ENV as _CHECKPOINT_MIGRATION_ENV,
+    CheckpointCrossingRefused,
+    binding_series_digest,
+    load_migration_record,
+    plan_crossing,
+)
+from qdl.runtime.declaration import (
+    config_file_record,
+    effective_declaration,
+    enforce_declaration,
+    log_effective_declaration,
+)
 from qdl.runtime.heartbeat import write_heartbeat
 from qdl.runtime.kn_bar_readback import KnBarReadbackError
 from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
@@ -56,6 +69,11 @@ _DURABLE_COVERAGE_BATCH_ROWS = 256
 _STATE_SCHEMA_V2 = "qdl.stable-bar-edge-state.v2"
 _STATE_SCHEMA_V3 = "qdl.stable-bar-edge-state.v3"
 _STATE_SCHEMA_V4 = "qdl.stable-bar-edge-state.v4"
+# DL v2.3.0: v4 + one series digest per binding, so a later catalogue or
+# acquisition revision can keep every unchanged watermark (bar_edge_checkpoint).
+# ``canonical_cache_id`` is present exactly when the SQLite cache is in use.
+_STATE_SCHEMA_V5 = "qdl.stable-bar-edge-state.v5"
+_CROSSING_FIELDS = ("catalog_revision", "acquisition_revision", "binding_ids")
 _MAX_CONNECTION_GENERATION = (1 << 64) - 1
 # A durable BAR binding is not a promise that every venue has unlimited
 # history.  Three years keeps the default bootstrap useful for daily/weekly
@@ -241,6 +259,8 @@ class StableBinanceBarEdge:
         history_gate=None,
         history_end_ms: int | None = None,
         history_only: bool = False,
+        checkpoint_migration: dict | None = None,
+        declaration: dict | None = None,
     ) -> None:
         if not 1 <= warmup_rows <= _MAX_DURABLE_BAR_ROWS:
             raise ValueError(
@@ -292,6 +312,11 @@ class StableBinanceBarEdge:
         self.native_recovery_visibility_seconds = native_recovery_visibility_seconds
         self.state_path = Path(state_path) if state_path is not None else None
         self.repair_only = repair_only
+        # DL v2.3.0: an explicit record for a non-additive checkpoint crossing,
+        # and the effective declaration this edge runs (logged, heartbeat).
+        self.checkpoint_migration = checkpoint_migration
+        self.declaration = declaration
+        self.checkpoint_crossing = None
         if repair_only and (self.state_path is None or not self.state_path.is_file()):
             raise RuntimeError("stable BAR repair requires the active writer checkpoint")
         self.canonical_cache_id = (
@@ -417,6 +442,10 @@ class StableBinanceBarEdge:
             acquisition.binding_id: acquisition
             for _source, acquisition in self.history_bindings + self.history_okx_bindings
         }
+        self._binding_digests = {
+            source.binding_id: binding_series_digest(source, acquisition)
+            for source, acquisition in self.history_bindings + self.history_okx_bindings
+        }
         # Demand decides which venues and markets exist, so this edge must not
         # assert a fixed market-family set. It owns every enabled crypto BAR
         # bootstrap and only the explicit REST subset for recurring polling.
@@ -479,12 +508,18 @@ class StableBinanceBarEdge:
             if self.canonical_cache_id is None:
                 raise RuntimeError("stable BAR V4 checkpoint requires canonical cache identity")
             payload["canonical_cache_id"] = self.canonical_cache_id
+        if schema == _STATE_SCHEMA_V5:
+            payload["binding_digests"] = {
+                key: self._binding_digests[key] for key in self._binding_ids
+            }
+            if self.canonical_cache_id is not None:
+                payload["canonical_cache_id"] = self.canonical_cache_id
         return payload
 
     def _state_payload(self) -> dict:
         if not 1 <= self.connection_generation <= _MAX_CONNECTION_GENERATION:
             raise RuntimeError("stable BAR connection generation is invalid")
-        schema = _STATE_SCHEMA_V4 if self.canonical_cache_id is not None else _STATE_SCHEMA_V3
+        schema = _STATE_SCHEMA_V5
         return {
             **self._state_identity_payload(schema=schema),
             "connection_generation": self.connection_generation,
@@ -553,21 +588,79 @@ class StableBinanceBarEdge:
             cache_continuity_confirmed = (
                 payload.get("canonical_cache_id") == self.canonical_cache_id
             )
+        elif schema == _STATE_SCHEMA_V5:
+            expected = self._state_identity_payload(schema=_STATE_SCHEMA_V5)
+            expected_fields = (set(expected) - {"canonical_cache_id"}) | {
+                "connection_generation", "last_open_ms",
+            }
+            if "canonical_cache_id" in payload:
+                if self.canonical_cache_id is None:
+                    raise RuntimeError("stable BAR checkpoint requires canonical cache identity")
+                expected_fields.add("canonical_cache_id")
+                cache_continuity_confirmed = (
+                    payload["canonical_cache_id"] == self.canonical_cache_id
+                )
+            else:
+                cache_continuity_confirmed = self.canonical_cache_id is None
+            previous_generation = payload.get("connection_generation")
+            if (
+                isinstance(previous_generation, bool)
+                or not isinstance(previous_generation, int)
+                or not 1 <= previous_generation <= _MAX_CONNECTION_GENERATION
+            ):
+                raise RuntimeError("stable BAR checkpoint generation is invalid")
+            digests = payload.get("binding_digests")
+            if not isinstance(digests, dict) or set(digests) != set(
+                payload.get("binding_ids") or ()
+            ):
+                raise RuntimeError("stable BAR checkpoint binding digests are invalid")
         else:
             raise RuntimeError("stable BAR checkpoint fields are invalid")
         if set(payload) != expected_fields:
             raise RuntimeError("stable BAR checkpoint fields are invalid")
-        for field in (
-            "schema", "slice_id", "authority_revision", "catalog_revision",
-            "acquisition_revision", "warmup_rows", "binding_ids",
-        ):
+        for field in ("schema", "slice_id", "authority_revision", "warmup_rows"):
             if payload[field] != expected[field]:
                 raise RuntimeError(
                     f"stable BAR checkpoint {field} differs from runtime authority"
                 )
+        # DL v2.3.0: catalogue/acquisition revision and binding set may move by
+        # a purely additive declaration (or an explicit migration record); every
+        # unchanged binding keeps its watermark. See bar_edge_checkpoint.
+        if not isinstance(payload["binding_ids"], list) or any(
+            not isinstance(item, str) for item in payload["binding_ids"]
+        ):
+            raise RuntimeError("stable BAR checkpoint fields are invalid")
+        for field in _CROSSING_FIELDS[:2]:
+            if isinstance(payload[field], bool) or not isinstance(payload[field], int):
+                raise RuntimeError("stable BAR checkpoint fields are invalid")
+        try:
+            crossing = plan_crossing(
+                checkpoint={
+                    **{field: payload[field] for field in _CROSSING_FIELDS},
+                    **({"binding_digests": payload["binding_digests"]}
+                       if "binding_digests" in payload else {}),
+                },
+                runtime={field: expected[field] for field in _CROSSING_FIELDS},
+                current_digests=self._binding_digests,
+                migration=self.checkpoint_migration,
+            )
+        except CheckpointCrossingRefused as error:
+            raise RuntimeError(str(error)) from error
+        if crossing.crossed and self.repair_only:
+            raise RuntimeError(
+                "stable BAR repair cannot cross a checkpoint revision; start the writer first"
+            )
+        self.checkpoint_crossing = crossing
+        if crossing.crossed:
+            logger.warning(
+                "stable BAR checkpoint crosses catalog %s->%s acquisition %s->%s %s",
+                payload["catalog_revision"], expected["catalog_revision"],
+                payload["acquisition_revision"], expected["acquisition_revision"],
+                crossing.summary(),
+            )
         last_open_ms = payload["last_open_ms"]
         if not isinstance(last_open_ms, dict) or not set(last_open_ms).issubset(
-            self._binding_ids
+            payload["binding_ids"]
         ):
             raise RuntimeError("stable BAR checkpoint binding watermarks are invalid")
         restored: dict[str, int] = {}
@@ -576,6 +669,10 @@ class StableBinanceBarEdge:
             for source, _acquisition in self.history_bindings + self.history_okx_bindings
         }
         for binding_id, value in last_open_ms.items():
+            if binding_id not in crossing.retained:
+                # Removed or re-identified under the migration record: its
+                # watermark describes another series and is never adopted.
+                continue
             if (
                 isinstance(value, bool)
                 or not isinstance(value, int)
@@ -2053,7 +2150,9 @@ class StableBinanceBarEdge:
                 serving = self.serving_status() if getattr(self, "bar_readback", None) is not None else {}
                 write_heartbeat(heartbeat_path, role="stable_bar_edge",
                                 detail=f"bindings={len(self.history_bindings)}"
-                                + "".join(f" {name}={value}" for name, value in serving.items()))
+                                + "".join(f" {name}={value}" for name, value in serving.items())
+                                + _declaration_detail(getattr(self, "declaration", None)),
+                                extra=_declaration_extra(getattr(self, "declaration", None)))
             try:
                 # Bootstrap is a bounded latest-closed history read.  It must
                 # run immediately after process start; `_next_ready_at()` is
@@ -2107,10 +2206,32 @@ def build_from_environment(
 ) -> StableBinanceBarEdge:
     """Build the shared edge or an isolated repair client from one runtime env."""
 
-    catalog = StableSourceCatalog.load(os.environ["QDL_STABLE_SOURCE_BINDINGS"])
-    acquisition = StableAcquisitionPlan.load(
-        os.environ["QDL_STABLE_ACQUISITION_BINDINGS"], catalog=catalog
-    )
+    catalog_path = os.environ["QDL_STABLE_SOURCE_BINDINGS"]
+    acquisition_path = os.environ["QDL_STABLE_ACQUISITION_BINDINGS"]
+    catalog = StableSourceCatalog.load(catalog_path)
+    acquisition = StableAcquisitionPlan.load(acquisition_path, catalog=catalog)
+    # DL v2.3.0: the edge states the declaration it runs (and may be required
+    # to run a mounted, indexed one); see qdl.runtime.declaration.
+    records = [
+        config_file_record(catalog_path, kind="catalog", revision=catalog.catalog_revision),
+        config_file_record(acquisition_path, kind="acquisition", revision=acquisition.revision),
+    ]
+    demand_bundle_path = os.environ.get("QDL_STABLE_BAR_DEMAND_BUNDLE", "").strip()
+    if demand_bundle_path:
+        records.append(config_file_record(demand_bundle_path, kind="demand_bundle", revision=None))
+    migration_path = os.environ.get(_CHECKPOINT_MIGRATION_ENV, "").strip()
+    checkpoint_migration = None
+    if migration_path:
+        checkpoint_migration = load_migration_record(migration_path)
+        records.append(config_file_record(
+            migration_path, kind="checkpoint_migration",
+            revision=int(checkpoint_migration["to"]["acquisition_revision"]),
+        ))
+    declaration = effective_declaration(records, role="stable_bar_edge")
+    index = enforce_declaration(declaration)
+    if index is not None:
+        declaration = effective_declaration(records, role="stable_bar_edge", index=index)
+    log_effective_declaration(declaration)
     runtime_dir = Path(os.environ["QDL_STABLE_RUNTIME_DIR"])
     authority = json.loads((runtime_dir / "authority.json").read_text(encoding="utf-8"))
     if publisher is None:
@@ -2246,7 +2367,28 @@ def build_from_environment(
         history_end_ms=history_end_ms,
         history_only=history_only,
         repair_only=repair_only,
+        checkpoint_migration=checkpoint_migration,
+        declaration=declaration,
     )
+
+
+def _declaration_detail(declaration: dict | None) -> str:
+    return f" declaration={declaration['digest'][:12]}" if declaration else ""
+
+
+def _declaration_extra(declaration: dict | None) -> dict | None:
+    """The heartbeat's compact view of the effective declaration (DL v2.3.0)."""
+
+    if not declaration:
+        return None
+    return {"declaration": {
+        "digest": declaration["digest"],
+        "declaration_revision": declaration["declaration_revision"],
+        "image_files": declaration["image_files"],
+        "revisions": {
+            item["kind"]: item["revision"] for item in declaration["files"]
+        },
+    }}
 
 
 def build_readonly_repair_probe_from_environment(

@@ -77236,3 +77236,153 @@ window plan: scratchpad `dlcov/PACKET.md`; window runbook `dlcov/WINDOW_STAGE_A.
     - The cores and projectors stay on the stage A config throughout, because it is additive.
 - Status: IMPLEMENTED / TESTED_LOCALLY, not deployed, not certified. v2.2.6 is config-only (no image rebuild); the
   certificate inherits unchanged digests by delta proof and re-runs G4/G6/R2/R4 on the final config. Not pushed.
+### DL v2.3.0 slice 2a: declaration-only mechanism (accept-set, selectors, provenance, checkpoint v5, producer knobs) - 2026-11-13 (Claude)
+
+- Goal (owner, via the coordinator 2026-11-13): after v2.3.0, adding instruments or derived intervals is a config
+  revision + coverage gate + ordered restart, with no certification campaign, image or tag.
+  - Study: `COVERAGE_150_STUDY.md` §6 (scratchpad `dlcov/`).
+  - Guide delta: `upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md` "Delta 2026-11-13: DL v2.3.0
+    declaration-only coverage mechanism (slice 2a)".
+  - Branch `feat/v2.3.0-declaration-mechanism` off origin/dev 098c94b, worktree `.worktrees/dl-v230-declaration`.
+  - Parallel: DERIVED_FINAL bars live in `dl-v230-derived-bars`; this slice does not touch their code. Expected
+    overlap is only `stable_bar_edge.py` `__init__` (they add derived pairs; here two kwargs and
+    `_binding_digests`) and `stable_deployment.py` (theirs only).
+- Scope 2a (implemented, tested locally, no runtime change, nothing pushed):
+  1. **Accept-set.**
+     - Manifest `metadata.min_token_revision` (optional, 1..revision; bool/non-int refused).
+       `ConsumerManifest.accepts_token_revision` is used by `qdl/security/data_plane.py`.
+     - Rust `gateway_bundle::Manifest.min_token_revision` (absent = revision) and `accepts_token_revision` are
+       used by `auth.rs` authenticate and `authority.rs` reauthorize.
+     - The renderer rule is `qdl/consumer/manifest_compat.py`: an additive successor keeps the floor, anything
+       else resets it. The gate check is `declared_floor_problems`.
+     - The bundle compiler emits the field only when declared.
+  2. **Universe selectors.**
+     - Code: `qdl/consumer/selectors.py`, loaded by `ConsumerManifestLoader.load(..., selector_context=)`.
+     - ALPHA/RESEARCH only; deterministic expansion; unknown member refused; at most 16,384 rows.
+     - Audit in `selector_expansions` (Query log + bundle entry).
+     - Universe files: `qdl.v2.declared-universe.v1`, or the D48 market-cap membership.
+     - Query builds the selector context lazily (only if a manifest has selectors).
+     - The requirement check uses an index keyed by (uid, feed, interval), with the same comparisons.
+  3. **Effective declaration.**
+     - `qdl/runtime/declaration.py` records each loaded file: path, sha256, revision, IMAGE/MOUNTED.
+     - Opt-in guards: `QDL_STABLE_REQUIRE_MOUNTED_DECLARATION=1` and `QDL_STABLE_DECLARATION_INDEX`.
+     - bar_edge logs it and adds `declaration` to its heartbeat (additive keys, `heartbeat.extra`).
+     - Query logs it and adds a non-gating `declaration` component to `/health/dependencies`. The kn3 path now
+       loads the acquisition plan once instead of twice.
+  4. **Bar-edge checkpoint v5.**
+     - `qdl/runtime/bar_edge_checkpoint.py`: per-binding series digest, then `plan_crossing`.
+     - Additive crossing: watermarks kept, added bindings bootstrap.
+     - Removed or changed bindings: refused unless an exact `qdl.stable-bar-edge-checkpoint-migration.v1` record
+       (`QDL_STABLE_BAR_CHECKPOINT_MIGRATION`) names them.
+     - Revisions never decrease.
+     - A legacy v2-v4 checkpoint crosses only with `previous_binding_digests`.
+     - A repair client never crosses.
+     - The edge writes v5 from now on. The old image cannot read v5, so rollback restores the pre-roll checkpoint
+       backup.
+  5. **Ingestor producer knobs.**
+     - `KafkaTransportConfig.producer_linger_ms` (`linger.ms` set only when Some, 0..=100).
+     - Ingestor env `QDL_KAFKA_PRODUCER_LINGER_MS` and `QDL_KAFKA_REQUEST_TIMEOUT_SECONDS`, both unset = today.
+       The second fixes the side finding that the ingestor hard-coded 30 s and ignored the variable set on its
+       container; the deployed value is 30, so no behaviour change.
+     - Echoed as `producer` in the started and progress events. Ships unset (BATCHING_SLICE design).
+- Production facts read for the rollout (read-only: docker inspect and `--rm` reads, no mutation):
+  - bar_edge `08f356a8` runs image config catalog r11 / acquisition r19. Query `/runtime`
+    (`releases/v2.2.0-02cd827/runtime`) is r12/r20.
+  - Live checkpoint `crypto-bar-checkpoint.json`: schema v4, 640 binding_ids, 635 watermarks, canonical_cache_id
+    present.
+  - Both ingestor containers carry `QDL_KAFKA_REQUEST_TIMEOUT_SECONDS=30`.
+- Tests (all in `--rm` containers, no network for Python):
+  - Python, image `qdl-v2-python:2.2.5-9b6747f`:
+    - new `tests/test_v230_declaration_mechanism.py`: 20 OK;
+    - impacted suites (67 modules that import manifests, the bundle, data-plane security, the bar edge or the
+      heartbeat): 1353 OK (49 skipped); after the Query declaration wiring, the 24 modules importing `qdl.runtime.stable`/selectors re-run: 247 OK (1 skipped).
+    - Existing tests updated for intended changes:
+      - persisted checkpoint schema v3/v4 -> v5 (4 asserts);
+      - r128 test double gains `_binding_digests` / `checkpoint_migration`, and its refusal message is now the
+        legacy one.
+  - Bundle compat: the repo bundle compiled at 098c94b and on this tree is byte-identical (sha256
+    `21f42d2d726de6b9...`).
+  - Rust, image `qdl-rust-builder:r134-test` (1.82.0), `--cpus 2 --memory 4g`:
+    - `cargo fmt --all -- --check` OK;
+    - `cargo clippy -p qdl-kafka -p qdl-contracts -p qdl-stream-gateway --all-targets --locked -- -D warnings` OK;
+    - `cargo test` on the same packages: qdl-contracts 34, qdl-kafka lib 47 (2 ignored), ingestor 73 (1 ignored),
+      production-core 7, realtime-core 30, stream-gateway lib 69, hot_lookup 1, native_stream 56 (1 ignored).
+    - New tests:
+      - accept-set parse/refusal x3;
+      - `t03_an_additive_manifest_revision_keeps_older_tokens_and_a_reset_floor_ends_them`;
+      - producer linger unset/set/out-of-range;
+      - ingestor ProducerSettings x3.
+- Cleanup: every container `--rm`; no image built. Scratch (`scratchpad/v230`: target, registry, logs) is outside
+  the repo.
+- Status: implemented, tested locally. Not shadow-certified, not deployed.
+- Open:
+  - 2b: sticky lanes, per-feed flush, compose mounts.
+  - The declaration tool (separate agent, from this commit).
+  - Usability status file `qdl.execution-binding-status.v1`.
+  - v2.3.0 release certificate (R-cert 1-4 of the study, which the derived-bars slice shares).
+
+### DL v2.3.0 slice 2b: sticky ingestor lanes, per-feed latest-state flush, mounted declarations in compose - 2026-11-13 (Claude)
+
+- Continues slice 2a (`ccfe62a8`). Same branch and worktree. Guide: the same delta section, items 6-7 below.
+- Scope (implemented, tested locally, no runtime change, nothing pushed):
+  1. **Sticky lanes.**
+     - Ingestor `RawBinding.lane_shard: Option<usize>` (1..=999). All bindings pinned or none.
+     - Grouping: OKX by (service, shard), lane `okx-<service>-<NNN>` unchanged. Binance by (route, feed, shard),
+       lane `binance-<route>-<feed>-<NNN>` unchanged.
+     - One feed class per lane, at most `max_subscriptions_per_connection`. Refused in `validate()`, so the
+       supervisor never retries a bad plan.
+     - Absent pins = today's positional partition (bytes of an unchanged config behave identically).
+     - Renderer `qdl/runtime/ingestor_lanes.py`:
+       - `legacy_lane_assignment` mirrors the ingestor; first pinned render = today's lanes, proved on the repo
+         ingestor configs;
+       - `sticky_lane_pins` keeps retained pins, fills same-scope same-feed capacity, opens max+1;
+       - `lane_plan_report` is the gate's lane-stability input.
+     - The tool applies pins to the rendered config, so `stable_deployment.py` is untouched (no overlap with the
+       derived-bars slice).
+  2. **Per-feed flush.** `IngestorConfig.latest_state_flush_ms_by_feed` (QUOTE/MARK_INDEX, 1..=1000 ms). Each
+     lane's latest-state tick uses its feed's value (one feed per lane). Started event adds the map and
+     `lane_plan: PINNED|POSITIONAL`.
+  3. **Compose** `deploy/compose/qdl-v2-stable-kn.yml`:
+     - bar_edge catalogue and acquisition come from `/runtime` (was the image's r11/r19). The unused
+       `QDL_STABLE_CONSUMER_MANIFESTS` is removed from bar_edge (`build_from_environment` never reads it).
+     - query_kn_1/2 read all 12 manifests from `/consumer-realms`.
+     - Header documents these as v2.3.0 deltas against live. `kn_versioned_compose.py parity` against the v2.2.5
+       roles shows them until the window.
+  4. **Release route loader.** `StableReleaseRoutePlan.load/from_mapping/_consumer(selector_context=None)` passes
+     to the manifest loader. Default keeps refusing selector manifests (declaration-tool agent request).
+  5. **Draft rollout** `upgrade/evidence/releases/v2.3.0/drafts/DECLARATION_MECHANISM_ROLLOUT_DRAFT.md`.
+- Facts verified (read-only):
+  - The r11/r19 (image `08f356a8`) -> r12/r20 (live `/runtime`) BAR binding crossing, classified with the
+    certified loaders and series digests: 640 -> 640, added 0, removed 0, changed 0.
+  - The three image manifests are byte-identical to the repository copies, and the realm dir lacks them.
+- Tests:
+  - Rust (`qdl-rust-builder:r134-test`, 2 CPU / 4 GiB `--rm`):
+    - `cargo fmt --check` OK;
+    - `cargo clippy -p qdl-kafka --all-targets -D warnings` OK;
+    - ingestor tests 78 passed / 1 ignored (+5 new `lane_plan_tests`: pinned reproduces positional, growth keeps
+      names with a positional control, invalid pins, Binance per-feed numbering, per-feed flush, partial pin
+      refused);
+    - `cargo check --workspace --all-targets` OK.
+  - Python (`qdl-v2-python:2.2.5-9b6747f`, `--rm`, no network): `test_v230_declaration_mechanism` (21, incl. release-route selector kwarg), `test_v230_ingestor_lanes` (6), `test_kn_stable_compose` (12) and the 10 `StableReleaseRoutePlan` suites: 179 OK.
+  - ruff 0.15.13 (no ruff in DL CI; run as a lint) clean on the new files.
+- Status: implemented, tested locally. Open:
+  - the declaration tool (separate agent, worktree `dl-v230-declaration-tool`);
+  - status file `qdl.execution-binding-status.v1` (item 3);
+  - merge with the derived-bars slice;
+  - v2.3.0 images, certificate, window (draft packet).
+- Fix 2026-11-13 (cross-slice defect reported by the declaration-tool agent, reproduced with an overlay of 7eb58c5 +
+  the derived-bars python files: 1716 DERIVED_FINAL rows -> `TypeError: Object of type StableDerivedBarAcquisition is
+  not JSON serializable` in `binding_series_digest`). The digest read `derived_from.interval`, but the derived-bars
+  slice names the field `StableDerivedBarAcquisition.base_interval`, so the dataclass itself reached `json.dumps`.
+  The digest now reads `base_interval` (or a plain string) and refuses anything else with a typed ValueError; a
+  binding without `derived_from` keeps its digest. Test `SeriesDigestDerivedTests` (no-derived digest unchanged,
+  base interval changes the identity, a missing base interval refused); `tests.test_v230_declaration_mechanism`
+  22 OK; ruff clean.
+- Follow-up 2026-11-13: the derived-bars slice settled the field as `StableDerivedBarAcquisition.interval` (YAML
+  `derived_from.interval`, worktree `dl-v230-derived-bars`). The digest now reads `interval` and still hashes only
+  the string; a plain string hashes the same, `derived_from: None` leaves the key out, and anything else is refused.
+  `tests.test_v230_declaration_mechanism` 22 OK.
+- Follow-up 2026-11-13: in the ingestor, an empty `QDL_KAFKA_PRODUCER_LINGER_MS` or `QDL_KAFKA_REQUEST_TIMEOUT_SECONDS`
+  value now means unset (compose `${VAR:-}`), the same rule as the v2.2.7 hotfix (`release/v2.2.7-ingestor-linger`
+  13f20d05). Tested: `cargo fmt --check` OK, and the 3 `producer_settings_tests` pass
+  (`qdl-rust-builder:r134-test`, 1 CPU, cpu-shares 256).
