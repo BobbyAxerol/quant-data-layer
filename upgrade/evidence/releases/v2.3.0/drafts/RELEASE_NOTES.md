@@ -93,7 +93,7 @@ The release tree reproduces the deployed runtime (pre-flight F2, 2026-11-13):
   - The Python image `a235c0a1` was built from a git archive of `7cd4fc36` (`COPY . /app`). A rebuild from this
     tree differs by docs and the files above, so the release ships the certified digests rather than a rebuild.
 
-## First production declaration (window 2026-11-13: TBD result)
+## First production declaration (window A 2026-11-13 14:44-17:31Z: GREEN)
 
 The first production declaration is rendered by `scripts/dl_declaration.py` at tool `5a42ba01` and passes the offline
 gate 18/18 (render out6, packet section 3).
@@ -103,6 +103,16 @@ gate 18/18 (render out6, packet section 3).
 - New bindings: 89 native candle1m, plus 318 DERIVED_FINAL (1h/12h for the 94 crossec swaps; 3m-1d for the 25
   covered).
 - bar_edge moves to its mounted runtime pair. Checkpoint crossing r11/r19 -> r14/r22 with a migration record.
+- **Result (window A, receipt `window-A-20261113T1444Z/`).**
+  - Crossing: retained 640, added 407, dropped 0, migration_record=True.
+  - Bootstrap: 14:52:47-17:00:54Z, about 2 h 08 min against the 72.7 min estimate. The core backpressure stage of
+    2000 paused history repeatedly under host load.
+  - Bootstrap outcome: 1047/1047 published, 681 provider-short. 5 bindings (Binance 3d BNB/BTC/DOGE/ETH/SOL) are
+    suspended with a recent suffix (OVERLAP, daily retry, as before rc3).
+  - 584 retained provider-short products re-bootstrapped at restore, as expected: defect DL-BL-2026-11-13-D,
+    v2.3.1.
+  - D6b at bootstrap end + 15 min: 0 derived gaps recorded, healed or kept; 76 derived ACK lines. The + 6 h read is
+    at 23:01Z: FILL.
 
 ## Certification (TBD final)
 
@@ -111,8 +121,8 @@ gate 18/18 (render out6, packet section 3).
 | R-cert 1 offline derived-bar parity | **PASS**: 740,350 records compared, 0 mismatches; receipt `6814e25c` |
 | R-cert 2 live shadow (>= 24 h + Monday 00:00Z) | TBD. Run 2 is a weekend run on the rc3 images (namespace `qdl-v230-rcert2-20261113t1551z`, started 2026-11-13 15:51Z). Run 1 interim 840/840 MATCH on rc1 images (12:03Z) does not count for the final verdict |
 | R-cert 3 fault matrix | TBD |
-| R-cert 4 capacity envelope | TBD (window substitute: D0 median and bootstrap-end + 30 min, DL vCPU <= 6.0) |
-| Window R-gates | rc2 combined window 2026-11-13: D1-D6 PASS, W1 VERIFY_FAILED, rolled back (receipt `window-20261113T1237Z/`). rc3 window A (DL only, writer 7332e85a): TBD receipt |
+| R-cert 4 capacity envelope | Not run. Window substitute, owner delta gate: median at bootstrap end + 30 min <= D0 median + 0.3. Window A: D0 6.97, gate median **6.54** over 11 samples, PASS. DL was above the 6.0 cap before the window (Kafka F1 leader balancing and stage A; the lever is the linger work) |
+| Window R-gates | rc2 combined window 2026-11-13: D1-D6 PASS, W1 VERIFY_FAILED, rolled back (receipt `window-20261113T1237Z/`). rc3 window A (DL only, writer 7332e85a): **GREEN**. D1-D6, D5a (the W1 defect class) PASS on both Query instances, writer W1/W2 VERIFIED (46.7 s / 47.9 s), 10 min soak, D6b + 15 min and CPU gate PASS; Paper outage about 12 min (receipt `window-A-20261113T1444Z/`) |
 | Full CI on the release tree (CI6) | TBD, one run (CI plan in [CI_PLAN.md](CI_PLAN.md)) |
 
 ## Limits (carried and new)
@@ -125,10 +135,12 @@ gate 18/18 (render out6, packet section 3).
   retained binding, so the gap is not exposed by this release's declaration.
 - Bootstrap depth is manifest-wide (`max_warmup_rows`); per-row depth is backlog item DL-BL-2026-11-13-C.
 - Bootstrap and native gap repair share the OKX HISTORY_CANDLES admission lane at BATCH priority.
-- 1W / 2D / 3D derived bars stay off until R-cert 2 passes a Monday boundary.
+- 1W / 2D / 3D derived bars stay off until a later declaration's R-cert run crosses their boundaries (Monday 00:00Z). v2.3.0 releases on the 2026-11-13 R-cert 2 run-2 certificate (owner, 2026-11-13: do not wait for Monday).
 
 ## Rollback
 
-TBD from the window packet section 5: back to v2.2.6 stage-A r13 for query/stream/OKX ingestor, stage-A for
-cores/projectors and v2.2.5 for the Binance ingestor/bar_edge. The pre-rollout bar-edge checkpoint backup restores
+From the window packet section 5, as exercised on 2026-11-13 13:00-13:05Z (rc2 rollback, receipt
+`window-20261113T1237Z/`): back to v2.2.6 stage-A r13 for query/stream/OKX ingestor, stage-A for cores/projectors
+and v2.2.5 for the Binance ingestor/bar_edge. Capture logs and inspect before every recreate. The writer is
+restored BOOTSTRAP then STRICT, never with `docker start`. The pre-rollout bar-edge checkpoint backup restores
 the v4 checkpoint, because the old image cannot read v5. A declaration rollback is a forward declaration.
