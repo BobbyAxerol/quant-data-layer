@@ -1469,6 +1469,9 @@ class Render:
             "provider": "OKX", "market": "SWAP", "endpoint_family": "HISTORY_CANDLES"})
         rate_per_min = lane["refill_tokens"] / (lane["refill_interval_ns"] / 1e9) * 60
         lookback_ms = 1_095 * 86_400_000  # stable_bar_edge _BOOTSTRAP_HISTORY_LOOKBACK_DAYS
+        from qdl.adapters.okx.history import OkxHistoricalClient
+
+        page = int(OkxHistoricalClient._CANDLE_ENDPOINTS["TRADE"][1])  # history-candles page (300)
         by_interval: dict[str, dict[str, int]] = {}
         rows = requests = bindings = 0
         for row in new_acq:
@@ -1478,10 +1481,10 @@ class Render:
             depth = min(demand.get(row["binding_id"], 0), max(1, lookback_ms // canonical_interval_ms(interval)))
             entry = by_interval.setdefault(interval, {"bindings": 0, "rows_per_binding": depth, "requests": 0})
             entry["bindings"] += 1
-            entry["requests"] += -(-depth // 100)
+            entry["requests"] += -(-depth // page)
             bindings += 1
             rows += depth
-            requests += -(-depth // 100)
+            requests += -(-depth // page)
         return {"bindings": bindings, "rows": rows, "requests": requests,
                 "kn_cache_rows_added": rows, "kn_cache_row_cap_added": rows + 2_064 * bindings,
                 "lane": "OKX/SWAP/HISTORY_CANDLES (separate token bucket from the live CANDLES lane)",
@@ -1490,7 +1493,9 @@ class Render:
                 "by_interval": dict(sorted(by_interval.items(), key=lambda kv: canonical_interval_ms(kv[0]))),
                 "basis": "depth = qdl.runtime.bar_history_demand over the rendered kn bundle (largest granting "
                          "manifest max_warmup_rows; 0 when ungranted), capped by the bar edge's 1,095-day lookback; "
-                         "100 rows per history request (OKX page, not re-verified); one pass, no retries"}
+                         f"{page} rows per history-candles request (qdl.adapters.okx.history page); one pass, no "
+                         "retries; bootstrap and native gap repair share this lane at BATCH priority",
+                "rows_per_request": page}
 
     def _bootstrap_from_templates(self, new_acq: list[dict[str, Any]]) -> dict[str, Any]:
         """One-off bar-edge history bootstrap of the new BAR bindings: depth = the largest declared warmup that
@@ -2054,9 +2059,11 @@ def gate(rendered: Path) -> dict[str, Any]:
 
         bar_edge_stamp = inputs.get("bar_edge_config_lineage")
         base_sources = {item.binding_id: item for item in base_catalog.bindings}
+        # only rows the base did not pin: a pinned base row already states its lineage
         bar_edge_owned = {item.binding_id for item in base_plan.bindings
                           if item.enabled and item.runtime in {"BINANCE", "OKX"}
-                          and base_sources[item.binding_id].feed.value == "BAR"}
+                          and base_sources[item.binding_id].feed.value == "BAR"
+                          and getattr(item, "lineage_config_revision", None) is None}
 
         def _live_aware(old, new, ids, *, runtime_plan=False):
             problems, moved = [], []
