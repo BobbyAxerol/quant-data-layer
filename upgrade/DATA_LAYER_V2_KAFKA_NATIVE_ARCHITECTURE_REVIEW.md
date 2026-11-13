@@ -3219,3 +3219,63 @@ ordered restart, with no certification campaign, image or tag. The design rules 
 Still a release after v2.3.0: new venue/market or feed type, new derivation kind, parser/normaliser/proto change,
 flush or lane semantics, exceeding the certified capacity envelope. Removals and source-mode changes are a
 declaration with an explicit migration record, separately approved.
+
+### Delta 2026-11-13: DL v2.3.0 slice 1, DERIVED_FINAL bars from finer final bars
+
+Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, entry "DL v2.3.0 slice 1:
+DERIVED_FINAL bar aggregation (tested locally) - 2026-11-13". Owner rule: higher
+intervals are aggregated from 1m inside the standard DL structure, so adding an
+interval later is a declaration, not a code change.
+
+- **Mode.** Acquisition `mode: DERIVED_FINAL` with `derived_from: {interval: <base>}`.
+  The base must be strictly finer and divide the target exactly. The target
+  calendar anchor must start on a base open. The parent is the single BAR binding
+  of the same instrument, provider and source role. An enabled child needs an
+  enabled parent. The intended chain is 3m<-1m, 5m<-1m, 15m<-5m, 30m<-15m,
+  1h<-30m, 2h<-1h, 4h<-2h, 6h<-2h, 12h<-6h, 1d<-12h, 2d<-1d, 3d<-1d, 1w<-1d.
+  - The binding keeps the venue BAR provider kind and the native channel of its
+    own interval (OKX `candle1H`, Binance `rest-klines/1h`). History bootstrap
+    therefore stays native and routes on the same core key. No ingestor
+    subscribes it.
+- **Who derives, who writes.** The bar edge reads the parent's durable final rows
+  from the KN market cache (`KnBarReadback.final_bar_rows`). It then publishes
+  one raw `qdl_derived_bar` record to `md.raw.realtime.v2`, with transport
+  `FILE_REPLAY` and capture boundary `REPLAY_BYTES`. The record carries the
+  constituents' identities and values, and no aggregate of its own.
+  - The Rust core (`qdl-core/src/derived_bar.rs`) recomputes the aggregate,
+    checks it against the binding's `derived_bar` spec, and is the only
+    canonical writer. Its output is `BAR_ORIGIN_AGGREGATED` with the new additive
+    `Bar.aggregation` lineage: base interval and source, constituent count,
+    first and last constituent event ids and offsets, and a constituent SHA-256.
+  - Query maps the lineage to `resample_lineage`.
+- **Aggregation rule (measured, replaces "naive OHLC").** A venue zero-volume bar
+  repeats the previous close, and OKX native candles exclude it from
+  open/high/low/close. So OHLC come only from constituents with volume > 0, and an
+  untraded bucket keeps all of them. Volumes and trade counts are summed over all
+  constituents.
+  - With this rule the warmup resample and the core agree with OKX native on
+    1,949 / 1,949 bars of the committed capture
+    (`tests/fixtures/okx_derived_bar_parity_ldo_20261112.json`).
+  - Without it, 3 of 480 native 3m bars differ.
+  - Buckets use `intervals.bar_bucket_open_ms`, i.e. the provider anchor: Monday
+    weeks, and the Binance Monday 3d grid.
+- **Finality, gaps, revisions.**
+  - Derivation is final-only, on a complete contiguous bucket.
+  - A missing constituent waits 120 s after the target close. It then becomes a
+    visible gap: no bar, rechecked every 30 s for 6 h, at most 256 per binding, so
+    native gap repair can still fill it. Nothing is synthesized or filled.
+  - The derived revision is the sum of the constituent revisions, so a correction
+    always strictly raises it (the projector refuses equal-revision different
+    content).
+  - A durable row is replaced only by a higher revision of an AGGREGATED row, and
+    the replacement is `REVISED` with `supersedes_event_id`. Venue history rows
+    are never replaced.
+- **Ordering constraint for any rollout.** Every role that decodes canonical
+  envelopes (projector, stream, query, core) must run the v2.3.0 contracts before
+  the bar edge publishes a derived bar.
+  - An older projector drops field 19 on decode, and its row codec then refuses
+    the envelope as `ENVELOPE_NOT_CANONICAL`.
+- **Not in this slice.** The parity auditor, live shadow and the release
+  certificate (R-cert 1-4), and every declaration-mechanism item (mounted bar
+  edge config, checkpoint superset, token revision ranges, selectors, lane names,
+  per-feed coalescing) belong to the sibling slice `feat/v2.3.0-declaration-mechanism`.

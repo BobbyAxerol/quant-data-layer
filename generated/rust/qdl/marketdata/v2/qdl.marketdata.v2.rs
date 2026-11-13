@@ -72,6 +72,37 @@ pub struct Bar {
     pub quote_volume: ::core::option::Option<super::super::common::v1::DecimalValue>,
     #[prost(message, optional, tag="18")]
     pub contract_volume: ::core::option::Option<super::super::common::v1::DecimalValue>,
+    /// Present exactly when origin is BAR_ORIGIN_AGGREGATED: the lineage of a
+    /// bar the Data Layer derived from finer final bars of the same instrument.
+    #[prost(message, optional, tag="19")]
+    pub aggregation: ::core::option::Option<BarAggregation>,
+}
+/// Lineage of one QDL-derived bar. The constituents are the final bars of the
+/// next finer interval in the derivation chain (for example 30m for 1h), read
+/// back from the durable market cache. The canonical core recomputes the
+/// aggregate from them, so this record is evidence of what was aggregated, not
+/// a second copy of the values.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct BarAggregation {
+    #[prost(string, tag="1")]
+    pub base_interval: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub base_source_id: ::prost::alloc::string::String,
+    #[prost(uint32, tag="3")]
+    pub constituent_count: u32,
+    #[prost(bytes="vec", tag="4")]
+    pub first_constituent_event_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes="vec", tag="5")]
+    pub last_constituent_event_id: ::prost::alloc::vec::Vec<u8>,
+    /// SHA-256 over the ordered constituent identities (event id, open time,
+    /// revision), the same value the raw derived record carries.
+    #[prost(bytes="vec", tag="6")]
+    pub constituent_sha256: ::prost::alloc::vec::Vec<u8>,
+    /// Durable bars-topic offsets of the first and last constituent rows.
+    #[prost(uint64, tag="7")]
+    pub first_constituent_offset: u64,
+    #[prost(uint64, tag="8")]
+    pub last_constituent_offset: u64,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct BookLevel {

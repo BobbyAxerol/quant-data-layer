@@ -102,7 +102,7 @@ fn boolean(raw: &Value, field: &str) -> Result<bool, String> {
         .ok_or_else(|| format!("required provider boolean is missing or invalid: {field}"))
 }
 
-fn set_payload_hash(envelope: &mut EventEnvelope) -> Result<(), String> {
+pub(crate) fn set_payload_hash(envelope: &mut EventEnvelope) -> Result<(), String> {
     if envelope.source_session_id.is_empty() {
         return Ok(());
     }
@@ -224,7 +224,7 @@ fn source_role(value: &str) -> Result<SourceRole, String> {
     }
 }
 
-fn base_envelope(
+pub(crate) fn base_envelope(
     fixture: &TradeFixture,
     feed: &str,
     source_sequence: String,
@@ -304,7 +304,7 @@ fn validate_shadow_context(context: &TradeContext) -> Result<(), String> {
     Ok(())
 }
 
-fn quantity_unit(context: &TradeContext) -> Result<QuantityUnit, String> {
+pub(crate) fn quantity_unit(context: &TradeContext) -> Result<QuantityUnit, String> {
     let venue = context.venue.trim().to_ascii_uppercase();
     let market = context.market.trim().to_ascii_uppercase();
     let product = context.product_type.trim().to_ascii_uppercase();
@@ -449,6 +449,7 @@ fn canonicalize_binance_bar(fixture: &TradeFixture) -> Result<EventEnvelope, Str
             .map(|value| parse_decimal(&value))
             .transpose()?,
         contract_volume: None,
+        aggregation: None,
     }));
     set_payload_hash(&mut envelope)?;
     Ok(envelope)
@@ -513,6 +514,7 @@ fn canonicalize_binance_rest_bar(fixture: &TradeFixture) -> Result<EventEnvelope
         base_volume: Some(parse_decimal(&scalar_text(&row[5])?)?),
         quote_volume: Some(parse_decimal(&scalar_text(&row[7])?)?),
         contract_volume: None,
+        aggregation: None,
     }));
     set_payload_hash(&mut envelope)?;
     Ok(envelope)
@@ -689,6 +691,7 @@ fn canonicalize_okx_bar(fixture: &TradeFixture) -> Result<EventEnvelope, String>
         } else {
             None
         },
+        aggregation: None,
     }));
     set_payload_hash(&mut envelope)?;
     Ok(envelope)
@@ -772,6 +775,7 @@ fn canonicalize_dnse_bar(fixture: &TradeFixture) -> Result<EventEnvelope, String
         } else {
             None
         },
+        aggregation: None,
     }));
     set_payload_hash(&mut envelope)?;
     Ok(envelope)

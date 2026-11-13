@@ -44,6 +44,12 @@ pub mod qdl {
     }
 
     pub mod marketdata {
+        // v2.3.0 `Bar.aggregation` (DERIVED_FINAL lineage) made the BAR the
+        // largest `EventEnvelope.payload` variant by more than clippy's bound.
+        // Prost keeps `oneof` as an inline enum; boxing it would change the
+        // generated API every caller matches on, so the size is accepted and
+        // measured in the release capacity envelope instead.
+        #[allow(clippy::large_enum_variant)]
         pub mod v2 {
             include!(concat!(
                 env!("CARGO_MANIFEST_DIR"),

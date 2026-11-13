@@ -5,6 +5,7 @@ pub mod binance;
 pub mod binance_session;
 pub mod canonical;
 pub mod decimal;
+pub mod derived_bar;
 pub mod event_id;
 pub mod json_probe;
 pub mod l2_adapter;
