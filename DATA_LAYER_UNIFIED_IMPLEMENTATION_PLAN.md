@@ -78084,3 +78084,35 @@ container has been started.
   - Linger and broker fetch are config-only and are recorded as runtime config if their arms pass.
   - CI has no ruff step (no ruff/flake8 in `.github/workflows`, Makefile or pyproject). The unused `import os` in
     `scripts/build_qdl_release_images.py` is removed anyway: ruff 0.15.13 clean, import check OK.
+
+### DL v2.3.0 final package refreshed (pre-flight F1/F2): rc3 base, release tree = runtime - 2026-11-13 (Claude)
+
+Coordinator pre-flight `PREFLIGHT_20261113T1605Z` found the final package stale.
+
+- **F1.** `release/v2.3.0-final-prep` was rebased onto the rc3 integration tip `3d8ccd7`. The base contains
+  `7cd4fc36`, `60a97a18` and `7e12b08`. One plan conflict, resolved by keeping both sides.
+  - The release runtime is rc3: rust `58bdd282`, python `a235c0a1`.
+  - The rc2 Python `03de529a` is out of the release (W1 rollback).
+  - R-cert 2 run 2 is the weekend run on the rc3 images.
+  - Updated: release notes, fill list, PR body and the ledger v2.3.0 section.
+- **F2.** The release tree now reproduces the runtime:
+  - `deploy/compose/qdl-v2-stable-kn.yml` is byte-equal to the deployed compose (sha256 `5b1381e0`): alpha.okx r16,
+    the bar_edge runtime pair, core backpressure 2000, the checkpoint migration env.
+  - New `deploy/compose/qdl-v2-stable-kn.v2.3.0.env` is byte-equal to the deployed rc3 env (sha256 `2b1b4b8d`).
+  - The out6 `repo/` set is committed: `config/v2` acquisition r22 (every row pinned), catalogue r14, demand r10,
+    scope r13, routing r31, the two universes, and `consumers/stable/alpha-okx-paper.yaml` r16. There was no repo
+    drift on these paths since `832c02c4`.
+  - All six consumer manifests equal the mounted realm documents.
+  - What stays different is recorded in RELEASE_NOTES "Release tree = runtime":
+    - the mounted `runtime/*` documents are rendered from the live runtime base (H2 stamps, `:8443` URLs on 110
+      rows, 2 l2 rows);
+    - the root-only release dirs need sudo for a byte readback;
+    - the Python image bakes `COPY . /app`, so the release ships the certified digests rather than a rebuild.
+- The compose and env files are CI-defining (CI5): the release run is full regardless.
+- **Stage B** (S1-S4) moves after the v2.3.0 release, as its own packet (post-arm baseline, disk >= 25% free,
+  multi-member group proof).
+
+Guide delta: `upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md`, "Delta 2026-11-13: v2.3.0 release tree
+reproduces the runtime".
+
+Status: docs and configuration only; not pushed, no runtime action.

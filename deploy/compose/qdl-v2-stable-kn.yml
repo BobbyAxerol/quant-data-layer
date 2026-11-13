@@ -810,7 +810,7 @@ services:
       QDL_STABLE_AUTHORITY_MODE: RUST_PRIMARY
       QDL_STABLE_AUTHORITY_REVISION: '1'
       QDL_STABLE_CONSUMER_GROUP: stable-query-1
-      QDL_STABLE_CONSUMER_MANIFESTS: /consumer-realms/monitoring-multivenue.yaml:/consumer-realms/alpha.binance.paper.stable-r16.yaml:/consumer-realms/alpha.okx.paper.stable-r15.yaml:/consumer-realms/alpha-vn-paper.yaml:/consumer-realms/${QDL_PAPER_REALM_MANIFEST:-trading-system.paper.stable-r11.yaml}:/consumer-realms/reference-l2-stable.yaml:/consumer-realms/alpha.binance.live.stable.yaml:/consumer-realms/alpha.binance.sandbox.stable.yaml:/consumer-realms/alpha.okx.live.stable.yaml:/consumer-realms/alpha.okx.sandbox.stable.yaml:/consumer-realms/trading-system.live.stable.yaml:/consumer-realms/trading-system.sandbox.stable.yaml
+      QDL_STABLE_CONSUMER_MANIFESTS: /consumer-realms/monitoring-multivenue.yaml:/consumer-realms/alpha.binance.paper.stable-r16.yaml:/consumer-realms/alpha.okx.paper.stable-r16.yaml:/consumer-realms/alpha-vn-paper.yaml:/consumer-realms/${QDL_PAPER_REALM_MANIFEST:-trading-system.paper.stable-r11.yaml}:/consumer-realms/reference-l2-stable.yaml:/consumer-realms/alpha.binance.live.stable.yaml:/consumer-realms/alpha.binance.sandbox.stable.yaml:/consumer-realms/alpha.okx.live.stable.yaml:/consumer-realms/alpha.okx.sandbox.stable.yaml:/consumer-realms/trading-system.live.stable.yaml:/consumer-realms/trading-system.sandbox.stable.yaml
       QDL_STABLE_CURSOR_ACTIVE_KEY_ID: stable-k1
       QDL_STABLE_CURSOR_KEYS_JSON: ${QDL_STABLE_CURSOR_KEYS_JSON:?set QDL_STABLE_CURSOR_KEYS_JSON (host-only secrets env)}
       QDL_STABLE_CURSOR_TTL_SECONDS: '3600'
@@ -963,7 +963,7 @@ services:
       QDL_STABLE_AUTHORITY_MODE: RUST_PRIMARY
       QDL_STABLE_AUTHORITY_REVISION: '1'
       QDL_STABLE_CONSUMER_GROUP: stable-query-1
-      QDL_STABLE_CONSUMER_MANIFESTS: /consumer-realms/monitoring-multivenue.yaml:/consumer-realms/alpha.binance.paper.stable-r16.yaml:/consumer-realms/alpha.okx.paper.stable-r15.yaml:/consumer-realms/alpha-vn-paper.yaml:/consumer-realms/${QDL_PAPER_REALM_MANIFEST:-trading-system.paper.stable-r11.yaml}:/consumer-realms/reference-l2-stable.yaml:/consumer-realms/alpha.binance.live.stable.yaml:/consumer-realms/alpha.binance.sandbox.stable.yaml:/consumer-realms/alpha.okx.live.stable.yaml:/consumer-realms/alpha.okx.sandbox.stable.yaml:/consumer-realms/trading-system.live.stable.yaml:/consumer-realms/trading-system.sandbox.stable.yaml
+      QDL_STABLE_CONSUMER_MANIFESTS: /consumer-realms/monitoring-multivenue.yaml:/consumer-realms/alpha.binance.paper.stable-r16.yaml:/consumer-realms/alpha.okx.paper.stable-r16.yaml:/consumer-realms/alpha-vn-paper.yaml:/consumer-realms/${QDL_PAPER_REALM_MANIFEST:-trading-system.paper.stable-r11.yaml}:/consumer-realms/reference-l2-stable.yaml:/consumer-realms/alpha.binance.live.stable.yaml:/consumer-realms/alpha.binance.sandbox.stable.yaml:/consumer-realms/alpha.okx.live.stable.yaml:/consumer-realms/alpha.okx.sandbox.stable.yaml:/consumer-realms/trading-system.live.stable.yaml:/consumer-realms/trading-system.sandbox.stable.yaml
       QDL_STABLE_CURSOR_ACTIVE_KEY_ID: stable-k1
       QDL_STABLE_CURSOR_KEYS_JSON: ${QDL_STABLE_CURSOR_KEYS_JSON:?set QDL_STABLE_CURSOR_KEYS_JSON (host-only secrets env)}
       QDL_STABLE_CURSOR_TTL_SECONDS: '3600'
@@ -1276,11 +1276,12 @@ services:
       QDL_KAFKA_CLIENT_ID: qdl-v2-stable-binance-bars
       QDL_KN3_ENVIRONMENT: paper
       QDL_KN3_MARKET_CACHE_URL: redis://market_cache:6379/0
-      QDL_STABLE_ACQUISITION_BINDINGS: /runtime/stable-acquisition-bindings.yaml
+      QDL_STABLE_ACQUISITION_BINDINGS: /runtime/bar-edge-acquisition-bindings.yaml
       QDL_STABLE_AUTHORITY_MODE: RUST_PRIMARY
       QDL_STABLE_AUTHORITY_REVISION: '1'
       QDL_STABLE_BAR_BACKPRESSURE_BOOTSTRAP: kafka1:9092,kafka2:9092,kafka3:9092
-      QDL_STABLE_BAR_BACKPRESSURE_STAGES: core:qdl-v2-realtime-core-v2:md.raw.realtime.v2:20000,a:kn-projector-v3-a:md.canonical.v2:50000,b:kn-projector-v3-b:md.bars.v2:50000
+      QDL_STABLE_BAR_BACKPRESSURE_STAGES: core:qdl-v2-realtime-core-v2:md.raw.realtime.v2:2000,a:kn-projector-v3-a:md.canonical.v2:50000,b:kn-projector-v3-b:md.bars.v2:50000
+      QDL_STABLE_BAR_CHECKPOINT_MIGRATION: /runtime/bar-edge-checkpoint-migration.json
       QDL_STABLE_BAR_DEMAND_BUNDLE: /kn/bundle.json
       QDL_STABLE_BAR_MAX_CATCHUP_ROWS: '10000'
       QDL_STABLE_BAR_MAX_CONCURRENT_REQUESTS: '32'
@@ -1316,7 +1317,7 @@ services:
       QDL_STABLE_REQUEST_DEADLINE_SECONDS: '90'
       QDL_STABLE_RUNTIME_DIR: /runtime
       QDL_STABLE_SCHEMA_DIGEST: 100966435a30367dfa20dd8f9d94af15fb0c27f684aeedbd3ac9511bb757d13b
-      QDL_STABLE_SOURCE_BINDINGS: /runtime/stable-source-bindings.yaml
+      QDL_STABLE_SOURCE_BINDINGS: /runtime/bar-edge-source-bindings.yaml
       QDL_STABLE_STATE_DIR: /var/lib/qdl-stable/runtime
     cpus: 0.75
     mem_limit: 536870912

@@ -2437,7 +2437,8 @@ Pinned at:
 
 ## DL v2.3.0 - declaration-only coverage + derived bars (release package in preparation; NOT certified, NOT tagged)
 
-Release candidate rc2 (`release/v2.3.0-rc2-integration`, code `832c02c4`; tool `5a42ba01` merged as `f9444aa`).
+Release candidate rc3 on `release/v2.3.0-rc2-integration` (tip `3d8ccd7`; rc3 code `7cd4fc36`; Rust code `832c02c4`;
+tool `5a42ba01` merged as `f9444aa`).
 Evidence folder: `upgrade/evidence/releases/v2.3.0/` (drafts until the certificate). Rows below marked PLACEHOLDER are
 filled after the window and the R-cert 2 final verdict (`drafts/RELEASE_FILL_LIST.md`).
 
@@ -2449,16 +2450,25 @@ filled after the window and the R-cert 2 final verdict (`drafts/RELEASE_FILL_LIS
 
 ### PLACEHOLDER - R-cert 2: live derived-vs-native shadow (>= 24 h + Monday 00:00Z)
 
-- Interim: 840/840 MATCH at 12:03Z 2026-11-13 on the rc1 images (`7af599de`). S1-S6 run Monday 06:00Z; the final
-  verdict comes after 12:30Z. Pinned at: TBD (images, shadow topology, receipt sha256).
+- Run 1 interim: 840/840 MATCH at 12:03Z 2026-11-13 on the rc1 images (`7af599de`); not counted for the verdict.
+- Run 2: weekend run on the rc3 images (namespace `qdl-v230-rcert2-20261113t1551z`, started 15:51Z 2026-11-13); it
+  must cross Monday 00:00Z. Pinned at: TBD (images rust `58bdd282` / python `a235c0a1`, shadow topology, receipt
+  sha256).
 
-### PLACEHOLDER - combined production window (DL v2.3.0 rc2 + TS writer W-B2)
+### 2026-11-13 - combined production window (DL v2.3.0 rc2 + TS writer W-B2) - ROLLED BACK at W1
+
+- D1-D6 PASS, W1 VERIFY_FAILED (OKX SESSION_STATE: session liveness refused pinned revisions, fixed in rc3), coupled
+  rollback complete. Receipt `upgrade/evidence/releases/v2.3.0/window-20261113T1237Z/`. The rc2 Python image
+  `03de529a` is not part of the release.
+
+### PLACEHOLDER - rc3 window A (DL only, writer 7332e85a)
 
 - Pinned at: rust `sha256:58bdd28216139f0c1a40abeee3077834f1cf922cf6412e7fb1ce8845591a0512`, python
-  `sha256:03de529acc4f59ba2637f289aa196f544944f92fdcf719390cdf9aacbdfd441b` (TBD confirm by docker inspect), compose +
-  env TBD, first declaration render out6 (gate 18/18, tool `5a42ba01`), writer
-  `sha256:9dfef8a8a548be2ee2d800fb62c006c8d11fcbcf3c66999779f6c97e15a71a6f`.
-- R-gates, bootstrap duration, D6b gap gate, section 7a CPU gate: TBD (receipts `window-<UTC>/SHA256SUMS`).
+  `sha256:a235c0a18cdeb112ea0b49627eaf02f2a68ab878298ebba07884461ee5709d0b` (docker inspect about 16:10Z 2026-11-13;
+  reconfirm at fill), compose `deploy/compose/qdl-v2-stable-kn.yml` sha256 `5b1381e062d97a7a...` + env
+  `deploy/compose/qdl-v2-stable-kn.v2.3.0.env` sha256 `2b1b4b8db699721f...` (both byte-equal to the host copies),
+  first declaration render out6 (gate 18/18, tool `5a42ba01`; `config/v2` + `consumers/stable` in the tree).
+- R-gates, D5a, bootstrap duration, D6b gap gate, section 7a CPU gate: TBD (receipts `window-<UTC>/SHA256SUMS`).
 
 ### PLACEHOLDER - v2.3.0 certificate
 

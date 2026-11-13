@@ -26,11 +26,14 @@ Release notes: `upgrade/evidence/releases/v2.3.0/RELEASE_NOTES.md`; certificate:
 ## Validation
 
 - R-cert 1 offline derived-bar parity: PASS, 740,350 records, 0 mismatches (receipt `6814e25c`).
-- R-cert 2 live shadow: TBD final verdict (interim 840/840 MATCH on rc1).
+- R-cert 2 live shadow: TBD final verdict; run 2 is a weekend run on the rc3 images (started 2026-11-13 15:51Z).
 - R-cert 3 fault matrix: TBD. R-cert 4 capacity envelope: TBD.
-- Combined production window (rc2 `832c02c4` + TS writer W-B2), 2026-11-13: TBD, receipts under
-  `upgrade/evidence/releases/v2.3.0/window-*`.
+- Combined production window (rc2 `832c02c4` + TS writer W-B2), 2026-11-13: D1-D6 PASS, W1 VERIFY_FAILED, rolled
+  back (`window-20261113T1237Z/`). rc3 window A (DL only, Python `a235c0a1`): TBD receipt.
 - rc2 full suite on `269fc9c8`: 4,296 tests, 4 environment-only errors (non-root log permission; 15 OK as root).
+- rc3 full suite: 4,304 tests, 4 environment-only errors, root re-run 15 OK (packet section 0b, `3d8ccd7`).
+- Release tree = runtime (F2): the deployed compose and rc3 env byte-equal; out6 `config/v2` + `consumers/stable`
+  committed. TBD: impacted-suite count on this tree.
 - Delta tests on tool `5a42ba01`:
   - `test_v230_declaration_tool`, `test_v230_bar_source`, `test_v230_lineage`: 47 OK, including the env-gated stage A
     goldens;
@@ -45,12 +48,13 @@ Release notes: `upgrade/evidence/releases/v2.3.0/RELEASE_NOTES.md`; certificate:
 
 ## Risk And Rollback
 
-- Production already runs rc2 after the window; this PR carries the same code and configuration, plus evidence.
+- Production runs rc3 (rust `58bdd282`, python `a235c0a1`); this PR carries the same code, the deployed compose/env and
+  the out6 configuration, plus evidence.
 - Rollback of the deployment: window packet section 5. Back to v2.2.6 stage-A r13 / stage-A / v2.2.5 images and
   composes, restoring the pre-rollout bar-edge checkpoint backup (v4; the old image cannot read v5). The writer goes
   BOOTSTRAP then STRICT (W.5).
 - A declaration rollback is a forward declaration, so revisions stay monotonic.
-- Known limits: single host; IDR-128 open; funding is reference-only (no live binding); bootstrap depth is
+- Known limits: single host; IDR-128 open; funding is reference-only here (live binding in v2.3.1); bootstrap depth is
   manifest-wide; bootstrap and gap repair share the HISTORY_CANDLES lane; 1W/2D/3D derived bars off until R-cert 2
   passes a Monday boundary.
 - Not touched: the TS repository (W-B2 is a TS release), Kafka topics and retention, the TLS generation, the SDK wheel.

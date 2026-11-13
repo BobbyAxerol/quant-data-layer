@@ -5,7 +5,8 @@ metadata:
   owner: alpha-platform
   subject: spiffe://qdl/paper/alpha-okx-stable
   environment: paper
-  revision: 15
+  revision: 16
+  min_token_revision: 15
 spec:
   sdk_major: 2
   rollback_contract: V1
@@ -4936,3 +4937,274 @@ spec:
     gap_policy: BLOCK
     recovery: FRESH_SNAPSHOT
     bar_revision_policy: LATEST
+  selectors:
+  - universe: okx-swap-covered-25
+    venue: OKX
+    market: SWAP
+    intervals:
+    - 1m
+    template:
+      feed: BAR
+      consumer_grade: ALPHA
+      source_policy_id: crypto_primary_v2
+      warmup_limit: 10000
+      max_freshness_ms: 180000
+      require_full_coverage: true
+      require_final_bars: true
+      stale_policy: BLOCK
+      gap_policy: BLOCK
+      recovery: SNAPSHOT_AND_REPLAY
+      bar_revision_policy: EMIT_REVISIONS
+  - universe: okx-swap-covered-25
+    venue: OKX
+    market: SWAP
+    intervals:
+    - 3m
+    template:
+      feed: BAR
+      consumer_grade: ALPHA
+      source_policy_id: crypto_primary_v2
+      warmup_limit: 10000
+      max_freshness_ms: 540000
+      require_full_coverage: true
+      require_final_bars: true
+      stale_policy: BLOCK
+      gap_policy: BLOCK
+      recovery: SNAPSHOT_AND_REPLAY
+      bar_revision_policy: EMIT_REVISIONS
+  - universe: okx-swap-covered-25
+    venue: OKX
+    market: SWAP
+    intervals:
+    - 5m
+    template:
+      feed: BAR
+      consumer_grade: ALPHA
+      source_policy_id: crypto_primary_v2
+      warmup_limit: 10000
+      max_freshness_ms: 900000
+      require_full_coverage: true
+      require_final_bars: true
+      stale_policy: BLOCK
+      gap_policy: BLOCK
+      recovery: SNAPSHOT_AND_REPLAY
+      bar_revision_policy: EMIT_REVISIONS
+  - universe: okx-swap-covered-25
+    venue: OKX
+    market: SWAP
+    intervals:
+    - 15m
+    template:
+      feed: BAR
+      consumer_grade: ALPHA
+      source_policy_id: crypto_primary_v2
+      warmup_limit: 10000
+      max_freshness_ms: 2700000
+      require_full_coverage: true
+      require_final_bars: true
+      stale_policy: BLOCK
+      gap_policy: BLOCK
+      recovery: SNAPSHOT_AND_REPLAY
+      bar_revision_policy: EMIT_REVISIONS
+  - universe: okx-swap-covered-25
+    venue: OKX
+    market: SWAP
+    intervals:
+    - 30m
+    template:
+      feed: BAR
+      consumer_grade: ALPHA
+      source_policy_id: crypto_primary_v2
+      warmup_limit: 10000
+      max_freshness_ms: 5400000
+      require_full_coverage: true
+      require_final_bars: true
+      stale_policy: BLOCK
+      gap_policy: BLOCK
+      recovery: SNAPSHOT_AND_REPLAY
+      bar_revision_policy: EMIT_REVISIONS
+  - universe: okx-swap-covered-25
+    venue: OKX
+    market: SWAP
+    intervals:
+    - 1h
+    template:
+      feed: BAR
+      consumer_grade: ALPHA
+      source_policy_id: crypto_primary_v2
+      warmup_limit: 10000
+      max_freshness_ms: 10800000
+      require_full_coverage: true
+      require_final_bars: true
+      stale_policy: BLOCK
+      gap_policy: BLOCK
+      recovery: SNAPSHOT_AND_REPLAY
+      bar_revision_policy: EMIT_REVISIONS
+  - universe: okx-swap-covered-25
+    venue: OKX
+    market: SWAP
+    intervals:
+    - 2h
+    template:
+      feed: BAR
+      consumer_grade: ALPHA
+      source_policy_id: crypto_primary_v2
+      warmup_limit: 10000
+      max_freshness_ms: 21600000
+      require_full_coverage: true
+      require_final_bars: true
+      stale_policy: BLOCK
+      gap_policy: BLOCK
+      recovery: SNAPSHOT_AND_REPLAY
+      bar_revision_policy: EMIT_REVISIONS
+  - universe: okx-swap-covered-25
+    venue: OKX
+    market: SWAP
+    intervals:
+    - 4h
+    template:
+      feed: BAR
+      consumer_grade: ALPHA
+      source_policy_id: crypto_primary_v2
+      warmup_limit: 10000
+      max_freshness_ms: 43200000
+      require_full_coverage: true
+      require_final_bars: true
+      stale_policy: BLOCK
+      gap_policy: BLOCK
+      recovery: SNAPSHOT_AND_REPLAY
+      bar_revision_policy: EMIT_REVISIONS
+  - universe: okx-swap-covered-25
+    venue: OKX
+    market: SWAP
+    intervals:
+    - 6h
+    template:
+      feed: BAR
+      consumer_grade: ALPHA
+      source_policy_id: crypto_primary_v2
+      warmup_limit: 10000
+      max_freshness_ms: 64800000
+      require_full_coverage: true
+      require_final_bars: true
+      stale_policy: BLOCK
+      gap_policy: BLOCK
+      recovery: SNAPSHOT_AND_REPLAY
+      bar_revision_policy: EMIT_REVISIONS
+  - universe: okx-swap-covered-25
+    venue: OKX
+    market: SWAP
+    intervals:
+    - 12h
+    template:
+      feed: BAR
+      consumer_grade: ALPHA
+      source_policy_id: crypto_primary_v2
+      warmup_limit: 10000
+      max_freshness_ms: 129600000
+      require_full_coverage: true
+      require_final_bars: true
+      stale_policy: BLOCK
+      gap_policy: BLOCK
+      recovery: SNAPSHOT_AND_REPLAY
+      bar_revision_policy: EMIT_REVISIONS
+  - universe: okx-swap-covered-25
+    venue: OKX
+    market: SWAP
+    intervals:
+    - 1d
+    template:
+      feed: BAR
+      consumer_grade: ALPHA
+      source_policy_id: crypto_primary_v2
+      warmup_limit: 10000
+      max_freshness_ms: 259200000
+      require_full_coverage: true
+      require_final_bars: true
+      stale_policy: BLOCK
+      gap_policy: BLOCK
+      recovery: SNAPSHOT_AND_REPLAY
+      bar_revision_policy: EMIT_REVISIONS
+  - universe: okx-swap-crossec-94
+    venue: OKX
+    market: SWAP
+    intervals:
+    - 1m
+    template:
+      feed: BAR
+      consumer_grade: ALPHA
+      source_policy_id: crypto_primary_v2
+      warmup_limit: 10000
+      max_freshness_ms: 180000
+      require_full_coverage: true
+      require_final_bars: true
+      stale_policy: BLOCK
+      gap_policy: BLOCK
+      recovery: SNAPSHOT_AND_REPLAY
+      bar_revision_policy: EMIT_REVISIONS
+  - universe: okx-swap-crossec-94
+    venue: OKX
+    market: SWAP
+    intervals:
+    - 1h
+    template:
+      feed: BAR
+      consumer_grade: ALPHA
+      source_policy_id: crypto_primary_v2
+      warmup_limit: 10000
+      max_freshness_ms: 10800000
+      require_full_coverage: true
+      require_final_bars: true
+      stale_policy: BLOCK
+      gap_policy: BLOCK
+      recovery: SNAPSHOT_AND_REPLAY
+      bar_revision_policy: EMIT_REVISIONS
+  - universe: okx-swap-crossec-94
+    venue: OKX
+    market: SWAP
+    intervals:
+    - 12h
+    template:
+      feed: BAR
+      consumer_grade: ALPHA
+      source_policy_id: crypto_primary_v2
+      warmup_limit: 10000
+      max_freshness_ms: 129600000
+      require_full_coverage: true
+      require_final_bars: true
+      stale_policy: BLOCK
+      gap_policy: BLOCK
+      recovery: SNAPSHOT_AND_REPLAY
+      bar_revision_policy: EMIT_REVISIONS
+  - universe: okx-swap-crossec-94
+    venue: OKX
+    market: SWAP
+    template:
+      feed: CONTRACT_METADATA
+      consumer_grade: ALPHA
+      source_policy_id: crypto_liquid_v2
+      interval: null
+      warmup_limit: 0
+      max_freshness_ms: 86400000
+      require_full_coverage: true
+      require_final_bars: false
+      stale_policy: BLOCK
+      gap_policy: BLOCK
+      recovery: FRESH_SNAPSHOT
+      bar_revision_policy: LATEST
+  - universe: okx-swap-crossec-94
+    venue: OKX
+    market: SWAP
+    template:
+      feed: FUNDING_RATE
+      consumer_grade: ALPHA
+      source_policy_id: crypto_liquid_v2
+      interval: null
+      warmup_limit: 0
+      max_freshness_ms: 28800000
+      require_full_coverage: true
+      require_final_bars: false
+      stale_policy: BLOCK
+      gap_policy: BLOCK
+      recovery: FRESH_SNAPSHOT
+      bar_revision_policy: LATEST

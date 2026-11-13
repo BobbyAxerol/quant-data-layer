@@ -3356,3 +3356,13 @@ ordering authority, resume markers and cursors on that lineage (the TS writer: `
    - Readers accept an event whose revision is at or below its session's, and refuse one above it
      (`qdl/runtime/session_liveness.py`).
    - Exact equality broke the 2026-11-13 window (W1). Class sweep: packet section 0c.
+
+### Delta 2026-11-13: v2.3.0 release tree reproduces the runtime
+
+From v2.3.0 on, the release tree carries the deployed compose and env byte for byte, together with the rendered
+declaration's repo-form configuration (`config/v2`, `consumers/stable`).
+
+The mounted runtime documents are derived from the live runtime base. They stay host-only and are pinned by sha256
+in the window packet. The reason they differ from the repo form is written into the release notes.
+
+Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, "DL v2.3.0 final package refreshed (pre-flight F1/F2)".
