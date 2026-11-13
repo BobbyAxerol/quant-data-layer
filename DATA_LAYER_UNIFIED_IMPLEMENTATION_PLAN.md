@@ -77220,3 +77220,53 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   - The declaration tool (separate agent, from this commit).
   - Usability status file `qdl.execution-binding-status.v1`.
   - v2.3.0 release certificate (R-cert 1-4 of the study, which the derived-bars slice shares).
+
+### DL v2.3.0 slice 2b: sticky ingestor lanes, per-feed latest-state flush, mounted declarations in compose - 2026-11-13 (Claude)
+
+- Continues slice 2a (`ccfe62a8`). Same branch and worktree. Guide: the same delta section, items 6-7 below.
+- Scope (implemented, tested locally, no runtime change, nothing pushed):
+  1. **Sticky lanes.**
+     - Ingestor `RawBinding.lane_shard: Option<usize>` (1..=999). All bindings pinned or none.
+     - Grouping: OKX by (service, shard), lane `okx-<service>-<NNN>` unchanged. Binance by (route, feed, shard),
+       lane `binance-<route>-<feed>-<NNN>` unchanged.
+     - One feed class per lane, at most `max_subscriptions_per_connection`. Refused in `validate()`, so the
+       supervisor never retries a bad plan.
+     - Absent pins = today's positional partition (bytes of an unchanged config behave identically).
+     - Renderer `qdl/runtime/ingestor_lanes.py`:
+       - `legacy_lane_assignment` mirrors the ingestor; first pinned render = today's lanes, proved on the repo
+         ingestor configs;
+       - `sticky_lane_pins` keeps retained pins, fills same-scope same-feed capacity, opens max+1;
+       - `lane_plan_report` is the gate's lane-stability input.
+     - The tool applies pins to the rendered config, so `stable_deployment.py` is untouched (no overlap with the
+       derived-bars slice).
+  2. **Per-feed flush.** `IngestorConfig.latest_state_flush_ms_by_feed` (QUOTE/MARK_INDEX, 1..=1000 ms). Each
+     lane's latest-state tick uses its feed's value (one feed per lane). Started event adds the map and
+     `lane_plan: PINNED|POSITIONAL`.
+  3. **Compose** `deploy/compose/qdl-v2-stable-kn.yml`:
+     - bar_edge catalogue and acquisition come from `/runtime` (was the image's r11/r19). The unused
+       `QDL_STABLE_CONSUMER_MANIFESTS` is removed from bar_edge (`build_from_environment` never reads it).
+     - query_kn_1/2 read all 12 manifests from `/consumer-realms`.
+     - Header documents these as v2.3.0 deltas against live. `kn_versioned_compose.py parity` against the v2.2.5
+       roles shows them until the window.
+  4. **Release route loader.** `StableReleaseRoutePlan.load/from_mapping/_consumer(selector_context=None)` passes
+     to the manifest loader. Default keeps refusing selector manifests (declaration-tool agent request).
+  5. **Draft rollout** `upgrade/evidence/releases/v2.3.0/drafts/DECLARATION_MECHANISM_ROLLOUT_DRAFT.md`.
+- Facts verified (read-only):
+  - The r11/r19 (image `08f356a8`) -> r12/r20 (live `/runtime`) BAR binding crossing, classified with the
+    certified loaders and series digests: 640 -> 640, added 0, removed 0, changed 0.
+  - The three image manifests are byte-identical to the repository copies, and the realm dir lacks them.
+- Tests:
+  - Rust (`qdl-rust-builder:r134-test`, 2 CPU / 4 GiB `--rm`):
+    - `cargo fmt --check` OK;
+    - `cargo clippy -p qdl-kafka --all-targets -D warnings` OK;
+    - ingestor tests 78 passed / 1 ignored (+5 new `lane_plan_tests`: pinned reproduces positional, growth keeps
+      names with a positional control, invalid pins, Binance per-feed numbering, per-feed flush, partial pin
+      refused);
+    - `cargo check --workspace --all-targets` OK.
+  - Python (`qdl-v2-python:2.2.5-9b6747f`, `--rm`, no network): `test_v230_declaration_mechanism` (21, incl. release-route selector kwarg), `test_v230_ingestor_lanes` (6), `test_kn_stable_compose` (12) and the 10 `StableReleaseRoutePlan` suites: 179 OK.
+  - ruff 0.15.13 (no ruff in DL CI; run as a lint) clean on the new files.
+- Status: implemented, tested locally. Open:
+  - the declaration tool (separate agent, worktree `dl-v230-declaration-tool`);
+  - status file `qdl.execution-binding-status.v1` (item 3);
+  - merge with the derived-bars slice;
+  - v2.3.0 images, certificate, window (draft packet).

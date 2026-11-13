@@ -496,3 +496,19 @@ class QueryDeclarationTests(unittest.TestCase):
         self.assertEqual(declaration["image_files"], 0)
         probe_detail = _declaration_probe(declaration)
         self.assertEqual(probe_detail.name, "declaration")
+
+
+class ReleaseRoutePlanSelectorTests(unittest.TestCase):
+    def test_the_release_route_loader_passes_the_selector_context_through(self):
+        import inspect
+
+        from qdl.consumer.release import StableReleaseRoutePlan
+
+        for method in (StableReleaseRoutePlan.load, StableReleaseRoutePlan.from_mapping,
+                       StableReleaseRoutePlan._consumer):
+            parameter = inspect.signature(method).parameters["selector_context"]
+            self.assertIsNone(parameter.default, method.__name__)
+        plan = StableReleaseRoutePlan.load(
+            ROOT / "config/v2/stable-v2-release-routing.yaml", manifest_root=ROOT,
+        )
+        self.assertTrue(plan.consumers)

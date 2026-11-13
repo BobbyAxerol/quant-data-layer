@@ -255,9 +255,13 @@ class StableReleaseRoutePlan:
             raise ValueError("stable release consumers must be unique")
 
     @classmethod
-    def load(cls, path: str | Path, *, manifest_root: str | Path) -> "StableReleaseRoutePlan":
+    def load(
+        cls, path: str | Path, *, manifest_root: str | Path, selector_context: object = None,
+    ) -> "StableReleaseRoutePlan":
         payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-        return cls.from_mapping(payload, manifest_root=manifest_root)
+        return cls.from_mapping(
+            payload, manifest_root=manifest_root, selector_context=selector_context,
+        )
 
     @classmethod
     def from_mapping(
@@ -265,7 +269,10 @@ class StableReleaseRoutePlan:
         payload: object,
         *,
         manifest_root: str | Path,
+        selector_context: object = None,
     ) -> "StableReleaseRoutePlan":
+        """``selector_context`` (DL v2.3.0) expands manifests that declare
+        universe selectors; ``None`` keeps refusing them, as before."""
         expected = {
             "schema", "revision", "contract_version", "source_catalog",
             "crypto_demand", "capability_matrix", "v1_fallback", "consumers",
@@ -300,6 +307,7 @@ class StableReleaseRoutePlan:
                 catalog=catalog,
                 demand_revision=demand_ref.revision,
                 demand_keys=demand_keys,
+                selector_context=selector_context,
             )
             for item in consumers_raw
         )
@@ -409,6 +417,7 @@ class StableReleaseRoutePlan:
         catalog: StableSourceCatalog,
         demand_revision: int,
         demand_keys: frozenset[tuple[str, str, str, str, str, str | None, str]],
+        selector_context: object = None,
     ) -> StableReleaseConsumerRoute:
         expected = {
             "consumer_id", "manifest", "manifest_revision", "manifest_sha256",
@@ -417,7 +426,7 @@ class StableReleaseRoutePlan:
         if not isinstance(raw, dict) or set(raw) != expected:
             raise ValueError("stable release consumer fields are incomplete or unknown")
         path = _resolve_under_root(raw["manifest"], root=root, field="consumer manifest")
-        manifest = ConsumerManifestLoader.load(path)
+        manifest = ConsumerManifestLoader.load(path, selector_context=selector_context)
         consumer_id = str(raw["consumer_id"]).strip()
         if (
             not consumer_id

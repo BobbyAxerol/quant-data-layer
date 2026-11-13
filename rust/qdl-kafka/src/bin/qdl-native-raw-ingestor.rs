@@ -58,7 +58,7 @@ enum ProviderRuntime {
     Okx,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum RawFeed {
     Trade,
@@ -98,6 +98,14 @@ struct RawBinding {
     /// one Kafka partition without turning symbols into worker identities.
     #[serde(default)]
     mark_index_target: Option<String>,
+    /// DL v2.3.0 sticky lanes: the number in this binding's lane name. Absent on
+    /// every binding keeps today's positional partition. Present on every
+    /// binding, the renderer (`qdl/runtime/ingestor_lanes.py`) owns the lane
+    /// plan: an existing binding never changes lane and a lane name never
+    /// moves to another feed when coverage grows. Old binaries reject the field
+    /// (`deny_unknown_fields`), so the binary ships first.
+    #[serde(default)]
+    lane_shard: Option<usize>,
 }
 
 /// A lane's bindings by routing key. Values are shared: every frame of a
@@ -252,6 +260,12 @@ struct IngestorConfig {
     #[serde(default = "default_max_subscriptions_per_connection")]
     max_subscriptions_per_connection: usize,
     latest_state_flush_ms: u64,
+    /// DL v2.3.0: per-feed latest-state flush cadence, e.g. `{"MARK_INDEX": 500}`
+    /// while QUOTE keeps `latest_state_flush_ms`. Only QUOTE and MARK_INDEX (the
+    /// latest-state feeds), 1..=1000 ms. Absent = `latest_state_flush_ms` for all.
+    /// Old binaries reject the field (`deny_unknown_fields`).
+    #[serde(default)]
+    latest_state_flush_ms_by_feed: BTreeMap<RawFeed, u64>,
     /// IDR-040 fix 2: cadence of the in-band transport liveness marker for
     /// quiet Binance BOOK bindings. Absent or zero (the default) emits none.
     /// The realtime core that reads the marker must be deployed first.
@@ -316,6 +330,87 @@ fn partition_feed_lanes(bindings: &[RawBinding], max_subscriptions: usize) -> Ve
     .collect()
 }
 
+/// One lane: the number in its name and its bindings.
+type ShardLane = (usize, Vec<RawBinding>);
+
+/// DL v2.3.0 sticky lanes: the lanes `lane_shard` pins declare, or `None`
+/// when no binding is pinned (today's positional partition then applies).
+///
+/// `feed_scoped` numbers shards inside a feed (Binance lane names carry the
+/// feed); otherwise inside the service (OKX `okx-<service>-<NNN>`), where one
+/// number must never hold two feeds. Every lane holds one feed class and at
+/// most `max_subscriptions` bindings; a partly pinned config is refused.
+fn pinned_lanes(
+    bindings: &[RawBinding],
+    max_subscriptions: usize,
+    feed_scoped: bool,
+) -> Result<Option<Vec<ShardLane>>, String> {
+    let pinned = bindings
+        .iter()
+        .filter(|binding| binding.lane_shard.is_some())
+        .count();
+    if pinned == 0 {
+        return Ok(None);
+    }
+    if pinned != bindings.len() {
+        return Err("ingestor config pins some bindings to lanes but not all".into());
+    }
+    let mut lanes: BTreeMap<(Option<RawFeed>, usize), Vec<RawBinding>> = BTreeMap::new();
+    for binding in bindings {
+        let shard = binding.lane_shard.unwrap_or_default();
+        if shard == 0 || shard > 999 {
+            return Err(format!(
+                "lane_shard must be within 1..=999: {}",
+                binding.key()
+            ));
+        }
+        let feed = feed_scoped.then_some(binding.feed);
+        lanes
+            .entry((feed, shard))
+            .or_default()
+            .push(binding.clone());
+    }
+    let mut result = Vec::with_capacity(lanes.len());
+    for ((_, shard), members) in lanes {
+        let feed = members[0].feed;
+        if members.iter().any(|binding| binding.feed != feed) {
+            return Err(format!("pinned lane {shard:03} mixes feed classes"));
+        }
+        if members.len() > max_subscriptions {
+            return Err(format!(
+                "pinned lane {shard:03} holds {} > {max_subscriptions} subscriptions",
+                members.len()
+            ));
+        }
+        result.push((shard, members));
+    }
+    Ok(Some(result))
+}
+
+/// OKX lanes of one service: the pinned plan, or the positional one
+/// (`okx-<service>-<index>`, numbered across feeds) when nothing is pinned.
+fn okx_service_lanes(
+    bindings: &[RawBinding],
+    max_subscriptions: usize,
+) -> Result<Vec<ShardLane>, String> {
+    if let Some(lanes) = pinned_lanes(bindings, max_subscriptions, false)? {
+        return Ok(lanes);
+    }
+    Ok(partition_okx_bindings(bindings, max_subscriptions)
+        .into_iter()
+        .enumerate()
+        .map(|(index, lane)| (index + 1, lane))
+        .collect())
+}
+
+fn okx_service_of(binding: &RawBinding) -> Result<OkxService, String> {
+    OkxSubscription {
+        channel: binding.native_channel.clone(),
+        inst_id: binding.native_symbol.clone(),
+    }
+    .service()
+}
+
 fn partition_binance_bindings(
     bindings: &[RawBinding],
     max_subscriptions: usize,
@@ -346,6 +441,17 @@ fn feed_lane_name(feed: RawFeed) -> &'static str {
     }
 }
 
+/// The config spelling of a feed (`RawFeed`'s serde name).
+fn raw_feed_config_name(feed: RawFeed) -> &'static str {
+    match feed {
+        RawFeed::Book => "BOOK",
+        RawFeed::Bar => "BAR",
+        RawFeed::Trade => "TRADE",
+        RawFeed::Quote => "QUOTE",
+        RawFeed::MarkIndex => "MARK_INDEX",
+    }
+}
+
 fn partition_binance_route(
     bindings: &[RawBinding],
     route: BinanceRoute,
@@ -356,6 +462,16 @@ fn partition_binance_route(
         if binance::stream_route(&binding.native_channel)? == route {
             selected.push(binding.clone());
         }
+    }
+    if let Some(pinned) = pinned_lanes(&selected, max_subscriptions, true)? {
+        return Ok(pinned
+            .into_iter()
+            .map(|(shard_index, bindings)| BinanceLane {
+                feed: bindings[0].feed,
+                shard_index,
+                bindings,
+            })
+            .collect());
     }
     let mut lanes: Vec<BinanceLane> = Vec::new();
     for shard in partition_binance_bindings(&selected, max_subscriptions) {
@@ -393,6 +509,53 @@ fn partition_okx_bindings(
 }
 
 impl IngestorConfig {
+    /// The latest-state flush cadence of a lane of `feed` (DL v2.3.0).
+    fn latest_state_flush_ms_for(&self, feed: RawFeed) -> u64 {
+        self.latest_state_flush_ms_by_feed
+            .get(&feed)
+            .copied()
+            .unwrap_or(self.latest_state_flush_ms)
+    }
+
+    /// Refuse an invalid sticky-lane plan at start, before the supervisor
+    /// would retry it forever. An unpinned config always passes.
+    fn validate_lane_plan(&self) -> Result<(), String> {
+        let pinned = self
+            .bindings
+            .iter()
+            .filter(|binding| binding.lane_shard.is_some())
+            .count();
+        if pinned == 0 {
+            return Ok(());
+        }
+        if pinned != self.bindings.len() {
+            return Err("ingestor config pins some bindings to lanes but not all".into());
+        }
+        match self.runtime {
+            ProviderRuntime::Binance => {
+                for route in [BinanceRoute::Public, BinanceRoute::Market] {
+                    partition_binance_route(
+                        &self.bindings,
+                        route,
+                        self.max_subscriptions_per_connection,
+                    )?;
+                }
+            }
+            ProviderRuntime::Okx => {
+                for service in [OkxService::Public, OkxService::Business] {
+                    let mut selected = Vec::new();
+                    for binding in &self.bindings {
+                        if okx_service_of(binding)? == service {
+                            selected.push(binding.clone());
+                        }
+                    }
+                    okx_service_lanes(&selected, self.max_subscriptions_per_connection)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn validate(&self) -> Result<(), String> {
         self.authority.validate()?;
         if let Some(resync) = &self.book_resync {
@@ -435,6 +598,16 @@ impl IngestorConfig {
                 "native raw ingestor config is invalid or not a shared Rust authority".into(),
             );
         }
+        for (feed, flush_ms) in &self.latest_state_flush_ms_by_feed {
+            if !matches!(feed, RawFeed::Quote | RawFeed::MarkIndex)
+                || !(1..=1_000).contains(flush_ms)
+            {
+                return Err(
+                    "latest_state_flush_ms_by_feed accepts QUOTE/MARK_INDEX at 1..=1000 ms".into(),
+                );
+            }
+        }
+        self.validate_lane_plan()?;
         let generation_path = Path::new(&self.generation_state_path);
         if !generation_path.is_absolute()
             || generation_path
@@ -2499,12 +2672,11 @@ async fn run_binance_connection(
     // A feed lane holds one feed class by construction, so the first binding
     // names the whole lane.
     let route_name = route.segment();
-    let feed_name = feed_lane_name(
-        shard_bindings
-            .first()
-            .map(|binding| binding.feed)
-            .ok_or("Binance lane has no bindings")?,
-    );
+    let lane_feed = shard_bindings
+        .first()
+        .map(|binding| binding.feed)
+        .ok_or("Binance lane has no bindings")?;
+    let feed_name = feed_lane_name(lane_feed);
     let bindings: BindingMap = shard_bindings
         .into_iter()
         .map(|binding| (binding.native_channel.clone(), Arc::new(binding)))
@@ -2610,8 +2782,9 @@ async fn run_binance_connection(
                 let mut inbound = InboundDeadline::new(liveness_policy, Instant::now());
                 let mut inflight = FuturesUnordered::<RawPublishFuture>::new();
                 let mut latest = LatestStateBuffer::default();
-                let mut latest_tick =
-                    tokio::time::interval(Duration::from_millis(config.latest_state_flush_ms));
+                let mut latest_tick = tokio::time::interval(Duration::from_millis(
+                    config.latest_state_flush_ms_for(lane_feed),
+                ));
                 latest_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                 latest_tick.tick().await;
                 let mut book_snapshot_tick = snapshot_period.map(tokio::time::interval);
@@ -3961,6 +4134,8 @@ async fn run_okx_service(
     if bindings.is_empty() {
         return Ok(());
     }
+    // One feed class per lane by construction (positional or pinned).
+    let lane_feed = bindings[0].feed;
     let service_name = match service {
         OkxService::Public => "public",
         OkxService::Business => "business",
@@ -4124,8 +4299,9 @@ async fn run_okx_service(
         previous_end = None;
         let mut inflight = FuturesUnordered::<RawPublishFuture>::new();
         let mut latest = LatestStateBuffer::default();
-        let mut latest_tick =
-            tokio::time::interval(Duration::from_millis(config.latest_state_flush_ms));
+        let mut latest_tick = tokio::time::interval(Duration::from_millis(
+            config.latest_state_flush_ms_for(lane_feed),
+        ));
         latest_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         latest_tick.tick().await;
         match book_session_bootstrap(ProviderRuntime::Okx, &binding_map) {
@@ -4610,27 +4786,13 @@ async fn run_okx(
     let public: Vec<RawBinding> = config
         .bindings
         .iter()
-        .filter(|binding| {
-            OkxSubscription {
-                channel: binding.native_channel.clone(),
-                inst_id: binding.native_symbol.clone(),
-            }
-            .service()
-                == Ok(OkxService::Public)
-        })
+        .filter(|binding| okx_service_of(binding) == Ok(OkxService::Public))
         .cloned()
         .collect();
     let business: Vec<RawBinding> = config
         .bindings
         .iter()
-        .filter(|binding| {
-            OkxSubscription {
-                channel: binding.native_channel.clone(),
-                inst_id: binding.native_symbol.clone(),
-            }
-            .service()
-                == Ok(OkxService::Business)
-        })
+        .filter(|binding| okx_service_of(binding) == Ok(OkxService::Business))
         .cloned()
         .collect();
     let business_url = config
@@ -4638,20 +4800,23 @@ async fn run_okx(
         .clone()
         .ok_or("OKX business WebSocket URL is required")?;
     let pacer = OkxConnectPacer::default();
-    let public_lanes = partition_okx_bindings(&public, config.max_subscriptions_per_connection);
-    let business_lanes = partition_okx_bindings(&business, config.max_subscriptions_per_connection);
-    let lane_count = public_lanes.iter().filter(|lane| !lane.is_empty()).count()
+    let public_lanes = okx_service_lanes(&public, config.max_subscriptions_per_connection)?;
+    let business_lanes = okx_service_lanes(&business, config.max_subscriptions_per_connection)?;
+    let lane_count = public_lanes
+        .iter()
+        .filter(|(_, lane)| !lane.is_empty())
+        .count()
         + business_lanes
             .iter()
-            .filter(|lane| !lane.is_empty())
+            .filter(|(_, lane)| !lane.is_empty())
             .count();
     let publisher = Arc::new(RawPublisher::new(&config, "okx-raw", lane_count)?);
     let mut futures = Vec::new();
-    for (index, bindings) in public_lanes.into_iter().enumerate() {
+    for (shard_index, bindings) in public_lanes {
         futures.push(run_okx_service(
             OkxServiceShard {
                 service: OkxService::Public,
-                shard_index: index + 1,
+                shard_index,
                 url: config.websocket_url.clone(),
                 bindings,
                 establish_budget: OKX_ESTABLISH_BUDGET,
@@ -4665,11 +4830,11 @@ async fn run_okx(
             pacer.clone(),
         ));
     }
-    for (index, bindings) in business_lanes.into_iter().enumerate() {
+    for (shard_index, bindings) in business_lanes {
         futures.push(run_okx_service(
             OkxServiceShard {
                 service: OkxService::Business,
-                shard_index: index + 1,
+                shard_index,
                 url: business_url.clone(),
                 bindings,
                 establish_budget: OKX_ESTABLISH_BUDGET,
@@ -4742,6 +4907,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "bindings": config.bindings.len(),
             "producer": producer.clone(),
             "latest_state_flush_ms": config.latest_state_flush_ms,
+            "latest_state_flush_ms_by_feed": config
+                .latest_state_flush_ms_by_feed
+                .iter()
+                .map(|(feed, value)| (raw_feed_config_name(*feed).to_owned(), json!(value)))
+                .collect::<serde_json::Map<String, Value>>(),
+            "lane_plan": if config.bindings.iter().any(|binding| binding.lane_shard.is_some()) {
+                "PINNED"
+            } else {
+                "POSITIONAL"
+            },
             "latest_state_staleness": config.latest_state_staleness,
             "production_public_writes": 0,
             "production_legacy_writes": 0,
@@ -4888,6 +5063,7 @@ mod tests {
             delivery_class,
             l2: None,
             mark_index_target: None,
+            lane_shard: None,
         }
     }
 
@@ -5636,6 +5812,7 @@ mod resync_tests {
                 snapshot_refresh_seconds: Some(30),
             }),
             mark_index_target: None,
+            lane_shard: None,
         };
         let raw = RawProviderEnvelope {
             provider: b.provider.clone(),
@@ -5683,6 +5860,7 @@ mod resync_tests {
             max_inflight_publishes: 16,
             max_subscriptions_per_connection: 100,
             latest_state_flush_ms: 50,
+            latest_state_flush_ms_by_feed: BTreeMap::new(),
             book_liveness_proof_ms: 0,
             liveness_ping_ms: 0,
             liveness_dead_ms: 0,
@@ -6215,6 +6393,7 @@ mod okx_reconnect_tests {
             delivery_class: DeliveryClass::Lossless,
             l2: None,
             mark_index_target: None,
+            lane_shard: None,
         }
     }
 
@@ -6845,6 +7024,7 @@ mod staleness_tests {
             delivery_class: DeliveryClass::LatestState,
             l2: None,
             mark_index_target: None,
+            lane_shard: None,
         }
     }
 
@@ -7551,6 +7731,7 @@ mod staleness_tests {
             max_inflight_publishes: 64,
             max_subscriptions_per_connection: 100,
             latest_state_flush_ms: 1,
+            latest_state_flush_ms_by_feed: BTreeMap::new(),
             book_liveness_proof_ms: 0,
             liveness_ping_ms: options.liveness_ms.0,
             liveness_dead_ms: options.liveness_ms.1,
@@ -8165,5 +8346,246 @@ mod producer_settings_tests {
                 "{value:?}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod lane_plan_tests {
+    use super::*;
+
+    fn raw(venue: &str, symbol: &str, channel: &str, feed: RawFeed) -> RawBinding {
+        RawBinding {
+            provider: format!("{venue}_DIRECT"),
+            venue: venue.into(),
+            market: if venue == "OKX" { "SWAP" } else { "USDM" }.into(),
+            product_type: "PERPETUAL".into(),
+            native_symbol: symbol.into(),
+            native_channel: channel.into(),
+            subscription_id: format!("{channel}-{symbol}"),
+            adapter_version: "test/2.0.0".into(),
+            instrument_catalog_revision: 1,
+            feed,
+            delivery_class: match feed {
+                RawFeed::Quote | RawFeed::MarkIndex => DeliveryClass::LatestState,
+                _ => DeliveryClass::Lossless,
+            },
+            l2: None,
+            mark_index_target: (feed == RawFeed::MarkIndex).then(|| format!("{symbol}-mark")),
+            lane_shard: None,
+        }
+    }
+
+    fn keys(lanes: &[ShardLane]) -> Vec<(usize, Vec<String>)> {
+        lanes
+            .iter()
+            .map(|(shard, members)| (*shard, members.iter().map(RawBinding::key).collect()))
+            .collect()
+    }
+
+    fn okx_public() -> Vec<RawBinding> {
+        let mut bindings = (0..5)
+            .map(|index| {
+                raw(
+                    "OKX",
+                    &format!("S{index}-USDT-SWAP"),
+                    "bbo-tbt",
+                    RawFeed::Quote,
+                )
+            })
+            .collect::<Vec<_>>();
+        bindings.extend((0..2).map(|index| {
+            raw(
+                "OKX",
+                &format!("S{index}-USDT-SWAP"),
+                "mark-price",
+                RawFeed::MarkIndex,
+            )
+        }));
+        bindings
+    }
+
+    #[test]
+    fn pinning_the_positional_plan_reproduces_it_exactly() {
+        let bindings = okx_public();
+        let positional = okx_service_lanes(&bindings, 2).unwrap();
+        assert_eq!(
+            positional
+                .iter()
+                .map(|(shard, lane)| (*shard, lane[0].feed, lane.len()))
+                .collect::<Vec<_>>(),
+            vec![
+                (1, RawFeed::Quote, 2),
+                (2, RawFeed::Quote, 2),
+                (3, RawFeed::Quote, 1),
+                (4, RawFeed::MarkIndex, 2)
+            ]
+        );
+        let mut pinned = bindings.clone();
+        for binding in &mut pinned {
+            let shard = positional
+                .iter()
+                .find(|(_, lane)| lane.iter().any(|item| item.key() == binding.key()))
+                .map(|(shard, _)| *shard)
+                .unwrap();
+            binding.lane_shard = Some(shard);
+        }
+        let sticky = okx_service_lanes(&pinned, 2).unwrap();
+        assert_eq!(keys(&sticky), keys(&positional));
+        // Growth: a new quote opens shard 5. Positional numbering would have
+        // moved MARK_INDEX from okx-public-004 to 005; pinned, nothing moves.
+        let mut grown = pinned.clone();
+        let mut added = raw("OKX", "A0-USDT-SWAP", "bbo-tbt", RawFeed::Quote);
+        added.lane_shard = Some(5);
+        grown.insert(0, added.clone());
+        let sticky = okx_service_lanes(&grown, 2).unwrap();
+        assert_eq!(keys(&sticky)[..4], keys(&positional)[..]);
+        assert_eq!(keys(&sticky)[4], (5, vec![added.key()]));
+        let mut unpinned = bindings.clone();
+        for symbol in ["A0-USDT-SWAP", "A1-USDT-SWAP"] {
+            unpinned.insert(0, raw("OKX", symbol, "bbo-tbt", RawFeed::Quote));
+        }
+        let control = okx_service_lanes(&unpinned, 2).unwrap();
+        assert_eq!(control[4].1[0].feed, RawFeed::MarkIndex);
+        assert_eq!(
+            control[4].0, 5,
+            "control: positional renumbering moves MARK_INDEX"
+        );
+    }
+
+    #[test]
+    fn invalid_pins_are_refused() {
+        let mut bindings = okx_public();
+        bindings[0].lane_shard = Some(1);
+        assert!(okx_service_lanes(&bindings, 10)
+            .unwrap_err()
+            .contains("but not all"));
+        for binding in &mut bindings {
+            binding.lane_shard = Some(1);
+        }
+        assert!(okx_service_lanes(&bindings, 10)
+            .unwrap_err()
+            .contains("mixes feed classes"));
+        let mut quotes = bindings[..5].to_vec();
+        assert!(okx_service_lanes(&quotes, 4)
+            .unwrap_err()
+            .contains("subscriptions"));
+        quotes[0].lane_shard = Some(0);
+        assert!(okx_service_lanes(&quotes, 10)
+            .unwrap_err()
+            .contains("1..=999"));
+    }
+
+    #[test]
+    fn binance_pins_count_inside_their_feed() {
+        let mut quote = raw("BINANCE", "BTCUSDT", "btcusdt@bookTicker", RawFeed::Quote);
+        let mut trade = raw("BINANCE", "BTCUSDT", "btcusdt@trade", RawFeed::Trade);
+        quote.lane_shard = Some(1);
+        trade.lane_shard = Some(1);
+        let lanes = partition_binance_route(&[quote, trade], BinanceRoute::Public, 10).unwrap();
+        assert_eq!(
+            lanes
+                .iter()
+                .map(|lane| (lane.feed, lane.shard_index))
+                .collect::<Vec<_>>(),
+            vec![(RawFeed::Trade, 1), (RawFeed::Quote, 1)]
+        );
+    }
+
+    fn document() -> Value {
+        json!({
+            "runtime": "OKX",
+            "websocket_url": "wss://ws.okx.com/ws/v5/public",
+            "business_websocket_url": "wss://ws.okx.com/ws/v5/business",
+            "market_websocket_url": null,
+            "raw_stream": "md.raw.v2",
+            "shard_id": "qdl-v2-stable-okx-swap",
+            "lease_epoch": 1,
+            "partition_plan_epoch": 1,
+            "config_revision": 20,
+            "heartbeat_seconds": 15,
+            "liveness_ping_ms": 1500,
+            "liveness_dead_ms": 4000,
+            "max_events": 0,
+            "max_runtime_seconds": 0,
+            "metrics_every_events": 1000,
+            "generation_state_path": "/var/lib/qdl-stable/runtime/generations/okx-swap",
+            "session_liveness_dir": "/var/lib/qdl-stable/runtime/session-liveness/okx-swap",
+            "session_liveness_write_interval_ms": 1000,
+            "max_inflight_publishes": 512,
+            "max_subscriptions_per_connection": 100,
+            "latest_state_flush_ms": 50,
+            "authority": {
+                "schema": "qdl.authority-record.v1",
+                "slice_id": "unit",
+                "revision": 2,
+                "mode": "RUST_PRIMARY",
+                "candidate_image_digest": format!("sha256:{}", "0".repeat(64)),
+                "capability_manifest_digest": "0".repeat(64),
+                "contract_digest": "0".repeat(64),
+                "partition_plan_digest": "0".repeat(64),
+                "public_write_allowed": false,
+                "legacy_write_allowed": false,
+                "approved_by": "unit-test",
+                "effective_at_ns": 1
+            },
+            "bindings": [{
+                "provider": "OKX_DIRECT", "venue": "OKX", "market": "SWAP",
+                "product_type": "PERPETUAL", "native_symbol": "BTC-USDT-SWAP",
+                "native_channel": "bbo-tbt", "subscription_id": "s",
+                "adapter_version": "2.0.0", "instrument_catalog_revision": 1,
+                "feed": "QUOTE", "delivery_class": "LATEST_STATE"
+            }, {
+                "provider": "OKX_DIRECT", "venue": "OKX", "market": "SWAP",
+                "product_type": "PERPETUAL", "native_symbol": "BTC-USDT-SWAP",
+                "native_channel": "mark-price", "subscription_id": "m",
+                "adapter_version": "2.0.0", "instrument_catalog_revision": 1,
+                "feed": "MARK_INDEX", "delivery_class": "LATEST_STATE",
+                "mark_index_target": "BTC-USDT-SWAP"
+            }]
+        })
+    }
+
+    #[test]
+    fn per_feed_flush_overrides_only_the_declared_latest_state_feed() {
+        let config: IngestorConfig = serde_json::from_value(document()).unwrap();
+        config.validate().unwrap();
+        assert_eq!(config.latest_state_flush_ms_for(RawFeed::Quote), 50);
+        assert_eq!(config.latest_state_flush_ms_for(RawFeed::MarkIndex), 50);
+        let mut value = document();
+        value["latest_state_flush_ms_by_feed"] = json!({"MARK_INDEX": 500});
+        let config: IngestorConfig = serde_json::from_value(value).unwrap();
+        config.validate().unwrap();
+        assert_eq!(config.latest_state_flush_ms_for(RawFeed::Quote), 50);
+        assert_eq!(config.latest_state_flush_ms_for(RawFeed::MarkIndex), 500);
+        for refused in [
+            json!({"TRADE": 500}),
+            json!({"MARK_INDEX": 0}),
+            json!({"QUOTE": 1001}),
+        ] {
+            let mut value = document();
+            value["latest_state_flush_ms_by_feed"] = refused.clone();
+            let config: IngestorConfig = serde_json::from_value(value).unwrap();
+            assert!(config.validate().is_err(), "{refused}");
+        }
+        let mut value = document();
+        value["latest_state_flush_ms_by_feed"] = json!({"MARKINDEX": 500});
+        assert!(serde_json::from_value::<IngestorConfig>(value).is_err());
+    }
+
+    #[test]
+    fn a_partly_pinned_config_is_refused_at_validation() {
+        let mut value = document();
+        value["bindings"][0]["lane_shard"] = json!(1);
+        let config: IngestorConfig = serde_json::from_value(value.clone()).unwrap();
+        assert!(config.validate().unwrap_err().contains("but not all"));
+        value["bindings"][1]["lane_shard"] = json!(2);
+        let config: IngestorConfig = serde_json::from_value(value.clone()).unwrap();
+        config.validate().unwrap();
+        value["bindings"][1]["lane_shard"] = json!(1);
+        let config: IngestorConfig = serde_json::from_value(value).unwrap();
+        assert!(config
+            .validate()
+            .unwrap_err()
+            .contains("mixes feed classes"));
     }
 }
