@@ -33,7 +33,9 @@ Fill everything before the single release CI run (CI_PLAN.md step 1). Each item 
 ## From the certificate (R-cert owner)
 
 6. R-cert 2 final verdict: run 2 is the weekend run on the rc3 images (namespace `qdl-v230-rcert2-20261113t1551z`,
-   started 2026-11-13 15:51Z). It must cross Monday 00:00Z before the verdict; run 1 (rc1 images) does not count.
+   started 2026-11-13 15:51Z). The v2.3.0 release uses tonight's certificate (owner overnight package
+   2026-11-13). The Monday 00:00Z crossing gates only the 1W/2D/3D derived declarations, which stay off until a
+   Monday-crossing run passes. Run 1 (rc1 images) does not count.
 7. R-cert 3 fault-matrix receipt; R-cert 4 capacity envelope, or the recorded window substitute.
 8. `upgrade/evidence/releases/v2.3.0/certificate.json` (status PASS), `endpoint-report.json` and its sha in
    `certificate.endpoint_report_sha256` (checked by `release.yml`), and `CERTIFICATE.md`.
@@ -50,8 +52,8 @@ Fill everything before the single release CI run (CI_PLAN.md step 1). Each item 
 ## Not part of v2.3.0 (do not fill here)
 
 - Stage B (S1-S4, TS QUOTE/MARK for the remaining 69 crossec swaps): after the v2.3.0 release, as a later declaration.
-  Re-render it on the measured post-arm baseline, with the owner disk floor (>= 20% free and >= 90 GiB absolute;
-  flag, do not block, if a step would go below it so the owner can add disk) and its own packet that includes the
+  Re-render it on the measured post-arm baseline, with the owner disk floor (>= 14-15% free, never below 10%;
+  it does not block the main flow: flag it so the owner adds disk, planned 2026-11-14/15) and its own packet that includes the
   multi-member group proof.
 - The 4-contract `price_tick` refresh: a later declaration with its own migration record.
 - Live funding binding (v2.3.1), DL-BL-2026-11-13-E (v2.3.1), per-row bootstrap depth (DL-BL-2026-11-13-C).

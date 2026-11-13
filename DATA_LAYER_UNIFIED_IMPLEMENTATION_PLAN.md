@@ -78120,3 +78120,5 @@ Status: docs and configuration only; not pushed, no runtime action.
 Owner correction (2026-11-13, via coordinator) to the stage B precondition above: the disk floor for stage B and later
 packets is >= 20% free and >= 90 GiB absolute, not >= 25% (about 22% / 108 GB at the time). If a step would go below
 it, flag it so the owner can add disk; it does not block.
+Superseded the same day (owner update): the floor is >= 14-15% free and never below 10%. It does not block the main
+flow; the owner adds disk on 2026-11-14/15.
