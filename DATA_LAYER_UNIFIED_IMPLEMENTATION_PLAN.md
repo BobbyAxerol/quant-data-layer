@@ -77451,3 +77451,36 @@ window plan: scratchpad `dlcov/PACKET.md`; window runbook `dlcov/WINDOW_STAGE_A.
   - the capacity estimate uses mean rates (liquid subsets run higher; `capacity.rates_per_binding` overrides);
   - the Binance ingestor gets pins + the flush map with no binding change and keeps `config_revision`;
   - `qdl.execution-binding-status.v1` (item 3) is not in this slice.
+- Update 2026-11-13 (coordinator-approved follow-up): quotas from the quota model; merged stage A `c29c216`.
+  - The v2.2.6 stage A window failed RATE_LIMITED: Paper r12 had a hand-picked 4,500 requests/min for a modelled
+    ~6,000/min. EXECUTION quotas are now derived by `qdl.consumer.quota_model.model_manifest` over the rendered
+    manifest. Granted = max(current, declared, model); a declared quota below the model is refused.
+  - SIGNAL (alpha) quotas stay as declared and are `MODEL_PENDING` (no alpha client model yet).
+  - `report.json` gains `quota_models` and `capacity.query_requests`: modelled steady Query requests/min and streams
+    per EXECUTION consumer. Query/Redis vCPU per request is not measured, so no vCPU is derived from it.
+  - The gate gains `consumer_quota_model` (reuses `scripts/check_consumer_quota_model.check`).
+  - Declarations may set `revision` / `release_revision` per consumer (a retired revision is skipped, never
+    reused: Paper r12 / binding r24 are retired).
+  - The Query runtime acquisition takes every repository row the deployed copy lacks. Capacity counts rows absent
+    from the deployed runtime acquisition, so a repository that leads the deployment cannot hide rows. The gate
+    computes the crossing from the repository plan when the deployed copy does not pair with the base catalogue,
+    and says so.
+  - Merge `0ba4d35` of `c29c216` (no vendored copies left). Compose resolution: 2b's `/consumer-realms` mounts with
+    stage A's `QDL_PAPER_REALM_MANIFEST` variable. Plan journal: both entries kept.
+  - Golden, from the pre-stage-A tree (`git archive 098c94b`):
+    - the six repository files of `c29c216` are byte-identical (Paper manifest r13 with 10,000 requests/min and 160
+      streams; routing r30);
+    - with the deployed base role files the render equals `dlcov/stageA-pinned-r13`: realm bundle `5180a904...`,
+      binding r25 `980123da...`, ingestor, cores, kn bundle, Query runtime;
+    - consumer env JWT 13 / `9ba2264d...`.
+    On this tree the stage A declaration is a no-op and the gate passes.
+  - 150 on this tree (r13 base, deployed base role files, TS base binding r25):
+    - TS manifest r13 -> r14 with floor 13; 350 products (QUOTE 154, MARK 154);
+    - modelled steady 29,382 requests/min (about 490/s), 350 streams;
+    - granted quota 46,500 requests/min and 530 streams (r13 has 6,012 steady and 104 streams, about 4.9x less);
+    - ingest estimate +1,072 records/s, about 6.0 vCPU against 5.0 (EXCEEDS_ENVELOPE);
+    - the gate fails only on capacity.
+  - Builder note: since `c29c216` a symbol whose only non-BAR demand is EXECUTION QUOTE/MARK stays on the REST
+    final lane. The 143 declared-native signal BAR 1m bindings therefore render as `PYTHON_REST`, polled by the bar
+    edge, not as native OKX candles. The report says so. Native candles would need the builder rule to count SIGNAL
+    BAR demand (open question).
