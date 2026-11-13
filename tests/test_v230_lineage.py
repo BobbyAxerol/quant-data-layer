@@ -280,3 +280,30 @@ class LiveConfigLineageTests(unittest.TestCase):
             self.assertTrue(problems and "1 bindings" in problems[0], problems)
         with self.assertRaisesRegex(ValueError, "two live config revisions"):
             live_config_lineage(catalog, configs + [{"config_revision": 20, "bindings": [{"subscription_id": okx.source_id}]}])
+
+
+class SharedSourceLineageTests(unittest.TestCase):
+    """Re-review H2: BOOK_SNAPSHOT and BOOK_DELTA share one subscription; both get the live stamp."""
+
+    def test_both_book_bindings_of_one_source_are_stamped_and_gated(self):
+        from qdl.runtime.lineage import live_config_lineage, live_config_lineage_problems
+
+        catalog_doc = json.loads(CATALOG.read_text(encoding="utf-8"))
+        plan_doc = yaml.safe_load(ACQUISITION.read_text(encoding="utf-8"))
+        catalog = StableSourceCatalog.load(CATALOG)
+        books = {}
+        for item in catalog.bindings:
+            if item.binding_id.startswith("binance-usdm") and item.feed.value in {"BOOK_SNAPSHOT", "BOOK_DELTA"}:
+                books.setdefault(item.source_id, []).append(item.binding_id)
+        source, pair = next((s, ids) for s, ids in books.items() if len(ids) == 2)
+        live = live_config_lineage(catalog, [{"config_revision": 19, "bindings": [{"subscription_id": source}]}])
+        self.assertEqual(live, {binding: 19 for binding in pair})
+        with tempfile.TemporaryDirectory() as directory:
+            pinned = pin_lineage(catalog_doc, plan_doc, catalog_doc, plan_doc, live_config=live)
+            _, plan, _ = _write(Path(directory), "pinned", *pinned[:2])
+            self.assertEqual(live_config_lineage_problems(plan, live, catalog=catalog), [])
+            self.assertEqual({plan.lineage_config_revision_for(b) for b in pair}, {19})
+            # The old single-binding map dropped one book binding; plan-side coverage reports it.
+            dropped = {pair[0]: 19}
+            problems = live_config_lineage_problems(plan, dropped, catalog=catalog)
+            self.assertTrue(any(pair[1] in item for item in problems), problems)

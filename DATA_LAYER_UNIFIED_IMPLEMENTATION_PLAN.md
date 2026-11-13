@@ -77885,3 +77885,11 @@ container has been started.
   - The declaration tool's capacity gate encodes it: declared venue priority, default OKX > BINANCE; cap 6.0; it
     reports the Binance rows to defer and refuses OKX-first violations. The tool agent implements this.
 - **Status:** implemented, tested locally. rc2 head moves; the rc2 image build waits for this commit.
+- **Re-review H2 remainder (2026-11-13).** `live_config_lineage` mapped a source_id to one binding.
+  - BOOK_SNAPSHOT and BOOK_DELTA share a subscription, so all 7 Binance BOOK_DELTA kept the plan's 21, while the
+    writer's delta markers hold 19.
+  - The gate iterated only the live map, so it could not see the dropped binding.
+  - Fix: every binding of a stamped source gets the stamp. `live_config_lineage_problems(..., catalog=)` also checks
+    coverage from the plan side: a plan binding whose source is live-stamped but which has no stamp is a problem.
+  - Test `SharedSourceLineageTests` (a Binance book pair stamped 19; the dropped-binding control is reported).
+    `tests.test_v230_lineage` 14 OK; ruff F clean.

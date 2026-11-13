@@ -81,35 +81,51 @@ def live_config_lineage(
     config lineage must be seeded from here. Rows map to bindings through ``subscription_id`` = source_id.
     """
 
-    by_source = {item.source_id: item.binding_id for item in catalog.bindings}
+    # One physical subscription can feed several bindings: BOOK_SNAPSHOT and BOOK_DELTA share a source_id
+    # (re-review H2), so every binding of that source gets the stamp.
+    by_source: dict[str, list[str]] = {}
+    for item in catalog.bindings:
+        by_source.setdefault(item.source_id, []).append(item.binding_id)
     result: dict[str, int] = {}
     for config in ingestor_configs:
         default = int(config["config_revision"])
         for row in config["bindings"]:
-            binding = by_source.get(str(row["subscription_id"]))
-            if binding is None:
-                continue
             value = int(row.get("config_revision", default))
-            if result.setdefault(binding, value) != value:
-                raise ValueError(f"binding {binding} carries two live config revisions")
+            for binding in by_source.get(str(row["subscription_id"]), ()):
+                if result.setdefault(binding, value) != value:
+                    raise ValueError(f"binding {binding} carries two live config revisions")
     return result
 
 
 def live_config_lineage_problems(
-    plan: StableAcquisitionPlan, live: Mapping[str, int],
+    plan: StableAcquisitionPlan, live: Mapping[str, int], *, catalog: StableSourceCatalog | None = None,
 ) -> list[str]:
-    """Gate: every binding a live ingestor stamps keeps that exact config lineage in the plan."""
+    """Gate: every plan binding a live ingestor stamps keeps that exact config lineage.
 
+    With ``catalog``, coverage is checked from the plan side: a plan binding whose source_id a live
+    ingestor subscribes but which is missing from ``live`` is itself a problem (re-review H2: a map
+    that dropped a shared-source binding passed this gate).
+    """
+
+    plan_ids = {item.binding_id for item in plan.bindings}
+    missing: list[str] = []
+    if catalog is not None:
+        live_sources = {item.source_id for item in catalog.bindings if item.binding_id in live}
+        missing = sorted(
+            item.binding_id for item in catalog.bindings
+            if item.source_id in live_sources and item.binding_id in plan_ids and item.binding_id not in live
+        )
     moved = sorted(
         binding for binding, value in live.items()
-        if any(item.binding_id == binding for item in plan.bindings)
-        and plan.lineage_config_revision_for(binding) != value
+        if binding in plan_ids and plan.lineage_config_revision_for(binding) != value
     )
-    if not moved:
+    if not moved and not missing:
         return []
-    return [f"{len(moved)} bindings' plan config lineage differs from the live ingestor stamp"] + [
-        f"{binding}: plan {plan.lineage_config_revision_for(binding)} live {live[binding]}" for binding in moved[:5]
-    ]
+    return (
+        [f"{len(moved) + len(missing)} bindings' plan config lineage differs from or lacks the live ingestor stamp"]
+        + [f"{binding}: plan {plan.lineage_config_revision_for(binding)} live {live[binding]}" for binding in moved[:5]]
+        + [f"{binding}: no live stamp for a live-stamped source" for binding in missing[:5]]
+    )
 
 
 def pin_lineage(
