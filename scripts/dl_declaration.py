@@ -80,6 +80,7 @@ from qdl.adapters.intervals import (  # noqa: E402
     provider_bar_calendar_anchor_ms,
 )
 from qdl.consumer.manifest import ConsumerManifestLoader  # noqa: E402
+from qdl.consumer import quota_model  # noqa: E402
 from qdl.consumer.manifest_compat import (  # noqa: E402
     additive_problems,
     declared_floor_problems,
@@ -114,6 +115,7 @@ from qdl.runtime.stable_deployment import (  # noqa: E402
     StableAcquisitionPlan,
     validate_shared_authority_record,
 )
+from scripts import check_consumer_quota_model  # noqa: E402
 from scripts import kn_gateway_bundle  # noqa: E402
 from scripts import phase115c_materialize_active_native_bars as phase115c  # noqa: E402
 from scripts import prepare_paper_read_extension as paper_extension  # noqa: E402
@@ -413,6 +415,7 @@ class Render:
         self.env: dict[str, dict[str, str]] = {}
         self.summary: dict[str, Any] = {}
         self._execution_added: list[tuple[str, str]] = []
+        self.quota_models: dict[str, dict[str, Any]] = {}
 
     # ---------------------------------------------------------------- captures
     def _captures(self) -> dict[str, Path]:
@@ -675,6 +678,18 @@ class Render:
         acq_by_id = {row["binding_id"]: row for row in generated_acq["bindings"]}
         new_acq = [deepcopy(acq_by_id[binding_id]) for binding_id in new_ids]
         derived_ids = self._derive(new_bindings, new_acq)
+        # Declared-native signal intervals keep the builder's acquisition mode (ProductionCatalogBuilder decides
+        # the lane; since c29c216 a symbol with only EXECUTION QUOTE/MARK demand stays on the REST final lane).
+        native_intervals = {i for u in self.accepted_signal for i in (u.get("bars") or {}).get("native") or []}
+        interval_of = {row["binding_id"]: row.get("interval") for row in new_bindings if row["feed"] == "BAR"}
+        native_modes = Counter(f"{interval_of[row['binding_id']]}:{row['mode']}" for row in new_acq
+                               if interval_of.get(row["binding_id"]) in native_intervals)
+        rest = sum(n for key, n in native_modes.items() if key.endswith(":PYTHON_REST"))
+        if rest:
+            self.notes.append(
+                f"{rest} declared-native signal BAR bindings render as PYTHON_REST (REST final lane via the bar "
+                "edge, one poll per boundary): the builder admits the native OKX candle lane only for symbols with "
+                "non-BAR demand other than EXECUTION QUOTE/MARK (production_catalog execution_symbols)")
         catalog_doc = deepcopy(base_catalog_doc)
         acq_doc = deepcopy(base_acq_doc)
         if new_bindings or new_instruments:
@@ -700,6 +715,7 @@ class Render:
             "revision": [int(base_acq_doc["revision"]), int(acq_doc["revision"])],
             "new_rows_by_mode": dict(sorted(Counter(row["mode"] for row in new_acq).items())),
             "derived_final": len(derived_ids),
+            "declared_native_bar_modes": dict(sorted(native_modes.items())),
         }
         return catalog_doc, acq_doc, new_ids, new_acq
 
@@ -783,8 +799,14 @@ class Render:
                 if value > current:
                     target["spec"]["quotas"][name] = value
                     changed = True
+            changed = self._apply_quota_model(cid, klass, target, quotas) or changed
             if changed:
-                target["metadata"]["revision"] = int(base_doc["metadata"]["revision"]) + 1
+                # A retired revision is skipped, never reused (v2.2.6 r12 -> r13): ``revision`` in the declaration.
+                base_revision = int(base_doc["metadata"]["revision"])
+                wanted = consumer.get("revision")
+                if wanted is not None and int(wanted) <= base_revision:
+                    raise DeclarationRefused(f"{cid} target revision {wanted} must be above the base {base_revision}")
+                target["metadata"]["revision"] = base_revision + 1 if wanted is None else int(wanted)
             self.manifests[cid] = {"rel": rel, "base_raw": raw, "base": base_doc, "doc": target,
                                    "class": klass}
             self.manifest_changed[cid] = changed
@@ -807,6 +829,34 @@ class Render:
             item["parsed"] = parsed
             item["previous"] = previous
             item["additive_problems"] = additive_problems(previous, parsed)
+
+    def _apply_quota_model(self, cid: str, klass: str, target: dict[str, Any], declared: Mapping[str, Any]) -> bool:
+        """EXECUTION quotas are derived from the declared products (qdl.consumer.quota_model), never hand-picked.
+
+        A declared quota below the model is refused; the granted quota is max(current, declared, model) so a
+        quota never falls. SIGNAL (alpha) manifests keep their declared quotas and are marked MODEL_PENDING:
+        the model covers the Trading System writer's client only.
+        """
+        if klass != "EXECUTION":
+            self.quota_models[cid] = {"status": "MODEL_PENDING",
+                                      "reason": "no alpha client request model; quotas as declared"}
+            return False
+        model = quota_model.model_manifest(target)
+        required = {"requests_per_minute": model.required_requests_per_minute,
+                    "max_streams": model.required_max_streams}
+        for name, value in sorted(declared.items()):
+            if name in required and value < required[name]:
+                raise DeclarationRefused(f"{cid} declares {name}={value} below the quota model's {required[name]}")
+        changed = False
+        for name, value in required.items():
+            if target["spec"]["quotas"][name] < value:
+                target["spec"]["quotas"][name] = value
+                changed = True
+        if quota_model.quota_shortfall(target):
+            raise DeclarationRefused(f"{cid} quotas do not cover the quota model")
+        self.quota_models[cid] = {"status": "MODELLED", "evidence": model.evidence(),
+                                  "granted": {name: target["spec"]["quotas"][name] for name in required}}
+        return changed
 
     def _execution_manifest(self, cid, consumer, target, instrument_by_symbol) -> bool:
         rows = [row for row in self.accepted_execution if row["consumer_id"] == cid]
@@ -966,7 +1016,9 @@ class Render:
         base_raw = Path(path).read_bytes()
         doc = yaml.safe_load(base_raw)
         have = {row["binding_id"] for row in doc["bindings"]}
-        additions = [deepcopy(row) for row in new_acq if row["binding_id"] not in have]
+        # Every repository row the deployed runtime copy lacks: this render's additions and any earlier declaration
+        # not yet deployed (e.g. a rolled-back window), in repository order. Retained runtime rows keep their bytes.
+        additions = [deepcopy(row) for row in acq_doc["bindings"] if row["binding_id"] not in have]
         if not additions:
             return base_raw
         # DL v2.3.0 2d: the bar edge stamps config_revision from this file, so
@@ -1174,11 +1226,17 @@ class Render:
                 if base_quotas != new_quotas:
                     quota_change = {k: {"from": base_quotas[k], "to": new_quotas[k]}
                                     for k in sorted(new_quotas) if new_quotas[k] != base_quotas[k]}
+                release_revision = next((c.get("release_revision") for c in self.declaration["consumers"]
+                                         if c["consumer_id"] == cid), None)
+                if release_revision is not None and int(release_revision) <= int(base_binding["release_revision"]):
+                    raise DeclarationRefused(f"{cid} release_revision must be above the base binding")
                 sealed = paper_extension._seal(
                     current=current, consumer=consumer, base=base, products=products, catalog=catalog_doc,
                     target=target, new_binding=new_binding, quota_change=quota_change,
                     added_products=len(self._execution_added), linear_okx_swaps=sorted(symbols),
-                    feeds=sorted({feed for _s, feed in self._execution_added}))
+                    feeds=sorted({feed for _s, feed in self._execution_added}),
+                    quota_model=self.quota_models[cid]["evidence"],
+                    release_revision=None if release_revision is None else int(release_revision))
                 binding = sealed["binding"]
                 payload = json.dumps(binding, indent=2, sort_keys=True).encode("utf-8")
                 self.env[cid] = dict(sealed["consumer_environment"])
@@ -1268,6 +1326,34 @@ class Render:
             "added_bindings_by_kind": dict(sorted(per_kind.items())),
             "unmeasured_bindings_by_kind": dict(sorted(unmeasured.items())),
             "ingestor_subscriptions_after": subs,
+            "query_requests": self._query_requests(),
+        }
+
+    def _query_requests(self) -> dict[str, Any]:
+        """Modelled Query request load (shared per-consumer calendar-minute quota counter in stable_redis)."""
+        consumers = {}
+        for cid, item in self.manifests.items():
+            if item["class"] != "EXECUTION":
+                consumers[cid] = {"status": "MODEL_PENDING"}
+                continue
+            before = quota_model.model_manifest(item["base"])
+            after = quota_model.model_manifest(item["doc"])
+            consumers[cid] = {
+                "status": "MODELLED",
+                "steady_requests_per_minute": [before.steady_requests_per_minute, after.steady_requests_per_minute],
+                "streams": [before.streams, after.streams],
+                "required_requests_per_minute": after.required_requests_per_minute,
+                "required_max_streams": after.required_max_streams,
+                "granted": {k: item["doc"]["spec"]["quotas"][k] for k in ("requests_per_minute", "max_streams")},
+            }
+        modelled = [v for v in consumers.values() if v["status"] == "MODELLED"]
+        return {
+            "basis": "qdl.consumer.quota_model (TS writer client, calibrated on r11: model 2,212/min vs measured "
+                     "1,940-2,034/min); Query/Redis vCPU per request is not measured, so no vCPU is derived",
+            "execution_steady_requests_per_minute_after": sum(v["steady_requests_per_minute"][1] for v in modelled),
+            "execution_steady_requests_per_minute_added": sum(
+                v["steady_requests_per_minute"][1] - v["steady_requests_per_minute"][0] for v in modelled),
+            "consumers": consumers,
         }
 
     # ------------------------------------------------------------------- driver
@@ -1336,7 +1422,16 @@ class Render:
             cores = self.build_cores(catalog_path, repo_acq_path)
             bundles = self.build_bundles(catalog_path, self._universe_dir_for_load())
         bindings = self.build_execution_binding(catalog_doc)
-        capacity = self.capacity(new_acq, ingestors)
+        # Capacity is measured against what runs: with a deployed runtime acquisition, every row it lacks counts
+        # (a repository that leads the deployment, e.g. after a rolled-back window, must not hide its rows).
+        deployed_delta = new_acq
+        if self.base.runtime.get("query_acquisition"):
+            deployed = {row["binding_id"] for row in
+                        yaml.safe_load(Path(self.base.runtime["query_acquisition"]).read_bytes())["bindings"]}
+            deployed_delta = [row for row in acq_doc["bindings"] if row["binding_id"] not in deployed]
+        capacity = self.capacity(deployed_delta, ingestors)
+        capacity["basis_rows"] = ("rows absent from the deployed runtime acquisition"
+                                  if deployed_delta is not new_acq else "rows added by this render")
         self.summary.update(
             demand={"revision": [int(self.base.docs["demand"]["revision"]), int(demand["revision"])],
                     "added_rows": len(demand_added)},
@@ -1365,6 +1460,7 @@ class Render:
             "blocked": sorted(self.blocked, key=lambda r: json.dumps(r, sort_keys=True)),
             "blocked_by_reason": dict(sorted(Counter(r["reason"] for r in self.blocked).items())),
             "capacity": capacity,
+            "quota_models": dict(sorted(self.quota_models.items())),
             "consumer_environment": self.env,
             "ordered_restart": list(RESTART_ORDER),
             "notes": sorted(set(self.notes)),
@@ -1497,6 +1593,15 @@ def gate(rendered: Path) -> dict[str, Any]:
                 manifest_problems.append(f"{cid}: not additive: {problems}")
             floor_problems.extend(declared_floor_problems(old, new))
     check("manifests_load_and_are_additive", not manifest_problems, manifest_problems)
+    # The stage A offline quota gate over every declared manifest; non-EXECUTION ones are MODEL_PENDING.
+    verdict = check_consumer_quota_model.check([repo / rel for rel in inputs["manifests"].values()])
+    pending = [cid for cid, rel in inputs["manifests"].items() if not quota_model.is_execution_manifest(
+        yaml.safe_load((repo / rel).read_text(encoding="utf-8")))]
+    check("consumer_quota_model", verdict["status"] == "PASS",
+          {"manifests": {Path(k).name: v["status"] for k, v in verdict["manifests"].items()},
+           "failing": {Path(k).name: v.get("shortfall") for k, v in verdict["manifests"].items()
+                       if v["status"] != "PASS"},
+           "model_pending": pending})
     check("accept_set_floor_rule", not floor_problems, floor_problems)
     # release routing (with the manifests' selectors when the loader supports it)
     try:
@@ -1586,8 +1691,16 @@ def gate(rendered: Path) -> dict[str, Any]:
     check("role_configs_additive_and_lanes_stable", not role_problems, role_problems)
     # 4. bar-edge checkpoint crossing from the base runtime plan (additive => no record needed)
     try:
-        base_acq_path = runtime.get("query_acquisition") or str(base_repo / REPO_FILES["acquisition"])
-        base_plan = StableAcquisitionPlan.load(base_acq_path, catalog=base_catalog)
+        basis = "repository plan"
+        base_plan = StableAcquisitionPlan.load(base_repo / REPO_FILES["acquisition"], catalog=base_catalog)
+        if runtime.get("query_acquisition"):
+            try:
+                base_plan = StableAcquisitionPlan.load(runtime["query_acquisition"], catalog=base_catalog)
+                basis = "deployed runtime plan"
+            except ValueError:
+                # The deployed runtime copy lags the repository (e.g. a rolled-back window): it does not pair with
+                # the base catalogue, so the crossing is computed from the repository plan, and says so.
+                basis = "repository plan (deployed runtime acquisition does not pair with the base catalogue)"
         before = _bar_edge_set(base_catalog, base_plan)
         after = _bar_edge_set(catalog, runtime_acquisition)
         record_path = rendered / "runtime/bar-edge-checkpoint-migration.json"
@@ -1598,7 +1711,7 @@ def gate(rendered: Path) -> dict[str, Any]:
             runtime={"catalog_revision": catalog.catalog_revision, "acquisition_revision": runtime_acquisition.revision,
                      "binding_ids": sorted(after)},
             current_digests=after, migration=record)
-        check("bar_edge_checkpoint_crossing", True, crossing.summary())
+        check("bar_edge_checkpoint_crossing", True, f"{crossing.summary()} basis={basis}")
     except Exception as error:  # noqa: BLE001 - a crossing that cannot be computed is a failure
         check("bar_edge_checkpoint_crossing", False, f"{type(error).__name__}: {error}")
     # 4b. DL v2.3.0 2d: the contract lineage of every retained-unchanged binding is unchanged

@@ -1,13 +1,14 @@
-"""DL v2.3.0 declaration tool (scripts/dl_declaration.py): golden, additivity, BLOCKED, gate, migration.
+"""DL v2.3.0 declaration tool (scripts/dl_declaration.py): golden, additivity, quotas, BLOCKED, gate, migration.
 
-* Stage A golden (repository part, always runs): the v2.2.6 stage A declaration rendered against this tree's r12
-  revision set reproduces, byte for byte, the six repository files of the stage A worktree (demand r9, catalogue r13,
-  acquisition r21, promotion scope r12, routing r30, Trading System Paper manifest r12).
-* Stage A golden (runtime part): with ``QDL_V230_STAGE_A_RUNTIME_DIR`` pointing at the deployed base role files
-  (layout in ``_runtime_declaration``), the render also reproduces the pinned ingestor, three cores, both gateway
-  bundles, the sealed binding r24 and the Query runtime catalogue + acquisition. Skipped without the directory
-  (the base files are host state, not repository content); the expected hashes are the pinned SHA256SUMS.
-* 150-instrument declaration (dry): typed BLOCKED for FET/LUNA, the accept-set floors and the capacity verdict.
+* Stage A against this tree (always runs): the tree carries stage A (c29c216), so the stage A declaration is a
+  no-op: no revision moves, quotas already cover the quota model, gate PASS.
+* Stage A golden: with ``QDL_V230_STAGE_A_BASE_REPO`` pointing at the pre-stage-A tree (``git archive 098c94b config
+  consumers upgrade/evidence/releases/v2.2.5/consumer-realms``) the declaration reproduces, byte for byte, the six
+  repository files of c29c216 (demand r9, catalogue r13, acquisition r21, scope r12, routing r30, Paper manifest r13
+  with model quotas 10,000/160). With ``QDL_V230_STAGE_A_RUNTIME_DIR`` (deployed base role files, layout in
+  ``_runtime_declaration``) it also reproduces the r13 pinned runtime set (ingestor, cores, bundles, binding r25,
+  Query runtime catalogue + acquisition). Both directories are host state, not repository content.
+* 150-instrument declaration (dry): typed BLOCKED for FET/LUNA, accept-set floors, model quotas, capacity verdict.
 """
 from __future__ import annotations
 
@@ -32,10 +33,10 @@ STAGE_A_REPO = {
     "config/v2/stable-acquisition-bindings.yaml": "4533da057ce2e521c998657fb19e89c5549746b9e084002cd9fff698bf73f4e7",
     "config/v2/stable-authority-promotion-scope.yaml":
         "65d21991e61f0d8831b77ea0a156bd3089b18644420b39f66b7d6fd1de6b80ba",
-    "config/v2/stable-v2-release-routing.yaml": "fcaf0e67e8038db6d8359ca91bb369d315032f4b24f000eed92099e8f63833ee",
-    "consumers/stable/trading-system-paper.yaml": "9c21d9fb752d8dc26a5fad99f2b399a53c5b6f2005528752b20b905ec4e533c1",
+    "config/v2/stable-v2-release-routing.yaml": "144af5609981329d4930d5f1ff0ff4e8abd6e927bb4a42080c0a1284870e0534",
+    "consumers/stable/trading-system-paper.yaml": "cfc20e29b18d35c9f7e66f59c0cc3a999a115d22b87c088d1d124bb37b09d555",
 }
-# dlcov/stageA-pinned/SHA256SUMS (inputs under base/, then the pinned outputs)
+# dlcov/stageA-pinned-r13/SHA256SUMS (inputs under base/, then the pinned outputs; r12/r24 are retired)
 STAGE_A_RUNTIME_INPUTS = {
     "base/rust_core.json": "e11550dc6eac8d9311469afca7a42f567596ebd7b4625925c85a7f773521a482",
     "base/rust_core_2.json": "9d8ed362ed8ddb4881bb3679900f798ee87be71423bb099610cbd1ad01e8f229",
@@ -46,6 +47,7 @@ STAGE_A_RUNTIME_INPUTS = {
     "ingestor-binance-usdm.json": "5833bc4ea35cb4558a931288d34b61a94e99d260f1ba6b0e56596423995930ed",
     "authority.json": "33b3ff2509b30217598737002e8cec052d2abcf83170324997dd943a463c49de",
     "trading-system.paper.stable-r23-v3.json": "685fdf6f7d9faaa5e75e75d6f9621155b3f1bb26310b17611870155af843e997",
+    "trading-system.paper.stable-r25.json": "980123da2ffee321a54ea519a65d85ad172fcbad9c7fd0861a522db4b5b8ec66",
 }
 STAGE_A_RUNTIME_OUTPUTS = {
     "ingestor/ingestor-okx-swap.json": "d62f36b4927dbf2c7b5966654033dd320f8f130bafd608f2ea172e1ed988dbbb",
@@ -54,15 +56,16 @@ STAGE_A_RUNTIME_OUTPUTS = {
     "cores/rust_core_2.json": "26d6dad9ee9c3e5ecb2d35e66b52bc4d540cc11995411d62c9de3ba1e2416493",
     "cores/rust_core_3.json": "c962191bf8a2374f71662f512de007735871c378ed8e9b6c4697245ab9e1e4fa",
     "bundles/kn-bundle.json": "9136beba5280c6852240c8473dfb6976c3280b93f047d8c61125694c18fa1267",
-    "bundles/realm-bundle.json": "1a80a9f42f7729964bc53124b267ee3ce7abc1030df99eb4ea1f56e3ef279ab4",
-    "bindings/trading-system.paper.stable-r24.json":
-        "0524d2000669541822266cd7ac7b000dd47ad422675ff75de7a034a45c8f8983",
+    "bundles/realm-bundle.json": "5180a904971e50ea3e1ac21ad63f6ec91ab597920a14ae417f0792ae7313c339",
+    "bindings/trading-system.paper.stable-r25.json":
+        "980123da2ffee321a54ea519a65d85ad172fcbad9c7fd0861a522db4b5b8ec66",
     "runtime/stable-acquisition-bindings.yaml": "bf9fbad47242e62229f43ea1bc8445b21cee4b3eac7e55e401b39acb333c7659",
     "runtime/stable-source-bindings.yaml": "f51ef5c44e46e04a319f1e8e1e59362cee165abbf1da659fa427c811e57bd926",
-    "consumer-realms/trading-system.paper.stable-r12.yaml":
-        "9c21d9fb752d8dc26a5fad99f2b399a53c5b6f2005528752b20b905ec4e533c1",
+    "consumer-realms/trading-system.paper.stable-r13.yaml":
+        "cfc20e29b18d35c9f7e66f59c0cc3a999a115d22b87c088d1d124bb37b09d555",
 }
 RUNTIME_DIR = os.environ.get("QDL_V230_STAGE_A_RUNTIME_DIR")
+BASE_REPO = os.environ.get("QDL_V230_STAGE_A_BASE_REPO")
 
 
 def _sha(path: Path) -> str:
@@ -75,9 +78,9 @@ def _write_declaration(directory: Path, document: dict, name: str = "declaration
     return path
 
 
-def _fixture(name: str) -> dict:
+def _fixture(name: str, repo: Path | str = ROOT) -> dict:
     document = yaml.safe_load((FIXTURES / name).read_text(encoding="utf-8"))
-    document["base"]["repo"] = str(ROOT)
+    document["base"]["repo"] = str(repo)
 
     def absolute(value):
         return str(FIXTURES / value)
@@ -97,7 +100,8 @@ def _fixture(name: str) -> dict:
     return document
 
 
-def _runtime_declaration(document: dict, runtime_dir: Path) -> dict:
+def _runtime_declaration(document: dict, runtime_dir: Path,
+                         binding: str = "trading-system.paper.stable-r23-v3.json") -> dict:
     result = copy.deepcopy(document)
     result["base"]["runtime"] = {
         "authority": str(runtime_dir / "authority.json"),
@@ -107,12 +111,14 @@ def _runtime_declaration(document: dict, runtime_dir: Path) -> dict:
                                  "stable-acquisition-bindings.runtime-r20.yaml"),
         "bundles": {"realm": str(runtime_dir / "base/realm-bundle.json"),
                     "kn": str(runtime_dir / "base/kn-bundle.json")},
-        "route_bindings": {"trading-system.paper.stable": str(runtime_dir / "trading-system.paper.stable-r23-v3.json")},
+        "route_bindings": {"trading-system.paper.stable": str(runtime_dir / binding)},
     }
     return result
 
 
-class StageARepositoryGoldenTests(unittest.TestCase):
+class StageAOnThisTreeTests(unittest.TestCase):
+    """The tree carries stage A (c29c216): its declaration is a no-op and the tree passes the gate."""
+
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
@@ -125,26 +131,19 @@ class StageARepositoryGoldenTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
-    def test_reproduces_the_stage_a_repository_files(self):
+    def test_stage_a_is_already_declared(self):
         for rel, digest in STAGE_A_REPO.items():
             self.assertEqual(_sha(self.out / "repo" / rel), digest, rel)
-        self.assertEqual(self.report["blocked"], [])
-        self.assertEqual(self.report["summary"]["catalog"]["revision"], [12, 13])
-        self.assertEqual(self.report["summary"]["catalog"]["new_bindings"], 40)
+        summary = self.report["summary"]
+        self.assertEqual(summary["catalog"]["revision"], [13, 13])
+        self.assertEqual(summary["demand"]["added_rows"], 0)
+        self.assertFalse(summary["manifests"]["trading-system.paper.stable"]["changed"])
+        model = self.report["quota_models"]["trading-system.paper.stable"]
+        self.assertEqual(model["granted"], {"requests_per_minute": 10_000, "max_streams": 160})
 
     def test_never_writes_into_an_existing_directory(self):
         with self.assertRaisesRegex(tool.DeclarationRefused, "never overwrite"):
             tool.render(self.declaration, self.out)
-
-    def test_render_is_idempotent_on_its_own_output(self):
-        document = _fixture("stage_a.yaml")
-        document["base"]["repo"] = str(self.out / "repo")
-        again = tool.render(_write_declaration(self.root, document, "again.yaml"), self.root / "again")
-        for rel in STAGE_A_REPO:
-            self.assertEqual((self.root / "again/repo" / rel).read_bytes(), (self.out / "repo" / rel).read_bytes())
-        self.assertEqual(again["summary"]["catalog"]["revision"], [13, 13])
-        self.assertEqual(again["summary"]["demand"]["added_rows"], 0)
-        self.assertFalse(again["summary"]["manifests"]["trading-system.paper.stable"]["changed"])
 
     def test_render_is_deterministic(self):
         second = self.root / "second"
@@ -156,6 +155,8 @@ class StageARepositoryGoldenTests(unittest.TestCase):
     def test_gate_passes_and_catches_tampering(self):
         result = tool.gate(self.out)
         self.assertEqual(result["status"], "PASS", result["failing"])
+        quota = next(c for c in result["checks"] if c["check"] == "consumer_quota_model")
+        self.assertEqual(quota["status"], "PASS")
         tampered = self.root / "tampered"
         import shutil
         shutil.copytree(self.out, tampered)
@@ -167,7 +168,68 @@ class StageARepositoryGoldenTests(unittest.TestCase):
         self.assertIn("declaration_index_matches_files", failing)
         self.assertIn("config_strictly_additive", failing)
 
-    def test_checkpoint_migration_record_for_an_additive_crossing(self):
+    def test_hand_picked_quota_below_the_model_is_refused(self):
+        # 20,000 raises today's 10,000 but stays under the 150-tier model: refused, never granted.
+        document = _fixture("okx150.yaml")
+        document["consumers"][0]["quotas"] = {"requests_per_minute": 20_000}
+        with self.assertRaisesRegex(tool.DeclarationRefused, "below the quota model"):
+            tool.render(_write_declaration(self.root, document, "low-quota.yaml"), None, dry_run=True)
+        document["consumers"][0]["quotas"] = {"requests_per_minute": 4500}
+        with self.assertRaisesRegex(tool.DeclarationRefused, "may only be raised"):
+            tool.render(_write_declaration(self.root, document, "lower.yaml"), None, dry_run=True)
+
+
+@unittest.skipUnless(BASE_REPO, "set QDL_V230_STAGE_A_BASE_REPO to the pre-stage-A tree (git archive 098c94b ...)")
+class StageAGoldenTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.root = Path(cls.tmp.name)
+        cls.out = cls.root / "out"
+        cls.report = tool.render(_write_declaration(cls.root, _fixture("stage_a.yaml", BASE_REPO)), cls.out)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_reproduces_the_stage_a_commit(self):
+        for rel, digest in STAGE_A_REPO.items():
+            self.assertEqual(_sha(self.out / "repo" / rel), digest, rel)
+        self.assertEqual(self.report["blocked"], [])
+        self.assertEqual(self.report["summary"]["catalog"]["revision"], [12, 13])
+        self.assertEqual(self.report["summary"]["manifests"]["trading-system.paper.stable"]["revision"], [11, 13])
+        queries = self.report["capacity"]["query_requests"]["consumers"]["trading-system.paper.stable"]
+        self.assertEqual(queries["steady_requests_per_minute"], [2212, 6012])
+        self.assertEqual(queries["granted"], {"requests_per_minute": 10_000, "max_streams": 160})
+
+    def test_render_is_idempotent_on_its_own_output(self):
+        document = _fixture("stage_a.yaml", self.out / "repo")
+        again = tool.render(_write_declaration(self.root, document, "again.yaml"), self.root / "again")
+        for rel in STAGE_A_REPO:
+            self.assertEqual((self.root / "again/repo" / rel).read_bytes(), (self.out / "repo" / rel).read_bytes())
+        self.assertEqual(again["summary"]["catalog"]["revision"], [13, 13])
+        self.assertFalse(again["summary"]["manifests"]["trading-system.paper.stable"]["changed"])
+
+    def test_gate_passes(self):
+        self.assertEqual(tool.gate(self.out)["status"], "PASS")
+
+
+class CheckpointMigrationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.root = Path(cls.tmp.name)
+        document = _fixture("stage_a.yaml")
+        document["consumers"][0]["instruments"][0]["symbols"] = ["APT-USDT-SWAP"]
+        document["consumers"][0].update(revision=None, release_revision=None)
+        cls.out = cls.root / "out"
+        tool.render(_write_declaration(cls.root, document), cls.out)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_record_for_an_additive_crossing(self):
         record = tool.checkpoint_migration(
             previous_catalog=(ROOT / "config/v2/stable-source-bindings.yaml").read_bytes(),
             previous_acquisition=(ROOT / "config/v2/stable-acquisition-bindings.yaml").read_bytes(),
@@ -175,8 +237,8 @@ class StageARepositoryGoldenTests(unittest.TestCase):
             acquisition=self.out / "repo/config/v2/stable-acquisition-bindings.yaml",
             reason="test", approved_by="test")
         self.assertEqual((record["from"], record["to"]),
-                         ({"catalog_revision": 12, "acquisition_revision": 20},
-                          {"catalog_revision": 13, "acquisition_revision": 21}))
+                         ({"catalog_revision": 13, "acquisition_revision": 21},
+                          {"catalog_revision": 14, "acquisition_revision": 22}))
         self.assertEqual((record["removed_binding_ids"], record["changed_binding_ids"]), ([], []))
         self.assertEqual(len(record["previous_binding_digests"]), 640)
         # a legacy (v4) checkpoint crosses only with the record
@@ -188,7 +250,7 @@ class StageARepositoryGoldenTests(unittest.TestCase):
         self.assertTrue(plan_crossing(checkpoint=legacy, runtime=runtime, current_digests=digests,
                                       migration=record).migration_used)
 
-    def test_checkpoint_migration_refuses_a_backwards_crossing(self):
+    def test_refuses_a_backwards_crossing(self):
         with self.assertRaisesRegex(CheckpointCrossingRefused, "forward declaration"):
             tool.checkpoint_migration(
                 previous_catalog=(self.out / "runtime/stable-source-bindings.yaml").read_bytes(),
@@ -209,32 +271,33 @@ class BlockedAndAdapterTests(unittest.TestCase):
             {"venue": "OKX", "market": "SWAP", "native_symbol": "FET-USDT-SWAP", "feed": "QUOTE",
              "consumer_grade": "EXECUTION", "role": "READ", "purposes": ["MARKET"],
              "canonical_instrument_id": "OKX:SWAP:FET-USDT-SWAP"},
-            {"venue": "OKX", "market": "SWAP", "native_symbol": "ARB-USDT-SWAP", "feed": "QUOTE",
+            {"venue": "OKX", "market": "SWAP", "native_symbol": "APT-USDT-SWAP", "feed": "QUOTE",
              "consumer_grade": "EXECUTION", "role": "SUPPLY", "supplies": ["X"],
-             "canonical_instrument_id": "OKX:SWAP:ARB-USDT-SWAP"},
-            {"venue": "OKX", "market": "SWAP", "native_symbol": "ARB-USDT-SWAP", "feed": "TRADE",
+             "canonical_instrument_id": "OKX:SWAP:APT-USDT-SWAP"},
+            {"venue": "OKX", "market": "SWAP", "native_symbol": "APT-USDT-SWAP", "feed": "TRADE",
              "consumer_grade": "EXECUTION", "role": "READ", "purposes": ["LAST"],
-             "canonical_instrument_id": "OKX:SWAP:ARB-USDT-SWAP"},
-            {"venue": "BINANCE", "market": "USD_M", "native_symbol": "ARBUSDT", "feed": "QUOTE",
+             "canonical_instrument_id": "OKX:SWAP:APT-USDT-SWAP"},
+            {"venue": "BINANCE", "market": "USD_M", "native_symbol": "APTUSDT", "feed": "QUOTE",
              "consumer_grade": "EXECUTION", "role": "READ", "purposes": ["MARKET"],
-             "canonical_instrument_id": "BINANCE:USD_M:ARBUSDT"},
-            {"venue": "OKX", "market": "SWAP", "native_symbol": "ARB-USDT-SWAP", "feed": "QUOTE",
+             "canonical_instrument_id": "BINANCE:USD_M:APTUSDT"},
+            {"venue": "OKX", "market": "SWAP", "native_symbol": "APT-USDT-SWAP", "feed": "QUOTE",
              "consumer_grade": "EXECUTION", "role": "READ", "purposes": ["MARKET"],
-             "canonical_instrument_id": "OKX:SWAP:ARB-USDT-SWAP"},
+             "canonical_instrument_id": "OKX:SWAP:APT-USDT-SWAP"},
         ]
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             (root / "ts.json").write_text(json.dumps(self._ts_document(rows)), encoding="utf-8")
             document = _fixture("stage_a.yaml")
-            document["consumers"][0].update(instruments=[], ts_requirements=[str(root / "ts.json")])
+            document["consumers"][0].update(instruments=[], ts_requirements=[str(root / "ts.json")],
+                                            revision=None, release_revision=None)
             report = tool.render(_write_declaration(root, document), None, dry_run=True)
         reasons = {(r["native_symbol"], r["feed"]): r["reason"] for r in report["blocked"]}
         self.assertEqual(reasons[("FET-USDT-SWAP", "QUOTE")], "NOT_IN_CATALOG")
-        self.assertEqual(reasons[("ARB-USDT-SWAP", "TRADE")], "FEED_NOT_DECLARABLE")
-        self.assertEqual(reasons[("ARBUSDT", "QUOTE")], "EXECUTION_MARKET_NOT_DECLARABLE")
+        self.assertEqual(reasons[("APT-USDT-SWAP", "TRADE")], "FEED_NOT_DECLARABLE")
+        self.assertEqual(reasons[("APTUSDT", "QUOTE")], "EXECUTION_MARKET_NOT_DECLARABLE")
         self.assertIn("ROLE_NOT_A_DL_READ_GRANT", report["blocked_by_reason"])
-        self.assertEqual(report["summary"]["catalog"]["new_bindings"], 1)  # only ARB QUOTE is granted
-        self.assertEqual(report["summary"]["manifests"]["trading-system.paper.stable"]["requirements"], 66)
+        self.assertEqual(report["summary"]["catalog"]["new_bindings"], 1)  # only APT QUOTE is granted
+        self.assertEqual(report["summary"]["manifests"]["trading-system.paper.stable"]["requirements"], 106)
 
     def test_ts_requirements_with_a_wrong_digest_are_refused(self):
         document = self._ts_document([])
@@ -283,11 +346,11 @@ class Okx150DryRenderTests(unittest.TestCase):
 
     def test_new_coverage_and_accept_set_floors(self):
         summary = self.report["summary"]
-        self.assertEqual(summary["catalog"]["new_bindings_by_feed"]["QUOTE"], 143)
-        self.assertEqual(summary["catalog"]["new_bindings_by_feed"]["MARK_INDEX_PRICE"], 143)
+        self.assertEqual(summary["catalog"]["new_bindings_by_feed"]["QUOTE"], 123)  # 143 minus stage A's 20
+        self.assertEqual(summary["catalog"]["new_bindings_by_feed"]["MARK_INDEX_PRICE"], 123)
         manifests = summary["manifests"]
-        self.assertEqual(manifests["trading-system.paper.stable"]["revision"], [11, 12])
-        self.assertEqual(manifests["trading-system.paper.stable"]["min_token_revision"], 11)
+        self.assertEqual(manifests["trading-system.paper.stable"]["revision"], [13, 14])
+        self.assertEqual(manifests["trading-system.paper.stable"]["min_token_revision"], 13)
         self.assertEqual(manifests["alpha.okx.paper.stable"]["revision"], [15, 16])
         self.assertEqual(manifests["alpha.okx.paper.stable"]["min_token_revision"], 15)
         self.assertTrue(all(not item["additive_problems"] for item in manifests.values()))
@@ -302,6 +365,17 @@ class Okx150DryRenderTests(unittest.TestCase):
                              sorted(["3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "2d", "3d", "1w"]))
             self.assertEqual(self.report["summary"]["catalog"]["new_bindings_by_feed"]["BAR"], 143)
 
+    def test_execution_quotas_come_from_the_model(self):
+        model = self.report["quota_models"]["trading-system.paper.stable"]
+        evidence = model["evidence"]
+        self.assertEqual(model["status"], "MODELLED")
+        self.assertEqual(model["granted"], {"requests_per_minute": evidence["required_requests_per_minute"],
+                                            "max_streams": evidence["required_max_streams"]})
+        self.assertEqual(evidence["products_by_feed"]["QUOTE"], 154)
+        self.assertEqual(self.report["quota_models"]["alpha.okx.paper.stable"]["status"], "MODEL_PENDING")
+        queries = self.report["capacity"]["query_requests"]
+        self.assertEqual(queries["execution_steady_requests_per_minute_after"], evidence["steady_requests_per_minute"])
+
     def test_capacity_is_reported_against_the_envelope(self):
         capacity = self.report["capacity"]
         self.assertEqual(capacity["mark_index_flush_ms"], 500)
@@ -309,7 +383,8 @@ class Okx150DryRenderTests(unittest.TestCase):
         self.assertGreater(capacity["projected_dl_vcpu"], 5.0)
 
 
-@unittest.skipUnless(RUNTIME_DIR, "set QDL_V230_STAGE_A_RUNTIME_DIR to the deployed stage A base role files")
+@unittest.skipUnless(RUNTIME_DIR and BASE_REPO,
+                     "set QDL_V230_STAGE_A_RUNTIME_DIR (deployed base role files) and QDL_V230_STAGE_A_BASE_REPO")
 class StageARuntimeGoldenTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -320,7 +395,7 @@ class StageARuntimeGoldenTests(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.root = Path(cls.tmp.name)
         cls.out = cls.root / "out"
-        document = _runtime_declaration(_fixture("stage_a.yaml"), cls.runtime)
+        document = _runtime_declaration(_fixture("stage_a.yaml", BASE_REPO), cls.runtime)
         cls.report = tool.render(_write_declaration(cls.root, document), cls.out)
 
     @classmethod
@@ -331,14 +406,14 @@ class StageARuntimeGoldenTests(unittest.TestCase):
         for rel, digest in STAGE_A_RUNTIME_OUTPUTS.items():
             self.assertEqual(_sha(self.out / rel), digest, rel)
         self.assertEqual(self.report["consumer_environment"]["trading-system.paper.stable"], {
-            "DATA_LAYER_V2_JWT_MANIFEST_REVISION": "12",
+            "DATA_LAYER_V2_JWT_MANIFEST_REVISION": "13",
             "DATA_LAYER_V2_RELEASE_MANIFEST_SHA256":
-                "ca5b8477542984b89fa0bd4ddae4023b8b02f75cbd8f5f4af01192f06211f54f"})
+                "9ba2264da2d5c2729376569c4ee2328cf7ad665f1aa209215f94892a5df47248"})
 
     def test_execution_scope_matches_the_ts_reader_contract(self):
         scope = json.loads((self.out / "execution-scope/trading-system.paper.stable.json").read_text())
-        self.assertEqual(scope["binding_digest"], STAGE_A_RUNTIME_OUTPUTS["bindings/trading-system.paper.stable-r24.json"])
-        self.assertEqual((scope["manifest_revision"], scope["catalog_revision"]), (12, 13))
+        self.assertEqual(scope["binding_digest"], STAGE_A_RUNTIME_OUTPUTS["bindings/trading-system.paper.stable-r25.json"])
+        self.assertEqual((scope["manifest_revision"], scope["catalog_revision"]), (13, 13))
         keys = [(r["venue"], r["market"], r["native_symbol"]) for r in scope["instruments"]]
         self.assertEqual(keys, sorted(set(keys)))
         self.assertTrue(all(r["feeds"] == sorted(set(r["feeds"])) and set(r["feeds"]) <= set(tool.SCOPE_FEEDS)
@@ -352,7 +427,8 @@ class StageARuntimeGoldenTests(unittest.TestCase):
         self.assertEqual(result["status"], "PASS", result["failing"])
 
     def test_sticky_lanes_and_flush_map_on_150(self):
-        document = _runtime_declaration(_fixture("okx150.yaml"), self.runtime)
+        # on this tree (stage A r13): the base sealed binding is stage A's r25
+        document = _runtime_declaration(_fixture("okx150.yaml"), self.runtime, "trading-system.paper.stable-r25.json")
         out = self.root / "out150"
         report = tool.render(_write_declaration(self.root, document, "okx150.yaml"), out)
         okx = report["summary"]["ingestors"]["ingestor-okx-swap.json"]
@@ -365,7 +441,7 @@ class StageARuntimeGoldenTests(unittest.TestCase):
         pinned = json.loads((out / "ingestor/ingestor-okx-swap.json").read_text())
         self.assertTrue(all(isinstance(b.get("lane_shard"), int) for b in pinned["bindings"]))
         gate = tool.gate(out)
-        self.assertEqual(gate["failing"], ["capacity_envelope"])
+        self.assertEqual(gate["failing"], ["capacity_envelope"])  # quota model PASS; ingest estimate > 5.0 vCPU
 
 
 if __name__ == "__main__":

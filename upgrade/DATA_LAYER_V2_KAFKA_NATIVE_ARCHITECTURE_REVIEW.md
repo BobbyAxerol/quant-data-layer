@@ -3308,6 +3308,11 @@ Rules the tool enforces:
 - a row DL cannot serve is BLOCKED with a reason, never dropped.
 It never mounts, restarts or edits a deployed file.
 
+Update (same day): EXECUTION quotas are derived by `qdl.consumer.quota_model` and never hand-picked; a declared
+quota below the model is refused. The gate's `consumer_quota_model` check guards it, and the report carries the
+modelled Query request load (`capacity.query_requests`). Alpha quotas are `MODEL_PENDING`. A retired revision is
+skipped through the declaration's `revision` / `release_revision`, never reused.
+
 ### Delta 2026-11-13: DL v2.3.0 slice 2d, per-binding contract lineage and contract-line schema digest
 
 Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, "DL v2.3.0 slice 2d".

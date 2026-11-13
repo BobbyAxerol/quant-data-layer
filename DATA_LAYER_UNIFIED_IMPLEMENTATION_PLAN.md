@@ -77584,6 +77584,14 @@ Tests: `tests.test_v230_rcert2_shadow`, 7 OK (render, caps, isolation argv, verd
 container has been started.
 
 <a id="dl-v230-declaration-tool-20261113"></a>
+- 2026-11-13 addition (coordinator, inside the approved caps): gate G2.7, the REST-final 1m lane.
+  - DOGE and BNB take their 1m base from the bar edge REST final-bar lane (`PYTHON_REST`, `candle1m`).
+  - BTC, ETH and SOL keep native WS.
+  - The comparator also checks every 1m base bar.
+  - Latency is reported per lane and interval (`published_at - close`), with gates: REST final 1m p99 <= 20 s,
+    REST-lane derived p99 <= 30 s. If the gate fails, the 150-tier declaration switches that universe to native 1m.
+  - `tests.test_v230_rcert2_shadow`: 8 OK.
+
 ### DL v2.3.0 slice 2c: declaration tool `scripts/dl_declaration.py` (render, gate, checkpoint-migration) - 2026-11-13 (Claude)
 
 - Goal (owner, via the coordinator): after v2.3.0 an instrument/interval addition is "declaration + gate + ordered
@@ -77650,6 +77658,71 @@ container has been started.
   - the capacity estimate uses mean rates (liquid subsets run higher; `capacity.rates_per_binding` overrides);
   - the Binance ingestor gets pins + the flush map with no binding change and keeps `config_revision`;
   - `qdl.execution-binding-status.v1` (item 3) is not in this slice.
+- Update 2026-11-13 (coordinator-approved follow-up): quotas from the quota model; merged stage A `c29c216`.
+  - The v2.2.6 stage A window failed RATE_LIMITED: Paper r12 had a hand-picked 4,500 requests/min for a modelled
+    ~6,000/min. EXECUTION quotas are now derived by `qdl.consumer.quota_model.model_manifest` over the rendered
+    manifest. Granted = max(current, declared, model); a declared quota below the model is refused.
+  - SIGNAL (alpha) quotas stay as declared and are `MODEL_PENDING` (no alpha client model yet).
+  - `report.json` gains `quota_models` and `capacity.query_requests`: modelled steady Query requests/min and streams
+    per EXECUTION consumer. Query/Redis vCPU per request is not measured, so no vCPU is derived from it.
+  - The gate gains `consumer_quota_model` (reuses `scripts/check_consumer_quota_model.check`).
+  - Declarations may set `revision` / `release_revision` per consumer (a retired revision is skipped, never
+    reused: Paper r12 / binding r24 are retired).
+  - The Query runtime acquisition takes every repository row the deployed copy lacks. Capacity counts rows absent
+    from the deployed runtime acquisition, so a repository that leads the deployment cannot hide rows. The gate
+    computes the crossing from the repository plan when the deployed copy does not pair with the base catalogue,
+    and says so.
+  - Merge `0ba4d35` of `c29c216` (no vendored copies left). Compose resolution: 2b's `/consumer-realms` mounts with
+    stage A's `QDL_PAPER_REALM_MANIFEST` variable. Plan journal: both entries kept.
+  - Golden, from the pre-stage-A tree (`git archive 098c94b`):
+    - the six repository files of `c29c216` are byte-identical (Paper manifest r13 with 10,000 requests/min and 160
+      streams; routing r30);
+    - with the deployed base role files the render equals `dlcov/stageA-pinned-r13`: realm bundle `5180a904...`,
+      binding r25 `980123da...`, ingestor, cores, kn bundle, Query runtime;
+    - consumer env JWT 13 / `9ba2264d...`.
+    On this tree the stage A declaration is a no-op and the gate passes.
+  - 150 on this tree (r13 base, deployed base role files, TS base binding r25):
+    - TS manifest r13 -> r14 with floor 13; 350 products (QUOTE 154, MARK 154);
+    - modelled steady 29,382 requests/min (about 490/s), 350 streams;
+    - granted quota 46,500 requests/min and 530 streams (r13 has 6,012 steady and 104 streams, about 4.9x less);
+    - ingest estimate +1,072 records/s, about 6.0 vCPU against 5.0 (EXCEEDS_ENVELOPE);
+    - the gate fails only on capacity.
+  - Builder note: since `c29c216` a symbol whose only non-BAR demand is EXECUTION QUOTE/MARK stays on the REST
+    final lane. The 143 declared-native signal BAR 1m bindings therefore render as `PYTHON_REST`, polled by the bar
+    edge, not as native OKX candles. The report says so. Native candles would need the builder rule to count SIGNAL
+    BAR demand (open question).
+
+### DL v2.3.0 rc1 integration branch `release/v2.3.0-rc1-integration` - 2026-11-13 (Claude)
+
+- **Scope.** The coordinator asked for this branch (owner approved an early start of the R-cert 2 shadow).
+  Worktree `.worktrees/dl-v230-rc1`. Local `git merge --no-ff`, author BobbyAxerol, nothing pushed.
+- **Merge order:**
+  1. base: stage A `c29c216` (v2.2.6);
+  2. mechanism `d0976ed` (2a/2b plus fixes), merge `e88d7e8`;
+  3. derived bars `a6bc112a`, merge `3a9b6e1`;
+  4. tool `0ba4d35`, merge `c899d44`;
+  5. tool quota model `72f35cf`, merge `34a354f`;
+  6. derived bars G2.7 `a562e469`, merge `b231c2d`.
+- **Conflicts:**
+  - `stable_bar_edge.py`: imports only (both kept); `run_forever` auto-merged, heartbeat before
+    `run_derived_cycle()`.
+  - compose: rerere reused the tool agent's resolution, which I verified: stage A `${QDL_PAPER_REALM_MANIFEST:-...}`
+    plus the mechanism's `/consumer-realms` manifests.
+  - plan and guide: append-only, both kept; the G2.7 bullet was moved back under its own entry.
+- **Tests.**
+  - Rust: the tree is identical to rehearsal tree `81ac924` (`git diff 81ac924 HEAD -- rust Cargo.lock generated
+    contracts` is empty). On that tree, `qdl-rust-builder:r134-test` at 2 CPU, cpu-shares 256:
+    - `cargo fmt --check` OK;
+    - clippy `-D warnings` on contracts/core/kafka/realtime-core/stream-gateway/projector OK;
+    - tests: contracts 34, core 63, kafka lib 47, ingestor 78, production-core 7, realtime-core bin 30,
+      realtime-core lib 58, gateway lib 69, hot_lookup 1, native_stream 56;
+    - `cargo check --workspace` OK.
+  - Python on the final tree: `tests.test_v230_declaration_tool`, `tests.test_v230_rcert2_shadow` and
+    `tests.test_v230_derived_bars` give 60 OK (7 skipped).
+  - The combined impacted run (127 modules) started on `c899d44` and was still running at this entry; its result
+    goes in the next entry.
+- **Next.** The derived-bars agent builds `qdl-v2-rust:2.3.0-rc1-<sha8>` and `qdl-v2-python:2.3.0-rc1-<sha8>` from
+  this branch head for the isolated R-cert 2 shadow. rc2 adds slice 2d (lineage).
 
 ### DL v2.3.0 slice 2d: per-binding contract lineage, cursor lineage, contract-line schema digest - 2026-11-13 (Claude)
 
