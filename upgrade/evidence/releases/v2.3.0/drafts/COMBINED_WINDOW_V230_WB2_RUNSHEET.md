@@ -38,6 +38,14 @@ packet's (sections 4, 4a, 5, 6, W). It adds only the exact commands.
 > Pass: both VERIFIED, plus packet W.4 items 2-3 (continuity == PRE within 5 min, 10 min soak clean).
 > `$REPO` = `/home/bobby/.worktrees/dl-v230-rc2`.
 
+> **Rule (2026-11-13): never `docker exec` a JVM tool into a production broker.**
+> - At about 12:30Z on 2026-11-13, the DL integration agent ran `kafka-consumer-groups.sh --describe` via
+>   `docker exec` in `qdl_v2_stable_candidate-kafka1-1`. It timed out ("Killed"), and the JVM shared the broker's
+>   1.5 GiB cgroup, which left `State.OOMKilled=true` on kafka1 (the broker JVM itself stayed up).
+> - Any Kafka CLI runs from a separate capped `--rm` client container on the cluster network.
+> - Better still, no CLI at all: core lag comes from the bar_edge history gate (heartbeat `gate_closed`, "history
+>   paused" lines), as this sheet does.
+
 ## 0. Prepared before T-30 (done 2026-11-13 ~12:27Z; no running container reads any of it)
 
 **Pinned set** `$A`: 21 files with `SHA256SUMS`.
