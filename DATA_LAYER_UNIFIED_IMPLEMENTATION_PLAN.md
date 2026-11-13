@@ -77910,3 +77910,29 @@ container has been started.
     coverage from the plan side: a plan binding whose source is live-stamped but which has no stamp is a problem.
   - Test `SharedSourceLineageTests` (a Binance book pair stamped 19; the dropped-binding control is reported).
     `tests.test_v230_lineage` 14 OK; ruff F clean.
+
+### DL v2.3.0 rc2 integration branch `release/v2.3.0-rc2-integration` - 2026-11-13 (Claude)
+
+- **Contents:** rc1 (`7af599de`) + slice 2d (`0f20d8ff`, merge `e13b1050`) + tool `de9d766` (declarable final-BAR
+  source, OKX REST budget gate; merge `269fc9c8`) + tool `c5c42dd` (150 tier `bar_1m_source: native`; merge
+  `3f45a315`) + H2 follow-ups `5b18b861`, `c7fe877f` + tool `832c02c4` (bar_edge runtime pair, live config lineage,
+  6.0 vCPU OKX-first cap; fast-forward).
+  - Merges are local `--no-ff` by BobbyAxerol; worktree `.worktrees/dl-v230-rc2`.
+  - Journal and guide conflicts were append-only; the tool's additions were placed under its own entry.
+- **The rc1 combined run (127 modules on `c899d44`) is superseded.** The coordinator stopped it at about 65 min,
+  with 0 ERROR/FAIL markers so far; the rc2 full suite is its superset.
+- **Tests:**
+  - Rust tree = the tested 2d tree (`git diff 0f20d8f HEAD -- rust Cargo.lock generated contracts` is empty).
+  - Full Python suite (`unittest discover`, 1 CPU, `--rm`, no network) on `269fc9c8`: 4296 tests, 4292 OK, 132 skipped, 4 errors. All 4 are environment errors: `/app/logs/app.log` permission denied
+    for the non-root test user (crypto_history_contract, phase0_contract_golden, phase3_control_plane,
+    runtime_source_lifespan). The same modules re-run as container root: 15 OK.
+  - Later deltas: `test_v230_lineage` 14 OK on `c7fe877f`; tool + bar_source + lineage 47 OK (8 skipped) on
+    `832c02c4`..
+  - Delta run on `3f45a315` (`test_v230_declaration_tool`, `test_v230_bar_source`): 29 OK (7 skipped).
+- **Packet facts from the tool agent (150 tier, native 1m):**
+  - `okx_rest_budget` PASS (REST lane 1d polls only, 0.2/min).
+  - Gate FAIL on capacity only: about 6.1 vCPU vs the 5.0 ceiling.
+  - 675 OKX subscriptions; lanes at most 100 each, retained names unchanged.
+- **Status:** rc2 = `832c02c4` cleared for images (Rust from `c7fe877`, identical Rust inputs). Combined window
+  packet: `upgrade/evidence/releases/v2.3.0/drafts/COMBINED_WINDOW_V230_WB2_PACKET.md` (reviewed; final pass
+  pending image digests).
