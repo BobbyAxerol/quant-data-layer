@@ -3219,3 +3219,32 @@ ordered restart, with no certification campaign, image or tag. The design rules 
 Still a release after v2.3.0: new venue/market or feed type, new derivation kind, parser/normaliser/proto change,
 flush or lane semantics, exceeding the certified capacity envelope. Removals and source-mode changes are a
 declaration with an explicit migration record, separately approved.
+
+<a id="delta-20261113-dl-v230-declaration-tool"></a>
+### Delta 2026-11-13: DL v2.3.0 declaration tool (slice 2c)
+
+Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`
+[DL v2.3.0 slice 2c](DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#dl-v230-declaration-tool-20261113).
+
+An addition is now operated as three commands plus the window's ordered restart:
+
+1. `python3 -B scripts/dl_declaration.py render DECLARATION.yaml --out NEW_DIR`.
+   - One `qdl.v2.declaration.v1` file names the base (live) revision set and the consumers.
+   - EXECUTION consumers take explicit rows and/or TS `ts.declared-execution-requirements.v1`.
+   - SIGNAL consumers take universes: explicit, or the alpha hosting intent + universe. Each universe declares
+     native/derived intervals, history depth and reference feeds.
+   - Output: the coupled set (repository files, Query runtime, role configs, bundles, sealed binding, execution
+     scope, universes, declaration index) plus `report.json` (typed BLOCKED rows, capacity estimate, consumer env,
+     restart order).
+2. `python3 -B scripts/dl_declaration.py gate NEW_DIR`: the offline acceptance. Then the live TS coverage gate.
+3. When the bar edge crosses a legacy checkpoint, `checkpoint-migration` renders the record from the files it last
+   loaded (`--git-rev <image revision>` with `--expect-previous-sha256`).
+
+Rules the tool enforces:
+- strictly additive (every retained row byte for byte; revisions only rise);
+- deterministic and idempotent;
+- dedup by feed key with other consumers' demand kept;
+- execution rows explicit, alpha rows as selectors;
+- sticky lanes: existing lane names and members never move;
+- a row DL cannot serve is BLOCKED with a reason, never dropped.
+It never mounts, restarts or edits a deployed file.

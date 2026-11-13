@@ -1,0 +1,2337 @@
+{
+  "consumer_id": "trading-system.paper.stable",
+  "declared_by": {
+    "bindings_revision": "hosting-paper-crossec-v1-1584bb76",
+    "bindings_schema": "native-paper-risk-bindings.v1",
+    "bindings_sha256": "a0528982ce23f63bc88168f77e005a59f0cbff963f544ae0f68aa646f5a98bce",
+    "tool": "ts.market-coverage-gate",
+    "ts_source_commit": "worktree tools/market-coverage-gate on 2b120abd, gate blob 4304914b2d8d0e31271034a4390095542a93d93d"
+  },
+  "policy": {
+    "excluded_optional_profiles": [
+      "MARKET+L2"
+    ],
+    "gating_profiles": [
+      "MARKET"
+    ],
+    "market_max_age_ms": 2000,
+    "order_types": [
+      "MARKET"
+    ],
+    "paper_model": "BBO_EXECUTABLE",
+    "paper_model_version": "native-paper.v1",
+    "trigger_references": [
+      "MARK",
+      "INDEX",
+      "LAST"
+    ]
+  },
+  "requirements": [
+    {
+      "canonical_instrument_id": "OKX:SWAP:AAVE-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "AAVE-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:AAVE-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "AAVE-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ADA-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "ADA-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ADA-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "ADA-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ALGO-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "ALGO-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ALGO-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "ALGO-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:APE-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "APE-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:APE-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "APE-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:APT-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "APT-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:APT-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "APT-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ARB-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "ARB-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ARB-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "ARB-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ASTER-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "ASTER-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ASTER-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "ASTER-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ATOM-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "ATOM-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ATOM-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "ATOM-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:AUCTION-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "AUCTION-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:AUCTION-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "AUCTION-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:AVAX-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "AVAX-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:AVAX-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "AVAX-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:AXS-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "AXS-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:AXS-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "AXS-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:BAND-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "BAND-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:BAND-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "BAND-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:BAT-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "BAT-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:BAT-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "BAT-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:BCH-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "BCH-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:BCH-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "BCH-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:BIO-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "BIO-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:BIO-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "BIO-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:BNB-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "BNB-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:BNB-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "BNB-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:BOME-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "BOME-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:BOME-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "BOME-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:BONK-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "BONK-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:BONK-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "BONK-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:BTC-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "BTC-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:BTC-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "BTC-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:CFX-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "CFX-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:CFX-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "CFX-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:CHZ-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "CHZ-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:CHZ-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "CHZ-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:COMP-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "COMP-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:COMP-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "COMP-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:CRV-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "CRV-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:CRV-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "CRV-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:DASH-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "DASH-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:DASH-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "DASH-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:DOGE-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "DOGE-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:DOGE-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "DOGE-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:DOT-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "DOT-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:DOT-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "DOT-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:DYDX-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "DYDX-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:DYDX-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "DYDX-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:EGLD-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "EGLD-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:EGLD-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "EGLD-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ENA-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "ENA-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ENA-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "ENA-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ENJ-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "ENJ-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ENJ-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "ENJ-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ETC-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "ETC-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ETC-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "ETC-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ETH-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "ETH-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ETH-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "ETH-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:FET-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "FET-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:FET-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "FET-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:FIL-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "FIL-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:FIL-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "FIL-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:FLOKI-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "FLOKI-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:FLOKI-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "FLOKI-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:GALA-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "GALA-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:GALA-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "GALA-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:GAS-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "GAS-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:GAS-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "GAS-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:GMT-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "GMT-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:GMT-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "GMT-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:HBAR-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "HBAR-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:HBAR-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "HBAR-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ICP-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "ICP-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ICP-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "ICP-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:INJ-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "INJ-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:INJ-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "INJ-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:IOST-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "IOST-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:IOST-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "IOST-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:IOTA-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "IOTA-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:IOTA-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "IOTA-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:KITE-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "KITE-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:KITE-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "KITE-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:KSM-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "KSM-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:KSM-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "KSM-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:LDO-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "LDO-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:LDO-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "LDO-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:LINK-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "LINK-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:LINK-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "LINK-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:LTC-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "LTC-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:LTC-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "LTC-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:LUNA-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "LUNA-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:LUNA-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "LUNA-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:MAGIC-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "MAGIC-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:MAGIC-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "MAGIC-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:MANA-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "MANA-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:MANA-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "MANA-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:MASK-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "MASK-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:MASK-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "MASK-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:NEAR-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "NEAR-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:NEAR-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "NEAR-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:NEIRO-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "NEIRO-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:NEIRO-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "NEIRO-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:NEO-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "NEO-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:NEO-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "NEO-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:NOT-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "NOT-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:NOT-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "NOT-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ONDO-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "ONDO-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ONDO-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "ONDO-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ONE-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "ONE-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ONE-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "ONE-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ONT-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "ONT-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ONT-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "ONT-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:OP-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "OP-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:OP-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "OP-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ORDI-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "ORDI-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ORDI-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "ORDI-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:PENDLE-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "PENDLE-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:PENDLE-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "PENDLE-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:PENGU-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "PENGU-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:PENGU-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "PENGU-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:PEOPLE-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "PEOPLE-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:PEOPLE-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "PEOPLE-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:PEPE-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "PEPE-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:PEPE-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "PEPE-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:PNUT-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "PNUT-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:PNUT-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "PNUT-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:PUMP-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "PUMP-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:PUMP-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "PUMP-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:QTUM-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "QTUM-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:QTUM-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "QTUM-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:S-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "S-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:S-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "S-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:SAND-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "SAND-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:SAND-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "SAND-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:SEI-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "SEI-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:SEI-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "SEI-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:SHIB-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "SHIB-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:SHIB-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "SHIB-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:SOL-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "SOL-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:SOL-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "SOL-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:STRK-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "STRK-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:STRK-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "STRK-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:STX-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "STX-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:STX-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "STX-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:SUI-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "SUI-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:SUI-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "SUI-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:SUSHI-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "SUSHI-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:SUSHI-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "SUSHI-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:TAO-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "TAO-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:TAO-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "TAO-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:THETA-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "THETA-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:THETA-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "THETA-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:TIA-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "TIA-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:TIA-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "TIA-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:TRB-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "TRB-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:TRB-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "TRB-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:TRUMP-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "TRUMP-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:TRUMP-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "TRUMP-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:TRX-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "TRX-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:TRX-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "TRX-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:UNI-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "UNI-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:UNI-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "UNI-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:WIF-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "WIF-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:WIF-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "WIF-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:WLD-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "WLD-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:WLD-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "WLD-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:WLFI-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "WLFI-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:WLFI-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "WLFI-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:XLM-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "XLM-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:XLM-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "XLM-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:XPL-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "XPL-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:XPL-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "XPL-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:XRP-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "XRP-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:XRP-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "XRP-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:XTZ-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "XTZ-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:XTZ-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "XTZ-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:YFI-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "YFI-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:YFI-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "YFI-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:YGG-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "YGG-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:YGG-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "YGG-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ZEC-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "ZEC-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ZEC-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "ZEC-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ZEN-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "ZEN-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ZEN-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "ZEN-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ZIL-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "SWAP",
+      "native_symbol": "ZIL-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    },
+    {
+      "canonical_instrument_id": "OKX:SWAP:ZIL-USDT-SWAP",
+      "consumer_grade": "EXECUTION",
+      "feed": "QUOTE",
+      "market": "SWAP",
+      "native_symbol": "ZIL-USDT-SWAP",
+      "purposes": [
+        "MARKET"
+      ],
+      "role": "READ",
+      "venue": "OKX"
+    }
+  ],
+  "requirements_sha256": "939993a9699e17f90dcd392155100517268cd8a3c720563778c2e94a974844c6",
+  "schema": "ts.declared-execution-requirements.v1"
+}

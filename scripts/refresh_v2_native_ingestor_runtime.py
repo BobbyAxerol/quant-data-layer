@@ -1,11 +1,31 @@
 #!/usr/bin/env python3
-"""Safely materialize additive realtime L2 bindings for the shared ingestors.
+"""Safely materialize additive realtime bindings for the shared ingestors.
 
 The stable BAR edge owns every final BAR bootstrap and recurring provider poll.
 This compiler intentionally refreshes only the physical realtime inputs of the
 two existing shared Rust ingestors: TRADE, QUOTE, MARK_INDEX and coalesced BOOK. It never
 turns catalog BAR rows into native subscriptions, changes authority, creates a
 symbol worker, or edits a Compose environment file.
+
+The refresh is strictly additive (v2.2.6):
+
+* every active binding is kept byte for byte, including its materialized
+  ``instrument_catalog_revision``. The Rust core quarantines a raw record whose
+  catalog revision differs from its own binding (``qdl-realtime-core`` lib.rs
+  ``instrument catalog revision mismatch``), so rematerializing a retained
+  binding would quarantine it for as long as the ingestor and the three cores
+  are not switched at the same instant. New bindings carry the current catalog
+  revision, and the cores receive the same additions;
+* active BAR bindings (native OKX bars) are retained verbatim and never
+  generated here;
+* a realtime binding may be added, never removed or changed;
+* non-binding runtime fields the generator does not produce (for example the
+  operator-installed ``book_resync``) are preserved; a field both produce must
+  be equal; ``config_revision`` advances to the acquisition revision only
+  when a binding is added, and a file without additions is left untouched;
+* OKX lane names are positional (``okx-<service>-<index>``) and the L2 book
+  core compares bare connection generations, so a refresh that would move an
+  existing lane to another feed (renumbering) is refused.
 """
 
 from __future__ import annotations
@@ -62,9 +82,15 @@ def _read_json(path: Path, *, field: str) -> dict[str, Any]:
     return value
 
 
+RETAINED_ONLY_FEEDS = frozenset({"BAR"})
+# partition_feed_lanes() order in rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs
+LANE_FEED_ORDER = ("BOOK", "BAR", "TRADE", "QUOTE", "MARK_INDEX")
+OKX_PUBLIC_CHANNELS = frozenset({"trades", "bbo-tbt", "books", "mark-price", "index-tickers"})
+
+
 def _binding_key(binding: Mapping[str, Any]) -> tuple[str, ...]:
     feed = binding.get("feed")
-    if not isinstance(feed, str) or feed not in REALTIME_FEEDS:
+    if not isinstance(feed, str) or feed not in REALTIME_FEEDS | RETAINED_ONLY_FEEDS:
         raise ValueError("native ingestor binding feed is invalid")
     # OKX MARK_INDEX is a paired physical input under one logical source ID;
     # the native channel is part of the physical subscription identity.
@@ -131,61 +157,84 @@ def _expected_config(
     return result
 
 
+def _okx_lanes(config: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """(lane name, feed) in the Rust ingestor's order: public then business,
+    feed lanes Book/Bar/Trade/Quote/MarkIndex, chunked by the per-connection cap."""
+    cap = config.get("max_subscriptions_per_connection", 100)
+    if not isinstance(cap, int) or not 0 < cap <= 1024:
+        raise ValueError("max_subscriptions_per_connection is invalid")
+    lanes: list[tuple[str, str]] = []
+    bindings = [item for item in config.get("bindings") or [] if isinstance(item, dict)]
+    for service, members in (
+        ("public", [b for b in bindings if b.get("native_channel") in OKX_PUBLIC_CHANNELS]),
+        ("business", [b for b in bindings if b.get("native_channel") not in OKX_PUBLIC_CHANNELS]),
+    ):
+        index = 0
+        for feed in LANE_FEED_ORDER:
+            count = sum(1 for b in members if b.get("feed") == feed)
+            for _ in range(0, count, cap):
+                index += 1
+                lanes.append((f"okx-{service}-{index:03d}", feed))
+    return lanes
+
+
 def _validate_transition(
     *,
     active: Mapping[str, Any],
     expected: Mapping[str, Any],
     target: str,
-) -> dict[str, Any]:
-    if _non_binding_fields(active) != _non_binding_fields(expected):
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return (successor config, change summary) for one ingestor file."""
+    active_fields = _non_binding_fields(active)
+    expected_fields = _non_binding_fields(expected)
+    if set(expected_fields) - set(active_fields):
+        raise ValueError(f"{target} changes a non-binding runtime field")
+    if any(active_fields[key] != value for key, value in expected_fields.items()):
         raise ValueError(f"{target} changes a non-binding runtime field")
 
     active_bindings = _binding_map(active.get("bindings"), field=f"active {target}")
     expected_bindings = _binding_map(expected.get("bindings"), field=f"expected {target}")
-    active_by_feed = {
-        feed: {key: item for key, item in active_bindings.items() if key[0] == feed}
-        for feed in REALTIME_FEEDS
-    }
-    expected_by_feed = {
-        feed: {key: item for key, item in expected_bindings.items() if key[0] == feed}
-        for feed in REALTIME_FEEDS
-    }
-
-    for feed in ("TRADE", "QUOTE"):
-        if set(active_by_feed[feed]) != set(expected_by_feed[feed]):
-            raise ValueError(f"{target} changes {feed} subscription membership")
-        for key in active_by_feed[feed]:
-            if _without_catalog_revision(active_by_feed[feed][key]) != _without_catalog_revision(expected_by_feed[feed][key]):
-                raise ValueError(f"{target} changes {feed} binding contract")
-
-    if not set(active_by_feed["BOOK"]).issubset(expected_by_feed["BOOK"]):
-        raise ValueError(f"{target} removes an existing BOOK subscription")
-    for key, active_binding in active_by_feed["BOOK"].items():
-        expected_binding = expected_by_feed["BOOK"][key]
+    for key, active_binding in active_bindings.items():
+        if key[0] in RETAINED_ONLY_FEEDS:
+            continue
+        expected_binding = expected_bindings.get(key)
+        if expected_binding is None:
+            raise ValueError(f"{target} removes an existing {key[0]} subscription")
         if _without_catalog_revision(active_binding) != _without_catalog_revision(expected_binding):
-            raise ValueError(f"{target} changes an existing BOOK binding contract")
+            raise ValueError(f"{target} changes an existing {key[0]} binding contract")
 
-    added_books = [
-        item
-        for key, item in expected_by_feed["BOOK"].items()
-        if key not in active_by_feed["BOOK"]
-    ]
-    return {
-        "before_binding_count": len(active_bindings),
-        "after_binding_count": len(expected_bindings),
-        "before_config_revision": active.get("config_revision"),
-        "after_config_revision": expected.get("config_revision"),
-        "before_book_symbols": sorted(
-            str(item["native_symbol"]) for item in active_by_feed["BOOK"].values()
-        ),
-        "after_book_symbols": sorted(
-            str(item["native_symbol"]) for item in expected_by_feed["BOOK"].values()
-        ),
-        "added_book_symbols": sorted(str(item["native_symbol"]) for item in added_books),
-        "added_book_subscription_ids": sorted(
-            str(item["subscription_id"]) for item in added_books
-        ),
+    added = [item for key, item in expected_bindings.items() if key not in active_bindings]
+    successor = dict(active)
+    if added:
+        revision = expected.get("config_revision")
+        if not isinstance(revision, int) or revision <= int(active.get("config_revision") or 0):
+            raise ValueError(f"{target} additions require a higher config_revision")
+        successor["bindings"] = [dict(item) for item in active["bindings"]] + [dict(item) for item in added]
+        successor["config_revision"] = revision
+    if target == TARGETS["okx-swap"]:
+        before, after = _okx_lanes(active), _okx_lanes(successor)
+        if after[: len(before)] != before:
+            raise ValueError(f"{target} renames an existing OKX lane (generation fence): {before} -> {after}")
+    by_feed = lambda items: {
+        feed: sorted({str(item["native_symbol"]) for item in items if item.get("feed") == feed})
+        for feed in sorted(REALTIME_FEEDS)
     }
+    added_by_feed = {feed: symbols for feed, symbols in by_feed(added).items() if symbols}
+    change = {
+        "before_binding_count": len(active_bindings),
+        "after_binding_count": len(active_bindings) + len(added),
+        "before_config_revision": active.get("config_revision"),
+        "after_config_revision": successor.get("config_revision"),
+        "added_binding_count": len(added),
+        "added_symbols_by_feed": added_by_feed,
+        "added_book_symbols": added_by_feed.get("BOOK", []),
+        "added_subscription_ids": sorted({str(item["subscription_id"]) for item in added}),
+        "retained_bindings_byte_identical": True,
+    }
+    if target == TARGETS["okx-swap"]:
+        change["okx_lanes_before"] = [name for name, _feed in _okx_lanes(active)]
+        change["okx_lanes_after"] = [name for name, _feed in _okx_lanes(successor)]
+    return successor, change
 
 
 def _atomic_replace(path: Path, content: bytes, *, mode: int) -> None:
@@ -247,8 +296,8 @@ def refresh(
             acquisition=acquisition,
             authority=authority,
         )
-        change = _validate_transition(active=active, expected=expected, target=file_name)
-        expected_bytes = _canonical_bytes(expected)
+        successor, change = _validate_transition(active=active, expected=expected, target=file_name)
+        expected_bytes = _canonical_bytes(successor) if change["added_binding_count"] else active_bytes
         pending[file_name] = (
             path,
             active_bytes,

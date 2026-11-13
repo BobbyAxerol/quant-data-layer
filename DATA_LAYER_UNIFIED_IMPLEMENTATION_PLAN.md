@@ -77282,3 +77282,71 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   `derived_from.interval`, worktree `dl-v230-derived-bars`). The digest now reads `interval` and still hashes only
   the string; a plain string hashes the same, `derived_from: None` leaves the key out, and anything else is refused.
   `tests.test_v230_declaration_mechanism` 22 OK.
+
+<a id="dl-v230-declaration-tool-20261113"></a>
+### DL v2.3.0 slice 2c: declaration tool `scripts/dl_declaration.py` (render, gate, checkpoint-migration) - 2026-11-13 (Claude)
+
+- Goal (owner, via the coordinator): after v2.3.0 an instrument/interval addition is "declaration + gate + ordered
+  restart", no campaign, image or tag. Branch `feat/v2.3.0-declaration-tool` on 2b `b71b45e`, worktree
+  `.worktrees/dl-v230-declaration-tool`. Guide delta: `upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md`
+  "Delta 2026-11-13: DL v2.3.0 declaration tool (slice 2c)".
+- `render DECLARATION --out NEW_DIR [--dry-run]` (`qdl.v2.declaration.v1`). Inputs:
+  - explicit rows;
+  - TS `ts.declared-execution-requirements.v1` (requirements_sha256 verified; READ + EXECUTION only; TS market
+    tokens mapped);
+  - alpha hosting intent + universe with an `execution-alpha.data-requirements.v1` profile.
+  It splits these into EXECUTION (TS) and SIGNAL (alpha) and writes one coupled set:
+  - demand (dedup by feed key across consumers);
+  - catalogue + acquisition (the stage A additive merge over `ProductionCatalogBuilder`; retained rows as committed);
+  - promotion scope; routing (`phase115c._update_release_route` + product routes cloned from the same venue/market);
+  - TS manifest (prepare_paper_read_extension templates) and alpha universe selectors (one per interval + reference);
+  - accept-set floor by `manifest_compat.next_min_token_revision`; universe files;
+  - Query runtime catalogue + acquisition;
+  - ingestor configs (strictly additive refresh + native 1m BAR additions + `ingestor_lanes.sticky_lane_pins` +
+    `latest_state_flush_ms_by_feed`);
+  - cores (`refresh_v2_core_runtime_bindings.successor`); kn/realm bundles (splice; kn replaces an entry only when
+    its BAR rows change);
+  - sealed TS binding (`_seal`); `execution-scope/<consumer>.json`; `runtime/declaration-index.json`; `report.json`.
+  Derived intervals become `DERIVED_FINAL` with `derived_from {interval}` = the largest finer materialised parent.
+  Unservable rows are typed BLOCKED (`NOT_IN_CATALOG`, `FEED_NOT_DECLARABLE`, `EXECUTION_MARKET_NOT_DECLARABLE`,
+  `ROLE_NOT_A_DL_READ_GRANT`, `DERIVED_FINAL_UNSUPPORTED_BY_LOADER`, ...). The tool never writes outside the new
+  directory and never overwrites.
+- `gate NEW_DIR` (offline): base unchanged since the render; index = files; certified loaders (catalogue,
+  acquisition, scope, manifests with selector context, release routing with `selector_context`); manifests additive
+  + accept-set floor rule; config strictly additive; role configs additive + lanes stable; bar-edge crossing by
+  `plan_crossing` from the base runtime plan; derived parents; execution scope = rendered binding; capacity envelope
+  (estimate).
+- `checkpoint-migration` (`--git-rev` or `--previous-*`, `--expect-previous-sha256`) writes
+  `qdl.stable-bar-edge-checkpoint-migration.v1` with `previous_binding_digests` over exactly the previous bar-edge
+  set, and self-checks it with `plan_crossing`.
+- Reused, copied byte-identical from the uncommitted stage A worktree `dl-v226-stage-a` (merge stage A first; on
+  divergence take stage A): `scripts/prepare_paper_read_extension.py` (f18788a3...),
+  `scripts/refresh_v2_native_ingestor_runtime.py` (f5662a09...), `scripts/refresh_v2_core_runtime_bindings.py`
+  (cfdb9a1e...).
+- Evidence (all `--rm`, `--network none`, 2 CPU / 2 GiB, `qdl-v2-python:2.2.5-9b6747f`):
+  - Stage A golden: 17 of 17 files byte-identical to the stage A worktree and `dlcov/stageA-pinned/SHA256SUMS`.
+    These are the 6 repository files, the OKX ingestor (Binance unchanged), 3 cores, 2 bundles, binding r24, the Query
+    runtime catalogue + acquisition, and the realm manifest r12. Consumer env JWT 12 / `ca5b8477...`. Gate PASS.
+  - The stage A execution scope (31 instruments) and the 150 one (154) are accepted by the TS writer's own parser
+    (trading_system `44c098d7` `parse_declared_scope`): LOADED, 94 / 340 routes.
+  - 150 (E-crypto) dry render: 143 new instruments x QUOTE/MARK/BAR 1m; FET/LUNA BLOCKED NOT_IN_CATALOG for both
+    consumers; TS r11->r12 floor 11, alpha r15->r16 floor 15; capacity +1,147 rec/s, about 6.1 vCPU against 5.0
+    (EXCEEDS_ENVELOPE, as the study found).
+    - Pinned base: OKX lanes 001-004 and business-001 keep name and feed; new lanes public-005..007 and
+      business-002/003; every lane <= 100.
+    - Overlay with the derived-bars loader: 1716 DERIVED_FINAL, derived_parents PASS, crossing retained 640, added
+      1859, dropped 0.
+  - checkpoint-migration from `a388537` (sha 9d4ab51e... / 1b586549..., the image `08f356a8` files) to live r12/r20
+    and to stage A r13/r21: 640 previous digests, removed 0, changed 0.
+  - Cross-slice defect found by the overlay: digest field `derived_from.interval` vs `base_interval`. Reported; fixed
+    by 2b `850baf7` and then `b71b45e`.
+- Tests (`--rm`, 2 CPU / 2 GiB, `QDL_V230_STAGE_A_RUNTIME_DIR` set): `test_v230_declaration_tool` (19, incl. the
+  runtime golden and 150 sticky lanes) plus impacted `test_refresh_v2_native_ingestor_runtime`,
+  `test_paper_read_extension`, `test_kn_gateway_bundle`, `test_phase115c_native_bar_materialization`,
+  `test_v230_declaration_mechanism`, `test_v230_ingestor_lanes`: 77 OK. ruff 0.15.13 (isolated, line 120) clean.
+- Status: implemented, tested locally. Not pushed.
+- Open:
+  - the derived-bars slice is uncommitted (the loader in this branch blocks derived intervals, typed);
+  - the capacity estimate uses mean rates (liquid subsets run higher; `capacity.rates_per_binding` overrides);
+  - the Binance ingestor gets pins + the flush map with no binding change and keeps `config_revision`;
+  - `qdl.execution-binding-status.v1` (item 3) is not in this slice.

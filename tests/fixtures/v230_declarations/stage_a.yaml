@@ -1,0 +1,28 @@
+# DL v2.2.6 stage A expressed as a v2.3.0 declaration (golden: reproduces the pinned stage A set).
+# Base = the repository revision set (catalog r12 / acquisition r20 / Paper manifest r11).
+# Runtime inputs (deployed role files) are added by the golden test when the pinned set is available.
+schema: qdl.v2.declaration.v1
+declaration_revision: 1
+environment: paper
+description: v2.2.6 stage A, 20 OKX linear swaps, QUOTE + MARK_INDEX_PRICE for Trading System Paper
+accept_set: false          # stage A predates the accept-set (v2.2.6 readers require exact revisions)
+ingestor:
+  lane_pins: false         # stage A runs the v2.2.5 ingestor image (positional lanes)
+capacity:
+  baseline_dl_vcpu: 4.06   # PACKET 2.1, 60 s basis, 2026-11-13 04:15Z
+  ceiling_dl_vcpu: 5.0
+base:
+  repo: ../../..
+consumers:
+- consumer_id: trading-system.paper.stable
+  class: EXECUTION
+  manifest: consumers/stable/trading-system-paper.yaml
+  quotas: {max_streams: 150, requests_per_minute: 4500}
+  instruments:
+  - venue: OKX
+    market: SWAP
+    feeds: [QUOTE, MARK_INDEX_PRICE]
+    symbols: [ARB-USDT-SWAP, ZEC-USDT-SWAP, XRP-USDT-SWAP, PEPE-USDT-SWAP, UNI-USDT-SWAP, NEAR-USDT-SWAP,
+              SUI-USDT-SWAP, ENA-USDT-SWAP, BCH-USDT-SWAP, ADA-USDT-SWAP, WLD-USDT-SWAP, AAVE-USDT-SWAP,
+              LINK-USDT-SWAP, FIL-USDT-SWAP, ONDO-USDT-SWAP, AVAX-USDT-SWAP, TAO-USDT-SWAP, PUMP-USDT-SWAP,
+              PENGU-USDT-SWAP, TIA-USDT-SWAP]
