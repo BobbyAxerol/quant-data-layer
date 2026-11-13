@@ -54,13 +54,14 @@ derived bars, so higher intervals are aggregated from final 1m bars inside the s
   version is bumped rather than republishing 2.4.1 with other bytes (release decision 2026-11-13, overnight package,
   recommended option). 2.4.1 keeps working against v2.3.0; older clients ignore field 19.
 
-## Runtime (docker inspect after the window: TBD)
+## Runtime (docker inspect 2026-11-13 21:55Z, after the arms)
 
 | Role | Image |
 |---|---|
-| rust_core x3, market_projector x2, stream_kn x2, ingestors x2 | `qdl-v2-rust:2.3.0-rc2-832c02c4` `sha256:58bdd28216139f0c1a40abeee3077834f1cf922cf6412e7fb1ce8845591a0512` (docker inspect 2026-11-13 ~16:10Z; reconfirm at fill) |
-| query_kn x2, binance_bar_edge | `qdl-v2-python:2.3.0-rc3-7cd4fc36` `sha256:a235c0a18cdeb112ea0b49627eaf02f2a68ab878298ebba07884461ee5709d0b` (docker inspect 2026-11-13 ~16:10Z; reconfirm at fill) |
-| kafka1-3, market_cache, stable_redis | unchanged (TBD digests) |
+| rust_core x3, market_projector x2, stream_kn x2, ingestors x2 | `qdl-v2-rust:2.3.0-rc2-832c02c4` `sha256:58bdd28216139f0c1a40abeee3077834f1cf922cf6412e7fb1ce8845591a0512` (docker inspect 21:55Z) |
+| query_kn x2, binance_bar_edge | `qdl-v2-python:2.3.0-rc3-7cd4fc36` `sha256:a235c0a18cdeb112ea0b49627eaf02f2a68ab878298ebba07884461ee5709d0b` (docker inspect 21:55Z) |
+| kafka1-3 | `apache/kafka@sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9` (unchanged) |
+| market_cache, stable_redis | `redis@sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8` (unchanged) |
 | TS writer | W-B2 `sha256:9dfef8a8a548be2ee2d800fb62c006c8d11fcbcf3c66999779f6c97e15a71a6f` (TS release, not part of this tag) |
 
 v2.3.0 ships the rc3 runtime: the rc2 Rust image and the rc3 Python image (session liveness accepts a pinned event
@@ -68,8 +69,21 @@ revision at or below its session's; Rust diff against `832c02c4` is empty). The 
 part of the release; it failed W1 of the 2026-11-13 combined window and was rolled back.
 - CPU optimisations and live funding go into v2.3.1, so these digests do not change. The CPU optimisations are:
   projector commit coalescing, fetch batching, pipelined Redis reads, stream ListOffsets.
-- Producer linger and broker fetch settings are runtime configuration only. They are recorded here only if they pass
-  their measurement arms: TBD.
+- Measurement arms 2026-11-13 (receipts `~/.local/state/qdl-v2/v230-arms-20261113T1753Z/`), none adopted:
+  - **producer linger `QDL_KAFKA_PRODUCER_LINGER_MS`: UNSET.** OKX 10/20 ms and A1 ran; no proven saving (A1 5.510
+    vs okx-final 5.836 DL vCPU). Reverted: OKX ingestor recreated 21:31Z on the exact rc3 compose/env (config-hash
+    `b5d33acd`, equal to the repo render), `linger_ms` null, D5a PASS, writer STRICT 21:34:39Z.
+  - **broker `replica.fetch.min.bytes=65536` / `replica.fetch.wait.max.ms=50`: FAIL, rolled back to Kafka defaults.**
+    Post-roll raw-age p99 1000 ms vs 151 ms (gate +50 ms), writer MARK p99 +125 ms (gate +100 ms). Rollback
+    kafka2/3/1 21:25-21:30Z, election 21:30:49Z, kafka1 OOMKilled false. Forward-roll deviation: writer DEGRADED
+    20:48-20:52:45Z (0 gaps), Query DATA_NOT_READY 20:49-20:52Z, one projector restart (IDR-285).
+  - The brokers were recreated by the K1 tool from `rollback.compose.json`. Their effective configuration equals the
+    repo compose + v2.3.0 env (KAFKA_* env, cpus, memory, image; differences only `$$` escaping, image-default
+    entrypoint/cmd, the image's anonymous `/mnt/shared/config` volume), but their compose config-hash labels differ
+    from the repo render (kafka1 live `47015f03` vs render `4dabbf9c`). A plain `docker compose up` of kafka from the
+    repo compose would therefore recreate the brokers: use the K1 tool, one broker at a time.
+  - DL CPU after the arms: 5.935 vCPU (21:46-21:56Z sample), brokers 3.717, raw-age p99 166 ms; below 6.0 only
+    narrowly (kafka2 about +0.4 vCPU after the rolls, leadership at preferred).
 
 ## Release tree = runtime
 
