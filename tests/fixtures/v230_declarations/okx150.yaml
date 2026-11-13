@@ -40,8 +40,10 @@ consumers:
       native: [1m]
       derived: [3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 12h, 1d, 2d, 3d, 1w]
     history: {1h: 1000, 12h: 400, default: 500}
-    # bar_1m_source: rest_final (default) or native. DERIVED_FINAL consumes only FINAL 1m bars, so the REST
-    # final lane suffices for derivation; the gate checks its OKX REST budget (okx_rest_budget).
+    # Native candle1m WS (coordinator 2026-11-13): REST final 1m for 143 symbols saturates the bar-edge
+    # OKX/SWAP/CANDLES admission lane (143.2 of 150 req/min, last read +55 s). REST_FINAL stays declarable
+    # for small (stage-A-sized) sets; the okx_rest_budget gate holds it to the lane.
+    bar_1m_source: native
     reference: [FUNDING_RATE]
     alpha_hosting:
       registry: alpha-data-requirements.yaml
