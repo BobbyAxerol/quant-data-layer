@@ -77584,6 +77584,14 @@ Tests: `tests.test_v230_rcert2_shadow`, 7 OK (render, caps, isolation argv, verd
 container has been started.
 
 <a id="dl-v230-declaration-tool-20261113"></a>
+- 2026-11-13 addition (coordinator, inside the approved caps): gate G2.7, the REST-final 1m lane.
+  - DOGE and BNB take their 1m base from the bar edge REST final-bar lane (`PYTHON_REST`, `candle1m`).
+  - BTC, ETH and SOL keep native WS.
+  - The comparator also checks every 1m base bar.
+  - Latency is reported per lane and interval (`published_at - close`), with gates: REST final 1m p99 <= 20 s,
+    REST-lane derived p99 <= 30 s. If the gate fails, the 150-tier declaration switches that universe to native 1m.
+  - `tests.test_v230_rcert2_shadow`: 8 OK.
+
 ### DL v2.3.0 slice 2c: declaration tool `scripts/dl_declaration.py` (render, gate, checkpoint-migration) - 2026-11-13 (Claude)
 
 - Goal (owner, via the coordinator): after v2.3.0 an instrument/interval addition is "declaration + gate + ordered

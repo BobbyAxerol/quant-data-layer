@@ -65,6 +65,13 @@ SYMBOLS = ("BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP", "DOGE-USDT-SWAP", 
 CHAIN = {"3m": "1m", "5m": "1m", "15m": "5m", "30m": "15m", "1h": "30m", "2h": "1h", "4h": "2h",
          "6h": "2h", "12h": "6h", "1d": "12h", "2d": "1d", "3d": "1d", "1w": "1d"}
 INTERVALS = ("1m", *CHAIN)
+# Coordinator gate (2026-11-13): the 150 tier takes 1m from the REST final-bar
+# lane (bar edge polling) by default, so 2 symbols run their 1m base that way.
+# Gate: final 1m on the REST lane p99 <= 20 s after close, every derived
+# interval on that lane p99 <= 30 s; failing it switches that universe's
+# declaration to native 1m.
+REST_FINAL_SYMBOLS = ("DOGE-USDT-SWAP", "BNB-USDT-SWAP")
+LATENCY_GATES_MS = {"REST_FINAL/1m": 20_000, "REST_FINAL/derived": 30_000}
 WARMUP_ROWS = 300
 BOOTSTRAP = "localhost:9092"
 CLUSTER_ID = "VjIzMFJDZXJ0MlNoYWRvdw"
@@ -126,8 +133,10 @@ def _select_bindings(catalog) -> dict[tuple[str, str], object]:
     return selected
 
 
-def derived_acquisition_rows(plan_rows: list[dict], selected: dict, ns: str) -> list[dict]:
-    """The acquisition rows of the shadow: native 1m, DERIVED_FINAL for the chain."""
+def derived_acquisition_rows(plan_rows: list[dict], selected: dict, ns: str,
+                             rest_final_symbols=REST_FINAL_SYMBOLS) -> list[dict]:
+    """The acquisition rows of the shadow: 1m base (native WS, or the REST final
+    lane for ``rest_final_symbols``), DERIVED_FINAL for the chain."""
     from qdl.adapters.intervals import okx_candle_channel
 
     by_id = {row["binding_id"]: row for row in plan_rows}
@@ -137,7 +146,14 @@ def derived_acquisition_rows(plan_rows: list[dict], selected: dict, ns: str) -> 
         row["enabled"] = True
         if interval == "1m":
             if row["mode"] != "RUST_NATIVE":
-                raise ValueError(f"{source.binding_id}: the 1m base must be the native lane")
+                raise ValueError(f"{source.binding_id}: the 1m base must start from the native lane")
+            if symbol in rest_final_symbols:
+                for key in ("l2", "mark_index"):
+                    row.pop(key, None)
+                # The production catalog's OKX REST final-bar row shape.
+                row.update(mode="PYTHON_REST", provider_kind="okx_bar", native_channel="candle1m",
+                           sequence_policy="NONE", websocket_url=None, business_websocket_url=None,
+                           market_websocket_url=None)
         else:
             for key in ("l2", "mark_index"):
                 row.pop(key, None)
@@ -229,7 +245,8 @@ def _save(path: Path, value, *, private: bool = False) -> None:
         handle.write(data)
 
 
-def render(work: Path, ns: str, *, rust_image: str, python_image: str, tls_hours: int = 120) -> dict:
+def render(work: Path, ns: str, *, rust_image: str, python_image: str, tls_hours: int = 120,
+           rest_final_symbols=REST_FINAL_SYMBOLS) -> dict:
     """Write every config of the shadow into ``work`` (must not exist). Starts nothing."""
     import yaml
     from qdl.runtime.stable_catalog import StableSourceCatalog
@@ -259,7 +276,9 @@ def render(work: Path, ns: str, *, rust_image: str, python_image: str, tls_hours
 
     plan_doc = yaml.safe_load((ROOT / "config/v2/stable-acquisition-bindings.yaml").read_text(encoding="utf-8"))
     plan_doc["topics"] = {"raw": raw_topic, "canonical": canonical_topic, "quarantine": quarantine_topic}
-    plan_doc["bindings"] = derived_acquisition_rows(plan_doc["bindings"], selected, ns)
+    if not set(rest_final_symbols) <= set(SYMBOLS) or len(rest_final_symbols) >= len(SYMBOLS):
+        raise ValueError("REST-final symbols must be a strict subset of the shadow symbols")
+    plan_doc["bindings"] = derived_acquisition_rows(plan_doc["bindings"], selected, ns, rest_final_symbols)
     _save(work / "acquisition.yaml", yaml.safe_dump(plan_doc, sort_keys=False))
     plan = StableAcquisitionPlan.load(work / "acquisition.yaml", catalog=catalog)
     parents = plan.derived_parents({item.binding_id: item for item in catalog.bindings})
@@ -283,8 +302,9 @@ def render(work: Path, ns: str, *, rust_image: str, python_image: str, tls_hours
     ingestor["generation_state_path"] = "/work/state/ingestor-generations"
     ingestor["session_liveness_dir"] = "/work/state/session-liveness"
     channels = sorted({item["native_channel"] for item in ingestor["bindings"]})
-    if channels != ["candle1m"] or len(ingestor["bindings"]) != len(SYMBOLS):
-        raise ValueError(f"the shadow ingestor subscribes candle1m x 5 only, got {channels}")
+    native = sorted(set(SYMBOLS) - set(rest_final_symbols))
+    if channels != ["candle1m"] or sorted(item["native_symbol"] for item in ingestor["bindings"]) != native:
+        raise ValueError(f"the shadow ingestor subscribes candle1m for {native} only, got {channels}")
     _save(work / "ingestor.json", ingestor)
 
     requirements = []
@@ -307,6 +327,10 @@ def render(work: Path, ns: str, *, rust_image: str, python_image: str, tls_hours
               "client_tls": {"ca": "/work/ca.crt", "cert": "/work/client.crt", "key": "/work/client.key"},
               "images": {"rust": rust_image, "python": python_image, **EXISTING_IMAGES},
               "symbols": list(SYMBOLS), "chain": CHAIN, "derived_parents": parents,
+              "lanes": {symbol: "REST_FINAL" if symbol in rest_final_symbols else "NATIVE_WS"
+                        for symbol in SYMBOLS},
+              "base_bindings": sorted(item.binding_id for (symbol, interval), item in selected.items()
+                                      if interval == "1m"),
               "rendered_at": _now(), "source_commit": _git_head(), "topic_id": ""}
     _save(work / "packet.json", packet)
     return packet
@@ -502,6 +526,35 @@ def classify(*, derived, native_row, interval: str, base_interval: str) -> dict:
     return {"verdict": "MISMATCH" if differs else "MATCH", "fields": differs, "derive_latency_ms": latency_ms}
 
 
+def classify_base(*, row, native_row) -> dict:
+    """A 1m base bar (native WS or REST final lane) against the native OKX row."""
+    from qdl.runtime.stable_source import bar_item_fields
+
+    if row is None:
+        return {"verdict": "MISSING"}
+    if native_row is None or native_row[8] != "1":
+        return {"verdict": "NATIVE_UNAVAILABLE"}
+    differs = native_matches(bar_item_fields(row.envelope)["payload"], native_row)
+    latency_ms = (int(row.envelope.published_at_ns) - int(row.envelope.bar.close_time_ns)) // 1_000_000
+    return {"verdict": "MISMATCH" if differs else "MATCH", "fields": differs, "final_latency_ms": latency_ms}
+
+
+def latency_gates(latency: dict) -> dict:
+    """PASS/FAIL/NOT_MEASURED of the coordinator latency gate from per lane/interval p99."""
+    rest_1m = latency.get("REST_FINAL/1m")
+    derived = {key: value for key, value in latency.items()
+               if key.startswith("REST_FINAL/") and key != "REST_FINAL/1m"}
+
+    def verdict(values, limit):
+        if not values:
+            return "NOT_MEASURED"
+        return "PASS" if all(item["p99"] <= limit for item in values) else "FAIL"
+
+    return {"REST_FINAL/1m": verdict([rest_1m] if rest_1m else [], LATENCY_GATES_MS["REST_FINAL/1m"]),
+            "REST_FINAL/derived": verdict(list(derived.values()), LATENCY_GATES_MS["REST_FINAL/derived"]),
+            "limits_ms": LATENCY_GATES_MS}
+
+
 def summarize(path: Path) -> dict:
     """Gate view of every compared target so far (recomputed from the evidence file, restart-safe)."""
     summary = {"by_verdict": {}, "by_interval": {}, "mismatches": 0, "missing": 0, "latency_ms": {},
@@ -515,12 +568,14 @@ def summarize(path: Path) -> dict:
         bucket[verdict] = bucket.get(verdict, 0) + 1
         summary["mismatches"] += verdict in {"MISMATCH", "LINEAGE_MISMATCH"}
         summary["missing"] += verdict == "MISSING"
-        if "derive_latency_ms" in row:
-            latencies.setdefault(interval, []).append(int(row["derive_latency_ms"]))
+        for key in ("derive_latency_ms", "final_latency_ms"):
+            if key in row:
+                latencies.setdefault(f"{row.get('lane', 'NATIVE_WS')}/{interval}", []).append(int(row[key]))
     for interval, values in latencies.items():
         values.sort()
         summary["latency_ms"][interval] = {"n": len(values), "p50": values[len(values) // 2],
                                            "p99": values[min(len(values) - 1, int(len(values) * 0.99))]}
+    summary["latency_gates"] = latency_gates(summary["latency_ms"])
     return summary
 
 
@@ -554,7 +609,8 @@ def compare(work: Path, *, once: bool = False, http=None, readback=None, started
         seen = {(row["binding_id"], row["open_ms"]) for row in map(json.loads, done_path.read_text().splitlines())}
     while True:
         now_ms = int(time.time() * 1000)
-        for child, parent in sorted(packet["derived_parents"].items()):
+        targets = sorted(packet["derived_parents"].items()) + [(base, None) for base in packet["base_bindings"]]
+        for child, parent in targets:
             source = sources[child]
             step = canonical_interval_ms(source.interval)
             boundary = latest_closed_boundary_ms(source.interval, now_ms - GAP_AFTER_S * 1000, provider="OKX")
@@ -567,9 +623,15 @@ def compare(work: Path, *, once: bool = False, http=None, readback=None, started
                 reply = http({"instId": source.instrument.native_symbol, "bar": okx_bar_size(source.interval),
                               "after": str(open_ms + 1), "limit": "1"})
                 data = [row for row in (reply.get("data") or []) if int(row[0]) == open_ms]
-                result = classify(derived=rows.get(open_ms), native_row=data[0] if data else None,
-                                  interval=source.interval, base_interval=sources[parent].interval)
+                native_row = data[0] if data else None
+                if parent is None:
+                    result = classify_base(row=rows.get(open_ms), native_row=native_row)
+                else:
+                    result = classify(derived=rows.get(open_ms), native_row=native_row,
+                                      interval=source.interval, base_interval=sources[parent].interval)
                 record = {"binding_id": child, "interval": source.interval,
+                          "lane": packet["lanes"][source.instrument.native_symbol],
+                          "kind": "base" if parent is None else "derived",
                           "symbol": source.instrument.native_symbol, "open_ms": open_ms,
                           "checked_at": _now(), **result}
                 verdict = result["verdict"]

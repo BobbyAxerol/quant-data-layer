@@ -25,6 +25,7 @@ production native bindings carry.
 | G2.3 latency | Median and p99 time from bar close to the derived row being readable in the shadow cache are reported per chain level. Report-only: there is no prior baseline, and the budget is set from this run. |
 | G2.4 Monday burst | All 5 x (1w, 1d, 12h, ...) bars closing at 2026-11-16 00:00Z are derived and equal native. 1w opens Monday 2026-11-09 00:00Z. |
 | G2.5 lineage | Every derived row is AGGREGATED. Its `aggregation` constituent count equals interval / base, and its constituent digest matches the cache rows. |
+| G2.7 REST-final 1m lane (coordinator, 2026-11-13) | DOGE and BNB take their 1m base from the bar edge's REST final-bar lane (`PYTHON_REST`); the other 3 symbols use native WS. Gate: final 1m on the REST lane p99 <= 20 s after close, and every derived interval on that lane p99 <= 30 s. Parity vs native as G2.1. If it fails, the 150-tier declaration switches that universe to native 1m. |
 | G2.6 isolation | Before/after hashes of production (container ids, image ids, compose config) are equal. 0 writes outside the namespace. |
 
 ## 2. Shadow-only fault cases (R-cert 3, part B)
