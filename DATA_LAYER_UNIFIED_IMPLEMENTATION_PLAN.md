@@ -77282,3 +77282,7 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   `derived_from.interval`, worktree `dl-v230-derived-bars`). The digest now reads `interval` and still hashes only
   the string; a plain string hashes the same, `derived_from: None` leaves the key out, and anything else is refused.
   `tests.test_v230_declaration_mechanism` 22 OK.
+- Follow-up 2026-11-13: in the ingestor, an empty `QDL_KAFKA_PRODUCER_LINGER_MS` or `QDL_KAFKA_REQUEST_TIMEOUT_SECONDS`
+  value now means unset (compose `${VAR:-}`), the same rule as the v2.2.7 hotfix (`release/v2.2.7-ingestor-linger`
+  13f20d05). Tested: `cargo fmt --check` OK, and the 3 `producer_settings_tests` pass
+  (`qdl-rust-builder:r134-test`, 1 CPU, cpu-shares 256).

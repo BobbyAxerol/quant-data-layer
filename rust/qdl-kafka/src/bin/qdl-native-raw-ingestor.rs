@@ -708,6 +708,7 @@ fn required(name: &str) -> Result<String, String> {
 /// Both are optional and default to the values this ingestor used before they
 /// were configurable, so an unchanged container env builds a byte-identical
 /// producer config:
+/// Unset or empty means the default.
 /// - `QDL_KAFKA_PRODUCER_LINGER_MS` (0..=100): producer `linger.ms`. Unset keeps
 ///   the librdkafka default (5 ms in 2.12.1) by not setting the key at all.
 ///   This is the DL v2.3.0 batching measurement knob; it ships unset.
@@ -725,6 +726,9 @@ const DEFAULT_KAFKA_REQUEST_TIMEOUT_SECONDS: u64 = 30;
 
 impl ProducerSettings {
     fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
+        // An empty value is unset: compose passes `${VAR:-}` as an empty string,
+        // and an arm that does not set the knob must build today's producer.
+        let lookup = |name: &str| lookup(name).filter(|value| !value.trim().is_empty());
         let linger_ms = match lookup("QDL_KAFKA_PRODUCER_LINGER_MS") {
             None => None,
             Some(raw) => match raw.trim().parse::<u32>() {
@@ -8297,6 +8301,17 @@ mod producer_settings_tests {
 
     #[test]
     fn unset_environment_keeps_the_pre_knob_producer() {
+        for empty in ["", "  "] {
+            assert_eq!(
+                settings(&[
+                    ("QDL_KAFKA_PRODUCER_LINGER_MS", empty),
+                    ("QDL_KAFKA_REQUEST_TIMEOUT_SECONDS", empty),
+                ])
+                .unwrap(),
+                settings(&[]).unwrap(),
+                "an empty value is unset (compose `${{VAR:-}}`)"
+            );
+        }
         let unset = settings(&[]).unwrap();
         assert_eq!(unset.linger_ms, None);
         assert_eq!(
@@ -8334,7 +8349,7 @@ mod producer_settings_tests {
 
     #[test]
     fn out_of_range_or_malformed_values_fail_at_start() {
-        for value in ["101", "-1", "5ms", "", "1e3"] {
+        for value in ["101", "-1", "5ms", "1e3"] {
             assert!(
                 settings(&[("QDL_KAFKA_PRODUCER_LINGER_MS", value)]).is_err(),
                 "{value:?}"
