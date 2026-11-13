@@ -77732,6 +77732,23 @@ container has been started.
     - business: 001 BAR 100.
     New lanes: public-005 MARK_INDEX 100, public-006 MARK_INDEX 98, public-007 QUOTE 49, business-002 BAR 100,
     business-003 BAR 13. 675 subscriptions in all; no lane above 100.
+- Update 2026-11-13 (first v2.3.0 production declaration, integration agent + coordinator):
+  - bar_edge runtime pair `/runtime/bar-edge-{source,acquisition}-bindings.yaml`. Retained bar-edge-owned BAR rows
+    are pinned at the live core rows' raw catalogue lineage (11) and the bar edge's config stamp (19).
+  - Declaration `bar_edge.migration` renders the checkpoint record from the image files (a388537, 9d4ab51e /
+    1b586549) into the declaration index.
+  - Gate checks `bar_edge_core_raw_lineage` and `bar_edge_migration_record` (the latter verified against the live
+    v4 checkpoint).
+  - Review H2 / re-review:
+    - config lineage is seeded from the live ingestor stamps (`live_config_lineage`, BOOK snapshot + delta);
+    - the Query runtime BAR rows that no ingestor stamps carry the bar-edge stamp;
+    - gate `live_config_lineage`;
+    - `retained_lineage_unchanged` takes live and bar-edge stamps as the "before" value.
+  - Owner CPU rule: cap 6.0 vCPU, `capacity.venue_priority` (OKX > BINANCE). `venue_priority_plan` defers BINANCE
+    additions first and never trims OKX.
+  - `grant_intervals` per universe (a derivation parent need not be granted).
+  - The bootstrap estimate uses `bar_history_demand` over the rendered kn bundle, with the 1,095-day lookback.
+  - Pre-2d goldens compare modulo lineage keys.
 
 ### DL v2.3.0 rc1 integration branch `release/v2.3.0-rc1-integration` - 2026-11-13 (Claude)
 

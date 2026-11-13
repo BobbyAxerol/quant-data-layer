@@ -89,7 +89,13 @@ from qdl.consumer.manifest_compat import (  # noqa: E402
 from qdl.consumer.realtime_route import requirement_key  # noqa: E402
 from qdl.consumer.selectors import SelectorContext  # noqa: E402
 from qdl.runtime import ingestor_lanes  # noqa: E402
-from qdl.runtime.lineage import pin_lineage, retained_lineage_problems, retained_unchanged_ids  # noqa: E402
+from qdl.runtime.lineage import (  # noqa: E402
+    binding_lineage,
+    live_config_lineage,
+    live_config_lineage_problems,
+    pin_lineage,
+    retained_unchanged_ids,
+)
 from qdl.runtime.bar_edge_checkpoint import (  # noqa: E402
     MIGRATION_SCHEMA,
     CheckpointCrossingRefused,
@@ -247,7 +253,7 @@ def load_declaration(path: Path) -> dict[str, Any]:
     if payload.get("schema") != DECLARATION_SCHEMA:
         raise DeclarationRefused("declaration schema is unsupported")
     allowed = {"schema", "declaration_revision", "environment", "base", "consumers",
-               "instrument_captures", "ingestor", "capacity", "accept_set", "description"}
+               "instrument_captures", "ingestor", "capacity", "accept_set", "description", "bar_edge"}
     if set(payload) - allowed:
         raise DeclarationRefused(f"declaration has unknown fields: {sorted(set(payload) - allowed)}")
     revision = payload.get("declaration_revision")
@@ -296,6 +302,16 @@ def load_declaration(path: Path) -> dict[str, Any]:
             if hosting:
                 universe["alpha_hosting"] = {k: resolve(v) if k in {"registry", "manifest", "universe"} else v
                                              for k, v in hosting.items()}
+    bar_edge = dict(payload.get("bar_edge") or {})
+    migration = dict(bar_edge.get("migration") or {})
+    for key in ("previous_catalog", "previous_acquisition"):
+        if migration.get(key):
+            migration[key] = resolve(migration[key])
+    if migration:
+        bar_edge["migration"] = migration
+    if bar_edge.get("live_checkpoint"):
+        bar_edge["live_checkpoint"] = resolve(bar_edge["live_checkpoint"])
+    payload["bar_edge"] = bar_edge
     payload["ingestor"] = dict(payload.get("ingestor") or {})
     payload["capacity"] = dict(payload.get("capacity") or {})
     payload.setdefault("accept_set", True)
@@ -704,7 +720,7 @@ class Render:
             # DL v2.3.0 2d: every retained-unchanged binding keeps its contract
             # lineage; added rows carry the new revisions (qdl.runtime.lineage).
             catalog_doc, acq_doc, self.summary["lineage"] = pin_lineage(
-                base_catalog_doc, base_acq_doc, catalog_doc, acq_doc)
+                base_catalog_doc, base_acq_doc, catalog_doc, acq_doc, live_config=self.live_config())
             pinned_acq = {row["binding_id"]: row for row in acq_doc["bindings"]}
             new_acq = [pinned_acq[row["binding_id"]] for row in new_acq]
         self.summary["catalog"] = {
@@ -902,7 +918,10 @@ class Render:
             history = {normalise_interval(k) if k != "default" else k: int(v)
                        for k, v in (universe.get("history") or {}).items()}
             entries = []
+            granted = [normalise_interval(i) for i in universe.get("grant_intervals") or universe["intervals"]]
             for interval in universe["intervals"]:
+                if interval not in granted:
+                    continue  # acquired (e.g. a 1m derivation parent) but not entitled to this consumer
                 template = next((r for r in bar_rows if r.get("interval") == interval), None)
                 if template is None:
                     raise DeclarationRefused(f"{cid} has no BAR {interval} manifest template row")
@@ -1012,6 +1031,90 @@ class Render:
         return routing
 
     # ------------------------------------------------------------- runtime files
+    def live_config(self) -> dict[str, int]:
+        """binding -> config_revision the LIVE ingestors stamp (review H2: Binance 19 while the plan said 21)."""
+        if not hasattr(self, "_live_config"):
+            configs = [json.loads(Path(path).read_text(encoding="utf-8"))
+                       for path in (self.base.runtime.get("ingestors") or {}).values()]
+            self._live_config = live_config_lineage(self.base.catalog, configs) if configs else {}
+        return self._live_config
+
+    def build_bar_edge_runtime(self, catalog_bytes: bytes, acquisition_bytes: bytes) -> None:
+        """The bar edge's own runtime pair: its records keep the raw lineage the cores hold today.
+
+        Query and the bar edge used to read different catalogues (Query the mounted r13, the bar edge its image
+        r11/r19). Query serves catalogue lineage (``kn_query_backend`` cursor/contract claims), the bar edge stamps
+        it onto raw BAR envelopes, and the cores quarantine a raw envelope whose ``instrument_catalog_revision``
+        differs from their row (``qdl-realtime-core`` lib.rs). One shared file cannot keep both, so the bar edge
+        gets ``/runtime/bar-edge-{source,acquisition}-bindings.yaml``: every retained bar-edge-owned binding
+        (enabled BINANCE/OKX BAR) is pinned at catalogue lineage = its live core rows' ``instrument_catalog_revision``
+        and at config lineage = the declared bar-edge stamp (``bar_edge.config_lineage``, today 19); new rows keep
+        the new revisions. Every other row equals the Query runtime file.
+        """
+        config = self.declaration["bar_edge"]
+        config_lineage = int(config["config_lineage"])
+        cores = [json.loads(Path(path).read_text(encoding="utf-8")) for path in self.base.runtime.get("cores") or []]
+        if not cores:
+            raise DeclarationRefused("bar_edge.split_runtime needs the live core configs (base.runtime.cores)")
+        raw_by_source: dict[str, set[int]] = defaultdict(set)
+        for core in cores:
+            for row in core["core"]["bindings"]:
+                raw_by_source[str(row["source_id"])].add(int(row["instrument_catalog_revision"]))
+        catalog = yaml.safe_load(catalog_bytes) if not catalog_bytes.lstrip().startswith(b"{") else json.loads(
+            catalog_bytes)
+        plan = yaml.safe_load(acquisition_bytes)
+        base_ids = {row["binding_id"] for row in self.base.docs["catalog"]["bindings"]}
+        source_ids = {item.binding_id: item.source_id
+                      for item in _with_tempfile(catalog_bytes, "catalog.yaml", StableSourceCatalog.load).bindings}
+        acq_by_id = {row["binding_id"]: row for row in plan["bindings"]}
+        owned_retained = []
+        for row in catalog["bindings"]:
+            acquisition = acq_by_id[row["binding_id"]]
+            owned = (acquisition.get("enabled", True) and acquisition["runtime"] in {"BINANCE", "OKX"}
+                     and row["feed"] == "BAR")
+            if not owned or row["binding_id"] not in base_ids:
+                continue
+            revisions = raw_by_source.get(str(source_ids[row["binding_id"]]))
+            if not revisions or len(revisions) != 1:
+                raise DeclarationRefused(f"bar-edge binding {row['binding_id']} has no single live core raw "
+                                         f"lineage: {sorted(revisions or [])}")
+            row["lineage_revision"] = next(iter(revisions))
+            acquisition["lineage_config_revision"] = config_lineage
+            owned_retained.append(row["binding_id"])
+        self.files["runtime/bar-edge-source-bindings.yaml"] = _catalog_bytes(catalog, like=catalog_bytes)
+        self.files["runtime/bar-edge-acquisition-bindings.yaml"] = yaml.safe_dump(
+            plan, allow_unicode=False).encode("utf-8")
+        raw_counts = Counter(row["lineage_revision"] for row in catalog["bindings"]
+                             if row["binding_id"] in set(owned_retained))
+        self.summary["bar_edge_runtime"] = {
+            "files": ["runtime/bar-edge-source-bindings.yaml", "runtime/bar-edge-acquisition-bindings.yaml"],
+            "retained_owned_bindings": len(owned_retained),
+            "catalog_lineage_from_live_cores": dict(sorted(raw_counts.items())),
+            "config_lineage": config_lineage,
+        }
+        migration = config.get("migration")
+        if migration:
+            previous = (Path(migration["previous_catalog"]).read_bytes(),
+                        Path(migration["previous_acquisition"]).read_bytes())
+            expected = migration.get("expect_sha256")
+            if expected and [_sha256_bytes(v) for v in previous] != list(expected):
+                raise DeclarationRefused("bar-edge previous catalogue/acquisition sha256 differs from the declared "
+                                         "image files")
+            with tempfile.TemporaryDirectory(prefix="qdl-declaration-bar-edge-") as raw:
+                root = Path(raw)
+                (root / "catalog.yaml").write_bytes(self.files["runtime/bar-edge-source-bindings.yaml"])
+                (root / "acquisition.yaml").write_bytes(self.files["runtime/bar-edge-acquisition-bindings.yaml"])
+                record = checkpoint_migration(previous_catalog=previous[0], previous_acquisition=previous[1],
+                                              catalog=root / "catalog.yaml", acquisition=root / "acquisition.yaml",
+                                              reason=str(migration["reason"]),
+                                              approved_by=str(migration["approved_by"]))
+            self.files["runtime/bar-edge-checkpoint-migration.json"] = _json_sorted(record)
+            self.summary["bar_edge_runtime"]["migration"] = {
+                "from": record["from"], "to": record["to"], "removed": len(record["removed_binding_ids"]),
+                "changed": len(record["changed_binding_ids"]),
+                "previous_binding_digests": len(record["previous_binding_digests"]),
+                "previous_sha256": [_sha256_bytes(v) for v in previous]}
+
     def build_query_acquisition(self, acq_doc, new_acq) -> bytes | None:
         path = self.base.runtime.get("query_acquisition")
         if not path:
@@ -1026,8 +1129,19 @@ class Render:
             return base_raw
         # DL v2.3.0 2d: the bar edge stamps config_revision from this file, so
         # the retained rows keep the revision they were acquired at.
+        live = self.live_config()
+        # Re-review H2: a bar-edge-owned BAR row that no live ingestor stamps carries the bar edge's stamp (its
+        # REST/repair envelopes), the same value as the bar-edge pair; an ingestor-stamped row keeps that stamp.
+        bar_edge_lineage = self.declaration["bar_edge"].get("config_lineage")
+        feeds = {row["binding_id"]: row["feed"] for row in self._catalog_doc["bindings"]}
         for row in doc["bindings"]:
-            row.setdefault("lineage_config_revision", int(doc["revision"]))
+            if "lineage_config_revision" in row:
+                continue
+            value = live.get(row["binding_id"])
+            if value is None and bar_edge_lineage is not None and feeds.get(row["binding_id"]) == "BAR" and (
+                    row.get("enabled", True) and row["runtime"] in {"BINANCE", "OKX"}):
+                value = int(bar_edge_lineage)
+            row["lineage_config_revision"] = int(doc["revision"] if value is None else value)
         doc["bindings"].extend(additions)
         doc["revision"] = int(acq_doc["revision"])
         # Stage A precedent (pinned Query runtime r21): sorted-key YAML.
@@ -1289,6 +1403,7 @@ class Render:
         per_kind: Counter = Counter()
         intervals = {row["binding_id"]: row.get("interval") for row in self._catalog_doc["bindings"]}
         rates = {**RATE_PER_BINDING, **{str(k): float(v) for k, v in (config.get("rates_per_binding") or {}).items()}}
+        rated: list[tuple[str, str, float | None]] = []
         for row in new_acq:
             kind, mode = row["provider_kind"], row["mode"]
             if mode == "DERIVED_FINAL":
@@ -1301,9 +1416,11 @@ class Render:
                 rate = rates[kind]
             else:
                 unmeasured[kind] += 1
+                rated.append((row["binding_id"], row["runtime"], None))
                 continue
             records += rate
             per_kind[f"{kind}:{mode}"] += 1
+            rated.append((row["binding_id"], row["runtime"], rate))
         baseline = config.get("baseline_dl_vcpu")
         ceiling = config.get("ceiling_dl_vcpu")
         added_vcpu = round(records * VCPU_PER_RECORD, 3)
@@ -1314,8 +1431,15 @@ class Render:
         elif projected is not None and ceiling is not None:
             status = "WITHIN_ENVELOPE" if projected <= float(ceiling) else "EXCEEDS_ENVELOPE"
         subs = {name: sum(lane["members"] for lane in value["lanes"].values()) for name, value in ingestors.items()}
+        priority = [str(v).upper() for v in config.get("venue_priority") or ("OKX", "BINANCE")]
+        deferral = venue_priority_plan(rated, baseline=baseline, ceiling=ceiling, priority=priority)
+        if status == "EXCEEDS_ENVELOPE" and deferral["status"] == "HIGHER_PRIORITY_TRIM_REQUIRED":
+            status = "EXCEEDS_ENVELOPE_HIGHER_PRIORITY_TRIM_REQUIRED"
         return {
             "status": status,
+            "venue_priority": priority,
+            "deferral_plan": deferral,
+            "bootstrap": self.bootstrap_estimate(new_acq),
             "basis": "estimate: mean per-binding rates of the 150 E-crypto set measured 2026-11-13 "
                      "(COVERAGE_150_STUDY 5.1/3.2; liquid subsets run above the mean, override with "
                      "capacity.rates_per_binding), 1.8 ms/record upper bound; not a measurement",
@@ -1331,6 +1455,76 @@ class Render:
             "ingestor_subscriptions_after": subs,
             "query_requests": self._query_requests(),
         }
+
+    def bootstrap_estimate(self, new_acq: list[dict[str, Any]]) -> dict[str, Any]:
+        kn = self.files.get("bundles/kn-bundle.json")
+        if kn is None:
+            return self._bootstrap_from_templates(new_acq)
+        from qdl.runtime.bar_history_demand import demanded_history_rows
+
+        demand = demanded_history_rows(json.loads(kn))
+        intervals = {row["binding_id"]: row.get("interval") for row in self._catalog_doc["bindings"]}
+        policy = json.loads(self.base.path(CONFIG / "provider-admission-policy-kn-bar-edge-v1.json").read_text())
+        lane = next(item["policy"] for item in policy["lanes"] if item["lane"] == {
+            "provider": "OKX", "market": "SWAP", "endpoint_family": "HISTORY_CANDLES"})
+        rate_per_min = lane["refill_tokens"] / (lane["refill_interval_ns"] / 1e9) * 60
+        lookback_ms = 1_095 * 86_400_000  # stable_bar_edge _BOOTSTRAP_HISTORY_LOOKBACK_DAYS
+        by_interval: dict[str, dict[str, int]] = {}
+        rows = requests = bindings = 0
+        for row in new_acq:
+            interval = intervals.get(row["binding_id"])
+            if row["runtime"] != "OKX" or interval is None:
+                continue
+            depth = min(demand.get(row["binding_id"], 0), max(1, lookback_ms // canonical_interval_ms(interval)))
+            entry = by_interval.setdefault(interval, {"bindings": 0, "rows_per_binding": depth, "requests": 0})
+            entry["bindings"] += 1
+            entry["requests"] += -(-depth // 100)
+            bindings += 1
+            rows += depth
+            requests += -(-depth // 100)
+        return {"bindings": bindings, "rows": rows, "requests": requests,
+                "kn_cache_rows_added": rows, "kn_cache_row_cap_added": rows + 2_064 * bindings,
+                "lane": "OKX/SWAP/HISTORY_CANDLES (separate token bucket from the live CANDLES lane)",
+                "lane_requests_per_minute": rate_per_min,
+                "duration_minutes": round(requests / rate_per_min, 1) if rate_per_min else None,
+                "by_interval": dict(sorted(by_interval.items(), key=lambda kv: canonical_interval_ms(kv[0]))),
+                "basis": "depth = qdl.runtime.bar_history_demand over the rendered kn bundle (largest granting "
+                         "manifest max_warmup_rows; 0 when ungranted), capped by the bar edge's 1,095-day lookback; "
+                         "100 rows per history request (OKX page, not re-verified); one pass, no retries"}
+
+    def _bootstrap_from_templates(self, new_acq: list[dict[str, Any]]) -> dict[str, Any]:
+        """One-off bar-edge history bootstrap of the new BAR bindings: depth = the largest declared warmup that
+        grants the binding (selector templates of the rendered manifests; explicit rows of unchanged manifests are
+        not re-read), read from the venue history through the OKX/SWAP/HISTORY_CANDLES admission lane.
+        Rows per request: 100 (OKX history-candles page; not re-verified here)."""
+        depth_by_interval: dict[str, int] = {}
+        for item in self.manifests.values():
+            for selector in item["doc"]["spec"].get("selectors") or []:
+                template = selector["template"]
+                if template.get("feed") != "BAR":
+                    continue
+                for interval in selector.get("intervals") or [template.get("interval")]:
+                    depth_by_interval[interval] = max(depth_by_interval.get(interval, 0),
+                                                      int(template.get("warmup_limit") or 0))
+        intervals = {row["binding_id"]: row.get("interval") for row in self._catalog_doc["bindings"]}
+        policy = json.loads(self.base.path(CONFIG / "provider-admission-policy-kn-bar-edge-v1.json").read_text())
+        lane = next(item["policy"] for item in policy["lanes"] if item["lane"] == {
+            "provider": "OKX", "market": "SWAP", "endpoint_family": "HISTORY_CANDLES"})
+        rate_per_min = lane["refill_tokens"] / (lane["refill_interval_ns"] / 1e9) * 60
+        rows = requests = bindings = 0
+        for row in new_acq:
+            interval = intervals.get(row["binding_id"])
+            if row["runtime"] != "OKX" or interval is None:
+                continue
+            depth = depth_by_interval.get(interval, 0)
+            bindings += 1
+            rows += depth
+            requests += -(-depth // 100)
+        return {"bindings": bindings, "rows": rows, "requests": requests,
+                "lane": "OKX/SWAP/HISTORY_CANDLES", "lane_requests_per_minute": rate_per_min,
+                "duration_minutes": round(requests / rate_per_min, 1) if rate_per_min else None,
+                "depth_by_interval": dict(sorted(depth_by_interval.items(), key=lambda kv: canonical_interval_ms(kv[0]))),
+                "basis": "estimate: 100 rows per history request (OKX page size, not re-verified); one pass, no retries"}
 
     def okx_rest_budget(self, catalog_bytes: bytes, acquisition_bytes: bytes) -> dict[str, Any]:
         """OKX public REST used by the bar edge's REST final lane, and the final-bar visibility it implies.
@@ -1483,6 +1677,8 @@ class Render:
         query_acq = self.build_query_acquisition(acq_doc, new_acq)
         if query_acq is not None:
             self.files["runtime/stable-acquisition-bindings.yaml"] = query_acq
+        if self.declaration["bar_edge"].get("split_runtime"):
+            self.build_bar_edge_runtime(catalog_bytes, query_acq if query_acq is not None else acq_bytes)
         with tempfile.TemporaryDirectory(prefix="qdl-declaration-runtime-") as raw:
             root = Path(raw)
             catalog_path = root / "stable-source-bindings.yaml"
@@ -1561,6 +1757,10 @@ class Render:
             "base_sha256": self.base.input_hashes(),
             "manifests": {cid: str(i["rel"]) for cid, i in self.manifests.items()},
             "accept_set": bool(self.declaration["accept_set"]),
+            "bar_edge_config_lineage": self.declaration["bar_edge"].get("config_lineage"),
+            "bar_edge_live_checkpoint": (None if not self.declaration["bar_edge"].get("live_checkpoint")
+                                         else str(self.declaration["bar_edge"]["live_checkpoint"])),
+            "live_sources": self.declaration["base"].get("live_sources"),
         })
         return report
 
@@ -1578,6 +1778,41 @@ class Render:
             "repo_files": {rel[len("repo/"):]: _sha256_bytes(self.files[rel])
                            for rel in sorted(self.files) if rel.startswith("repo/")},
         }
+
+
+def venue_priority_plan(rated: Iterable[tuple[str, str, float | None]], *, baseline: float | None,
+                        ceiling: float | None, priority: list[str]) -> dict[str, Any]:
+    """Which added bindings to defer to fit the DL CPU cap, never touching a higher-priority venue first.
+
+    Owner rule (2026-11-13): DL CPU cap 6.0 vCPU, OKX before BINANCE. When the estimate exceeds the cap, the plan
+    defers the lowest-priority venue's additions (largest estimated rate first) until it fits; if every
+    lower-priority addition is deferred and it still exceeds, it reports HIGHER_PRIORITY_TRIM_REQUIRED and defers
+    nothing of the higher-priority venues (that is a separate owner decision, never automatic).
+    """
+    rows = list(rated)
+    if baseline is None or ceiling is None:
+        return {"status": "NO_ENVELOPE", "defer": []}
+    added = sum(rate or 0.0 for _b, _v, rate in rows) * VCPU_PER_RECORD
+    excess = float(baseline) + added - float(ceiling)
+    if excess <= 0:
+        return {"status": "FITS", "defer": [], "headroom_vcpu": round(-excess, 3)}
+    rank = {venue: index for index, venue in enumerate(priority)}
+    lowest_first = sorted(rows, key=lambda r: (-rank.get(r[1], len(priority)), -(r[2] or 0.0), r[0]))
+    defer: list[str] = []
+    saved = 0.0
+    top = priority[0] if priority else None
+    for binding_id, venue, rate in lowest_first:
+        if venue == top:
+            break
+        defer.append(binding_id)
+        saved += (rate or 0.0) * VCPU_PER_RECORD
+        if saved >= excess:
+            return {"status": "FITS_WITH_DEFERRAL", "defer": defer, "saved_vcpu": round(saved, 3),
+                    "excess_vcpu": round(excess, 3)}
+    return {"status": "HIGHER_PRIORITY_TRIM_REQUIRED" if any(v == top for _b, v, _r in rows) else "EXCEEDS",
+            "defer": defer, "saved_vcpu": round(saved, 3), "excess_vcpu": round(excess, 3),
+            "note": f"deferring every lower-priority addition still exceeds the cap; {top} is never trimmed "
+                    "automatically"}
 
 
 def render(declaration_path: Path, out: Path | None, *, dry_run: bool = False) -> dict[str, Any]:
@@ -1709,7 +1944,13 @@ def gate(rendered: Path) -> dict[str, Any]:
         old_rows = {row[key]: row for row in base_docs[name][field]}
         new_rows = {row[key]: row for row in new_docs[name][field]}
         removed = sorted(set(old_rows) - set(new_rows))
-        changed = sorted(k for k in set(old_rows) & set(new_rows) if old_rows[k] != new_rows[k])
+        # Lineage pins (DL v2.3.0 2d) are gated by retained_lineage_unchanged, not here.
+        lineage_keys = {"lineage_revision", "lineage_config_revision"}
+
+        def body(row):
+            return {k: v for k, v in row.items() if k not in lineage_keys}
+
+        changed = sorted(k for k in set(old_rows) & set(new_rows) if body(old_rows[k]) != body(new_rows[k]))
         if removed or changed:
             problems.append({"file": name, "field": field, "removed": removed[:10], "changed": changed[:10]})
     old_demand = {json.dumps(r, sort_keys=True) for c in base_docs["demand"]["consumers"] for r in c["requirements"]}
@@ -1806,16 +2047,104 @@ def gate(rendered: Path) -> dict[str, Any]:
         new_docs = (_load_mapping(repo / REPO_FILES["catalog"]), _load_mapping(repo / REPO_FILES["acquisition"]))
         retained = retained_unchanged_ids(*base_docs, *new_docs)
         base_repo_plan = StableAcquisitionPlan.load(base_repo / REPO_FILES["acquisition"], catalog=base_catalog)
-        lineage_problems.extend(retained_lineage_problems(
-            (base_catalog, base_repo_plan), (catalog, acquisition), retained, migration_binding_ids=lineage_allowed))
+        # Review H2: where a live ingestor stamps the binding, that stamp is the "before" config lineage, not the
+        # plan document's revision (gated against the live configs by live_config_lineage).
+        live_stamps = live_config_lineage(base_catalog, [json.loads(Path(path).read_text())
+                                                         for path in (runtime.get("ingestors") or {}).values()])
+
+        bar_edge_stamp = inputs.get("bar_edge_config_lineage")
+        base_sources = {item.binding_id: item for item in base_catalog.bindings}
+        bar_edge_owned = {item.binding_id for item in base_plan.bindings
+                          if item.enabled and item.runtime in {"BINANCE", "OKX"}
+                          and base_sources[item.binding_id].feed.value == "BAR"}
+
+        def _live_aware(old, new, ids, *, runtime_plan=False):
+            problems, moved = [], []
+            for binding in sorted(set(ids) - set(lineage_allowed)):
+                before, after = binding_lineage(*old, binding), binding_lineage(*new, binding)
+                if binding in live_stamps:
+                    before["config_revision"] = live_stamps[binding]
+                elif runtime_plan and bar_edge_stamp is not None and binding in bar_edge_owned:
+                    before["config_revision"] = bar_edge_stamp  # the bar edge's own REST/repair stamp today
+                if before != after:
+                    moved.append(binding)
+                    if len(problems) < 5:
+                        problems.append(f"{binding} lineage moved "
+                                        f"{ {k: (before[k], after[k]) for k in before if before[k] != after[k]} }")
+            return ([f"{len(moved)} retained bindings would change their contract lineage"] if moved else []) + problems
+
+        lineage_problems.extend(_live_aware((base_catalog, base_repo_plan), (catalog, acquisition), retained))
         runtime_retained = retained & {b.binding_id for b in base_plan.bindings} & {
             b.binding_id for b in runtime_acquisition.bindings}
-        lineage_problems.extend(f"runtime plan: {item}" for item in retained_lineage_problems(
-            (base_catalog, base_plan), (catalog, runtime_acquisition), runtime_retained,
-            migration_binding_ids=lineage_allowed))
+        lineage_problems.extend(f"runtime plan: {item}" for item in _live_aware(
+            (base_catalog, base_plan), (catalog, runtime_acquisition), runtime_retained, runtime_plan=True))
         check("retained_lineage_unchanged", not lineage_problems, lineage_problems[:10])
     except Exception as error:  # noqa: BLE001 - a lineage that cannot be computed is a failure
         check("retained_lineage_unchanged", False, f"{type(error).__name__}: {error}")
+    # 4b'. review H2: the repo and runtime plans keep the config lineage the live ingestors stamp
+    try:
+        configs = [json.loads(Path(path).read_text()) for path in (runtime.get("ingestors") or {}).values()]
+        if configs:
+            live = live_config_lineage(base_catalog, configs)
+            problems = [f"repo plan: {item}" for item in
+                        live_config_lineage_problems(acquisition, live, catalog=catalog)]
+            problems += [f"runtime plan: {item}" for item in
+                         live_config_lineage_problems(runtime_acquisition, live, catalog=catalog)]
+            check("live_config_lineage", not problems,
+                  {"live_bindings": len(live), "values": dict(sorted(Counter(live.values()).items())),
+                   "problems": problems[:10]})
+    except Exception as error:  # noqa: BLE001
+        check("live_config_lineage", False, f"{type(error).__name__}: {error}")
+    # 4c. bar-edge runtime pair: raw catalogue lineage equals the cores' rows; the migration record crosses
+    pair = (rendered / "runtime/bar-edge-source-bindings.yaml", rendered / "runtime/bar-edge-acquisition-bindings.yaml")
+    if pair[0].is_file():
+        problems, checked = [], 0
+        try:
+            edge_catalog = StableSourceCatalog.load(pair[0])
+            edge_plan = StableAcquisitionPlan.load(pair[1], catalog=edge_catalog)
+            core_rows: dict[str, set[int]] = defaultdict(set)
+            core_files = sorted((rendered / "cores").glob("*.json"))
+            for path in core_files:
+                for row in json.loads(path.read_text())["core"]["bindings"]:
+                    core_rows[str(row["source_id"])].add(int(row["instrument_catalog_revision"]))
+            sources = {item.binding_id: item for item in edge_catalog.bindings}
+            for item in edge_plan.bindings:
+                source = sources[item.binding_id]
+                if not (item.enabled and item.runtime in {"BINANCE", "OKX"} and source.feed.value == "BAR"):
+                    continue
+                checked += 1
+                want = edge_catalog.lineage_revision_for(source)
+                have = core_rows.get(source.source_id)
+                if have != {want}:
+                    problems.append(f"{item.binding_id}: bar-edge lineage {want} vs core rows {sorted(have or [])}")
+            check("bar_edge_core_raw_lineage", bool(core_files) and not problems,
+                  {"bar_edge_bindings": checked, "cores": len(core_files), "problems": problems[:10]})
+        except Exception as error:  # noqa: BLE001
+            check("bar_edge_core_raw_lineage", False, f"{type(error).__name__}: {error}")
+        record_path = rendered / "runtime/bar-edge-checkpoint-migration.json"
+        if record_path.is_file():
+            try:
+                record = json.loads(record_path.read_text())
+                after = _bar_edge_set(edge_catalog, edge_plan)
+                legacy = {**record["from"], "binding_ids": sorted(record["previous_binding_digests"])}
+                crossing = plan_crossing(checkpoint=legacy, runtime={
+                    "catalog_revision": edge_catalog.catalog_revision, "acquisition_revision": edge_plan.revision,
+                    "binding_ids": sorted(after)}, current_digests=after, migration=record)
+                detail = {"crossing": crossing.summary()}
+                live = inputs.get("bar_edge_live_checkpoint")
+                ok = crossing.migration_used
+                if live:
+                    checkpoint = json.loads(Path(live).read_text())
+                    same = (sorted(checkpoint["binding_ids"]) == sorted(record["previous_binding_digests"])
+                            and {"catalog_revision": checkpoint["catalog_revision"],
+                                 "acquisition_revision": checkpoint["acquisition_revision"]} == record["from"])
+                    detail["live_checkpoint"] = {"schema": checkpoint.get("schema"),
+                                                 "binding_ids": len(checkpoint["binding_ids"]),
+                                                 "matches_record_from": same}
+                    ok = ok and same
+                check("bar_edge_migration_record", ok, detail)
+            except Exception as error:  # noqa: BLE001
+                check("bar_edge_migration_record", False, f"{type(error).__name__}: {error}")
     # 5. coverage chain: derived parents, execution scope = binding, declared rows resolved or BLOCKED
     chain = []
     if hasattr(runtime_acquisition, "derived_parents"):
@@ -1843,6 +2172,10 @@ def gate(rendered: Path) -> dict[str, Any]:
     check("okx_rest_budget", rest["status"] == "WITHIN_ENVELOPE",
           {k: rest.get(k) for k in ("problems", "bar_edge_requests_per_minute_avg", "lane_utilisation",
                                      "host_ip_utilisation", "final_1m_visibility_ms")})
+    capacity = {**capacity, "statement": (
+        f"estimated DL vCPU after this declaration {capacity.get('projected_dl_vcpu')} against the "
+        f"{capacity.get('ceiling_dl_vcpu')} cap (baseline {capacity.get('baseline_dl_vcpu')} + added "
+        f"{capacity.get('added_dl_vcpu_upper_bound')}, upper bound)")}
     check("capacity_envelope", capacity["status"] == "WITHIN_ENVELOPE", capacity,
           status=None if capacity["status"] in {"WITHIN_ENVELOPE", "EXCEEDS_ENVELOPE"} else
           f"FAIL_{capacity['status']}")

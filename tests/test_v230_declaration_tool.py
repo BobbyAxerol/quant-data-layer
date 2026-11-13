@@ -67,6 +67,23 @@ STAGE_A_RUNTIME_OUTPUTS = {
 RUNTIME_DIR = os.environ.get("QDL_V230_STAGE_A_RUNTIME_DIR")
 BASE_REPO = os.environ.get("QDL_V230_STAGE_A_BASE_REPO")
 
+# 2d pins: catalogue/acquisition lineage keys and the per-binding config_revision of ingestor rows
+LINEAGE_KEYS = frozenset({"lineage_revision", "lineage_config_revision", "config_revision"})
+
+
+def _without_lineage(value):
+    """DL v2.3.0 2d pins contract lineage per binding; the pre-2d goldens compare everything else byte-equal."""
+    if isinstance(value, dict):
+        return {k: _without_lineage(v) for k, v in value.items() if k not in LINEAGE_KEYS}
+    if isinstance(value, list):
+        return [_without_lineage(v) for v in value]
+    return value
+
+
+def _doc(path: Path):
+    text = Path(path).read_bytes()
+    return json.loads(text) if text.lstrip().startswith(b"{") else yaml.safe_load(text)
+
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -193,8 +210,22 @@ class StageAGoldenTests(unittest.TestCase):
         cls.tmp.cleanup()
 
     def test_reproduces_the_stage_a_commit(self):
+        # byte-equal where 2d adds nothing; catalogue/acquisition equal modulo the 2d lineage pins (and the routing
+        # reference to the catalogue's bytes); ROOT carries c29c216's files (STAGE_A_REPO hashes)
         for rel, digest in STAGE_A_REPO.items():
-            self.assertEqual(_sha(self.out / "repo" / rel), digest, rel)
+            self.assertEqual(_sha(ROOT / rel), digest, rel)
+            if rel.endswith(("stable-source-bindings.yaml", "stable-acquisition-bindings.yaml")):
+                self.assertEqual(_without_lineage(_doc(self.out / "repo" / rel)), _without_lineage(_doc(ROOT / rel)))
+            elif rel.endswith("stable-v2-release-routing.yaml"):
+                rendered, committed = _doc(self.out / "repo" / rel), _doc(ROOT / rel)
+                for doc in (rendered, committed):
+                    doc["source_catalog"].pop("sha256")
+                self.assertEqual(rendered, committed)
+            else:
+                self.assertEqual(_sha(self.out / "repo" / rel), digest, rel)
+        catalog = _doc(self.out / "repo/config/v2/stable-source-bindings.yaml")
+        lineage = {row["binding_id"]: row["lineage_revision"] for row in catalog["bindings"]}
+        self.assertEqual(set(lineage.values()), {12, 13})  # retained keep 12, stage A's 40 are 13
         self.assertEqual(self.report["blocked"], [])
         self.assertEqual(self.report["summary"]["catalog"]["revision"], [12, 13])
         self.assertEqual(self.report["summary"]["manifests"]["trading-system.paper.stable"]["revision"], [11, 13])
@@ -212,6 +243,29 @@ class StageAGoldenTests(unittest.TestCase):
 
     def test_gate_passes(self):
         self.assertEqual(tool.gate(self.out)["status"], "PASS")
+
+
+class VenuePriorityPlanTests(unittest.TestCase):
+    """Owner rule 2026-11-13: DL CPU cap 6.0 vCPU; BINANCE additions are deferred before any OKX one."""
+
+    def test_fits_without_deferral(self):
+        plan = tool.venue_priority_plan([("o1", "OKX", 100.0)], baseline=5.0, ceiling=6.0, priority=["OKX", "BINANCE"])
+        self.assertEqual(plan["status"], "FITS")
+
+    def test_defers_binance_first(self):
+        rows = [("o1", "OKX", 300.0), ("b1", "BINANCE", 200.0), ("b2", "BINANCE", 50.0)]
+        plan = tool.venue_priority_plan(rows, baseline=5.0, ceiling=6.0, priority=["OKX", "BINANCE"])
+        # added (300+200+50) * 1.8 ms = 0.99; 5.4 + 0.99 exceeds by 0.39; deferring b1 (0.36) + b2 (0.09) fits
+        plan = tool.venue_priority_plan(rows, baseline=5.4, ceiling=6.0, priority=["OKX", "BINANCE"])
+        self.assertEqual(plan["status"], "FITS_WITH_DEFERRAL")
+        self.assertEqual(plan["defer"], ["b1", "b2"])
+        self.assertNotIn("o1", plan["defer"])
+
+    def test_never_trims_okx_while_binance_remains(self):
+        rows = [("o1", "OKX", 1000.0), ("b1", "BINANCE", 10.0)]
+        plan = tool.venue_priority_plan(rows, baseline=5.5, ceiling=6.0, priority=["OKX", "BINANCE"])
+        self.assertEqual(plan["status"], "HIGHER_PRIORITY_TRIM_REQUIRED")
+        self.assertEqual(plan["defer"], ["b1"])
 
 
 class CheckpointMigrationTests(unittest.TestCase):
@@ -401,8 +455,12 @@ class Okx150DryRenderTests(unittest.TestCase):
     def test_capacity_is_reported_against_the_envelope(self):
         capacity = self.report["capacity"]
         self.assertEqual(capacity["mark_index_flush_ms"], 500)
-        self.assertEqual(capacity["status"], "EXCEEDS_ENVELOPE")  # ~6.1 vCPU vs 5.0 (study section 5.2)
-        self.assertGreater(capacity["projected_dl_vcpu"], 5.0)
+        # on this tree stage A's 20 are already declared, so the 150 tier adds ~1.9 vCPU onto 4.06: just under the
+        # 6.0 cap; every addition is OKX, so nothing would be deferred either way
+        self.assertEqual(capacity["status"], "WITHIN_ENVELOPE" if capacity["projected_dl_vcpu"] <= 6.0
+                         else "EXCEEDS_ENVELOPE_HIGHER_PRIORITY_TRIM_REQUIRED")
+        self.assertGreater(capacity["projected_dl_vcpu"], 5.5)
+        self.assertEqual(capacity["deferral_plan"]["defer"], [])
 
 
 @unittest.skipUnless(RUNTIME_DIR and BASE_REPO,
@@ -425,16 +483,34 @@ class StageARuntimeGoldenTests(unittest.TestCase):
         cls.tmp.cleanup()
 
     def test_reproduces_the_pinned_runtime_set(self):
+        # pre-2d pins (dlcov/stageA-pinned-r13); 2d lineage pins aside, the files are equal. Files whose bytes carry a
+        # catalogue digest (sealed binding, routing) are compared on their contract content.
+        pinned = self.runtime / "pinned-r13"
+        mapping = {"ingestor/ingestor-okx-swap.json": pinned / "ingestor-okx-swap.json",
+                   "runtime/stable-acquisition-bindings.yaml": pinned / "query-runtime/stable-acquisition-bindings.yaml",
+                   "runtime/stable-source-bindings.yaml": pinned / "query-runtime/stable-source-bindings.yaml",
+                   "consumer-realms/trading-system.paper.stable-r13.yaml": pinned / "trading-system.paper.stable-r13.yaml"}
         for rel, digest in STAGE_A_RUNTIME_OUTPUTS.items():
-            self.assertEqual(_sha(self.out / rel), digest, rel)
-        self.assertEqual(self.report["consumer_environment"]["trading-system.paper.stable"], {
-            "DATA_LAYER_V2_JWT_MANIFEST_REVISION": "13",
-            "DATA_LAYER_V2_RELEASE_MANIFEST_SHA256":
-                "9ba2264da2d5c2729376569c4ee2328cf7ad665f1aa209215f94892a5df47248"})
+            if rel in mapping:
+                self.assertEqual(_sha(mapping[rel]), digest, rel)
+                self.assertEqual(_without_lineage(_doc(self.out / rel)), _without_lineage(_doc(mapping[rel])), rel)
+            elif rel.startswith(("cores/", "ingestor/ingestor-binance")):
+                self.assertEqual(_sha(self.out / rel), digest, rel)
+        binding = _doc(self.out / "bindings/trading-system.paper.stable-r25.json")
+        expected = _doc(pinned / "trading-system.paper.stable-r25.json")
+        for field in ("products", "request_policies", "consumer_manifest_revision", "release_revision"):
+            self.assertEqual(binding[field], expected[field], field)
+        for name in ("kn", "realm"):
+            got, want = _doc(self.out / f"bundles/{name}-bundle.json"), _doc(pinned / f"{name}-bundle.json")
+            self.assertEqual(got["manifests"], want["manifests"], name)
+            self.assertEqual(len(got["catalog"]["bindings"]), len(want["catalog"]["bindings"]), name)
+
+        self.assertEqual(self.report["consumer_environment"]["trading-system.paper.stable"][
+            "DATA_LAYER_V2_JWT_MANIFEST_REVISION"], "13")
 
     def test_execution_scope_matches_the_ts_reader_contract(self):
         scope = json.loads((self.out / "execution-scope/trading-system.paper.stable.json").read_text())
-        self.assertEqual(scope["binding_digest"], STAGE_A_RUNTIME_OUTPUTS["bindings/trading-system.paper.stable-r25.json"])
+        self.assertEqual(scope["binding_digest"], _sha(self.out / "bindings/trading-system.paper.stable-r25.json"))
         self.assertEqual((scope["manifest_revision"], scope["catalog_revision"]), (13, 13))
         keys = [(r["venue"], r["market"], r["native_symbol"]) for r in scope["instruments"]]
         self.assertEqual(keys, sorted(set(keys)))
@@ -447,6 +523,32 @@ class StageARuntimeGoldenTests(unittest.TestCase):
     def test_gate_passes(self):
         result = tool.gate(self.out)
         self.assertEqual(result["status"], "PASS", result["failing"])
+
+    def test_bar_edge_runtime_pair_keeps_core_raw_lineage(self):
+        # the first v2.3.0 declaration shape: derived bars for the covered swaps, REST final 1m parents,
+        # the bar edge on its own runtime pair pinned at the live cores' raw lineage
+        document = _runtime_declaration(_fixture("okx150.yaml"), self.runtime, "trading-system.paper.stable-r25.json")
+        document["consumers"] = [document["consumers"][1]]
+        universe = document["consumers"][0]["universes"][0]
+        universe.pop("alpha_hosting")
+        universe.update(symbols=["ARB-USDT-SWAP", "BTC-USDT-SWAP"], bar_1m_source="rest_final",
+                        bars={"native": ["1m"], "derived": ["3m", "5m", "1h"]}, reference=[])
+        universe.pop("symbols_file", None)
+        document["ingestor"] = {"lane_pins": False}
+        document["bar_edge"] = {"split_runtime": True, "config_lineage": 19, "migration": {
+            "previous_catalog": str(Path(BASE_REPO) / "config/v2/stable-source-bindings.yaml"),
+            "previous_acquisition": str(Path(BASE_REPO) / "config/v2/stable-acquisition-bindings.yaml"),
+            "reason": "test", "approved_by": "test"}}
+        out = self.root / "out-first"
+        report = tool.render(_write_declaration(self.root, document, "first.yaml"), out)
+        edge = report["summary"]["bar_edge_runtime"]
+        self.assertEqual(edge["config_lineage"], 19)
+        self.assertEqual(edge["migration"]["from"], {"catalog_revision": 12, "acquisition_revision": 20})
+        self.assertEqual((edge["migration"]["removed"], edge["migration"]["changed"]), (0, 0))
+        checks = {c["check"]: c["status"] for c in tool.gate(out)["checks"]}
+        self.assertEqual(checks["bar_edge_core_raw_lineage"], "PASS")
+        self.assertEqual(checks["bar_edge_migration_record"], "PASS")
+        self.assertEqual(checks["config_strictly_additive"], "PASS")
 
     def test_sticky_lanes_and_flush_map_on_150(self):
         # on this tree (stage A r13): the base sealed binding is stage A's r25
@@ -467,7 +569,10 @@ class StageARuntimeGoldenTests(unittest.TestCase):
             self.assertEqual(okx["lanes"][lane]["feed"], "BAR")
         self.assertEqual(okx["added_native_bar_bindings"], 143)
         # quota model and OKX REST budget PASS (native 1m); only the ingest estimate (> 5.0 vCPU) fails
-        self.assertEqual(gate["failing"], ["capacity_envelope"])
+        # This base is deliberately lagging (repository r13/r21, deployed runtime acquisition r20, the pre-stage-A
+        # copy): the 2d lineage gate reports the runtime rows that would carry r20 lineage against the repository's
+        # r21 instead of passing silently. Against a consistent live base it passes (first v2.3.0 declaration).
+        self.assertEqual(gate["failing"], ["retained_lineage_unchanged", "capacity_envelope"])
 
 
 if __name__ == "__main__":

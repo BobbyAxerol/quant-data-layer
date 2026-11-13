@@ -13,7 +13,8 @@ ingestor:
   latest_state_flush_ms_by_feed: {MARK_INDEX: 500}
 capacity:
   baseline_dl_vcpu: 4.06
-  ceiling_dl_vcpu: 5.0
+  ceiling_dl_vcpu: 6.0     # owner cap 2026-11-13 (was 5.0)
+  venue_priority: [OKX, BINANCE]
 base:
   repo: ../../..
 consumers:

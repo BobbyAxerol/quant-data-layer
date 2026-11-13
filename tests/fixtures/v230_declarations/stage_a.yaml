@@ -12,7 +12,8 @@ ingestor:
   lane_pins: false         # stage A runs the v2.2.5 ingestor image (positional lanes)
 capacity:
   baseline_dl_vcpu: 4.06   # PACKET 2.1, 60 s basis, 2026-11-13 04:15Z
-  ceiling_dl_vcpu: 5.0
+  ceiling_dl_vcpu: 6.0     # owner cap 2026-11-13 (was 5.0)
+  venue_priority: [OKX, BINANCE]
 base:
   repo: ../../..
 consumers:
