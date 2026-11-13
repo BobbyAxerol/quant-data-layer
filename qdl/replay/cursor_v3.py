@@ -29,7 +29,7 @@ latter, so nothing that a normal migration produces may land there.
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 import hashlib
 import hmac
 import json
@@ -112,6 +112,13 @@ class CursorV3Expectation:
     catalog_revision: int
     route_generation: str
     schema_major: int = 2
+    # DL v2.3.0 2d: per-product catalogue lineage (a binding's lineage_revision).
+    # A token for a listed product must carry that revision; any other product
+    # is checked against ``catalog_revision`` (the pre-v2.3.0 rule).
+    catalog_revision_by_product: Mapping[str, int] = field(default_factory=dict)
+
+    def catalog_revision_for(self, product_key: str) -> int:
+        return int(self.catalog_revision_by_product.get(product_key, self.catalog_revision))
 
 
 def canonical_body(value: Mapping[str, Any]) -> bytes:
@@ -270,7 +277,7 @@ class SignedCursorV3Codec:
             ("TOPIC_GENERATION", claims.source_topic_id, expected.source_topic_id),
             ("PARTITION_PLAN", claims.partition_plan_epoch, expected.partition_plan_epoch),
             ("SOURCE_POLICY", claims.source_policy_revision, expected.source_policy_revision),
-            ("CATALOG", claims.catalog_revision, expected.catalog_revision),
+            ("CATALOG", claims.catalog_revision, expected.catalog_revision_for(claims.product_key)),
             ("ROUTE_GENERATION", claims.route_generation, expected.route_generation),
         ):
             if actual != wanted:

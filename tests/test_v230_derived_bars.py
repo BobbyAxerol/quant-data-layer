@@ -275,7 +275,9 @@ class AcquisitionSchemaTests(unittest.TestCase):
         bindings = []
         for item in sorted(self.plan.bindings, key=lambda value: value.binding_id):
             payload = asdict(item)
-            for name in self.plan.TRANSPORT_FIELDS + ("derived_from",):
+            # Fields added after the certified digest (derived_from, DL v2.3.0
+            # 2d lineage_config_revision) are absent from it when unset.
+            for name in self.plan.TRANSPORT_FIELDS + ("derived_from", "lineage_config_revision"):
                 payload.pop(name)
             bindings.append(payload)
         legacy = hashlib.sha256(json.dumps({

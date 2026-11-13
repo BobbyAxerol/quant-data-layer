@@ -77650,3 +77650,100 @@ container has been started.
   - the capacity estimate uses mean rates (liquid subsets run higher; `capacity.rates_per_binding` overrides);
   - the Binance ingestor gets pins + the flush map with no binding change and keeps `config_revision`;
   - `qdl.execution-binding-status.v1` (item 3) is not in this slice.
+
+### DL v2.3.0 slice 2d: per-binding contract lineage, cursor lineage, contract-line schema digest - 2026-11-13 (Claude)
+
+- **Why.** RCA by the TS writer agent, confirmed in DL code.
+  - The additive stage A declaration (catalog 12 -> 13, acquisition 20 -> 21, 40 bindings added, 0 changed;
+    `tests/fixtures/v230_stage_a_delta.json` from `git diff 098c94b..c29c216`) changed `config_revision` and
+    `instrument_catalog_revision` on EVERY record. The writer then refused every BOOK slice
+    (EXECUTION_ORDERING_AUTHORITY_MISMATCH) and native resume (RESUME_GENERATION_MISMATCH).
+  - Sources:
+    - ingestor envelope `config_revision` = the global config revision, passed through by the core
+      (`qdl-realtime-core/src/lib.rs:806`);
+    - the served contract's `instrument_catalog_revision` = the global catalogue revision
+      (`qdl/runtime/stable_source.py:1304`);
+    - the cores already checked per binding (`lib.rs:698`).
+  - The same coupling in resume tokens: cursor v3 claims carried the global catalogue revision (issued at
+    `kn_query_backend.py:989`, verified by `cursor_v3.rs:401` / `cursor_v3.py:273`), so a declaration expired every
+    token with CATALOG.
+- **Owner decisions** (via the coordinator):
+  - solve DL thoroughly (class fix, defence in depth with the writer's IDR-289 handoff);
+  - `schema_digest` is REDEFINED as the contract-line digest.
+- **Change** (branch `feat/v2.3.0-lineage` off rc1 integration `c899d44`; worktree `.worktrees/dl-v230-lineage`):
+  1. Catalogue binding `lineage_revision`; acquisition binding `lineage_config_revision`.
+     - Both optional, bounded by their document's revision; absent = today's global value.
+     - The acquisition identity digest ignores the unset field.
+     - Helpers: `StableSourceCatalog.lineage_revision_for` and `StableAcquisitionPlan.lineage_config_revision_for`.
+  2. Renderers: core and ingestor configs stamp `instrument_catalog_revision` from lineage, and the ingestor binding
+     gets `config_revision` only when pinned.
+     - The Rust ingestor's `RawBinding.config_revision` (optional, 1..=config revision) is the envelope's
+       `config_revision`. Book-resync identity uses the same per-binding value.
+     - The bar edge stamps per-binding lineage on its REST and derived envelopes.
+     - Query's served contract (`stable_source.py`) uses the binding lineage.
+     - Pass-through (`provider_history.py`, no binding, never EXECUTION) keeps the global value; canary has a
+       separate catalogue class and is unchanged.
+  3. Cursor v3.
+     - Query issues the binding's lineage revision.
+     - Both verifiers check the product's lineage (`CursorV3Expectation.catalog_revision_by_product` /
+       `catalog_revision_for`; the Rust gateway builds it from the bundle's per-binding `lineage_revision`).
+     - The bundle emits `lineage_revision` only when pinned, so it stays byte-compatible.
+  4. `qdl/runtime/lineage.py`: `pin_lineage` (the renderer rule), `retained_unchanged_ids`,
+     `retained_lineage_problems` (the gate).
+     - `scripts/dl_declaration.py` pins in `build_catalog` and in the Query/bar-edge runtime plan, stamps carried
+       ingestor rows, and gates `retained_lineage_unchanged` (repository plan, runtime plan, ingestor files;
+       `runtime/lineage-migration.json` may name allowed moves).
+     - `refresh_v2_native_ingestor_runtime._validate_transition(pin_config_lineage=)` defaults to off, because
+       v2.2.x ingestor binaries refuse the field.
+  5. Contract line.
+     - `contracts/schema-lines/qdl-v2-contract-lines.json`: line 1 = `100966435a30367d...` (sha256 of
+       market_data.proto at fc5e29e = the deployed QDL_STABLE_SCHEMA_DIGEST).
+     - Baseline image `contracts/baseline/qdl-v2-contract-line-1.binpb` (`buf build` of fc5e29e, sha256
+       `d21ba923...`).
+     - `scripts/schema_line.py digest|file-sha256|check`. CI runs the check after `buf breaking`.
+     - `phaseb_prepare_stable_candidate.py` writes the line digest.
+     - The role public manifest reports `schema_file_sha256` when `QDL_STABLE_SCHEMA_FILE_SHA256` is set.
+     - The current module (with v2.3.0 Bar.aggregation) passes `buf breaking` against line 1 (rc 0).
+     - Negative control: renumbering EventEnvelope `config_revision` 27 -> 28 is refused (rc 100).
+- **Coordination.** TS writer agent (ab9ce296) informed of the field semantics, the line digest and cursor survival.
+  Its IDR-289 revision-only handoff covers releases and migration records.
+- **Tests:**
+  - Rust (`qdl-rust-builder:r134-test`, 1 CPU, cpu-shares 256): fmt OK; clippy `-D warnings` on qdl-contracts,
+    qdl-kafka, qdl-stream-gateway OK; contracts 36 (+2: bundle lineage default/bounds, cursor lineage across a
+    catalogue bump with a pre-v2.3.0 control); stream-gateway lib 69, hot_lookup 1, native_stream 56; ingestor 80
+    (+2: pinned envelope lineage, binding config_revision bounds); `cargo check --workspace` OK.
+  - Python targeted (16 modules, 232 tests, on c899d44 + 2d): `tests.test_v230_lineage` 12 OK (stage A shape: 40
+    added / 0 changed; unpinned gate flags every retained binding; pinned keeps 12/20 on ingestor rows, core,
+    bundle and cursor; added rows 13/21; lineage bounds; unpinned unchanged; contract line digest = the compose
+    literal; check PASS/FAIL/tampered baseline). One oracle updated: `test_v230_derived_bars` identity-digest
+    legacy recompute also drops the unset `lineage_config_revision` (the digest itself is unchanged). 3
+    `test_v230_declaration_tool` errors there came from the pre-`72f35cf` quota golden (the r13 manifest raised rpm);
+    rerun after merging rc1 is recorded in the next bullet.
+  - `buf breaking` (bufbuild/buf:1.50.0, `--rm`, no network): current module vs line-1 baseline rc 0; negative
+    control (EventEnvelope `config_revision` renumbered) rc 100.
+  - ruff 0.15.13 `--select F`: no new findings in changed files (pre-existing ones unchanged); removed the
+    now-unused `hashlib` import in `phaseb_prepare_stable_candidate.py`.
+- **Status:** implemented, tested locally, not merged into rc1; it lands in rc2.
+  - Open: the rc2 merge and images.
+  - Before the first v2.3.0 declaration, the renderer pins lineage at the then-live values, so nothing moves at
+    activation.
+- **Backlog, registered here (not in rc1/rc2). DL-FR-2026-11-13-A: execution snapshot BATCH read.**
+  - Coordinator request after the TS writer RCA. DL has no batch read with EXECUTION semantics:
+    `warmup:batch` / `reference:batch` are HISTORY_READ, at most 100 items, with different semantics. So the writer
+    cannot batch its per-product freshness probes, and Query load grows with product count (tier 150).
+  - Design sketch: additive `POST /v2/market-data/snapshot:batch`.
+    - Same per-item semantics and typed per-item problems as `/v2/market-data/{uid}/snapshot` (freshness,
+      eligibility, gap, session liveness).
+    - Per-item entitlement through `requirement_allowed`.
+    - Purpose EXECUTION allowed.
+    - Item count bounded by the manifest's existing `max_batch_items` (<= 100).
+    - Quota: one request per batch for `requests_per_minute`, plus the item count against `max_batch_items`
+      (decision: per request, like warmup:batch).
+    - No cursor issued (probe-only); hot read via one market-cache MGET of the product keys.
+    - SDK `snapshot_batch()`; OpenAPI snapshot updated additively.
+  - Size: about 1.5-2 days (router + models + kn3 backend batch read + SDK + contract snapshot + tests, including a
+    hot-read A/B like v2.2.5).
+  - Decision after measuring W-B2's probe rate on the isolated stack (the writer's probe deferral may make it
+    unnecessary).
+  - The shared IDR register lives in the TS repository (writer agent's branch). An IDR number should be assigned by
+    the coordinator, pointing here.

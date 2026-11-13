@@ -1,0 +1,16 @@
+{
+  "schema": "qdl.v2.contract-lines.v1",
+  "description": "The compatible contract lines of the Data Layer V2 protobuf module. A record contract's schema_digest is the digest of its LINE, not of the current proto file: it changes only when a release changes the module incompatibly (buf breaking, FILE rules, against the line's frozen baseline image) and opens a new line. Additive changes stay in the line. The real sha256 of market_data.proto is recorded separately as schema_file_sha256 (audit only, never lineage). Tool: scripts/schema_line.py.",
+  "proto": "contracts/proto/qdl/marketdata/v2/market_data.proto",
+  "lines": [
+    {
+      "line": 1,
+      "schema_digest": "100966435a30367dfa20dd8f9d94af15fb0c27f684aeedbd3ac9511bb757d13b",
+      "baseline_source_ref": "fc5e29e3d04516f9ef209adfbadd2162a5f608ba",
+      "baseline_proto_sha256": "100966435a30367dfa20dd8f9d94af15fb0c27f684aeedbd3ac9511bb757d13b",
+      "baseline_image": "contracts/baseline/qdl-v2-contract-line-1.binpb",
+      "baseline_image_sha256": "d21ba9239d355edf234d03e4bda2dc4b1a214a58a6e0572ffe34bc3ea28e952b",
+      "note": "The digest every V2 stable role has carried since the stable candidate (QDL_STABLE_SCHEMA_DIGEST = sha256 of market_data.proto at fc5e29e, 2026-08-19). Later proto changes (7b5f222, b1965b1, 1a2daf1, v2.3.0 Bar.aggregation 74ea7e2) are additive and pass buf breaking against this image."
+    }
+  ]
+}

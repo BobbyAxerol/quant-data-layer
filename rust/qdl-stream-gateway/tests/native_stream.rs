@@ -347,6 +347,7 @@ fn binding(feed: &str, interval: Option<&str>, key: &str) -> Binding {
         physical_key: key.into(),
         product_key: format!("lpk1|paper|OKX|SWAP|{UID}|{feed}|{qualifier}"),
         stale_after_ms: 5_000,
+        lineage_revision: 9,
     }
 }
 
@@ -494,6 +495,7 @@ fn expectation() -> CursorV3Expectation {
         catalog_revision: 9,
         route_generation: "kn2-test-r1".into(),
         schema_major: 2,
+        catalog_revision_by_product: Default::default(),
     }
 }
 

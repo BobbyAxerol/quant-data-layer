@@ -106,6 +106,12 @@ struct RawBinding {
     /// (`deny_unknown_fields`), so the binary ships first.
     #[serde(default)]
     lane_shard: Option<usize>,
+    /// DL v2.3.0 2d: the acquisition revision at which THIS binding last
+    /// changed. Its raw envelopes carry it as `config_revision`, so an additive
+    /// declaration (a new ingestor config revision) leaves the contract lineage
+    /// of untouched bindings unchanged. Absent = the config's `config_revision`.
+    #[serde(default)]
+    config_revision: Option<u64>,
 }
 
 /// A lane's bindings by routing key. Values are shared: every frame of a
@@ -114,6 +120,11 @@ struct RawBinding {
 type BindingMap = HashMap<String, Arc<RawBinding>>;
 
 impl RawBinding {
+    /// The `config_revision` this binding's envelopes carry (DL v2.3.0 2d).
+    fn lineage_config_revision(&self, config_revision: u64) -> u64 {
+        self.config_revision.unwrap_or(config_revision)
+    }
+
     fn key(&self) -> String {
         format!("{}|{}", self.native_channel, self.native_symbol)
     }
@@ -608,6 +619,13 @@ impl IngestorConfig {
             }
         }
         self.validate_lane_plan()?;
+        if self.bindings.iter().any(|binding| {
+            binding
+                .config_revision
+                .is_some_and(|revision| revision == 0 || revision > self.config_revision)
+        }) {
+            return Err("binding config_revision must be within 1..=config_revision".into());
+        }
         let generation_path = Path::new(&self.generation_state_path);
         if !generation_path.is_absolute()
             || generation_path
@@ -1299,7 +1317,7 @@ impl RawEnvelopeContext {
             raw_frame_sha256: Sha256::digest(&raw_frame).to_vec(),
             raw_frame_bytes: raw_frame,
             adapter_version: binding.adapter_version.clone(),
-            config_revision: self.config_revision,
+            config_revision: binding.lineage_config_revision(self.config_revision),
             instrument_catalog_revision: binding.instrument_catalog_revision,
             correlation_id: hex::encode(&capture_id),
             test_provenance: false,
@@ -2458,7 +2476,7 @@ fn matches_book_resync(
         || raw.native_channel != binding.native_channel
         || raw.adapter_version != binding.adapter_version
         || raw.instrument_catalog_revision != binding.instrument_catalog_revision
-        || raw.config_revision != config.config_revision
+        || raw.config_revision != binding.lineage_config_revision(config.config_revision)
         || raw.lease_epoch != config.lease_epoch
         || raw.partition_plan_epoch != config.partition_plan_epoch
         || raw.authority_revision != config.authority.revision
@@ -5068,6 +5086,7 @@ mod tests {
             l2: None,
             mark_index_target: None,
             lane_shard: None,
+            config_revision: None,
         }
     }
 
@@ -5817,6 +5836,7 @@ mod resync_tests {
             }),
             mark_index_target: None,
             lane_shard: None,
+            config_revision: None,
         };
         let raw = RawProviderEnvelope {
             provider: b.provider.clone(),
@@ -5998,6 +6018,39 @@ mod resync_tests {
         assert_ne!(raw.capture_id.as_slice(), &raw.raw_frame_sha256[..16]);
         assert_eq!(record.event_id, raw.capture_id);
         assert_eq!(raw.correlation_id, hex::encode(&raw.capture_id));
+    }
+
+    #[test]
+    fn a_pinned_binding_config_revision_is_the_envelope_lineage() {
+        // DL v2.3.0 2d: an additive declaration bumps the config revision; an
+        // untouched binding keeps the revision it was declared at.
+        let (mut config, bindings, _) = fixture(false);
+        config.config_revision = 21;
+        let context = RawEnvelopeContext::new(&config);
+        let mut binding = (**bindings.values().next().unwrap()).clone();
+        let record = |binding: &RawBinding| {
+            let record = context.record(PendingRawFrame {
+                binding: Arc::new(binding.clone()),
+                session_id: "s".into(),
+                generation: 1,
+                raw_frame: br#"{"e":"depthUpdate"}"#.to_vec(),
+                received_at_ns: 5,
+                transport_protocol: TransportProtocol::Websocket,
+            });
+            RawProviderEnvelope::decode(record.payload.as_slice()).unwrap()
+        };
+        assert_eq!(
+            record(&binding).config_revision,
+            21,
+            "unpinned: the config's revision"
+        );
+        binding.config_revision = Some(20);
+        let pinned = record(&binding);
+        assert_eq!(pinned.config_revision, 20);
+        assert_eq!(
+            pinned.instrument_catalog_revision,
+            binding.instrument_catalog_revision
+        );
     }
 
     /// The pre-change OKX data path, verbatim: a `Value` parse, the notice and
@@ -6398,6 +6451,7 @@ mod okx_reconnect_tests {
             l2: None,
             mark_index_target: None,
             lane_shard: None,
+            config_revision: None,
         }
     }
 
@@ -7029,6 +7083,7 @@ mod staleness_tests {
             l2: None,
             mark_index_target: None,
             lane_shard: None,
+            config_revision: None,
         }
     }
 
@@ -8387,6 +8442,7 @@ mod lane_plan_tests {
             l2: None,
             mark_index_target: (feed == RawFeed::MarkIndex).then(|| format!("{symbol}-mark")),
             lane_shard: None,
+            config_revision: None,
         }
     }
 
@@ -8585,6 +8641,28 @@ mod lane_plan_tests {
         let mut value = document();
         value["latest_state_flush_ms_by_feed"] = json!({"MARKINDEX": 500});
         assert!(serde_json::from_value::<IngestorConfig>(value).is_err());
+    }
+
+    #[test]
+    fn a_binding_config_revision_must_not_exceed_the_config() {
+        let mut value = document();
+        value["bindings"][0]["config_revision"] = json!(19);
+        let config: IngestorConfig = serde_json::from_value(value.clone()).unwrap();
+        config.validate().unwrap();
+        assert_eq!(config.config_revision, 20);
+        assert_eq!(
+            config.bindings[0].lineage_config_revision(config.config_revision),
+            19
+        );
+        assert_eq!(
+            config.bindings[1].lineage_config_revision(config.config_revision),
+            20
+        );
+        for refused in [json!(0), json!(21)] {
+            value["bindings"][0]["config_revision"] = refused.clone();
+            let config: IngestorConfig = serde_json::from_value(value.clone()).unwrap();
+            assert!(config.validate().is_err(), "{refused}");
+        }
     }
 
     #[test]

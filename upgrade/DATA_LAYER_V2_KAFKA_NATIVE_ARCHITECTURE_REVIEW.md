@@ -3307,3 +3307,35 @@ Rules the tool enforces:
 - sticky lanes: existing lane names and members never move;
 - a row DL cannot serve is BLOCKED with a reason, never dropped.
 It never mounts, restarts or edits a deployed file.
+
+### Delta 2026-11-13: DL v2.3.0 slice 2d, per-binding contract lineage and contract-line schema digest
+
+Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, "DL v2.3.0 slice 2d".
+The rule: a declaration must not move the contract lineage of a binding it does not change. A consumer keys
+ordering authority, resume markers and cursors on that lineage (the TS writer: `atomic_projection.lineage`,
+`execution_ordering`, native resume).
+
+1. **`instrument_catalog_revision`** of a record, its served contract and its cursor v3 catalogue claim is the
+   binding's catalogue `lineage_revision`.
+   - That is the catalogue revision at which the binding last changed.
+   - Absent means the catalogue revision, which is the old behaviour.
+2. **`config_revision`** of a record is the binding's acquisition `lineage_config_revision`.
+   - The ingestor stamps it per binding (raw binding `config_revision`); the bar edge stamps it on its REST and
+     derived envelopes.
+   - Absent means the plan or ingestor config revision.
+3. **The declaration renderer pins lineage** (`qdl.runtime.lineage.pin_lineage`).
+   - A binding whose catalogue and acquisition rows are unchanged keeps its lineage.
+   - Added or changed bindings carry the new revisions.
+   - The gate (`retained_lineage_unchanged`) refuses any move of a retained binding's lineage, unless a
+     `lineage-migration.json` record names it.
+4. **`schema_digest` is the contract-LINE digest** (owner decision 2026-11-13), not the sha256 of the proto file.
+   - A line has a frozen baseline image.
+   - Proto changes must pass `buf breaking` (FILE rules) against the current line's baseline; additive changes keep
+     the digest. An incompatible change opens a new line.
+   - Line 1 = `100966435a30367d...`, the value every stable role has carried (sha256 of market_data.proto at
+     fc5e29e).
+   - `schema_file_sha256` reports the real file hash for audit only.
+   - Registry: `contracts/schema-lines/qdl-v2-contract-lines.json`. Tool: `scripts/schema_line.py`. CI runs the check.
+5. **What still changes lineage, and is therefore a release or a migration:** a binding's own change; an authority
+   or source-policy revision; a new contract line. Consumers hand those over explicitly (TS writer IDR-289
+   revision-only handoff for authority, config, source-policy and catalogue revisions).

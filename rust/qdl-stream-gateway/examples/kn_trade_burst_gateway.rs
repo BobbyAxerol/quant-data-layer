@@ -297,6 +297,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         catalog_revision: 1,
         route_generation: "capture-test-only".into(),
         schema_major: 2,
+        catalog_revision_by_product: Default::default(),
     };
     let mut bindings = Vec::new();
     let mut requirements = Vec::new();
@@ -319,6 +320,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             physical_key: product.uid.clone(),
             product_key: lpk.clone(),
             stale_after_ms: 3000,
+            lineage_revision: 1,
         });
         requirements.push(ManifestRequirement {
             instrument_uid: product.uid.clone(),

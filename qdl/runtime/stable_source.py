@@ -1301,7 +1301,9 @@ class StableSpoolQueryBackend:
                 contract_version="2.0.0",
                 normalizer_version=envelope.normalizer_version,
                 adapter_version=envelope.adapter_version,
-                instrument_catalog_revision=self.catalog.catalog_revision,
+                # DL v2.3.0 2d: the binding's own lineage, so an additive
+                # declaration leaves an untouched binding's contract unchanged.
+                instrument_catalog_revision=self.catalog.lineage_revision_for(binding),
                 source_policy_revision=self.catalog.source_policy_revision,
                 authority_revision=self.catalog.authority_revision,
                 config_revision=max(1, int(envelope.config_revision or self.config_revision)),

@@ -20,6 +20,10 @@ pub struct Binding {
     pub physical_key: String,
     pub product_key: String,
     pub stale_after_ms: u64,
+    /// DL v2.3.0 2d: the catalogue revision at which this binding last changed
+    /// (its records' `instrument_catalog_revision`, its cursors' catalog
+    /// claim). A bundle entry without it carries the catalogue revision.
+    pub lineage_revision: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -155,6 +159,7 @@ impl Bundle {
             ));
         }
         let catalog = &document["catalog"];
+        let catalog_revision = integer(catalog, "catalog_revision")?;
         let bindings = catalog["bindings"]
             .as_array()
             .ok_or("bundle catalog bindings must be an array")?
@@ -171,6 +176,15 @@ impl Bundle {
                     physical_key: text(item, "physical_key")?,
                     product_key: text(item, "product_key")?,
                     stale_after_ms: integer(item, "stale_after_ms")?,
+                    lineage_revision: match &item["lineage_revision"] {
+                        Value::Null => catalog_revision,
+                        value => value
+                            .as_u64()
+                            .filter(|revision| (1..=catalog_revision).contains(revision))
+                            .ok_or(
+                                "bundle field lineage_revision must be within 1..=catalog_revision",
+                            )?,
+                    },
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -311,6 +325,32 @@ mod tests {
         assert!(Bundle::parse(&document.to_string())
             .unwrap_err()
             .contains("hash mismatch"));
+    }
+
+    #[test]
+    fn a_binding_lineage_defaults_to_the_catalogue_revision_and_is_bounded_by_it() {
+        let parse = |lineage: Option<Value>| {
+            let mut document = sample();
+            if let Some(value) = lineage {
+                document["catalog"]["bindings"][0]["lineage_revision"] = value;
+            }
+            let hash = canonical_sha256(document.as_object().expect("object"));
+            document["sha256"] = Value::String(hash);
+            Bundle::parse(&document.to_string())
+        };
+        assert_eq!(parse(None).unwrap().bindings[0].lineage_revision, 9);
+        assert_eq!(
+            parse(Some(Value::from(7))).unwrap().bindings[0].lineage_revision,
+            7
+        );
+        for refused in [Value::from(0), Value::from(10), Value::from("7")] {
+            assert!(
+                parse(Some(refused.clone()))
+                    .unwrap_err()
+                    .contains("lineage_revision"),
+                "{refused}"
+            );
+        }
     }
 
     fn with_manifest(extra: Option<Value>) -> Result<Bundle, String> {

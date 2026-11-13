@@ -481,6 +481,10 @@ class StableRuntimeConfig:
             "authority": self.authority_mode,
             "authority_revision": self.authority_revision,
             "schema_digest": self.schema_digest,
+            # DL v2.3.0 2d: schema_digest is the contract-line digest (lineage);
+            # the proto file's own sha256 is reported for audit when deployed.
+            **({"schema_file_sha256": os.environ["QDL_STABLE_SCHEMA_FILE_SHA256"]}
+               if os.environ.get("QDL_STABLE_SCHEMA_FILE_SHA256") else {}),
             "redis_prefix": self.redis_prefix,
             "consumer_group": self.consumer_group,
             "owns_venue_connections": False,

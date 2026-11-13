@@ -166,6 +166,12 @@ fn load_authority() -> Result<Authority, String> {
         catalog_revision: bundle.catalog_revision,
         route_generation: env("QDL_KN_ROUTE_GENERATION")?,
         schema_major: 2,
+        // DL v2.3.0 2d: a product's cursor carries its binding's lineage.
+        catalog_revision_by_product: bundle
+            .bindings
+            .iter()
+            .map(|binding| (binding.product_key.clone(), binding.lineage_revision))
+            .collect(),
     };
     Ok(Authority {
         jwt: jwt_config(&environment)?,

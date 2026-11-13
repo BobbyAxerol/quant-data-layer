@@ -116,8 +116,10 @@ def _binding_map(
 
 
 def _without_catalog_revision(binding: Mapping[str, Any]) -> dict[str, Any]:
+    """A binding without its lineage fields (catalogue and, since DL v2.3.0 2d, config revision)."""
     result = dict(binding)
     result.pop("instrument_catalog_revision", None)
+    result.pop("config_revision", None)
     return result
 
 
@@ -183,8 +185,15 @@ def _validate_transition(
     active: Mapping[str, Any],
     expected: Mapping[str, Any],
     target: str,
+    pin_config_lineage: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Return (successor config, change summary) for one ingestor file."""
+    """Return (successor config, change summary) for one ingestor file.
+
+    ``pin_config_lineage`` (DL v2.3.0 ingestor binaries only; older ones refuse
+    the per-binding field) stamps every retained binding with the config
+    revision it was acquired at, so raising the file's ``config_revision`` for
+    additions does not change the contract lineage of untouched bindings.
+    """
     active_fields = _non_binding_fields(active)
     expected_fields = _non_binding_fields(expected)
     if set(expected_fields) - set(active_fields):
@@ -209,7 +218,12 @@ def _validate_transition(
         revision = expected.get("config_revision")
         if not isinstance(revision, int) or revision <= int(active.get("config_revision") or 0):
             raise ValueError(f"{target} additions require a higher config_revision")
-        successor["bindings"] = [dict(item) for item in active["bindings"]] + [dict(item) for item in added]
+        previous = int(active.get("config_revision") or 0)
+        retained = [dict(item) for item in active["bindings"]]
+        if pin_config_lineage:
+            for item in retained:
+                item.setdefault("config_revision", previous)
+        successor["bindings"] = retained + [dict(item) for item in added]
         successor["config_revision"] = revision
     if target == TARGETS["okx-swap"]:
         before, after = _okx_lanes(active), _okx_lanes(successor)

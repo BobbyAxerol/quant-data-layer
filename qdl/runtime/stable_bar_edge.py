@@ -849,9 +849,16 @@ class StableBinanceBarEdge:
             authority_revision=int(self.authority["revision"]),
             partition_plan_epoch=1,
             adapter_version=source.adapter_version,
-            config_revision=self.acquisition.revision,
-            instrument_catalog_revision=self.catalog.catalog_revision,
+            config_revision=self._lineage_config_revision(source),
+            instrument_catalog_revision=self.catalog.lineage_revision_for(source),
         )
+
+    def _lineage_config_revision(self, source: StableSourceBinding) -> int:
+        """DL v2.3.0 2d: the config lineage this binding's raw envelopes carry."""
+
+        acquisition = getattr(self, "_acquisition_by_id", {}).get(source.binding_id)
+        pinned = getattr(acquisition, "lineage_config_revision", None)
+        return self.acquisition.revision if pinned is None else pinned
 
     def _okx_binding(
         self,
@@ -870,8 +877,8 @@ class StableBinanceBarEdge:
             authority_revision=int(self.authority["revision"]),
             partition_plan_epoch=1,
             adapter_version=source.adapter_version,
-            config_revision=self.acquisition.revision,
-            instrument_catalog_revision=self.catalog.catalog_revision,
+            config_revision=self._lineage_config_revision(source),
+            instrument_catalog_revision=self.catalog.lineage_revision_for(source),
         )
 
     def _history_repair_plan(
@@ -2032,8 +2039,8 @@ class StableBinanceBarEdge:
                         decision=decision, source_session_id=self._derived_session_id(),
                         connection_generation=self.connection_generation,
                         authority_revision=int(self.authority["revision"]),
-                        config_revision=self.acquisition.revision,
-                        instrument_catalog_revision=self.catalog.catalog_revision,
+                        config_revision=self._lineage_config_revision(source),
+                        instrument_catalog_revision=self.catalog.lineage_revision_for(source),
                         received_at_ns=time.time_ns(),
                     )
                     for decision in publish

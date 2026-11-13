@@ -51,7 +51,7 @@ def compile_bundle(*, environment: str, catalog_path: Path, manifest_paths: Iter
     bindings = []
     for binding in sorted(catalog.bindings, key=lambda item: item.binding_id):
         identity = binding.instrument.identity
-        bindings.append({
+        entry = {
             "binding_id": binding.binding_id,
             "instrument_uid": identity.instrument_uid,
             "venue": identity.venue,
@@ -67,7 +67,12 @@ def compile_bundle(*, environment: str, catalog_path: Path, manifest_paths: Iter
                 instrument_uid=identity.instrument_uid, feed=binding.feed.value,
                 interval=binding.interval,
             ).encode(),
-        })
+        }
+        # DL v2.3.0 2d: emitted only when the catalogue pins it, so an
+        # unpinned catalogue compiles the byte-identical v2.2.x bundle.
+        if binding.lineage_revision is not None:
+            entry["lineage_revision"] = binding.lineage_revision
+        bindings.append(entry)
     manifests = []
     for path in sorted(manifest_paths):
         manifest = ConsumerManifestLoader.load(path, selector_context=selector_context)

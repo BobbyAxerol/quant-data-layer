@@ -485,6 +485,11 @@ class StableAcquisitionBinding:
     enabled: bool = True
     # DERIVED_FINAL only: the finer interval this final BAR is built from.
     derived_from: StableDerivedBarAcquisition | None = None
+    # DL v2.3.0 (slice 2d): the acquisition revision at which THIS binding last
+    # changed; it is the ``config_revision`` its raw envelopes (and so its
+    # canonical records and served contract) carry. ``None`` = the plan's own
+    # revision, the pre-v2.3.0 behaviour; see ``StableAcquisitionPlan.lineage_config_revision_for``.
+    lineage_config_revision: int | None = None
 
     def validate(self, source: StableSourceBinding) -> None:
         if (
@@ -531,6 +536,12 @@ class StableAcquisitionBinding:
             self.mark_index.validate(source, self)
         elif source.feed is FeedType.MARK_INDEX_PRICE:
             raise ValueError("MARK_INDEX binding requires an explicit acquisition contract")
+        if self.lineage_config_revision is not None and (
+            isinstance(self.lineage_config_revision, bool)
+            or not isinstance(self.lineage_config_revision, int)
+            or self.lineage_config_revision < 1
+        ):
+            raise ValueError("stable acquisition lineage_config_revision must be positive")
         if (self.mode == "DERIVED_FINAL") != (self.derived_from is not None):
             raise ValueError("DERIVED_FINAL requires derived_from, and only it may carry one")
         if self.derived_from is not None:
@@ -642,6 +653,15 @@ class StableAcquisitionPlan:
     def __post_init__(self) -> None:
         if self.schema != "qdl.v2.stable-acquisition-bindings.v1" or self.revision < 1:
             raise ValueError("unsupported stable acquisition schema/revision")
+        late = sorted(
+            item.binding_id for item in self.bindings
+            if item.lineage_config_revision is not None and item.lineage_config_revision > self.revision
+        )
+        if late:
+            raise ValueError(
+                "stable acquisition lineage_config_revision is newer than the plan revision: "
+                + ",".join(late[:5])
+            )
         topics = (self.raw_topic, self.canonical_topic, self.quarantine_topic)
         if any(not value for value in topics) or len(set(topics)) != 3:
             raise ValueError("stable acquisition topics must be non-empty and unique")
@@ -656,6 +676,14 @@ class StableAcquisitionPlan:
     TRANSPORT_FIELDS = (
         "websocket_url", "business_websocket_url", "market_websocket_url",
     )
+
+    def lineage_config_revision_for(self, binding_id: str) -> int:
+        """The ``config_revision`` a binding's records carry (DL v2.3.0 2d)."""
+
+        for item in self.bindings:
+            if item.binding_id == binding_id:
+                return self.revision if item.lineage_config_revision is None else item.lineage_config_revision
+        raise KeyError(binding_id)
 
     def identity_digest(self) -> str:
         """SHA-256 of everything that defines the plan except transport endpoints.
@@ -675,6 +703,9 @@ class StableAcquisitionPlan:
             # before DERIVED_FINAL keep the digest they were certified with.
             if payload.get("derived_from") is None:
                 payload.pop("derived_from", None)
+            # The same rule for the per-binding lineage pin (DL v2.3.0 2d).
+            if payload.get("lineage_config_revision") is None:
+                payload.pop("lineage_config_revision", None)
             bindings.append(payload)
         payload = {
             "schema": self.schema,
@@ -711,7 +742,9 @@ class StableAcquisitionPlan:
                 "market_websocket_url",
             }
             if not isinstance(value, dict) or not required <= set(value) or (
-                set(value) - required - {"enabled", "l2", "mark_index", "derived_from"}
+                set(value) - required - {
+                    "enabled", "l2", "mark_index", "derived_from", "lineage_config_revision",
+                }
             ):
                 raise ValueError("stable acquisition binding fields are incomplete or unknown")
             enabled = value.get("enabled", True)
@@ -834,6 +867,10 @@ class StableAcquisitionPlan:
                 mark_index=mark_index,
                 enabled=enabled,
                 derived_from=derived_from,
+                lineage_config_revision=(
+                    int(value["lineage_config_revision"])
+                    if value.get("lineage_config_revision") is not None else None
+                ),
             ))
         result = cls(
             schema=str(payload["schema"]),
@@ -1055,7 +1092,7 @@ class StableAcquisitionPlan:
                 "instrument_uid": source.instrument.instrument_uid,
                 "instrument_id": source.instrument.instrument_id,
                 "instrument_revision": source.instrument.metadata_revision,
-                "instrument_catalog_revision": catalog.catalog_revision,
+                "instrument_catalog_revision": catalog.lineage_revision_for(source),
                 "source_id": source.source_id,
                 "source_role": source.source_role,
                 "normalizer_version": source.normalizer_version,
@@ -1224,7 +1261,7 @@ class StableAcquisitionPlan:
                     "native_channel": entry.physical_native_channel,
                     "subscription_id": source.source_id,
                     "adapter_version": source.adapter_version,
-                    "instrument_catalog_revision": catalog.catalog_revision,
+                    "instrument_catalog_revision": catalog.lineage_revision_for(source),
                     "feed": (
                         "BOOK"
                         if acquisition.l2 is not None
@@ -1243,6 +1280,10 @@ class StableAcquisitionPlan:
                         else "LOSSLESS"
                     ),
                 }
+                # DL v2.3.0 2d: a pinned per-binding config lineage travels on the
+                # binding; without a pin the ingestor stamps its config revision.
+                if acquisition.lineage_config_revision is not None:
+                    binding["config_revision"] = acquisition.lineage_config_revision
                 if acquisition.l2 is not None:
                     binding["l2"] = acquisition.l2_mapping()
                 if entry.mark_index_component is not None:

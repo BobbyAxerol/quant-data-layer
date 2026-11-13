@@ -187,6 +187,8 @@ jobs:
           buf lint
           buf breaking --against baseline/qdl-v2-phase1.binpb
           buf breaking --against baseline/qdl-v2-phase7-beta.binpb
+          # DL v2.3.0: the current contract line (schema_digest) must stay compatible.
+          python3 ../scripts/schema_line.py check --buf buf
 
       - name: Check schema against pull-request base
         if: github.event_name == 'pull_request'

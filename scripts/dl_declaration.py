@@ -88,6 +88,7 @@ from qdl.consumer.manifest_compat import (  # noqa: E402
 from qdl.consumer.realtime_route import requirement_key  # noqa: E402
 from qdl.consumer.selectors import SelectorContext  # noqa: E402
 from qdl.runtime import ingestor_lanes  # noqa: E402
+from qdl.runtime.lineage import pin_lineage, retained_lineage_problems, retained_unchanged_ids  # noqa: E402
 from qdl.runtime.bar_edge_checkpoint import (  # noqa: E402
     MIGRATION_SCHEMA,
     CheckpointCrossingRefused,
@@ -682,6 +683,12 @@ class Render:
             catalog_doc["catalog_revision"] = revision
             acq_doc["bindings"].extend(new_acq)
             acq_doc["revision"] = int(base_acq_doc["revision"]) + 1
+            # DL v2.3.0 2d: every retained-unchanged binding keeps its contract
+            # lineage; added rows carry the new revisions (qdl.runtime.lineage).
+            catalog_doc, acq_doc, self.summary["lineage"] = pin_lineage(
+                base_catalog_doc, base_acq_doc, catalog_doc, acq_doc)
+            pinned_acq = {row["binding_id"]: row for row in acq_doc["bindings"]}
+            new_acq = [pinned_acq[row["binding_id"]] for row in new_acq]
         self.summary["catalog"] = {
             "revision": [self.base.catalog.catalog_revision, catalog_doc["catalog_revision"]],
             "new_instruments": [row["native_symbol"] for row in new_instruments],
@@ -962,6 +969,10 @@ class Render:
         additions = [deepcopy(row) for row in new_acq if row["binding_id"] not in have]
         if not additions:
             return base_raw
+        # DL v2.3.0 2d: the bar edge stamps config_revision from this file, so
+        # the retained rows keep the revision they were acquired at.
+        for row in doc["bindings"]:
+            row.setdefault("lineage_config_revision", int(doc["revision"]))
         doc["bindings"].extend(additions)
         doc["revision"] = int(acq_doc["revision"])
         # Stage A precedent (pinned Query runtime r21): sorted-key YAML.
@@ -994,12 +1005,22 @@ class Render:
             # The positional rename check is replaced by the sticky-lane plan when pins are on.
             label = f"{file_name} (sticky lanes)" if pins_on else file_name
             successor, change = ingestor_refresh._validate_transition(active=unpinned, expected=expected,
-                                                                      target=label)
+                                                                      target=label, pin_config_lineage=True)
             native_bars = self._native_bar_additions(unpinned, generated_all.get(lane) or {})
             if native_bars:
                 successor["bindings"] = list(successor["bindings"]) + native_bars
                 if successor.get("config_revision") == active.get("config_revision"):
                     successor["config_revision"] = int(expected["config_revision"])
+            if successor.get("config_revision") != active.get("config_revision"):
+                # DL v2.3.0 2d: bindings carried over from the active file keep
+                # the config revision their records already carry.
+                previous = int(active["config_revision"])
+                carried = {ingestor_lanes.binding_key(b) for b in active["bindings"]}
+                successor["bindings"] = [
+                    dict(b, config_revision=b.get("config_revision", previous))
+                    if ingestor_lanes.binding_key(b) in carried else b
+                    for b in successor["bindings"]
+                ]
             runtime_name = "OKX" if lane == "okx-swap" else "BINANCE"
             cap = int(active.get("max_subscriptions_per_connection", 100))
             lanes_before = ingestor_lanes.lane_plan_report(
@@ -1525,14 +1546,23 @@ def gate(rendered: Path) -> dict[str, Any]:
     # 3. role configs: retained rows byte-identical (lane pins aside), lanes stable
     role_problems = []
     runtime = inputs["base_runtime"]
+    lineage_problems: list[str] = []
     for file_name, base_path in (runtime.get("ingestors") or {}).items():
         new_path = rendered / "ingestor" / file_name
         old, new = json.loads(Path(base_path).read_text()), json.loads(new_path.read_text())
-        strip = lambda rows: {ingestor_lanes.binding_key(b): {k: v for k, v in b.items() if k != "lane_shard"}  # noqa: E731
+        strip = lambda rows: {ingestor_lanes.binding_key(b): {k: v for k, v in b.items()  # noqa: E731
+                                                              if k not in {"lane_shard", "config_revision"}}
                               for b in rows}
         o, n = strip(old["bindings"]), strip(new["bindings"])
         if any(k not in n or n[k] != v for k, v in o.items()):
             role_problems.append(f"{file_name}: a retained binding was removed or changed")
+        # DL v2.3.0 2d: the config lineage a retained binding's envelopes carry is unchanged.
+        effective = lambda doc: {ingestor_lanes.binding_key(b): int(b.get("config_revision",  # noqa: E731
+                                                                          doc["config_revision"])) for b in doc["bindings"]}
+        old_lineage, new_lineage = effective(old), effective(new)
+        moved = sorted(k for k, v in old_lineage.items() if new_lineage.get(k, v) != v)
+        lineage_problems.extend(f"{file_name}: {k} config_revision {old_lineage[k]} -> {new_lineage[k]}"
+                                for k in moved[:5])
         runtime_name = "OKX" if "okx" in file_name else "BINANCE"
         cap = int(new.get("max_subscriptions_per_connection", 100))
         try:
@@ -1571,6 +1601,26 @@ def gate(rendered: Path) -> dict[str, Any]:
         check("bar_edge_checkpoint_crossing", True, crossing.summary())
     except Exception as error:  # noqa: BLE001 - a crossing that cannot be computed is a failure
         check("bar_edge_checkpoint_crossing", False, f"{type(error).__name__}: {error}")
+    # 4b. DL v2.3.0 2d: the contract lineage of every retained-unchanged binding is unchanged
+    #     (catalogue + repository plan, the Query/bar-edge runtime plan, the ingestor files above).
+    try:
+        lineage_record_path = rendered / "runtime/lineage-migration.json"
+        lineage_allowed = (json.loads(lineage_record_path.read_text())["binding_ids"]
+                           if lineage_record_path.is_file() else [])
+        base_docs = (_load_mapping(base_repo / REPO_FILES["catalog"]), _load_mapping(base_repo / REPO_FILES["acquisition"]))
+        new_docs = (_load_mapping(repo / REPO_FILES["catalog"]), _load_mapping(repo / REPO_FILES["acquisition"]))
+        retained = retained_unchanged_ids(*base_docs, *new_docs)
+        base_repo_plan = StableAcquisitionPlan.load(base_repo / REPO_FILES["acquisition"], catalog=base_catalog)
+        lineage_problems.extend(retained_lineage_problems(
+            (base_catalog, base_repo_plan), (catalog, acquisition), retained, migration_binding_ids=lineage_allowed))
+        runtime_retained = retained & {b.binding_id for b in base_plan.bindings} & {
+            b.binding_id for b in runtime_acquisition.bindings}
+        lineage_problems.extend(f"runtime plan: {item}" for item in retained_lineage_problems(
+            (base_catalog, base_plan), (catalog, runtime_acquisition), runtime_retained,
+            migration_binding_ids=lineage_allowed))
+        check("retained_lineage_unchanged", not lineage_problems, lineage_problems[:10])
+    except Exception as error:  # noqa: BLE001 - a lineage that cannot be computed is a failure
+        check("retained_lineage_unchanged", False, f"{type(error).__name__}: {error}")
     # 5. coverage chain: derived parents, execution scope = binding, declared rows resolved or BLOCKED
     chain = []
     if hasattr(runtime_acquisition, "derived_parents"):
