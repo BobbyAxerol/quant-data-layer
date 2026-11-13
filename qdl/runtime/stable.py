@@ -22,6 +22,7 @@ from redis.asyncio import Redis as AsyncRedis
 
 from qdl.api_v2 import create_v2_app
 from qdl.consumer import ConsumerManifestLoader, ConsumerManifestRegistry
+from qdl.consumer.selectors import LazySelectorContext, SelectorContext
 from qdl.projection.stable import RedisStableProjectionTarget, StableCompatibilityProjector
 from qdl.replay import GapFreeHandoff, SignedHandoffCursorCodec
 from qdl.runtime.bounds import BoundedRequestMiddleware, RequestBounds
@@ -38,6 +39,13 @@ from qdl.runtime.readiness import (
     MeasuredRuntimeReadiness,
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
+from qdl.runtime.declaration import (
+    config_file_record,
+    effective_declaration,
+    enforce_declaration,
+    log_effective_declaration,
+    universe_directory,
+)
 from qdl.runtime.memory_maintenance import install_query_memory_maintenance
 from qdl.runtime.stall_telemetry import (
     install_gc_pause_telemetry,
@@ -531,7 +539,27 @@ def stable_grpc_server_credentials(
 
 
 def load_stable_manifests(config: StableRuntimeConfig) -> ConsumerManifestRegistry:
-    manifests = tuple(ConsumerManifestLoader.load(path) for path in config.manifest_paths)
+    # DL v2.3.0: universe selectors expand against the mounted catalogue and
+    # the universe directory (QDL_STABLE_UNIVERSE_DIR, default
+    # <catalogue dir>/universes); the catalogue is read only if a manifest
+    # actually declares a selector.
+    selector_context = LazySelectorContext(lambda: SelectorContext.from_catalog(
+        StableSourceCatalog.load(config.source_bindings_path),
+        universe_dir=universe_directory(None, default=config.source_bindings_path.parent / "universes"),
+    ))
+    manifests = tuple(
+        ConsumerManifestLoader.load(path, selector_context=selector_context)
+        for path in config.manifest_paths
+    )
+    for path, manifest in zip(config.manifest_paths, manifests):
+        for audit in manifest.selector_expansions:
+            logger.info(
+                "consumer manifest selector expanded consumer=%s path=%s universe=%s r%s "
+                "universe_sha256=%s members=%s requirements=%s requirements_sha256=%s",
+                manifest.consumer_id, path, audit["universe_id"], audit["universe_revision"],
+                audit["universe_sha256"], audit["members"], audit["requirements"],
+                audit["requirements_sha256"],
+            )
     # Public market storage/cursors keep their realm. Consumer realms require
     # explicit, separately pinned JWT key/subject bindings.
     raw_realms = os.environ.get("QDL_DATA_JWT_KEY_ENVIRONMENTS_JSON")
@@ -539,7 +567,56 @@ def load_stable_manifests(config: StableRuntimeConfig) -> ConsumerManifestRegist
               if raw_realms else frozenset({config.environment}))
     if any(item.environment not in realms for item in manifests):
         raise ValueError("stable consumer manifest environment mismatch")
-    return ConsumerManifestRegistry(manifests)
+    registry = ConsumerManifestRegistry(manifests)
+    registry.declaration_records = tuple(
+        config_file_record(
+            path, kind="manifest", revision=manifest.manifest_revision,
+            identity=manifest.consumer_id,
+        )
+        for path, manifest in zip(config.manifest_paths, manifests)
+    )
+    return registry
+
+
+def stable_effective_declaration(
+    config: StableRuntimeConfig,
+    *,
+    catalog: StableSourceCatalog,
+    acquisition: StableAcquisitionPlan,
+    manifests: ConsumerManifestRegistry,
+) -> dict:
+    """DL v2.3.0: what this role runs, logged and enforced at start."""
+
+    records = [
+        config_file_record(
+            config.source_bindings_path, kind="catalog", revision=catalog.catalog_revision,
+        ),
+        config_file_record(
+            config.acquisition_bindings_path, kind="acquisition", revision=acquisition.revision,
+        ),
+        *getattr(manifests, "declaration_records", ()),
+    ]
+    declaration = effective_declaration(records, role=config.role)
+    index = enforce_declaration(declaration)
+    if index is not None:
+        declaration = effective_declaration(records, role=config.role, index=index)
+    log_effective_declaration(declaration)
+    return declaration
+
+
+def _declaration_probe(declaration: dict) -> CallableReadinessProbe:
+    detail = (
+        f"digest={declaration['digest']} image_files={declaration['image_files']} "
+        + " ".join(
+            f"{item['kind']}:{item.get('identity') or ''}r{item['revision']}:{item['source']}"
+            for item in declaration["files"]
+        )
+    )
+    revision = declaration["declaration_revision"]
+    # Informational: it never gates readiness, it states what is running.
+    return CallableReadinessProbe("declaration", lambda: _ready(
+        "declaration", detail=detail, revision=None if revision is None else str(revision),
+    ), required=False)
 
 
 def build_stable_identity(
@@ -730,6 +807,12 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
     manifests = load_stable_manifests(config)
     identity = build_stable_identity(config, manifests)
     catalog = StableSourceCatalog.load(config.source_bindings_path)
+    # Loaded once: the effective declaration, the kn3 diagnostic exclusions and
+    # the execution MARK/INDEX reader all read the same plan.
+    acquisition_plan = StableAcquisitionPlan.load(config.acquisition_bindings_path, catalog=catalog)
+    declaration = stable_effective_declaration(
+        config, catalog=catalog, acquisition=acquisition_plan, manifests=manifests,
+    )
     query_backend = os.environ.get(QUERY_BACKEND_ENV, "spool").strip() or "spool"
     if query_backend not in QUERY_BACKENDS:
         raise ValueError(f"{QUERY_BACKEND_ENV} must be one of {QUERY_BACKENDS}")
@@ -747,7 +830,7 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
             session_liveness_root=str(config.session_liveness_dir),
             row_cache_entries=int(os.environ.get(ROW_CACHE_ENTRIES_ENV, str(DEFAULT_ROW_CACHE_ENTRIES))),
             diagnostic_exclusions={b.binding_id: "ACQUISITION_DISABLED"
-                for b in StableAcquisitionPlan.load(config.acquisition_bindings_path, catalog=catalog).bindings
+                for b in acquisition_plan.bindings
                 if not b.enabled},
         )
         kn_issuer = KnCursorV3Issuer(settings, catalog)
@@ -764,7 +847,7 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
         execution_mark_index_reader = (
             build_cache_execution_mark_index_reader(
                 catalog=catalog, backend=kn_backend,
-                acquisition=StableAcquisitionPlan.load(config.acquisition_bindings_path, catalog=catalog),
+                acquisition=acquisition_plan,
                 session_liveness_reader=StableSessionLivenessReader(
                     config.session_liveness_dir, clock_ns=time.time_ns),
             )
@@ -800,7 +883,7 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
         extra_probes=(CallableReadinessProbe("instrument_catalog", lambda: _ready(
             "instrument_catalog", detail=f"bindings={len(catalog.bindings)}",
             revision=str(catalog.catalog_revision),
-        )),),
+        )), _declaration_probe(declaration)),
     )
     app = create_v2_app(
         service, identity_service=identity, readiness_service=readiness,

@@ -541,7 +541,9 @@ pub fn authenticate(
             "workload token signing key is not bound to the manifest subject".into(),
         ));
     }
-    if principal.consumer_manifest_revision != Some(manifest.manifest_revision) {
+    // Exact revision unless the bundle carries a purely additive accept-set
+    // (DL v2.3.0 `min_token_revision`), the same rule as the Python service.
+    if !manifest.accepts_token_revision(principal.consumer_manifest_revision) {
         return Err(AccessError::Unauthenticated(
             "workload token is not bound to the active consumer manifest revision".into(),
         ));

@@ -366,6 +366,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             subject: SUBJECT.into(),
             environment: "paper".into(),
             manifest_revision: 1,
+            min_token_revision: 1,
             allowed_purposes: vec!["INTERNAL_EXECUTION".into()],
             allowed_permissions: vec!["stream:read".into(), "history:read".into()],
             requirements,

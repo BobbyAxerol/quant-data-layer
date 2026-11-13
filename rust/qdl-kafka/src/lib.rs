@@ -193,8 +193,15 @@ pub struct KafkaTransportConfig {
     pub client_id: String,
     pub group_id: String,
     pub request_timeout: Duration,
+    /// Producer `linger.ms`. `None` leaves the client config exactly as it was
+    /// before the knob existed (librdkafka default, 5 ms in 2.12.1), so every
+    /// role that does not opt in is unchanged. Only producers read it.
+    pub producer_linger_ms: Option<u32>,
     pub tls: KafkaTlsConfig,
 }
+
+/// Inclusive bounds of an explicit producer `linger.ms` (DL v2.3.0 batching knob).
+pub const PRODUCER_LINGER_MS_MAX: u32 = 100;
 
 impl KafkaTransportConfig {
     pub fn validate(&self) -> Result<(), KafkaTransportError> {
@@ -219,6 +226,14 @@ impl KafkaTransportConfig {
             return Err(KafkaTransportError::Configuration(
                 "request_timeout must be positive".into(),
             ));
+        }
+        if self
+            .producer_linger_ms
+            .is_some_and(|value| value > PRODUCER_LINGER_MS_MAX)
+        {
+            return Err(KafkaTransportError::Configuration(format!(
+                "producer_linger_ms must be within 0..={PRODUCER_LINGER_MS_MAX}"
+            )));
         }
         for path in [
             &self.tls.ca_location,
@@ -753,6 +768,9 @@ fn durable_producer_config(
             "delivery.timeout.ms",
             config.request_timeout.as_millis().to_string(),
         );
+    if let Some(linger_ms) = config.producer_linger_ms {
+        client.set("linger.ms", linger_ms.to_string());
+    }
     if let Some(bounds) = bounds {
         bounds.apply(&mut client);
     }
@@ -1738,6 +1756,7 @@ mod tests {
             client_id: "qdl-core-001".into(),
             group_id: "qdl-core-v1".into(),
             request_timeout: Duration::from_secs(5),
+            producer_linger_ms: None,
             tls: KafkaTlsConfig {
                 ca_location: "/not-read/ca".into(),
                 certificate_location: "/not-read/cert".into(),
@@ -1857,6 +1876,7 @@ mod tests {
             client_id: "qdl-core-002".into(),
             group_id: "qdl-core-v1".into(),
             request_timeout: Duration::from_secs(30),
+            producer_linger_ms: None,
             tls: KafkaTlsConfig {
                 ca_location: "/not-read/ca".into(),
                 certificate_location: "/not-read/cert".into(),
@@ -1921,6 +1941,7 @@ mod tests {
                 client_id: "qdl-config-test".into(),
                 group_id: "qdl-config-test".into(),
                 request_timeout: Duration::from_secs(30),
+                producer_linger_ms: None,
                 tls: KafkaTlsConfig {
                     ca_location: path("ca"),
                     certificate_location: path("cert"),
@@ -1995,6 +2016,36 @@ mod tests {
     }
 
     #[test]
+    fn producer_linger_is_absent_unless_explicitly_configured() {
+        let (mut config, directory) = config_with_tls_files("linger");
+        let bounds = ProducerQueueBounds::scaled_default(4).unwrap();
+        let unset = durable_producer_config(&config, Some(bounds)).unwrap();
+        assert_eq!(unset.get("linger.ms"), None);
+        config.producer_linger_ms = Some(20);
+        let set = durable_producer_config(&config, Some(bounds)).unwrap();
+        assert_eq!(set.get("linger.ms"), Some("20"));
+        // Unset is byte-identical to the config before the knob existed: the
+        // explicit setting is the only key that differs.
+        let unset_keys = unset.config_map().clone();
+        let mut set_keys = set.config_map().clone();
+        set_keys.remove("linger.ms");
+        assert_eq!(unset_keys, set_keys);
+        config.producer_linger_ms = Some(0);
+        assert_eq!(
+            durable_producer_config(&config, None)
+                .unwrap()
+                .get("linger.ms"),
+            Some("0")
+        );
+        config.producer_linger_ms = Some(super::PRODUCER_LINGER_MS_MAX + 1);
+        assert!(matches!(
+            durable_producer_config(&config, None),
+            Err(KafkaTransportError::Configuration(message)) if message.contains("producer_linger_ms")
+        ));
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn shutdown_signal_labels_are_stable_for_structured_logs() {
         assert_eq!(ShutdownSignal::Interrupt.as_str(), "SIGINT");
         assert_eq!(ShutdownSignal::Terminate.as_str(), "SIGTERM");
@@ -2022,6 +2073,7 @@ mod tests {
             client_id: "phase8-test".into(),
             group_id: "phase8-test".into(),
             request_timeout: Duration::from_secs(5),
+            producer_linger_ms: None,
             tls: KafkaTlsConfig {
                 ca_location: "/missing/ca".into(),
                 certificate_location: "/missing/cert".into(),
@@ -2122,6 +2174,7 @@ mod tests {
             client_id: String::new(),
             group_id: String::new(),
             request_timeout: Duration::ZERO,
+            producer_linger_ms: None,
             tls: KafkaTlsConfig {
                 ca_location: String::new(),
                 certificate_location: String::new(),
@@ -2170,6 +2223,7 @@ mod control_broker_tests {
             client_id: "readiness-control-test".into(),
             group_id: "readiness-control-test-group".into(),
             request_timeout: Duration::from_secs(10),
+            producer_linger_ms: None,
             tls: KafkaTlsConfig {
                 ca_location: format!("{root}/ca.crt"),
                 certificate_location: format!("{root}/client.crt"),

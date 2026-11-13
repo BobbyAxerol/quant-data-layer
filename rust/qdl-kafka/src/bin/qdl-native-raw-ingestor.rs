@@ -530,13 +530,81 @@ fn required(name: &str) -> Result<String, String> {
     env::var(name).map_err(|_| format!("required environment variable is missing: {name}"))
 }
 
+/// The raw producer's tunables, read from the environment once.
+///
+/// Both are optional and default to the values this ingestor used before they
+/// were configurable, so an unchanged container env builds a byte-identical
+/// producer config:
+/// - `QDL_KAFKA_PRODUCER_LINGER_MS` (0..=100): producer `linger.ms`. Unset keeps
+///   the librdkafka default (5 ms in 2.12.1) by not setting the key at all.
+///   This is the DL v2.3.0 batching measurement knob; it ships unset.
+/// - `QDL_KAFKA_REQUEST_TIMEOUT_SECONDS` (1..=300): socket/request/delivery
+///   timeout. Unset keeps 30 s. The KN compose already sets it to 30 on the
+///   ingestor containers, which this binary ignored until now (the cores read
+///   it); honouring it at its deployed value changes nothing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ProducerSettings {
+    linger_ms: Option<u32>,
+    request_timeout_seconds: u64,
+}
+
+const DEFAULT_KAFKA_REQUEST_TIMEOUT_SECONDS: u64 = 30;
+
+impl ProducerSettings {
+    fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
+        let linger_ms = match lookup("QDL_KAFKA_PRODUCER_LINGER_MS") {
+            None => None,
+            Some(raw) => match raw.trim().parse::<u32>() {
+                Ok(value) if value <= qdl_kafka::PRODUCER_LINGER_MS_MAX => Some(value),
+                _ => {
+                    return Err(format!(
+                        "QDL_KAFKA_PRODUCER_LINGER_MS must be an integer within 0..={}",
+                        qdl_kafka::PRODUCER_LINGER_MS_MAX
+                    ))
+                }
+            },
+        };
+        let request_timeout_seconds = match lookup("QDL_KAFKA_REQUEST_TIMEOUT_SECONDS") {
+            None => DEFAULT_KAFKA_REQUEST_TIMEOUT_SECONDS,
+            Some(raw) => match raw.trim().parse::<u64>() {
+                Ok(value) if (1..=300).contains(&value) => value,
+                _ => {
+                    return Err(
+                        "QDL_KAFKA_REQUEST_TIMEOUT_SECONDS must be an integer within 1..=300"
+                            .into(),
+                    )
+                }
+            },
+        };
+        Ok(Self {
+            linger_ms,
+            request_timeout_seconds,
+        })
+    }
+
+    fn from_environment() -> Result<Self, String> {
+        Self::from_lookup(|name| env::var(name).ok())
+    }
+
+    /// What the process reports it runs with (startup and progress lines).
+    fn report(&self) -> Value {
+        json!({
+            "linger_ms": self.linger_ms,
+            "linger_ms_source": if self.linger_ms.is_some() { "EXPLICIT" } else { "LIBRDKAFKA_DEFAULT" },
+            "request_timeout_seconds": self.request_timeout_seconds,
+        })
+    }
+}
+
 fn kafka_config(identity: &str) -> Result<KafkaTransportConfig, String> {
     let cert_root = required("QDL_KAFKA_CERT_ROOT")?;
+    let producer = ProducerSettings::from_environment()?;
     Ok(KafkaTransportConfig {
         bootstrap_servers: required("QDL_KAFKA_BOOTSTRAP_SERVERS")?,
         client_id: format!("{}-{identity}", required("QDL_KAFKA_CLIENT_ID")?),
         group_id: required("QDL_KAFKA_GROUP_ID")?,
-        request_timeout: Duration::from_secs(30),
+        request_timeout: Duration::from_secs(producer.request_timeout_seconds),
+        producer_linger_ms: producer.linger_ms,
         tls: KafkaTlsConfig {
             ca_location: format!("{cert_root}/ca.crt"),
             certificate_location: format!("{cert_root}/client.crt"),
@@ -1439,6 +1507,7 @@ async fn report_progress(
     runtime: &'static str,
     accepted: Arc<AtomicU64>,
     coalesced: Arc<AtomicU64>,
+    producer: Value,
 ) {
     let mut tick = tokio::time::interval(PROGRESS_INTERVAL);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -1448,13 +1517,14 @@ async fn report_progress(
         tick.tick().await;
         let now = Instant::now();
         let Ok(now_ns) = now_ns() else { continue };
-        let line = registry.progress_line(
+        let mut line = registry.progress_line(
             runtime,
             now.saturating_duration_since(previous),
             now_ns,
             accepted.load(Ordering::Acquire),
             coalesced.load(Ordering::Acquire),
         );
+        line["producer"] = producer.clone();
         previous = now;
         println!("{line}");
     }
@@ -4661,6 +4731,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
         }
     });
+    // Fail at start, before any venue connection, on an invalid producer knob.
+    let producer = ProducerSettings::from_environment()?.report();
     println!(
         "{}",
         serde_json::to_string(&json!({
@@ -4668,6 +4740,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "runtime": format!("{:?}", config.runtime).to_ascii_uppercase(),
             "authority": authority_mode_name(&config.authority.mode),
             "bindings": config.bindings.len(),
+            "producer": producer.clone(),
             "latest_state_flush_ms": config.latest_state_flush_ms,
             "latest_state_staleness": config.latest_state_staleness,
             "production_public_writes": 0,
@@ -4683,6 +4756,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         },
         Arc::clone(&accepted),
         Arc::clone(&coalesced_latest),
+        producer,
     ));
     let supervisor_backoff = BackoffPolicy {
         initial_ms: 500,
@@ -8023,6 +8097,73 @@ mod staleness_tests {
             );
         } else {
             assert_eq!(report["staleness_recycles_total"], 0, "{summary}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod producer_settings_tests {
+    use super::{ProducerSettings, DEFAULT_KAFKA_REQUEST_TIMEOUT_SECONDS};
+    use std::collections::HashMap;
+
+    fn settings(values: &[(&str, &str)]) -> Result<ProducerSettings, String> {
+        let map: HashMap<String, String> = values
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect();
+        ProducerSettings::from_lookup(|name| map.get(name).cloned())
+    }
+
+    #[test]
+    fn unset_environment_keeps_the_pre_knob_producer() {
+        let unset = settings(&[]).unwrap();
+        assert_eq!(unset.linger_ms, None);
+        assert_eq!(
+            unset.request_timeout_seconds,
+            DEFAULT_KAFKA_REQUEST_TIMEOUT_SECONDS
+        );
+        assert_eq!(unset.report()["linger_ms"], serde_json::Value::Null);
+        assert_eq!(unset.report()["linger_ms_source"], "LIBRDKAFKA_DEFAULT");
+    }
+
+    #[test]
+    fn explicit_linger_and_timeout_are_used_and_reported() {
+        let set = settings(&[
+            ("QDL_KAFKA_PRODUCER_LINGER_MS", "20"),
+            ("QDL_KAFKA_REQUEST_TIMEOUT_SECONDS", "45"),
+        ])
+        .unwrap();
+        assert_eq!(set.linger_ms, Some(20));
+        assert_eq!(set.request_timeout_seconds, 45);
+        assert_eq!(set.report()["linger_ms"], 20);
+        assert_eq!(set.report()["linger_ms_source"], "EXPLICIT");
+        assert_eq!(
+            settings(&[("QDL_KAFKA_PRODUCER_LINGER_MS", "0")])
+                .unwrap()
+                .linger_ms,
+            Some(0)
+        );
+        assert_eq!(
+            settings(&[("QDL_KAFKA_PRODUCER_LINGER_MS", "100")])
+                .unwrap()
+                .linger_ms,
+            Some(100)
+        );
+    }
+
+    #[test]
+    fn out_of_range_or_malformed_values_fail_at_start() {
+        for value in ["101", "-1", "5ms", "", "1e3"] {
+            assert!(
+                settings(&[("QDL_KAFKA_PRODUCER_LINGER_MS", value)]).is_err(),
+                "{value:?}"
+            );
+        }
+        for value in ["0", "301", "abc"] {
+            assert!(
+                settings(&[("QDL_KAFKA_REQUEST_TIMEOUT_SECONDS", value)]).is_err(),
+                "{value:?}"
+            );
         }
     }
 }

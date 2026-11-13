@@ -29,6 +29,7 @@ fn transport_config(identity: &str, group_id: &str) -> Result<KafkaTransportConf
         client_id: format!("phase8-authority-{identity}"),
         group_id: group_id.to_owned(),
         request_timeout: Duration::from_secs(15),
+        producer_linger_ms: None,
         tls: KafkaTlsConfig {
             ca_location: format!("{cert_root}/ca.crt"),
             certificate_location: format!("{cert_root}/phase8-{identity}.crt"),

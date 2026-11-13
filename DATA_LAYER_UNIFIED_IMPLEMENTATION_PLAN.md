@@ -77135,3 +77135,88 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   Same session, 06:10-06:13Z, 24 shapes x 2 passes: **PASS**. Statuses: 44 x 200 and 4 x 400 typed refusals, equal on
   both images. Receipt `byte-compare-alpha.json` `c884e495...`, copied to the release folder. 0 `qdl-hr-*` containers
   and networks left.
+
+### DL v2.3.0 slice 2a: declaration-only mechanism (accept-set, selectors, provenance, checkpoint v5, producer knobs) - 2026-11-13 (Claude)
+
+- Goal (owner, via the coordinator 2026-11-13): after v2.3.0, adding instruments or derived intervals is a config
+  revision + coverage gate + ordered restart, with no certification campaign, image or tag.
+  - Study: `COVERAGE_150_STUDY.md` §6 (scratchpad `dlcov/`).
+  - Guide delta: `upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md` "Delta 2026-11-13: DL v2.3.0
+    declaration-only coverage mechanism (slice 2a)".
+  - Branch `feat/v2.3.0-declaration-mechanism` off origin/dev 098c94b, worktree `.worktrees/dl-v230-declaration`.
+  - Parallel: DERIVED_FINAL bars live in `dl-v230-derived-bars`; this slice does not touch their code. Expected
+    overlap is only `stable_bar_edge.py` `__init__` (they add derived pairs; here two kwargs and
+    `_binding_digests`) and `stable_deployment.py` (theirs only).
+- Scope 2a (implemented, tested locally, no runtime change, nothing pushed):
+  1. **Accept-set.**
+     - Manifest `metadata.min_token_revision` (optional, 1..revision; bool/non-int refused).
+       `ConsumerManifest.accepts_token_revision` is used by `qdl/security/data_plane.py`.
+     - Rust `gateway_bundle::Manifest.min_token_revision` (absent = revision) and `accepts_token_revision` are
+       used by `auth.rs` authenticate and `authority.rs` reauthorize.
+     - The renderer rule is `qdl/consumer/manifest_compat.py`: an additive successor keeps the floor, anything
+       else resets it. The gate check is `declared_floor_problems`.
+     - The bundle compiler emits the field only when declared.
+  2. **Universe selectors.**
+     - Code: `qdl/consumer/selectors.py`, loaded by `ConsumerManifestLoader.load(..., selector_context=)`.
+     - ALPHA/RESEARCH only; deterministic expansion; unknown member refused; at most 16,384 rows.
+     - Audit in `selector_expansions` (Query log + bundle entry).
+     - Universe files: `qdl.v2.declared-universe.v1`, or the D48 market-cap membership.
+     - Query builds the selector context lazily (only if a manifest has selectors).
+     - The requirement check uses an index keyed by (uid, feed, interval), with the same comparisons.
+  3. **Effective declaration.**
+     - `qdl/runtime/declaration.py` records each loaded file: path, sha256, revision, IMAGE/MOUNTED.
+     - Opt-in guards: `QDL_STABLE_REQUIRE_MOUNTED_DECLARATION=1` and `QDL_STABLE_DECLARATION_INDEX`.
+     - bar_edge logs it and adds `declaration` to its heartbeat (additive keys, `heartbeat.extra`).
+     - Query logs it and adds a non-gating `declaration` component to `/health/dependencies`. The kn3 path now
+       loads the acquisition plan once instead of twice.
+  4. **Bar-edge checkpoint v5.**
+     - `qdl/runtime/bar_edge_checkpoint.py`: per-binding series digest, then `plan_crossing`.
+     - Additive crossing: watermarks kept, added bindings bootstrap.
+     - Removed or changed bindings: refused unless an exact `qdl.stable-bar-edge-checkpoint-migration.v1` record
+       (`QDL_STABLE_BAR_CHECKPOINT_MIGRATION`) names them.
+     - Revisions never decrease.
+     - A legacy v2-v4 checkpoint crosses only with `previous_binding_digests`.
+     - A repair client never crosses.
+     - The edge writes v5 from now on. The old image cannot read v5, so rollback restores the pre-roll checkpoint
+       backup.
+  5. **Ingestor producer knobs.**
+     - `KafkaTransportConfig.producer_linger_ms` (`linger.ms` set only when Some, 0..=100).
+     - Ingestor env `QDL_KAFKA_PRODUCER_LINGER_MS` and `QDL_KAFKA_REQUEST_TIMEOUT_SECONDS`, both unset = today.
+       The second fixes the side finding that the ingestor hard-coded 30 s and ignored the variable set on its
+       container; the deployed value is 30, so no behaviour change.
+     - Echoed as `producer` in the started and progress events. Ships unset (BATCHING_SLICE design).
+- Production facts read for the rollout (read-only: docker inspect and `--rm` reads, no mutation):
+  - bar_edge `08f356a8` runs image config catalog r11 / acquisition r19. Query `/runtime`
+    (`releases/v2.2.0-02cd827/runtime`) is r12/r20.
+  - Live checkpoint `crypto-bar-checkpoint.json`: schema v4, 640 binding_ids, 635 watermarks, canonical_cache_id
+    present.
+  - Both ingestor containers carry `QDL_KAFKA_REQUEST_TIMEOUT_SECONDS=30`.
+- Tests (all in `--rm` containers, no network for Python):
+  - Python, image `qdl-v2-python:2.2.5-9b6747f`:
+    - new `tests/test_v230_declaration_mechanism.py`: 20 OK;
+    - impacted suites (67 modules that import manifests, the bundle, data-plane security, the bar edge or the
+      heartbeat): 1353 OK (49 skipped); after the Query declaration wiring, the 24 modules importing `qdl.runtime.stable`/selectors re-run: 247 OK (1 skipped).
+    - Existing tests updated for intended changes:
+      - persisted checkpoint schema v3/v4 -> v5 (4 asserts);
+      - r128 test double gains `_binding_digests` / `checkpoint_migration`, and its refusal message is now the
+        legacy one.
+  - Bundle compat: the repo bundle compiled at 098c94b and on this tree is byte-identical (sha256
+    `21f42d2d726de6b9...`).
+  - Rust, image `qdl-rust-builder:r134-test` (1.82.0), `--cpus 2 --memory 4g`:
+    - `cargo fmt --all -- --check` OK;
+    - `cargo clippy -p qdl-kafka -p qdl-contracts -p qdl-stream-gateway --all-targets --locked -- -D warnings` OK;
+    - `cargo test` on the same packages: qdl-contracts 34, qdl-kafka lib 47 (2 ignored), ingestor 73 (1 ignored),
+      production-core 7, realtime-core 30, stream-gateway lib 69, hot_lookup 1, native_stream 56 (1 ignored).
+    - New tests:
+      - accept-set parse/refusal x3;
+      - `t03_an_additive_manifest_revision_keeps_older_tokens_and_a_reset_floor_ends_them`;
+      - producer linger unset/set/out-of-range;
+      - ingestor ProducerSettings x3.
+- Cleanup: every container `--rm`; no image built. Scratch (`scratchpad/v230`: target, registry, logs) is outside
+  the repo.
+- Status: implemented, tested locally. Not shadow-certified, not deployed.
+- Open:
+  - 2b: sticky lanes, per-feed flush, compose mounts.
+  - The declaration tool (separate agent, from this commit).
+  - Usability status file `qdl.execution-binding-status.v1`.
+  - v2.3.0 release certificate (R-cert 1-4 of the study, which the derived-bars slice shares).

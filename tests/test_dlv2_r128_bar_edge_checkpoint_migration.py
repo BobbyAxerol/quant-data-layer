@@ -153,6 +153,9 @@ class RestoreAcceptsTheMigratedCheckpointTests(unittest.TestCase):
             if item.binding_id.startswith("okx")
         )
         edge._checkpoint_history_gaps = lambda restored: {}
+        # DL v2.3.0: series digests of the runtime bindings, and no record.
+        edge._binding_digests = {name: f"{index:064x}" for index, name in enumerate(BINDINGS)}
+        edge.checkpoint_migration = None
         return edge
 
     def _restore(self, payload: dict, *, acquisition_revision: int) -> StableBinanceBarEdge:
@@ -166,7 +169,9 @@ class RestoreAcceptsTheMigratedCheckpointTests(unittest.TestCase):
 
     def test_the_unmigrated_checkpoint_is_refused_at_the_new_revision(self):
         """The failure this migration exists to prevent, reproduced first."""
-        with self.assertRaisesRegex(RuntimeError, "acquisition_revision"):
+        # DL v2.3.0: a legacy (v4) checkpoint without series digests still
+        # cannot cross a revision on its own; it needs a migration record.
+        with self.assertRaisesRegex(RuntimeError, "legacy checkpoint cannot prove"):
             self._restore(_checkpoint(), acquisition_revision=17)
 
     def test_the_migrated_checkpoint_restores_with_its_watermarks(self):

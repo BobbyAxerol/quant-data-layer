@@ -3184,3 +3184,38 @@ Use exact TS case roster/provenance; development placeholders are not acceptance
 Retain v2.2.3 HOLD until DR/broker receipts and own DR01/DR08 meet their contracts.
 TRADE latest-state opt-in and realtime-core batch25->50 remain proposals only;
 no delivery-mode default, interface, broker config or core binary is changed.
+
+### Delta 2026-11-13: DL v2.3.0 declaration-only coverage mechanism (slice 2a)
+
+Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, "DL v2.3.0 slice 2a: declaration-only mechanism".
+Owner requirement: after v2.3.0, adding instruments or derived intervals is a config revision + coverage gate +
+ordered restart, with no certification campaign, image or tag. The design rules this delta adds:
+
+1. **Consumer manifest accept-set.** `metadata.min_token_revision` (optional, `1..revision`) lets readers
+   (Python `data_plane.py`, Rust `auth.rs`/`authority.rs`) accept a workload token for any revision in
+   `min..revision`.
+   - Only `qdl.consumer.manifest_compat.next_min_token_revision` may set it. Purely additive successors keep the
+     floor; anything else resets it to the new revision, which keeps the same-window JWT coupling for non-additive
+     bumps.
+   - Absent = the exact-match rule, so the bundle stays byte-identical.
+2. **Universe selectors** (`spec.selectors`) grant ALPHA/RESEARCH rows by declared universe. Expansion is
+   deterministic against the mounted catalogue and audited (universe revision and sha256, row count, rows sha256)
+   in the manifest, the Query log and the gateway bundle.
+   - Execution rows stay explicit.
+   - Unknown members fail closed.
+3. **Effective declaration.** Every role states the files it loaded (path, sha256, revision, IMAGE or MOUNTED).
+   Opt-in guards: `QDL_STABLE_REQUIRE_MOUNTED_DECLARATION`, and `QDL_STABLE_DECLARATION_INDEX` (sha256 index of a
+   rendered declaration).
+4. **Bar-edge checkpoint v5** stores a per-binding series digest. A revision crossing keeps every unchanged
+   watermark and bootstraps only the added bindings.
+   - Removal or a change of series identity or acquisition mode is refused unless an explicit
+     `qdl.stable-bar-edge-checkpoint-migration.v1` record names exactly that set.
+   - Revisions never decrease (rollback is a forward declaration).
+   - This replaces the strict equality that caused the C.19/C.32 strand.
+5. **Raw ingestor producer knobs** (env, unset = unchanged): `QDL_KAFKA_PRODUCER_LINGER_MS` (0..100, the batching
+   measurement variable) and `QDL_KAFKA_REQUEST_TIMEOUT_SECONDS`. Before this, the ingestor ignored the timeout
+   variable and hard-coded 30 s.
+
+Still a release after v2.3.0: new venue/market or feed type, new derivation kind, parser/normaliser/proto change,
+flush or lane semantics, exceeding the certified capacity envelope. Removals and source-mode changes are a
+declaration with an explicit migration record, separately approved.

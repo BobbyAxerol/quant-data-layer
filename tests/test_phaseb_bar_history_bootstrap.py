@@ -1527,7 +1527,7 @@ class StableBarBootstrapTests(unittest.TestCase):
                 self.assertEqual(first.bootstrap_history(), expected_bindings * 2)
 
             persisted = json.loads(state_path.read_text(encoding="utf-8"))
-            self.assertEqual(persisted["schema"], "qdl.stable-bar-edge-state.v3")
+            self.assertEqual(persisted["schema"], "qdl.stable-bar-edge-state.v5")
             self.assertEqual(persisted["connection_generation"], 100)
             self.assertEqual(persisted["warmup_rows"], 2)
             self.assertEqual(set(persisted["last_open_ms"]), set(first._binding_ids))
@@ -1629,7 +1629,7 @@ class StableBarBootstrapTests(unittest.TestCase):
             self.assertEqual(rebuilt._last_open_ms, {})
             self.assertEqual(rebuilt.connection_generation, 300)
             persisted = json.loads(state_path.read_text(encoding="utf-8"))
-            self.assertEqual(persisted["schema"], "qdl.stable-bar-edge-state.v4")
+            self.assertEqual(persisted["schema"], "qdl.stable-bar-edge-state.v5")
             self.assertEqual(persisted["canonical_cache_id"], rebuilt_cache_id)
             self.assertEqual(persisted["last_open_ms"], {})
 
@@ -1665,7 +1665,7 @@ class StableBarBootstrapTests(unittest.TestCase):
                 generation_clock_ns=lambda: 777,
             )
             persisted = json.loads(state_path.read_text(encoding="utf-8"))
-            self.assertEqual(persisted["schema"], "qdl.stable-bar-edge-state.v4")
+            self.assertEqual(persisted["schema"], "qdl.stable-bar-edge-state.v5")
             self.assertEqual(persisted["canonical_cache_id"], "c" * 32)
             self.assertEqual(persisted["connection_generation"], 777)
             self.assertEqual(persisted["last_open_ms"], {})
@@ -1779,7 +1779,7 @@ class StableBarBootstrapTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "every Kafka ACK"):
                     edge.bootstrap_history()
             persisted = json.loads(state_path.read_text(encoding="utf-8"))
-            self.assertEqual(persisted["schema"], "qdl.stable-bar-edge-state.v3")
+            self.assertEqual(persisted["schema"], "qdl.stable-bar-edge-state.v5")
             self.assertGreater(persisted["connection_generation"], 0)
             self.assertEqual(persisted["last_open_ms"], {})
             self.assertEqual(edge._last_open_ms, {})
