@@ -44,7 +44,12 @@ class RenderAndTopologyTests(unittest.TestCase):
             if row["mode"] == "DERIVED_FINAL":
                 self.assertIsNone(row["websocket_url"])
                 self.assertEqual(row["sequence_policy"], "NONE")
-        self.assertEqual(modes, {"RUST_NATIVE": 5, "DERIVED_FINAL": 65})
+        self.assertEqual(modes, {"RUST_NATIVE": 3, "PYTHON_REST": 2, "DERIVED_FINAL": 65})
+        rest = [row for row in plan["bindings"] if row["mode"] == "PYTHON_REST"]
+        self.assertTrue(all(row["native_channel"] == "candle1m" and row["websocket_url"] is None for row in rest))
+        self.assertEqual(self.packet["lanes"]["DOGE-USDT-SWAP"], "REST_FINAL")
+        self.assertEqual(self.packet["lanes"]["BTC-USDT-SWAP"], "NATIVE_WS")
+        self.assertEqual(len(self.packet["base_bindings"]), 5)
         self.assertEqual(plan["topics"]["raw"], NS + ".raw")
         self.assertEqual(len(self.packet["derived_parents"]), 65)
         catalog = json.loads((self.work / "catalog.yaml").read_text())
@@ -62,7 +67,8 @@ class RenderAndTopologyTests(unittest.TestCase):
         self.assertTrue(week and all(item["anchor_ms"] == 4 * 86_400_000 for item in week))
         ingestor = json.loads((self.work / "ingestor.json").read_text())
         self.assertEqual(sorted({item["native_channel"] for item in ingestor["bindings"]}), ["candle1m"])
-        self.assertEqual(sorted(item["native_symbol"] for item in ingestor["bindings"]), sorted(shadow.SYMBOLS))
+        self.assertEqual(sorted(item["native_symbol"] for item in ingestor["bindings"]),
+                         sorted(set(shadow.SYMBOLS) - set(shadow.REST_FINAL_SYMBOLS)))
         self.assertTrue(ingestor["generation_state_path"].startswith("/work/"))
         bundle = json.loads((self.work / "bundle.json").read_text())
         self.assertTrue(bundle)
@@ -154,6 +160,16 @@ class ComparatorTests(unittest.TestCase):
         self.assertEqual(classify(derived=_row(180_000), native_row=provisional, interval="3m",
                                   base_interval="1m")["verdict"], "NATIVE_UNAVAILABLE")
 
+    def test_base_verdicts_and_latency_gates(self):
+        row = _row(60_000, origin=common_pb2.BAR_ORIGIN_VENUE_NATIVE)
+        result = shadow.classify_base(row=row, native_row=NATIVE)
+        self.assertEqual((result["verdict"], result["final_latency_ms"]), ("MATCH", 2_001))
+        gates = shadow.latency_gates({"REST_FINAL/1m": {"n": 9, "p50": 3_000, "p99": 19_000},
+                                      "REST_FINAL/1h": {"n": 3, "p50": 9_000, "p99": 31_000},
+                                      "NATIVE_WS/1h": {"n": 3, "p50": 1_000, "p99": 2_000}})
+        self.assertEqual((gates["REST_FINAL/1m"], gates["REST_FINAL/derived"]), ("PASS", "FAIL"))
+        self.assertEqual(shadow.latency_gates({})["REST_FINAL/1m"], "NOT_MEASURED")
+
     def test_compare_once_records_and_summarizes(self):
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory) / "work"
@@ -179,9 +195,10 @@ class ComparatorTests(unittest.TestCase):
             summary = shadow.compare(work, once=True, http=http, readback=Readback(), started_ms=0)
             self.assertEqual(summary["mismatches"], 0)
             self.assertEqual(summary["by_interval"]["3m"]["MATCH"], 3)
-            self.assertEqual(summary["missing"], 64 * 3, "every other binding has no derived row here")
+            self.assertEqual(summary["missing"], (64 + 5) * 3, "every other binding and base has no row here")
             self.assertNotIn("NATIVE_UNAVAILABLE", summary["by_verdict"])
-            self.assertEqual(summary["latency_ms"]["3m"]["n"], 3)
+            self.assertEqual([value["n"] for key, value in summary["latency_ms"].items() if key.endswith("/3m")], [3])
+            self.assertIn("latency_gates", summary)
             # A second pass compares nothing twice (restart-safe evidence).
             again = shadow.compare(work, once=True, http=http, readback=Readback(), started_ms=0)
             self.assertEqual(again["by_interval"]["3m"]["MATCH"], 3)
