@@ -48,7 +48,7 @@ from scripts.host_measurement_lock import MAX_MINUTES as MAX_LOCK_MINUTES, lock_
 # (rc2 `qdl-v2-rust:2.3.0-rc2-832c02c4` 58bdd282.., `qdl-v2-python:2.3.0-rc2-832c02c4` 03de529a..). The v2.2.5 note:
 # python-only, rust images kept their v2.2.4 digests.
 RELEASE = "2.3.0"
-SDK_VERSION = "2.4.1"
+SDK_VERSION = "2.5.0"
 REPO = Path(__file__).resolve().parents[1]
 HOME = Path.home()
 STATE_ROOT = HOME / ".local/state/qdl-v2"

@@ -49,7 +49,10 @@ derived bars, so higher intervals are aggregated from final 1m bars inside the s
   `release/v2.2.7-ingestor-linger` (`13f20d0`) never rolled and is not tagged. Its knob
   (`QDL_KAFKA_PRODUCER_LINGER_MS`, honoured `QDL_KAFKA_REQUEST_TIMEOUT_SECONDS`) is re-implemented in v2.3.0 slices
   2a/2b (coordinator decision 2026-11-13).
-- **SDK**: unchanged. `qdl-sdk 2.4.1`, no diff under `qdl_sdk/` since v2.2.5.
+- **SDK 2.5.0** (additive, no SDK source change). The wheel bundles the generated contract, which gains
+  `Bar.aggregation = 19` (`BarAggregation`). Its bytes therefore differ from the v2.2.5 asset `qdl_sdk-2.4.1`, so the
+  version is bumped rather than republishing 2.4.1 with other bytes (release decision 2026-11-13, overnight package,
+  recommended option). 2.4.1 keeps working against v2.3.0; older clients ignore field 19.
 
 ## Runtime (docker inspect after the window: TBD)
 
@@ -152,3 +155,11 @@ From the window packet section 5, as exercised on 2026-11-13 13:00-13:05Z (rc2 r
 and v2.2.5 for the Binance ingestor/bar_edge. Capture logs and inspect before every recreate. The writer is
 restored BOOTSTRAP then STRICT, never with `docker start`. The pre-rollout bar-edge checkpoint backup restores
 the v4 checkpoint, because the old image cannot read v5. A declaration rollback is a forward declaration.
+
+**Projector rollback after derived bars are published (R-cert 2 S5).** Once DERIVED_FINAL bars carrying
+`BAR_ORIGIN_AGGREGATED` / `Bar.aggregation` are on `md.bars.v2`, rolling the projectors back to the v2.2.4 image
+stops stage B: the old projector rejects those records with `ENVELOPE_NOT_CANONICAL`, so bars stop flowing to the
+cache. A projector-only rollback is therefore not a safe partial rollback after the first derived bar. Roll back
+coupled (section 5), with bar_edge's derived bindings removed first by a forward declaration, or keep the projectors
+on the v2.3.0 image. TBD: the regression verdict on the real v2.2.6 r13 rollback target and on the projector
+stage-B `BrokerTransportFailure` exit seen during the broker roll (it gates the tag).

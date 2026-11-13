@@ -19,7 +19,7 @@ pass the offline gate, ordered restart; no campaign, image or tag. DL-side deriv
     and the 6.0 vCPU OKX-first cap.
 - Per-binding contract lineage and cursor lineage, seeded from the live ingestor stamps; contract-line `schema_digest`.
 - v2.2.6 stage A configuration (catalogue r13, TS Paper r13 with model quotas).
-- SDK unchanged (2.4.1).
+- SDK 2.5.0: additive; the bundled generated contract gains `Bar.aggregation` (no SDK source change).
 
 Release notes: `upgrade/evidence/releases/v2.3.0/RELEASE_NOTES.md`; certificate: `.../certificate.json` (TBD PASS).
 
@@ -54,7 +54,9 @@ Release notes: `upgrade/evidence/releases/v2.3.0/RELEASE_NOTES.md`; certificate:
   composes, restoring the pre-rollout bar-edge checkpoint backup (v4; the old image cannot read v5). The writer goes
   BOOTSTRAP then STRICT (W.5).
 - A declaration rollback is a forward declaration, so revisions stay monotonic.
+- A projector-only rollback to v2.2.4 after derived bars are published stops stage B (`ENVELOPE_NOT_CANONICAL`,
+  R-cert 2 S5): roll back coupled, or remove derived bindings first.
 - Known limits: single host; IDR-128 open; funding is reference-only here (live binding in v2.3.1); bootstrap depth is
   manifest-wide; bootstrap and gap repair share the HISTORY_CANDLES lane; 1W/2D/3D derived bars off until R-cert 2
   passes a Monday boundary.
-- Not touched: the TS repository (W-B2 is a TS release), Kafka topics and retention, the TLS generation, the SDK wheel.
+- Not touched: the TS repository (W-B2 is a TS release), Kafka topics and retention, the TLS generation.

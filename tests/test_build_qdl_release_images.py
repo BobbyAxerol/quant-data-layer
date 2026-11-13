@@ -374,7 +374,7 @@ class SourceTests(unittest.TestCase):
     def test_pre_bump_source_is_refused(self):
         result = b.source_preconditions(REPO, "87db2159f411e7c4d7d49033e7573b42a75fc91d")
         self.assertFalse(result["ok"])
-        self.assertTrue(any("2.4.1" in p for p in result["problems"]))
+        self.assertTrue(any(b.SDK_VERSION in p for p in result["problems"]))
 
     @unittest.skipUnless(git_has(*(rev for _, rev in b.PYTHON_REFERENCE_TREE)),
                          "reference revision not in this (shallow?) checkout")

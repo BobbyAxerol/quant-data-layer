@@ -1,5 +1,16 @@
 # SDK Changelog
 
+## 2.5.0 (Data Layer v2.3.0: derived-bar lineage in the generated contract)
+
+Additive only; no SDK source change. The bundled generated contract gains
+`Bar.aggregation = 19` (`BarAggregation`: base interval and source, constituent count,
+first/last constituent event ids and offsets, constituent SHA-256). The field is present
+exactly on bars with `BAR_ORIGIN_AGGREGATED` (an existing enum value), i.e. bars the Data Layer
+derived from finer final bars (`DERIVED_FINAL`). Older clients ignore it; 2.4.1 keeps
+working against v2.3.0. The version moves to 2.5.0 because the wheel's generated contract
+(and so its bytes) changed; a 2.4.1 wheel with different bytes would contradict the v2.2.5
+release asset.
+
 ## 2.4.1 (replay budget status opt-in, progress-bounded reconnects; IDR-096)
 
 `GrpcStreamTransport` sets the additive `SubscribeRequest.replay_budget_status_v2 = 8`
