@@ -109,7 +109,7 @@ Build receipt: `~/.local/state/qdl-v2/v230-rcert2/images-832c02c4.json`. Both im
   - **`okx-swap-covered-25`:** 1m granted, derived 3m..1D from native 1m, granted.
   - Not declared: 1W, 2D, 3D (after R-cert 2 passes the Monday boundary), and the 4-contract price_tick refresh
     (non-additive, needs its own migration record).
-  - TS QUOTE/MARK for the other 69 is **stage B**, right after this window: about +1.40 vCPU, which with stage A puts
+  - TS QUOTE/MARK for the other 69 is **stage B**, HELD until DL is back under 6.0 (section 7a): about +1.40 vCPU, which with stage A puts
     it at the 6.0 cap.
 - **Gate: 18/18 PASS:**
   - `live_config_lineage`: 181 live bindings, 34 at 19 (Binance, including the 7 book_delta), 147 at 21;
@@ -512,12 +512,47 @@ labels.
   encodes this (venue priority OKX > BINANCE, cap 6.0).
 - **Headroom** = 6.0 minus the D0-measured median DL vCPU (all `qdl_v2_stable_candidate-*` roles, cgroup 60 s
   samples over 10 min).
-  - Coordinator's current figure: about 4.75-5.16, so headroom is about 0.8-1.25.
+  - The coordinator's earlier figure of about 4.75-5.16 is superseded by the T-30 measurement below; headroom is negative.
   - The declaration's steady delta is about 0. rc2 is new code on every DL role, so the delta is only known by
     measurement.
-- **Recorded gate:** bootstrap end + 30 min median DL vCPU (steady state; the bootstrap burst, upper bound about +0.45 vCPU, is recorded separately) <= 6.0. If it is exceeded, apply the OKX-first rule: defer Binance
-  additions by declaration. This window adds none, so exceeding means rc2 itself costs more, and the window rolls
-  back.
+- **DL is already above the 6.0 cap before this window** (measured at T-30, 2026-11-13 12:32-12:41Z).
+  - Method: `docker stats --no-stream` over every `qdl_v2_stable_candidate-*` container, Kafka included, 10 samples
+    50 s apart.
+  - Samples (vCPU): 6.34, 6.54, 6.03, 5.75, 6.43, 6.38, 5.78, plus the remaining samples in the receipt
+    (`cpu-d0.txt`). Interim median over 7 samples: **6.34**. The D0 median used by the gate is the full 10-sample
+    median, recorded in the receipt.
+  - Per container, the mean of 3 snapshots at about 12:36Z:
+
+    | Container | vCPU |
+    |---|---|
+    | kafka3 | 1.37 |
+    | kafka2 | 1.34 |
+    | kafka1 | 1.11 |
+    | query_kn_2 | 0.43 |
+    | query_kn_1 | 0.29 |
+    | market_projector_1 | 0.26 |
+    | stream_kn_1 | 0.24 |
+    | rust_core_2 | 0.23 |
+    | rust_core | 0.15 |
+    | ingestor_okx_swap | 0.14 |
+    | rust_core_3 | 0.14 |
+    | ingestor_binance_usdm | 0.12 |
+    | market_cache | 0.11 |
+    | stream_kn_2 | 0.11 |
+    | market_projector_2 | 0.10 |
+    | stable_redis | 0.01 |
+    | binance_bar_edge | 0.00 |
+    | total | 6.13 |
+
+  - Cause (coordinator): Kafka F1 leader balancing (about +1.2 vCPU on the brokers) and stage A.
+  - Lever: the ingestor producer linger fix (v2.2.7 knob). It is not in rc2 and not in this window.
+- **Owner decision, this window only: a DELTA gate.**
+  - At bootstrap end + 30 min, the median DL vCPU (same method, Kafka included) must be <= the D0 median + 0.3 vCPU.
+  - Bootstrap bursts are recorded separately and are not gated.
+  - Exceeding it means rc2 itself costs more, so the window rolls back (section 5).
+  - The 6.0 cap is not restated. The receipt records plainly that DL is above it before and after.
+- **Stage B is HELD.** That is TS QUOTE/MARK execution coverage for the other 69, about +1.40 vCPU. It waits until DL
+  is back under 6.0, OKX first.
 
 ## 8. Evidence to keep
 

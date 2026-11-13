@@ -217,7 +217,7 @@ mark W2; hb | tee $WIN/w2-hb.json
   - outstanding derived gaps (gap lines without a `gap healed`) = 0 → else FAIL;
   - record the recorded and healed counts;
   - the gap-repair backlog has drained.
-- At bootstrap end + 30 min: CPU median (same sampler as D0) <= 6.0, else the section 7a rule.
+- At bootstrap end + 30 min: CPU median (same sampler as D0, Kafka included) <= D0 median + 0.3 vCPU (owner delta gate, this window only), else roll back (section 7a).
 - Then release the measurement lock.
 - At + 6 h (~02:00Z, the coordinator's live-controller agent): any `derived BAR gap kept` line → FAIL → section 5
   rollback, outside 23:30-00:05Z.
