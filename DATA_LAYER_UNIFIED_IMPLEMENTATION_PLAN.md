@@ -77484,3 +77484,30 @@ window plan: scratchpad `dlcov/PACKET.md`; window runbook `dlcov/WINDOW_STAGE_A.
     final lane. The 143 declared-native signal BAR 1m bindings therefore render as `PYTHON_REST`, polled by the bar
     edge, not as native OKX candles. The report says so. Native candles would need the builder rule to count SIGNAL
     BAR demand (open question).
+- Update 2026-11-13 (coordinator decision): the 1m source is declarable; the OKX REST budget is gated.
+  - Demand BAR rows may carry `bar_source: NATIVE | REST_FINAL`. Only OKX SWAP accepts it, the one certified native
+    final-bar lane.
+    - `qdl.runtime.universal_demand.resolve_bar_source` is the single rule: a declaration wins; otherwise the
+      bar-family rule applies (stage A: TS QUOTE/MARK pricing alone gives REST_FINAL).
+    - `ProductionCatalogBuilder` uses that rule for the OKX SWAP lane. `ProductionDemand.bar_source` is not part of
+      the requirement identity; two declarations that conflict are refused.
+    - The release-route demand reader accepts the field.
+    - Demand files without the field render exactly as before.
+  - The tool's universe field is `bar_1m_source: native|rest_final`. If omitted, the rule applies (REST_FINAL for
+    the 150 tier), because DERIVED_FINAL consumes only FINAL 1m bars.
+  - The report's `capacity.okx_rest` and the gate check `okx_rest_budget` model the bar edge's REST final reads:
+    - one read per binding per boundary at +0.10 s, through the bar-edge admission lane OKX/SWAP/CANDLES (token
+      bucket, 5 tokens per 2 s = 150/min, `provider-admission-policy-kn-bar-edge-v1.json`);
+    - lane utilisation, and host-IP utilisation with other REST users as declared;
+    - the final-1m read schedule, for R-cert 2: first read and last read after the boundary, and the worst boundary.
+    The check refuses above `okx_rest_max_utilization` (default 0.8), on a one-minute backlog, or above a declared
+    `rest_final_max_visibility_ms`.
+  - Finding (150 on r13, rest_final):
+    - 143 REST 1m + 250 REST 1d (D48) bindings make 143.2 requests/min on a 150/min lane (utilisation 0.95), so the
+      gate fails.
+    - The last 1m read lands +55.3 s after the boundary. At 00:00 UTC 393 reads queue, and the last lands at +155 s,
+      a backlog into the next minutes.
+    - With `bar_1m_source: native` the lane holds only the 1d polls (0.2/min) and the ingest estimate rises by
+      +75 records/s.
+    - REST_FINAL for the 150 tier therefore needs a larger bar-edge OKX CANDLES admission lane (a config change
+      within OKX's per-IP limit, not verified here) or native 1m. Owner decision.

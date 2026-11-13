@@ -3253,3 +3253,9 @@ Update (same day): EXECUTION quotas are derived by `qdl.consumer.quota_model` an
 quota below the model is refused. The gate's `consumer_quota_model` check guards it, and the report carries the
 modelled Query request load (`capacity.query_requests`). Alpha quotas are `MODEL_PENDING`. A retired revision is
 skipped through the declaration's `revision` / `release_revision`, never reused.
+
+Update (same day): the final-BAR source is declarable. A BAR demand row may carry `bar_source: NATIVE|REST_FINAL`
+(OKX SWAP only), resolved by `qdl.runtime.universal_demand.resolve_bar_source`; a declaration universe sets it as
+`bar_1m_source`. The gate check `okx_rest_budget` holds the REST final lane to the bar-edge admission lane
+(OKX/SWAP/CANDLES, 150/min) and to the declared host-IP envelope. The report gives the final-1m read schedule that
+R-cert 2 gates.
