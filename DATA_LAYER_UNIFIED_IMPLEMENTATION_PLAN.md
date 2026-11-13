@@ -78122,3 +78122,39 @@ packets is >= 20% free and >= 90 GiB absolute, not >= 25% (about 22% / 108 GB at
 it, flag it so the owner can add disk; it does not block.
 Superseded the same day (owner update): the floor is >= 14-15% free and never below 10%. It does not block the main
 flow; the owner adds disk on 2026-11-14/15.
+### DL v2.3.0 rc3 window A, 2026-11-13 14:44-17:31Z (Claude): GREEN, DL rc3 live with the old writer
+
+- **Scope and authority:** owner GO for window A (packet `60a97a18`), conditional on the rc3 full suite being green.
+  Receipt: `upgrade/evidence/releases/v2.3.0/window-A-20261113T1444Z/`.
+- **Gates (UTC):**
+
+  | Time | Gate | Result |
+  |---|---|---|
+  | 14:43:59 | T0 | measurement lock taken; D0 CPU median 6.97 |
+  | 14:46 | D1 | PASS |
+  | 14:47 | D2 | PASS |
+  | 14:49 | D3/D4 | PASS: Query on rc3 `a235c0a1`, r16 mounted, D5a pre-check PASS |
+  | 14:50:09 | W-pre | writer stopped |
+  | 14:52 | D5 | PASS: OKX 252 bindings, pinned lanes plus okx-business-002 |
+  | after D5 | D5a | PASS on both Query: OKX session 22 accepts events at 21 and 22; this is the W1 defect class, now fixed |
+  | 14:52:47 | D6 crossing | PASS: 640 retained, 407 added, 0 dropped, migration record present |
+  | 14:59:55 | W-gate | GREEN |
+  | 15:00:55 | W1 | writer 7332e85a BOOTSTRAP VERIFIED in 46.7 s |
+  | 15:02:09 | W2 | STRICT VERIFIED in 47.9 s: 104/104/93, continuity 11/11 |
+  | 15:12 | soak | PASS |
+  | 17:00:54 | bootstrap end | 1042 published + 5 suspended (Binance 3d OVERLAP, as before rc3); 681 short |
+  | 17:15:54 | D6b +15 min | PASS: 0 derived gaps recorded, healed or kept; 76 derived ACK lines |
+  | 17:30:55 | CPU gate | PASS: median 6.54 <= 7.27 (D0 + 0.3); lock released |
+
+  - The measurement lock was released 15:43-17:16Z while waiting for the bootstrap end.
+- **Notes.**
+  - Paper outage: about 12 min.
+  - The bootstrap ran about 2 h 08 min, against an estimate of about 74 min. The core backpressure stage of 2000
+    paused history repeatedly under host load.
+  - The 584 provider-short re-bootstraps recurred, as expected (DL-BL-2026-11-13-D).
+- **After the window, about 17:31Z: TS writer worker 4 RESTART_EXHAUSTED.** `NativeWorkerError: native health
+  timestamp did not advance`, so 41 Binance slices were unavailable. This is a TS writer defect class in 7332e85a
+  that W-B2 fixes; the cause is not proven. DL was healthy throughout.
+  - Coordinator decision: window B (W-B2), executed by the TS writer agent. DL stays hands-off on the writer.
+- **Open:** the D6b +6 h read at 23:01Z (detached checker writes `runA/D6B_6H`); the v2.3.0 release after the
+  R-cert 2 final verdict.

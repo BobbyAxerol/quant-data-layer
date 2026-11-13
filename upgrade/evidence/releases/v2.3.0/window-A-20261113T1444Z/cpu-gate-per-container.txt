@@ -1,0 +1,17 @@
+kafka2 196.21%
+kafka3 185.12%
+kafka1 155.09%
+rust_core_2 30.26%
+market_projector_1 30.12%
+query_kn_1 24.48%
+rust_core_3 20.25%
+stream_kn_1 19.25%
+rust_core 19.14%
+ingestor_binance_usdm 18.87%
+stream_kn_2 18.76%
+ingestor_okx_swap 18.07%
+market_cache 16.30%
+market_projector_2 11.69%
+query_kn_2 6.78%
+stable_redis 0.41%
+binance_bar_edge 0.04%
