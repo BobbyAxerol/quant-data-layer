@@ -455,6 +455,10 @@ labels.
 - **Not touched.** Section 6: Kafka brokers and config, topics and retention, market_cache and stable_redis, the
   cert mesh, CPU and memory caps, monitor, Portal, every TS service other than the writer, every consumer JWT (no reissue; the only manifest change is alpha.okx.paper.stable r15 -> r16 with accept-set 15..16, section 3c).
 
+- **D6 note (window 2026-11-13).** 584 retained bindings re-bootstrapped at restore, not about 5, because they are
+  provider-short products. They are bounded and safe; this is defect DL-BL-2026-11-13-D in the DL plan, and it
+  recurs on every bar_edge restart until v2.3.x.
+
 ## 5. Rollback (coupled, reverse order; each about 1 min per role)
 
 1. **W:** section W.

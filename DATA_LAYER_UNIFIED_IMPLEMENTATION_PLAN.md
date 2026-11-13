@@ -77951,3 +77951,18 @@ container has been started.
   - Bootstrap and native gap repair interleave per binding in the single kn3 loop (packet section 3).
   - Correction: the rc2 full suite ran on `269fc9c8`; the packet's earlier `3f45a315` was wrong, and the delta
     file set is the same.
+- **Defect, registered here for v2.3.x. DL-BL-2026-11-13-D: provider-short BAR products re-bootstrap on every
+  bar_edge restart.** Seen in the combined window, D6, 2026-11-13 12:51Z: 584 of the 640 retained bindings logged
+  `history incomplete; bounded repair required` (255 Binance 1d, 255 OKX 1d, plus the 5 majors' other intervals).
+  - `_history_short` is in memory only. It is initialised at `qdl/runtime/stable_bar_edge.py:388` and set at `:1622`,
+    and it is not part of `_state_payload` (`:552-565`).
+  - At restore, `_checkpoint_history_gaps` (`:788-818`) expects `_bootstrap_rows_for(source)` opens, which are capped
+    by the demand and not by the provider's real history. So a product the provider can never fill is "incomplete"
+    after every restart.
+  - Within one run it terminates: a short fetch is recorded (`:1617-1630`), published with the rows that exist, and
+    the watermark is set.
+  - The cost recurs per restart. It is bounded by one provider pass per short product: OKX 1d at most about 4-5
+    pages of 300 rows each, so at most about 1,275 HISTORY_CANDLES requests (about 8.5 min of the 150/min lane),
+    plus Binance 1d requests on Binance's own budget.
+  - Fix (v2.3.x): persist provider-short as `(requested, available, first_open_ms)` in the checkpoint, and have the
+    restore gap check expect only opens at or after the provider's first open.
