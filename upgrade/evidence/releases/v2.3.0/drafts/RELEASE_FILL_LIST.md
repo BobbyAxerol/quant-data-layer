@@ -44,5 +44,9 @@ Fill everything before the single release CI run (CI_PLAN.md step 1). Each item 
 - Stage B (TS QUOTE/MARK for the remaining 69 crossec swaps): a later declaration, not a release.
 - The 4-contract `price_tick` refresh: a later declaration with its own migration record.
 - Live funding binding and per-row bootstrap depth (DL-BL-2026-11-13-C): v2.3.x candidates.
-- v2.2.7 (`13f20d0`, linger hotfix) is not an ancestor of rc2. Its knob was re-implemented in slice 2a/2b. Whether
-  v2.2.7 is tagged separately is an owner decision.
+- v2.2.7 (`13f20d0`, branch `release/v2.2.7-ingestor-linger`): decided, not tagged; superseded by v2.3.0, not
+  released.
+- CPU optimisations (projector commit coalescing, fetch batching, pipelined Redis reads, stream ListOffsets) and live
+  funding: v2.3.1. The certified v2.3.0 digests stay 58bdd282 / 03de529a.
+- Linger / broker fetch: runtime config only. Record the chosen values in RELEASE_NOTES "Runtime" only if their
+  measurement arms pass.

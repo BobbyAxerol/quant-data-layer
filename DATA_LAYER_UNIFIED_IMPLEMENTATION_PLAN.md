@@ -78075,3 +78075,12 @@ container has been started.
 - No root CHANGELOG exists; per-release `RELEASE_NOTES.md` is the repository's changelog (the SDK changelog is
   unchanged).
 - Status: prepared; the fills wait for the window and the R-cert 2 verdict. Not pushed.
+- Decisions 2026-11-13 (coordinator):
+  - v2.2.7 (`release/v2.2.7-ingestor-linger`, `13f20d0`): **superseded by v2.3.0, not released, not tagged**. It
+    never rolled; its knob is re-implemented in slices 2a/2b.
+  - v2.3.0 final ships the rc2 images 58bdd282 / 03de529a as certified.
+  - CPU optimisations (projector commit coalescing, fetch batching, pipelined Redis reads, stream ListOffsets) and
+    live funding: v2.3.1.
+  - Linger and broker fetch are config-only and are recorded as runtime config if their arms pass.
+  - CI has no ruff step (no ruff/flake8 in `.github/workflows`, Makefile or pyproject). The unused `import os` in
+    `scripts/build_qdl_release_images.py` is removed anyway: ruff 0.15.13 clean, import check OK.

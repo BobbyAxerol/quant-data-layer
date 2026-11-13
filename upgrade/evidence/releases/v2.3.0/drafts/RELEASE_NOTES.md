@@ -44,6 +44,10 @@ derived bars, so higher intervals are aggregated from final 1m bars inside the s
   - Per-binding cursor lineage and the contract-line `schema_digest`; the value is unchanged, line 1 `100966435a30367d...`.
 - **v2.2.6 stage A configuration** (QUOTE + MARK for 20 more OKX linear swaps, catalogue r13, TS Paper r13 with
   model quotas 10,000 rpm / 160 streams): carried in this tree (`c29c216`).
+- **v2.2.7 (ingestor producer linger hotfix): superseded by v2.3.0, not released.** Branch
+  `release/v2.2.7-ingestor-linger` (`13f20d0`) never rolled and is not tagged. Its knob
+  (`QDL_KAFKA_PRODUCER_LINGER_MS`, honoured `QDL_KAFKA_REQUEST_TIMEOUT_SECONDS`) is re-implemented in v2.3.0 slices
+  2a/2b (coordinator decision 2026-11-13).
 - **SDK**: unchanged. `qdl-sdk 2.4.1`, no diff under `qdl_sdk/` since v2.2.5.
 
 ## Runtime (docker inspect after the window: TBD)
@@ -55,8 +59,11 @@ derived bars, so higher intervals are aggregated from final 1m bars inside the s
 | kafka1-3, market_cache, stable_redis | unchanged (TBD digests) |
 | TS writer | W-B2 `sha256:9dfef8a8a548be2ee2d800fb62c006c8d11fcbcf3c66999779f6c97e15a71a6f` (TS release, not part of this tag) |
 
-The images are the rc2 images, unchanged, unless the R-cert 2 final verdict or the window forces an rc3. The linger
-setting is config-only, so on its own it does not need an rc3.
+v2.3.0 ships the rc2 images as certified (coordinator decision 2026-11-13).
+- CPU optimisations and live funding go into v2.3.1, so these digests do not change. The CPU optimisations are:
+  projector commit coalescing, fetch batching, pipelined Redis reads, stream ListOffsets.
+- Producer linger and broker fetch settings are runtime configuration only. They are recorded here only if they pass
+  their measurement arms: TBD.
 
 ## First production declaration (window 2026-11-13: TBD result)
 
