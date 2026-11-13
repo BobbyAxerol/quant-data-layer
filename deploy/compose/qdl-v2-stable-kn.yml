@@ -810,7 +810,7 @@ services:
       QDL_STABLE_AUTHORITY_MODE: RUST_PRIMARY
       QDL_STABLE_AUTHORITY_REVISION: '1'
       QDL_STABLE_CONSUMER_GROUP: stable-query-1
-      QDL_STABLE_CONSUMER_MANIFESTS: /consumer-realms/monitoring-multivenue.yaml:/consumer-realms/alpha.binance.paper.stable-r16.yaml:/consumer-realms/alpha.okx.paper.stable-r15.yaml:/consumer-realms/alpha-vn-paper.yaml:/consumer-realms/trading-system.paper.stable-r11.yaml:/consumer-realms/reference-l2-stable.yaml:/consumer-realms/alpha.binance.live.stable.yaml:/consumer-realms/alpha.binance.sandbox.stable.yaml:/consumer-realms/alpha.okx.live.stable.yaml:/consumer-realms/alpha.okx.sandbox.stable.yaml:/consumer-realms/trading-system.live.stable.yaml:/consumer-realms/trading-system.sandbox.stable.yaml
+      QDL_STABLE_CONSUMER_MANIFESTS: /consumer-realms/monitoring-multivenue.yaml:/consumer-realms/alpha.binance.paper.stable-r16.yaml:/consumer-realms/alpha.okx.paper.stable-r15.yaml:/consumer-realms/alpha-vn-paper.yaml:/consumer-realms/${QDL_PAPER_REALM_MANIFEST:-trading-system.paper.stable-r11.yaml}:/consumer-realms/reference-l2-stable.yaml:/consumer-realms/alpha.binance.live.stable.yaml:/consumer-realms/alpha.binance.sandbox.stable.yaml:/consumer-realms/alpha.okx.live.stable.yaml:/consumer-realms/alpha.okx.sandbox.stable.yaml:/consumer-realms/trading-system.live.stable.yaml:/consumer-realms/trading-system.sandbox.stable.yaml
       QDL_STABLE_CURSOR_ACTIVE_KEY_ID: stable-k1
       QDL_STABLE_CURSOR_KEYS_JSON: ${QDL_STABLE_CURSOR_KEYS_JSON:?set QDL_STABLE_CURSOR_KEYS_JSON (host-only secrets env)}
       QDL_STABLE_CURSOR_TTL_SECONDS: '3600'
@@ -963,7 +963,7 @@ services:
       QDL_STABLE_AUTHORITY_MODE: RUST_PRIMARY
       QDL_STABLE_AUTHORITY_REVISION: '1'
       QDL_STABLE_CONSUMER_GROUP: stable-query-1
-      QDL_STABLE_CONSUMER_MANIFESTS: /consumer-realms/monitoring-multivenue.yaml:/consumer-realms/alpha.binance.paper.stable-r16.yaml:/consumer-realms/alpha.okx.paper.stable-r15.yaml:/consumer-realms/alpha-vn-paper.yaml:/consumer-realms/trading-system.paper.stable-r11.yaml:/consumer-realms/reference-l2-stable.yaml:/consumer-realms/alpha.binance.live.stable.yaml:/consumer-realms/alpha.binance.sandbox.stable.yaml:/consumer-realms/alpha.okx.live.stable.yaml:/consumer-realms/alpha.okx.sandbox.stable.yaml:/consumer-realms/trading-system.live.stable.yaml:/consumer-realms/trading-system.sandbox.stable.yaml
+      QDL_STABLE_CONSUMER_MANIFESTS: /consumer-realms/monitoring-multivenue.yaml:/consumer-realms/alpha.binance.paper.stable-r16.yaml:/consumer-realms/alpha.okx.paper.stable-r15.yaml:/consumer-realms/alpha-vn-paper.yaml:/consumer-realms/${QDL_PAPER_REALM_MANIFEST:-trading-system.paper.stable-r11.yaml}:/consumer-realms/reference-l2-stable.yaml:/consumer-realms/alpha.binance.live.stable.yaml:/consumer-realms/alpha.binance.sandbox.stable.yaml:/consumer-realms/alpha.okx.live.stable.yaml:/consumer-realms/alpha.okx.sandbox.stable.yaml:/consumer-realms/trading-system.live.stable.yaml:/consumer-realms/trading-system.sandbox.stable.yaml
       QDL_STABLE_CURSOR_ACTIVE_KEY_ID: stable-k1
       QDL_STABLE_CURSOR_KEYS_JSON: ${QDL_STABLE_CURSOR_KEYS_JSON:?set QDL_STABLE_CURSOR_KEYS_JSON (host-only secrets env)}
       QDL_STABLE_CURSOR_TTL_SECONDS: '3600'

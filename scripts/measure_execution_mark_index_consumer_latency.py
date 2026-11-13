@@ -80,9 +80,10 @@ def _summary(samples: Iterable[float]) -> dict[str, float | int]:
     }
 
 
-# Trading System Paper manifest revision 11: five Binance + five OKX linear
-# perpetuals plus the inverse OKX BTC-USD-SWAP (IDR-075, deployed 2026-10-09).
-EXECUTION_MARK_INDEX_REQUIREMENTS = 11
+# Trading System Paper manifest revision 12: five Binance + five OKX linear
+# perpetuals, the inverse OKX BTC-USD-SWAP (IDR-075, deployed 2026-10-09) and the
+# 20 v2.2.6 stage A OKX linear swaps (QUOTE + MARK only, 2026-11-13).
+EXECUTION_MARK_INDEX_REQUIREMENTS = 31
 
 
 def execution_mark_index_requirements(manifest: Path) -> tuple[ReferenceRequirement, ...]:

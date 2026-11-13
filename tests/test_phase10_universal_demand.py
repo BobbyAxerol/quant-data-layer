@@ -38,6 +38,7 @@ from scripts.phase10_real_provider_admission import (
 
 
 from tests.universe_support import UNIVERSE_SYMBOLS
+from tests.v226_stage_a_support import V226_STAGE_A
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = ROOT / "config/v2/stable-source-bindings.yaml"
@@ -534,7 +535,9 @@ class UniversalDemandTests(unittest.TestCase):
             }
             # D48: the daily market-cap universe's bar-only symbols.
             | {("BINANCE", "USDM", symbol) for symbol in UNIVERSE_SYMBOLS["BINANCE"]}
-            | {("OKX", "SWAP", symbol) for symbol in UNIVERSE_SYMBOLS["OKX"]},
+            | {("OKX", "SWAP", symbol) for symbol in UNIVERSE_SYMBOLS["OKX"]}
+            # v2.2.6 stage A execution QUOTE/MARK symbols (demand revision 9).
+            | {("OKX", "SWAP", symbol) for symbol in V226_STAGE_A},
         )
 
         class Response:

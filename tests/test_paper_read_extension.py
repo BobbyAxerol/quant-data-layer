@@ -8,7 +8,12 @@ import yaml
 from qdl.consumer.manifest import ConsumerManifestLoader
 from qdl.consumer.universal_release import ConsumerRouteBinding
 from scripts.phase115_render_consumer_route_binding import binding_from_stable_release
-from scripts.prepare_paper_read_extension import digest, prepare_paper_extension
+from scripts.prepare_paper_read_extension import (
+    digest,
+    prepare_paper_extension,
+    prepare_paper_linear_swap_extension,
+)
+from tests.v226_stage_a_support import V226_STAGE_A
 from tests.inverse_extension_support import pre_inverse_paper_manifest, without_inverse_products
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -155,12 +160,55 @@ class PaperReadExtensionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "quota change"):
                 prepare_paper_extension(**self.source, quotas=bad)
 
-    def test_committed_r11_manifest_is_the_reproduced_d1_render(self):
-        # IDR-127: consumers/stable/trading-system-paper.yaml is the deployed
-        # realm file (sha256 efd482fa...), rendered on 2026-10-09 by this script
-        # from these inputs with the D1 quota raise and written by yaml.safe_dump.
-        raised = prepare_paper_extension(**self.source, quotas={"max_streams": 77, "requests_per_minute": 3000})
+    def _d1_r11(self):
+        # IDR-127: the deployed r11 realm file (sha256 efd482fa...) was rendered on 2026-10-09 by this script from
+        # these inputs with the D1 quota raise.
+        return prepare_paper_extension(**self.source, quotas={"max_streams": 77, "requests_per_minute": 3000})
+
+    def test_committed_r13_manifest_is_the_reproduced_d1_then_v226_stage_a_render(self):
+        # r12 (quotas 150/4500 picked by hand) was deployed ~7 min on 2026-11-13 and refused RATE_LIMITED; it is
+        # retired, so the stage A manifest is r13 with quotas DERIVED from the products (qdl/consumer/quota_model.py).
+        r11 = self._d1_r11()
+        self.assertEqual(r11["manifest"]["metadata"]["revision"], 11)
+        r13 = prepare_paper_linear_swap_extension(
+            catalog=self.source["catalog"], manifest=r11["manifest"], binding=r11["binding"],
+            symbols=list(V226_STAGE_A), revision=13)
         committed = (ROOT / "consumers/stable/trading-system-paper.yaml").read_bytes()
-        self.assertEqual(yaml.safe_dump(raised["manifest"]).encode(), committed)
-        self.assertEqual(raised["provenance"]["consumer_manifest_sha256"],
+        self.assertEqual(yaml.safe_dump(r13["manifest"], sort_keys=False).encode(), committed)
+        self.assertEqual(r13["provenance"]["consumer_manifest_sha256"],
                          ConsumerManifestLoader.load(ROOT / "consumers/stable/trading-system-paper.yaml").manifest_sha256)
+        self.assertEqual(r13["consumer_environment"]["DATA_LAYER_V2_JWT_MANIFEST_REVISION"], "13")
+        self.assertEqual(r13["manifest"]["spec"]["quotas"]["requests_per_minute"], 10_000)
+        self.assertEqual(r13["manifest"]["spec"]["quotas"]["max_streams"], 160)
+        with self.assertRaisesRegex(ValueError, "below the modelled demand"):
+            prepare_paper_linear_swap_extension(
+                catalog=self.source["catalog"], manifest=r11["manifest"], binding=r11["binding"],
+                symbols=list(V226_STAGE_A), quotas={"max_streams": 150, "requests_per_minute": 4500}, revision=13)
+        with self.assertRaisesRegex(ValueError, "above the base revision"):
+            prepare_paper_linear_swap_extension(
+                catalog=self.source["catalog"], manifest=r11["manifest"], binding=r11["binding"],
+                symbols=list(V226_STAGE_A), revision=11)
+
+    def test_linear_extension_adds_only_requested_feeds_and_fails_closed(self):
+        r11 = self._d1_r11()
+        base = dict(catalog=self.source["catalog"], manifest=r11["manifest"], binding=r11["binding"])
+        result = prepare_paper_linear_swap_extension(**base, symbols=["ARB-USDT-SWAP"])
+        added = [p for p in result["binding"]["products"] if p["native_symbol"] == "ARB-USDT-SWAP"]
+        self.assertEqual({p["feed"] for p in added}, {"QUOTE", "MARK_INDEX_PRICE"})
+        self.assertTrue(all(p["execution_grade"] and p["fallback"] == "BLOCKED" for p in added))
+        self.assertEqual(len(result["binding"]["products"]), len(r11["binding"]["products"]) + 2)
+        # 66 V2 products need ceil10(66 * 1.5) = 100 streams and more than 3000 rpm: the quotas are raised to the
+        # model, never lowered and never left below it.
+        self.assertEqual(result["manifest"]["spec"]["quotas"]["max_streams"], 100)
+        self.assertGreaterEqual(result["manifest"]["spec"]["quotas"]["requests_per_minute"], 3000)
+        ConsumerRouteBinding.from_canonical_mapping(result["binding"])
+        with self.assertRaisesRegex(ValueError, "already entitled"):
+            prepare_paper_linear_swap_extension(**base, symbols=["BTC-USDT-SWAP"])
+        with self.assertRaisesRegex(ValueError, "not an OKX linear USDT swap"):
+            prepare_paper_linear_swap_extension(**base, symbols=["BTC-USD-SWAP"])
+        with self.assertRaises(Exception):  # the catalog has BAR only for this swap: no QUOTE source
+            prepare_paper_linear_swap_extension(**base, symbols=["ZIL-USDT-SWAP"])
+        with self.assertRaisesRegex(ValueError, "unique list"):
+            prepare_paper_linear_swap_extension(**base, symbols=["ARB-USDT-SWAP", "ARB-USDT-SWAP"])
+        with self.assertRaisesRegex(ValueError, "feeds must be a subset"):
+            prepare_paper_linear_swap_extension(**base, symbols=["ARB-USDT-SWAP"], feeds=["TRADE"])

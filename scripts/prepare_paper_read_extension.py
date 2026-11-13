@@ -21,6 +21,7 @@ from pathlib import Path
 import yaml
 
 from qdl.consumer.manifest import ConsumerManifestLoader
+from qdl.consumer.quota_model import model_manifest, quota_shortfall
 from qdl.consumer.realtime_route import requirement_key
 from qdl.consumer.universal_release import ConsumerRouteBinding
 from qdl.runtime.stable_catalog import StableSourceCatalog
@@ -111,7 +112,8 @@ def _raise_quotas(manifest, target, quotas):
     return {k: {"from": current_quotas[k], "to": v} for k, v in sorted(quotas.items())}
 
 
-def _seal(*, current, consumer, base, products, catalog, target, new_binding, quota_change, **provenance_fields):
+def _seal(*, current, consumer, base, products, catalog, target, new_binding, quota_change, release_revision=None,
+          **provenance_fields):
     parsed = ConsumerManifestLoader.from_mapping(target)
     parsed_requirements = {requirement_key(r): r for r in parsed.requirements}
     new_binding["request_policies"] = []
@@ -138,7 +140,7 @@ def _seal(*, current, consumer, base, products, catalog, target, new_binding, qu
         provenance["quota_change"] = quota_change
     new_binding.update(schema="qdl.v2.consumer-route-binding.v3",
                        consumer_manifest_revision=parsed.manifest_revision,
-                       release_revision=base.release_revision + 1,
+                       release_revision=base.release_revision + 1 if release_revision is None else release_revision,
                        universal_manifest_sha256=digest(provenance))
     for field in ("products", "request_policies"):
         new_binding[field].sort(key=lambda row: row["requirement_id"])
@@ -190,7 +192,8 @@ def prepare_paper_extension(*, catalog, manifest, binding, quotas=None):
 LINEAR_FEEDS = frozenset({"QUOTE", "MARK_INDEX_PRICE"})
 
 
-def prepare_paper_linear_swap_extension(*, catalog, manifest, binding, symbols, feeds=LINEAR_FEEDS, quotas=None):
+def prepare_paper_linear_swap_extension(*, catalog, manifest, binding, symbols, feeds=LINEAR_FEEDS, quotas=None,
+                                        revision=None, release_revision=None):
     """Entitle OKX linear USDT swaps for the requested execution feeds (v2.2.6 crossec Paper coverage).
 
     Fail-closed: every symbol must be a catalog OKX SWAP PERPETUAL with ctType linear and USDT quote/settlement, no
@@ -206,8 +209,14 @@ def prepare_paper_linear_swap_extension(*, catalog, manifest, binding, symbols, 
     template = _okx_swap(catalog, "ETH-USDT-SWAP")
     templates = {feed: _execution_template(requirements, products, template, feed) for feed in sorted(feeds)}
     target, new_binding = deepcopy(manifest), deepcopy(binding)
-    target["metadata"]["revision"] += 1
-    quota_change = _raise_quotas(manifest, target, quotas)
+    # A revision number may be skipped (never reused) when a rendered revision was retired, e.g. v2.2.6 r12, which
+    # was deployed for ~7 min on 2026-11-13 and rolled back: its successor is r13, not a second r12.
+    base_revision = int(manifest["metadata"]["revision"])
+    if revision is not None and int(revision) <= base_revision:
+        raise ValueError("target manifest revision must be above the base revision")
+    if release_revision is not None and int(release_revision) <= int(binding["release_revision"]):
+        raise ValueError("target binding release revision must be above the base binding")
+    target["metadata"]["revision"] = base_revision + 1 if revision is None else int(revision)
     added = []
     for symbol in symbols:
         row = _okx_swap(catalog, symbol)
@@ -224,9 +233,24 @@ def prepare_paper_linear_swap_extension(*, catalog, manifest, binding, symbols, 
             target["spec"]["requirements"].append(req)
             new_binding["products"].append(route)
             added.append(f"{symbol}:{feed}")
+    # v2.2.6 class fix: quotas are DERIVED from the declared products (qdl/consumer/quota_model.py); an explicit
+    # quota may only raise them further. A hand-picked quota below the modelled demand is refused.
+    model = model_manifest(target)
+    derived = {k: max(v, int(manifest["spec"]["quotas"][k])) for k, v in (
+        ("max_streams", model.required_max_streams), ("requests_per_minute", model.required_requests_per_minute))}
+    for key, value in (quotas or {}).items():
+        if key in derived and value < derived[key]:
+            raise ValueError(f"{key} {value} is below the modelled demand {derived[key]}")
+    wanted = {k: max(derived.get(k, 0), (quotas or {}).get(k, 0)) for k in QUOTA_KEYS}
+    wanted = {k: v for k, v in wanted.items() if v > int(manifest["spec"]["quotas"][k])}
+    quota_change = _raise_quotas(manifest, target, wanted or None)
+    if quota_shortfall(target):
+        raise ValueError(f"rendered quotas below the modelled demand: {quota_shortfall(target)['shortfall']}")
     return _seal(current=current, consumer=consumer, base=base, products=products, catalog=catalog,
                  target=target, new_binding=new_binding, quota_change=quota_change,
-                 added_products=len(added), linear_okx_swaps=sorted(symbols), feeds=sorted(feeds))
+                 added_products=len(added), linear_okx_swaps=sorted(symbols), feeds=sorted(feeds),
+                 quota_model=model.evidence(),
+                 release_revision=None if release_revision is None else int(release_revision))
 
 
 def main():
@@ -238,6 +262,8 @@ def main():
     parser.add_argument("--linear-okx-swaps", type=Path,
                         help="JSON list of OKX linear USDT swap native symbols (v2.2.6 mode)")
     parser.add_argument("--feeds", default="QUOTE,MARK_INDEX_PRICE", help="linear mode only")
+    parser.add_argument("--revision", type=int, help="linear mode only: explicit target revision (skip a retired one)")
+    parser.add_argument("--release-revision", type=int, help="linear mode only: explicit sealed-binding release revision")
     args = parser.parse_args()
     quotas = {k: v for k, v in (("max_streams", args.max_streams),
                                 ("requests_per_minute", args.requests_per_minute)) if v is not None}
@@ -245,7 +271,8 @@ def main():
     if args.linear_okx_swaps:
         result = prepare_paper_linear_swap_extension(
             **inputs, symbols=json.loads(args.linear_okx_swaps.read_text()),
-            feeds=[f.strip().upper() for f in args.feeds.split(",") if f.strip()], quotas=quotas or None)
+            feeds=[f.strip().upper() for f in args.feeds.split(",") if f.strip()], quotas=quotas or None,
+            revision=args.revision, release_revision=args.release_revision)
     else:
         result = prepare_paper_extension(**inputs, quotas=quotas or None)
     # Never overwrite an earlier preparation or a live manifest.

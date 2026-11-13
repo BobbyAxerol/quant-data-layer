@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 import hashlib
 import json
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping
 
 from qdl.demand import (
     DemandLeaseRegistry,
@@ -325,3 +325,33 @@ class UniversalDemandPlanner:
             execution_eligible=eligible,
             reason=reason,
         )
+
+
+PRICING_ONLY_FEEDS = frozenset({"QUOTE", "MARK_INDEX_PRICE"})
+
+
+def bar_family_symbols(demand: Mapping[str, Any]) -> set[tuple[str, str]]:
+    """(VENUE, native symbol) pairs that carry the full native BAR family.
+
+    A symbol gets every native bar interval when it has non-BAR demand, except demand that only
+    prices Trading System orders: QUOTE / MARK_INDEX_PRICE rows of an EXECUTION-grade consumer
+    (v2.2.6 stage A). That execution-only pricing demand never turns a D48 universe symbol into a
+    full-bar-family symbol, so it never implies new native candle subscriptions. Every symbol that
+    qualified before (any TRADE/BOOK/alpha realtime demand) still qualifies.
+    The single predicate for qdl/runtime/production_catalog.py (BAR lane), scripts/kn_universe_top300.py,
+    phase115c_materialize_active_native_bars.py, phase533_materialize_alpha_runtime_entitlements.py and
+    tests/universe_support.py.
+    """
+    result = set()
+    for consumer in demand.get("consumers") or ():
+        if not isinstance(consumer, Mapping):
+            continue
+        execution = str(consumer.get("consumer_grade", "")).upper() == "EXECUTION"
+        for row in consumer.get("requirements") or ():
+            if not isinstance(row, Mapping):
+                continue
+            feed = str(row.get("feed", "")).upper()
+            if feed == "BAR" or (execution and feed in PRICING_ONLY_FEEDS):
+                continue
+            result.add((str(row.get("venue", "")).upper(), str(row.get("native_symbol", ""))))
+    return result

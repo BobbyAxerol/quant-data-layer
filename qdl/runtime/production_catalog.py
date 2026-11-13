@@ -426,10 +426,16 @@ class ProductionCatalogBuilder:
         acquisitions: list[dict[str, Any]] = []
         # An execution symbol has realtime demand beyond BAR; a symbol demanded
         # only for bars (the D48 daily market-cap universe) needs one final bar
-        # per boundary, so it stays on the shared REST final lane.
+        # per boundary, so it stays on the shared REST final lane. Demand that only
+        # prices Trading System orders (EXECUTION-grade QUOTE / MARK_INDEX_PRICE,
+        # v2.2.6 stage A) does not move a bar to the native candle lane: the same
+        # rule as qdl.runtime.universal_demand.bar_family_symbols.
         execution_symbols = {
             (item.venue, item.market, item.native_symbol)
-            for item in demand.demands if item.feed is not FeedType.BAR
+            for item in demand.demands
+            if item.feed is not FeedType.BAR
+            and not (item.consumer_grade is ConsumerGrade.EXECUTION
+                     and item.feed in (FeedType.QUOTE, FeedType.MARK_INDEX_PRICE))
         }
         execution_books = {
             (item.venue, item.market, item.native_symbol)

@@ -41,6 +41,7 @@ from qdl.runtime.production_catalog import (
 )
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import AuthorityPromotionScope, StableAcquisitionPlan
+from qdl.runtime.universal_demand import bar_family_symbols
 
 
 CRYPTO_VENUES = frozenset({"BINANCE", "OKX"})
@@ -100,7 +101,8 @@ def expand_demand(payload: Mapping[str, Any]) -> tuple[dict[str, Any], int]:
     Disabled Spot records are deliberately excluded.  Adding a new active
     symbol still requires an explicit demand row; this compiler never turns an
     exchange-wide universe into an implicit runtime subscription. Only an
-    execution symbol (one with any non-BAR demand) gets the full bar family: a
+    signal symbol (non-BAR demand from a non-EXECUTION consumer, see
+    ``qdl.runtime.universal_demand.bar_family_symbols``) gets the full bar family: a
     market-cap universe symbol (D48, `scripts/kn_universe_top300.py`) keeps
     exactly the interval it declares.
     """
@@ -112,12 +114,9 @@ def expand_demand(payload: Mapping[str, Any]) -> tuple[dict[str, Any], int]:
         raise ValueError("Phase 11.5-C3.5 demand consumers are invalid")
 
     additions = 0
-    active = {
-        (str(item.get("venue", "")).upper(), str(item.get("native_symbol", "")))
-        for consumer in consumers if isinstance(consumer, dict)
-        for item in consumer.get("requirements") or () if isinstance(item, dict)
-        and str(item.get("feed", "")).upper() != "BAR"
-    }
+    # The shared predicate: non-BAR demand of a signal (non-EXECUTION) consumer. Execution-only QUOTE/MARK demand
+    # (v2.2.6 stage A) never implies a native bar family.
+    active = bar_family_symbols(result)
     for consumer in consumers:
         requirements = consumer.get("requirements") if isinstance(consumer, dict) else None
         if not isinstance(requirements, list):

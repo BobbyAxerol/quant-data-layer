@@ -108,6 +108,7 @@ from qdl.warmup import WarmupSpecification, WarmupTimeRange
 
 
 from tests.universe_support import UNIVERSE_PER_VENUE, UNIVERSE_TOTAL
+from tests.v226_stage_a_support import V226_STAGE_A
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = ROOT / "config/v2/stable-source-bindings.yaml"
@@ -391,6 +392,8 @@ class StableCatalogContractTests(unittest.TestCase):
             # Catalog revision 12: the inverse BTC-USD-SWAP QUOTE (its MARK and
             # BOOK rows are counted with the families below).
             + 1
+            # Catalog revision 13 (v2.2.6 stage A): 20 OKX swap QUOTE rows (MARK below).
+            + 20
         )
         l2_bindings = [
             item for item in catalog.bindings
@@ -404,7 +407,7 @@ class StableCatalogContractTests(unittest.TestCase):
         self.assertTrue({"BTCUSDT_260925", "ETHUSDT_260925"}.isdisjoint(
             item.instrument.native_symbol for item in l2_bindings
         ))
-        self.assertEqual(len(mark_index_bindings), 11)
+        self.assertEqual(len(mark_index_bindings), 31)  # + 20 stage A (catalog r13)
         self.assertEqual(
             len(catalog.bindings),
             baseline + len(l2_bindings) + len(mark_index_bindings),
@@ -439,7 +442,7 @@ class StableCatalogContractTests(unittest.TestCase):
                 ("OKX", "DOGE-USDT-SWAP"),
                 ("OKX", "BNB-USDT-SWAP"),
                 ("OKX", "BTC-USD-SWAP"),
-            },
+            } | {("OKX", symbol) for symbol in V226_STAGE_A},  # catalog r13 (v2.2.6 stage A)
         )
         for binding in catalog.bindings:
             recreated = InstrumentIdentity.create(

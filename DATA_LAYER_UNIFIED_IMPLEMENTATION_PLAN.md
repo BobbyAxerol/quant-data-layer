@@ -77136,6 +77136,107 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   both images. Receipt `byte-compare-alpha.json` `c884e495...`, copied to the release folder. 0 `qdl-hr-*` containers
   and networks left.
 
+<a id="dl-v226-stage-a-okx-coverage-20261113"></a>
+### DL v2.2.6 stage A: execution QUOTE + MARK for 20 more OKX linear swaps (crossec Paper), additive refresh tools - 2026-11-13 (Claude)
+
+Owner decisions (2026-11-13, through the coordinator): staged coverage, stage A first; QUOTE + MARK_INDEX_PRICE only
+(Paper `BBO_EXECUTABLE` needs exactly these for MARKET/LIMIT on a SWAP; crossec sends MARKET only); the crossec Paper
+bindings are narrowed per stage by the PM declaration step (owner/Codex), not here. Packet with measurements and the
+window plan: scratchpad `dlcov/PACKET.md`; window runbook `dlcov/WINDOW_STAGE_A.md` (coordinator runs the window).
+
+- Config slice (all additive; every retained row byte-identical):
+  - `config/v2/stable-crypto-demand.yaml` r8 -> r9: +40 requirements for `trading-system.paper.stable`, cloned from the
+    deployed SOL-USDT-SWAP QUOTE / MARK_INDEX_PRICE rows; `index_native_symbol` = the swap's `uly`.
+  - `config/v2/stable-source-bindings.yaml` catalog r12 -> r13: +40 bindings (no new instrument in stage A).
+  - `config/v2/stable-acquisition-bindings.yaml` r20 -> r21: +20 `okx_bbo`, +20 `okx_mark_index`.
+  - `config/v2/stable-authority-promotion-scope.yaml` r11 -> r12: +40 ids.
+  - `consumers/stable/trading-system-paper.yaml` r11 -> **r13** (105 requirements; quotas DERIVED: 160 streams /
+    10000 RPM), rendered by `scripts/prepare_paper_read_extension.py --linear-okx-swaps --revision 13
+    --release-revision 25` from the deployed r11 + r23-v3 pair. Paired consumer env (CLAUDE.md 4.1):
+    `DATA_LAYER_V2_JWT_MANIFEST_REVISION=13`,
+    `DATA_LAYER_V2_RELEASE_MANIFEST_SHA256=9ba2264da2d5c2729376569c4ee2328cf7ad665f1aa209215f94892a5df47248`, sealed
+    binding r25 `binding_sha256` `70925882...` (104 products), rendered outside the repository.
+  - **r12 is retired, never reused.** r12 (hand-picked quotas 150 / 4500) was mounted by the 4 readers for about
+    10 min in the 2026-11-13 window (08:10:47-08:21:12Z declared outage). The JWT-12 writer bootstrap failed
+    VERIFY: 297 x `RATE_LIMITED consumer request quota is exhausted` (`qdl/security/data_plane.py` `RedisMinuteQuota`,
+    one fixed window per calendar minute per consumer identity, shared by both Query replicas through stable_redis).
+    The coupled rollback restored r11 / r23 (VERIFIED 64/64). RCA: the writer's steady Query demand for 104 products
+    is about 6,000/min (model below; measured 2,015-2,034/min for r11's 64 products), so 4,500 could never fit.
+  - `config/v2/stable-v2-release-routing.yaml` r29 -> r30: catalog/demand sha + revision, every consumer
+    `demand_revision` 9, Paper manifest r13 sha `adad7177...`, +40 `V2_PRIMARY`/`BLOCKED` routes.
+  - Class fix (quotas): `qdl/consumer/quota_model.py` models an EXECUTION manifest's Query and stream demand per
+    product (QUOTE 90, MARK 100, TRADE 10, BOOK_SNAPSHOT 2 requests/min; one stream per V2 product; calibrated on the
+    measured r11 writer) with `HEADROOM` 1.5 x (steady + opening) and 1.5 x streams: the quota counter INCRements
+    before comparing, so refusals burn quota (the window's refusal spiral, ready 82 -> 27). The linear-swap renderer derives the quotas from it and refuses explicit quotas below it,
+    and `scripts/check_consumer_quota_model.py` is the offline gate over consumers/stable.
+  - Stage A symbols (20 most liquid of the 91 uncovered crossec swaps by a measured 60 s public `bbo-tbt` rate): ARB
+    ZEC XRP PEPE UNI NEAR SUI ENA BCH ADA WLD AAVE LINK FIL ONDO AVAX TAO PUMP PENGU TIA (`-USDT-SWAP`).
+- Tools (production-standard, replacing the scratch renderer the packet used):
+  - `scripts/refresh_v2_native_ingestor_runtime.py` is now strictly additive: retained bindings (incl. native OKX
+    BAR) are kept byte for byte with their materialized `instrument_catalog_revision` (the core quarantines a revision
+    mismatch, `qdl-realtime-core` lib.rs `instrument catalog revision mismatch`); operator-installed fields such as
+    `book_resync` are preserved; a file without additions is untouched; an OKX lane renumbering is refused (positional
+    lane names + the L2 book core's bare generation compare). Before: it refused the live config (`book_resync`,
+    Binance `config_revision` 19) and would have dropped the native OKX bars.
+  - New `scripts/refresh_v2_core_runtime_bindings.py`: renders additive successors of the three core configs into a
+    new directory (never in place); the `core_config` all-acquired selection reproduces the deployed cores exactly
+    (699/699, 0 contract differences).
+  - `scripts/prepare_paper_read_extension.py`: linear OKX swap mode next to the unchanged IDR-075 inverse mode.
+  - `tests/inverse_extension_support.py` (class fix): the pre-inverse recovery is restricted to the IDR-127 row scope
+    frozen in `tests/fixtures/idr127/committed-scope.json`, so later additive revisions no longer break the pinned
+    historical documents; a changed retained row still does.
+  - Class fix, one predicate for "full bar family / native candle lane": `qdl.runtime.universal_demand.bar_family_symbols`
+    (any non-BAR demand except EXECUTION-grade QUOTE / MARK_INDEX_PRICE, which only prices orders). Before, four places each treated *any* non-BAR demand
+    as "execution symbol": `qdl/runtime/production_catalog.py` (BAR lane REST vs native), `scripts/phase115c_materialize_active_native_bars.py`
+    (14-interval bar family), `scripts/phase533_materialize_alpha_runtime_entitlements.py` (alpha universe rows) and
+    `scripts/kn_universe_top300.py`, plus `tests/universe_support.py`. Under that rule the stage A QUOTE/MARK rows would
+    have implied 280 new native OKX candle subscriptions and 20 fewer universe symbols. The five liquid symbols keep
+    their TRADE/BOOK demand, so every existing output is unchanged; the pinned "+N" totals change by exactly the 40
+    new products. Shared stage A scope for the tests: `tests/v226_stage_a_support.py`.
+  - `scripts/measure_execution_mark_index_consumer_latency.py`: the exact MARK scope is now 31 (11 + 20 stage A).
+- Stage A runtime outputs (repo tools, offline, dlcov `stageA-repo/`): OKX ingestor 103 -> 163 bindings,
+  `config_revision` 21, lanes unchanged (`okx-public-001..004`, `okx-business-001`); Binance ingestor unchanged; cores
+  699 -> 759 each; realm bundle `56135f7a...`; projector bundle `0770a8fa...`; Query runtime catalog r13 + runtime
+  acquisition r20 + 40 rows (r21). bar_edge (catalog in its image) is not touched.
+- Compose: the Query Paper realm manifest is now `${QDL_PAPER_REALM_MANIFEST:-trading-system.paper.stable-r11.yaml}`
+  (the v2.2.5 env renders the deployed value unchanged); `deploy/compose/qdl-v2-stable-kn.v2.2.6-stage-a.env` keeps every
+  v2.2.5 image digest and the KN state dir and points at the new stage A host directories.
+- F2 (Kafka RCA, owner-approved 2026-11-13): after any multi-broker restart run the preferred-leader election
+  (`scripts/kafka_preferred_leader_election.py --apply --scope data`, then `--scope coordinators` as a declared
+  interruption). Added as step 1b of `docs/runbooks/kn-host-reboot-recovery.md` and as W4b of the new
+  `docs/runbooks/kn-maintenance-window-template.md`. Cause: `auto.leader.rebalance.enable=false`, so after restarts all
+  166 leaders sat on kafka3 (about 1.8 vCPU of the DL budget). F1a/F1b run in the stage A window, before the feed steps.
+- Capacity (measured, linear upper bound): stage A about +450 Kafka records/s, about +0.8 vCPU on a DL draw of
+  3.6-4.1 vCPU; stage B (the other 71) needs headroom from the kafka3 RCA or an owner CPU decision.
+- Tests: see the commit message. Guide delta: `upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md`
+  [2026-11-13 delta](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md#delta-20261113-okx-ws-limits-and-lane-rule).
+- Runtime attempts on 2026-11-13. The coordinator operated both; evidence is in scratchpad `dlcov/window-stageA/` and
+  `dlcov/window-stageA-retry/`.
+  - **Attempt 1, r12.**
+    - Steps 0 to 2 passed and stay deployed: the scratch dirs, Kafka F1a/F1b leader election, the 3 cores (759
+      bindings) and the 2 projectors (kn bundle `0770a8fa`).
+    - Steps 3 to 5 passed: the readers on bundle `56135f7a`, and the OKX ingestor at 163 bindings with lane names
+      unchanged.
+    - Step 6 failed VERIFY: the writer BOOTSTRAP hit 297 `RATE_LIMITED` refusals on the hand-picked r12 quota.
+    - The coupled rollback ran 08:17:51-08:21:12Z. The declared outage was 08:10:47-08:21:12Z.
+  - **Attempt 2, r13, quotas derived 10,000 rpm / 160 streams.**
+    - Steps 3 to 5 passed again.
+    - Step 6 BOOTSTRAP failed VERIFY. There were 0 quota refusals and 0 auth refusals, but every BOOK slice reported
+      `EXECUTION_ORDERING_AUTHORITY_MISMATCH` (281 log lines). The cause is the TS writer's ordering marker in
+      redis_marketdata DB1: it has no TTL and is keyed on contract lineage, including `config_revision` and
+      `instrument_catalog_revision`, so the markers left by the old scope refuse the new lineage.
+    - The rollback then hit the native `RESUME_GENERATION_MISMATCH` until the 120 s marker TTL expired.
+    - Writer r23 was READY 64/64 with exec 53 from 09:07:09Z. The readers are back on r11 and the ingestor on the rc7
+      base. Outage: 08:52:38-09:07:09Z.
+  - **Next.**
+    - A reviewed writer scope-reset tool. With the writer stopped it deletes the exact old and new scope keys
+      (BOOK snapshot/delta, `:ordering-v1`, native applied/execution QUOTE/TRADE); then BOOTSTRAP and STRICT. The
+      writer agent is building it.
+    - The thorough fix is the writer handoff (W-B) together with per-binding lineage in DL v2.3.0.
+    - The cores and projectors stay on the stage A config throughout, because it is additive.
+- Status: IMPLEMENTED / TESTED_LOCALLY, not deployed, not certified. v2.2.6 is config-only (no image rebuild); the
+  certificate inherits unchanged digests by delta proof and re-runs G4/G6/R2/R4 on the final config. Not pushed.
+
 ### DL v2.3.0 slice 2a: declaration-only mechanism (accept-set, selectors, provenance, checkpoint v5, producer knobs) - 2026-11-13 (Claude)
 
 - Goal (owner, via the coordinator 2026-11-13): after v2.3.0, adding instruments or derived intervals is a config
