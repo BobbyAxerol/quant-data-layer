@@ -12,11 +12,12 @@ For every lane record of every venue directory under the session-liveness root i
 ``StableSessionLivenessReader`` for that record's own session and generation with:
 
 * the record's revision and every revision down to ``--min-pinned`` (the lowest pinned binding revision): must not be
-  refused with SOURCE_SESSION_CONFIG_MISMATCH;
+  refused with SOURCE_SESSION_CONFIG_MISMATCH. A lane whose own revision is below ``--min-pinned`` checks only its own
+  revision (Binance in window A: session 19 = its pins 19);
 * the record's revision + 1 (an event newer than its session): must be refused with SOURCE_SESSION_CONFIG_MISMATCH.
 
 Records whose state is not LIVE or that are older than ``--max-age-s`` are reported and skipped (a lane that is down
-is the ingestor gate's business, not this one). Output: one JSON object; exit 0 only when ``verdict`` is PASS.
+is the ingestor gate's business, not this one), but each venue must have at least one LIVE lane checked. Output: one JSON object; exit 0 only when ``verdict`` is PASS.
 
 Boundary: read-only. It reads the session files the Query container already mounts and imports only the Query's own
 reader; no network, no write.
@@ -74,8 +75,9 @@ def main() -> int:
                 failures.append(f"{row['lane']} accepted an event newer than its session")
             rows.append(row)
     checked = [row for row in rows if "skipped" not in row]
-    if not any(row["lane"].startswith("okx-swap/") for row in checked):
-        failures.append("no LIVE OKX lane was checked")
+    for prefix, name in (("okx-swap/", "OKX"), ("binance-usdm/", "Binance")):
+        if not any(row["lane"].startswith(prefix) for row in checked):
+            failures.append(f"no LIVE {name} lane was checked")
     print(json.dumps({"schema": "qdl.v230-session-revision-check.v1", "verdict": "FAIL" if failures else "PASS",
                       "failures": failures, "lanes": rows}, sort_keys=True))
     return 1 if failures else 0

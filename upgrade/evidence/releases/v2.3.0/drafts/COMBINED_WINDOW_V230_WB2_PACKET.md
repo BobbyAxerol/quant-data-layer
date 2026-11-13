@@ -90,6 +90,28 @@ final DL v2.3.0 release and tag happen only after the R-cert 2 final verdict and
     - then `--expect-image 7332e85a --require-resume 1`, verify.
     - This is the path proven at 13:04-13:05Z today: 52 s and 54 s, 104/104/93, continuity 11/11.
   - No writer image change in window A.
+- **Window A carries over every gate of sections 4 and 5 unchanged.** That includes:
+  - D6b: FAIL on outstanding derived gaps at bootstrap end + 15 min, or on any `gap kept` line by + 6 h; recorded and
+    healed counts are logged;
+  - the D6 HOLD on `cache generation changed; bounded bootstrap required`;
+  - the W-gate;
+  - the D6 note on the 584 provider-short re-bootstraps (expected; DL-BL-2026-11-13-D).
+- **D5a scope.** `--min-pinned 21`:
+  - OKX lanes (session 22) must accept 21 and 22 and refuse 23;
+  - Binance lanes (session 19) check 19 only, which equals their pins, and must refuse 20;
+  - the gate fails if no LIVE lane is checked for either venue.
+- **rc3 evidence.**
+  - Delta tests, 1 CPU, cpu-shares 256, `--rm`, no network, image `qdl-v2-python:2.2.5-9b6747f` with
+    `PYTHONPATH=/src`, the CI test image:
+    `Ran 189 tests in 232.215s / OK (skipped=34)`. The modules were session_liveness_lineage,
+    session_liveness_read_clock, phaseb_stable_edge, execution_mark_index_live_view, kn_query_backend,
+    dlv2_r1_stale_reason and execution_view_diagnostics.
+  - The 2 new pinned-revision tests also passed alone: `Ran 2 tests ... OK`.
+  - D5a fixture (session 22, pinned 21): fixed code `rc 0 PASS {'21': 'LIVE', '22': 'LIVE'}`; rc2 image `rc 1 FAIL
+    refused pinned revision 21`.
+  - Full Python suite on `7cd4fc36`: FULL_SUITE_PENDING.
+  - The rc3 image itself carries the fix (`/app/qdl/runtime/session_liveness.py:308`, `match.config_revision <
+    config_revision`).
 - **Window B = W-B2 alone, later.** Section W is unchanged, run against a DL already on rc3.
 - **Rollback procedure amendment.** Before ANY recreate, including each rollback recreate, capture
   `docker logs --timestamps` and the masked `docker inspect` of that role into `$WIN/pre-recreate/<role>-<ts>.*`.
@@ -141,8 +163,10 @@ final DL v2.3.0 release and tag happen only after the R-cert 2 final verdict and
 | QDL_IMAGE_PROJECTOR | same rust image `sha256:58bdd282…0512` | market_projector_1/2 |
 | QDL_IMAGE_STREAM | same rust image `sha256:58bdd282…0512` | stream_kn_1/2 |
 | QDL_IMAGE_INGESTOR | same rust image `sha256:58bdd282…0512` | ingestor_okx_swap, ingestor_binance_usdm |
-| QDL_IMAGE_QUERY | `qdl-v2-python:2.3.0-rc2-832c02c4` = `sha256:03de529acc4f59ba2637f289aa196f544944f92fdcf719390cdf9aacbdfd441b` (label revision 832c02c4) | query_kn_1/2 |
-| QDL_IMAGE_BAR_EDGE | same python image `sha256:03de529a…441b` | binance_bar_edge |
+| QDL_IMAGE_QUERY | **rc3 (window A):** `qdl-v2-python:2.3.0-rc3-7cd4fc36` = `sha256:a235c0a18cdeb112ea0b49627eaf02f2a68ab878298ebba07884461ee5709d0b` (label revision 7cd4fc36, dependency 753604f8; receipt `~/.local/state/qdl-v2/v230-rcert2/images-7cd4fc36.json`). Superseded rc2: `sha256:03de529a...` | query_kn_1/2 |
+| QDL_IMAGE_BAR_EDGE | same rc3 python image `sha256:a235c0a1...0d0b` | binance_bar_edge |
+
+Window A env: `$R/v2.3.0-rc2-compose/qdl-v2-stable-kn.v2.3.0-rc3.env` (sha256 `2b1b4b8d`). It is the rc2 env with only the two Python image lines changed. The Rust image `58bdd282` is unchanged.
 
 Build receipt: `~/.local/state/qdl-v2/v230-rcert2/images-832c02c4.json`. Both images come from a git-archive context of `832c02c4`; the Python dependency image is `qdl-v2-python@sha256:753604f8…`, and `verify_runtime_dependencies` PASS.
 

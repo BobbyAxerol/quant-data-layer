@@ -78043,3 +78043,16 @@ container has been started.
 - **Packet:** section 0b, the split retry (window A = rc3 DL with the old writer 7332e85a; window B = W-B2 alone),
   plus the D5a row and the rule to capture logs and inspect before every recreate. The run sheet has the window A
   changes.
+- **Backlog, registered here for v2.3.x. DL-BL-2026-11-13-E: bind session acceptance to the binding's own pin
+  (final review of rc3).**
+  - rc3 accepts an event at or below its session revision.
+  - Gap on the successor path: if a later declaration CHANGES a binding at revision N+1, an event from the
+    pre-restart session still at N is accepted under the N+1 successor until the binding's first new event. Before
+    rc3 that event was refused, which is correct.
+  - Not exposed in window A, which changes no retained binding.
+  - Hardening: Query requires `event == lineage_config_revision_for(binding)`
+    (`qdl/runtime/stable_deployment.py:680`) and `pin <= session`.
+- **rc3 image:** `qdl-v2-python:2.3.0-rc3-7cd4fc36` = `sha256:a235c0a18cdeb112ea0b49627eaf02f2a68ab878298ebba07884461ee5709d0b`.
+  Built from a git archive of `7cd4fc36`, dependency 753604f8. Rust is unchanged (`58bdd282`, an empty Rust diff
+  against 832c02c4). The focused review gave GO-ready for window A. D5a now also fails when no LIVE Binance lane is
+  checked.

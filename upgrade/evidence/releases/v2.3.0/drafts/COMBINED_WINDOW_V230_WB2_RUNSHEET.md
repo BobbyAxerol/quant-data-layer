@@ -10,7 +10,7 @@ packet's (sections 4, 4a, 5, 6, W). It adds only the exact commands.
 
 > **Retry as window A (rc3, packet section 0b).**
 > - Same commands as below, with these changes:
->   - the rc3 env (Python image = the rc3 digest; Rust unchanged);
+>   - the rc3 env: after sourcing env.sh, `NEW_ENV=$CD/qdl-v2-stable-kn.v2.3.0-rc3.env` (Query and bar_edge on `a235c0a1`; Rust unchanged);
 >   - D5a after D5;
 >   - `capture <role>` before every recreate, including rollback recreates;
 >   - the writer step uses the OLD image (section 2a).
