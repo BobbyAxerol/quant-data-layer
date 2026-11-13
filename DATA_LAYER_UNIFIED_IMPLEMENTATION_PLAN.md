@@ -77966,3 +77966,49 @@ container has been started.
     plus Binance 1d requests on Binance's own budget.
   - Fix (v2.3.x): persist provider-short as `(requested, available, first_open_ms)` in the checkpoint, and have the
     restore gap check expect only opens at or after the provider's first open.
+
+### DL v2.3.0 rc2 + TS writer W-B2 combined window, 2026-11-13 12:37-13:05Z (Claude): ROLLED BACK at W1
+
+- **Scope and authority:** packet `6798ca0` + `e7247126`, run sheet `0207363`, owner GO.
+- **Outcome:** D1-D6 passed, then W1 (W-B2 BOOTSTRAP) VERIFY_FAILED. The section 5 coupled rollback ran; nothing
+  stays changed. Receipt: `upgrade/evidence/releases/v2.3.0/window-20261113T1237Z/`.
+- **Gates (UTC):**
+
+  | Time | Gate | Result |
+  |---|---|---|
+  | 12:37:54 | T0 | measurement lock taken; D0 CPU median 6.34 (7 pre-T0 samples) |
+  | 12:41 | D1 cores | PASS |
+  | 12:43 | D2 projectors | PASS: bundle aec2ef6f |
+  | 12:44 | D3 stream | PASS: bundle 373ff326 |
+  | 12:45 | D4 Query | PASS: r16 mounted. The `image_files` probe is not exposed on Query health, so env provenance was used |
+  | 12:46:33 | W-pre | writer stopped |
+  | 12:48 | D5 | PASS: OKX 252 PINNED, new lane business-002; Binance 27 PINNED |
+  | 12:49:18 | D6 crossing | PASS: retained=640, added=407, dropped=0, migration_record=True |
+  | 12:51:34 | D6 restore | 584 provider-short retained bindings re-bootstrapped (DL-BL-2026-11-13-D) |
+  | 12:56:40 | W-gate | GREEN |
+
+- **W1 failure.**
+  - Ran 12:56:57-13:00:06Z (189 s).
+  - ready 0 -> 41 at about +40 s, then flat at 41/104 for about 2.5 min. execution_ready 36. Not rising when
+    judged.
+  - 57 OKX `execution_quote` / `execution_trade` / `execution_mark_index_price` keys missing. Binance served.
+  - Writer: OKX MARK_INDEX `IncompleteExecutionReferenceError ... live view did not return a current active
+    record: SESSION_STATE`; OKX BOOK_DELTA `DATA_STALE ... freshness policy (SESSION_STATE)`; MARK wake streams
+    ended with DataLayerError.
+  - The OKX ingestor was publishing (QUOTE lane about 380 frames/s) and core websocket raw age max was under
+    150 ms. **Hypothesis, not verified:** the OKX session-state / liveness records that stream and Query
+    consult for the rc2 lane plan (pinned lanes plus the new `okx-business-002`) were missing or stale for
+    the products.
+- **Rollback, 13:00:38-13:05:38Z.**
+  - Order: writer stop; bar_edge 08f356a8 plus checkpoint `.pre-v230` (8f25340f; 0 derived bars had been
+    published); ingestors 27c79b53; Query, stream, projectors and cores on the r13 compose.
+  - Writer 7332e85a BOOTSTRAP VERIFIED in 52 s, then STRICT VERIFIED in 54 s: 104/104/93, continuity 11/11.
+    G1/W05 unchanged. Lock released 13:05:48Z.
+  - The old writer verifying on the old DL in under a minute isolates the failure to rc2 DL, or to rc2 DL
+    together with W-B2.
+- **Evidence gap.** `force-recreate` removed the rc2 core, projector, stream, Query and bar_edge containers, so
+  their window logs are lost. Kept: the W-B2 writer container (`market_data_service_p184w.prev-20261113T130333Z`)
+  with its logs and masked inspect, the tool journals, and the Redis OKX `execution_*` key names (post-rollback).
+  Future windows must `docker logs` each role before its rollback recreate.
+- **Next:** RCA on an isolated stack: rc2 OKX ingestor with the pinned lanes -> rc2 cores -> stream / Query
+  session state. No new window until it is fixed and rehearsed.

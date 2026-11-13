@@ -1,0 +1,9 @@
+D1 PASS 12:41:02
+D2 PASS 12:43:32 (projector_2 latest_applied 0 as in stage A; b_batches advancing)
+D3 PASS 12:46:10: streams healthy, one new bundle 373ff326 on both, writer 0 CURSOR_EXPIRED/mismatch, 0 auth, 104/104/93
+D4 PASS 12:46:10: Query healthy x2, r16 mounted, env 0 /app manifest paths; image_files probe not exposed on Query health endpoints (deviation recorded); writer gates green
+D5 PASS 12:49:03: OKX 252 bindings PINNED, lanes public-001..004 + business-001 retained + business-002 new; Binance 27 PINNED 5 lanes; linger null (librdkafka default), timeout 30 s; 0 rejected; cores scope_q 0 oos 0 ws_max <90
+D6 PASS (crossing) 12:50:17: crossed catalog 11->14 acq 19->22 retained=640 added=407 dropped=0 migration_record=True; image_files=0; no cache-generation line; checkpoint .pre-v230 8f25340f
+WGATE GREEN 12:56:47: 5 fresh samples 12:52-12:56Z ws_max<=144 ms, gate_closed 0
+W1 FAIL 13:00:38: VERIFY_FAILED ready 41/104 exec 36, OKX execution_quote/trade/mark missing (57 keys), OKX QUOTE DATA_STALE, MARK SOURCE_UNAVAILABLE IncompleteExecutionReferenceError; Binance OK -> section 5 coupled rollback
+ROLLBACK COMPLETE 13:05:48: writer 7332e85a STRICT VERIFIED 13:05:38Z (BOOTSTRAP 13:04:25Z), 104/104/93, continuity 11/11; DL roles = section 1; lock released
