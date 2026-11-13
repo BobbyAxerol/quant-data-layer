@@ -109,7 +109,14 @@ final DL v2.3.0 release and tag happen only after the R-cert 2 final verdict and
   - The 2 new pinned-revision tests also passed alone: `Ran 2 tests ... OK`.
   - D5a fixture (session 22, pinned 21): fixed code `rc 0 PASS {'21': 'LIVE', '22': 'LIVE'}`; rc2 image `rc 1 FAIL
     refused pinned revision 21`.
-  - Full Python suite on `7cd4fc36`: FULL_SUITE_PENDING.
+  - Full Python suite on `7cd4fc36`:
+    - Run in the same CI test image, 1 CPU, cpu-shares 256, `--rm`, no network, non-root:
+      `Ran 4304 tests in 4303.516s / FAILED (errors=4, skipped=133)`, with 0 FAIL.
+    - The 4 errors are the same 4 environment-only modules as rc2 (`PermissionError: [Errno 13] Permission denied:
+      '/app/logs/app.log'` for the non-root user): test_crypto_history_contract, test_phase0_contract_golden,
+      test_phase3_control_plane, test_runtime_source_lifespan.
+    - Re-run of exactly those 4 modules as container root from a git archive of `7cd4fc36`: `Ran 15 tests / OK`.
+    - Verdict: GREEN.
   - The rc3 image itself carries the fix (`/app/qdl/runtime/session_liveness.py:308`, `match.config_revision <
     config_revision`).
 - **Window B = W-B2 alone, later.** Section W is unchanged, run against a DL already on rc3.
@@ -706,7 +713,7 @@ docker inspect market_data_service_p184w --format '{{.State.Status}} {{.Image}}'
 python3 -B scripts/p184_writer_recreate.py --expect-image sha256:7332e85a7f125a89e587a263267ca187a8ec2ee62ebd9eb2608e546eb8835944 --image sha256:9dfef8a8a548be2ee2d800fb62c006c8d11fcbcf3c66999779f6c97e15a71a6f \
   --allow-stopped --require-resume 0 --set-env MARKET_DATA_NATIVE_GAP_BOOTSTRAP_FEEDS=QUOTE \
   --min-execution-ready <PRE execution_ready> --deadline 180 --convergence-s 120 [--dry-run first]
-# W2 STRICT (same image; the strict precheck refuses unless every QUOTE/TRADE marker + value exists and is <= 30 s old)
+# W2 STRICT (same image; strict precheck, p184_writer_recreate.py:411-423 @ 2d2e18eb: no QUOTE/TRADE key missing, QUOTE any age, TRADE < 60 s; the 30 s is the stop budget)
 python3 -B scripts/p184_writer_recreate.py --expect-image sha256:9dfef8a8a548be2ee2d800fb62c006c8d11fcbcf3c66999779f6c97e15a71a6f --require-resume 1 \
   --min-execution-ready <PRE execution_ready> --deadline 180 --convergence-s 120 [--dry-run first]
 ```
