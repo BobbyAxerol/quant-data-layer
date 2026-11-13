@@ -1,0 +1,46 @@
+{
+  "schema": "alpha-hosting-source-intent.v1",
+  "revision": 2,
+  "status": "OWNER_SELECTED_NOT_ACTIVATED",
+  "decision_by": "bobby",
+  "decision_date": "2026-11-12",
+  "alpha_family": "crossec_ema_pfl",
+  "mode": "paper",
+  "signal_provider": "OKX",
+  "execution_venue": "OKX",
+  "product": "SWAP",
+  "settlement_currency": "USDT",
+  "intervals": ["1h", "12h"],
+  "bar_clock": "UTC_CLOSED_ONLY",
+  "parameters": {
+    "lam": 2.7722491138264167,
+    "sigma_star": 0.05643749505757501
+  },
+  "supplied_source": {
+    "path": "strategy_pitv5__v5e.py",
+    "sha256": "5829ca84407f92386b4522f5cf24ca0a722773e3928263d1debac54b68d8fcc7"
+  },
+  "historical_provenance": {
+    "signal_provider": "BINANCE",
+    "manifest_before_override_sha256": "36ab98b89f17478496e84f522c2c6755eb9c477f49123f1220cd77fba79a6aed",
+    "results_apply_to_okx": false,
+    "research_refit_requested": false,
+    "supplied_source_matches_historical_hash": false
+  },
+  "universe": {
+    "source_symbol_count": 146,
+    "exact_active_okx_usdt_swap_count": 96,
+    "missing_exact_contract_count": 50,
+    "coverage_raw_sha256": "19b1ee078502f30c1f8898ef962e6a5b9dbcc732b42b5e1e14ace7d6732642f3",
+    "selection_status": "OWNER_REVIEWED",
+    "declaration_path": "hosting/environments/crossec_ema_pfl.paper.universe.json",
+    "declaration_sha256": "fe3ae02b4fabdbb6ecca8f0517b0843cf11fc495508dcb30f3854f1a7ab4db4c",
+    "aliases_or_substitutions": []
+  },
+  "gates": [
+    "native_multi_instrument_qualification",
+    "metadata_and_model_qualification",
+    "backtest_live_behavior_parity_on_okx_inputs",
+    "final_execution_packet_approval"
+  ]
+}
