@@ -35,10 +35,10 @@ final DL v2.3.0 release and tag happen only after the R-cert 2 final verdict and
 |---|---|---|
 | R-cert 1 | PASS | 740,350 records compared, 0 mismatches; receipt `6814e25c` |
 | R-cert 2 (shadow) | **Interim only** | 840/840 MATCH at 12:03Z on the **rc1** images (`7af599de`). S1-S6 run Monday 06:00Z; final verdict after 12:30Z |
-| R-cert 4 (capacity envelope) | **Not run** | The window's measured substitute is the D0 median and the D6 + 30 min gate, DL vCPU <= 6.0 (section 7a) |
+| R-cert 4 (capacity envelope) | **Not run** | The window's measured substitute is the D0 median and the bootstrap-end + 30 min gate, DL vCPU <= 6.0 (section 7a) |
 | rc2 full suite | PASS (environment errors only) | Run on `3f45a315`: 4296 tests, 4 errors, all `/app/logs/app.log` permission errors for the non-root user; those modules re-run as root: 15 OK |
 | rc2 delta after the full suite | PASS | `3f45a315..832c02c4` changes only `qdl/runtime/lineage.py`, `scripts/dl_declaration.py`, 2 fixtures and 2 test files (no Rust, no runtime role code). Delta tests: `test_v230_lineage` 14 OK on `c7fe877`; tool + bar_source + lineage 47 OK (8 skipped) on `832c02c4` |
-| Declaration render | Gate 18/18 PASS | Tool `832c02c4`, depth 1000 render (section 3) |
+| Declaration render | Gate 18/18 PASS | Tool `832c02c4` + page-size fix (uncommitted, tool agent), out5 = out4 runtime files byte-identical (section 3) |
 
 **rc2 vs rc1 (`7af599de..832c02c4`), by commit**, and how each is covered:
 - `0f20d8f`, slice 2d: per-binding contract lineage, cursor lineage, contract-line schema_digest. Python + Rust
@@ -146,16 +146,48 @@ Build receipt: `~/.local/state/qdl-v2/v230-rcert2/images-832c02c4.json`. Both im
   | OKX ingestor | `4cb59e29` |
   | Binance ingestor | `021dd5dc` |
 
-- **Bootstrap (one-off). Decision R-H2 = depth 1000 (coordinator, 2026-11-13; matches L6).**
-  - The new selectors declare max_warmup_rows 1000, capped by the 1,095-day lookback. That covers crossec's need
-    (180 x 12h plus 60 bars) with ample margin.
-  - Estimate: BOOTSTRAP_ESTIMATE_PENDING (re-render out5). The 10000 render estimated 407 bindings, about 2.30M rows,
-    about 23,058 requests and about 154 min on OKX/SWAP/HISTORY_CANDLES (150/min, a bucket separate from the live
-    CANDLES lane), assuming 100 rows/request, one pass and no retries.
-  - **Deeper history later.** Depth up to 10,000 is a later declaration-only step using the v2.3.0 mechanism: a
-    config revision, the coverage gate and an ordered restart, with no image and no tag. It runs off-window and
-    outside the 23:30-00:05Z band. The alpha's 1h depth beyond 1000 h follows that path if they ask.
-  - Not verified: whether native gap repair shares the HISTORY_CANDLES bucket.
+- **Bootstrap (one-off). Decision R-H2: depth 1000 cannot be declared for the new selectors alone.** The depth is
+  a manifest-wide quota, not a per-row setting (verified):
+  - bar_edge (`qdl/runtime/bar_history_demand.py:20-37`) and the projector `retained_caps`
+    (`rust/qdl-projector/src/products.rs:118-143`, plus BAR_HEADROOM) both take, per BAR binding, the largest
+    `quotas.max_warmup_rows` of any manifest that requires it. Each row's `warmup_limit` is ignored.
+  - Options:
+
+    | Option | Cost | Verdict |
+    |---|---|---|
+    | (A) Keep `alpha.okx.paper.stable` `max_warmup_rows` 10000 (this render) | Bootstrap about **52.5 min** | **Recommended, pending coordinator re-confirmation** |
+    | (B) Lower that quota to 1000 | Not additive: the accept-set floor resets to 16, a same-window JWT bump is needed, and the projector trims the cached history of every existing alpha BAR product (255 x 1d at 10000) to 3064 | Rejected |
+    | (C) Make depth follow the row's `warmup_limit` in both places | Python + Rust change, not in rc2 | v2.3.x candidate; bootstrap about 9 min |
+
+  - Estimate (A), render out5 (tool page size corrected to OKX history-candles 300 rows/page,
+    `qdl/adapters/okx/history.py:105`):
+    - 407 bindings, about 2.30M rows, 7,878 requests on OKX/SWAP/HISTORY_CANDLES at 150/min: about 52.5 min.
+    - By interval:
+
+      | Interval | Bindings | Rows each | Requests |
+      |---|---|---|---|
+      | 1h | 89 | 10000 | 3,026 |
+      | 12h | 89 | 2190 (lookback cap) | 712 |
+      | 3m, 5m, 15m, 30m, 2h | 20 each | 10000 | 680 each |
+      | 4h | 20 | 6570 | 440 |
+      | 6h | 20 | 4380 | 300 |
+      | 1m | 89 | 0 (not granted) | 0 |
+
+    - Dropping the 3m-30m grants for the covered 25 would bring it to about 34 min.
+  - **Shared bucket (verified by the tool agent; Rust BATCH lease ordering not verified).**
+    - Bootstrap (`stable_bar_edge.py:1081`) and native gap repair (`:1713`) both use
+      `/api/v5/market/history-candles` on the HISTORY_CANDLES lane (`qdl/adapters/okx/admitted_rest.py:39`), at
+      the same BATCH priority.
+    - `reserved_realtime_inflight: 1` protects only the live final reads on the separate CANDLES lane
+      (`stable_bar_edge.py:2165`).
+    - Risk: gap repair can be delayed for up to about 52 min while the bootstrap runs. Live 1m finals are not
+      affected.
+    - D6 gate addition: record the gap-repair backlog at D6 and at the bootstrap end; it must drain within 15 min
+      after the bootstrap ends.
+  - **Deeper or shallower history later** is a declaration-only step using the v2.3.0 mechanism: a config
+    revision, the coverage gate and an ordered restart, with no image and no tag. It runs off-window and outside
+    23:30-00:05Z. Per-row depth (option C) is a v2.3.x code change.
+  - Not verified: a 300 B/row cache estimate (about +0.7 GB).
 
 ## 3c. Consumer manifest revisions and JWTs (verified read-only 2026-11-13 ~12:40Z)
 
@@ -164,7 +196,7 @@ Build receipt: `~/.local/state/qdl-v2/v230-rcert2/images-832c02c4.json`. Both im
 
   | Manifest | Live (query_kn_1 mount) | Render |
   |---|---|---|
-  | `alpha.okx.paper.stable` | r15 `/consumer-realms/alpha.okx.paper.stable-r15.yaml` sha256 `33b9cfd4ff19fee2...` | **r16**, `metadata.min_token_revision: 15`; out4 sha256 `b998bdce7be0c1c7...`, replaced by the depth-1000 render (out5) |
+  | `alpha.okx.paper.stable` | r15 `/consumer-realms/alpha.okx.paper.stable-r15.yaml` sha256 `33b9cfd4ff19fee2...` | **r16**, `metadata.min_token_revision: 15`; sha256 `b998bdce7be0c1c7...` (out4 = out5, byte-identical) |
   | `trading-system.paper.stable` | r13 `/consumer-realms/trading-system.paper.stable-r13.yaml` sha256 `cfc20e29b18d35c9...` | r13, byte-identical (`cfc20e29...`), no accept-set: exact 13 as today |
   | alpha-binance-paper r16, alpha-vn-paper r1, monitoring-multivenue r2, reference-l2-stable r7 | as today | byte-identical |
   | sandbox / live realm files | as today | not rendered, not touched |
@@ -280,11 +312,11 @@ labels.
 
 ## 4a. Window plan (estimates; T = start of D0)
 
-- **Start.** Any time 14:00-21:00Z today (2026-11-13), with the owner's GO; proposed 19:00Z.
-  - Latest start 21:00Z, so that D6, the bootstrap and the D6 + 30 min gate end before 23:30Z.
+- **Start.** Any time 14:00-20:30Z today (2026-11-13), with the owner's GO; proposed 19:00Z (ends about 21:20Z).
+  - Latest start 20:30Z, so that D6, the 52.5 min bootstrap and the CPU gate end before 23:30Z with margin.
   - Otherwise start after 00:05Z.
   - The 23:30-00:05Z band is avoided: daily 1d close, HISTORY_CANDLES contention.
-- **Duration.** About 2 h, from D0 to the end of the D6 + 30 min CPU gate. Timings are estimates, not measured.
+- **Duration.** About 2 h 20 min, from D0 to the end of the CPU gate. Timings are estimates, not measured.
 
   | Step | Time |
   |---|---|
@@ -295,11 +327,11 @@ labels.
   | D4 (Query) | T+38 to T+43 |
   | W-pre | T+43 |
   | D5 (ingestors) | T+43 to T+50 |
-  | D6 (bar_edge; the bootstrap runs about 15 min at depth 1000) | T+50 to T+70 |
-  | W (W1 + W2 + 10 min soak) | T+70 to T+90 |
-  | D6 + 30 min CPU gate | until about T+100 to T+120 |
+  | D6 (bar_edge recreate and its gates; the bootstrap then runs in the background, about 52.5 min) | T+50 to T+60; bootstrap T+55 to about T+108 |
+  | W (W1 + W2 + 10 min soak; starts after the D6 gates, not after the bootstrap) | T+60 to T+80 |
+  | CPU gate: bootstrap end + 30 min, steady state, median <= 6.0; the bootstrap burst is also recorded | about T+108 to T+140 |
 
-- **Writer outage.** Paper fails closed from W-pre to W2 VERIFIED, about 35 min. Bound: 30 min from W-pre to D5 + D6
+- **Writer outage.** Paper fails closed from W-pre to W2 VERIFIED, about 30 min. Bound: 30 min from W-pre to D5 + D6
   green, else roll back (section W).
 - **Blast radius.** Recreated:
   - DL: rust_core x3, market_projector x2, stream_kn x2, query_kn x2, ingestor_okx_swap, ingestor_binance_usdm,
@@ -354,9 +386,9 @@ labels.
   only.
 - REST visibility: last 1m read +6.1 s after the boundary. At 00:00Z the 1m and 250 D48 1d reads queue together:
   last at +106 s (today about +98 s).
-- Bootstrap: depth 1000 (R-H2, section 3), about 15 min, bounded by the 150/min HISTORY_CANDLES lane.
+- Bootstrap: quota 10000 (R-H2 option A, section 3), about 52.5 min, bounded by the 150/min HISTORY_CANDLES lane.
 - DL vCPU today: ~4.75-5.16 after Kafka F1 (coordinator). Expected steady delta about 0 vCPU (+0.2 records/s); the bootstrap burst is bounded by the 150/min lane.
-- Disk: the bootstrap adds about 200k bar rows once at depth 1000 (bytes not verified). Floor at D0 and D6: free >= 100 GiB AND >= 20% of `/`; 109 GiB / 22.5% at review time; 118 GiB / 24% free after the rc2 Rust build (12:08Z). Abort below.
+- Disk: the bootstrap adds about 2.30M bar rows once (about 0.7 GB at an assumed 300 B/row, not measured). Floor at D0 and D6: free >= 100 GiB AND >= 20% of `/`; 109 GiB / 22.5% at review time; 118 GiB / 24% free after the rc2 Rust build (12:08Z). Abort below.
 
 ## 7a. CPU budget (owner rule 2026-11-13)
 
@@ -368,7 +400,7 @@ labels.
   - Coordinator's current figure: about 4.75-5.16, so headroom is about 0.8-1.25.
   - The declaration's steady delta is about 0. rc2 is new code on every DL role, so the delta is only known by
     measurement.
-- **Recorded gate:** D6 + 30 min median DL vCPU <= 6.0. If it is exceeded, apply the OKX-first rule: defer Binance
+- **Recorded gate:** bootstrap end + 30 min median DL vCPU (steady state; the bootstrap burst, upper bound about +0.45 vCPU, is recorded separately) <= 6.0. If it is exceeded, apply the OKX-first rule: defer Binance
   additions by declaration. This window adds none, so exceeding means rc2 itself costs more, and the window rolls
   back.
 
