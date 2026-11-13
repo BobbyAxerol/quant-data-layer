@@ -7,7 +7,7 @@ recreate below needs the owner's GO for this exact blast radius and rollback (CL
 
 ## 0. Scope in one paragraph
 
-- **DL v2.3.0 rc2** (`release/v2.3.0-rc2-integration` @ `3f45a315`) delivers:
+- **DL v2.3.0 rc2** (`release/v2.3.0-rc2-integration`, code `832c02c4`) delivers:
   - DERIVED_FINAL bars for the 25 covered OKX instruments at 3m, 5m, 15m, 30m, 1H, 2H, 4H, 6H, 12H and 1D (1W, 2D and
     3D stay off until R-cert 2 passes the Monday 00:00Z boundary; they are enabled later by declaration);
   - per-binding contract lineage and per-binding cursor lineage;
@@ -25,6 +25,45 @@ recreate below needs the owner's GO for this exact blast radius and rollback (CL
   - Reviewed delta: TS `upgrade/evidence/P184_WRITER_REVIEWED_DELTA_R1_TO_WB3.json`.
 - Order: the DL roles go first, on the new contracts, before any derived bar is published. Then bar_edge. The writer
   goes last.
+
+## 0a. Certification status at GO (what is and is not proven)
+
+**This window rolls rc2 (`832c02c4`) to production as a release candidate.** It is not the DL v2.3.0 release. The
+final DL v2.3.0 release and tag happen only after the R-cert 2 final verdict and S1-S6 pass.
+
+| Item | Status | Evidence |
+|---|---|---|
+| R-cert 1 | PASS | 740,350 records compared, 0 mismatches; receipt `6814e25c` |
+| R-cert 2 (shadow) | **Interim only** | 840/840 MATCH at 12:03Z on the **rc1** images (`7af599de`). S1-S6 run Monday 06:00Z; final verdict after 12:30Z |
+| R-cert 4 (capacity envelope) | **Not run** | The window's measured substitute is the D0 median and the D6 + 30 min gate, DL vCPU <= 6.0 (section 7a) |
+| rc2 full suite | PASS (environment errors only) | Run on `3f45a315`: 4296 tests, 4 errors, all `/app/logs/app.log` permission errors for the non-root user; those modules re-run as root: 15 OK |
+| rc2 delta after the full suite | PASS | `3f45a315..832c02c4` changes only `qdl/runtime/lineage.py`, `scripts/dl_declaration.py`, 2 fixtures and 2 test files (no Rust, no runtime role code). Delta tests: `test_v230_lineage` 14 OK on `c7fe877`; tool + bar_source + lineage 47 OK (8 skipped) on `832c02c4` |
+| Declaration render | Gate 18/18 PASS | Tool `832c02c4`, depth 1000 render (section 3) |
+
+**rc2 vs rc1 (`7af599de..832c02c4`), by commit**, and how each is covered:
+- `0f20d8f`, slice 2d: per-binding contract lineage, cursor lineage, contract-line schema_digest. Python + Rust
+  (`cursor_v3.rs`, `gateway_bundle.rs`, stream-gateway, native ingestor). Covered by the full suite and the 2d cargo tests: contracts 36, stream-gateway lib 69 + native_stream
+  56, ingestor 80, clippy `-D warnings` (DL plan, slice 2d entry).
+  It is **not** covered by the R-cert 2 shadow, which runs rc1.
+- `de9d766`: declarable final-BAR source (`bar_source` / `bar_1m_source`) and the OKX REST budget gate. Covered by
+  the full suite and `test_v230_bar_source`.
+- `c5c42dd`: the tool sets `bar_1m_source: native` for the 150 tier. Covered by the full suite.
+- `5b18b86`, `c7fe877`: config lineage seeded from the live ingestor stamps, covering every binding of a shared
+  source. Lineage helpers and the gate only. Covered by the delta tests.
+- `832c02c`: tool support for the bar_edge runtime pair, live config lineage and the 6.0 vCPU OKX-first cap. Covered
+  by the delta tests and the 18/18 gate.
+- Not proven before GO, so the window gates are the check:
+  - rc2's lineage code against live consumers: the D3/D4 lineage and cursor gates, plus the writer gates;
+  - rc2's CPU cost: the section 7a gate.
+
+**Shadow-tied rollback criteria.**
+- The window's rollback path (section 5) back to v2.2.6 stage-A r13 applies if any of these fails:
+  - Monday's S1-S6;
+  - the R-cert 2 final verdict;
+  - a re-run of R-cert 2 on the rc2 images, if the owner requires one.
+- The section 5 order, the M4 offset guard and the writer BOOTSTRAP-then-STRICT path (W.5) apply unchanged.
+- The DL roles go back to their section 1 images and recorded compose: stage-A r13 for query/stream/OKX ingestor,
+  stage-A for cores/projectors, v2.2.5 for Binance ingestor/bar_edge.
 
 ## 1. Live state the packet starts from (read-only docker inspect, 2026-11-13 ~10:40Z; re-read at T-0)
 
@@ -107,17 +146,15 @@ Build receipt: `~/.local/state/qdl-v2/v230-rcert2/images-832c02c4.json`. Both im
   | OKX ingestor | `4cb59e29` |
   | Binance ingestor | `021dd5dc` |
 
-- **Bootstrap (one-off). Decision R-H2 needed.** Depth per binding is the largest granting manifest's
-  max_warmup_rows (10000), capped by the 1,095-day lookback.
-  - Total: 407 bindings, about 2.30M rows, about 23,058 requests on OKX/SWAP/HISTORY_CANDLES (150/min, a bucket
-    separate from the live CANDLES lane), about **154 min**. Assumes 100 rows/request, one pass, no retries.
-  - KN cache: about +2.3M rows, about 0.7 GB at an assumed 300 B/row (not measured).
-  - Projector: one-off upper bound about +0.45 vCPU spread over the bootstrap.
-  - Options:
-    - (a) accept 154 min: the window must start so that the bootstrap ends before 23:30Z, or start after 00:05Z;
-    - (b) drop the 3m..30m grants for the 20: about -53 min;
-    - (c) declare depth 1000 for the new selectors: about 15 min. Raise depth later by declaration.
-  - Recommendation: (c), the earlier L6 decision. Deep history then follows by a later declaration outside 00:00Z.
+- **Bootstrap (one-off). Decision R-H2 = depth 1000 (coordinator, 2026-11-13; matches L6).**
+  - The new selectors declare max_warmup_rows 1000, capped by the 1,095-day lookback. That covers crossec's need
+    (180 x 12h plus 60 bars) with ample margin.
+  - Estimate: BOOTSTRAP_ESTIMATE_PENDING (re-render out5). The 10000 render estimated 407 bindings, about 2.30M rows,
+    about 23,058 requests and about 154 min on OKX/SWAP/HISTORY_CANDLES (150/min, a bucket separate from the live
+    CANDLES lane), assuming 100 rows/request, one pass and no retries.
+  - **Deeper history later.** Depth up to 10,000 is a later declaration-only step using the v2.3.0 mechanism: a
+    config revision, the coverage gate and an ordered restart, with no image and no tag. It runs off-window and
+    outside the 23:30-00:05Z band. The alpha's 1h depth beyond 1000 h follows that path if they ask.
   - Not verified: whether native gap repair shares the HISTORY_CANDLES bucket.
 
 ## 3a. Two catalogue lineages (verified read-only 2026-11-13) and how the declaration keeps both
@@ -194,6 +231,39 @@ labels.
     - ready == demanded, execution_ready >= PRE, 0 parked.
 - **Stop rule.** Any gate FAIL stops the window. Roll back that step, then the coupled set (section 5).
 
+## 4a. Window plan (estimates; T = start of D0)
+
+- **Start.** Any time 14:00-21:00Z today (2026-11-13), with the owner's GO; proposed 19:00Z.
+  - Latest start 21:00Z, so that D6, the bootstrap and the D6 + 30 min gate end before 23:30Z.
+  - Otherwise start after 00:05Z.
+  - The 23:30-00:05Z band is avoided: daily 1d close, HISTORY_CANDLES contention.
+- **Duration.** About 2 h, from D0 to the end of the D6 + 30 min CPU gate. Timings are estimates, not measured.
+
+  | Step | Time |
+  |---|---|
+  | D0 (preflight; the 10 min CPU median sets the headroom) | T+0 to T+15 |
+  | D1 (cores, simultaneous replace) | T+15 to T+25 |
+  | D2 (projectors) | T+25 to T+33 |
+  | D3 (stream) | T+33 to T+38 |
+  | D4 (Query) | T+38 to T+43 |
+  | W-pre | T+43 |
+  | D5 (ingestors) | T+43 to T+50 |
+  | D6 (bar_edge; the bootstrap runs about 15 min at depth 1000) | T+50 to T+70 |
+  | W (W1 + W2 + 10 min soak) | T+70 to T+90 |
+  | D6 + 30 min CPU gate | until about T+100 to T+120 |
+
+- **Writer outage.** Paper fails closed from W-pre to W2 VERIFIED, about 35 min. Bound: 30 min from W-pre to D5 + D6
+  green, else roll back (section W).
+- **Blast radius.** Recreated:
+  - DL: rust_core x3, market_projector x2, stream_kn x2, query_kn x2, ingestor_okx_swap, ingestor_binance_usdm,
+    binance_bar_edge (11 containers, `qdl_v2_stable_candidate`);
+  - TS: `market_data_service_p184w` (writer, W-B `9dfef8a8...`).
+  - Consumers interrupted briefly: Paper (fail-closed outage above), Sandbox G1 / W05 relays (section 6).
+- **Rollback.** Section 5: reverse order, about 1 min per role, to the section 1 images. Writer back to `7332e85a`
+  via BOOTSTRAP then STRICT. M4 offset guard; no offset reset or seek. Shadow-tied criteria in section 0a.
+- **Not touched.** Section 6: Kafka brokers and config, topics and retention, market_cache and stable_redis, the
+  cert mesh, CPU and memory caps, monitor, Portal, every TS service other than the writer, JWT revisions.
+
 ## 5. Rollback (coupled, reverse order; each about 1 min per role)
 
 1. **W:** section W.
@@ -236,7 +306,7 @@ labels.
   only.
 - REST visibility: last 1m read +6.1 s after the boundary. At 00:00Z the 1m and 250 D48 1d reads queue together:
   last at +106 s (today about +98 s).
-- Bootstrap: see history depth in section 3. Decision R-H2 is open; the recommendation is 1000. The section 3 render digests are at depth 10000 and are re-rendered if 1000 is chosen.
+- Bootstrap: depth 1000 (R-H2, section 3), about 15 min, bounded by the 150/min HISTORY_CANDLES lane.
 - DL vCPU today: ~4.75-5.16 after Kafka F1 (coordinator). Expected steady delta about 0 vCPU (+0.2 records/s); the bootstrap burst is bounded by the 150/min lane.
 - Disk: the bootstrap adds about 200k bar rows once at depth 1000 (bytes not verified). Floor at D0 and D6: free >= 100 GiB AND >= 20% of `/`; 109 GiB / 22.5% at review time; 118 GiB / 24% free after the rc2 Rust build (12:08Z). Abort below.
 
