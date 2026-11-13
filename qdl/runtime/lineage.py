@@ -70,9 +70,53 @@ def retained_unchanged_ids(
     )
 
 
+def live_config_lineage(
+    catalog: StableSourceCatalog, ingestor_configs: Iterable[Mapping[str, Any]],
+) -> dict[str, int]:
+    """binding_id -> the config_revision its LIVE ingestor envelopes carry.
+
+    Each rendered ingestor config stamps a binding's raw envelopes with the binding row's own
+    ``config_revision`` or, absent, the file's ``config_revision`` (``qdl-native-raw-ingestor`` RawBinding).
+    The plan document's revision is NOT that value (Binance ran 19 while the plan said 21; review H2), so
+    config lineage must be seeded from here. Rows map to bindings through ``subscription_id`` = source_id.
+    """
+
+    by_source = {item.source_id: item.binding_id for item in catalog.bindings}
+    result: dict[str, int] = {}
+    for config in ingestor_configs:
+        default = int(config["config_revision"])
+        for row in config["bindings"]:
+            binding = by_source.get(str(row["subscription_id"]))
+            if binding is None:
+                continue
+            value = int(row.get("config_revision", default))
+            if result.setdefault(binding, value) != value:
+                raise ValueError(f"binding {binding} carries two live config revisions")
+    return result
+
+
+def live_config_lineage_problems(
+    plan: StableAcquisitionPlan, live: Mapping[str, int],
+) -> list[str]:
+    """Gate: every binding a live ingestor stamps keeps that exact config lineage in the plan."""
+
+    moved = sorted(
+        binding for binding, value in live.items()
+        if any(item.binding_id == binding for item in plan.bindings)
+        and plan.lineage_config_revision_for(binding) != value
+    )
+    if not moved:
+        return []
+    return [f"{len(moved)} bindings' plan config lineage differs from the live ingestor stamp"] + [
+        f"{binding}: plan {plan.lineage_config_revision_for(binding)} live {live[binding]}" for binding in moved[:5]
+    ]
+
+
 def pin_lineage(
     old_catalog_doc: Mapping[str, Any], old_plan_doc: Mapping[str, Any],
     new_catalog_doc: Mapping[str, Any], new_plan_doc: Mapping[str, Any],
+    *,
+    live_config: Mapping[str, int] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Return the new documents with every binding's lineage pinned, and a report.
 
@@ -98,7 +142,10 @@ def pin_lineage(
     for row in plan["bindings"]:
         binding = str(row["binding_id"])
         if binding in retained:
-            row[_PLAN_KEY] = int(old_p[binding].get(_PLAN_KEY) or old_plan_doc["revision"])
+            # Live stamp first (review H2): the value the binding's records actually carry.
+            live_value = None if live_config is None else live_config.get(binding)
+            row[_PLAN_KEY] = int(live_value if live_value is not None
+                                 else old_p[binding].get(_PLAN_KEY) or old_plan_doc["revision"])
         else:
             row[_PLAN_KEY] = new_plan_revision
     return catalog, plan, {"retained": kept, "new_or_changed": moved}

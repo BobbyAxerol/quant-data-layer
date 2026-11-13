@@ -77861,3 +77861,27 @@ container has been started.
     unnecessary).
   - The shared IDR register lives in the TS repository (writer agent's branch). An IDR number should be assigned by
     the coordinator, pointing here.
+
+### DL v2.3.0 2d follow-up: config lineage seeded from the live ingestor stamps (review H2); CPU cap rule - 2026-11-13 (Claude)
+
+- **Review H2** (reviewer agent, combined window packet), verified:
+  - `pin_lineage` fell back to the old plan document's revision for config lineage, which gave 21.
+  - The live Binance ingestor stamps its own `config_revision` 19, and the writer's Binance ordering markers hold
+    config 19 / catalogue 13.
+  - The document-to-document gate could not catch this. A later render deriving ingestor per-binding
+    `config_revision` from those pins would move every Binance record 19 -> 21, which is the stage A class of
+    failure.
+- **Fix** in `qdl/runtime/lineage.py`:
+  - `live_config_lineage(catalog, ingestor_configs)`: binding -> the config revision its live envelopes carry (row
+    value or file value, mapped through `subscription_id`; refuses two values for one binding);
+  - `pin_lineage(..., live_config=)` pins retained rows at the live stamp first;
+  - `live_config_lineage_problems(plan, live)` is the gate against live values.
+  - The tool agent wires both into `scripts/dl_declaration.py` and re-renders.
+  - Test `LiveConfigLineageTests` (Binance 19 / OKX 21; unpinned control flags exactly Binance; conflicting stamps
+    refused). `tests.test_v230_lineage` 13 OK.
+- **Owner rule recorded:** the DL CPU budget cap is **6.0 vCPU**.
+  - When a window or declaration would exceed it, OKX coverage (all OKX bindings and endpoints) has priority.
+  - Binance additions are deferred or trimmed first, never OKX.
+  - The declaration tool's capacity gate encodes it: declared venue priority, default OKX > BINANCE; cap 6.0; it
+    reports the Binance rows to defer and refuses OKX-first violations. The tool agent implements this.
+- **Status:** implemented, tested locally. rc2 head moves; the rc2 image build waits for this commit.

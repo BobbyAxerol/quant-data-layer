@@ -251,3 +251,32 @@ class ContractLineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LiveConfigLineageTests(unittest.TestCase):
+    """Review H2: config lineage comes from what the live ingestors stamp, not the plan revision."""
+
+    def test_pins_follow_the_live_ingestor_stamp_and_the_gate_checks_it(self):
+        from qdl.runtime.lineage import live_config_lineage, live_config_lineage_problems
+
+        catalog_doc = json.loads(CATALOG.read_text(encoding="utf-8"))
+        plan_doc = yaml.safe_load(ACQUISITION.read_text(encoding="utf-8"))
+        catalog = StableSourceCatalog.load(CATALOG)
+        binance = next(b for b in catalog.bindings if b.binding_id.startswith("binance-usdm") and b.feed.value == "QUOTE")
+        okx = next(b for b in catalog.bindings if b.binding_id.startswith("okx-swap") and b.feed.value == "QUOTE")
+        configs = [
+            {"config_revision": 19, "bindings": [{"subscription_id": binance.source_id}]},
+            {"config_revision": 21, "bindings": [{"subscription_id": okx.source_id}]},
+        ]
+        live = live_config_lineage(catalog, configs)
+        self.assertEqual(live, {binance.binding_id: 19, okx.binding_id: 21})
+        pinned_catalog, pinned_plan, _ = pin_lineage(catalog_doc, plan_doc, catalog_doc, plan_doc, live_config=live)
+        with tempfile.TemporaryDirectory() as directory:
+            _, plan, _ = _write(Path(directory), "live", pinned_catalog, pinned_plan)
+            self.assertEqual(live_config_lineage_problems(plan, live), [])
+            self.assertEqual(plan.lineage_config_revision_for(binance.binding_id), 19)
+            _, unpinned, _ = _write(Path(directory), "doc", *pin_lineage(catalog_doc, plan_doc, catalog_doc, plan_doc)[:2])
+            problems = live_config_lineage_problems(unpinned, live)
+            self.assertTrue(problems and "1 bindings" in problems[0], problems)
+        with self.assertRaisesRegex(ValueError, "two live config revisions"):
+            live_config_lineage(catalog, configs + [{"config_revision": 20, "bindings": [{"subscription_id": okx.source_id}]}])
