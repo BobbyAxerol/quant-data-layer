@@ -1,0 +1,53 @@
+# DL v2.3.0 coverage to 150 OKX instruments (COVERAGE_150_STUDY, E-crypto list okx150_crypto.json).
+# EXECUTION: Trading System Paper QUOTE + MARK_INDEX_PRICE for all 150, plus the TS gate's declared
+#            requirements for the crossec 96 (ts.declared-execution-requirements.v1, deduplicated).
+# SIGNAL:    alpha.okx.paper.stable, universe okx-swap-tier-e: BAR 1m native + 13 intervals derived in DL,
+#            history depth per interval, FUNDING_RATE reference; the crossec hosting intent adds its members.
+# FET-USDT-SWAP / LUNA-USDT-SWAP are not in the catalogue and no verbatim capture is declared: typed BLOCKED.
+schema: qdl.v2.declaration.v1
+declaration_revision: 2
+environment: paper
+accept_set: true
+ingestor:
+  lane_pins: true
+  latest_state_flush_ms_by_feed: {MARK_INDEX: 500}
+capacity:
+  baseline_dl_vcpu: 4.06
+  ceiling_dl_vcpu: 6.0     # owner cap 2026-11-13 (was 5.0)
+  venue_priority: [OKX, BINANCE]
+base:
+  repo: ../../..
+consumers:
+- consumer_id: trading-system.paper.stable
+  class: EXECUTION
+  manifest: consumers/stable/trading-system-paper.yaml
+  # quotas: derived by qdl.consumer.quota_model from the declared products (never hand-picked)
+  ts_requirements: [ts-declared-requirements-crossec96.json]
+  instruments:
+  - venue: OKX
+    market: SWAP
+    feeds: [QUOTE, MARK_INDEX_PRICE]
+    symbols_file: okx150_crypto.json
+- consumer_id: alpha.okx.paper.stable
+  class: SIGNAL
+  manifest: consumers/stable/alpha-okx-paper.yaml
+  quotas: {max_streams: 600}
+  universes:
+  - universe_id: okx-swap-tier-e
+    venue: OKX
+    market: SWAP
+    symbols_file: okx150_crypto.json
+    bars:
+      native: [1m]
+      derived: [3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 12h, 1d, 2d, 3d, 1w]
+    history: {1h: 1000, 12h: 400, default: 500}
+    # Native candle1m WS (coordinator 2026-11-13): REST final 1m for 143 symbols saturates the bar-edge
+    # OKX/SWAP/CANDLES admission lane (143.2 of 150 req/min, last read +55 s). REST_FINAL stays declarable
+    # for small (stage-A-sized) sets; the okx_rest_budget gate holds it to the lane.
+    bar_1m_source: native
+    reference: [FUNDING_RATE]
+    alpha_hosting:
+      registry: alpha-data-requirements.yaml
+      profile: multi_symbol_bar
+      manifest: crossec_ema_pfl.paper.manifest.json
+      universe: crossec_ema_pfl.paper.universe.json

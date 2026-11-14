@@ -1,5 +1,5 @@
 schema: qdl.v2.authority-promotion-scope.v1
-revision: 11
+revision: 12
 binding_ids:
 - binance-usdm-0gusdt-bar-1d
 - binance-usdm-1000bonkusdt-bar-1d
@@ -363,9 +363,13 @@ binding_ids:
 - okx-swap-2z-usdt-swap-bar-1d
 - okx-swap-a-usdt-swap-bar-1d
 - okx-swap-aave-usdt-swap-bar-1d
+- okx-swap-aave-usdt-swap-mark_index_price
+- okx-swap-aave-usdt-swap-quote
 - okx-swap-act-usdt-swap-bar-1d
 - okx-swap-acu-usdt-swap-bar-1d
 - okx-swap-ada-usdt-swap-bar-1d
+- okx-swap-ada-usdt-swap-mark_index_price
+- okx-swap-ada-usdt-swap-quote
 - okx-swap-aero-usdt-swap-bar-1d
 - okx-swap-aevo-usdt-swap-bar-1d
 - okx-swap-agld-usdt-swap-bar-1d
@@ -379,6 +383,8 @@ binding_ids:
 - okx-swap-apt-usdt-swap-bar-1d
 - okx-swap-ar-usdt-swap-bar-1d
 - okx-swap-arb-usdt-swap-bar-1d
+- okx-swap-arb-usdt-swap-mark_index_price
+- okx-swap-arb-usdt-swap-quote
 - okx-swap-arkm-usdt-swap-bar-1d
 - okx-swap-arx-usdt-swap-bar-1d
 - okx-swap-aster-usdt-swap-bar-1d
@@ -387,6 +393,8 @@ binding_ids:
 - okx-swap-atom-usdt-swap-bar-1d
 - okx-swap-auction-usdt-swap-bar-1d
 - okx-swap-avax-usdt-swap-bar-1d
+- okx-swap-avax-usdt-swap-mark_index_price
+- okx-swap-avax-usdt-swap-quote
 - okx-swap-avnt-usdt-swap-bar-1d
 - okx-swap-axs-usdt-swap-bar-1d
 - okx-swap-aztec-usdt-swap-bar-1d
@@ -396,6 +404,8 @@ binding_ids:
 - okx-swap-based-usdt-swap-bar-1d
 - okx-swap-bat-usdt-swap-bar-1d
 - okx-swap-bch-usdt-swap-bar-1d
+- okx-swap-bch-usdt-swap-mark_index_price
+- okx-swap-bch-usdt-swap-quote
 - okx-swap-beat-usdt-swap-bar-1d
 - okx-swap-bera-usdt-swap-bar-1d
 - okx-swap-bico-usdt-swap-bar-1d
@@ -489,6 +499,8 @@ binding_ids:
 - okx-swap-egld-usdt-swap-bar-1d
 - okx-swap-eigen-usdt-swap-bar-1d
 - okx-swap-ena-usdt-swap-bar-1d
+- okx-swap-ena-usdt-swap-mark_index_price
+- okx-swap-ena-usdt-swap-quote
 - okx-swap-enj-usdt-swap-bar-1d
 - okx-swap-ens-usdt-swap-bar-1d
 - okx-swap-enso-usdt-swap-bar-1d
@@ -518,6 +530,8 @@ binding_ids:
 - okx-swap-f-usdt-swap-bar-1d
 - okx-swap-fartcoin-usdt-swap-bar-1d
 - okx-swap-fil-usdt-swap-bar-1d
+- okx-swap-fil-usdt-swap-mark_index_price
+- okx-swap-fil-usdt-swap-quote
 - okx-swap-floki-usdt-swap-bar-1d
 - okx-swap-flow-usdt-swap-bar-1d
 - okx-swap-fogo-usdt-swap-bar-1d
@@ -560,6 +574,8 @@ binding_ids:
 - okx-swap-ldo-usdt-swap-bar-1d
 - okx-swap-linea-usdt-swap-bar-1d
 - okx-swap-link-usdt-swap-bar-1d
+- okx-swap-link-usdt-swap-mark_index_price
+- okx-swap-link-usdt-swap-quote
 - okx-swap-lit-usdt-swap-bar-1d
 - okx-swap-lpt-usdt-swap-bar-1d
 - okx-swap-lqty-usdt-swap-bar-1d
@@ -582,6 +598,8 @@ binding_ids:
 - okx-swap-move-usdt-swap-bar-1d
 - okx-swap-mubarak-usdt-swap-bar-1d
 - okx-swap-near-usdt-swap-bar-1d
+- okx-swap-near-usdt-swap-mark_index_price
+- okx-swap-near-usdt-swap-quote
 - okx-swap-neiro-usdt-swap-bar-1d
 - okx-swap-neo-usdt-swap-bar-1d
 - okx-swap-night-usdt-swap-bar-1d
@@ -590,6 +608,8 @@ binding_ids:
 - okx-swap-o-usdt-swap-bar-1d
 - okx-swap-on-usdt-swap-bar-1d
 - okx-swap-ondo-usdt-swap-bar-1d
+- okx-swap-ondo-usdt-swap-mark_index_price
+- okx-swap-ondo-usdt-swap-quote
 - okx-swap-one-usdt-swap-bar-1d
 - okx-swap-ont-usdt-swap-bar-1d
 - okx-swap-op-usdt-swap-bar-1d
@@ -599,8 +619,12 @@ binding_ids:
 - okx-swap-ordi-usdt-swap-bar-1d
 - okx-swap-pendle-usdt-swap-bar-1d
 - okx-swap-pengu-usdt-swap-bar-1d
+- okx-swap-pengu-usdt-swap-mark_index_price
+- okx-swap-pengu-usdt-swap-quote
 - okx-swap-people-usdt-swap-bar-1d
 - okx-swap-pepe-usdt-swap-bar-1d
+- okx-swap-pepe-usdt-swap-mark_index_price
+- okx-swap-pepe-usdt-swap-quote
 - okx-swap-pieverse-usdt-swap-bar-1d
 - okx-swap-pippin-usdt-swap-bar-1d
 - okx-swap-plume-usdt-swap-bar-1d
@@ -609,6 +633,8 @@ binding_ids:
 - okx-swap-popcat-usdt-swap-bar-1d
 - okx-swap-prove-usdt-swap-bar-1d
 - okx-swap-pump-usdt-swap-bar-1d
+- okx-swap-pump-usdt-swap-mark_index_price
+- okx-swap-pump-usdt-swap-quote
 - okx-swap-pyth-usdt-swap-bar-1d
 - okx-swap-qnt-usdt-swap-bar-1d
 - okx-swap-qtum-usdt-swap-bar-1d
@@ -662,11 +688,17 @@ binding_ids:
 - okx-swap-strk-usdt-swap-bar-1d
 - okx-swap-stx-usdt-swap-bar-1d
 - okx-swap-sui-usdt-swap-bar-1d
+- okx-swap-sui-usdt-swap-mark_index_price
+- okx-swap-sui-usdt-swap-quote
 - okx-swap-sushi-usdt-swap-bar-1d
 - okx-swap-syrup-usdt-swap-bar-1d
 - okx-swap-tao-usdt-swap-bar-1d
+- okx-swap-tao-usdt-swap-mark_index_price
+- okx-swap-tao-usdt-swap-quote
 - okx-swap-theta-usdt-swap-bar-1d
 - okx-swap-tia-usdt-swap-bar-1d
+- okx-swap-tia-usdt-swap-mark_index_price
+- okx-swap-tia-usdt-swap-quote
 - okx-swap-trb-usdt-swap-bar-1d
 - okx-swap-tria-usdt-swap-bar-1d
 - okx-swap-trump-usdt-swap-bar-1d
@@ -677,6 +709,8 @@ binding_ids:
 - okx-swap-ub-usdt-swap-bar-1d
 - okx-swap-uma-usdt-swap-bar-1d
 - okx-swap-uni-usdt-swap-bar-1d
+- okx-swap-uni-usdt-swap-mark_index_price
+- okx-swap-uni-usdt-swap-quote
 - okx-swap-useless-usdt-swap-bar-1d
 - okx-swap-vana-usdt-swap-bar-1d
 - okx-swap-virtual-usdt-swap-bar-1d
@@ -687,11 +721,15 @@ binding_ids:
 - okx-swap-wet-usdt-swap-bar-1d
 - okx-swap-wif-usdt-swap-bar-1d
 - okx-swap-wld-usdt-swap-bar-1d
+- okx-swap-wld-usdt-swap-mark_index_price
+- okx-swap-wld-usdt-swap-quote
 - okx-swap-wlfi-usdt-swap-bar-1d
 - okx-swap-woo-usdt-swap-bar-1d
 - okx-swap-xlm-usdt-swap-bar-1d
 - okx-swap-xpl-usdt-swap-bar-1d
 - okx-swap-xrp-usdt-swap-bar-1d
+- okx-swap-xrp-usdt-swap-mark_index_price
+- okx-swap-xrp-usdt-swap-quote
 - okx-swap-xtz-usdt-swap-bar-1d
 - okx-swap-yb-usdt-swap-bar-1d
 - okx-swap-yfi-usdt-swap-bar-1d
@@ -699,6 +737,8 @@ binding_ids:
 - okx-swap-zama-usdt-swap-bar-1d
 - okx-swap-zbt-usdt-swap-bar-1d
 - okx-swap-zec-usdt-swap-bar-1d
+- okx-swap-zec-usdt-swap-mark_index_price
+- okx-swap-zec-usdt-swap-quote
 - okx-swap-zen-usdt-swap-bar-1d
 - okx-swap-zeta-usdt-swap-bar-1d
 - okx-swap-zil-usdt-swap-bar-1d

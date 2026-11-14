@@ -87,6 +87,13 @@ class StableSourceBinding:
     # Explicitly signed historical revisions are replay-only lineage.  They
     # never change the current instrument metadata returned to consumers.
     historical_metadata_revisions: tuple[int, ...] = ()
+    # DL v2.3.0 (slice 2d): the catalogue revision at which THIS binding last
+    # changed. It is the ``instrument_catalog_revision`` of the binding's served
+    # contract and raw/core lineage, so an additive declaration (a new catalogue
+    # revision that leaves this binding untouched) does not change the lineage a
+    # consumer keyed its ordering/resume state on. ``None`` = the catalogue's own
+    # revision (the pre-v2.3.0 behaviour); see ``StableSourceCatalog.lineage_revision_for``.
+    lineage_revision: int | None = None
 
     def __post_init__(self) -> None:
         required = (
@@ -99,6 +106,12 @@ class StableSourceBinding:
             self.normalizer_version,
             self.canonical_stream,
         )
+        if self.lineage_revision is not None and (
+            isinstance(self.lineage_revision, bool)
+            or not isinstance(self.lineage_revision, int)
+            or self.lineage_revision < 1
+        ):
+            raise ValueError("stable binding lineage_revision must be a positive integer")
         if any(not value.strip() for value in required):
             raise ValueError("stable source binding identity is incomplete")
         if self.source_role not in {"PRIMARY", "SECONDARY", "REFERENCE", "BACKFILL"}:
@@ -261,6 +274,15 @@ class StableSourceCatalog:
         self.canonical_stream = canonical_stream
         self.bindings = bindings
         self.catalog_revision = catalog_revision
+        late = sorted(
+            item.binding_id for item in bindings
+            if item.lineage_revision is not None and item.lineage_revision > catalog_revision
+        )
+        if late:
+            raise ValueError(
+                "stable binding lineage_revision is newer than the catalogue revision: "
+                + ",".join(late[:5])
+            )
         self.source_policy_revision = source_policy_revision
         self.authority_revision = authority_revision
         self._by_requirement = {item.requirement_key: item for item in bindings}
@@ -397,7 +419,7 @@ class StableSourceCatalog:
         if not isinstance(raw, dict) or set(raw) != {
             "binding_id", "instrument_uid", "feed", "interval", "source", "quality",
             "v1_compatibility",
-        }:
+        } | ({"lineage_revision"} if isinstance(raw, dict) and "lineage_revision" in raw else set()):
             raise ValueError("stable source binding fields are incomplete or unknown")
         source = raw["source"]
         quality = raw["quality"]
@@ -439,7 +461,15 @@ class StableSourceCatalog:
             freshness_basis=str(quality.get("freshness_basis", "SOURCE_EVENT")).upper(),
             delivery_semantics=str(quality.get("delivery_semantics", "STRICT_EVENT")).upper(),
             historical_metadata_revisions=history_by_uid[instrument.instrument_uid],
+            lineage_revision=(
+                int(raw["lineage_revision"]) if raw.get("lineage_revision") is not None else None
+            ),
         )
+
+    def lineage_revision_for(self, binding: StableSourceBinding) -> int:
+        """The ``instrument_catalog_revision`` a binding's records carry (DL v2.3.0 2d)."""
+
+        return self.catalog_revision if binding.lineage_revision is None else binding.lineage_revision
 
     def binding_for(self, requirement: DataRequirement) -> StableSourceBinding:
         try:

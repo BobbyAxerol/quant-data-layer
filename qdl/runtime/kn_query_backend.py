@@ -986,7 +986,9 @@ class KnCursorV3Issuer:
             source_offset=offset,
             partition_plan_epoch=self.settings.partition_plan_epoch,
             source_policy_revision=self.catalog.source_policy_revision,
-            catalog_revision=self.catalog.catalog_revision,
+            # DL v2.3.0 2d: the binding's lineage, so the token survives an
+            # additive declaration that leaves this binding untouched.
+            catalog_revision=self.catalog.lineage_revision_for(binding),
             route_generation=self.settings.route_generation,
             issued_at_ns=now,
             expires_at_ns=now + self.settings.ttl_seconds * 1_000_000_000,

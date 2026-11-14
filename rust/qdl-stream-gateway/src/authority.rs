@@ -113,7 +113,7 @@ pub fn reauthorize(
         .bundle
         .manifest_by_subject(&principal.environment, &principal.subject)
         .ok_or_else(|| AccessError::Unauthenticated("consumer manifest was withdrawn".into()))?;
-    if principal.consumer_manifest_revision != Some(manifest.manifest_revision)
+    if !manifest.accepts_token_revision(principal.consumer_manifest_revision)
         || manifest.consumer_id != consumer_id
     {
         return Err(AccessError::Unauthenticated(

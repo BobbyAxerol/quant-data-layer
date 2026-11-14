@@ -103,8 +103,10 @@ class SessionLineageTests(unittest.TestCase):
         self.lineage(OLD, NEW, revision=21)
         self.assertEqual(self.status().state, "UNKNOWN")
         self.lineage(OLD, NEW)
-        result = self.status(revision=19)
+        # An event newer than its session's config is refused; an older (pinned) one is not.
+        result = self.status(revision=21)
         self.assertEqual((result.state, result.flags), ("UNKNOWN", ("SOURCE_SESSION_CONFIG_MISMATCH",)))
+        self.assertEqual(self.status(revision=19).state, "LIVE")
 
     def test_two_chains_claiming_one_session_fail_closed(self) -> None:
         other = ("okx-public-003-175-1", 175)

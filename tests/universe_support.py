@@ -12,13 +12,14 @@ from pathlib import Path
 
 import yaml
 
+from qdl.runtime.universal_demand import bar_family_symbols
+
 ROOT = Path(__file__).resolve().parents[1]
 _DEMAND = yaml.safe_load((ROOT / "config/v2/stable-crypto-demand.yaml").read_text(encoding="utf-8"))
-_EXECUTION = {
-    (str(row["venue"]).upper(), str(row["native_symbol"]))
-    for consumer in _DEMAND["consumers"] for row in consumer["requirements"]
-    if str(row["feed"]).upper() != "BAR"
-}
+# Full-bar-family symbols (the five liquid per venue) are the baseline, not the universe: the shared predicate
+# `bar_family_symbols` ignores execution-only demand (v2.2.6 stage A QUOTE + MARK), so the universe counts stay a
+# property of the universe file alone.
+_EXECUTION = bar_family_symbols(_DEMAND)
 UNIVERSE_SYMBOLS = {
     venue: sorted({
         str(row["native_symbol"])

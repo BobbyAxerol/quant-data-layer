@@ -1,0 +1,12 @@
+rust_core 7c848aadcb0d running
+rust_core_2 7c848aadcb0d running
+rust_core_3 7c848aadcb0d running
+market_projector_1 60f83a5106b0 running
+market_projector_2 60f83a5106b0 running
+stream_kn_1 27c79b53400e running
+stream_kn_2 27c79b53400e running
+query_kn_1 753604f8abaa running
+query_kn_2 753604f8abaa running
+ingestor_okx_swap 27c79b53400e running
+ingestor_binance_usdm 27c79b53400e running
+binance_bar_edge 08f356a84151 running

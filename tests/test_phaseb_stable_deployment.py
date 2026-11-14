@@ -14,6 +14,8 @@ from pathlib import Path
 
 import yaml
 
+from tests.v226_stage_a_support import V226_STAGE_A
+
 from qdl.adapters.intervals import canonical_interval_ms
 from qdl.adapters.vn import build_dnse_bar_raw_envelope
 from qdl.query import FeedType, StalePolicy
@@ -199,7 +201,7 @@ class StableDeploymentContractTests(unittest.TestCase):
         quote_requirements = tuple(
             item for item in manifest.requirements if item.feed is FeedType.QUOTE
         )
-        self.assertEqual(len(quote_requirements), 11)
+        self.assertEqual(len(quote_requirements), 31)  # +20 stage A (r12)
         expected = {
             ("BINANCE", symbol)
             for symbol in ("BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "BNBUSDT")
@@ -210,7 +212,7 @@ class StableDeploymentContractTests(unittest.TestCase):
                 "DOGE-USDT-SWAP", "BNB-USDT-SWAP",
                 "BTC-USD-SWAP",  # inverse Paper extension (manifest r11)
             )
-        }
+        } | {("OKX", symbol) for symbol in V226_STAGE_A}  # v2.2.6 stage A (manifest r12)
         observed = set()
         for requirement in quote_requirements:
             with self.subTest(instrument_uid=requirement.instrument_uid):
@@ -321,7 +323,7 @@ class StableDeploymentContractTests(unittest.TestCase):
                     "DOGE-USDT-SWAP", "BNB-USDT-SWAP",
                     "BTC-USD-SWAP",  # inverse Paper extension (demand revision 8)
                 )
-            },
+            } | {("OKX", symbol) for symbol in V226_STAGE_A},  # v2.2.6 stage A (demand revision 9)
         )
 
     def test_tls_generator_covers_all_published_ingress_aliases(self):
@@ -588,6 +590,8 @@ class StableDeploymentContractTests(unittest.TestCase):
                 "okx-swap-doge-usdt-swap-quote": "NONE",
                 "okx-swap-eth-usdt-swap-quote": "NONE",
                 "okx-swap-sol-usdt-swap-quote": "NONE",
+            } | {  # v2.2.6 stage A (acquisition r21)
+                f"okx-swap-{symbol.lower()}-quote": "NONE" for symbol in V226_STAGE_A
             },
         )
 

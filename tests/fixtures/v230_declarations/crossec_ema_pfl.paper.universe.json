@@ -1,0 +1,656 @@
+{
+  "schema": "alpha-hosting-universe.v1",
+  "revision": 1,
+  "status": "OWNER_SELECTED_NOT_ACTIVATED",
+  "decision_by": "bobby",
+  "decision_date": "2026-11-12",
+  "alpha_family": "crossec_ema_pfl",
+  "venue": "OKX",
+  "product": "SWAP",
+  "settlement_currency": "USDT",
+  "source_symbol_count": 146,
+  "selected_count": 96,
+  "excluded_count": 50,
+  "source_sha256": "5829ca84407f92386b4522f5cf24ca0a722773e3928263d1debac54b68d8fcc7",
+  "provider_capture_sha256": "19b1ee078502f30c1f8898ef962e6a5b9dbcc732b42b5e1e14ace7d6732642f3",
+  "provider_capture_utc": "2026-11-12T10:27:01.330400+00:00",
+  "selection_rule": "Exact live linear USDT SWAP matches from the original source universe; no aliases or substitute coins. Preserve monthly PIT ranking, not a fixed top-20. Revalidate provider state before activation.",
+  "selected": [
+    {
+      "research_symbol": "AAVEUSDT",
+      "venue_symbol": "AAVE-USDT-SWAP"
+    },
+    {
+      "research_symbol": "ADAUSDT",
+      "venue_symbol": "ADA-USDT-SWAP"
+    },
+    {
+      "research_symbol": "ALGOUSDT",
+      "venue_symbol": "ALGO-USDT-SWAP"
+    },
+    {
+      "research_symbol": "APEUSDT",
+      "venue_symbol": "APE-USDT-SWAP"
+    },
+    {
+      "research_symbol": "APTUSDT",
+      "venue_symbol": "APT-USDT-SWAP"
+    },
+    {
+      "research_symbol": "ARBUSDT",
+      "venue_symbol": "ARB-USDT-SWAP"
+    },
+    {
+      "research_symbol": "ASTERUSDT",
+      "venue_symbol": "ASTER-USDT-SWAP"
+    },
+    {
+      "research_symbol": "ATOMUSDT",
+      "venue_symbol": "ATOM-USDT-SWAP"
+    },
+    {
+      "research_symbol": "AUCTIONUSDT",
+      "venue_symbol": "AUCTION-USDT-SWAP"
+    },
+    {
+      "research_symbol": "AVAXUSDT",
+      "venue_symbol": "AVAX-USDT-SWAP"
+    },
+    {
+      "research_symbol": "AXSUSDT",
+      "venue_symbol": "AXS-USDT-SWAP"
+    },
+    {
+      "research_symbol": "BANDUSDT",
+      "venue_symbol": "BAND-USDT-SWAP"
+    },
+    {
+      "research_symbol": "BATUSDT",
+      "venue_symbol": "BAT-USDT-SWAP"
+    },
+    {
+      "research_symbol": "BCHUSDT",
+      "venue_symbol": "BCH-USDT-SWAP"
+    },
+    {
+      "research_symbol": "BIOUSDT",
+      "venue_symbol": "BIO-USDT-SWAP"
+    },
+    {
+      "research_symbol": "BNBUSDT",
+      "venue_symbol": "BNB-USDT-SWAP"
+    },
+    {
+      "research_symbol": "BOMEUSDT",
+      "venue_symbol": "BOME-USDT-SWAP"
+    },
+    {
+      "research_symbol": "BONKUSDT",
+      "venue_symbol": "BONK-USDT-SWAP"
+    },
+    {
+      "research_symbol": "BTCUSDT",
+      "venue_symbol": "BTC-USDT-SWAP"
+    },
+    {
+      "research_symbol": "CFXUSDT",
+      "venue_symbol": "CFX-USDT-SWAP"
+    },
+    {
+      "research_symbol": "CHZUSDT",
+      "venue_symbol": "CHZ-USDT-SWAP"
+    },
+    {
+      "research_symbol": "COMPUSDT",
+      "venue_symbol": "COMP-USDT-SWAP"
+    },
+    {
+      "research_symbol": "CRVUSDT",
+      "venue_symbol": "CRV-USDT-SWAP"
+    },
+    {
+      "research_symbol": "DASHUSDT",
+      "venue_symbol": "DASH-USDT-SWAP"
+    },
+    {
+      "research_symbol": "DOGEUSDT",
+      "venue_symbol": "DOGE-USDT-SWAP"
+    },
+    {
+      "research_symbol": "DOTUSDT",
+      "venue_symbol": "DOT-USDT-SWAP"
+    },
+    {
+      "research_symbol": "DYDXUSDT",
+      "venue_symbol": "DYDX-USDT-SWAP"
+    },
+    {
+      "research_symbol": "EGLDUSDT",
+      "venue_symbol": "EGLD-USDT-SWAP"
+    },
+    {
+      "research_symbol": "ENAUSDT",
+      "venue_symbol": "ENA-USDT-SWAP"
+    },
+    {
+      "research_symbol": "ENJUSDT",
+      "venue_symbol": "ENJ-USDT-SWAP"
+    },
+    {
+      "research_symbol": "ETCUSDT",
+      "venue_symbol": "ETC-USDT-SWAP"
+    },
+    {
+      "research_symbol": "ETHUSDT",
+      "venue_symbol": "ETH-USDT-SWAP"
+    },
+    {
+      "research_symbol": "FETUSDT",
+      "venue_symbol": "FET-USDT-SWAP"
+    },
+    {
+      "research_symbol": "FILUSDT",
+      "venue_symbol": "FIL-USDT-SWAP"
+    },
+    {
+      "research_symbol": "FLOKIUSDT",
+      "venue_symbol": "FLOKI-USDT-SWAP"
+    },
+    {
+      "research_symbol": "GALAUSDT",
+      "venue_symbol": "GALA-USDT-SWAP"
+    },
+    {
+      "research_symbol": "GASUSDT",
+      "venue_symbol": "GAS-USDT-SWAP"
+    },
+    {
+      "research_symbol": "GMTUSDT",
+      "venue_symbol": "GMT-USDT-SWAP"
+    },
+    {
+      "research_symbol": "HBARUSDT",
+      "venue_symbol": "HBAR-USDT-SWAP"
+    },
+    {
+      "research_symbol": "ICPUSDT",
+      "venue_symbol": "ICP-USDT-SWAP"
+    },
+    {
+      "research_symbol": "INJUSDT",
+      "venue_symbol": "INJ-USDT-SWAP"
+    },
+    {
+      "research_symbol": "IOSTUSDT",
+      "venue_symbol": "IOST-USDT-SWAP"
+    },
+    {
+      "research_symbol": "IOTAUSDT",
+      "venue_symbol": "IOTA-USDT-SWAP"
+    },
+    {
+      "research_symbol": "KITEUSDT",
+      "venue_symbol": "KITE-USDT-SWAP"
+    },
+    {
+      "research_symbol": "KSMUSDT",
+      "venue_symbol": "KSM-USDT-SWAP"
+    },
+    {
+      "research_symbol": "LDOUSDT",
+      "venue_symbol": "LDO-USDT-SWAP"
+    },
+    {
+      "research_symbol": "LINKUSDT",
+      "venue_symbol": "LINK-USDT-SWAP"
+    },
+    {
+      "research_symbol": "LTCUSDT",
+      "venue_symbol": "LTC-USDT-SWAP"
+    },
+    {
+      "research_symbol": "LUNAUSDT",
+      "venue_symbol": "LUNA-USDT-SWAP"
+    },
+    {
+      "research_symbol": "MAGICUSDT",
+      "venue_symbol": "MAGIC-USDT-SWAP"
+    },
+    {
+      "research_symbol": "MANAUSDT",
+      "venue_symbol": "MANA-USDT-SWAP"
+    },
+    {
+      "research_symbol": "MASKUSDT",
+      "venue_symbol": "MASK-USDT-SWAP"
+    },
+    {
+      "research_symbol": "NEARUSDT",
+      "venue_symbol": "NEAR-USDT-SWAP"
+    },
+    {
+      "research_symbol": "NEIROUSDT",
+      "venue_symbol": "NEIRO-USDT-SWAP"
+    },
+    {
+      "research_symbol": "NEOUSDT",
+      "venue_symbol": "NEO-USDT-SWAP"
+    },
+    {
+      "research_symbol": "NOTUSDT",
+      "venue_symbol": "NOT-USDT-SWAP"
+    },
+    {
+      "research_symbol": "ONDOUSDT",
+      "venue_symbol": "ONDO-USDT-SWAP"
+    },
+    {
+      "research_symbol": "ONEUSDT",
+      "venue_symbol": "ONE-USDT-SWAP"
+    },
+    {
+      "research_symbol": "ONTUSDT",
+      "venue_symbol": "ONT-USDT-SWAP"
+    },
+    {
+      "research_symbol": "OPUSDT",
+      "venue_symbol": "OP-USDT-SWAP"
+    },
+    {
+      "research_symbol": "ORDIUSDT",
+      "venue_symbol": "ORDI-USDT-SWAP"
+    },
+    {
+      "research_symbol": "PENDLEUSDT",
+      "venue_symbol": "PENDLE-USDT-SWAP"
+    },
+    {
+      "research_symbol": "PENGUUSDT",
+      "venue_symbol": "PENGU-USDT-SWAP"
+    },
+    {
+      "research_symbol": "PEOPLEUSDT",
+      "venue_symbol": "PEOPLE-USDT-SWAP"
+    },
+    {
+      "research_symbol": "PEPEUSDT",
+      "venue_symbol": "PEPE-USDT-SWAP"
+    },
+    {
+      "research_symbol": "PNUTUSDT",
+      "venue_symbol": "PNUT-USDT-SWAP"
+    },
+    {
+      "research_symbol": "PUMPUSDT",
+      "venue_symbol": "PUMP-USDT-SWAP"
+    },
+    {
+      "research_symbol": "QTUMUSDT",
+      "venue_symbol": "QTUM-USDT-SWAP"
+    },
+    {
+      "research_symbol": "SANDUSDT",
+      "venue_symbol": "SAND-USDT-SWAP"
+    },
+    {
+      "research_symbol": "SEIUSDT",
+      "venue_symbol": "SEI-USDT-SWAP"
+    },
+    {
+      "research_symbol": "SHIBUSDT",
+      "venue_symbol": "SHIB-USDT-SWAP"
+    },
+    {
+      "research_symbol": "SOLUSDT",
+      "venue_symbol": "SOL-USDT-SWAP"
+    },
+    {
+      "research_symbol": "STRKUSDT",
+      "venue_symbol": "STRK-USDT-SWAP"
+    },
+    {
+      "research_symbol": "STXUSDT",
+      "venue_symbol": "STX-USDT-SWAP"
+    },
+    {
+      "research_symbol": "SUIUSDT",
+      "venue_symbol": "SUI-USDT-SWAP"
+    },
+    {
+      "research_symbol": "SUSDT",
+      "venue_symbol": "S-USDT-SWAP"
+    },
+    {
+      "research_symbol": "SUSHIUSDT",
+      "venue_symbol": "SUSHI-USDT-SWAP"
+    },
+    {
+      "research_symbol": "TAOUSDT",
+      "venue_symbol": "TAO-USDT-SWAP"
+    },
+    {
+      "research_symbol": "THETAUSDT",
+      "venue_symbol": "THETA-USDT-SWAP"
+    },
+    {
+      "research_symbol": "TIAUSDT",
+      "venue_symbol": "TIA-USDT-SWAP"
+    },
+    {
+      "research_symbol": "TRBUSDT",
+      "venue_symbol": "TRB-USDT-SWAP"
+    },
+    {
+      "research_symbol": "TRUMPUSDT",
+      "venue_symbol": "TRUMP-USDT-SWAP"
+    },
+    {
+      "research_symbol": "TRXUSDT",
+      "venue_symbol": "TRX-USDT-SWAP"
+    },
+    {
+      "research_symbol": "UNIUSDT",
+      "venue_symbol": "UNI-USDT-SWAP"
+    },
+    {
+      "research_symbol": "WIFUSDT",
+      "venue_symbol": "WIF-USDT-SWAP"
+    },
+    {
+      "research_symbol": "WLDUSDT",
+      "venue_symbol": "WLD-USDT-SWAP"
+    },
+    {
+      "research_symbol": "WLFIUSDT",
+      "venue_symbol": "WLFI-USDT-SWAP"
+    },
+    {
+      "research_symbol": "XLMUSDT",
+      "venue_symbol": "XLM-USDT-SWAP"
+    },
+    {
+      "research_symbol": "XPLUSDT",
+      "venue_symbol": "XPL-USDT-SWAP"
+    },
+    {
+      "research_symbol": "XRPUSDT",
+      "venue_symbol": "XRP-USDT-SWAP"
+    },
+    {
+      "research_symbol": "XTZUSDT",
+      "venue_symbol": "XTZ-USDT-SWAP"
+    },
+    {
+      "research_symbol": "YFIUSDT",
+      "venue_symbol": "YFI-USDT-SWAP"
+    },
+    {
+      "research_symbol": "YGGUSDT",
+      "venue_symbol": "YGG-USDT-SWAP"
+    },
+    {
+      "research_symbol": "ZECUSDT",
+      "venue_symbol": "ZEC-USDT-SWAP"
+    },
+    {
+      "research_symbol": "ZENUSDT",
+      "venue_symbol": "ZEN-USDT-SWAP"
+    },
+    {
+      "research_symbol": "ZILUSDT",
+      "venue_symbol": "ZIL-USDT-SWAP"
+    }
+  ],
+  "excluded": [
+    {
+      "research_symbol": "1000SATSUSDT",
+      "expected_venue_symbol": "1000SATS-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "ALICEUSDT",
+      "expected_venue_symbol": "ALICE-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "ANCUSDT",
+      "expected_venue_symbol": "ANC-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "ARPAUSDT",
+      "expected_venue_symbol": "ARPA-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "BCCUSDT",
+      "expected_venue_symbol": "BCC-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "BCHABCUSDT",
+      "expected_venue_symbol": "BCHABC-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "BCHSVUSDT",
+      "expected_venue_symbol": "BCHSV-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "BLZUSDT",
+      "expected_venue_symbol": "BLZ-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "BTTUSDT",
+      "expected_venue_symbol": "BTT-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "CAKEUSDT",
+      "expected_venue_symbol": "CAKE-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "CELRUSDT",
+      "expected_venue_symbol": "CELR-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "DENTUSDT",
+      "expected_venue_symbol": "DENT-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "DEXEUSDT",
+      "expected_venue_symbol": "DEXE-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "EOSUSDT",
+      "expected_venue_symbol": "EOS-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "ERDUSDT",
+      "expected_venue_symbol": "ERD-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "FTMUSDT",
+      "expected_venue_symbol": "FTM-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "FTTUSDT",
+      "expected_venue_symbol": "FTT-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "HIFIUSDT",
+      "expected_venue_symbol": "HIFI-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "HOTUSDT",
+      "expected_venue_symbol": "HOT-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "ICXUSDT",
+      "expected_venue_symbol": "ICX-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "JASMYUSDT",
+      "expected_venue_symbol": "JASMY-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "KAVAUSDT",
+      "expected_venue_symbol": "KAVA-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "LENDUSDT",
+      "expected_venue_symbol": "LEND-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "LINAUSDT",
+      "expected_venue_symbol": "LINA-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "LOOMUSDT",
+      "expected_venue_symbol": "LOOM-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "LRCUSDT",
+      "expected_venue_symbol": "LRC-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "LUNCUSDT",
+      "expected_venue_symbol": "LUNC-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "MATICUSDT",
+      "expected_venue_symbol": "MATIC-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "MKRUSDT",
+      "expected_venue_symbol": "MKR-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "NULSUSDT",
+      "expected_venue_symbol": "NULS-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "OGUSDT",
+      "expected_venue_symbol": "OG-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "OMGUSDT",
+      "expected_venue_symbol": "OMG-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "OMUSDT",
+      "expected_venue_symbol": "OM-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "RENUSDT",
+      "expected_venue_symbol": "REN-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "RNDRUSDT",
+      "expected_venue_symbol": "RNDR-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "ROSEUSDT",
+      "expected_venue_symbol": "ROSE-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "RUNEUSDT",
+      "expected_venue_symbol": "RUNE-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "SLPUSDT",
+      "expected_venue_symbol": "SLP-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "SXPUSDT",
+      "expected_venue_symbol": "SXP-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "TFUELUSDT",
+      "expected_venue_symbol": "TFUEL-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "TLMUSDT",
+      "expected_venue_symbol": "TLM-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "TONUSDT",
+      "expected_venue_symbol": "TON-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "TUTUSDT",
+      "expected_venue_symbol": "TUT-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "TWTUSDT",
+      "expected_venue_symbol": "TWT-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "UUSDT",
+      "expected_venue_symbol": "U-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "VETUSDT",
+      "expected_venue_symbol": "VET-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "WAVESUSDT",
+      "expected_venue_symbol": "WAVES-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "WINUSDT",
+      "expected_venue_symbol": "WIN-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "XMRUSDT",
+      "expected_venue_symbol": "XMR-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    },
+    {
+      "research_symbol": "YFIIUSDT",
+      "expected_venue_symbol": "YFII-USDT-SWAP",
+      "reason": "NO_EXACT_ACTIVE_CONTRACT_AT_CAPTURE"
+    }
+  ]
+}

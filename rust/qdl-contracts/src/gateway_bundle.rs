@@ -20,6 +20,10 @@ pub struct Binding {
     pub physical_key: String,
     pub product_key: String,
     pub stale_after_ms: u64,
+    /// DL v2.3.0 2d: the catalogue revision at which this binding last changed
+    /// (its records' `instrument_catalog_revision`, its cursors' catalog
+    /// claim). A bundle entry without it carries the catalogue revision.
+    pub lineage_revision: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,6 +52,12 @@ pub struct Manifest {
     pub subject: String,
     pub environment: String,
     pub manifest_revision: u64,
+    /// DL v2.3.0 accept-set floor: tokens minted for any revision in
+    /// `min_token_revision..=manifest_revision` are accepted. A bundle entry
+    /// without the field keeps the exact-match rule (floor = revision). The
+    /// Python renderer (`qdl.consumer.manifest_compat`) only lowers it when
+    /// every later revision is purely additive for the consumer.
+    pub min_token_revision: u64,
     pub allowed_purposes: Vec<String>,
     pub allowed_permissions: Vec<String>,
     pub quotas: Quotas,
@@ -115,6 +125,25 @@ pub fn canonical_sha256(document: &Map<String, Value>) -> String {
         })
 }
 
+impl Manifest {
+    /// Whether a token minted for `revision` may use this manifest revision.
+    pub fn accepts_token_revision(&self, revision: Option<u64>) -> bool {
+        revision.is_some_and(|value| {
+            (self.min_token_revision..=self.manifest_revision).contains(&value)
+        })
+    }
+}
+
+fn min_token_revision(item: &Value, manifest_revision: u64) -> Result<u64, String> {
+    match &item["min_token_revision"] {
+        Value::Null => Ok(manifest_revision),
+        value => match value.as_u64() {
+            Some(floor) if (1..=manifest_revision).contains(&floor) => Ok(floor),
+            _ => Err("bundle field min_token_revision must be within 1..=manifest_revision".into()),
+        },
+    }
+}
+
 impl Bundle {
     pub fn parse(raw: &str) -> Result<Self, String> {
         let document: Value = serde_json::from_str(raw).map_err(|error| error.to_string())?;
@@ -130,6 +159,7 @@ impl Bundle {
             ));
         }
         let catalog = &document["catalog"];
+        let catalog_revision = integer(catalog, "catalog_revision")?;
         let bindings = catalog["bindings"]
             .as_array()
             .ok_or("bundle catalog bindings must be an array")?
@@ -146,6 +176,15 @@ impl Bundle {
                     physical_key: text(item, "physical_key")?,
                     product_key: text(item, "product_key")?,
                     stale_after_ms: integer(item, "stale_after_ms")?,
+                    lineage_revision: match &item["lineage_revision"] {
+                        Value::Null => catalog_revision,
+                        value => value
+                            .as_u64()
+                            .filter(|revision| (1..=catalog_revision).contains(revision))
+                            .ok_or(
+                                "bundle field lineage_revision must be within 1..=catalog_revision",
+                            )?,
+                    },
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -155,11 +194,13 @@ impl Bundle {
             .iter()
             .map(|item| {
                 let quotas = &item["quotas"];
+                let manifest_revision = integer(item, "manifest_revision")?;
                 Ok(Manifest {
                     consumer_id: text(item, "consumer_id")?,
                     subject: text(item, "subject")?,
                     environment: text(item, "environment")?,
-                    manifest_revision: integer(item, "manifest_revision")?,
+                    manifest_revision,
+                    min_token_revision: min_token_revision(item, manifest_revision)?,
                     allowed_purposes: strings(item, "allowed_purposes")?,
                     allowed_permissions: strings(item, "allowed_permissions")?,
                     quotas: Quotas {
@@ -284,5 +325,92 @@ mod tests {
         assert!(Bundle::parse(&document.to_string())
             .unwrap_err()
             .contains("hash mismatch"));
+    }
+
+    #[test]
+    fn a_binding_lineage_defaults_to_the_catalogue_revision_and_is_bounded_by_it() {
+        let parse = |lineage: Option<Value>| {
+            let mut document = sample();
+            if let Some(value) = lineage {
+                document["catalog"]["bindings"][0]["lineage_revision"] = value;
+            }
+            let hash = canonical_sha256(document.as_object().expect("object"));
+            document["sha256"] = Value::String(hash);
+            Bundle::parse(&document.to_string())
+        };
+        assert_eq!(parse(None).unwrap().bindings[0].lineage_revision, 9);
+        assert_eq!(
+            parse(Some(Value::from(7))).unwrap().bindings[0].lineage_revision,
+            7
+        );
+        for refused in [Value::from(0), Value::from(10), Value::from("7")] {
+            assert!(
+                parse(Some(refused.clone()))
+                    .unwrap_err()
+                    .contains("lineage_revision"),
+                "{refused}"
+            );
+        }
+    }
+
+    fn with_manifest(extra: Option<Value>) -> Result<Bundle, String> {
+        let mut document = sample();
+        let mut manifest = serde_json::json!({
+            "consumer_id": "alpha.okx.paper.stable", "subject": "spiffe://qdl/paper/a",
+            "environment": "paper", "manifest_revision": 7,
+            "allowed_purposes": ["SIGNAL"], "allowed_permissions": ["stream:read"],
+            "quotas": {"requests_per_minute": 1, "max_batch_items": 1, "max_warmup_rows": 1,
+                "max_streams": 1, "max_buffer_events": 1},
+            "requirements": []
+        });
+        if let Some(value) = extra {
+            manifest["min_token_revision"] = value;
+        }
+        document["manifests"] = Value::Array(vec![manifest]);
+        let hash = canonical_sha256(document.as_object().expect("object"));
+        document["sha256"] = Value::String(hash);
+        Bundle::parse(&document.to_string())
+    }
+
+    #[test]
+    fn a_manifest_without_an_accept_set_accepts_only_its_own_revision() {
+        let bundle = with_manifest(None).expect("valid bundle");
+        let manifest = &bundle.manifests[0];
+        assert_eq!(manifest.min_token_revision, 7);
+        assert!(manifest.accepts_token_revision(Some(7)));
+        assert!(!manifest.accepts_token_revision(Some(6)));
+        assert!(!manifest.accepts_token_revision(Some(8)));
+        assert!(!manifest.accepts_token_revision(None));
+    }
+
+    #[test]
+    fn an_accept_set_admits_older_additive_revisions_and_never_newer_ones() {
+        let bundle = with_manifest(Some(Value::from(4))).expect("valid bundle");
+        let manifest = &bundle.manifests[0];
+        for revision in 4..=7 {
+            assert!(
+                manifest.accepts_token_revision(Some(revision)),
+                "{revision}"
+            );
+        }
+        assert!(!manifest.accepts_token_revision(Some(3)));
+        assert!(!manifest.accepts_token_revision(Some(8)));
+    }
+
+    #[test]
+    fn an_accept_set_outside_the_revision_is_refused() {
+        for value in [
+            Value::from(0),
+            Value::from(8),
+            Value::from("4"),
+            Value::from(-1),
+        ] {
+            assert!(
+                with_manifest(Some(value.clone()))
+                    .unwrap_err()
+                    .contains("min_token_revision"),
+                "{value}"
+            );
+        }
     }
 }

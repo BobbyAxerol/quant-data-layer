@@ -74,6 +74,22 @@ pub struct CursorV3Expectation {
     pub catalog_revision: u64,
     pub route_generation: String,
     pub schema_major: u64,
+    /// DL v2.3.0 2d: the catalogue lineage revision of a product (its binding's
+    /// `lineage_revision`). A token minted for a product carries that
+    /// product's lineage, so an additive declaration (a new catalogue revision
+    /// that leaves the binding untouched) does not expire it. A product absent
+    /// here is checked against `catalog_revision`, which is the pre-v2.3.0 rule.
+    pub catalog_revision_by_product: BTreeMap<String, u64>,
+}
+
+impl CursorV3Expectation {
+    /// The catalogue revision a token for `product_key` must carry.
+    pub fn catalog_revision_for(&self, product_key: &str) -> u64 {
+        self.catalog_revision_by_product
+            .get(product_key)
+            .copied()
+            .unwrap_or(self.catalog_revision)
+    }
 }
 
 enum Field {
@@ -399,7 +415,7 @@ impl CursorV3Codec {
             ),
             (
                 "CATALOG",
-                claims.catalog_revision == expected.catalog_revision,
+                claims.catalog_revision == expected.catalog_revision_for(&claims.product_key),
             ),
             (
                 "ROUTE_GENERATION",
@@ -524,6 +540,7 @@ mod tests {
             catalog_revision: integer("catalog_revision"),
             route_generation: text("route_generation"),
             schema_major: integer("schema_major"),
+            catalog_revision_by_product: Default::default(),
         }
     }
 
@@ -627,6 +644,58 @@ mod tests {
                 ),
             }
         }
+    }
+
+    #[test]
+    fn a_product_lineage_keeps_its_token_valid_across_a_catalogue_bump() {
+        // DL v2.3.0 2d: the canonical golden token was minted at some catalogue
+        // revision R for product P. After a declaration the replica runs R+1,
+        // but P's binding is unchanged and keeps lineage R.
+        let doc = golden("cursor_v3.json");
+        let canonical = &doc["canonical"];
+        let claims = claims(&canonical["claims"]);
+        let codec = codec(&doc);
+        let token = codec.encode(&claims).expect("token");
+        let mut expected = CursorV3Expectation {
+            environment: claims.environment.clone(),
+            stream: claims.stream.clone(),
+            source_topic_id: claims.source_topic_id.clone(),
+            partition_plan_epoch: claims.partition_plan_epoch,
+            source_policy_revision: claims.source_policy_revision,
+            catalog_revision: claims.catalog_revision + 1,
+            route_generation: claims.route_generation.clone(),
+            schema_major: claims.schema_major,
+            catalog_revision_by_product: Default::default(),
+        };
+        let now = claims.issued_at_ns + 1;
+        let verify = |expected: &CursorV3Expectation| {
+            codec.verify(
+                &token,
+                &claims.consumer_id,
+                &claims.environment,
+                &claims.requirement_digest,
+                expected,
+                now,
+            )
+        };
+        assert!(
+            matches!(verify(&expected), Err(CursorError::Expired("CATALOG"))),
+            "without a lineage the pre-v2.3.0 rule expires it"
+        );
+        expected
+            .catalog_revision_by_product
+            .insert(claims.product_key.clone(), claims.catalog_revision);
+        assert_eq!(
+            verify(&expected).expect("valid").source_offset,
+            claims.source_offset
+        );
+        expected
+            .catalog_revision_by_product
+            .insert(claims.product_key.clone(), claims.catalog_revision + 1);
+        assert!(matches!(
+            verify(&expected),
+            Err(CursorError::Expired("CATALOG"))
+        ));
     }
 
     #[test]

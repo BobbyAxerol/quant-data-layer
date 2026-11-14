@@ -55,9 +55,9 @@ class ArgumentTests(unittest.TestCase):
     def test_identity_names_release_tags_and_receipt_dir(self):
         rev = "0123456789abcdef0123456789abcdef01234567"
         ident = b.identity(rev, Path("/state"))
-        self.assertEqual(ident["rust_tag"], "qdl-v2-rust:2.2.5-0123456")
-        self.assertEqual(ident["python_tag"], "qdl-v2-python:2.2.5-0123456")
-        self.assertEqual(ident["build_dir"], "/state/build-v2.2.5-0123456")
+        self.assertEqual(ident["rust_tag"], f"qdl-v2-rust:{b.RELEASE}-0123456")
+        self.assertEqual(ident["python_tag"], f"qdl-v2-python:{b.RELEASE}-0123456")
+        self.assertEqual(ident["build_dir"], f"/state/build-v{b.RELEASE}-0123456")
 
     @unittest.skipUnless(git_has("HEAD"), "git binary or checkout unavailable: resolve_rev reads git")
     def test_resolve_rev_rejects_non_commit(self):
@@ -142,7 +142,7 @@ class CommandTests(unittest.TestCase):
     def test_rust_dockerfile_is_release_labelled_without_test_label(self):
         text = b.rust_dockerfile("f" * 40)
         self.assertTrue(text.startswith(f"FROM {b.RUST_BASE_TAG}\n"))
-        self.assertIn('org.opencontainers.image.version="2.2.5"', text)
+        self.assertIn(f'org.opencontainers.image.version="{b.RELEASE}"', text)
         self.assertIn('qdl.build.method="cargo-cache-551428d9+runtime-overlay-f41ecb66"', text)
         self.assertNotIn("qdl.test.only", text)
         self.assertIn("USER 10001:10001", text)
@@ -161,7 +161,7 @@ class CommandTests(unittest.TestCase):
     def test_python_build_carries_revision_and_release(self):
         argv = b.python_image_argv(Path("/s/d"), "e" * 40, "t")
         self.assertIn("QDL_GIT_SHA=" + "e" * 40, argv)
-        self.assertIn("QDL_RELEASE=2.2.5", argv)
+        self.assertIn(f"QDL_RELEASE={b.RELEASE}", argv)
         self.assertIn("/s/d/src/Dockerfile", argv)
 
 
@@ -374,7 +374,7 @@ class SourceTests(unittest.TestCase):
     def test_pre_bump_source_is_refused(self):
         result = b.source_preconditions(REPO, "87db2159f411e7c4d7d49033e7573b42a75fc91d")
         self.assertFalse(result["ok"])
-        self.assertTrue(any("2.4.1" in p for p in result["problems"]))
+        self.assertTrue(any(b.SDK_VERSION in p for p in result["problems"]))
 
     @unittest.skipUnless(git_has(*(rev for _, rev in b.PYTHON_REFERENCE_TREE)),
                          "reference revision not in this (shallow?) checkout")
@@ -391,7 +391,7 @@ class SourceTests(unittest.TestCase):
         with mock.patch.object(b.subprocess, "run", wraps=subprocess.run) as run:
             result = b.plan(REPO, self.head(), ["rust", "python"], Path("/state"))
         self.assertFalse(any(call.args and call.args[0][:1] == ["docker"] for call in run.call_args_list))
-        self.assertEqual(result["identity"]["build_dir"], f"/state/build-v2.2.5-{self.head()[:7]}")
+        self.assertEqual(result["identity"]["build_dir"], f"/state/build-v{b.RELEASE}-{self.head()[:7]}")
         self.assertTrue(result["source_preconditions"]["ok"])
 
 

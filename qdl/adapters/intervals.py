@@ -147,6 +147,29 @@ def is_valid_bar_open_ms(
     return (open_ms - anchor_ms) % duration_ms == 0
 
 
+def bar_bucket_open_ms(
+    interval: str,
+    timestamp_ms: int,
+    *,
+    provider: str | None = None,
+) -> int:
+    """Return the open of the provider-calendar bucket containing ``timestamp_ms``.
+
+    This is the one grouping rule for building a coarser bar from finer final
+    bars (warmup resample and the bar edge's DERIVED_FINAL mode). Grouping on
+    ``timestamp // duration * duration`` is the Unix-epoch grid, which is only
+    right where the anchor is zero: a weekly bar opens on Monday 00:00 UTC on
+    both venues and a Binance ``3d`` bar on the Binance Monday grid, so those
+    buckets must start at :func:`provider_bar_calendar_anchor_ms`.
+    """
+    if isinstance(timestamp_ms, bool) or not isinstance(timestamp_ms, int) or timestamp_ms < 0:
+        raise ValueError("bar bucket timestamp must be a non-negative integer millisecond")
+    value = normalise_interval(interval)
+    duration_ms = canonical_interval_ms(value)
+    anchor_ms = provider_bar_calendar_anchor_ms(value, provider=provider)
+    return (timestamp_ms - anchor_ms) // duration_ms * duration_ms + anchor_ms
+
+
 def latest_closed_boundary_ms(
     interval: str,
     observed_ms: int,

@@ -41,6 +41,7 @@ def write_heartbeat(
     role: str,
     detail: str = "",
     min_interval_ns: int = _MIN_INTERVAL_NS,
+    extra: dict | None = None,
 ) -> None:
     """Rewrite the heartbeat file atomically, at most once per interval.
 
@@ -60,14 +61,19 @@ def write_heartbeat(
         _last_written_ns[key] = monotonic_ns
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps({
+        body = {
             "schema": "qdl.role-heartbeat.v1",
             "role": role,
             "detail": detail,
             "updated_at_ns": now_ns,
             "monotonic_ns": monotonic_ns,
             "pid": os.getpid(),
-        })
+        }
+        if extra:
+            # Additive keys only (DL v2.3.0: the role's effective declaration);
+            # a reader that knows v1 ignores them.
+            body.update({key: value for key, value in extra.items() if key not in body})
+        payload = json.dumps(body)
         handle, temporary = tempfile.mkstemp(dir=str(target.parent), prefix=".hb-")
         try:
             with os.fdopen(handle, "w") as stream:

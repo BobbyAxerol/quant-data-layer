@@ -3,3 +3,40 @@
 # and setuptools >=78.1.1 before this narrowly scoped false-positive waiver.
 GHSA-6v7p-g79w-8964
 CVE-2025-47273
+
+# DL v2.3.0 owner-approved dependency advisory waiver (2026-11-14), expires v2.3.1.
+# Trivy ID aliases for exactly the packages in .github/accepted-advisories.json
+# (certifi, msgpack, pillow, soupsieve); found by CI run 43548270507.
+GHSA-6q48-6c7w-9gw2  # certifi
+CVE-2026-114613  # msgpack
+CVE-2026-112393  # pillow
+CVE-2026-112398  # pillow
+CVE-2026-112403  # pillow
+CVE-2026-112900  # pillow
+CVE-2026-96639  # pillow
+CVE-2026-112390  # pillow
+CVE-2026-112392  # pillow
+CVE-2026-112397  # pillow
+CVE-2026-112399  # pillow
+CVE-2026-112400  # pillow
+CVE-2026-112402  # pillow
+CVE-2026-112404  # pillow
+CVE-2026-112405  # pillow
+CVE-2026-112406  # pillow
+CVE-2026-112892  # pillow
+CVE-2026-112893  # pillow
+CVE-2026-112894  # pillow
+CVE-2026-112895  # pillow
+CVE-2026-112896  # pillow
+CVE-2026-112897  # pillow
+CVE-2026-112902  # pillow
+CVE-2026-128067  # pillow
+CVE-2026-96637  # pillow
+CVE-2026-96640  # pillow
+CVE-2026-96642  # pillow
+CVE-2026-96643  # pillow
+CVE-2026-96644  # pillow
+CVE-2026-96778  # pillow
+GHSA-78g4-xqwv-q3g8  # pillow
+CVE-2026-126190  # soupsieve
+CVE-2026-126191  # soupsieve

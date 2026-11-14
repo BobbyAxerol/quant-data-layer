@@ -1,0 +1,1 @@
+D0 median 6.9671 (7 samples 14:38-14:43Z); delta gate <= 7.2671

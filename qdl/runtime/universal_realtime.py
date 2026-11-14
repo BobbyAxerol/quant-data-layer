@@ -195,9 +195,11 @@ class ProviderRealtimeBinding:
         if self.feed is FeedType.BAR:
             if not self.require_final_bar or self.interval is None or self.l2 is not None:
                 raise ValueError("final BAR binding is missing finality, interval or carries L2")
-            if self.mode == "PYTHON_REST":
+            if self.mode in {"PYTHON_REST", "DERIVED_FINAL"}:
+                # DERIVED_FINAL is built by the bar edge from finer final bars
+                # already in the durable cache; like REST it has no socket.
                 if self.websocket_url is not None or self.business_websocket_url is not None:
-                    raise ValueError("REST final BAR cannot carry a websocket endpoint")
+                    raise ValueError("REST or derived final BAR cannot carry a websocket endpoint")
                 return
             if self.mode != "RUST_NATIVE" or not self.websocket_url:
                 raise ValueError("native final BAR requires an admitted websocket lane")
@@ -459,7 +461,7 @@ def build_universal_realtime_plan(
             mode = str(acquisition["mode"])
             if mode == "RUST_NATIVE":
                 subscriptions.append(_subscription_from_demand(item))
-            elif mode != "PYTHON_REST":
+            elif mode not in {"PYTHON_REST", "DERIVED_FINAL"}:
                 raise InventoryError("final BAR acquisition mode is unsupported")
         else:
             subscriptions.append(_subscription_from_demand(item))

@@ -1,0 +1,8 @@
+ Container qdl_v2_stable_candidate-ingestor_okx_swap-1 Started
+ingestor_okx_swap bindings 252 lane_plan PINNED {'linger_ms': None, 'linger_ms_source': 'LIBRDKAFKA_DEFAULT', 'request_timeout_seconds': 30}
+[('okx-public-001', 97), ('okx-public-002', 217), ('okx-public-003', 919), ('okx-public-004', 199), ('okx-business-001', 126), ('okx-business-002', 29)]
+rejected: 0
+ Container qdl_v2_stable_candidate-ingestor_binance_usdm-1 Started
+ingestor_binance_usdm bindings 27 lane_plan PINNED {'linger_ms': None, 'linger_ms_source': 'LIBRDKAFKA_DEFAULT', 'request_timeout_seconds': 30}
+[('binance-public-trade-001', 450), ('binance-public-quote-001', 4479), ('binance-public-book-001', 64), ('binance-market-bar-001', 12), ('binance-market-markindex-001', 5)]
+rejected: 0

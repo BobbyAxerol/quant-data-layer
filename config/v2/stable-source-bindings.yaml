@@ -15058,10 +15058,890 @@
         "source_role": "PRIMARY"
       },
       "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-aave-usdt-swap-mark_index_price",
+      "instrument_uid": "f5a63ee0-7db9-5696-b84e-ab0d4b06ce2a",
+      "feed": "MARK_INDEX_PRICE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-aave-usdt-swap-mark_index_price-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_liquid_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 2000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "freshness_basis": "PROVIDER_CONFIRMATION"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-aave-usdt-swap-quote",
+      "instrument_uid": "f5a63ee0-7db9-5696-b84e-ab0d4b06ce2a",
+      "feed": "QUOTE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-aave-usdt-swap-quote-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_primary_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 5000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "delivery_semantics": "ON_CHANGE"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-ada-usdt-swap-mark_index_price",
+      "instrument_uid": "4dfc6d0e-ead5-5b66-b680-ab4be9fcb006",
+      "feed": "MARK_INDEX_PRICE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-ada-usdt-swap-mark_index_price-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_liquid_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 2000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "freshness_basis": "PROVIDER_CONFIRMATION"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-ada-usdt-swap-quote",
+      "instrument_uid": "4dfc6d0e-ead5-5b66-b680-ab4be9fcb006",
+      "feed": "QUOTE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-ada-usdt-swap-quote-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_primary_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 5000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "delivery_semantics": "ON_CHANGE"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-arb-usdt-swap-mark_index_price",
+      "instrument_uid": "c93702ef-d71b-512e-8cc8-5ecd3615a644",
+      "feed": "MARK_INDEX_PRICE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-arb-usdt-swap-mark_index_price-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_liquid_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 2000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "freshness_basis": "PROVIDER_CONFIRMATION"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-arb-usdt-swap-quote",
+      "instrument_uid": "c93702ef-d71b-512e-8cc8-5ecd3615a644",
+      "feed": "QUOTE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-arb-usdt-swap-quote-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_primary_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 5000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "delivery_semantics": "ON_CHANGE"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-avax-usdt-swap-mark_index_price",
+      "instrument_uid": "507e7575-15f4-5f2e-bd0b-e846fe5526a0",
+      "feed": "MARK_INDEX_PRICE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-avax-usdt-swap-mark_index_price-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_liquid_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 2000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "freshness_basis": "PROVIDER_CONFIRMATION"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-avax-usdt-swap-quote",
+      "instrument_uid": "507e7575-15f4-5f2e-bd0b-e846fe5526a0",
+      "feed": "QUOTE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-avax-usdt-swap-quote-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_primary_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 5000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "delivery_semantics": "ON_CHANGE"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-bch-usdt-swap-mark_index_price",
+      "instrument_uid": "e1dbf2df-216a-589f-9d50-160825eec9c3",
+      "feed": "MARK_INDEX_PRICE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-bch-usdt-swap-mark_index_price-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_liquid_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 2000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "freshness_basis": "PROVIDER_CONFIRMATION"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-bch-usdt-swap-quote",
+      "instrument_uid": "e1dbf2df-216a-589f-9d50-160825eec9c3",
+      "feed": "QUOTE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-bch-usdt-swap-quote-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_primary_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 5000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "delivery_semantics": "ON_CHANGE"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-ena-usdt-swap-mark_index_price",
+      "instrument_uid": "489ea514-438e-557d-afd0-1f45af70d83e",
+      "feed": "MARK_INDEX_PRICE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-ena-usdt-swap-mark_index_price-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_liquid_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 2000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "freshness_basis": "PROVIDER_CONFIRMATION"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-ena-usdt-swap-quote",
+      "instrument_uid": "489ea514-438e-557d-afd0-1f45af70d83e",
+      "feed": "QUOTE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-ena-usdt-swap-quote-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_primary_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 5000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "delivery_semantics": "ON_CHANGE"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-fil-usdt-swap-mark_index_price",
+      "instrument_uid": "fcb15aad-f5e9-5245-9f5c-3aa66b4d6507",
+      "feed": "MARK_INDEX_PRICE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-fil-usdt-swap-mark_index_price-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_liquid_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 2000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "freshness_basis": "PROVIDER_CONFIRMATION"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-fil-usdt-swap-quote",
+      "instrument_uid": "fcb15aad-f5e9-5245-9f5c-3aa66b4d6507",
+      "feed": "QUOTE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-fil-usdt-swap-quote-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_primary_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 5000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "delivery_semantics": "ON_CHANGE"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-link-usdt-swap-mark_index_price",
+      "instrument_uid": "b05f357a-776d-5fb2-a701-483e0838bf6d",
+      "feed": "MARK_INDEX_PRICE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-link-usdt-swap-mark_index_price-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_liquid_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 2000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "freshness_basis": "PROVIDER_CONFIRMATION"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-link-usdt-swap-quote",
+      "instrument_uid": "b05f357a-776d-5fb2-a701-483e0838bf6d",
+      "feed": "QUOTE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-link-usdt-swap-quote-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_primary_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 5000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "delivery_semantics": "ON_CHANGE"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-near-usdt-swap-mark_index_price",
+      "instrument_uid": "62df6d23-97c0-56d2-b692-2599900de181",
+      "feed": "MARK_INDEX_PRICE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-near-usdt-swap-mark_index_price-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_liquid_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 2000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "freshness_basis": "PROVIDER_CONFIRMATION"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-near-usdt-swap-quote",
+      "instrument_uid": "62df6d23-97c0-56d2-b692-2599900de181",
+      "feed": "QUOTE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-near-usdt-swap-quote-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_primary_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 5000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "delivery_semantics": "ON_CHANGE"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-ondo-usdt-swap-mark_index_price",
+      "instrument_uid": "2b84d2ac-ae1c-5f7b-892d-0ee66ea524ce",
+      "feed": "MARK_INDEX_PRICE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-ondo-usdt-swap-mark_index_price-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_liquid_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 2000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "freshness_basis": "PROVIDER_CONFIRMATION"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-ondo-usdt-swap-quote",
+      "instrument_uid": "2b84d2ac-ae1c-5f7b-892d-0ee66ea524ce",
+      "feed": "QUOTE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-ondo-usdt-swap-quote-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_primary_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 5000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "delivery_semantics": "ON_CHANGE"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-pengu-usdt-swap-mark_index_price",
+      "instrument_uid": "99660d9e-89eb-5e36-82a9-386a20e9456a",
+      "feed": "MARK_INDEX_PRICE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-pengu-usdt-swap-mark_index_price-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_liquid_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 2000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "freshness_basis": "PROVIDER_CONFIRMATION"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-pengu-usdt-swap-quote",
+      "instrument_uid": "99660d9e-89eb-5e36-82a9-386a20e9456a",
+      "feed": "QUOTE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-pengu-usdt-swap-quote-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_primary_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 5000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "delivery_semantics": "ON_CHANGE"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-pepe-usdt-swap-mark_index_price",
+      "instrument_uid": "c3705bd0-6cfc-5fce-b553-a7a9cadfae83",
+      "feed": "MARK_INDEX_PRICE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-pepe-usdt-swap-mark_index_price-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_liquid_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 2000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "freshness_basis": "PROVIDER_CONFIRMATION"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-pepe-usdt-swap-quote",
+      "instrument_uid": "c3705bd0-6cfc-5fce-b553-a7a9cadfae83",
+      "feed": "QUOTE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-pepe-usdt-swap-quote-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_primary_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 5000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "delivery_semantics": "ON_CHANGE"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-pump-usdt-swap-mark_index_price",
+      "instrument_uid": "cf6b9041-4ee3-5085-b4fe-96dca6d5e559",
+      "feed": "MARK_INDEX_PRICE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-pump-usdt-swap-mark_index_price-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_liquid_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 2000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "freshness_basis": "PROVIDER_CONFIRMATION"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-pump-usdt-swap-quote",
+      "instrument_uid": "cf6b9041-4ee3-5085-b4fe-96dca6d5e559",
+      "feed": "QUOTE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-pump-usdt-swap-quote-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_primary_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 5000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "delivery_semantics": "ON_CHANGE"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-sui-usdt-swap-mark_index_price",
+      "instrument_uid": "3e398787-071d-5908-a5e1-2ce40fdc1ab5",
+      "feed": "MARK_INDEX_PRICE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-sui-usdt-swap-mark_index_price-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_liquid_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 2000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "freshness_basis": "PROVIDER_CONFIRMATION"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-sui-usdt-swap-quote",
+      "instrument_uid": "3e398787-071d-5908-a5e1-2ce40fdc1ab5",
+      "feed": "QUOTE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-sui-usdt-swap-quote-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_primary_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 5000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "delivery_semantics": "ON_CHANGE"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-tao-usdt-swap-mark_index_price",
+      "instrument_uid": "ab30f1b5-36ae-5ed3-8d53-75389fa69760",
+      "feed": "MARK_INDEX_PRICE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-tao-usdt-swap-mark_index_price-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_liquid_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 2000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "freshness_basis": "PROVIDER_CONFIRMATION"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-tao-usdt-swap-quote",
+      "instrument_uid": "ab30f1b5-36ae-5ed3-8d53-75389fa69760",
+      "feed": "QUOTE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-tao-usdt-swap-quote-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_primary_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 5000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "delivery_semantics": "ON_CHANGE"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-tia-usdt-swap-mark_index_price",
+      "instrument_uid": "d10ee13d-a2a2-5305-bb0d-678a9c63c5e2",
+      "feed": "MARK_INDEX_PRICE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-tia-usdt-swap-mark_index_price-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_liquid_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 2000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "freshness_basis": "PROVIDER_CONFIRMATION"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-tia-usdt-swap-quote",
+      "instrument_uid": "d10ee13d-a2a2-5305-bb0d-678a9c63c5e2",
+      "feed": "QUOTE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-tia-usdt-swap-quote-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_primary_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 5000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "delivery_semantics": "ON_CHANGE"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-uni-usdt-swap-mark_index_price",
+      "instrument_uid": "fefc51a7-8247-5790-bf82-6817bf12e7b3",
+      "feed": "MARK_INDEX_PRICE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-uni-usdt-swap-mark_index_price-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_liquid_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 2000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "freshness_basis": "PROVIDER_CONFIRMATION"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-uni-usdt-swap-quote",
+      "instrument_uid": "fefc51a7-8247-5790-bf82-6817bf12e7b3",
+      "feed": "QUOTE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-uni-usdt-swap-quote-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_primary_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 5000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "delivery_semantics": "ON_CHANGE"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-wld-usdt-swap-mark_index_price",
+      "instrument_uid": "da4e0df9-0b8c-54c1-9a9c-309187cbb94d",
+      "feed": "MARK_INDEX_PRICE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-wld-usdt-swap-mark_index_price-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_liquid_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 2000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "freshness_basis": "PROVIDER_CONFIRMATION"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-wld-usdt-swap-quote",
+      "instrument_uid": "da4e0df9-0b8c-54c1-9a9c-309187cbb94d",
+      "feed": "QUOTE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-wld-usdt-swap-quote-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_primary_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 5000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "delivery_semantics": "ON_CHANGE"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-xrp-usdt-swap-mark_index_price",
+      "instrument_uid": "529720c7-b5fc-5cbf-a468-bf7d090de894",
+      "feed": "MARK_INDEX_PRICE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-xrp-usdt-swap-mark_index_price-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_liquid_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 2000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "freshness_basis": "PROVIDER_CONFIRMATION"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-xrp-usdt-swap-quote",
+      "instrument_uid": "529720c7-b5fc-5cbf-a468-bf7d090de894",
+      "feed": "QUOTE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-xrp-usdt-swap-quote-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_primary_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 5000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "delivery_semantics": "ON_CHANGE"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-zec-usdt-swap-mark_index_price",
+      "instrument_uid": "6eab37a2-e239-501a-9c28-bdb217207626",
+      "feed": "MARK_INDEX_PRICE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-zec-usdt-swap-mark_index_price-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_liquid_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 2000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "freshness_basis": "PROVIDER_CONFIRMATION"
+      },
+      "v1_compatibility": "NONE"
+    },
+    {
+      "binding_id": "okx-swap-zec-usdt-swap-quote",
+      "instrument_uid": "6eab37a2-e239-501a-9c28-bdb217207626",
+      "feed": "QUOTE",
+      "interval": null,
+      "source": {
+        "provider": "OKX_DIRECT",
+        "source_id": "okx-swap-zec-usdt-swap-quote-primary-v2",
+        "source_role": "PRIMARY",
+        "source_policy_id": "crypto_primary_v2",
+        "authoritative": true,
+        "adapter_version": "okx-v5/2.0.0",
+        "normalizer_version": "qdl-rust-core/2.0.0"
+      },
+      "quality": {
+        "stale_after_ms": 5000,
+        "require_final_bar": false,
+        "continuous_calendar": true,
+        "delivery_semantics": "ON_CHANGE"
+      },
+      "v1_compatibility": "NONE"
     }
   ],
   "canonical_stream": "md.canonical.v2",
-  "catalog_revision": 12,
+  "catalog_revision": 13,
   "instruments": [
     {
       "asset_class": "CRYPTO",

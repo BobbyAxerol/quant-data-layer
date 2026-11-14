@@ -1,5 +1,5 @@
 schema: qdl.v2.production-demand.v1
-revision: 8
+revision: 9
 consumers:
 - consumer_id: trading-system.paper.stable
   consumer_grade: EXECUTION
@@ -1461,6 +1461,346 @@ consumers:
     depth_per_side: 100
     max_freshness_ms: 2000
     require_live: true
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ARB-USDT-SWAP
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ARB-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: ARB-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ZEC-USDT-SWAP
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ZEC-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: ZEC-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: XRP-USDT-SWAP
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: XRP-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: XRP-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: PEPE-USDT-SWAP
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: PEPE-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: PEPE-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: UNI-USDT-SWAP
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: UNI-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: UNI-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: NEAR-USDT-SWAP
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: NEAR-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: NEAR-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: SUI-USDT-SWAP
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: SUI-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: SUI-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ENA-USDT-SWAP
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ENA-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: ENA-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BCH-USDT-SWAP
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: BCH-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: BCH-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ADA-USDT-SWAP
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ADA-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: ADA-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: WLD-USDT-SWAP
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: WLD-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: WLD-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: AAVE-USDT-SWAP
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: AAVE-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: AAVE-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: LINK-USDT-SWAP
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: LINK-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: LINK-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: FIL-USDT-SWAP
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: FIL-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: FIL-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ONDO-USDT-SWAP
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: ONDO-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: ONDO-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: AVAX-USDT-SWAP
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: AVAX-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: AVAX-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: TAO-USDT-SWAP
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: TAO-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: TAO-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: PUMP-USDT-SWAP
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: PUMP-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: PUMP-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: PENGU-USDT-SWAP
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: PENGU-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: PENGU-USDT
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: TIA-USDT-SWAP
+    feed: QUOTE
+    interval: null
+    source_policy_id: crypto_primary_v2
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    native_symbol: TIA-USDT-SWAP
+    feed: MARK_INDEX_PRICE
+    interval: null
+    source_policy_id: crypto_liquid_v2
+    max_freshness_ms: 2000
+    require_live: true
+    index_native_symbol: TIA-USDT
 - consumer_id: alpha.binance.paper.stable
   consumer_grade: ALPHA
   requirements:

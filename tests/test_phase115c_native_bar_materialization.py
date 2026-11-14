@@ -14,6 +14,7 @@ from qdl.adapters.intervals import BINANCE_USDM_NATIVE_INTERVALS, OKX_NATIVE_INT
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import AuthorityPromotionScope, StableAcquisitionPlan
 from tests.universe_support import UNIVERSE_PER_VENUE, UNIVERSE_SYMBOLS, UNIVERSE_TOTAL
+from tests.v226_stage_a_support import V226_STAGE_A
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -203,8 +204,8 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
         })
         self.assertEqual(self.summary["price_binding_counts"], {
             "binance_usdm": 80 + UNIVERSE_PER_VENUE["BINANCE"],
-            # +1: the inverse BTC-USD-SWAP QUOTE (demand revision 8).
-            "okx_swap": 81 + UNIVERSE_PER_VENUE["OKX"],
+            # +1: the inverse BTC-USD-SWAP QUOTE (demand revision 8); +20 stage A QUOTE (revision 9).
+            "okx_swap": 101 + UNIVERSE_PER_VENUE["OKX"],
         })
         self.assertEqual(
             self._canonical_demand(self.demand),
@@ -230,7 +231,7 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
         self.assertEqual(product_counts[("BINANCE", "USDM", "TRADE")], 5)
         self.assertEqual(product_counts[("BINANCE", "USDM", "QUOTE")], 5)
         self.assertEqual(product_counts[("OKX", "SWAP", "TRADE")], 5)
-        self.assertEqual(product_counts[("OKX", "SWAP", "QUOTE")], 6)  # + inverse BTC-USD-SWAP
+        self.assertEqual(product_counts[("OKX", "SWAP", "QUOTE")], 26)  # + inverse BTC-USD-SWAP + 20 stage A (r13)
         current_l2 = {
             item["binding_id"] for item in self.current_catalog["bindings"]
             if str(item["feed"]).startswith("BOOK_")
@@ -286,8 +287,8 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
             and (item.instrument.identity.venue, item.instrument.identity.market)
             in {("BINANCE", "USDM"), ("OKX", "SWAP")}
         }
-        # Ten linear plus the inverse BTC-USD-SWAP already in the catalog (r12).
-        self.assertEqual(len(mark_bindings), 11)
+        # Ten linear plus the inverse BTC-USD-SWAP (r12) plus the 20 v2.2.6 stage A swaps (r13).
+        self.assertEqual(len(mark_bindings), 31)
         self.assertTrue(set(mark_bindings).issubset(set(scope["binding_ids"])))
         baseline_by_requirement = {
             self.tool._source_requirement_key(item): item
@@ -307,7 +308,7 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
             source_by_id={item.binding_id: item for item in loaded_catalog.bindings},
             selected_ids=frozenset(mark_bindings),
         )
-        self.assertEqual(len(entries), 17)
+        self.assertEqual(len(entries), 57)  # + 20 stage A OKX MARK and INDEX components (r13)
         self.assertEqual(
             Counter(
                 (entry.source.instrument.identity.venue, entry.mark_index_component)
@@ -315,8 +316,8 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
             ),
             {
                 ("BINANCE", "BOTH"): 5,
-                ("OKX", "MARK"): 6,
-                ("OKX", "INDEX"): 6,
+                ("OKX", "MARK"): 26,
+                ("OKX", "INDEX"): 26,
             },
         )
         self.assertEqual(
@@ -332,7 +333,7 @@ class Phase115CNativeBarMaterializationTests(unittest.TestCase):
                 ("DOGE-USDT-SWAP", "DOGE-USDT"),
                 ("BNB-USDT-SWAP", "BNB-USDT"),
                 ("BTC-USD-SWAP", "BTC-USD"),
-            },
+            } | {(symbol, symbol[: -len("-SWAP")]) for symbol in V226_STAGE_A},
         )
 
     def test_every_active_bar_uses_only_the_admitted_venue_acquisition_lane(self) -> None:

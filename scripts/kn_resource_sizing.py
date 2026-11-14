@@ -110,6 +110,20 @@ def _complete_bar(envelope, payload: bytes) -> bytes:
         "close_time_ns": int(bar.close_time_ns), "is_final": bool(bar.is_final), "revision": int(bar.revision),
         "origin": int(bar.origin), "lifecycle": int(bar.lifecycle),
         "supersedes_event_id": bar.supersedes_event_id.hex() if bar.HasField("supersedes_event_id") else None,
+        # v2.3.0 DERIVED_FINAL lineage (absent on venue bars).
+        "aggregation": (
+            {
+                "base_interval": bar.aggregation.base_interval,
+                "base_source_id": bar.aggregation.base_source_id,
+                "constituent_count": int(bar.aggregation.constituent_count),
+                "first_constituent_event_id": bar.aggregation.first_constituent_event_id.hex(),
+                "last_constituent_event_id": bar.aggregation.last_constituent_event_id.hex(),
+                "constituent_sha256": bar.aggregation.constituent_sha256.hex(),
+                "first_constituent_offset": int(bar.aggregation.first_constituent_offset),
+                "last_constituent_offset": int(bar.aggregation.last_constituent_offset),
+            }
+            if bar.HasField("aggregation") else None
+        ),
     }
     envelope_row = {
         "schema_name": envelope.schema_name, "schema_major": int(envelope.schema_major),

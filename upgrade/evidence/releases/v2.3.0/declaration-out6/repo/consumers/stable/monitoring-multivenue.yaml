@@ -1,0 +1,89 @@
+apiVersion: qdl/v2
+kind: DataRequirement
+metadata:
+  id: monitoring.multivenue.stable
+  owner: data-platform
+  subject: spiffe://qdl/paper/monitoring-multivenue-stable
+  environment: paper
+  revision: 2
+spec:
+  sdk_major: 2
+  rollback_contract: V1
+  execution_dependency: FORBIDDEN
+  permissions:
+  - instruments:read
+  - snapshot:read
+  - history:read
+  - status:read
+  - quality:read
+  - stream:read
+  purposes:
+  - INTERNAL_RESEARCH
+  quotas:
+    requests_per_minute: 180
+    max_batch_items: 50
+    max_warmup_rows: 2000
+    max_streams: 20
+    max_buffer_events: 2000
+  requirements:
+  - instrument_uid: a953e16e-7138-5562-b5e8-c337a44d0b65
+    feed: TRADE
+    consumer_grade: RESEARCH
+    source_policy_id: crypto_primary_v2
+    warmup_limit: 0
+    max_freshness_ms: 15000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+  - instrument_uid: fb26214c-7b9b-5961-95b2-55154755af0f
+    feed: TRADE
+    consumer_grade: RESEARCH
+    source_policy_id: crypto_primary_v2
+    warmup_limit: 0
+    max_freshness_ms: 15000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+  - instrument_uid: d0ac3d4c-2374-5690-8af5-b970448f91d3
+    feed: BAR
+    consumer_grade: RESEARCH
+    source_policy_id: vn_primary_v2
+    warmup_limit: 30
+    max_freshness_ms: 180000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: EMIT_REVISIONS
+    interval: 1m
+  - instrument_uid: ee93fabf-68df-5b50-8924-51bf25a5a757
+    feed: TRADE
+    consumer_grade: RESEARCH
+    source_policy_id: crypto_primary_v2
+    warmup_limit: 0
+    max_freshness_ms: 15000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST
+  - instrument_uid: e49b54ae-c23d-5351-9e64-47934aac28f8
+    feed: TRADE
+    consumer_grade: RESEARCH
+    source_policy_id: crypto_primary_v2
+    warmup_limit: 0
+    max_freshness_ms: 15000
+    require_full_coverage: true
+    require_final_bars: true
+    stale_policy: BLOCK
+    gap_policy: BLOCK
+    recovery: SNAPSHOT_AND_REPLAY
+    bar_revision_policy: LATEST

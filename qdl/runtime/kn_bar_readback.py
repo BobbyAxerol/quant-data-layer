@@ -141,6 +141,16 @@ def bucket_of(open_ms: int, interval_ms: int) -> int:
 
 
 @dataclass(frozen=True)
+class DurableBarRow:
+    """One durable final BAR of a binding: the canonical envelope and its
+    bars-topic offset (the row trailer). Used by the DERIVED_FINAL deriver to
+    read constituents and its own prior output."""
+
+    envelope: market_data_pb2.EventEnvelope
+    source_offset: int
+
+
+@dataclass(frozen=True)
 class _Pointer:
     ready: int | None
     fence: int
@@ -268,8 +278,18 @@ class KnBarReadback:
     def durable_final_bar_opens(self, source: Any, expected_opens: frozenset[int]) -> frozenset[int]:
         """Opens of ``expected_opens`` that are durable final bars of ``source``."""
 
+        return frozenset(self.final_bar_rows(source, expected_opens))
+
+    def final_bar_rows(self, source: Any, expected_opens: frozenset[int]) -> dict[int, DurableBarRow]:
+        """The durable final bars of ``source`` at ``expected_opens`` (absent opens omitted).
+
+        Same reads, identity checks and generation fence as the coverage
+        question; it also returns what it proved, so a caller that needs the
+        bar (DERIVED_FINAL) never reads a row twice.
+        """
+
         if not expected_opens:
-            return frozenset()
+            return {}
         if source.feed.value != "BAR" or not source.interval:
             raise KnBarReadbackError(f"stable BAR readback needs a BAR binding: {source.binding_id}")
         lpk = self.product_key(source)
@@ -286,13 +306,13 @@ class KnBarReadback:
             if self._pointers([lpk])[0] != before:
                 raise KnBarReadbackError(f"stable BAR market cache product changed during readback {lpk.encode()}")
             # Never materialized in a built cache: nothing of it is durable.
-            return frozenset()
+            return {}
         buckets: dict[int, list[int]] = defaultdict(list)
         for open_ms in sorted(expected_opens):
             if isinstance(open_ms, bool) or not isinstance(open_ms, int) or open_ms < 0:
                 raise KnBarReadbackError(f"stable BAR readback open is invalid: {open_ms!r}")
             buckets[bucket_of(open_ms, interval_ms)].append(open_ms)
-        covered: set[int] = set()
+        covered: dict[int, DurableBarRow] = {}
         ordered = sorted(buckets.items())
         for start in range(0, len(ordered), MAX_BUCKETS_PER_ROUND_TRIP):
             chunk = ordered[start:start + MAX_BUCKETS_PER_ROUND_TRIP]
@@ -309,18 +329,21 @@ class KnBarReadback:
                 if len(rows) != len(opens):
                     raise KnBarReadbackError("stable BAR market cache returned a short row reply")
                 for open_ms, row in zip(opens, rows, strict=True):
-                    if row is not None and self._final_row(source, lpk, open_ms, row):
-                        covered.add(open_ms)
+                    if row is None:
+                        continue
+                    decoded = self._final_row(source, lpk, open_ms, row)
+                    if decoded is not None:
+                        covered[open_ms] = decoded
         after = self._pointers([lpk])[0]
         if (after.ready, after.fence) != (before.ready, before.fence):
             raise KnBarReadbackError(
                 "stable BAR market cache generation changed during readback "
                 f"{self._identity(lpk, before)} -> {self._identity(lpk, after)}"
             )
-        return frozenset(covered)
+        return covered
 
     @staticmethod
-    def _final_row(source: Any, lpk: LogicalProductKey, open_ms: int, row: bytes) -> bool:
+    def _final_row(source: Any, lpk: LogicalProductKey, open_ms: int, row: bytes) -> DurableBarRow | None:
         try:
             decoded = decode_bar_row(bytes(row), lpk)
             envelope = market_data_pb2.EventEnvelope.FromString(decoded.canonical)
@@ -336,7 +359,9 @@ class KnBarReadback:
             raise KnBarReadbackError(
                 f"stable BAR market cache row is filed under another open binding={source.binding_id} open_ms={open_ms}"
             )
-        return envelope.bar.is_final and envelope.bar.lifecycle in _FINAL_LIFECYCLES
+        if envelope.bar.is_final and envelope.bar.lifecycle in _FINAL_LIFECYCLES:
+            return DurableBarRow(envelope, int(decoded.source_offset))
+        return None
 
 
 def readback_from_environment(environ: Mapping[str, str]) -> KnBarReadback:

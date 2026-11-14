@@ -1,5 +1,5 @@
 schema: qdl.v2.stable-acquisition-bindings.v1
-revision: 20
+revision: 21
 topics:
   raw: md.raw.realtime.v2
   canonical: md.canonical.v2
@@ -6700,6 +6700,486 @@ bindings:
       MARK: 15000
       INDEX: 70000
 - binding_id: okx-swap-btc-usd-swap-quote
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_bbo
+  native_channel: bbo-tbt
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+- binding_id: okx-swap-aave-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: AAVE-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+- binding_id: okx-swap-aave-usdt-swap-quote
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_bbo
+  native_channel: bbo-tbt
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+- binding_id: okx-swap-ada-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: ADA-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+- binding_id: okx-swap-ada-usdt-swap-quote
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_bbo
+  native_channel: bbo-tbt
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+- binding_id: okx-swap-arb-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: ARB-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+- binding_id: okx-swap-arb-usdt-swap-quote
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_bbo
+  native_channel: bbo-tbt
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+- binding_id: okx-swap-avax-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: AVAX-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+- binding_id: okx-swap-avax-usdt-swap-quote
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_bbo
+  native_channel: bbo-tbt
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+- binding_id: okx-swap-bch-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: BCH-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+- binding_id: okx-swap-bch-usdt-swap-quote
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_bbo
+  native_channel: bbo-tbt
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+- binding_id: okx-swap-ena-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: ENA-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+- binding_id: okx-swap-ena-usdt-swap-quote
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_bbo
+  native_channel: bbo-tbt
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+- binding_id: okx-swap-fil-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: FIL-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+- binding_id: okx-swap-fil-usdt-swap-quote
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_bbo
+  native_channel: bbo-tbt
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+- binding_id: okx-swap-link-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: LINK-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+- binding_id: okx-swap-link-usdt-swap-quote
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_bbo
+  native_channel: bbo-tbt
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+- binding_id: okx-swap-near-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: NEAR-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+- binding_id: okx-swap-near-usdt-swap-quote
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_bbo
+  native_channel: bbo-tbt
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+- binding_id: okx-swap-ondo-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: ONDO-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+- binding_id: okx-swap-ondo-usdt-swap-quote
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_bbo
+  native_channel: bbo-tbt
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+- binding_id: okx-swap-pengu-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: PENGU-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+- binding_id: okx-swap-pengu-usdt-swap-quote
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_bbo
+  native_channel: bbo-tbt
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+- binding_id: okx-swap-pepe-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: PEPE-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+- binding_id: okx-swap-pepe-usdt-swap-quote
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_bbo
+  native_channel: bbo-tbt
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+- binding_id: okx-swap-pump-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: PUMP-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+- binding_id: okx-swap-pump-usdt-swap-quote
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_bbo
+  native_channel: bbo-tbt
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+- binding_id: okx-swap-sui-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: SUI-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+- binding_id: okx-swap-sui-usdt-swap-quote
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_bbo
+  native_channel: bbo-tbt
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+- binding_id: okx-swap-tao-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: TAO-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+- binding_id: okx-swap-tao-usdt-swap-quote
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_bbo
+  native_channel: bbo-tbt
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+- binding_id: okx-swap-tia-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: TIA-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+- binding_id: okx-swap-tia-usdt-swap-quote
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_bbo
+  native_channel: bbo-tbt
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+- binding_id: okx-swap-uni-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: UNI-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+- binding_id: okx-swap-uni-usdt-swap-quote
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_bbo
+  native_channel: bbo-tbt
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+- binding_id: okx-swap-wld-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: WLD-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+- binding_id: okx-swap-wld-usdt-swap-quote
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_bbo
+  native_channel: bbo-tbt
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+- binding_id: okx-swap-xrp-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: XRP-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+- binding_id: okx-swap-xrp-usdt-swap-quote
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_bbo
+  native_channel: bbo-tbt
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+- binding_id: okx-swap-zec-usdt-swap-mark_index_price
+  mode: RUST_NATIVE
+  runtime: OKX
+  provider_kind: okx_mark_index
+  native_channel: mark-price
+  sequence_policy: NONE
+  websocket_url: wss://ws.okx.com/ws/v5/public
+  business_websocket_url: wss://ws.okx.com/ws/v5/business
+  market_websocket_url: null
+  mark_index:
+    provider_protocol: OKX_MARK_INDEX
+    index_native_symbol: ZEC-USDT
+    component_quiet_after_ms:
+      MARK: 15000
+      INDEX: 70000
+- binding_id: okx-swap-zec-usdt-swap-quote
   mode: RUST_NATIVE
   runtime: OKX
   provider_kind: okx_bbo

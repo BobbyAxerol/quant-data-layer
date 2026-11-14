@@ -29,16 +29,29 @@ def _value(item: Any) -> Any:
     return getattr(item, "value", item)
 
 
-def compile_bundle(*, environment: str, catalog_path: Path, manifest_paths: Iterable[Path]) -> dict[str, Any]:
+def compile_bundle(*, environment: str, catalog_path: Path, manifest_paths: Iterable[Path],
+                   universe_dir: Path | None = None) -> dict[str, Any]:
+    """Compile the bundle. DL v2.3.0 additions are emitted only when declared.
+
+    ``min_token_revision`` (accept-set) and ``selector_expansions`` (universe
+    selector audit) appear on a manifest entry only when that manifest declares
+    them, so a bundle compiled from unchanged manifests is byte-identical to the
+    v2.2.x bundle. Selectors expand against ``universe_dir`` (default: the
+    catalogue's ``universes/`` sibling) and the same catalogue.
+    """
     from qdl.consumer.manifest import ConsumerManifestLoader
+    from qdl.consumer.selectors import SelectorContext
     from qdl.projection.state_contract import LogicalProductKey
     from qdl.runtime.stable_catalog import StableSourceCatalog
 
     catalog = StableSourceCatalog.load(catalog_path)
+    selector_context = SelectorContext.from_catalog(
+        catalog, universe_dir=universe_dir or Path(catalog_path).parent / "universes",
+    )
     bindings = []
     for binding in sorted(catalog.bindings, key=lambda item: item.binding_id):
         identity = binding.instrument.identity
-        bindings.append({
+        entry = {
             "binding_id": binding.binding_id,
             "instrument_uid": identity.instrument_uid,
             "venue": identity.venue,
@@ -54,11 +67,16 @@ def compile_bundle(*, environment: str, catalog_path: Path, manifest_paths: Iter
                 instrument_uid=identity.instrument_uid, feed=binding.feed.value,
                 interval=binding.interval,
             ).encode(),
-        })
+        }
+        # DL v2.3.0 2d: emitted only when the catalogue pins it, so an
+        # unpinned catalogue compiles the byte-identical v2.2.x bundle.
+        if binding.lineage_revision is not None:
+            entry["lineage_revision"] = binding.lineage_revision
+        bindings.append(entry)
     manifests = []
     for path in sorted(manifest_paths):
-        manifest = ConsumerManifestLoader.load(path)
-        manifests.append({
+        manifest = ConsumerManifestLoader.load(path, selector_context=selector_context)
+        entry = {
             "consumer_id": manifest.consumer_id,
             "subject": manifest.subject,
             "environment": manifest.environment,
@@ -86,7 +104,12 @@ def compile_bundle(*, environment: str, catalog_path: Path, manifest_paths: Iter
                 } for item in manifest.requirements),
                 key=lambda row: json.dumps(row, sort_keys=True),
             ),
-        })
+        }
+        if manifest.min_token_revision is not None:
+            entry["min_token_revision"] = manifest.min_token_revision
+        if manifest.selector_expansions:
+            entry["selector_expansions"] = list(manifest.selector_expansions)
+        manifests.append(entry)
     document = {
         "schema": SCHEMA,
         "environment": environment,
@@ -116,10 +139,12 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--catalog", type=Path, default=ROOT / "config/v2/stable-source-bindings.yaml")
     parser.add_argument("--manifests", type=Path, nargs="*",
                         default=sorted((ROOT / "consumers/stable").glob("*.yaml")))
+    parser.add_argument("--universe-dir", type=Path, default=None,
+                        help="universe files for manifest selectors (default: <catalog dir>/universes)")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(list(argv) if argv is not None else None)
     document = compile_bundle(environment=args.environment, catalog_path=args.catalog,
-                              manifest_paths=args.manifests)
+                              manifest_paths=args.manifests, universe_dir=args.universe_dir)
     args.out.write_text(json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
     print(json.dumps({"out": str(args.out), "sha256": document["sha256"]}), file=sys.stderr)
     return 0

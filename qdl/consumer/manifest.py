@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from qdl._compat import StrEnum
 from pathlib import Path
 from typing import Any
@@ -85,6 +85,17 @@ class ConsumerManifest:
     requirements: tuple[DataRequirement, ...]
     rollback_contract: str
     manifest_sha256: str
+    # DL v2.3.0 accept-set. A workload token names the manifest revision it was
+    # minted for. ``None`` keeps the exact-match rule (the token revision must
+    # equal ``manifest_revision``). A rendered manifest may declare the oldest
+    # revision from which every later revision is purely additive for this
+    # consumer; tokens from ``min_token_revision..manifest_revision`` are then
+    # accepted, so the consumer bumps its token at its own pace. The renderer
+    # (``qdl.consumer.manifest_compat``) is the only thing that may lower it.
+    min_token_revision: int | None = None
+    # Audit records of the universe selectors expanded into ``requirements``.
+    selector_expansions: tuple = ()
+    _requirement_index: dict = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not all(
@@ -110,8 +121,33 @@ class ConsumerManifest:
             raise ValueError("rollback_contract must be V1 or V2")
         if len(self.manifest_sha256) != 64:
             raise ValueError("manifest SHA-256 is invalid")
+        if self.min_token_revision is not None and (
+            isinstance(self.min_token_revision, bool)
+            or not 1 <= self.min_token_revision <= self.manifest_revision
+        ):
+            raise ValueError("min_token_revision must be within 1..manifest revision")
+        index: dict = {}
+        for item in self.requirements:
+            index.setdefault((item.instrument_uid, item.feed, item.interval), []).append(item)
+        object.__setattr__(self, "_requirement_index", index)
+
+    @property
+    def accepted_token_revisions(self) -> range:
+        low = self.manifest_revision if self.min_token_revision is None else self.min_token_revision
+        return range(low, self.manifest_revision + 1)
+
+    def accepts_token_revision(self, revision: object) -> bool:
+        """Whether a token minted for ``revision`` may use this manifest revision."""
+        return (
+            isinstance(revision, int)
+            and not isinstance(revision, bool)
+            and revision in self.accepted_token_revisions
+        )
 
     def requirement_allowed(self, requirement: DataRequirement) -> bool:
+        candidates = self._requirement_index.get(
+            (requirement.instrument_uid, requirement.feed, requirement.interval), ()
+        )
         return any(
             configured.instrument_uid == requirement.instrument_uid
             and configured.feed is requirement.feed
@@ -126,7 +162,7 @@ class ConsumerManifest:
                 configured.max_session_liveness_ms
                 == requirement.max_session_liveness_ms
             )
-            for configured in self.requirements
+            for configured in candidates
         )
 
     def purpose_allowed(self, purpose: AccessPurpose) -> bool:
@@ -149,12 +185,17 @@ class ConsumerManifest:
 
 class ConsumerManifestLoader:
     @staticmethod
-    def load(path: str | Path) -> ConsumerManifest:
+    def load(path: str | Path, *, selector_context: Any = None) -> ConsumerManifest:
         payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-        return ConsumerManifestLoader.from_mapping(payload)
+        return ConsumerManifestLoader.from_mapping(payload, selector_context=selector_context)
 
     @staticmethod
-    def from_mapping(payload: Any) -> ConsumerManifest:
+    def from_mapping(payload: Any, *, selector_context: Any = None) -> ConsumerManifest:
+        """Load one manifest; ``selector_context`` expands ``spec.selectors``.
+
+        A manifest with selectors and no context is refused rather than loaded
+        with fewer rows than it grants (``qdl.consumer.selectors``).
+        """
         if not isinstance(payload, dict):
             raise ValueError("consumer manifest must be a mapping")
         if payload.get("apiVersion") != "qdl/v2" or payload.get("kind") != "DataRequirement":
@@ -166,7 +207,9 @@ class ConsumerManifestLoader:
         allowed_top = {"apiVersion", "kind", "metadata", "spec"}
         if set(payload) - allowed_top:
             raise ValueError("consumer manifest contains unknown top-level fields")
-        if set(metadata) - {"id", "owner", "subject", "environment", "revision"}:
+        if set(metadata) - {
+            "id", "owner", "subject", "environment", "revision", "min_token_revision",
+        }:
             raise ValueError("consumer manifest metadata contains unknown fields")
         if set(spec) - {
             "sdk_major",
@@ -176,13 +219,21 @@ class ConsumerManifestLoader:
             "purposes",
             "quotas",
             "requirements",
+            "selectors",
         }:
             raise ValueError("consumer manifest spec contains unknown fields")
-        requirements = spec.get("requirements")
+        requirements = spec.get("requirements", [])
+        selectors = spec.get("selectors", [])
+        if not isinstance(selectors, list) or len(selectors) > 64:
+            raise ValueError("consumer manifest selectors must be a list of at most 64")
         # Bounded, not a product quota: the D48 daily universe (up to 300
         # symbols per venue) sits beside the execution products of one alpha
         # identity; per-request limits stay in the manifest quotas.
-        if not isinstance(requirements, list) or not 1 <= len(requirements) <= 1024:
+        if (
+            not isinstance(requirements, list)
+            or len(requirements) > 1024
+            or (not requirements and not selectors)
+        ):
             raise ValueError("consumer manifest requires 1..1024 requirements")
         permissions = spec.get("permissions")
         purposes = spec.get("purposes")
@@ -203,6 +254,37 @@ class ConsumerManifestLoader:
         if set(quotas) != allowed_quota_fields:
             raise ValueError("consumer manifest quota fields are incomplete or unknown")
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        explicit = tuple(DataRequirement.from_mapping(item) for item in requirements)
+        expanded: list[DataRequirement] = []
+        expansions = []
+        if selectors:
+            if selector_context is None:
+                raise ValueError(
+                    "consumer manifest declares universe selectors but no universe/catalogue "
+                    "context was provided"
+                )
+            from qdl.consumer.selectors import MAX_EXPANDED_REQUIREMENTS
+
+            for selector in selectors:
+                rows, audit = selector_context.expand(selector)
+                expanded.extend(rows)
+                expansions.append(audit.as_record())
+            if len(explicit) + len(expanded) > MAX_EXPANDED_REQUIREMENTS:
+                raise ValueError("consumer manifest selectors expand beyond the V2 bound")
+        # Explicit rows exactly as declared (an unchanged manifest yields the
+        # same tuple as before selectors existed), then each selector row not
+        # already granted.
+        seen: set[DataRequirement] = set(explicit)
+        combined: list[DataRequirement] = list(explicit)
+        for item in expanded:
+            if item not in seen:
+                seen.add(item)
+                combined.append(item)
+        min_token_revision = metadata.get("min_token_revision")
+        if min_token_revision is not None and (
+            isinstance(min_token_revision, bool) or not isinstance(min_token_revision, int)
+        ):
+            raise ValueError("min_token_revision must be an integer")
         return ConsumerManifest(
             consumer_id=str(metadata.get("id", "")),
             owner=str(metadata.get("owner", "")),
@@ -218,9 +300,13 @@ class ConsumerManifestLoader:
                 spec.get("execution_dependency", "FORBIDDEN")
             ).upper(),
             quotas=ConsumerQuotas(**{key: int(value) for key, value in quotas.items()}),
-            requirements=tuple(DataRequirement.from_mapping(item) for item in requirements),
+            requirements=tuple(combined),
             rollback_contract=str(spec.get("rollback_contract", "V1")).upper(),
             manifest_sha256=hashlib.sha256(canonical).hexdigest(),
+            min_token_revision=(
+                None if min_token_revision is None else int(min_token_revision)
+            ),
+            selector_expansions=tuple(expansions),
         )
 
 

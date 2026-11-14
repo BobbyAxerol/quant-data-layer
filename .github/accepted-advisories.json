@@ -1,0 +1,674 @@
+{
+ "schema": "qdl.accepted-advisories.v1",
+ "release": "v2.3.0",
+ "expires": "v2.3.1",
+ "approved": "owner-approved 2026-11-14 (AskUserQuestion, option A: ID-scoped waiver for v2.3.0 only)",
+ "basis": "Published after the certified v2.3.0 images were built. Cargo.lock and poetry.lock are unchanged since 9dab224 (2026-10-18), the dependency set v2.2.5 shipped green on 2026-10-20. Fixing them changes the images, so the certified running digests (rust 58bdd282, python a235c0a1) would no longer be the release. v2.3.1 refreshes the dependencies and empties this file.",
+ "detected_by": "CI run 43524274265 (PR #50), 2026-11-13: 6 RustSec advisories; pip-audit 49 findings = 48 distinct IDs (PYSEC-2026-4320 reported twice for certifi); GHSA-xmj3-9gf7-h52w (setuptools) found by the local CI10 re-check 2026-11-14; trivy image scan aliases (33 IDs, certifi/msgpack/pillow/soupsieve) from CI run 43548270507",
+ "rust": [
+  {
+   "id": "RUSTSEC-2026-0418",
+   "package": "libz-sys",
+   "version": "1.1.29",
+   "fixed": ">=1.1.31",
+   "exposure": "build-script environment leak at build time only; the release images are already built from a pinned lockfile in an offline builder",
+   "reason": "published after the certified image build; lockfile unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "RUSTSEC-2026-0441",
+   "package": "pin-utils",
+   "version": "0.1.0",
+   "fixed": "none (unmaintained; replace the dependency)",
+   "exposure": "unmaintained notice, no known vulnerability",
+   "reason": "published after the certified image build; lockfile unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "RUSTSEC-2026-0382",
+   "package": "rustls-webpki",
+   "version": "0.103.14",
+   "fixed": ">=0.103.16, <0.104.0-alpha.1",
+   "exposure": "distrusted intermediates may verify; the DL mesh uses a private CA without public intermediates; venue clients connect to fixed public endpoints",
+   "reason": "published after the certified image build; lockfile unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "RUSTSEC-2026-0386",
+   "package": "tokio",
+   "version": "1.48.0",
+   "fixed": ">=1.51.6, <1.52.0 or >=1.53.3",
+   "exposure": "AsyncFd constructors unsound; DL code does not construct AsyncFd from foreign file descriptors",
+   "reason": "published after the certified image build; lockfile unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "RUSTSEC-2026-0381",
+   "package": "webpki-roots",
+   "version": "0.26.11 / 1.0.9",
+   "fixed": ">=1.0.10",
+   "exposure": "bundled set still trusts distrusted emSign intermediates; venue endpoints do not chain to emSign; the mesh uses a private CA",
+   "reason": "published after the certified image build; lockfile unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "RUSTSEC-2026-0410",
+   "package": "zstd-sys",
+   "version": "2.0.16+zstd.1.5.7",
+   "fixed": ">=2.1.2",
+   "exposure": "WebAssembly allocator shim only; the DL builds x86_64-unknown-linux-gnu only",
+   "reason": "published after the certified image build; lockfile unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  }
+ ],
+ "python": [
+  {
+   "id": "PYSEC-2026-4320",
+   "package": "certifi",
+   "version": "2026.4.22",
+   "fixed": "2026.10.18",
+   "exposure": "CA bundle used only by the bundled OpenAPI SDK websocket client (app/openapi_sdk/python/websocket_marketdata/trading_websocket/connection.py); DL service roles use the private mesh CA, venue TLS is in the Rust roles",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-114613",
+   "package": "msgpack",
+   "version": "1.2.1",
+   "fixed": "1.2.3",
+   "exposure": "used only by the bundled OpenAPI SDK websocket encoding (app/openapi_sdk/python/websocket_marketdata/trading_websocket/encoding.py); not on the Query/bar_edge request path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "PYSEC-2026-4327",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "PYSEC-2026-4328",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "PYSEC-2026-4326",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "PYSEC-2026-4339",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "PYSEC-2026-4340",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "PYSEC-2026-4343",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "PYSEC-2026-4334",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "PYSEC-2026-4337",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "PYSEC-2026-4341",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "PYSEC-2026-4330",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "PYSEC-2026-4338",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "PYSEC-2026-4335",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "PYSEC-2026-4336",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "PYSEC-2026-4331",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "PYSEC-2026-4332",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "PYSEC-2026-4329",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "PYSEC-2026-4333",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "PYSEC-2026-4342",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "PYSEC-2026-4363",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112895",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112400",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112897",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112395",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112404",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112899",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112900",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112893",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112891",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112390",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112401",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112391",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112894",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112406",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112399",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112892",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112393",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-96638",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-96640",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-96778",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "GHSA-78g4-xqwv-q3g8",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-128067",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-128066",
+   "package": "pillow",
+   "version": "12.3.0",
+   "fixed": "13.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module (no 'import PIL' / 'from PIL' outside tests/); no image decoding on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-126192",
+   "package": "soupsieve",
+   "version": "2.9.2",
+   "fixed": "2.10.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module; no HTML/CSS selector parsing on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-126190",
+   "package": "soupsieve",
+   "version": "2.9.2",
+   "fixed": "4.0.0",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module; no HTML/CSS selector parsing on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-126193",
+   "package": "soupsieve",
+   "version": "2.9.2",
+   "fixed": "3.0.2",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module; no HTML/CSS selector parsing on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-126191",
+   "package": "soupsieve",
+   "version": "2.9.2",
+   "fixed": "3.0.2",
+   "exposure": "declared runtime dependency, not imported by any non-test DL module; no HTML/CSS selector parsing on any DL path",
+   "reason": "published after the certified image build; poetry.lock unchanged since v2.2.5",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "GHSA-xmj3-9gf7-h52w",
+   "package": "setuptools",
+   "version": "84.0.0",
+   "fixed": "84.1.0",
+   "exposure": "packaging/build tool present in the runtime venv; not imported on any DL request path (Query, bar_edge)",
+   "reason": "published after CI run 43524274265 and after the certified image build; owner-approved 2026-11-14 ~02:20Z (AskUserQuestion)",
+   "expires": "v2.3.1"
+  }
+ ],
+ "trivy": [
+  {
+   "id": "GHSA-6q48-6c7w-9gw2",
+   "package": "certifi",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-114613",
+   "package": "msgpack",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112393",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112398",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112403",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112900",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-96639",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112390",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112392",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112397",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112399",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112400",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112402",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112404",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112405",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112406",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112892",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112893",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112894",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112895",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112896",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112897",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-112902",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-128067",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-96637",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-96640",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-96642",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-96643",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-96644",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-96778",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "GHSA-78g4-xqwv-q3g8",
+   "package": "pillow",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-126190",
+   "package": "soupsieve",
+   "expires": "v2.3.1"
+  },
+  {
+   "id": "CVE-2026-126191",
+   "package": "soupsieve",
+   "expires": "v2.3.1"
+  }
+ ]
+}

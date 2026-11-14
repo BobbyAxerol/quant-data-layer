@@ -1,0 +1,6 @@
+rust_core gen 1 q 3 scope_q 0 oos 0 ws_max 152 rest_max None
+rust_core_2 gen 1 q 11 scope_q 0 oos 0 ws_max 133 rest_max None
+rust_core_3 gen 1 q 3 scope_q 0 oos 0 ws_max 135 rest_max None
+rust_core gen 1 q 3 scope_q 0 oos 0 ws_max 114 rest_max None
+rust_core_2 gen 1 q 11 scope_q 0 oos 0 ws_max 105 rest_max None
+rust_core_3 gen 1 q 3 scope_q 0 oos 0 ws_max 112 rest_max None

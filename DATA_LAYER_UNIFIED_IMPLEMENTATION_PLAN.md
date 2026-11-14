@@ -77135,3 +77135,1113 @@ locally; release image NOT rebuilt (the coordinator rebuilds rust together with 
   Same session, 06:10-06:13Z, 24 shapes x 2 passes: **PASS**. Statuses: 44 x 200 and 4 x 400 typed refusals, equal on
   both images. Receipt `byte-compare-alpha.json` `c884e495...`, copied to the release folder. 0 `qdl-hr-*` containers
   and networks left.
+
+<a id="dl-v226-stage-a-okx-coverage-20261113"></a>
+### DL v2.2.6 stage A: execution QUOTE + MARK for 20 more OKX linear swaps (crossec Paper), additive refresh tools - 2026-11-13 (Claude)
+
+Owner decisions (2026-11-13, through the coordinator): staged coverage, stage A first; QUOTE + MARK_INDEX_PRICE only
+(Paper `BBO_EXECUTABLE` needs exactly these for MARKET/LIMIT on a SWAP; crossec sends MARKET only); the crossec Paper
+bindings are narrowed per stage by the PM declaration step (owner/Codex), not here. Packet with measurements and the
+window plan: scratchpad `dlcov/PACKET.md`; window runbook `dlcov/WINDOW_STAGE_A.md` (coordinator runs the window).
+
+- Config slice (all additive; every retained row byte-identical):
+  - `config/v2/stable-crypto-demand.yaml` r8 -> r9: +40 requirements for `trading-system.paper.stable`, cloned from the
+    deployed SOL-USDT-SWAP QUOTE / MARK_INDEX_PRICE rows; `index_native_symbol` = the swap's `uly`.
+  - `config/v2/stable-source-bindings.yaml` catalog r12 -> r13: +40 bindings (no new instrument in stage A).
+  - `config/v2/stable-acquisition-bindings.yaml` r20 -> r21: +20 `okx_bbo`, +20 `okx_mark_index`.
+  - `config/v2/stable-authority-promotion-scope.yaml` r11 -> r12: +40 ids.
+  - `consumers/stable/trading-system-paper.yaml` r11 -> **r13** (105 requirements; quotas DERIVED: 160 streams /
+    10000 RPM), rendered by `scripts/prepare_paper_read_extension.py --linear-okx-swaps --revision 13
+    --release-revision 25` from the deployed r11 + r23-v3 pair. Paired consumer env (CLAUDE.md 4.1):
+    `DATA_LAYER_V2_JWT_MANIFEST_REVISION=13`,
+    `DATA_LAYER_V2_RELEASE_MANIFEST_SHA256=9ba2264da2d5c2729376569c4ee2328cf7ad665f1aa209215f94892a5df47248`, sealed
+    binding r25 `binding_sha256` `70925882...` (104 products), rendered outside the repository.
+  - **r12 is retired, never reused.** r12 (hand-picked quotas 150 / 4500) was mounted by the 4 readers for about
+    10 min in the 2026-11-13 window (08:10:47-08:21:12Z declared outage). The JWT-12 writer bootstrap failed
+    VERIFY: 297 x `RATE_LIMITED consumer request quota is exhausted` (`qdl/security/data_plane.py` `RedisMinuteQuota`,
+    one fixed window per calendar minute per consumer identity, shared by both Query replicas through stable_redis).
+    The coupled rollback restored r11 / r23 (VERIFIED 64/64). RCA: the writer's steady Query demand for 104 products
+    is about 6,000/min (model below; measured 2,015-2,034/min for r11's 64 products), so 4,500 could never fit.
+  - `config/v2/stable-v2-release-routing.yaml` r29 -> r30: catalog/demand sha + revision, every consumer
+    `demand_revision` 9, Paper manifest r13 sha `adad7177...`, +40 `V2_PRIMARY`/`BLOCKED` routes.
+  - Class fix (quotas): `qdl/consumer/quota_model.py` models an EXECUTION manifest's Query and stream demand per
+    product (QUOTE 90, MARK 100, TRADE 10, BOOK_SNAPSHOT 2 requests/min; one stream per V2 product; calibrated on the
+    measured r11 writer) with `HEADROOM` 1.5 x (steady + opening) and 1.5 x streams: the quota counter INCRements
+    before comparing, so refusals burn quota (the window's refusal spiral, ready 82 -> 27). The linear-swap renderer derives the quotas from it and refuses explicit quotas below it,
+    and `scripts/check_consumer_quota_model.py` is the offline gate over consumers/stable.
+  - Stage A symbols (20 most liquid of the 91 uncovered crossec swaps by a measured 60 s public `bbo-tbt` rate): ARB
+    ZEC XRP PEPE UNI NEAR SUI ENA BCH ADA WLD AAVE LINK FIL ONDO AVAX TAO PUMP PENGU TIA (`-USDT-SWAP`).
+- Tools (production-standard, replacing the scratch renderer the packet used):
+  - `scripts/refresh_v2_native_ingestor_runtime.py` is now strictly additive: retained bindings (incl. native OKX
+    BAR) are kept byte for byte with their materialized `instrument_catalog_revision` (the core quarantines a revision
+    mismatch, `qdl-realtime-core` lib.rs `instrument catalog revision mismatch`); operator-installed fields such as
+    `book_resync` are preserved; a file without additions is untouched; an OKX lane renumbering is refused (positional
+    lane names + the L2 book core's bare generation compare). Before: it refused the live config (`book_resync`,
+    Binance `config_revision` 19) and would have dropped the native OKX bars.
+  - New `scripts/refresh_v2_core_runtime_bindings.py`: renders additive successors of the three core configs into a
+    new directory (never in place); the `core_config` all-acquired selection reproduces the deployed cores exactly
+    (699/699, 0 contract differences).
+  - `scripts/prepare_paper_read_extension.py`: linear OKX swap mode next to the unchanged IDR-075 inverse mode.
+  - `tests/inverse_extension_support.py` (class fix): the pre-inverse recovery is restricted to the IDR-127 row scope
+    frozen in `tests/fixtures/idr127/committed-scope.json`, so later additive revisions no longer break the pinned
+    historical documents; a changed retained row still does.
+  - Class fix, one predicate for "full bar family / native candle lane": `qdl.runtime.universal_demand.bar_family_symbols`
+    (any non-BAR demand except EXECUTION-grade QUOTE / MARK_INDEX_PRICE, which only prices orders). Before, four places each treated *any* non-BAR demand
+    as "execution symbol": `qdl/runtime/production_catalog.py` (BAR lane REST vs native), `scripts/phase115c_materialize_active_native_bars.py`
+    (14-interval bar family), `scripts/phase533_materialize_alpha_runtime_entitlements.py` (alpha universe rows) and
+    `scripts/kn_universe_top300.py`, plus `tests/universe_support.py`. Under that rule the stage A QUOTE/MARK rows would
+    have implied 280 new native OKX candle subscriptions and 20 fewer universe symbols. The five liquid symbols keep
+    their TRADE/BOOK demand, so every existing output is unchanged; the pinned "+N" totals change by exactly the 40
+    new products. Shared stage A scope for the tests: `tests/v226_stage_a_support.py`.
+  - `scripts/measure_execution_mark_index_consumer_latency.py`: the exact MARK scope is now 31 (11 + 20 stage A).
+- Stage A runtime outputs (repo tools, offline, dlcov `stageA-repo/`): OKX ingestor 103 -> 163 bindings,
+  `config_revision` 21, lanes unchanged (`okx-public-001..004`, `okx-business-001`); Binance ingestor unchanged; cores
+  699 -> 759 each; realm bundle `56135f7a...`; projector bundle `0770a8fa...`; Query runtime catalog r13 + runtime
+  acquisition r20 + 40 rows (r21). bar_edge (catalog in its image) is not touched.
+- Compose: the Query Paper realm manifest is now `${QDL_PAPER_REALM_MANIFEST:-trading-system.paper.stable-r11.yaml}`
+  (the v2.2.5 env renders the deployed value unchanged); `deploy/compose/qdl-v2-stable-kn.v2.2.6-stage-a.env` keeps every
+  v2.2.5 image digest and the KN state dir and points at the new stage A host directories.
+- F2 (Kafka RCA, owner-approved 2026-11-13): after any multi-broker restart run the preferred-leader election
+  (`scripts/kafka_preferred_leader_election.py --apply --scope data`, then `--scope coordinators` as a declared
+  interruption). Added as step 1b of `docs/runbooks/kn-host-reboot-recovery.md` and as W4b of the new
+  `docs/runbooks/kn-maintenance-window-template.md`. Cause: `auto.leader.rebalance.enable=false`, so after restarts all
+  166 leaders sat on kafka3 (about 1.8 vCPU of the DL budget). F1a/F1b run in the stage A window, before the feed steps.
+- Capacity (measured, linear upper bound): stage A about +450 Kafka records/s, about +0.8 vCPU on a DL draw of
+  3.6-4.1 vCPU; stage B (the other 71) needs headroom from the kafka3 RCA or an owner CPU decision.
+- Tests: see the commit message. Guide delta: `upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md`
+  [2026-11-13 delta](upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md#delta-20261113-okx-ws-limits-and-lane-rule).
+- Runtime attempts on 2026-11-13. The coordinator operated both; evidence is in scratchpad `dlcov/window-stageA/` and
+  `dlcov/window-stageA-retry/`.
+  - **Attempt 1, r12.**
+    - Steps 0 to 2 passed and stay deployed: the scratch dirs, Kafka F1a/F1b leader election, the 3 cores (759
+      bindings) and the 2 projectors (kn bundle `0770a8fa`).
+    - Steps 3 to 5 passed: the readers on bundle `56135f7a`, and the OKX ingestor at 163 bindings with lane names
+      unchanged.
+    - Step 6 failed VERIFY: the writer BOOTSTRAP hit 297 `RATE_LIMITED` refusals on the hand-picked r12 quota.
+    - The coupled rollback ran 08:17:51-08:21:12Z. The declared outage was 08:10:47-08:21:12Z.
+  - **Attempt 2, r13, quotas derived 10,000 rpm / 160 streams.**
+    - Steps 3 to 5 passed again.
+    - Step 6 BOOTSTRAP failed VERIFY. There were 0 quota refusals and 0 auth refusals, but every BOOK slice reported
+      `EXECUTION_ORDERING_AUTHORITY_MISMATCH` (281 log lines). The cause is the TS writer's ordering marker in
+      redis_marketdata DB1: it has no TTL and is keyed on contract lineage, including `config_revision` and
+      `instrument_catalog_revision`, so the markers left by the old scope refuse the new lineage.
+    - The rollback then hit the native `RESUME_GENERATION_MISMATCH` until the 120 s marker TTL expired.
+    - Writer r23 was READY 64/64 with exec 53 from 09:07:09Z. The readers are back on r11 and the ingestor on the rc7
+      base. Outage: 08:52:38-09:07:09Z.
+  - **Next.**
+    - A reviewed writer scope-reset tool. With the writer stopped it deletes the exact old and new scope keys
+      (BOOK snapshot/delta, `:ordering-v1`, native applied/execution QUOTE/TRADE); then BOOTSTRAP and STRICT. The
+      writer agent is building it.
+    - The thorough fix is the writer handoff (W-B) together with per-binding lineage in DL v2.3.0.
+    - The cores and projectors stay on the stage A config throughout, because it is additive.
+- Status: IMPLEMENTED / TESTED_LOCALLY, not deployed, not certified. v2.2.6 is config-only (no image rebuild); the
+  certificate inherits unchanged digests by delta proof and re-runs G4/G6/R2/R4 on the final config. Not pushed.
+
+### DL v2.3.0 slice 2a: declaration-only mechanism (accept-set, selectors, provenance, checkpoint v5, producer knobs) - 2026-11-13 (Claude)
+
+- Goal (owner, via the coordinator 2026-11-13): after v2.3.0, adding instruments or derived intervals is a config
+  revision + coverage gate + ordered restart, with no certification campaign, image or tag.
+  - Study: `COVERAGE_150_STUDY.md` §6 (scratchpad `dlcov/`).
+  - Guide delta: `upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md` "Delta 2026-11-13: DL v2.3.0
+    declaration-only coverage mechanism (slice 2a)".
+  - Branch `feat/v2.3.0-declaration-mechanism` off origin/dev 098c94b, worktree `.worktrees/dl-v230-declaration`.
+  - Parallel: DERIVED_FINAL bars live in `dl-v230-derived-bars`; this slice does not touch their code. Expected
+    overlap is only `stable_bar_edge.py` `__init__` (they add derived pairs; here two kwargs and
+    `_binding_digests`) and `stable_deployment.py` (theirs only).
+- Scope 2a (implemented, tested locally, no runtime change, nothing pushed):
+  1. **Accept-set.**
+     - Manifest `metadata.min_token_revision` (optional, 1..revision; bool/non-int refused).
+       `ConsumerManifest.accepts_token_revision` is used by `qdl/security/data_plane.py`.
+     - Rust `gateway_bundle::Manifest.min_token_revision` (absent = revision) and `accepts_token_revision` are
+       used by `auth.rs` authenticate and `authority.rs` reauthorize.
+     - The renderer rule is `qdl/consumer/manifest_compat.py`: an additive successor keeps the floor, anything
+       else resets it. The gate check is `declared_floor_problems`.
+     - The bundle compiler emits the field only when declared.
+  2. **Universe selectors.**
+     - Code: `qdl/consumer/selectors.py`, loaded by `ConsumerManifestLoader.load(..., selector_context=)`.
+     - ALPHA/RESEARCH only; deterministic expansion; unknown member refused; at most 16,384 rows.
+     - Audit in `selector_expansions` (Query log + bundle entry).
+     - Universe files: `qdl.v2.declared-universe.v1`, or the D48 market-cap membership.
+     - Query builds the selector context lazily (only if a manifest has selectors).
+     - The requirement check uses an index keyed by (uid, feed, interval), with the same comparisons.
+  3. **Effective declaration.**
+     - `qdl/runtime/declaration.py` records each loaded file: path, sha256, revision, IMAGE/MOUNTED.
+     - Opt-in guards: `QDL_STABLE_REQUIRE_MOUNTED_DECLARATION=1` and `QDL_STABLE_DECLARATION_INDEX`.
+     - bar_edge logs it and adds `declaration` to its heartbeat (additive keys, `heartbeat.extra`).
+     - Query logs it and adds a non-gating `declaration` component to `/health/dependencies`. The kn3 path now
+       loads the acquisition plan once instead of twice.
+  4. **Bar-edge checkpoint v5.**
+     - `qdl/runtime/bar_edge_checkpoint.py`: per-binding series digest, then `plan_crossing`.
+     - Additive crossing: watermarks kept, added bindings bootstrap.
+     - Removed or changed bindings: refused unless an exact `qdl.stable-bar-edge-checkpoint-migration.v1` record
+       (`QDL_STABLE_BAR_CHECKPOINT_MIGRATION`) names them.
+     - Revisions never decrease.
+     - A legacy v2-v4 checkpoint crosses only with `previous_binding_digests`.
+     - A repair client never crosses.
+     - The edge writes v5 from now on. The old image cannot read v5, so rollback restores the pre-roll checkpoint
+       backup.
+  5. **Ingestor producer knobs.**
+     - `KafkaTransportConfig.producer_linger_ms` (`linger.ms` set only when Some, 0..=100).
+     - Ingestor env `QDL_KAFKA_PRODUCER_LINGER_MS` and `QDL_KAFKA_REQUEST_TIMEOUT_SECONDS`, both unset = today.
+       The second fixes the side finding that the ingestor hard-coded 30 s and ignored the variable set on its
+       container; the deployed value is 30, so no behaviour change.
+     - Echoed as `producer` in the started and progress events. Ships unset (BATCHING_SLICE design).
+- Production facts read for the rollout (read-only: docker inspect and `--rm` reads, no mutation):
+  - bar_edge `08f356a8` runs image config catalog r11 / acquisition r19. Query `/runtime`
+    (`releases/v2.2.0-02cd827/runtime`) is r12/r20.
+  - Live checkpoint `crypto-bar-checkpoint.json`: schema v4, 640 binding_ids, 635 watermarks, canonical_cache_id
+    present.
+  - Both ingestor containers carry `QDL_KAFKA_REQUEST_TIMEOUT_SECONDS=30`.
+- Tests (all in `--rm` containers, no network for Python):
+  - Python, image `qdl-v2-python:2.2.5-9b6747f`:
+    - new `tests/test_v230_declaration_mechanism.py`: 20 OK;
+    - impacted suites (67 modules that import manifests, the bundle, data-plane security, the bar edge or the
+      heartbeat): 1353 OK (49 skipped); after the Query declaration wiring, the 24 modules importing `qdl.runtime.stable`/selectors re-run: 247 OK (1 skipped).
+    - Existing tests updated for intended changes:
+      - persisted checkpoint schema v3/v4 -> v5 (4 asserts);
+      - r128 test double gains `_binding_digests` / `checkpoint_migration`, and its refusal message is now the
+        legacy one.
+  - Bundle compat: the repo bundle compiled at 098c94b and on this tree is byte-identical (sha256
+    `21f42d2d726de6b9...`).
+  - Rust, image `qdl-rust-builder:r134-test` (1.82.0), `--cpus 2 --memory 4g`:
+    - `cargo fmt --all -- --check` OK;
+    - `cargo clippy -p qdl-kafka -p qdl-contracts -p qdl-stream-gateway --all-targets --locked -- -D warnings` OK;
+    - `cargo test` on the same packages: qdl-contracts 34, qdl-kafka lib 47 (2 ignored), ingestor 73 (1 ignored),
+      production-core 7, realtime-core 30, stream-gateway lib 69, hot_lookup 1, native_stream 56 (1 ignored).
+    - New tests:
+      - accept-set parse/refusal x3;
+      - `t03_an_additive_manifest_revision_keeps_older_tokens_and_a_reset_floor_ends_them`;
+      - producer linger unset/set/out-of-range;
+      - ingestor ProducerSettings x3.
+- Cleanup: every container `--rm`; no image built. Scratch (`scratchpad/v230`: target, registry, logs) is outside
+  the repo.
+- Status: implemented, tested locally. Not shadow-certified, not deployed.
+- Open:
+  - 2b: sticky lanes, per-feed flush, compose mounts.
+  - The declaration tool (separate agent, from this commit).
+  - Usability status file `qdl.execution-binding-status.v1`.
+  - v2.3.0 release certificate (R-cert 1-4 of the study, which the derived-bars slice shares).
+
+### DL v2.3.0 slice 2b: sticky ingestor lanes, per-feed latest-state flush, mounted declarations in compose - 2026-11-13 (Claude)
+
+- Continues slice 2a (`ccfe62a8`). Same branch and worktree. Guide: the same delta section, items 6-7 below.
+- Scope (implemented, tested locally, no runtime change, nothing pushed):
+  1. **Sticky lanes.**
+     - Ingestor `RawBinding.lane_shard: Option<usize>` (1..=999). All bindings pinned or none.
+     - Grouping: OKX by (service, shard), lane `okx-<service>-<NNN>` unchanged. Binance by (route, feed, shard),
+       lane `binance-<route>-<feed>-<NNN>` unchanged.
+     - One feed class per lane, at most `max_subscriptions_per_connection`. Refused in `validate()`, so the
+       supervisor never retries a bad plan.
+     - Absent pins = today's positional partition (bytes of an unchanged config behave identically).
+     - Renderer `qdl/runtime/ingestor_lanes.py`:
+       - `legacy_lane_assignment` mirrors the ingestor; first pinned render = today's lanes, proved on the repo
+         ingestor configs;
+       - `sticky_lane_pins` keeps retained pins, fills same-scope same-feed capacity, opens max+1;
+       - `lane_plan_report` is the gate's lane-stability input.
+     - The tool applies pins to the rendered config, so `stable_deployment.py` is untouched (no overlap with the
+       derived-bars slice).
+  2. **Per-feed flush.** `IngestorConfig.latest_state_flush_ms_by_feed` (QUOTE/MARK_INDEX, 1..=1000 ms). Each
+     lane's latest-state tick uses its feed's value (one feed per lane). Started event adds the map and
+     `lane_plan: PINNED|POSITIONAL`.
+  3. **Compose** `deploy/compose/qdl-v2-stable-kn.yml`:
+     - bar_edge catalogue and acquisition come from `/runtime` (was the image's r11/r19). The unused
+       `QDL_STABLE_CONSUMER_MANIFESTS` is removed from bar_edge (`build_from_environment` never reads it).
+     - query_kn_1/2 read all 12 manifests from `/consumer-realms`.
+     - Header documents these as v2.3.0 deltas against live. `kn_versioned_compose.py parity` against the v2.2.5
+       roles shows them until the window.
+  4. **Release route loader.** `StableReleaseRoutePlan.load/from_mapping/_consumer(selector_context=None)` passes
+     to the manifest loader. Default keeps refusing selector manifests (declaration-tool agent request).
+  5. **Draft rollout** `upgrade/evidence/releases/v2.3.0/drafts/DECLARATION_MECHANISM_ROLLOUT_DRAFT.md`.
+- Facts verified (read-only):
+  - The r11/r19 (image `08f356a8`) -> r12/r20 (live `/runtime`) BAR binding crossing, classified with the
+    certified loaders and series digests: 640 -> 640, added 0, removed 0, changed 0.
+  - The three image manifests are byte-identical to the repository copies, and the realm dir lacks them.
+- Tests:
+  - Rust (`qdl-rust-builder:r134-test`, 2 CPU / 4 GiB `--rm`):
+    - `cargo fmt --check` OK;
+    - `cargo clippy -p qdl-kafka --all-targets -D warnings` OK;
+    - ingestor tests 78 passed / 1 ignored (+5 new `lane_plan_tests`: pinned reproduces positional, growth keeps
+      names with a positional control, invalid pins, Binance per-feed numbering, per-feed flush, partial pin
+      refused);
+    - `cargo check --workspace --all-targets` OK.
+  - Python (`qdl-v2-python:2.2.5-9b6747f`, `--rm`, no network): `test_v230_declaration_mechanism` (21, incl. release-route selector kwarg), `test_v230_ingestor_lanes` (6), `test_kn_stable_compose` (12) and the 10 `StableReleaseRoutePlan` suites: 179 OK.
+  - ruff 0.15.13 (no ruff in DL CI; run as a lint) clean on the new files.
+- Status: implemented, tested locally. Open:
+  - the declaration tool (separate agent, worktree `dl-v230-declaration-tool`);
+  - status file `qdl.execution-binding-status.v1` (item 3);
+  - merge with the derived-bars slice;
+  - v2.3.0 images, certificate, window (draft packet).
+- Fix 2026-11-13 (cross-slice defect reported by the declaration-tool agent, reproduced with an overlay of 7eb58c5 +
+  the derived-bars python files: 1716 DERIVED_FINAL rows -> `TypeError: Object of type StableDerivedBarAcquisition is
+  not JSON serializable` in `binding_series_digest`). The digest read `derived_from.interval`, but the derived-bars
+  slice names the field `StableDerivedBarAcquisition.base_interval`, so the dataclass itself reached `json.dumps`.
+  The digest now reads `base_interval` (or a plain string) and refuses anything else with a typed ValueError; a
+  binding without `derived_from` keeps its digest. Test `SeriesDigestDerivedTests` (no-derived digest unchanged,
+  base interval changes the identity, a missing base interval refused); `tests.test_v230_declaration_mechanism`
+  22 OK; ruff clean.
+- Follow-up 2026-11-13: the derived-bars slice settled the field as `StableDerivedBarAcquisition.interval` (YAML
+  `derived_from.interval`, worktree `dl-v230-derived-bars`). The digest now reads `interval` and still hashes only
+  the string; a plain string hashes the same, `derived_from: None` leaves the key out, and anything else is refused.
+  `tests.test_v230_declaration_mechanism` 22 OK.
+- Follow-up 2026-11-13: in the ingestor, an empty `QDL_KAFKA_PRODUCER_LINGER_MS` or `QDL_KAFKA_REQUEST_TIMEOUT_SECONDS`
+  value now means unset (compose `${VAR:-}`), the same rule as the v2.2.7 hotfix (`release/v2.2.7-ingestor-linger`
+  13f20d05). Tested: `cargo fmt --check` OK, and the 3 `producer_settings_tests` pass
+  (`qdl-rust-builder:r134-test`, 1 CPU, cpu-shares 256).
+### DL v2.3.0 slice 1: DERIVED_FINAL bar aggregation (tested locally) - 2026-11-13 (Claude)
+
+**Scope.** Owner-approved design (coordinator, 2026-11-13): BAR intervals above 1m are aggregated from 1m inside the
+standard DL structure, so adding an interval later is a declaration only.
+
+**Status.** `implemented`, `tested locally`.
+- No runtime change, no image, no push.
+- Branch `feat/v2.3.0-derived-bars`, worktree `/home/bobby/.worktrees/dl-v230-derived-bars`, cut from `origin/dev` `098c94b`.
+- Sibling slice: `feat/v2.3.0-declaration-mechanism` (mounted bar edge config, checkpoint superset, token revision
+  ranges, selectors, lane names, per-feed coalescing). This slice does not touch those concerns.
+- Guide delta: `upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md`, "Delta 2026-11-13: DL v2.3.0 slice 1".
+
+**Implemented.**
+- **Contract (additive).**
+  - `Bar.aggregation = 19` (`BarAggregation`): base interval and source, constituent count, first and last
+    constituent event ids and offsets, constituent SHA-256.
+  - Regenerated with `buf generate` (Python and Rust). `buf lint`, `format` and `breaking` pass against
+    `qdl-v2-phase1` and `qdl-v2-phase7-beta`.
+  - `qdl-contracts` allows `clippy::large_enum_variant` on `marketdata.v2`, as it already does for `query.v2`. The
+    BAR variant is now 688 bytes; the in-memory cost goes into R-cert 4.
+- **Interval anchors.**
+  - New `intervals.bar_bucket_open_ms` is the one grouping rule.
+  - `resample_final_bars` (warmup `EXACT_FINAL_RESAMPLE`) groups on provider anchors (Monday weeks, Binance Monday 3d)
+    instead of the Unix grid.
+  - Its revision is now the sum of constituent revisions (was the maximum).
+  - Zero-volume rule, see the finding below.
+- **Acquisition.**
+  - New mode `DERIVED_FINAL` with `derived_from: {interval}` (`StableDerivedBarAcquisition`).
+  - Validator: socketless; base finer and dividing the target; target anchor on a base open; venue history channel of
+    the target interval.
+  - `StableAcquisitionPlan.derived_parents`: exactly one parent per derived binding; an enabled child needs an enabled
+    parent.
+  - `core_config` emits `derived_bar` {interval, base_interval, base_source_id, anchor_ms}.
+  - `identity_digest` is unchanged for plans without derivations (tested).
+  - The universal planner treats the mode as socketless.
+- **Rust core.**
+  - `qdl-core/src/derived_bar.rs` recomputes the aggregate from the constituents with exact i128 decimals and checks:
+    - the spec, symbol and calendar anchor;
+    - the constituents are complete, contiguous, final, of one unit and non-repeating;
+    - the digest;
+    - supersedes only with revision > 0.
+  - It emits `BAR_ORIGIN_AGGREGATED` with lineage, `FINAL`, or `REVISED` with `supersedes_event_id`.
+  - Event identity is `open:close:r<revision>`, so the same constituents give the same event.
+  - `qdl-realtime-core`: `CoreBinding.derived_bar`. A `qdl.derived-bar.v1` record is accepted only on a
+    `DERIVED_FINAL` binding and only over `FILE_REPLAY`; otherwise it is quarantined. Venue history rows on the same
+    key keep the venue canonicalizer.
+- **Bar edge.**
+  - `KnBarReadback.final_bar_rows` returns proven final rows with their offsets.
+  - New `qdl/runtime/derived_bars.py` holds the decision (publish/skip/wait/gap) and the raw record.
+  - `StableBinanceBarEdge.run_derived_cycle` runs in chain order:
+    - targets after the `last_open_ms` watermark, plus recorded gaps;
+    - a wait stops the watermark;
+    - gap after 120 s, rechecked every 30 s for 6 h, at most 256 per binding;
+    - ACK before the watermark moves;
+    - the parent must be bootstrapped first.
+  - Derived bindings bootstrap native history like every BAR binding; checkpoint and config loading are unchanged.
+- **Query.** `bar_item_fields` maps `aggregation` to `resample_lineage`.
+- **Cross-slice name.** The Python attribute is `StableDerivedBarAcquisition.interval`, the same as the YAML
+  `derived_from.interval`. It was agreed with the declaration slice, whose `binding_series_digest` reads it
+  (`feat/v2.3.0-declaration-mechanism` `b71b45e`).
+- **R-cert 1 tool.** `scripts/v230_derived_bar_parity.py` captures OKX public candles for N days per
+  instrument and compares them through `resample_final_bars`. The ignored Rust test
+  `qdl-core derived_bar::tests::okx_parity_directory` (`QDL_DERIVED_PARITY_DIR`) runs the core path on the same
+  files. Smoke on the committed fixture: 988 / 988.
+
+**Finding (measured): the study's "exact naive aggregation" claim does not hold.**
+- New public capture, LDO-USDT-SWAP, 2026-11-12 UTC: 1,440 x 1m plus every native interval, and 28 days of
+  1Dutc/2Dutc/3Dutc/1Wutc. Committed as `tests/fixtures/okx_derived_bar_parity_ldo_20261112.json`, 206 KB.
+- Naive OHLC differed on 3 of 480 native 3m bars. OKX zero-volume 1m bars repeat the previous close, and native candles
+  exclude them from open/high/low.
+- The rule is now: OHLC from constituents with volume > 0, all constituents if none traded; volumes summed. With it:
+  - 1,949 / 1,949 bars equal in the offline Python check (each interval directly from 1m and through the chain, plus
+    2D/3D/1W from 1D);
+  - 988 / 988 through the repo's `resample_final_bars`;
+  - 988 / 988 through the Rust core.
+- The anchors were confirmed: 2Dutc and 3Dutc on the Unix grid, 1Wutc on Monday.
+- The 132-bar sample in the study missed this because 1H/4H/12H/1D buckets rarely start on an untraded minute.
+
+**Tests (all `--rm`; Python 2 CPU, last Rust run 1 CPU).**
+- `tests.test_v230_derived_bars`: 20 pass.
+- R-cert 1 tool: `scripts/v230_derived_bar_parity.py` (public capture plus warmup-path compare). In `--compare-only`
+  mode on the committed fixture: 988 compared, 0 mismatches.
+  - Covers: anchors, warmup parity, schema and loader, chain and core mapping, digest stability, deriver
+    publish/wait/gap/heal/revision/native-kept, parent wait, shared record golden, cache codec, query lineage.
+- Impacted Python suites: the 76 modules that import intervals, handoff, stable_deployment, universal_realtime,
+  stable_bar_edge, kn_bar_readback, stable_source, provider_history or kn_query_backend, run on this tree:
+  1,268 tests OK, 42 skipped, 2,405 s on a host at load ~30 (`qdl-v2-python:2.2.5-9b6747f`, no network).
+  The base run at `098c94b` was stopped unfinished, because nothing failed that needed comparing.
+- Contract and golden modules not in that set (46 modules: generated code, descriptors, codec goldens, sizing):
+  807 tests, 83 skipped, 1 error. The error was `test_kn_resource_sizing` refusing the unmapped
+  `bar.aggregation` field, as it is designed to. Fixed by mapping the field in `scripts/kn_resource_sizing.py`,
+  so the KN row sizing counts lineage bytes. That module then reran: 13 OK.
+- Contract/golden modules not in that set (46 modules that use pb2 descriptors, `contracts/golden` or `generated/python`):
+  807 tests, 83 skipped, 1 error. The error was correct: `tests.test_kn_resource_sizing` refuses a proto field that
+  the contract-complete BAR sizing row does not map (`bar.aggregation`).
+  `scripts/kn_resource_sizing._complete_bar` now maps `aggregation`. Rerun of that module plus the new module: 33 OK.
+- Rust (builder image `qdl-rust-builder:r134-test`, rust 1.82): `cargo fmt --check`, then `clippy -D warnings` and
+  `test` for `qdl-core`, `qdl-realtime-core` and `qdl-contracts`: 63 + 58 + 31 pass. Ignored: 1 in `qdl-core`
+  (`okx_parity_directory`, the R-cert 1 runner) and 1 already present in `qdl-realtime-core`. Rust tests include:
+  - full-chain and calendar parity on the fixture;
+  - the zero-volume rule;
+  - refusals;
+  - revision sum and supersede;
+  - identity;
+  - the Python golden `tests/fixtures/derived_bar_record_v1.json`;
+  - the cache row codec round trip;
+  - core routing and transport.
+- No ruff step exists in DL CI (`grep ruff .github` is empty), so none was run.
+- The certification ledger is unaffected. The certified pass-through rows are native intervals; resample only runs for
+  non-native targets.
+
+**Open (decision or next slice).**
+- Parity auditor in the bar edge: sampled native REST comparison per close. Deferred to the R slice.
+- R-cert 1-4 are not run.
+- Merge with the declaration slice: expected overlap is `stable_deployment.py` (`derived_from` field and loader key)
+  and `stable_bar_edge.py` (`__init__` derived pairs, new methods, run loop hook). A per-binding digest there must drop
+  `derived_from` when it is `None`, as `identity_digest` does.
+- Late 1m corrections: DL native canonicalizers emit revision 0 only, and the projector treats a same-open content
+  change as a conflict (`state_contract.rs` `bar_revision_decision`). A venue correction is therefore not a revision
+  today. Derived revisions only propagate from derived parents.
+
+**Rollout constraint.** Projector, stream, query and core must run the v2.3.0 contracts before any bar edge publishes a
+derived bar. An older projector drops field 19, then refuses the row (`ENVELOPE_NOT_CANONICAL`).
+
+**Rollback.** Revert the commit. Plans without `DERIVED_FINAL` are byte-identical in identity digest and core config.
+
+### DL v2.3.0 slice 1: R-cert 1 run, R-cert 3 offline cases, R-cert 2 packet - 2026-11-13 (Claude)
+
+**Scope.** The coordinator asked to close v2.3.0 quickly, in parallel with the stage A retry.
+Status: R-cert 3 offline cases are `tested locally`; R-cert 1 is `in progress`; R-cert 2 is a draft packet, not approved.
+Guide delta: the 2026-11-13 v2.3.0 slice 1 section in `upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md`.
+
+**R-cert 1 (offline parity).**
+- Scope: the 25 stage-A instruments (the 5 existing plus `symbols-stageA20`) x 30 UTC days (2026-10-14..2026-11-12) x 13 intervals.
+- Each day covers every intraday native interval from 1m, plus 2D/3D/1W from the 28 days of 1D before that day's Monday.
+- Tool: `scripts/v230_derived_bar_parity.py`.
+  - Now backs off on OKX `50011` and on transport errors instead of failing the run.
+  - Runs in one `--rm` container: `--cpus 1`, `--cpu-shares 256`, 4 req/s (below the per-IP budget it shares with production).
+- State, outside Git: `~/.local/state/qdl-v2/v230-rcert1/` (`captures/`, `rcert1.log`, `summary.json`).
+- The core-path half is the ignored Rust test `okx_parity_directory` on the same directory. It runs once host load allows.
+- Gate: 0 mismatches. Gaps are reported, never filled.
+- The result is recorded in a follow-up entry.
+
+**R-cert 3 (offline part).** `tests.test_v230_derived_bars.FaultMatrixTests`, 9 cases:
+- F1: restart after the ACK but before the checkpoint republishes byte-identical records.
+- F2: restart after the rows are durable publishes nothing.
+- F3: a missing ACK keeps the watermark and records no gap.
+- F4: a cache generation change during a read fails closed.
+- F5: the chain climbs only after the finer level is durable.
+- F6: weekly targets open on Monday, with 7 constituents.
+- F7: the gap set is bounded (256) and expires after 6 h.
+- F8: catch-up is bounded per cycle.
+- F9: a provisional parent row never counts as a constituent.
+
+Module total: 29 tests OK (`--rm`, 1 CPU).
+
+The cases that need real roles are S1–S6 in the R-cert 2 packet:
+- bar_edge restart mid-chain;
+- ingestor outage, then native repair;
+- projector restart;
+- cache flush and rebuild;
+- refusal by a v2.2.4 projector (the rollout-order rule);
+- core restart.
+
+**R-cert 2 packet.** Draft: `upgrade/evidence/releases/v2.3.0/drafts/RCERT2_DERIVED_BARS_SHADOW_PACKET.md`. It covers:
+- an isolated namespace in the G12 pattern, with a single KRaft node, Redis and one instance of each role;
+- 5 symbols x 13 derived intervals, compared with native OKX REST over at least 24 h across Monday 2026-11-16 00:00Z;
+- caps of 1.15 vCPU and 2.3 GiB; expected use +0.2 to +0.35 vCPU against measured DL use of about 4.9 vCPU;
+- two v2.3.0 images built from the merged tree;
+- what is not touched, teardown and rollback.
+
+It needs owner approval. The driver `scripts/v230_rcert2_shadow.py` is not written yet.
+
+### DL v2.3.0 R-cert 2 shadow driver (offline parts tested) - 2026-11-13 (Claude)
+
+The owner approved the packet as written at e30392b9, with an early start (relayed by the coordinator). The run starts
+once the v2.3.0 rc images exist and keeps going through Monday 2026-11-16 12:00Z, with S1–S6.
+
+Driver: `scripts/v230_rcert2_shadow.py`.
+- `--render`, using the code under test:
+  - catalog subset of 70 BAR bindings;
+  - acquisition with 5 native 1m bindings and 65 DERIVED_FINAL bindings on the chain;
+  - `core_config` and the `native_ingestor_configs` OKX SWAP lane (candle1m x 5 only);
+  - consumer manifest, `compile_bundle`, authority record;
+  - single-node KRaft properties and a throwaway TLS CA valid 120 h.
+- `--plan` / `--up`: one holder on a new bridge network; every other role shares its network. Every role is `--rm`,
+  `--cpu-shares 256`, capped (1.15 CPU and 2,336 MiB in total) and labelled.
+- `--create-topics`.
+- `--compare`: derived cache rows against public OKX REST at 2 req/s or less. Evidence is restart-safe; `summarize` is
+  rebuilt from `compared.jsonl`.
+- `--fault S1..S6`, `--teardown`.
+- G2.6: a production compose identity hash is taken before and after the run.
+
+Tests: `tests.test_v230_rcert2_shadow`, 7 OK (render, caps, isolation argv, verdicts, comparator idempotence). No
+container has been started.
+
+<a id="dl-v230-declaration-tool-20261113"></a>
+- 2026-11-13 addition (coordinator, inside the approved caps): gate G2.7, the REST-final 1m lane.
+  - DOGE and BNB take their 1m base from the bar edge REST final-bar lane (`PYTHON_REST`, `candle1m`).
+  - BTC, ETH and SOL keep native WS.
+  - The comparator also checks every 1m base bar.
+  - Latency is reported per lane and interval (`published_at - close`), with gates: REST final 1m p99 <= 20 s,
+    REST-lane derived p99 <= 30 s. If the gate fails, the 150-tier declaration switches that universe to native 1m.
+  - `tests.test_v230_rcert2_shadow`: 8 OK.
+
+### DL v2.3.0 slice 2c: declaration tool `scripts/dl_declaration.py` (render, gate, checkpoint-migration) - 2026-11-13 (Claude)
+
+- Goal (owner, via the coordinator): after v2.3.0 an instrument/interval addition is "declaration + gate + ordered
+  restart", no campaign, image or tag. Branch `feat/v2.3.0-declaration-tool` on 2b `b71b45e`, worktree
+  `.worktrees/dl-v230-declaration-tool`. Guide delta: `upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md`
+  "Delta 2026-11-13: DL v2.3.0 declaration tool (slice 2c)".
+- `render DECLARATION --out NEW_DIR [--dry-run]` (`qdl.v2.declaration.v1`). Inputs:
+  - explicit rows;
+  - TS `ts.declared-execution-requirements.v1` (requirements_sha256 verified; READ + EXECUTION only; TS market
+    tokens mapped);
+  - alpha hosting intent + universe with an `execution-alpha.data-requirements.v1` profile.
+  It splits these into EXECUTION (TS) and SIGNAL (alpha) and writes one coupled set:
+  - demand (dedup by feed key across consumers);
+  - catalogue + acquisition (the stage A additive merge over `ProductionCatalogBuilder`; retained rows as committed);
+  - promotion scope; routing (`phase115c._update_release_route` + product routes cloned from the same venue/market);
+  - TS manifest (prepare_paper_read_extension templates) and alpha universe selectors (one per interval + reference);
+  - accept-set floor by `manifest_compat.next_min_token_revision`; universe files;
+  - Query runtime catalogue + acquisition;
+  - ingestor configs (strictly additive refresh + native 1m BAR additions + `ingestor_lanes.sticky_lane_pins` +
+    `latest_state_flush_ms_by_feed`);
+  - cores (`refresh_v2_core_runtime_bindings.successor`); kn/realm bundles (splice; kn replaces an entry only when
+    its BAR rows change);
+  - sealed TS binding (`_seal`); `execution-scope/<consumer>.json`; `runtime/declaration-index.json`; `report.json`.
+  Derived intervals become `DERIVED_FINAL` with `derived_from {interval}` = the largest finer materialised parent.
+  Unservable rows are typed BLOCKED (`NOT_IN_CATALOG`, `FEED_NOT_DECLARABLE`, `EXECUTION_MARKET_NOT_DECLARABLE`,
+  `ROLE_NOT_A_DL_READ_GRANT`, `DERIVED_FINAL_UNSUPPORTED_BY_LOADER`, ...). The tool never writes outside the new
+  directory and never overwrites.
+- `gate NEW_DIR` (offline): base unchanged since the render; index = files; certified loaders (catalogue,
+  acquisition, scope, manifests with selector context, release routing with `selector_context`); manifests additive
+  + accept-set floor rule; config strictly additive; role configs additive + lanes stable; bar-edge crossing by
+  `plan_crossing` from the base runtime plan; derived parents; execution scope = rendered binding; capacity envelope
+  (estimate).
+- `checkpoint-migration` (`--git-rev` or `--previous-*`, `--expect-previous-sha256`) writes
+  `qdl.stable-bar-edge-checkpoint-migration.v1` with `previous_binding_digests` over exactly the previous bar-edge
+  set, and self-checks it with `plan_crossing`.
+- Reused, copied byte-identical from the uncommitted stage A worktree `dl-v226-stage-a` (merge stage A first; on
+  divergence take stage A): `scripts/prepare_paper_read_extension.py` (f18788a3...),
+  `scripts/refresh_v2_native_ingestor_runtime.py` (f5662a09...), `scripts/refresh_v2_core_runtime_bindings.py`
+  (cfdb9a1e...).
+- Evidence (all `--rm`, `--network none`, 2 CPU / 2 GiB, `qdl-v2-python:2.2.5-9b6747f`):
+  - Stage A golden: 17 of 17 files byte-identical to the stage A worktree and `dlcov/stageA-pinned/SHA256SUMS`.
+    These are the 6 repository files, the OKX ingestor (Binance unchanged), 3 cores, 2 bundles, binding r24, the Query
+    runtime catalogue + acquisition, and the realm manifest r12. Consumer env JWT 12 / `ca5b8477...`. Gate PASS.
+  - The stage A execution scope (31 instruments) and the 150 one (154) are accepted by the TS writer's own parser
+    (trading_system `44c098d7` `parse_declared_scope`): LOADED, 94 / 340 routes.
+  - 150 (E-crypto) dry render: 143 new instruments x QUOTE/MARK/BAR 1m; FET/LUNA BLOCKED NOT_IN_CATALOG for both
+    consumers; TS r11->r12 floor 11, alpha r15->r16 floor 15; capacity +1,147 rec/s, about 6.1 vCPU against 5.0
+    (EXCEEDS_ENVELOPE, as the study found).
+    - Pinned base: OKX lanes 001-004 and business-001 keep name and feed; new lanes public-005..007 and
+      business-002/003; every lane <= 100.
+    - Overlay with the derived-bars loader: 1716 DERIVED_FINAL, derived_parents PASS, crossing retained 640, added
+      1859, dropped 0.
+  - checkpoint-migration from `a388537` (sha 9d4ab51e... / 1b586549..., the image `08f356a8` files) to live r12/r20
+    and to stage A r13/r21: 640 previous digests, removed 0, changed 0.
+  - Cross-slice defect found by the overlay: digest field `derived_from.interval` vs `base_interval`. Reported; fixed
+    by 2b `850baf7` and then `b71b45e`.
+- Tests (`--rm`, 2 CPU / 2 GiB, `QDL_V230_STAGE_A_RUNTIME_DIR` set): `test_v230_declaration_tool` (19, incl. the
+  runtime golden and 150 sticky lanes) plus impacted `test_refresh_v2_native_ingestor_runtime`,
+  `test_paper_read_extension`, `test_kn_gateway_bundle`, `test_phase115c_native_bar_materialization`,
+  `test_v230_declaration_mechanism`, `test_v230_ingestor_lanes`: 77 OK. ruff 0.15.13 (isolated, line 120) clean.
+- Status: implemented, tested locally. Not pushed.
+- Open:
+  - the derived-bars slice is uncommitted (the loader in this branch blocks derived intervals, typed);
+  - the capacity estimate uses mean rates (liquid subsets run higher; `capacity.rates_per_binding` overrides);
+  - the Binance ingestor gets pins + the flush map with no binding change and keeps `config_revision`;
+  - `qdl.execution-binding-status.v1` (item 3) is not in this slice.
+- Update 2026-11-13 (coordinator-approved follow-up): quotas from the quota model; merged stage A `c29c216`.
+  - The v2.2.6 stage A window failed RATE_LIMITED: Paper r12 had a hand-picked 4,500 requests/min for a modelled
+    ~6,000/min. EXECUTION quotas are now derived by `qdl.consumer.quota_model.model_manifest` over the rendered
+    manifest. Granted = max(current, declared, model); a declared quota below the model is refused.
+  - SIGNAL (alpha) quotas stay as declared and are `MODEL_PENDING` (no alpha client model yet).
+  - `report.json` gains `quota_models` and `capacity.query_requests`: modelled steady Query requests/min and streams
+    per EXECUTION consumer. Query/Redis vCPU per request is not measured, so no vCPU is derived from it.
+  - The gate gains `consumer_quota_model` (reuses `scripts/check_consumer_quota_model.check`).
+  - Declarations may set `revision` / `release_revision` per consumer (a retired revision is skipped, never
+    reused: Paper r12 / binding r24 are retired).
+  - The Query runtime acquisition takes every repository row the deployed copy lacks. Capacity counts rows absent
+    from the deployed runtime acquisition, so a repository that leads the deployment cannot hide rows. The gate
+    computes the crossing from the repository plan when the deployed copy does not pair with the base catalogue,
+    and says so.
+  - Merge `0ba4d35` of `c29c216` (no vendored copies left). Compose resolution: 2b's `/consumer-realms` mounts with
+    stage A's `QDL_PAPER_REALM_MANIFEST` variable. Plan journal: both entries kept.
+  - Golden, from the pre-stage-A tree (`git archive 098c94b`):
+    - the six repository files of `c29c216` are byte-identical (Paper manifest r13 with 10,000 requests/min and 160
+      streams; routing r30);
+    - with the deployed base role files the render equals `dlcov/stageA-pinned-r13`: realm bundle `5180a904...`,
+      binding r25 `980123da...`, ingestor, cores, kn bundle, Query runtime;
+    - consumer env JWT 13 / `9ba2264d...`.
+    On this tree the stage A declaration is a no-op and the gate passes.
+  - 150 on this tree (r13 base, deployed base role files, TS base binding r25):
+    - TS manifest r13 -> r14 with floor 13; 350 products (QUOTE 154, MARK 154);
+    - modelled steady 29,382 requests/min (about 490/s), 350 streams;
+    - granted quota 46,500 requests/min and 530 streams (r13 has 6,012 steady and 104 streams, about 4.9x less);
+    - ingest estimate +1,072 records/s, about 6.0 vCPU against 5.0 (EXCEEDS_ENVELOPE);
+    - the gate fails only on capacity.
+  - Builder note: since `c29c216` a symbol whose only non-BAR demand is EXECUTION QUOTE/MARK stays on the REST
+    final lane. The 143 declared-native signal BAR 1m bindings therefore render as `PYTHON_REST`, polled by the bar
+    edge, not as native OKX candles. The report says so. Native candles would need the builder rule to count SIGNAL
+    BAR demand (open question).
+- Update 2026-11-13 (coordinator decision): the 1m source is declarable; the OKX REST budget is gated.
+  - Demand BAR rows may carry `bar_source: NATIVE | REST_FINAL`. Only OKX SWAP accepts it, the one certified native
+    final-bar lane.
+    - `qdl.runtime.universal_demand.resolve_bar_source` is the single rule: a declaration wins; otherwise the
+      bar-family rule applies (stage A: TS QUOTE/MARK pricing alone gives REST_FINAL).
+    - `ProductionCatalogBuilder` uses that rule for the OKX SWAP lane. `ProductionDemand.bar_source` is not part of
+      the requirement identity; two declarations that conflict are refused.
+    - The release-route demand reader accepts the field.
+    - Demand files without the field render exactly as before.
+  - The tool's universe field is `bar_1m_source: native|rest_final`. If omitted, the rule applies (REST_FINAL for
+    the 150 tier), because DERIVED_FINAL consumes only FINAL 1m bars.
+  - The report's `capacity.okx_rest` and the gate check `okx_rest_budget` model the bar edge's REST final reads:
+    - one read per binding per boundary at +0.10 s, through the bar-edge admission lane OKX/SWAP/CANDLES (token
+      bucket, 5 tokens per 2 s = 150/min, `provider-admission-policy-kn-bar-edge-v1.json`);
+    - lane utilisation, and host-IP utilisation with other REST users as declared;
+    - the final-1m read schedule, for R-cert 2: first read and last read after the boundary, and the worst boundary.
+    The check refuses above `okx_rest_max_utilization` (default 0.8), on a one-minute backlog, or above a declared
+    `rest_final_max_visibility_ms`.
+  - Finding (150 on r13, rest_final):
+    - 143 REST 1m + 250 REST 1d (D48) bindings make 143.2 requests/min on a 150/min lane (utilisation 0.95), so the
+      gate fails.
+    - The last 1m read lands +55.3 s after the boundary. At 00:00 UTC 393 reads queue, and the last lands at +155 s,
+      a backlog into the next minutes.
+    - With `bar_1m_source: native` the lane holds only the 1d polls (0.2/min) and the ingest estimate rises by
+      +75 records/s.
+    - REST_FINAL for the 150 tier therefore needs a larger bar-edge OKX CANDLES admission lane (a config change
+      within OKX's per-IP limit, not verified here) or native 1m. Owner decision.
+- Decision 2026-11-13 (coordinator): the 150-tier declaration sets `bar_1m_source: native`.
+  - R-cert 2 measured native 1m visibility p99 at 1.2 s.
+  - REST_FINAL stays declarable for small, stage-A-sized sets, held by `okx_rest_budget`.
+  - The bar-edge admission lane is NOT widened.
+  - Open item: verify OKX's documented market-candles per-IP limit from OKX docs before any future widening. The
+    host IP is shared and the figure is unverified.
+  - 150 on r13, native, deployed base role files:
+    - 143 RUST_NATIVE candle1m bindings; the REST lane carries only the 1d polls (0.2/min), okx_rest_budget PASS;
+    - ingest estimate +1,147 records/s, about 6.1 vCPU against 5.0, so the gate fails on capacity only.
+  - Sticky OKX lanes, max_subscriptions_per_connection 100. Retained lanes keep name and feed:
+    - public: 001 BOOK 10, 002 TRADE 5, 003 QUOTE 100, 004 MARK_INDEX 100;
+    - business: 001 BAR 100.
+    New lanes: public-005 MARK_INDEX 100, public-006 MARK_INDEX 98, public-007 QUOTE 49, business-002 BAR 100,
+    business-003 BAR 13. 675 subscriptions in all; no lane above 100.
+- Update 2026-11-13 (first v2.3.0 production declaration, integration agent + coordinator):
+  - bar_edge runtime pair `/runtime/bar-edge-{source,acquisition}-bindings.yaml`. Retained bar-edge-owned BAR rows
+    are pinned at the live core rows' raw catalogue lineage (11) and the bar edge's config stamp (19).
+  - Declaration `bar_edge.migration` renders the checkpoint record from the image files (a388537, 9d4ab51e /
+    1b586549) into the declaration index.
+  - Gate checks `bar_edge_core_raw_lineage` and `bar_edge_migration_record` (the latter verified against the live
+    v4 checkpoint).
+  - Review H2 / re-review:
+    - config lineage is seeded from the live ingestor stamps (`live_config_lineage`, BOOK snapshot + delta);
+    - the Query runtime BAR rows that no ingestor stamps carry the bar-edge stamp;
+    - gate `live_config_lineage`;
+    - `retained_lineage_unchanged` takes live and bar-edge stamps as the "before" value.
+  - Owner CPU rule: cap 6.0 vCPU, `capacity.venue_priority` (OKX > BINANCE). `venue_priority_plan` defers BINANCE
+    additions first and never trims OKX.
+  - `grant_intervals` per universe (a derivation parent need not be granted).
+  - The bootstrap estimate uses `bar_history_demand` over the rendered kn bundle, with the 1,095-day lookback.
+  - Pre-2d goldens compare modulo lineage keys.
+
+### DL v2.3.0 rc1 integration branch `release/v2.3.0-rc1-integration` - 2026-11-13 (Claude)
+
+- **Scope.** The coordinator asked for this branch (owner approved an early start of the R-cert 2 shadow).
+  Worktree `.worktrees/dl-v230-rc1`. Local `git merge --no-ff`, author BobbyAxerol, nothing pushed.
+- **Merge order:**
+  1. base: stage A `c29c216` (v2.2.6);
+  2. mechanism `d0976ed` (2a/2b plus fixes), merge `e88d7e8`;
+  3. derived bars `a6bc112a`, merge `3a9b6e1`;
+  4. tool `0ba4d35`, merge `c899d44`;
+  5. tool quota model `72f35cf`, merge `34a354f`;
+  6. derived bars G2.7 `a562e469`, merge `b231c2d`.
+- **Conflicts:**
+  - `stable_bar_edge.py`: imports only (both kept); `run_forever` auto-merged, heartbeat before
+    `run_derived_cycle()`.
+  - compose: rerere reused the tool agent's resolution, which I verified: stage A `${QDL_PAPER_REALM_MANIFEST:-...}`
+    plus the mechanism's `/consumer-realms` manifests.
+  - plan and guide: append-only, both kept; the G2.7 bullet was moved back under its own entry.
+- **Tests.**
+  - Rust: the tree is identical to rehearsal tree `81ac924` (`git diff 81ac924 HEAD -- rust Cargo.lock generated
+    contracts` is empty). On that tree, `qdl-rust-builder:r134-test` at 2 CPU, cpu-shares 256:
+    - `cargo fmt --check` OK;
+    - clippy `-D warnings` on contracts/core/kafka/realtime-core/stream-gateway/projector OK;
+    - tests: contracts 34, core 63, kafka lib 47, ingestor 78, production-core 7, realtime-core bin 30,
+      realtime-core lib 58, gateway lib 69, hot_lookup 1, native_stream 56;
+    - `cargo check --workspace` OK.
+  - Python on the final tree: `tests.test_v230_declaration_tool`, `tests.test_v230_rcert2_shadow` and
+    `tests.test_v230_derived_bars` give 60 OK (7 skipped).
+  - The combined impacted run (127 modules) started on `c899d44` and was still running at this entry; its result
+    goes in the next entry.
+- **Next.** The derived-bars agent builds `qdl-v2-rust:2.3.0-rc1-<sha8>` and `qdl-v2-python:2.3.0-rc1-<sha8>` from
+  this branch head for the isolated R-cert 2 shadow. rc2 adds slice 2d (lineage).
+
+### DL v2.3.0 slice 2d: per-binding contract lineage, cursor lineage, contract-line schema digest - 2026-11-13 (Claude)
+
+- **Why.** RCA by the TS writer agent, confirmed in DL code.
+  - The additive stage A declaration (catalog 12 -> 13, acquisition 20 -> 21, 40 bindings added, 0 changed;
+    `tests/fixtures/v230_stage_a_delta.json` from `git diff 098c94b..c29c216`) changed `config_revision` and
+    `instrument_catalog_revision` on EVERY record. The writer then refused every BOOK slice
+    (EXECUTION_ORDERING_AUTHORITY_MISMATCH) and native resume (RESUME_GENERATION_MISMATCH).
+  - Sources:
+    - ingestor envelope `config_revision` = the global config revision, passed through by the core
+      (`qdl-realtime-core/src/lib.rs:806`);
+    - the served contract's `instrument_catalog_revision` = the global catalogue revision
+      (`qdl/runtime/stable_source.py:1304`);
+    - the cores already checked per binding (`lib.rs:698`).
+  - The same coupling in resume tokens: cursor v3 claims carried the global catalogue revision (issued at
+    `kn_query_backend.py:989`, verified by `cursor_v3.rs:401` / `cursor_v3.py:273`), so a declaration expired every
+    token with CATALOG.
+- **Owner decisions** (via the coordinator):
+  - solve DL thoroughly (class fix, defence in depth with the writer's IDR-289 handoff);
+  - `schema_digest` is REDEFINED as the contract-line digest.
+- **Change** (branch `feat/v2.3.0-lineage` off rc1 integration `c899d44`; worktree `.worktrees/dl-v230-lineage`):
+  1. Catalogue binding `lineage_revision`; acquisition binding `lineage_config_revision`.
+     - Both optional, bounded by their document's revision; absent = today's global value.
+     - The acquisition identity digest ignores the unset field.
+     - Helpers: `StableSourceCatalog.lineage_revision_for` and `StableAcquisitionPlan.lineage_config_revision_for`.
+  2. Renderers: core and ingestor configs stamp `instrument_catalog_revision` from lineage, and the ingestor binding
+     gets `config_revision` only when pinned.
+     - The Rust ingestor's `RawBinding.config_revision` (optional, 1..=config revision) is the envelope's
+       `config_revision`. Book-resync identity uses the same per-binding value.
+     - The bar edge stamps per-binding lineage on its REST and derived envelopes.
+     - Query's served contract (`stable_source.py`) uses the binding lineage.
+     - Pass-through (`provider_history.py`, no binding, never EXECUTION) keeps the global value; canary has a
+       separate catalogue class and is unchanged.
+  3. Cursor v3.
+     - Query issues the binding's lineage revision.
+     - Both verifiers check the product's lineage (`CursorV3Expectation.catalog_revision_by_product` /
+       `catalog_revision_for`; the Rust gateway builds it from the bundle's per-binding `lineage_revision`).
+     - The bundle emits `lineage_revision` only when pinned, so it stays byte-compatible.
+  4. `qdl/runtime/lineage.py`: `pin_lineage` (the renderer rule), `retained_unchanged_ids`,
+     `retained_lineage_problems` (the gate).
+     - `scripts/dl_declaration.py` pins in `build_catalog` and in the Query/bar-edge runtime plan, stamps carried
+       ingestor rows, and gates `retained_lineage_unchanged` (repository plan, runtime plan, ingestor files;
+       `runtime/lineage-migration.json` may name allowed moves).
+     - `refresh_v2_native_ingestor_runtime._validate_transition(pin_config_lineage=)` defaults to off, because
+       v2.2.x ingestor binaries refuse the field.
+  5. Contract line.
+     - `contracts/schema-lines/qdl-v2-contract-lines.json`: line 1 = `100966435a30367d...` (sha256 of
+       market_data.proto at fc5e29e = the deployed QDL_STABLE_SCHEMA_DIGEST).
+     - Baseline image `contracts/baseline/qdl-v2-contract-line-1.binpb` (`buf build` of fc5e29e, sha256
+       `d21ba923...`).
+     - `scripts/schema_line.py digest|file-sha256|check`. CI runs the check after `buf breaking`.
+     - `phaseb_prepare_stable_candidate.py` writes the line digest.
+     - The role public manifest reports `schema_file_sha256` when `QDL_STABLE_SCHEMA_FILE_SHA256` is set.
+     - The current module (with v2.3.0 Bar.aggregation) passes `buf breaking` against line 1 (rc 0).
+     - Negative control: renumbering EventEnvelope `config_revision` 27 -> 28 is refused (rc 100).
+- **Coordination.** TS writer agent (ab9ce296) informed of the field semantics, the line digest and cursor survival.
+  Its IDR-289 revision-only handoff covers releases and migration records.
+- **Tests:**
+  - Rust (`qdl-rust-builder:r134-test`, 1 CPU, cpu-shares 256): fmt OK; clippy `-D warnings` on qdl-contracts,
+    qdl-kafka, qdl-stream-gateway OK; contracts 36 (+2: bundle lineage default/bounds, cursor lineage across a
+    catalogue bump with a pre-v2.3.0 control); stream-gateway lib 69, hot_lookup 1, native_stream 56; ingestor 80
+    (+2: pinned envelope lineage, binding config_revision bounds); `cargo check --workspace` OK.
+  - Python targeted (16 modules, 232 tests, on c899d44 + 2d): `tests.test_v230_lineage` 12 OK (stage A shape: 40
+    added / 0 changed; unpinned gate flags every retained binding; pinned keeps 12/20 on ingestor rows, core,
+    bundle and cursor; added rows 13/21; lineage bounds; unpinned unchanged; contract line digest = the compose
+    literal; check PASS/FAIL/tampered baseline). One oracle updated: `test_v230_derived_bars` identity-digest
+    legacy recompute also drops the unset `lineage_config_revision` (the digest itself is unchanged). 3
+    `test_v230_declaration_tool` errors there came from the pre-`72f35cf` quota golden (the r13 manifest raised rpm);
+    rerun after merging rc1 is recorded in the next bullet.
+  - `buf breaking` (bufbuild/buf:1.50.0, `--rm`, no network): current module vs line-1 baseline rc 0; negative
+    control (EventEnvelope `config_revision` renumbered) rc 100.
+  - ruff 0.15.13 `--select F`: no new findings in changed files (pre-existing ones unchanged); removed the
+    now-unused `hashlib` import in `phaseb_prepare_stable_candidate.py`.
+- **Status:** implemented, tested locally, not merged into rc1; it lands in rc2.
+  - Open: the rc2 merge and images.
+  - Before the first v2.3.0 declaration, the renderer pins lineage at the then-live values, so nothing moves at
+    activation.
+- **Backlog, registered here (not in rc1/rc2). DL-FR-2026-11-13-A: execution snapshot BATCH read.**
+  - Coordinator request after the TS writer RCA. DL has no batch read with EXECUTION semantics:
+    `warmup:batch` / `reference:batch` are HISTORY_READ, at most 100 items, with different semantics. So the writer
+    cannot batch its per-product freshness probes, and Query load grows with product count (tier 150).
+  - Design sketch: additive `POST /v2/market-data/snapshot:batch`.
+    - Same per-item semantics and typed per-item problems as `/v2/market-data/{uid}/snapshot` (freshness,
+      eligibility, gap, session liveness).
+    - Per-item entitlement through `requirement_allowed`.
+    - Purpose EXECUTION allowed.
+    - Item count bounded by the manifest's existing `max_batch_items` (<= 100).
+    - Quota: one request per batch for `requests_per_minute`, plus the item count against `max_batch_items`
+      (decision: per request, like warmup:batch).
+    - No cursor issued (probe-only); hot read via one market-cache MGET of the product keys.
+    - SDK `snapshot_batch()`; OpenAPI snapshot updated additively.
+  - Size: about 1.5-2 days (router + models + kn3 backend batch read + SDK + contract snapshot + tests, including a
+    hot-read A/B like v2.2.5).
+  - Decision after measuring W-B2's probe rate on the isolated stack (the writer's probe deferral may make it
+    unnecessary).
+  - The shared IDR register lives in the TS repository (writer agent's branch). An IDR number should be assigned by
+    the coordinator, pointing here.
+
+### DL v2.3.0 2d follow-up: config lineage seeded from the live ingestor stamps (review H2); CPU cap rule - 2026-11-13 (Claude)
+
+- **Review H2** (reviewer agent, combined window packet), verified:
+  - `pin_lineage` fell back to the old plan document's revision for config lineage, which gave 21.
+  - The live Binance ingestor stamps its own `config_revision` 19, and the writer's Binance ordering markers hold
+    config 19 / catalogue 13.
+  - The document-to-document gate could not catch this. A later render deriving ingestor per-binding
+    `config_revision` from those pins would move every Binance record 19 -> 21, which is the stage A class of
+    failure.
+- **Fix** in `qdl/runtime/lineage.py`:
+  - `live_config_lineage(catalog, ingestor_configs)`: binding -> the config revision its live envelopes carry (row
+    value or file value, mapped through `subscription_id`; refuses two values for one binding);
+  - `pin_lineage(..., live_config=)` pins retained rows at the live stamp first;
+  - `live_config_lineage_problems(plan, live)` is the gate against live values.
+  - The tool agent wires both into `scripts/dl_declaration.py` and re-renders.
+  - Test `LiveConfigLineageTests` (Binance 19 / OKX 21; unpinned control flags exactly Binance; conflicting stamps
+    refused). `tests.test_v230_lineage` 13 OK.
+- **Owner rule recorded:** the DL CPU budget cap is **6.0 vCPU**.
+  - When a window or declaration would exceed it, OKX coverage (all OKX bindings and endpoints) has priority.
+  - Binance additions are deferred or trimmed first, never OKX.
+  - The declaration tool's capacity gate encodes it: declared venue priority, default OKX > BINANCE; cap 6.0; it
+    reports the Binance rows to defer and refuses OKX-first violations. The tool agent implements this.
+- **Status:** implemented, tested locally. rc2 head moves; the rc2 image build waits for this commit.
+- **Re-review H2 remainder (2026-11-13).** `live_config_lineage` mapped a source_id to one binding.
+  - BOOK_SNAPSHOT and BOOK_DELTA share a subscription, so all 7 Binance BOOK_DELTA kept the plan's 21, while the
+    writer's delta markers hold 19.
+  - The gate iterated only the live map, so it could not see the dropped binding.
+  - Fix: every binding of a stamped source gets the stamp. `live_config_lineage_problems(..., catalog=)` also checks
+    coverage from the plan side: a plan binding whose source is live-stamped but which has no stamp is a problem.
+  - Test `SharedSourceLineageTests` (a Binance book pair stamped 19; the dropped-binding control is reported).
+    `tests.test_v230_lineage` 14 OK; ruff F clean.
+
+### DL v2.3.0 rc2 integration branch `release/v2.3.0-rc2-integration` - 2026-11-13 (Claude)
+
+- **Contents:** rc1 (`7af599de`) + slice 2d (`0f20d8ff`, merge `e13b1050`) + tool `de9d766` (declarable final-BAR
+  source, OKX REST budget gate; merge `269fc9c8`) + tool `c5c42dd` (150 tier `bar_1m_source: native`; merge
+  `3f45a315`) + H2 follow-ups `5b18b861`, `c7fe877f` + tool `832c02c4` (bar_edge runtime pair, live config lineage,
+  6.0 vCPU OKX-first cap; fast-forward).
+  - Merges are local `--no-ff` by BobbyAxerol; worktree `.worktrees/dl-v230-rc2`.
+  - Journal and guide conflicts were append-only; the tool's additions were placed under its own entry.
+- **The rc1 combined run (127 modules on `c899d44`) is superseded.** The coordinator stopped it at about 65 min,
+  with 0 ERROR/FAIL markers so far; the rc2 full suite is its superset.
+- **Tests:**
+  - Rust tree = the tested 2d tree (`git diff 0f20d8f HEAD -- rust Cargo.lock generated contracts` is empty).
+  - Full Python suite (`unittest discover`, 1 CPU, `--rm`, no network) on `269fc9c8`: 4296 tests, 4292 OK, 132 skipped, 4 errors. All 4 are environment errors: `/app/logs/app.log` permission denied
+    for the non-root test user (crypto_history_contract, phase0_contract_golden, phase3_control_plane,
+    runtime_source_lifespan). The same modules re-run as container root: 15 OK.
+  - Later deltas: `test_v230_lineage` 14 OK on `c7fe877f`; tool + bar_source + lineage 47 OK (8 skipped) on
+    `832c02c4`..
+  - Delta run on `3f45a315` (`test_v230_declaration_tool`, `test_v230_bar_source`): 29 OK (7 skipped).
+- **Packet facts from the tool agent (150 tier, native 1m):**
+  - `okx_rest_budget` PASS (REST lane 1d polls only, 0.2/min).
+  - Gate FAIL on capacity only: about 6.1 vCPU vs the 5.0 ceiling.
+  - 675 OKX subscriptions; lanes at most 100 each, retained names unchanged.
+- **Status:** rc2 = `832c02c4` cleared for images (Rust from `c7fe877`, identical Rust inputs). Combined window
+  packet: `upgrade/evidence/releases/v2.3.0/drafts/COMBINED_WINDOW_V230_WB2_PACKET.md` (reviewed; final pass
+  pending image digests).
+- **Backlog, registered here (not in rc2). DL-BL-2026-11-13-C: per-row BAR history depth.**
+  - Today bar_edge (`qdl/runtime/bar_history_demand.py:20-37`) and the projector `retained_caps`
+    (`rust/qdl-projector/src/products.rs:118-143`) size bootstrap and retained history per binding from the largest
+    manifest-wide `quotas.max_warmup_rows`, ignoring each requirement row's `warmup_limit`.
+  - Change, in both places at once: depth = max over granting rows of `min(row.warmup_limit, quotas.max_warmup_rows)`.
+  - Purpose: a new selector can declare a shallow depth without lowering the quota, because lowering it is not
+    additive: the accept-set floor resets and existing products are trimmed.
+  - Estimate for the crossec-94 declaration: bootstrap about 9 min instead of about 52.5 min.
+  - Target v2.3.x. It needs Python + Rust tests plus a projector cap-migration check: existing caps must never
+    shrink below the cached rows without a declaration.
+- **Combined window R-H2 = option A** (coordinator 2026-11-13): quota 10000 as rendered (out4 = out5), bootstrap
+  about 52.5 min at 300 rows/page.
+  - Bootstrap and native gap repair interleave per binding in the single kn3 loop (packet section 3).
+  - Correction: the rc2 full suite ran on `269fc9c8`; the packet's earlier `3f45a315` was wrong, and the delta
+    file set is the same.
+- **Defect, registered here for v2.3.x. DL-BL-2026-11-13-D: provider-short BAR products re-bootstrap on every
+  bar_edge restart.** Seen in the combined window, D6, 2026-11-13 12:51Z: 584 of the 640 retained bindings logged
+  `history incomplete; bounded repair required` (255 Binance 1d, 255 OKX 1d, plus the 5 majors' other intervals).
+  - `_history_short` is in memory only. It is initialised at `qdl/runtime/stable_bar_edge.py:388` and set at `:1622`,
+    and it is not part of `_state_payload` (`:552-565`).
+  - At restore, `_checkpoint_history_gaps` (`:788-818`) expects `_bootstrap_rows_for(source)` opens, which are capped
+    by the demand and not by the provider's real history. So a product the provider can never fill is "incomplete"
+    after every restart.
+  - Within one run it terminates: a short fetch is recorded (`:1617-1630`), published with the rows that exist, and
+    the watermark is set.
+  - The cost recurs per restart. It is bounded by one provider pass per short product: OKX 1d at most about 4-5
+    pages of 300 rows each, so at most about 1,275 HISTORY_CANDLES requests (about 8.5 min of the 150/min lane),
+    plus Binance 1d requests on Binance's own budget.
+  - Fix (v2.3.x): persist provider-short as `(requested, available, first_open_ms)` in the checkpoint, and have the
+    restore gap check expect only opens at or after the provider's first open.
+
+### DL v2.3.0 rc2 + TS writer W-B2 combined window, 2026-11-13 12:37-13:05Z (Claude): ROLLED BACK at W1
+
+- **Scope and authority:** packet `6798ca0` + `e7247126`, run sheet `0207363`, owner GO.
+- **Outcome:** D1-D6 passed, then W1 (W-B2 BOOTSTRAP) VERIFY_FAILED. The section 5 coupled rollback ran; nothing
+  stays changed. Receipt: `upgrade/evidence/releases/v2.3.0/window-20261113T1237Z/`.
+- **Gates (UTC):**
+
+  | Time | Gate | Result |
+  |---|---|---|
+  | 12:37:54 | T0 | measurement lock taken; D0 CPU median 6.34 (7 pre-T0 samples) |
+  | 12:41 | D1 cores | PASS |
+  | 12:43 | D2 projectors | PASS: bundle aec2ef6f |
+  | 12:44 | D3 stream | PASS: bundle 373ff326 |
+  | 12:45 | D4 Query | PASS: r16 mounted. The `image_files` probe is not exposed on Query health, so env provenance was used |
+  | 12:46:33 | W-pre | writer stopped |
+  | 12:48 | D5 | PASS: OKX 252 PINNED, new lane business-002; Binance 27 PINNED |
+  | 12:49:18 | D6 crossing | PASS: retained=640, added=407, dropped=0, migration_record=True |
+  | 12:51:34 | D6 restore | 584 provider-short retained bindings re-bootstrapped (DL-BL-2026-11-13-D) |
+  | 12:56:40 | W-gate | GREEN |
+
+- **W1 failure.**
+  - Ran 12:56:57-13:00:06Z (189 s).
+  - ready 0 -> 41 at about +40 s, then flat at 41/104 for about 2.5 min. execution_ready 36. Not rising when
+    judged.
+  - 57 OKX `execution_quote` / `execution_trade` / `execution_mark_index_price` keys missing. Binance served.
+  - Writer: OKX MARK_INDEX `IncompleteExecutionReferenceError ... live view did not return a current active
+    record: SESSION_STATE`; OKX BOOK_DELTA `DATA_STALE ... freshness policy (SESSION_STATE)`; MARK wake streams
+    ended with DataLayerError.
+  - The OKX ingestor was publishing (QUOTE lane about 380 frames/s) and core websocket raw age max was under
+    150 ms. **Hypothesis, not verified:** the OKX session-state / liveness records that stream and Query
+    consult for the rc2 lane plan (pinned lanes plus the new `okx-business-002`) were missing or stale for
+    the products.
+- **Rollback, 13:00:38-13:05:38Z.**
+  - Order: writer stop; bar_edge 08f356a8 plus checkpoint `.pre-v230` (8f25340f; 0 derived bars had been
+    published); ingestors 27c79b53; Query, stream, projectors and cores on the r13 compose.
+  - Writer 7332e85a BOOTSTRAP VERIFIED in 52 s, then STRICT VERIFIED in 54 s: 104/104/93, continuity 11/11.
+    G1/W05 unchanged. Lock released 13:05:48Z.
+  - The old writer verifying on the old DL in under a minute isolates the failure to rc2 DL, or to rc2 DL
+    together with W-B2.
+- **Evidence gap.** `force-recreate` removed the rc2 core, projector, stream, Query and bar_edge containers, so
+  their window logs are lost. Kept: the W-B2 writer container (`market_data_service_p184w.prev-20261113T130333Z`)
+  with its logs and masked inspect, the tool journals, and the Redis OKX `execution_*` key names (post-rollback).
+  Future windows must `docker logs` each role before its rollback recreate.
+- **Next:** RCA on an isolated stack: rc2 OKX ingestor with the pinned lanes -> rc2 cores -> stream / Query
+  session state. No new window until it is fixed and rehearsed.
+
+### DL v2.3.0 rc3: session liveness accepts pinned (lower) event revisions - 2026-11-13 (Claude)
+
+- **Defect** (W1 of the 2026-11-13 window).
+  - RCA by the TS writer agent ab9ce296, confirmed against the code.
+  - The OKX ingestor stamps lane session records with the global config revision
+    (`rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs:897`, written at `:999`).
+  - Since slice 2d, envelopes carry the pinned per-binding revision (`:1320`).
+  - `qdl/runtime/session_liveness.py:300` required equality, so every retained OKX binding pinned at 21 under
+    session 22 got SOURCE_SESSION_CONFIG_MISMATCH, then SESSION_STATE. This hit both the Query/stream path
+    (`stable_source.py:1087-1093`) and the MARK/INDEX path (`execution_mark_index.py:497-503`).
+  - The slice 2d review checked contracts, cursor and checkpoint, but not this consumer.
+- **Fix:** refuse only `record.config_revision < event revision`. An event newer than its session is still refused.
+  Python only: no Rust reader of the session file exists.
+- **Class sweep:** packet section 0c. One real hit, this one; every other equality site compares like with like.
+- **Tests** (rc3 Python image, 1 CPU, cpu-shares 256, `--rm`, no network):
+  - Delta, 7 modules: 189 OK (34 skipped). They include the new `test_pinned_event_revision_below_the_session_revision_is_live`
+    (Query path) and `test_pinned_lineage_revision_below_the_session_revision_is_live` (MARK/INDEX path); both ran
+    and passed explicitly.
+  - Two existing equality oracles were updated to the new rule (`test_session_liveness_lineage`,
+    `test_session_liveness_read_clock`).
+  - ruff 0.15.13 F (`--isolated`) is clean on the changed code. The one finding is pre-existing: the unused
+    `UNIVERSE_PER_VENUE` import in `test_phaseb_stable_edge.py`.
+- **New window gate D5a:** `scripts/v230_session_revision_check.py` runs the deployed reader against the live
+  session files.
+  - On a fixture (session 22, pinned 21): PASS on the fixed code; FAIL on the rc2 image `03de529a` ("refused pinned
+    revision 21").
+  - Read-only run on the live Query at about 13:12Z: PASS.
+- **Packet:** section 0b, the split retry (window A = rc3 DL with the old writer 7332e85a; window B = W-B2 alone),
+  plus the D5a row and the rule to capture logs and inspect before every recreate. The run sheet has the window A
+  changes.
+- **Backlog, registered here for v2.3.x. DL-BL-2026-11-13-E: bind session acceptance to the binding's own pin
+  (final review of rc3).**
+  - rc3 accepts an event at or below its session revision.
+  - Gap on the successor path: if a later declaration CHANGES a binding at revision N+1, an event from the
+    pre-restart session still at N is accepted under the N+1 successor until the binding's first new event. Before
+    rc3 that event was refused, which is correct.
+  - Not exposed in window A, which changes no retained binding.
+  - Hardening: Query requires `event == lineage_config_revision_for(binding)`
+    (`qdl/runtime/stable_deployment.py:680`) and `pin <= session`.
+- **rc3 image:** `qdl-v2-python:2.3.0-rc3-7cd4fc36` = `sha256:a235c0a18cdeb112ea0b49627eaf02f2a68ab878298ebba07884461ee5709d0b`.
+  Built from a git archive of `7cd4fc36`, dependency 753604f8. Rust is unchanged (`58bdd282`, an empty Rust diff
+  against 832c02c4). The focused review gave GO-ready for window A. D5a now also fails when no LIVE Binance lane is
+  checked.
+
+
+<a id="dl-v230-final-prep-20261113"></a>
+### DL v2.3.0 final release package prepared offline (not certified, not tagged) - 2026-11-13 (Claude)
+
+- Branch `release/v2.3.0-final-prep` from `release/v2.3.0-rc2-integration` `e724712`, worktree
+  `.worktrees/dl-v230-final-prep`. The live-window packet files are not touched.
+- Drafts in `upgrade/evidence/releases/v2.3.0/drafts/`:
+  - `RELEASE_NOTES.md` (contents since v2.2.5, runtime, certification, limits, rollback; TBD fields);
+  - `CI_PLAN.md` (classifier dry run against `098c94b`: full, forced by CI-defining paths; one full run on the final
+    tree; dev/main inherit by tree identity; `release.yml` once);
+  - `PR_BODY.md`;
+  - `RELEASE_FILL_LIST.md`.
+- `CERTIFICATION_LEDGER.md`: v2.3.0 section with R-cert 1 PASS (`6814e25c`) and placeholders for R-cert 2, the window
+  and the certificate.
+- `scripts/build_qdl_release_images.py` `RELEASE = "2.3.0"`. The SDK stays 2.4.1 (no `qdl_sdk/` diff since v2.2.5).
+- No root CHANGELOG exists; per-release `RELEASE_NOTES.md` is the repository's changelog (the SDK changelog is
+  unchanged).
+- Status: prepared; the fills wait for the window and the R-cert 2 verdict. Not pushed.
+- Decisions 2026-11-13 (coordinator):
+  - v2.2.7 (`release/v2.2.7-ingestor-linger`, `13f20d0`): **superseded by v2.3.0, not released, not tagged**. It
+    never rolled; its knob is re-implemented in slices 2a/2b.
+  - v2.3.0 final ships the rc2 images 58bdd282 / 03de529a as certified.
+  - CPU optimisations (projector commit coalescing, fetch batching, pipelined Redis reads, stream ListOffsets) and
+    live funding: v2.3.1.
+  - Linger and broker fetch are config-only and are recorded as runtime config if their arms pass.
+  - CI has no ruff step (no ruff/flake8 in `.github/workflows`, Makefile or pyproject). The unused `import os` in
+    `scripts/build_qdl_release_images.py` is removed anyway: ruff 0.15.13 clean, import check OK.
+
+### DL v2.3.0 final package refreshed (pre-flight F1/F2): rc3 base, release tree = runtime - 2026-11-13 (Claude)
+
+Coordinator pre-flight `PREFLIGHT_20261113T1605Z` found the final package stale.
+
+- **F1.** `release/v2.3.0-final-prep` was rebased onto the rc3 integration tip `3d8ccd7`. The base contains
+  `7cd4fc36`, `60a97a18` and `7e12b08`. One plan conflict, resolved by keeping both sides.
+  - The release runtime is rc3: rust `58bdd282`, python `a235c0a1`.
+  - The rc2 Python `03de529a` is out of the release (W1 rollback).
+  - R-cert 2 run 2 is the weekend run on the rc3 images.
+  - Updated: release notes, fill list, PR body and the ledger v2.3.0 section.
+- **F2.** The release tree now reproduces the runtime:
+  - `deploy/compose/qdl-v2-stable-kn.yml` is byte-equal to the deployed compose (sha256 `5b1381e0`): alpha.okx r16,
+    the bar_edge runtime pair, core backpressure 2000, the checkpoint migration env.
+  - New `deploy/compose/qdl-v2-stable-kn.v2.3.0.env` is byte-equal to the deployed rc3 env (sha256 `2b1b4b8d`).
+  - The out6 `repo/` set is committed: `config/v2` acquisition r22 (every row pinned), catalogue r14, demand r10,
+    scope r13, routing r31, the two universes, and `consumers/stable/alpha-okx-paper.yaml` r16. There was no repo
+    drift on these paths since `832c02c4`.
+  - All six consumer manifests equal the mounted realm documents.
+  - What stays different is recorded in RELEASE_NOTES "Release tree = runtime":
+    - the mounted `runtime/*` documents are rendered from the live runtime base (H2 stamps, `:8443` URLs on 110
+      rows, 2 l2 rows);
+    - the root-only release dirs need sudo for a byte readback;
+    - the Python image bakes `COPY . /app`, so the release ships the certified digests rather than a rebuild.
+- The compose and env files are CI-defining (CI5): the release run is full regardless.
+- **Stage B** (S1-S4) moves after the v2.3.0 release, as its own packet (post-arm baseline, disk >= 25% free,
+  multi-member group proof).
+
+Guide delta: `upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md`, "Delta 2026-11-13: v2.3.0 release tree
+reproduces the runtime".
+
+Status: docs and configuration only; not pushed, no runtime action.
+
+Owner correction (2026-11-13, via coordinator) to the stage B precondition above: the disk floor for stage B and later
+packets is >= 20% free and >= 90 GiB absolute, not >= 25% (about 22% / 108 GB at the time). If a step would go below
+it, flag it so the owner can add disk; it does not block.
+Superseded the same day (owner update): the floor is >= 14-15% free and never below 10%. It does not block the main
+flow; the owner adds disk on 2026-11-14/15.
+### DL v2.3.0 rc3 window A, 2026-11-13 14:44-17:31Z (Claude): GREEN, DL rc3 live with the old writer
+
+- **Scope and authority:** owner GO for window A (packet `60a97a18`), conditional on the rc3 full suite being green.
+  Receipt: `upgrade/evidence/releases/v2.3.0/window-A-20261113T1444Z/`.
+- **Gates (UTC):**
+
+  | Time | Gate | Result |
+  |---|---|---|
+  | 14:43:59 | T0 | measurement lock taken; D0 CPU median 6.97 |
+  | 14:46 | D1 | PASS |
+  | 14:47 | D2 | PASS |
+  | 14:49 | D3/D4 | PASS: Query on rc3 `a235c0a1`, r16 mounted, D5a pre-check PASS |
+  | 14:50:09 | W-pre | writer stopped |
+  | 14:52 | D5 | PASS: OKX 252 bindings, pinned lanes plus okx-business-002 |
+  | after D5 | D5a | PASS on both Query: OKX session 22 accepts events at 21 and 22; this is the W1 defect class, now fixed |
+  | 14:52:47 | D6 crossing | PASS: 640 retained, 407 added, 0 dropped, migration record present |
+  | 14:59:55 | W-gate | GREEN |
+  | 15:00:55 | W1 | writer 7332e85a BOOTSTRAP VERIFIED in 46.7 s |
+  | 15:02:09 | W2 | STRICT VERIFIED in 47.9 s: 104/104/93, continuity 11/11 |
+  | 15:12 | soak | PASS |
+  | 17:00:54 | bootstrap end | 1042 published + 5 suspended (Binance 3d OVERLAP, as before rc3); 681 short |
+  | 17:15:54 | D6b +15 min | PASS: 0 derived gaps recorded, healed or kept; 76 derived ACK lines |
+  | 17:30:55 | CPU gate | PASS: median 6.54 <= 7.27 (D0 + 0.3); lock released |
+
+  - The measurement lock was released 15:43-17:16Z while waiting for the bootstrap end.
+- **Notes.**
+  - Paper outage: about 12 min.
+  - The bootstrap ran about 2 h 08 min, against an estimate of about 74 min. The core backpressure stage of 2000
+    paused history repeatedly under host load.
+  - The 584 provider-short re-bootstraps recurred, as expected (DL-BL-2026-11-13-D).
+- **After the window, about 17:31Z: TS writer worker 4 RESTART_EXHAUSTED.** `NativeWorkerError: native health
+  timestamp did not advance`, so 41 Binance slices were unavailable. This is a TS writer defect class in 7332e85a
+  that W-B2 fixes; the cause is not proven. DL was healthy throughout.
+  - Coordinator decision: window B (W-B2), executed by the TS writer agent. DL stays hands-off on the writer.
+- **Open:** the D6b +6 h read at 23:01Z (detached checker writes `runA/D6B_6H`); the v2.3.0 release after the
+  R-cert 2 final verdict.
+
+Correction to F2 (same day, Claude), agreed with the coordinator and the release owner.
+
+The impacted suite on the F2 tree: 96 modules, rc3 image, 1 CPU. Ran 1,270: 18 failures, 92 errors, 63 skipped. All
+of them come from the out6 config in `config/v2` / `consumers/stable`:
+- selector manifests loaded without universe context: 54;
+- DERIVED_FINAL rows on SQLite readback: 35;
+- goldens pinned to r21/r13: about 20.
+
+The compose and env stay as committed; `test_kn_stable_compose` passes. `config/v2` and `consumers/stable` are
+restored to the 3d8ccd7 baseline. The live declaration is carried as evidence in
+`upgrade/evidence/releases/v2.3.0/declaration-out6/` (with `SHA256SUMS`; bundles omitted).
+
+Follow-up for v2.3.1: make the repo-default loaders and those tests selector- and DERIVED_FINAL-aware, so that the
+repo config can track the live declaration.
+
+### DL v2.3.0 release fill: certificate PASS with noted limits, SDK 2.5.0, rollback amendments - 2026-11-13 (Claude)
+
+The release track was handed over by the coordinator after the release agent was lost. Overnight package approved
+by the owner; recommended options taken.
+
+- **Certificate:** `upgrade/evidence/releases/v2.3.0/certificate.json` (`qdl.scoped-release-certificate.v2`, status
+  PASS) and `endpoint-report.json`, both built from the receipts.
+  - R-cert 1 PASS.
+  - R-cert 2 run 2: PASS_WITH_NOTED_LIMITS (receipt copied to `rcert2/`, sha256 `1c469205`).
+  - R-cert 3 = offline F1-F9 + live S1-S6.
+  - R-cert 4 by the window substitute.
+  - Window A green; D6b + 6 h PASS at 23:01:09Z (22/22 healed, 0 kept).
+  - Two post-hoc decisions, recorded in the certificate:
+    - the shortened run is accepted; the Monday boundary gates only the 1W/2D/3D derived declarations, which stay
+      off;
+    - G2.2 is attributed to the harness.
+- **SDK 2.5.0:** the wheel bundles `generated/python/qdl`, and `market_data_pb2.py` changed (`Bar.aggregation = 19`).
+  Keeping 2.4.1 would have published different bytes under the v2.2.5 asset's version. The wheel was built twice,
+  byte-identical (`ec3ce349`).
+- **Release-image tests:** they now follow `RELEASE` (they hard-coded 2.2.5 and broke on the 2.3.0 bump).
+  SDK-impacted suite: 925 ran; the 3 failures were fixed and the re-run gave 50 OK.
+- **Runtime after the arms** (docker inspect 21:55Z):
+  - linger UNSET;
+  - broker fetch FAIL, rolled back to Kafka defaults;
+  - the broker compose-hash now drifts from the repo render (effective config equal), so the K1 tool is used for
+    any broker recreate;
+  - compose and env byte-equal to the host copies.
+- **Rollback:** amendments 4'/6' from the RCA (the old projector `60f83a51` refuses derived bars, so the projectors
+  stay on rc3 while derived records exist), plus the rollback-receipt gate. A dated amendment was added to the
+  window-A packet. Known issue IDR-285 (one projector restart on a broker leadership move).
+- **Notes location:** the release notes moved to `upgrade/evidence/releases/v2.3.0/RELEASE_NOTES.md` (required by
+  `release.yml`).
+- **Next:** one PR to dev, one full CI run, local `--no-ff` merge (G7), PR dev -> main inherited by tree, tag
+  `v2.3.0`.
+
+Guide delta: `upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md`, "Delta 2026-11-13: v2.3.0 release fill".
+
+### DL v2.3.0 dependency advisory waiver (owner-approved 2026-11-14) and v2.3.1 dependency-refresh backlog - 2026-11-14 (Claude)
+
+CI run 43524274265 (PR #50) went red on advisories published after the certified images were built. `Cargo.lock` and
+`poetry.lock` are unchanged since 9dab224. The owner chose option A: an exact-ID waiver for v2.3.0 only, expiring at
+v2.3.1.
+- The waiver lives in `.github/accepted-advisories.json` (6 RustSec, 49 Python IDs; each with exposure, reason and
+  expiry). `deny.toml` ignores, and the CI pip-audit step passes `--ignore-vuln` per ID.
+- GHSA-xmj3-9gf7-h52w (setuptools) was found by the local CI10 re-check after the run and added by owner decision at
+  about 02:20Z.
+- Local CI10 reproduction:
+  - cargo-deny 0.20.2: advisories ok;
+  - pip-audit on a235c0a1: no known vulnerabilities, 50 ignored;
+  - unit shard 4 from `/app`: the fixed declaration test passes (2 errors are local-only receipt-path imports, which
+    passed in CI).
+- Certificate re-issued with the waiver as a limit: sha256 `677a690797ff16f54e9119d00912eca6b6745781deb25914e47b1c2194eba4a1`. Endpoint report sha256 `c75b7a662e4bed8a249216cab497e3324094aee58da1abd27d72f5c992fd3baf`.
+
+**Backlog, v2.3.1 dependency refresh (removes the waiver; `.github/accepted-advisories.json` must end empty):**
+- Rust: RUSTSEC-2026-0418 libz-sys -> >=1.1.31, RUSTSEC-2026-0441 pin-utils -> none (unmaintained; replace the dependency), RUSTSEC-2026-0382 rustls-webpki -> >=0.103.16, <0.104.0-alpha.1, RUSTSEC-2026-0386 tokio -> >=1.51.6, <1.52.0 or >=1.53.3, RUSTSEC-2026-0381 webpki-roots -> >=1.0.10, RUSTSEC-2026-0410 zstd-sys -> >=2.1.2.
+- Python: certifi -> 2026.10.18: PYSEC-2026-4320; msgpack -> 1.2.3: CVE-2026-114613; pillow -> 13.0.0: PYSEC-2026-4327, PYSEC-2026-4328, PYSEC-2026-4326, PYSEC-2026-4339, PYSEC-2026-4340, PYSEC-2026-4343, PYSEC-2026-4334, PYSEC-2026-4337, PYSEC-2026-4341, PYSEC-2026-4330, PYSEC-2026-4338, PYSEC-2026-4335, PYSEC-2026-4336, PYSEC-2026-4331, PYSEC-2026-4332, PYSEC-2026-4329, PYSEC-2026-4333, PYSEC-2026-4342, PYSEC-2026-4363, CVE-2026-112895, CVE-2026-112400, CVE-2026-112897, CVE-2026-112395, CVE-2026-112404, CVE-2026-112899, CVE-2026-112900, CVE-2026-112893, CVE-2026-112891, CVE-2026-112390, CVE-2026-112401, CVE-2026-112391, CVE-2026-112894, CVE-2026-112406, CVE-2026-112399, CVE-2026-112892, CVE-2026-112393, CVE-2026-96638, CVE-2026-96640, CVE-2026-96778, GHSA-78g4-xqwv-q3g8, CVE-2026-128067, CVE-2026-128066; soupsieve -> 2.10.0: CVE-2026-126192; soupsieve -> 4.0.0: CVE-2026-126190; soupsieve -> 3.0.2: CVE-2026-126193, CVE-2026-126191; setuptools -> 84.1.0: GHSA-xmj3-9gf7-h52w.
+- The refresh means a rebuild of both images and the matching certification.
+
+Addendum (2026-11-14, ~03:10Z, owner "A extended"): CI run 43548270507 went red on two gates the first waiver did not
+cover.
+- The trivy image scan reported the same packages under 33 alias IDs. They are added to `.trivyignore` and to the
+  accepted file's `trivy` list.
+- The phase-83 policy test asserted an empty `deny.toml` ignore list. It now requires the ignore list to be exactly
+  the accepted rust IDs, each with a reason and expiry v2.3.1, so it stays fail-closed.
+- Local reproduction of every release-gates step not already proven green on 707af30a:
+  - trivy 0.70.0 (the CI version) on a235c0a1 with the repo `.trivyignore`: exit 0;
+  - SBOM/signed-manifest rehearsal: PASS;
+  - unit shard 3 from `/app`: see below.
+- v2.3.1 backlog unchanged: the dependency refresh also clears the trivy aliases. `.trivyignore` returns to its two
+  pre-existing setuptools false-positive entries.
+- Certificate re-issued, endpoint report sha256 `974096cba5308473685145b71f260078d6d76a72fc74f3573fec9e68d4982ef0`.

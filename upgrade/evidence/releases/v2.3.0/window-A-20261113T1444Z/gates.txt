@@ -1,0 +1,13 @@
+D1 PASS 14:46:46
+D2 PASS 14:47:55: bundle aec2ef6f both, errors {}, 0 ENVELOPE_NOT_CANONICAL
+D3 PASS / D4 PASS 14:50:04: streams 373ff326, Query rc3 a235c0a1 r16, D5a pre PASS x2, writer clean
+D5 PASS 14:52:33: OKX 252 PINNED + okx-business-002, Binance 27 PINNED 5 lanes, 0 rejected; D5a PASS x2 (OKX session 22 accepts 21,22)
+D6 crossing PASS 14:53:44: retained=640 added=407 dropped=0 migration_record=True; image_files=0; no cache-generation line
+WGATE GREEN 15:00:08: 5 fresh samples 14:55-14:59Z ws_max<=96, gate_closed 0
+W1 PASS 15:00:55Z: 7332e85a BOOTSTRAP VERIFIED in 46.7 s on DL rc3
+W2 PASS 15:02:09Z: STRICT VERIFIED 47.9 s, 104/104/93, continuity 11/11
+SOAK PASS 15:12:18Z: 104/104/93, continuity 11/11, 0 mismatch/session/cursor/native errors, 0 NATIVE_HEALTH_STALE_REPORT, RestartCount 0; G1/W05 unchanged
+LOCK released 15:44Z while waiting for bootstrap end (re-taken for the CPU measurement)
+BOOTSTRAP END 17:00:54Z: 1042/1047 published (5 suspended = Binance 3d OVERLAP, daily retry), 680 short, 0 derived gap lines
+D6b PASS 17:15:54Z: gap recorded 0, healed 0, kept 0, cache-gen 0; 76 derived ACK lines; published 1047
+CPU GATE PASS 17:30:55Z: median 6.54 (11 samples 17:20:58-17:30:32Z) <= D0 6.97 + 0.3 = 7.27; lock released
