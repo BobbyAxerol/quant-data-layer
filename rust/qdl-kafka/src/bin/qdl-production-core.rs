@@ -213,6 +213,7 @@ fn kafka_config(group_suffix: &str) -> Result<KafkaTransportConfig, String> {
         client_id: format!("{}-{group_suffix}", required("QDL_KAFKA_CLIENT_ID")?),
         group_id: format!("{}-{group_suffix}", required("QDL_KAFKA_GROUP_ID")?),
         request_timeout: Duration::from_secs(timeout_seconds),
+        producer_linger_ms: None,
         tls: KafkaTlsConfig {
             ca_location: format!("{cert_root}/ca.crt"),
             certificate_location: format!("{cert_root}/client.crt"),

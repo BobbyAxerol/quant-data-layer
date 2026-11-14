@@ -3184,3 +3184,195 @@ Use exact TS case roster/provenance; development placeholders are not acceptance
 Retain v2.2.3 HOLD until DR/broker receipts and own DR01/DR08 meet their contracts.
 TRADE latest-state opt-in and realtime-core batch25->50 remain proposals only;
 no delivery-mode default, interface, broker config or core binary is changed.
+
+### Delta 2026-11-13: DL v2.3.0 declaration-only coverage mechanism (slice 2a)
+
+Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, "DL v2.3.0 slice 2a: declaration-only mechanism".
+Owner requirement: after v2.3.0, adding instruments or derived intervals is a config revision + coverage gate +
+ordered restart, with no certification campaign, image or tag. The design rules this delta adds:
+
+1. **Consumer manifest accept-set.** `metadata.min_token_revision` (optional, `1..revision`) lets readers
+   (Python `data_plane.py`, Rust `auth.rs`/`authority.rs`) accept a workload token for any revision in
+   `min..revision`.
+   - Only `qdl.consumer.manifest_compat.next_min_token_revision` may set it. Purely additive successors keep the
+     floor; anything else resets it to the new revision, which keeps the same-window JWT coupling for non-additive
+     bumps.
+   - Absent = the exact-match rule, so the bundle stays byte-identical.
+2. **Universe selectors** (`spec.selectors`) grant ALPHA/RESEARCH rows by declared universe. Expansion is
+   deterministic against the mounted catalogue and audited (universe revision and sha256, row count, rows sha256)
+   in the manifest, the Query log and the gateway bundle.
+   - Execution rows stay explicit.
+   - Unknown members fail closed.
+3. **Effective declaration.** Every role states the files it loaded (path, sha256, revision, IMAGE or MOUNTED).
+   Opt-in guards: `QDL_STABLE_REQUIRE_MOUNTED_DECLARATION`, and `QDL_STABLE_DECLARATION_INDEX` (sha256 index of a
+   rendered declaration).
+4. **Bar-edge checkpoint v5** stores a per-binding series digest. A revision crossing keeps every unchanged
+   watermark and bootstraps only the added bindings.
+   - Removal or a change of series identity or acquisition mode is refused unless an explicit
+     `qdl.stable-bar-edge-checkpoint-migration.v1` record names exactly that set.
+   - Revisions never decrease (rollback is a forward declaration).
+   - This replaces the strict equality that caused the C.19/C.32 strand.
+5. **Raw ingestor producer knobs** (env, unset = unchanged): `QDL_KAFKA_PRODUCER_LINGER_MS` (0..100, the batching
+   measurement variable) and `QDL_KAFKA_REQUEST_TIMEOUT_SECONDS`. Before this, the ingestor ignored the timeout
+   variable and hard-coded 30 s.
+
+Still a release after v2.3.0: new venue/market or feed type, new derivation kind, parser/normaliser/proto change,
+flush or lane semantics, exceeding the certified capacity envelope. Removals and source-mode changes are a
+declaration with an explicit migration record, separately approved.
+
+### Delta 2026-11-13: DL v2.3.0 slice 1, DERIVED_FINAL bars from finer final bars
+
+Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, entry "DL v2.3.0 slice 1:
+DERIVED_FINAL bar aggregation (tested locally) - 2026-11-13". Owner rule: higher
+intervals are aggregated from 1m inside the standard DL structure, so adding an
+interval later is a declaration, not a code change.
+
+- **Mode.** Acquisition `mode: DERIVED_FINAL` with `derived_from: {interval: <base>}`.
+  The base must be strictly finer and divide the target exactly. The target
+  calendar anchor must start on a base open. The parent is the single BAR binding
+  of the same instrument, provider and source role. An enabled child needs an
+  enabled parent. The intended chain is 3m<-1m, 5m<-1m, 15m<-5m, 30m<-15m,
+  1h<-30m, 2h<-1h, 4h<-2h, 6h<-2h, 12h<-6h, 1d<-12h, 2d<-1d, 3d<-1d, 1w<-1d.
+  - The binding keeps the venue BAR provider kind and the native channel of its
+    own interval (OKX `candle1H`, Binance `rest-klines/1h`). History bootstrap
+    therefore stays native and routes on the same core key. No ingestor
+    subscribes it.
+- **Who derives, who writes.** The bar edge reads the parent's durable final rows
+  from the KN market cache (`KnBarReadback.final_bar_rows`). It then publishes
+  one raw `qdl_derived_bar` record to `md.raw.realtime.v2`, with transport
+  `FILE_REPLAY` and capture boundary `REPLAY_BYTES`. The record carries the
+  constituents' identities and values, and no aggregate of its own.
+  - The Rust core (`qdl-core/src/derived_bar.rs`) recomputes the aggregate,
+    checks it against the binding's `derived_bar` spec, and is the only
+    canonical writer. Its output is `BAR_ORIGIN_AGGREGATED` with the new additive
+    `Bar.aggregation` lineage: base interval and source, constituent count,
+    first and last constituent event ids and offsets, and a constituent SHA-256.
+  - Query maps the lineage to `resample_lineage`.
+- **Aggregation rule (measured, replaces "naive OHLC").** A venue zero-volume bar
+  repeats the previous close, and OKX native candles exclude it from
+  open/high/low/close. So OHLC come only from constituents with volume > 0, and an
+  untraded bucket keeps all of them. Volumes and trade counts are summed over all
+  constituents.
+  - With this rule the warmup resample and the core agree with OKX native on
+    1,949 / 1,949 bars of the committed capture
+    (`tests/fixtures/okx_derived_bar_parity_ldo_20261112.json`).
+  - Without it, 3 of 480 native 3m bars differ.
+  - Buckets use `intervals.bar_bucket_open_ms`, i.e. the provider anchor: Monday
+    weeks, and the Binance Monday 3d grid.
+- **Finality, gaps, revisions.**
+  - Derivation is final-only, on a complete contiguous bucket.
+  - A missing constituent waits 120 s after the target close. It then becomes a
+    visible gap: no bar, rechecked every 30 s for 6 h, at most 256 per binding, so
+    native gap repair can still fill it. Nothing is synthesized or filled.
+  - The derived revision is the sum of the constituent revisions, so a correction
+    always strictly raises it (the projector refuses equal-revision different
+    content).
+  - A durable row is replaced only by a higher revision of an AGGREGATED row, and
+    the replacement is `REVISED` with `supersedes_event_id`. Venue history rows
+    are never replaced.
+- **Ordering constraint for any rollout.** Every role that decodes canonical
+  envelopes (projector, stream, query, core) must run the v2.3.0 contracts before
+  the bar edge publishes a derived bar.
+  - An older projector drops field 19 on decode, and its row codec then refuses
+    the envelope as `ENVELOPE_NOT_CANONICAL`.
+- **Not in this slice.** The parity auditor, live shadow and the release
+  certificate (R-cert 1-4), and every declaration-mechanism item (mounted bar
+  edge config, checkpoint superset, token revision ranges, selectors, lane names,
+  per-feed coalescing) belong to the sibling slice `feat/v2.3.0-declaration-mechanism`.
+<a id="delta-20261113-dl-v230-declaration-tool"></a>
+### Delta 2026-11-13: DL v2.3.0 declaration tool (slice 2c)
+
+Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`
+[DL v2.3.0 slice 2c](DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#dl-v230-declaration-tool-20261113).
+
+An addition is now operated as three commands plus the window's ordered restart:
+
+1. `python3 -B scripts/dl_declaration.py render DECLARATION.yaml --out NEW_DIR`.
+   - One `qdl.v2.declaration.v1` file names the base (live) revision set and the consumers.
+   - EXECUTION consumers take explicit rows and/or TS `ts.declared-execution-requirements.v1`.
+   - SIGNAL consumers take universes: explicit, or the alpha hosting intent + universe. Each universe declares
+     native/derived intervals, history depth and reference feeds.
+   - Output: the coupled set (repository files, Query runtime, role configs, bundles, sealed binding, execution
+     scope, universes, declaration index) plus `report.json` (typed BLOCKED rows, capacity estimate, consumer env,
+     restart order).
+2. `python3 -B scripts/dl_declaration.py gate NEW_DIR`: the offline acceptance. Then the live TS coverage gate.
+3. When the bar edge crosses a legacy checkpoint, `checkpoint-migration` renders the record from the files it last
+   loaded (`--git-rev <image revision>` with `--expect-previous-sha256`).
+
+Rules the tool enforces:
+- strictly additive (every retained row byte for byte; revisions only rise);
+- deterministic and idempotent;
+- dedup by feed key with other consumers' demand kept;
+- execution rows explicit, alpha rows as selectors;
+- sticky lanes: existing lane names and members never move;
+- a row DL cannot serve is BLOCKED with a reason, never dropped.
+It never mounts, restarts or edits a deployed file.
+
+Update (same day): EXECUTION quotas are derived by `qdl.consumer.quota_model` and never hand-picked; a declared
+quota below the model is refused. The gate's `consumer_quota_model` check guards it, and the report carries the
+modelled Query request load (`capacity.query_requests`). Alpha quotas are `MODEL_PENDING`. A retired revision is
+skipped through the declaration's `revision` / `release_revision`, never reused.
+Update (same day): the final-BAR source is declarable. A BAR demand row may carry `bar_source: NATIVE|REST_FINAL`
+(OKX SWAP only), resolved by `qdl.runtime.universal_demand.resolve_bar_source`; a declaration universe sets it as
+`bar_1m_source`. The gate check `okx_rest_budget` holds the REST final lane to the bar-edge admission lane
+(OKX/SWAP/CANDLES, 150/min) and to the declared host-IP envelope. The report gives the final-1m read schedule that
+R-cert 2 gates.
+
+### Delta 2026-11-13: DL v2.3.0 slice 2d, per-binding contract lineage and contract-line schema digest
+
+Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, "DL v2.3.0 slice 2d".
+The rule: a declaration must not move the contract lineage of a binding it does not change. A consumer keys
+ordering authority, resume markers and cursors on that lineage (the TS writer: `atomic_projection.lineage`,
+`execution_ordering`, native resume).
+
+1. **`instrument_catalog_revision`** of a record, its served contract and its cursor v3 catalogue claim is the
+   binding's catalogue `lineage_revision`.
+   - That is the catalogue revision at which the binding last changed.
+   - Absent means the catalogue revision, which is the old behaviour.
+2. **`config_revision`** of a record is the binding's acquisition `lineage_config_revision`.
+   - The ingestor stamps it per binding (raw binding `config_revision`); the bar edge stamps it on its REST and
+     derived envelopes.
+   - Absent means the plan or ingestor config revision.
+3. **The declaration renderer pins lineage** (`qdl.runtime.lineage.pin_lineage`).
+   - A binding whose catalogue and acquisition rows are unchanged keeps its lineage.
+   - Added or changed bindings carry the new revisions.
+   - The gate (`retained_lineage_unchanged`) refuses any move of a retained binding's lineage, unless a
+     `lineage-migration.json` record names it.
+4. **`schema_digest` is the contract-LINE digest** (owner decision 2026-11-13), not the sha256 of the proto file.
+   - A line has a frozen baseline image.
+   - Proto changes must pass `buf breaking` (FILE rules) against the current line's baseline; additive changes keep
+     the digest. An incompatible change opens a new line.
+   - Line 1 = `100966435a30367d...`, the value every stable role has carried (sha256 of market_data.proto at
+     fc5e29e).
+   - `schema_file_sha256` reports the real file hash for audit only.
+   - Registry: `contracts/schema-lines/qdl-v2-contract-lines.json`. Tool: `scripts/schema_line.py`. CI runs the check.
+5. **What still changes lineage, and is therefore a release or a migration:** a binding's own change; an authority
+   or source-policy revision; a new contract line. Consumers hand those over explicitly (TS writer IDR-289
+   revision-only handoff for authority, config, source-policy and catalogue revisions).
+
+6. **Session liveness under pinned lineage (delta 2026-11-13, v2.3.0 rc3; DL plan "DL v2.3.0 rc3").**
+   - A lane's session record carries the ingestor's global config revision. An event carries its binding's pinned
+     revision, which can be lower.
+   - Readers accept an event whose revision is at or below its session's, and refuse one above it
+     (`qdl/runtime/session_liveness.py`).
+   - Exact equality broke the 2026-11-13 window (W1). Class sweep: packet section 0c.
+
+### Delta 2026-11-13: v2.3.0 release tree reproduces the runtime
+
+From v2.3.0 on, the release tree carries the deployed compose and env byte for byte, together with the rendered
+declaration's repo-form configuration (`config/v2`, `consumers/stable`).
+
+The mounted runtime documents are derived from the live runtime base. They stay host-only and are pinned by sha256
+in the window packet. The reason they differ from the repo form is written into the release notes.
+
+Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, "DL v2.3.0 final package refreshed (pre-flight F1/F2)".
+
+### Delta 2026-11-13: v2.3.0 release fill
+
+- **SDK version follows the generated contract.** The SDK wheel's bytes include the generated Python contract, so
+  any proto change bumps the SDK version, even when `qdl_sdk/` is unchanged. v2.3.0 therefore ships SDK 2.5.0.
+- **Projector rollback after derived bars.** Once derived (AGGREGATED) bars exist on `md.bars.v2`, a projector older
+  than v2.3.0 cannot be put back in front of the topic: it refuses the envelope and crash-loops from its checkpoint.
+  Rollback keeps the v2.3.0 projectors.
+
+Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, "DL v2.3.0 release fill".

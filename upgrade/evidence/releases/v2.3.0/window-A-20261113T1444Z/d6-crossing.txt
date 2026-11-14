@@ -1,0 +1,2 @@
+2026-11-13 14:52:47,142 INFO qdl.runtime.declaration effective declaration role=stable_bar_edge digest=cbaced19782b2b26c3923c2110136de323fe414a0fefb09a06351b40bbf1e498 declaration_revision=None image_files=0 acquisition=r22,catalog=r14,checkpoint_migration=r22,demand_bundle=rNone
+2026-11-13 14:52:47,509 WARNING qdl.runtime.stable_bar_edge stable BAR checkpoint crosses catalog 11->14 acquisition 19->22 crossed=True retained=640 added=407 dropped=0 migration_record=True

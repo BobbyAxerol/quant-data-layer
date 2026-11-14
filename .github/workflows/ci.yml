@@ -187,6 +187,8 @@ jobs:
           buf lint
           buf breaking --against baseline/qdl-v2-phase1.binpb
           buf breaking --against baseline/qdl-v2-phase7-beta.binpb
+          # DL v2.3.0: the current contract line (schema_digest) must stay compatible.
+          python3 ../scripts/schema_line.py check --buf buf
 
       - name: Check schema against pull-request base
         if: github.event_name == 'pull_request'
@@ -350,14 +352,16 @@ jobs:
 
       - name: Audit final runtime dependencies
         run: |
-          docker run --rm "${QDL_CI_IMAGE}" sh -c '
+          # Exact-ID, time-boxed waivers (owner-approved 2026-11-14, expire at v2.3.1).
+          QDL_PIP_AUDIT_IGNORES="$(python3 -c 'import json; d=json.load(open(".github/accepted-advisories.json")); print(" ".join("--ignore-vuln " + e["id"] for e in d["python"]))')"
+          docker run --rm -e QDL_PIP_AUDIT_IGNORES="${QDL_PIP_AUDIT_IGNORES}" "${QDL_CI_IMAGE}" sh -c '
             test ! -e /opt/venv/bin/poetry
             test "$(head -n 1 /opt/venv/bin/uvicorn)" = "#!/opt/venv/bin/python"
             uvicorn --version
             python -c "from importlib.metadata import version; from packaging.version import Version; assert Version(version(\"msgpack\")) >= Version(\"1.2.1\"); assert Version(version(\"setuptools\")) >= Version(\"78.1.1\")"
             python -m pip freeze --local > /tmp/qdl-runtime-requirements.txt
             python -m pip install --disable-pip-version-check --no-cache-dir "pip-audit>=2.9,<3"
-            pip-audit --cache-dir /tmp/qdl-pip-audit-cache -r /tmp/qdl-runtime-requirements.txt --progress-spinner=off
+            pip-audit --cache-dir /tmp/qdl-pip-audit-cache -r /tmp/qdl-runtime-requirements.txt --progress-spinner=off $QDL_PIP_AUDIT_IGNORES
           '
 
       - name: Run KN Query and BAR readback against isolated Redis

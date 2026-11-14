@@ -7,7 +7,7 @@ import hashlib
 import json
 from typing import Callable, Iterable
 
-from qdl.adapters.intervals import canonical_interval_ms
+from qdl.adapters.intervals import bar_bucket_open_ms, canonical_interval_ms
 from qdl.query.lifecycle import BarLifecycle
 from qdl.query.results import MarketDataItem
 
@@ -28,6 +28,11 @@ def _sum_optional(items: tuple[MarketDataItem, ...], field: str) -> str | None:
     if any(value is None for value in values):
         raise ValueError(f"resample constituent {field} coverage is incomplete")
     return format(sum((Decimal(str(value)) for value in values), Decimal(0)), "f")
+
+
+def _extreme(items: tuple[MarketDataItem, ...], field: str, choose) -> str:
+    """The constituent's own text of the max/min value (no re-formatting)."""
+    return str(choose(items, key=lambda item: Decimal(str(item.payload[field]))).payload[field])
 
 
 def resample_final_bars(
@@ -64,10 +69,19 @@ def resample_final_bars(
             raise ValueError("resample input requires final bars from one base interval")
         if item.payload.get("volume_unit") != source[0].payload.get("volume_unit"):
             raise ValueError("resample input mixes volume units")
+    # Buckets follow the provider calendar of the target interval, not the
+    # Unix-epoch grid: a weekly bar opens on Monday 00:00 UTC (and a Binance
+    # 3d bar on the Binance Monday grid). `intervals` owns that anchor.
+    venue = source[0].source.venue
     groups: dict[int, list[MarketDataItem]] = {}
     for item in source:
         open_ns = int(item.payload["open_time_ns"])
-        groups.setdefault(open_ns // target_ns * target_ns, []).append(item)
+        # Anchors and durations are whole milliseconds, so flooring a
+        # sub-millisecond open cannot move it into another bucket.
+        bucket_ms = bar_bucket_open_ms(
+            target_interval, open_ns // 1_000_000, provider=venue
+        )
+        groups.setdefault(bucket_ms * 1_000_000, []).append(item)
     result = []
     for target_open, raw_group in sorted(groups.items()):
         group = tuple(raw_group)
@@ -76,6 +90,13 @@ def resample_final_bars(
         if observed != expected:
             continue
         first, last = group[0], group[-1]
+        # A venue's zero-volume bar repeats the previous close and carries no
+        # price of its own; OKX native candles exclude it from open/high/low
+        # (measured: tests/fixtures/okx_derived_bar_parity_ldo_20261112.json).
+        # A bucket without any traded constituent keeps them all (one price).
+        priced = tuple(
+            item for item in group if Decimal(str(item.payload["volume"])) != 0
+        ) or group
         payload = {
             **last.payload,
             "open_time_ns": target_open,
@@ -84,10 +105,10 @@ def resample_final_bars(
             # encode the exclusive boundary; the final constituent is the
             # authoritative close timestamp for the aggregate.
             "close_time_ns": last.payload["close_time_ns"],
-            "open": first.payload["open"],
-            "high": format(max(Decimal(str(item.payload["high"])) for item in group), "f"),
-            "low": format(min(Decimal(str(item.payload["low"])) for item in group), "f"),
-            "close": last.payload["close"],
+            "open": priced[0].payload["open"],
+            "high": _extreme(priced, "high", max),
+            "low": _extreme(priced, "low", min),
+            "close": priced[-1].payload["close"],
             "volume": format(sum((Decimal(str(item.payload["volume"])) for item in group), Decimal(0)), "f"),
             "base_volume": _sum_optional(group, "base_volume"),
             "quote_volume": _sum_optional(group, "quote_volume"),
@@ -121,7 +142,11 @@ def resample_final_bars(
                 received_at_ns=max(
                     item.received_at_ns or item.observed_at_ns for item in group
                 ),
-                revision=max(item.revision for item in group),
+                # The sum, not the maximum: a revision of any constituent must
+                # raise the aggregate's revision, or two different corrections
+                # would produce one revision with two contents (a projector
+                # conflict). The live DERIVED_FINAL core uses the same rule.
+                revision=sum(item.revision for item in group),
                 watermark_offset=max(item.watermark_offset for item in group),
                 bar_lifecycle=BarLifecycle.FINAL,
                 supersedes_event_id=None,

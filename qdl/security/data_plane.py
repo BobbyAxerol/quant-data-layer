@@ -385,7 +385,10 @@ class DataPlaneIdentityService:
                     status_code=401,
                 )
         access = DataPlaneAccess(principal, manifest)
-        if principal.consumer_manifest_revision != manifest.manifest_revision:
+        # Exact revision unless the manifest declares a purely additive
+        # accept-set (``min_token_revision``, DL v2.3.0); see
+        # ``qdl.consumer.manifest_compat``.
+        if not manifest.accepts_token_revision(principal.consumer_manifest_revision):
             raise DataPlaneAccessError(
                 "UNAUTHENTICATED",
                 "workload token is not bound to the active consumer manifest revision",

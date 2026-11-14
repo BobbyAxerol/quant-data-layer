@@ -6,11 +6,13 @@ from qdl.consumer.release import StableReleaseRoutePlan
 from qdl.consumer.realtime_route import requirement_key
 from qdl.consumer.universal_release import ConsumerRouteBinding
 from scripts.phase115_render_consumer_route_binding import binding_from_stable_release
+from tests.v226_stage_a_support import V226_STAGE_A
 
 
 ROOT = Path(__file__).resolve().parents[1]
 ROUTING = ROOT / "config/v2/stable-v2-release-routing.yaml"
 CONSUMER = "trading-system.paper.stable"
+
 
 
 class TradingConsumerScopeTests(unittest.TestCase):
@@ -28,15 +30,20 @@ class TradingConsumerScopeTests(unittest.TestCase):
             # deployed BTC-USD-SWAP execution feeds, no TRADE/BAR.
             ("OKX", "BTC-USD-SWAP", feed, None)
             for feed in ("QUOTE", "MARK_INDEX_PRICE", "BOOK_SNAPSHOT", "BOOK_DELTA")
+        } | {
+            # v2.2.6 stage A (manifest revision 12): QUOTE + MARK only, the Paper BBO_EXECUTABLE minimum.
+            ("OKX", symbol, feed, None)
+            for symbol in V226_STAGE_A
+            for feed in ("QUOTE", "MARK_INDEX_PRICE")
         }
-        self.assertEqual(len(self.binding.products), 64)
+        self.assertEqual(len(self.binding.products), 104)
         self.assertEqual(expected, {(p.venue, p.native_symbol, p.feed, p.interval) for p in self.binding.products})
-        self.assertEqual(len({p.requirement_id for p in self.binding.products}), 64)
+        self.assertEqual(len({p.requirement_id for p in self.binding.products}), 104)
 
     def test_sealed_roundtrip_and_manifest_revision(self):
         parsed = ConsumerRouteBinding.from_canonical_mapping(self.binding.canonical_mapping())
         self.assertEqual(parsed, self.binding)
-        self.assertEqual(parsed.consumer_manifest_revision, 11)
+        self.assertEqual(parsed.consumer_manifest_revision, 13)
         value = self.binding.canonical_mapping()
         value["products"][0]["native_symbol"] = "WRONG"
         with self.assertRaises(ValueError):
@@ -61,7 +68,7 @@ class TradingConsumerScopeTests(unittest.TestCase):
         manifest = ConsumerManifestLoader.load(ROOT / "consumers/stable/trading-system-paper.yaml")
         streams = sum(p.feed in {"TRADE", "QUOTE", "BAR", "BOOK_DELTA"} for p in self.binding.products)
         polls_per_minute = sum(60 if p.feed == "MARK_INDEX_PRICE" else 2 if p.feed == "BOOK_SNAPSHOT" else 0 for p in self.binding.products)
-        self.assertEqual(streams, 42)  # 40 linear + inverse QUOTE and BOOK_DELTA
+        self.assertEqual(streams, 62)  # 40 linear + inverse QUOTE and BOOK_DELTA + 20 stage A QUOTE
         self.assertGreaterEqual(manifest.quotas.max_streams, streams + 10)
         self.assertGreaterEqual(manifest.quotas.requests_per_minute, 2 * polls_per_minute)
 

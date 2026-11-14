@@ -297,7 +297,15 @@ class StableSessionLivenessReader:
         if match is None:
             flag = "SOURCE_SESSION_MALFORMED" if malformed else "SOURCE_SESSION_UNAVAILABLE"
             return ProviderSessionStatus("UNKNOWN", None, (flag,))
-        if match.config_revision != config_revision:
+        # DL v2.3.0: since slice 2d an envelope carries its binding's PINNED lineage
+        # revision, which may be lower than the session's global revision: a
+        # retained binding keeps the revision it was added at while the session
+        # (the ingestor) runs a newer config. The ingestor refuses any binding
+        # revision above its own config revision, so a record of this very
+        # session/generation never legitimately claims less than the event.
+        # Refuse only that (an event newer than its session), not every
+        # difference (W1 2026-11-13: 21-pinned OKX bindings under session 22).
+        if match.config_revision < config_revision:
             return ProviderSessionStatus("UNKNOWN", None, ("SOURCE_SESSION_CONFIG_MISMATCH",))
         # The record is judged at the end of this read, never at the caller's
         # earlier sample: that sample would under-state the age of an old

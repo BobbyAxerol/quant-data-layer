@@ -17,7 +17,7 @@ class ConsumerLatencyReportingTests(unittest.TestCase):
 
     def test_revision_comes_from_exact_manifest(self):
         with patch.dict(probe.os.environ, {}, clear=True):
-            self.assertEqual(probe.manifest_revision(), 11)
+            self.assertEqual(probe.manifest_revision(), 13)
         with patch.dict(probe.os.environ, {"QDL_MANIFEST_REVISION": "9"}, clear=True):
             with self.assertRaisesRegex(ValueError, "differs"):
                 probe.manifest_revision()
@@ -85,7 +85,7 @@ class ConsumerLatencyReportingTests(unittest.TestCase):
             root / "config/v2/stable-source-bindings.yaml",
             root / "config/v2/stable-acquisition-bindings.yaml",
         )
-        self.assertEqual(len(products), 64)  # 60 linear + 4 inverse BTC-USD-SWAP (manifest r11)
+        self.assertEqual(len(products), 104)  # 60 linear + 4 inverse BTC-USD-SWAP (r11) + 40 stage A (r13)
 
 
 if __name__ == "__main__":

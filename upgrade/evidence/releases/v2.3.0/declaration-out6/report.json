@@ -1,0 +1,410 @@
+{
+  "blocked": [
+    {
+      "consumer_id": "alpha.okx.paper.stable",
+      "market": "SWAP",
+      "native_symbol": "FET-USDT-SWAP",
+      "reason": "NOT_IN_CATALOG",
+      "universe_id": "okx-swap-crossec-94",
+      "venue": "OKX"
+    },
+    {
+      "consumer_id": "alpha.okx.paper.stable",
+      "market": "SWAP",
+      "native_symbol": "LUNA-USDT-SWAP",
+      "reason": "NOT_IN_CATALOG",
+      "universe_id": "okx-swap-crossec-94",
+      "venue": "OKX"
+    }
+  ],
+  "blocked_by_reason": {
+    "NOT_IN_CATALOG": 2
+  },
+  "capacity": {
+    "added_bindings_by_kind": {
+      "okx_bar:DERIVED_FINAL": 318,
+      "okx_bar:RUST_NATIVE": 89
+    },
+    "added_dl_vcpu_upper_bound": 0.085,
+    "added_records_per_s": 47.0,
+    "baseline_dl_vcpu": 4.06,
+    "basis": "estimate: mean per-binding rates of the 150 E-crypto set measured 2026-11-13 (COVERAGE_150_STUDY 5.1/3.2; liquid subsets run above the mean, override with capacity.rates_per_binding), 1.8 ms/record upper bound; not a measurement",
+    "basis_rows": "rows absent from the deployed runtime acquisition",
+    "bootstrap": {
+      "basis": "depth = qdl.runtime.bar_history_demand over the rendered kn bundle (largest granting manifest max_warmup_rows; 0 when ungranted), capped by the bar edge's 1,095-day lookback; 300 rows per history-candles request (qdl.adapters.okx.history page); one pass, no retries; bootstrap and native gap repair share this lane at BATCH priority",
+      "bindings": 407,
+      "by_interval": {
+        "12h": {
+          "bindings": 89,
+          "requests": 712,
+          "rows_per_binding": 2190
+        },
+        "15m": {
+          "bindings": 20,
+          "requests": 680,
+          "rows_per_binding": 10000
+        },
+        "1h": {
+          "bindings": 89,
+          "requests": 3026,
+          "rows_per_binding": 10000
+        },
+        "1m": {
+          "bindings": 89,
+          "requests": 3026,
+          "rows_per_binding": 10000
+        },
+        "2h": {
+          "bindings": 20,
+          "requests": 680,
+          "rows_per_binding": 10000
+        },
+        "30m": {
+          "bindings": 20,
+          "requests": 680,
+          "rows_per_binding": 10000
+        },
+        "3m": {
+          "bindings": 20,
+          "requests": 680,
+          "rows_per_binding": 10000
+        },
+        "4h": {
+          "bindings": 20,
+          "requests": 440,
+          "rows_per_binding": 6570
+        },
+        "5m": {
+          "bindings": 20,
+          "requests": 680,
+          "rows_per_binding": 10000
+        },
+        "6h": {
+          "bindings": 20,
+          "requests": 300,
+          "rows_per_binding": 4380
+        }
+      },
+      "duration_minutes": 72.7,
+      "kn_cache_row_cap_added": 4033958,
+      "kn_cache_rows_added": 3193910,
+      "lane": "OKX/SWAP/HISTORY_CANDLES (separate token bucket from the live CANDLES lane)",
+      "lane_requests_per_minute": 150.0,
+      "requests": 10904,
+      "rows": 3193910,
+      "rows_per_request": 300
+    },
+    "ceiling_dl_vcpu": 6.0,
+    "deferral_plan": {
+      "defer": [],
+      "headroom_vcpu": 1.855,
+      "status": "FITS"
+    },
+    "ingestor_subscriptions_after": {
+      "ingestor-binance-usdm.json": 27,
+      "ingestor-okx-swap.json": 252
+    },
+    "mark_index_flush_ms": 50,
+    "okx_rest": {
+      "admission_lane": {
+        "burst": 5,
+        "family": "OKX/SWAP/CANDLES",
+        "max_inflight": 2,
+        "refill_per_s": 2.5,
+        "requests_per_minute": 150.0
+      },
+      "bar_edge_requests_per_minute_avg": 0.2,
+      "basis": "model: one read per REST final binding per boundary through the bar-edge admission token bucket; host-IP limit as declared (OKX docs give 40 requests/2 s per IP for market candles; not re-verified here)",
+      "declared_max_visibility_ms": null,
+      "final_1m_visibility_ms": null,
+      "host_ip_limit_per_minute_declared": 1200.0,
+      "host_ip_utilisation": 0.0,
+      "lane_utilisation": 0.001,
+      "max_utilisation": 0.8,
+      "other_requests_per_minute_declared": 0.0,
+      "problems": [],
+      "rest_final_bindings_by_interval": {
+        "1d": 250
+      },
+      "status": "WITHIN_ENVELOPE"
+    },
+    "projected_dl_vcpu": 4.145,
+    "query_requests": {
+      "basis": "qdl.consumer.quota_model (TS writer client, calibrated on r11: model 2,212/min vs measured 1,940-2,034/min); Query/Redis vCPU per request is not measured, so no vCPU is derived",
+      "consumers": {
+        "alpha.okx.paper.stable": {
+          "status": "MODEL_PENDING"
+        }
+      },
+      "execution_steady_requests_per_minute_added": 0,
+      "execution_steady_requests_per_minute_after": 0
+    },
+    "rates_per_binding": {
+      "okx_bar": 0.5253333333333333,
+      "okx_bbo": 4.253333333333333,
+      "okx_mark_index@50": 6.32,
+      "okx_mark_index@500": 3.24
+    },
+    "status": "WITHIN_ENVELOPE",
+    "unmeasured_bindings_by_kind": {},
+    "venue_priority": [
+      "OKX",
+      "BINANCE"
+    ]
+  },
+  "consumer_environment": {},
+  "declaration_index_sha256": "904b4f693f39f34017a8f64c474a2c5aa1ad893cc6615e28a83a68881fcd627c",
+  "declaration_revision": 5,
+  "loader_capabilities": {
+    "derived_final": true,
+    "routing_selector_context": true
+  },
+  "notes": [],
+  "ordered_restart": [
+    "ingestor_okx_swap / ingestor_binance_usdm (v2.3.0 image first: lane_shard + flush map)",
+    "rust_core, rust_core_2, rust_core_3",
+    "market_projector_1, market_projector_2",
+    "stream_kn_1, stream_kn_2",
+    "query_kn_1, query_kn_2",
+    "binance_bar_edge (with the checkpoint migration record when it crosses a legacy checkpoint)",
+    "consumers whose JWT is outside the new accept-set (TS writer: sealed binding + execution scope)"
+  ],
+  "quota_models": {
+    "alpha.okx.paper.stable": {
+      "reason": "no alpha client request model; quotas as declared",
+      "status": "MODEL_PENDING"
+    }
+  },
+  "runtime_mutations": 0,
+  "schema": "qdl.v2.declaration-render-report.v1",
+  "status": "RENDERED_NOT_APPLIED",
+  "summary": {
+    "acquisition": {
+      "base_bar_modes": {
+        "1m:RUST_NATIVE": 89
+      },
+      "derived_final": 318,
+      "new_rows_by_mode": {
+        "DERIVED_FINAL": 318,
+        "RUST_NATIVE": 89
+      },
+      "revision": [
+        21,
+        22
+      ]
+    },
+    "bar_edge_runtime": {
+      "catalog_lineage_from_live_cores": {
+        "11": 640
+      },
+      "config_lineage": 19,
+      "files": [
+        "runtime/bar-edge-source-bindings.yaml",
+        "runtime/bar-edge-acquisition-bindings.yaml"
+      ],
+      "migration": {
+        "changed": 0,
+        "from": {
+          "acquisition_revision": 19,
+          "catalog_revision": 11
+        },
+        "previous_binding_digests": 640,
+        "previous_sha256": [
+          "9d4ab51e4880a3615e4171fe4cebc244c02522a20bbd3273973478ef32ec275d",
+          "1b5865494f08c99cb2550155dc570d46502b54c7351fa495ebd57e923eb3656a"
+        ],
+        "removed": 0,
+        "to": {
+          "acquisition_revision": 22,
+          "catalog_revision": 14
+        }
+      },
+      "retained_owned_bindings": 640
+    },
+    "bindings": {},
+    "bundles": {
+      "kn": {
+        "base_sha256": "0770a8fa431dae6aee66a27ac7f2fc2e49eef49bad258253ed9a1844eced5e9c",
+        "catalog_bindings": 1163,
+        "replaced_manifests": [
+          "alpha.okx.paper.stable"
+        ],
+        "sha256": "aec2ef6f0dccf0df7b8e2ef29b6d0712ec9e632d5b71a1c145036aa8c532246a"
+      },
+      "realm": {
+        "base_sha256": "4df7421e58f73b217800431cf606fd4c4bc4d3e114f42622898782763b402db8",
+        "catalog_bindings": 1163,
+        "replaced_manifests": [
+          "alpha.okx.paper.stable"
+        ],
+        "sha256": "373ff32629128c257a1bebbb11b00fb6af385173360fa61c390bbbe3de223ec2"
+      }
+    },
+    "catalog": {
+      "generated_rows_differing_from_committed_kept_committed": 8,
+      "new_bindings": 407,
+      "new_bindings_by_feed": {
+        "BAR": 407
+      },
+      "new_instruments": [],
+      "revision": [
+        13,
+        14
+      ]
+    },
+    "cores": {
+      "rust_core.json": {
+        "added": 407,
+        "added_by_provider_kind": {
+          "okx_bar": 407
+        },
+        "after_sha256": "ff1051829120fb1a4edc8653e8378d3b167a2beb30ccccb6f1538dc0330d95e7",
+        "before_sha256": "22e139ffbaa2e49843867fcf93c79ae0232ba23f3171f08a4c5dd06026c3769c"
+      },
+      "rust_core_2.json": {
+        "added": 407,
+        "added_by_provider_kind": {
+          "okx_bar": 407
+        },
+        "after_sha256": "348f2c708910e12a5dde06d3c60529be2709dc371f0faecc0164d902c598639d",
+        "before_sha256": "26d6dad9ee9c3e5ecb2d35e66b52bc4d540cc11995411d62c9de3ba1e2416493"
+      },
+      "rust_core_3.json": {
+        "added": 407,
+        "added_by_provider_kind": {
+          "okx_bar": 407
+        },
+        "after_sha256": "dfab3186fefb701afba79cc4f5dc74e2485aa5cc848c5456492bc38c6b3d3133",
+        "before_sha256": "c962191bf8a2374f71662f512de007735871c378ed8e9b6c4697245ab9e1e4fa"
+      }
+    },
+    "demand": {
+      "added_rows": 407,
+      "revision": [
+        9,
+        10
+      ]
+    },
+    "derived_bindings": 318,
+    "ingestors": {
+      "ingestor-binance-usdm.json": {
+        "added_native_bar_bindings": 0,
+        "added_realtime_bindings": 0,
+        "after_sha256": "021dd5dcf4bdaa40b09b663b990c8307ad12b978e5edbd117c828012dc77f1e5",
+        "before_sha256": "5833bc4ea35cb4558a931288d34b61a94e99d260f1ba6b0e56596423995930ed",
+        "config_revision": [
+          19,
+          19
+        ],
+        "lane_plan": "PINNED",
+        "lanes": {
+          "binance-market-bar-001": {
+            "feed": "BAR",
+            "members": 5
+          },
+          "binance-market-markindex-001": {
+            "feed": "MARK_INDEX",
+            "members": 5
+          },
+          "binance-public-book-001": {
+            "feed": "BOOK",
+            "members": 7
+          },
+          "binance-public-quote-001": {
+            "feed": "QUOTE",
+            "members": 5
+          },
+          "binance-public-trade-001": {
+            "feed": "TRADE",
+            "members": 5
+          }
+        },
+        "latest_state_flush_ms_by_feed": null,
+        "max_subscriptions_per_connection": 200,
+        "new_lanes": []
+      },
+      "ingestor-okx-swap.json": {
+        "added_native_bar_bindings": 89,
+        "added_realtime_bindings": 0,
+        "after_sha256": "4cb59e29d9448bc35fa540c2ca81ada0a975f123b2b7c14a9cf0d8987526a7be",
+        "before_sha256": "d62f36b4927dbf2c7b5966654033dd320f8f130bafd608f2ea172e1ed988dbbb",
+        "config_revision": [
+          21,
+          22
+        ],
+        "lane_plan": "PINNED",
+        "lanes": {
+          "okx-business-001": {
+            "feed": "BAR",
+            "members": 100
+          },
+          "okx-business-002": {
+            "feed": "BAR",
+            "members": 59
+          },
+          "okx-public-001": {
+            "feed": "BOOK",
+            "members": 10
+          },
+          "okx-public-002": {
+            "feed": "TRADE",
+            "members": 5
+          },
+          "okx-public-003": {
+            "feed": "QUOTE",
+            "members": 26
+          },
+          "okx-public-004": {
+            "feed": "MARK_INDEX",
+            "members": 52
+          }
+        },
+        "latest_state_flush_ms_by_feed": null,
+        "max_subscriptions_per_connection": 100,
+        "new_lanes": [
+          "okx-business-002"
+        ]
+      }
+    },
+    "lineage": {
+      "new_or_changed": 407,
+      "retained": 756
+    },
+    "manifests": {
+      "alpha.okx.paper.stable": {
+        "additive_problems": [],
+        "changed": true,
+        "min_token_revision": 15,
+        "requirements": 960,
+        "revision": [
+          15,
+          16
+        ]
+      }
+    },
+    "promotion_scope": {
+      "revision": [
+        12,
+        13
+      ]
+    },
+    "routing": {
+      "revision": [
+        30,
+        31
+      ]
+    },
+    "universes": {
+      "okx-swap-covered-25": {
+        "members": 25,
+        "membership_sha256": "f47bd6757b4b72cf8dd8442481e36068971b603bf5443395d1e813af7ae68ce3",
+        "revision": 1
+      },
+      "okx-swap-crossec-94": {
+        "members": 94,
+        "membership_sha256": "3a37eb3bae474cf5c41a152011e49f218c8822ef11331f00cf33568bfb731ca0",
+        "revision": 1
+      }
+    }
+  }
+}

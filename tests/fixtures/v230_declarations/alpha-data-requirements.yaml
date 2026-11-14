@@ -1,0 +1,274 @@
+schema: execution-alpha.data-requirements.v1
+revision: 1
+
+# Profiles are infrastructure declarations, not strategy logic. They describe
+# which Data Layer products a reviewed alpha class is entitled to consume.
+profiles:
+  directional_bar:
+    feeds:
+      - feed: BAR
+        interval: signal
+        source_policy_id: crypto_primary_v2
+        provider_plane: REALTIME
+        max_freshness_ms: 180000
+        require_final_bars: true
+        require_live: false
+        gap_policy: BLOCK
+        fallback: BLOCKED
+        blocked_reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  multi_symbol_bar:
+    feeds:
+      - feed: BAR
+        interval: signal
+        source_policy_id: crypto_primary_v2
+        provider_plane: REALTIME
+        max_freshness_ms: 180000
+        require_final_bars: true
+        require_live: false
+        gap_policy: BLOCK
+        fallback: BLOCKED
+        blocked_reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+  bracket_context:
+    feeds:
+      - feed: BAR
+        interval: signal
+        source_policy_id: crypto_primary_v2
+        provider_plane: REALTIME
+        max_freshness_ms: 180000
+        require_final_bars: true
+        require_live: false
+        gap_policy: BLOCK
+        fallback: BLOCKED
+        blocked_reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+      - feed: TRADE
+        source_policy_id: crypto_primary_v2
+        provider_plane: REALTIME
+        max_freshness_ms: 15000
+        require_live: true
+        gap_policy: BLOCK
+        fallback: V1
+        fallback_rule_id: V1_TRADE_EQUIVALENCE_CERTIFIED
+      - feed: QUOTE
+        source_policy_id: crypto_primary_v2
+        provider_plane: REALTIME
+        max_freshness_ms: 15000
+        require_live: true
+        gap_policy: BLOCK
+        fallback: BLOCKED
+        blocked_reason: V1_QUOTE_EQUIVALENCE_UNPROVEN
+      - feed: MARK_INDEX_PRICE
+        source_policy_id: crypto_liquid_v2
+        provider_plane: REFERENCE
+        max_freshness_ms: 15000
+        require_live: true
+        gap_policy: BLOCK
+        fallback: BLOCKED
+        blocked_reason: V1_MARK_INDEX_EQUIVALENCE_UNPROVEN
+  grid_l2:
+    feeds:
+      - feed: BAR
+        interval: signal
+        source_policy_id: crypto_primary_v2
+        provider_plane: REALTIME
+        max_freshness_ms: 180000
+        require_final_bars: true
+        require_live: false
+        gap_policy: BLOCK
+        fallback: BLOCKED
+        blocked_reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+      - feed: TRADE
+        source_policy_id: crypto_primary_v2
+        provider_plane: REALTIME
+        max_freshness_ms: 15000
+        require_live: true
+        gap_policy: BLOCK
+        fallback: V1
+        fallback_rule_id: V1_TRADE_EQUIVALENCE_CERTIFIED
+      - feed: QUOTE
+        source_policy_id: crypto_primary_v2
+        provider_plane: REALTIME
+        max_freshness_ms: 15000
+        require_live: true
+        gap_policy: BLOCK
+        fallback: BLOCKED
+        blocked_reason: V1_QUOTE_EQUIVALENCE_UNPROVEN
+      - feed: MARK_INDEX_PRICE
+        source_policy_id: crypto_liquid_v2
+        provider_plane: REFERENCE
+        max_freshness_ms: 15000
+        require_live: true
+        gap_policy: BLOCK
+        fallback: BLOCKED
+        blocked_reason: V1_MARK_INDEX_EQUIVALENCE_UNPROVEN
+      - feed: BOOK_SNAPSHOT
+        source_policy_id: crypto_liquid_v2
+        provider_plane: L2
+        max_freshness_ms: 2000
+        require_live: true
+        gap_policy: BLOCK
+        fallback: BLOCKED
+        blocked_reason: V1_L2_EQUIVALENCE_UNPROVEN
+      - feed: BOOK_DELTA
+        source_policy_id: crypto_liquid_v2
+        provider_plane: L2
+        max_freshness_ms: 2000
+        require_live: true
+        gap_policy: BLOCK
+        fallback: BLOCKED
+        blocked_reason: V1_L2_EQUIVALENCE_UNPROVEN
+  basis_reference:
+    feeds:
+      - feed: BAR
+        interval: signal
+        source_policy_id: crypto_primary_v2
+        provider_plane: REALTIME
+        max_freshness_ms: 172800000
+        require_final_bars: true
+        require_live: false
+        gap_policy: BLOCK
+        fallback: BLOCKED
+        blocked_reason: V1_FINAL_BAR_EQUIVALENCE_UNPROVEN
+      - feed: TRADE
+        source_policy_id: crypto_primary_v2
+        provider_plane: REALTIME
+        max_freshness_ms: 15000
+        require_live: true
+        gap_policy: BLOCK
+        fallback: V1
+        fallback_rule_id: V1_TRADE_EQUIVALENCE_CERTIFIED
+      - feed: BOOK_SNAPSHOT
+        source_policy_id: crypto_liquid_v2
+        provider_plane: L2
+        max_freshness_ms: 2000
+        require_live: true
+        gap_policy: BLOCK
+        fallback: BLOCKED
+        blocked_reason: V1_L2_EQUIVALENCE_UNPROVEN
+      - feed: BOOK_DELTA
+        source_policy_id: crypto_liquid_v2
+        provider_plane: L2
+        max_freshness_ms: 2000
+        require_live: true
+        gap_policy: BLOCK
+        fallback: BLOCKED
+        blocked_reason: V1_L2_EQUIVALENCE_UNPROVEN
+      - feed: FUNDING_RATE
+        source_policy_id: crypto_liquid_v2
+        provider_plane: REFERENCE
+        max_freshness_ms: 43200000
+        require_live: false
+        gap_policy: BLOCK
+        fallback: BLOCKED
+        blocked_reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+      - feed: OPEN_INTEREST
+        interval: signal
+        source_policy_id: crypto_liquid_v2
+        provider_plane: REFERENCE
+        max_freshness_ms: 86400000
+        require_live: false
+        gap_policy: BLOCK
+        fallback: BLOCKED
+        blocked_reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+      - feed: LONG_SHORT_RATIO
+        interval: signal
+        source_policy_id: crypto_liquid_v2
+        provider_plane: REFERENCE
+        max_freshness_ms: 86400000
+        require_live: false
+        gap_policy: BLOCK
+        fallback: BLOCKED
+        blocked_reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+      - feed: TAKER_FLOW
+        interval: signal
+        source_policy_id: crypto_liquid_v2
+        provider_plane: REFERENCE
+        max_freshness_ms: 86400000
+        require_live: false
+        gap_policy: BLOCK
+        fallback: BLOCKED
+        blocked_reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+      - feed: BASIS
+        interval: signal
+        source_policy_id: crypto_liquid_v2
+        provider_plane: REFERENCE
+        max_freshness_ms: 172800000
+        require_live: false
+        gap_policy: BLOCK
+        fallback: BLOCKED
+        blocked_reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+      - feed: CONTRACT_METADATA
+        source_policy_id: crypto_liquid_v2
+        provider_plane: REFERENCE
+        max_freshness_ms: 86400000
+        require_live: false
+        gap_policy: BLOCK
+        fallback: BLOCKED
+        blocked_reason: V1_REFERENCE_EQUIVALENCE_UNPROVEN
+
+# Only reviewed classes become DECLARED. All other paper Compose deployments
+# are still represented in the generated inventory as PROFILE_REVIEW_REQUIRED.
+declarations:
+  adaptive_hma_cpp:
+    profile: directional_bar
+    min_bars: 400
+    paired_okx_probe: true
+    config:
+      path: alphas/adaptive_hma_cpp/strategy.yaml
+      maxlen_selector: ADAPTIVEHMA001.maxlen
+  scalping_purely:
+    profile: multi_symbol_bar
+    min_bars: 200
+    paired_okx_probe: true
+    config:
+      path: alphas/scalping_purely/config.yaml
+      maxlen_selector: SCALPINGPURELY001.maxlen
+  fib_sl_tp_strength:
+    profile: bracket_context
+    min_bars: 560
+    paired_okx_probe: true
+    config:
+      path: alphas/fib_sl_tp_strength/strategy.yaml
+      maxlen_selector: FIBSLTPSTRENGTH001.maxlen
+      symbols_selector: FIBSLTPSTRENGTH001.symbols_{interval}
+      symbols_suffix: USDT
+  dynamic_grid:
+    profile: grid_l2
+    min_bars: 100
+    paired_okx_probe: true
+    config:
+      path: alphas/dynamic_grid/strategy.yaml
+      maxlen_selector: '{alpha_id}.maxlen'
+      symbols_selector: '{alpha_id}.symbol'
+  regressionportfolioA001_5m:
+    profile: multi_symbol_bar
+    min_bars: 100
+    paired_okx_probe: true
+    config:
+      path: alphas/regressionportfolioA001_5m/strategy.yaml
+      maxlen_selector: regressionportfolioA001_5m.maxlen
+  e2e_probe:
+    profile: directional_bar
+    min_bars: 100
+    paired_okx_probe: true
+    config:
+      path: alphas/e2e_probe/strategy.yaml
+      maxlen_selector: E2EPROBE001.maxlen
+  basis_arb_binance:
+    profile: basis_reference
+    min_bars: 365
+    paired_okx_probe: true
+    # Keep the paired proof native. OKX Swap has no native dated-contract
+    # basis, certified daily OI, public global/top ratio, or taker-flow series
+    # equivalent to this Binance profile. They remain explicit unavailable
+    # routes rather than being approximated or borrowed cross-venue.
+    paired_okx_optional_reference_feeds:
+      - BASIS
+      - LONG_SHORT_RATIO
+      - OPEN_INTEREST
+      - TAKER_FLOW
+    primary_provider: binance
+    config:
+      path: alphas/basis_arb_binance/config/deployment.paper.json
+      interval_selector: data.interval
+      symbols_selector: data.perp_symbol
+      maxlen_selector: runtime.history_cache_rows

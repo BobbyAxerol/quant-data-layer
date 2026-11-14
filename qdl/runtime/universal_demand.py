@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 import hashlib
 import json
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping
 
 from qdl.demand import (
     DemandLeaseRegistry,
@@ -325,3 +325,55 @@ class UniversalDemandPlanner:
             execution_eligible=eligible,
             reason=reason,
         )
+
+
+PRICING_ONLY_FEEDS = frozenset({"QUOTE", "MARK_INDEX_PRICE"})
+# Declarable acquisition source of one final BAR (DL v2.3.0, demand row field ``bar_source``):
+# NATIVE = the shared native OKX candle lane (RUST_NATIVE, confirm=1 rows, ingestor subscription);
+# REST_FINAL = the bar edge's REST final lane (PYTHON_REST, one provider read per boundary).
+BAR_SOURCES = frozenset({"NATIVE", "REST_FINAL"})
+# The only market whose native final-bar lane passed the real-provider gate (production_catalog).
+NATIVE_BAR_MARKETS = frozenset({("OKX", "SWAP")})
+
+
+def resolve_bar_source(declared: str | None, *, bar_family: bool) -> str:
+    """Acquisition source of one OKX SWAP final BAR.
+
+    An explicit declaration wins (``bar_source`` on the BAR demand row, e.g. a SIGNAL consumer that needs
+    native 1m). Without one, the ``bar_family_symbols`` rule decides: a symbol with non-BAR demand other
+    than Trading System QUOTE/MARK pricing gets the native candle lane, every other symbol the REST final
+    lane (v2.2.6 stage A). A DERIVED_FINAL bar consumes only FINAL parents, so REST_FINAL is sufficient for
+    derivation; NATIVE trades provider REST budget for WS subscriptions and Kafka records.
+    """
+    if declared is not None:
+        if declared not in BAR_SOURCES:
+            raise ValueError(f"bar_source must be one of {sorted(BAR_SOURCES)}")
+        return declared
+    return "NATIVE" if bar_family else "REST_FINAL"
+
+
+def bar_family_symbols(demand: Mapping[str, Any]) -> set[tuple[str, str]]:
+    """(VENUE, native symbol) pairs that carry the full native BAR family.
+
+    A symbol gets every native bar interval when it has non-BAR demand, except demand that only
+    prices Trading System orders: QUOTE / MARK_INDEX_PRICE rows of an EXECUTION-grade consumer
+    (v2.2.6 stage A). That execution-only pricing demand never turns a D48 universe symbol into a
+    full-bar-family symbol, so it never implies new native candle subscriptions. Every symbol that
+    qualified before (any TRADE/BOOK/alpha realtime demand) still qualifies.
+    The single predicate for qdl/runtime/production_catalog.py (BAR lane), scripts/kn_universe_top300.py,
+    phase115c_materialize_active_native_bars.py, phase533_materialize_alpha_runtime_entitlements.py and
+    tests/universe_support.py.
+    """
+    result = set()
+    for consumer in demand.get("consumers") or ():
+        if not isinstance(consumer, Mapping):
+            continue
+        execution = str(consumer.get("consumer_grade", "")).upper() == "EXECUTION"
+        for row in consumer.get("requirements") or ():
+            if not isinstance(row, Mapping):
+                continue
+            feed = str(row.get("feed", "")).upper()
+            if feed == "BAR" or (execution and feed in PRICING_ONLY_FEEDS):
+                continue
+            result.add((str(row.get("venue", "")).upper(), str(row.get("native_symbol", ""))))
+    return result

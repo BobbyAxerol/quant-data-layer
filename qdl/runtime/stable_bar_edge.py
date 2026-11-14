@@ -32,6 +32,20 @@ from qdl.adapters.okx.bar_edge import (
 )
 from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
+from qdl.runtime.bar_edge_checkpoint import (
+    MIGRATION_ENV as _CHECKPOINT_MIGRATION_ENV,
+    CheckpointCrossingRefused,
+    binding_series_digest,
+    load_migration_record,
+    plan_crossing,
+)
+from qdl.runtime.declaration import (
+    config_file_record,
+    effective_declaration,
+    enforce_declaration,
+    log_effective_declaration,
+)
+from qdl.runtime import derived_bars
 from qdl.runtime.heartbeat import write_heartbeat
 from qdl.runtime.kn_bar_readback import KnBarReadbackError
 from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
@@ -56,6 +70,11 @@ _DURABLE_COVERAGE_BATCH_ROWS = 256
 _STATE_SCHEMA_V2 = "qdl.stable-bar-edge-state.v2"
 _STATE_SCHEMA_V3 = "qdl.stable-bar-edge-state.v3"
 _STATE_SCHEMA_V4 = "qdl.stable-bar-edge-state.v4"
+# DL v2.3.0: v4 + one series digest per binding, so a later catalogue or
+# acquisition revision can keep every unchanged watermark (bar_edge_checkpoint).
+# ``canonical_cache_id`` is present exactly when the SQLite cache is in use.
+_STATE_SCHEMA_V5 = "qdl.stable-bar-edge-state.v5"
+_CROSSING_FIELDS = ("catalog_revision", "acquisition_revision", "binding_ids")
 _MAX_CONNECTION_GENERATION = (1 << 64) - 1
 # A durable BAR binding is not a promise that every venue has unlimited
 # history.  Three years keeps the default bootstrap useful for daily/weekly
@@ -76,6 +95,18 @@ _NATIVE_RECOVERY_MAX_CONCURRENT_REQUESTS = 4
 _SERVE_OVERDUE_SECONDS = 900.0
 # Bindings whose serving is verified per loop turn (bounded cache reads).
 _SERVE_VERIFY_PER_TURN = 8
+# DERIVED_FINAL (v2.3.0). A target whose constituents are still missing this
+# long after its close is a visible gap (no bar); it is rechecked for
+# `_DERIVED_GAP_RETRY_SECONDS` (native gap repair may still fill the base),
+# at most `_DERIVED_GAP_LIMIT` per binding. While a target waits on its base
+# the edge rechecks it every `_DERIVED_POLL_SECONDS`.
+_DERIVED_GAP_GRACE_SECONDS = 120.0
+_DERIVED_GAP_RETRY_SECONDS = 6 * 3600.0
+_DERIVED_GAP_RECHECK_SECONDS = 30.0
+_DERIVED_GAP_LIMIT = 256
+_DERIVED_POLL_SECONDS = 0.5
+_DERIVED_SETTLE_SECONDS = 0.5
+_DERIVED_PARENT_WAIT_SECONDS = 5.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,6 +272,8 @@ class StableBinanceBarEdge:
         history_gate=None,
         history_end_ms: int | None = None,
         history_only: bool = False,
+        checkpoint_migration: dict | None = None,
+        declaration: dict | None = None,
     ) -> None:
         if not 1 <= warmup_rows <= _MAX_DURABLE_BAR_ROWS:
             raise ValueError(
@@ -292,6 +325,11 @@ class StableBinanceBarEdge:
         self.native_recovery_visibility_seconds = native_recovery_visibility_seconds
         self.state_path = Path(state_path) if state_path is not None else None
         self.repair_only = repair_only
+        # DL v2.3.0: an explicit record for a non-additive checkpoint crossing,
+        # and the effective declaration this edge runs (logged, heartbeat).
+        self.checkpoint_migration = checkpoint_migration
+        self.declaration = declaration
+        self.checkpoint_crossing = None
         if repair_only and (self.state_path is None or not self.state_path.is_file()):
             raise RuntimeError("stable BAR repair requires the active writer checkpoint")
         self.canonical_cache_id = (
@@ -410,12 +448,36 @@ class StableBinanceBarEdge:
                 self.native_recovery_bindings + self.native_recovery_okx_bindings
             )
         }
+        # DERIVED_FINAL: built here from the parent's durable final bars, in
+        # chain order (finer first) so one pass can climb several levels once
+        # each level is durable. Bootstrap and checkpoint are the ordinary
+        # history-binding ones (`last_open_ms`); only live bars are derived.
+        parents = acquisition.derived_parents(source_by_id)
+        self.derived_bindings = tuple(sorted(
+            (pair for pair in pairs if pair[1].enabled and pair[1].mode == "DERIVED_FINAL"),
+            key=lambda pair: (_bar_interval_ms(pair[0].interval or ""), pair[0].binding_id),
+        ))
+        self._derived_parent = {
+            source.binding_id: source_by_id[parents[source.binding_id]]
+            for source, _acquisition in self.derived_bindings
+        }
+        self._derived_active = bool(self.derived_bindings) and not history_only and not repair_only
+        if self._derived_active and bar_readback is None:
+            raise ValueError("DERIVED_FINAL BARs need the KN market-cache readback")
+        self._derived_next_at: dict[str, float] = {}
+        self._derived_gaps: dict[str, dict[int, float]] = {}
+        self.derived_published = 0
+        self.derived_gaps_recorded = 0
         self._heartbeat_path = os.environ.get("QDL_STABLE_HEARTBEAT_PATH") or None
         # Keyed by binding id so a capture can ask what channel the core has this
         # binding registered under; see `_binance_binding`.
         self._acquisition_by_id = {
             acquisition.binding_id: acquisition
             for _source, acquisition in self.history_bindings + self.history_okx_bindings
+        }
+        self._binding_digests = {
+            source.binding_id: binding_series_digest(source, acquisition)
+            for source, acquisition in self.history_bindings + self.history_okx_bindings
         }
         # Demand decides which venues and markets exist, so this edge must not
         # assert a fixed market-family set. It owns every enabled crypto BAR
@@ -479,12 +541,18 @@ class StableBinanceBarEdge:
             if self.canonical_cache_id is None:
                 raise RuntimeError("stable BAR V4 checkpoint requires canonical cache identity")
             payload["canonical_cache_id"] = self.canonical_cache_id
+        if schema == _STATE_SCHEMA_V5:
+            payload["binding_digests"] = {
+                key: self._binding_digests[key] for key in self._binding_ids
+            }
+            if self.canonical_cache_id is not None:
+                payload["canonical_cache_id"] = self.canonical_cache_id
         return payload
 
     def _state_payload(self) -> dict:
         if not 1 <= self.connection_generation <= _MAX_CONNECTION_GENERATION:
             raise RuntimeError("stable BAR connection generation is invalid")
-        schema = _STATE_SCHEMA_V4 if self.canonical_cache_id is not None else _STATE_SCHEMA_V3
+        schema = _STATE_SCHEMA_V5
         return {
             **self._state_identity_payload(schema=schema),
             "connection_generation": self.connection_generation,
@@ -553,21 +621,79 @@ class StableBinanceBarEdge:
             cache_continuity_confirmed = (
                 payload.get("canonical_cache_id") == self.canonical_cache_id
             )
+        elif schema == _STATE_SCHEMA_V5:
+            expected = self._state_identity_payload(schema=_STATE_SCHEMA_V5)
+            expected_fields = (set(expected) - {"canonical_cache_id"}) | {
+                "connection_generation", "last_open_ms",
+            }
+            if "canonical_cache_id" in payload:
+                if self.canonical_cache_id is None:
+                    raise RuntimeError("stable BAR checkpoint requires canonical cache identity")
+                expected_fields.add("canonical_cache_id")
+                cache_continuity_confirmed = (
+                    payload["canonical_cache_id"] == self.canonical_cache_id
+                )
+            else:
+                cache_continuity_confirmed = self.canonical_cache_id is None
+            previous_generation = payload.get("connection_generation")
+            if (
+                isinstance(previous_generation, bool)
+                or not isinstance(previous_generation, int)
+                or not 1 <= previous_generation <= _MAX_CONNECTION_GENERATION
+            ):
+                raise RuntimeError("stable BAR checkpoint generation is invalid")
+            digests = payload.get("binding_digests")
+            if not isinstance(digests, dict) or set(digests) != set(
+                payload.get("binding_ids") or ()
+            ):
+                raise RuntimeError("stable BAR checkpoint binding digests are invalid")
         else:
             raise RuntimeError("stable BAR checkpoint fields are invalid")
         if set(payload) != expected_fields:
             raise RuntimeError("stable BAR checkpoint fields are invalid")
-        for field in (
-            "schema", "slice_id", "authority_revision", "catalog_revision",
-            "acquisition_revision", "warmup_rows", "binding_ids",
-        ):
+        for field in ("schema", "slice_id", "authority_revision", "warmup_rows"):
             if payload[field] != expected[field]:
                 raise RuntimeError(
                     f"stable BAR checkpoint {field} differs from runtime authority"
                 )
+        # DL v2.3.0: catalogue/acquisition revision and binding set may move by
+        # a purely additive declaration (or an explicit migration record); every
+        # unchanged binding keeps its watermark. See bar_edge_checkpoint.
+        if not isinstance(payload["binding_ids"], list) or any(
+            not isinstance(item, str) for item in payload["binding_ids"]
+        ):
+            raise RuntimeError("stable BAR checkpoint fields are invalid")
+        for field in _CROSSING_FIELDS[:2]:
+            if isinstance(payload[field], bool) or not isinstance(payload[field], int):
+                raise RuntimeError("stable BAR checkpoint fields are invalid")
+        try:
+            crossing = plan_crossing(
+                checkpoint={
+                    **{field: payload[field] for field in _CROSSING_FIELDS},
+                    **({"binding_digests": payload["binding_digests"]}
+                       if "binding_digests" in payload else {}),
+                },
+                runtime={field: expected[field] for field in _CROSSING_FIELDS},
+                current_digests=self._binding_digests,
+                migration=self.checkpoint_migration,
+            )
+        except CheckpointCrossingRefused as error:
+            raise RuntimeError(str(error)) from error
+        if crossing.crossed and self.repair_only:
+            raise RuntimeError(
+                "stable BAR repair cannot cross a checkpoint revision; start the writer first"
+            )
+        self.checkpoint_crossing = crossing
+        if crossing.crossed:
+            logger.warning(
+                "stable BAR checkpoint crosses catalog %s->%s acquisition %s->%s %s",
+                payload["catalog_revision"], expected["catalog_revision"],
+                payload["acquisition_revision"], expected["acquisition_revision"],
+                crossing.summary(),
+            )
         last_open_ms = payload["last_open_ms"]
         if not isinstance(last_open_ms, dict) or not set(last_open_ms).issubset(
-            self._binding_ids
+            payload["binding_ids"]
         ):
             raise RuntimeError("stable BAR checkpoint binding watermarks are invalid")
         restored: dict[str, int] = {}
@@ -576,6 +702,10 @@ class StableBinanceBarEdge:
             for source, _acquisition in self.history_bindings + self.history_okx_bindings
         }
         for binding_id, value in last_open_ms.items():
+            if binding_id not in crossing.retained:
+                # Removed or re-identified under the migration record: its
+                # watermark describes another series and is never adopted.
+                continue
             if (
                 isinstance(value, bool)
                 or not isinstance(value, int)
@@ -719,9 +849,16 @@ class StableBinanceBarEdge:
             authority_revision=int(self.authority["revision"]),
             partition_plan_epoch=1,
             adapter_version=source.adapter_version,
-            config_revision=self.acquisition.revision,
-            instrument_catalog_revision=self.catalog.catalog_revision,
+            config_revision=self._lineage_config_revision(source),
+            instrument_catalog_revision=self.catalog.lineage_revision_for(source),
         )
+
+    def _lineage_config_revision(self, source: StableSourceBinding) -> int:
+        """DL v2.3.0 2d: the config lineage this binding's raw envelopes carry."""
+
+        acquisition = getattr(self, "_acquisition_by_id", {}).get(source.binding_id)
+        pinned = getattr(acquisition, "lineage_config_revision", None)
+        return self.acquisition.revision if pinned is None else pinned
 
     def _okx_binding(
         self,
@@ -740,8 +877,8 @@ class StableBinanceBarEdge:
             authority_revision=int(self.authority["revision"]),
             partition_plan_epoch=1,
             adapter_version=source.adapter_version,
-            config_revision=self.acquisition.revision,
-            instrument_catalog_revision=self.catalog.catalog_revision,
+            config_revision=self._lineage_config_revision(source),
+            instrument_catalog_revision=self.catalog.lineage_revision_for(source),
         )
 
     def _history_repair_plan(
@@ -1806,6 +1943,157 @@ class StableBinanceBarEdge:
                 )
         return published
 
+    # ------------------------------------------------------------ DERIVED_FINAL
+
+    def _derived_session_id(self) -> str:
+        return f"qdl-v2-stable-derived-r{self._authority_revision}-g{self.connection_generation}"
+
+    def _derived_ready_at(self, source: StableSourceBinding) -> float:
+        """When the next target of ``source`` closes, plus a settle offset."""
+        interval_ms = _bar_interval_ms(source.interval or "")
+        next_open = self._last_open_ms[source.binding_id] + interval_ms
+        return (next_open + interval_ms) / 1000 + _DERIVED_SETTLE_SECONDS
+
+    def run_derived_cycle(self) -> int:
+        """Publish due DERIVED_FINAL bars; returns the number of ACKed records.
+
+        Per binding: targets after the live watermark (bounded by
+        ``max_catchup_rows``) plus recorded gaps. Each target is decided from
+        durable rows only (`derived_bars.decide`). The watermark moves over
+        published, skipped and gap targets after the Kafka ACK, and stops at
+        the first target still waiting on its base.
+        """
+        if not getattr(self, "_derived_active", False):
+            return 0
+        now = self.clock()
+        now_ms = int(now * 1000)
+        grace_ms = int(_DERIVED_GAP_GRACE_SECONDS * 1000)
+        acknowledged_total = 0
+        moved = False
+        for source, acquisition in self.derived_bindings:
+            binding_id = source.binding_id
+            gaps = self._derived_gaps.setdefault(binding_id, {})
+            due_gaps = bool(gaps) and min(gaps.values()) <= now
+            if self._derived_next_at.get(binding_id, 0.0) > now and not due_gaps:
+                continue
+            parent = self._derived_parent[binding_id]
+            if not (self._live_history_ready(binding_id)
+                    and self._live_history_ready(parent.binding_id)
+                    and binding_id in self._last_open_ms):
+                self._derived_next_at[binding_id] = now + _DERIVED_PARENT_WAIT_SECONDS
+                continue
+            interval_ms = _bar_interval_ms(source.interval or "")
+            for open_ms in [key for key in gaps if now_ms > key + interval_ms + _DERIVED_GAP_RETRY_SECONDS * 1000]:
+                gaps.pop(open_ms)
+                logger.error("stable derived BAR gap kept binding=%s open_ms=%s", binding_id, open_ms)
+            last = self._last_open_ms[binding_id]
+            boundary = _latest_source_closed_boundary_ms(source, now_ms)
+            new_opens = list(range(last + interval_ms, boundary, interval_ms))[: self.max_catchup_rows]
+            retry = sorted(key for key, at in gaps.items() if at <= now)
+            targets = frozenset(new_opens) | frozenset(retry)
+            if not targets:
+                self._derived_next_at[binding_id] = self._derived_ready_at(source)
+                continue
+            base_interval = acquisition.derived_from.interval
+            existing = self.bar_readback.final_bar_rows(source, targets)
+            parent_rows = self.bar_readback.final_bar_rows(parent, frozenset(
+                item for open_ms in targets for item in derived_bars.constituent_opens(
+                    open_ms, interval=source.interval, base_interval=base_interval)
+            ))
+
+            def decide(open_ms: int) -> derived_bars.DerivedDecision:
+                return derived_bars.decide(
+                    open_ms=open_ms, interval=source.interval, base_interval=base_interval,
+                    parent_rows=parent_rows, existing=existing.get(open_ms),
+                    now_ms=now_ms, gap_grace_ms=grace_ms,
+                )
+
+            publish: list[derived_bars.DerivedDecision] = []
+            watermark = last
+            waiting = False
+            new_gaps: list[int] = []
+            for open_ms in new_opens:
+                decision = decide(open_ms)
+                if decision.action == derived_bars.WAIT:
+                    waiting = True
+                    break
+                if decision.action == derived_bars.PUBLISH:
+                    publish.append(decision)
+                elif decision.action == derived_bars.GAP:
+                    new_gaps.append(open_ms)
+                watermark = open_ms
+            healed: list[int] = []
+            for open_ms in retry:
+                decision = decide(open_ms)
+                if decision.action == derived_bars.PUBLISH:
+                    publish.append(decision)
+                    healed.append(open_ms)
+                elif decision.action == derived_bars.SKIP:
+                    healed.append(open_ms)
+                else:
+                    gaps[open_ms] = now + _DERIVED_GAP_RECHECK_SECONDS
+            if publish:
+                envelopes = [
+                    derived_bars.derived_raw_envelope(
+                        source=source, acquisition=acquisition, base_source=parent,
+                        decision=decision, source_session_id=self._derived_session_id(),
+                        connection_generation=self.connection_generation,
+                        authority_revision=int(self.authority["revision"]),
+                        config_revision=self._lineage_config_revision(source),
+                        instrument_catalog_revision=self.catalog.lineage_revision_for(source),
+                        received_at_ns=time.time_ns(),
+                    )
+                    for decision in publish
+                ]
+                acknowledgements = self.publisher.publish_many(envelopes)
+                if len(acknowledgements) != len(envelopes):
+                    raise RuntimeError(
+                        f"stable derived BAR publish missed a Kafka ACK binding={binding_id}"
+                    )
+                acknowledged_total += len(acknowledgements)
+                self.derived_published += len(acknowledgements)
+            for open_ms in healed:
+                gaps.pop(open_ms, None)
+                logger.info("stable derived BAR gap healed binding=%s open_ms=%s", binding_id, open_ms)
+            for open_ms in new_gaps:
+                gaps[open_ms] = now + _DERIVED_GAP_RECHECK_SECONDS
+                self.derived_gaps_recorded += 1
+                logger.warning(
+                    "stable derived BAR gap binding=%s open_ms=%s base=%s: no bar published",
+                    binding_id, open_ms, parent.binding_id,
+                )
+            while len(gaps) > _DERIVED_GAP_LIMIT:
+                dropped = min(gaps)
+                gaps.pop(dropped)
+                logger.error("stable derived BAR gap kept binding=%s open_ms=%s", binding_id, dropped)
+            if watermark != last:
+                self._last_open_ms[binding_id] = watermark
+                moved = True
+            # Poll again soon while a target waits on its base or the
+            # catch-up quantum left closed targets behind the watermark.
+            behind = watermark < boundary - interval_ms
+            self._derived_next_at[binding_id] = (
+                now + _DERIVED_POLL_SECONDS if waiting or behind
+                else self._derived_ready_at(source)
+            )
+        if moved:
+            self._persist_state()
+        if acknowledged_total:
+            logger.info("stable derived BAR ACK count=%s", acknowledged_total)
+        return acknowledged_total
+
+    def _derived_next_wake(self, now: float) -> float | None:
+        if not getattr(self, "_derived_active", False):
+            return None
+        candidates = list(self._derived_next_at.values())
+        candidates.extend(
+            min(gaps.values()) for gaps in self._derived_gaps.values() if gaps
+        )
+        unscheduled = len(self._derived_next_at) < len(self.derived_bindings)
+        if unscheduled or not candidates:
+            return now
+        return min(candidates)
+
     def _next_ready_at(self, now: float) -> float:
         """Wake for a due target retry or the next provider BAR boundary."""
         candidates = []
@@ -2027,6 +2315,9 @@ class StableBinanceBarEdge:
         delay = 60.0
         if self._rest_fallback_active or getattr(self, "_native_recovery_active", False):
             delay = max(0.01, self._next_ready_at(now) - now)
+        derived_at = self._derived_next_wake(now)
+        if derived_at is not None:
+            delay = min(delay, max(0.01, derived_at - now))
         history_delay = self._history_loop_delay(now)
         return delay if history_delay is None else min(delay, history_delay)
 
@@ -2053,7 +2344,9 @@ class StableBinanceBarEdge:
                 serving = self.serving_status() if getattr(self, "bar_readback", None) is not None else {}
                 write_heartbeat(heartbeat_path, role="stable_bar_edge",
                                 detail=f"bindings={len(self.history_bindings)}"
-                                + "".join(f" {name}={value}" for name, value in serving.items()))
+                                + "".join(f" {name}={value}" for name, value in serving.items())
+                                + _declaration_detail(getattr(self, "declaration", None)),
+                                extra=_declaration_extra(getattr(self, "declaration", None)))
             try:
                 # Bootstrap is a bounded latest-closed history read.  It must
                 # run immediately after process start; `_next_ready_at()` is
@@ -2072,6 +2365,8 @@ class StableBinanceBarEdge:
                     self.run_cycle()
                 if getattr(self, "_native_recovery_active", False):
                     self.run_native_recovery_cycle()
+                if getattr(self, "_derived_active", False):
+                    self.run_derived_cycle()
                 failures = 0
             except Exception:
                 failures += 1
@@ -2107,10 +2402,32 @@ def build_from_environment(
 ) -> StableBinanceBarEdge:
     """Build the shared edge or an isolated repair client from one runtime env."""
 
-    catalog = StableSourceCatalog.load(os.environ["QDL_STABLE_SOURCE_BINDINGS"])
-    acquisition = StableAcquisitionPlan.load(
-        os.environ["QDL_STABLE_ACQUISITION_BINDINGS"], catalog=catalog
-    )
+    catalog_path = os.environ["QDL_STABLE_SOURCE_BINDINGS"]
+    acquisition_path = os.environ["QDL_STABLE_ACQUISITION_BINDINGS"]
+    catalog = StableSourceCatalog.load(catalog_path)
+    acquisition = StableAcquisitionPlan.load(acquisition_path, catalog=catalog)
+    # DL v2.3.0: the edge states the declaration it runs (and may be required
+    # to run a mounted, indexed one); see qdl.runtime.declaration.
+    records = [
+        config_file_record(catalog_path, kind="catalog", revision=catalog.catalog_revision),
+        config_file_record(acquisition_path, kind="acquisition", revision=acquisition.revision),
+    ]
+    demand_bundle_path = os.environ.get("QDL_STABLE_BAR_DEMAND_BUNDLE", "").strip()
+    if demand_bundle_path:
+        records.append(config_file_record(demand_bundle_path, kind="demand_bundle", revision=None))
+    migration_path = os.environ.get(_CHECKPOINT_MIGRATION_ENV, "").strip()
+    checkpoint_migration = None
+    if migration_path:
+        checkpoint_migration = load_migration_record(migration_path)
+        records.append(config_file_record(
+            migration_path, kind="checkpoint_migration",
+            revision=int(checkpoint_migration["to"]["acquisition_revision"]),
+        ))
+    declaration = effective_declaration(records, role="stable_bar_edge")
+    index = enforce_declaration(declaration)
+    if index is not None:
+        declaration = effective_declaration(records, role="stable_bar_edge", index=index)
+    log_effective_declaration(declaration)
     runtime_dir = Path(os.environ["QDL_STABLE_RUNTIME_DIR"])
     authority = json.loads((runtime_dir / "authority.json").read_text(encoding="utf-8"))
     if publisher is None:
@@ -2246,7 +2563,28 @@ def build_from_environment(
         history_end_ms=history_end_ms,
         history_only=history_only,
         repair_only=repair_only,
+        checkpoint_migration=checkpoint_migration,
+        declaration=declaration,
     )
+
+
+def _declaration_detail(declaration: dict | None) -> str:
+    return f" declaration={declaration['digest'][:12]}" if declaration else ""
+
+
+def _declaration_extra(declaration: dict | None) -> dict | None:
+    """The heartbeat's compact view of the effective declaration (DL v2.3.0)."""
+
+    if not declaration:
+        return None
+    return {"declaration": {
+        "digest": declaration["digest"],
+        "declaration_revision": declaration["declaration_revision"],
+        "image_files": declaration["image_files"],
+        "revisions": {
+            item["kind"]: item["revision"] for item in declaration["files"]
+        },
+    }}
 
 
 def build_readonly_repair_probe_from_environment(

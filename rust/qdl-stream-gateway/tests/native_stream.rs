@@ -347,6 +347,7 @@ fn binding(feed: &str, interval: Option<&str>, key: &str) -> Binding {
         physical_key: key.into(),
         product_key: format!("lpk1|paper|OKX|SWAP|{UID}|{feed}|{qualifier}"),
         stale_after_ms: 5_000,
+        lineage_revision: 9,
     }
 }
 
@@ -390,6 +391,7 @@ fn bundle_with_streams(
             subject: SUBJECT.into(),
             environment: "paper".into(),
             manifest_revision: revision,
+            min_token_revision: revision,
             allowed_purposes: vec!["INTERNAL_ALPHA".into()],
             allowed_permissions: permissions
                 .iter()
@@ -493,6 +495,7 @@ fn expectation() -> CursorV3Expectation {
         catalog_revision: 9,
         route_generation: "kn2-test-r1".into(),
         schema_major: 2,
+        catalog_revision_by_product: Default::default(),
     }
 }
 
@@ -1542,6 +1545,39 @@ async fn t03_key_rotation_keeps_streams_and_revocation_closes_them() {
         "the revoked key cannot open a new stream"
     );
     assert!(harness.state().metrics.revoked.load(Ordering::Relaxed) >= 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn t03_an_additive_manifest_revision_keeps_older_tokens_and_a_reset_floor_ends_them() {
+    // DL v2.3.0 accept-set: the stream was opened with a revision-3 token.
+    let harness = Harness::new(Options::default());
+    let cursor = harness.log.append(0, TRADE_KEY, &trade(1));
+    harness.settle();
+    let mut stream = harness.subscribe("TRADE", None, cursor, 100).await.unwrap();
+    stream.until_live().await;
+    let authority = harness.state().authority.clone();
+    // Revision 4 is purely additive and declares the floor 3: the stream stays.
+    let mut additive = bundle(4, &ALL_PERMISSIONS, &ALL_FEEDS);
+    additive.manifests[0].min_token_revision = 3;
+    authority.replace(Authority {
+        jwt: jwt_config(&[("k1", &harness.keys)]),
+        bundle: additive,
+        expectation: expectation(),
+    });
+    let next = harness.log.append(0, TRADE_KEY, &trade(2));
+    assert_eq!(stream.collect(1).await.1, vec![next as u64]);
+    // Revision 5 is not additive (the renderer resets the floor to 5): it ends typed.
+    authority.replace(Authority {
+        jwt: jwt_config(&[("k1", &harness.keys)]),
+        bundle: bundle(5, &ALL_PERMISSIONS, &ALL_FEEDS),
+        expectation: expectation(),
+    });
+    let (code, message) = stream.error().await;
+    assert_eq!(code, Code::Unauthenticated);
+    assert!(
+        message.contains("active consumer manifest revision"),
+        "{message}"
+    );
 }
 
 // ------------------------------------------------------------------ K2-T04

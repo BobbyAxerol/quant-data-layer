@@ -48,6 +48,11 @@ import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:  # runnable as `python3 -B scripts/kn_universe_top300.py` from any cwd
+    sys.path.insert(0, str(ROOT))
+
+from qdl.runtime.universal_demand import bar_family_symbols  # noqa: E402
+
 UNIVERSE = ROOT / "config/v2/universes/crypto-top300-1d.json"
 CHANGES = ROOT / "config/v2/universes/crypto-top300-1d.changes.jsonl"
 OWNERSHIP = ROOT / "config/v2/universes/crypto-top300-1d.ownership.json"
@@ -204,10 +209,11 @@ UNIVERSE_CONSUMERS = {
 
 
 def active_symbols(demand: Mapping[str, Any]) -> set[tuple[str, str]]:
-    """(venue, native symbol) with any non-BAR demand: these keep every bar interval."""
-    return {(str(row["venue"]).upper(), str(row["native_symbol"]))
-            for consumer in demand["consumers"] for row in consumer["requirements"]
-            if str(row["feed"]).upper() != "BAR"}
+    """(venue, native symbol) that keep every bar interval: non-BAR demand of a signal (non-EXECUTION) consumer.
+
+    Delegates to `qdl.runtime.universal_demand.bar_family_symbols`, the one predicate shared with the native-bar
+    and alpha-entitlement compilers (v2.2.6: execution-only QUOTE/MARK demand does not change the universe)."""
+    return bar_family_symbols(demand)
 
 
 def demand_row_key(row: Mapping[str, Any]) -> str:

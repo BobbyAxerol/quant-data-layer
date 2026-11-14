@@ -4,11 +4,15 @@ The committed catalog (revision 12), acquisition plan (revision 20) and Trading
 System Paper manifest (revision 11) already carry the four BTC-USD-SWAP feeds
 (IDR-127 brought the repository up to the deployed runtime). The preparation
 scripts extend the scope *before* those feeds existed, so their tests need the
-pre-extension documents. They are recovered from the committed ones by removing
-exactly the inverse instrument/rows and restoring the prior revision/quotas, and
-each recovered document is pinned by the canonical-JSON SHA-256 of the
-historical repository file it reproduces (r11 catalog, r19 acquisition, r10
-manifest), so a drift in either the committed file or this recovery fails.
+pre-extension documents. They are recovered from the committed ones by first
+restricting them to the IDR-127 committed scope (row identities frozen in
+``tests/fixtures/idr127/committed-scope.json``), then removing exactly the
+inverse instrument/rows and restoring the prior revision/quotas. Each recovered
+document is pinned by the canonical-JSON SHA-256 of the historical repository
+file it reproduces (r11 catalog, r19 acquisition, r10 manifest), so a changed
+retained row in the committed file, or a drift in this recovery, fails, while a
+later additive revision (v2.2.6 catalog r13 / acquisition r21 / Paper r12) does
+not.
 """
 from __future__ import annotations
 
@@ -44,6 +48,14 @@ def _load(relative: str):
     return yaml.safe_load((ROOT / relative).read_text(encoding="utf-8"))
 
 
+SCOPE = json.loads((ROOT / "tests/fixtures/idr127/committed-scope.json").read_text(encoding="utf-8"))
+
+
+def _in_scope(rows, field: str, allowed) -> list:
+    allowed = set(allowed)
+    return [row for row in rows if row[field] in allowed]
+
+
 def _pinned(value, expected: str, name: str):
     actual = canonical_sha256(value)
     if actual != expected:
@@ -60,7 +72,9 @@ def inverse_binding_ids() -> frozenset[str]:
 
 def pre_inverse_catalog() -> dict:
     catalog = _load("config/v2/stable-source-bindings.yaml")
-    catalog["catalog_revision"] -= 1
+    catalog["catalog_revision"] = SCOPE["catalog_revision"] - 1
+    catalog["instruments"] = _in_scope(catalog["instruments"], "instrument_uid", SCOPE["catalog_instrument_uids"])
+    catalog["bindings"] = _in_scope(catalog["bindings"], "binding_id", SCOPE["catalog_binding_ids"])
     catalog["instruments"] = [r for r in catalog["instruments"] if r["instrument_uid"] != INVERSE_UID]
     catalog["bindings"] = [r for r in catalog["bindings"] if r["instrument_uid"] != INVERSE_UID]
     return _pinned(catalog, CATALOG_R11_SHA256, "catalog")
@@ -69,25 +83,31 @@ def pre_inverse_catalog() -> dict:
 def pre_inverse_acquisition() -> dict:
     removed = inverse_binding_ids()
     acquisition = _load("config/v2/stable-acquisition-bindings.yaml")
-    acquisition["revision"] -= 1
+    acquisition["revision"] = SCOPE["acquisition_revision"] - 1
+    acquisition["bindings"] = _in_scope(acquisition["bindings"], "binding_id", SCOPE["acquisition_binding_ids"])
     acquisition["bindings"] = [r for r in acquisition["bindings"] if r["binding_id"] not in removed]
     return _pinned(acquisition, ACQUISITION_R19_SHA256, "acquisition")
 
 
 def pre_inverse_paper_manifest() -> dict:
     manifest = _load("consumers/stable/trading-system-paper.yaml")
-    manifest["metadata"]["revision"] -= 1
+    manifest["metadata"]["revision"] = SCOPE["paper_manifest_revision"] - 1
+    scoped = {tuple(k) for k in SCOPE["paper_requirement_keys"]}
     manifest["spec"]["requirements"] = [
-        r for r in manifest["spec"]["requirements"] if r["instrument_uid"] != INVERSE_UID
+        r for r in manifest["spec"]["requirements"]
+        if (r["instrument_uid"], r["feed"], r.get("interval"), r["source_policy_id"]) in scoped
+        and r["instrument_uid"] != INVERSE_UID
     ]
     manifest["spec"]["quotas"].update(PAPER_R10_QUOTAS)
     return _pinned(manifest, PAPER_MANIFEST_R10_SHA256, "Paper manifest")
 
 
 def without_inverse_products(binding: dict, *, manifest_revision: int, reseal) -> dict:
-    """Drop the inverse products/policies from a rendered binding and reseal it."""
+    """Restrict a rendered binding to the IDR-127 scope, drop the inverse products/policies and reseal it."""
     result = deepcopy(binding)
-    kept = [p for p in result["products"] if p["instrument_uid"] != INVERSE_UID]
+    scoped = {tuple(k) for k in SCOPE["paper_requirement_keys"]}
+    kept = [p for p in result["products"] if p["instrument_uid"] != INVERSE_UID
+            and (p["instrument_uid"], p["feed"], p.get("interval"), p["source_policy_id"]) in scoped]
     ids = {p["requirement_id"] for p in kept}
     result["products"] = kept
     if "request_policies" in result:

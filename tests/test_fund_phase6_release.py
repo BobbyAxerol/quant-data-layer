@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import tempfile
 import unittest
 from pathlib import Path
@@ -78,13 +80,20 @@ class ReleaseBundleTests(unittest.TestCase):
         )
         self.assertNotIn("volumes: !reset []", test_runner)
         ignored = {
-            line.strip()
+            line.split("#", 1)[0].strip()
             for line in (ROOT / ".trivyignore").read_text(encoding="utf-8").splitlines()
-            if line.strip() and not line.startswith("#")
+            if line.split("#", 1)[0].strip()
         }
+        # Fail closed: only the narrow BuildKit SBOM false positives plus exactly the
+        # owner-approved, expiring DL v2.3.0 trivy aliases (expire at v2.3.1).
+        accepted = json.loads(
+            (ROOT / ".github" / "accepted-advisories.json").read_text(encoding="utf-8")
+        )
+        waived = {item["id"] for item in accepted["trivy"]}
+        self.assertTrue(all(item["expires"] == "v2.3.1" for item in accepted["trivy"]))
         self.assertEqual(
             ignored,
-            {"GHSA-6v7p-g79w-8964", "CVE-2025-47273"},
+            {"GHSA-6v7p-g79w-8964", "CVE-2025-47273"} | waived,
         )
 
     def test_sbom_contains_locked_python_and_rust_components(self):

@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = ROOT / "deploy/compose/qdl-v2-stable-kn.yml"
 ENV_V224 = ROOT / "deploy/compose/qdl-v2-stable-kn.v2.2.4.env"
 ENV_V225 = ROOT / "deploy/compose/qdl-v2-stable-kn.v2.2.5.env"
+ENV_V226A = ROOT / "deploy/compose/qdl-v2-stable-kn.v2.2.6-stage-a.env"
 CERTIFICATE_V224 = ROOT / "upgrade/evidence/releases/v2.2.4/certificate.json"
 ROLES = {"kafka1", "kafka2", "kafka3", "rust_core", "rust_core_2", "rust_core_3", "ingestor_binance_usdm",
          "ingestor_okx_swap", "market_projector_1", "market_projector_2", "market_cache", "stable_redis",
@@ -56,7 +57,7 @@ class KnStableComposeTest(unittest.TestCase):
             self.assertIsNotNone(match, role)
             variables.add(match.group(1))
             self.assertEqual(svc.get("pull_policy"), "never", role)
-        for path in (ENV_V224, ENV_V225):
+        for path in (ENV_V224, ENV_V225, ENV_V226A):
             if not path.exists():
                 continue
             env = env_file(path)
@@ -128,8 +129,21 @@ class KnStableComposeTest(unittest.TestCase):
                         self.assertTrue(source.startswith("${QDL_TLS_"), source)
                 self.assertNotIn("stable_tls", source)
 
+    def test_v226_stage_a_env_is_config_only_and_selects_paper_r13(self):
+        # v2.2.6 stage A changes host paths only: every image digest equals v2.2.5, the KN state stays put, and the
+        # Paper realm manifest defaults to r11 so the v2.2.5 env renders the deployed Query environment unchanged.
+        old, new = env_file(ENV_V225), env_file(ENV_V226A)
+        self.assertEqual({k: v for k, v in new.items() if k.startswith("QDL_IMAGE_")},
+                         {k: v for k, v in old.items() if k.startswith("QDL_IMAGE_")})
+        self.assertEqual(new["QDL_KN_STATE_DIR"], old["QDL_KN_STATE_DIR"])
+        self.assertEqual(new["QDL_PAPER_REALM_MANIFEST"], "trading-system.paper.stable-r13.yaml")
+        for role in ("query_kn_1", "query_kn_2"):
+            manifests = self.services[role]["environment"]["QDL_STABLE_CONSUMER_MANIFESTS"]
+            self.assertIn("/consumer-realms/${QDL_PAPER_REALM_MANIFEST:-trading-system.paper.stable-r11.yaml}",
+                          manifests)
+
     def test_no_secret_literal_in_committed_files(self):
-        files = [COMPOSE] + [p for p in (ENV_V224, ENV_V225) if p.exists()]
+        files = [COMPOSE] + [p for p in (ENV_V224, ENV_V225, ENV_V226A) if p.exists()]
         for path in files:
             text = path.read_text()
             with self.subTest(file=path.name):

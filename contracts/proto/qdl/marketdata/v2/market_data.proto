@@ -88,6 +88,28 @@ message Bar {
   optional qdl.common.v1.DecimalValue base_volume = 16;
   optional qdl.common.v1.DecimalValue quote_volume = 17;
   optional qdl.common.v1.DecimalValue contract_volume = 18;
+  // Present exactly when origin is BAR_ORIGIN_AGGREGATED: the lineage of a
+  // bar the Data Layer derived from finer final bars of the same instrument.
+  optional BarAggregation aggregation = 19;
+}
+
+// Lineage of one QDL-derived bar. The constituents are the final bars of the
+// next finer interval in the derivation chain (for example 30m for 1h), read
+// back from the durable market cache. The canonical core recomputes the
+// aggregate from them, so this record is evidence of what was aggregated, not
+// a second copy of the values.
+message BarAggregation {
+  string base_interval = 1;
+  string base_source_id = 2;
+  uint32 constituent_count = 3;
+  bytes first_constituent_event_id = 4;
+  bytes last_constituent_event_id = 5;
+  // SHA-256 over the ordered constituent identities (event id, open time,
+  // revision), the same value the raw derived record carries.
+  bytes constituent_sha256 = 6;
+  // Durable bars-topic offsets of the first and last constituent rows.
+  uint64 first_constituent_offset = 7;
+  uint64 last_constituent_offset = 8;
 }
 
 message BookLevel {

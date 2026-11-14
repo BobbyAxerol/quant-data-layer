@@ -5496,3 +5496,23 @@ Redis. Kafka restart counters observed 5/1/0 are not claimed as task-induced.
 Final handoff: **READY FOR PARENT REVIEW / SOURCE ONLY**. Code/tests frozen after
 the 102-test pass; parent owns combined/full suite, main-plan reconciliation and
 coherent commit. This worker neither commits nor activates the candidate.
+
+<a id="delta-20261113-okx-ws-limits-and-lane-rule"></a>
+## Delta 2026-11-13: OKX public WS limits re-checked and the lane-stability rule (v2.2.6 stage A)
+
+Append-only delta; plan journal entry:
+[DL v2.2.6 stage A](../DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md#dl-v226-stage-a-okx-coverage-20261113).
+
+- OKX docs (okx.com/docs-v5, read 2026-11-13): 3 connection requests/s per IP; 480 subscribe/unsubscribe/login
+  requests per hour per connection; the total channel length of one subscribe request at most 64 KB; no stated cap on
+  channels per connection; a connection without a push for 30 s is closed (ping timer N < 30 s).
+- The ingestor sends one subscribe request per lane (`rust/qdl-core/src/okx.rs` `control_command`, budget 480/h at
+  `okx.rs:244`), so adding symbols does not consume the request budget per symbol.
+- Measured venue rates (60 s public probe, 2026-11-13 ~04:25Z, 96 crossec swaps): `bbo-tbt` 792 frames/s, `mark-price`
+  477, `index-tickers` 124, `books` 568, `trades` 168; the 50 ms latest-state coalescing caps QUOTE at about 20/s per
+  symbol.
+- Lane rule: lanes are `okx-<service>-<index>` in the order BOOK, BAR, TRADE, QUOTE, MARK_INDEX, chunked by
+  `max_subscriptions_per_connection` (live 100). Growing a non-last feed past the cap renumbers every later lane, which
+  the L2 book core treats as a stale generation (silently dropped books). `refresh_v2_native_ingestor_runtime.py` now
+  refuses such a refresh; raise the cap (e.g. 200) in the same reviewed change if a feed must outgrow it. Stage A keeps
+  the live layout; the full 96-symbol BOOK tier would need the cap raised.

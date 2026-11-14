@@ -1,0 +1,4 @@
+D6b +6h PASS at 2026-11-13T23:01:09Z
+container qdl_v2_stable_candidate-binance_bar_edge-1: 2026-11-13T14:52:35.316066858Z 0 sha256:a235c0a18cdeb112ea0b49627eaf02f2a68ab878298ebba07884461ee5709d0b
+log since 14:52:00Z, first line 2026-11-13 14:52:47,142, 65764 lines
+gap recorded 22, healed 22, outstanding 0, kept 0, cache-gen lines 0

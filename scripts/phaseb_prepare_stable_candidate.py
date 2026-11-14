@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import secrets
@@ -178,9 +177,11 @@ def prepare_candidate(
         "stable-reference-l2-jwt",
     )
 
-    schema_digest = hashlib.sha256(
-        (ROOT / "contracts/proto/qdl/marketdata/v2/market_data.proto").read_bytes()
-    ).hexdigest()
+    # DL v2.3.0 2d: the record lineage carries the contract LINE digest
+    # (scripts/schema_line.py); the file sha256 is audit only.
+    schema_digest = json.loads(
+        (ROOT / "contracts/schema-lines/qdl-v2-contract-lines.json").read_text(encoding="utf-8")
+    )["lines"][-1]["schema_digest"]
     ingest_secret = secrets.token_urlsafe(48)
     cursor_secret = secrets.token_urlsafe(48)
     phase92_bootstrap_secret = secrets.token_hex(32)

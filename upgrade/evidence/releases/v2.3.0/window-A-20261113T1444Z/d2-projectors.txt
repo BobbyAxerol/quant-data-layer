@@ -1,0 +1,6 @@
+ Container qdl_v2_stable_candidate-market_projector_1-1 Started
+"bundle_sha256":"aec2ef6f0dccf0df7b8e2ef29b6d0712ec9e632d5b71a1c145036aa8c532246a"
+ Container qdl_v2_stable_candidate-market_projector_2-1 Started
+"bundle_sha256":"aec2ef6f0dccf0df7b8e2ef29b6d0712ec9e632d5b71a1c145036aa8c532246a"
+market_projector_1 errors {} ownership_lost 0 rebuilds_started 0 b_batches 4121 latest_applied 24628
+market_projector_2 errors {} ownership_lost 0 rebuilds_started 0 b_batches 10 latest_applied 0
