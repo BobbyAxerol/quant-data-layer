@@ -8,7 +8,14 @@ all-features = false
 no-default-features = false
 
 [advisories]
-ignore = []
+ignore = [
+  { id = "RUSTSEC-2026-0418", reason = "libz-sys: build-script environment leak at build time only; the release images are already built from a pinned lockfile in an offline builder; owner-approved 2026-11-14, expires v2.3.1" },
+  { id = "RUSTSEC-2026-0441", reason = "pin-utils: unmaintained notice, no known vulnerability; owner-approved 2026-11-14, expires v2.3.1" },
+  { id = "RUSTSEC-2026-0382", reason = "rustls-webpki: distrusted intermediates may verify; the DL mesh uses a private CA without public intermediates; venue clients connect to fixed public endpoints; owner-approved 2026-11-14, expires v2.3.1" },
+  { id = "RUSTSEC-2026-0386", reason = "tokio: AsyncFd constructors unsound; DL code does not construct AsyncFd from foreign file descriptors; owner-approved 2026-11-14, expires v2.3.1" },
+  { id = "RUSTSEC-2026-0381", reason = "webpki-roots: bundled set still trusts distrusted emSign intermediates; venue endpoints do not chain to emSign; the mesh uses a private CA; owner-approved 2026-11-14, expires v2.3.1" },
+  { id = "RUSTSEC-2026-0410", reason = "zstd-sys: WebAssembly allocator shim only; the DL builds x86_64-unknown-linux-gnu only; owner-approved 2026-11-14, expires v2.3.1" },
+]
 git-fetch-with-cli = true
 
 [licenses]

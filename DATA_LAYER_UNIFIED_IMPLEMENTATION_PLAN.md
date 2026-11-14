@@ -78210,3 +78210,24 @@ by the owner; recommended options taken.
   `v2.3.0`.
 
 Guide delta: `upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md`, "Delta 2026-11-13: v2.3.0 release fill".
+
+### DL v2.3.0 dependency advisory waiver (owner-approved 2026-11-14) and v2.3.1 dependency-refresh backlog - 2026-11-14 (Claude)
+
+CI run 43524274265 (PR #50) went red on advisories published after the certified images were built. `Cargo.lock` and
+`poetry.lock` are unchanged since 9dab224. The owner chose option A: an exact-ID waiver for v2.3.0 only, expiring at
+v2.3.1.
+- The waiver lives in `.github/accepted-advisories.json` (6 RustSec, 49 Python IDs; each with exposure, reason and
+  expiry). `deny.toml` ignores, and the CI pip-audit step passes `--ignore-vuln` per ID.
+- GHSA-xmj3-9gf7-h52w (setuptools) was found by the local CI10 re-check after the run and added by owner decision at
+  about 02:20Z.
+- Local CI10 reproduction:
+  - cargo-deny 0.20.2: advisories ok;
+  - pip-audit on a235c0a1: no known vulnerabilities, 50 ignored;
+  - unit shard 4 from `/app`: the fixed declaration test passes (2 errors are local-only receipt-path imports, which
+    passed in CI).
+- Certificate re-issued with the waiver as a limit: sha256 `677a690797ff16f54e9119d00912eca6b6745781deb25914e47b1c2194eba4a1`. Endpoint report sha256 `c75b7a662e4bed8a249216cab497e3324094aee58da1abd27d72f5c992fd3baf`.
+
+**Backlog, v2.3.1 dependency refresh (removes the waiver; `.github/accepted-advisories.json` must end empty):**
+- Rust: RUSTSEC-2026-0418 libz-sys -> >=1.1.31, RUSTSEC-2026-0441 pin-utils -> none (unmaintained; replace the dependency), RUSTSEC-2026-0382 rustls-webpki -> >=0.103.16, <0.104.0-alpha.1, RUSTSEC-2026-0386 tokio -> >=1.51.6, <1.52.0 or >=1.53.3, RUSTSEC-2026-0381 webpki-roots -> >=1.0.10, RUSTSEC-2026-0410 zstd-sys -> >=2.1.2.
+- Python: certifi -> 2026.10.18: PYSEC-2026-4320; msgpack -> 1.2.3: CVE-2026-114613; pillow -> 13.0.0: PYSEC-2026-4327, PYSEC-2026-4328, PYSEC-2026-4326, PYSEC-2026-4339, PYSEC-2026-4340, PYSEC-2026-4343, PYSEC-2026-4334, PYSEC-2026-4337, PYSEC-2026-4341, PYSEC-2026-4330, PYSEC-2026-4338, PYSEC-2026-4335, PYSEC-2026-4336, PYSEC-2026-4331, PYSEC-2026-4332, PYSEC-2026-4329, PYSEC-2026-4333, PYSEC-2026-4342, PYSEC-2026-4363, CVE-2026-112895, CVE-2026-112400, CVE-2026-112897, CVE-2026-112395, CVE-2026-112404, CVE-2026-112899, CVE-2026-112900, CVE-2026-112893, CVE-2026-112891, CVE-2026-112390, CVE-2026-112401, CVE-2026-112391, CVE-2026-112894, CVE-2026-112406, CVE-2026-112399, CVE-2026-112892, CVE-2026-112393, CVE-2026-96638, CVE-2026-96640, CVE-2026-96778, GHSA-78g4-xqwv-q3g8, CVE-2026-128067, CVE-2026-128066; soupsieve -> 2.10.0: CVE-2026-126192; soupsieve -> 4.0.0: CVE-2026-126190; soupsieve -> 3.0.2: CVE-2026-126193, CVE-2026-126191; setuptools -> 84.1.0: GHSA-xmj3-9gf7-h52w.
+- The refresh means a rebuild of both images and the matching certification.

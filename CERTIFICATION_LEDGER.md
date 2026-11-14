@@ -2484,3 +2484,5 @@ filled after the window and the R-cert 2 final verdict (`drafts/RELEASE_FILL_LIS
   substitute (CPU gate 6.54 <= 7.27). Post-hoc decisions 2 (overnight package, recommended options).
 - SDK 2.5.0 wheel `ec3ce3491b14db9e6dd4c835996c3aa43737d0dceb958fdb82017b2ea066b456` (two builds identical).
 - Full CI (CI6): one run on the release PR head tree; run id recorded in the dev merge commit and the plan journal.
+- Re-issued 2026-11-14 with the owner-approved dependency advisory waiver (6 RustSec, 49 Python IDs, expires v2.3.1;
+  `.github/accepted-advisories.json`): certificate sha256 `677a690797ff16f54e9119d00912eca6b6745781deb25914e47b1c2194eba4a1`, endpoint report `c75b7a662e4bed8a249216cab497e3324094aee58da1abd27d72f5c992fd3baf`.
