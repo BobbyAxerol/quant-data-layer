@@ -117,7 +117,18 @@ class Phase83CandidateContractTests(unittest.TestCase):
 
     def test_rust_supply_chain_policy_is_explicit_and_fail_closed(self):
         policy = tomllib.loads((ROOT / "deny.toml").read_text())
-        self.assertEqual(policy["advisories"]["ignore"], [])
+        # Fail closed: every advisory ignore must be an exact, expiring, owner-approved
+        # entry in .github/accepted-advisories.json (DL v2.3.0 waiver, expires v2.3.1).
+        accepted = json.loads((ROOT / ".github" / "accepted-advisories.json").read_text())
+        accepted_rust = {item["id"]: item for item in accepted["rust"]}
+        for entry in policy["advisories"]["ignore"]:
+            self.assertIsInstance(entry, dict)
+            self.assertIn(entry["id"], accepted_rust)
+            self.assertTrue(entry["reason"].strip())
+            self.assertEqual(accepted_rust[entry["id"]]["expires"], "v2.3.1")
+        self.assertEqual(
+            {entry["id"] for entry in policy["advisories"]["ignore"]}, set(accepted_rust)
+        )
         self.assertEqual(policy["bans"]["wildcards"], "deny")
         self.assertEqual(policy["sources"]["unknown-registry"], "deny")
         self.assertEqual(policy["sources"]["unknown-git"], "deny")

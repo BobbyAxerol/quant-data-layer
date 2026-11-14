@@ -56,10 +56,10 @@
   "a broker leadership move can restart a projector once, about 45 s, exactly-once kept (IDR-285, fix in v2.3.1)",
   "live funding binding in v2.3.1; DL-BL-2026-11-13-E successor-path hardening in v2.3.1",
   "DL CPU below 6.0 only narrowly after the arms (5.935 vCPU sample)",
-  "dependency advisory waiver, owner-approved 2026-11-14, expires v2.3.1: 6 RustSec (RUSTSEC-2026-0418, RUSTSEC-2026-0441, RUSTSEC-2026-0382, RUSTSEC-2026-0386, RUSTSEC-2026-0381, RUSTSEC-2026-0410) and 49 Python IDs (pillow 12.3.0, soupsieve 2.9.2, certifi 2026.4.22, msgpack 1.2.1, setuptools 84.0.0), published after the certified images were built; lockfiles unchanged since v2.2.5; exposure per ID in .github/accepted-advisories.json"
+  "dependency advisory waiver, owner-approved 2026-11-14, expires v2.3.1: 6 RustSec (RUSTSEC-2026-0418, RUSTSEC-2026-0441, RUSTSEC-2026-0382, RUSTSEC-2026-0386, RUSTSEC-2026-0381, RUSTSEC-2026-0410) and 49 Python IDs (pillow 12.3.0, soupsieve 2.9.2, certifi 2026.4.22, msgpack 1.2.1, setuptools 84.0.0), published after the certified images were built; lockfiles unchanged since v2.2.5; exposure per ID in .github/accepted-advisories.json; plus 33 trivy image-scan aliases for the same packages (certifi 1, msgpack 1, pillow 29, soupsieve 2) in .trivyignore"
  ],
  "ci": "required: one full CI run green on the release PR head tree (CI6, drafts/CI_PLAN.md). The run id is recorded in the dev merge commit message, the plan journal and the GitHub release, not in this file, so the certified tree is exactly the tested tree.",
- "endpoint_report_sha256": "c75b7a662e4bed8a249216cab497e3324094aee58da1abd27d72f5c992fd3baf",
+ "endpoint_report_sha256": "974096cba5308473685145b71f260078d6d76a72fc74f3573fec9e68d4982ef0",
  "evidence_sha256": {
   "window-A-20261113T1444Z/SHA256SUMS": "5ca08d1870a751d72b8edadba7517638451cc49fdfbfa4d25ed61a8a0fde0f64",
   "window-20261113T1237Z/SHA256SUMS": "6a4ec87bdbc6ed652aa54ee028d9d42d1ce4add7b81d7eedaabfab68ff99d039",
@@ -68,18 +68,11 @@
   "window-A-20261113T1444Z-d6b-6h.txt": "c73180041f9721bc6b6bae9e12cf7f61222740389c7503fff4bb3e069f081b38"
  },
  "dependency_advisory_waiver": {
-  "approved": "owner-approved 2026-11-14 (AskUserQuestion option A; setuptools added ~02:20Z)",
+  "approved": "owner-approved 2026-11-14 (AskUserQuestion option A; setuptools added ~02:20Z; trivy aliases ~03:10Z, 'A extended')",
   "expires": "v2.3.1",
   "file": ".github/accepted-advisories.json",
-  "file_sha256": "acd6790daa25ad8b5174f81c893cc690324e003129f0f15a199fa5b5239ab15c",
-  "rust_ids": [
-   "RUSTSEC-2026-0418",
-   "RUSTSEC-2026-0441",
-   "RUSTSEC-2026-0382",
-   "RUSTSEC-2026-0386",
-   "RUSTSEC-2026-0381",
-   "RUSTSEC-2026-0410"
-  ],
+  "file_sha256": "242bbe0031adec5920143978f5d59f9ccc7f41e80679e6b711990a80d65c277b",
+  "local_ci10": "cargo-deny 0.20.2 advisories ok; pip-audit on a235c0a1: no known vulnerabilities, 50 ignored (49 IDs, certifi PYSEC-2026-4320 reported twice); trivy 0.70.0 image scan (ignore-unfixed, CRITICAL,HIGH, repo .trivyignore) on a235c0a1: exit 0; SBOM/signed-manifest rehearsal PASS",
   "python_ids": [
    "PYSEC-2026-4320",
    "CVE-2026-114613",
@@ -131,6 +124,49 @@
    "CVE-2026-126191",
    "GHSA-xmj3-9gf7-h52w"
   ],
-  "local_ci10": "cargo-deny 0.20.2 advisories ok; pip-audit on a235c0a1: no known vulnerabilities, 50 ignored (49 IDs, certifi PYSEC-2026-4320 reported twice)"
+  "rust_ids": [
+   "RUSTSEC-2026-0418",
+   "RUSTSEC-2026-0441",
+   "RUSTSEC-2026-0382",
+   "RUSTSEC-2026-0386",
+   "RUSTSEC-2026-0381",
+   "RUSTSEC-2026-0410"
+  ],
+  "trivy_ids": [
+   "GHSA-6q48-6c7w-9gw2",
+   "CVE-2026-114613",
+   "CVE-2026-112393",
+   "CVE-2026-112398",
+   "CVE-2026-112403",
+   "CVE-2026-112900",
+   "CVE-2026-96639",
+   "CVE-2026-112390",
+   "CVE-2026-112392",
+   "CVE-2026-112397",
+   "CVE-2026-112399",
+   "CVE-2026-112400",
+   "CVE-2026-112402",
+   "CVE-2026-112404",
+   "CVE-2026-112405",
+   "CVE-2026-112406",
+   "CVE-2026-112892",
+   "CVE-2026-112893",
+   "CVE-2026-112894",
+   "CVE-2026-112895",
+   "CVE-2026-112896",
+   "CVE-2026-112897",
+   "CVE-2026-112902",
+   "CVE-2026-128067",
+   "CVE-2026-96637",
+   "CVE-2026-96640",
+   "CVE-2026-96642",
+   "CVE-2026-96643",
+   "CVE-2026-96644",
+   "CVE-2026-96778",
+   "GHSA-78g4-xqwv-q3g8",
+   "CVE-2026-126190",
+   "CVE-2026-126191"
+  ],
+  "trivyignore_sha256": "c80f3feb9aae9d7d98ef4b115d2553fe0b4f59dc64bc489d42235ffa8939a08e"
  }
 }

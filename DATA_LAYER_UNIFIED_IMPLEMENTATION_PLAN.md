@@ -78231,3 +78231,17 @@ v2.3.1.
 - Rust: RUSTSEC-2026-0418 libz-sys -> >=1.1.31, RUSTSEC-2026-0441 pin-utils -> none (unmaintained; replace the dependency), RUSTSEC-2026-0382 rustls-webpki -> >=0.103.16, <0.104.0-alpha.1, RUSTSEC-2026-0386 tokio -> >=1.51.6, <1.52.0 or >=1.53.3, RUSTSEC-2026-0381 webpki-roots -> >=1.0.10, RUSTSEC-2026-0410 zstd-sys -> >=2.1.2.
 - Python: certifi -> 2026.10.18: PYSEC-2026-4320; msgpack -> 1.2.3: CVE-2026-114613; pillow -> 13.0.0: PYSEC-2026-4327, PYSEC-2026-4328, PYSEC-2026-4326, PYSEC-2026-4339, PYSEC-2026-4340, PYSEC-2026-4343, PYSEC-2026-4334, PYSEC-2026-4337, PYSEC-2026-4341, PYSEC-2026-4330, PYSEC-2026-4338, PYSEC-2026-4335, PYSEC-2026-4336, PYSEC-2026-4331, PYSEC-2026-4332, PYSEC-2026-4329, PYSEC-2026-4333, PYSEC-2026-4342, PYSEC-2026-4363, CVE-2026-112895, CVE-2026-112400, CVE-2026-112897, CVE-2026-112395, CVE-2026-112404, CVE-2026-112899, CVE-2026-112900, CVE-2026-112893, CVE-2026-112891, CVE-2026-112390, CVE-2026-112401, CVE-2026-112391, CVE-2026-112894, CVE-2026-112406, CVE-2026-112399, CVE-2026-112892, CVE-2026-112393, CVE-2026-96638, CVE-2026-96640, CVE-2026-96778, GHSA-78g4-xqwv-q3g8, CVE-2026-128067, CVE-2026-128066; soupsieve -> 2.10.0: CVE-2026-126192; soupsieve -> 4.0.0: CVE-2026-126190; soupsieve -> 3.0.2: CVE-2026-126193, CVE-2026-126191; setuptools -> 84.1.0: GHSA-xmj3-9gf7-h52w.
 - The refresh means a rebuild of both images and the matching certification.
+
+Addendum (2026-11-14, ~03:10Z, owner "A extended"): CI run 43548270507 went red on two gates the first waiver did not
+cover.
+- The trivy image scan reported the same packages under 33 alias IDs. They are added to `.trivyignore` and to the
+  accepted file's `trivy` list.
+- The phase-83 policy test asserted an empty `deny.toml` ignore list. It now requires the ignore list to be exactly
+  the accepted rust IDs, each with a reason and expiry v2.3.1, so it stays fail-closed.
+- Local reproduction of every release-gates step not already proven green on 707af30a:
+  - trivy 0.70.0 (the CI version) on a235c0a1 with the repo `.trivyignore`: exit 0;
+  - SBOM/signed-manifest rehearsal: PASS;
+  - unit shard 3 from `/app`: see below.
+- v2.3.1 backlog unchanged: the dependency refresh also clears the trivy aliases. `.trivyignore` returns to its two
+  pre-existing setuptools false-positive entries.
+- Certificate re-issued, endpoint report sha256 `974096cba5308473685145b71f260078d6d76a72fc74f3573fec9e68d4982ef0`.

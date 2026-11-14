@@ -155,8 +155,10 @@ gate 18/18 (render out6, packet section 3).
 - **Dependency advisory waiver (owner-approved 2026-11-14, expires v2.3.1).** Advisories published after the certified
   images were built, against lockfiles unchanged since v2.2.5: 6 RustSec (RUSTSEC-2026-0418, RUSTSEC-2026-0441, RUSTSEC-2026-0382, RUSTSEC-2026-0386, RUSTSEC-2026-0381, RUSTSEC-2026-0410) and 49 Python IDs
   (pillow 12.3.0, soupsieve 2.9.2, certifi 2026.4.22, msgpack 1.2.1, setuptools 84.0.0). Exact IDs only, each with its
-  exposure in `.github/accepted-advisories.json`; `deny.toml` and the CI pip-audit step read them. v2.3.1 refreshes the
-  dependencies and removes the waiver.
+  exposure in `.github/accepted-advisories.json`; `deny.toml` and the CI pip-audit step read them. The CI image scan
+  (trivy) reports the same packages under 33 alias IDs (certifi 1, msgpack 1, pillow 29, soupsieve 2), listed in
+  `.trivyignore` and in the same file (owner-approved 2026-11-14, "A extended"). v2.3.1 refreshes the dependencies and
+  removes the waiver.
 - Post-hoc decisions (2, recommended options under the owner-approved overnight package): the shortened R-cert 2 run
   is accepted, the Monday boundary gating only the 1W/2D/3D derived declarations, which stay off; the G2.2 MISSING set
   is accepted as harness-attributed (open item: the 20:26Z offset restore did not make the shadow re-project).
