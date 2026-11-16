@@ -74,3 +74,16 @@ See `upgrade/evidence/releases/v2.3.0/drafts/STAGE_B_EXECUTION_71_PACKET.md`.
    (verified identical otherwise); the class fix is to make `batch_wait_ms` a declared/core-config input (v2.3.1).
 3. The TS binding is start-time only; a TS route hot-reload (new binding without a recreate) does not exist.
 4. Query CPU per request is not in the capacity model.
+
+## Delta 2026-11-16: stage B and W-A1 applied; gaps 2 and 4 confirmed
+
+Plan anchor: DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md, "DL runtime record: W-A1 permanent and stage B r7 APPLIED".
+- The first production use of "Add execution feeds" and "Change latest-state flush per feed" is done: stage B r7
+  APPLIED 12:24-12:38Z with the row's restart set (cores x3, projectors x2, stream x2, Query x2, OKX ingestor, writer
+  only on the TS side). Rollback was not needed. Evidence `upgrade/evidence/releases/v2.3.0/runtime-record-20261116/`.
+- Gap 2 (hard-coded `batch_wait_ms`) is confirmed in production: the running cores are the bw50 successors
+  (byte-equal to `declaration-stage-b-r7/cores-bw50/`), not the generator output. v2.3.1 B1.
+- Gap 4 (Query cost per request) has a measured term: the TS identity's requests are 57-61 % native QUOTE probes
+  (2,958-3,319/min), not MARK reads, so a MARK-only lever cannot meet a request gate. v2.3.1 B4 proposes a batched
+  probe read.
+- The flush map moved the retained OKX MARK lanes too (per ingestor file, as the matrix says). v2.3.1 B3.
