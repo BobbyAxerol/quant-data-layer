@@ -26,6 +26,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 OPERATIONS = {
     "snapshot": ("GET", "/v2/market-data/{instrument_uid}/snapshot", "snapshot:read"),
+    "snapshot_batch": ("POST", "/v2/market-data/snapshot:batch", "snapshot:read"),
     "warmup": ("GET", "/v2/market-data/{instrument_uid}/warmup", "history:read"),
     "history": ("GET", "/v2/market-data/{instrument_uid}/history", "history:read"),
     "warmup_batch": ("POST", "/v2/market-data/warmup:batch", "history:read"),
@@ -141,7 +142,8 @@ def cases_for(products, batch_size):
                 cases.append(("stream", (p,)))
     cases.extend(("instrument", (p,)) for p in instruments.values())
     # Keep grades separate: public batch contracts reject mixed-grade requests.
-    for name, values in (("warmup_batch", bars), ("reference_batch", references), ("readiness_check", ordinary)):
+    for name, values in (("warmup_batch", bars), ("reference_batch", references), ("readiness_check", ordinary),
+                         ("snapshot_batch", ordinary)):
         for grade in sorted({p.requirement.consumer_grade.value for p in values}):
             selected = [p for p in values if p.requirement.consumer_grade.value == grade]
             for i in range(0, len(selected), batch_size):
@@ -267,6 +269,16 @@ def validate_operation(op, products, payload, refs=()):
         m.InstrumentPageResponse.model_validate(payload)
     elif op == "readiness":
         m.SystemReadinessSummary.model_validate(payload)
+    elif op == "snapshot_batch":
+        from qdl.api_v2.models import SnapshotBatchResponse
+        value = SnapshotBatchResponse.model_validate(payload)
+        if value.partial:
+            raise ValueError("PARTIAL_RESULT")
+        if [x.instrument_uid for x in value.results] != [p.instrument_uid for p in products]:
+            raise ValueError("IDENTITY_MISMATCH")
+        for p, item in zip(products, value.results, strict=True):
+            read(p, {"schema": "qdl.marketdata.snapshot.v2", "request_id": value.request_id,
+                     "data": item.data.model_dump(mode="json", by_alias=True)}, False)
     elif op == "readiness_check":
         value = m.ReadinessResponse.model_validate(payload)
         if [x.instrument_uid for x in value.results] != [p.instrument_uid for p in products]:
@@ -318,6 +330,8 @@ async def invoke(op, products, query, client, manifest, stream_seconds):
         kwargs["params"] = reqs[0].query_params()
     elif op == "readiness_check":
         kwargs["json"] = {"consumer_id": cid, "require_all": True, "requirements": [r.to_mapping() for r in reqs]}
+    elif op == "snapshot_batch":
+        kwargs["json"] = {"consumer_id": cid, "requirements": [r.to_mapping() for r in reqs]}
     response = await query._read_request(OPERATIONS[op][0].lower(), path, **kwargs)
     return query._decode(response)
 
