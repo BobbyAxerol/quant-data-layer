@@ -1,0 +1,38 @@
+{
+  "schema": "qdl.v2.universe-registry.v1",
+  "revision": 1,
+  "universes": [
+    {
+      "universe_id": "binance-usdm-core-v1",
+      "venue": "BINANCE",
+      "market": "USDM",
+      "product_type": "PERPETUAL",
+      "symbols": [
+        {"native_symbol": "BTCUSDT", "segments": ["core", "liquid"]},
+        {"native_symbol": "ETHUSDT", "segments": ["core", "liquid"]},
+        {"native_symbol": "BNBUSDT", "segments": ["liquid"]},
+        {"native_symbol": "SOLUSDT", "segments": ["liquid"]}
+      ]
+    },
+    {
+      "universe_id": "okx-swap-core-v1",
+      "venue": "OKX",
+      "market": "SWAP",
+      "product_type": "PERPETUAL",
+      "symbols": [
+        {"native_symbol": "BTC-USDT-SWAP", "segments": ["core", "liquid"]},
+        {"native_symbol": "ETH-USDT-SWAP", "segments": ["core", "liquid"]},
+        {"native_symbol": "SOL-USDT-SWAP", "segments": ["liquid"]}
+      ]
+    },
+    {
+      "universe_id": "dnse-vn-derivative-core-v1",
+      "venue": "HNX",
+      "market": "VN_DERIVATIVES",
+      "product_type": "FUTURE",
+      "symbols": [
+        {"native_symbol": "VN30F1M", "segments": ["core", "vn-derivative"]}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+{
+  "manifests": {
+    "/s/live/trading-system.paper.stable-r13.yaml": {
+      "model": {
+        "headroom": 1.5,
+        "opening_requests": 436,
+        "products_by_feed": {
+          "BAR": 10,
+          "BOOK_DELTA": 11,
+          "BOOK_SNAPSHOT": 11,
+          "MARK_INDEX_PRICE": 31,
+          "QUOTE": 31,
+          "TRADE": 10
+        },
+        "rates": {
+          "BAR": 0,
+          "BOOK_DELTA": 0,
+          "BOOK_SNAPSHOT": 2,
+          "MARK_INDEX_PRICE": 100,
+          "QUOTE": 90,
+          "TRADE": 10
+        },
+        "required_max_streams": 160,
+        "required_requests_per_minute": 10000,
+        "schema": "qdl.v2.consumer-quota-model.v1",
+        "steady_requests_per_minute": 6012,
+        "stream_headroom": 1.5,
+        "streams": 104
+      },
+      "quotas": {
+        "max_batch_items": 50,
+        "max_buffer_events": 2000,
+        "max_streams": 160,
+        "max_warmup_rows": 2000,
+        "requests_per_minute": 10000
+      },
+      "status": "PASS"
+    },
+    "/s/outB7/consumer-realms/trading-system.paper.stable-r14.yaml": {
+      "model": {
+        "headroom": 1.5,
+        "opening_requests": 1004,
+        "products_by_feed": {
+          "BAR": 10,
+          "BOOK_DELTA": 11,
+          "BOOK_SNAPSHOT": 11,
+          "MARK_INDEX_PRICE": 102,
+          "QUOTE": 102,
+          "TRADE": 10
+        },
+        "rates": {
+          "BAR": 0,
+          "BOOK_DELTA": 0,
+          "BOOK_SNAPSHOT": 2,
+          "MARK_INDEX_PRICE": 100,
+          "QUOTE": 90,
+          "TRADE": 10
+        },
+        "required_max_streams": 370,
+        "required_requests_per_minute": 31000,
+        "schema": "qdl.v2.consumer-quota-model.v1",
+        "steady_requests_per_minute": 19502,
+        "stream_headroom": 1.5,
+        "streams": 246
+      },
+      "quotas": {
+        "max_batch_items": 50,
+        "max_buffer_events": 2000,
+        "max_streams": 370,
+        "max_warmup_rows": 2000,
+        "requests_per_minute": 31000
+      },
+      "status": "PASS"
+    }
+  },
+  "schema": "qdl.v2.consumer-quota-gate.v1",
+  "status": "PASS"
+}
