@@ -85,6 +85,24 @@ v2.3.1 does three things:
    - A rollback no longer depends on env-file order.
    - The image digests stay the v2.3.0 ones until the rollout records the new Query digest.
 
+8. **Stage C declaration r8, Binance signal data for crossec_ema** (owner, 2026-11-17). Rendered and gated offline;
+   it runs in its own window after Query x2 (`ROLLOUT_PLAN.md` section 7).
+   - Coverage: the 96 crossec instruments crossec_ema trades on OKX get Binance USDM BAR 1m on the native kline lane
+     (91 new), DERIVED_FINAL 1h and 12h (182), and FUNDING_RATE on the reference path. All of it is granted to
+     `alpha.okx.paper.stable` r17 (accept-set floor 15).
+   - Revisions: catalogue r16 (adds FETUSDT and LUNA2USDT from the verbatim exchangeInfo), acquisition r24, demand
+     r12, routing r33.
+   - Gate 17/17. The bar-edge crossing from the live out6 pair is additive: 1,047 retained, 273 added, 0 dropped.
+   - Tool changes in `scripts/dl_declaration.py`:
+     - Binance USDM signal universes;
+     - a cross-venue demand template;
+     - Binance-anchored derived parents;
+     - verbatim Binance capture rows appended for listed symbols only;
+     - a complete runtime universe mount.
+     - Tests: `tests/test_v231_stage_c_binance_signal.py`.
+   - Evidence: `declaration-stage-c-r8/`, including the 96-symbol OKX -> Binance map (4 symbols at ×1000, 1 rename,
+     0 missing) and the measured kline rate.
+
 ## Release tree = runtime
 
 - Compose: `deploy/compose/qdl-v2-stable-kn.yml` is byte-equal to the deployed compose (sha256 `5b1381e062d97a7a...`).

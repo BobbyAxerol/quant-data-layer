@@ -78500,3 +78500,61 @@ Files:
 - `CERTIFICATION_LEDGER.md`.
 
 Status: `implemented`, `tested locally`. Not pushed. CI expectation: full run (CI5: `ci.yml` and the lockfiles changed).
+
+### DL v2.3.1 stage C declaration r8: Binance signal data for crossec_ema rendered and gated offline (tested locally) - 2026-11-17 (Claude)
+
+Owner decision 2026-11-17: fold stage C into v2.3.1, then run full CI once on the final tree. Offline only. One read
+of public Binance data was made: exchangeInfo, plus a 120 s public kline WS count. There was no runtime action.
+
+**Symbol map:** `upgrade/evidence/releases/v2.3.1/declaration-stage-c-r8/inputs/okx-binance-symbol-map.json`.
+- Source: exchangeInfo captured 2026-11-17, sha256 `531cecc5...`, 946 symbols.
+- 96 of 96 OKX crossec swaps are mapped; 0 are missing.
+- ×1000: BONK, FLOKI, PEPE, SHIB.
+- LUNA -> LUNA2.
+
+**Lane choice for 1m: native kline WS.**
+- It is the only certified Binance USDM 1m lane (`qdl/runtime/production_catalog.py` R1.28: final klines arrive
+  0.04-1.1 s after close).
+- The REST-final alternative is not declarable for Binance: `bar_source` is refused outside `NATIVE_BAR_MARKETS`.
+  It would cost about 96 requests/min with +6 s visibility, against a DL cost here of about 0.07 vCPU.
+- Measured rate: 4,796 frames in 120 s = 40.0/s = 0.416 per binding.
+
+**Render and gate.**
+- Render: `scripts/dl_declaration.py render`, 0 BLOCKED rows.
+- New: 273 BAR bindings (91 native 1m, 182 DERIVED_FINAL 1h/12h; 12h is derived from 1h).
+- Revisions: catalogue 15->16, acquisition 23->24, demand 11->12, routing 32->33, alpha.okx 16->17 with floor 15.
+- Binance ingestor: config revision 19->24.
+- Gate: 17/17 PASS.
+- Bar-edge crossing from the live out6 pair (14/22 -> 16/24): retained 1047, added 273, dropped 0, no migration
+  record needed.
+- Capacity: +0.068 vCPU upper bound, projected 6.28.
+- Bootstrap: about 2,093 kline pages, about 10,500 weight, at least about 9 min at 50 % of the IP limit.
+- Provider-short: 20 symbols on 12h and 1 symbol (KITEUSDT) on 1h.
+
+**Tool changes (`scripts/dl_declaration.py`):**
+- Binance USDM signal universes (`SIGNAL_INTERVALS`);
+- a cross-venue demand template;
+- Binance-anchored derived parents;
+- Binance `instrument_captures` that append listed symbols verbatim;
+- runtime universes that carry the retained set.
+
+**Tests.**
+- `tests/test_v231_stage_c_binance_signal.py`: 7 OK.
+- `tests.test_v230_declaration_tool` and `tests.test_v230_declaration_mechanism`: OK. The only failure in the
+  combined 58-test run was the new test's parent expectation, now fixed.
+
+**Coupling (alpha side, not edited here):**
+- No same-window JWT bump is needed, because of the accept-set floor 15.
+- crossec_ema subscribes to the Binance products through the same identity.
+- Bump `DATA_LAYER_V2_JWT_MANIFEST_REVISION` to 17 at the next restart.
+
+**Window:** `ROLLOUT_PLAN.md` section 7, after Query x2.
+
+**Files:**
+- `scripts/dl_declaration.py`;
+- `tests/test_v231_stage_c_binance_signal.py`;
+- `tests/fixtures/v231_stage_c/binance-usdm-exchangeinfo-fet-luna2.json`;
+- `upgrade/evidence/releases/v2.3.1/{declaration-stage-c-r8/,ROLLOUT_PLAN.md,RELEASE_NOTES.md,CERTIFICATE_DRAFT.md}`;
+- `upgrade/DL_HOT_ADJUSTMENT_PATHS_V2_3_X.md`.
+
+Status: `implemented`, `tested locally`. Not pushed.

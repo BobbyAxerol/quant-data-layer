@@ -1,0 +1,73 @@
+schema: qdl.v2.declaration.v1
+declaration_revision: 8
+environment: paper
+description: 'DL stage C (v2.3.1): Binance USDM signal data for crossec_ema on the same 96 crossec instruments it
+  trades on OKX (OKX crossec-94 universe plus FET and LUNA from stage B). BAR 1m as the REST-final base (bar_edge),
+  DERIVED_FINAL 1h and 12h, FUNDING_RATE on the reference history path. Granted to alpha.okx.paper.stable, the
+  identity crossec_ema runs under. Additive on the live stage B declaration r7. OKX QUOTE/MARK stage B unchanged.
+  FETUSDT and LUNA2USDT enter the catalogue from the verbatim public exchangeInfo of 2026-11-17.'
+accept_set: true
+ingestor:
+  lane_pins: true
+capacity:
+  # DL total after W-QRR, 2026-11-17 03:49Z (wqrr-window-20261117T0310Z/RECEIPT.md): about 6.21 vCPU.
+  baseline_dl_vcpu: 6.21
+  ceiling_dl_vcpu: 6.5
+  venue_priority:
+  - OKX
+  - BINANCE
+  # Measured on exactly these 96 (public fstream /market/ws, 120 s, 2026-11-17, kline-rate-120s.json):
+  # 4,796 kline frames (provisional + final) = 40.0 frames/s = 0.416 per binding.
+  rates_per_binding:
+    binance_usdm_bar: 0.416
+instrument_captures:
+- venue: BINANCE
+  market: USDM
+  path: binance-usdm-exchangeinfo-20261117.json
+  captured_at_utc: '2026-11-17T06:17:19Z'
+  endpoint: GET https://fapi.binance.com/fapi/v1/exchangeInfo
+  symbols:
+  - FETUSDT
+  - LUNA2USDT
+base:
+  repo: /src/upgrade/evidence/releases/v2.3.0/declaration-stage-b-r7/repo
+  runtime:
+    authority: /s/live/authority.json
+    ingestors:
+      # The live Binance ingestor file (021dd5dc, unchanged since 2026-11-13). The OKX ingestor is left out on
+      # purpose: stage C adds no OKX binding, so ingestor_okx_swap is not recreated.
+      ingestor-binance-usdm.json: /s/live/ingestor-binance-usdm.json
+    cores:
+    - /s/live/cores/rust_core.json
+    - /s/live/cores/rust_core_2.json
+    - /s/live/cores/rust_core_3.json
+    query_acquisition: /s/live/query-stable-acquisition-bindings.yaml
+    bundles:
+      realm: /s/live/realm-bundle.json
+      kn: /s/live/kn-bundle.json
+    route_bindings:
+      trading-system.paper.stable: /s/live/trading-system.paper.stable-r26.json
+bar_edge:
+  split_runtime: true
+  config_lineage: 19
+consumers:
+- consumer_id: alpha.okx.paper.stable
+  class: SIGNAL
+  manifest: consumers/stable/alpha-okx-paper.yaml
+  universes:
+  - universe_id: binance-usdm-crossec-96
+    venue: BINANCE
+    market: USDM
+    symbols_file: symbols-binance-crossec-96.json
+    bars:
+      native:
+      - 1m
+      derived:
+      - 1h
+      - 12h
+    grant_intervals:
+    - 1m
+    - 1h
+    - 12h
+    reference:
+    - FUNDING_RATE

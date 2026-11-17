@@ -106,3 +106,18 @@ Plan anchor: DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md, "DL v2.3.1 release candi
 **Gap 4 (Query cost).** It has two measured terms:
 - replica affinity of a single httpx pool: the fix is the SDK 2.6.0 per-replica client;
 - an offline per-item cost of about 0.59 ms CPU per execution MARK item.
+
+## Delta 2026-11-17 (later): Binance signal universes are declarable (stage C)
+
+Plan anchor: DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md, "DL v2.3.1 stage C declaration r8".
+
+"Add signal bars" now covers Binance USDM. You can declare a SIGNAL universe with venue BINANCE / market USDM and
+native 1m plus derived intervals.
+
+Constraints:
+- The 1m base is always the certified native kline lane. `bar_1m_source` is not declarable for Binance.
+- New Binance instruments enter through `instrument_captures` (venue BINANCE, exact `symbols`), appended verbatim.
+- A signal consumer may take a second venue. Its own OKX BAR row is the demand template.
+
+Restart set: `ingestor_binance_usdm`, cores, projectors, streams, Query and bar_edge. `ingestor_okx_swap` is
+restarted only when OKX bindings change.

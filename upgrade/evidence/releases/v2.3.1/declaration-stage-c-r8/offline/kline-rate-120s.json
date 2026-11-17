@@ -1,0 +1,1 @@
+{"url": "wss://fstream.binance.com/market/ws", "symbols": 96, "symbols_with_frames": 96, "seconds": 120.0, "frames": 4796, "frames_per_s": 40.0, "per_binding_mean": 0.416, "per_binding_p50": 0.242, "per_binding_max": 2.182, "final_frames": 192}

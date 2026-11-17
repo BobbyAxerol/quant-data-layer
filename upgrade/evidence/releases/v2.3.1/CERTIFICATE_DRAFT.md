@@ -19,6 +19,7 @@ The certificate is issued by the coordinator after three things:
 | B5 one versioned env | `deploy/compose/qdl-v2-stable-kn.v2.3.1.env` | `tests/test_kn_stable_compose.py::test_v231_env_is_the_one_versioned_runtime_env` | tested locally |
 | SDK 2.6.0 replica-balanced Query client | additive helper | `tests/test_qdl_sdk_replica_read_transport.py::ReplicatedRestQueryBuilderTests` (3); simulation (section 3) | tested locally |
 | Query JWT parsed-key cache | server-internal | `tests/test_phasec2_transport_security.py::test_verifier_parses_each_key_once_and_still_fails_closed` | tested locally |
+| Stage C declaration r8 (Binance signal data for crossec_ema) | declaration render + gate, tool generalised | `declaration-stage-c-r8/` (gate 17/17; crossing from the live out6 pair is additive), `tests/test_v231_stage_c_binance_signal.py` (7) | tested locally; window `ROLLOUT_PLAN.md` section 7 |
 | Dependency refresh, waiver removed | locks, `deny.toml`, `accepted-advisories.json`, `.trivyignore`, policy tests | section 2 | tested locally (Rust); Python image audit at R0 |
 
 ## 2. Local preflight (CI-shaped, capped, one container at a time)
