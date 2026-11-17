@@ -199,14 +199,18 @@ class ConsumerEndpointBenchmarkTests(unittest.TestCase):
                 patch.object(bench, "measure", side_effect=fake_measure), \
                 patch.object(bench.asyncio, "sleep", AsyncMock()):
             result = asyncio.run(bench.run_client(p))
-        rows = [r for r in result["results"] if r["operation"] == "instrument"]
+        # Every case appends one row per replica (filtered cases too), so pairs follow the global case index.
+        every = result["results"]
         replicas = p["queries"]
+        self.assertEqual(len(every) % len(replicas), 0)
+        for case_index in range(len(every) // len(replicas)):
+            first, second = every[case_index * 2], every[case_index * 2 + 1]
+            self.assertEqual([first["replica"], second["replica"]],
+                             replicas if case_index % 2 == 0 else replicas[::-1])
+            self.assertEqual((first["operation"], first["products"]), (second["operation"], second["products"]))
+        rows = [r for r in every if r["operation"] == "instrument"]
         self.assertGreaterEqual(len(rows), 4)
-        self.assertEqual(len(rows) % len(replicas), 0)
-        for case_index in range(len(rows) // len(replicas)):
-            pair = [r["replica"] for r in rows[case_index * 2:case_index * 2 + 2]]
-            self.assertEqual(pair, replicas if case_index % 2 == 0 else replicas[::-1])
-            self.assertEqual(rows[case_index * 2]["products"], rows[case_index * 2 + 1]["products"])
+        self.assertEqual({r["replica"] for r in rows[:2]} | {r["replica"] for r in rows[2:4]}, set(replicas))
         walls = [s["started_wall_ms"] for r in rows for s in r["samples"]]
         self.assertEqual(walls, sorted(walls))
         self.assertTrue(all(isinstance(w, float) for w in walls))
