@@ -2774,6 +2774,117 @@
         "title": "ResampleLineageView",
         "type": "object"
       },
+      "SnapshotBatchItemResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarketDataView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "feed": {
+            "$ref": "#/components/schemas/FeedType"
+          },
+          "instrument_uid": {
+            "title": "Instrument Uid",
+            "type": "string"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProblemDetails"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instrument_uid",
+          "feed",
+          "status"
+        ],
+        "title": "SnapshotBatchItemResponse",
+        "type": "object"
+      },
+      "SnapshotBatchRequestModel": {
+        "additionalProperties": false,
+        "properties": {
+          "consumer_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Consumer Id",
+            "type": "string"
+          },
+          "requirements": {
+            "items": {
+              "$ref": "#/components/schemas/RequirementModel"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Requirements",
+            "type": "array"
+          }
+        },
+        "required": [
+          "consumer_id",
+          "requirements"
+        ],
+        "title": "SnapshotBatchRequestModel",
+        "type": "object"
+      },
+      "SnapshotBatchResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "error_count": {
+            "title": "Error Count",
+            "type": "integer"
+          },
+          "partial": {
+            "title": "Partial",
+            "type": "boolean"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SnapshotBatchItemResponse"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "schema": {
+            "default": "qdl.marketdata.snapshot-batch.v1",
+            "title": "Schema",
+            "type": "string"
+          },
+          "success_count": {
+            "title": "Success Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_id",
+          "partial",
+          "success_count",
+          "error_count",
+          "results"
+        ],
+        "title": "SnapshotBatchResponse",
+        "type": "object"
+      },
       "SnapshotResponse": {
         "additionalProperties": false,
         "properties": {
@@ -3698,6 +3809,65 @@
           }
         ],
         "summary": "Reference Data Batch",
+        "tags": [
+          "market-data-v2"
+        ]
+      }
+    },
+    "/v2/market-data/snapshot:batch": {
+      "post": {
+        "description": "B4 (DL v2.3.1): many single snapshots in one call, each with its own outcome.\n\nAuthorization is the single route's, checked for every item before any read\n(consumer, ``snapshot:read``, purpose, the manifest's ``max_batch_items`` and\nevery requirement), so one unauthorized item refuses the whole call exactly\nlike its single read would. Each item then runs the unchanged snapshot policy\nand cursor binding; a data refusal (``DATA_STALE``, ``DATA_NOT_READY``, ...)\nis that item's typed ``problem`` inside a 200 envelope, never a substitute\nview. The call is one request against the consumer's quota.",
+        "operationId": "snapshot_batch_v2_market_data_snapshot_batch_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-QDL-Purpose",
+            "required": true,
+            "schema": {
+              "title": "X-Qdl-Purpose",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnapshotBatchRequestModel"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotBatchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "QDLConsumerIdentity": [],
+            "QDLWorkloadBearer": []
+          }
+        ],
+        "summary": "Snapshot Batch",
         "tags": [
           "market-data-v2"
         ]

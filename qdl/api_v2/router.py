@@ -37,6 +37,8 @@ from qdl.api_v2.models import (
     ReadinessResponse,
     ReferenceBatchRequest,
     ReferenceBatchResponse,
+    SnapshotBatchRequestModel,
+    SnapshotBatchResponse,
     SnapshotResponse,
     SourceView,
     SystemReadinessSummary,
@@ -1005,6 +1007,7 @@ def _warmup_batch_response(
 
 _WARMUP_BATCH_ROUTE = "/v2/market-data/warmup:batch"
 _REFERENCE_BATCH_ROUTE = "/v2/market-data/reference:batch"
+_SNAPSHOT_BATCH_ROUTE = "/v2/market-data/snapshot:batch"
 
 
 def _record_batch_item_refusal(
@@ -1549,6 +1552,86 @@ async def reference_data_batch(
         partial=result.partial,
         success_count=result.success_count,
         error_count=result.error_count,
+        results=items,
+    )
+
+
+@router.post("/market-data/snapshot:batch", response_model=SnapshotBatchResponse)
+async def snapshot_batch(
+    request: Request,
+    body: SnapshotBatchRequestModel,
+    purpose: AccessPurpose = Depends(_purpose),
+    service: V2QueryService = Depends(_service),
+    access: DataPlaneAccess = Depends(_data_access),
+):
+    """B4 (DL v2.3.1): many single snapshots in one call, each with its own outcome.
+
+    Authorization is the single route's, checked for every item before any read
+    (consumer, ``snapshot:read``, purpose, the manifest's ``max_batch_items`` and
+    every requirement), so one unauthorized item refuses the whole call exactly
+    like its single read would. Each item then runs the unchanged snapshot policy
+    and cursor binding; a data refusal (``DATA_STALE``, ``DATA_NOT_READY``, ...)
+    is that item's typed ``problem`` inside a 200 envelope, never a substitute
+    view. The call is one request against the consumer's quota.
+    """
+
+    access.require_consumer(body.consumer_id)
+    access.require_permission(DataPlanePermission.SNAPSHOT_READ)
+    access.require_purpose(purpose)
+    access.require_batch_size(len(body.requirements))
+    requirements = tuple(_requirement(item) for item in body.requirements)
+    for requirement in requirements:
+        if requirement.warmup_limit or requirement.warmup is not None:
+            raise QueryServiceError(
+                QueryProblem(
+                    CanonicalErrorCode.INVALID_ARGUMENT,
+                    "a snapshot batch item carries no warmup",
+                    False,
+                ),
+                request_id=service.request_id(),
+                instrument_uid=requirement.instrument_uid,
+            )
+        access.require_requirement(requirement)
+    result = await service.snapshot_batch_async(
+        requirements, purpose=purpose, consumer_id=access.consumer_id
+    )
+    items = []
+    for item in result.results:
+        requirement = item.requirement
+        if item.error is not None:
+            try:
+                problem = _problem(item.error)
+                _record_batch_item_refusal(
+                    "snapshot_batch_item",
+                    problem,
+                    feed=requirement.feed,
+                    route=_SNAPSHOT_BATCH_ROUTE,
+                    extra_reasons=(item.error.reason,),
+                )
+            finally:
+                release_exception_frames(item.error)
+            items.append({
+                "instrument_uid": requirement.instrument_uid,
+                "feed": requirement.feed,
+                "status": problem.code,
+                "data": None,
+                "problem": problem,
+            })
+            continue
+        bound = _bind_item_cursor(request, access, requirement, item.result.item)
+        items.append({
+            "instrument_uid": requirement.instrument_uid,
+            "feed": requirement.feed,
+            "status": "OK",
+            "data": _market_item(bound),
+            "problem": None,
+        })
+    errors = sum(item["problem"] is not None for item in items)
+    return SnapshotBatchResponse(
+        request_id=result.request_id,
+        partial=errors > 0,
+        success_count=len(items) - errors,
+        error_count=errors,
         results=items,
     )
 

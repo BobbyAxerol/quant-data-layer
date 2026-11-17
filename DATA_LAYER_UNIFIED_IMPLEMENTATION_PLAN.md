@@ -78344,3 +78344,66 @@ owner-approved changes. Both are recorded here as **APPLIED** with their receipt
 Files: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md` (this entry), `upgrade/DL_HOT_ADJUSTMENT_PATHS_V2_3_X.md` (delta),
 `upgrade/evidence/releases/v2.3.0/runtime-record-20261116/{RUNTIME_RECORD.md,SHA256SUMS,receipts/*.md}`.
 Status: record of applied runtime (APPLIED, receipts). No code change, no runtime action, not pushed.
+
+### DL v2.3.1 B4: `POST /v2/market-data/snapshot:batch` for batched QUOTE liveness probes (tested locally) - 2026-11-16 (Claude)
+
+Owner-approved v2.3.1 item B4 (2026-11-16), offline only: no runtime action, image build, push or CI.
+
+**Why.** Measured 15:56-16:00Z (evidence `~/.local/state/qdl-v2/capacity-under-6.5-20261116/writer-coalesce-20261116T1600Z/`):
+- the TS native writer sends 2,958-3,319 QUOTE probes/min;
+- that is 57-61 % of the `trading-system.paper.stable` identity's 5,211-5,815 Query requests/min;
+- 99 % of the probes return `renewed_same_record`.
+
+Each probe is one HTTP call, and the quota counts calls (`qdl/security/data_plane.py`, `self.quota.consume` once per
+authenticated request).
+
+**What (additive, versioned).**
+- `POST /v2/market-data/snapshot:batch`, contract `qdl.marketdata.snapshot-batch.v1`. Request
+  `{consumer_id, requirements[1..100]}` with no warmup. Response `{schema, request_id, partial, success_count, error_count,
+  results[{instrument_uid, feed, status, data|problem}]}`.
+- Authorization is the single route's, checked before any read: consumer, `snapshot:read`, purpose, the manifest's
+  `max_batch_items` (paper r13: 50, else 429 `QUOTA_EXCEEDED`) and every requirement (one unauthorized item refuses the
+  call). A warmup item is 400 `INVALID_ARGUMENT`.
+- `V2QueryService.snapshot_batch_async` runs every item through the unchanged `snapshot()` policy (freshness, session
+  liveness, recency, gap, entitlement, eligibility) in one hot-thread hop. It uses one hot-lane permit that reserves the
+  single read's 16 KiB once per item. A lane refusal is one 429 `RATE_LIMITED` envelope.
+- Each item is cursor-bound like the single read (`_bind_item_cursor`). A refused item is its typed problem in the 200
+  envelope and leaves a `snapshot_batch_item` refusal line.
+- One call is one quota unit. The single snapshot contract is unchanged.
+- Files:
+  - `qdl/api_v2/router.py`, `qdl/api_v2/models.py`, `qdl/query/service.py`;
+  - OpenAPI snapshot regenerated (diff: +1 path, +3 schemas, nothing changed or removed);
+  - `scripts/benchmark_consumer_endpoints.py` covers the new operation;
+  - path/schema counts in `tests/test_fund_phase5_contracts.py`, `tests/test_phaseb_stable_release.py` and
+    `tests/test_consumer_endpoint_benchmark.py`;
+  - `DATA_LAYER_SERVICE_ACCESS_GUIDE.md`.
+- New tests: `tests/test_v231_snapshot_batch.py` (11). They cover:
+  - item == single read;
+  - batch requirement == single requirement (same `requirement_digest`);
+  - per-item `DATA_NOT_READY`/`DATA_STALE` equal the single problem;
+  - one quota unit for 20 items;
+  - 51 items -> 429;
+  - unauthorized item -> 403 before any read;
+  - consumer/permission/purpose/auth;
+  - warmup/empty/unknown field -> 400;
+  - one admission permit;
+  - lane refusal -> 429.
+
+**Tests (capped `--rm --network none --cpus 1 --memory 2g`, image `qdl-v2-python:2.3.0-rc3-7cd4fc36`):**
+`python -B -m unittest tests.test_phaseb_stable_release tests.test_v231_snapshot_batch tests.test_fund_phase5_contracts
+tests.test_consumer_endpoint_benchmark tests.test_phase0_contract_golden` -> 45 OK. Also run:
+`tests.test_fund_phase5_api tests.test_query_refusal_cycles tests.test_refusal_log tests.test_p184_dr05_public_query`
+-> OK except the path count that this slice then updated.
+
+**Not done:**
+- ruff (not installed on the host or in the image);
+- Redis-backed KN suites;
+- measured per-item Query cost.
+
+**Rollout coupling:**
+- The route lives in the Python image, so it needs a DL v2.3.1 image and a recreate of `query_kn_1`/`query_kn_2` only.
+- No catalog, consumer-manifest or JWT manifest-revision change.
+- Projector, stream, core, ingestor and the writer are untouched.
+- A Query without the route answers 404, and the TS writer falls back to the per-route GET.
+
+Status: `implemented`, `tested locally`.
