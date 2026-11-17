@@ -1,5 +1,22 @@
 # SDK Changelog
 
+## 2.7.0 (Data Layer v2.3.2: session-alive frames for quiet QUOTE/TRADE streams)
+
+Additive only. `GrpcStreamTransport` gains keyword-only `session_alive_interval_ms`
+(default 0 = off; otherwise 250..500). When set, `subscribe()` sends the additive
+`SubscribeRequest.session_alive_interval_ms = 9` and yields `SessionAliveEvent`
+(`StreamRecord.session_alive = 12`, schema `qdl.stream.session-alive.v1`): the
+session id, connection generation and config revision of the instrument's last event,
+the ingestor's last transport time, the liveness age at emission, the gateway epoch and
+high watermark, and the current resume token unchanged. `WarmupStreamSession` passes
+the event through without touching offsets or acknowledgements. A refused request maps
+to `DataLayerError` code `SESSION_ALIVE_INVALID` / `SESSION_ALIVE_UNAVAILABLE`.
+
+Unchanged for every other client: with the default 0 the request bytes equal 2.6.0, and
+a `session_alive` record a client did not ask for is ignored. Why: a quiet BBO left the
+TS writer's session proof older than Risk's 2 s rule while the venue was healthy
+(design `upgrade/DL_V232_SESSION_ALIVE_FRAME_DESIGN.md`).
+
 ## 2.6.0 (Data Layer v2.3.1: per-request Query replica balancing)
 
 Additive only. New `build_replicated_rest_query(urls, *, tls, credential_provider,

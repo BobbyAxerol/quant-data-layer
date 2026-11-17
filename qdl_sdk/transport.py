@@ -14,7 +14,13 @@ import httpx
 from qdl.query.v2 import query_pb2
 from qdl_sdk.credentials import CredentialProvider
 from qdl_sdk.errors import CursorExpiredError, DataLayerError, SlowConsumerError
-from qdl_sdk.models import ControlEvent, DataRequirement, Grade, StreamEvent
+from qdl_sdk.models import (
+    ControlEvent,
+    DataRequirement,
+    Grade,
+    SessionAliveEvent,
+    StreamEvent,
+)
 from qdl_sdk.reference import ReferenceRequirement
 from qdl_sdk.tls import WorkloadTlsConfig
 
@@ -518,11 +524,16 @@ def build_replicated_rest_query(
 # gateway ignores the field and keeps sending one `record` per response.
 DEFAULT_MAX_RECORDS_PER_RESPONSE = 64
 MAX_RECORDS_PER_RESPONSE = 256
+# SDK 2.7.0 (Data Layer v2.3.2): session-alive cadence bounds the gateway
+# clamps `SubscribeRequest.session_alive_interval_ms` to; 0 = not requested.
+MIN_SESSION_ALIVE_INTERVAL_MS = 250
+MAX_SESSION_ALIVE_INTERVAL_MS = 500
 
 
 class GrpcStreamTransport:
     # Class default for instances built without __init__ (test doubles).
     max_records_per_response: int = DEFAULT_MAX_RECORDS_PER_RESPONSE
+    session_alive_interval_ms: int = 0
 
     def __init__(
         self,
@@ -534,7 +545,23 @@ class GrpcStreamTransport:
         credential_provider: CredentialProvider | None = None,
         start_index: int | None = None,
         max_records_per_response: int = DEFAULT_MAX_RECORDS_PER_RESPONSE,
+        session_alive_interval_ms: int = 0,
     ) -> None:
+        if type(session_alive_interval_ms) is not int or not (
+            session_alive_interval_ms == 0
+            or MIN_SESSION_ALIVE_INTERVAL_MS
+            <= session_alive_interval_ms
+            <= MAX_SESSION_ALIVE_INTERVAL_MS
+        ):
+            raise ValueError(
+                "session_alive_interval_ms must be 0 (off) or an int between "
+                f"{MIN_SESSION_ALIVE_INTERVAL_MS} and {MAX_SESSION_ALIVE_INTERVAL_MS}"
+            )
+        # 0 sends the pre-2.7.0 request (field 9 absent): no SessionAlive frames.
+        # A value asks a v2.3.2 gateway for SessionAliveEvent at that cadence on
+        # event-recency OBSERVE QUOTE/TRADE subscriptions (any other route is
+        # refused INVALID_ARGUMENT); an older gateway ignores the field.
+        self.session_alive_interval_ms = session_alive_interval_ms
         if (
             type(max_records_per_response) is not int
             or not 1 <= max_records_per_response <= MAX_RECORDS_PER_RESPONSE
@@ -595,7 +622,7 @@ class GrpcStreamTransport:
         consumer_id: str,
         cursor_token: str,
         max_buffer_events: int = 1000,
-    ) -> AsyncIterator[StreamEvent | ControlEvent]:
+    ) -> AsyncIterator[StreamEvent | ControlEvent | SessionAliveEvent]:
         request = query_pb2.SubscribeRequest(
             consumer_id=consumer_id,
             requirement=requirement.to_proto(),
@@ -609,6 +636,8 @@ class GrpcStreamTransport:
         # RESOURCE_EXHAUSTED for replay work budgets. An older gateway ignores
         # field 8 and answers OUT_OF_RANGE CURSOR_EXPIRED; both are handled.
         request.replay_budget_status_v2 = True
+        if self.session_alive_interval_ms > 0:
+            request.session_alive_interval_ms = self.session_alive_interval_ms
         if self._credential_provider is None:
             raise DataLayerError(
                 "UNAUTHENTICATED",
@@ -655,6 +684,20 @@ class GrpcStreamTransport:
                                 record.gateway_dequeue_wall_ns or None,
                                 record.gateway_send_wall_ns or None,
                             )
+                        elif payload == "session_alive" and self.session_alive_interval_ms > 0:
+                            frame = record.session_alive
+                            yield SessionAliveEvent(
+                                record.resume_token,
+                                frame.source_session_id,
+                                frame.connection_generation,
+                                frame.config_revision,
+                                frame.provider_last_transport_at_ns,
+                                frame.provider_session_liveness_ms,
+                                frame.gateway_epoch,
+                                frame.high_watermark,
+                            )
+                        # Anything else (an unrequested frame, a future
+                        # payload) is not this client's contract: ignored.
                 return
             except grpc.aio.AioRpcError as error:
                 detail = error.details() or "gRPC stream failed"
@@ -676,9 +719,13 @@ class GrpcStreamTransport:
                         "RATE_LIMITED", detail, retryable=True
                     ) from error
                 if error.code() is grpc.StatusCode.INVALID_ARGUMENT:
-                    raise DataLayerError(
-                        "CURSOR_INVALID", detail, retryable=False
-                    ) from error
+                    # 2.7.0: a refused session-alive request keeps its own code.
+                    code = (
+                        detail.partition(":")[0]
+                        if detail.startswith("SESSION_ALIVE_")
+                        else "CURSOR_INVALID"
+                    )
+                    raise DataLayerError(code, detail, retryable=False) from error
                 if error.code() is grpc.StatusCode.PERMISSION_DENIED:
                     raise DataLayerError(
                         "SOURCE_NOT_ALLOWED", detail, retryable=False

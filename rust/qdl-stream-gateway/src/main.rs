@@ -22,6 +22,7 @@ use qdl_stream_gateway::reader::{latest_for_key, KafkaLogSource, KafkaRangeSourc
 use qdl_stream_gateway::readview::{NotReadyReadView, ReadView};
 use qdl_stream_gateway::replay::{ReplayCoordinator, ReplayLimits};
 use qdl_stream_gateway::service::{Gateway, GatewayState, StreamLimits};
+use qdl_stream_gateway::session_liveness::SessionLivenessReader;
 use qdl_stream_gateway::subscription::ByteBudget;
 use qdl_stream_gateway::tls;
 use std::collections::BTreeMap;
@@ -207,6 +208,22 @@ fn process_usage() -> (u64, f64) {
     (rss, cpu)
 }
 
+/// DL v2.3.2 session-alive frames: `QDL_KN_SESSION_LIVENESS_DIR` names the
+/// read-only mount of the ingestors' `runtime/session-liveness` records. Unset
+/// or empty: the feature is unavailable and a Subscribe asking for frames is
+/// refused INVALID_ARGUMENT. Set to anything but a readable directory: the
+/// gateway refuses to start (a typo must not look like a quiet venue).
+fn session_liveness(state: GatewayState) -> Result<GatewayState, String> {
+    let dir = env_or("QDL_KN_SESSION_LIVENESS_DIR", "");
+    if dir.is_empty() {
+        return Ok(state);
+    }
+    std::fs::read_dir(&dir).map_err(|error| {
+        format!("QDL_KN_SESSION_LIVENESS_DIR {dir} is not a readable directory: {error}")
+    })?;
+    Ok(state.with_session_liveness(Arc::new(SessionLivenessReader::new(dir))))
+}
+
 fn limits(queue_total: u64) -> Result<StreamLimits, String> {
     let per_subscription = default_queue_bytes_per_subscription(queue_total).to_string();
     Ok(StreamLimits {
@@ -268,7 +285,7 @@ async fn serve() -> Result<(), String> {
         limits.replay.clone(),
         ByteBudget::new(memory.replay_total as usize),
     );
-    let state = Arc::new(GatewayState::new(
+    let state = GatewayState::new(
         authority.clone(),
         Arc::new(quota),
         cursor_codec()?,
@@ -277,7 +294,8 @@ async fn serve() -> Result<(), String> {
         read_view()?,
         budget,
         limits,
-    ));
+    );
+    let state = Arc::new(session_liveness(state)?);
     let tls_config = tls::server_config(
         &read("QDL_KN_TLS_CERT_FILE")?,
         &read("QDL_KN_TLS_KEY_FILE")?,
@@ -336,6 +354,12 @@ async fn serve() -> Result<(), String> {
                 "handoff_timeout_within_floor": load(&isolation.handoff_timeout_within_floor),
                 "handoff_timeout_over_floor": load(&isolation.handoff_timeout_over_floor),
             });
+            // DL v2.3.2 frames; added after the literal, which is at json!'s recursion limit.
+            let session_alive = serde_json::json!({
+                "sent": load(&metrics.session_alive_sent),
+                "dropped": load(&metrics.session_alive_dropped),
+                "withheld": load(&metrics.session_alive_withheld),
+            });
             let replay_timing = serde_json::json!({
                 "slot_waits": load(&replay.slot_waits),
                 "slot_wait_ns": load(&replay.slot_wait_ns),
@@ -344,9 +368,7 @@ async fn serve() -> Result<(), String> {
                 "cursor_next_calls": load(&replay.cursor_next_calls),
                 "cursor_next_elapsed_ns": load(&replay.cursor_next_elapsed_ns),
             });
-            println!(
-                "{}",
-                serde_json::json!({
+            let mut report = serde_json::json!({
                     "event": "qdl_kn_gateway_metrics",
                     "bundle_sha256": reporter.authority.current().bundle.sha256,
                     "authority_generation": reporter.authority.generation(),
@@ -388,8 +410,9 @@ async fn serve() -> Result<(), String> {
                     "queue_isolation": queue_isolation,
                     "rss_bytes": rss,
                     "cpu_seconds": cpu,
-                })
-            );
+            });
+            report["session_alive"] = session_alive;
+            println!("{report}");
         }
     });
     let address = env_or("QDL_KN_LISTEN", "0.0.0.0:8210")
@@ -400,7 +423,9 @@ async fn serve() -> Result<(), String> {
         serde_json::json!({"event": "qdl_kn_gateway_start", "listen": env_or("QDL_KN_LISTEN", "0.0.0.0:8210"),
             "bundle_sha256": state.authority.current().bundle.sha256,
             "route_generation": state.authority.current().expectation.route_generation,
-            "partitions": starts, "memory": memory.summary()})
+            "partitions": starts, "memory": memory.summary(),
+            "session_alive_enabled": !env_or("QDL_KN_SESSION_LIVENESS_DIR", "").is_empty(),
+            "gateway_epoch": state.gateway_epoch})
     );
     let incoming = tls::incoming(address, tls_config)
         .await

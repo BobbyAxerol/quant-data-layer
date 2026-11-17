@@ -1,6 +1,6 @@
 # DL v2.3.2 design: Stream "session alive" frame (quiet QUOTE class fix)
 
-- **Status:** design only. Not implemented in this branch; see section 6.
+- **Status:** DL side implemented on this branch (section 8), `tested locally` only. Not deployed, not pushed.
 - **Owner decision:** option (a), 2026-11-17 about 08:00Z. DL v2.3.2 / TS v2.1.5, together with TS interim (b).
   The Risk 2 s rule stays unchanged.
 - **Problem and measurements:** `upgrade/DL_V232_QUIET_QUOTE_SESSION_PROOF_DESIGN.md` on branch
@@ -176,3 +176,55 @@ Recommended next slice: a dedicated implementation pass on this branch in the or
 
 The "after" column is a model: frame lag U(0, 500 ms) plus the measured `provider_session_liveness_ms` (max 1007 ms).
 It assumes frames are not delayed. The implementation slice must confirm it on a live replay.
+
+## 8. Implementation (DL v2.3.2 slice 1, 2026-11-17)
+
+What was built, and where it differs from sections 3-4. Each difference is fail-closed.
+
+**Contract** (`contracts/proto/qdl/query/v2/query.proto`): exactly section 3 (field 9, `SessionAlive` 1..7,
+oneof member 12).
+- `config_revision` is the revision the instrument's last event carries. The session record may be newer, because a
+  retained binding keeps the revision it was added at (the Query reader rule since v2.3.0 rc3). A record older than
+  the event gives no frame.
+- `gateway_epoch` is the gateway process start time (Unix ns). The gateway has no ownership epoch, so this names the
+  instance that judged the frame.
+- `contracts/schema-lines` registers compatible lines of `market_data.proto` only. It has no per-message entries, and
+  an additive change stays in line 1, so nothing is added there. The name `qdl.stream.session-alive.v1` is in the
+  proto comment and in `session_liveness.rs` (`SESSION_ALIVE_SCHEMA`).
+
+**Gateway** (`rust/qdl-stream-gateway/src/session_liveness.rs`, `service.rs`, `hub.rs`, `main.rs`):
+- `SessionLivenessReader` ports `StableSessionLivenessReader.status`: the same record validation, file rule, 256-file
+  cap, flags and `(inode, mtime, size)` cache. Two differences: the lineage successor is not ported, and a record
+  file over 4 KiB is refused.
+- The Subscribe live loop gets an interval arm, created only when field 9 is set. Each tick emits a frame only if
+  all of these hold:
+  - auth is valid and the subscription is not terminal;
+  - the queue holds nothing for this product;
+  - the hub reader is caught up on the partition (`Hub::reader_caught_up`: the hot-read rules, broker head confirmed
+    within 1 s);
+  - the session matches the last delivered event and is LIVE;
+  - the transport age is at most 3 x interval and within the requirement's `max_session_liveness_ms`.
+- The frame goes through `try_send`. A full handoff drops it and counts it (`session_alive_dropped`).
+- A stream that has delivered no event yet takes the session from the newest committed record of its key in the hot
+  ring, and only when that record is at or below the stream position. This covers a quiet instrument right after
+  subscribe.
+- Field 9 on a route that is not event-recency OBSERVE QUOTE/TRADE: INVALID_ARGUMENT `SESSION_ALIVE_INVALID`.
+- `QDL_KN_SESSION_LIVENESS_DIR` unset: INVALID_ARGUMENT `SESSION_ALIVE_UNAVAILABLE`. Set but unreadable: the gateway
+  refuses to start.
+
+**SDK 2.7.0:** `GrpcStreamTransport(session_alive_interval_ms=0|250..500)` and `SessionAliveEvent`; the default
+sends 2.6.0 bytes.
+
+**Runtime config, written in the repo and not applied:**
+- `stream_kn_1/2` get the Query mount and `QDL_KN_SESSION_LIVENESS_DIR=/session-liveness`.
+- The compiler declares `STABLE_SESSION_LIVENESS_WRITE_INTERVAL_MS = 250` for both native ingestors.
+- `refresh_v2_native_ingestor_runtime` and `dl_declaration` carry it as a compiler-tuned field. Before this change
+  they refused any non-binding difference.
+
+**Consumer rule (TS):** re-stamp a cached QUOTE only when the frame's `source_session_id`, `connection_generation`
+and `config_revision` equal the cached event's. A `payload = None` record is skipped.
+
+**Measured cost** (`rust/qdl-stream-gateway/tests/session_alive_cost.rs`, in-process, opt-level 3; no HTTP/2 or TLS):
+- build and encode: about 0.27 µs per frame (343 bytes);
+- the session status read: 34.8 µs with 4 lane files and 98.9 µs with 16, mostly the directory scan;
+- at 226 frames/s that is 0.008 to 0.022 vCPU. The section 4 estimate was 0.005 to 0.011.

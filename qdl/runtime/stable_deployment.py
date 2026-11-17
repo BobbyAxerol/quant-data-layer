@@ -75,6 +75,13 @@ STABLE_CORE_BATCH_WAIT_MS = 50
 # deployed core carries true (declaration-stage-b-r7/cores-bw50), so the
 # generator declares it too (DL v2.3.1 B1: generated role fields == runtime).
 STABLE_CORE_BOOK_RESYNC_QUARANTINE = True
+# Native-ingestor session-liveness write throttle (DL v2.3.2; ingestor bound
+# 250..5000, `qdl-native-raw-ingestor.rs` config validation). The Stream
+# gateway's session-alive frames (every <= 500 ms) carry the record's transport
+# age, so the worst proof age is about this + 500 ms + transport: 1000 ms
+# gave ~1.5 s against Risk's 2 s rule, 250 ms gives ~0.75 s. Every rendered
+# native ingestor (OKX SWAP and Binance USD-M both carry QUOTE) uses it.
+STABLE_SESSION_LIVENESS_WRITE_INTERVAL_MS = 250
 V2_REALTIME_RAW_TOPIC = "md.raw.realtime.v2"
 SHARED_REALTIME_CORE_GROUP_ID = "qdl-v2-realtime-core-v2"
 SHARED_REALTIME_CORE_ID_PREFIX = "qdl-v2-realtime-core"
@@ -1337,7 +1344,9 @@ class StableAcquisitionPlan:
                 "session_liveness_dir": (
                     f"/var/lib/qdl-stable/runtime/session-liveness/{key}"
                 ),
-                "session_liveness_write_interval_ms": 1000,
+                "session_liveness_write_interval_ms": (
+                    STABLE_SESSION_LIVENESS_WRITE_INTERVAL_MS
+                ),
                 "max_inflight_publishes": 512,
                 "max_subscriptions_per_connection": (
                     200 if runtime == "BINANCE" else 100

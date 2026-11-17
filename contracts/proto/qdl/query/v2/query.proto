@@ -127,6 +127,13 @@ message SubscribeRequest {
   // cannot progress) is OUT_OF_RANGE "CURSOR_EXPIRED:REPLAY_SCAN_LIMIT:..." for
   // every client. REPLAY_TIME_LIMIT and RETENTION are unchanged by this field.
   bool replay_budget_status_v2 = 8;
+  // Additive (SDK 2.7.0, DL v2.3.2): ask for SessionAlive frames at this
+  // cadence. 0 (absent) = no frames, the pre-2.3.2 behaviour. A server that
+  // knows the field clamps it to 250..500 ms. Valid only for a requirement
+  // whose route is event-recency OBSERVE on QUOTE or TRADE; otherwise the
+  // server answers INVALID_ARGUMENT. A server whose session-liveness source is
+  // not configured also answers INVALID_ARGUMENT (fail closed).
+  uint32 session_alive_interval_ms = 9;
 }
 
 message ReplayRequest {
@@ -153,6 +160,35 @@ message StreamControl {
   uint64 high_watermark = 4;
 }
 
+// Schema qdl.stream.session-alive.v1 (DL v2.3.2). Typed evidence that the
+// provider session carrying the subscription's instrument is LIVE, sent only
+// to a client that set SubscribeRequest.session_alive_interval_ms, only while
+// the subscription is LIVE, and only when the ingestor's session record is
+// LIVE, fresh (at most 3 x the interval old) and of the same session,
+// connection generation and config revision as the instrument's last
+// delivered event. Silence is the signal: no frame means no proof. The record
+// carrying it has logical_offset 0 and the subscription's current
+// resume_token unchanged; it never advances a cursor.
+message SessionAlive {
+  // The provider connection the instrument's last delivered event came on.
+  string source_session_id = 1;
+  uint64 connection_generation = 2;
+  // The config revision the last delivered event carries. The session
+  // record's own revision is equal or newer (a retained binding keeps the
+  // revision it was added at), never older.
+  uint32 config_revision = 3;
+  // From the ingestor's session record (Unix ns, DL host clock).
+  uint64 provider_last_transport_at_ns = 4;
+  // Gateway now minus provider_last_transport_at_ns, at emission.
+  uint64 provider_session_liveness_ms = 5;
+  // The serving gateway's generation: its process start time (Unix ns). A
+  // restarted gateway has a new epoch, so a frame names the one instance that
+  // judged it.
+  uint64 gateway_epoch = 6;
+  // The subscription's committed high watermark at emission.
+  uint64 high_watermark = 7;
+}
+
 message StreamRecord {
   uint64 logical_offset = 1;
   string resume_token = 2;
@@ -175,6 +211,9 @@ message StreamRecord {
   oneof payload {
     qdl.marketdata.v2.EventEnvelope event = 10;
     StreamControl control = 11;
+    // Additive (DL v2.3.2): never sent unless requested (SubscribeRequest
+    // field 9). A reader that never asked can ignore it.
+    SessionAlive session_alive = 12;
   }
 }
 

@@ -509,8 +509,9 @@ class StableDeploymentContractTests(unittest.TestCase):
             },
         )
         self.assertEqual(
+            # DL v2.3.2: 250 ms so session-alive frames stay well inside 2 s.
             {item["session_liveness_write_interval_ms"] for item in native.values()},
-            {1000},
+            {250},
         )
         self.assertEqual(
             {item["latest_state_flush_ms"] for item in native.values()}, {50}

@@ -110,6 +110,14 @@ pub struct SubscribeRequest {
     /// every client. REPLAY_TIME_LIMIT and RETENTION are unchanged by this field.
     #[prost(bool, tag="8")]
     pub replay_budget_status_v2: bool,
+    /// Additive (SDK 2.7.0, DL v2.3.2): ask for SessionAlive frames at this
+    /// cadence. 0 (absent) = no frames, the pre-2.3.2 behaviour. A server that
+    /// knows the field clamps it to 250..500 ms. Valid only for a requirement
+    /// whose route is event-recency OBSERVE on QUOTE or TRADE; otherwise the
+    /// server answers INVALID_ARGUMENT. A server whose session-liveness source is
+    /// not configured also answers INVALID_ARGUMENT (fail closed).
+    #[prost(uint32, tag="9")]
+    pub session_alive_interval_ms: u32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ReplayRequest {
@@ -129,6 +137,42 @@ pub struct StreamControl {
     #[prost(string, tag="3")]
     pub detail: ::prost::alloc::string::String,
     #[prost(uint64, tag="4")]
+    pub high_watermark: u64,
+}
+/// Schema qdl.stream.session-alive.v1 (DL v2.3.2). Typed evidence that the
+/// provider session carrying the subscription's instrument is LIVE, sent only
+/// to a client that set SubscribeRequest.session_alive_interval_ms, only while
+/// the subscription is LIVE, and only when the ingestor's session record is
+/// LIVE, fresh (at most 3 x the interval old) and of the same session,
+/// connection generation and config revision as the instrument's last
+/// delivered event. Silence is the signal: no frame means no proof. The record
+/// carrying it has logical_offset 0 and the subscription's current
+/// resume_token unchanged; it never advances a cursor.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SessionAlive {
+    /// The provider connection the instrument's last delivered event came on.
+    #[prost(string, tag="1")]
+    pub source_session_id: ::prost::alloc::string::String,
+    #[prost(uint64, tag="2")]
+    pub connection_generation: u64,
+    /// The config revision the last delivered event carries. The session
+    /// record's own revision is equal or newer (a retained binding keeps the
+    /// revision it was added at), never older.
+    #[prost(uint32, tag="3")]
+    pub config_revision: u32,
+    /// From the ingestor's session record (Unix ns, DL host clock).
+    #[prost(uint64, tag="4")]
+    pub provider_last_transport_at_ns: u64,
+    /// Gateway now minus provider_last_transport_at_ns, at emission.
+    #[prost(uint64, tag="5")]
+    pub provider_session_liveness_ms: u64,
+    /// The serving gateway's generation: its process start time (Unix ns). A
+    /// restarted gateway has a new epoch, so a frame names the one instance that
+    /// judged it.
+    #[prost(uint64, tag="6")]
+    pub gateway_epoch: u64,
+    /// The subscription's committed high watermark at emission.
+    #[prost(uint64, tag="7")]
     pub high_watermark: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -156,7 +200,7 @@ pub struct StreamRecord {
     /// from send to the client's receive is the network plus client buffers.
     #[prost(uint64, tag="5")]
     pub gateway_send_wall_ns: u64,
-    #[prost(oneof="stream_record::Payload", tags="10, 11")]
+    #[prost(oneof="stream_record::Payload", tags="10, 11, 12")]
     pub payload: ::core::option::Option<stream_record::Payload>,
 }
 /// Nested message and enum types in `StreamRecord`.
@@ -167,6 +211,10 @@ pub mod stream_record {
         Event(super::super::super::marketdata::v2::EventEnvelope),
         #[prost(message, tag="11")]
         Control(super::StreamControl),
+        /// Additive (DL v2.3.2): never sent unless requested (SubscribeRequest
+        /// field 9). A reader that never asked can ignore it.
+        #[prost(message, tag="12")]
+        SessionAlive(super::SessionAlive),
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]

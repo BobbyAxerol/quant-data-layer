@@ -78558,3 +78558,66 @@ of public Binance data was made: exchangeInfo, plus a 120 s public kline WS coun
 - `upgrade/DL_HOT_ADJUSTMENT_PATHS_V2_3_X.md`.
 
 Status: `implemented`, `tested locally`. Not pushed.
+
+### DL v2.3.2 slice 1: Stream session-alive frames for quiet QUOTE/TRADE (tested locally) - 2026-11-17 (Claude)
+
+This implements design `upgrade/DL_V232_SESSION_ALIVE_FRAME_DESIGN.md`, sections 3-4 (owner option a). The
+differences from the design are listed in its section 8.
+
+**Contract** (additive):
+- `SubscribeRequest.session_alive_interval_ms = 9`;
+- `message SessionAlive` with fields 1..7;
+- `StreamRecord.session_alive = 12`.
+- `buf format`, `lint`, and `breaking` against phase1, phase7-beta and contract-line-1: all rc=0, so
+  `schema_digest` stays on line 1.
+- The generated Rust is written in the prost-build style, because `buf generate` needs remote plugins and the run was
+  offline.
+- The generated Python comes from an offline emulator of the protoc python generator. Its self-check renders the base
+  proto byte-equal to the committed `query_pb2.py` before it renders the new one.
+
+**Gateway:**
+- `src/session_liveness.rs` is a port of `StableSessionLivenessReader.status`, plus the frame rules.
+- `service.rs` gets the live-loop interval arm. A frame needs a healthy, caught-up stream with an empty queue
+  (`Hub::reader_caught_up`). It is sent with `try_send` and dropped when the handoff is full.
+- A stream with no delivered event takes its session from the hot ring.
+- `QDL_KN_SESSION_LIVENESS_DIR`: unset means INVALID_ARGUMENT `SESSION_ALIVE_UNAVAILABLE`; set but unreadable means
+  the gateway does not start.
+- New metrics: `session_alive.{sent,dropped,withheld}`.
+
+**SDK 2.7.0:** `GrpcStreamTransport(session_alive_interval_ms)` and `SessionAliveEvent`. The default sends 2.6.0
+bytes.
+
+**Runtime config** (in the repo, not applied):
+- The `stream_kn_1/2` mount plus env.
+- `STABLE_SESSION_LIVENESS_WRITE_INTERVAL_MS = 250`.
+- The refresh and declaration tools carry it as a compiler-tuned field. Before this change they refused any
+  non-binding difference.
+
+**Tests:** container `rust:1.82-slim`, offline, `--cpus 1`.
+- `cargo check --workspace --all-targets`: clean.
+- `cargo test --workspace --all-targets -- --test-threads=1`: 559 passed, 0 failed, 72 ignored. This includes:
+  - `session_liveness` unit tests: 10;
+  - native_stream, 4 new tests: inter-frame gaps 501/498/499/500/500 ms at 500 ms; no frame after DISCONNECTED;
+    the handoff-full test dropped 5 and sent 1 after the drain.
+- Not run: clippy and the toolchain's own rustfmt, which are not installed offline. Format was checked with
+  rustfmt 1.83.
+- Python (`qdl-v2-python:2.3.1-aa75218`, 63 impacted modules): 1138 tests, 81 skipped, 1 error.
+  - The error was the new refresh test's direct-call fixture. It is fixed: the rerun of
+    `tests.test_refresh_v2_native_ingestor_runtime` and `tests.test_qdl_sdk_session_alive` gave 16 OK.
+  - Ruff is not in the image, so lint was not run.
+
+**Measured cost** (`tests/session_alive_cost.rs`; opt-level 3 for the gateway, contracts, prost, bytes and
+serde_json; no HTTP/2 or TLS):
+- build and encode: 266-271 ns, 343 bytes;
+- status read: 34.8 µs with 4 lane files, 98.9 µs with 16;
+- vCPU at 226 frames/s: 0.008 with 4 lane files, 0.022 with 16.
+- The directory scan dominates. A shared, short-TTL scan is a follow-up if the production lane count is high.
+
+**Blast radius for a rollout** (not done):
+- recreate `stream_kn_1/2` with a new Stream image, the mount and the env;
+- re-render the ingestor configs (250 ms) and recreate `ingestor_okx_swap` and `ingestor_binance_usdm`, same image;
+  this reconnects the provider sessions.
+- Nothing else is touched: Kafka x3, cores x3, projectors, market_cache, stable_redis, query_kn_1/2, bar_edge.
+- Rollback: the previous Stream digest and the 1000 ms ingestor configs.
+
+Status: `implemented`, `tested locally`. Not pushed.
