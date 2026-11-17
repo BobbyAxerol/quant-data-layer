@@ -263,6 +263,16 @@ class ConsumerEndpointBenchmarkTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 bench.validate_profile({**self.profile, **bad})
 
+    def test_scope_loads_from_the_deployed_selector_declaration(self):
+        # The deployed stage-B r7 declaration carries selector manifests (alpha.okx r16). Without a selector context
+        # the route plan refused it ("declares universe selectors but no universe/catalogue context"), which ended
+        # the first after-W-QRR run with a ValueError before any call.
+        decl = bench.ROOT / "upgrade/evidence/releases/v2.3.0/declaration-stage-b-r7/repo"
+        with patch.object(bench, "ROOT", decl):
+            manifest, scope = bench.load_scope("trading-system.paper.stable")
+        self.assertEqual(manifest.manifest_revision, 14)
+        self.assertEqual(scope.evidence()["product_count"], 246)
+
     def test_cleanup_only_exact_container_and_failure_visible(self):
         with patch.object(bench.subprocess, "run", return_value=SimpleNamespace(stdout="")) as run:
             bench.cleanup_container("qdl-endpoint-bench-x")

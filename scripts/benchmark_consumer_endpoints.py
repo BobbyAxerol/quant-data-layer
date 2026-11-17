@@ -123,7 +123,12 @@ def load_scope(consumer_id):
 
     catalog = StableSourceCatalog.load(ROOT / "config/v2/stable-source-bindings.yaml")
     acquisition = StableAcquisitionPlan.load(ROOT / "config/v2/stable-acquisition-bindings.yaml", catalog=catalog)
-    release = StableReleaseRoutePlan.load(ROOT / "config/v2/stable-v2-release-routing.yaml", manifest_root=ROOT)
+    from qdl.consumer.selectors import SelectorContext
+    # A deployed declaration (DL v2.3.0+) can carry selector manifests (alpha.okx r16); they need the catalogue and
+    # universe context the runtime loads them with. Repo-default manifests without selectors are unaffected.
+    selectors = SelectorContext.from_catalog(catalog, universe_dir=ROOT / "config/v2/universes")
+    release = StableReleaseRoutePlan.load(ROOT / "config/v2/stable-v2-release-routing.yaml", manifest_root=ROOT,
+                                          selector_context=selectors)
     selected = next(c for c in release.consumers if c.consumer_id == consumer_id)
     if not any(x.route == "V2_PRIMARY" for x in selected.products):
         raise ValueError("selected consumer has no released V2 products; legacy remains excluded")
