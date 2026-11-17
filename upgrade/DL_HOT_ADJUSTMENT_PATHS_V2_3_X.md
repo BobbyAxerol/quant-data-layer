@@ -87,3 +87,22 @@ Plan anchor: DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md, "DL runtime record: W-A1
   (2,958-3,319/min), not MARK reads, so a MARK-only lever cannot meet a request gate. v2.3.1 B4 proposes a batched
   probe read.
 - The flush map moved the retained OKX MARK lanes too (per ingestor file, as the matrix says). v2.3.1 B3.
+
+## Delta 2026-11-17: v2.3.1 closes gap 2, corrects its cause, and adds one-env-per-release
+
+Plan anchor: DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md, "DL v2.3.1 release candidate prepared offline".
+
+**Gap 2, correction.**
+- The core refresher (`refresh_v2_core_runtime_bindings.successor`, also used by `dl_declaration.py build_cores`)
+  does not refuse a bw50 base. It compares only the `core` sub-document and carries the active top-level
+  `batch_wait_ms` over.
+- Verified offline on `declaration-stage-b-r7/cores-bw50`: OK, 0 additions, byte-equal.
+- The hard-coded value only affected full generator output. v2.3.1 declares it, `STABLE_CORE_BATCH_WAIT_MS = 50`,
+  together with the previously omitted `book_resync_quarantine: true`.
+
+**Env.** `deploy/compose/qdl-v2-stable-kn.v2.3.1.env` is the single env for the release. An overlay env file
+(stage-b.env) is no longer part of the rollback recipe.
+
+**Gap 4 (Query cost).** It has two measured terms:
+- replica affinity of a single httpx pool: the fix is the SDK 2.6.0 per-replica client;
+- an offline per-item cost of about 0.59 ms CPU per execution MARK item.

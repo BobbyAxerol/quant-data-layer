@@ -1,0 +1,96 @@
+quantity 3: delivery lag venue event -> canonical publish (Kafka CreateTime), seconds; BAR from close time.
+per manifest x venue x feed x interval: rows declared, rows with samples, total n, median of row p50, max of row p95, max
+== alpha-binance-paper declared 380 measured 40
+  BINANCE  BAR               12h  rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  BAR               15m  rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  BAR               1d   rows 255 meas   0 (no event in the 6-min capture)
+  BINANCE  BAR               1h   rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  BAR               1m   rows   5 meas   5 n      30 p50   0.292 p95max   3.050 max   3.050
+  BINANCE  BAR               1w   rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  BAR               2h   rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  BAR               30m  rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  BAR               3d   rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  BAR               3m   rows   5 meas   5 n      10 p50   6.621 p95max   7.355 max   7.355
+  BINANCE  BAR               4h   rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  BAR               5m   rows   5 meas   5 n       5 p50   6.353 p95max   6.441 max   6.441
+  BINANCE  BAR               6h   rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  BAR               8h   rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  BASIS             1d   rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  BOOK_DELTA        -    rows   5 meas   5 n   16094 p50   0.068 p95max   0.095 max   0.196
+  BINANCE  BOOK_SNAPSHOT     -    rows   5 meas   5 n    2077 p50   0.069 p95max   0.113 max   0.196
+  BINANCE  CONTRACT_METADATA -    rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  FUNDING_RATE      -    rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  LONG_SHORT_RATIO  1d   rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  MARK_INDEX_PRICE  -    rows   5 meas   5 n    1726 p50   0.124 p95max   0.186 max   0.215
+  BINANCE  OPEN_INTEREST     -    rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  OPEN_INTEREST     1d   rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  QUOTE             -    rows   5 meas   5 n   21262 p50   0.088 p95max   0.133 max   0.220
+  BINANCE  TAKER_FLOW        1d   rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  TRADE             -    rows   5 meas   5 n   38335 p50   0.083 p95max   0.157 max   0.226
+== alpha-okx-paper declared 375 measured 40
+  OKX      BAR               12h  rows   5 meas   0 (no event in the 6-min capture)
+  OKX      BAR               15m  rows   5 meas   0 (no event in the 6-min capture)
+  OKX      BAR               1d   rows 255 meas   0 (no event in the 6-min capture)
+  OKX      BAR               1h   rows   5 meas   0 (no event in the 6-min capture)
+  OKX      BAR               1m   rows   5 meas   5 n      30 p50   0.756 p95max   1.394 max   1.394
+  OKX      BAR               1w   rows   5 meas   0 (no event in the 6-min capture)
+  OKX      BAR               2d   rows   5 meas   0 (no event in the 6-min capture)
+  OKX      BAR               2h   rows   5 meas   0 (no event in the 6-min capture)
+  OKX      BAR               30m  rows   5 meas   0 (no event in the 6-min capture)
+  OKX      BAR               3d   rows   5 meas   0 (no event in the 6-min capture)
+  OKX      BAR               3m   rows   5 meas   5 n      10 p50   0.798 p95max   1.127 max   1.127
+  OKX      BAR               4h   rows   5 meas   0 (no event in the 6-min capture)
+  OKX      BAR               5m   rows   5 meas   5 n       5 p50   0.881 p95max   1.063 max   1.063
+  OKX      BAR               6h   rows   5 meas   0 (no event in the 6-min capture)
+  OKX      BOOK_DELTA        -    rows   5 meas   5 n   16300 p50   0.066 p95max   0.131 max   0.391
+  OKX      BOOK_SNAPSHOT     -    rows   5 meas   5 n    2087 p50   0.072 p95max   0.180 max   0.391
+  OKX      CONTRACT_METADATA -    rows   5 meas   0 (no event in the 6-min capture)
+  OKX      FUNDING_RATE      -    rows   5 meas   0 (no event in the 6-min capture)
+  OKX      LONG_SHORT_RATIO  1d   rows   5 meas   0 (no event in the 6-min capture)
+  OKX      MARK_INDEX_PRICE  -    rows   5 meas   5 n    5862 p50   0.625 p95max   1.561 max   2.116
+  OKX      OPEN_INTEREST     -    rows   5 meas   0 (no event in the 6-min capture)
+  OKX      OPEN_INTEREST     1d   rows   5 meas   0 (no event in the 6-min capture)
+  OKX      QUOTE             -    rows   5 meas   5 n   18736 p50   0.091 p95max   0.142 max   0.302
+  OKX      TAKER_FLOW        1d   rows   5 meas   0 (no event in the 6-min capture)
+  OKX      TRADE             -    rows   5 meas   5 n   11093 p50   0.078 p95max   0.268 max   0.534
+== alpha-vn-paper declared 2 measured 0
+  HNX      BAR               1m   rows   1 meas   0 (no event in the 6-min capture)
+  HNX      TRADE             -    rows   1 meas   0 (no event in the 6-min capture)
+== monitoring-multivenue declared 5 measured 4
+  BINANCE  TRADE             -    rows   2 meas   2 n   27318 p50   0.084 p95max   0.153 max   0.226
+  HNX      BAR               1m   rows   1 meas   0 (no event in the 6-min capture)
+  OKX      TRADE             -    rows   2 meas   2 n    9441 p50   0.078 p95max   0.221 max   0.534
+== reference-l2-stable declared 95 measured 30
+  BINANCE  BASIS             1d   rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  BOOK_DELTA        -    rows   4 meas   4 n   10163 p50   0.069 p95max   0.099 max   0.196
+  BINANCE  BOOK_SNAPSHOT     -    rows   4 meas   4 n    2886 p50   0.072 p95max   0.113 max   0.196
+  BINANCE  CONTRACT_METADATA -    rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  FUNDING_RATE      -    rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  LONG_SHORT_RATIO  1d   rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  MARK_INDEX_PRICE  -    rows   5 meas   5 n    1726 p50   0.124 p95max   0.186 max   0.215
+  BINANCE  OPEN_INTEREST     -    rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  OPEN_INTEREST     1d   rows   5 meas   0 (no event in the 6-min capture)
+  BINANCE  TAKER_FLOW        1d   rows   5 meas   0 (no event in the 6-min capture)
+  OKX      BOOK_DELTA        -    rows   6 meas   6 n   12097 p50   0.070 p95max   0.186 max   0.391
+  OKX      BOOK_SNAPSHOT     -    rows   6 meas   6 n    2458 p50   0.076 p95max   0.274 max   0.391
+  OKX      CONTRACT_METADATA -    rows   5 meas   0 (no event in the 6-min capture)
+  OKX      FUNDING_RATE      -    rows   5 meas   0 (no event in the 6-min capture)
+  OKX      LONG_SHORT_RATIO  1d   rows   5 meas   0 (no event in the 6-min capture)
+  OKX      MARK_INDEX_PRICE  -    rows   5 meas   5 n    5862 p50   0.625 p95max   1.561 max   2.116
+  OKX      OPEN_INTEREST     -    rows   5 meas   0 (no event in the 6-min capture)
+  OKX      OPEN_INTEREST     1d   rows   5 meas   0 (no event in the 6-min capture)
+  OKX      TAKER_FLOW        1d   rows   5 meas   0 (no event in the 6-min capture)
+== trading-system-paper declared 247 measured 246
+  BINANCE  BAR               1m   rows   5 meas   5 n      30 p50   0.292 p95max   3.050 max   3.050
+  BINANCE  BOOK_DELTA        -    rows   5 meas   5 n   16094 p50   0.068 p95max   0.095 max   0.196
+  BINANCE  BOOK_SNAPSHOT     -    rows   5 meas   5 n    2077 p50   0.069 p95max   0.113 max   0.196
+  BINANCE  MARK_INDEX_PRICE  -    rows   5 meas   5 n    1726 p50   0.124 p95max   0.186 max   0.215
+  BINANCE  QUOTE             -    rows   5 meas   5 n   21262 p50   0.088 p95max   0.133 max   0.220
+  BINANCE  TRADE             -    rows   5 meas   5 n   38335 p50   0.083 p95max   0.157 max   0.226
+  HNX      TRADE             -    rows   1 meas   0 (no event in the 6-min capture)
+  OKX      BAR               1m   rows   5 meas   5 n      30 p50   0.756 p95max   1.394 max   1.394
+  OKX      BOOK_DELTA        -    rows   6 meas   6 n   19574 p50   0.066 p95max   0.131 max   0.391
+  OKX      BOOK_SNAPSHOT     -    rows   6 meas   6 n    2496 p50   0.072 p95max   0.180 max   0.391
+  OKX      MARK_INDEX_PRICE  -    rows  97 meas  97 n   98361 p50   0.700 p95max   2.050 max   2.157
+  OKX      QUOTE             -    rows  97 meas  97 n  103121 p50   0.095 p95max   0.223 max   0.332
+  OKX      TRADE             -    rows   5 meas   5 n   11093 p50   0.078 p95max   0.268 max   0.534

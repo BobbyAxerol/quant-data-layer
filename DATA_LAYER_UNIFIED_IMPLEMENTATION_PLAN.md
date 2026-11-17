@@ -78407,3 +78407,96 @@ tests.test_consumer_endpoint_benchmark tests.test_phase0_contract_golden` -> 45 
 - A Query without the route answers 404, and the TS writer falls back to the per-route GET.
 
 Status: `implemented`, `tested locally`.
+
+### DL v2.3.1 release candidate prepared offline: runtime record + B1 + B4 + Query balance/JWT + waiver removed (tested locally) - 2026-11-17 (Claude)
+
+Owner 2026-11-17: v2.3.1 includes B4. The coordinator scope addendum asks to optimise the architecture and Query,
+report the latency of every binding endpoint, then release. The owner chose rollout option A: Query x2 now, the Rust
+roles and bar_edge in a follow-up window. Offline only, except the coordinator-approved read-only "before" latency run.
+No push, merge or tag.
+
+**Branch.** `release/v2.3.1-query-b4-stage-b` (worktree `/home/bobby/.worktrees/dl-v231-release-20261117`) from
+`origin/dev` 7d4333e. It merges `feat/dl-stage-b-execution-71` b3a3670b and `feat/dl-v231-b4-batched-quote-probe`
+faad7c3d with `--no-ff`. The one conflict was in this journal; both entries were kept.
+
+**A.1 replica imbalance (root cause, read-only evidence 02:27-02:30Z).**
+- The writer uses one `RestQueryTransport` (TS `alpha_sdk/data_layer_v2.py:134` at 68428be5, SDK `qdl_sdk/transport.py:51`),
+  so one httpx pool on the alias `qdl-v2-query`, which names both replicas.
+- httpcore 1.0.9 assigns every request to `available_connections[0]`, the oldest free connection. The sequential
+  ReferenceBatcher stream therefore stays on the replica its first connection reached. Connection counts are
+  balanced (44/40), which hid it.
+- Simulation with the same library versions: single pool, heavy stream 100 % on one replica in 4/4 seeds;
+  per-replica pools, balanced.
+- Fix:
+  - DL: SDK 2.6.0 `build_replicated_rest_query` (an additive helper over the existing `ReplicatedRestQueryTransport`,
+    with keep-alive = max connections);
+  - TS: the writer adopts it with `https://query_v2_1:8200,https://query_v2_2:8200`, owned by the TS writer agent.
+  - The Query certificate SANs already include both names.
+
+**A.2.**
+- `ServiceTokenVerifier` caches the parsed key per (kid, alg). Offline: RS256 171 -> 132 us.
+- The offline per-item profile of `reference:batch` MARK reads is about 590 us CPU per item, 55 % of it in the
+  in-process ASGI hop (`upgrade/evidence/releases/v2.3.1/CERTIFICATE_DRAFT.md` section 3). Follow-ups are ranked, not
+  implemented.
+
+**B1.**
+- `STABLE_CORE_BATCH_WAIT_MS = 50` and `STABLE_CORE_BOOK_RESYNC_QUARANTINE = True` are declared in
+  `qdl/runtime/stable_deployment.py`. The generator omitted the quarantine flag that every deployed core carries;
+  the Rust default is false.
+- New test: the generated role fields equal `declaration-stage-b-r7/cores-bw50`.
+- **Correction** to the 2026-11-16 runtime record section 5 B1 and to guide gap 2: the core refresher does not refuse
+  a bw50 base. Offline `successor()` on cores-bw50 with the r7 configs returned OK, 0 additions, byte-equal; it
+  compares only the `core` sub-document.
+
+**B5.** `deploy/compose/qdl-v2-stable-kn.v2.3.1.env` is one versioned env: the deployed rc3 env with the stage-B
+overlay applied. Static test added.
+
+**Dependency refresh (the v2.3.0 waiver expired at v2.3.1).**
+- Rust:
+  - tokio =1.51.6, futures-util =0.3.34 (pin-utils gone), libz-sys 1.1.33, rustls-webpki 0.103.17, webpki-roots
+    1.0.12, zstd-sys 2.1.3;
+  - `deny.toml` `ignore = []`; cargo-deny 0.20.2: advisories/bans/licenses/sources ok.
+- Python:
+  - certifi 2026.10.23, msgpack 1.2.4;
+  - pillow and soupsieve dropped from the runtime dependencies. They are unused (grep) and have no dependents in
+    the lock; pillow 13 needs Python >= 3.11.
+- `.github/accepted-advisories.json` lists are empty, `.trivyignore` is back to the 2 BuildKit entries, and the
+  phase-6/phase-83 tests require empty waivers.
+
+**Benchmark tool.**
+- `scripts/benchmark_consumer_endpoints.py` gains `declaration_root` (mount the deployed declaration) and an
+  owner-approved `container_user: "0"` root client. That client runs with only CAP_DAC_READ_SEARCH added, and the
+  identity files are mounted read-only and never read on the host.
+- Test: `test_declaration_root_and_owner_approved_root_client`.
+
+**Latency "before"** (02:47-02:56Z, coordinator lock). See `upgrade/evidence/releases/v2.3.1/LATENCY_REPORT.md`:
+- quantity 3: delivery lag over 6 manifests / 1,104 requirements, 326,985 canonical records;
+- quantity 4: an upper bound from read-only Redis sweeps;
+- quantities 1/2: NOT MEASURED, because the identities are root-only. They are re-planned with the root client after
+  W-QRR and after the v2.3.1 Query recreate.
+
+**Tests (local, capped, one container at a time).**
+- Rust job: fmt, clippy -D warnings, cargo test 533 passed / 0 failed / 71 ignored.
+- Python, 16 impacted modules: 216 ran, 2 errors.
+  - The new test lacked a credential provider; fixed.
+  - The phase-0 golden failed on environment only: uid 1001 cannot write `/app/logs`. Rerun as image uid 10001:
+    80/80 OK.
+- Not yet run:
+  - the full 4-shard unit suite on the committed head;
+  - pip-audit and trivy on a built v2.3.1 image (R0);
+  - ruff 0.15.13.
+
+Files:
+- code: `qdl/runtime/stable_deployment.py`, `qdl/security/policy.py`, `qdl_sdk/{transport.py,__init__.py,CHANGELOG.md,README.md}`;
+- scripts: `scripts/{benchmark_consumer_endpoints.py,build_qdl_release_images.py,build_qdl_sdk_release.py}`;
+- dependency and policy files: `Cargo.toml`, `Cargo.lock`, `deny.toml`, `pyproject.toml`, `poetry.lock`,
+  `.github/accepted-advisories.json`, `.github/workflows/ci.yml` (comment), `.trivyignore`;
+- tests: `tests/{test_fund_phase6_release,test_fund_phase83_release,test_kn_stable_compose,test_phaseb_stable_deployment,
+  test_phaseb_stable_release,test_phasec2_transport_security,test_qdl_sdk_release,test_qdl_sdk_replica_read_transport,
+  test_consumer_endpoint_benchmark}.py`;
+- deployment: `deploy/compose/qdl-v2-stable-kn.v2.3.1.env`;
+- evidence: `upgrade/evidence/releases/v2.3.1/{RELEASE_NOTES.md,CERTIFICATE_DRAFT.md,ROLLOUT_PLAN.md,LATENCY_REPORT.md,latency-before-20261117T0247Z/}`;
+- guide: `upgrade/DL_HOT_ADJUSTMENT_PATHS_V2_3_X.md` (delta);
+- `CERTIFICATION_LEDGER.md`.
+
+Status: `implemented`, `tested locally`. Not pushed. CI expectation: full run (CI5: `ci.yml` and the lockfiles changed).
