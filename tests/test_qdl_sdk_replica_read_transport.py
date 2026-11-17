@@ -6,6 +6,7 @@ import unittest
 import httpx
 
 from qdl_sdk.errors import DataLayerError
+from qdl_sdk.models import Grade
 from qdl_sdk.transport import ReplicatedRestQueryTransport
 
 
@@ -259,3 +260,66 @@ class RefusalDiagnosticsDecodeTests(unittest.TestCase):
             with self.assertRaises(DataLayerError) as raised:
                 RestQueryTransport._decode(httpx.Response(503, json={**body, "diagnostics": None, **extra}))
             self.assertIsNone(raised.exception.diagnostics)
+
+
+class ReplicatedRestQueryBuilderTests(unittest.IsolatedAsyncioTestCase):
+    """SDK 2.6.0 ``build_replicated_rest_query`` (DL v2.3.1 A.1 replica affinity fix)."""
+
+    async def test_builds_one_pool_per_replica_with_keepalive_equal_to_limit(self):
+        from qdl_sdk import build_replicated_rest_query
+        from qdl_sdk.transport import RestQueryTransport
+
+        transport = build_replicated_rest_query(
+            ("https://query_v2_1:8200", "https://query_v2_2:8200"), max_connections_per_replica=32
+        )
+        try:
+            self.assertIsInstance(transport, ReplicatedRestQueryTransport)
+            self.assertEqual(
+                [replica.base_url for replica in transport.replicas],
+                ["https://query_v2_1:8200", "https://query_v2_2:8200"],
+            )
+            for replica in transport.replicas:
+                self.assertIsInstance(replica, RestQueryTransport)
+                pool = replica._client._transport._pool
+                self.assertEqual((pool._max_connections, pool._max_keepalive_connections), (32, 32))
+        finally:
+            await transport.close()
+
+    async def test_sequential_reads_alternate_replicas_per_request(self):
+        from qdl_sdk import build_replicated_rest_query
+
+        from qdl_sdk.credentials import StaticBearerCredential
+
+        transport = build_replicated_rest_query(
+            ("https://query_v2_1:8200", "https://query_v2_2:8200"),
+            credential_provider=StaticBearerCredential("test-token"),
+        )
+        seen = []
+        for replica in transport.replicas:
+            name = replica.base_url
+
+            def handler(request: httpx.Request, _name=name) -> httpx.Response:
+                seen.append(_name)
+                return httpx.Response(200, json={"replica": _name})
+
+            await replica._client.aclose()
+            replica._client = httpx.AsyncClient(base_url=name, transport=httpx.MockTransport(handler))
+        try:
+            for _ in range(6):
+                await transport.instruments(consumer_id="alpha", consumer_grade=Grade.EXECUTION)
+        finally:
+            await transport.close()
+        self.assertEqual(seen.count("https://query_v2_1:8200"), 3)
+        self.assertEqual(seen.count("https://query_v2_2:8200"), 3)
+        self.assertTrue(all(a != b for a, b in zip(seen, seen[1:])))
+
+    def test_refuses_fewer_than_two_urls_and_bad_keepalive(self):
+        from qdl_sdk import build_replicated_rest_query
+        from qdl_sdk.transport import RestQueryTransport
+
+        with self.assertRaises(ValueError):
+            build_replicated_rest_query(("https://query_v2_1:8200",))
+        with self.assertRaises(ValueError):
+            RestQueryTransport("https://query_v2_1:8200", max_connections=4, max_keepalive_connections=5)
+        with self.assertRaises(ValueError):
+            RestQueryTransport("https://query_v2_1:8200", max_keepalive_connections=0)

@@ -179,6 +179,26 @@ class BatchQueryResult:
 
 
 @dataclass(frozen=True)
+class SnapshotBatchItemResult:
+    """One item of ``snapshot_batch_async``: the single-snapshot outcome of its requirement.
+
+    ``result`` is exactly what ``snapshot`` returns for the requirement; ``error`` is
+    exactly the ``QueryServiceError`` it raises (same code, detail, quality state,
+    diagnostics and reason). Never both, never neither.
+    """
+
+    requirement: DataRequirement
+    result: QueryResult | None = None
+    error: QueryServiceError | None = None
+
+
+@dataclass(frozen=True)
+class SnapshotBatchResult:
+    request_id: str
+    results: tuple[SnapshotBatchItemResult, ...]
+
+
+@dataclass(frozen=True)
 class ReferenceBatchItemResult:
     requirement: ReferenceDataRequirement
     status: str
@@ -680,6 +700,63 @@ class V2QueryService:
                 request_id=request_id,
                 instrument_uid=requirement.instrument_uid,
             ) from error
+
+    async def snapshot_batch_async(
+        self,
+        requirements: tuple[DataRequirement, ...],
+        *,
+        purpose: AccessPurpose,
+        consumer_id: str,
+        request_id: str | None = None,
+    ) -> SnapshotBatchResult:
+        """B4 (DL v2.3.1): many latest views under one hot admission permit.
+
+        Each item runs the unchanged ``snapshot`` policy (freshness, session
+        liveness, recency, gap, entitlement and eligibility checks) and keeps its
+        own typed outcome, so a batch is never weaker than its single reads. The
+        permit reserves the single read's bytes once per item, so admission
+        accounting per item is unchanged; the request is one HTTP call (one quota
+        unit) and one hot-thread hop instead of one per item.
+        """
+
+        if not requirements:
+            raise ValueError("snapshot batch requires at least one requirement")
+        request_id = request_id or self.request_id()
+
+        def execute_items() -> tuple[SnapshotBatchItemResult, ...]:
+            results = []
+            for requirement in requirements:
+                try:
+                    results.append(SnapshotBatchItemResult(
+                        requirement,
+                        result=self.snapshot(
+                            requirement, purpose=purpose, request_id=request_id
+                        ),
+                    ))
+                except QueryServiceError as error:
+                    results.append(SnapshotBatchItemResult(requirement, error=error))
+            return tuple(results)
+
+        async def execute() -> SnapshotBatchResult:
+            return SnapshotBatchResult(
+                request_id, await self._query_work_pools_for().hot(execute_items)
+            )
+
+        task = asyncio.create_task(
+            self._hot_snapshot_admission_for().run(
+                execute,
+                consumer_id=consumer_id,
+                reserved_bytes=_HOT_SNAPSHOT_RESERVED_BYTES * len(requirements),
+            ),
+            name="qdl-v2-hot-snapshot-batch",
+        )
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            task.add_done_callback(self._consume_detached_lane_task)
+            raise
+        except ReadLaneRejected as error:
+            raise self._lane_error(error, request_id=request_id) from error
 
     async def status_async(
         self,

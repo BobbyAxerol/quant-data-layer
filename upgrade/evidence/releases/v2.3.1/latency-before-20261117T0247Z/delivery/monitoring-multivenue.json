@@ -1,0 +1,122 @@
+[
+  {
+    "venue": "BINANCE",
+    "symbol": "BTCUSDT",
+    "feed": "TRADE",
+    "interval": "-",
+    "contract_max_freshness_ms": 15000,
+    "measured_samples": 10335,
+    "delivery_p50_s": 0.084,
+    "delivery_p95_s": 0.153,
+    "delivery_max_s": 0.222,
+    "spool_newest_age_s": null,
+    "measured_against": "source event time",
+    "capabilities": {
+      "consumer_grade": "RESEARCH",
+      "source_policy_id": "crypto_primary_v2",
+      "recovery": "SNAPSHOT_AND_REPLAY",
+      "gap_policy": "BLOCK",
+      "stale_policy": "BLOCK",
+      "bar_revision_policy": "LATEST",
+      "require_final_bars": true,
+      "require_full_coverage": true,
+      "warmup_limit": 0
+    }
+  },
+  {
+    "venue": "BINANCE",
+    "symbol": "ETHUSDT",
+    "feed": "TRADE",
+    "interval": "-",
+    "contract_max_freshness_ms": 15000,
+    "measured_samples": 16983,
+    "delivery_p50_s": 0.083,
+    "delivery_p95_s": 0.153,
+    "delivery_max_s": 0.226,
+    "spool_newest_age_s": null,
+    "measured_against": "source event time",
+    "capabilities": {
+      "consumer_grade": "RESEARCH",
+      "source_policy_id": "crypto_primary_v2",
+      "recovery": "SNAPSHOT_AND_REPLAY",
+      "gap_policy": "BLOCK",
+      "stale_policy": "BLOCK",
+      "bar_revision_policy": "LATEST",
+      "require_final_bars": true,
+      "require_full_coverage": true,
+      "warmup_limit": 0
+    }
+  },
+  {
+    "venue": "HNX",
+    "symbol": "VN30F1M",
+    "feed": "BAR",
+    "interval": "1m",
+    "contract_max_freshness_ms": 180000,
+    "measured_samples": 0,
+    "delivery_p50_s": null,
+    "delivery_p95_s": null,
+    "delivery_max_s": null,
+    "spool_newest_age_s": null,
+    "measured_against": "bar close time",
+    "capabilities": {
+      "consumer_grade": "RESEARCH",
+      "source_policy_id": "vn_primary_v2",
+      "recovery": "SNAPSHOT_AND_REPLAY",
+      "gap_policy": "BLOCK",
+      "stale_policy": "BLOCK",
+      "bar_revision_policy": "EMIT_REVISIONS",
+      "require_final_bars": true,
+      "require_full_coverage": true,
+      "warmup_limit": 30
+    }
+  },
+  {
+    "venue": "OKX",
+    "symbol": "BTC-USDT-SWAP",
+    "feed": "TRADE",
+    "interval": "-",
+    "contract_max_freshness_ms": 15000,
+    "measured_samples": 3882,
+    "delivery_p50_s": 0.078,
+    "delivery_p95_s": 0.197,
+    "delivery_max_s": 0.532,
+    "spool_newest_age_s": null,
+    "measured_against": "source event time",
+    "capabilities": {
+      "consumer_grade": "RESEARCH",
+      "source_policy_id": "crypto_primary_v2",
+      "recovery": "SNAPSHOT_AND_REPLAY",
+      "gap_policy": "BLOCK",
+      "stale_policy": "BLOCK",
+      "bar_revision_policy": "LATEST",
+      "require_final_bars": true,
+      "require_full_coverage": true,
+      "warmup_limit": 0
+    }
+  },
+  {
+    "venue": "OKX",
+    "symbol": "ETH-USDT-SWAP",
+    "feed": "TRADE",
+    "interval": "-",
+    "contract_max_freshness_ms": 15000,
+    "measured_samples": 5559,
+    "delivery_p50_s": 0.078,
+    "delivery_p95_s": 0.221,
+    "delivery_max_s": 0.534,
+    "spool_newest_age_s": null,
+    "measured_against": "source event time",
+    "capabilities": {
+      "consumer_grade": "RESEARCH",
+      "source_policy_id": "crypto_primary_v2",
+      "recovery": "SNAPSHOT_AND_REPLAY",
+      "gap_policy": "BLOCK",
+      "stale_policy": "BLOCK",
+      "bar_revision_policy": "LATEST",
+      "require_final_bars": true,
+      "require_full_coverage": true,
+      "warmup_limit": 0
+    }
+  }
+]

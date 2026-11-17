@@ -2486,3 +2486,19 @@ filled after the window and the R-cert 2 final verdict (`drafts/RELEASE_FILL_LIS
 - Full CI (CI6): one run on the release PR head tree; run id recorded in the dev merge commit and the plan journal.
 - Re-issued 2026-11-14 with the owner-approved dependency advisory waiver (6 RustSec, 49 Python IDs, expires v2.3.1;
   `.github/accepted-advisories.json`): certificate sha256 `677a690797ff16f54e9119d00912eca6b6745781deb25914e47b1c2194eba4a1`, endpoint report `c75b7a662e4bed8a249216cab497e3324094aee58da1abd27d72f5c992fd3baf`.
+
+### 2026-11-17 - v2.3.1 release candidate - DRAFT (tested locally, not certified)
+
+- Branch `release/v2.3.1-query-b4-stage-b`.
+- Package: `upgrade/evidence/releases/v2.3.1/` (RELEASE_NOTES, CERTIFICATE_DRAFT, ROLLOUT_PLAN, LATENCY_REPORT).
+- Pinned at: the release head. Runtime unchanged: rust `58bdd282`, python `a235c0a1`, stage B r7, W-A1 bw50.
+- Local:
+  - Rust job PASS (533/0/71);
+  - cargo-deny PASS with empty ignores;
+  - Python impacted modules PASS (the phase-0 golden as the image user).
+- Pending:
+  - the full unit shards;
+  - R0 pip-audit/trivy on the built image;
+  - full CI (CI5);
+  - the rollout gates;
+  - the latency "after".

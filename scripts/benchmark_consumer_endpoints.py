@@ -26,6 +26,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 OPERATIONS = {
     "snapshot": ("GET", "/v2/market-data/{instrument_uid}/snapshot", "snapshot:read"),
+    "snapshot_batch": ("POST", "/v2/market-data/snapshot:batch", "snapshot:read"),
     "warmup": ("GET", "/v2/market-data/{instrument_uid}/warmup", "history:read"),
     "history": ("GET", "/v2/market-data/{instrument_uid}/history", "history:read"),
     "warmup_batch": ("POST", "/v2/market-data/warmup:batch", "history:read"),
@@ -47,8 +48,21 @@ SAFETY_BLOCKED = {
 
 def validate_profile(raw):
     p = dict(raw)
-    if set(p) - {"image", "network", "queries", "stream_targets", "consumers", "limits", "operations"}:
+    if set(p) - {"image", "network", "queries", "stream_targets", "consumers", "limits", "operations",
+                 "declaration_root", "container_user"}:
         raise ValueError("unknown profile fields; credentials must be file references")
+    # DL v2.3.1: `declaration_root` mounts the deployed declaration's config/v2 and consumers (for example
+    # upgrade/evidence/releases/v2.3.0/declaration-stage-b-r7/repo) instead of the repository defaults, so the
+    # measured scope equals the runtime. `container_user` "0" (owner-approved, read-only identity mounts) runs the
+    # client as root with only CAP_DAC_READ_SEARCH added, for identity files the host user cannot read.
+    if "declaration_root" in p:
+        root = p["declaration_root"]
+        if not isinstance(root, str) or not Path(root).is_absolute() or ".." in Path(root).parts:
+            raise ValueError("declaration_root must be an absolute path")
+        if not (Path(root) / "config/v2").is_dir() or not (Path(root) / "consumers").is_dir():
+            raise ValueError("declaration_root must hold config/v2 and consumers")
+    if p.get("container_user", "0") != "0":
+        raise ValueError("container_user may only be \"0\" (root, read-only identity mounts)")
     if not p.get("image") or not re.fullmatch(r"[A-Za-z0-9_.-]+", p.get("network", "")):
         raise ValueError("existing image and Docker network required")
     if not 1 <= len(p.get("queries", [])) <= 4:
@@ -109,7 +123,12 @@ def load_scope(consumer_id):
 
     catalog = StableSourceCatalog.load(ROOT / "config/v2/stable-source-bindings.yaml")
     acquisition = StableAcquisitionPlan.load(ROOT / "config/v2/stable-acquisition-bindings.yaml", catalog=catalog)
-    release = StableReleaseRoutePlan.load(ROOT / "config/v2/stable-v2-release-routing.yaml", manifest_root=ROOT)
+    from qdl.consumer.selectors import SelectorContext
+    # A deployed declaration (DL v2.3.0+) can carry selector manifests (alpha.okx r16); they need the catalogue and
+    # universe context the runtime loads them with. Repo-default manifests without selectors are unaffected.
+    selectors = SelectorContext.from_catalog(catalog, universe_dir=ROOT / "config/v2/universes")
+    release = StableReleaseRoutePlan.load(ROOT / "config/v2/stable-v2-release-routing.yaml", manifest_root=ROOT,
+                                          selector_context=selectors)
     selected = next(c for c in release.consumers if c.consumer_id == consumer_id)
     if not any(x.route == "V2_PRIMARY" for x in selected.products):
         raise ValueError("selected consumer has no released V2 products; legacy remains excluded")
@@ -141,7 +160,8 @@ def cases_for(products, batch_size):
                 cases.append(("stream", (p,)))
     cases.extend(("instrument", (p,)) for p in instruments.values())
     # Keep grades separate: public batch contracts reject mixed-grade requests.
-    for name, values in (("warmup_batch", bars), ("reference_batch", references), ("readiness_check", ordinary)):
+    for name, values in (("warmup_batch", bars), ("reference_batch", references), ("readiness_check", ordinary),
+                         ("snapshot_batch", ordinary)):
         for grade in sorted({p.requirement.consumer_grade.value for p in values}):
             selected = [p for p in values if p.requirement.consumer_grade.value == grade]
             for i in range(0, len(selected), batch_size):
@@ -267,6 +287,16 @@ def validate_operation(op, products, payload, refs=()):
         m.InstrumentPageResponse.model_validate(payload)
     elif op == "readiness":
         m.SystemReadinessSummary.model_validate(payload)
+    elif op == "snapshot_batch":
+        from qdl.api_v2.models import SnapshotBatchResponse
+        value = SnapshotBatchResponse.model_validate(payload)
+        if value.partial:
+            raise ValueError("PARTIAL_RESULT")
+        if [x.instrument_uid for x in value.results] != [p.instrument_uid for p in products]:
+            raise ValueError("IDENTITY_MISMATCH")
+        for p, item in zip(products, value.results, strict=True):
+            read(p, {"schema": "qdl.marketdata.snapshot.v2", "request_id": value.request_id,
+                     "data": item.data.model_dump(mode="json", by_alias=True)}, False)
     elif op == "readiness_check":
         value = m.ReadinessResponse.model_validate(payload)
         if [x.instrument_uid for x in value.results] != [p.instrument_uid for p in products]:
@@ -318,6 +348,8 @@ async def invoke(op, products, query, client, manifest, stream_seconds):
         kwargs["params"] = reqs[0].query_params()
     elif op == "readiness_check":
         kwargs["json"] = {"consumer_id": cid, "require_all": True, "requirements": [r.to_mapping() for r in reqs]}
+    elif op == "snapshot_batch":
+        kwargs["json"] = {"consumer_id": cid, "requirements": [r.to_mapping() for r in reqs]}
     response = await query._read_request(OPERATIONS[op][0].lower(), path, **kwargs)
     return query._decode(response)
 
@@ -343,6 +375,7 @@ async def run_client(profile, inventory=False):
               "timing_contract": "response includes HTTP decode; usable includes SDK and product validation; no strategy computation",
               "percentile_warning": "small-sample p95 descriptive only; p99 withheld below 100 usable samples"}
     report["safety_blocked_operations"] = SAFETY_BLOCKED
+    report["replica_order"] = "interleaved per case, first replica alternating by case"
     if inventory:
         report.update(status="INVENTORY_ONLY", planned_cases_per_replica=len(cases))
         return report
@@ -352,14 +385,21 @@ async def run_client(profile, inventory=False):
         environment=manifest.environment, consumer_manifest_revision=manifest.manifest_revision)
     deadline = time.monotonic() + limits["max_seconds"]
     next_request = 0.0
+    # Replicas are interleaved per case, and the first replica alternates by case (DL v2.3.1): measuring every case
+    # on one replica and then on the next put the two replicas in different host-load phases (after-W-QRR run,
+    # 2026-11-17), which made a load-phase difference look like a replica difference.
+    endpoints = []
     for replica in profile["queries"]:
         query = RestQueryTransport(replica, tls=tls, credential_provider=credential, timeout_seconds=limits["timeout_seconds"])
         stream = GrpcStreamTransport(profile["stream_targets"], tls=tls, credential_provider=credential)
         client = AsyncDataLayerClient(query_transport=query, stream_transport=stream, consumer_id=manifest.consumer_id,
                                      max_reconnect_attempts=0, max_buffer_events=min(100, manifest.quotas.max_buffer_events))
-        first_request = True
-        try:
-            for op, products in cases:
+        endpoints.append({"replica": replica, "query": query, "client": client, "first_request": True})
+    try:
+        for case_index, (op, products) in enumerate(cases):
+            order = endpoints if case_index % 2 == 0 else endpoints[::-1]
+            for endpoint in order:
+                replica, query, client = endpoint["replica"], endpoint["query"], endpoint["client"]
                 row = {"replica": replica, "operation": op, "endpoint": OPERATIONS[op][1],
                        "products": [p.evidence() for p in products], "samples": [],
                        "latency_unit": "batch_wall" if len(products) > 1 else "request",
@@ -391,10 +431,12 @@ async def run_client(profile, inventory=False):
                             return await query.reference_batch(tuple(p.sdk_requirement for p in refs), consumer_id=manifest.consumer_id, require_all=True)
                         return await invoke(op, products, query, client, manifest, limits["stream_seconds"])
                     next_request = time.monotonic() + max(interval, 2.0 if op == "stream" else 0)
+                    started_wall_ms = round(time.time() * 1000, 3)
                     sample = await measure(call, lambda payload: validate_operation(op, products, payload, refs),
                                            min(remaining, limits["timeout_seconds"] + (limits["stream_seconds"] if op == "stream" else 0)))
-                    sample.update(round=round_index, first_request_on_replica=first_request, pacing_wait_ms=round(wait * 1000, 3))
-                    first_request = False
+                    sample.update(round=round_index, first_request_on_replica=endpoint["first_request"],
+                                  pacing_wait_ms=round(wait * 1000, 3), started_wall_ms=started_wall_ms)
+                    endpoint["first_request"] = False
                     row["samples"].append(sample)
                 expected = 1 if op == "stream" else limits["rounds"]
                 samples = row["samples"]
@@ -404,12 +446,33 @@ async def run_client(profile, inventory=False):
                 row["response_latency"] = percentiles([s["response_ms"] for s in samples if s["response_ms"] is not None])
                 row["usable_latency"] = percentiles([s["usable_ms"] for s in samples if s["status"] == "PASS"])
                 row["steady_usable_latency"] = percentiles([s["usable_ms"] for s in samples if s["status"] == "PASS" and s["round"] > 0])
-        finally:
-            await client.close()
+    finally:
+        for endpoint in endpoints:
+            await endpoint["client"].close()
     states = [r["status"] for r in report["results"]]
     report["status"] = "FAIL" if "FAIL" in states else "INCOMPLETE" if any(x in states for x in ("NOT_MEASURED_DEADLINE", "NO_EVENT", "SAFETY_BLOCKED")) else "PASS_SELECTED_READS"
     report["certification"] = "BENCHMARK_ONLY_NOT_A_RELEASE_CERTIFICATE"
     return report
+
+
+def credential_source(path, *, root_container):
+    """Host path of one credential file for a read-only bind mount (never opened or read here).
+
+    The host user must normally see the file. A root-only identity directory is accepted only for an
+    owner-approved root client container: the absolute path is passed as given (no symlink resolution is
+    possible without permission) and the Docker daemon, which performs the bind mount as root, fails the run if
+    the file is missing.
+    """
+    raw = Path(path)
+    try:
+        source = raw.resolve(strict=True)
+    except PermissionError:
+        if not root_container or ".." in raw.parts or not raw.is_absolute():
+            raise
+        return raw
+    if not source.is_file():
+        raise ValueError("credential must be a file")
+    return source
 
 
 def docker_command(profile, consumer, name, image_id, inventory):
@@ -417,17 +480,19 @@ def docker_command(profile, consumer, name, image_id, inventory):
                "--read-only", "--cpus", "1", "--memory", "512m", "--pids-limit", "128", "--cap-drop", "ALL",
                "--security-opt", "no-new-privileges", "--tmpfs", "/tmp:rw,nosuid,size=64m", "-e", "PYTHONDONTWRITEBYTECODE=1",
                "-e", "QDL_ENDPOINT_BENCHMARK_PROFILE", "--entrypoint", "python"]
+    if profile.get("container_user") == "0":
+        command += ["--user", "0:0", "--cap-add", "DAC_READ_SEARCH"]
+    declaration = Path(profile.get("declaration_root") or ROOT)
     for src, dst in ((ROOT / "scripts/benchmark_consumer_endpoints.py", "/app/scripts/benchmark_consumer_endpoints.py"),
-                     (ROOT / "config/v2", "/app/config/v2"), (ROOT / "consumers", "/app/consumers"),
+                     (declaration / "config/v2", "/app/config/v2"), (declaration / "consumers", "/app/consumers"),
                      (ROOT / "contracts/v2/openapi.snapshot.json", "/app/contracts/v2/openapi.snapshot.json")):
         command += ["--mount", f"type=bind,src={src},dst={dst},readonly"]
     client = json.loads(json.dumps(profile))
+    client.pop("declaration_root", None)  # mounted at /app above; a host path means nothing in the client
     c = json.loads(json.dumps(consumer))
     if not inventory:
         for group, field in (("tls", "ca_file"), ("tls", "cert_file"), ("tls", "key_file"), ("jwt", "private_key_file")):
-            source = Path(c[group][field]).resolve(strict=True)
-            if not source.is_file():
-                raise ValueError("credential must be a file")
+            source = credential_source(c[group][field], root_container=profile.get("container_user") == "0")
             target = f"/bench-id/{group}-{field}"
             command += ["--mount", f"type=bind,src={source},dst={target},readonly"]
             c[group][field] = target

@@ -84,17 +84,13 @@ class ReleaseBundleTests(unittest.TestCase):
             for line in (ROOT / ".trivyignore").read_text(encoding="utf-8").splitlines()
             if line.split("#", 1)[0].strip()
         }
-        # Fail closed: only the narrow BuildKit SBOM false positives plus exactly the
-        # owner-approved, expiring DL v2.3.0 trivy aliases (expire at v2.3.1).
+        # Fail closed: only the narrow BuildKit SBOM false positives. The DL v2.3.0
+        # trivy alias waiver expired at v2.3.1 and was removed by the dependency refresh.
         accepted = json.loads(
             (ROOT / ".github" / "accepted-advisories.json").read_text(encoding="utf-8")
         )
-        waived = {item["id"] for item in accepted["trivy"]}
-        self.assertTrue(all(item["expires"] == "v2.3.1" for item in accepted["trivy"]))
-        self.assertEqual(
-            ignored,
-            {"GHSA-6v7p-g79w-8964", "CVE-2025-47273"} | waived,
-        )
+        self.assertEqual(accepted["trivy"], [])
+        self.assertEqual(ignored, {"GHSA-6v7p-g79w-8964", "CVE-2025-47273"})
 
     def test_sbom_contains_locked_python_and_rust_components(self):
         packages = build_spdx(ROOT, release="phase6-test")["packages"]

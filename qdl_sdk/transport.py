@@ -39,9 +39,13 @@ class RestQueryTransport:
         client: httpx.AsyncClient | None = None,
         credential_provider: CredentialProvider | None = None,
         tls: WorkloadTlsConfig | None = None,
+        max_connections: int = 100,
+        max_keepalive_connections: int = 20,
     ) -> None:
         if timeout_seconds <= 0:
             raise ValueError("query timeout must be positive")
+        if not 1 <= max_keepalive_connections <= max_connections:
+            raise ValueError("query keep-alive connections must be within 1..max_connections")
         self.base_url = base_url.rstrip("/")
         if client is not None and tls is not None:
             raise ValueError("provide either REST client or workload TLS, not both")
@@ -51,7 +55,10 @@ class RestQueryTransport:
         self._client = client or httpx.AsyncClient(
             base_url=self.base_url,
             timeout=httpx.Timeout(timeout_seconds),
-            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+            limits=httpx.Limits(
+                max_connections=max_connections,
+                max_keepalive_connections=max_keepalive_connections,
+            ),
             verify=tls.ssl_context() if tls is not None else True,
         )
 
@@ -461,6 +468,48 @@ class ReplicatedRestQueryTransport:
         # local cooldown error. It never fans out beyond max_attempts.
         selected = available or ordered
         return selected[: self._max_attempts]
+
+
+def build_replicated_rest_query(
+    urls: Sequence[str],
+    *,
+    tls: WorkloadTlsConfig | None = None,
+    credential_provider: CredentialProvider | None = None,
+    timeout_seconds: float = 10.0,
+    max_connections_per_replica: int = 100,
+    max_attempts: int = 2,
+    cooldown_seconds: float = 1.0,
+) -> ReplicatedRestQueryTransport:
+    """One REST pool per Query replica, balanced per request (SDK 2.6.0).
+
+    Use this instead of one ``RestQueryTransport`` on a DNS alias that names
+    several replicas. A single httpx pool picks a replica once per TCP
+    connection and then always reuses its oldest free connection, so a
+    sequential caller (for example a coalesced ``reference_batch`` stream)
+    stays on whichever replica its first connection reached (DL v2.3.1 A.1:
+    query_kn_1 0.94 vCPU with ~213 slow requests/min, query_kn_2 0.26 with 0).
+    Each replica pool keeps every connection it may open alive
+    (keep-alive = max connections), so idle connections are not closed and
+    re-handshaken between bursts.
+    """
+
+    values = tuple(urls)
+    if len(values) < 2:
+        raise ValueError("replicated Query transport requires at least two replica URLs")
+    replicas = tuple(
+        RestQueryTransport(
+            url,
+            timeout_seconds=timeout_seconds,
+            credential_provider=credential_provider,
+            tls=tls,
+            max_connections=max_connections_per_replica,
+            max_keepalive_connections=max_connections_per_replica,
+        )
+        for url in values
+    )
+    return ReplicatedRestQueryTransport(
+        replicas, max_attempts=max_attempts, cooldown_seconds=cooldown_seconds
+    )
 
 
 # Records the SDK accepts in one SubscribeResponse (SDK 2.3.0). A gateway that

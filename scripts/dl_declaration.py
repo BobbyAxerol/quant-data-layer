@@ -162,6 +162,10 @@ SCOPE_FEEDS = ("TRADE", "QUOTE", "MARK_INDEX_PRICE", "BOOK_SNAPSHOT", "BOOK_DELT
 SCOPE_MARKETS = {"BINANCE": {"USDM"}, "OKX": {"SWAP"}}
 REFERENCE_FEEDS = frozenset({"FUNDING_RATE"})
 OKX_INTERVALS = ("1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "2d", "3d", "1w")
+# DL v2.3.1 stage C: Binance USDM signal universes (fapi kline intervals; 1M excluded like OKX).
+BINANCE_USDM_INTERVALS = ("1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w")
+SIGNAL_INTERVALS = {("OKX", "SWAP"): OKX_INTERVALS, ("BINANCE", "USDM"): BINANCE_USDM_INTERVALS}
+SIGNAL_TEMPLATE_SYMBOL = {("OKX", "SWAP"): "SOL-USDT-SWAP", ("BINANCE", "USDM"): "SOLUSDT"}
 FLUSH_FEEDS = frozenset({"QUOTE", "MARK_INDEX"})
 RESTART_ORDER = (
     "ingestor_okx_swap / ingestor_binance_usdm (v2.3.0 image first: lane_shard + flush map)",
@@ -435,15 +439,22 @@ class Render:
 
     # ---------------------------------------------------------------- captures
     def _captures(self) -> dict[str, Path]:
-        """Base captures plus verbatim appended OKX instrument rows (never by name alias)."""
+        """Base captures plus verbatim appended OKX / Binance USDM instrument rows (never by name alias)."""
         paths = {name: self.base.path(rel) for name, rel in CAPTURES.items()}
-        extra = self.declaration["instrument_captures"]
+        extra = [item for item in self.declaration["instrument_captures"]
+                 if str(item.get("venue", "OKX")).upper() == "OKX"]
+        binance = [item for item in self.declaration["instrument_captures"]
+                   if str(item.get("venue", "OKX")).upper() == "BINANCE"]
+        if binance:
+            self._append_binance_usdm_captures(paths, binance)
         if not extra:
             return paths
         okx = json.loads(paths["okx_swap"].read_text(encoding="utf-8"))
         rows = okx["data"]
         known = {row["instId"] for row in rows}
-        provenance = json.loads(self.base.path(CAPTURE_PROVENANCE).read_text(encoding="utf-8"))
+        provenance_rel = f"repo/{CAPTURE_PROVENANCE}"
+        provenance = (json.loads(self.files[provenance_rel]) if provenance_rel in self.files
+                      else json.loads(self.base.path(CAPTURE_PROVENANCE).read_text(encoding="utf-8")))
         entry = next(item for item in provenance["captures"] if item["venue"] == "OKX" and item["market"] == "SWAP")
         appended = 0
         for item in extra:
@@ -472,12 +483,70 @@ class Render:
             self.files[f"repo/{CAPTURE_PROVENANCE}"] = (json.dumps(provenance, indent=2) + "\n").encode()
         return paths
 
+    def _append_binance_usdm_captures(self, paths: Mapping[str, Path], items: list[Mapping[str, Any]]) -> None:
+        """DL v2.3.1 stage C: append verbatim Binance USDM exchangeInfo rows for the listed symbols.
+
+        Each item names a full public ``/fapi/v1/exchangeInfo`` response and the exact ``symbols`` to take from it;
+        rows already in the base filtered capture are kept byte for byte and never replaced. A listed symbol absent
+        from the response refuses the render.
+        """
+        capture = json.loads(paths["binance_usdm"].read_text(encoding="utf-8"))
+        known = {row["symbol"] for row in capture["symbols"]}
+        provenance_rel = f"repo/{CAPTURE_PROVENANCE}"
+        provenance = (json.loads(self.files[provenance_rel]) if provenance_rel in self.files
+                      else json.loads(self.base.path(CAPTURE_PROVENANCE).read_text(encoding="utf-8")))
+        entry = next(item for item in provenance["captures"]
+                     if item["venue"] == "BINANCE" and item["market"] == "USDM")
+        appended = 0
+        for item in items:
+            if str(item.get("market", "USDM")).upper() != "USDM":
+                raise DeclarationRefused("Binance instrument captures support USDM only")
+            raw = Path(item["path"]).read_bytes()
+            body = json.loads(raw)
+            if not isinstance(body, dict) or not isinstance(body.get("symbols"), list):
+                raise DeclarationRefused(f"{item['path']} is not a Binance USDM exchangeInfo response")
+            rows = {row.get("symbol"): row for row in body["symbols"]}
+            wanted = [str(symbol) for symbol in item.get("symbols") or []]
+            if not wanted:
+                raise DeclarationRefused(f"{item['path']}: a Binance capture must list its symbols")
+            added = 0
+            for symbol in wanted:
+                if symbol in known:
+                    continue
+                row = rows.get(symbol)
+                if row is None:
+                    raise DeclarationRefused(f"{item['path']}: {symbol} is not in the exchangeInfo response")
+                capture["symbols"].append(row)
+                known.add(symbol)
+                added += 1
+            if added:
+                appended += added
+                entry.setdefault("appended_captures", []).append({
+                    "captured_at_utc": str(item["captured_at_utc"]),
+                    "endpoint": str(item["endpoint"]),
+                    "full_response_sha256": _sha256_bytes(raw),
+                    "symbols_added": added,
+                    "note": f"verbatim rows appended by declaration r{self.declaration['declaration_revision']}",
+                })
+        if appended:
+            capture_bytes = json.dumps(capture, separators=(",", ":")).encode("utf-8")
+            entry["filtered_capture_sha256"] = _sha256_bytes(capture_bytes)
+            entry["filtered_capture_bytes"] = len(capture_bytes)
+            self.files[f"repo/{CAPTURES['binance_usdm']}"] = capture_bytes
+            self.files[provenance_rel] = (json.dumps(provenance, indent=2) + "\n").encode()
+
+    def _binance_usdm(self, paths: Mapping[str, Path]):
+        rel = f"repo/{CAPTURES['binance_usdm']}"
+        if rel in self.files:
+            return _with_tempfile(self.files[rel], "binance-usdm.json", load_binance_exchange_info)
+        return load_binance_exchange_info(paths["binance_usdm"])
+
     def _capture_index(self, paths: Mapping[str, Path]) -> set[tuple[str, str, str]]:
         okx_rel = f"repo/{CAPTURES['okx_swap']}"
         swap = (json.loads(self.files[okx_rel])["data"] if okx_rel in self.files
                 else load_okx_instruments(paths["okx_swap"]))
         result = {("OKX", "SWAP", str(row["instId"])) for row in swap if row.get("state", "live") == "live"}
-        usdm = load_binance_exchange_info(paths["binance_usdm"])
+        usdm = self._binance_usdm(paths)
         result |= {(r.identity.venue, r.identity.market, r.native_symbol) for r in usdm.records}
         return result
 
@@ -560,6 +629,12 @@ class Render:
                   bar_source=None):
             product = PRODUCT_TYPES.get((venue, market))
             template = self._demand_template(consumer_id, feed, interval, template_symbol)
+            if template is None and feed == "BAR" and (venue, market) != ("OKX", "SWAP"):
+                # A signal consumer's first rows on another venue (stage C: Binance USDM for an OKX-trading alpha)
+                # take the consumer's own OKX BAR row as the template, moved to the declared venue/market.
+                template = self._demand_template(consumer_id, feed, interval, SIGNAL_TEMPLATE_SYMBOL[("OKX", "SWAP")])
+                if template is not None:
+                    template = {**template, "venue": venue, "market": market}
             if template is None:
                 return "NO_DEMAND_TEMPLATE"
             row = deepcopy(template)
@@ -617,7 +692,7 @@ class Render:
                 members.append(symbol)
             intervals = []
             for interval in native + derived:
-                if (venue, market) != ("OKX", "SWAP") or interval not in OKX_INTERVALS:
+                if interval not in SIGNAL_INTERVALS.get((venue, market), ()):
                     self.blocked.append(_blocked(cid, "INTERVAL_NOT_DECLARABLE", venue=venue, market=market,
                                                  interval=interval, universe_id=universe["universe_id"]))
                     continue
@@ -633,7 +708,8 @@ class Render:
             source = None if declared_source is None else str(declared_source).upper()
             for symbol in members:
                 for interval in intervals:
-                    reason = admit(cid, venue, market, symbol, "BAR", interval, "SOL-USDT-SWAP", index_rule=False,
+                    reason = admit(cid, venue, market, symbol, "BAR", interval, SIGNAL_TEMPLATE_SYMBOL[(venue, market)],
+                                   index_rule=False,
                                    bar_source=source if interval in native and interval not in derived else None)
                     if reason:
                         raise DeclarationRefused(f"{cid} BAR {interval}: {reason}")
@@ -671,7 +747,7 @@ class Render:
             authority_revision=self.base.catalog.authority_revision,
         ).build(
             demand=manifest,
-            binance_usdm=load_binance_exchange_info(capture_paths["binance_usdm"]),
+            binance_usdm=self._binance_usdm(capture_paths),
             binance_spot=parse_spot_exchange_info(
                 json.loads(capture_paths["binance_spot"].read_text(encoding="utf-8")), valid_from_ns=0),
             okx_rows=(*okx_rows, *load_okx_instruments(capture_paths["okx_spot"])),
@@ -758,11 +834,12 @@ class Render:
             if row["feed"] != "BAR" or interval not in derived_intervals or (row["instrument_uid"], interval) in retained_native:
                 continue
             target_ms = canonical_interval_ms(interval)
-            target_anchor = provider_bar_calendar_anchor_ms(interval, provider="OKX")
+            provider = "BINANCE" if acq.get("runtime") == "BINANCE" else "OKX"  # calendar anchors are per venue
+            target_anchor = provider_bar_calendar_anchor_ms(interval, provider=provider)
             candidates = [
                 other for other in materialised[row["instrument_uid"]]
                 if canonical_interval_ms(other) < target_ms and target_ms % canonical_interval_ms(other) == 0
-                and (target_anchor - provider_bar_calendar_anchor_ms(other, provider="OKX"))
+                and (target_anchor - provider_bar_calendar_anchor_ms(other, provider=provider))
                 % canonical_interval_ms(other) == 0
             ]
             if not candidates:
@@ -1670,6 +1747,12 @@ class Render:
             for path in sorted(base_universes.iterdir()):
                 if path.is_file():
                     self.files.setdefault(f"repo/{CONFIG}/universes/{path.name}", path.read_bytes())
+            # DL v2.3.1 stage C: the runtime universe directory is one mount. When this revision renders a universe,
+            # it carries every base universe too, so a changed selector manifest (which still names the retained
+            # universes) loads against the complete set, not only the new file.
+            if any(rel.startswith("runtime/universes/") for rel in self.files):
+                for path in sorted(base_universes.glob("*.json")):
+                    self.files.setdefault(f"runtime/universes/{path.name}", path.read_bytes())
         for path in sorted(self.base.path(Path("consumers/stable")).glob("*.yaml")):
             self.files[f"repo/consumers/stable/{path.name}"] = path.read_bytes()
         for cid, item in self.manifests.items():

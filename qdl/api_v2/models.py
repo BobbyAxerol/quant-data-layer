@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from qdl.query import (
     BarRevisionPolicy,
@@ -36,6 +36,7 @@ from qdl_sdk.models import (
     QuotePayload,
     ReadinessItemResponse,
     ReadinessResponse,
+    ResponseModel,
     SnapshotResponse,
     SourceView,
     SystemReadinessSummary,
@@ -81,3 +82,44 @@ class BatchRequirementModel(ClosedModel):
     consumer_id: str = Field(min_length=1, max_length=200)
     requirements: list[RequirementModel] = Field(min_length=1, max_length=100)
     require_all: bool = True
+
+
+# B4 (DL v2.3.1): batched latest snapshots, one HTTP call (one quota unit) for
+# many probe reads. Additive route and schemas; the single snapshot contract
+# (``qdl.marketdata.snapshot.v2``) is unchanged and each item's ``data`` is that
+# contract's ``data``.
+SNAPSHOT_BATCH_SCHEMA = "qdl.marketdata.snapshot-batch.v1"
+
+
+class SnapshotBatchRequestModel(ClosedModel):
+    consumer_id: str = Field(min_length=1, max_length=200)
+    # The manifest's ``max_batch_items`` is the binding bound (checked first);
+    # this is the transport ceiling shared with the other batch routes.
+    requirements: list[RequirementModel] = Field(min_length=1, max_length=100)
+
+
+class SnapshotBatchItemResponse(ResponseModel):
+    instrument_uid: str
+    feed: FeedType
+    status: str
+    data: MarketDataView | None = None
+    problem: ProblemDetails | None = None
+
+
+class SnapshotBatchResponse(ResponseModel):
+    contract_schema: str = Field(SNAPSHOT_BATCH_SCHEMA, alias="schema")
+    request_id: str
+    partial: bool
+    success_count: int
+    error_count: int
+    results: list[SnapshotBatchItemResponse]
+
+    @model_validator(mode="after")
+    def counts_match(self):
+        if self.success_count + self.error_count != len(self.results):
+            raise ValueError("snapshot batch counts do not match results")
+        if self.partial != (self.error_count > 0):
+            raise ValueError("snapshot batch partial flag does not match errors")
+        if any((item.data is None) == (item.problem is None) for item in self.results):
+            raise ValueError("snapshot batch item needs exactly one of data or problem")
+        return self

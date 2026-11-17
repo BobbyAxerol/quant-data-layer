@@ -352,7 +352,7 @@ jobs:
 
       - name: Audit final runtime dependencies
         run: |
-          # Exact-ID, time-boxed waivers (owner-approved 2026-11-14, expire at v2.3.1).
+          # Exact-ID, time-boxed waivers only (.github/accepted-advisories.json; empty since v2.3.1).
           QDL_PIP_AUDIT_IGNORES="$(python3 -c 'import json; d=json.load(open(".github/accepted-advisories.json")); print(" ".join("--ignore-vuln " + e["id"] for e in d["python"]))')"
           docker run --rm -e QDL_PIP_AUDIT_IGNORES="${QDL_PIP_AUDIT_IGNORES}" "${QDL_CI_IMAGE}" sh -c '
             test ! -e /opt/venv/bin/poetry

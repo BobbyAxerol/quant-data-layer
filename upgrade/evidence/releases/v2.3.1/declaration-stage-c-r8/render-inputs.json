@@ -1,0 +1,47 @@
+{
+  "accept_set": true,
+  "bar_edge_config_lineage": 19,
+  "bar_edge_live_checkpoint": null,
+  "base_repo": "/src/upgrade/evidence/releases/v2.3.0/declaration-stage-b-r7/repo",
+  "base_runtime": {
+    "authority": "/s/live/authority.json",
+    "bundles": {
+      "kn": "/s/live/kn-bundle.json",
+      "realm": "/s/live/realm-bundle.json"
+    },
+    "cores": [
+      "/s/live/cores/rust_core.json",
+      "/s/live/cores/rust_core_2.json",
+      "/s/live/cores/rust_core_3.json"
+    ],
+    "ingestors": {
+      "ingestor-binance-usdm.json": "/s/live/ingestor-binance-usdm.json"
+    },
+    "query_acquisition": "/s/live/query-stable-acquisition-bindings.yaml",
+    "route_bindings": {
+      "trading-system.paper.stable": "/s/live/trading-system.paper.stable-r26.json"
+    }
+  },
+  "base_sha256": {
+    "config/v2/stable-acquisition-bindings.yaml": "da7240cd33402b2a49f9222de5fd800f8c2c65a77a9923c049effbd7ba361d26",
+    "config/v2/stable-authority-promotion-scope.yaml": "3d6613b0a39ad620d770862cda692ae0d27e4a1abdcfaaedd8f39e92eb1d39bc",
+    "config/v2/stable-crypto-demand.yaml": "be1646f0b852db3fe420fcdbaef47845afc7fa619016ef03ab855a3bd7838817",
+    "config/v2/stable-source-bindings.yaml": "87945896a9f85e526d1efa77d0a750b5398cd6241da4dc2bdb920ca020b9fd71",
+    "config/v2/stable-v2-release-routing.yaml": "8290128b70e651d9eb050ebff3d55f1a5dd3860aaedbbf32986cc5db6b12f8fa",
+    "runtime:authority": "db00040f1aca925bfa732903378c5729ee4d4ae7811435b16474b9121bc4e5c0",
+    "runtime:bundles:kn": "12934c8ef2b6adf7eb78acca20b88c72d231020b920544e2cd193b857bc0c0fe",
+    "runtime:bundles:realm": "54026d98e1974904a19f6eb2272da82301ffbdff367e73d9f2fc57c5ee94de15",
+    "runtime:cores:rust_core.json": "8fb1dc9638a09625ee5a1f40917e1e467182ceac52d534a69caafd2aea6b8c00",
+    "runtime:cores:rust_core_2.json": "af533769523bb5696efaebd9b5ed466cce9c1be1f04e70de5473d64c92fd7440",
+    "runtime:cores:rust_core_3.json": "383c34cd3074830583d691a1f888928768bf152bdbd00aea90867bff352ef1d4",
+    "runtime:ingestors:ingestor-binance-usdm.json": "021dd5dcf4bdaa40b09b663b990c8307ad12b978e5edbd117c828012dc77f1e5",
+    "runtime:query_acquisition": "9256bd5a5cbf5e3577db457b2c016c4aaaf44e40e236c2ee90db5ca17b51532c",
+    "runtime:route_bindings:trading-system.paper.stable": "7f5394b9743b917084315ff70c3bc6dee3729f1decb68ffc7962af6c0774c0e9"
+  },
+  "declaration_revision": 8,
+  "live_sources": null,
+  "manifests": {
+    "alpha.okx.paper.stable": "consumers/stable/alpha-okx-paper.yaml"
+  },
+  "schema": "qdl.v2.declaration-render-inputs.v1"
+}

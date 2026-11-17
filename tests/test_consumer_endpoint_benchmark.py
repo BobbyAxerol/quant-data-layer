@@ -6,6 +6,7 @@ import copy
 from contextlib import asynccontextmanager
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -54,7 +55,7 @@ class ConsumerEndpointBenchmarkTests(unittest.TestCase):
 
     def test_openapi_coverage_and_fail_closed_drift(self):
         snapshot = json.loads((bench.ROOT / "contracts/v2/openapi.snapshot.json").read_text())
-        self.assertEqual(len(bench.endpoint_coverage(snapshot)), 11)
+        self.assertEqual(len(bench.endpoint_coverage(snapshot)), 12)
         snapshot["paths"]["/v2/new-read"] = {"get": {}}
         with self.assertRaisesRegex(ValueError, "coverage drift"):
             bench.endpoint_coverage(snapshot)
@@ -183,6 +184,40 @@ class ConsumerEndpointBenchmarkTests(unittest.TestCase):
         query.snapshot.assert_not_called()
         self.assertEqual(query.close.await_count, 2)
 
+    def test_replicas_are_interleaved_per_case_with_alternating_first_and_wall_time(self):
+        # DL v2.3.1: sequential per-replica measurement put the replicas in different load phases (after-W-QRR).
+        p = bench.validate_profile({**self.profile, "operations": ["instrument"]})
+        query, stream = AsyncMock(), AsyncMock()
+
+        async def fake_measure(call, validate, timeout):
+            return {"status": "PASS", "response_ms": 1.0, "usable_ms": 1.0, "elapsed_ms": 1.0, "diagnostics": []}
+
+        with patch.object(bench, "load_scope", return_value=(self.manifest, self.scope)), \
+                patch("qdl_sdk.tls.WorkloadTlsConfig"), patch("qdl_sdk.credentials.RotatingJwtCredentialProvider"), \
+                patch("qdl_sdk.transport.RestQueryTransport", return_value=query), \
+                patch("qdl_sdk.transport.GrpcStreamTransport", return_value=stream), \
+                patch.object(bench, "measure", side_effect=fake_measure), \
+                patch.object(bench.asyncio, "sleep", AsyncMock()):
+            result = asyncio.run(bench.run_client(p))
+        # Every case appends one row per replica (filtered cases too), so pairs follow the global case index.
+        every = result["results"]
+        replicas = p["queries"]
+        self.assertEqual(len(every) % len(replicas), 0)
+        for case_index in range(len(every) // len(replicas)):
+            first, second = every[case_index * 2], every[case_index * 2 + 1]
+            self.assertEqual([first["replica"], second["replica"]],
+                             replicas if case_index % 2 == 0 else replicas[::-1])
+            self.assertEqual((first["operation"], first["products"]), (second["operation"], second["products"]))
+        rows = [r for r in every if r["operation"] == "instrument"]
+        self.assertGreaterEqual(len(rows), 4)
+        self.assertEqual({r["replica"] for r in rows[:2]} | {r["replica"] for r in rows[2:4]}, set(replicas))
+        walls = [s["started_wall_ms"] for r in rows for s in r["samples"]]
+        self.assertEqual(walls, sorted(walls))
+        self.assertTrue(all(isinstance(w, float) for w in walls))
+        self.assertEqual(sum(s["first_request_on_replica"] for r in rows for s in r["samples"]), len(replicas))
+        self.assertEqual(result["replica_order"], "interleaved per case, first replica alternating by case")
+        self.assertEqual(query.close.await_count, 2)
+
     def test_unsafe_diagnostic_cannot_be_enabled_by_operation_filter(self):
         p = bench.validate_profile({**self.profile, "operations": ["gaps"]})
         query, stream = AsyncMock(), AsyncMock()
@@ -224,6 +259,53 @@ class ConsumerEndpointBenchmarkTests(unittest.TestCase):
         self.assertIn("--rm", cmd)
         self.assertEqual(cmd.count("--mount"), 8)
         self.assertEqual(inner["consumers"][0]["tls"]["key_file"], "/bench-id/tls-key_file")
+
+    def test_declaration_root_and_owner_approved_root_client(self):
+        # DL v2.3.1: mount the deployed declaration instead of the repo defaults, and accept a root-only identity
+        # only for a root client container. Nothing is read from the credential files on the host.
+        decl = bench.ROOT / "upgrade/evidence/releases/v2.3.0/declaration-stage-b-r7/repo"
+        p = bench.validate_profile({**self.profile, "declaration_root": str(decl), "container_user": "0"})
+        c = copy.deepcopy(p["consumers"][0])
+        with tempfile.TemporaryDirectory() as tmp:
+            hidden = Path(tmp) / "root-only"
+            hidden.mkdir()
+            key = hidden / "identity"
+            key.touch()
+            hidden.chmod(0o000)
+            try:
+                c["tls"] = {k: str(key) for k in c["tls"]}
+                c["jwt"]["private_key_file"] = str(key)
+                cmd, inner = bench.docker_command(p, c, "qdl-endpoint-bench-test", "sha256:" + "a" * 64, False)
+                plain = bench.validate_profile(self.profile)
+                if os.geteuid() != 0:  # not root: the directory is really unreadable to this user
+                    with self.assertRaises(PermissionError):
+                        bench.docker_command(plain, c, "qdl-endpoint-bench-test", "sha256:" + "a" * 64, False)
+            finally:
+                hidden.chmod(0o700)
+        joined = " ".join(cmd)
+        self.assertIn(f"src={decl / 'config/v2'},dst=/app/config/v2,readonly", joined)
+        self.assertIn(f"src={decl / 'consumers'},dst=/app/consumers,readonly", joined)
+        self.assertIn(f"src={key},dst=/bench-id/jwt-private_key_file,readonly", joined)
+        self.assertEqual(cmd[cmd.index("--user") + 1], "0:0")
+        self.assertEqual(cmd[cmd.index("--cap-add") + 1], "DAC_READ_SEARCH")
+        self.assertEqual(cmd.count("--cap-add"), 1)
+        for flag in ("--read-only", "--rm", "--cap-drop", "no-new-privileges"):
+            self.assertIn(flag, cmd)
+        self.assertNotIn("declaration_root", inner)
+        for bad in ({"container_user": "1000"}, {"declaration_root": "relative/path"},
+                    {"declaration_root": str(bench.ROOT / "qdl")}):
+            with self.assertRaises(ValueError):
+                bench.validate_profile({**self.profile, **bad})
+
+    def test_scope_loads_from_the_deployed_selector_declaration(self):
+        # The deployed stage-B r7 declaration carries selector manifests (alpha.okx r16). Without a selector context
+        # the route plan refused it ("declares universe selectors but no universe/catalogue context"), which ended
+        # the first after-W-QRR run with a ValueError before any call.
+        decl = bench.ROOT / "upgrade/evidence/releases/v2.3.0/declaration-stage-b-r7/repo"
+        with patch.object(bench, "ROOT", decl):
+            manifest, scope = bench.load_scope("trading-system.paper.stable")
+        self.assertEqual(manifest.manifest_revision, 14)
+        self.assertEqual(scope.evidence()["product_count"], 246)
 
     def test_cleanup_only_exact_container_and_failure_visible(self):
         with patch.object(bench.subprocess, "run", return_value=SimpleNamespace(stdout="")) as run:

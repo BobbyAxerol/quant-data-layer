@@ -58,11 +58,23 @@ STABLE_CORE_DEDUP_CAPACITY = 100_000
 # Records per realtime-core transaction (P18.4 capacity package step 1). A
 # transaction costs ~17 ms fixed plus a per-record term; at 256 a hot partition
 # saturated near 5.5-7.6k rec/s in the isolated arch-A bench, at 2048 the same
-# 6-partition drain committed 17.5k rec/s. batch_wait_ms stays 25: a calm
-# partition still leaves after 25 ms, so the larger cap only matters in bursts.
+# 6-partition drain committed 17.5k rec/s. A calm partition still leaves after
+# STABLE_CORE_BATCH_WAIT_MS, so the larger cap only matters in bursts.
 # Owner decision 2026-10-14: 1024 (2048 overflowed the gateway live queue 7x in
 # OPT-05 W2; 1024 passed W3/W4 and is the production value since the rc18 rollout).
 STABLE_CORE_BATCH_SIZE = 1024
+# Realtime-core gather wait per transaction (declared production value, B1 of DL
+# v2.3.1). W-A1 (owner, permanent since 2026-11-16 11:16Z, receipt
+# upgrade/evidence/releases/v2.3.0/runtime-record-20261116/receipts/wa1-perm-*):
+# 25 -> 50 ms cut DL from a median 6.085 to 4.958 vCPU with raw-age window-max
+# p99 177.2 -> 131.3 ms. Every generated core config carries this value, so a
+# render equals the deployed cores instead of needing a hand patch.
+STABLE_CORE_BATCH_WAIT_MS = 50
+# Session-fenced L2 resnapshot quarantine (runtime opt-in since 355f3d3,
+# 2026-09-30; `qdl-realtime-core` defaults it to false when absent). Every
+# deployed core carries true (declaration-stage-b-r7/cores-bw50), so the
+# generator declares it too (DL v2.3.1 B1: generated role fields == runtime).
+STABLE_CORE_BOOK_RESYNC_QUARANTINE = True
 V2_REALTIME_RAW_TOPIC = "md.raw.realtime.v2"
 SHARED_REALTIME_CORE_GROUP_ID = "qdl-v2-realtime-core-v2"
 SHARED_REALTIME_CORE_ID_PREFIX = "qdl-v2-realtime-core"
@@ -1138,11 +1150,12 @@ class StableAcquisitionPlan:
             # The Rust core must therefore quarantine a bad envelope instead
             # of quietly skipping it and masking a topology/config error.
             "strict_subscription_scope": self.raw_topic == V2_REALTIME_RAW_TOPIC,
+            "book_resync_quarantine": STABLE_CORE_BOOK_RESYNC_QUARANTINE,
             "authority": dict(authority),
             "shard_id": f"{SHARED_REALTIME_CORE_ID_PREFIX}-{worker_index:03d}",
             "transactional_id": f"{SHARED_REALTIME_CORE_ID_PREFIX}-{worker_index:03d}",
             "batch_size": STABLE_CORE_BATCH_SIZE,
-            "batch_wait_ms": 25,
+            "batch_wait_ms": STABLE_CORE_BATCH_WAIT_MS,
             "max_events": max_events,
             "metrics_every_batches": 100,
         }

@@ -1,0 +1,13 @@
+quantity 4b: cache age at read = redis TIME - observed_at_ms (ms); upper bound on end-to-end (includes time since the last write)
+feed                             venue       n      p50      p95      p99      max | freshness_ms at write p50/p95 (n)
+execution_book_delta             BINANCE    15      170      213      222      222 | 86/98 (5)
+execution_book_delta             OKX        18      146      220      242      242 | 106/132 (12)
+execution_book_snapshot          BINANCE    15      685     1058     1075     1075 | -/- (0)
+execution_book_snapshot          OKX        18      527     1031     1088     1088 | -/- (0)
+execution_mark_index_price       BINANCE    15     1091     1308     1346     1346 | 856/1030 (15)
+execution_mark_index_price       OKX       291     1358     2425     2895     3334 | 968/2038 (291)
+execution_quote                  BINANCE    15      184      364      419      419 | 111/152 (15)
+execution_quote                  OKX       291      884     8730    15842    58725 | 769/8323 (291)
+execution_trade                  BINANCE    15      974     2734     5272     5272 | 96/119 (15)
+execution_trade                  OKX        15      875     2111     2333     2333 | 105/113 (15)
+MARK evaluated_at - source_event_time (ms): n 306 p50 942 p95 1940 max 2644
