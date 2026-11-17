@@ -236,7 +236,58 @@ Before vs after W-QRR (quantity 4, OKX):
 
 These are single 30-second samples, so treat them as indicative, not as a gate.
 
-## 4. "After v2.3.1": to be filled after the Query recreate
+## 4. "After v2.3.1" (Query x2 on `26c3b051`), measured 2026-11-17 08:21-08:32Z
 
-Run the same q1/q2 command (`run_q12.sh after-v231`), plus a quantity-3 capture and the quantity-4 sweeps.
-Compare per replica.
+Evidence: `latency-after-v231-20261117T0821Z/` (report.md, report.csv, report.json, SHA256SUMS). Window receipt:
+`window-query-x2-20261117T0722Z/RECEIPT.md`.
+
+**Method.**
+- TS identity, r14, 246 products, root client on `qdl-v2-python:2.3.1-aa75218`, 2 rps, rounds 1, under the host lock.
+- **Replicas interleaved per case**, so per-replica numbers are directly comparable, unlike section 3.
+
+**Load state during the run.** The writer's Rust native client held 86 of its 87 Query connections on `query_kn_2`.
+- This is a TS writer defect: W-QRR covers only the Python transport. It is fixed in TS v2.1.5, not in DL.
+- `query_kn_2` ran at about 0.9-1.0 vCPU and `query_kn_1` at about 0.4 vCPU.
+- The kn_1 column is therefore the uncontended Query cost; kn_2 is the cost under the writer's full load.
+
+### Quantity 1: request latency, ms, p50 / p95 (n per replica)
+
+| Operation, product | query_kn_1 | query_kn_2 |
+|---|---|---|
+| snapshot QUOTE (101/95) | 11.3 / 68.9 | 89.4 / 237.6 |
+| snapshot TRADE (10) | 14.7 / 55.4 | 124.4 / 202.0 |
+| snapshot BOOK_DELTA (11) | 13.7 / 60.5 | 103.3 / 177.9 |
+| snapshot BOOK_SNAPSHOT (11/10) | 31.4 / 70.7 | 84.2 / 187.4 |
+| snapshot BAR (10) | 20.1 / 46.0 | 95.5 / 226.2 |
+| **snapshot_batch QUOTE x8 (B4, new) (7)** | **56.4 / 140.2** | **224.6 / 313.5** |
+| reference_batch MARK_INDEX_PRICE (115) | 12.2 / 156.1 | 61.0 / 271.8 |
+| feed_status QUOTE (101/100) | 10.8 / 66.7 | 69.1 / 172.6 |
+| instrument MARK_INDEX_PRICE (91) | 6.1 / 34.3 | 37.0 / 71.7 |
+| readiness_check QUOTE (12) | 31.8 / 162.5 | 177.3 / 309.3 |
+| history BAR (10) | 514.6 / 645.9 | 746.2 / 865.1 |
+| warmup BAR (10) | 783.1 / 886.9 | 1159.3 / 1255.7 |
+
+These are medians of the per-row p50 and an approximate p95 of the per-row p50 values, from `report.csv`.
+
+**B4 comparison.** One snapshot:batch of 8 QUOTE items costs 56 ms on the uncontended replica, against 8 x 11 ms = about
+90 ms for 8 single snapshots, and it counts as one quota unit instead of eight.
+
+**Failures, all explained:**
+- snapshot_batch INVALID_ARGUMENT 18: batches with BAR items carry warmup_limit and are refused by design
+  (`qdl/api_v2/router.py:1583-1592`). The benchmark fix is on `fix/dl-v232-benchmark-snapshot-batch`.
+- RATE_LIMITED 8: the benchmark shares the TS identity quota with the live writer.
+- DATA_NOT_READY 4: quiet instruments.
+
+### Quantity 2: durable event age
+
+`freshness_ms` values are in report.json. They are unchanged in kind from section 3, because Query does not change event
+age. The quiet-QUOTE tail (BAND, GAS and similar) is a TS-side proof-window issue, which is the owner-approved class
+fix in DL v2.3.2 / TS v2.1.5 (`DL_V232_SESSION_ALIVE_FRAME_DESIGN.md`).
+
+### Quantities 3 and 4
+
+- **3 (delivery lag):** NOT re-measured. The Query recreate does not change the ingest, core or projector path;
+  the section 2 "before" values stand, labelled.
+- **4 (writer cache age):** the window soak measured writer-side freshness instead, 360 samples 07:48-08:18Z:
+  - MARK p50/p99/max 119/765/881 ms;
+  - QUOTE p50/p99 236/870 ms, max 58,002 ms (a quiet instrument).

@@ -1,13 +1,36 @@
-# DL v2.3.1 certificate (DRAFT, not issued)
+# DL v2.3.1 certificate (ISSUED 2026-11-17, PASS WITH NOTED LIMITS)
 
-Draft status: `tested locally`. It is not shadow-certified and not production-ready until the rollout gates and the
-full CI run pass.
+**Status.** Query x2 runs v2.3.1 in production: `query_kn_1` and `query_kn_2` on
+`qdl-v2-python@sha256:26c3b051ed1378aa83928230866cffcd6abcea87d248c06f850ee056994b3b47`. That makes the release
+`production-authoritative` for Query.
+- The Binance stage C declaration (r8) is in the tree but NOT applied. It has its own window, `ROLLOUT_PLAN.md`
+  section 7.
+- The Rust roles and bar_edge stay on their previous images (section 8 follow-up).
 
-The certificate is issued by the coordinator after three things:
-- one full green CI run on the release PR head tree (CI6). CI5 applies: `ci.yml`, `Cargo.lock`, `poetry.lock` and
-  `pyproject.toml` changed, so the run cannot be inherited;
-- the rollout R2-R5 gates (`ROLLOUT_PLAN.md`);
-- the latency "after" run (`LATENCY_REPORT.md` section 3).
+**Receipts:**
+- **CI6:** full CI run 44035167016, 13/13 green, on PR #52 head `3fb95de`. dev `e9388a7` has the identical tree
+  `393e2755`.
+- **R0:** `R0_SECURITY.md`. pip-audit 0 findings, trivy 0 CRITICAL/HIGH, no waivers.
+- **Rollout R0-R5:** `window-query-x2-20261117T0722Z/RECEIPT.md`.
+- **Latency:** `LATENCY_REPORT.md`, sections 2-4.
+
+**Noted limit (R4 gate FAIL, cause outside DL).**
+- The `slow_request <= R1 + 10 %` gate failed: median 196/min against about 130.
+- Proven cause: the TS writer's Rust native client (`market-data-writer`) re-connected to `query_kn_2` while
+  `query_kn_1` was recreated, and stuck there (86 of 87 connections; mapped by socket inode).
+- The writer's Python W-QRR transport stayed balanced. The Query image is not the cause, and a Query rollback would
+  not fix it.
+- The owner accepted the tag with this limit (2026-11-17) and chose the root fix in TS v2.1.5: per-replica pools in
+  the Rust writer, from `DATA_LAYER_V2_QUERY_URLS`.
+- Every other R4 gate passed: MARK p99 765 ms, QUOTE p99 870 ms, DL median 5.97 vCPU (max 6.45), 0 stalls over 2 s,
+  246/246.
+
+**Window incident, recorded.**
+- Two R2 attempts on `query_kn_2` were rolled back by the gate because of defects in the coordinator's gate script:
+  a missing space, and a 2.3.0-rc3 client without the snapshot-batch parser. Both rollbacks restored `a235c0a1`
+  healthy.
+- The 3 recreates in about 7 minutes caused writer stream RATE_LIMITED reconnects, 2 native-worker restarts, and a
+  freshness excursion (MARK p99 1047 / QUOTE p99 1605 at 07:40Z). All of it recovered by 07:44Z.
 
 ## 1. Scope
 

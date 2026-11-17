@@ -2502,3 +2502,16 @@ filled after the window and the R-cert 2 final verdict (`drafts/RELEASE_FILL_LIS
   - full CI (CI5);
   - the rollout gates;
   - the latency "after".
+
+### 2026-11-17 - v2.3.1 ISSUED - PASS WITH NOTED LIMITS (Query x2 production-authoritative)
+
+| Item | Pinned at | Result |
+|---|---|---|
+| Full CI (CI6) | run 44035167016, PR #52 head 3fb95de, tree 393e2755 (= dev e9388a7) | 13/13 green |
+| R0 image | `qdl-v2-python@sha256:26c3b051...` from aa752182 | pip-audit 0, trivy 0 C/H, no waivers |
+| Rollout R2/R3 | query_kn_2 07:42:43Z, query_kn_1 07:48:09Z | image, r14, B4 18/18, writer 0 refusals, 246/246 |
+| R4 soak 07:48-08:18Z | same | PASS except slow_request (+R1 10 %) FAIL: TS writer Rust client stuck on kn_2 (86/87 connections), cause outside DL; owner accepted, fix in TS v2.1.5 |
+| R5 latency 08:21-08:32Z | interleaved replicas | `LATENCY_REPORT.md` section 4 |
+
+Not applied in this window: Binance stage C r8 (own window), Rust roles / bar_edge (follow-up). Receipt:
+`upgrade/evidence/releases/v2.3.1/window-query-x2-20261117T0722Z/RECEIPT.md`.
