@@ -158,15 +158,28 @@ Raw data: `~/.local/state/qdl-v2/v231-latency-q12/run-after-wqrr-20261117T042211
 Notes:
 - **snapshot:batch FAIL is expected.** The route is new in v2.3.1, and Query still runs v2.3.0 `a235c0a1`. This is
   the R2/R3 smoke gate after the recreate.
-- **Replica asymmetry persists after W-QRR.** At the request level, kn_1 is still about 5-7x slower than kn_2 at p50
-  for the hot single reads (OKX QUOTE snapshot 75.9 vs 13.5 ms; OKX MARK reference 122.8 vs 17.0 ms). That is with a
-  51/49 request split.
-  - Cause not determined, and I have not checked it. Candidates to examine read-only before the Query recreate:
-    - per-replica CPU;
-    - kn_1 event-loop stall lines;
-    - per-replica hot-lane admission stats;
-    - a heavier request mix on kn_1, such as warmups.
-  - The R4/R5 gates in `ROLLOUT_PLAN.md` measure this pair directly.
+- **The replica asymmetry is a measurement artifact, not a Query defect** (RCA 2026-11-17 about 04:45Z, read only:
+  logs, `/proc/net/tcp` via `docker exec`, `docker stats`; the coordinator accepted it).
+  - In this run, kn_1 was about 5-7x slower than kn_2 at p50 on hot single reads (OKX QUOTE snapshot 75.9 vs 13.5 ms;
+    OKX MARK reference 122.8 vs 17.0 ms).
+  - Cause: the tool measured the replicas sequentially. `scripts/benchmark_consumer_endpoints.py` (at f4b4b37,
+    `for replica in profile["queries"]:` around the whole case list) ran all 547 kn_1 samples first, at about
+    04:22:34-04:27Z, and then all kn_2 samples, at about 04:27-04:32Z. The two replicas were therefore measured in
+    different host-load phases (W-QRR scoring and PM-L1/L3 starting, load 20-25).
+  - Server load is symmetric (10 minutes to about 04:44Z):
+    - `qdl.stall slow_request`: kn_1 823 vs kn_2 886. Of these, `reference:batch` is 695 vs 693; stall p50
+      311 vs 305 ms.
+    - `loop_lag` is 55-75 ms on both.
+    - CPU is 70-78 % vs 69-80 % (3 samples); RSS is about 300 MiB on each.
+    - Hot-lane refusals are low on both: RATE_LIMITED 5 vs 1.
+  - The only client peer on either replica (150 snapshots each) is the writer `172.18.0.12`, with 50 vs 46
+    connections. The hypothesis "another consumer pins the alias to kn_1" is rejected.
+  - Fix in the tool: replicas are now interleaved per case, the first replica alternates by case, and each sample
+    records `started_wall_ms` (test `test_replicas_are_interleaved_per_case_with_alternating_first_and_wall_time`).
+    The "after v2.3.1" run uses it.
+  - Follow-up, TS-owned, not in this DL release: `ts-gateway`, `ts-risk`, `ts-performance` and `ts-paper` still use
+    the alias `DATA_LAYER_V2_QUERY_URL=https://qdl-v2-query:8200`, which is a single pool. They are the remaining
+    adopters of SDK 2.6.0 `build_replicated_rest_query`. They are low volume: no connection was held in the samples.
 - Not measured: `stream` (Subscribe disabled by the plan, so no stream slots are taken) and `gaps` (SAFETY_BLOCKED).
 - Not measured: the other identities (alpha.okx, alpha.binance, alpha.vn, monitoring, reference-l2), because only
   the TS identity was approved.

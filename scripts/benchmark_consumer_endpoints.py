@@ -375,6 +375,7 @@ async def run_client(profile, inventory=False):
               "timing_contract": "response includes HTTP decode; usable includes SDK and product validation; no strategy computation",
               "percentile_warning": "small-sample p95 descriptive only; p99 withheld below 100 usable samples"}
     report["safety_blocked_operations"] = SAFETY_BLOCKED
+    report["replica_order"] = "interleaved per case, first replica alternating by case"
     if inventory:
         report.update(status="INVENTORY_ONLY", planned_cases_per_replica=len(cases))
         return report
@@ -384,14 +385,21 @@ async def run_client(profile, inventory=False):
         environment=manifest.environment, consumer_manifest_revision=manifest.manifest_revision)
     deadline = time.monotonic() + limits["max_seconds"]
     next_request = 0.0
+    # Replicas are interleaved per case, and the first replica alternates by case (DL v2.3.1): measuring every case
+    # on one replica and then on the next put the two replicas in different host-load phases (after-W-QRR run,
+    # 2026-11-17), which made a load-phase difference look like a replica difference.
+    endpoints = []
     for replica in profile["queries"]:
         query = RestQueryTransport(replica, tls=tls, credential_provider=credential, timeout_seconds=limits["timeout_seconds"])
         stream = GrpcStreamTransport(profile["stream_targets"], tls=tls, credential_provider=credential)
         client = AsyncDataLayerClient(query_transport=query, stream_transport=stream, consumer_id=manifest.consumer_id,
                                      max_reconnect_attempts=0, max_buffer_events=min(100, manifest.quotas.max_buffer_events))
-        first_request = True
-        try:
-            for op, products in cases:
+        endpoints.append({"replica": replica, "query": query, "client": client, "first_request": True})
+    try:
+        for case_index, (op, products) in enumerate(cases):
+            order = endpoints if case_index % 2 == 0 else endpoints[::-1]
+            for endpoint in order:
+                replica, query, client = endpoint["replica"], endpoint["query"], endpoint["client"]
                 row = {"replica": replica, "operation": op, "endpoint": OPERATIONS[op][1],
                        "products": [p.evidence() for p in products], "samples": [],
                        "latency_unit": "batch_wall" if len(products) > 1 else "request",
@@ -423,10 +431,12 @@ async def run_client(profile, inventory=False):
                             return await query.reference_batch(tuple(p.sdk_requirement for p in refs), consumer_id=manifest.consumer_id, require_all=True)
                         return await invoke(op, products, query, client, manifest, limits["stream_seconds"])
                     next_request = time.monotonic() + max(interval, 2.0 if op == "stream" else 0)
+                    started_wall_ms = round(time.time() * 1000, 3)
                     sample = await measure(call, lambda payload: validate_operation(op, products, payload, refs),
                                            min(remaining, limits["timeout_seconds"] + (limits["stream_seconds"] if op == "stream" else 0)))
-                    sample.update(round=round_index, first_request_on_replica=first_request, pacing_wait_ms=round(wait * 1000, 3))
-                    first_request = False
+                    sample.update(round=round_index, first_request_on_replica=endpoint["first_request"],
+                                  pacing_wait_ms=round(wait * 1000, 3), started_wall_ms=started_wall_ms)
+                    endpoint["first_request"] = False
                     row["samples"].append(sample)
                 expected = 1 if op == "stream" else limits["rounds"]
                 samples = row["samples"]
@@ -436,8 +446,9 @@ async def run_client(profile, inventory=False):
                 row["response_latency"] = percentiles([s["response_ms"] for s in samples if s["response_ms"] is not None])
                 row["usable_latency"] = percentiles([s["usable_ms"] for s in samples if s["status"] == "PASS"])
                 row["steady_usable_latency"] = percentiles([s["usable_ms"] for s in samples if s["status"] == "PASS" and s["round"] > 0])
-        finally:
-            await client.close()
+    finally:
+        for endpoint in endpoints:
+            await endpoint["client"].close()
     states = [r["status"] for r in report["results"]]
     report["status"] = "FAIL" if "FAIL" in states else "INCOMPLETE" if any(x in states for x in ("NOT_MEASURED_DEADLINE", "NO_EVENT", "SAFETY_BLOCKED")) else "PASS_SELECTED_READS"
     report["certification"] = "BENCHMARK_ONLY_NOT_A_RELEASE_CERTIFICATE"

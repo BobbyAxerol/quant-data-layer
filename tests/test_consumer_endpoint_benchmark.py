@@ -184,6 +184,36 @@ class ConsumerEndpointBenchmarkTests(unittest.TestCase):
         query.snapshot.assert_not_called()
         self.assertEqual(query.close.await_count, 2)
 
+    def test_replicas_are_interleaved_per_case_with_alternating_first_and_wall_time(self):
+        # DL v2.3.1: sequential per-replica measurement put the replicas in different load phases (after-W-QRR).
+        p = bench.validate_profile({**self.profile, "operations": ["instrument"]})
+        query, stream = AsyncMock(), AsyncMock()
+
+        async def fake_measure(call, validate, timeout):
+            return {"status": "PASS", "response_ms": 1.0, "usable_ms": 1.0, "elapsed_ms": 1.0, "diagnostics": []}
+
+        with patch.object(bench, "load_scope", return_value=(self.manifest, self.scope)), \
+                patch("qdl_sdk.tls.WorkloadTlsConfig"), patch("qdl_sdk.credentials.RotatingJwtCredentialProvider"), \
+                patch("qdl_sdk.transport.RestQueryTransport", return_value=query), \
+                patch("qdl_sdk.transport.GrpcStreamTransport", return_value=stream), \
+                patch.object(bench, "measure", side_effect=fake_measure), \
+                patch.object(bench.asyncio, "sleep", AsyncMock()):
+            result = asyncio.run(bench.run_client(p))
+        rows = [r for r in result["results"] if r["operation"] == "instrument"]
+        replicas = p["queries"]
+        self.assertGreaterEqual(len(rows), 4)
+        self.assertEqual(len(rows) % len(replicas), 0)
+        for case_index in range(len(rows) // len(replicas)):
+            pair = [r["replica"] for r in rows[case_index * 2:case_index * 2 + 2]]
+            self.assertEqual(pair, replicas if case_index % 2 == 0 else replicas[::-1])
+            self.assertEqual(rows[case_index * 2]["products"], rows[case_index * 2 + 1]["products"])
+        walls = [s["started_wall_ms"] for r in rows for s in r["samples"]]
+        self.assertEqual(walls, sorted(walls))
+        self.assertTrue(all(isinstance(w, float) for w in walls))
+        self.assertEqual(sum(s["first_request_on_replica"] for r in rows for s in r["samples"]), len(replicas))
+        self.assertEqual(result["replica_order"], "interleaved per case, first replica alternating by case")
+        self.assertEqual(query.close.await_count, 2)
+
     def test_unsafe_diagnostic_cannot_be_enabled_by_operation_filter(self):
         p = bench.validate_profile({**self.profile, "operations": ["gaps"]})
         query, stream = AsyncMock(), AsyncMock()
