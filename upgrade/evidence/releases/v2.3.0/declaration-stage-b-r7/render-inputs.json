@@ -1,0 +1,47 @@
+{
+  "accept_set": true,
+  "bar_edge_config_lineage": 19,
+  "bar_edge_live_checkpoint": null,
+  "base_repo": "/src/upgrade/evidence/releases/v2.3.0/declaration-out6/repo",
+  "base_runtime": {
+    "authority": "/s/live/authority.json",
+    "bundles": {
+      "kn": "/s/live/kn-bundle.json",
+      "realm": "/s/live/realm-bundle.json"
+    },
+    "cores": [
+      "/s/live/cores/rust_core.json",
+      "/s/live/cores/rust_core_2.json",
+      "/s/live/cores/rust_core_3.json"
+    ],
+    "ingestors": {
+      "ingestor-okx-swap.json": "/s/live/ingestor-okx-swap.json"
+    },
+    "query_acquisition": "/s/live/query-stable-acquisition-bindings.yaml",
+    "route_bindings": {
+      "trading-system.paper.stable": "/s/live/trading-system.paper.stable-r25.json"
+    }
+  },
+  "base_sha256": {
+    "config/v2/stable-acquisition-bindings.yaml": "57ea9a633308813f78564f2a940226ba61bef1d466394206016abc0c22f41066",
+    "config/v2/stable-authority-promotion-scope.yaml": "a69ea9b0df8fb6d5ffb6448cf90d910a1b0280218d6fe8ea319e5a8c6f637d4d",
+    "config/v2/stable-crypto-demand.yaml": "fbee33af3ddf00cf941b76f82304d518434c784296183a2ed568d89930a0af43",
+    "config/v2/stable-source-bindings.yaml": "6f1699d4a19edf74468602f44dbf427af387b6088ee22f203a67e07ff5a69646",
+    "config/v2/stable-v2-release-routing.yaml": "b8f64f84ddaf0e0d72b40e4181b119f548b4f6abab1bbc0cba44c44b57be548b",
+    "runtime:authority": "db00040f1aca925bfa732903378c5729ee4d4ae7811435b16474b9121bc4e5c0",
+    "runtime:bundles:kn": "924951cdb7bb695ea30c368bbcbcd217199ab98839dfddb921c967b61fb40b42",
+    "runtime:bundles:realm": "c5e21bb7527705b794360d4e4b2e0fedaf86a0290079d0790e6213243aabb15b",
+    "runtime:cores:rust_core.json": "ff1051829120fb1a4edc8653e8378d3b167a2beb30ccccb6f1538dc0330d95e7",
+    "runtime:cores:rust_core_2.json": "348f2c708910e12a5dde06d3c60529be2709dc371f0faecc0164d902c598639d",
+    "runtime:cores:rust_core_3.json": "dfab3186fefb701afba79cc4f5dc74e2485aa5cc848c5456492bc38c6b3d3133",
+    "runtime:ingestors:ingestor-okx-swap.json": "4cb59e29d9448bc35fa540c2ca81ada0a975f123b2b7c14a9cf0d8987526a7be",
+    "runtime:query_acquisition": "81d001aaa47c13557f84f947f5bc7b7b8a31177cdd963cc1e2145ea7f70b6850",
+    "runtime:route_bindings:trading-system.paper.stable": "980123da2ffee321a54ea519a65d85ad172fcbad9c7fd0861a522db4b5b8ec66"
+  },
+  "declaration_revision": 7,
+  "live_sources": null,
+  "manifests": {
+    "trading-system.paper.stable": "consumers/stable/trading-system-paper.yaml"
+  },
+  "schema": "qdl.v2.declaration-render-inputs.v1"
+}

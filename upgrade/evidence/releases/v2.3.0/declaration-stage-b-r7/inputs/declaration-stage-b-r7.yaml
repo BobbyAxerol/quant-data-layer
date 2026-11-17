@@ -1,0 +1,67 @@
+schema: qdl.v2.declaration.v1
+declaration_revision: 7
+environment: paper
+description: 'DL stage B: TS Paper (trading-system.paper.stable) execution QUOTE + MARK_INDEX_PRICE for the 71
+  crossec OKX linear swaps that the 2026-11-16 10:01Z TS coverage gate found unusable (NOT_GRANTED / NOT_ROUTED),
+  additive on the live v2.3.0 declaration out6 (declaration_revision 5). FET and LUNA enter the catalogue from the
+  verbatim public OKX captures of 2026-11-13 04:26Z. Revision 6 was a dry render on 2026-11-13 (outB6, 69 symbols)
+  and is not reused.'
+accept_set: true
+ingestor:
+  lane_pins: true
+  latest_state_flush_ms_by_feed:
+    QUOTE: 50
+    MARK_INDEX: 500
+capacity:
+  # Post-W-A1 DL median measured 2026-11-14 (wa1-20261114T0006Z, batch_wait 50). Stage B assumes W-A1 runs first.
+  baseline_dl_vcpu: 4.948
+  ceiling_dl_vcpu: 6.0
+  venue_priority:
+  - OKX
+  - BINANCE
+  # Measured on exactly these 71 (public OKX WS, 60 s, 2026-11-16 10:3xZ, coalesce-50/500.json):
+  # bbo-tbt @50 ms 125.5 rec/s; mark-price @500 ms 142.0 + index-tickers @500 ms 62.7 rec/s.
+  rates_per_binding:
+    okx_bbo: 1.768
+    okx_mark_index@500: 2.883
+instrument_captures:
+- path: captures/okx-FET-USDT-SWAP.json
+  captured_at_utc: '2026-11-13T04:26:00Z'
+  endpoint: GET https://www.okx.com/api/v5/public/instruments?instType=SWAP&instId=FET-USDT-SWAP
+- path: captures/okx-LUNA-USDT-SWAP.json
+  captured_at_utc: '2026-11-13T04:26:00Z'
+  endpoint: GET https://www.okx.com/api/v5/public/instruments?instType=SWAP&instId=LUNA-USDT-SWAP
+base:
+  repo: /src/upgrade/evidence/releases/v2.3.0/declaration-out6/repo
+  runtime:
+    authority: /s/live/authority.json
+    ingestors:
+      # Binance is left out on purpose: stage B adds no Binance binding, and the per-config flush map would
+      # otherwise change the Binance file and force an ingestor_binance_usdm recreate (blast radius).
+      ingestor-okx-swap.json: /s/live/ingestor-okx-swap.json
+    cores:
+    - /s/live/cores/rust_core.json
+    - /s/live/cores/rust_core_2.json
+    - /s/live/cores/rust_core_3.json
+    query_acquisition: /s/live/query-stable-acquisition-bindings.yaml
+    bundles:
+      realm: /s/live/realm-bundle.json
+      kn: /s/live/kn-bundle.json
+    route_bindings:
+      trading-system.paper.stable: /s/live/trading-system.paper.stable-r25.json
+bar_edge:
+  split_runtime: true
+  config_lineage: 19
+consumers:
+- consumer_id: trading-system.paper.stable
+  class: EXECUTION
+  manifest: consumers/stable/trading-system-paper.yaml
+  revision: 14
+  release_revision: 26
+  instruments:
+  - venue: OKX
+    market: SWAP
+    feeds:
+    - QUOTE
+    - MARK_INDEX_PRICE
+    symbols_file: symbols-stageB71.json
