@@ -35,6 +35,7 @@ from qdl.consumer import ConsumerManifestLoader
 from qdl.runtime.stable_deployment import (
     SHARED_REALTIME_CORE_GROUP_ID,
     SHARED_REALTIME_CORE_ID_PREFIX,
+    STABLE_CORE_BATCH_WAIT_MS,
     STABLE_CORE_WORKER_COUNT,
     STABLE_CORE_DEDUP_CAPACITY,
     AuthorityPromotionScope,
@@ -639,17 +640,38 @@ class StableDeploymentContractTests(unittest.TestCase):
         )
         self.assertEqual(current_native_count, previous_native_count + 2)
 
-    def test_core_transaction_batch_is_1024_records_with_unchanged_wait(self):
-        # P18.4 capacity step 1: one variable. Only the record cap moves; the
-        # 25 ms gather wait and the metrics cadence stay as before.
+    def test_core_transaction_batch_is_1024_records_with_declared_wait(self):
+        # P18.4 capacity step 1 moved only the record cap. W-A1 (2026-11-16)
+        # moved only the gather wait, 25 -> 50 ms, as the declared value.
         for worker_index in (1, 2, 3):
             core = self.acquisition.core_config(
                 catalog=self.catalog, authority=self.authority,
                 worker_index=worker_index,
             )
             self.assertEqual(core["batch_size"], 1024)
-            self.assertEqual(core["batch_wait_ms"], 25)
+            self.assertEqual(core["batch_wait_ms"], 50)
+            self.assertEqual(core["batch_wait_ms"], STABLE_CORE_BATCH_WAIT_MS)
             self.assertEqual(core["metrics_every_batches"], 100)
+
+    def test_generated_core_role_fields_equal_the_deployed_stage_b_cores(self):
+        # B1 (DL v2.3.1): release tree = runtime. Every non-binding role field
+        # the generator writes equals the deployed cores (v2.3.0-stage-b-cores,
+        # byte-equal to declaration-stage-b-r7/cores-bw50 per RUNTIME_RECORD.md).
+        deployed_dir = ROOT / "upgrade/evidence/releases/v2.3.0/declaration-stage-b-r7/cores-bw50"
+        for worker_index, name in ((1, "rust_core.json"), (2, "rust_core_2.json"), (3, "rust_core_3.json")):
+            deployed = json.loads((deployed_dir / name).read_text(encoding="utf-8"))
+            generated = self.acquisition.core_config(
+                catalog=self.catalog, authority=self.authority, worker_index=worker_index,
+            )
+            role = {key: value for key, value in generated.items() if key not in {"authority", "core"}}
+            self.assertEqual(
+                role, {key: value for key, value in deployed.items() if key not in {"authority", "core"}}, name
+            )
+            self.assertEqual(
+                {key: value for key, value in generated["core"].items() if key != "bindings"},
+                {key: value for key, value in deployed["core"].items() if key != "bindings"},
+                name,
+            )
 
     def test_core_bundle_uses_stable_identity_lineage_and_never_enables_public_writes(self):
         core = self.acquisition.core_config(

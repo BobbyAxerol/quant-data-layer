@@ -1,5 +1,24 @@
 # SDK Changelog
 
+## 2.6.0 (Data Layer v2.3.1: per-request Query replica balancing)
+
+Additive only. New `build_replicated_rest_query(urls, *, tls, credential_provider,
+timeout_seconds, max_connections_per_replica=100, max_attempts=2, cooldown_seconds=1.0)`
+returns the existing `ReplicatedRestQueryTransport` over one `RestQueryTransport` pool per
+Query replica URL, with keep-alive equal to the pool's connection limit.
+`RestQueryTransport` gains keyword-only `max_connections` (default 100) and
+`max_keepalive_connections` (default 20, unchanged behaviour).
+
+Why: one pool on a DNS alias that names several replicas (`qdl-v2-query`) selects a
+replica per TCP connection, and httpx then always reuses the oldest free connection.
+A sequential caller, such as a coalesced `reference_batch` stream, therefore stays on one
+replica for the life of the process (production 2026-11-17: query_kn_1 0.94 vCPU with about
+213 slow requests/min, query_kn_2 0.26 vCPU with none). With httpx 0.28.1/httpcore 1.0.9,
+a pool above its keep-alive limit also closes idle connections, so a bursty caller
+re-handshakes TLS. Per-replica pools with per-request round-robin remove both effects.
+Replica URLs must match the Query certificate SANs (`query_v2_1`, `query_v2_2`).
+Clients on 2.5.0 keep working; no wire or model change.
+
 ## 2.5.0 (Data Layer v2.3.0: derived-bar lineage in the generated contract)
 
 Additive only; no SDK source change. The bundled generated contract gains

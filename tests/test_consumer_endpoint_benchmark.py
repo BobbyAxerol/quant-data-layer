@@ -6,6 +6,7 @@ import copy
 from contextlib import asynccontextmanager
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -224,6 +225,43 @@ class ConsumerEndpointBenchmarkTests(unittest.TestCase):
         self.assertIn("--rm", cmd)
         self.assertEqual(cmd.count("--mount"), 8)
         self.assertEqual(inner["consumers"][0]["tls"]["key_file"], "/bench-id/tls-key_file")
+
+    def test_declaration_root_and_owner_approved_root_client(self):
+        # DL v2.3.1: mount the deployed declaration instead of the repo defaults, and accept a root-only identity
+        # only for a root client container. Nothing is read from the credential files on the host.
+        decl = bench.ROOT / "upgrade/evidence/releases/v2.3.0/declaration-stage-b-r7/repo"
+        p = bench.validate_profile({**self.profile, "declaration_root": str(decl), "container_user": "0"})
+        c = copy.deepcopy(p["consumers"][0])
+        with tempfile.TemporaryDirectory() as tmp:
+            hidden = Path(tmp) / "root-only"
+            hidden.mkdir()
+            key = hidden / "identity"
+            key.touch()
+            hidden.chmod(0o000)
+            try:
+                c["tls"] = {k: str(key) for k in c["tls"]}
+                c["jwt"]["private_key_file"] = str(key)
+                cmd, inner = bench.docker_command(p, c, "qdl-endpoint-bench-test", "sha256:" + "a" * 64, False)
+                plain = bench.validate_profile(self.profile)
+                if os.geteuid() != 0:  # not root: the directory is really unreadable to this user
+                    with self.assertRaises(PermissionError):
+                        bench.docker_command(plain, c, "qdl-endpoint-bench-test", "sha256:" + "a" * 64, False)
+            finally:
+                hidden.chmod(0o700)
+        joined = " ".join(cmd)
+        self.assertIn(f"src={decl / 'config/v2'},dst=/app/config/v2,readonly", joined)
+        self.assertIn(f"src={decl / 'consumers'},dst=/app/consumers,readonly", joined)
+        self.assertIn(f"src={key},dst=/bench-id/jwt-private_key_file,readonly", joined)
+        self.assertEqual(cmd[cmd.index("--user") + 1], "0:0")
+        self.assertEqual(cmd[cmd.index("--cap-add") + 1], "DAC_READ_SEARCH")
+        self.assertEqual(cmd.count("--cap-add"), 1)
+        for flag in ("--read-only", "--rm", "--cap-drop", "no-new-privileges"):
+            self.assertIn(flag, cmd)
+        self.assertNotIn("declaration_root", inner)
+        for bad in ({"container_user": "1000"}, {"declaration_root": "relative/path"},
+                    {"declaration_root": str(bench.ROOT / "qdl")}):
+            with self.assertRaises(ValueError):
+                bench.validate_profile({**self.profile, **bad})
 
     def test_cleanup_only_exact_container_and_failure_visible(self):
         with patch.object(bench.subprocess, "run", return_value=SimpleNamespace(stdout="")) as run:

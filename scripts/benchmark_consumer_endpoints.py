@@ -48,8 +48,21 @@ SAFETY_BLOCKED = {
 
 def validate_profile(raw):
     p = dict(raw)
-    if set(p) - {"image", "network", "queries", "stream_targets", "consumers", "limits", "operations"}:
+    if set(p) - {"image", "network", "queries", "stream_targets", "consumers", "limits", "operations",
+                 "declaration_root", "container_user"}:
         raise ValueError("unknown profile fields; credentials must be file references")
+    # DL v2.3.1: `declaration_root` mounts the deployed declaration's config/v2 and consumers (for example
+    # upgrade/evidence/releases/v2.3.0/declaration-stage-b-r7/repo) instead of the repository defaults, so the
+    # measured scope equals the runtime. `container_user` "0" (owner-approved, read-only identity mounts) runs the
+    # client as root with only CAP_DAC_READ_SEARCH added, for identity files the host user cannot read.
+    if "declaration_root" in p:
+        root = p["declaration_root"]
+        if not isinstance(root, str) or not Path(root).is_absolute() or ".." in Path(root).parts:
+            raise ValueError("declaration_root must be an absolute path")
+        if not (Path(root) / "config/v2").is_dir() or not (Path(root) / "consumers").is_dir():
+            raise ValueError("declaration_root must hold config/v2 and consumers")
+    if p.get("container_user", "0") != "0":
+        raise ValueError("container_user may only be \"0\" (root, read-only identity mounts)")
     if not p.get("image") or not re.fullmatch(r"[A-Za-z0-9_.-]+", p.get("network", "")):
         raise ValueError("existing image and Docker network required")
     if not 1 <= len(p.get("queries", [])) <= 4:
@@ -426,22 +439,44 @@ async def run_client(profile, inventory=False):
     return report
 
 
+def credential_source(path, *, root_container):
+    """Host path of one credential file for a read-only bind mount (never opened or read here).
+
+    The host user must normally see the file. A root-only identity directory is accepted only for an
+    owner-approved root client container: the absolute path is passed as given (no symlink resolution is
+    possible without permission) and the Docker daemon, which performs the bind mount as root, fails the run if
+    the file is missing.
+    """
+    raw = Path(path)
+    try:
+        source = raw.resolve(strict=True)
+    except PermissionError:
+        if not root_container or ".." in raw.parts or not raw.is_absolute():
+            raise
+        return raw
+    if not source.is_file():
+        raise ValueError("credential must be a file")
+    return source
+
+
 def docker_command(profile, consumer, name, image_id, inventory):
     command = ["docker", "run", "--rm", "--name", name, "--network", "none" if inventory else profile["network"],
                "--read-only", "--cpus", "1", "--memory", "512m", "--pids-limit", "128", "--cap-drop", "ALL",
                "--security-opt", "no-new-privileges", "--tmpfs", "/tmp:rw,nosuid,size=64m", "-e", "PYTHONDONTWRITEBYTECODE=1",
                "-e", "QDL_ENDPOINT_BENCHMARK_PROFILE", "--entrypoint", "python"]
+    if profile.get("container_user") == "0":
+        command += ["--user", "0:0", "--cap-add", "DAC_READ_SEARCH"]
+    declaration = Path(profile.get("declaration_root") or ROOT)
     for src, dst in ((ROOT / "scripts/benchmark_consumer_endpoints.py", "/app/scripts/benchmark_consumer_endpoints.py"),
-                     (ROOT / "config/v2", "/app/config/v2"), (ROOT / "consumers", "/app/consumers"),
+                     (declaration / "config/v2", "/app/config/v2"), (declaration / "consumers", "/app/consumers"),
                      (ROOT / "contracts/v2/openapi.snapshot.json", "/app/contracts/v2/openapi.snapshot.json")):
         command += ["--mount", f"type=bind,src={src},dst={dst},readonly"]
     client = json.loads(json.dumps(profile))
+    client.pop("declaration_root", None)  # mounted at /app above; a host path means nothing in the client
     c = json.loads(json.dumps(consumer))
     if not inventory:
         for group, field in (("tls", "ca_file"), ("tls", "cert_file"), ("tls", "key_file"), ("jwt", "private_key_file")):
-            source = Path(c[group][field]).resolve(strict=True)
-            if not source.is_file():
-                raise ValueError("credential must be a file")
+            source = credential_source(c[group][field], root_container=profile.get("container_user") == "0")
             target = f"/bench-id/{group}-{field}"
             command += ["--mount", f"type=bind,src={source},dst={target},readonly"]
             c[group][field] = target
