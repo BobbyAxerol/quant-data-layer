@@ -112,10 +112,118 @@ The OKX QUOTE tail is event age on quiet instruments. The QUOTE liveness probe r
 (`renewed_same_record`), so `observed_at_ms` stays at the last real quote. Canonical delivery for the same feed is
 p95 0.22 s (quantity 3).
 
-## 3. "After": to be filled after the rollout
+## 3. "After W-QRR" (TS writer replicated Query transport, writer `cf88571c`), measured 2026-11-17 04:22-04:34Z
 
-Use the same command set and the same caps. For quantity 1, the coordinator supplies readable identity files.
-Compare the following, before vs after:
-- reference:batch and snapshot request latency per replica;
-- writer requests/min;
-- per-replica `qdl.stall slow_request`/min.
+Runtime: the DL side is unchanged (Query `a235c0a1` x2). The writer splits its requests 51/49 across the replicas
+(coordinator receipt `~/.local/state/qdl-v2/wqrr-window-20261117T0310Z/RECEIPT.md`). The run was made under the
+coordinator's host lock.
+
+Evidence: `latency-after-wqrr-20261117T0422Z/`, with `SHA256SUMS`.
+- `report.md`: the benchmark tool's per-requirement table;
+- `summary-q12.txt`: per operation x replica x venue x feed, with response/usable p50/p95/max, freshness_ms and age at
+  the client;
+- `q2-event-age.txt`;
+- `q4-redis-cache-age.txt`.
+
+Raw data: `~/.local/state/qdl-v2/v231-latency-q12/run-after-wqrr-20261117T042211Z/report.json`.
+
+### Quantity 1: request latency, ms
+
+- Scope and method: identity `trading-system.paper.stable`, manifest r14, 246 products, usable latency (call to a
+  validated response) per replica.
+- Client: an owner-approved root client (`--rm`, read-only identity mounts).
+- Pacing: 2 rps; rounds 1, so each row has n = 1 per replica.
+- Code: tool commit `f4b4b37`. The selector-context fix ran from the worktree and was committed afterwards as
+  `1a01b20`, with the same content.
+
+| Operation | Venue / feed | query_v2_1 (kn_1) p50 / p95 / max (n) | query_v2_2 (kn_2) p50 / p95 / max (n) |
+|---|---|---|---|
+| snapshot | OKX QUOTE | 75.9 / 191.6 / 191.6 (97) | 13.5 / 157.0 / 157.0 (97) |
+| snapshot | OKX TRADE, BOOK_DELTA, BOOK_SNAPSHOT, BAR 1m | 16.8-61.5 / <= 149.6 (5-6 each) | 12.5-26.0 / <= 140.6 (5-6 each) |
+| snapshot | BINANCE QUOTE, TRADE, BOOK_*, BAR 1m | 35.4-80.7 / <= 255.9 (5 each) | 22.4-132.3 / <= 196.2 (5 each) |
+| feed_status | OKX QUOTE | 77.3 / 169.0 (97) | 15.5 / 165.5 (97) |
+| feed_status | other feeds | 13.1-83.7 / <= 190.2 | 9.2-57.7 / <= 162.1 |
+| reference_batch, single item | OKX MARK_INDEX | 122.8 / 336.2 / 412.7 (97) | 17.0 / 220.4 / 400.7 (97) |
+| reference_batch, single item | BINANCE MARK_INDEX | 42.7 / 361.6 (5) | 78.2 / 180.4 (5) |
+| reference_batch, batch of 8 | OKX MARK_INDEX | 105.1 / 198.9 (9) | 36.2 / 48.7 (9) |
+| reference_batch, batch | BINANCE+OKX MARK_INDEX | 158.2 / 237.2 (4) | 42.3 / 45.6 (4) |
+| instrument | MARK_INDEX instruments | 5.3 / 30.9 (91) | 40.1 / 83.6 (91) |
+| instruments (one page of 500) | - | 325.3 (1) | 61.7 (1) |
+| readiness / readiness:check | - | 82.9 (1) / 122.8-559.7 (18) | 48.6 (1) / 110.6-501.0 (18) |
+| history BAR 1m | BINANCE / OKX | 674.9 / 555.4 p50 (5 each) | 756.4 / 863.6 p50 (5 each) |
+| warmup BAR 1m | BINANCE / OKX | 1,042.3 / 1,026.4 p50 (5 each) | 1,305.8 / 1,234.1 p50 (5 each) |
+| warmup:batch BAR 1m | BINANCE+OKX / OKX | 9,943.6 / 1,679.0 (1 each) | 9,951.2 / 1,730.6 (1 each) |
+| snapshot:batch (B4) | all | FAIL `INTERNAL_ERROR`, 0 usable (13 batches) | FAIL, same |
+
+Notes:
+- **snapshot:batch FAIL is expected.** The route is new in v2.3.1, and Query still runs v2.3.0 `a235c0a1`. This is
+  the R2/R3 smoke gate after the recreate.
+- **Replica asymmetry persists after W-QRR.** At the request level, kn_1 is still about 5-7x slower than kn_2 at p50
+  for the hot single reads (OKX QUOTE snapshot 75.9 vs 13.5 ms; OKX MARK reference 122.8 vs 17.0 ms). That is with a
+  51/49 request split.
+  - Cause not determined, and I have not checked it. Candidates to examine read-only before the Query recreate:
+    - per-replica CPU;
+    - kn_1 event-loop stall lines;
+    - per-replica hot-lane admission stats;
+    - a heavier request mix on kn_1, such as warmups.
+  - The R4/R5 gates in `ROLLOUT_PLAN.md` measure this pair directly.
+- Not measured: `stream` (Subscribe disabled by the plan, so no stream slots are taken) and `gaps` (SAFETY_BLOCKED).
+- Not measured: the other identities (alpha.okx, alpha.binance, alpha.vn, monitoring, reference-l2), because only
+  the TS identity was approved.
+
+### Quantity 2: durable event age, ms
+
+These are the server's `quality.freshness_ms` and the client-side `event_age_at_client_ms` from the same responses.
+Both replicas are pooled.
+
+| Operation | Venue | Feed | n | freshness p50 / p95 / max | age at client p50 / p95 |
+|---|---|---|---:|---|---|
+| snapshot | OKX | QUOTE | 194 | 802 / 10,343 / 29,529 | 809 / 10,373 |
+| snapshot | OKX | TRADE | 10 | 1,149 / 6,469 | 1,153 / 6,472 |
+| snapshot | OKX | BOOK_DELTA | 12 | 369 / 428 / 463 | 375 / 433 |
+| snapshot | OKX | BOOK_SNAPSHOT | 12 | 940 / 1,184 / 1,258 | 962 / 1,196 |
+| snapshot | BINANCE | QUOTE | 10 | 345 / 405 | 356 / 436 |
+| snapshot | BINANCE | TRADE | 10 | 471 / 4,634 | 476 / 4,655 |
+| snapshot | BINANCE | BOOK_DELTA | 10 | 316 / 480 | 321 / 488 |
+| snapshot | BINANCE | BOOK_SNAPSHOT | 10 | 557 / 1,263 | 583 / 1,297 |
+| snapshot / warmup / history | BINANCE | BAR 1m | 10 each | 35,318-37,545 / <= 60,462 | 35,320-37,806 / <= 59,987 |
+| snapshot / warmup / history | OKX | BAR 1m | 10 each | 36,794-39,060 / <= 60,614 | 96,800-99,367 / <= 121,215 |
+
+BAR rows: the age of the latest *closed* 1m bar is 0-60 s by construction. For OKX, the client-side age is about
+60 s above `freshness_ms`. That points to a different reference point (bar open vs close) for OKX in the client
+computation; I have not checked the code. Quiet OKX QUOTE instruments explain the QUOTE tail, as in section 2.
+
+### Quantity 3: delivery lag
+
+Not re-measured after W-QRR. W-QRR changed only the TS writer's Query client; the DL publish path is unchanged.
+The "before" capture (section 2) stands. A new capture needs a container under the lock. It is planned for
+"after v2.3.1".
+
+### Quantity 4: consumer cache (TS writer Redis), ms; read-only sweeps 04:33Z, 3 x 246 keys
+
+| Key family | Venue | n | age at read p50 / p95 / p99 / max | freshness_ms at write p50 / p95 (n) |
+|---|---|---:|---|---|
+| execution_quote | OKX | 291 | 727 / 9,357 / 11,656 / 22,473 | 160 / 8,751 (291) |
+| execution_quote | BINANCE | 15 | 153 / 309 / 352 / 352 | 104 / 174 (15) |
+| execution_mark_index_price | OKX | 291 | 1,453 / 2,506 / 2,772 / 3,123 | 1,195 / 2,313 (291) |
+| execution_mark_index_price | BINANCE | 15 | 758 / 1,341 / 1,567 / 1,567 | 407 / 873 (15) |
+| execution_trade | OKX | 15 | 761 / 2,047 / 3,167 / 3,167 | 86 / 123 (15) |
+| execution_trade | BINANCE | 15 | 766 / 1,178 / 2,261 / 2,261 | 106 / 121 (15) |
+| execution_book_delta | OKX | 18 | 179 / 251 / 269 / 269 | 135 / 176 (12) |
+| execution_book_delta | BINANCE | 15 | 208 / 233 / 294 / 294 | 98 / 168 (2) |
+| execution_book_snapshot | OKX | 18 | 686 / 1,058 / 1,107 / 1,107 | not stored |
+| execution_book_snapshot | BINANCE | 15 | 746 / 966 / 1,063 / 1,063 | not stored |
+
+MARK `evaluated_at - source_event`: n 306, p50 1,190 ms, p95 2,284 ms (before: 942 / 1,940).
+
+Before vs after W-QRR (quantity 4, OKX):
+- QUOTE freshness at write p50: 769 -> 160 ms;
+- MARK age p50: 1,358 -> 1,453 ms;
+- MARK freshness p50: 968 -> 1,195 ms.
+
+These are single 30-second samples, so treat them as indicative, not as a gate.
+
+## 4. "After v2.3.1": to be filled after the Query recreate
+
+Run the same q1/q2 command (`run_q12.sh after-v231`), plus a quantity-3 capture and the quantity-4 sweeps.
+Compare per replica.
