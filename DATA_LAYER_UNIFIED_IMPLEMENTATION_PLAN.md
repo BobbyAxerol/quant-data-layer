@@ -78558,3 +78558,32 @@ of public Binance data was made: exchangeInfo, plus a 120 s public kline WS coun
 - `upgrade/DL_HOT_ADJUSTMENT_PATHS_V2_3_X.md`.
 
 Status: `implemented`, `tested locally`. Not pushed.
+
+### DL v2.3.2 benchmark: snapshot_batch measures QUOTE probes only; client-image import gaps are client errors (tested locally) - 2026-11-17 (Claude)
+
+Two tool defects surfaced in the v2.3.1 Query x2 window. In the R2 B4 smoke, the server returned data (8/8):
+- (a) The 2.3.0-rc3 client image lacks `qdl.api_v2.models.SnapshotBatchResponse`. The `ImportError` in
+  `validate_operation` reached `measure()`, which records `getattr(exc, "code", type(exc).__name__)`, so "ImportError"
+  showed as an error code next to a real `response_ms`. It is now `CLIENT_IMAGE_CONTRACT_MISSING`: a client version
+  skew, because the tool is mounted from the tree and the library comes from the image.
+- (b) snapshot_batch cases included BAR items carrying `warmup_limit`, which the route correctly refuses
+  (`qdl/api_v2/router.py` snapshot_batch: "a snapshot batch item carries no warmup"). The cases are now QUOTE-only.
+  That is the route's real consumer: the TS Rust market-data-writer QUOTE liveness probes (TS 3438bc90,
+  `probe_batch.rs`, items without warmup and interval).
+
+The released Python SDK (2.6.0) has no snapshot_batch method; B4 is server-side and the writer calls it from Rust.
+
+Tests:
+- `test_snapshot_batch_carries_only_warmup_free_quote_probes`;
+- `test_missing_client_contract_is_a_client_error_not_a_server_status`.
+
+Also recorded (read-only RCA, no change): OKX quiet-QUOTE `EXECUTION_CONTEXT_STALE`, for example BAND-USDT-SWAP.
+- TS accepts an unchanged QUOTE only while the writer's per-record session proof is at most 2 s old
+  (`ts_session_budget_ms` = manifest `max_session_liveness_ms` 2000; probes every 666 ms).
+- BAND's proof was older than 2 s in 8 of 38 one-second samples, while bbo-tbt was quiet for up to 56 s. 5 to 7 of
+  the 96 crossec symbols showed a proof gap in 48 s.
+- Recommended class fix: a DL Stream per-session liveness frame that the writer stamps on every cached QUOTE of the
+  session, replacing the 666 ms Query probes. TS interim: stamp the proof on stream-path writes.
+
+Files: `scripts/benchmark_consumer_endpoints.py`, `tests/test_consumer_endpoint_benchmark.py`, this entry.
+Status: `implemented`, `tested locally`.
