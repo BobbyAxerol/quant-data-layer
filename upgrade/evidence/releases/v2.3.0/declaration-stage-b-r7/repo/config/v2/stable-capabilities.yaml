@@ -1,0 +1,92 @@
+schema: qdl.v2.stable-capability-matrix.v2
+revision: 5
+public_contract_version: 2.0.0
+realtime_core_target: RUST
+python_role: OUTER_AND_VENDOR_ACQUISITION_EDGE
+runtime_authority: RUST_SHADOW
+authority_eligible: false
+equal_source_contract: true
+capabilities:
+  - venue: BINANCE
+    market: USDM
+    product_type: PERPETUAL
+    acquisition_adapter: qdl-capability-routed-binance-edge
+    feed_adapters:
+      TRADE: qdl-rust-binance-json
+      BBO: qdl-rust-binance-json
+      BAR: qdl-python-binance-rest-bar-edge@2.0.0
+    canonical_core: qdl-rust-realtime-core
+    feeds: [TRADE, BBO, BAR]
+    certification: BOUNDED_REAL_PROVIDER_SHADOW
+  - venue: BINANCE
+    market: SPOT
+    product_type: SPOT
+    acquisition_adapter: qdl-capability-routed-binance-edge
+    feed_adapters:
+      TRADE: qdl-rust-binance-json
+      BBO: qdl-rust-binance-json
+      BAR: qdl-python-binance-rest-bar-edge@2.0.0
+    canonical_core: qdl-rust-realtime-core
+    feeds: [TRADE, BBO, BAR]
+    certification: BOUNDED_REAL_PROVIDER_SHADOW
+  - venue: OKX
+    market: SWAP
+    product_type: PERPETUAL
+    acquisition_adapter: qdl-rust-okx-json
+    feed_adapters:
+      TRADE: qdl-rust-okx-json
+      BBO: qdl-rust-okx-json
+      BAR: qdl-rust-okx-json
+    canonical_core: qdl-rust-realtime-core
+    feeds: [TRADE, BBO, BAR]
+    certification: BOUNDED_REAL_PROVIDER_SHADOW
+  - venue: OKX
+    market: SPOT
+    product_type: SPOT
+    acquisition_adapter: qdl-rust-okx-json
+    feed_adapters:
+      TRADE: qdl-rust-okx-json
+      BBO: qdl-rust-okx-json
+      BAR: qdl-rust-okx-json
+    canonical_core: qdl-rust-realtime-core
+    feeds: [TRADE, BBO, BAR]
+    certification: BOUNDED_REAL_PROVIDER_SHADOW
+  - venue: HNX
+    market: VN_DERIVATIVES
+    product_type: FUTURE
+    acquisition_adapter: qdl-python-dnse-vendor-edge@2.0.1
+    canonical_core: qdl-rust-realtime-core
+    feeds: [TRADE, BAR]
+    certification: UNEXERCISED
+  - venue: HOSE
+    market: EQUITIES
+    product_type: COMMON_STOCK
+    acquisition_adapter: qdl-python-dnse-vnstock-policy-edge@2.0.1
+    canonical_core: qdl-rust-realtime-core
+    feeds: [TRADE, BAR]
+    certification: UNEXERCISED
+capability_gates:
+  VN_TRADE:
+    stable: false
+    reason: >-
+      the vn_edge_v2 role sits behind the stable-vn Compose profile, has never
+      been created, and no VN partition has ever appeared in the canonical
+      spool; the capability was advertised as PROVIDER_DERIVED_DURABLE_REPLAY
+      while nothing had produced a single event
+  VN_BAR:
+    stable: false
+    reason: >-
+      same as VN_TRADE; certification requires the role running inside VN
+      session hours against the real DNSE provider with recorded evidence
+  CRYPTO_L2:
+    stable: false
+    reason: requires equal Binance/OKX snapshot-delta resync certification
+  VN_QUOTE:
+    stable: false
+    reason: requires a real DNSE/vnstock bid-ask subscription and source-switch certification
+  OKX_SBE:
+    stable: false
+    reason: entitlement and JSON parity required
+  OKX_TRADES_ALL:
+    stable: false
+    reason: atomic trade-count capability must be activated explicitly

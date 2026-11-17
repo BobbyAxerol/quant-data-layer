@@ -19,7 +19,7 @@ rust-version = "1.82"
 
 [workspace.dependencies]
 base64 = "=0.22.1"
-futures-util = "=0.3.31"
+futures-util = "=0.3.34"
 hex = "=0.4.3"
 indexmap = "=2.7.1"
 jobserver = "=0.1.32"
@@ -39,6 +39,6 @@ rustls = { version = "=0.23.46", default-features = false, features = ["ring", "
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.145"
 sha2 = "0.10.9"
-tokio = { version = "=1.48.0", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "=1.51.6", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-tungstenite = { version = "=0.24.0", features = ["rustls-tls-webpki-roots"] }
 zeroize = "=1.8.1"

@@ -1,0 +1,11 @@
+execution_book_delta         BINANCE  n   15 age p50/p95/p99/max 208/233/294/294 | freshness p50/p95 98/168 (2)
+execution_book_delta         OKX      n   18 age p50/p95/p99/max 179/251/269/269 | freshness p50/p95 135/176 (12)
+execution_book_snapshot      BINANCE  n   15 age p50/p95/p99/max 746/966/1063/1063 | freshness p50/p95 -/- (0)
+execution_book_snapshot      OKX      n   18 age p50/p95/p99/max 686/1058/1107/1107 | freshness p50/p95 -/- (0)
+execution_mark_index_price   BINANCE  n   15 age p50/p95/p99/max 758/1341/1567/1567 | freshness p50/p95 407/873 (15)
+execution_mark_index_price   OKX      n  291 age p50/p95/p99/max 1453/2506/2772/3123 | freshness p50/p95 1195/2313 (291)
+execution_quote              BINANCE  n   15 age p50/p95/p99/max 153/309/352/352 | freshness p50/p95 104/174 (15)
+execution_quote              OKX      n  291 age p50/p95/p99/max 727/9357/11656/22473 | freshness p50/p95 160/8751 (291)
+execution_trade              BINANCE  n   15 age p50/p95/p99/max 766/1178/2261/2261 | freshness p50/p95 106/121 (15)
+execution_trade              OKX      n   15 age p50/p95/p99/max 761/2047/3167/3167 | freshness p50/p95 86/123 (15)
+MARK evaluated-source ms n 306 p50 1190 p95 2284 max 2669

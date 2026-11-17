@@ -1,0 +1,262 @@
+{
+ "timezone": "UTC",
+ "serverTime": 1794887061606,
+ "futuresType": "U_MARGINED",
+ "rateLimits": [
+  {
+   "rateLimitType": "REQUEST_WEIGHT",
+   "interval": "MINUTE",
+   "intervalNum": 1,
+   "limit": 2400
+  },
+  {
+   "rateLimitType": "ORDERS",
+   "interval": "MINUTE",
+   "intervalNum": 1,
+   "limit": 1200
+  },
+  {
+   "rateLimitType": "ORDERS",
+   "interval": "SECOND",
+   "intervalNum": 10,
+   "limit": 300
+  }
+ ],
+ "exchangeFilters": [],
+ "assets": [
+  {
+   "asset": "USDT",
+   "marginAvailable": true,
+   "autoAssetExchange": "-10000"
+  },
+  {
+   "asset": "BTC",
+   "marginAvailable": true,
+   "autoAssetExchange": "-0.10000000"
+  },
+  {
+   "asset": "BNB",
+   "marginAvailable": true,
+   "autoAssetExchange": "0"
+  },
+  {
+   "asset": "ETH",
+   "marginAvailable": true,
+   "autoAssetExchange": "0"
+  },
+  {
+   "asset": "USDC",
+   "marginAvailable": true,
+   "autoAssetExchange": "-10000"
+  },
+  {
+   "asset": "FDUSD",
+   "marginAvailable": true,
+   "autoAssetExchange": "0"
+  },
+  {
+   "asset": "BNFCR",
+   "marginAvailable": true,
+   "autoAssetExchange": "-5000"
+  },
+  {
+   "asset": "BFUSD",
+   "marginAvailable": true,
+   "autoAssetExchange": "0"
+  },
+  {
+   "asset": "LDUSDT",
+   "marginAvailable": true,
+   "autoAssetExchange": "0"
+  },
+  {
+   "asset": "RWUSD",
+   "marginAvailable": true,
+   "autoAssetExchange": "0"
+  },
+  {
+   "asset": "USD1",
+   "marginAvailable": true,
+   "autoAssetExchange": "-5000"
+  },
+  {
+   "asset": "U",
+   "marginAvailable": true,
+   "autoAssetExchange": "-5000"
+  }
+ ],
+ "symbols": [
+  {
+   "symbol": "LUNA2USDT",
+   "pair": "LUNA2USDT",
+   "contractType": "PERPETUAL",
+   "deliveryDate": 4133404800000,
+   "onboardDate": 1662706800000,
+   "status": "TRADING",
+   "maintMarginPercent": "2.5000",
+   "requiredMarginPercent": "5.0000",
+   "baseAsset": "LUNA2",
+   "quoteAsset": "USDT",
+   "marginAsset": "USDT",
+   "pricePrecision": 7,
+   "quantityPrecision": 0,
+   "baseAssetPrecision": 8,
+   "quotePrecision": 8,
+   "underlyingType": "COIN",
+   "underlyingSubType": [
+    "Layer-1",
+    "Crypto"
+   ],
+   "triggerProtect": "0.1000",
+   "liquidationFee": "0.015000",
+   "marketTakeBound": "0.10",
+   "maxMoveOrderLimit": 10000,
+   "filters": [
+    {
+     "filterType": "PRICE_FILTER",
+     "maxPrice": "200",
+     "tickSize": "0.0000100",
+     "minPrice": "0.0000100"
+    },
+    {
+     "stepSize": "1",
+     "filterType": "LOT_SIZE",
+     "minQty": "1",
+     "maxQty": "13000000"
+    },
+    {
+     "minQty": "1",
+     "filterType": "MARKET_LOT_SIZE",
+     "maxQty": "2000000",
+     "stepSize": "1"
+    },
+    {
+     "filterType": "MAX_NUM_ORDERS",
+     "limit": 200
+    },
+    {
+     "filterType": "MIN_NOTIONAL",
+     "notional": "5"
+    },
+    {
+     "multiplierUp": "1.1000",
+     "multiplierDown": "0.9000",
+     "filterType": "PERCENT_PRICE",
+     "multiplierDecimal": "4"
+    },
+    {
+     "positionControlSide": "NONE",
+     "filterType": "POSITION_RISK_CONTROL"
+    }
+   ],
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "STOP",
+    "STOP_MARKET",
+    "TAKE_PROFIT",
+    "TAKE_PROFIT_MARKET",
+    "TRAILING_STOP_MARKET"
+   ],
+   "timeInForce": [
+    "GTC",
+    "IOC",
+    "FOK",
+    "GTX",
+    "GTD"
+   ],
+   "permissionSets": [
+    "GRID",
+    "COPY",
+    "DCA",
+    "PSB"
+   ]
+  },
+  {
+   "symbol": "FETUSDT",
+   "pair": "FETUSDT",
+   "contractType": "PERPETUAL",
+   "deliveryDate": 4133404800000,
+   "onboardDate": 1673766000000,
+   "status": "TRADING",
+   "maintMarginPercent": "2.5000",
+   "requiredMarginPercent": "5.0000",
+   "baseAsset": "FET",
+   "quoteAsset": "USDT",
+   "marginAsset": "USDT",
+   "pricePrecision": 7,
+   "quantityPrecision": 0,
+   "baseAssetPrecision": 8,
+   "quotePrecision": 8,
+   "underlyingType": "COIN",
+   "underlyingSubType": [
+    "AI",
+    "Crypto"
+   ],
+   "triggerProtect": "0.1000",
+   "liquidationFee": "0.015000",
+   "marketTakeBound": "0.10",
+   "maxMoveOrderLimit": 10000,
+   "filters": [
+    {
+     "filterType": "PRICE_FILTER",
+     "minPrice": "0.0001000",
+     "maxPrice": "200",
+     "tickSize": "0.0001000"
+    },
+    {
+     "minQty": "1",
+     "stepSize": "1",
+     "maxQty": "10000000",
+     "filterType": "LOT_SIZE"
+    },
+    {
+     "filterType": "MARKET_LOT_SIZE",
+     "minQty": "1",
+     "maxQty": "700000",
+     "stepSize": "1"
+    },
+    {
+     "limit": 200,
+     "filterType": "MAX_NUM_ORDERS"
+    },
+    {
+     "notional": "5",
+     "filterType": "MIN_NOTIONAL"
+    },
+    {
+     "multiplierDown": "0.9000",
+     "multiplierDecimal": "4",
+     "multiplierUp": "1.1000",
+     "filterType": "PERCENT_PRICE"
+    },
+    {
+     "filterType": "POSITION_RISK_CONTROL",
+     "positionControlSide": "NONE"
+    }
+   ],
+   "orderTypes": [
+    "LIMIT",
+    "MARKET",
+    "STOP",
+    "STOP_MARKET",
+    "TAKE_PROFIT",
+    "TAKE_PROFIT_MARKET",
+    "TRAILING_STOP_MARKET"
+   ],
+   "timeInForce": [
+    "GTC",
+    "IOC",
+    "FOK",
+    "GTX",
+    "GTD"
+   ],
+   "permissionSets": [
+    "GRID",
+    "COPY",
+    "DCA",
+    "PSB"
+   ]
+  }
+ ]
+}

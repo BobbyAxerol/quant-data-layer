@@ -2486,3 +2486,32 @@ filled after the window and the R-cert 2 final verdict (`drafts/RELEASE_FILL_LIS
 - Full CI (CI6): one run on the release PR head tree; run id recorded in the dev merge commit and the plan journal.
 - Re-issued 2026-11-14 with the owner-approved dependency advisory waiver (6 RustSec, 49 Python IDs, expires v2.3.1;
   `.github/accepted-advisories.json`): certificate sha256 `677a690797ff16f54e9119d00912eca6b6745781deb25914e47b1c2194eba4a1`, endpoint report `c75b7a662e4bed8a249216cab497e3324094aee58da1abd27d72f5c992fd3baf`.
+
+### 2026-11-17 - v2.3.1 release candidate - DRAFT (tested locally, not certified)
+
+- Branch `release/v2.3.1-query-b4-stage-b`.
+- Package: `upgrade/evidence/releases/v2.3.1/` (RELEASE_NOTES, CERTIFICATE_DRAFT, ROLLOUT_PLAN, LATENCY_REPORT).
+- Pinned at: the release head. Runtime unchanged: rust `58bdd282`, python `a235c0a1`, stage B r7, W-A1 bw50.
+- Local:
+  - Rust job PASS (533/0/71);
+  - cargo-deny PASS with empty ignores;
+  - Python impacted modules PASS (the phase-0 golden as the image user).
+- Pending:
+  - the full unit shards;
+  - R0 pip-audit/trivy on the built image;
+  - full CI (CI5);
+  - the rollout gates;
+  - the latency "after".
+
+### 2026-11-17 - v2.3.1 ISSUED - PASS WITH NOTED LIMITS (Query x2 production-authoritative)
+
+| Item | Pinned at | Result |
+|---|---|---|
+| Full CI (CI6) | run 44035167016, PR #52 head 3fb95de, tree 393e2755 (= dev e9388a7) | 13/13 green |
+| R0 image | `qdl-v2-python@sha256:26c3b051...` from aa752182 | pip-audit 0, trivy 0 C/H, no waivers |
+| Rollout R2/R3 | query_kn_2 07:42:43Z, query_kn_1 07:48:09Z | image, r14, B4 18/18, writer 0 refusals, 246/246 |
+| R4 soak 07:48-08:18Z | same | PASS except slow_request (+R1 10 %) FAIL: TS writer Rust client stuck on kn_2 (86/87 connections), cause outside DL; owner accepted, fix in TS v2.1.5 |
+| R5 latency 08:21-08:32Z | interleaved replicas | `LATENCY_REPORT.md` section 4 |
+
+Not applied in this window: Binance stage C r8 (own window), Rust roles / bar_edge (follow-up). Receipt:
+`upgrade/evidence/releases/v2.3.1/window-query-x2-20261117T0722Z/RECEIPT.md`.

@@ -1,6 +1,6 @@
 """Stable Python SDK V2 with typed public models and generated transports."""
 
-__version__ = "2.5.0"
+__version__ = "2.6.0"
 
 from qdl_sdk.client import AsyncDataLayerClient, DataLayerClientV2, WarmupStreamSession
 from qdl_sdk.credentials import (
@@ -56,6 +56,7 @@ from qdl_sdk.transport import (
     GrpcStreamTransport,
     ReplicatedRestQueryTransport,
     RestQueryTransport,
+    build_replicated_rest_query,
 )
 from qdl_sdk.tls import WorkloadTlsConfig
 from qdl_sdk.v1_facade import V1CompatibilityFacade
@@ -96,6 +97,7 @@ __all__ = [
     "OPTIONAL_INTERVAL_FEEDS",
     "QuantityUnit",
     "ReplicatedRestQueryTransport",
+    "build_replicated_rest_query",
     "RestQueryTransport",
     "RecoveryPolicy",
     "ReferenceBatchRequest",

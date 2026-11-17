@@ -118,6 +118,50 @@ class WorkloadTlsConfigTests(unittest.IsolatedAsyncioTestCase):
             now[0] += 500
             self.assertNotEqual(first, await provider.get_token())
 
+    def test_verifier_parses_each_key_once_and_still_fails_closed(self):
+        import jwt
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ec, rsa
+        from qdl.security.policy import ServiceTokenVerifier
+
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        public_pem = key.public_key().public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        ec_pem = ec.generate_private_key(ec.SECP256R1()).public_key().public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        verifier = ServiceTokenVerifier(
+            issuer="https://identity.qdl", audience="qdl-v2",
+            keys_by_id={"rs": public_pem, "ec": ec_pem}, algorithms=("RS256",),
+        )
+        now = int(time.time())
+        claims = {"sub": "spiffe://qdl/paper/x", "iss": "https://identity.qdl", "aud": "qdl-v2",
+                  "iat": now, "exp": now + 300, "jti": "j", "environment": "paper",
+                  "roles": ["market_data_reader"]}
+        token = jwt.encode(claims, key, algorithm="RS256", headers={"kid": "rs"})
+        calls = []
+        real = jwt.get_algorithm_by_name
+
+        def counting(name):
+            calls.append(name)
+            return real(name)
+
+        with mock.patch("qdl.security.policy.jwt.get_algorithm_by_name", side_effect=counting):
+            for _ in range(3):
+                self.assertEqual(
+                    verifier.verify(token, expected_environment="paper").subject, "spiffe://qdl/paper/x"
+                )
+        self.assertEqual(calls, ["RS256"])
+        # A key that does not fit the algorithm is refused, and nothing is cached for it.
+        wrong = jwt.encode(claims, key, algorithm="RS256", headers={"kid": "ec"})
+        with self.assertRaisesRegex(PermissionError, "verification failed"):
+            verifier.verify(wrong, expected_environment="paper")
+        self.assertNotIn(("ec", "RS256"), verifier._prepared_keys)
+        tampered = token[:-4] + ("AAAA" if not token.endswith("AAAA") else "BBBB")
+        with self.assertRaisesRegex(PermissionError, "verification failed"):
+            verifier.verify(tampered, expected_environment="paper")
+
     async def test_ambiguous_tls_clients_and_duplicate_targets_are_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             tls = self.identity(Path(temp))

@@ -1,0 +1,158 @@
+{
+ "checks": {
+  "acquisition(query runtime)": {
+   "added": 142,
+   "base": 1163,
+   "changed": [],
+   "missing": [],
+   "render": 1305,
+   "status": "PASS"
+  },
+  "acquisition(repo)": {
+   "added": 142,
+   "base": 1163,
+   "changed": [],
+   "missing": [],
+   "render": 1305,
+   "status": "PASS"
+  },
+  "binding.products": {
+   "added": 142,
+   "base": 104,
+   "changed": [],
+   "missing": [],
+   "render": 246,
+   "status": "PASS"
+  },
+  "binding.request_policies": {
+   "added": 142,
+   "base": 104,
+   "changed": [],
+   "missing": [],
+   "render": 246,
+   "status": "PASS"
+  },
+  "catalog(query runtime).bindings": {
+   "added": 142,
+   "base": 1163,
+   "changed": [],
+   "missing": [],
+   "render": 1305,
+   "status": "PASS"
+  },
+  "catalog.bindings": {
+   "added": 142,
+   "base": 1163,
+   "changed": [],
+   "missing": [],
+   "render": 1305,
+   "status": "PASS"
+  },
+  "catalog.instruments": {
+   "added": 2,
+   "base": 523,
+   "changed": [],
+   "missing": [],
+   "render": 525,
+   "status": "PASS"
+  },
+  "cores/rust_core.json.bindings": {
+   "added": 213,
+   "base": 1166,
+   "changed": [],
+   "missing": [],
+   "render": 1379,
+   "status": "PASS"
+  },
+  "cores/rust_core.json.non_binding_fields_changed": [],
+  "cores/rust_core_2.json.bindings": {
+   "added": 213,
+   "base": 1166,
+   "changed": [],
+   "missing": [],
+   "render": 1379,
+   "status": "PASS"
+  },
+  "cores/rust_core_2.json.non_binding_fields_changed": [],
+  "cores/rust_core_3.json.bindings": {
+   "added": 213,
+   "base": 1166,
+   "changed": [],
+   "missing": [],
+   "render": 1379,
+   "status": "PASS"
+  },
+  "cores/rust_core_3.json.non_binding_fields_changed": [],
+  "demand.requirements": {
+   "added": 142,
+   "base": 1291,
+   "changed": [],
+   "missing": [],
+   "render": 1433,
+   "status": "PASS"
+  },
+  "ingestor/ingestor-okx-swap.json.bindings": {
+   "added": 213,
+   "base": 252,
+   "changed": [],
+   "missing": [],
+   "render": 465,
+   "status": "PASS"
+  },
+  "ingestor/ingestor-okx-swap.json.non_binding_fields_changed": [
+   "config_revision",
+   "latest_state_flush_ms_by_feed"
+  ],
+  "promotion_scope.binding_ids": {
+   "added": 142,
+   "base": 1153,
+   "changed": [],
+   "missing": [],
+   "render": 1295,
+   "status": "PASS"
+  },
+  "ts_manifest.metadata": {
+   "base": {
+    "environment": "paper",
+    "id": "trading-system.paper.stable",
+    "owner": "trading-platform",
+    "revision": 13,
+    "subject": "spiffe://qdl/paper/trading-system-stable"
+   },
+   "quotas": [
+    {
+     "max_batch_items": 50,
+     "max_buffer_events": 2000,
+     "max_streams": 160,
+     "max_warmup_rows": 2000,
+     "requests_per_minute": 10000
+    },
+    {
+     "max_batch_items": 50,
+     "max_buffer_events": 2000,
+     "max_streams": 370,
+     "max_warmup_rows": 2000,
+     "requests_per_minute": 31000
+    }
+   ],
+   "render": {
+    "environment": "paper",
+    "id": "trading-system.paper.stable",
+    "min_token_revision": 13,
+    "owner": "trading-platform",
+    "revision": 14,
+    "subject": "spiffe://qdl/paper/trading-system-stable"
+   }
+  },
+  "ts_manifest.requirements": {
+   "added": 142,
+   "base": 105,
+   "changed": [],
+   "missing": [],
+   "render": 247,
+   "status": "PASS"
+  }
+ },
+ "schema": "stageb.retained-rows-check.v1",
+ "status": "PASS"
+}

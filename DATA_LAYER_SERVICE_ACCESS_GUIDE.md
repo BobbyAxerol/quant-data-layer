@@ -49,6 +49,7 @@ V2 query operations are:
 GET  /v2/instruments
 GET  /v2/instruments/{identity}
 GET  /v2/market-data/{instrument_uid}/snapshot
+POST /v2/market-data/snapshot:batch
 GET  /v2/market-data/{instrument_uid}/warmup
 GET  /v2/market-data/{instrument_uid}/history
 POST /v2/market-data/warmup:batch
@@ -66,6 +67,20 @@ live handoff; no new per-symbol container or provider connection is needed.
 Stale, partial or gapped execution data stays rejected. Bounded retry waits for
 a new valid read; it never changes old data's timestamp or treats session
 liveness as a fresh executable book/price.
+
+### Batched Latest Snapshots (v2.3.1)
+
+`POST /v2/market-data/snapshot:batch` (`qdl.marketdata.snapshot-batch.v1`) carries
+up to the manifest's `max_batch_items` snapshot requirements in one call:
+`{"consumer_id": ..., "requirements": [RequirementModel, ...]}` with no warmup.
+It needs `snapshot:read` and the purpose header, and every requirement is
+authorized before any read, so one unauthorized item refuses the whole call
+(403). Each item then runs the unchanged single-snapshot policy: its `data` is
+the `qdl.marketdata.snapshot.v2` `data` of the same requirement, or its
+`problem` is the single read's typed refusal (`DATA_STALE`, `DATA_NOT_READY`,
+...) inside the 200 envelope. The call counts once against
+`requests_per_minute`. A Query without the route answers 404; a client falls
+back to the single GET.
 
 ### V1 Compatibility And Fallback
 

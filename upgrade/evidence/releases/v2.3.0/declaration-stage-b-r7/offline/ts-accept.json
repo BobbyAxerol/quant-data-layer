@@ -1,0 +1,36 @@
+{
+ "schema": "stageb.ts-acceptance.v1",
+ "status": "PASS",
+ "checks": {
+  "binding_r26_jwt14": {
+   "ok": true,
+   "products": 246
+  },
+  "route_manifest_r26_jwt14": {
+   "ok": true
+  },
+  "binding_r26_jwt13_must_refuse": {
+   "ok": false,
+   "error": "ValueError: Data Layer V2 binding consumer manifest revision differs from JWT configuration",
+   "expected_refusal_seen": true
+  },
+  "binding_r25_jwt13_paper_roles": {
+   "ok": true
+  },
+  "declared_scope_parse_classify": {
+   "ok": true,
+   "state": "LOADED",
+   "revision": 7,
+   "manifest_revision": 14,
+   "routes": 236,
+   "unbound": 0,
+   "unbound_sample": []
+  },
+  "stageB71_routes_v2": {
+   "ok": true,
+   "checked": 142,
+   "not_v2": [],
+   "not_v2_count": 0
+  }
+ }
+}

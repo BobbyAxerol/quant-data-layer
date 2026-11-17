@@ -78245,3 +78245,331 @@ cover.
 - v2.3.1 backlog unchanged: the dependency refresh also clears the trivy aliases. `.trivyignore` returns to its two
   pre-existing setuptools false-positive entries.
 - Certificate re-issued, endpoint report sha256 `974096cba5308473685145b71f260078d6d76a72fc74f3573fec9e68d4982ef0`.
+
+### DL stage B packet prepared offline (not applied): execution QUOTE + MARK_INDEX_PRICE for 71 crossec OKX swaps, TS r14 / r26 - 2026-11-16 (Claude)
+
+- Trigger: TS v2.1.3 Phase 0 P0-DL2 (`~/.local/state/trading-system/v213-goals/V213_SCOPE_DRAFT.md` §7, §8.6). The TS
+  coverage gate at 10:01Z found 71 of 96 crossec instruments unusable (NOT_GRANTED / NOT_ROUTED for QUOTE and MARK).
+  Branch `feat/dl-stage-b-execution-71` off origin/dev `7d4333e` (tree = main `f2ea1d7`), worktree
+  `.worktrees/dl-stage-b-20261116`.
+- Render with the production tool: `scripts/dl_declaration.py render` on the live declaration out6 (verified byte-equal to
+  the mounted documents), declaration revision 7 (r6 was the 2026-11-13 dry render, not reused); `gate` PASS 17/17.
+  - Catalogue r15 (+FET/LUNA from the 2026-11-13 verbatim captures), acquisition r23, demand r11, scope r14, routing r32.
+  - TS manifest r14, 247 requirements, `min_token_revision` 13, model quotas 31,000 rpm / 370 streams.
+  - Sealed binding r26, 246 products; consumer env JWT 14 / `0b51a0f5...`.
+  - OKX ingestor 465 subscriptions, new lane okx-public-005, flush `{MARK_INDEX: 500, QUOTE: 50}`. The flush map is per
+    ingestor file, so the retained OKX MARK lanes move to 500 ms as well. The Binance ingestor is deliberately not in
+    the base, so it is left untouched.
+  - Cores: the generator hard-codes `batch_wait_ms` 25 and the refresher refuses a changed non-binding field, so the
+    post-W-A1 (bw50) successors are the bw25 render with that one key set. Verified equal to live bw50 + the tool's
+    213 additions.
+- Offline checks:
+  - retained rows: independent check PASS (every base row JSON-equal);
+  - quota gate PASS (r13 10,000 / r14 31,000);
+  - unit tests: 67 OK, 8 skipped;
+  - TS acceptance in the g34 image with the real loaders: r26 + JWT 14 loads; r26 + JWT 13 is refused; r25 + JWT 13
+    still loads; `parse_declared_scope` LOADED with 0 unbound; 142/142 routes are V2;
+  - TS coverage gate offline: r13/r25 gives 71 failing (control), r14/r26 gives STATIC_PASS for 96 with 0 failing.
+- Minimal TS coupling (from code): writer only. It needs JWT 14 + sha + r26 + OKX symbols because the binding is
+  start-time only and sealed per revision. ts-gateway / ts-risk / ts-paper keep JWT 13 / r25: they price from the
+  market cache, and r14 accepts 13.
+- Measured read-only:
+  - W-B2 identity demand 1,551-2,250/min (mean 1,907) at 104 products;
+  - per-venue raw Kafka: OKX 536-557 rec/s, Binance 185-229 rec/s;
+  - writer MARK write-age p99 723 ms;
+  - disk 48 % free.
+- Capacity: post-W-A1 DL 4.958 (coordinator receipt) + ingest +0.59 gross / about +0.44 net + Query +0.5 (estimate) +
+  stream +0.1-0.2 gives about 5.9-6.1, which is at the 6.0 cap. §8.6's "about 5.4" left out the Query cost. The
+  window's CPU gate decides (owner decision D3).
+- Binance census: QUOTE/MARK/BOOK are demanded only by TS Paper; TRADE and BAR 1m also by alpha.binance.paper. All of
+  them are granted to up to 8 manifests. A removal is non-additive (floor reset, JWT bumps), and v2.3.x has no realtime
+  removal tool path.
+- Files:
+  - `upgrade/evidence/releases/v2.3.0/drafts/STAGE_B_EXECUTION_71_PACKET.md`;
+  - `upgrade/evidence/releases/v2.3.0/drafts/STAGE_B_EXECUTION_71_RUNSHEET.md`;
+  - `upgrade/evidence/releases/v2.3.0/declaration-stage-b-r7/` (render without bundles, inputs, offline receipts,
+    tools, `SHA256SUMS`);
+  - guide `upgrade/DL_HOT_ADJUSTMENT_PATHS_V2_3_X.md` (hot-adjustment matrix).
+- Status: implemented (render) / tested locally (offline gate, quota gate, unit tests, TS loader acceptance). Not
+  applied, not shadow-certified. 0 runtime mutations. Not pushed.
+
+### DL runtime record: W-A1 permanent and stage B r7 APPLIED; owner CPU decision; v2.3.1 capacity backlog - 2026-11-16 (Claude)
+
+Release tree = runtime: the deployed KN stack now differs from `dev` 7d4333e (tree = main f2ea1d7, v2.3.0) in two
+owner-approved changes. Both are recorded here as **APPLIED** with their receipts. Evidence:
+`upgrade/evidence/releases/v2.3.0/runtime-record-20261116/` (`RUNTIME_RECORD.md`, receipts, `SHA256SUMS`).
+- **W-A1 permanent (P0-DL1), APPLIED 11:14:32-11:16:22Z, PASS.** rust_core x3 `batch_wait_ms` 25 -> 50, image
+  58bdd282 unchanged. DL median 6.085 -> 4.958 vCPU, raw-age window-max p99 177.2 -> 131.3 ms, 0 writer
+  ERROR/RATE_LIMITED. Persisted on line 15 of `releases/v2.3.0-rc2-compose/qdl-v2-stable-kn.v2.3.0-rc3.env`
+  (`QDL_CORE_CONFIG_DIR=.../v2.3.0-rc3-a1-bw50-cores`); backup `.pre-wa1` in
+  `~/.local/state/qdl-v2/wa1-perm-20261116T1110Z/`.
+- **Stage B declaration r7 (P0-DL2), APPLIED 12:24:51-12:38:02Z.** Catalogue r15, acquisition r23, demand r11,
+  scope r14, routing r32, TS manifest r14, sealed binding r26; OKX ingestor 465 bindings, flush
+  `{MARK_INDEX: 500, QUOTE: 50}`; writer JWT 14. G1-G5 and G7 PASS; G6 FAIL against 6.5 (DL median 6.565). Receipt
+  `~/.local/state/qdl-v2/stage-b-window-20261116T1200Z/RECEIPT.md` (copied into the evidence dir).
+- **Deployed = this branch (read-only `sha256sum`, ~16:05Z):** the running cores mount `v2.3.0-stage-b-cores/*.json`,
+  byte-equal to `declaration-stage-b-r7/cores-bw50/*.json` (8fb1dc96 / af533769 / 383c34cd); realm manifest r14
+  (fc51bbf2) and writer binding r26 (7f5394b9) equal too. The ingestor file was not readable by this user (root 0750);
+  the pinned set lists the repo hash 14b28e29. The repo `cores/` (bw25) files are generator output, not runtime.
+- **Env layering:** env files in order are the rc3 base env (sha 949cf3f3), then `v2.3.0-stage-b-compose/stage-b.env`
+  (sha c2b3c2ca, 5 keys, wins), then TLS and secrets. The effective core dir is `v2.3.0-stage-b-cores`, not the line-15
+  bw50 dir. Both hold `batch_wait_ms: 50`.
+- **Owner CPU decision (2026-11-16):** D3 ceiling 6.5, raised to 7.0 after G6. W-CAP65 (TS writer env only,
+  `DATA_LAYER_V2_MARK_BATCH_WINDOW_MS` 20 -> 100) FAILED its request gate (3,000-6,100/min vs <= 3,500) and was rolled
+  back at 15:13:39Z. At 15:08Z DL was 7.09-7.23 with every role up (US-hours volume). At about 15:10Z the owner kept
+  stage B with a **temporary 7.5 ceiling during US hours**; above 7.5 stage B is rolled back. Root fix: **DL v2.3.1**
+  (cut unused feeds) plus **code-level read coalescing in the TS writer** (TS `feat/v213-writer-mark-read-coalescing`
+  68428be5, W-MRT, not deployed).
+- **Why the writer lever missed (TS measurement 15:56-16:00Z, read-only):** native QUOTE probes are 2,958-3,319/min of
+  the `trading-system.paper.stable` identity's 5,211-5,815/min (57-61 %); MARK calls are at most 2,117-2,337. The
+  W-CAP65 packet assumed 950 QUOTE probes/min. The quota is per call: `qdl/security/data_plane.py:398` -> `consume`.
+
+**v2.3.1 backlog (new, from this record):**
+- **B1 `batch_wait_ms` declared.** `qdl/runtime/stable_deployment.py:1145` hard-codes 25 in `core_config` and
+  `scripts/refresh_v2_core_runtime_bindings.py:73-75` refuses a changed non-binding field, so every render on the
+  live (bw50) cores needs a hand edit. Make it a declared core value (declaration -> render -> refresher), default 50.
+  Gate: a render on the live base is byte-equal to `v2.3.0-stage-b-cores/*.json`.
+- **B2 Binance BOOK/TRADE retirement slice.** A declaration `retirements[]` record (feed, instruments, reason, owner
+  approval id); refreshers and the gate accept a removed row only when a record matches; the gate proves no manifest
+  still grants it and emits the floor-reset list (`qdl/consumer/manifest_compat.py:69-75`); a real-reader census first;
+  same-window JWT bumps for the affected consumers (`declaration-stage-b-r7/offline/binance-census.json`). Saving at
+  most 0.20-0.26 vCPU.
+- **B3 per-instrument flush.** `latest_state_flush_ms_by_feed` is per ingestor file (`scripts/dl_declaration.py:1160-1213`),
+  so stage B moved the retained OKX MARK lanes to 500 ms as well. Add a per-binding or per-lane override.
+- **B4 (proposed, owner decision needed) batched QUOTE probe read** for the TS native writer: Query has only
+  `market-data/reference:batch` (`qdl/api_v2/router.py:1485`), so per-route QUOTE probes cannot be coalesced on the TS
+  side. A `snapshot:batch` or a per-session liveness frame on Stream would cut ~3,000 requests/min to ~270.
+- **B5 one versioned env per release** instead of the base env plus an overlay (rollback must drop `stage-b.env` first).
+
+Files: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md` (this entry), `upgrade/DL_HOT_ADJUSTMENT_PATHS_V2_3_X.md` (delta),
+`upgrade/evidence/releases/v2.3.0/runtime-record-20261116/{RUNTIME_RECORD.md,SHA256SUMS,receipts/*.md}`.
+Status: record of applied runtime (APPLIED, receipts). No code change, no runtime action, not pushed.
+
+### DL v2.3.1 B4: `POST /v2/market-data/snapshot:batch` for batched QUOTE liveness probes (tested locally) - 2026-11-16 (Claude)
+
+Owner-approved v2.3.1 item B4 (2026-11-16), offline only: no runtime action, image build, push or CI.
+
+**Why.** Measured 15:56-16:00Z (evidence `~/.local/state/qdl-v2/capacity-under-6.5-20261116/writer-coalesce-20261116T1600Z/`):
+- the TS native writer sends 2,958-3,319 QUOTE probes/min;
+- that is 57-61 % of the `trading-system.paper.stable` identity's 5,211-5,815 Query requests/min;
+- 99 % of the probes return `renewed_same_record`.
+
+Each probe is one HTTP call, and the quota counts calls (`qdl/security/data_plane.py`, `self.quota.consume` once per
+authenticated request).
+
+**What (additive, versioned).**
+- `POST /v2/market-data/snapshot:batch`, contract `qdl.marketdata.snapshot-batch.v1`. Request
+  `{consumer_id, requirements[1..100]}` with no warmup. Response `{schema, request_id, partial, success_count, error_count,
+  results[{instrument_uid, feed, status, data|problem}]}`.
+- Authorization is the single route's, checked before any read: consumer, `snapshot:read`, purpose, the manifest's
+  `max_batch_items` (paper r13: 50, else 429 `QUOTA_EXCEEDED`) and every requirement (one unauthorized item refuses the
+  call). A warmup item is 400 `INVALID_ARGUMENT`.
+- `V2QueryService.snapshot_batch_async` runs every item through the unchanged `snapshot()` policy (freshness, session
+  liveness, recency, gap, entitlement, eligibility) in one hot-thread hop. It uses one hot-lane permit that reserves the
+  single read's 16 KiB once per item. A lane refusal is one 429 `RATE_LIMITED` envelope.
+- Each item is cursor-bound like the single read (`_bind_item_cursor`). A refused item is its typed problem in the 200
+  envelope and leaves a `snapshot_batch_item` refusal line.
+- One call is one quota unit. The single snapshot contract is unchanged.
+- Files:
+  - `qdl/api_v2/router.py`, `qdl/api_v2/models.py`, `qdl/query/service.py`;
+  - OpenAPI snapshot regenerated (diff: +1 path, +3 schemas, nothing changed or removed);
+  - `scripts/benchmark_consumer_endpoints.py` covers the new operation;
+  - path/schema counts in `tests/test_fund_phase5_contracts.py`, `tests/test_phaseb_stable_release.py` and
+    `tests/test_consumer_endpoint_benchmark.py`;
+  - `DATA_LAYER_SERVICE_ACCESS_GUIDE.md`.
+- New tests: `tests/test_v231_snapshot_batch.py` (11). They cover:
+  - item == single read;
+  - batch requirement == single requirement (same `requirement_digest`);
+  - per-item `DATA_NOT_READY`/`DATA_STALE` equal the single problem;
+  - one quota unit for 20 items;
+  - 51 items -> 429;
+  - unauthorized item -> 403 before any read;
+  - consumer/permission/purpose/auth;
+  - warmup/empty/unknown field -> 400;
+  - one admission permit;
+  - lane refusal -> 429.
+
+**Tests (capped `--rm --network none --cpus 1 --memory 2g`, image `qdl-v2-python:2.3.0-rc3-7cd4fc36`):**
+`python -B -m unittest tests.test_phaseb_stable_release tests.test_v231_snapshot_batch tests.test_fund_phase5_contracts
+tests.test_consumer_endpoint_benchmark tests.test_phase0_contract_golden` -> 45 OK. Also run:
+`tests.test_fund_phase5_api tests.test_query_refusal_cycles tests.test_refusal_log tests.test_p184_dr05_public_query`
+-> OK except the path count that this slice then updated.
+
+**Not done:**
+- ruff (not installed on the host or in the image);
+- Redis-backed KN suites;
+- measured per-item Query cost.
+
+**Rollout coupling:**
+- The route lives in the Python image, so it needs a DL v2.3.1 image and a recreate of `query_kn_1`/`query_kn_2` only.
+- No catalog, consumer-manifest or JWT manifest-revision change.
+- Projector, stream, core, ingestor and the writer are untouched.
+- A Query without the route answers 404, and the TS writer falls back to the per-route GET.
+
+Status: `implemented`, `tested locally`.
+
+### DL v2.3.1 release candidate prepared offline: runtime record + B1 + B4 + Query balance/JWT + waiver removed (tested locally) - 2026-11-17 (Claude)
+
+Owner 2026-11-17: v2.3.1 includes B4. The coordinator scope addendum asks to optimise the architecture and Query,
+report the latency of every binding endpoint, then release. The owner chose rollout option A: Query x2 now, the Rust
+roles and bar_edge in a follow-up window. Offline only, except the coordinator-approved read-only "before" latency run.
+No push, merge or tag.
+
+**Branch.** `release/v2.3.1-query-b4-stage-b` (worktree `/home/bobby/.worktrees/dl-v231-release-20261117`) from
+`origin/dev` 7d4333e. It merges `feat/dl-stage-b-execution-71` b3a3670b and `feat/dl-v231-b4-batched-quote-probe`
+faad7c3d with `--no-ff`. The one conflict was in this journal; both entries were kept.
+
+**A.1 replica imbalance (root cause, read-only evidence 02:27-02:30Z).**
+- The writer uses one `RestQueryTransport` (TS `alpha_sdk/data_layer_v2.py:134` at 68428be5, SDK `qdl_sdk/transport.py:51`),
+  so one httpx pool on the alias `qdl-v2-query`, which names both replicas.
+- httpcore 1.0.9 assigns every request to `available_connections[0]`, the oldest free connection. The sequential
+  ReferenceBatcher stream therefore stays on the replica its first connection reached. Connection counts are
+  balanced (44/40), which hid it.
+- Simulation with the same library versions: single pool, heavy stream 100 % on one replica in 4/4 seeds;
+  per-replica pools, balanced.
+- Fix:
+  - DL: SDK 2.6.0 `build_replicated_rest_query` (an additive helper over the existing `ReplicatedRestQueryTransport`,
+    with keep-alive = max connections);
+  - TS: the writer adopts it with `https://query_v2_1:8200,https://query_v2_2:8200`, owned by the TS writer agent.
+  - The Query certificate SANs already include both names.
+
+**A.2.**
+- `ServiceTokenVerifier` caches the parsed key per (kid, alg). Offline: RS256 171 -> 132 us.
+- The offline per-item profile of `reference:batch` MARK reads is about 590 us CPU per item, 55 % of it in the
+  in-process ASGI hop (`upgrade/evidence/releases/v2.3.1/CERTIFICATE_DRAFT.md` section 3). Follow-ups are ranked, not
+  implemented.
+
+**B1.**
+- `STABLE_CORE_BATCH_WAIT_MS = 50` and `STABLE_CORE_BOOK_RESYNC_QUARANTINE = True` are declared in
+  `qdl/runtime/stable_deployment.py`. The generator omitted the quarantine flag that every deployed core carries;
+  the Rust default is false.
+- New test: the generated role fields equal `declaration-stage-b-r7/cores-bw50`.
+- **Correction** to the 2026-11-16 runtime record section 5 B1 and to guide gap 2: the core refresher does not refuse
+  a bw50 base. Offline `successor()` on cores-bw50 with the r7 configs returned OK, 0 additions, byte-equal; it
+  compares only the `core` sub-document.
+
+**B5.** `deploy/compose/qdl-v2-stable-kn.v2.3.1.env` is one versioned env: the deployed rc3 env with the stage-B
+overlay applied. Static test added.
+
+**Dependency refresh (the v2.3.0 waiver expired at v2.3.1).**
+- Rust:
+  - tokio =1.51.6, futures-util =0.3.34 (pin-utils gone), libz-sys 1.1.33, rustls-webpki 0.103.17, webpki-roots
+    1.0.12, zstd-sys 2.1.3;
+  - `deny.toml` `ignore = []`; cargo-deny 0.20.2: advisories/bans/licenses/sources ok.
+- Python:
+  - certifi 2026.10.23, msgpack 1.2.4;
+  - pillow and soupsieve dropped from the runtime dependencies. They are unused (grep) and have no dependents in
+    the lock; pillow 13 needs Python >= 3.11.
+- `.github/accepted-advisories.json` lists are empty, `.trivyignore` is back to the 2 BuildKit entries, and the
+  phase-6/phase-83 tests require empty waivers.
+
+**Benchmark tool.**
+- `scripts/benchmark_consumer_endpoints.py` gains `declaration_root` (mount the deployed declaration) and an
+  owner-approved `container_user: "0"` root client. That client runs with only CAP_DAC_READ_SEARCH added, and the
+  identity files are mounted read-only and never read on the host.
+- Test: `test_declaration_root_and_owner_approved_root_client`.
+
+**Latency "before"** (02:47-02:56Z, coordinator lock). See `upgrade/evidence/releases/v2.3.1/LATENCY_REPORT.md`:
+- quantity 3: delivery lag over 6 manifests / 1,104 requirements, 326,985 canonical records;
+- quantity 4: an upper bound from read-only Redis sweeps;
+- quantities 1/2: NOT MEASURED, because the identities are root-only. They are re-planned with the root client after
+  W-QRR and after the v2.3.1 Query recreate.
+
+**Tests (local, capped, one container at a time).**
+- Rust job: fmt, clippy -D warnings, cargo test 533 passed / 0 failed / 71 ignored.
+- Python, 16 impacted modules: 216 ran, 2 errors.
+  - The new test lacked a credential provider; fixed.
+  - The phase-0 golden failed on environment only: uid 1001 cannot write `/app/logs`. Rerun as image uid 10001:
+    80/80 OK.
+- Not yet run:
+  - the full 4-shard unit suite on the committed head;
+  - pip-audit and trivy on a built v2.3.1 image (R0);
+  - ruff 0.15.13.
+
+Files:
+- code: `qdl/runtime/stable_deployment.py`, `qdl/security/policy.py`, `qdl_sdk/{transport.py,__init__.py,CHANGELOG.md,README.md}`;
+- scripts: `scripts/{benchmark_consumer_endpoints.py,build_qdl_release_images.py,build_qdl_sdk_release.py}`;
+- dependency and policy files: `Cargo.toml`, `Cargo.lock`, `deny.toml`, `pyproject.toml`, `poetry.lock`,
+  `.github/accepted-advisories.json`, `.github/workflows/ci.yml` (comment), `.trivyignore`;
+- tests: `tests/{test_fund_phase6_release,test_fund_phase83_release,test_kn_stable_compose,test_phaseb_stable_deployment,
+  test_phaseb_stable_release,test_phasec2_transport_security,test_qdl_sdk_release,test_qdl_sdk_replica_read_transport,
+  test_consumer_endpoint_benchmark}.py`;
+- deployment: `deploy/compose/qdl-v2-stable-kn.v2.3.1.env`;
+- evidence: `upgrade/evidence/releases/v2.3.1/{RELEASE_NOTES.md,CERTIFICATE_DRAFT.md,ROLLOUT_PLAN.md,LATENCY_REPORT.md,latency-before-20261117T0247Z/}`;
+- guide: `upgrade/DL_HOT_ADJUSTMENT_PATHS_V2_3_X.md` (delta);
+- `CERTIFICATION_LEDGER.md`.
+
+Status: `implemented`, `tested locally`. Not pushed. CI expectation: full run (CI5: `ci.yml` and the lockfiles changed).
+
+### DL v2.3.1 stage C declaration r8: Binance signal data for crossec_ema rendered and gated offline (tested locally) - 2026-11-17 (Claude)
+
+Owner decision 2026-11-17: fold stage C into v2.3.1, then run full CI once on the final tree. Offline only. One read
+of public Binance data was made: exchangeInfo, plus a 120 s public kline WS count. There was no runtime action.
+
+**Symbol map:** `upgrade/evidence/releases/v2.3.1/declaration-stage-c-r8/inputs/okx-binance-symbol-map.json`.
+- Source: exchangeInfo captured 2026-11-17, sha256 `531cecc5...`, 946 symbols.
+- 96 of 96 OKX crossec swaps are mapped; 0 are missing.
+- ×1000: BONK, FLOKI, PEPE, SHIB.
+- LUNA -> LUNA2.
+
+**Lane choice for 1m: native kline WS.**
+- It is the only certified Binance USDM 1m lane (`qdl/runtime/production_catalog.py` R1.28: final klines arrive
+  0.04-1.1 s after close).
+- The REST-final alternative is not declarable for Binance: `bar_source` is refused outside `NATIVE_BAR_MARKETS`.
+  It would cost about 96 requests/min with +6 s visibility, against a DL cost here of about 0.07 vCPU.
+- Measured rate: 4,796 frames in 120 s = 40.0/s = 0.416 per binding.
+
+**Render and gate.**
+- Render: `scripts/dl_declaration.py render`, 0 BLOCKED rows.
+- New: 273 BAR bindings (91 native 1m, 182 DERIVED_FINAL 1h/12h; 12h is derived from 1h).
+- Revisions: catalogue 15->16, acquisition 23->24, demand 11->12, routing 32->33, alpha.okx 16->17 with floor 15.
+- Binance ingestor: config revision 19->24.
+- Gate: 17/17 PASS.
+- Bar-edge crossing from the live out6 pair (14/22 -> 16/24): retained 1047, added 273, dropped 0, no migration
+  record needed.
+- Capacity: +0.068 vCPU upper bound, projected 6.28.
+- Bootstrap: about 2,093 kline pages, about 10,500 weight, at least about 9 min at 50 % of the IP limit.
+- Provider-short: 20 symbols on 12h and 1 symbol (KITEUSDT) on 1h.
+
+**Tool changes (`scripts/dl_declaration.py`):**
+- Binance USDM signal universes (`SIGNAL_INTERVALS`);
+- a cross-venue demand template;
+- Binance-anchored derived parents;
+- Binance `instrument_captures` that append listed symbols verbatim;
+- runtime universes that carry the retained set.
+
+**Tests.**
+- `tests/test_v231_stage_c_binance_signal.py`: 7 OK.
+- `tests.test_v230_declaration_tool` and `tests.test_v230_declaration_mechanism`: OK. The only failure in the
+  combined 58-test run was the new test's parent expectation, now fixed.
+
+**Coupling (alpha side, not edited here):**
+- No same-window JWT bump is needed, because of the accept-set floor 15.
+- crossec_ema subscribes to the Binance products through the same identity.
+- Bump `DATA_LAYER_V2_JWT_MANIFEST_REVISION` to 17 at the next restart.
+
+**Window:** `ROLLOUT_PLAN.md` section 7, after Query x2.
+
+**Files:**
+- `scripts/dl_declaration.py`;
+- `tests/test_v231_stage_c_binance_signal.py`;
+- `tests/fixtures/v231_stage_c/binance-usdm-exchangeinfo-fet-luna2.json`;
+- `upgrade/evidence/releases/v2.3.1/{declaration-stage-c-r8/,ROLLOUT_PLAN.md,RELEASE_NOTES.md,CERTIFICATE_DRAFT.md}`;
+- `upgrade/DL_HOT_ADJUSTMENT_PATHS_V2_3_X.md`.
+
+Status: `implemented`, `tested locally`. Not pushed.
+
+<a id="dl-v231-release-record-20261117"></a>
+### DL v2.3.1 release record: Query x2 window and certificate - 2026-11-17 (Claude, coordinator)
+- Owner approvals: push and PR #52; CI held, then run once on the final tree with stage C folded in; push dev; the
+  Query x2 window with its exact blast radius; tag with the R4 limit noted; writer rebalance deferred to the TS v2.1.5
+  root fix.
+- CI: run 44035167016 full green 13/13 on 3fb95de. dev e9388a7 was merged locally with --no-ff, as the G2 identity,
+  with an identical tree.
+- Window: R0-R5 PASS except the R4 slow_request gate, whose cause was proven in the TS writer's Rust client. The
+  certificate is `upgrade/evidence/releases/v2.3.1/CERTIFICATE.md`; the latency report section 4 is filled.
+- Follow-ups:
+  - DL v2.3.2: the benchmark snapshot_batch fix, and the session-alive frame (owner-approved quiet-QUOTE class fix).
+  - TS v2.1.5: per-replica pools in the Rust writer, plus the session-alive consumer.
+  - The stage C window.
+  - The Rust/bar_edge window.

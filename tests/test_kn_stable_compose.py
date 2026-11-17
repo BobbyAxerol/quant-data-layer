@@ -22,6 +22,8 @@ COMPOSE = ROOT / "deploy/compose/qdl-v2-stable-kn.yml"
 ENV_V224 = ROOT / "deploy/compose/qdl-v2-stable-kn.v2.2.4.env"
 ENV_V225 = ROOT / "deploy/compose/qdl-v2-stable-kn.v2.2.5.env"
 ENV_V226A = ROOT / "deploy/compose/qdl-v2-stable-kn.v2.2.6-stage-a.env"
+ENV_V230 = ROOT / "deploy/compose/qdl-v2-stable-kn.v2.3.0.env"
+ENV_V231 = ROOT / "deploy/compose/qdl-v2-stable-kn.v2.3.1.env"
 CERTIFICATE_V224 = ROOT / "upgrade/evidence/releases/v2.2.4/certificate.json"
 ROLES = {"kafka1", "kafka2", "kafka3", "rust_core", "rust_core_2", "rust_core_3", "ingestor_binance_usdm",
          "ingestor_okx_swap", "market_projector_1", "market_projector_2", "market_cache", "stable_redis",
@@ -57,7 +59,7 @@ class KnStableComposeTest(unittest.TestCase):
             self.assertIsNotNone(match, role)
             variables.add(match.group(1))
             self.assertEqual(svc.get("pull_policy"), "never", role)
-        for path in (ENV_V224, ENV_V225, ENV_V226A):
+        for path in (ENV_V224, ENV_V225, ENV_V226A, ENV_V230, ENV_V231):
             if not path.exists():
                 continue
             env = env_file(path)
@@ -142,8 +144,26 @@ class KnStableComposeTest(unittest.TestCase):
             self.assertIn("/consumer-realms/${QDL_PAPER_REALM_MANIFEST:-trading-system.paper.stable-r11.yaml}",
                           manifests)
 
+    def test_v231_env_is_the_one_versioned_runtime_env(self):
+        # DL v2.3.1 B5: one env per release. It equals the deployed rc3 env with the stage-B overlay applied
+        # (last wins), so a rollback no longer needs an env-file order. Images stay the v2.3.0 digests in the tree
+        # until the rollout records the new Query digest.
+        old, new = env_file(ENV_V230), env_file(ENV_V231)
+        self.assertEqual({k: v for k, v in new.items() if k.startswith("QDL_IMAGE_")},
+                         {k: v for k, v in old.items() if k.startswith("QDL_IMAGE_")})
+        self.assertEqual(set(new), set(old))
+        releases = "/home/bobby/.local/state/qdl-v2/releases/"
+        self.assertEqual(new["QDL_KN_RELEASE_DIR"], releases + "v2.3.0-stage-b")
+        self.assertEqual(new["QDL_CONSUMER_REALM_DIR"], releases + "v2.3.0-stage-b-realm")
+        self.assertEqual(new["QDL_PAPER_REALM_MANIFEST"], "trading-system.paper.stable-r14.yaml")
+        self.assertEqual(new["QDL_CORE_CONFIG_DIR"], releases + "v2.3.0-stage-b-cores")
+        self.assertEqual(new["QDL_INGESTOR_CONFIG_DIR"], releases + "v2.3.0-stage-b-ingestor")
+        changed = {k for k in new if new[k] != old[k]}
+        self.assertEqual(changed, {"QDL_KN_RELEASE_DIR", "QDL_CONSUMER_REALM_DIR", "QDL_PAPER_REALM_MANIFEST",
+                                   "QDL_CORE_CONFIG_DIR", "QDL_INGESTOR_CONFIG_DIR"})
+
     def test_no_secret_literal_in_committed_files(self):
-        files = [COMPOSE] + [p for p in (ENV_V224, ENV_V225, ENV_V226A) if p.exists()]
+        files = [COMPOSE] + [p for p in (ENV_V224, ENV_V225, ENV_V226A, ENV_V230, ENV_V231) if p.exists()]
         for path in files:
             text = path.read_text()
             with self.subTest(file=path.name):

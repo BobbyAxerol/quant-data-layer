@@ -3376,3 +3376,17 @@ Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, "DL v2.3.0 final package r
   Rollback keeps the v2.3.0 projectors.
 
 Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, "DL v2.3.0 release fill".
+
+### Delta 2026-11-16: v2.3.1 B4, batched latest snapshots
+
+- **A batch is a transport change.** `POST /v2/market-data/snapshot:batch` (`qdl.marketdata.snapshot-batch.v1`) is
+  one HTTP call (one quota unit) for up to `max_batch_items` latest reads.
+  - Every item runs the unchanged single-snapshot policy and cursor binding.
+  - Authorization is per item and runs before any read.
+  - A refused item keeps its typed problem.
+  - Batching never weakens a read.
+- **Admission is accounted per item.** The single hot-lane permit reserves 16 KiB per item. A 50-item batch therefore
+  takes 800 KiB of the 1 MiB lane, so clients should size batches below the lane (the TS writer defaults to the
+  manifest's 50; the window plan starts at 26).
+
+Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, "DL v2.3.1 B4".

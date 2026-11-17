@@ -1,0 +1,1548 @@
+{
+ "acquisition_modes": {
+  "BAR|PYTHON_REST|binance_usdm_rest_bar": 65,
+  "BAR|RUST_NATIVE|binance_spot_bar": 1,
+  "BAR|RUST_NATIVE|binance_usdm_bar": 5,
+  "BOOK_DELTA|RUST_NATIVE|binance_usdm_book": 5,
+  "BOOK_SNAPSHOT|RUST_NATIVE|binance_usdm_book": 5,
+  "MARK_INDEX_PRICE|RUST_NATIVE|binance_usdm_mark_index": 5,
+  "QUOTE|RUST_NATIVE|binance_spot_bbo": 1,
+  "QUOTE|RUST_NATIVE|binance_usdm_bbo": 5,
+  "TRADE|RUST_NATIVE|binance_spot_trade": 1,
+  "TRADE|RUST_NATIVE|binance_usdm_trade": 5
+ },
+ "binance_instruments": [
+  "BINANCE:SPOT:BTCUSDT",
+  "BINANCE:USDM:BNBUSDT",
+  "BINANCE:USDM:BTCUSDT",
+  "BINANCE:USDM:DOGEUSDT",
+  "BINANCE:USDM:ETHUSDT",
+  "BINANCE:USDM:SOLUSDT"
+ ],
+ "by_feed": {
+  "BAR:12h": {
+   "BNBUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   }
+  },
+  "BAR:15m": {
+   "BNBUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   }
+  },
+  "BAR:1d": {
+   "BNBUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   }
+  },
+  "BAR:1h": {
+   "BNBUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   }
+  },
+  "BAR:1m": {
+   "BNBUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   }
+  },
+  "BAR:1w": {
+   "BNBUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   }
+  },
+  "BAR:2h": {
+   "BNBUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   }
+  },
+  "BAR:30m": {
+   "BNBUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   }
+  },
+  "BAR:3d": {
+   "BNBUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   }
+  },
+  "BAR:3m": {
+   "BNBUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   }
+  },
+  "BAR:4h": {
+   "BNBUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   }
+  },
+  "BAR:5m": {
+   "BNBUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   }
+  },
+  "BAR:6h": {
+   "BNBUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   }
+  },
+  "BAR:8h": {
+   "BNBUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable"
+    ]
+   }
+  },
+  "BASIS:1d": {
+   "BNBUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   }
+  },
+  "BOOK_DELTA": {
+   "BNBUSDT": {
+    "demanded_by": [
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   }
+  },
+  "BOOK_SNAPSHOT": {
+   "BNBUSDT": {
+    "demanded_by": [
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   }
+  },
+  "CONTRACT_METADATA": {
+   "BNBUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   }
+  },
+  "FUNDING_RATE": {
+   "BNBUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   }
+  },
+  "LONG_SHORT_RATIO:1d": {
+   "BNBUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   }
+  },
+  "MARK_INDEX_PRICE": {
+   "BNBUSDT": {
+    "demanded_by": [
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   }
+  },
+  "OPEN_INTEREST": {
+   "BNBUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.paper.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.paper.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.paper.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.paper.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.paper.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   }
+  },
+  "OPEN_INTEREST:1d": {
+   "BNBUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   }
+  },
+  "QUOTE": {
+   "BNBUSDT": {
+    "demanded_by": [
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   }
+  },
+  "TAKER_FLOW:1d": {
+   "BNBUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "qdl.crypto.reference-l2.stable"
+    ]
+   }
+  },
+  "TRADE": {
+   "BNBUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "BTCUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "monitoring.multivenue.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "DOGEUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "ETHUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "monitoring.multivenue.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   },
+   "SOLUSDT": {
+    "demanded_by": [
+     "alpha.binance.paper.stable",
+     "trading-system.paper.stable"
+    ],
+    "granted_to": [
+     "alpha.binance.live.stable",
+     "alpha.binance.paper.stable",
+     "alpha.binance.sandbox.stable",
+     "trading-system.live.stable",
+     "trading-system.paper.stable",
+     "trading-system.sandbox.stable"
+    ]
+   }
+  }
+ },
+ "ingestor_subscriptions_by_feed": {
+  "BAR": 5,
+  "BOOK": 7,
+  "MARK_INDEX": 5,
+  "QUOTE": 5,
+  "TRADE": 5
+ },
+ "manifests_read": [
+  "stable/alpha-binance-paper.yaml",
+  "stable/alpha-okx-paper.yaml",
+  "stable/alpha-vn-paper.yaml",
+  "stable/monitoring-multivenue.yaml",
+  "stable/reference-l2-stable.yaml",
+  "stable/trading-system-paper.yaml",
+  "v2.3.0-rc2-realm/alpha-vn-paper.yaml",
+  "v2.3.0-rc2-realm/alpha.binance.live.stable.yaml",
+  "v2.3.0-rc2-realm/alpha.binance.paper.stable-r16.yaml",
+  "v2.3.0-rc2-realm/alpha.binance.sandbox.stable.yaml",
+  "v2.3.0-rc2-realm/alpha.okx.live.stable.yaml",
+  "v2.3.0-rc2-realm/alpha.okx.paper.stable-r15.yaml",
+  "v2.3.0-rc2-realm/alpha.okx.paper.stable-r16.yaml",
+  "v2.3.0-rc2-realm/alpha.okx.sandbox.stable.yaml",
+  "v2.3.0-rc2-realm/monitoring-multivenue.yaml",
+  "v2.3.0-rc2-realm/reference-l2-stable.yaml",
+  "v2.3.0-rc2-realm/trading-system.live.stable.yaml",
+  "v2.3.0-rc2-realm/trading-system.paper.stable-r11.yaml",
+  "v2.3.0-rc2-realm/trading-system.paper.stable-r13.yaml",
+  "v2.3.0-rc2-realm/trading-system.sandbox.stable.yaml"
+ ],
+ "schema": "stageb.binance-feed-census.v1",
+ "selector_manifests": {
+  "stable/alpha-okx-paper.yaml": 16,
+  "v2.3.0-rc2-realm/alpha.okx.paper.stable-r16.yaml": 16
+ },
+ "symbols": [
+  "BNBUSDT",
+  "BTCUSDT",
+  "DOGEUSDT",
+  "ETHUSDT",
+  "SOLUSDT"
+ ]
+}

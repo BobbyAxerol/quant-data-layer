@@ -77,6 +77,19 @@ class ServiceTokenVerifier:
             ):
                 raise ValueError("JWT key-realm bindings must cover exactly the keyring")
         self._environments_by_key_id = environments_by_key_id
+        # Parsed verification keys by (key id, algorithm). PyJWT otherwise
+        # re-parses the PEM on every decode (about 40 us of 170 us per RS256
+        # request, DL v2.3.1 A.2). Only successfully parsed keys are kept; a
+        # key that does not fit the algorithm still fails inside ``verify``.
+        self._prepared_keys: dict[tuple[str, str], Any] = {}
+
+    def _prepared_key(self, key_id: str, algorithm: str) -> Any:
+        slot = (key_id, algorithm)
+        prepared = self._prepared_keys.get(slot)
+        if prepared is None:
+            prepared = jwt.get_algorithm_by_name(algorithm).prepare_key(self._keys[key_id])
+            self._prepared_keys[slot] = prepared
+        return prepared
 
     def verify(self, token: str, *, expected_environment: str) -> Principal:
         try:
@@ -87,7 +100,7 @@ class ServiceTokenVerifier:
                 raise PermissionError("untrusted workload token key or algorithm")
             claims = jwt.decode(
                 token,
-                self._keys[key_id],
+                self._prepared_key(key_id, algorithm),
                 algorithms=[algorithm],
                 issuer=self._issuer,
                 audience=self._audience,
