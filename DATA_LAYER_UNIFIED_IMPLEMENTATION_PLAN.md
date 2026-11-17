@@ -78558,3 +78558,18 @@ of public Binance data was made: exchangeInfo, plus a 120 s public kline WS coun
 - `upgrade/DL_HOT_ADJUSTMENT_PATHS_V2_3_X.md`.
 
 Status: `implemented`, `tested locally`. Not pushed.
+
+<a id="dl-v231-release-record-20261117"></a>
+### DL v2.3.1 release record: Query x2 window and certificate - 2026-11-17 (Claude, coordinator)
+- Owner approvals: push and PR #52; CI held, then run once on the final tree with stage C folded in; push dev; the
+  Query x2 window with its exact blast radius; tag with the R4 limit noted; writer rebalance deferred to the TS v2.1.5
+  root fix.
+- CI: run 44035167016 full green 13/13 on 3fb95de. dev e9388a7 was merged locally with --no-ff, as the G2 identity,
+  with an identical tree.
+- Window: R0-R5 PASS except the R4 slow_request gate, whose cause was proven in the TS writer's Rust client. The
+  certificate is `upgrade/evidence/releases/v2.3.1/CERTIFICATE.md`; the latency report section 4 is filled.
+- Follow-ups:
+  - DL v2.3.2: the benchmark snapshot_batch fix, and the session-alive frame (owner-approved quiet-QUOTE class fix).
+  - TS v2.1.5: per-replica pools in the Rust writer, plus the session-alive consumer.
+  - The stage C window.
+  - The Rust/bar_edge window.

@@ -1,9 +1,9 @@
 # Quant Data Layer v2.3.1
 
-Status: **release candidate, prepared offline; not certified, not tagged, not pushed.**
+Status: **released 2026-11-17 (tag v2.3.1); certificate PASS WITH NOTED LIMITS (`CERTIFICATE.md`).**
 - Release branch: `release/v2.3.1-query-b4-stage-b` (worktree `/home/bobby/.worktrees/dl-v231-release-20261117`),
   from `origin/dev` 7d4333e (= v2.3.0 main tree).
-- Certificate: `CERTIFICATE_DRAFT.md`.
+- Certificate: `CERTIFICATE.md`.
 - Rollout: `ROLLOUT_PLAN.md` (Query x2, plus the coupled TS writer rollout).
 - Latency: `LATENCY_REPORT.md` ("before" measured; "after" follows the rollout).
 
@@ -140,9 +140,9 @@ the manifests, the JWT revision, the certificates and the secrets.
 - The latency "before" quantities 1 and 2 are NOT MEASURED. The current-mesh identities are root-only for this user.
   Credentials for alpha.okx, alpha.vn, monitoring and reference-l2 were not located. Quantity 4 is an upper bound,
   because the cache stores no write timestamp (`LATENCY_REPORT.md`).
-- The `reference:batch` per-item cost is profiled offline only (`CERTIFICATE_DRAFT.md`), not on a live replica.
+- The `reference:batch` per-item cost is profiled offline only (`CERTIFICATE.md`), not on a live replica.
 - The SDK helper is `tested locally`. The balance gain is a simulation plus the code path, not yet a production
   measurement (`ROLLOUT_PLAN.md` R4 gates).
 - Carried from v2.3.0: DL-BL-2026-11-13-D provider-short re-bootstrap (branch `fix/v2.3.1-bar-edge-provider-short`).
-  It is **not in this release**, together with the other v2.3.1-named branches listed in `CERTIFICATE_DRAFT.md`
+  It is **not in this release**, together with the other v2.3.1-named branches listed in `CERTIFICATE.md`
   section 4.
