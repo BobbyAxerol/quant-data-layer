@@ -27,8 +27,14 @@ Boundary
     Dry-run (default) only reads git and prints the plan; it runs no docker command.
     ``--build`` builds images and runs ``--rm`` probe containers. It never creates,
     recreates or stops a runtime container, never touches Kafka/Redis/Postgres, never
-    pushes an image or a git ref, and never moves an existing tag. ``--build`` requires
-    the host measurement lock to be held by ``--lock-owner`` (AGENTS 34a).
+    pushes an image or a git ref, and never moves an existing tag.
+
+Host coordination (AGENTS 34b, owner rule): a build is ``correctness`` work. It never takes or waits for the
+exclusive measurement lock; it writes a non-exclusive activity record
+``~/.local/state/host-activity/<owner>.json`` (owner, purpose, class, started/until, CPU cap), runs under a load gate
+(1-min load < ``--max-load``, re-checked before every expensive stage) and removes the record when it ends. The
+compile and probe containers carry a CPU cap. ``--class measurement`` keeps the old rule (the measurement lock held
+by ``--lock-owner``, AGENTS 34a) for a build that is itself part of a measurement window.
 """
 
 from __future__ import annotations
@@ -37,6 +43,7 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -59,6 +66,14 @@ REPO = Path(__file__).resolve().parents[1]
 HOME = Path.home()
 STATE_ROOT = HOME / ".local/state/qdl-v2"
 LOCK_PATH = HOME / ".local/state/host-measurement-window.lock"
+ACTIVITY_DIR = HOME / ".local/state/host-activity"
+MAX_LOAD = 20.0
+LOAD_WAIT_S = 1800
+COMPILE_CPUS = "2"
+PROBE_CPUS = "1"
+CPU_CAP = {"rust_compile": f"--cpus {COMPILE_CPUS} --memory 3g", "probes": f"--cpus {PROBE_CPUS}",
+           "image_builds": "docker build (BuildKit) has no per-build CPU flag; rust image is COPY only, python image "
+                           "is the repository Dockerfile"}
 CARGO_WORK = HOME / ".local/state/trading-system/p184-n1-final-20261012"
 MIN_FREE_GIB = 40
 
@@ -259,6 +274,65 @@ def check_lock(lock_path: Path, owner: str | None, at: dt.datetime | None = None
     return lock
 
 
+def _owner_ok(owner: str | None) -> str:
+    if not owner or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", owner):
+        raise BuildError("--build requires a plain --lock-owner name (the activity/lock owner)")
+    return owner
+
+
+def record_activity(activity_dir: Path, owner: str | None, purpose: str, minutes: int,
+                    at: dt.datetime | None = None) -> dict:
+    """AGENTS 34b: write the non-exclusive ``correctness`` record for this build; never waits for any lock."""
+    owner = _owner_ok(owner)
+    if not 1 <= minutes <= MAX_LOCK_MINUTES:
+        raise BuildError(f"activity window must be 1..{MAX_LOCK_MINUTES} minutes")
+    at = at or dt.datetime.now(dt.timezone.utc)
+    record = {"owner": owner, "purpose": purpose, "class": "correctness",
+              "started_utc": at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "until_utc": (at + dt.timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "cpu_cap": CPU_CAP}
+    activity_dir.mkdir(parents=True, exist_ok=True)
+    (activity_dir / f"{owner}.json").write_text(json.dumps(record, sort_keys=True) + "\n")
+    return record
+
+
+def check_activity(activity_dir: Path, owner: str, at: dt.datetime | None = None) -> dict:
+    """The record still exists, is ours and is inside its window (re-checked at each expensive stage)."""
+    path = activity_dir / f"{_owner_ok(owner)}.json"
+    try:
+        record = json.loads(path.read_text())
+        until = dt.datetime.fromisoformat(str(record["until_utc"]).replace("Z", "+00:00"))
+    except (OSError, ValueError, KeyError) as error:
+        raise BuildError(f"activity record {path} is missing or unreadable") from error
+    if record.get("owner") != owner or record.get("class") != "correctness":
+        raise BuildError(f"activity record {path} is not this build's correctness record")
+    if until <= (at or dt.datetime.now(dt.timezone.utc)):
+        raise BuildError(f"activity window of {owner!r} ended at {record['until_utc']}")
+    return record
+
+
+def clear_activity(activity_dir: Path, owner: str) -> None:
+    path = activity_dir / f"{owner}.json"
+    try:
+        if json.loads(path.read_text()).get("owner") == owner:
+            path.unlink()
+    except (OSError, ValueError):
+        pass
+
+
+def check_load(max_load: float = MAX_LOAD, wait_s: float = LOAD_WAIT_S, read=os.getloadavg,
+               sleep=time.sleep, clock=time.monotonic) -> float:
+    """Wait (bounded) until the 1-min load is below ``max_load``; the value seen, or BuildError."""
+    deadline = clock() + wait_s
+    while True:
+        load = read()[0]
+        if load < max_load:
+            return round(load, 2)
+        if clock() >= deadline:
+            raise BuildError(f"1-min load {load:.1f} stayed >= {max_load} for {wait_s:.0f} s; not building")
+        sleep(15)
+
+
 def check_disk(path: Path, min_gib: int) -> float:
     free = shutil.disk_usage(path).free / 2**30
     if free < min_gib:
@@ -300,7 +374,7 @@ def expected_python_diff(repo: Path, rev: str, base: str) -> list[str]:
 def rust_compile_argv(build_dir: Path, cargo_work: Path = CARGO_WORK) -> list[str]:
     return [
         "docker", "run", "--rm", "--pull=never", "--network", "none", "--name", f"qdl-release-{build_dir.name}",
-        "--cpus", "2", "--memory", "3g", "--pids-limit", "256", "--user", "1001:1001",
+        "--cpus", COMPILE_CPUS, "--memory", "3g", "--pids-limit", "256", "--user", "1001:1001",
         "-e", "HOME=/work", "-e", "CARGO_HOME=/work/cargo", "-e", "CARGO_TARGET_DIR=/work/dl-target",
         "-e", "CARGO_BUILD_JOBS=2", "-v", f"{cargo_work}:/work", "-v", f"{build_dir / 'src'}:/src:ro",
         "-w", "/src", BUILDER_IMAGE, "sh", "-c", "set -eu\n" + "\n".join(CARGO_COMMANDS),
@@ -332,7 +406,7 @@ def python_image_argv(build_dir: Path, rev: str, tag: str) -> list[str]:
 
 
 def probe_argv(image: str, script: str) -> list[str]:
-    return ["docker", "run", "--rm", "--pull=never", "--network", "none", "--read-only",
+    return ["docker", "run", "--rm", "--pull=never", "--network", "none", "--read-only", "--cpus", PROBE_CPUS,
             "--entrypoint", "sh", image, "-c", script]
 
 
@@ -340,7 +414,7 @@ def extract_argv(image: str, binary: str) -> list[str]:
     """Copy one reference binary out of an image to stdout (isolated, read-only, no shell)."""
     if binary not in RUST_BINARIES:
         raise BuildError(f"unknown binary {binary!r}")
-    return ["docker", "run", "--rm", "--pull=never", "--network", "none", "--read-only",
+    return ["docker", "run", "--rm", "--pull=never", "--network", "none", "--read-only", "--cpus", PROBE_CPUS,
             "--entrypoint", "cat", image, f"/usr/local/bin/{binary}"]
 
 
@@ -586,14 +660,28 @@ def build(repo: Path, rev: str, components: list[str], args) -> dict:
     receipt = {"schema": "qdl.release-image-build-receipt.v1", "release": RELEASE, "identity": ident,
                "components": components, "script_sha256": sha256_file(Path(__file__)),
                "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    receipt["lock"] = check_lock(LOCK_PATH, args.lock_owner)
-    receipt["lock_checks"] = [{"stage": "start", "until_utc": receipt["lock"].get("until_utc")}]
+    measurement = getattr(args, "klass", "correctness") == "measurement"
+    if measurement:
+        receipt["lock"] = check_lock(LOCK_PATH, args.lock_owner)
+        receipt["lock_checks"] = [{"stage": "start", "until_utc": receipt["lock"].get("until_utc")}]
+    else:
+        receipt["activity"] = record_activity(ACTIVITY_DIR, args.lock_owner,
+                                              f"DL v{RELEASE} release image build", args.activity_minutes)
+        receipt["lock_checks"] = [{"stage": "start", "class": "correctness",
+                                   "until_utc": receipt["activity"]["until_utc"],
+                                   "load1": check_load(args.max_load)}]
 
     def guard(stage: str) -> None:
-        """Re-validate the owner's window before an expensive stage (raises BuildError -> status FAIL)."""
-        lock = check_lock(LOCK_PATH, args.lock_owner)
-        receipt["lock_checks"].append({"stage": stage, "until_utc": lock.get("until_utc"),
-                                       "at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+        """Re-validate the window (and, for correctness work, the load gate) before an expensive stage."""
+        if measurement:
+            lock = check_lock(LOCK_PATH, args.lock_owner)
+            entry = {"stage": stage, "until_utc": lock.get("until_utc")}
+        else:
+            record = check_activity(ACTIVITY_DIR, args.lock_owner)
+            entry = {"stage": stage, "class": "correctness", "until_utc": record["until_utc"],
+                     "load1": check_load(args.max_load)}
+        entry["at_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        receipt["lock_checks"].append(entry)
     receipt["free_gib_before"] = check_disk(STATE_ROOT, args.min_free_gib)
     pre = source_preconditions(repo, rev)
     if not pre["ok"]:
@@ -633,6 +721,8 @@ def build(repo: Path, rev: str, components: list[str], args) -> dict:
         receipt["free_gib_after"] = round(shutil.disk_usage(STATE_ROOT).free / 2**30, 1)
         receipt["finished_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         (build_dir / "receipt.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+        if not measurement:
+            clear_activity(ACTIVITY_DIR, args.lock_owner)
     return receipt
 
 
@@ -715,7 +805,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--repo", type=Path, default=REPO)
     parser.add_argument("--component", choices=("all", "rust", "python"), default="all")
     parser.add_argument("--build", action="store_true", help="execute (default: dry-run plan only)")
-    parser.add_argument("--lock-owner", help="owner of the host measurement lock held for this build")
+    parser.add_argument("--lock-owner", help="owner name: of the correctness activity record (default class), or of "
+                                             "the measurement lock held for this build (--class measurement)")
+    parser.add_argument("--class", dest="klass", choices=("correctness", "measurement"), default="correctness",
+                        help="AGENTS 34b class; a build is correctness work unless it is part of a measurement")
+    parser.add_argument("--activity-minutes", type=int, default=90)
+    parser.add_argument("--max-load", type=float, default=MAX_LOAD)
     parser.add_argument("--min-free-gib", type=int, default=MIN_FREE_GIB)
     args = parser.parse_args(argv)
     if args.build and not args.lock_owner:

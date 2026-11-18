@@ -78881,3 +78881,13 @@ OK in 98.1 s. The earlier attribution was wrong: the faulthandler dump that name
 deliberate SIGSEGV (`test_native_crash_is_a_typed_sample_error...`), and the verbose run that excluded it stalled at
 `test_phase10_universal_warmup.QueuedLocalBatchLaneTests.test_queue_stays_bounded_per_identity...`, an old-semantics
 test fixed in 67e4199. No ptrace, capability or user change is needed; CI's shards (image user, no CPU cap) run it.
+
+Update, release recipe host class (owner rule AGENTS 34b, coordinator decision): `scripts/build_qdl_release_images.py`
+no longer requires the exclusive measurement lock for a build. Default `--class correctness`: writes
+`~/.local/state/host-activity/<owner>.json` (owner, purpose, class, started/until, CPU cap), runs a load gate (1-min
+load < `--max-load` 20, bounded wait 30 min) at start and before each expensive stage, re-checks the record's window,
+and removes it at the end. `--class measurement` keeps the 34a lock check. Compile `--cpus 2 --memory 3g` (unchanged),
+probe/extract containers now `--cpus 1`; the two `docker build` steps have no BuildKit CPU flag (recorded in the
+record). `tests.test_build_qdl_release_images`: Ran 43 OK on the host (git available; 6 skipped in the image).
+The first build attempt (measurement lock waiter, started 13:13Z) was stopped by PID (479535/479536, mine) before it
+took the lock; no build ran.

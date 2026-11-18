@@ -121,6 +121,55 @@ class GuardTests(unittest.TestCase):
             self.assertEqual(b.check_disk(Path("/"), 5), 10.0)
 
 
+class HostClassTests(unittest.TestCase):
+    """AGENTS 34b: a build is correctness work (activity record + load gate); measurement keeps the lock."""
+
+    def test_default_class_is_correctness_and_measurement_is_explicit(self):
+        self.assertEqual(b.parse_args(["--build", "--lock-owner", "me"]).klass, "correctness")
+        self.assertEqual(b.parse_args(["--build", "--lock-owner", "me", "--class", "measurement"]).klass,
+                         "measurement")
+
+    def test_correctness_record_is_written_checked_and_cleared_without_any_lock(self):
+        now = dt.datetime(2026, 11, 18, 14, 0, tzinfo=dt.timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            activity = Path(tmp) / "host-activity"
+            record = b.record_activity(activity, "dl-v240-r0-build", "build", 90, now)
+            self.assertEqual((record["class"], record["until_utc"]), ("correctness", "2026-11-18T15:30:00Z"))
+            self.assertIn("rust_compile", record["cpu_cap"])
+            self.assertEqual(b.check_activity(activity, "dl-v240-r0-build", now)["owner"], "dl-v240-r0-build")
+            with self.assertRaisesRegex(b.BuildError, "ended"):
+                b.check_activity(activity, "dl-v240-r0-build", now + dt.timedelta(minutes=91))
+            with self.assertRaisesRegex(b.BuildError, "missing"):
+                b.check_activity(activity, "someone-else", now)
+            b.clear_activity(activity, "dl-v240-r0-build")
+            self.assertFalse((activity / "dl-v240-r0-build.json").exists())
+            for bad in (None, "../x", "a b"):
+                with self.subTest(owner=bad), self.assertRaises(b.BuildError):
+                    b.record_activity(activity, bad, "build", 10, now)
+            with self.assertRaises(b.BuildError):
+                b.record_activity(activity, "me", "build", b.MAX_LOCK_MINUTES + 1, now)
+
+    def test_load_gate_waits_bounded_then_refuses(self):
+        loads = iter([(25.0,), (21.0,), (19.5,)])
+        slept = []
+        self.assertEqual(b.check_load(20.0, 60, read=lambda: next(loads), sleep=slept.append,
+                                      clock=lambda: 0.0), 19.5)
+        self.assertEqual(len(slept), 2)
+        clock = iter([0.0, 0.0, 100.0])
+        with self.assertRaisesRegex(b.BuildError, "stayed"):
+            b.check_load(20.0, 60, read=lambda: (30.0,), sleep=lambda _s: None, clock=lambda: next(clock))
+
+    def test_measurement_class_still_requires_the_lock(self):
+        now = dt.datetime(2026, 11, 18, 14, 0, tzinfo=dt.timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(b.BuildError, "no host lock"):
+            b.check_lock(Path(tmp) / "lock", "me", now)
+
+    def test_probe_and_compile_containers_are_cpu_capped(self):
+        for argv in (b.probe_argv("img", "true"), b.extract_argv("sha256:" + "1" * 64, "qdl-projector"),
+                     b.rust_compile_argv(Path("/s/build-v2.4.0-abc1234"), Path("/w"))):
+            self.assertIn("--cpus", argv)
+
+
 class CommandTests(unittest.TestCase):
     def test_rust_compile_is_offline_pinned_and_read_only_source(self):
         argv = b.rust_compile_argv(Path("/s/build-v2.2.5-abc1234"), Path("/w"))
