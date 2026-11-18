@@ -74,6 +74,8 @@ from qdl.security import (
     DataPlaneIdentityService,
     DataPlanePermission,
 )
+from qdl.security import request_cost
+from qdl.security.data_plane import session_fairness_key
 from qdl.runtime.bounds import BoundedRequestMiddleware, RequestBounds
 from qdl.runtime.readiness import FailClosedReadiness
 from qdl.runtime.refusal_log import REFUSALS
@@ -122,9 +124,68 @@ def _data_access(
     access = identity.authenticate(
         credentials.credentials,
         consumer_id=consumer_id,
+        charge_quota=False,
     )
+    session = request.headers.get(SESSION_HEADER)
     request.state.qdl_data_access = access
+    # Fairness only (never identity or entitlement): see ``_fairness_key``.
+    request.state.qdl_fairness_key = (
+        session_fairness_key(access.consumer_id, session) or access.consumer_id
+    )
+    # DL v2.4.0 S3: one unit is taken now so an exhausted identity is refused
+    # before any work; ``QuotaSettlementMiddleware`` returns it when the
+    # response is a refusal or was served from a shared result.
+    lease = identity.admit(access, session=session)
+    cost = getattr(request.state, "qdl_request_cost", None)
+    if cost is None:
+        lease.settle(charged=True)
+    else:
+        cost.lease = lease
     return access
+
+
+# Optional, untrusted fairness hint (DL v2.4.0): requests that name a session
+# are queued and rate-shared per session inside their authenticated identity.
+# It never authenticates, authorizes or widens anything; absent, the identity
+# is the fairness key (SDK 2.x before 2.8.0 sends no header).
+SESSION_HEADER = "X-QDL-Session"
+
+
+def _fairness_key(request: Request, access: DataPlaneAccess) -> str:
+    return getattr(request.state, "qdl_fairness_key", None) or access.consumer_id
+
+
+class QuotaSettlementMiddleware:
+    """Settle each request's quota lease once its response status is known (DL v2.4.0 S3).
+
+    A unit is kept only for a response below 400 that did its own read
+    (``qdl.security.request_cost``); a refusal, a cancelled request and a
+    request served only from shared results return it.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        cost, token = request_cost.begin()
+        scope.setdefault("state", {})["qdl_request_cost"] = cost
+        status: list[int] = []
+
+        async def observed_send(message):
+            if message["type"] == "http.response.start":
+                status.append(int(message["status"]))
+            await send(message)
+
+        try:
+            await self.app(scope, receive, observed_send)
+        finally:
+            request_cost.end(token)
+            lease = cost.lease
+            if lease is not None:
+                lease.settle(charged=bool(status) and status[0] < 400 and not cost.free())
 
 
 def _purpose(value: Annotated[str, Header(alias="X-QDL-Purpose")]):
@@ -913,6 +974,26 @@ async def _warmup_json_off_loop(build) -> Response:
     return SlicedBodyResponse(content=body, media_type="application/json")
 
 
+def _fair_key_kwargs(request: Request, access: DataPlaneAccess, service) -> dict:
+    """DL v2.4.0: the hot lanes' session-fair key (production service only)."""
+
+    if not isinstance(service, V2QueryService):
+        return {}
+    return {"fairness_key": _fairness_key(request, access)}
+
+
+def _fair_queue_kwargs(request: Request, access: DataPlaneAccess, service) -> dict:
+    """DL v2.4.0 S6: the warmup queue's fairness key and client-gone probe.
+
+    Only the production service takes them; focused service doubles keep
+    their pre-v2.4.0 signature.
+    """
+
+    if not isinstance(service, V2QueryService):
+        return {}
+    return {"fairness_key": _fairness_key(request, access), "abandoned": request.is_disconnected}
+
+
 async def _single_warmup_response(
     request, access, service, requirement, purpose, *, redirect: bool = False
 ):
@@ -947,6 +1028,7 @@ async def _single_warmup_response(
             purpose=purpose,
             completion=render,
             **({"redirect_when_busy": True} if redirect else {}),
+            **_fair_queue_kwargs(request, access, service),
         )
     # Service doubles predating the completion hook keep the original path.
     result = await service.warmup_async(
@@ -1318,6 +1400,7 @@ async def snapshot(
         requirement,
         purpose=purpose,
         consumer_id=access.consumer_id,
+        **_fair_key_kwargs(request, access, service),
     )
     item = _bind_item_cursor(request, access, requirement, result.item)
     return SnapshotResponse(request_id=result.request_id, data=_market_item(item))
@@ -1479,6 +1562,7 @@ async def warmup_batch(
             purpose=purpose,
             completion=render,
             **({"redirect_when_busy": True} if redirect else {}),
+            **_fair_queue_kwargs(request, access, service),
         )
     # Focused service doubles predating the internal completion hook retain the
     # old public service protocol. Production V2QueryService always uses it.
@@ -1487,6 +1571,7 @@ async def warmup_batch(
 
 @router.post("/market-data/reference:batch", response_model=ReferenceBatchResponse)
 async def reference_data_batch(
+    request: Request,
     body: ReferenceBatchRequest,
     purpose: AccessPurpose = Depends(_purpose),
     service: V2QueryService = Depends(_service),
@@ -1512,7 +1597,9 @@ async def reference_data_batch(
         requirements,
         require_all=body.require_all,
     )
-    result = await service.reference_data_batch_async(batch, purpose=purpose)
+    result = await service.reference_data_batch_async(
+        batch, purpose=purpose, **_fair_key_kwargs(request, access, service)
+    )
     items = []
     for item in result.results:
         problem = None
@@ -1593,7 +1680,8 @@ async def snapshot_batch(
             )
         access.require_requirement(requirement)
     result = await service.snapshot_batch_async(
-        requirements, purpose=purpose, consumer_id=access.consumer_id
+        requirements, purpose=purpose, consumer_id=access.consumer_id,
+        **_fair_key_kwargs(request, access, service),
     )
     items = []
     for item in result.results:
@@ -1638,6 +1726,7 @@ async def snapshot_batch(
 
 @router.get("/feeds/{instrument_uid}/status", response_model=FeedStatusResponse)
 async def feed_status(
+    request: Request,
     instrument_uid: str,
     feed: FeedType,
     source_policy_id: str,
@@ -1675,6 +1764,7 @@ async def feed_status(
             await service.status_async(
                 requirement,
                 consumer_id=access.consumer_id,
+                **_fair_key_kwargs(request, access, service),
             )
         ),
     }
@@ -1789,6 +1879,7 @@ def create_v2_app(
         "contract_version": contract_version,
     }
     app.include_router(router)
+    app.add_middleware(QuotaSettlementMiddleware)
     if request_bounds is not None:
         app.add_middleware(BoundedRequestMiddleware, bounds=request_bounds)
     default_openapi = app.openapi

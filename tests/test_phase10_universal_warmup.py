@@ -2968,14 +2968,19 @@ class SmallLocalWarmupLaneTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(disabled._local_batch_admission_for((small,)), disabled._local_batch_admission_for())
 
     async def test_small_lane_stays_bounded_per_consumer_and_recovers(self):
+        # DL v2.4.0 S6: the small lane is session-fair; one identity (no
+        # session header) is bounded at the policy's per-identity pending.
+        from qdl.query.service import _small_local_warmup_lane_policy
+
         service = self._service(enabled=True)
         lane = service._local_batch_admission_for((self._requirement("s", 1),))
         hold = asyncio.Event()
+        bound = _small_local_warmup_lane_policy().max_pending_per_consumer
         blockers = [
             asyncio.create_task(lane.run(hold.wait, consumer_id="alpha-a"))
-            for _ in range(4)
+            for _ in range(bound)
         ]
-        while lane.stats()["pending"] < 4:
+        while lane.stats()["pending"] < bound:
             await asyncio.sleep(0)
         with self.assertRaises(ReadLaneRejected):
             await lane.run(hold.wait, consumer_id="alpha-a")
@@ -3018,16 +3023,22 @@ class QueuedLocalBatchLaneTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(peak, 1)
 
     async def test_queue_stays_bounded_per_identity_and_keeps_room_for_ts(self):
+        # DL v2.4.0 S6: the fair queue bounds an identity at 448 pending (it
+        # fronts every session of a tier); a full identity is refused at once
+        # and the Trading System still has its reserved room.
+        from qdl.query.service import _queued_local_batch_lane_policy
+
         lane = self._lane()
         hold = asyncio.Event()
+        bound = _queued_local_batch_lane_policy().max_pending_per_consumer
         alphas = [asyncio.create_task(lane.run(hold.wait, consumer_id="alpha.okx.paper.stable"))
-                  for _ in range(8)]
-        while lane.stats()["pending"] < 8:
+                  for _ in range(bound)]
+        while lane.stats()["pending"] < bound:
             await asyncio.sleep(0)
         with self.assertRaises(ReadLaneRejected):
             await lane.run(hold.wait, consumer_id="alpha.okx.paper.stable")
         ts = asyncio.create_task(lane.run(hold.wait, consumer_id="trading-system.paper.stable"))
-        while lane.stats()["pending"] < 9:
+        while lane.stats()["pending"] < bound + 1:
             await asyncio.sleep(0)
         hold.set()
         await asyncio.gather(*alphas, ts)

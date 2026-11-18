@@ -42,6 +42,9 @@ class Principal:
     token_id: str
     consumer_manifest_revision: int | None = None
     key_id: str | None = None
+    # The verified ``exp`` claim (DL v2.4.0 S1): a verified-token cache keeps
+    # the principal no longer than the token itself is valid.
+    expires_at: int | None = None
 
     def has_permission(self, permission: Permission) -> bool:
         return any(
@@ -61,6 +64,7 @@ class ServiceTokenVerifier:
         algorithms: Sequence[str] = ("RS256", "ES256"),
         max_lifetime_seconds: int = 900,
         environments_by_key_id: Mapping[str, str] | None = None,
+        enforce_roles: bool = True,
     ):
         if not issuer or not audience or not keys_by_id:
             raise ValueError("issuer, audience and at least one verification key are required")
@@ -77,6 +81,10 @@ class ServiceTokenVerifier:
             ):
                 raise ValueError("JWT key-realm bindings must cover exactly the keyring")
         self._environments_by_key_id = environments_by_key_id
+        # DL v2.4.0 S8: the data plane accepts and ignores role claims (the
+        # consumer manifest's permissions are its only gate). Control-plane
+        # verifiers (``qdl.security.fastapi``) keep enforcing known roles.
+        self._enforce_roles = enforce_roles
         # Parsed verification keys by (key id, algorithm). PyJWT otherwise
         # re-parses the PEM on every decode (about 40 us of 170 us per RS256
         # request, DL v2.3.1 A.2). Only successfully parsed keys are kept; a
@@ -123,10 +131,14 @@ class ServiceTokenVerifier:
         )
         if environment != trusted_environment:
             raise PermissionError("workload token environment mismatch")
-        roles = frozenset(str(role) for role in claims.get("roles", []))
-        unknown = roles - _ROLE_PERMISSIONS.keys()
-        if not roles or unknown:
-            raise PermissionError("workload token contains unknown or empty roles")
+        raw_roles = claims.get("roles", [])
+        roles = frozenset(
+            str(role) for role in (raw_roles if isinstance(raw_roles, list) else ())
+        )
+        if self._enforce_roles:
+            unknown = roles - _ROLE_PERMISSIONS.keys()
+            if not roles or unknown or not isinstance(raw_roles, list):
+                raise PermissionError("workload token contains unknown or empty roles")
         manifest_revision = claims.get("consumer_manifest_revision")
         if manifest_revision is not None:
             try:
@@ -145,7 +157,11 @@ class ServiceTokenVerifier:
             token_id=str(claims["jti"]),
             consumer_manifest_revision=manifest_revision,
             key_id=key_id,
+            expires_at=expires_at,
         )
+
+    def has_key(self, key_id: str | None) -> bool:
+        return key_id is not None and key_id in self._keys
 
 
 class RbacAuthorizer:

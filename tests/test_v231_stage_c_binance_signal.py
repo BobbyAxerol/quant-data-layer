@@ -91,7 +91,7 @@ class StageCBinanceSignalTests(unittest.TestCase):
     def test_alpha_manifest_bump_is_additive_with_accept_set(self):
         manifest = self.report["summary"]["manifests"]["alpha.okx.paper.stable"]
         self.assertEqual(manifest["revision"], [16, 17])
-        self.assertEqual(manifest["min_token_revision"], 15)
+        self.assertEqual(manifest["min_token_revision"], 1)  # DL v2.4.0 S2: advisory floor
         self.assertEqual(manifest["additive_problems"], [])
         self.assertEqual(self.report["consumer_environment"], {})
 

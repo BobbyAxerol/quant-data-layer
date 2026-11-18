@@ -28,6 +28,8 @@ from qdl_sdk.tls import WorkloadTlsConfig
 REPLICA_REDIRECT_HEADER = "X-QDL-Replica-Redirect"
 REFUSAL_REASON_HEADER = "X-QDL-Refusal-Reason"
 REPLICA_LANE_BUSY = "REPLICA_LANE_BUSY"
+SESSION_HEADER = "X-QDL-Session"
+COLD_TIMEOUT_MARGIN_S = 2.0
 
 
 def _redirect_headers(headers: dict[str, str], replica_redirect: bool | None) -> dict[str, str]:
@@ -47,9 +49,18 @@ class RestQueryTransport:
         tls: WorkloadTlsConfig | None = None,
         max_connections: int = 100,
         max_keepalive_connections: int = 20,
+        session_id: str | None = None,
     ) -> None:
         if timeout_seconds <= 0:
             raise ValueError("query timeout must be positive")
+        if session_id is not None and (
+            not session_id.strip() or len(session_id) > 128 or not session_id.isprintable()
+        ):
+            raise ValueError("session_id must be 1..128 printable characters")
+        # SDK 2.8.0 (DL v2.4.0): optional fairness hint sent as X-QDL-Session.
+        # It never authenticates or grants anything; absent, the request is
+        # byte-identical to 2.7.0.
+        self._session_id = session_id
         if not 1 <= max_keepalive_connections <= max_connections:
             raise ValueError("query keep-alive connections must be within 1..max_connections")
         self.base_url = base_url.rstrip("/")
@@ -68,18 +79,42 @@ class RestQueryTransport:
             verify=tls.ssl_context() if tls is not None else True,
         )
 
-    async def _read_request(self, method: str, path: str, **kwargs) -> httpx.Response:
+    async def _read_request(
+        self, method: str, path: str, *, timeout_seconds: float | None = None, **kwargs
+    ) -> httpx.Response:
         # Query POSTs are read-only too. A peer can close an idle keep-alive
         # socket between pool reuse and receipt of headers; retry it once.
-        deadline = time.monotonic() + self._timeout_seconds
+        budget = self._timeout_seconds if timeout_seconds is None else timeout_seconds
+        deadline = time.monotonic() + budget
         request = getattr(self._client, method)
         try:
-            return await request(path, **kwargs)
+            if timeout_seconds is None:
+                return await request(path, **kwargs)
+            return await request(path, timeout=budget, **kwargs)
         except httpx.RemoteProtocolError:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise
             return await request(path, timeout=remaining, **kwargs)
+
+    def _cold_timeout_seconds(self, requirements) -> float | None:
+        """SDK 2.8.0: a warmup's HTTP timeout outlives its server queue wait.
+
+        Data Layer v2.4.0 queues a warmup for up to its ``deadline_ms`` (less a
+        margin), so the client waits ``deadline_ms`` + ``COLD_TIMEOUT_MARGIN_S``
+        when that is longer than the transport timeout. None keeps the
+        transport timeout (and the 2.7.0 request) when it is already longer.
+        """
+
+        deadlines = [
+            spec.deadline_ms
+            for spec in (getattr(item, "warmup_specification", None) for item in requirements)
+            if spec is not None
+        ]
+        if not deadlines:
+            return None
+        wanted = max(deadlines) / 1_000 + COLD_TIMEOUT_MARGIN_S
+        return wanted if wanted > self._timeout_seconds else None
 
     async def warmup(
         self,
@@ -98,6 +133,7 @@ class RestQueryTransport:
             f"/v2/market-data/{requirement.instrument_uid}/warmup",
             params=requirement.query_params(),
             headers=headers,
+            timeout_seconds=self._cold_timeout_seconds((requirement,)),
         )
         return self._decode(response)
 
@@ -127,6 +163,7 @@ class RestQueryTransport:
                 "requirements": [item.to_mapping() for item in values],
             },
             headers=headers,
+            timeout_seconds=self._cold_timeout_seconds(values),
         )
         return self._decode(response)
 
@@ -239,11 +276,14 @@ class RestQueryTransport:
         if not isinstance(consumer_grade, Grade):
             raise TypeError("consumer_grade must use the typed SDK enum")
         token = await self._credential_provider.get_token()
-        return {
+        headers = {
             "Authorization": f"Bearer {token}",
             "X-QDL-Consumer-ID": consumer_id,
             "X-QDL-Purpose": self._purpose(consumer_grade),
         }
+        if self._session_id is not None:
+            headers[SESSION_HEADER] = self._session_id
+        return headers
 
     @staticmethod
     def _purpose(consumer_grade: Grade | DataRequirement) -> str:
@@ -485,6 +525,7 @@ def build_replicated_rest_query(
     max_connections_per_replica: int = 100,
     max_attempts: int = 2,
     cooldown_seconds: float = 1.0,
+    session_id: str | None = None,
 ) -> ReplicatedRestQueryTransport:
     """One REST pool per Query replica, balanced per request (SDK 2.6.0).
 
@@ -510,6 +551,7 @@ def build_replicated_rest_query(
             tls=tls,
             max_connections=max_connections_per_replica,
             max_keepalive_connections=max_connections_per_replica,
+            session_id=session_id,
         )
         for url in values
     )

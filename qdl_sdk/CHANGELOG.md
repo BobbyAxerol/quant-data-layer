@@ -1,5 +1,18 @@
 # SDK Changelog
 
+## 2.8.0 (Data Layer v2.4.0: optional session fairness hint)
+
+Additive only. `RestQueryTransport` and `build_replicated_rest_query` gain keyword-only
+`session_id` (default None). When set, every Query request carries `X-QDL-Session:
+<session_id>` (1..128 printable characters). The Data Layer uses it only for fairness
+inside the authenticated identity: the session-fair warmup queue and a per-session share
+of the identity's request rate, so one noisy session of a shared tier identity is
+throttled alone. It never authenticates, authorizes or widens anything. Default None:
+request bytes equal 2.7.0. Server side (no SDK change needed): JWT role claims are
+ignored, the token manifest revision is advisory (`min_token_revision: 1`), refusals and
+shared-cache hits no longer spend quota, and a queued warmup waits up to its
+`deadline_ms` with `retry_after_ms` from its queue position.
+
 ## 2.7.0 (Data Layer v2.3.2: session-alive frames for quiet QUOTE/TRADE streams)
 
 Additive only. `GrpcStreamTransport` gains keyword-only `session_alive_interval_ms`

@@ -20,6 +20,7 @@ next ``cold_yield`` (``ColdWorkCancelled``) so the wait is one slice long.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 from contextlib import contextmanager
 from functools import partial
 import os
@@ -117,8 +118,12 @@ async def await_in_thread(executor, work, /, *args, cold: bool = False, on_cance
 
     loop = asyncio.get_running_loop()
     cancelled = threading.Event()
+    # The worker runs in a copy of the caller's context (as asyncio.to_thread
+    # does), so per-request notes (qdl.security.request_cost) reach it.
+    context = contextvars.copy_context()
     future = loop.run_in_executor(
-        executor, partial(_run_cancellable, cancelled, cold, work, *args, **kwargs)
+        executor,
+        partial(context.run, _run_cancellable, cancelled, cold, work, *args, **kwargs),
     )
     try:
         return await asyncio.shield(future)

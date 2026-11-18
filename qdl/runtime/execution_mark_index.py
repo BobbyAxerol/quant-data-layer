@@ -574,6 +574,139 @@ class ExecutionMarkIndexLiveView:
             return len(self._records)
 
 
+class MarkIndexReadRefused(Exception):
+    """The private read edge's refusal: an HTTP status and a bounded detail."""
+
+    def __init__(self, status_code: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
+@dataclass(frozen=True, slots=True)
+class MarkIndexReadFields:
+    instrument_uid: str
+    instrument_revision: int
+    source_policy_id: str
+    max_freshness_ms: int
+    event_recency_policy: StalePolicy
+    max_session_liveness_ms: int | None
+
+
+def parse_execution_mark_index_read(*, secret: bytes, body: bytes, signature: str | None) -> MarkIndexReadFields:
+    """Every request check of the private endpoint: signature, schema, fields."""
+
+    if not signature or not hmac.compare_digest(
+        signature, stable_hmac_signature(secret, body)
+    ):
+        raise MarkIndexReadRefused(401, "invalid stable read signature")
+    try:
+        payload = json.loads(body)
+        legacy_fields = {
+            "schema", "instrument_uid", "instrument_revision",
+            "source_policy_id", "max_freshness_ms",
+        }
+        quiet_fields = legacy_fields | {
+            "event_recency_policy", "max_session_liveness_ms",
+        }
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schema") not in {
+                _LEGACY_REQUEST_SCHEMA,
+                _REQUEST_SCHEMA,
+            }
+            or (
+                payload["schema"] == _LEGACY_REQUEST_SCHEMA
+                and set(payload) != legacy_fields
+            )
+            or (
+                payload["schema"] == _REQUEST_SCHEMA
+                and set(payload) != quiet_fields
+            )
+        ):
+            raise ValueError("execution MARK/INDEX read schema is invalid")
+        instrument_uid = str(payload["instrument_uid"])
+        instrument_revision = int(payload["instrument_revision"])
+        source_policy_id = str(payload["source_policy_id"])
+        max_freshness_ms = int(payload["max_freshness_ms"])
+        if payload["schema"] == _REQUEST_SCHEMA:
+            event_recency_policy = StalePolicy(
+                str(payload["event_recency_policy"]).upper()
+            )
+            max_session_liveness_ms = int(payload["max_session_liveness_ms"])
+            if event_recency_policy is not StalePolicy.OBSERVE:
+                raise ValueError("quiet execution MARK/INDEX policy is invalid")
+        else:
+            event_recency_policy = StalePolicy.BLOCK
+            max_session_liveness_ms = None
+        if not instrument_uid or not source_policy_id or not 1 <= max_freshness_ms <= 300_000:
+            raise ValueError("execution MARK/INDEX read fields are invalid")
+    except (TypeError, ValueError, json.JSONDecodeError) as error:
+        raise MarkIndexReadRefused(400, str(error)) from error
+    return MarkIndexReadFields(
+        instrument_uid, instrument_revision, source_policy_id, max_freshness_ms,
+        event_recency_policy, max_session_liveness_ms,
+    )
+
+
+async def serve_execution_mark_index_read(
+    *,
+    gateway: DurableStreamGateway,
+    view: "ExecutionMarkIndexLiveView",
+    fields: MarkIndexReadFields,
+) -> tuple[dict[str, str], dict]:
+    """The private endpoint's read: ``(headers, payload)`` or ``MarkIndexReadRefused``.
+
+    One function for the FastAPI route and the in-process direct client
+    (``qdl.reference.local_mark_index``, DL v2.4.0 S4), so both apply the same
+    gateway fence, view read, refusal record and response fields.
+    """
+
+    try:
+        epoch = gateway.assert_active()
+        assert epoch is not None
+        result = await view.read(
+            instrument_uid=fields.instrument_uid,
+            instrument_revision=fields.instrument_revision,
+            source_policy_id=fields.source_policy_id,
+            max_freshness_ms=fields.max_freshness_ms,
+            gateway_epoch=epoch,
+            event_recency_policy=fields.event_recency_policy,
+            max_session_liveness_ms=fields.max_session_liveness_ms,
+        )
+        gateway.assert_active(epoch)
+    except GatewayFenced as error:
+        raise MarkIndexReadRefused(409, "execution MARK/INDEX gateway fenced") from error
+    if result.record is None:
+        detail = f"execution MARK/INDEX live view unavailable:{result.reason}"
+        # Astra R6: the view's own reason (e.g. MARKET_CACHE_BACKUP_UNAVAILABLE) is
+        # normalised away by the reference reader; keep it at this layer.
+        REFUSALS.record(origin="execution_mark_index", code="LIVE_VIEW_UNAVAILABLE", detail=detail,
+                        status=409, retryable=True, instrument_uid=fields.instrument_uid,
+                        route="/internal/v2/execution/mark-index/latest")
+        raise MarkIndexReadRefused(409, detail)
+    record = result.record
+    # A header keeps the private JSON response additive-compatible with a
+    # rolling reader deployment while carrying the stream-authoritative
+    # basis that governed this exact record's live admission.
+    headers = {_FRESHNESS_BASIS_HEADER: record.freshness_basis}
+    if result.recency_mode is not None:
+        headers[_RECENCY_MODE_HEADER] = result.recency_mode
+    if result.session is not None and result.session_checked_at_ns is not None:
+        headers[_SESSION_STATE_HEADER] = result.session.state
+        headers[_SESSION_LIVENESS_HEADER] = str(result.session.liveness_ms)
+        headers[_SESSION_CHECKED_AT_HEADER] = str(result.session_checked_at_ns)
+        headers[_COMPONENT_RECEIPTS_HEADER] = _component_header(result.component_receipts_ns)
+        headers[_COMPONENT_CADENCE_HEADER] = _component_header(result.component_quiet_after_ms)
+    return headers, {
+        "schema": _RESPONSE_SCHEMA,
+        "lease_epoch": record.gateway_epoch,
+        "spool_watermark_offset": record.spool_watermark_offset,
+        "delivery_stage": record.delivery_stage,
+        "canonical": base64.b64encode(record.canonical).decode("ascii"),
+    }
+
+
 def install_execution_mark_index_read(
     app: FastAPI,
     *,
@@ -593,104 +726,16 @@ def install_execution_mark_index_read(
         signature: str | None = Header(None, alias="X-QDL-Stable-Signature"),
     ):
         body = await request.body()
-        if not signature or not hmac.compare_digest(
-            signature, stable_hmac_signature(secret, body)
-        ):
-            raise HTTPException(status_code=401, detail="invalid stable read signature")
         try:
-            payload = json.loads(body)
-            legacy_fields = {
-                "schema", "instrument_uid", "instrument_revision",
-                "source_policy_id", "max_freshness_ms",
-            }
-            quiet_fields = legacy_fields | {
-                "event_recency_policy", "max_session_liveness_ms",
-            }
-            if (
-                not isinstance(payload, dict)
-                or payload.get("schema") not in {
-                    _LEGACY_REQUEST_SCHEMA,
-                    _REQUEST_SCHEMA,
-                }
-                or (
-                    payload["schema"] == _LEGACY_REQUEST_SCHEMA
-                    and set(payload) != legacy_fields
-                )
-                or (
-                    payload["schema"] == _REQUEST_SCHEMA
-                    and set(payload) != quiet_fields
-                )
-            ):
-                raise ValueError("execution MARK/INDEX read schema is invalid")
-            instrument_uid = str(payload["instrument_uid"])
-            instrument_revision = int(payload["instrument_revision"])
-            source_policy_id = str(payload["source_policy_id"])
-            max_freshness_ms = int(payload["max_freshness_ms"])
-            if payload["schema"] == _REQUEST_SCHEMA:
-                event_recency_policy = StalePolicy(
-                    str(payload["event_recency_policy"]).upper()
-                )
-                max_session_liveness_ms = int(payload["max_session_liveness_ms"])
-                if event_recency_policy is not StalePolicy.OBSERVE:
-                    raise ValueError("quiet execution MARK/INDEX policy is invalid")
-            else:
-                event_recency_policy = StalePolicy.BLOCK
-                max_session_liveness_ms = None
-            if not instrument_uid or not source_policy_id or not 1 <= max_freshness_ms <= 300_000:
-                raise ValueError("execution MARK/INDEX read fields are invalid")
-        except (TypeError, ValueError, json.JSONDecodeError) as error:
-            raise HTTPException(status_code=400, detail=str(error)) from error
-        try:
-            epoch = gateway.assert_active()
-            assert epoch is not None
-            result = await view.read(
-                instrument_uid=instrument_uid,
-                instrument_revision=instrument_revision,
-                source_policy_id=source_policy_id,
-                max_freshness_ms=max_freshness_ms,
-                gateway_epoch=epoch,
-                event_recency_policy=event_recency_policy,
-                max_session_liveness_ms=max_session_liveness_ms,
+            fields = parse_execution_mark_index_read(secret=secret, body=body, signature=signature)
+            headers, payload = await serve_execution_mark_index_read(
+                gateway=gateway, view=view, fields=fields,
             )
-            gateway.assert_active(epoch)
-        except GatewayFenced as error:
-            raise HTTPException(status_code=409, detail="execution MARK/INDEX gateway fenced") from error
-        if result.record is None:
-            detail = f"execution MARK/INDEX live view unavailable:{result.reason}"
-            # Astra R6: the view's own reason (e.g. MARKET_CACHE_BACKUP_UNAVAILABLE) is
-            # normalised away by the reference reader; keep it at this layer.
-            REFUSALS.record(origin="execution_mark_index", code="LIVE_VIEW_UNAVAILABLE", detail=detail,
-                            status=409, retryable=True, instrument_uid=instrument_uid,
-                            route="/internal/v2/execution/mark-index/latest")
-            raise HTTPException(status_code=409, detail=detail)
-        record = result.record
-        # A header keeps the private JSON response additive-compatible with a
-        # rolling reader deployment while carrying the stream-authoritative
-        # basis that governed this exact record's live admission.
-        response.headers[_FRESHNESS_BASIS_HEADER] = record.freshness_basis
-        if result.recency_mode is not None:
-            response.headers[_RECENCY_MODE_HEADER] = result.recency_mode
-        if result.session is not None and result.session_checked_at_ns is not None:
-            response.headers[_SESSION_STATE_HEADER] = result.session.state
-            response.headers[_SESSION_LIVENESS_HEADER] = str(
-                result.session.liveness_ms
-            )
-            response.headers[_SESSION_CHECKED_AT_HEADER] = str(
-                result.session_checked_at_ns
-            )
-            response.headers[_COMPONENT_RECEIPTS_HEADER] = _component_header(
-                result.component_receipts_ns
-            )
-            response.headers[_COMPONENT_CADENCE_HEADER] = _component_header(
-                result.component_quiet_after_ms
-            )
-        return {
-            "schema": _RESPONSE_SCHEMA,
-            "lease_epoch": record.gateway_epoch,
-            "spool_watermark_offset": record.spool_watermark_offset,
-            "delivery_stage": record.delivery_stage,
-            "canonical": base64.b64encode(record.canonical).decode("ascii"),
-        }
+        except MarkIndexReadRefused as refused:
+            raise HTTPException(status_code=refused.status_code, detail=refused.detail) from refused
+        for name, value in headers.items():
+            response.headers[name] = value
+        return payload
 
 
 def _component_header(values: tuple[tuple[str, int], ...]) -> str:

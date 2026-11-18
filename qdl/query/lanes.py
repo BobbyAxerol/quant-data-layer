@@ -367,3 +367,304 @@ class BoundedReadLane:
     def _non_reserved_active(self) -> int:
         reserved = self.policy.reserved_consumer_id
         return self._active - self._active_by_consumer.get(reserved or "", 0)
+
+
+@dataclass(frozen=True, slots=True)
+class FairLanePolicy:
+    """A session-fair warmup queue (DL v2.4.0 S6).
+
+    ``max_active`` bounds concurrent materializations (the memory bound: the
+    large-warmup lane keeps 1 per replica). Waiting costs a coroutine, not
+    rows, so the queue is bounded by count only; one request may still not
+    reserve more than ``max_request_bytes``.
+    """
+
+    max_active: int
+    max_pending: int
+    max_pending_per_session: int
+    max_pending_per_consumer: int
+    max_request_bytes: int
+    reserved_consumer_id: str | None = None
+    reserved_pending_slots: int = 0
+    reserved_max_active: int = 1
+    initial_service_ms: int = 500
+    retry_after_min_ms: int = 250
+    retry_after_max_ms: int = 2_000
+    abandon_poll_ms: int = 500
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.max_active <= 64:
+            raise ValueError("fair lane max_active must be between 1 and 64")
+        if not self.max_active <= self.max_pending <= 8_192:
+            raise ValueError("fair lane max_pending must include active work")
+        if not 1 <= self.max_pending_per_session <= self.max_pending_per_consumer <= self.max_pending:
+            raise ValueError("fair lane per-session/per-consumer bounds are invalid")
+        if self.max_request_bytes < 1:
+            raise ValueError("fair lane max_request_bytes must be positive")
+        if not 0 <= self.reserved_pending_slots < self.max_pending:
+            raise ValueError("fair lane reserved pending slots are invalid")
+        if self.reserved_pending_slots and not self.reserved_consumer_id:
+            raise ValueError("fair lane pending reserve requires a consumer identity")
+        if not 1 <= self.reserved_max_active <= self.max_active:
+            raise ValueError("fair lane reserved active bound is invalid")
+        if not 0 < self.retry_after_min_ms <= self.retry_after_max_ms <= 2_000:
+            raise ValueError("fair lane retry hint must stay within the SDK's 0..2000 ms")
+        if not 50 <= self.abandon_poll_ms <= 10_000 or self.initial_service_ms < 1:
+            raise ValueError("fair lane timing bounds are invalid")
+
+
+@dataclass(slots=True)
+class _FairEntry:
+    consumer_id: str
+    key: str
+    explicit_session: bool
+    reserved_bytes: int
+    sequence: int
+    round: int
+    future: asyncio.Future
+    started: bool = False
+    started_at: float = 0.0
+
+
+class FairWarmupLane:
+    """Session-fair FIFO admission that waits up to each request's deadline (DL v2.4.0 S6).
+
+    Ordering: a waiting Trading System request (the reserved identity) goes
+    first when a slot frees; otherwise the entry with the lowest per-key round
+    wins, then the oldest. A key's n-th queued request has round n, so a
+    session's second warmup runs after every other session's first (session-
+    fair FIFO). The key is the request's fairness key (``X-QDL-Session`` within
+    its identity) or the identity itself. At most one request per key runs at
+    a time (the reserved identity up to ``reserved_max_active``).
+
+    Admission: refused at once only when a count bound is full (``ReadLaneAt
+    Capacity``) or a request exceeds the byte budget; a waiter is refused when
+    its own deadline passes, or withdrawn when ``abandoned()`` says its client
+    went away. Every refusal carries ``retry_after_ms`` derived from the queue
+    position and the measured service time. Dispatch is explicit (one O(n)
+    scan per completion), never a broadcast to every waiter.
+    """
+
+    def __init__(self, policy: FairLanePolicy) -> None:
+        self.policy = policy
+        self._waiting: list[_FairEntry] = []
+        self._active = 0
+        self._active_by_key: dict[str, int] = {}
+        self._pending_by_key: dict[str, int] = {}
+        self._pending_by_consumer: dict[str, int] = {}
+        self._rounds: dict[str, int] = {}
+        self._pending_bytes = 0
+        self._sequence = 0
+        self._service_ms = float(policy.initial_service_ms)
+        self._admitted = 0
+        self._rejected = 0
+        self._rejected_bytes = 0
+        self._queue_wait_timeouts = 0
+        self._busy_refusals = 0
+        self._abandoned = 0
+        self._max_waited_ms = 0.0
+
+    # ------------------------------------------------------------ public
+
+    async def run(
+        self,
+        work: Callable[[], Awaitable[T]],
+        *,
+        consumer_id: str,
+        reserved_bytes: int,
+        fairness_key: str | None = None,
+        wait_timeout_ms: int | None = None,
+        refuse_if_queued: bool = False,
+        abandoned: Callable[[], Awaitable[bool]] | None = None,
+    ) -> T:
+        if not consumer_id.strip():
+            raise ValueError("read lane consumer_id is required")
+        if reserved_bytes < 1:
+            raise ValueError("read lane reserved_bytes must be positive")
+        if wait_timeout_ms is not None and wait_timeout_ms < 1:
+            raise ValueError("read lane wait timeout must be positive")
+        reserved = consumer_id == self.policy.reserved_consumer_id
+        explicit = bool(fairness_key) and fairness_key != consumer_id and not reserved
+        key = fairness_key if explicit else consumer_id
+        loop = asyncio.get_running_loop()
+        if reserved_bytes > self.policy.max_request_bytes:
+            self._rejected += 1
+            self._rejected_bytes += 1
+            raise ReadLaneRejected("read lane request exceeds its byte reservation budget")
+        if refuse_if_queued and not self._startable_now(key, reserved):
+            self._busy_refusals += 1
+            raise ReadLaneBusy("read lane is busy; the request would queue")
+        self._reject_if_full(consumer_id, key, explicit, reserved)
+        round_ = self._rounds.get(key, 0) + 1
+        self._rounds[key] = round_
+        entry = _FairEntry(
+            consumer_id, key, explicit, reserved_bytes, self._sequence, round_, loop.create_future(),
+        )
+        self._sequence += 1
+        self._waiting.append(entry)
+        self._pending_by_key[key] = self._pending_by_key.get(key, 0) + 1
+        self._pending_by_consumer[consumer_id] = self._pending_by_consumer.get(consumer_id, 0) + 1
+        self._pending_bytes += reserved_bytes
+        enqueued_at = loop.time()
+        self._dispatch(loop)
+        try:
+            if not entry.started:
+                await self._wait(entry, loop, wait_timeout_ms, abandoned)
+        except BaseException:
+            if entry.started:
+                self._finish(entry, loop)
+            else:
+                self._withdraw_waiting(entry)
+                self._dispatch(loop)
+            raise
+        self._max_waited_ms = max(self._max_waited_ms, (entry.started_at - enqueued_at) * 1_000)
+        try:
+            return await work()
+        finally:
+            self._finish(entry, loop)
+
+    def stats(self) -> dict[str, int]:
+        reserved = self.policy.reserved_consumer_id or ""
+        return {
+            "active": self._active,
+            "pending": len(self._waiting) + self._active,
+            "waiting": len(self._waiting),
+            "pending_bytes": self._pending_bytes,
+            "active_reserved": self._active_by_key.get(reserved, 0),
+            "pending_reserved": self._pending_by_consumer.get(reserved, 0),
+            "admitted": self._admitted,
+            "rejected": self._rejected,
+            "rejected_bytes": self._rejected_bytes,
+            "queue_wait_timeouts": self._queue_wait_timeouts,
+            "busy_refusals": self._busy_refusals,
+            "abandoned": self._abandoned,
+            "service_ms": int(self._service_ms),
+            "max_waited_ms": int(self._max_waited_ms),
+        }
+
+    def retry_after_ms(self, position: int | None = None) -> int:
+        ahead = len(self._waiting) if position is None else position
+        estimate = (ahead // self.policy.max_active + 1) * self._service_ms
+        return int(min(self.policy.retry_after_max_ms, max(self.policy.retry_after_min_ms, estimate)))
+
+    # ------------------------------------------------------------ internals
+
+    def _refusal(self, kind, message: str, position: int | None = None):
+        error = kind(message)
+        error.retry_after_ms = self.retry_after_ms(position)
+        return error
+
+    def _reject_if_full(self, consumer_id: str, key: str, explicit: bool, reserved: bool) -> None:
+        total = len(self._waiting) + self._active
+        limit = self.policy.max_pending - (0 if reserved else self.policy.reserved_pending_slots)
+        if total >= limit:
+            self._rejected += 1
+            raise self._refusal(ReadLaneAtCapacity, "read lane queue is full")
+        if not reserved and self._pending_by_consumer.get(consumer_id, 0) >= self.policy.max_pending_per_consumer:
+            self._rejected += 1
+            raise self._refusal(ReadLaneAtCapacity, "read lane consumer is at its finite pending bound")
+        if explicit and self._pending_by_key.get(key, 0) >= self.policy.max_pending_per_session:
+            self._rejected += 1
+            raise self._refusal(ReadLaneAtCapacity, "read lane session is at its finite pending bound")
+
+    def _key_limit(self, key: str) -> int:
+        return self.policy.reserved_max_active if key == self.policy.reserved_consumer_id else 1
+
+    def _startable_now(self, key: str, reserved: bool) -> bool:
+        if self._active >= self.policy.max_active:
+            return False
+        if self._active_by_key.get(key, 0) >= self._key_limit(key):
+            return False
+        if reserved:
+            return not any(item.key == key for item in self._waiting)
+        # Anything already waiting that could run would be served first.
+        return not any(
+            self._active_by_key.get(item.key, 0) < self._key_limit(item.key) for item in self._waiting
+        )
+
+    def _dispatch(self, loop) -> None:
+        reserved = self.policy.reserved_consumer_id
+        while self._active < self.policy.max_active and self._waiting:
+            candidate = None
+            if reserved is not None and self._active_by_key.get(reserved, 0) < self.policy.reserved_max_active:
+                candidate = next((item for item in self._waiting if item.key == reserved), None)
+            if candidate is None:
+                best = None
+                for item in self._waiting:
+                    if self._active_by_key.get(item.key, 0) >= self._key_limit(item.key):
+                        continue
+                    rank = (item.round, item.sequence)
+                    if best is None or rank < best[0]:
+                        best = (rank, item)
+                candidate = None if best is None else best[1]
+            if candidate is None:
+                return
+            self._waiting.remove(candidate)
+            candidate.started = True
+            candidate.started_at = loop.time()
+            self._active += 1
+            self._active_by_key[candidate.key] = self._active_by_key.get(candidate.key, 0) + 1
+            self._admitted += 1
+            if not candidate.future.done():
+                candidate.future.set_result(None)
+
+    def _position(self, entry: _FairEntry) -> int:
+        rank = (entry.round, entry.sequence)
+        return sum(1 for item in self._waiting if (item.round, item.sequence) < rank)
+
+    async def _wait(self, entry, loop, wait_timeout_ms, abandoned) -> None:
+        deadline = None if wait_timeout_ms is None else loop.time() + wait_timeout_ms / 1_000
+        poll = self.policy.abandon_poll_ms / 1_000
+        while not entry.started:
+            timeout = None if deadline is None else deadline - loop.time()
+            if timeout is not None and timeout <= 0:
+                self._queue_wait_timeouts += 1
+                position = self._position(entry)
+                self._withdraw_waiting(entry)
+                self._dispatch(loop)
+                # Same detail text as BoundedReadLane (refusal-log detail
+                # digests stay comparable); the position is in the hint.
+                raise self._refusal(
+                    ReadLaneRejected,
+                    "read lane admission wait exceeded the declared deadline",
+                    position,
+                )
+            if abandoned is not None:
+                timeout = poll if timeout is None else min(timeout, poll)
+            await asyncio.wait({entry.future}, timeout=timeout)
+            if not entry.started and abandoned is not None and await abandoned():
+                self._abandoned += 1
+                self._withdraw_waiting(entry)
+                self._dispatch(loop)
+                raise ReadLaneRejected("read lane waiter withdrawn: the client disconnected")
+
+    def _withdraw_waiting(self, entry: _FairEntry) -> None:
+        if entry in self._waiting:
+            self._waiting.remove(entry)
+            self._release_counts(entry)
+
+    def _release_counts(self, entry: _FairEntry) -> None:
+        for counts, name in ((self._pending_by_key, entry.key), (self._pending_by_consumer, entry.consumer_id)):
+            left = counts.get(name, 0) - 1
+            if left > 0:
+                counts[name] = left
+            else:
+                counts.pop(name, None)
+        if entry.key not in self._pending_by_key:
+            self._rounds.pop(entry.key, None)
+        self._pending_bytes -= entry.reserved_bytes
+
+    def _finish(self, entry: _FairEntry, loop) -> None:
+        if not entry.started:
+            return
+        entry.started = False  # finish once
+        self._active -= 1
+        left = self._active_by_key.get(entry.key, 0) - 1
+        if left > 0:
+            self._active_by_key[entry.key] = left
+        else:
+            self._active_by_key.pop(entry.key, None)
+        elapsed_ms = max(1.0, (loop.time() - entry.started_at) * 1_000)
+        self._service_ms = 0.8 * self._service_ms + 0.2 * elapsed_ms
+        self._release_counts(entry)
+        self._dispatch(loop)

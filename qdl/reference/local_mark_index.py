@@ -32,7 +32,10 @@ from qdl.reference.execution_live import HttpExecutionMarkIndexReader
 from qdl.runtime.execution_mark_index import (
     ExecutionMarkIndexRead,
     ExecutionMarkIndexLiveView,
+    MarkIndexReadRefused,
     install_execution_mark_index_read,
+    parse_execution_mark_index_read,
+    serve_execution_mark_index_read,
 )
 
 _LOCAL_EPOCH = 1
@@ -264,9 +267,62 @@ class InProcessAsgiClient:
         return None
 
 
-def reader_for_view(view: SpoolRefreshingMarkIndexView) -> HttpExecutionMarkIndexReader:
+class InProcessViewClient:
+    """The private MARK/INDEX endpoint called directly, without an ASGI hop (DL v2.4.0 S4).
+
+    ``reference:batch`` reached the in-process view through a FastAPI app:
+    building an ASGI scope, routing, header injection and JSON response
+    rendering were about 55 % of 0.59 ms per MARK/INDEX item (2026-11-18
+    review). This client keeps every check of that endpoint and calls the
+    same code (``parse_execution_mark_index_read`` verifies the HMAC
+    signature, schema and fields; ``serve_execution_mark_index_read`` applies
+    the gateway fence, the view read and the refusal record) and returns the
+    same status, headers and body the route would, so
+    ``HttpExecutionMarkIndexReader`` converts and validates it unchanged.
+    """
+
+    __slots__ = ("gateway", "view", "secret", "calls")
+
+    def __init__(self, *, gateway, view, secret: bytes) -> None:
+        if len(secret) < 32:
+            raise ValueError("stable internal read secret must contain at least 256 bits")
+        self.gateway = gateway
+        self.view = view
+        self.secret = secret
+        self.calls = 0
+
+    async def post(self, url: str, *, content: bytes, headers: dict[str, str], timeout=None) -> InProcessAsgiResponse:
+        del url, timeout  # in-process: bounded by the caller's asyncio.wait_for
+        self.calls += 1
+        signature = next(
+            (value for name, value in headers.items() if name.lower() == "x-qdl-stable-signature"), None,
+        )
+        try:
+            fields = parse_execution_mark_index_read(secret=self.secret, body=content, signature=signature)
+            response_headers, payload = await serve_execution_mark_index_read(
+                gateway=self.gateway, view=self.view, fields=fields,
+            )
+        except MarkIndexReadRefused as refused:
+            body = json.dumps({"detail": refused.detail}, separators=(",", ":")).encode()
+            return InProcessAsgiResponse(
+                refused.status_code, httpx.Headers({"content-type": "application/json"}), body,
+            )
+        body = json.dumps(payload, separators=(",", ":")).encode()
+        response_headers = {"content-type": "application/json", **response_headers}
+        return InProcessAsgiResponse(200, httpx.Headers(response_headers), body)
+
+    async def aclose(self) -> None:
+        return None
+
+
+def reader_for_view(view: SpoolRefreshingMarkIndexView, *, direct: bool = True) -> HttpExecutionMarkIndexReader:
+    """The in-process MARK/INDEX reader; ``direct=False`` keeps the pre-v2.4.0 ASGI hop (tests, A/B)."""
+
     secret = os.urandom(32)
-    app = FastAPI()
-    install_execution_mark_index_read(app, gateway=_LocalGateway(), view=view, secret=secret)
-    client = InProcessAsgiClient(app, base_url=_LOCAL_URL)
+    if direct:
+        client = InProcessViewClient(gateway=_LocalGateway(), view=view, secret=secret)
+    else:
+        app = FastAPI()
+        install_execution_mark_index_read(app, gateway=_LocalGateway(), view=view, secret=secret)
+        client = InProcessAsgiClient(app, base_url=_LOCAL_URL)
     return HttpExecutionMarkIndexReader(urls=(_LOCAL_URL,), secret=secret, client=client)

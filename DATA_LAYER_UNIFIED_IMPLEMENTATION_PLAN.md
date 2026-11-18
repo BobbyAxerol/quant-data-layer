@@ -78756,3 +78756,85 @@ Also recorded (read-only RCA, no change): OKX quiet-QUOTE `EXECUTION_CONTEXT_STA
 
 Files: `scripts/benchmark_consumer_endpoints.py`, `tests/test_consumer_endpoint_benchmark.py`, this entry.
 Status: `implemented`, `tested locally`.
+
+### DL v2.4.0 S1-S9: shared reads, quota on admission, session-fair queues, advisory token revision (tested locally) - 2026-11-18 (Claude)
+
+Scope: owner DL design decisions 2026-11-18 ~08:50Z (internal fund, one host, internal alphas only): one tier
+identity per venue x environment, entitlement = the declared manifest requirements, cheap stream and poll, quota
+only a coarse per-tier guard plus per-session fairness, the TS lane reserve kept, warmup a fair queue. Coordinator
+review corrections (hot lanes session-fair, TS full per-replica rate, waits below client timeouts, Rust refund) are
+included. Base `release/v2.3.2-session-alive` 2401393; branch `release/v2.4.0`. Offline only: no runtime action.
+
+Slices (all additive; no endpoint, schema or proto change; SDK 2.x unchanged on the wire unless it opts in):
+- S1 verified-token cache (`qdl/security/data_plane.py` `VerifiedTokenCache`): LRU 4096 on sha256(token) ->
+  `Principal` until its `exp` (new additive `Principal.expires_at`); an entry whose key left the keyring is evicted,
+  `rotate_keys()` clears. Manifest lookup, key-subject binding, revision accept-set and consumer binding still run on
+  every request.
+- S2 advisory token revision: the readers accept any token revision 1..manifest revision
+  (`ConsumerManifest.accepted_token_revisions`, Rust `Manifest::accepts_token_revision`); `min_token_revision` is kept,
+  validated and informational; `manifest_compat.next_min_token_revision` returns 1, so the renderer declares floor 1.
+  The upper bound stays (rollout order: Data Layer first). Deviation from the brief ("min_token_revision: 1 on every
+  stable manifest"), decided after the first full run: rewriting the 6 YAMLs changed their sha256, which
+  `config/v2/stable-v2-release-routing.yaml` and the consumer env `DATA_LAYER_V2_RELEASE_MANIFEST_SHA256` pin
+  (9 modules failed on it: trading_consumer_scope, paper_read_extension, declaration tool stage A, ...), i.e. it would
+  re-create the very coupling S2 removes. The rule now lives in code; the manifest files are unchanged, so no realm
+  re-render is needed. CLAUDE.md section 4.1 coupling is removed once the new Query/Stream images run.
+- S3 quota only on admission: `qdl/security/request_cost.py` (per-request notes in a ContextVar; `await_in_thread`
+  now copies the context). REST takes one unit after authentication (`admit`), `QuotaSettlementMiddleware` keeps it
+  only for a response < 400 that did its own read; refusals, cancellations and shared-only results return it. gRPC
+  (Python) charges after the purpose rule. Rust: the charge moved after the purpose rule and a `QuotaGuard` refunds
+  on every later refusal of Subscribe/Replay/GetSnapshot/GetFeedStatus.
+- S4 direct view call: the private MARK/INDEX endpoint body is `parse_execution_mark_index_read` +
+  `serve_execution_mark_index_read`; the route and the new `InProcessViewClient` call the same code (HMAC, schema,
+  fields, gateway fence, view read, refusal record), so `reference:batch` no longer takes an in-process ASGI hop.
+  `default_capability_resolver` builds one profile per (venue, market).
+- S5 key-level latest view + singleflight (`KnMarketCacheQueryBackend._shared_view`): one market-cache read per
+  (binding, last) per TTL per replica (`QDL_V2_SHARED_VIEW_TTL_MS`, 0..20, runtime default 10; constructor default 0);
+  typed refusals shared as fresh exceptions; freshness, quality, eligibility, cursor and the monotonic checks stay
+  per request; the hot backup path never uses a shared result (rc4 precedent).
+- S6 session-fair warmup queue (`qdl/query/lanes.py` `FairWarmupLane`, explicit O(n) dispatch): TS first, then
+  lowest per-key round, then oldest; one active per fairness key (`X-QDL-Session` within the identity, the identity
+  as fallback); large lane 1 active per replica (memory bound), 512 pending, 4 per named session, 448 per identity,
+  32 TS slots; small lane 2 active. Waits up to min(deadline, 60 s) less min(1 s, deadline/4); a disconnected
+  client's waiter is withdrawn; refusals carry `retry_after_ms` from queue position x measured service time
+  (250..2000). `_WarmupFlights`: identical fully-local warmups (same requirement except `deadline_ms`) share one
+  materialization; a request joins only when every item is in flight, so no two requests wait on each other.
+- Hot lanes (coordinator review): snapshot/status/snapshot:batch and the execution-reference lane use the same fair
+  lane keyed per session (snapshot 2 active / 512 pending / 32 per session; reference 4 / 256 / 8), TS first. A hot
+  waiter is refused at min(request deadline, 8 s) less a margin (7.5 s), always before the TS writer's 10 s
+  `query_deadline_ms`.
+- S7 coarse guard `LocalTokenBucketQuota` (Python) / `LocalTokenBucketQuota` + `LayeredQuota` (Rust): per identity
+  per replica rpm x 0.5 / 60 per s with a 10 s burst; per named session 1/8 of that; the Trading System identity
+  (`trading-system.` prefix) gets its FULL rate per replica because its traffic is not balanced (ledger R4 soak:
+  writer on kn_2 86/87 connections; plan A.1: sequential writer stream 100 % on one replica; modelled ~6,000/min vs
+  rpm/2 = 5,000). Shared Redis counting is optional (`QDL_V2_SHARED_QUOTA` / `QDL_KN_SHARED_QUOTA`, default off) and
+  its outage never refuses.
+- S8 role claims accepted and ignored on the data plane (Python verifier `enforce_roles=False`, Rust role check
+  removed); the manifest permissions are the only gate. Control-plane verifiers still enforce roles.
+- SDK 2.8.0: optional `session_id` (sends `X-QDL-Session`); warmup/warmup:batch HTTP timeout = max(transport
+  timeout, deadline_ms + 2 s).
+- S9 prepared, not run: `scripts/p184_capacity100.py` profile `shared100`; `evaluate_shared100_gates` in
+  `qdl/certification/phase3_consumer_load.py`; `config/v2/p184-shared100-profile.json` (restart storm 100 sessions /
+  10 s / 0 refusals / TS p95 <= G5 COLD_2500 6265.1 ms; noisy neighbour 50 rps; G14 baseline-subtracted alpha delta
+  <= 0.5 vCPU OWNER-APPROVED 2026-11-18); A6 `config/v2/p184-stage100-a6-shared100-preregistered.json`
+  (PRE_REGISTERED, profile sha256 720e6d98...). Quota r18 superseded.
+
+TS writer check (read-only, no TS change needed): `market-data-writer/src/query.rs:91-92` refuses any warmup
+requirement, so the writer sends no warmup/history; its Query calls use `query_deadline_ms` 10 000 ms
+(`services/market_data/native_plan.py:264`) as one timeout per request (`query.rs:406`).
+
+Blast radius when rolled out (not done): new Python image for `query_kn_1/2`; new Rust Stream image for
+`stream_kn_1/2` with the bundle rebuilt from floor-1 manifests; re-render the alpha realm (r17) for floor 1.
+Untouched: Kafka, cores, projectors, stable_redis, market_cache, bar_edge, ingestors, TS writer. Rollback: previous
+query_kn/stream_kn digests and manifests/realm.
+
+Tests (image `qdl-v2-python:2.3.1-aa75218`, `--rm --cpus 1 --memory 4g --network none`, tree read-only):
+- full impacted set (3 new + 103 impacted modules, `tests.test_p184_g12_isolated_fault` excluded: it hangs in this
+  container at its forked-child SIGSEGV case with or without `--init`; it imports no changed module): Ran 1470,
+  4 failures + 15 errors, all from the manifest-byte S2 variant, the reference route's missing `request` parameter, an
+  SDK duck-typed double and the SDK version pin; fixed.
+- rerun of the 11 failing modules plus 2: Ran 191, 1 failure (an older-revision token now accepted by design; the
+  test now uses a future revision); then the revision-sensitive and lane modules (14): Ran 262, OK.
+- Old-semantics lane tests updated (they asserted 8/4 per identity, which is the refusal storm S6 removes).
+Status: Python slices `implemented`, `tested locally`. Rust (S3 refund, S7, S8, S2 rule) and the micro-bench: see
+the next update.

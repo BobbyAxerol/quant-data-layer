@@ -70,6 +70,11 @@ gRPC message. The session still yields one event per record with its own
 resume token; against an older gateway, or with `max_records_per_response=1`,
 every message carries one record as before.
 
+`RestQueryTransport(..., session_id="<session>")` (SDK 2.8.0, Data Layer v2.4.0) sends the optional
+`X-QDL-Session` fairness hint: the Data Layer queues warmups and shares the identity's request
+rate per session, so one noisy session is throttled alone. It grants nothing; default None sends
+the 2.7.0 request.
+
 `GrpcStreamTransport(..., session_alive_interval_ms=500)` (SDK 2.7.0, Data Layer
 v2.3.2; 0, the default, is off) asks the gateway for `SessionAliveEvent` frames
 on an event-recency OBSERVE QUOTE/TRADE subscription: typed evidence, at most
@@ -181,7 +186,7 @@ Build the standalone artifact with:
 python scripts/build_qdl_sdk_release.py --output-dir dist/qdl-sdk
 ```
 
-The output contains a reproducible `qdl_sdk-2.7.0-py3-none-any.whl`, a release
+The output contains a reproducible `qdl_sdk-2.8.0-py3-none-any.whl`, a release
 manifest with the wheel/source/generated-contract SHA-256 digests, and a
 CycloneDX SBOM. The wheel contains only the public SDK plus generated Protobuf
 contracts; it does not package `qdl.api_v2`, runtime adapters, provider code or
