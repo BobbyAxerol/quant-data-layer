@@ -21,6 +21,7 @@ from qdl_sdk.models import (
     InstrumentPageResponse,
     InstrumentResponse,
     InstrumentView,
+    SessionAliveEvent,
     SnapshotResponse,
     StreamEvent,
     WarmupResponse,
@@ -383,7 +384,7 @@ class WarmupStreamSession:
     def __aiter__(self):
         return self
 
-    async def __anext__(self) -> StreamEvent | ControlEvent:
+    async def __anext__(self) -> StreamEvent | ControlEvent | SessionAliveEvent:
         if self._closed or self._events is None:
             raise StopAsyncIteration
         try:
@@ -429,7 +430,9 @@ class WarmupStreamSession:
                 "RECONNECTED",
                 "stream transport reconnected from the last confirmed cursor",
             )
-        if isinstance(event, ControlEvent):
+        # A session-alive frame (2.7.0) is evidence, not a record: it never
+        # moves the stream position or the acknowledgement window.
+        if isinstance(event, (ControlEvent, SessionAliveEvent)):
             return event
         if event.logical_offset <= self._last_seen_offset:
             raise ContinuityError(

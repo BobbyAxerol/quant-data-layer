@@ -1272,7 +1272,7 @@ class Render:
             lanes_before = ingestor_lanes.lane_plan_report(
                 runtime_name, active["bindings"],
                 ingestor_lanes.current_lane_assignment(runtime_name, active["bindings"], cap))
-            changed = bool(change["added_binding_count"] or native_bars)
+            changed = bool(change["added_binding_count"] or native_bars or change["tuned_fields"])
             if pins_on:
                 pins = ingestor_lanes.sticky_lane_pins(runtime_name, active["bindings"], successor["bindings"], cap)
                 pinned = ingestor_lanes.apply_lane_pins(successor, pins)
@@ -1299,6 +1299,7 @@ class Render:
                 "lanes": {name: {"feed": v["feed"], "members": len(v["members"])} for name, v in lanes_after.items()},
                 "new_lanes": sorted(set(lanes_after) - set(lanes_before)),
                 "latest_state_flush_ms_by_feed": successor.get("latest_state_flush_ms_by_feed"),
+                "session_liveness_write_interval_ms": successor.get("session_liveness_write_interval_ms"),
                 "max_subscriptions_per_connection": cap,
             }
         return report

@@ -78573,3 +78573,157 @@ Status: `implemented`, `tested locally`. Not pushed.
   - TS v2.1.5: per-replica pools in the Rust writer, plus the session-alive consumer.
   - The stage C window.
   - The Rust/bar_edge window.
+
+### DL v2.3.2 slice 1: Stream session-alive frames for quiet QUOTE/TRADE (tested locally) - 2026-11-17 (Claude)
+
+This implements design `upgrade/DL_V232_SESSION_ALIVE_FRAME_DESIGN.md`, sections 3-4 (owner option a). The
+differences from the design are listed in its section 8.
+
+**Contract** (additive):
+- `SubscribeRequest.session_alive_interval_ms = 9`;
+- `message SessionAlive` with fields 1..7;
+- `StreamRecord.session_alive = 12`.
+- `buf format`, `lint`, and `breaking` against phase1, phase7-beta and contract-line-1: all rc=0, so
+  `schema_digest` stays on line 1.
+- The generated Rust is written in the prost-build style, because `buf generate` needs remote plugins and the run was
+  offline.
+- The generated Python comes from an offline emulator of the protoc python generator. Its self-check renders the base
+  proto byte-equal to the committed `query_pb2.py` before it renders the new one.
+
+**Gateway:**
+- `src/session_liveness.rs` is a port of `StableSessionLivenessReader.status`, plus the frame rules.
+- `service.rs` gets the live-loop interval arm. A frame needs a healthy, caught-up stream with an empty queue
+  (`Hub::reader_caught_up`). It is sent with `try_send` and dropped when the handoff is full.
+- A stream with no delivered event takes its session from the hot ring.
+- `QDL_KN_SESSION_LIVENESS_DIR`: unset means INVALID_ARGUMENT `SESSION_ALIVE_UNAVAILABLE`; set but unreadable means
+  the gateway does not start.
+- New metrics: `session_alive.{sent,dropped,withheld}`.
+
+**SDK 2.7.0:** `GrpcStreamTransport(session_alive_interval_ms)` and `SessionAliveEvent`. The default sends 2.6.0
+bytes.
+
+**Runtime config** (in the repo, not applied):
+- The `stream_kn_1/2` mount plus env.
+- `STABLE_SESSION_LIVENESS_WRITE_INTERVAL_MS = 250`.
+- The refresh and declaration tools carry it as a compiler-tuned field. Before this change they refused any
+  non-binding difference.
+
+**Tests:** container `rust:1.82-slim`, offline, `--cpus 1`.
+- `cargo check --workspace --all-targets`: clean.
+- `cargo test --workspace --all-targets -- --test-threads=1`: 559 passed, 0 failed, 72 ignored. This includes:
+  - `session_liveness` unit tests: 10;
+  - native_stream, 4 new tests: inter-frame gaps 501/498/499/500/500 ms at 500 ms; no frame after DISCONNECTED;
+    the handoff-full test dropped 5 and sent 1 after the drain.
+- Not run: clippy and the toolchain's own rustfmt, which are not installed offline. Format was checked with
+  rustfmt 1.83.
+- Python (`qdl-v2-python:2.3.1-aa75218`, 63 impacted modules): 1138 tests, 81 skipped, 1 error.
+  - The error was the new refresh test's direct-call fixture. It is fixed: the rerun of
+    `tests.test_refresh_v2_native_ingestor_runtime` and `tests.test_qdl_sdk_session_alive` gave 16 OK.
+  - Ruff is not in the image, so lint was not run.
+
+**Measured cost** (`tests/session_alive_cost.rs`; opt-level 3 for the gateway, contracts, prost, bytes and
+serde_json; no HTTP/2 or TLS):
+- build and encode: 266-271 ns, 343 bytes;
+- status read: 34.8 µs with 4 lane files, 98.9 µs with 16;
+- vCPU at 226 frames/s: 0.008 with 4 lane files, 0.022 with 16.
+- The directory scan dominates. A shared, short-TTL scan is a follow-up if the production lane count is high.
+
+**Blast radius for a rollout** (not done):
+- recreate `stream_kn_1/2` with a new Stream image, the mount and the env;
+- re-render the ingestor configs (250 ms) and recreate `ingestor_okx_swap` and `ingestor_binance_usdm`, same image;
+  this reconnects the provider sessions.
+- Nothing else is touched: Kafka x3, cores x3, projectors, market_cache, stable_redis, query_kn_1/2, bar_edge.
+- Rollback: the previous Stream digest and the 1000 ms ingestor configs.
+
+Status: `implemented`, `tested locally`. Not pushed.
+
+### DL v2.3.2 slice 2: DELIVERY_ON_CHANGE on Stream QUOTE records, opt-in (tested locally) - 2026-11-18 (Claude)
+
+Owner decision 2026-11-18, about 04:25Z (TS interim (b)): the TS writer takes DELIVERY_ON_CHANGE from the DL Stream
+and stops synthesizing it from its last Query verdict. Risk is unchanged.
+
+**Contract** (additive):
+- `qdl.common.v1.QualityFlag.QUALITY_FLAG_DELIVERY_ON_CHANGE = 18`;
+- `SubscribeRequest.delivery_on_change_flag = 10` (bool).
+
+**Why opt-in:** readers before 2.3.2 refuse an unknown flag value.
+- `qdl_sdk/projection.py:413-416` calls `QualityFlag.Name`.
+- The TS native writer, `market-data-writer/src/view.rs:349`, raises `KernelError::Value`.
+- With the field absent or false, the record bytes are exactly the pre-2.3.2 bytes.
+
+**Rule** (the same one Query uses):
+- Query: `binding.delivery_semantics == "ON_CHANGE"`, `qdl/runtime/stable_source.py:1160-1167`.
+- The catalogue allows ON_CHANGE only on QUOTE (`stable_catalog.py:144-148`), so only QUOTE records are marked.
+- Source of truth: `scripts/kn_gateway_bundle.py` now emits `delivery_semantics: ON_CHANGE` from the catalogue, only
+  for those bindings. A bundle without the field stays byte-identical.
+- `qdl-contracts::gateway_bundle::Binding.delivery_on_change` defaults to false (fail closed). It is refused on a
+  non-QUOTE binding.
+- The gateway resolves this once per Subscribe from the subscription's binding. Both live and catch-up records get
+  their copy marked through `subscribe_event_record`; the committed record is never changed. The Replay RPC and Query
+  are unchanged.
+
+**SDK 2.7.0:** `GrpcStreamTransport(delivery_on_change_flag=False)`. The projection maps value 18 to
+`"DELIVERY_ON_CHANGE"`.
+
+**Generated code:** the same offline emulator, with the base render proven byte-equal first for `query_pb2` and
+`common_pb2`. The prost files are edited by hand in prost-build style.
+
+**Tests:**
+- `buf format`/`lint`/`breaking` against phase1, phase7-beta and contract-line-1: rc=0.
+- Rust (`rust:1.82-slim`, offline, `cargo test --workspace --all-targets --locked --offline -- --test-threads=1`):
+  562 passed, 0 failed, 72 ignored. That includes 3 new tests:
+  - bundle parsing;
+  - opted-in vs not, replayed and live rows;
+  - STRICT_EVENT QUOTE and TRADE never marked.
+- Python (`qdl-v2-python:2.3.1-aa75218`, 77 impacted modules in two runs): 781 OK (74 skipped) and 601 OK (9 skipped).
+
+**Rollout coupling:** the deployed gateway bundle (`QDL_CONSUMER_REALM_DIR/bundle.json`) must be recompiled with this
+`kn_gateway_bundle.py`. The Stream and the projector reload it live. Until then no record is marked, which is
+fail-closed.
+
+Status: `implemented`, `tested locally`. Not pushed.
+
+### DL v2.3.2 x TS v2.1.5 isolated e2e: flag, SessionAlive and a 90 s Stream outage, all PASS (TEST_ONLY) - 2026-11-18 (Claude)
+
+Owner GO 2026-11-18, isolated only. The run started at 06:55Z, after the 06:40Z gate and the Edge "Sandbox done".
+No live container, network, Redis or volume was touched.
+
+**Setup:**
+- The Stream is the real v2.3.2 service from `414324b`: hub, replay, access, cursor codec, SessionAlive and the
+  opt-in DELIVERY_ON_CHANGE. It runs in the new TEST example `rust/qdl-stream-gateway/examples/v232_quiet_quote_e2e.rs`,
+  over a persisted in-memory log, with:
+  - a Query snapshot stub;
+  - a fake session-liveness dir, rewritten every 250 ms;
+  - plaintext loopback endpoints.
+- **Bindings** come from the realm bundle recompiled with `scripts/kn_gateway_bundle.py` into scratch. The bundle has
+  756 bindings: 31 ON_CHANGE (all QUOTE, 26 OKX SWAP, none on another feed) and 2 STRICT_EVENT QUOTE. Its sha256 is
+  `bde6e89b…`. The e2e used one ON_CHANGE (`okx-swap-aave-usdt-swap-quote`) and one STRICT (`binance-spot-btcusdt-quote`).
+- **Image:** one TEST image, `local/qdl-v232-e2e-gateway:414324b`, id
+  `sha256:a3669da43ba29c47837f76f86d1d43ff114d9105d2f57306a787b3ac84a303ff`. It is the base
+  `qdl-v2-rust:2.3.1-funding-50be2b92` plus the example binary (sha256 `deb471d1…`, debug build). It was removed
+  after the run.
+- **Writer:** TS `feat/v215-writer-session-alive` `cc320a4a`, binary sha256 `a4d86cf1…`, run under the production
+  supervisor (FixedWorkerSupervisor native slot), with `MARKET_DATA_NATIVE_SESSION_ALIVE_MS=500`.
+  Harness: TS `scripts/v215_e2e_session_alive.py` and `_run.sh`.
+- **Network:** one `--internal` network; the gateway shared the harness network namespace; loopback Redis DB 15;
+  every container `--rm` with 1 CPU.
+
+**Results** (report: `~/.local/state/qdl-v2/v232-quiet-quote/e2e-20261118/report.json`):
+- **Flag.** Every Subscribe sent `delivery_on_change_flag=true` and `session_alive_interval_ms=500`. After a new BBO
+  on the Stream, the ON_CHANGE row's flags were `["DELIVERY_ON_CHANGE"]` (from DL) and the STRICT row's flags were
+  `[]`.
+- **SessionAlive.** For 30 s the BBO was quiet, and the event age reached 31.0 s. In all 30 of 30 one-second samples,
+  Risk's unchanged `_quiet_quote_at_use` was True. The maximum proof age was 741 ms. 58 frames were sent, and the
+  ON_CHANGE route got 0 Query probes.
+- **Disconnect.** After the fake session was set to DISCONNECTED, the quote was refused at 2.0 s, and the route was
+  READY again after LIVE was restored.
+- **Outage.** The gateway was stopped for 90 s (06:55:45Z to 06:57:16Z):
+  - the native worker never exited (same epoch) and was never RESTART_EXHAUSTED;
+  - the only code seen was DEPENDENCY_UNAVAILABLE;
+  - all slices were READY again 6.0 s after the restart.
+
+**Limits:**
+- An in-memory log, not Kafka.
+- A Query stub, not the Query service.
+- The example binary was formatted with rustfmt after the build, with no semantic change.
+- Status: `tested locally` (isolated e2e). It is not a runtime certification.

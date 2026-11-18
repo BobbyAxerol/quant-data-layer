@@ -989,6 +989,43 @@ class StreamEvent:
 
 
 @dataclass(frozen=True)
+class SessionAliveEvent:
+    """SDK 2.7.0 (Data Layer v2.3.2, ``qdl.stream.session-alive.v1``).
+
+    Typed evidence from the stream gateway that the provider session carrying
+    the subscription's instrument is LIVE, though the instrument may be quiet.
+    Yielded only by a ``GrpcStreamTransport`` built with
+    ``session_alive_interval_ms`` > 0, and only for an event-recency OBSERVE
+    QUOTE/TRADE requirement. It is not a market event: it never advances a
+    cursor (``resume_token`` is the subscription's current token, unchanged)
+    and is never acknowledged. Silence is the signal: no frame means no proof.
+    A consumer must match ``source_session_id`` / ``connection_generation`` /
+    ``config_revision`` against its cached event before it re-stamps a proof;
+    the session was heard ``provider_session_liveness_ms`` before the gateway
+    sent the frame (DL host clock).
+    """
+
+    resume_token: str
+    source_session_id: str
+    connection_generation: int
+    config_revision: int
+    provider_last_transport_at_ns: int
+    provider_session_liveness_ms: int
+    gateway_epoch: int
+    high_watermark: int
+
+    def __post_init__(self) -> None:
+        if (
+            not self.resume_token
+            or not self.source_session_id
+            or self.connection_generation < 1
+            or self.config_revision < 1
+            or self.provider_last_transport_at_ns < 1
+        ):
+            raise ValueError("session-alive frame requires a token and a provider session identity")
+
+
+@dataclass(frozen=True)
 class ControlEvent:
     code: str
     detail: str

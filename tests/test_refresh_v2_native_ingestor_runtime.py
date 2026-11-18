@@ -216,6 +216,40 @@ class NativeIngestorRuntimeRefreshTests(unittest.TestCase):
                     state_root=root / "state",
                 )
 
+    def test_compiler_tuned_session_liveness_interval_is_carried(self):
+        # DL v2.3.2: an active file still on 1000 ms takes the compiler's 250 ms
+        # (Stream session-alive frames); nothing else non-binding may move.
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            runtime = self._runtime(root)
+            for name in TARGETS.values():
+                path = runtime / name
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                payload["session_liveness_write_interval_ms"] = 1000
+                path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            result = refresh(runtime_dir=runtime, output_dir=None, apply=False, state_root=root / "state")
+            for name in TARGETS.values():
+                item = result["files"][name]
+                self.assertTrue(item["changed"])
+                self.assertEqual(
+                    item["tuned_fields"], {"session_liveness_write_interval_ms": [1000, 250]}
+                )
+            active = json.loads((runtime / TARGETS["binance-usdm"]).read_text(encoding="utf-8"))
+            successor, change = _validate_transition(
+                active=active, expected=dict(active, session_liveness_write_interval_ms=250), target="t"
+            )
+            self.assertEqual(successor, dict(active, session_liveness_write_interval_ms=250))
+            self.assertEqual(change["added_binding_count"], 0)
+            for bad in (100, 6_000, True, "250"):
+                with self.subTest(value=bad), self.assertRaisesRegex(ValueError, "250..5000"):
+                    _validate_transition(
+                        active=active, expected=dict(active, session_liveness_write_interval_ms=bad), target="t"
+                    )
+            with self.assertRaisesRegex(ValueError, "non-binding runtime field"):
+                _validate_transition(
+                    active=active, expected=dict(active, heartbeat_seconds=10), target="t"
+                )
+
     def test_additions_keep_retained_bindings_and_operator_fields_verbatim(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

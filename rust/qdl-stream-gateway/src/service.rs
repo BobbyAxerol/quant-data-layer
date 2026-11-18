@@ -27,6 +27,10 @@ use crate::replay::{
 use crate::requirement::{
     delivery_decision, is_product, require_requirement, Delivery, StreamRequirement,
 };
+use crate::session_liveness::{
+    clamp_interval, requirement_allows_frames, session_alive, session_alive_record, EventSession,
+    SessionLivenessReader,
+};
 use crate::subscription::{ByteBudget, Charge, Next, Subscription};
 use qdl_contracts::cursor_v3::{CursorError, CursorV3Claims, CursorV3Codec};
 use std::collections::HashMap;
@@ -123,6 +127,12 @@ pub struct Metrics {
     /// slow client show up here, not in the dispatch lag).
     pub queue_wait: LagHistogram,
     pub handoff_wait: LagHistogram,
+    /// Session-alive frames (DL v2.3.2): handed to the transport, dropped
+    /// because the bounded handoff was full, and ticks without a frame
+    /// (fail closed: no event yet, session not LIVE, stale, unreadable).
+    pub session_alive_sent: AtomicU64,
+    pub session_alive_dropped: AtomicU64,
+    pub session_alive_withheld: AtomicU64,
 }
 
 pub struct GatewayState {
@@ -141,6 +151,13 @@ pub struct GatewayState {
     /// Set on SIGTERM/SIGINT: every open stream ends with a typed,
     /// retryable UNAVAILABLE so clients fail over at once.
     shutdown: tokio::sync::watch::Sender<bool>,
+    /// Provider-session liveness records (`QDL_KN_SESSION_LIVENESS_DIR`).
+    /// `None`: this gateway cannot vouch for a session, and a Subscribe that
+    /// asks for session-alive frames is refused INVALID_ARGUMENT.
+    session_liveness: Option<Arc<SessionLivenessReader>>,
+    /// This gateway instance's generation (process start, Unix ns), carried
+    /// by every session-alive frame as `gateway_epoch`.
+    pub gateway_epoch: u64,
 }
 
 impl GatewayState {
@@ -171,7 +188,15 @@ impl GatewayState {
             replays: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
             shutdown: tokio::sync::watch::channel(false).0,
+            session_liveness: None,
+            gateway_epoch: now_ns(),
         }
+    }
+
+    /// Enable session-alive frames from these liveness records (DL v2.3.2).
+    pub fn with_session_liveness(mut self, reader: Arc<SessionLivenessReader>) -> Self {
+        self.session_liveness = Some(reader);
+        self
     }
 
     /// Begin a graceful stop (planned restart / `docker stop`).
@@ -523,6 +548,30 @@ impl MarketDataStreamService for Gateway {
             .require_stream_buffer(buffer)
             .map_err(|error| state.refuse(error.to_status()))?;
         let delivery = &requirement.delivery;
+        // DL v2.3.2 session-alive frames: only for an event-recency OBSERVE
+        // QUOTE/TRADE route, and only from a gateway that reads the session
+        // records; anything else is refused before any stream slot is taken.
+        let alive = match clamp_interval(body.session_alive_interval_ms) {
+            None => None,
+            Some(interval) => {
+                if !requirement_allows_frames(
+                    &delivery.feed,
+                    delivery.event_recency_policy.as_deref(),
+                ) {
+                    return Err(state.refuse(Status::invalid_argument(
+                        "SESSION_ALIVE_INVALID:session_alive_interval_ms requires an \
+                         event-recency OBSERVE QUOTE or TRADE requirement",
+                    )));
+                }
+                let Some(reader) = state.session_liveness.clone() else {
+                    return Err(state.refuse(Status::invalid_argument(
+                        "SESSION_ALIVE_UNAVAILABLE:this gateway has no provider session \
+                         liveness source",
+                    )));
+                };
+                Some(SessionAliveTrack::new(reader, interval))
+            }
+        };
         let binding = authority
             .bundle
             .binding_for(
@@ -537,6 +586,10 @@ impl MarketDataStreamService for Gateway {
                     "CURSOR_INVALID:cursor requirement has no matching stable binding",
                 ))
             })?;
+        // DL v2.3.2: the Query rule (`delivery_semantics == "ON_CHANGE"`, QUOTE
+        // only), from the bundle the catalogue compiled; opt-in per stream.
+        let mark_on_change =
+            body.delivery_on_change_flag && binding.delivery_on_change && delivery.feed == "QUOTE";
         let claims = state
             .codec
             .verify(
@@ -664,6 +717,8 @@ impl MarketDataStreamService for Gateway {
             after,
             batch_limit,
             replay_budget_status_v2: body.replay_budget_status_v2,
+            alive,
+            mark_on_change,
         };
         tokio::spawn(task.run(barrier, ring));
         let stream = subscription_handoff(receiver, terminal);
@@ -942,15 +997,38 @@ fn event_record(record: &LiveRecord, token: String) -> query::StreamRecord {
 /// (SDK 2.4.0, diagnostic only): the hub dispatch (0 for replayed records)
 /// and the moment this task took it. The send clock is set by
 /// [`stamp_send`] when the transport takes the response.
+///
+/// `on_change` (DL v2.3.2, `SubscribeRequest.delivery_on_change_flag` on an
+/// ON_CHANGE QUOTE binding): a QUOTE record also carries
+/// `QUALITY_FLAG_DELIVERY_ON_CHANGE`, live and catch-up alike. The committed
+/// record is not changed; only this subscription's copy is.
 fn subscribe_event_record(
     record: &LiveRecord,
     token: String,
     dequeued_wall_ns: u64,
+    on_change: bool,
 ) -> query::StreamRecord {
-    query::StreamRecord {
+    let mut result = query::StreamRecord {
         gateway_dispatch_wall_ns: record.dispatched_wall_ns,
         gateway_dequeue_wall_ns: dequeued_wall_ns,
         ..event_record(record, token)
+    };
+    if on_change {
+        if let Some(query::stream_record::Payload::Event(envelope)) = result.payload.as_mut() {
+            mark_delivery_on_change(envelope);
+        }
+    }
+    result
+}
+
+/// Add `QUALITY_FLAG_DELIVERY_ON_CHANGE` to a QUOTE envelope once.
+fn mark_delivery_on_change(envelope: &mut crate::generated::marketdata_v2::EventEnvelope) {
+    use crate::generated::marketdata_v2::event_envelope::Payload;
+    let flag = qdl_contracts::qdl::common::v1::QualityFlag::DeliveryOnChange as i32;
+    if matches!(envelope.payload, Some(Payload::Quote(_)))
+        && !envelope.quality_flags.contains(&flag)
+    {
+        envelope.quality_flags.push(flag);
     }
 }
 
@@ -1217,6 +1295,60 @@ struct SubscriptionTask {
     batch_limit: usize,
     /// `SubscribeRequest.replay_budget_status_v2` (SDK 2.4.1, IDR-096).
     replay_budget_status_v2: bool,
+    /// `SubscribeRequest.session_alive_interval_ms` (DL v2.3.2), when set.
+    alive: Option<SessionAliveTrack>,
+    /// `SubscribeRequest.delivery_on_change_flag` on an ON_CHANGE QUOTE
+    /// binding (DL v2.3.2): QUOTE records carry DELIVERY_ON_CHANGE.
+    mark_on_change: bool,
+}
+
+/// Session-alive state of one subscription: the cadence, and what the client
+/// last received (the resume token of the last record handed to the
+/// transport, and the session of the last delivered event).
+struct SessionAliveTrack {
+    reader: Arc<SessionLivenessReader>,
+    interval: Duration,
+    last: Mutex<(String, Option<EventSession>)>,
+    sent: AtomicU64,
+    dropped: AtomicU64,
+    withheld: AtomicU64,
+}
+
+impl SessionAliveTrack {
+    fn new(reader: Arc<SessionLivenessReader>, interval: Duration) -> Self {
+        Self {
+            reader,
+            interval,
+            last: Mutex::new((String::new(), None)),
+            sent: AtomicU64::new(0),
+            dropped: AtomicU64::new(0),
+            withheld: AtomicU64::new(0),
+        }
+    }
+
+    /// The token and (for an event) the session of the last record of a
+    /// response, before it is handed to the transport.
+    fn pending(response: &query::SubscribeResponse) -> Option<(String, Option<EventSession>)> {
+        let record = response.records.last().or(response.record.as_ref())?;
+        let session = match &record.payload {
+            Some(query::stream_record::Payload::Event(envelope)) => EventSession::of(envelope),
+            _ => None,
+        };
+        Some((record.resume_token.clone(), session))
+    }
+
+    /// The response was handed to the transport.
+    fn delivered(&self, pending: (String, Option<EventSession>)) {
+        if let Ok(mut last) = self.last.lock() {
+            let (token, session) = pending;
+            if !token.is_empty() {
+                last.0 = token;
+            }
+            if session.is_some() {
+                last.1 = session;
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1320,6 +1452,10 @@ impl Drop for SubscriptionTask {
                 "handoff_timeouts": load(&counters.handoff_timeouts),
                 "queued": queued,
                 "queued_bytes": queued_bytes,
+                "session_alive_interval_ms": self.alive.as_ref().map(|alive| alive.interval.as_millis() as u64),
+                "session_alive_sent": self.alive.as_ref().map(|alive| load(&alive.sent)),
+                "session_alive_dropped": self.alive.as_ref().map(|alive| load(&alive.dropped)),
+                "session_alive_withheld": self.alive.as_ref().map(|alive| load(&alive.withheld)),
                 "outcome": self.report.outcome.lock().map(|value| *value).unwrap_or("?"),
             })
         );
@@ -1345,6 +1481,10 @@ impl SubscriptionTask {
             self.revoke(status).await;
             return Sent::Closed;
         }
+        let pending = self
+            .alive
+            .as_ref()
+            .and_then(|_| SessionAliveTrack::pending(&response));
         let handoff = async {
             match tokio::time::timeout(
                 self.state.limits.slow_consumer_after,
@@ -1364,11 +1504,124 @@ impl SubscriptionTask {
                 Sent::Closed
             }
             result = handoff => match result {
-                Ok(true) => Sent::Ok,
+                Ok(true) => {
+                    if let (Some(alive), Some(pending)) = (&self.alive, pending) {
+                        alive.delivered(pending);
+                    }
+                    Sent::Ok
+                }
                 Ok(false) => Sent::Closed,
                 Err(()) => Sent::Slow,
             },
         }
+    }
+
+    /// One session-alive tick (DL v2.3.2). Never waits: the frame is built
+    /// only while the subscription is LIVE and healthy, carries the current
+    /// resume token unchanged with logical_offset 0, and is dropped, never
+    /// queued, when the bounded handoff is full (a late "alive" is worse than
+    /// none). Every refusal is silence; the client's proof ages out.
+    fn session_alive_tick(&self, alive: &SessionAliveTrack, position: i64) {
+        let withheld = || {
+            alive.withheld.fetch_add(1, Ordering::Relaxed);
+            self.state
+                .metrics
+                .session_alive_withheld
+                .fetch_add(1, Ordering::Relaxed);
+        };
+        // The stream must be healthy and fully caught up: nothing terminal,
+        // nothing of this product still queued for the client, and this
+        // replica's reader caught up on the partition. Otherwise a frame
+        // could vouch for a quote that a newer, undelivered record replaced.
+        if self.auth.check().is_err()
+            || self.subscription.terminal().is_some()
+            || self.subscription.queued().0 > 0
+            || self.state.hub.reader_caught_up(self.partition).is_err()
+        {
+            withheld();
+            return;
+        }
+        let (token, session) = match alive.last.lock() {
+            Ok(last) => last.clone(),
+            Err(_) => {
+                withheld();
+                return;
+            }
+        };
+        if token.is_empty() {
+            withheld();
+            return;
+        }
+        let session = session.or_else(|| self.seed_session(alive, position));
+        let high = self.state.hub.next_offset(self.partition).unwrap_or(0) - 1;
+        let frame = match session_alive(
+            &alive.reader,
+            session.as_ref(),
+            alive.interval,
+            self.subscription
+                .requirement
+                .delivery
+                .max_session_liveness_ms,
+            self.state.gateway_epoch,
+            high.max(0) as u64,
+            now_ns() as i64,
+        ) {
+            Ok(frame) => frame,
+            Err(_) => {
+                withheld();
+                return;
+            }
+        };
+        let response = query::SubscribeResponse {
+            record: Some(session_alive_record(frame, &token)),
+            records: Vec::new(),
+        };
+        match self.sender.try_send((Ok(response), None)) {
+            Ok(()) => {
+                alive.sent.fetch_add(1, Ordering::Relaxed);
+                self.state
+                    .metrics
+                    .session_alive_sent
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                alive.dropped.fetch_add(1, Ordering::Relaxed);
+                self.state
+                    .metrics
+                    .session_alive_dropped
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {}
+        }
+    }
+
+    /// The session of the instrument's newest committed event when this
+    /// stream has delivered none yet (a quiet instrument right after
+    /// subscribe): only a record at or below the stream's position, which the
+    /// client already holds through its snapshot cursor, and only from a
+    /// healthy hot read. Any doubt leaves it unknown (no frame).
+    fn seed_session(&self, alive: &SessionAliveTrack, position: i64) -> Option<EventSession> {
+        let feed = &self.subscription.requirement.delivery.feed;
+        let hot = self
+            .state
+            .hub
+            .latest_hot(&self.key, feed, Instant::now() + Duration::from_millis(20))
+            .ok()?;
+        if hot.raw.offset > position {
+            return None;
+        }
+        let envelope = <crate::generated::marketdata_v2::EventEnvelope as prost::Message>::decode(
+            hot.raw.payload.as_slice(),
+        )
+        .ok()?;
+        if !is_product(feed, None, &envelope) {
+            return None;
+        }
+        let session = EventSession::of(&envelope)?;
+        if let Ok(mut last) = alive.last.lock() {
+            last.1.get_or_insert_with(|| session.clone());
+        }
+        Some(session)
     }
 
     #[cfg(feature = "isolated-replay-clock")]
@@ -1477,7 +1730,12 @@ impl SubscriptionTask {
             }
         };
         let response = query::SubscribeResponse {
-            record: Some(subscribe_event_record(record, token, now_ns())),
+            record: Some(subscribe_event_record(
+                record,
+                token,
+                now_ns(),
+                self.mark_on_change,
+            )),
             records: Vec::new(),
         };
         match self.send(response, charge).await {
@@ -1702,7 +1960,7 @@ impl SubscriptionTask {
                     }
                     batch.started.get_or_insert(taken);
                     batch.push(
-                        subscribe_event_record(&record, token, taken_wall),
+                        subscribe_event_record(&record, token, taken_wall, self.mark_on_change),
                         record.raw.offset,
                         bytes,
                         charge,
@@ -1815,7 +2073,7 @@ impl SubscriptionTask {
         }
         batch.started.get_or_insert_with(Instant::now);
         batch.push(
-            subscribe_event_record(record, token, now_ns()),
+            subscribe_event_record(record, token, now_ns(), self.mark_on_change),
             record.raw.offset,
             bytes,
             charge,
@@ -2168,6 +2426,21 @@ impl SubscriptionTask {
         }
         let mut shutdown = self.state.shutdown.subscribe();
         let mut filtered_since_delivery = 0usize;
+        // Session-alive cadence (DL v2.3.2), only when the client asked. The
+        // TEST data clock owns every send of a clocked subscription, so a
+        // clocked one never emits frames.
+        #[cfg(feature = "isolated-replay-clock")]
+        let clocked = self.state.hub.test_clock_enabled();
+        #[cfg(not(feature = "isolated-replay-clock"))]
+        let clocked = false;
+        let mut alive_tick = self.alive.as_ref().filter(|_| !clocked).map(|alive| {
+            let mut tick = tokio::time::interval_at(
+                tokio::time::Instant::now() + alive.interval,
+                alive.interval,
+            );
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            tick
+        });
         loop {
             if *shutdown.borrow() {
                 self.fail(Status::unavailable(
@@ -2184,6 +2457,17 @@ impl SubscriptionTask {
                     return;
                 }
                 () = self.sender.closed() => return,
+                () = async {
+                    match alive_tick.as_mut() {
+                        Some(tick) => { tick.tick().await; }
+                        None => std::future::pending::<()>().await,
+                    }
+                } => {
+                    if let Some(alive) = &self.alive {
+                        self.session_alive_tick(alive, last);
+                    }
+                    continue;
+                }
             };
             match next {
                 Next::Record(record, enqueued, charge) => {

@@ -31,6 +31,7 @@ use qdl_stream_gateway::replay::{
 };
 use qdl_stream_gateway::requirement::StreamRequirement;
 use qdl_stream_gateway::service::{Gateway, GatewayState, StreamLimits};
+use qdl_stream_gateway::session_liveness::SessionLivenessReader;
 use qdl_stream_gateway::subscription::ByteBudget;
 use ring::rand::SystemRandom;
 use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
@@ -348,6 +349,8 @@ fn binding(feed: &str, interval: Option<&str>, key: &str) -> Binding {
         product_key: format!("lpk1|paper|OKX|SWAP|{UID}|{feed}|{qualifier}"),
         stale_after_ms: 5_000,
         lineage_revision: 9,
+        // The native BBO QUOTE is ON_CHANGE in the production catalogue.
+        delivery_on_change: feed == "QUOTE",
     }
 }
 
@@ -407,6 +410,13 @@ fn bundle_with_streams(
             requirements: feeds
                 .iter()
                 .map(|(feed, interval)| manifest_requirement(feed, *interval))
+                // DL v2.3.2: the event-recency OBSERVE routes session-alive
+                // frames are valid for.
+                .chain(["QUOTE", "TRADE"].map(|feed| ManifestRequirement {
+                    event_recency_policy: Some("OBSERVE".into()),
+                    max_session_liveness_ms: Some(OBSERVE_SLA_MS),
+                    ..manifest_requirement(feed, None)
+                }))
                 .collect(),
         }],
     }
@@ -425,6 +435,17 @@ const ALL_PERMISSIONS: [&str; 4] = [
     "status:read",
     "history:read",
 ];
+
+const OBSERVE_SLA_MS: u64 = 2_000;
+
+/// An event-recency OBSERVE requirement (QUOTE/TRADE, explicit session SLA).
+fn observe_requirement(feed: &str) -> query::DataRequirement {
+    query::DataRequirement {
+        event_recency_policy: query::StalePolicy::Observe as i32,
+        max_session_liveness_ms: OBSERVE_SLA_MS,
+        ..requirement(feed, None)
+    }
+}
 
 fn requirement(feed: &str, interval: Option<&str>) -> query::DataRequirement {
     query::DataRequirement {
@@ -549,6 +570,10 @@ struct Options {
     replay_budget: Option<usize>,
     /// Build the live budget as production does (`ByteBudget::live`).
     live_reserve: bool,
+    /// DL v2.3.2 session-liveness records (`QDL_KN_SESSION_LIVENESS_DIR`).
+    session_liveness: Option<Arc<SessionLivenessReader>>,
+    /// The QUOTE binding's catalogue delivery semantics is ON_CHANGE.
+    quote_on_change: bool,
 }
 
 impl Default for Options {
@@ -570,6 +595,8 @@ impl Default for Options {
             range_delay: Duration::ZERO,
             replay_budget: None,
             live_reserve: false,
+            session_liveness: None,
+            quote_on_change: true,
         }
     }
 }
@@ -603,9 +630,14 @@ impl Harness {
             "kn2-test-k1",
         )
         .unwrap();
+        let mut bundle =
+            bundle_with_streams(3, &options.permissions, &ALL_FEEDS, options.max_streams);
+        for binding in &mut bundle.bindings {
+            binding.delivery_on_change &= options.quote_on_change;
+        }
         let authority = AuthorityHandle::new(Authority {
             jwt: jwt_config(&[("k1", &keys)]),
-            bundle: bundle_with_streams(3, &options.permissions, &ALL_FEEDS, options.max_streams),
+            bundle,
             expectation: expectation(),
         });
         let budget = if options.live_reserve {
@@ -613,7 +645,7 @@ impl Harness {
         } else {
             ByteBudget::new(options.budget)
         };
-        let state = Arc::new(GatewayState::new(
+        let state = GatewayState::new(
             authority,
             Arc::new(NoQuota),
             CursorV3Codec::new(
@@ -635,7 +667,11 @@ impl Harness {
             options.read_view,
             budget,
             options.limits,
-        ));
+        );
+        let state = Arc::new(match options.session_liveness {
+            Some(reader) => state.with_session_liveness(reader),
+            None => state,
+        });
         Self {
             log,
             gateway: Gateway { state },
@@ -652,7 +688,24 @@ impl Harness {
     }
 
     fn cursor(&self, feed: &str, interval: Option<&str>, partition: i32, after: i64) -> String {
-        let digest = DeliveryRequirement::from_proto(&requirement(feed, interval))
+        self.cursor_for(
+            &requirement(feed, interval),
+            feed,
+            interval,
+            partition,
+            after,
+        )
+    }
+
+    fn cursor_for(
+        &self,
+        requirement: &query::DataRequirement,
+        feed: &str,
+        interval: Option<&str>,
+        partition: i32,
+        after: i64,
+    ) -> String {
+        let digest = DeliveryRequirement::from_proto(requirement)
             .unwrap()
             .digest();
         let qualifier = interval.unwrap_or("-");
@@ -746,6 +799,8 @@ impl Harness {
             max_buffer_events: buffer,
             max_records_per_response: batch,
             replay_budget_status_v2: budget_v2,
+            session_alive_interval_ms: 0,
+            delivery_on_change_flag: false,
         });
         let response = self.gateway.subscribe(request).await?;
         Ok(Stream(response.into_inner(), None))
@@ -833,6 +888,10 @@ impl Stream {
                     }
                     query::stream_record::Payload::Event(event) => {
                         Item::Event(record.logical_offset, Box::new(event))
+                    }
+                    // A client that never set field 9 never sees field 12.
+                    query::stream_record::Payload::SessionAlive(_) => {
+                        panic!("session-alive frame sent to a client that did not ask")
                     }
                 }
             }
@@ -977,6 +1036,8 @@ async fn t01_offset_zero_is_snapshot_state_not_a_genesis_or_skipped_event() {
                 max_buffer_events: 100,
                 max_records_per_response: 0,
                 replay_budget_status_v2: false,
+                session_alive_interval_ms: 0,
+                delivery_on_change_flag: false,
             }))
             .await
             .unwrap();
@@ -1318,6 +1379,8 @@ async fn t02_matched_budget_resumes_exactly_on_ring_and_reader_without_expiry() 
                 max_buffer_events: 100,
                 max_records_per_response: batch,
                 replay_budget_status_v2: true,
+                session_alive_interval_ms: 0,
+                delivery_on_change_flag: false,
             }))
             .await
             .unwrap();
@@ -2280,6 +2343,8 @@ async fn t07_every_rpc_refuses_missing_or_mismatched_identity() {
         max_buffer_events: 10,
         max_records_per_response: 0,
         replay_budget_status_v2: false,
+        session_alive_interval_ms: 0,
+        delivery_on_change_flag: false,
     };
     let replay = query::ReplayRequest {
         consumer_id: CONSUMER.into(),
@@ -2399,7 +2464,10 @@ async fn t07_replay_pages_the_cursor_product_with_signed_tokens() {
                 offsets.push(record.logical_offset);
                 last_token = record.resume_token;
             }
-            query::stream_record::Payload::Control(_) => panic!("Replay sends records only"),
+            query::stream_record::Payload::Control(_)
+            | query::stream_record::Payload::SessionAlive(_) => {
+                panic!("Replay sends records only")
+            }
         }
     }
     assert_eq!(
@@ -3493,6 +3561,9 @@ async fn read_shapes_until(stream: &mut Stream, count: usize, shapes: &mut Shape
                         .events
                         .push((record.logical_offset, record.resume_token, event));
                 }
+                query::stream_record::Payload::SessionAlive(_) => {
+                    panic!("session-alive frame sent to a client that did not ask")
+                }
             }
             continue;
         }
@@ -3514,6 +3585,9 @@ async fn read_shapes_until(stream: &mut Stream, count: usize, shapes: &mut Shape
             match record.payload.expect("payload") {
                 query::stream_record::Payload::Control(control) => {
                     panic!("a control was batched: {}", control.code)
+                }
+                query::stream_record::Payload::SessionAlive(_) => {
+                    panic!("a session-alive frame was batched")
                 }
                 query::stream_record::Payload::Event(event) => {
                     shapes
@@ -3823,6 +3897,8 @@ async fn b08_replay_pending_records_precede_corruption_and_filtered_boundaries()
                 max_buffer_events: 100,
                 max_records_per_response: 64,
                 replay_budget_status_v2: false,
+                session_alive_interval_ms: 0,
+                delivery_on_change_flag: false,
             }))
             .await
             .unwrap();
@@ -4060,6 +4136,9 @@ async fn b05_subscribe_records_carry_gateway_dispatch_dequeue_and_send_clocks() 
                 assert!(record.gateway_dequeue_wall_ns >= started);
                 assert!(record.gateway_send_wall_ns >= record.gateway_dequeue_wall_ns);
                 assert!(*read >= record.gateway_send_wall_ns);
+            }
+            Some(query::stream_record::Payload::SessionAlive(_)) => {
+                panic!("session-alive frame sent to a client that did not ask")
             }
             None => panic!("payload"),
         }
@@ -4373,4 +4452,490 @@ async fn opt01_handoff_completes_before_continuing_producer_stops() {
     assert_eq!(actual, expected);
     drop(stream);
     harness.released().await;
+}
+
+// ------------------------------------------- session-alive frames (DL v2.3.2)
+
+const ALIVE_SESSION: &str = "okx-public-7";
+const ALIVE_GENERATION: u64 = 3;
+const ALIVE_REVISION: u64 = 9;
+
+fn session_quote(level: u32) -> EventEnvelope {
+    EventEnvelope {
+        venue: "OKX".into(),
+        market: "SWAP".into(),
+        source_session_id: ALIVE_SESSION.into(),
+        connection_generation: ALIVE_GENERATION,
+        config_revision: ALIVE_REVISION,
+        ..quote(level, Vec::new())
+    }
+}
+
+/// A fake `runtime/session-liveness` root with one OKX SWAP lane, kept fresh
+/// every 250 ms by a writer thread exactly as the ingestor writes it
+/// (atomic rename, `last_transport_at_ns` = now).
+struct SessionDir {
+    root: std::path::PathBuf,
+    state: Arc<Mutex<&'static str>>,
+    stop: Arc<AtomicBool>,
+    writer: Option<std::thread::JoinHandle<()>>,
+}
+
+impl SessionDir {
+    fn new(tag: &str) -> Self {
+        let base = std::env::var_os("QDL_TEST_TMPDIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let root = base.join(format!(
+            "qdl-alive-{tag}-{}-{}",
+            std::process::id(),
+            now_ns()
+        ));
+        std::fs::create_dir_all(root.join("okx-swap")).unwrap();
+        let state = Arc::new(Mutex::new("LIVE"));
+        let stop = Arc::new(AtomicBool::new(false));
+        let write = {
+            let root = root.clone();
+            move |state: &str| {
+                let now = now_ns();
+                let body = serde_json::json!({
+                    "schema": "qdl.provider-session-liveness.v1",
+                    "source_session_id": ALIVE_SESSION,
+                    "connection_generation": ALIVE_GENERATION,
+                    "state": state,
+                    "last_transport_at_ns": now,
+                    "updated_at_ns": now,
+                    "config_revision": ALIVE_REVISION + 1,
+                });
+                let dir = root.join("okx-swap");
+                let tmp = dir.join(".public.json.tmp");
+                std::fs::write(&tmp, body.to_string()).unwrap();
+                std::fs::rename(&tmp, dir.join("public.json")).unwrap();
+            }
+        };
+        write("LIVE");
+        let writer = {
+            let (state, stop) = (state.clone(), stop.clone());
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    let current = *state.lock().unwrap();
+                    write(current);
+                    std::thread::sleep(Duration::from_millis(250));
+                }
+            })
+        };
+        Self {
+            root,
+            state,
+            stop,
+            writer: Some(writer),
+        }
+    }
+
+    fn reader(&self) -> Arc<SessionLivenessReader> {
+        Arc::new(SessionLivenessReader::new(self.root.clone()))
+    }
+
+    fn set_state(&self, state: &'static str) {
+        *self.state.lock().unwrap() = state;
+    }
+}
+
+impl Drop for SessionDir {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(writer) = self.writer.take() {
+            let _ = writer.join();
+        }
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+impl Harness {
+    async fn subscribe_alive(
+        &self,
+        requirement: query::DataRequirement,
+        after: i64,
+        interval_ms: u32,
+    ) -> Result<Stream, Status> {
+        self.subscribe_opt_in(requirement, after, interval_ms, false)
+            .await
+    }
+
+    /// Subscribe with the DL v2.3.2 opt-ins (fields 9 and 10).
+    async fn subscribe_opt_in(
+        &self,
+        requirement: query::DataRequirement,
+        after: i64,
+        interval_ms: u32,
+        on_change: bool,
+    ) -> Result<Stream, Status> {
+        let feed = query::FeedType::try_from(requirement.feed_type)
+            .unwrap()
+            .as_str_name()
+            .trim_start_matches("FEED_TYPE_")
+            .to_owned();
+        let cursor = self.cursor_for(&requirement, &feed, None, 0, after);
+        let request = self.authorized(query::SubscribeRequest {
+            consumer_id: CONSUMER.into(),
+            requirement: Some(requirement),
+            cursor_token: cursor,
+            max_buffer_events: 8,
+            max_records_per_response: 0,
+            replay_budget_status_v2: false,
+            session_alive_interval_ms: interval_ms,
+            delivery_on_change_flag: on_change,
+        });
+        let response = self.gateway.subscribe(request).await?;
+        Ok(Stream(response.into_inner(), None))
+    }
+}
+
+/// The next raw record within `timeout` (`None` on timeout or end).
+async fn next_record(stream: &mut Stream, timeout: Duration) -> Option<query::StreamRecord> {
+    match tokio::time::timeout(timeout, stream.0.next()).await {
+        Ok(Some(Ok(response))) => Some(response.record.expect("one record per response")),
+        Ok(Some(Err(status))) => panic!("stream failed: {status:?}"),
+        Ok(None) | Err(_) => None,
+    }
+}
+
+fn control_code(record: &query::StreamRecord) -> Option<&str> {
+    match &record.payload {
+        Some(query::stream_record::Payload::Control(control)) => Some(control.code.as_str()),
+        _ => None,
+    }
+}
+
+fn alive_frame(record: &query::StreamRecord) -> Option<&query::SessionAlive> {
+    match &record.payload {
+        Some(query::stream_record::Payload::SessionAlive(frame)) => Some(frame),
+        _ => None,
+    }
+}
+
+/// REPLAYING then LIVE, nothing in between (no frame before LIVE); returns
+/// the LIVE token.
+async fn expect_replaying_then_live(stream: &mut Stream) -> String {
+    let replaying = next_record(stream, Duration::from_secs(5)).await.unwrap();
+    assert_eq!(control_code(&replaying), Some("REPLAYING"));
+    let live = next_record(stream, Duration::from_secs(5)).await.unwrap();
+    assert_eq!(control_code(&live), Some("LIVE"), "{live:?}");
+    live.resume_token
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn session_alive_needs_an_observe_route_and_a_liveness_source() {
+    // No liveness source: refused before any stream slot is taken.
+    let harness = Harness::new(Options::default());
+    let after = harness.log.end(0) - 1;
+    let status = harness
+        .subscribe_alive(observe_requirement("QUOTE"), after, 500)
+        .await
+        .err()
+        .expect("refused");
+    assert_eq!(status.code(), Code::InvalidArgument);
+    assert!(
+        status.message().starts_with("SESSION_ALIVE_UNAVAILABLE:"),
+        "{}",
+        status.message()
+    );
+    let dir = SessionDir::new("route");
+    let harness = Harness::new(Options {
+        session_liveness: Some(dir.reader()),
+        ..Options::default()
+    });
+    let after = harness.log.end(0) - 1;
+    // A BLOCK (not event-recency OBSERVE) QUOTE route.
+    let status = harness
+        .subscribe_alive(requirement("QUOTE", None), after, 500)
+        .await
+        .err()
+        .expect("refused");
+    assert_eq!(status.code(), Code::InvalidArgument);
+    assert!(
+        status.message().starts_with("SESSION_ALIVE_INVALID:"),
+        "{}",
+        status.message()
+    );
+    assert_eq!(harness.state().open_streams(), 0);
+    // The same OBSERVE route without field 9 is an ordinary stream.
+    let mut stream = harness
+        .subscribe_alive(observe_requirement("QUOTE"), after, 0)
+        .await
+        .unwrap();
+    expect_replaying_then_live(&mut stream).await;
+    let offset = harness.log.append(0, QUOTE_KEY, &session_quote(1));
+    let event = next_record(&mut stream, Duration::from_secs(5))
+        .await
+        .unwrap();
+    assert_eq!(event.logical_offset, offset as u64);
+    // Not requested: no frame, whatever the session says.
+    assert!(next_record(&mut stream, Duration::from_millis(1_300))
+        .await
+        .is_none());
+    assert_eq!(
+        harness
+            .state()
+            .metrics
+            .session_alive_sent
+            .load(Ordering::Relaxed),
+        0
+    );
+    drop(stream);
+    harness.released().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn session_alive_frames_follow_the_live_session_and_stop_on_disconnect() {
+    let dir = SessionDir::new("cadence");
+    let harness = Harness::new(Options {
+        session_liveness: Some(dir.reader()),
+        ..Options::default()
+    });
+    let after = harness.log.end(0) - 1;
+    // Asked below the floor: clamped to 250 ms would be too fast to tell
+    // apart, so ask above the cap and expect 500 ms.
+    let mut stream = harness
+        .subscribe_alive(observe_requirement("QUOTE"), after, 5_000)
+        .await
+        .unwrap();
+    expect_replaying_then_live(&mut stream).await;
+    let first = harness.log.append(0, QUOTE_KEY, &session_quote(1));
+    let event = next_record(&mut stream, Duration::from_secs(5))
+        .await
+        .unwrap();
+    assert_eq!(event.logical_offset, first as u64);
+    let token = event.resume_token.clone();
+    let mut arrivals = Vec::new();
+    while arrivals.len() < 6 {
+        let record = next_record(&mut stream, Duration::from_secs(2))
+            .await
+            .expect("frame");
+        let frame = alive_frame(&record).expect("only frames while the instrument is quiet");
+        // A frame never moves a cursor: offset 0, the last event's token.
+        assert_eq!(record.logical_offset, 0);
+        assert_eq!(record.resume_token, token);
+        assert_eq!(frame.source_session_id, ALIVE_SESSION);
+        assert_eq!(frame.connection_generation, ALIVE_GENERATION);
+        assert_eq!(u64::from(frame.config_revision), ALIVE_REVISION);
+        assert!(frame.provider_session_liveness_ms <= 1_500, "{frame:?}");
+        assert_eq!(frame.gateway_epoch, harness.state().gateway_epoch);
+        assert_eq!(frame.high_watermark, (harness.log.end(0) - 1) as u64);
+        assert_eq!(
+            (record.gateway_dispatch_wall_ns, record.gateway_send_wall_ns),
+            (0, 0),
+            "frames carry no event clocks"
+        );
+        arrivals.push(Instant::now());
+    }
+    let gaps: Vec<u128> = arrivals
+        .windows(2)
+        .map(|pair| pair[1].duration_since(pair[0]).as_millis())
+        .collect();
+    println!("session-alive inter-frame gaps (ms, interval 500): {gaps:?}");
+    assert!(gaps.iter().all(|gap| (450..=550).contains(gap)), "{gaps:?}");
+    // A new event: the next frames carry its token; offsets keep advancing.
+    let second = harness.log.append(0, QUOTE_KEY, &session_quote(2));
+    let mut next = next_record(&mut stream, Duration::from_secs(2))
+        .await
+        .unwrap();
+    while alive_frame(&next).is_some() {
+        assert_eq!(
+            next.resume_token, token,
+            "a frame before the event keeps the old token"
+        );
+        next = next_record(&mut stream, Duration::from_secs(2))
+            .await
+            .unwrap();
+    }
+    assert_eq!(next.logical_offset, second as u64);
+    let token = next.resume_token.clone();
+    let frame = next_record(&mut stream, Duration::from_secs(2))
+        .await
+        .unwrap();
+    assert!(alive_frame(&frame).is_some());
+    assert_eq!(frame.resume_token, token);
+    // DISCONNECTED: silence within one interval (one frame judged just
+    // before the record changed may still be on its way).
+    dir.set_state("DISCONNECTED");
+    let changed = Instant::now();
+    let mut late = Vec::new();
+    while let Some(record) = next_record(&mut stream, Duration::from_millis(1_500)).await {
+        assert!(alive_frame(&record).is_some(), "{record:?}");
+        late.push(changed.elapsed().as_millis());
+    }
+    println!("frames after DISCONNECTED (ms after the change): {late:?}");
+    // The writer applies the state within 250 ms; then at most one tick.
+    assert!(late.iter().all(|at| *at <= 250 + 500 + 50), "{late:?}");
+    assert!(late.len() <= 2, "{late:?}");
+    let metrics = &harness.state().metrics;
+    assert!(metrics.session_alive_withheld.load(Ordering::Relaxed) >= 2);
+    assert_eq!(metrics.session_alive_dropped.load(Ordering::Relaxed), 0);
+    drop(stream);
+    harness.released().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn quiet_instrument_is_vouched_for_from_its_newest_committed_event() {
+    let dir = SessionDir::new("seed");
+    let harness = Harness::new(Options {
+        session_liveness: Some(dir.reader()),
+        ..Options::default()
+    });
+    // The quote the client already holds (its snapshot cursor is at it).
+    let held = harness.log.append(0, QUOTE_KEY, &session_quote(1));
+    harness.settle();
+    let mut stream = harness
+        .subscribe_alive(observe_requirement("QUOTE"), held, 250)
+        .await
+        .unwrap();
+    let token = expect_replaying_then_live(&mut stream).await;
+    let record = next_record(&mut stream, Duration::from_secs(2))
+        .await
+        .expect("a frame without any new event");
+    let frame = alive_frame(&record).expect("frame");
+    assert_eq!(record.logical_offset, 0);
+    assert_eq!(record.resume_token, token, "the LIVE token, unchanged");
+    assert_eq!(frame.source_session_id, ALIVE_SESSION);
+    drop(stream);
+    harness.released().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn full_handoff_drops_frames_instead_of_queueing_them() {
+    let dir = SessionDir::new("full");
+    let harness = Harness::new(Options {
+        session_liveness: Some(dir.reader()),
+        ..Options::default()
+    });
+    let held = harness.log.append(0, QUOTE_KEY, &session_quote(1));
+    harness.settle();
+    let mut stream = harness
+        .subscribe_alive(observe_requirement("QUOTE"), held, 250)
+        .await
+        .unwrap();
+    // The client reads nothing: REPLAYING and LIVE fill the two-slot handoff.
+    tokio::time::sleep(Duration::from_millis(1_400)).await;
+    let metrics = &harness.state().metrics;
+    let dropped = metrics.session_alive_dropped.load(Ordering::Relaxed);
+    assert!(dropped >= 3, "dropped {dropped}");
+    assert_eq!(metrics.session_alive_sent.load(Ordering::Relaxed), 0);
+    expect_replaying_then_live(&mut stream).await;
+    // Nothing old was queued behind the controls: the next frame is a fresh
+    // tick, and an event still flows.
+    let drained = Instant::now();
+    let record = next_record(&mut stream, Duration::from_secs(2))
+        .await
+        .unwrap();
+    let frame = alive_frame(&record).expect("frame");
+    assert!(frame.provider_session_liveness_ms <= 750, "{frame:?}");
+    assert!(drained.elapsed() <= Duration::from_millis(300));
+    let offset = harness.log.append(0, QUOTE_KEY, &session_quote(2));
+    let mut next = next_record(&mut stream, Duration::from_secs(2))
+        .await
+        .unwrap();
+    while alive_frame(&next).is_some() {
+        next = next_record(&mut stream, Duration::from_secs(2))
+            .await
+            .unwrap();
+    }
+    assert_eq!(next.logical_offset, offset as u64);
+    drop(stream);
+    harness.released().await;
+}
+
+// ------------------------------- DELIVERY_ON_CHANGE on QUOTE records (DL v2.3.2)
+
+const ON_CHANGE_FLAG: i32 = qdl_contracts::qdl::common::v1::QualityFlag::DeliveryOnChange as i32;
+
+/// The QUOTE events of a stream until `count` arrived: (offset, quality flags).
+async fn quote_flags(stream: &mut Stream, count: usize) -> Vec<(u64, Vec<i32>)> {
+    let mut out = Vec::new();
+    while out.len() < count {
+        let record = next_record(stream, Duration::from_secs(5))
+            .await
+            .expect("record");
+        if let Some(query::stream_record::Payload::Event(event)) = &record.payload {
+            out.push((record.logical_offset, event.quality_flags.clone()));
+        }
+    }
+    out
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn on_change_quote_records_carry_the_flag_only_for_an_opted_in_stream() {
+    for opted_in in [true, false] {
+        let harness = Harness::new(Options::default());
+        let after = harness.log.end(0) - 1;
+        // One committed before the subscription (replayed), one after LIVE.
+        let replayed = harness
+            .log
+            .append(0, QUOTE_KEY, &quote(1, vec![query_flag_late()]));
+        harness.settle();
+        let mut stream = harness
+            .subscribe_opt_in(requirement("QUOTE", None), after, 0, opted_in)
+            .await
+            .unwrap();
+        let mut rows = quote_flags(&mut stream, 1).await;
+        // REPLAYING, the replayed quote, LIVE: then a live quote.
+        let live = harness.log.append(0, QUOTE_KEY, &quote(2, Vec::new()));
+        rows.extend(quote_flags(&mut stream, 1).await);
+        assert_eq!(
+            rows.iter().map(|row| row.0).collect::<Vec<_>>(),
+            vec![replayed as u64, live as u64]
+        );
+        for (_, flags) in &rows {
+            assert_eq!(flags.contains(&ON_CHANGE_FLAG), opted_in, "{flags:?}");
+            assert!(flags.iter().filter(|flag| **flag == ON_CHANGE_FLAG).count() <= 1);
+        }
+        // The committed flags are kept, in order, before the added one.
+        assert_eq!(rows[0].1[0], query_flag_late());
+        drop(stream);
+        harness.released().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn strict_event_bindings_and_other_feeds_are_never_marked() {
+    // A QUOTE binding the catalogue does not declare ON_CHANGE.
+    let harness = Harness::new(Options {
+        quote_on_change: false,
+        ..Options::default()
+    });
+    let after = harness.log.end(0) - 1;
+    let mut stream = harness
+        .subscribe_opt_in(requirement("QUOTE", None), after, 0, true)
+        .await
+        .unwrap();
+    expect_replaying_then_live(&mut stream).await;
+    harness.log.append(0, QUOTE_KEY, &quote(1, Vec::new()));
+    let rows = quote_flags(&mut stream, 1).await;
+    assert!(!rows[0].1.contains(&ON_CHANGE_FLAG));
+    drop(stream);
+    harness.released().await;
+    // TRADE on the ON_CHANGE harness: the rule is QUOTE only.
+    let harness = Harness::new(Options::default());
+    let after = harness.log.end(0) - 1;
+    let mut stream = harness
+        .subscribe_opt_in(requirement("TRADE", None), after, 0, true)
+        .await
+        .unwrap();
+    expect_replaying_then_live(&mut stream).await;
+    harness.log.append(0, TRADE_KEY, &trade(7));
+    let record = loop {
+        let record = next_record(&mut stream, Duration::from_secs(5))
+            .await
+            .unwrap();
+        if let Some(query::stream_record::Payload::Event(event)) = record.payload {
+            break event;
+        }
+    };
+    assert!(!record.quality_flags.contains(&ON_CHANGE_FLAG));
+    drop(stream);
+    harness.released().await;
+}
+
+fn query_flag_late() -> i32 {
+    qdl_contracts::qdl::common::v1::QualityFlag::Late as i32
 }
