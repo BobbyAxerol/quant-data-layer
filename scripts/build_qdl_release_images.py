@@ -51,8 +51,10 @@ from scripts.host_measurement_lock import MAX_MINUTES as MAX_LOCK_MINUTES, lock_
 # v2.3.2 (Stream SessionAlive frames, opt-in DELIVERY_ON_CHANGE) changes rust and python: both images are built. It
 # also carries the v2.3.1 dependency refresh into the Rust roles (ROLLOUT_PLAN v2.3.1 section 8). The v2.3.1 note:
 # python-only (Query), the Rust roles kept the v2.3.0 rc2 image.
-RELEASE = "2.3.2"
-SDK_VERSION = "2.7.0"
+# v2.4.0 (S1-S9: shared reads, quota on admission, session-fair lanes, advisory token revision, role claims ignored)
+# changes rust (stream gateway, qdl-contracts accept rule) and python (Query): both images are built.
+RELEASE = "2.4.0"
+SDK_VERSION = "2.8.0"
 REPO = Path(__file__).resolve().parents[1]
 HOME = Path.home()
 STATE_ROOT = HOME / ".local/state/qdl-v2"
@@ -94,6 +96,8 @@ REQUIRED_ANCESTORS = {
     "query_g5_rc19": "4d3476c5b6944eba557d00ee71f351f150a5b752",
     "v231_dependency_refresh": "ad703172e3142e3d05868136f73a5a7095bdff06",
     "v232_session_alive": "2358766f66d9c08a89d2b40858144c62e866f8a0",
+    "v240_python_s1_s8": "67e4199c45a4642eb704729cce9ec6a93189f9a7",
+    "v240_rust_stream": "a65e8f8b9d1a21ea0251c4badb6dcaf461dad661",
 }
 
 # Identical to the four cargo invocations of Dockerfile.qdl-rust-runtime, offline.
@@ -161,14 +165,17 @@ PYTHON_HASH_ROOTS = ("qdl", "app", "generated", "config", "consumers", "qdl_sdk"
 _V231_REFRESH = ("v2.3.1 dependency refresh in its crate graph (ad70317: futures-util 0.3.31->0.3.34, "
                  "tokio 1.48.0->1.51.6, rustls-webpki 0.103.14->0.103.17, webpki-roots 1.0.9->1.0.12, "
                  "zstd-sys 2.0.16->2.1.3, libz-sys 1.1.29->1.1.33; bindgen/regex dropped)")
-_CONTRACTS = "qdl-contracts gateway_bundle.rs and generated/rust common/query v1/v2 changed (DL v2.3.2 SessionAlive)"
+_CONTRACTS = ("qdl-contracts gateway_bundle.rs and generated/rust common/query v1/v2 changed (DL v2.3.2 SessionAlive; "
+              "DL v2.4.0 advisory token revision in Manifest::accepts_token_revision)")
 _BINARY_DELTA = {
     "qdl-kafka": f"{_V231_REFRESH}; {_CONTRACTS}",
     "qdl-core": f"futures-util 0.3.34, tokio 1.51.6, rustls-webpki 0.103.17, webpki-roots 1.0.12; {_CONTRACTS}",
     "qdl-venue-core": f"futures-util 0.3.31->0.3.34; {_CONTRACTS}",
     "qdl-projector": f"futures-util 0.3.34, tokio 1.51.6, zstd-sys 2.1.3, libz-sys 1.1.33; {_CONTRACTS}",
     "qdl-stream-gateway": (f"DL v2.3.2 SessionAlive frames and opt-in DELIVERY_ON_CHANGE (hub.rs, service.rs, "
-                           f"session_liveness.rs, main.rs); {_V231_REFRESH}; {_CONTRACTS}"),
+                           f"session_liveness.rs, main.rs); DL v2.4.0 quota after purpose + refund guard, local "
+                           f"token bucket, role claims ignored (auth.rs, service.rs, main.rs); {_V231_REFRESH}; "
+                           f"{_CONTRACTS}"),
 }
 BINARY_PACKAGE = {
     "qdl-authority-rehearsal": "qdl-kafka", "qdl-kafka-smoke": "qdl-kafka", "qdl-native-raw-ingestor": "qdl-kafka",
