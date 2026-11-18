@@ -78898,3 +78898,9 @@ Update, R0 images built (correctness class, no lock): `qdl-v2-rust:2.4.0-c95476c
 DIFFERENT as expected vs rc2, image = context, runtime probe ok, no TEST markers; python files 0 unexpected vs Query
 v2.3.1 and bar_edge rc3). Record `upgrade/evidence/releases/v2.4.0/drafts/R0_BUILD.md`; the drafts carry the digests.
 Security scans OPEN. Scratch cargo target (uid 1001, 2.3 GB) removed.
+
+Update, R0 security gates run once (13:43-13:47Z, `drafts/R0_SECURITY.md`): cargo-deny (ignore = [], RustSec db
+2026-11-18) PASS; pip-audit PASS (no known vulnerabilities); trivy python image PASS (no fixable CRITICAL/HIGH);
+trivy rust image **FAIL**: 3 CRITICAL + 10 HIGH fixable, all in the debian 12.15 runtime base `c46ae0fa` (perl-base,
+apt/libapt-pkg, libpcre2-8-0). Not waived; reported to the coordinator with the proposed base rebuild. Status:
+release BLOCKED on the Rust runtime base.
