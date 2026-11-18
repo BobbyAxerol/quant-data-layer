@@ -1,0 +1,22 @@
+schema: qdl.v2.declaration.v1
+declaration_revision: 9
+environment: paper
+description: 'DL v2.4.0 A-FUND: FUNDING_RATE reference reads for the TS Paper writer on every perpetual it already reads
+  MARK_INDEX_PRICE for (OKX SWAP 97, Binance USDM 5). Additive on stage C r8; nothing else changes.'
+accept_set: true
+capacity:
+  # Same envelope as the r8 declaration (W-QRR receipt 2026-11-17); this revision adds no binding.
+  baseline_dl_vcpu: 6.21
+  ceiling_dl_vcpu: 6.5
+  venue_priority:
+  - OKX
+  - BINANCE
+base:
+  repo: upgrade/evidence/releases/v2.3.1/declaration-stage-c-r8/repo
+consumers:
+- consumer_id: trading-system.paper.stable
+  class: EXECUTION
+  manifest: consumers/stable/trading-system-paper.yaml
+  revision: 15
+  reference:
+  - FUNDING_RATE

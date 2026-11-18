@@ -1,0 +1,207 @@
+{
+  "blocked": [],
+  "blocked_by_reason": {},
+  "capacity": {
+    "added_bindings_by_kind": {},
+    "added_dl_vcpu_upper_bound": 0.0,
+    "added_records_per_s": 0.0,
+    "baseline_dl_vcpu": 6.21,
+    "basis": "estimate: mean per-binding rates of the 150 E-crypto set measured 2026-11-13 (COVERAGE_150_STUDY 5.1/3.2; liquid subsets run above the mean, override with capacity.rates_per_binding), 1.8 ms/record upper bound; not a measurement",
+    "basis_rows": "rows added by this render",
+    "bootstrap": {
+      "basis": "estimate: 100 rows per history request (OKX page size, not re-verified); one pass, no retries",
+      "bindings": 0,
+      "depth_by_interval": {},
+      "duration_minutes": 0.0,
+      "lane": "OKX/SWAP/HISTORY_CANDLES",
+      "lane_requests_per_minute": 150.0,
+      "requests": 0,
+      "rows": 0
+    },
+    "ceiling_dl_vcpu": 6.5,
+    "deferral_plan": {
+      "defer": [],
+      "headroom_vcpu": 0.29,
+      "status": "FITS"
+    },
+    "ingestor_subscriptions_after": {},
+    "mark_index_flush_ms": 50,
+    "okx_rest": {
+      "admission_lane": {
+        "burst": 5,
+        "family": "OKX/SWAP/CANDLES",
+        "max_inflight": 2,
+        "refill_per_s": 2.5,
+        "requests_per_minute": 150.0
+      },
+      "bar_edge_requests_per_minute_avg": 0.2,
+      "basis": "model: one read per REST final binding per boundary through the bar-edge admission token bucket; host-IP limit as declared (OKX docs give 40 requests/2 s per IP for market candles; not re-verified here)",
+      "declared_max_visibility_ms": null,
+      "final_1m_visibility_ms": null,
+      "host_ip_limit_per_minute_declared": 1200.0,
+      "host_ip_utilisation": 0.0,
+      "lane_utilisation": 0.001,
+      "max_utilisation": 0.8,
+      "other_requests_per_minute_declared": 0.0,
+      "problems": [],
+      "rest_final_bindings_by_interval": {
+        "1d": 250
+      },
+      "status": "WITHIN_ENVELOPE"
+    },
+    "projected_dl_vcpu": 6.21,
+    "query_requests": {
+      "basis": "qdl.consumer.quota_model (TS writer client, calibrated on r11: model 2,212/min vs measured 1,940-2,034/min); Query/Redis vCPU per request is not measured, so no vCPU is derived",
+      "consumers": {
+        "trading-system.paper.stable": {
+          "granted": {
+            "max_streams": 370,
+            "requests_per_minute": 31500
+          },
+          "required_max_streams": 370,
+          "required_requests_per_minute": 31500,
+          "status": "MODELLED",
+          "steady_requests_per_minute": [
+            19502,
+            19604
+          ],
+          "streams": [
+            246,
+            246
+          ]
+        }
+      },
+      "execution_steady_requests_per_minute_added": 102,
+      "execution_steady_requests_per_minute_after": 19604
+    },
+    "rates_per_binding": {
+      "okx_bar": 0.5253333333333333,
+      "okx_bbo": 4.253333333333333,
+      "okx_mark_index@50": 6.32,
+      "okx_mark_index@500": 3.24
+    },
+    "status": "WITHIN_ENVELOPE",
+    "unmeasured_bindings_by_kind": {},
+    "venue_priority": [
+      "OKX",
+      "BINANCE"
+    ]
+  },
+  "consumer_environment": {},
+  "declaration_index_sha256": "d4f3333e33419edf4503ac74429bf23a30f643bf312270d361a055f3528f3d49",
+  "declaration_revision": 9,
+  "loader_capabilities": {
+    "derived_final": true,
+    "routing_selector_context": true
+  },
+  "notes": [
+    "trading-system.paper.stable: no base route binding given; sealed binding and execution scope are not rendered"
+  ],
+  "ordered_restart": [
+    "ingestor_okx_swap / ingestor_binance_usdm (v2.3.0 image first: lane_shard + flush map)",
+    "rust_core, rust_core_2, rust_core_3",
+    "market_projector_1, market_projector_2",
+    "stream_kn_1, stream_kn_2",
+    "query_kn_1, query_kn_2",
+    "binance_bar_edge (with the checkpoint migration record when it crosses a legacy checkpoint)",
+    "consumers whose JWT is outside the new accept-set (TS writer: sealed binding + execution scope)"
+  ],
+  "quota_models": {
+    "trading-system.paper.stable": {
+      "evidence": {
+        "headroom": 1.5,
+        "opening_requests": 1106,
+        "products_by_feed": {
+          "BAR": 10,
+          "BOOK_DELTA": 11,
+          "BOOK_SNAPSHOT": 11,
+          "FUNDING_RATE": 102,
+          "MARK_INDEX_PRICE": 102,
+          "QUOTE": 102,
+          "TRADE": 10
+        },
+        "rates": {
+          "BAR": 0,
+          "BOOK_DELTA": 0,
+          "BOOK_SNAPSHOT": 2,
+          "FUNDING_RATE": 1,
+          "MARK_INDEX_PRICE": 100,
+          "QUOTE": 90,
+          "TRADE": 10
+        },
+        "required_max_streams": 370,
+        "required_requests_per_minute": 31500,
+        "schema": "qdl.v2.consumer-quota-model.v1",
+        "steady_requests_per_minute": 19604,
+        "stream_headroom": 1.5,
+        "streams": 246
+      },
+      "granted": {
+        "max_streams": 370,
+        "requests_per_minute": 31500
+      },
+      "status": "MODELLED"
+    }
+  },
+  "runtime_mutations": 0,
+  "schema": "qdl.v2.declaration-render-report.v1",
+  "status": "RENDERED_NOT_APPLIED",
+  "summary": {
+    "acquisition": {
+      "base_bar_modes": {},
+      "derived_final": 0,
+      "new_rows_by_mode": {},
+      "revision": [
+        24,
+        24
+      ]
+    },
+    "bindings": {},
+    "bundles": {},
+    "catalog": {
+      "generated_rows_differing_from_committed_kept_committed": 1553,
+      "new_bindings": 0,
+      "new_bindings_by_feed": {},
+      "new_instruments": [],
+      "revision": [
+        16,
+        16
+      ]
+    },
+    "cores": {},
+    "demand": {
+      "added_rows": 0,
+      "revision": [
+        12,
+        12
+      ]
+    },
+    "derived_bindings": 0,
+    "ingestors": {},
+    "manifests": {
+      "trading-system.paper.stable": {
+        "additive_problems": [],
+        "changed": true,
+        "min_token_revision": 1,
+        "requirements": 349,
+        "revision": [
+          14,
+          15
+        ]
+      }
+    },
+    "promotion_scope": {
+      "revision": [
+        15,
+        15
+      ]
+    },
+    "routing": {
+      "revision": [
+        33,
+        34
+      ]
+    },
+    "universes": {}
+  }
+}

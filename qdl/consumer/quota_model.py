@@ -54,7 +54,13 @@ STEADY_REQUESTS_PER_MINUTE = {
     "BOOK_SNAPSHOT": 2,
     "BOOK_DELTA": 0,
     "BAR": 0,
+    # DL v2.4.0 A-FUND: a bounded FUNDING_RATE reference_batch read per perpetual; the funding interval is 8 h,
+    # modelled conservatively as one read per product per minute (no stream).
+    "FUNDING_RATE": 1,
 }
+# Reference products an EXECUTION manifest may carry at a non-execution grade (qdl.query.reference: only
+# MARK_INDEX_PRICE is execution-grade reference data).
+REFERENCE_FEEDS = frozenset({"FUNDING_RATE"})
 # Initial reads per product on a writer (re)start (snapshot + warmup or reference read), all in the first minute.
 OPENING_REQUESTS = {
     "QUOTE": 4,
@@ -63,8 +69,9 @@ OPENING_REQUESTS = {
     "BOOK_SNAPSHOT": 4,
     "BOOK_DELTA": 4,
     "BAR": 6,
+    "FUNDING_RATE": 1,
 }
-STREAM_FEEDS = frozenset(STEADY_REQUESTS_PER_MINUTE)
+STREAM_FEEDS = frozenset(STEADY_REQUESTS_PER_MINUTE) - REFERENCE_FEEDS
 HEADROOM = 1.5
 STREAM_HEADROOM = 1.5
 RPM_STEP = 500
@@ -141,5 +148,7 @@ def quota_shortfall(manifest: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def is_execution_manifest(manifest: Mapping[str, Any]) -> bool:
+    """Every row is EXECUTION grade, except reference products (FUNDING_RATE) read at a non-execution grade."""
     rows = manifest.get("spec", {}).get("requirements") or []
-    return bool(rows) and all(str(row.get("consumer_grade", "")).upper() == "EXECUTION" for row in rows)
+    execution = [row for row in rows if str(row.get("feed", "")).upper() not in REFERENCE_FEEDS]
+    return bool(execution) and all(str(row.get("consumer_grade", "")).upper() == "EXECUTION" for row in execution)

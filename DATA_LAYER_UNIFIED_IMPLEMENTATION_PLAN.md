@@ -78920,3 +78920,36 @@ and python `75717b3c` (cargo-deny and pip-audit unchanged PASS). Drafts updated 
 rust digest in `ROLLOUT_PLAN.md`, `CERTIFICATE_DRAFT.md`, `PR_BODY.md`). Superseded `qdl-v2-rust:2.4.0-c95476c`
 `6970231d` removed by digest (0 container references); base `c46ae0fa` kept (parent of 2.3.1-funding and 2.3.2 rust
 images). Status: release package ready for the PR (full CI) and the owner-approved window; not pushed.
+
+### DL v2.4.0 A-FUND: FUNDING_RATE reference reads for the TS Paper writer, declaration r9 (tested locally) - 2026-11-18 (Claude)
+
+Request (coordinator, for TS Paper funding accrual A-FUND): FUNDING_RATE for every perpetual the TS manifest already
+reads MARK_INDEX_PRICE for. Base: the deployed stage C r8 state (TS manifest r14, 102 MARK perpetuals: OKX SWAP 97,
+Binance USDM 5; the repository file `consumers/stable/trading-system-paper.yaml` is still r13 and is NOT the base).
+
+- Tool (`scripts/dl_declaration.py`): an EXECUTION consumer may declare `reference: [FUNDING_RATE]`; one row per
+  PERPETUAL uid with a MARK_INDEX_PRICE row, ALPHA grade (DL policy: only MARK_INDEX_PRICE may be execution-grade
+  reference data, `qdl/query/reference.py:101-108`), crypto_liquid_v2, interval null, warmup 0, freshness OKX 8 h /
+  Binance 9 h (as the alpha-binance and reference-l2 rows), full coverage, BLOCK/BLOCK, FRESH_SNAPSHOT, LATEST. A
+  reference product without a route template in the consumer takes the alpha route (V2_PRIMARY / BLOCKED /
+  V1_REFERENCE_EQUIVALENCE_UNPROVEN). Other reference feeds are refused for EXECUTION consumers.
+- Quota model (`qdl/consumer/quota_model.py`): FUNDING_RATE 1 read/min steady, 1 opening, no stream; an EXECUTION
+  manifest may carry ALPHA-grade reference rows. Model raises TS rpm 31,000 -> 31,500 (streams unchanged 370).
+- Permission and purpose: none added. The route needs `history:read` (already granted); the reference sources grant
+  INTERNAL_EXECUTION for CANONICAL_HISTORY (`qdl/reference/runtime.py` `entitlement_grants`), so an ALPHA-grade read
+  with the manifest's only purpose INTERNAL_EXECUTION is served (test reproduces A-FUND's read).
+- Render (declaration r9, `upgrade/evidence/releases/v2.4.0/declaration-ts-funding-r9/`, SHA256SUMS): TS r14 -> r15
+  (`min_token_revision` 1, 349 requirements, additive_problems []), release routing r33 -> r34 (+102 FUNDING_RATE
+  products, manifest sha256 `47ea4a9e...`), catalog/demand/acquisition unchanged, blocked []. Offline gate 15/15
+  PASS (capacity envelope: same r8 envelope, 0 added bindings).
+- Tests (`qdl-v2-python:2.4.0-c95476c`, host slot runner, `--cpus 1 --cpu-shares 256`, tree read-only):
+  `tests.test_dl_v240_ts_funding_entitlement` (8: rows, grade, freshness, additivity/floor, ALPHA-only entitlement,
+  routing + quota model, gate, refusal; A-FUND REST read 200 OK with a r14 token, EXECUTION grade 400, r16 token 401)
+  plus `test_consumer_quota_model` (unknown-feed case now OPEN_INTEREST), `test_v230_declaration_tool`,
+  `test_v231_stage_c_binance_signal`, `test_v230_declaration_mechanism`: 73 run, 2 fixed, rerun 15 OK.
+- Runtime delivery (not done): the TS manifest is served from the realm mount (`QDL_STABLE_CONSUMER_MANIFESTS`,
+  `QDL_PAPER_REALM_MANIFEST`), not from the image: install `trading-system.paper.stable-r15.yaml` in the realm dir,
+  set `QDL_PAPER_REALM_MANIFEST`, render the realm/kn bundle successor with the r15 entry (needs the live base
+  bundles), recreate query_kn x2 and stream_kn x2; DL first, then the TS JWT may move to r15 (r14 tokens stay valid).
+  No image change is needed for this (the tool and quota-model changes are offline-only).
+Status: `implemented`, `tested locally`.
