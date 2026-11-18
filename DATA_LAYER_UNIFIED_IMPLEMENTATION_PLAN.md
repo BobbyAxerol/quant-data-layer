@@ -78974,3 +78974,13 @@ Update, A-FUND historical MARK (coordinator, shape approved): TS must read the O
   uids = 97). Render: 446 requirements, additive_problems [], routing r34 (+102 FUNDING_RATE, +97 MARK 1m products),
   manifest sha256 `725c8ca2...`, realm file sha256 `e9f4536a...`; quota model MARK_INDEX_HISTORY 97 (no stream), rpm
   31,500, streams 370; offline gate PASS (15/15).
+- Tests (`qdl-v2-python:2.4.0-c95476c`, host slot, `--cpus 1 --cpu-shares 256`, tree read-only): 101 impacted modules
+  (reference, SDK, declaration, quota, contracts; g12 module excluded as before): Ran 1650, 1 error (a TTL test double
+  without `observations`; `ttl_seconds` now reads them defensively), rerun of 3 modules Ran 43 OK.
+  `tests.test_build_qdl_release_images` on the host: 46 OK. New A-FUND MARK tests: the candle covering T, 5 identical
+  concurrent reads + 1 later = 1 provider call (singleflight + 6 h closed-candle TTL), non-OKX typed unavailable,
+  snapshot/EXECUTION shapes unchanged (exact message), SDK 2.9.0 request + 2.8 snapshot shape.
+- Images rebuilt from c17472c (recipe adds `--cpu-shares 256`): rust `abafab2c...` (context byte-identical to
+  3d4d84b), python `9cffe89b...`; trivy once each: 0 fixable CRITICAL/HIGH. Drafts updated (R0_BUILD, R0_SECURITY,
+  ROLLOUT_PLAN step 9 incl. the historical MARK probe, CERTIFICATE digests). Not pushed (batched).
+Status: `implemented`, `tested locally`.

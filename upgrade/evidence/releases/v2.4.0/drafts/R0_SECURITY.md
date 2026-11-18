@@ -52,3 +52,11 @@ re-run trivy-rust once. No waiver is proposed for fixable CRITICAL/HIGH.
 
 Release ids: rust `aef35edf`, python `75717b3c`. Follow-up for the next release (MEDIUM, no waiver needed):
 jsonwebtoken 10.x, the python image's pip 25.0.1.
+
+## A-FUND rebuild (c17472c) trivy, once per image (2026-11-18 20:37Z): **PASS**
+
+trivy 0.70.0, same DB (2026-11-18T07:15Z) and `.trivyignore`, `--cpus 1 --cpu-shares 256`, host slot.
+- rust `abafab2c`: 0 fixable CRITICAL/HIGH (unfixed CRITICAL 1, HIGH 37, MEDIUM 108, LOW 87), as `aef35edf`.
+- python `9cffe89b`: 0 fixable CRITICAL/HIGH (HIGH 47 unfixed; MEDIUM 11 fixable: pip 25.0.1, jsonwebtoken in
+  `app/Cargo.lock`, the recorded follow-up; LOW 2 fixable).
+cargo-deny and pip-audit: unchanged inputs (no Cargo.lock or Python dependency change), results above stand.

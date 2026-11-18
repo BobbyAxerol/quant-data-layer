@@ -48,3 +48,15 @@ The first rust image `6970231d` failed trivy on fixable Debian base packages (`R
   above (image = context, runtime probe, no TEST markers, 12/12 DIFFERENT vs rc2 as expected).
 - The superseded `6970231d` was removed by digest (no container referenced it). The old base `c46ae0fa` is kept: it
   is the parent of the 2.3.1-funding and 2.3.2 rust images.
+
+## A-FUND rebuild from c17472c (2026-11-18 20:31-20:36Z): both images, base b33ec0cb
+
+Query code changed (historical MARK_INDEX_PRICE candles, SDK 2.9.0), so both images were rebuilt with the recipe
+(`--rev c17472c`, compile `--cpus 2 --cpu-shares 256`, probes `--cpus 1 --cpu-shares 256`, inside a host slot,
+`--max-load 30`; load 17.71 / 17.71 / 21.31 / 21.29). Receipt `~/.local/state/qdl-v2/build-v2.4.0-c17472c/receipt.json`
+PASS.
+- **rust `qdl-v2-rust:2.4.0-c17472c` = `sha256:abafab2c98cbdd9d2fe86f2b26fd6fcf64800ccdd114a3dd5b92803de16a3e98`**,
+  `runtime-overlay-b33ec0cb`; context 13/13 byte-identical to 3d4d84b (only the revision label differs).
+- **python `qdl-v2-python:2.4.0-c17472c` = `sha256:9cffe89b2a44b29c6a4a8ef707512141464836ad1570319bb9462c9ec92a837f`**;
+  files vs Query v2.3.1 and bar_edge rc3: 0 unexpected differences; pip freeze as before.
+These supersede `aef35edf` / `75717b3c` as the v2.4.0 release candidates.
