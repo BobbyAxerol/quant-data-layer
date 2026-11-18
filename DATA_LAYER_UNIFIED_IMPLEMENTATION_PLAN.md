@@ -78846,4 +78846,12 @@ cargo-home), `--rm --cpus 1 --memory 4g --network none`:
   native_stream t03/t06/t07 updates);
 - `cargo fmt --check` (rustfmt 1.7.1) clean; `cargo clippy -D warnings`: one error, pre-existing in v2.3.2
   `src/session_liveness.rs:181` (`type_complexity`), not touched here; reported to the coordinator.
-Status: Rust `implemented`, `tested locally`.
+Status: Rust `implemented`, `tested locally` (commit a65e8f8).
+
+Update, merge and realm composition: merged release/v2.3.2-session-alive ea4fc48 (DL-S1 release notes, rollout plan
+on stage C r8, `scripts/v232_realm_bundle_successor.py`; DL-S2 R0 recipe re-pin d37e88c and R0_SECURITY.md 25550a2;
+no journal conflict). `tests/test_dl_v240_realm_composition.py` proves from the r8 inputs that the v2.3.2 successor
+(102 ON_CHANGE QUOTE bindings, manifests byte-equal, r17 floor 15 kept) already gets the advisory acceptance 1..17
+under v2.4.0, and that the next render of a changed manifest carries floor 1 and the catalogue `delivery_semantics`
+together. With `tests.test_v232_realm_bundle_successor` and `tests.test_build_qdl_release_images`: Ran 43, OK
+(6 skipped).
