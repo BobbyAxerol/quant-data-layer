@@ -78667,3 +78667,48 @@ and stops synthesizing it from its last Query verdict. Risk is unchanged.
 fail-closed.
 
 Status: `implemented`, `tested locally`. Not pushed.
+
+### DL v2.3.2 x TS v2.1.5 isolated e2e: flag, SessionAlive and a 90 s Stream outage, all PASS (TEST_ONLY) - 2026-11-18 (Claude)
+
+Owner GO 2026-11-18, isolated only. The run started at 06:55Z, after the 06:40Z gate and the Edge "Sandbox done".
+No live container, network, Redis or volume was touched.
+
+**Setup:**
+- The Stream is the real v2.3.2 service from `414324b`: hub, replay, access, cursor codec, SessionAlive and the
+  opt-in DELIVERY_ON_CHANGE. It runs in the new TEST example `rust/qdl-stream-gateway/examples/v232_quiet_quote_e2e.rs`,
+  over a persisted in-memory log, with:
+  - a Query snapshot stub;
+  - a fake session-liveness dir, rewritten every 250 ms;
+  - plaintext loopback endpoints.
+- **Bindings** come from the realm bundle recompiled with `scripts/kn_gateway_bundle.py` into scratch. The bundle has
+  756 bindings: 31 ON_CHANGE (all QUOTE, 26 OKX SWAP, none on another feed) and 2 STRICT_EVENT QUOTE. Its sha256 is
+  `bde6e89b…`. The e2e used one ON_CHANGE (`okx-swap-aave-usdt-swap-quote`) and one STRICT (`binance-spot-btcusdt-quote`).
+- **Image:** one TEST image, `local/qdl-v232-e2e-gateway:414324b`, id
+  `sha256:a3669da43ba29c47837f76f86d1d43ff114d9105d2f57306a787b3ac84a303ff`. It is the base
+  `qdl-v2-rust:2.3.1-funding-50be2b92` plus the example binary (sha256 `deb471d1…`, debug build). It was removed
+  after the run.
+- **Writer:** TS `feat/v215-writer-session-alive` `cc320a4a`, binary sha256 `a4d86cf1…`, run under the production
+  supervisor (FixedWorkerSupervisor native slot), with `MARKET_DATA_NATIVE_SESSION_ALIVE_MS=500`.
+  Harness: TS `scripts/v215_e2e_session_alive.py` and `_run.sh`.
+- **Network:** one `--internal` network; the gateway shared the harness network namespace; loopback Redis DB 15;
+  every container `--rm` with 1 CPU.
+
+**Results** (report: `~/.local/state/qdl-v2/v232-quiet-quote/e2e-20261118/report.json`):
+- **Flag.** Every Subscribe sent `delivery_on_change_flag=true` and `session_alive_interval_ms=500`. After a new BBO
+  on the Stream, the ON_CHANGE row's flags were `["DELIVERY_ON_CHANGE"]` (from DL) and the STRICT row's flags were
+  `[]`.
+- **SessionAlive.** For 30 s the BBO was quiet, and the event age reached 31.0 s. In all 30 of 30 one-second samples,
+  Risk's unchanged `_quiet_quote_at_use` was True. The maximum proof age was 741 ms. 58 frames were sent, and the
+  ON_CHANGE route got 0 Query probes.
+- **Disconnect.** After the fake session was set to DISCONNECTED, the quote was refused at 2.0 s, and the route was
+  READY again after LIVE was restored.
+- **Outage.** The gateway was stopped for 90 s (06:55:45Z to 06:57:16Z):
+  - the native worker never exited (same epoch) and was never RESTART_EXHAUSTED;
+  - the only code seen was DEPENDENCY_UNAVAILABLE;
+  - all slices were READY again 6.0 s after the restart.
+
+**Limits:**
+- An in-memory log, not Kafka.
+- A Query stub, not the Query service.
+- The example binary was formatted with rustfmt after the build, with no semantic change.
+- Status: `tested locally` (isolated e2e). It is not a runtime certification.
