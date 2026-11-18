@@ -71,7 +71,10 @@ MAX_LOAD = 20.0
 LOAD_WAIT_S = 1800
 COMPILE_CPUS = "2"
 PROBE_CPUS = "1"
-CPU_CAP = {"rust_compile": f"--cpus {COMPILE_CPUS} --memory 3g", "probes": f"--cpus {PROBE_CPUS}",
+# Host slot rule (owner 2026-11-18 17:05Z): agent containers yield to the runtime under load.
+CPU_SHARES = "256"
+CPU_CAP = {"rust_compile": f"--cpus {COMPILE_CPUS} --cpu-shares {CPU_SHARES} --memory 3g",
+           "probes": f"--cpus {PROBE_CPUS} --cpu-shares {CPU_SHARES}",
            "image_builds": "docker build (BuildKit) has no per-build CPU flag; rust image is COPY only, python image "
                            "is the repository Dockerfile"}
 CARGO_WORK = HOME / ".local/state/trading-system/p184-n1-final-20261012"
@@ -390,7 +393,7 @@ def expected_python_diff(repo: Path, rev: str, base: str) -> list[str]:
 def rust_compile_argv(build_dir: Path, cargo_work: Path = CARGO_WORK) -> list[str]:
     return [
         "docker", "run", "--rm", "--pull=never", "--network", "none", "--name", f"qdl-release-{build_dir.name}",
-        "--cpus", COMPILE_CPUS, "--memory", "3g", "--pids-limit", "256", "--user", "1001:1001",
+        "--cpus", COMPILE_CPUS, "--cpu-shares", CPU_SHARES, "--memory", "3g", "--pids-limit", "256", "--user", "1001:1001",
         "-e", "HOME=/work", "-e", "CARGO_HOME=/work/cargo", "-e", "CARGO_TARGET_DIR=/work/dl-target",
         "-e", "CARGO_BUILD_JOBS=2", "-v", f"{cargo_work}:/work", "-v", f"{build_dir / 'src'}:/src:ro",
         "-w", "/src", BUILDER_IMAGE, "sh", "-c", "set -eu\n" + "\n".join(CARGO_COMMANDS),
@@ -423,7 +426,7 @@ def python_image_argv(build_dir: Path, rev: str, tag: str) -> list[str]:
 
 def probe_argv(image: str, script: str) -> list[str]:
     return ["docker", "run", "--rm", "--pull=never", "--network", "none", "--read-only", "--cpus", PROBE_CPUS,
-            "--entrypoint", "sh", image, "-c", script]
+            "--cpu-shares", CPU_SHARES, "--entrypoint", "sh", image, "-c", script]
 
 
 def extract_argv(image: str, binary: str) -> list[str]:
@@ -431,7 +434,7 @@ def extract_argv(image: str, binary: str) -> list[str]:
     if binary not in RUST_BINARIES:
         raise BuildError(f"unknown binary {binary!r}")
     return ["docker", "run", "--rm", "--pull=never", "--network", "none", "--read-only", "--cpus", PROBE_CPUS,
-            "--entrypoint", "cat", image, f"/usr/local/bin/{binary}"]
+            "--cpu-shares", CPU_SHARES, "--entrypoint", "cat", image, f"/usr/local/bin/{binary}"]
 
 
 RUST_SHA_PROBE = "cd /usr/local/bin && sha256sum *"
