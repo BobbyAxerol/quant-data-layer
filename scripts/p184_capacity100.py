@@ -29,6 +29,37 @@ class TSReservation:
             raise ValueError("TS60 needs explicit positive stream and request reservations")
 
 
+# DL v2.4.0 S9 shared100: on-demand reads instead of hot polls, two Query replicas.
+SHARED100_ON_DEMAND_PERIOD_S = 60.0
+SHARED100_QUERY_REPLICAS = 2
+
+
+def shared100_quota_model(rows, manifests, *, replicas: int, share: float = 0.5,
+                          burst_seconds: float = 10.0) -> dict:
+    """Whether the sealed quotas carry the shared100 mix under the v2.4.0 local buckets.
+
+    Per replica and identity: rate = rpm * share / 60, burst = rate * burst_seconds
+    (``qdl.security.data_plane.LocalTokenBucketQuota`` defaults). The startup
+    minute must fit the burst plus one minute of refill on the worst replica,
+    which conservatively takes ALL of an identity's startup requests.
+    """
+
+    identities = []
+    for row in rows:
+        rpm = manifests[row["consumer_id"]].quotas.requests_per_minute
+        rate = rpm * share / 60.0
+        burst = max(10.0, rate * burst_seconds)
+        startup_capacity = burst + rate * 60.0
+        identities.append(dict(
+            consumer_id=row["consumer_id"], sealed_rpm=rpm, per_replica_rate_per_s=round(rate, 3),
+            per_replica_burst=round(burst, 1), steady_rpm=row["steady_rpm"],
+            startup_requests=row["startup_requests"],
+            steady_fits=row["steady_rpm"] <= rpm * share * replicas,
+            startup_fits_one_replica=row["startup_requests"] <= startup_capacity))
+    return dict(replicas=replicas, share=share, burst_seconds=burst_seconds, identities=identities,
+                fits=all(item["steady_fits"] and item["startup_fits_one_replica"] for item in identities))
+
+
 def _startup_requests(session):
     # SDK handoff is snapshot/warmup + Subscribe, also on resume.
     return (2 * len(session.streams) + len(session.startup_snapshots)
@@ -45,13 +76,19 @@ def build_capacity100_candidate(*, manifests, products_by_consumer,
     stress5: 100 sessions each consuming BAR/TRADE/QUOTE/BOOK_DELTA/BOOK_SNAPSHOT,
     polling QUOTE at 1 Hz and anchoring BOOK_DELTA at startup. No extra sixth
     product. Both plans require explicit DURABLE delivery for every stream.
+    shared100 (DL v2.4.0 S9, config/v2/p184-shared100-profile.json): the real
+    mix. The realistic sessions keep their continuous feeds as streams; every
+    periodic hot poll becomes an on-demand read (warmup at start, then the same
+    products once per ``SHARED100_ON_DEMAND_PERIOD_S``: reference/funding-like
+    reads), each session names its ``X-QDL-Session``, and no quota is bumped
+    (the report checks the per-replica bucket model instead).
 
     TS reservations are caller-supplied workload assumptions, not observed usage.
     Gateway limit is an explicit per-replica config input. The check conservatively
     places all traffic on one replica (including headroom); no assumed balancing
     or HA multiplier. Replay RPCs have a separate limit and remain an open gate.
     """
-    if profile not in {"realistic", "stress5"}:
+    if profile not in {"realistic", "stress5", "shared100"}:
         raise ValueError("unknown capacity profile")
     if type(gateway_subscription_limit) is not int or gateway_subscription_limit < 1:
         raise ValueError("gateway subscription limit must be a positive integer")
@@ -102,6 +139,12 @@ def build_capacity100_candidate(*, manifests, products_by_consumer,
                                   polls=(TargetPoll((selected[2],), 1.0, "SNAPSHOT"),),
                                   startup_snapshots=(selected[4],)))
         sessions = tuple(result)
+    if profile == "shared100":
+        sessions = tuple(
+            replace(session, polls=tuple(
+                TargetPoll(poll.products, max(poll.period_seconds, SHARED100_ON_DEMAND_PERIOD_S), poll.operation)
+                for poll in session.polls))
+            for session in sessions)
     for session in sessions:
         products = (*session.streams, *session.startup_snapshots,
                     *(p for poll in session.polls for p in poll.products))
@@ -147,6 +190,9 @@ def build_capacity100_candidate(*, manifests, products_by_consumer,
         if not is_ts:
             demands.append(demand)
     plan = TargetWorkloadPlan(100, sessions, tuple(demands))
+    shared = None
+    if profile == "shared100":
+        shared = shared100_quota_model(rows, manifests, replicas=SHARED100_QUERY_REPLICAS)
     total_streams = sum(row["streams"] for row in rows)
     reserved_streams = sum(row["candidate_streams"] for row in rows)
     report = dict(
@@ -187,6 +233,15 @@ def build_capacity100_candidate(*, manifests, products_by_consumer,
     )
     # These are the existing Rust MemoryPlan envelopes, not new pool sizing.
     # Include Replay transport slots even though alpha_streams counts Subscribe.
+    if shared is not None:
+        report["shared100"] = dict(
+            schema="p184.shared100.candidate.v1", session_header="X-QDL-Session",
+            session_ids=[f"s{session.ordinal:03d}" for session in sessions],
+            on_demand_period_seconds=SHARED100_ON_DEMAND_PERIOD_S,
+            quota_bump_required=not shared["fits"], quota_model=shared,
+            gates_profile="config/v2/p184-shared100-profile.json",
+            amendment="config/v2/p184-stage100-a6-shared100-preregistered.json")
+        report["status"] = "CANDIDATE_NOT_CERTIFIED"
     report["resource_envelopes"] = [
         dict(subscriptions=slots, replay_rpcs=32,
              transport_bytes_per_stream=96 * 1024,
