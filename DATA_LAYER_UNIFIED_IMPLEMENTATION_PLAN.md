@@ -78855,3 +78855,16 @@ no journal conflict). `tests/test_dl_v240_realm_composition.py` proves from the 
 under v2.4.0, and that the next render of a changed manifest carries floor 1 and the catalogue `delivery_semantics`
 together. With `tests.test_v232_realm_bundle_successor` and `tests.test_build_qdl_release_images`: Ran 43, OK
 (6 skipped).
+
+Update, micro-bench (`scratchpad/v240/bench/bench_v240.py`, outside the repo; `qdl-v2-python:2.3.1-aa75218`,
+`--cpus 1`, host load about 20-25, so absolute numbers are inflated; before/after run in the same process):
+- S1 authenticate, ES256 token: 280.6 us verify-every-request -> 4.9 us cache hit (median of 5).
+- S4 alpha MARK/INDEX fetch through the in-process reader: 924.0 us ASGI hop -> 647.8 us direct call (-30 %); the
+  remainder is the view read and conversion, which are unchanged.
+- S5 6 threads polling one binding every 1 ms for 1 s (0.3 ms stand-in per market-cache read): 3,924 requests /
+  3,924 reads (TTL 0) -> 5,258 requests / 99 reads (TTL 10 ms); a shared hit costs 0.85 us.
+- S6 100 sessions of one identity, 20 ms per warmup, SDK-like retries: pre-v2.4.0 lane served 80, 560 refusals,
+  20.8 s -> fair lane served 100, 0 refusals, 2.0 s. 100 identical concurrent warmups: 1 materialization, 100 OK.
+Not a runtime or capacity certification; S9 `shared100` is the acceptance run (prepared, not run).
+Cleanup: no v240 container is left. The scratch cargo target copy (`scratchpad/v240/rust-target`, 4.5 GB, files owned
+by the container's root user) could not be removed from the host account; its removal is left to the operator.
