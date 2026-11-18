@@ -78953,3 +78953,24 @@ Binance USDM 5; the repository file `consumers/stable/trading-system-paper.yaml`
   bundles), recreate query_kn x2 and stream_kn x2; DL first, then the TS JWT may move to r15 (r14 tokens stay valid).
   No image change is needed for this (the tool and quota-model changes are offline-only).
 Status: `implemented`, `tested locally`.
+
+Update, A-FUND historical MARK (coordinator, shape approved): TS must read the OKX mark price at a past funding time.
+- Shape: the existing reference product MARK_INDEX_PRICE accepts an optional bounded window at a non-execution grade
+  (`interval` "1m", `mark_index_kind` MARK or INDEX, window on whole minutes, `limit` 1..100); one observation per 1m
+  candle (`observed_at_ns` = candle open; `mark_open/high/low/close` or `index_*`; labels interval, price_type,
+  candle_close_ns, confirm). The mark at T: window `[floor_1m(T), floor_1m(T)+60 s)`, limit 1. No new product, feed,
+  proto or permission (buf: no proto change). Snapshot (no window) and EXECUTION grade unchanged (EXECUTION with a
+  window keeps "MARK_INDEX_PRICE is a snapshot request").
+- Code: `qdl/reference/contracts.py` (`mark_index_history_problem`), `qdl/query/reference.py`, `qdl/query/contracts.py`
+  (a non-execution MARK_INDEX_PRICE row may carry its candle interval), OKX adapter `_mark_index_history`
+  (`/api/v5/market/history-mark-price-candles`, index candles for INDEX), Binance refuses history (UNAVAILABLE),
+  `ReferenceBatchPolicy.closed_candle_ttl_seconds` 6 h for a complete all-closed candle result (existing singleflight
+  `_inflight`), SDK 2.9.0 (`qdl_sdk/reference.py`, additive; 2.8 requests serialize unchanged). Rust: unchanged (the
+  bundle parses manifest rows without the requirement validator).
+- r15 extended IN PLACE (still r14 -> r15): declaration token `MARK_INDEX_PRICE@1m` adds one ALPHA row (interval 1m)
+  for each of the 97 OKX SWAP perpetual MARK uids; the 5 Binance uids are typed blocked
+  (REFERENCE_VENUE_NOT_DECLARABLE). Recount command: `tests.test_dl_v240_ts_funding_entitlement
+  .test_historical_mark_rows_for_the_97_okx_swap_perpetuals...` (catalog identity OKX/SWAP/PERPETUAL over the r14 MARK
+  uids = 97). Render: 446 requirements, additive_problems [], routing r34 (+102 FUNDING_RATE, +97 MARK 1m products),
+  manifest sha256 `725c8ca2...`, realm file sha256 `e9f4536a...`; quota model MARK_INDEX_HISTORY 97 (no stream), rpm
+  31,500, streams 370; offline gate PASS (15/15).

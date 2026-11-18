@@ -94,6 +94,8 @@ class OkxSwapReferenceAdapter:
             return await self._contract_statistics(request, capability)
         if product is ReferenceProduct.MARK_INDEX_PRICE:
             require_product(request.instrument, ProductType.PERPETUAL, ProductType.FUTURE)
+            if request.is_history:
+                return await self._mark_index_history(request, capability)
             return await self._mark_index_snapshot(request, capability, received_at_ns)
         if product is ReferenceProduct.CONTRACT_METADATA:
             require_product(request.instrument, ProductType.PERPETUAL, ProductType.FUTURE)
@@ -263,6 +265,52 @@ class OkxSwapReferenceAdapter:
         return ReferenceFetch(
             observations=tuple(observations),
             lineage=(self._lineage("/api/v5/public/funding-rate-history", capability),),
+            coverage=self._history_coverage(result.coverage),
+        )
+
+    async def _mark_index_history(
+        self, request: ReferenceRequest, capability: FeedCapability
+    ) -> ReferenceFetch:
+        """DL v2.4.0 A-FUND: bounded 1m MARK (or INDEX) price candles, e.g. the mark price at a past funding time.
+
+        One candle per minute; ``observed_at_ns`` is the candle open time, so the candle covering a time T is the one
+        whose open is floor_1m(T). Fields mark_open/high/low/close (index_* for INDEX), labels interval, price_type,
+        candle_close_ns and confirm ("1" = closed, immutable).
+        """
+        assert request.start_ms is not None and request.end_ms is not None
+        kind = request.mark_index_kind
+        price_type = "MARK" if kind is MarkIndexKind.MARK else "INDEX"
+        inst_id = request.instrument.native_symbol if price_type == "MARK" else self._index_id(request)
+        endpoint = ("/api/v5/market/history-mark-price-candles" if price_type == "MARK"
+                    else "/api/v5/market/history-index-candles")
+        interval_ms = canonical_interval_ms(str(request.interval))
+        result = await self._history.candles(
+            inst_id=inst_id, bar=okx_bar_size(str(request.interval)), start_ms=request.start_ms,
+            end_ms=request.end_ms, price_type=price_type, max_records=request.limit, max_pages=request.max_pages,
+        )
+        prefix = "mark" if price_type == "MARK" else "index"
+        observations = []
+        for row in result.records:
+            if row.inst_id != inst_id:
+                raise ReferenceProviderError("OKX candle row identity differs from the request")
+            fields = _fields(
+                decimal_field(f"{prefix}_open", row.open, "QUOTE_PRICE"),
+                decimal_field(f"{prefix}_high", row.high, "QUOTE_PRICE"),
+                decimal_field(f"{prefix}_low", row.low, "QUOTE_PRICE"),
+                decimal_field(f"{prefix}_close", row.close, "QUOTE_PRICE"),
+            )
+            if len(fields) != 4:
+                raise ReferenceProviderError(f"OKX {price_type} candle row has no complete OHLC")
+            observations.append(self._observation(
+                request, row.open_ts_ms * 1_000_000, fields,
+                labels=(("native_symbol", request.instrument.native_symbol), ("interval", str(request.interval)),
+                        ("price_type", price_type),
+                        ("candle_close_ns", str((row.open_ts_ms + interval_ms) * 1_000_000)),
+                        ("confirm", "1" if row.confirmed else "0")),
+            ))
+        return ReferenceFetch(
+            observations=tuple(observations),
+            lineage=(self._lineage(endpoint, capability),),
             coverage=self._history_coverage(result.coverage),
         )
 

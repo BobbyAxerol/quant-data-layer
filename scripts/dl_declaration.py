@@ -165,7 +165,12 @@ REFERENCE_FEEDS = frozenset({"FUNDING_RATE"})
 # MARK_INDEX_PRICE may be execution-grade reference data (qdl/query/reference.py ReferenceDataRequirement); they are
 # granted for every PERPETUAL instrument the manifest already reads MARK_INDEX_PRICE for, with the alpha manifests'
 # per-venue freshness (OKX 8 h, Binance 9 h: the alpha-binance / reference-l2 rows).
-EXECUTION_REFERENCE_FRESHNESS_MS = {"FUNDING_RATE": {"OKX": 28_800_000, "BINANCE": 32_400_000}}
+# Declared token -> (feed, interval, freshness per venue). ``MARK_INDEX_PRICE@1m`` is the historical 1m MARK candle
+# read (OKX only: settled Binance funding rows carry markPrice), ALPHA grade like FUNDING_RATE.
+EXECUTION_REFERENCE = {
+    "FUNDING_RATE": ("FUNDING_RATE", None, {"OKX": 28_800_000, "BINANCE": 32_400_000}),
+    "MARK_INDEX_PRICE@1M": ("MARK_INDEX_PRICE", "1m", {"OKX": 28_800_000}),
+}
 # Route of a reference product without a template in the consumer's own routes (the alpha manifests' route).
 REFERENCE_ROUTE = {"route": "V2_PRIMARY", "fallback": "BLOCKED", "reason": "V1_REFERENCE_EQUIVALENCE_UNPROVEN"}
 OKX_INTERVALS = ("1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "2d", "3d", "1w")
@@ -993,20 +998,22 @@ class Render:
 
     def _execution_reference(self, cid, consumer, target, catalog) -> bool:
         """Declared reference reads of an EXECUTION consumer (``reference: [FUNDING_RATE]``), additive."""
-        feeds = [str(f).upper() for f in consumer.get("reference") or []]
-        unknown = sorted(set(feeds) - set(EXECUTION_REFERENCE_FRESHNESS_MS))
+        tokens = [str(f).upper() for f in consumer.get("reference") or []]
+        unknown = sorted(set(tokens) - set(EXECUTION_REFERENCE))
         if unknown:
             raise DeclarationRefused(f"{cid} reference feeds not declarable for an EXECUTION consumer: {unknown}")
         requirements = target["spec"]["requirements"]
-        existing = {(r["instrument_uid"], r["feed"]) for r in requirements}
-        marks = list(dict.fromkeys(r["instrument_uid"] for r in requirements if r["feed"] == "MARK_INDEX_PRICE"))
+        existing = {(r["instrument_uid"], r["feed"], r.get("interval")) for r in requirements}
+        marks = list(dict.fromkeys(r["instrument_uid"] for r in requirements
+                                   if r["feed"] == "MARK_INDEX_PRICE" and not r.get("interval")))
         added = 0
-        for feed in feeds:
+        for token in tokens:
+            feed, interval, venue_freshness = EXECUTION_REFERENCE[token]
             for uid in marks:
                 record = catalog.instrument_for(uid)
-                if record.identity.product_type.value != "PERPETUAL" or (uid, feed) in existing:
+                if record.identity.product_type.value != "PERPETUAL" or (uid, feed, interval) in existing:
                     continue
-                freshness = EXECUTION_REFERENCE_FRESHNESS_MS[feed].get(record.identity.venue)
+                freshness = venue_freshness.get(record.identity.venue)
                 if freshness is None:
                     self.blocked.append(_blocked(cid, "REFERENCE_VENUE_NOT_DECLARABLE", venue=record.identity.venue,
                                                  market=record.identity.market,
@@ -1014,11 +1021,11 @@ class Render:
                     continue
                 requirements.append({
                     "bar_revision_policy": "LATEST", "consumer_grade": "ALPHA", "feed": feed, "gap_policy": "BLOCK",
-                    "instrument_uid": uid, "interval": None, "max_freshness_ms": freshness,
+                    "instrument_uid": uid, "interval": interval, "max_freshness_ms": freshness,
                     "recovery": "FRESH_SNAPSHOT", "require_final_bars": False, "require_full_coverage": True,
                     "source_policy_id": "crypto_liquid_v2", "stale_policy": "BLOCK", "warmup_limit": 0,
                 })
-                existing.add((uid, feed))
+                existing.add((uid, feed, interval))
                 added += 1
         return bool(added)
 
@@ -1134,7 +1141,8 @@ class Render:
                     catalog.instrument_for(p["requirement_key"].split(":")[0]).identity)
                     == (identity.venue, identity.market)]
                 template = (same_market or candidates or [None])[0]
-                if template is None and requirement.feed.value in REFERENCE_FEEDS:
+                if template is None and (requirement.feed.value in REFERENCE_FEEDS or (
+                        requirement.feed.value == "MARK_INDEX_PRICE" and requirement.interval)):
                     template = REFERENCE_ROUTE
                 if template is None:
                     raise DeclarationRefused(f"{consumer['consumer_id']} has no product route template for "

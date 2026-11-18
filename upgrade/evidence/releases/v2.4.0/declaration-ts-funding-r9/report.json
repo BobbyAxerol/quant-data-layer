@@ -1,6 +1,49 @@
 {
-  "blocked": [],
-  "blocked_by_reason": {},
+  "blocked": [
+    {
+      "consumer_id": "trading-system.paper.stable",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "USDM",
+      "native_symbol": "BNBUSDT",
+      "reason": "REFERENCE_VENUE_NOT_DECLARABLE",
+      "venue": "BINANCE"
+    },
+    {
+      "consumer_id": "trading-system.paper.stable",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "USDM",
+      "native_symbol": "BTCUSDT",
+      "reason": "REFERENCE_VENUE_NOT_DECLARABLE",
+      "venue": "BINANCE"
+    },
+    {
+      "consumer_id": "trading-system.paper.stable",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "USDM",
+      "native_symbol": "DOGEUSDT",
+      "reason": "REFERENCE_VENUE_NOT_DECLARABLE",
+      "venue": "BINANCE"
+    },
+    {
+      "consumer_id": "trading-system.paper.stable",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "USDM",
+      "native_symbol": "ETHUSDT",
+      "reason": "REFERENCE_VENUE_NOT_DECLARABLE",
+      "venue": "BINANCE"
+    },
+    {
+      "consumer_id": "trading-system.paper.stable",
+      "feed": "MARK_INDEX_PRICE",
+      "market": "USDM",
+      "native_symbol": "SOLUSDT",
+      "reason": "REFERENCE_VENUE_NOT_DECLARABLE",
+      "venue": "BINANCE"
+    }
+  ],
+  "blocked_by_reason": {
+    "REFERENCE_VENUE_NOT_DECLARABLE": 5
+  },
   "capacity": {
     "added_bindings_by_kind": {},
     "added_dl_vcpu_upper_bound": 0.0,
@@ -63,7 +106,7 @@
           "status": "MODELLED",
           "steady_requests_per_minute": [
             19502,
-            19604
+            19701
           ],
           "streams": [
             246,
@@ -71,8 +114,8 @@
           ]
         }
       },
-      "execution_steady_requests_per_minute_added": 102,
-      "execution_steady_requests_per_minute_after": 19604
+      "execution_steady_requests_per_minute_added": 199,
+      "execution_steady_requests_per_minute_after": 19701
     },
     "rates_per_binding": {
       "okx_bar": 0.5253333333333333,
@@ -88,7 +131,7 @@
     ]
   },
   "consumer_environment": {},
-  "declaration_index_sha256": "d4f3333e33419edf4503ac74429bf23a30f643bf312270d361a055f3528f3d49",
+  "declaration_index_sha256": "f22c7e3d64506907388e47364b7e08476a0f860a8534a1367ee633c7cce98d49",
   "declaration_revision": 9,
   "loader_capabilities": {
     "derived_final": true,
@@ -110,12 +153,13 @@
     "trading-system.paper.stable": {
       "evidence": {
         "headroom": 1.5,
-        "opening_requests": 1106,
+        "opening_requests": 1203,
         "products_by_feed": {
           "BAR": 10,
           "BOOK_DELTA": 11,
           "BOOK_SNAPSHOT": 11,
           "FUNDING_RATE": 102,
+          "MARK_INDEX_HISTORY": 97,
           "MARK_INDEX_PRICE": 102,
           "QUOTE": 102,
           "TRADE": 10
@@ -125,6 +169,7 @@
           "BOOK_DELTA": 0,
           "BOOK_SNAPSHOT": 2,
           "FUNDING_RATE": 1,
+          "MARK_INDEX_HISTORY": 1,
           "MARK_INDEX_PRICE": 100,
           "QUOTE": 90,
           "TRADE": 10
@@ -132,7 +177,7 @@
         "required_max_streams": 370,
         "required_requests_per_minute": 31500,
         "schema": "qdl.v2.consumer-quota-model.v1",
-        "steady_requests_per_minute": 19604,
+        "steady_requests_per_minute": 19701,
         "stream_headroom": 1.5,
         "streams": 246
       },
@@ -183,7 +228,7 @@
         "additive_problems": [],
         "changed": true,
         "min_token_revision": 1,
-        "requirements": 349,
+        "requirements": 446,
         "revision": [
           14,
           15

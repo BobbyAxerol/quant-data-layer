@@ -57,10 +57,12 @@ STEADY_REQUESTS_PER_MINUTE = {
     # DL v2.4.0 A-FUND: a bounded FUNDING_RATE reference_batch read per perpetual; the funding interval is 8 h,
     # modelled conservatively as one read per product per minute (no stream).
     "FUNDING_RATE": 1,
+    # DL v2.4.0 A-FUND: a historical 1m MARK candle read (MARK_INDEX_PRICE row with an interval), no stream.
+    "MARK_INDEX_HISTORY": 1,
 }
 # Reference products an EXECUTION manifest may carry at a non-execution grade (qdl.query.reference: only
 # MARK_INDEX_PRICE is execution-grade reference data).
-REFERENCE_FEEDS = frozenset({"FUNDING_RATE"})
+REFERENCE_FEEDS = frozenset({"FUNDING_RATE", "MARK_INDEX_HISTORY"})
 # Initial reads per product on a writer (re)start (snapshot + warmup or reference read), all in the first minute.
 OPENING_REQUESTS = {
     "QUOTE": 4,
@@ -70,6 +72,7 @@ OPENING_REQUESTS = {
     "BOOK_DELTA": 4,
     "BAR": 6,
     "FUNDING_RATE": 1,
+    "MARK_INDEX_HISTORY": 1,
 }
 STREAM_FEEDS = frozenset(STEADY_REQUESTS_PER_MINUTE) - REFERENCE_FEEDS
 HEADROOM = 1.5
@@ -111,7 +114,7 @@ def _feeds(requirements: Iterable[Mapping[str, Any]]) -> dict[str, int]:
     for row in requirements:
         if str(row.get("source_policy_id", "")).startswith("vn_"):
             continue  # V1-routed VN/DNSE row: no V2 stream or Query read
-        feed = str(row.get("feed", "")).upper()
+        feed = _model_feed(row)
         if feed not in STEADY_REQUESTS_PER_MINUTE:
             raise ValueError(f"quota model has no request rate for feed {feed!r}")
         counts[feed] = counts.get(feed, 0) + 1
@@ -147,8 +150,16 @@ def quota_shortfall(manifest: Mapping[str, Any]) -> dict[str, Any]:
     return {"shortfall": short, "model": model.evidence()} if short else {}
 
 
+def _model_feed(row: Mapping[str, Any]) -> str:
+    """The model's feed key: a MARK_INDEX_PRICE row with an interval is the historical candle read."""
+    feed = str(row.get("feed", "")).upper()
+    if feed == "MARK_INDEX_PRICE" and row.get("interval"):
+        return "MARK_INDEX_HISTORY"
+    return feed
+
+
 def is_execution_manifest(manifest: Mapping[str, Any]) -> bool:
-    """Every row is EXECUTION grade, except reference products (FUNDING_RATE) read at a non-execution grade."""
+    """Every row is EXECUTION grade, except reference reads (FUNDING_RATE, historical MARK) at a non-execution grade."""
     rows = manifest.get("spec", {}).get("requirements") or []
-    execution = [row for row in rows if str(row.get("feed", "")).upper() not in REFERENCE_FEEDS]
+    execution = [row for row in rows if _model_feed(row) not in REFERENCE_FEEDS]
     return bool(execution) and all(str(row.get("consumer_grade", "")).upper() == "EXECUTION" for row in execution)

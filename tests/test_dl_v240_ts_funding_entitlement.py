@@ -35,7 +35,7 @@ def _declaration(directory: Path, **consumer) -> Path:
         "capacity": {"baseline_dl_vcpu": 6.21, "ceiling_dl_vcpu": 6.5, "venue_priority": ["OKX", "BINANCE"]},
         "base": {"repo": str(BASE)},
         "consumers": [{"consumer_id": "trading-system.paper.stable", "class": "EXECUTION", "manifest": MANIFEST,
-                       "revision": 15, "reference": ["FUNDING_RATE"], **consumer}],
+                       "revision": 15, "reference": ["FUNDING_RATE", "MARK_INDEX_PRICE@1m"], **consumer}],
     }
     path = directory / "declaration.yaml"
     path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
@@ -59,9 +59,34 @@ class TsFundingEntitlementTests(unittest.TestCase):
     def funding(self):
         return [r for r in self.doc["spec"]["requirements"] if r["feed"] == "FUNDING_RATE"]
 
+    def marks_1m(self):
+        return [r for r in self.doc["spec"]["requirements"] if r["feed"] == "MARK_INDEX_PRICE" and r.get("interval")]
+
+    def test_historical_mark_rows_for_the_97_okx_swap_perpetuals_and_binance_is_typed_blocked(self):
+        # Recount from the catalog: the TS r14 MARK uids whose identity is OKX SWAP PERPETUAL.
+        base_marks = [r["instrument_uid"] for r in self.base_doc["spec"]["requirements"]
+                      if r["feed"] == "MARK_INDEX_PRICE"]
+        okx = {u for u in base_marks if (lambda i: (i.venue, i.market, i.product_type.value))(
+            self.catalog.instrument_for(u).identity) == ("OKX", "SWAP", "PERPETUAL")}
+        self.assertEqual(len(okx), 97)
+        rows = self.marks_1m()
+        self.assertEqual({r["instrument_uid"] for r in rows}, okx)
+        self.assertEqual(len(rows), 97)
+        for row in rows:
+            self.assertEqual((row["consumer_grade"], row["interval"], row["source_policy_id"], row["recovery"],
+                              row["require_full_coverage"]), ("ALPHA", "1m", "crypto_liquid_v2", "FRESH_SNAPSHOT", True))
+        blocked = self.report["blocked"]
+        self.assertEqual(len(blocked), 5)
+        self.assertEqual({(b["reason"], b["venue"], b["feed"]) for b in blocked},
+                         {("REFERENCE_VENUE_NOT_DECLARABLE", "BINANCE", "MARK_INDEX_PRICE")})
+        # The execution MARK rows are byte-unchanged.
+        execution = lambda doc: [r for r in doc["spec"]["requirements"]  # noqa: E731
+                                 if r["feed"] == "MARK_INDEX_PRICE" and not r.get("interval")]
+        self.assertEqual(execution(self.doc), execution(self.base_doc))
+
     def test_one_alpha_grade_funding_row_per_perpetual_mark_uid(self):
-        self.assertEqual(self.report["blocked"], [])
-        marks = {r["instrument_uid"] for r in self.base_doc["spec"]["requirements"] if r["feed"] == "MARK_INDEX_PRICE"}
+        marks = {r["instrument_uid"] for r in self.base_doc["spec"]["requirements"] if r["feed"] == "MARK_INDEX_PRICE"
+                 and not r.get("interval")}
         rows = self.funding()
         self.assertEqual({r["instrument_uid"] for r in rows}, marks)
         self.assertEqual(len(rows), len(marks))
@@ -107,10 +132,15 @@ class TsFundingEntitlementTests(unittest.TestCase):
         funding = [p for p in ts["products"] if ":FUNDING_RATE:" in p["requirement_key"]]
         self.assertEqual(len(funding), 102)
         self.assertEqual({(p["route"], p["fallback"]) for p in funding}, {("V2_PRIMARY", "BLOCKED")})
+        history = [p for p in ts["products"] if ":MARK_INDEX_PRICE:1m:" in p["requirement_key"]]
+        self.assertEqual(len(history), 97)
+        self.assertEqual({(p["route"], p["fallback"]) for p in history}, {("V2_PRIMARY", "BLOCKED")})
         self.assertTrue(is_execution_manifest(self.doc))
         self.assertNotIn("FUNDING_RATE", STREAM_FEEDS)
         model = model_manifest(self.doc)
         self.assertEqual(model.products_by_feed["FUNDING_RATE"], 102)
+        self.assertEqual(model.products_by_feed["MARK_INDEX_HISTORY"], 97)
+        self.assertEqual(model.products_by_feed["MARK_INDEX_PRICE"], 102)
         self.assertEqual(model.streams, model_manifest(self.base_doc).streams)
 
     def test_gate_passes(self):
@@ -201,3 +231,138 @@ class AFundReadTests(unittest.IsolatedAsyncioTestCase):
         refused = self._read(client, grade="EXECUTION")
         self.assertEqual((refused.status_code, refused.json()["code"]), (400, "INVALID_ARGUMENT"))
         self.assertEqual(self._read(client, revision=16).status_code, 401)
+
+
+class MarkHistoryReadTests(unittest.IsolatedAsyncioTestCase):
+    """A-FUND's MARK read: given T, the 1m OKX mark candle covering T comes back (bounded, cached, singleflight)."""
+
+    T_MS = 1_800_000_037_123  # an arbitrary past time inside a minute
+    OPEN_MS = T_MS - T_MS % 60_000
+
+    def setUp(self):
+        from qdl.adapters.okx.history import HistoryCoverage, OkxCandle, OkxCandleHistory
+        from qdl.adapters.okx.reference import OkxSwapReferenceAdapter
+        from qdl.domain.instrument import InstrumentRegistry
+        from qdl.query import InstrumentQuery, MemoryMarketDataBackend, V2QueryService
+        from qdl.query.entitlement import EntitlementPolicy
+        from qdl.reference.batch import ReferenceBatch
+        from qdl.reference.runtime import build_default_reference_runtime
+        from tests.test_phase113_reference_v2 import record
+
+        test = self
+
+        class History:
+            calls = 0
+
+            async def candles(self, *, inst_id, bar, start_ms, end_ms, price_type, max_records, max_pages):
+                History.calls += 1
+                test.assertEqual((bar, price_type), ("1m", "MARK"))
+                rows = tuple(OkxCandle(inst_id=inst_id, bar=bar, price_type=price_type, open_ts_ms=open_ms,
+                                       open="2500.1", high="2501.5", low="2499.9", close="2500.7",
+                                       volume_raw=None, volume_ccy_raw=None, volume_quote_raw=None, confirmed=True)
+                             for open_ms in range(start_ms, end_ms, 60_000))[:max_records]
+                coverage = HistoryCoverage(start_ms, end_ms, rows[0].open_ts_ms if rows else None,
+                                           rows[-1].open_ts_ms if rows else None, True, True, False, "COMPLETE",
+                                           "/api/v5/market/history-mark-price-candles")
+                return OkxCandleHistory(rows, coverage)
+
+        self.history = History
+        self.okx = record(venue="OKX", market="SWAP", symbol="ETH-USDT-SWAP", base="ETH")
+        self.binance = record(venue="BINANCE", market="USDM", symbol="BTCUSDT", base="BTC")
+        registry = InstrumentRegistry()
+        registry.register(self.okx, [])
+        registry.register(self.binance, [])
+        runtime = build_default_reference_runtime()
+        from qdl.adapters.binance.reference import BinanceUsdmReferenceAdapter  # noqa: F401 - import check only
+        adapter = OkxSwapReferenceAdapter(client=object(), history=History())
+        self.batch = ReferenceBatch({("OKX", "SWAP"): adapter, ("BINANCE", "USDM"): adapter},
+                                    clock_ns=lambda: (self.T_MS + 86_400_000) * 1_000_000)
+        self.service = V2QueryService(
+            instruments=InstrumentQuery(registry), backend=MemoryMarketDataBackend(),
+            entitlements=EntitlementPolicy(runtime.entitlement_grants()), reference_batch=self.batch,
+            reference_source_id=runtime.source_id_for, clock_ns=lambda: (self.T_MS + 86_400_000) * 1_000_000,
+        )
+
+    def requirement(self, **changes):
+        fields = dict(instrument_uid=self.okx.instrument_uid, product=ReferenceProduct.MARK_INDEX_PRICE,
+                      consumer_grade=ConsumerGrade.ALPHA, source_policy_id="crypto_liquid_v2", interval="1m",
+                      mark_index_kind=__import__("qdl.reference.contracts", fromlist=["MarkIndexKind"]).MarkIndexKind.MARK,
+                      start_time_ns=self.OPEN_MS * 1_000_000, end_time_ns=(self.OPEN_MS + 60_000) * 1_000_000,
+                      limit=1)
+        fields.update(changes)
+        return ReferenceDataRequirement(**fields)
+
+    async def read(self, *requirements):
+        from qdl.query import AccessPurpose
+        from qdl.query.reference import ReferenceBatchRequirement
+
+        return await self.service.reference_data_batch_async(
+            ReferenceBatchRequirement("trading-system.paper.stable", requirements, require_all=True),
+            purpose=AccessPurpose.INTERNAL_EXECUTION)
+
+    async def test_the_candle_covering_t_comes_back(self):
+        result = await self.read(self.requirement())
+        item = result.results[0]
+        self.assertIsNone(item.problem, item.problem)
+        (observation,) = item.result.observations
+        self.assertEqual(observation.observed_at_ns, self.OPEN_MS * 1_000_000)
+        self.assertLessEqual(observation.observed_at_ns, self.T_MS * 1_000_000)
+        labels = dict(observation.labels)
+        self.assertEqual((labels["price_type"], labels["interval"], labels["confirm"]), ("MARK", "1m", "1"))
+        self.assertGreater(int(labels["candle_close_ns"]), self.T_MS * 1_000_000)
+        self.assertEqual([f.name for f in observation.fields], ["mark_open", "mark_high", "mark_low", "mark_close"])
+        self.assertEqual(item.result.lineage[0].provider_endpoint.split("/")[-1], "history-mark-price-candles")
+
+    async def test_identical_reads_share_one_provider_call_and_a_closed_candle_is_cached_long(self):
+        import asyncio
+
+        await asyncio.gather(*(self.read(self.requirement()) for _ in range(5)))
+        await self.read(self.requirement())
+        self.assertEqual(self.history.calls, 1)
+        from qdl.reference.batch import ReferenceBatchPolicy
+
+        self.assertEqual(ReferenceBatchPolicy().closed_candle_ttl_seconds, 21_600.0)
+
+    async def test_binance_history_is_typed_unavailable(self):
+        result = await self.read(self.requirement(instrument_uid=self.binance.instrument_uid))
+        self.assertIsNotNone(result.results[0].problem)
+
+    def test_snapshot_and_execution_shapes_are_unchanged(self):
+        from qdl.reference.contracts import MarkIndexKind
+
+        # The current snapshot (no window, no interval) still validates for ALPHA and EXECUTION.
+        for grade in (ConsumerGrade.ALPHA, ConsumerGrade.EXECUTION):
+            ReferenceDataRequirement(instrument_uid="u", product=ReferenceProduct.MARK_INDEX_PRICE,
+                                     consumer_grade=grade, source_policy_id="p", limit=1, max_pages=1)
+        refused = {
+            "execution with a window": dict(consumer_grade=ConsumerGrade.EXECUTION),
+            "snapshot with an interval": dict(start_time_ns=None, end_time_ns=None),
+            "BOTH": dict(mark_index_kind=MarkIndexKind.BOTH),
+            "5m": dict(interval="5m"),
+            "misaligned": dict(start_time_ns=(self.OPEN_MS + 1) * 1_000_000),
+            "limit 101": dict(limit=101, end_time_ns=(self.OPEN_MS + 101 * 60_000) * 1_000_000),
+        }
+        for name, change in refused.items():
+            with self.subTest(case=name), self.assertRaises(ValueError) as raised:
+                self.requirement(**change)
+            if name == "execution with a window":
+                self.assertEqual(str(raised.exception), "MARK_INDEX_PRICE is a snapshot request")
+
+    def test_sdk_2_9_builds_the_same_request_and_keeps_the_2_8_shapes(self):
+        from qdl_sdk.reference import Grade, MarkIndexKind, ReferenceProduct as SdkProduct, ReferenceRequirement
+
+        sdk = ReferenceRequirement(instrument_uid="u", product=SdkProduct.MARK_INDEX_PRICE, consumer_grade=Grade.ALPHA,
+                                   source_policy_id="crypto_liquid_v2", interval="1m",
+                                   mark_index_kind=MarkIndexKind.MARK, start_time_ns=self.OPEN_MS * 1_000_000,
+                                   end_time_ns=(self.OPEN_MS + 60_000) * 1_000_000, limit=1)
+        wire = sdk.model_dump(mode="json")
+        self.assertEqual((wire["product"], wire["interval"], wire["mark_index_kind"]), ("MARK_INDEX_PRICE", "1m", "MARK"))
+        with self.assertRaises(ValueError):
+            ReferenceRequirement(instrument_uid="u", product=SdkProduct.MARK_INDEX_PRICE,
+                                 consumer_grade=Grade.EXECUTION, source_policy_id="p", interval="1m",
+                                 start_time_ns=self.OPEN_MS * 1_000_000, end_time_ns=(self.OPEN_MS + 60_000) * 1_000_000,
+                                 limit=1)
+        # A 2.8-shaped snapshot request still serializes without any new field.
+        snapshot = ReferenceRequirement(instrument_uid="u", product=SdkProduct.MARK_INDEX_PRICE,
+                                        consumer_grade=Grade.EXECUTION, source_policy_id="p", limit=1, max_pages=1)
+        self.assertIsNone(snapshot.model_dump(mode="json")["interval"])

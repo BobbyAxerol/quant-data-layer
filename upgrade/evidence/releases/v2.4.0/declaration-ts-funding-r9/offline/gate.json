@@ -1,6 +1,8 @@
 {
-  "blocked_by_reason": {},
-  "blocked_rows": 0,
+  "blocked_by_reason": {
+    "REFERENCE_VENUE_NOT_DECLARABLE": 5
+  },
+  "blocked_rows": 5,
   "checks": [
     {
       "check": "base_unchanged_since_render",
@@ -150,7 +152,7 @@
               "status": "MODELLED",
               "steady_requests_per_minute": [
                 19502,
-                19604
+                19701
               ],
               "streams": [
                 246,
@@ -158,8 +160,8 @@
               ]
             }
           },
-          "execution_steady_requests_per_minute_added": 102,
-          "execution_steady_requests_per_minute_after": 19604
+          "execution_steady_requests_per_minute_added": 199,
+          "execution_steady_requests_per_minute_after": 19701
         },
         "rates_per_binding": {
           "okx_bar": 0.5253333333333333,

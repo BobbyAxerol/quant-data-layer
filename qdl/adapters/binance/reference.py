@@ -155,6 +155,9 @@ class BinanceUsdmReferenceAdapter:
             return await self._taker_history(request, capability)
         if product is ReferenceProduct.MARK_INDEX_PRICE:
             require_product(request.instrument, ProductType.PERPETUAL, ProductType.FUTURE)
+            if request.is_history:
+                # DL v2.4.0: historical MARK candles are OKX-only; settled Binance funding rows carry markPrice.
+                raise ReferenceUnavailable("Binance USD-M historical MARK_INDEX_PRICE is not provided")
             return await self._mark_index_snapshot(request, capability, received_at_ns)
         if product is ReferenceProduct.CONTRACT_METADATA:
             require_product(request.instrument, ProductType.PERPETUAL, ProductType.FUTURE)

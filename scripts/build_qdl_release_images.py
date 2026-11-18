@@ -61,7 +61,7 @@ from scripts.host_measurement_lock import MAX_MINUTES as MAX_LOCK_MINUTES, lock_
 # v2.4.0 (S1-S9: shared reads, quota on admission, session-fair lanes, advisory token revision, role claims ignored)
 # changes rust (stream gateway, qdl-contracts accept rule) and python (Query): both images are built.
 RELEASE = "2.4.0"
-SDK_VERSION = "2.8.0"
+SDK_VERSION = "2.9.0"
 REPO = Path(__file__).resolve().parents[1]
 HOME = Path.home()
 STATE_ROOT = HOME / ".local/state/qdl-v2"

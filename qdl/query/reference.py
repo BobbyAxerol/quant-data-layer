@@ -30,6 +30,7 @@ from qdl.reference.contracts import (
     MarkIndexKind,
     ReferenceProduct,
     ReferenceRequest,
+    mark_index_history_problem,
 )
 
 
@@ -220,9 +221,22 @@ class ReferenceDataRequirement:
             raise ValueError("FUNDING_RATE requires a bounded historical window")
         if self.product is ReferenceProduct.OPEN_INTEREST and has_history and not str(self.interval or "").strip():
             raise ValueError("historical OPEN_INTEREST requires a provider sampling interval")
-        if self.product in {ReferenceProduct.MARK_INDEX_PRICE, ReferenceProduct.CONTRACT_METADATA}:
+        if self.product is ReferenceProduct.CONTRACT_METADATA:
             if has_history or self.interval is not None:
                 raise ValueError(f"{self.product.value} is a snapshot request")
+        if self.product is ReferenceProduct.MARK_INDEX_PRICE:
+            if not has_history:
+                if self.interval is not None:
+                    raise ValueError(f"{self.product.value} is a snapshot request")
+            elif self.consumer_grade is ConsumerGrade.EXECUTION:
+                # Execution MARK/INDEX stays the one-row live snapshot (unchanged).
+                raise ValueError(f"{self.product.value} is a snapshot request")
+            else:
+                # DL v2.4.0 A-FUND: a bounded 1m candle history (e.g. the mark price at a past funding time).
+                mark_index_history_problem(
+                    self.interval, self.mark_index_kind, self.start_time_ns // 1_000_000,
+                    self.end_time_ns // 1_000_000, self.limit,
+                )
         execution_mark_snapshot = (
             self.consumer_grade is ConsumerGrade.EXECUTION
             and self.product is ReferenceProduct.MARK_INDEX_PRICE
