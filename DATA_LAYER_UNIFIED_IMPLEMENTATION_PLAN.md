@@ -78836,5 +78836,14 @@ Tests (image `qdl-v2-python:2.3.1-aa75218`, `--rm --cpus 1 --memory 4g --network
 - rerun of the 11 failing modules plus 2: Ran 191, 1 failure (an older-revision token now accepted by design; the
   test now uses a future revision); then the revision-sensitive and lane modules (14): Ran 262, OK.
 - Old-semantics lane tests updated (they asserted 8/4 per identity, which is the refusal storm S6 removes).
-Status: Python slices `implemented`, `tested locally`. Rust (S3 refund, S7, S8, S2 rule) and the micro-bench: see
-the next update.
+Status: Python slices `implemented`, `tested locally` (commits 67e4199, f6897f9).
+
+Update, Rust slice group (S2 rule in `qdl-contracts`, S3 order + `QuotaGuard` refund, S7 `LocalTokenBucketQuota` /
+`LayeredQuota` with TS full share, S8 roles ignored): image `qdl-rust-builder:1.82.0-v2.3.2` (rust 1.82.0, offline
+cargo-home), `--rm --cpus 1 --memory 4g --network none`:
+- `cargo test --offline --locked -p qdl-contracts -p qdl-stream-gateway --all-targets -- --test-threads=1`: 187 passed,
+  0 failed, 5 ignored (includes the new quota, refund-guard, full-share and advisory-revision tests, and the
+  native_stream t03/t06/t07 updates);
+- `cargo fmt --check` (rustfmt 1.7.1) clean; `cargo clippy -D warnings`: one error, pre-existing in v2.3.2
+  `src/session_liveness.rs:181` (`type_complexity`), not touched here; reported to the coordinator.
+Status: Rust `implemented`, `tested locally`.

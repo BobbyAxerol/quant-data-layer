@@ -132,10 +132,12 @@ pub fn canonical_sha256(document: &Map<String, Value>) -> String {
 
 impl Manifest {
     /// Whether a token minted for `revision` may use this manifest revision.
+    /// DL v2.4.0 S2: the token revision is advisory (same rule as the Python
+    /// `ConsumerManifest.accepted_token_revisions`): any revision in
+    /// `1..=manifest_revision` is accepted; `min_token_revision` is kept as
+    /// declared information only.
     pub fn accepts_token_revision(&self, revision: Option<u64>) -> bool {
-        revision.is_some_and(|value| {
-            (self.min_token_revision..=self.manifest_revision).contains(&value)
-        })
+        revision.is_some_and(|value| (1..=self.manifest_revision).contains(&value))
     }
 }
 
@@ -418,27 +420,29 @@ mod tests {
     }
 
     #[test]
-    fn a_manifest_without_an_accept_set_accepts_only_its_own_revision() {
+    fn a_manifest_without_an_accept_set_accepts_every_older_revision() {
+        // DL v2.4.0 S2: the token revision is advisory (1..=revision).
         let bundle = with_manifest(None).expect("valid bundle");
         let manifest = &bundle.manifests[0];
         assert_eq!(manifest.min_token_revision, 7);
         assert!(manifest.accepts_token_revision(Some(7)));
-        assert!(!manifest.accepts_token_revision(Some(6)));
+        assert!(manifest.accepts_token_revision(Some(6)));
+        assert!(manifest.accepts_token_revision(Some(1)));
+        assert!(!manifest.accepts_token_revision(Some(0)));
         assert!(!manifest.accepts_token_revision(Some(8)));
         assert!(!manifest.accepts_token_revision(None));
     }
 
     #[test]
-    fn an_accept_set_admits_older_additive_revisions_and_never_newer_ones() {
+    fn an_accept_set_admits_older_revisions_and_never_newer_ones() {
         let bundle = with_manifest(Some(Value::from(4))).expect("valid bundle");
         let manifest = &bundle.manifests[0];
-        for revision in 4..=7 {
+        for revision in 1..=7 {
             assert!(
                 manifest.accepts_token_revision(Some(revision)),
                 "{revision}"
             );
         }
-        assert!(!manifest.accepts_token_revision(Some(3)));
         assert!(!manifest.accepts_token_revision(Some(8)));
     }
 

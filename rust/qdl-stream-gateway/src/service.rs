@@ -16,6 +16,7 @@
 use crate::auth::{authenticate, Access, AccessError, Principal, RequestQuota};
 use crate::auth::{HISTORY_READ, SNAPSHOT_READ, STATUS_READ};
 use crate::authority::{reauthorize, Authority, AuthorityHandle, Entitlement};
+use crate::bundle::Manifest;
 use crate::generated::query_v2 as query;
 use crate::generated::query_v2::market_data_stream_service_server::MarketDataStreamService;
 use crate::hub::{live_weight, Hub, LagHistogram, LiveRecord, NearRegistration};
@@ -351,7 +352,52 @@ fn subscribe_control(
     }
 }
 
+/// DL v2.4.0 S3: the unit `authenticate` charged is returned when the RPC is
+/// refused after authentication (entitlement, cursor, capacity, read view),
+/// the same rule as the Python Query service. `commit` keeps it.
+struct QuotaGuard {
+    quota: Arc<dyn RequestQuota>,
+    manifest: Option<Manifest>,
+}
+
+impl QuotaGuard {
+    fn new(quota: Arc<dyn RequestQuota>, manifest: &Manifest) -> Self {
+        // The refund only needs the identity and its quota shape.
+        let manifest = Manifest {
+            consumer_id: manifest.consumer_id.clone(),
+            subject: manifest.subject.clone(),
+            environment: manifest.environment.clone(),
+            manifest_revision: manifest.manifest_revision,
+            min_token_revision: manifest.min_token_revision,
+            allowed_purposes: Vec::new(),
+            allowed_permissions: Vec::new(),
+            quotas: manifest.quotas.clone(),
+            requirements: Vec::new(),
+        };
+        Self {
+            quota,
+            manifest: Some(manifest),
+        }
+    }
+
+    fn commit(mut self) {
+        self.manifest = None;
+    }
+}
+
+impl Drop for QuotaGuard {
+    fn drop(&mut self) {
+        if let Some(manifest) = self.manifest.take() {
+            self.quota.refund(&manifest);
+        }
+    }
+}
+
 impl GatewayState {
+    fn quota_guard(&self, access: &Access) -> QuotaGuard {
+        QuotaGuard::new(self.quota.clone(), &access.manifest)
+    }
+
     /// `DataPlaneIdentityService.authenticate` against the current authority
     /// (JWT + manifest + shared quota), off the async runtime.
     async fn access<T>(
@@ -525,6 +571,7 @@ impl MarketDataStreamService for Gateway {
     ) -> Result<Response<Self::SubscribeStream>, Status> {
         let state = self.state.clone();
         let (access, authority, generation) = state.access(&request).await?;
+        let quota_guard = state.quota_guard(&access);
         let body = request.into_inner();
         let requirement = body
             .requirement
@@ -721,6 +768,7 @@ impl MarketDataStreamService for Gateway {
             mark_on_change,
         };
         tokio::spawn(task.run(barrier, ring));
+        quota_guard.commit();
         let stream = subscription_handoff(receiver, terminal);
         #[cfg(feature = "isolated-replay-clock")]
         if let Some(hub) = clock_guard {
@@ -735,6 +783,7 @@ impl MarketDataStreamService for Gateway {
     ) -> Result<Response<Self::ReplayStream>, Status> {
         let state = self.state.clone();
         let (access, authority, generation) = state.access(&request).await?;
+        let quota_guard = state.quota_guard(&access);
         let body = request.into_inner();
         state.metrics.replay_rpcs.fetch_add(1, Ordering::Relaxed);
         access
@@ -896,6 +945,7 @@ impl MarketDataStreamService for Gateway {
                 fail(status).await;
             }
         });
+        quota_guard.commit();
         Ok(Response::new(Box::pin(
             ReceiverStream::new(receiver).map(|(item, _charge)| item),
         )))
@@ -907,6 +957,7 @@ impl MarketDataStreamService for Gateway {
     ) -> Result<Response<query::GetSnapshotResponse>, Status> {
         let state = self.state.clone();
         let (access, _authority, _generation) = state.access(&request).await?;
+        let quota_guard = state.quota_guard(&access);
         let body = request.into_inner();
         let requirement = body
             .requirement
@@ -929,12 +980,16 @@ impl MarketDataStreamService for Gateway {
             .and_then(|()| require_requirement(&access.manifest, &requirement))
             .map_err(|error| state.refuse(access_status(error, "INVALID_ARGUMENT")))?;
         let proto = body.requirement.as_ref().expect("validated above");
-        state
+        let result = state
             .read_view
             .snapshot(&requirement, proto, &body.consumer_id)
             .await
             .map(Response::new)
-            .map_err(|error| error.to_status())
+            .map_err(|error| error.to_status());
+        if result.is_ok() {
+            quota_guard.commit();
+        }
+        result
     }
 
     async fn get_feed_status(
@@ -943,6 +998,7 @@ impl MarketDataStreamService for Gateway {
     ) -> Result<Response<query::GetFeedStatusResponse>, Status> {
         let state = self.state.clone();
         let (access, _authority, _generation) = state.access(&request).await?;
+        let quota_guard = state.quota_guard(&access);
         let body = request.into_inner();
         let requirement = body
             .requirement
@@ -960,12 +1016,16 @@ impl MarketDataStreamService for Gateway {
             .and_then(|()| require_requirement(&access.manifest, &requirement))
             .map_err(|error| state.refuse(access_status(error, "INVALID_ARGUMENT")))?;
         let proto = body.requirement.as_ref().expect("validated above");
-        state
+        let result = state
             .read_view
             .status(&requirement, proto, &body.consumer_id)
             .await
             .map(Response::new)
-            .map_err(|error| error.to_status())
+            .map_err(|error| error.to_status());
+        if result.is_ok() {
+            quota_guard.commit();
+        }
+        result
     }
 }
 
@@ -2707,5 +2767,65 @@ mod test_clock_transport {
         assert_eq!(status.code(), tonic::Code::Unavailable);
         assert_eq!(status.message(), "original terminal");
         assert!(stream.next().await.is_none());
+    }
+}
+
+#[cfg(test)]
+mod quota_guard_tests {
+    use super::*;
+    use crate::bundle::Quotas;
+    use std::sync::atomic::AtomicUsize;
+
+    #[derive(Default)]
+    struct Counting {
+        refunds: AtomicUsize,
+    }
+
+    impl RequestQuota for Counting {
+        fn consume(&self, _manifest: &Manifest) -> Result<(), AccessError> {
+            Ok(())
+        }
+
+        fn refund(&self, _manifest: &Manifest) {
+            self.refunds.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn manifest() -> Manifest {
+        Manifest {
+            consumer_id: "alpha".into(),
+            subject: "s".into(),
+            environment: "paper".into(),
+            manifest_revision: 1,
+            min_token_revision: 1,
+            allowed_purposes: vec!["INTERNAL_ALPHA".into()],
+            allowed_permissions: vec!["stream:read".into()],
+            quotas: Quotas {
+                requests_per_minute: 60,
+                max_batch_items: 1,
+                max_warmup_rows: 1,
+                max_streams: 1,
+                max_buffer_events: 1,
+            },
+            requirements: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_refused_rpc_returns_its_unit_and_an_admitted_one_keeps_it() {
+        let counting = Arc::new(Counting::default());
+        let quota: Arc<dyn RequestQuota> = counting.clone();
+        drop(QuotaGuard::new(quota.clone(), &manifest()));
+        assert_eq!(
+            counting.refunds.load(Ordering::SeqCst),
+            1,
+            "dropped on a refusal path"
+        );
+        QuotaGuard::new(quota, &manifest()).commit();
+        assert_eq!(
+            counting.refunds.load(Ordering::SeqCst),
+            1,
+            "committed: kept"
+        );
     }
 }

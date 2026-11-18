@@ -1611,7 +1611,7 @@ async fn t03_key_rotation_keeps_streams_and_revocation_closes_them() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn t03_an_additive_manifest_revision_keeps_older_tokens_and_a_reset_floor_ends_them() {
+async fn t03_a_manifest_revision_bump_keeps_older_tokens_streaming() {
     // DL v2.3.0 accept-set: the stream was opened with a revision-3 token.
     let harness = Harness::new(Options::default());
     let cursor = harness.log.append(0, TRADE_KEY, &trade(1));
@@ -1629,18 +1629,16 @@ async fn t03_an_additive_manifest_revision_keeps_older_tokens_and_a_reset_floor_
     });
     let next = harness.log.append(0, TRADE_KEY, &trade(2));
     assert_eq!(stream.collect(1).await.1, vec![next as u64]);
-    // Revision 5 is not additive (the renderer resets the floor to 5): it ends typed.
+    // DL v2.4.0 S2: the token revision is advisory, so a revision 5 that
+    // declares floor 5 still keeps the revision-3 stream (entitlement is the
+    // active manifest's, unchanged here).
     authority.replace(Authority {
         jwt: jwt_config(&[("k1", &harness.keys)]),
         bundle: bundle(5, &ALL_PERMISSIONS, &ALL_FEEDS),
         expectation: expectation(),
     });
-    let (code, message) = stream.error().await;
-    assert_eq!(code, Code::Unauthenticated);
-    assert!(
-        message.contains("active consumer manifest revision"),
-        "{message}"
-    );
+    let later = harness.log.append(0, TRADE_KEY, &trade(3));
+    assert_eq!(stream.collect(1).await.1, vec![later as u64]);
 }
 
 // ------------------------------------------------------------------ K2-T04
@@ -2266,20 +2264,22 @@ async fn t07_snapshot_and_status_run_the_python_checks_then_the_read_view() {
         "{}",
         status.message()
     );
-    // A warmup needs history:read; the token's role must grant it.
+    // DL v2.4.0 S8: a warmup needs the manifest's history:read; the token's
+    // role claim is ignored, so a reader-only role is not refused for it.
     let mut warm = requirement("BAR", Some("1m"));
     warm.warmup_limit = 10;
-    let without_history = harness.request(
+    let without_history_role = harness.request(
         snapshot_request(warm.clone()),
         &bearer(&harness.keys, "k1", &["market_data_reader"], 3),
     );
-    let status = harness
-        .gateway
-        .get_snapshot(without_history)
-        .await
-        .err()
-        .unwrap();
-    assert_eq!(status.code(), Code::PermissionDenied);
+    if let Err(status) = harness.gateway.get_snapshot(without_history_role).await {
+        assert_ne!(
+            status.code(),
+            Code::PermissionDenied,
+            "{}",
+            status.message()
+        );
+    }
     // Over the manifest warmup quota.
     let mut huge = requirement("BAR", Some("1m"));
     huge.warmup_limit = 6_000;
@@ -2412,22 +2412,33 @@ async fn t07_every_rpc_refuses_missing_or_mismatched_identity() {
         .err()
         .unwrap();
     assert_eq!(refused.code(), Code::PermissionDenied);
-    // A token without the stream role cannot Subscribe or Replay.
+    // DL v2.4.0 S8: the stream role claim is ignored; the manifest grants
+    // stream:read, so a reader-only role is not refused PermissionDenied.
     let reader_only = bearer(&harness.keys, "k1", &["market_data_reader"], 3);
-    let refused = harness
+    if let Err(status) = harness
         .gateway
         .subscribe(harness.request(subscribe, &reader_only))
         .await
-        .err()
-        .unwrap();
-    assert_eq!(refused.code(), Code::PermissionDenied);
-    let refused = harness
+    {
+        assert_ne!(
+            status.code(),
+            Code::PermissionDenied,
+            "{}",
+            status.message()
+        );
+    }
+    if let Err(status) = harness
         .gateway
         .replay(harness.request(replay, &reader_only))
         .await
-        .err()
-        .unwrap();
-    assert_eq!(refused.code(), Code::PermissionDenied);
+    {
+        assert_ne!(
+            status.code(),
+            Code::PermissionDenied,
+            "{}",
+            status.message()
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -8,7 +8,7 @@
 
 use prost::Message as _;
 use qdl_contracts::cursor_v3::{CursorV3Codec, CursorV3Expectation};
-use qdl_stream_gateway::auth::{JwtConfig, RedisMinuteQuota};
+use qdl_stream_gateway::auth::{JwtConfig, LayeredQuota, LocalTokenBucketQuota, RedisMinuteQuota};
 use qdl_stream_gateway::authority::{Authority, AuthorityHandle};
 use qdl_stream_gateway::bundle::Bundle;
 use qdl_stream_gateway::generated::marketdata_v2::EventEnvelope;
@@ -248,10 +248,36 @@ fn limits(queue_total: u64) -> Result<StreamLimits, String> {
 
 async fn serve() -> Result<(), String> {
     let authority = AuthorityHandle::new(load_authority()?);
-    let quota = RedisMinuteQuota::new(
-        &env("QDL_KN_QUOTA_REDIS_URL")?,
-        &env("QDL_KN_QUOTA_PREFIX")?,
-    )?;
+    // DL v2.4.0 S7: a per-replica in-memory token bucket is the coarse guard
+    // (share of the manifest minute quota, default 1/2 for two replicas); the
+    // shared Redis counter is optional (QDL_KN_SHARED_QUOTA=redis) and its
+    // outage never refuses a stream open.
+    let shared = match std::env::var("QDL_KN_SHARED_QUOTA")
+        .unwrap_or_else(|_| "off".into())
+        .as_str()
+    {
+        "off" => None,
+        "redis" => Some(RedisMinuteQuota::new(
+            &env("QDL_KN_QUOTA_REDIS_URL")?,
+            &env("QDL_KN_QUOTA_PREFIX")?,
+        )?),
+        other => {
+            return Err(format!(
+                "QDL_KN_SHARED_QUOTA must be off or redis, not {other}"
+            ))
+        }
+    };
+    let quota = LayeredQuota {
+        local: LocalTokenBucketQuota::with_full_share(
+            parsed("QDL_KN_QUOTA_REPLICA_SHARE", "0.5")?,
+            parsed("QDL_KN_QUOTA_BURST_SECONDS", "10")?,
+            env_or("QDL_KN_QUOTA_FULL_SHARE_PREFIXES", "trading-system.")
+                .split(',')
+                .map(|item| item.trim().to_owned())
+                .collect(),
+        )?,
+        shared,
+    };
     let readers: usize = parsed("QDL_KN_REPLAY_READERS", "4")?;
     let queue_total: u64 = parsed("QDL_KN_QUEUE_BYTES_TOTAL", "33554432")?;
     let limits = limits(queue_total)?;
