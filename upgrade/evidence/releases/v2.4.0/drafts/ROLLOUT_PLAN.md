@@ -93,3 +93,49 @@ OWNER-APPROVED 2026-11-18). A FAIL is recorded, never rescored.
 ## 5. Section 6 follow-up: cores and projectors
 
 As the v2.3.2 plan section 6, onto `qdl-v2-rust@sha256:aef35edf6cfa63f7ea9d8de69bce0a8e4354cb1008250be885344d6a534dfe5e`, after the scans PASS. Separate window.
+
+## 6. Step 9 (A-FUND): TS FUNDING_RATE entitlement, declaration r9 (DL first, TS JWT last)
+
+Package: `upgrade/evidence/releases/v2.4.0/declaration-ts-funding-r9/` (SHA256SUMS; gate 15/15 PASS). TS manifest
+r14 -> r15 (+102 ALPHA-grade FUNDING_RATE rows, rpm 31,000 -> 31,500), release routing r33 -> r34. No image change:
+the TS manifest is realm-mounted (`QDL_STABLE_CONSUMER_MANIFESTS`, `QDL_PAPER_REALM_MANIFEST`) and only offline tools
+changed. Run after the Query/Stream steps above are green (or fold 9.4 into those recreates).
+
+**9.1 Realm install.** Copy the realm dir as a new versioned dir (same owner and modes) and add
+`trading-system.paper.stable-r15.yaml` (sha256 `6a191147…`, 0444). Set `QDL_PAPER_REALM_MANIFEST=
+trading-system.paper.stable-r15.yaml` in the new env file. Gate: `diff -r` against the live realm dir shows only the
+new file (and the bundle of 9.2); the r14 file stays in place.
+
+**9.2 Realm and kn bundle successor (live base).** Re-render the bundles with `scripts/dl_declaration.py render` on
+the r9 declaration with `base.runtime.bundles` pointing at the LIVE realm and kn bundles (the offline package has no
+bundles: they need the live base). Gates: the base bundle hashes verify; the only difference is the
+`trading-system.paper.stable` manifest entry (revision 15, `min_token_revision` 1, the 102 FUNDING_RATE requirement
+rows); catalogue entries byte-equal (incl. `delivery_semantics`); the kn bundle changes only if its BAR rows change
+(they do not: expect it unchanged).
+
+**9.3 Routing r34.** Install `repo/config/v2/stable-v2-release-routing.yaml` r34 where the Query replicas read the
+release routing. Gate: it loads; the TS consumer entry is revision 15 with manifest sha256 `47ea4a9e…`; the only
+other change is the 102 FUNDING_RATE products (V2_PRIMARY / BLOCKED).
+
+**9.4 Recreate `query_kn_1`, `query_kn_2`, then `stream_kn_1`, `stream_kn_2`** (one at a time, same images, new
+realm dir / env). Gates per role: manifests loaded with TS r15; a TS token minted for r14 is still accepted (S2:
+1..15); TS writer 246/246 READY, no `UNAUTHENTICATED` / `PERMISSION_DENIED`; one read-only probe (TEST consumer or
+the TS identity, Grade.ALPHA FUNDING_RATE reference_batch, bounded window, limit 400) returns OK for one OKX and one
+Binance perpetual; Stream: bundle hash = the 9.2 successor, subscribers back.
+
+**9.5 TS JWT to r15 (TS window, last).** Only after 9.4 is green on every replica: set
+`DATA_LAYER_V2_JWT_MANIFEST_REVISION=15` on the TS writer and A-FUND. Gate: 246/246 READY, FUNDING_RATE reads OK,
+no 401 for revision.
+
+**Rollback (reverse order, each step alone):**
+
+| Step | Rollback |
+|---|---|
+| 9.5 | `DATA_LAYER_V2_JWT_MANIFEST_REVISION=14` on the TS writer (r14 tokens are valid under r15 and r14) |
+| 9.4 | recreate the same roles with the previous realm dir / env (`QDL_PAPER_REALM_MANIFEST` r14, previous bundles) |
+| 9.3 | routing r33 |
+| 9.2 | the previous realm / kn bundle files (byte copies kept in the previous realm dir) |
+| 9.1 | point back to the previous realm dir; the r15 file is inert while unreferenced |
+
+Never move the TS JWT to r15 before every Query and Stream replica serves r15: a r15 token against a r14 manifest is
+refused (S2 keeps the upper bound).
