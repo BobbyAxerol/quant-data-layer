@@ -78868,3 +78868,9 @@ Update, micro-bench (`scratchpad/v240/bench/bench_v240.py`, outside the repo; `q
 Not a runtime or capacity certification; S9 `shared100` is the acceptance run (prepared, not run).
 Cleanup: no v240 container is left. The scratch cargo target copy (`scratchpad/v240/rust-target`, 4.5 GB, files owned
 by the container's root user) could not be removed from the host account; its removal is left to the operator.
+
+Update, clippy clean (owner of release/v2.4.0 now): the two pre-existing v2.3.2 `-D warnings` errors are fixed with no
+behaviour change: `session_liveness.rs` `type_complexity` (alias `ParsedDirectory`) and the e2e example's
+`format_collect` in `hex()` (fold with `write!`). `qdl-rust-builder:1.82.0-v2.3.2`, host uid 1001, `--cpus 1`:
+`cargo fmt --check` 0, `cargo clippy -p qdl-contracts -p qdl-stream-gateway --all-targets -D warnings` 0, `cargo test`
+187 passed / 0 failed / 5 ignored.

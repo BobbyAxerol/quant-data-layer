@@ -172,13 +172,16 @@ fn wall_clock_ns() -> i64 {
         .unwrap_or_default()
 }
 
+/// Parsed session files of one directory: file name -> (file key, record).
+type ParsedDirectory = HashMap<String, (FileKey, Option<SessionRecord>)>;
+
 /// Bounded, session-scoped liveness lookups under one root directory.
 pub struct SessionLivenessReader {
     root: PathBuf,
     clock: Clock,
     /// Parsed contents by directory and file name, keyed by the file's
     /// `(inode, mtime_ns, size)`; only the files listed by the last scan.
-    parsed: Mutex<HashMap<String, HashMap<String, (FileKey, Option<SessionRecord>)>>>,
+    parsed: Mutex<HashMap<String, ParsedDirectory>>,
 }
 
 impl std::fmt::Debug for SessionLivenessReader {
