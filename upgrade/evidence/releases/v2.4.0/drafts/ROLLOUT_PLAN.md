@@ -9,7 +9,7 @@ stage C r8 completion, and S1-S9 (journal entry "DL v2.4.0 S1-S9"). It supersede
 images. Section and gate names below refer to that plan.
 
 **Images (candidates; digests from the v2.4.0 R0 build receipt, filled by the build step):**
-- rust `qdl-v2-rust:2.4.0-c95476c` = `qdl-v2-rust@sha256:6970231dfe984c5b01ee62758b9e26b3b1a9a1b810668417b8fc65ce04937a75` (stream_kn; cores/projectors only in section 6);
+- rust `qdl-v2-rust:2.4.0-3d4d84b` = `qdl-v2-rust@sha256:aef35edf6cfa63f7ea9d8de69bce0a8e4354cb1008250be885344d6a534dfe5e` (stream_kn; cores/projectors only in section 6);
 - python `qdl-v2-python:2.4.0-c95476c` = `qdl-v2-python@sha256:75717b3c44364fe708769083b6b8268b913bb6ed270b20b162e1c0eaeab7f2d9` (query_kn x2, binance_bar_edge).
 - Security scans (cargo-deny ignore = [], trivy, pip-audit) are OPEN and must PASS on these two ids before the window.
 
@@ -33,7 +33,7 @@ each replica. No JWT manifest revision change (S2: revision is advisory).
 | Step | Role | From (live) | To |
 |---|---|---|---|
 | P2 | realm dir | `v2.3.1-stage-c-realm/` (bundle `15bc88ff…`) | `v2.3.2-realm/` = byte copy + successor `76672095…` (only `delivery_semantics` on 102 QUOTE; manifests byte-equal) |
-| 3a, 3b | `stream_kn_1`, then `stream_kn_2` | rust `58bdd282`, stage-b r7 realm | rust v2.4.0 `qdl-v2-rust@sha256:6970231dfe984c5b01ee62758b9e26b3b1a9a1b810668417b8fc65ce04937a75`, realm `v2.3.2-realm/`, RO `/session-liveness` + `QDL_KN_SESSION_LIVENESS_DIR`; `QDL_KN_SHARED_QUOTA` unset (= off) |
+| 3a, 3b | `stream_kn_1`, then `stream_kn_2` | rust `58bdd282`, stage-b r7 realm | rust v2.4.0 `qdl-v2-rust@sha256:aef35edf6cfa63f7ea9d8de69bce0a8e4354cb1008250be885344d6a534dfe5e`, realm `v2.3.2-realm/`, RO `/session-liveness` + `QDL_KN_SESSION_LIVENESS_DIR`; `QDL_KN_SHARED_QUOTA` unset (= off) |
 | 4a, 4b | `query_kn_1`, then `query_kn_2` | python `26c3b051`, r7 config | python v2.4.0 `qdl-v2-python@sha256:75717b3c44364fe708769083b6b8268b913bb6ed270b20b162e1c0eaeab7f2d9`, r8 config per the stage C runsheet; new env defaults only (`QDL_V2_SHARED_QUOTA` off, `QDL_V2_SHARED_VIEW_TTL_MS` 10, `QDL_V2_QUOTA_REPLICA_SHARE` 0.5) |
 | 5a | `ingestor_binance_usdm` | rust `58bdd282`, config rev 19, 1000 ms | same image, config rev 24 (r8 bar lane 96) + 250 ms |
 | 5b | `ingestor_okx_swap` | rust `58bdd282`, 1000 ms | same image, 250 ms only |
@@ -52,7 +52,7 @@ secrets; Paper, PM and portal roles.
 session file cadence, stage C T-30 checks. Also record per Query replica: requests/min, 429 count, Redis quota EVAL
 rate (`INFO commandstats` read only on stable_redis) as the S7 "before".
 
-**Steps 3a/3b `stream_kn_1` then `stream_kn_2`:** command as the v2.3.2 plan with `QDL_IMAGE_STREAM=qdl-v2-rust@sha256:6970231dfe984c5b01ee62758b9e26b3b1a9a1b810668417b8fc65ce04937a75`.
+**Steps 3a/3b `stream_kn_1` then `stream_kn_2`:** command as the v2.3.2 plan with `QDL_IMAGE_STREAM=qdl-v2-rust@sha256:aef35edf6cfa63f7ea9d8de69bce0a8e4354cb1008250be885344d6a534dfe5e`.
 Gates: v2.3.2 plan 3a/3b gates (bundle `76672095…`, decode 0, subscribers back, `/session-liveness` RO, writer 246/246
 within 120 s with no RESTART_EXHAUSTED, a Stream-written ON_CHANGE QUOTE carries DELIVERY_ON_CHANGE) plus v2.4.0:
 `stream.refused` not above baseline; no `UNAUTHENTICATED` / `PERMISSION_DENIED` in the writer's stream codes (role
@@ -92,4 +92,4 @@ OWNER-APPROVED 2026-11-18). A FAIL is recorded, never rescored.
 
 ## 5. Section 6 follow-up: cores and projectors
 
-As the v2.3.2 plan section 6, onto `qdl-v2-rust@sha256:6970231dfe984c5b01ee62758b9e26b3b1a9a1b810668417b8fc65ce04937a75`, after the scans PASS. Separate window.
+As the v2.3.2 plan section 6, onto `qdl-v2-rust@sha256:aef35edf6cfa63f7ea9d8de69bce0a8e4354cb1008250be885344d6a534dfe5e`, after the scans PASS. Separate window.

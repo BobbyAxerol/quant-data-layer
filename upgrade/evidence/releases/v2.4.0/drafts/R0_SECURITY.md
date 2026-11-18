@@ -1,4 +1,4 @@
-# DL v2.4.0 R0 security gates (run once, 2026-11-18 13:43-13:47Z): **BLOCKED on the Rust image base**
+# DL v2.4.0 R0 security gates (2026-11-18): **PASS** on the release ids (rust re-scanned after the base fix)
 
 Images (receipt `~/.local/state/qdl-v2/build-v2.4.0-c95476c/receipt.json`):
 - rust `qdl-v2-rust:2.4.0-c95476c` `sha256:6970231dfe984c5b01ee62758b9e26b3b1a9a1b810668417b8fc65ce04937a75`;
@@ -40,3 +40,15 @@ re-run trivy-rust once. No waiver is proposed for fixable CRITICAL/HIGH.
   (`Cargo.toml` `=9.3.1`, `default-features = false`); RustSec/cargo-deny reports no advisory for it. A 10.x
   upgrade is a code change for a later release.
 - pip 25.0.1 inside the python image (MEDIUM, fixable): the image's own installer, not used at runtime.
+
+## Re-scan after the approved base fix (2026-11-18 14:07:44-14:07:54Z): **PASS**
+
+- Image: `qdl-v2-rust:2.4.0-3d4d84b` `sha256:aef35edf6cfa63f7ea9d8de69bce0a8e4354cb1008250be885344d6a534dfe5e`
+  (`R0_BUILD.md`: same binaries as `6970231d`, runtime base `b33ec0cb`).
+- trivy 0.70.0 once, same DB (2026-11-18T07:15Z) and `.trivyignore`, `--cpus 1 --memory 3g`, gate load 19.68.
+- Result: **0 fixable CRITICAL/HIGH** (all 13 blocking findings above are fixed). Remaining, all without a Debian fix:
+  CRITICAL 1, HIGH 37, MEDIUM 108, LOW 87. No fixable MEDIUM. No waiver.
+- cargo-deny and pip-audit results above are unchanged (the Rust source and the python image are the same).
+
+Release ids: rust `aef35edf`, python `75717b3c`. Follow-up for the next release (MEDIUM, no waiver needed):
+jsonwebtoken 10.x, the python image's pip 25.0.1.

@@ -78913,3 +78913,10 @@ Rust image rebuilt through the recipe: `qdl-v2-rust:2.4.0-3d4d84b`
 (12 binaries + admission policy) byte-identical to the c95476c build, so only the base layer changed. Python image
 unchanged (`75717b3c`). OPEN at this checkpoint: the trivy re-scan of `aef35edf`, then the draft digest updates and
 removal of the superseded `6970231d` (by digest, if unreferenced).
+
+Update, R0 complete: trivy re-scan of `aef35edf` (14:07Z, once, gate load 19.68): 0 fixable CRITICAL/HIGH (unfixed:
+CRITICAL 1, HIGH 37, MEDIUM 108, LOW 87; no fixable MEDIUM). R0 security PASS on the release ids rust `aef35edf`
+and python `75717b3c` (cargo-deny and pip-audit unchanged PASS). Drafts updated (`R0_SECURITY.md`, `R0_BUILD.md`,
+rust digest in `ROLLOUT_PLAN.md`, `CERTIFICATE_DRAFT.md`, `PR_BODY.md`). Superseded `qdl-v2-rust:2.4.0-c95476c`
+`6970231d` removed by digest (0 container references); base `c46ae0fa` kept (parent of 2.3.1-funding and 2.3.2 rust
+images). Status: release package ready for the PR (full CI) and the owner-approved window; not pushed.

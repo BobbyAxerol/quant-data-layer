@@ -1,4 +1,4 @@
-# DL v2.4.0 R0 build record (images built and post-checked; security scans NOT run)
+# DL v2.4.0 R0 build record (images built and post-checked; security gates PASS, see R0_SECURITY.md)
 
 Built once on 2026-11-18 13:19:20-13:40:02Z with `scripts/build_qdl_release_images.py --rev c95476c --build
 --lock-owner dl-v240-r0-build` (recipe commit c95476c, the d37e88c recipe with the v2.4.0 constants and the AGENTS 34b
@@ -33,3 +33,18 @@ correctness class). Receipt (outside Git): `~/.local/state/qdl-v2/build-v2.4.0-c
 ## OPEN (scheduled by the coordinator, once)
 
 cargo-deny (ignore = []), trivy, pip-audit on the two image ids above. No gate may be marked passed before they run.
+
+## Rust image rebuilt on an upgraded runtime base (2026-11-18 ~13:55-14:03Z, coordinator-approved R0 fix)
+
+The first rust image `6970231d` failed trivy on fixable Debian base packages (`R0_SECURITY.md`). Fix:
+- runtime base rebuilt from the pinned `RUST_BASE_RECIPE` (runtime stage of `Dockerfile.qdl-rust-runtime` +
+  `apt-get upgrade`, network for apt only; recipe sha256 `86e535de682cfb511f0b24a5f771bac3444cfcf62e279d671f8f4c7b40ca9e0f`):
+  `qdl-v2-rust-base:bookworm-v240-20261118` = `sha256:b33ec0cb161e80f3300684f96fa956eedabc49325e401a170fb25c02d4b2eef7`
+  (debian 12.15, perl-base 5.36.0-7+deb12u4, apt/libapt-pkg 2.6.2, libpcre2-8-0 10.42-1+deb12u2); pinned in `3d4d84b`.
+- **`qdl-v2-rust:2.4.0-3d4d84b` = `sha256:aef35edf6cfa63f7ea9d8de69bce0a8e4354cb1008250be885344d6a534dfe5e`**, built
+  with `--rev 3d4d84b --component rust`, receipt `~/.local/state/qdl-v2/build-v2.4.0-3d4d84b/receipt.json` PASS;
+  `qdl.build.method=cargo-cache-2cb66ad6+runtime-overlay-b33ec0cb`. The build context (12 binaries + admission
+  policy) is byte-identical to the c95476c build (13/13 sha256 equal): only the base layer changed. Post-checks as
+  above (image = context, runtime probe, no TEST markers, 12/12 DIFFERENT vs rc2 as expected).
+- The superseded `6970231d` was removed by digest (no container referenced it). The old base `c46ae0fa` is kept: it
+  is the parent of the 2.3.1-funding and 2.3.2 rust images.

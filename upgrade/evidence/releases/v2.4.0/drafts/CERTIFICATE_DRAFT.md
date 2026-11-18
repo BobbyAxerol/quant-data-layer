@@ -26,18 +26,22 @@ shared100 run have receipts. Release head and images: see section 3.
 | Python impacted set | `qdl-v2-python:2.3.1-aa75218`, `--cpus 1 --network none`, tree read-only | 1470 run; failures fixed; reruns 191 (1 fixed), 262 OK, 43 OK |
 | Rust qdl-contracts + qdl-stream-gateway | `qdl-rust-builder:1.82.0-v2.3.2`, offline, uid 1001 | fmt 0, clippy -D warnings 0, test 187 / 0 / 5 ignored |
 | Full CI | PR to dev (see `PR_BODY.md`) | OPEN |
-| R0 security (cargo-deny, trivy, pip-audit) | on the two R0 image ids | OPEN (scheduled by the coordinator) |
+| R0 security (cargo-deny, trivy, pip-audit) | on the two R0 image ids | PASS (`R0_SECURITY.md`; rust image rebuilt on an upgraded base first) |
 
 ## 3. Release candidate
 
-- Source: `release/v2.4.0` head `c95476c` (recipe commit 56eb6b3).
-- rust `qdl-v2-rust:2.4.0-c95476c` `qdl-v2-rust@sha256:6970231dfe984c5b01ee62758b9e26b3b1a9a1b810668417b8fc65ce04937a75`; python `qdl-v2-python:2.4.0-c95476c` `qdl-v2-python@sha256:75717b3c44364fe708769083b6b8268b913bb6ed270b20b162e1c0eaeab7f2d9`; receipt
-  `~/.local/state/qdl-v2/build-v2.4.0-c95476c/receipt.json`.
+- Source: python image from `c95476c`; rust image from `3d4d84b` (same Rust source and build context, byte-identical
+  binaries; only the runtime base changed to `b33ec0cb`, see `R0_BUILD.md`).
+- rust `qdl-v2-rust:2.4.0-3d4d84b` `qdl-v2-rust@sha256:aef35edf6cfa63f7ea9d8de69bce0a8e4354cb1008250be885344d6a534dfe5e`
+  (receipt `~/.local/state/qdl-v2/build-v2.4.0-3d4d84b/receipt.json`); python `qdl-v2-python:2.4.0-c95476c`
+  `qdl-v2-python@sha256:75717b3c44364fe708769083b6b8268b913bb6ed270b20b162e1c0eaeab7f2d9` (receipt
+  `~/.local/state/qdl-v2/build-v2.4.0-c95476c/receipt.json`).
+- R0 security: PASS on both ids (`R0_SECURITY.md`).
 
 ## 4. Gates to issue the certificate
 
 1. Full CI green on the release tree (CI6), or an inherited run on the identical tree.
-2. R0 security gates PASS on the two image ids.
+2. R0 security gates PASS on the two image ids (done 2026-11-18).
 3. Rollout steps 1-7 with receipts, every gate PASS (or rolled back and re-run).
 4. shared100 (A6) scored PASS: restart storm, noisy neighbour, G14 alpha delta <= 0.5 vCPU (owner-approved).
 
