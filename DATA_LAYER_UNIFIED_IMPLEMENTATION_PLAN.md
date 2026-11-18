@@ -78874,3 +78874,10 @@ behaviour change: `session_liveness.rs` `type_complexity` (alias `ParsedDirector
 `format_collect` in `hex()` (fold with `write!`). `qdl-rust-builder:1.82.0-v2.3.2`, host uid 1001, `--cpus 1`:
 `cargo fmt --check` 0, `cargo clippy -p qdl-contracts -p qdl-stream-gateway --all-targets -D warnings` 0, `cargo test`
 187 passed / 0 failed / 5 ignored.
+
+Update, `tests.test_p184_g12_isolated_fault` correction: it does not hang. Run alone, `qdl-v2-python:2.3.1-aa75218`,
+`--cpus 1 --network none`: as root PID 1 (the shape of the full runs) Ran 203 OK in 98.8 s; as host uid 1001 Ran 203
+OK in 98.1 s. The earlier attribution was wrong: the faulthandler dump that named it was the forked child's own
+deliberate SIGSEGV (`test_native_crash_is_a_typed_sample_error...`), and the verbose run that excluded it stalled at
+`test_phase10_universal_warmup.QueuedLocalBatchLaneTests.test_queue_stays_bounded_per_identity...`, an old-semantics
+test fixed in 67e4199. No ptrace, capability or user change is needed; CI's shards (image user, no CPU cap) run it.
