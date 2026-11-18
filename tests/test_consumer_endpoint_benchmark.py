@@ -67,6 +67,27 @@ class ConsumerEndpointBenchmarkTests(unittest.TestCase):
         bars = [p for p in self.scope.products if p.feed.value == "BAR"]
         self.assertEqual(len([1 for op, _ in cases if op == "history"]), len(bars))
 
+    def test_snapshot_batch_carries_only_warmup_free_quote_probes(self):
+        # R2 smoke 2026-11-17: BAR items carry warmup_limit and the route refuses them (INVALID_ARGUMENT).
+        cases = bench.cases_for(self.scope.products, 8)
+        batched = [p for op, ps in cases if op == "snapshot_batch" for p in ps]
+        quotes = [p for p in self.scope.products if p.feed.value == "QUOTE" and p.delivery.value != "ON_DEMAND"]
+        self.assertTrue(quotes)
+        self.assertEqual(sorted(p.identity for p in batched), sorted(p.identity for p in quotes))
+        self.assertTrue(all(p.feed.value == "QUOTE" and not p.requirement.warmup_limit for p in batched))
+
+    def test_missing_client_contract_is_a_client_error_not_a_server_status(self):
+        async def call():
+            return {"schema": "x"}
+
+        def validate(_payload):
+            raise ImportError("cannot import name 'SnapshotBatchResponse'")
+
+        sample = asyncio.run(bench.measure(call, validate, 5))
+        self.assertEqual(sample["status"], "FAIL")
+        self.assertEqual(sample["error_code"], "CLIENT_IMAGE_CONTRACT_MISSING")
+        self.assertIsNotNone(sample["response_ms"])
+
     def test_profile_rejects_inline_secret_http_invalid_budget(self):
         self.assertEqual(bench.validate_profile(self.profile)["limits"]["rounds"], 3)
         for update in ({"secret": "not-allowed"}, {"queries": ["http://query"]},
