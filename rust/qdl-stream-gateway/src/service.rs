@@ -586,6 +586,10 @@ impl MarketDataStreamService for Gateway {
                     "CURSOR_INVALID:cursor requirement has no matching stable binding",
                 ))
             })?;
+        // DL v2.3.2: the Query rule (`delivery_semantics == "ON_CHANGE"`, QUOTE
+        // only), from the bundle the catalogue compiled; opt-in per stream.
+        let mark_on_change =
+            body.delivery_on_change_flag && binding.delivery_on_change && delivery.feed == "QUOTE";
         let claims = state
             .codec
             .verify(
@@ -714,6 +718,7 @@ impl MarketDataStreamService for Gateway {
             batch_limit,
             replay_budget_status_v2: body.replay_budget_status_v2,
             alive,
+            mark_on_change,
         };
         tokio::spawn(task.run(barrier, ring));
         let stream = subscription_handoff(receiver, terminal);
@@ -992,15 +997,38 @@ fn event_record(record: &LiveRecord, token: String) -> query::StreamRecord {
 /// (SDK 2.4.0, diagnostic only): the hub dispatch (0 for replayed records)
 /// and the moment this task took it. The send clock is set by
 /// [`stamp_send`] when the transport takes the response.
+///
+/// `on_change` (DL v2.3.2, `SubscribeRequest.delivery_on_change_flag` on an
+/// ON_CHANGE QUOTE binding): a QUOTE record also carries
+/// `QUALITY_FLAG_DELIVERY_ON_CHANGE`, live and catch-up alike. The committed
+/// record is not changed; only this subscription's copy is.
 fn subscribe_event_record(
     record: &LiveRecord,
     token: String,
     dequeued_wall_ns: u64,
+    on_change: bool,
 ) -> query::StreamRecord {
-    query::StreamRecord {
+    let mut result = query::StreamRecord {
         gateway_dispatch_wall_ns: record.dispatched_wall_ns,
         gateway_dequeue_wall_ns: dequeued_wall_ns,
         ..event_record(record, token)
+    };
+    if on_change {
+        if let Some(query::stream_record::Payload::Event(envelope)) = result.payload.as_mut() {
+            mark_delivery_on_change(envelope);
+        }
+    }
+    result
+}
+
+/// Add `QUALITY_FLAG_DELIVERY_ON_CHANGE` to a QUOTE envelope once.
+fn mark_delivery_on_change(envelope: &mut crate::generated::marketdata_v2::EventEnvelope) {
+    use crate::generated::marketdata_v2::event_envelope::Payload;
+    let flag = qdl_contracts::qdl::common::v1::QualityFlag::DeliveryOnChange as i32;
+    if matches!(envelope.payload, Some(Payload::Quote(_)))
+        && !envelope.quality_flags.contains(&flag)
+    {
+        envelope.quality_flags.push(flag);
     }
 }
 
@@ -1269,6 +1297,9 @@ struct SubscriptionTask {
     replay_budget_status_v2: bool,
     /// `SubscribeRequest.session_alive_interval_ms` (DL v2.3.2), when set.
     alive: Option<SessionAliveTrack>,
+    /// `SubscribeRequest.delivery_on_change_flag` on an ON_CHANGE QUOTE
+    /// binding (DL v2.3.2): QUOTE records carry DELIVERY_ON_CHANGE.
+    mark_on_change: bool,
 }
 
 /// Session-alive state of one subscription: the cadence, and what the client
@@ -1699,7 +1730,12 @@ impl SubscriptionTask {
             }
         };
         let response = query::SubscribeResponse {
-            record: Some(subscribe_event_record(record, token, now_ns())),
+            record: Some(subscribe_event_record(
+                record,
+                token,
+                now_ns(),
+                self.mark_on_change,
+            )),
             records: Vec::new(),
         };
         match self.send(response, charge).await {
@@ -1924,7 +1960,7 @@ impl SubscriptionTask {
                     }
                     batch.started.get_or_insert(taken);
                     batch.push(
-                        subscribe_event_record(&record, token, taken_wall),
+                        subscribe_event_record(&record, token, taken_wall, self.mark_on_change),
                         record.raw.offset,
                         bytes,
                         charge,
@@ -2037,7 +2073,7 @@ impl SubscriptionTask {
         }
         batch.started.get_or_insert_with(Instant::now);
         batch.push(
-            subscribe_event_record(record, token, now_ns()),
+            subscribe_event_record(record, token, now_ns(), self.mark_on_change),
             record.raw.offset,
             bytes,
             charge,

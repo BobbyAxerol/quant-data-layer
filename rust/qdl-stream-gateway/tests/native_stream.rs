@@ -349,6 +349,8 @@ fn binding(feed: &str, interval: Option<&str>, key: &str) -> Binding {
         product_key: format!("lpk1|paper|OKX|SWAP|{UID}|{feed}|{qualifier}"),
         stale_after_ms: 5_000,
         lineage_revision: 9,
+        // The native BBO QUOTE is ON_CHANGE in the production catalogue.
+        delivery_on_change: feed == "QUOTE",
     }
 }
 
@@ -570,6 +572,8 @@ struct Options {
     live_reserve: bool,
     /// DL v2.3.2 session-liveness records (`QDL_KN_SESSION_LIVENESS_DIR`).
     session_liveness: Option<Arc<SessionLivenessReader>>,
+    /// The QUOTE binding's catalogue delivery semantics is ON_CHANGE.
+    quote_on_change: bool,
 }
 
 impl Default for Options {
@@ -592,6 +596,7 @@ impl Default for Options {
             replay_budget: None,
             live_reserve: false,
             session_liveness: None,
+            quote_on_change: true,
         }
     }
 }
@@ -625,9 +630,14 @@ impl Harness {
             "kn2-test-k1",
         )
         .unwrap();
+        let mut bundle =
+            bundle_with_streams(3, &options.permissions, &ALL_FEEDS, options.max_streams);
+        for binding in &mut bundle.bindings {
+            binding.delivery_on_change &= options.quote_on_change;
+        }
         let authority = AuthorityHandle::new(Authority {
             jwt: jwt_config(&[("k1", &keys)]),
-            bundle: bundle_with_streams(3, &options.permissions, &ALL_FEEDS, options.max_streams),
+            bundle,
             expectation: expectation(),
         });
         let budget = if options.live_reserve {
@@ -790,6 +800,7 @@ impl Harness {
             max_records_per_response: batch,
             replay_budget_status_v2: budget_v2,
             session_alive_interval_ms: 0,
+            delivery_on_change_flag: false,
         });
         let response = self.gateway.subscribe(request).await?;
         Ok(Stream(response.into_inner(), None))
@@ -1026,6 +1037,7 @@ async fn t01_offset_zero_is_snapshot_state_not_a_genesis_or_skipped_event() {
                 max_records_per_response: 0,
                 replay_budget_status_v2: false,
                 session_alive_interval_ms: 0,
+                delivery_on_change_flag: false,
             }))
             .await
             .unwrap();
@@ -1368,6 +1380,7 @@ async fn t02_matched_budget_resumes_exactly_on_ring_and_reader_without_expiry() 
                 max_records_per_response: batch,
                 replay_budget_status_v2: true,
                 session_alive_interval_ms: 0,
+                delivery_on_change_flag: false,
             }))
             .await
             .unwrap();
@@ -2331,6 +2344,7 @@ async fn t07_every_rpc_refuses_missing_or_mismatched_identity() {
         max_records_per_response: 0,
         replay_budget_status_v2: false,
         session_alive_interval_ms: 0,
+        delivery_on_change_flag: false,
     };
     let replay = query::ReplayRequest {
         consumer_id: CONSUMER.into(),
@@ -3884,6 +3898,7 @@ async fn b08_replay_pending_records_precede_corruption_and_filtered_boundaries()
                 max_records_per_response: 64,
                 replay_budget_status_v2: false,
                 session_alive_interval_ms: 0,
+                delivery_on_change_flag: false,
             }))
             .await
             .unwrap();
@@ -4543,6 +4558,18 @@ impl Harness {
         after: i64,
         interval_ms: u32,
     ) -> Result<Stream, Status> {
+        self.subscribe_opt_in(requirement, after, interval_ms, false)
+            .await
+    }
+
+    /// Subscribe with the DL v2.3.2 opt-ins (fields 9 and 10).
+    async fn subscribe_opt_in(
+        &self,
+        requirement: query::DataRequirement,
+        after: i64,
+        interval_ms: u32,
+        on_change: bool,
+    ) -> Result<Stream, Status> {
         let feed = query::FeedType::try_from(requirement.feed_type)
             .unwrap()
             .as_str_name()
@@ -4557,6 +4584,7 @@ impl Harness {
             max_records_per_response: 0,
             replay_budget_status_v2: false,
             session_alive_interval_ms: interval_ms,
+            delivery_on_change_flag: on_change,
         });
         let response = self.gateway.subscribe(request).await?;
         Ok(Stream(response.into_inner(), None))
@@ -4815,4 +4843,99 @@ async fn full_handoff_drops_frames_instead_of_queueing_them() {
     assert_eq!(next.logical_offset, offset as u64);
     drop(stream);
     harness.released().await;
+}
+
+// ------------------------------- DELIVERY_ON_CHANGE on QUOTE records (DL v2.3.2)
+
+const ON_CHANGE_FLAG: i32 = qdl_contracts::qdl::common::v1::QualityFlag::DeliveryOnChange as i32;
+
+/// The QUOTE events of a stream until `count` arrived: (offset, quality flags).
+async fn quote_flags(stream: &mut Stream, count: usize) -> Vec<(u64, Vec<i32>)> {
+    let mut out = Vec::new();
+    while out.len() < count {
+        let record = next_record(stream, Duration::from_secs(5))
+            .await
+            .expect("record");
+        if let Some(query::stream_record::Payload::Event(event)) = &record.payload {
+            out.push((record.logical_offset, event.quality_flags.clone()));
+        }
+    }
+    out
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn on_change_quote_records_carry_the_flag_only_for_an_opted_in_stream() {
+    for opted_in in [true, false] {
+        let harness = Harness::new(Options::default());
+        let after = harness.log.end(0) - 1;
+        // One committed before the subscription (replayed), one after LIVE.
+        let replayed = harness
+            .log
+            .append(0, QUOTE_KEY, &quote(1, vec![query_flag_late()]));
+        harness.settle();
+        let mut stream = harness
+            .subscribe_opt_in(requirement("QUOTE", None), after, 0, opted_in)
+            .await
+            .unwrap();
+        let mut rows = quote_flags(&mut stream, 1).await;
+        // REPLAYING, the replayed quote, LIVE: then a live quote.
+        let live = harness.log.append(0, QUOTE_KEY, &quote(2, Vec::new()));
+        rows.extend(quote_flags(&mut stream, 1).await);
+        assert_eq!(
+            rows.iter().map(|row| row.0).collect::<Vec<_>>(),
+            vec![replayed as u64, live as u64]
+        );
+        for (_, flags) in &rows {
+            assert_eq!(flags.contains(&ON_CHANGE_FLAG), opted_in, "{flags:?}");
+            assert!(flags.iter().filter(|flag| **flag == ON_CHANGE_FLAG).count() <= 1);
+        }
+        // The committed flags are kept, in order, before the added one.
+        assert_eq!(rows[0].1[0], query_flag_late());
+        drop(stream);
+        harness.released().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn strict_event_bindings_and_other_feeds_are_never_marked() {
+    // A QUOTE binding the catalogue does not declare ON_CHANGE.
+    let harness = Harness::new(Options {
+        quote_on_change: false,
+        ..Options::default()
+    });
+    let after = harness.log.end(0) - 1;
+    let mut stream = harness
+        .subscribe_opt_in(requirement("QUOTE", None), after, 0, true)
+        .await
+        .unwrap();
+    expect_replaying_then_live(&mut stream).await;
+    harness.log.append(0, QUOTE_KEY, &quote(1, Vec::new()));
+    let rows = quote_flags(&mut stream, 1).await;
+    assert!(!rows[0].1.contains(&ON_CHANGE_FLAG));
+    drop(stream);
+    harness.released().await;
+    // TRADE on the ON_CHANGE harness: the rule is QUOTE only.
+    let harness = Harness::new(Options::default());
+    let after = harness.log.end(0) - 1;
+    let mut stream = harness
+        .subscribe_opt_in(requirement("TRADE", None), after, 0, true)
+        .await
+        .unwrap();
+    expect_replaying_then_live(&mut stream).await;
+    harness.log.append(0, TRADE_KEY, &trade(7));
+    let record = loop {
+        let record = next_record(&mut stream, Duration::from_secs(5))
+            .await
+            .unwrap();
+        if let Some(query::stream_record::Payload::Event(event)) = record.payload {
+            break event;
+        }
+    };
+    assert!(!record.quality_flags.contains(&ON_CHANGE_FLAG));
+    drop(stream);
+    harness.released().await;
+}
+
+fn query_flag_late() -> i32 {
+    qdl_contracts::qdl::common::v1::QualityFlag::Late as i32
 }

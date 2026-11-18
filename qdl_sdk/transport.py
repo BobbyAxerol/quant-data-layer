@@ -534,6 +534,7 @@ class GrpcStreamTransport:
     # Class default for instances built without __init__ (test doubles).
     max_records_per_response: int = DEFAULT_MAX_RECORDS_PER_RESPONSE
     session_alive_interval_ms: int = 0
+    delivery_on_change_flag: bool = False
 
     def __init__(
         self,
@@ -546,7 +547,16 @@ class GrpcStreamTransport:
         start_index: int | None = None,
         max_records_per_response: int = DEFAULT_MAX_RECORDS_PER_RESPONSE,
         session_alive_interval_ms: int = 0,
+        delivery_on_change_flag: bool = False,
     ) -> None:
+        if type(delivery_on_change_flag) is not bool:
+            raise ValueError("delivery_on_change_flag must be a bool")
+        # SDK 2.7.0 (Data Layer v2.3.2): True asks the gateway to mark QUOTE
+        # records of an ON_CHANGE binding with QUALITY_FLAG_DELIVERY_ON_CHANGE
+        # (view.quality.flags "DELIVERY_ON_CHANGE", the Query rule). False sends
+        # the pre-2.7.0 request (field 10 absent). Readers before 2.7.0 refuse an
+        # unknown QualityFlag value, which is why the flag is opt-in.
+        self.delivery_on_change_flag = delivery_on_change_flag
         if type(session_alive_interval_ms) is not int or not (
             session_alive_interval_ms == 0
             or MIN_SESSION_ALIVE_INTERVAL_MS
@@ -638,6 +648,8 @@ class GrpcStreamTransport:
         request.replay_budget_status_v2 = True
         if self.session_alive_interval_ms > 0:
             request.session_alive_interval_ms = self.session_alive_interval_ms
+        if self.delivery_on_change_flag:
+            request.delivery_on_change_flag = True
         if self._credential_provider is None:
             raise DataLayerError(
                 "UNAUTHENTICATED",

@@ -118,6 +118,14 @@ pub struct SubscribeRequest {
     /// not configured also answers INVALID_ARGUMENT (fail closed).
     #[prost(uint32, tag="9")]
     pub session_alive_interval_ms: u32,
+    /// Additive (SDK 2.7.0, DL v2.3.2): mark every QUOTE event record of this
+    /// subscription, live and Subscribe catch-up alike, with
+    /// QUALITY_FLAG_DELIVERY_ON_CHANGE when its binding delivers ON_CHANGE (the
+    /// Query rule). false (absent) = never set, the pre-2.3.2 records: older
+    /// readers refuse an unknown QualityFlag value. A binding whose delivery
+    /// semantics the server cannot resolve is never marked (fail closed).
+    #[prost(bool, tag="10")]
+    pub delivery_on_change_flag: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ReplayRequest {

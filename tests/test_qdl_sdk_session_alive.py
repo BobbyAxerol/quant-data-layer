@@ -14,6 +14,7 @@ import unittest
 
 import grpc
 
+from qdl.common.v1 import common_pb2
 from qdl.marketdata.v2 import market_data_pb2
 from qdl.query.v2 import query_pb2
 from qdl_sdk import (
@@ -51,6 +52,7 @@ def event(offset: int) -> query_pb2.StreamRecord:
             connection_generation=3,
             config_revision=9,
             quote=market_data_pb2.Quote(level=1),
+            quality_flags=[common_pb2.QUALITY_FLAG_DELIVERY_ON_CHANGE],
         ),
     )
 
@@ -180,6 +182,25 @@ class SessionAliveTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(items[4].resume_token, items[3].resume_token)
         self.assertFalse(any(isinstance(item, StreamEvent) for item in items[4:]))
         self.assertTrue(all(isinstance(item, ControlEvent) for item in items[:2]))
+
+    async def test_delivery_on_change_opt_in_sends_field_10_only_when_true(self):
+        gateway = FakeGateway()
+        items = await self.run_stream(gateway, delivery_on_change_flag=True)
+        request = query_pb2.SubscribeRequest.FromString(gateway.requests[0])
+        self.assertIs(request.delivery_on_change_flag, True)
+        (event_item,) = [item for item in items if isinstance(item, StreamEvent)]
+        self.assertIn(common_pb2.QUALITY_FLAG_DELIVERY_ON_CHANGE, event_item.event.quality_flags)
+        gateway = FakeGateway()
+        await self.run_stream(gateway)
+        request = query_pb2.SubscribeRequest.FromString(gateway.requests[0])
+        self.assertIs(request.delivery_on_change_flag, False)
+        field = query_pb2.SubscribeRequest.DESCRIPTOR.fields_by_name["delivery_on_change_flag"]
+        self.assertEqual((field.number, field.type), (10, field.TYPE_BOOL))
+        for bad in (1, "true", None):
+            with self.subTest(value=bad), self.assertRaises(ValueError):
+                GrpcStreamTransport(
+                    "127.0.0.1:1", allow_insecure_loopback=True, delivery_on_change_flag=bad
+                )
 
     async def test_refused_request_keeps_the_session_alive_code(self):
         gateway = FakeGateway(

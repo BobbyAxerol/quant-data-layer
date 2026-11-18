@@ -78621,3 +78621,49 @@ serde_json; no HTTP/2 or TLS):
 - Rollback: the previous Stream digest and the 1000 ms ingestor configs.
 
 Status: `implemented`, `tested locally`. Not pushed.
+
+### DL v2.3.2 slice 2: DELIVERY_ON_CHANGE on Stream QUOTE records, opt-in (tested locally) - 2026-11-18 (Claude)
+
+Owner decision 2026-11-18, about 04:25Z (TS interim (b)): the TS writer takes DELIVERY_ON_CHANGE from the DL Stream
+and stops synthesizing it from its last Query verdict. Risk is unchanged.
+
+**Contract** (additive):
+- `qdl.common.v1.QualityFlag.QUALITY_FLAG_DELIVERY_ON_CHANGE = 18`;
+- `SubscribeRequest.delivery_on_change_flag = 10` (bool).
+
+**Why opt-in:** readers before 2.3.2 refuse an unknown flag value.
+- `qdl_sdk/projection.py:413-416` calls `QualityFlag.Name`.
+- The TS native writer, `market-data-writer/src/view.rs:349`, raises `KernelError::Value`.
+- With the field absent or false, the record bytes are exactly the pre-2.3.2 bytes.
+
+**Rule** (the same one Query uses):
+- Query: `binding.delivery_semantics == "ON_CHANGE"`, `qdl/runtime/stable_source.py:1160-1167`.
+- The catalogue allows ON_CHANGE only on QUOTE (`stable_catalog.py:144-148`), so only QUOTE records are marked.
+- Source of truth: `scripts/kn_gateway_bundle.py` now emits `delivery_semantics: ON_CHANGE` from the catalogue, only
+  for those bindings. A bundle without the field stays byte-identical.
+- `qdl-contracts::gateway_bundle::Binding.delivery_on_change` defaults to false (fail closed). It is refused on a
+  non-QUOTE binding.
+- The gateway resolves this once per Subscribe from the subscription's binding. Both live and catch-up records get
+  their copy marked through `subscribe_event_record`; the committed record is never changed. The Replay RPC and Query
+  are unchanged.
+
+**SDK 2.7.0:** `GrpcStreamTransport(delivery_on_change_flag=False)`. The projection maps value 18 to
+`"DELIVERY_ON_CHANGE"`.
+
+**Generated code:** the same offline emulator, with the base render proven byte-equal first for `query_pb2` and
+`common_pb2`. The prost files are edited by hand in prost-build style.
+
+**Tests:**
+- `buf format`/`lint`/`breaking` against phase1, phase7-beta and contract-line-1: rc=0.
+- Rust (`rust:1.82-slim`, offline, `cargo test --workspace --all-targets --locked --offline -- --test-threads=1`):
+  562 passed, 0 failed, 72 ignored. That includes 3 new tests:
+  - bundle parsing;
+  - opted-in vs not, replayed and live rows;
+  - STRICT_EVENT QUOTE and TRADE never marked.
+- Python (`qdl-v2-python:2.3.1-aa75218`, 77 impacted modules in two runs): 781 OK (74 skipped) and 601 OK (9 skipped).
+
+**Rollout coupling:** the deployed gateway bundle (`QDL_CONSUMER_REALM_DIR/bundle.json`) must be recompiled with this
+`kn_gateway_bundle.py`. The Stream and the projector reload it live. Until then no record is marked, which is
+fail-closed.
+
+Status: `implemented`, `tested locally`. Not pushed.

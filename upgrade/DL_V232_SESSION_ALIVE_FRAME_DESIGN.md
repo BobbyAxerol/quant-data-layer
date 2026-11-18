@@ -228,3 +228,14 @@ and `config_revision` equal the cached event's. A `payload = None` record is ski
 - build and encode: about 0.27 µs per frame (343 bytes);
 - the session status read: 34.8 µs with 4 lane files and 98.9 µs with 16, mostly the directory scan;
 - at 226 frames/s that is 0.008 to 0.022 vCPU. The section 4 estimate was 0.005 to 0.011.
+
+## 9. DELIVERY_ON_CHANGE on Stream QUOTE records (slice 2, owner 2026-11-18)
+
+- **Contract:** `QualityFlag.QUALITY_FLAG_DELIVERY_ON_CHANGE = 18`, set only for a Subscribe with
+  `SubscribeRequest.delivery_on_change_flag = 10` set to true. It is opt-in because older readers (SDK `Name()`, the
+  TS writer) refuse unknown flag values.
+- **Rule:** the Query rule, `delivery_semantics == "ON_CHANGE"`, which the catalogue allows on QUOTE only. It reaches
+  the Stream through the compiled gateway bundle (`delivery_semantics` on those bindings). A missing field means not
+  marked.
+- **Scope:** live and Subscribe catch-up records are marked alike; the Replay RPC and Query are unchanged.
+- **Rollout:** recompile the realm `bundle.json`, which the Stream reloads live, together with the new Stream image.

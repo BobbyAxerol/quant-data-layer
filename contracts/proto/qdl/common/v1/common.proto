@@ -58,6 +58,12 @@ enum QualityFlag {
   QUALITY_FLAG_CHECKSUM_FAILED = 15;
   QUALITY_FLAG_RESYNC_REQUIRED = 16;
   QUALITY_FLAG_CLOCK_SKEW_SUSPECTED = 17;
+  // Additive (DL v2.3.2): the record's binding delivers ON_CHANGE (a native
+  // BBO QUOTE is published only when it changes), the same rule as the Query
+  // quality flag DELIVERY_ON_CHANGE. The Stream sets it only for a Subscribe
+  // that set SubscribeRequest.delivery_on_change_flag: readers before 2.3.2
+  // refuse an unknown QualityFlag value.
+  QUALITY_FLAG_DELIVERY_ON_CHANGE = 18;
 }
 
 enum FeedLifecycleState {

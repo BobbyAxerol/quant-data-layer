@@ -12,7 +12,15 @@ high watermark, and the current resume token unchanged. `WarmupStreamSession` pa
 the event through without touching offsets or acknowledgements. A refused request maps
 to `DataLayerError` code `SESSION_ALIVE_INVALID` / `SESSION_ALIVE_UNAVAILABLE`.
 
-Unchanged for every other client: with the default 0 the request bytes equal 2.6.0, and
+`GrpcStreamTransport` also gains keyword-only `delivery_on_change_flag` (default False).
+When True, `subscribe()` sends the additive `SubscribeRequest.delivery_on_change_flag = 10`,
+and the gateway marks QUOTE records of an `ON_CHANGE` binding, live and catch-up, with the
+new `QualityFlag.QUALITY_FLAG_DELIVERY_ON_CHANGE = 18`. That is the Query rule;
+`market_data_view_from_stream` shows it as `"DELIVERY_ON_CHANGE"` in `view.quality.flags`.
+It is opt-in because a reader before 2.7.0 refuses an unknown `QualityFlag` value
+(`QualityFlag.Name`).
+
+Unchanged for every other client: with the defaults (0, False) the request bytes equal 2.6.0, and
 a `session_alive` record a client did not ask for is ignored. Why: a quiet BBO left the
 TS writer's session proof older than Risk's 2 s rule while the venue was healthy
 (design `upgrade/DL_V232_SESSION_ALIVE_FRAME_DESIGN.md`).

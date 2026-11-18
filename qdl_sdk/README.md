@@ -84,6 +84,12 @@ against the cached event before re-stamping its proof. Any other route is
 refused `SESSION_ALIVE_INVALID`; a gateway without a session-liveness source
 refuses `SESSION_ALIVE_UNAVAILABLE`; an older gateway ignores the field.
 
+`GrpcStreamTransport(..., delivery_on_change_flag=True)` (SDK 2.7.0) asks the gateway to
+mark QUOTE records of an `ON_CHANGE` binding (the native BBO is published only when it
+changes) with `QUALITY_FLAG_DELIVERY_ON_CHANGE`. This is the same rule as the Query flag, and
+`market_data_view_from_stream` shows it as `DELIVERY_ON_CHANGE`. It is off by default because
+readers before 2.7.0 refuse an unknown quality flag. An older gateway ignores the field.
+
 Each `StreamEvent` from a 2.4.0 gateway also carries the gateway's wall clocks
 for that record (Unix ns, gateway host clock, diagnostics only):
 `gateway_dispatch_wall_ns` (the live hub queued it for this subscription),
