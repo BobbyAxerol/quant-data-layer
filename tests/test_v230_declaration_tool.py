@@ -404,9 +404,9 @@ class Okx150DryRenderTests(unittest.TestCase):
         self.assertEqual(summary["catalog"]["new_bindings_by_feed"]["MARK_INDEX_PRICE"], 123)
         manifests = summary["manifests"]
         self.assertEqual(manifests["trading-system.paper.stable"]["revision"], [13, 14])
-        self.assertEqual(manifests["trading-system.paper.stable"]["min_token_revision"], 13)
+        self.assertEqual(manifests["trading-system.paper.stable"]["min_token_revision"], 1)  # DL v2.4.0 S2
         self.assertEqual(manifests["alpha.okx.paper.stable"]["revision"], [15, 16])
-        self.assertEqual(manifests["alpha.okx.paper.stable"]["min_token_revision"], 15)
+        self.assertEqual(manifests["alpha.okx.paper.stable"]["min_token_revision"], 1)
         self.assertTrue(all(not item["additive_problems"] for item in manifests.values()))
 
     def test_derived_intervals_follow_the_loader(self):

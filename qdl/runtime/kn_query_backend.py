@@ -60,6 +60,7 @@ from qdl.query.results import (
 from qdl.query.row_cache import BoundedRowCache, RenderSlot
 from qdl.replay.cursor_v3 import CursorV3Claims, SignedCursorV3Codec, requirement_digest
 from qdl.runtime.kn_hot_view import HOT_FEEDS, HotViewGap, HotViewUnavailable
+from qdl.security import request_cost
 from qdl.runtime.kn_bar_readback import binding_product_key
 from qdl.runtime.kn_market_cache import (
     KnCacheError,
@@ -102,6 +103,13 @@ DEFAULT_ROW_CACHE_ENTRIES = 20_000
 MARK_HOT_MEMO_NS = 50_000_000
 # Wait + lookup budget of one shared MARK read when the hot client declares no deadline (CanonicalHotClient does).
 MARK_HOT_DEFAULT_BUDGET_SECONDS = 0.25
+# DL v2.4.0 S5: the latest market-cache view of one product is read at most
+# once per SHARED_VIEW_TTL_MS per replica (5-20 ms; 0 disables). The stable
+# runtime enables DEFAULT_SHARED_VIEW_TTL_MS; a backend built directly (tests,
+# tools) keeps the pre-v2.4.0 read-per-request behaviour unless it asks.
+SHARED_VIEW_TTL_ENV = "QDL_V2_SHARED_VIEW_TTL_MS"
+DEFAULT_SHARED_VIEW_TTL_MS = 10
+MAX_SHARED_VIEW_TTL_MS = 20
 # Item fields rebuilt per request (time/request dependent); never cached.
 _DYNAMIC_ITEM_FIELDS = frozenset({"quality", "watermark_offset", "cursor", "snapshot_id", "render_key", "render_slot"})
 
@@ -173,7 +181,10 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         row_cache_entries: int = DEFAULT_ROW_CACHE_ENTRIES,
         diagnostic_exclusions: Mapping[str, str] | None = None,
         hot_client=None,
+        shared_view_ttl_ms: int = 0,
     ) -> None:
+        if not 0 <= shared_view_ttl_ms <= MAX_SHARED_VIEW_TTL_MS:
+            raise ValueError("shared view TTL must be within 0..20 ms")
         self._diagnostic_exclusions = dict(diagnostic_exclusions or {})
         unknown = self._diagnostic_exclusions.keys() - {b.binding_id for b in catalog.bindings}
         if unknown:
@@ -206,8 +217,62 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         self._mark_hot_memo: dict[str, tuple[int, object]] = {}
         self._mark_hot_locks: dict[str, threading.Lock] = {}
         self._mark_hot_locks_guard = threading.Lock()
+        # DL v2.4.0 S5: key-level latest-view memo + singleflight, bounded by
+        # the immutable catalog x the few ``last`` values latest reads use.
+        self._shared_view_ttl_ns = shared_view_ttl_ms * 1_000_000
+        self._shared_views: dict[tuple[str, int], tuple[int, object]] = {}
+        self._shared_view_locks: dict[tuple[str, int], threading.Lock] = {}
+        self._shared_view_guard = threading.Lock()
+        self.shared_view_stats = {"reads": 0, "hits": 0}
 
     # ------------------------------------------------------------ cache view
+
+    def _shared_view(self, binding: StableSourceBinding, last: int) -> ProductView | None:
+        """The product's latest view, shared by concurrent and back-to-back readers (DL v2.4.0 S5).
+
+        One market-cache read per (binding, ``last``) per TTL per replica: the
+        first reader reads (holding that key's lock, so concurrent readers wait
+        for its answer instead of issuing their own Lua EVAL); readers within
+        the TTL reuse the view, or the same typed refusal. Only the immutable
+        view (boundary + committed rows) is shared. Freshness, quality,
+        eligibility, the cursor and every lineage/monotonic check are still
+        computed per request from it, and the hot-view backup path never uses
+        a shared result (the rc4 precedent, see ``_hot_latest``). A view is
+        stamped with the time its read STARTED, so it is never older than the
+        TTL plus one read.
+        """
+
+        ttl = self._shared_view_ttl_ns
+        if ttl <= 0:
+            request_cost.note_work()
+            return self._view(binding, last=last)
+        key = (binding.binding_id, last)
+        memo = self._shared_views.get(key)
+        if memo is None or time.monotonic_ns() - memo[0] >= ttl:
+            with self._shared_view_guard:
+                lock = self._shared_view_locks.setdefault(key, threading.Lock())
+            with lock:
+                memo = self._shared_views.get(key)
+                if memo is None or time.monotonic_ns() - memo[0] >= ttl:
+                    started = time.monotonic_ns()
+                    try:
+                        outcome = self._view(binding, last=last)
+                    except QueryBackendError as error:
+                        outcome = error.problem
+                    memo = (started, outcome)
+                    self._shared_views[key] = memo
+                    self.shared_view_stats["reads"] += 1
+                    request_cost.note_work()
+                    return self._shared_outcome(outcome)
+        self.shared_view_stats["hits"] += 1
+        request_cost.note_shared_hit()
+        return self._shared_outcome(memo[1])
+
+    @staticmethod
+    def _shared_outcome(outcome):
+        if isinstance(outcome, QueryProblem):
+            raise QueryBackendError(outcome)  # a fresh exception per reader
+        return outcome
 
     def product_key(self, binding: StableSourceBinding):
         return binding_product_key(binding, self.environment)
@@ -396,7 +461,7 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
     def _latest_view(self, requirement, binding):
         primary_error = None
         try:
-            primary = self._view(binding, last=1)
+            primary = self._shared_view(binding, 1)
         except QueryBackendError as error:
             if error.problem.code is not CanonicalErrorCode.DEPENDENCY_UNAVAILABLE:
                 raise
@@ -497,7 +562,7 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         """
 
         try:
-            view = self._view(binding, last=1)
+            view = self._shared_view(binding, 1)
         except QueryBackendError as error:
             code = error.problem.code
             if code is CanonicalErrorCode.DATA_NOT_READY:
@@ -614,7 +679,7 @@ class KnMarketCacheQueryBackend(StableSpoolQueryBackend):
         requested = 1
         if binding.feed is FeedType.BAR:
             requested, _start, _end, _opens = self._requested_window(requirement)
-        view = (self._view(binding, last=max(2, requested)) if binding.feed is FeedType.BAR
+        view = (self._shared_view(binding, max(2, requested)) if binding.feed is FeedType.BAR
                 else self._latest_view(requirement, binding))
         if view is None:
             return None

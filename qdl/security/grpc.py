@@ -59,11 +59,17 @@ class GrpcDataPlaneInterceptor(grpc.aio.ServerInterceptor):
                     self._identity.authenticate,
                     authorization.removeprefix("Bearer ").strip(),
                     consumer_id=consumer_id,
+                    charge_quota=False,
                 )
                 purpose = AccessPurpose(purpose_value.upper())
                 if purpose is AccessPurpose.UNSPECIFIED:
                     raise ValueError("purpose cannot be UNSPECIFIED")
                 access.require_purpose(purpose)
+                # DL v2.4.0 S3: charged after authentication and the purpose
+                # rule admitted the RPC (one unit per RPC, as before).
+                admit = getattr(self._identity, "admit", None)
+                if callable(admit):
+                    admit(access).settle(charged=True)
                 return GrpcDataAccess(access, purpose)
             except (DataPlaneAccessError, ValueError) as error:
                 detail = getattr(error, "detail", str(error))

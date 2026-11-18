@@ -160,8 +160,12 @@ def cases_for(products, batch_size):
                 cases.append(("stream", (p,)))
     cases.extend(("instrument", (p,)) for p in instruments.values())
     # Keep grades separate: public batch contracts reject mixed-grade requests.
+    # snapshot:batch measures its real consumer use: the TS native writer's QUOTE liveness probes (TS 3438bc90,
+    # market-data-writer probe_batch.rs: no warmup, no interval). The route refuses any warmup item with
+    # INVALID_ARGUMENT (qdl/api_v2/router.py snapshot_batch), so BAR products (which carry warmup_limit) never enter.
+    probes = [p for p in ordinary if p.feed.value == "QUOTE"]
     for name, values in (("warmup_batch", bars), ("reference_batch", references), ("readiness_check", ordinary),
-                         ("snapshot_batch", ordinary)):
+                         ("snapshot_batch", probes)):
         for grade in sorted({p.requirement.consumer_grade.value for p in values}):
             selected = [p for p in values if p.requirement.consumer_grade.value == grade]
             for i in range(0, len(selected), batch_size):
@@ -225,6 +229,10 @@ async def measure(call, validate, timeout_seconds):
         result.update(status="PASS", usable_ms=(time.perf_counter() - started) * 1000)
     except NoEvent:
         result.update(status="NO_EVENT", error_code="NO_EVENT")
+    except ImportError:
+        # The client image's qdl package lacks this operation's contract (the tool is mounted from the tree, the
+        # library comes from the image): a client-side version skew, never a server status.
+        result["error_code"] = "CLIENT_IMAGE_CONTRACT_MISSING"
     except Exception as exc:
         code = getattr(exc, "code", type(exc).__name__)
         # Exception text may contain URLs, credentials or raw provider payloads.

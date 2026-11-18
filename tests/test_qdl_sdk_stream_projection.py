@@ -428,6 +428,27 @@ class SdkStreamProjectionTests(unittest.TestCase):
                     feed in EXECUTION_PRICE_VALIDATION_FEEDS,
                 )
 
+    def test_delivery_on_change_flag_projects_to_its_query_name(self):
+        # SDK 2.7.0 / DL v2.3.2: the Stream marks ON_CHANGE QUOTE records with the
+        # new enum value 18; the view carries the Query flag name.
+        self.assertEqual(common_pb2.QUALITY_FLAG_DELIVERY_ON_CHANGE, 18)
+        marked = envelope(Feed.QUOTE)
+        marked.quality_flags.append(common_pb2.QUALITY_FLAG_DELIVERY_ON_CHANGE)
+        result = market_data_view_from_stream(
+            StreamEvent(11, "signed", marked),
+            template=template(Feed.QUOTE),
+            requirement=self.requirement(Feed.QUOTE),
+            now_ns=NOW + 100_000_000,
+        )
+        self.assertIn("DELIVERY_ON_CHANGE", result.quality.flags)
+        plain = market_data_view_from_stream(
+            StreamEvent(11, "signed", envelope(Feed.QUOTE)),
+            template=template(Feed.QUOTE),
+            requirement=self.requirement(Feed.QUOTE),
+            now_ns=NOW + 100_000_000,
+        )
+        self.assertNotIn("DELIVERY_ON_CHANGE", plain.quality.flags)
+
     def test_unspecified_feed_is_rejected_at_requirement_boundary(self):
         with self.assertRaisesRegex(ValueError, "UNSPECIFIED"):
             DataRequirement(

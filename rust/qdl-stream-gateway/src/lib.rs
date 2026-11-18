@@ -22,5 +22,6 @@ pub mod replay;
 mod replay_clock;
 pub mod requirement;
 pub mod service;
+pub mod session_liveness;
 pub mod subscription;
 pub mod tls;

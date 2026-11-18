@@ -118,7 +118,7 @@ class PrimaryRuntimeConvergenceTests(unittest.TestCase):
                     _FIVE_LIQUID_BOOK_IDS_BY_INGESTOR[name]
                     <= set(item["added_book_subscription_ids"])
                 )
-                self.assertEqual(item["session_liveness_write_interval_ms"], 1_000)
+                self.assertEqual(item["session_liveness_write_interval_ms"], 250)
             self.assertEqual({name: (runtime / name).read_bytes() for name in RUNTIME_FILES}, before)
 
     def test_apply_writes_all_five_backups_and_preserves_authority(self):

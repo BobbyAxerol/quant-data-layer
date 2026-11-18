@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import math
 import re
 import threading
@@ -36,6 +37,8 @@ from qdl.query.lifecycle import BarLifecycle
 from qdl.query.cold_work import await_in_thread, cold_yield
 from qdl.query.lanes import (
     BoundedReadLane,
+    FairLanePolicy,
+    FairWarmupLane,
     ReadLaneAtCapacity,
     ReadLaneBusy,
     ReadLanePolicy,
@@ -60,6 +63,7 @@ from qdl.query.results import (
     CanonicalLineageMismatch,
 )
 from qdl.warmup.executor import BoundedWarmupExecutor, RetryableWarmupError
+from qdl.security import request_cost
 from qdl.reference.batch import ReferenceBatch
 from qdl.reference.execution_live import ExecutionMarkIndexReader
 from qdl.reference.contracts import (
@@ -249,6 +253,9 @@ _LOCAL_HISTORY_BASE_BYTES = 16 * 1024
 def _hot_snapshot_lane_policy() -> ReadLanePolicy:
     """Finite latest/status capacity sized for the current TS hot slice set.
 
+    Pre-v2.4.0 shape, kept as the reference its lane tests pin; the service
+    uses ``_hot_snapshot_fair_policy`` (DL v2.4.0).
+
     One identity may queue a fleet-sized burst (KN-4 K4.2). An alpha identity
     fronts every session of its runtime (up to its manifest's 60 streams), and
     those sessions read snapshots together at a bar close. With four queued
@@ -272,6 +279,49 @@ def _hot_snapshot_lane_policy() -> ReadLanePolicy:
         reserved_max_pending_per_consumer=15,
         reserved_pending_slots=1,
         non_reserved_pending_slots=1,
+    )
+
+
+def _hot_snapshot_fair_policy() -> FairLanePolicy:
+    """The hot latest/status lane, session-fair (DL v2.4.0, coordinator review).
+
+    With one tier identity per venue x environment about 100 alpha sessions
+    share ONE identity, so ``_hot_snapshot_lane_policy``'s one active and 32
+    pending per identity would serialise every alpha poll on a replica. The
+    fairness key is the request's ``X-QDL-Session`` within its identity (the
+    identity itself when absent): each session runs one read at a time and
+    queues at most 32, so one noisy session is throttled alone; the lane runs
+    2 reads at once (the 2 hot threads); the Trading System identity goes
+    first, may run 2 at once and keeps 32 queue slots. Waits are bounded by
+    the request deadline middleware, as before.
+    """
+
+    return FairLanePolicy(
+        max_active=2,
+        max_pending=512,
+        max_pending_per_session=32,
+        max_pending_per_consumer=448,
+        max_request_bytes=100 * _HOT_SNAPSHOT_RESERVED_BYTES,
+        reserved_consumer_id=_TS_RESERVED_CONSUMER_ID,
+        reserved_pending_slots=32,
+        reserved_max_active=2,
+        initial_service_ms=1,
+    )
+
+
+def _hot_reference_fair_policy() -> FairLanePolicy:
+    """The hot execution-reference lane, session-fair like the snapshot lane (DL v2.4.0)."""
+
+    return FairLanePolicy(
+        max_active=4,
+        max_pending=256,
+        max_pending_per_session=8,
+        max_pending_per_consumer=224,
+        max_request_bytes=1024 * 1024,
+        reserved_consumer_id=_TS_RESERVED_CONSUMER_ID,
+        reserved_pending_slots=16,
+        reserved_max_active=4,
+        initial_service_ms=1,
     )
 
 
@@ -324,7 +374,7 @@ def untyped_failure_reason(error: BaseException) -> str:
 _SMALL_LOCAL_WARMUP_ROWS = 2
 
 
-def _small_local_warmup_lane_policy() -> ReadLanePolicy:
+def _small_local_warmup_lane_policy() -> FairLanePolicy:
     """Finite lane for warmups of at most two rows, shaped like the hot lanes.
 
     A stream handoff or latest-style warmup reads one or two rows through the
@@ -333,24 +383,48 @@ def _small_local_warmup_lane_policy() -> ReadLanePolicy:
     that take seconds: on 2026-09-23 (v2.1.1 Phase-3 stage 20) alpha stream
     handoffs were refused ``RATE_LIMITED`` and TS slices stayed unready while
     alpha sessions warmed. Large warmups keep the single-active lane.
+
+    DL v2.4.0 S6: session-fair (one tier identity fronts every alpha session,
+    so a per-identity bound of 4 pending refused a fleet's handoffs); waits up
+    to the request deadline; the TS identity keeps priority and 16 slots.
     """
 
-    return ReadLanePolicy(
+    return FairLanePolicy(
         max_active=2,
-        max_pending=16,
-        max_pending_bytes=512 * 1024,
-        max_active_per_consumer=1,
-        max_pending_per_consumer=4,
+        max_pending=256,
+        max_pending_per_session=4,
+        max_pending_per_consumer=224,
+        max_request_bytes=512 * 1024,
         reserved_consumer_id=_TS_RESERVED_CONSUMER_ID,
-        reserved_slots=1,
-        reserved_max_active_per_consumer=2,
-        reserved_max_pending_per_consumer=15,
-        reserved_pending_slots=1,
-        non_reserved_pending_slots=1,
+        reserved_pending_slots=16,
+        reserved_max_active=2,
+        initial_service_ms=20,
     )
 
 
 _QUEUED_LOCAL_BATCH_MAX_WAIT_MS = 8_000
+# DL v2.4.0 S6 fair queue: wait up to min(deadline, 60 s) less min(1 s, a
+# quarter of it). 60 s stays under the stable 90 s request deadline.
+_FAIR_QUEUE_MAX_WAIT_MS = 60_000
+_FAIR_QUEUE_WAIT_MARGIN_MS = 1_000
+
+
+# DL v2.4.0 (coordinator review): a hot-lane waiter is refused (RATE_LIMITED,
+# retry_after_ms from its queue position) before 8 s less a margin, so the
+# refusal always arrives before the TS writer's 10 s ``query_deadline_ms``
+# (TS services/market_data/native_plan.py default) and any SDK 10 s timeout.
+_HOT_LANE_MAX_WAIT_MS = 8_000
+_HOT_LANE_WAIT_MARGIN_MS = 500
+
+
+def _hot_lane_wait_ms(deadline_ms: int | None = None) -> int:
+    bounded = _HOT_LANE_MAX_WAIT_MS if deadline_ms is None else min(deadline_ms, _HOT_LANE_MAX_WAIT_MS)
+    return max(1, bounded - min(_HOT_LANE_WAIT_MARGIN_MS, bounded // 4))
+
+
+def _fair_queue_wait_ms(deadline_ms: int) -> int:
+    bounded = min(deadline_ms, _FAIR_QUEUE_MAX_WAIT_MS)
+    return max(1, bounded - min(_FAIR_QUEUE_WAIT_MARGIN_MS, bounded // 4))
 
 # Retry hint on an immediate capacity refusal of the queued large-warmup lane
 # (count, byte or class reserve full; never the queue-wait deadline, whose
@@ -365,29 +439,32 @@ _QUEUED_LOCAL_BATCH_MAX_WAIT_MS = 8_000
 _QUEUED_LOCAL_BATCH_RETRY_AFTER_MS = 2_000
 
 
-def _queued_local_batch_lane_policy() -> ReadLanePolicy:
-    """The single-active large-warmup lane with a bounded queue per identity.
+def _queued_local_batch_lane_policy() -> FairLanePolicy:
+    """The single-active large-warmup lane as a session-fair queue (DL v2.4.0 S6).
 
-    The default admits one pending batch per consumer and refuses the next at
-    once. Many alpha sessions share one platform identity, so a fleet cold
-    start became immediate ``RATE_LIMITED`` refusals: on 2026-09-23 (v2.1.1
-    Phase-3) 5 of 35 and 13 of 50 sessions never started. Queuing keeps one
-    active materialization per replica - the memory bound - while each waiter
-    is still limited by its own request deadline and by 64 MiB of reserved
-    rows (about twelve 5,000-row warmups), with queue slots kept for TS.
+    History: the default admitted one pending batch per consumer; v2.1.1
+    queued 8 per identity and 16 in all with an 8 s wait cap, then refused
+    ``RATE_LIMITED`` with retry_after 2 s - about 1,575 refusals in 65 s at
+    stage 100 (2026-10-11, s74), because one tier identity fronts every alpha
+    session. Now: one active materialization per replica (the memory bound,
+    unchanged), a queue that holds a fleet restart (512 entries, 4 per named
+    session, 448 per identity), each waiter waits up to its own request
+    deadline (no 8 s cap), a waiter whose client disconnected is withdrawn,
+    identical warmups share one materialization (``_WarmupFlights``), and a
+    refusal's retry_after comes from the queue position. The Trading System
+    identity keeps priority and 32 reserved slots.
     """
 
-    return ReadLanePolicy(
+    return FairLanePolicy(
         max_active=1,
-        max_pending=16,
-        max_pending_bytes=64 * 1024 * 1024,
-        max_active_per_consumer=1,
-        max_pending_per_consumer=8,
+        max_pending=512,
+        max_pending_per_session=4,
+        max_pending_per_consumer=448,
+        max_request_bytes=64 * 1024 * 1024,
         reserved_consumer_id=_TS_RESERVED_CONSUMER_ID,
-        reserved_slots=0,
-        reserved_max_pending_per_consumer=8,
-        reserved_pending_slots=2,
-        non_reserved_pending_slots=1,
+        reserved_pending_slots=32,
+        reserved_max_active=1,
+        initial_service_ms=2_000,
     )
 
 
@@ -399,6 +476,28 @@ def _is_small_local_warmup(requirement: DataRequirement) -> bool:
         specification.rows is not None
         and specification.rows <= _SMALL_LOCAL_WARMUP_ROWS
     )
+
+
+def _fair(lane, fairness_key: str | None) -> dict:
+    """``fairness_key`` for a session-fair lane; a focused test double's BoundedReadLane takes none."""
+
+    return {"fairness_key": fairness_key} if isinstance(lane, FairWarmupLane) and fairness_key else {}
+
+
+# The reference batch path reaches the hot lane through several internal
+# helpers; the request's fairness key travels with the request context.
+_FAIRNESS_KEY: "contextvars.ContextVar[str | None]" = contextvars.ContextVar("qdl_fairness_key", default=None)
+
+
+def _current_fairness_key() -> str | None:
+    return _FAIRNESS_KEY.get()
+
+
+def _with_retry(error: ReadLaneRejected, cause: BaseException) -> ReadLaneRejected:
+    retry = getattr(cause, "retry_after_ms", None)
+    if retry is not None:
+        error.retry_after_ms = retry
+    return error
 
 
 class _LocalBatchAdmission:
@@ -437,8 +536,15 @@ class _LocalBatchAdmission:
                 reserved_consumer_id=reserved_consumer_id,
                 reserved_slots=0,
             )
-        self._lane = BoundedReadLane(policy)
+        self._lane = FairWarmupLane(policy) if isinstance(policy, FairLanePolicy) else BoundedReadLane(policy)
         self._anonymous_sequence = 0
+
+    @property
+    def fair(self) -> bool:
+        return isinstance(self._lane, FairWarmupLane)
+
+    def retry_after_ms(self) -> int | None:
+        return self._lane.retry_after_ms() if self.fair else None
 
     async def run(
         self,
@@ -448,6 +554,8 @@ class _LocalBatchAdmission:
         reserved_bytes: int = _LOCAL_HISTORY_BASE_BYTES,
         wait_timeout_ms: int | None = None,
         refuse_if_queued: bool = False,
+        fairness_key: str | None = None,
+        abandoned=None,
     ):
         if consumer_id is None:
             # Focused legacy callers did not carry an authenticated consumer
@@ -455,6 +563,7 @@ class _LocalBatchAdmission:
             # weakening the real router path, which always supplies one.
             self._anonymous_sequence += 1
             consumer_id = f"qdl.v2.legacy.{self._anonymous_sequence}"
+        extra = {"fairness_key": fairness_key, "abandoned": abandoned} if self.fair else {}
         try:
             return await self._lane.run(
                 work,
@@ -462,23 +571,128 @@ class _LocalBatchAdmission:
                 reserved_bytes=reserved_bytes,
                 wait_timeout_ms=wait_timeout_ms,
                 refuse_if_queued=refuse_if_queued,
+                **extra,
             )
         except ReadLaneBusy as error:
-            raise _LocalBatchLaneBusy(
+            raise _with_retry(_LocalBatchLaneBusy(
                 f"local canonical-cache batch admission {error}"
-            ) from error
+            ), error) from error
         except ReadLaneAtCapacity as error:
-            raise _LocalBatchAtCapacity(
+            raise _with_retry(_LocalBatchAtCapacity(
                 f"local canonical-cache batch admission {error}"
-            ) from error
+            ), error) from error
         except ReadLaneRejected as error:
-            raise _LocalBatchAdmissionRejected(
+            raise _with_retry(_LocalBatchAdmissionRejected(
                 f"local canonical-cache batch admission {error}"
-            ) from error
+            ), error) from error
 
     def stats(self) -> dict[str, int]:
         return self._lane.stats()
 
+
+
+_FLIGHT_ABANDONED = object()
+
+
+def _warmup_flight_key(requirement: DataRequirement) -> DataRequirement:
+    """Identical warmups: the same requirement except its own deadline."""
+
+    specification = requirement.warmup_specification
+    if specification is None or requirement.warmup is None:
+        return requirement
+    return replace(requirement, warmup=replace(requirement.warmup, deadline_ms=20_000))
+
+
+def _fresh_outcome(value):
+    """A follower's own copy of a shared typed refusal (never one exception object in two requests)."""
+
+    if isinstance(value, QueryBackendError):
+        return QueryBackendError(value.problem)
+    if isinstance(value, QueryServiceError):
+        return QueryServiceError(
+            value.problem, request_id=value.request_id, instrument_uid=value.instrument_uid,
+            quality_state=value.quality_state, diagnostics=value.diagnostics, reason=value.reason,
+        )
+    return value
+
+
+class _WarmupFlights:
+    """Singleflight for identical fully-local warmups (DL v2.4.0 S6).
+
+    A request whose EVERY item matches an in-flight materialization (same
+    binding, rows/window and policy; ``_warmup_flight_key``) waits for those
+    histories instead of queuing and reading again. It then shares their end
+    snapshot and stream-handoff boundary exactly. A request with any other
+    item is a leader for its items: it never waits on another request while
+    holding the lane, so two requests can never wait on each other. A flight
+    is visible only while it is in flight; a later request reads fresh data.
+    A leader that is refused or cancelled before reading marks its flights
+    abandoned and its followers fall back to their own admission.
+    """
+
+    def __init__(self) -> None:
+        self._flights: dict[DataRequirement, asyncio.Future] = {}
+        self.joined = 0
+        self.led = 0
+        self.fallbacks = 0
+
+    async def join(self, requirements, *, wait_ms: int | None):
+        if not requirements:
+            return None
+        keys = [_warmup_flight_key(item) for item in requirements]
+        futures = [self._flights.get(key) for key in keys]
+        if any(future is None for future in futures):
+            return None
+        try:
+            values = await asyncio.wait_for(
+                asyncio.gather(*(asyncio.shield(future) for future in futures)),
+                timeout=None if wait_ms is None else wait_ms / 1_000,
+            )
+        except asyncio.TimeoutError:
+            self.fallbacks += 1
+            return None
+        if any(value is _FLIGHT_ABANDONED for value in values):
+            self.fallbacks += 1
+            return None
+        self.joined += 1
+        return {requirement: _fresh_outcome(value) for requirement, value in zip(requirements, values)}
+
+    def lead(self, requirements) -> dict[DataRequirement, asyncio.Future]:
+        loop = asyncio.get_running_loop()
+        owned: dict[DataRequirement, asyncio.Future] = {}
+        for requirement in requirements:
+            key = _warmup_flight_key(requirement)
+            if key in self._flights or key in owned:
+                continue
+            future = loop.create_future()
+            self._flights[key] = future
+            owned[key] = future
+        if owned:
+            self.led += 1
+        return owned
+
+    def publish(self, owned, histories) -> None:
+        for requirement, value in histories.items():
+            key = _warmup_flight_key(requirement)
+            future = owned.get(key)
+            if future is not None and not future.done():
+                future.set_result(value)
+        self._release(owned)
+
+    def abandon(self, owned) -> None:
+        for future in owned.values():
+            if not future.done():
+                future.set_result(_FLIGHT_ABANDONED)
+        self._release(owned)
+
+    def _release(self, owned) -> None:
+        for key, future in owned.items():
+            if self._flights.get(key) is future:
+                del self._flights[key]
+
+    def stats(self) -> dict[str, int]:
+        return {"in_flight": len(self._flights), "joined": self.joined, "led": self.led,
+                "fallbacks": self.fallbacks}
 
 
 class _QueryWorkPools:
@@ -562,8 +776,8 @@ class V2QueryService:
         self._small_local_warmup_admission = _LocalBatchAdmission(
             policy=_small_local_warmup_lane_policy()
         )
-        self._hot_snapshot_admission = BoundedReadLane(_hot_snapshot_lane_policy())
-        self._hot_reference_admission = BoundedReadLane(_hot_reference_lane_policy())
+        self._hot_snapshot_admission = FairWarmupLane(_hot_snapshot_fair_policy())
+        self._hot_reference_admission = FairWarmupLane(_hot_reference_fair_policy())
         self._query_work_pools = _QueryWorkPools()
         self._gap_scan_task: asyncio.Task[tuple[GapRecord, ...]] | None = None
         self.last_batch_evidence: dict[str, object] = {}
@@ -616,17 +830,17 @@ class V2QueryService:
             ),
         )
 
-    def _hot_snapshot_admission_for(self) -> BoundedReadLane:
+    def _hot_snapshot_admission_for(self) -> FairWarmupLane:
         admission = getattr(self, "_hot_snapshot_admission", None)
         if admission is None:
-            admission = BoundedReadLane(_hot_snapshot_lane_policy())
+            admission = FairWarmupLane(_hot_snapshot_fair_policy())
             self._hot_snapshot_admission = admission
         return admission
 
-    def _hot_reference_admission_for(self) -> BoundedReadLane:
+    def _hot_reference_admission_for(self) -> FairWarmupLane:
         admission = getattr(self, "_hot_reference_admission", None)
         if admission is None:
-            admission = BoundedReadLane(_hot_reference_lane_policy())
+            admission = FairWarmupLane(_hot_reference_fair_policy())
             self._hot_reference_admission = admission
         return admission
 
@@ -656,7 +870,8 @@ class V2QueryService:
         instrument_uid: str | None = None,
     ) -> QueryServiceError:
         return QueryServiceError(
-            QueryProblem(CanonicalErrorCode.RATE_LIMITED, str(error), True),
+            QueryProblem(CanonicalErrorCode.RATE_LIMITED, str(error), True,
+                         getattr(error, "retry_after_ms", None)),
             request_id=request_id,
             instrument_uid=instrument_uid,
         )
@@ -668,6 +883,7 @@ class V2QueryService:
         purpose: AccessPurpose,
         consumer_id: str,
         request_id: str | None = None,
+        fairness_key: str | None = None,
     ) -> QueryResult:
         """Serve a small latest view without borrowing cold/history workers."""
 
@@ -686,6 +902,8 @@ class V2QueryService:
                 execute,
                 consumer_id=consumer_id,
                 reserved_bytes=_HOT_SNAPSHOT_RESERVED_BYTES,
+                wait_timeout_ms=_hot_lane_wait_ms(),
+                **_fair(self._hot_snapshot_admission_for(), fairness_key),
             ),
             name="qdl-v2-hot-snapshot",
         )
@@ -708,6 +926,7 @@ class V2QueryService:
         purpose: AccessPurpose,
         consumer_id: str,
         request_id: str | None = None,
+        fairness_key: str | None = None,
     ) -> SnapshotBatchResult:
         """B4 (DL v2.3.1): many latest views under one hot admission permit.
 
@@ -747,6 +966,8 @@ class V2QueryService:
                 execute,
                 consumer_id=consumer_id,
                 reserved_bytes=_HOT_SNAPSHOT_RESERVED_BYTES * len(requirements),
+                wait_timeout_ms=_hot_lane_wait_ms(),
+                **_fair(self._hot_snapshot_admission_for(), fairness_key),
             ),
             name="qdl-v2-hot-snapshot-batch",
         )
@@ -764,6 +985,7 @@ class V2QueryService:
         *,
         consumer_id: str,
         request_id: str | None = None,
+        fairness_key: str | None = None,
     ) -> QualityMetadata:
         """Read current governed status on the same bounded hot cache lane."""
 
@@ -777,6 +999,8 @@ class V2QueryService:
                 execute,
                 consumer_id=consumer_id,
                 reserved_bytes=_HOT_SNAPSHOT_RESERVED_BYTES,
+                wait_timeout_ms=_hot_lane_wait_ms(),
+                **_fair(self._hot_snapshot_admission_for(), fairness_key),
             ),
             name="qdl-v2-hot-status",
         )
@@ -895,6 +1119,13 @@ class V2QueryService:
                 )
         return BatchQueryResult(request_id, tuple(results))
 
+    def _warmup_flights_for(self) -> _WarmupFlights:
+        flights = getattr(self, "_warmup_flights", None)
+        if flights is None:
+            flights = _WarmupFlights()
+            self._warmup_flights = flights
+        return flights
+
     def large_warmup_lane_busy(self) -> bool:
         """IDR-129: True while the large-warmup lane runs or queues a batch (memory maintenance waits)."""
 
@@ -952,6 +1183,8 @@ class V2QueryService:
         purpose: AccessPurpose,
         consumer_id: str = "qdl.v2.single-warmup",
         request_id: str | None = None,
+        fairness_key: str | None = None,
+        abandoned=None,
     ) -> WarmupResult:
         """Run one warmup through the same bounded policy as a batch item."""
         request_id = request_id or self.request_id()
@@ -963,6 +1196,8 @@ class V2QueryService:
             ),
             purpose=purpose,
             request_id=request_id,
+            fairness_key=fairness_key,
+            abandoned=abandoned,
         )
         item = batch.results[0]
         if item.problem is not None:
@@ -981,6 +1216,8 @@ class V2QueryService:
         *,
         purpose: AccessPurpose,
         request_id: str | None = None,
+        fairness_key: str | None = None,
+        abandoned=None,
     ) -> BatchQueryResult:
         """Execute a batch concurrently without hiding item-level failures."""
 
@@ -992,6 +1229,8 @@ class V2QueryService:
             purpose=purpose,
             completion=return_result,
             request_id=request_id,
+            fairness_key=fairness_key,
+            abandoned=abandoned,
         )
 
     async def warmup_batch_completed_async(
@@ -1002,6 +1241,8 @@ class V2QueryService:
         completion: Callable[[BatchQueryResult], Awaitable[_BatchCompletion]],
         request_id: str | None = None,
         redirect_when_busy: bool = False,
+        fairness_key: str | None = None,
+        abandoned=None,
     ) -> _BatchCompletion:
         """Run an internal response completion under a fully-local batch lease.
 
@@ -1019,6 +1260,12 @@ class V2QueryService:
         reserved or read. Small warmups, mixed/provider batches and requests
         without the opt-in keep the queue. Stage 100f: two 2,500-row reads
         on one replica took 3.5 s and 7.0 s while the other replica was idle.
+
+        DL v2.4.0 S6: ``fairness_key`` (the request's ``X-QDL-Session`` within
+        its identity) orders the session-fair queue; ``abandoned`` withdraws
+        a waiter whose client went away; a fully-local batch whose every item
+        is already being materialized by an identical in-flight warmup joins
+        that one (``_WarmupFlights``) instead of queuing.
         """
         request_id = request_id or self.request_id()
         executor_before = self.warmup_executor.stats()
@@ -1058,8 +1305,11 @@ class V2QueryService:
                     consumer_id=batch.consumer_id,
                     reserved_bytes=local_reserved_bytes,
                     wait_timeout_ms=local_admission_wait_ms,
+                    fairness_key=fairness_key,
+                    abandoned=abandoned,
                 )
             except _LocalBatchAdmissionRejected as error:
+                request_cost.note_refusal()
                 return {
                     requirement: self._lane_error(
                         error,
@@ -1142,7 +1392,12 @@ class V2QueryService:
         local_admission_wait_ms = min(
             deadline(requirement) for requirement in local_requirements
         ) if local_requirements else None
-        if local_admission_wait_ms is not None and getattr(
+        if local_admission_wait_ms is not None and self._local_batch_admission_for(local_requirements).fair:
+            # DL v2.4.0 S6: a fair-queue waiter waits up to its own deadline,
+            # capped and less a margin, so it is refused while its client is
+            # still listening (SDK 2.8.0 waits deadline + 2 s).
+            local_admission_wait_ms = _fair_queue_wait_ms(local_admission_wait_ms)
+        elif local_admission_wait_ms is not None and getattr(
             self, "_queued_local_batch_lane", False
         ):
             # A queued large warmup must be refused while its client is still
@@ -1265,12 +1520,25 @@ class V2QueryService:
 
         if fully_local_batch:
             admission = self._local_batch_admission_for(local_requirements)
+            flights = self._warmup_flights_for()
+            joined = await flights.join(local_requirements, wait_ms=local_admission_wait_ms)
+            if joined is not None:
+                # Every item is being materialized by an identical in-flight
+                # warmup: share its immutable histories (same end snapshot and
+                # stream handoff boundary), never queue or read again. Item
+                # quality and the per-consumer cursor binding stay per request.
+                request_cost.note_shared_hit(len(local_requirements))
+                prefetched_local_histories = joined
+                return await complete(await execute_items())
             refuse_if_queued = bool(redirect_when_busy) and admission is not getattr(
                 self, "_small_local_warmup_admission", None
             )
+            owned = flights.lead(local_requirements)
+            admitted = False
 
             async def execute_whole_local_batch() -> _BatchCompletion:
-                nonlocal prefetched_local_histories
+                nonlocal prefetched_local_histories, admitted
+                admitted = True
                 try:
                     prefetched_local_histories = await self._query_work_pools_for().cold(
                         history_many, local_requirements
@@ -1279,6 +1547,8 @@ class V2QueryService:
                     prefetched_local_histories = {
                         requirement: error for requirement in local_requirements
                     }
+                request_cost.note_work(len(local_requirements))
+                flights.publish(owned, prefetched_local_histories)
                 return await complete(await execute_items())
 
             local_batch_task = asyncio.create_task(
@@ -1288,11 +1558,19 @@ class V2QueryService:
                     reserved_bytes=local_reserved_bytes,
                     wait_timeout_ms=local_admission_wait_ms,
                     refuse_if_queued=refuse_if_queued,
+                    fairness_key=fairness_key,
+                    abandoned=abandoned,
                 )
             )
+            local_batch_task.add_done_callback(lambda _task: flights.abandon(owned))
             try:
                 return await asyncio.shield(local_batch_task)
             except asyncio.CancelledError:
+                if not admitted:
+                    # Still queued: nothing was reserved or read, so a waiter
+                    # whose client went away leaves the queue now (DL v2.4.0
+                    # S6) instead of materializing for nobody later.
+                    local_batch_task.cancel()
                 # The caller may disappear while a SQLite tail read, item work
                 # or HTTP response serialization holds this reader's finite
                 # CPU budget. Keep the request-local lease until it drains.
@@ -1321,13 +1599,16 @@ class V2QueryService:
             except _LocalBatchAdmissionRejected as error:
                 # A bounded queued lane must fail typed before it can create
                 # cache work or borrow an external-provider budget.
-                retry_after_ms = (
-                    _QUEUED_LOCAL_BATCH_RETRY_AFTER_MS
-                    if isinstance(error, _LocalBatchAtCapacity)
-                    and getattr(self, "_queued_local_batch_lane", False)
-                    and admission is not getattr(self, "_small_local_warmup_admission", None)
-                    else None
-                )
+                request_cost.note_refusal(len(local_requirements))
+                retry_after_ms = getattr(error, "retry_after_ms", None)
+                if retry_after_ms is None:
+                    retry_after_ms = (
+                        _QUEUED_LOCAL_BATCH_RETRY_AFTER_MS
+                        if isinstance(error, _LocalBatchAtCapacity)
+                        and getattr(self, "_queued_local_batch_lane", False)
+                        and admission is not getattr(self, "_small_local_warmup_admission", None)
+                        else None
+                    )
                 prefetched_local_histories = {
                     requirement: QueryServiceError(
                         QueryProblem(
@@ -1384,6 +1665,22 @@ class V2QueryService:
         return max(_LOCAL_HISTORY_BASE_BYTES, rows * _LOCAL_HISTORY_BYTES_PER_ROW)
 
     async def reference_data_batch_async(
+        self,
+        batch: ReferenceBatchRequirement,
+        *,
+        purpose: AccessPurpose,
+        request_id: str | None = None,
+        fairness_key: str | None = None,
+    ) -> ReferenceBatchQueryResult:
+        """``_reference_data_batch``; ``fairness_key`` orders the session-fair hot reference lane (DL v2.4.0)."""
+
+        token = _FAIRNESS_KEY.set(fairness_key)
+        try:
+            return await self._reference_data_batch(batch, purpose=purpose, request_id=request_id)
+        finally:
+            _FAIRNESS_KEY.reset(token)
+
+    async def _reference_data_batch(
         self,
         batch: ReferenceBatchRequirement,
         *,
@@ -1775,7 +2072,8 @@ class V2QueryService:
             fetch,
             consumer_id=consumer_id,
             reserved_bytes=_HOT_REFERENCE_RESERVED_BYTES,
-            wait_timeout_ms=deadline_ms,
+            wait_timeout_ms=_hot_lane_wait_ms(deadline_ms),
+            **_fair(self._hot_reference_admission_for(), _current_fairness_key()),
         )
 
     def _reference_snapshot_requires_refresh(

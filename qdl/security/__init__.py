@@ -6,7 +6,10 @@ from qdl.security.data_plane import (
     DataPlanePermission,
     DataPlaneSecurityConfig,
     InMemoryMinuteQuota,
+    LocalTokenBucketQuota,
+    QuotaLease,
     RedisMinuteQuota,
+    VerifiedTokenCache,
 )
 from qdl.security.grpc import (
     GrpcDataAccess,
@@ -34,6 +37,9 @@ __all__ = [
     "DataPlaneSecurityConfig",
     "EgressPolicy",
     "InMemoryMinuteQuota",
+    "LocalTokenBucketQuota",
+    "QuotaLease",
+    "VerifiedTokenCache",
     "RedisMinuteQuota",
     "GrpcDataAccess",
     "GrpcDataPlaneInterceptor",

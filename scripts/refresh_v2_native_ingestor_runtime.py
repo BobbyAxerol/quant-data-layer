@@ -123,10 +123,19 @@ def _without_catalog_revision(binding: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+# Non-binding fields the compiler owns and a refresh carries from the
+# compiler output instead of refusing the difference (DL v2.3.2: the
+# session-liveness write throttle 1000 -> 250 ms for Stream session-alive
+# frames). The ingestor validates the same bound at start.
+COMPILER_TUNED_FIELDS = {"session_liveness_write_interval_ms": (250, 5_000)}
+
+
 def _non_binding_fields(value: Mapping[str, Any]) -> dict[str, Any]:
     result = dict(value)
     result.pop("bindings", None)
     result.pop("config_revision", None)
+    for field in COMPILER_TUNED_FIELDS:
+        result.pop(field, None)
     return result
 
 
@@ -214,6 +223,16 @@ def _validate_transition(
 
     added = [item for key, item in expected_bindings.items() if key not in active_bindings]
     successor = dict(active)
+    tuned: dict[str, list[Any]] = {}
+    for field, (low, high) in COMPILER_TUNED_FIELDS.items():
+        if field not in expected:
+            continue
+        value = expected[field]
+        if type(value) is not int or not low <= value <= high:
+            raise ValueError(f"{target} {field} must be an int in {low}..{high}")
+        if active.get(field) != value:
+            tuned[field] = [active.get(field), value]
+            successor[field] = value
     if added:
         revision = expected.get("config_revision")
         if not isinstance(revision, int) or revision <= int(active.get("config_revision") or 0):
@@ -244,6 +263,7 @@ def _validate_transition(
         "added_book_symbols": added_by_feed.get("BOOK", []),
         "added_subscription_ids": sorted({str(item["subscription_id"]) for item in added}),
         "retained_bindings_byte_identical": True,
+        "tuned_fields": tuned,
     }
     if target == TARGETS["okx-swap"]:
         change["okx_lanes_before"] = [name for name, _feed in _okx_lanes(active)]
@@ -311,7 +331,8 @@ def refresh(
             authority=authority,
         )
         successor, change = _validate_transition(active=active, expected=expected, target=file_name)
-        expected_bytes = _canonical_bytes(successor) if change["added_binding_count"] else active_bytes
+        changed = change["added_binding_count"] or change["tuned_fields"]
+        expected_bytes = _canonical_bytes(successor) if changed else active_bytes
         pending[file_name] = (
             path,
             active_bytes,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from functools import lru_cache
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
@@ -116,17 +117,29 @@ class _CacheEntry:
     result: ReferenceBatchResult
 
 
-def default_capability_resolver(record: InstrumentRecord) -> VenueCapabilityProfile:
-    identity = record.identity
-    if (identity.venue, identity.market) == ("BINANCE", "USDM"):
+@lru_cache(maxsize=16)
+def _venue_capabilities(venue: str, market: str) -> VenueCapabilityProfile:
+    if (venue, market) == ("BINANCE", "USDM"):
         return binance_usdm_capabilities()
-    if (identity.venue, identity.market) == ("OKX", "SWAP"):
+    if (venue, market) == ("OKX", "SWAP"):
         return okx_global_capabilities("SWAP")
-    if (identity.venue, identity.market) == ("OKX", "FUTURES"):
+    if (venue, market) == ("OKX", "FUTURES"):
         return okx_global_capabilities("FUTURES")
     raise ReferenceUnavailable(
-        f"reference batch has no approved adapter for {identity.venue}/{identity.market}"
+        f"reference batch has no approved adapter for {venue}/{market}"
     )
+
+
+def default_capability_resolver(record: InstrumentRecord) -> VenueCapabilityProfile:
+    """The venue profile; built once per (venue, market) (DL v2.4.0 S4).
+
+    The profile is a frozen value that depends only on (venue, market); it was
+    rebuilt twice per MARK/INDEX item. An unapproved venue still raises
+    ``ReferenceUnavailable`` on every call (exceptions are not cached).
+    """
+
+    identity = record.identity
+    return _venue_capabilities(identity.venue, identity.market)
 
 
 class ReferenceBatch:

@@ -65,7 +65,9 @@ class AlphaReferenceAccessTests(unittest.TestCase):
             with self.subTest(row=row):
                 self.assertIn(self.post([row]).status_code, (400, 403, 422))
         headers = dict(self.headers)
-        headers["Authorization"] = "Bearer " + make_token(self.subject, manifest_revision=self.manifest.manifest_revision - 1)
+        # DL v2.4.0 S2: an older token revision is advisory and accepted; a token
+        # for a revision the Data Layer has not loaded is still refused.
+        headers["Authorization"] = "Bearer " + make_token(self.subject, manifest_revision=self.manifest.manifest_revision + 1)
         self.assertIn(self.post(self.rows, headers).status_code, (401, 403))
         self.assertEqual(self.adapter.calls, 0)
 

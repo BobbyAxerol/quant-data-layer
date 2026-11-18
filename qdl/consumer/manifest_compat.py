@@ -21,6 +21,21 @@ of the current one. This module is the one place that decides it:
   to the new revision, which is exactly the pre-v2.3.0 behaviour (same-window
   token bump, CLAUDE.md section 4.1 unchanged for non-additive changes).
 
+DL v2.4.0 S2 (owner decision 2026-11-18): the token revision is ADVISORY.
+Authorization reads only the ACTIVE manifest (its permissions, purposes,
+requirements and quotas); the revision a token was minted for grants nothing
+by itself. So the readers accept any token revision 1..revision
+(``ConsumerManifest.accepted_token_revisions``, Rust ``Manifest::accepts_token_revision``)
+and the renderer declares floor 1 whatever the change: a manifest bump no
+longer needs a same-window JWT bump (CLAUDE.md section 4.1 coupling removed).
+The repository manifest files are not rewritten (their sha256 is pinned by the
+release routing and the consumer's release-manifest env). The accept set
+still has its upper bound (a token minted for a revision the Data Layer has not
+loaded yet is refused), so the rollout order stays Data Layer first, consumer
+second. ``additive_problems`` is still computed and reported for audit: a
+non-additive change is a reviewable entitlement change, it just no longer
+resets the token floor.
+
 Boundary: pure comparison of loaded manifests; no I/O.
 """
 
@@ -66,13 +81,19 @@ def is_additive(old: ConsumerManifest, new: ConsumerManifest) -> bool:
     return not additive_problems(old, new)
 
 
-def next_min_token_revision(previous: ConsumerManifest | None, new: ConsumerManifest) -> int:
-    """The accept-set floor a rendered successor may declare."""
+# DL v2.4.0 S2: the advisory floor every stable manifest declares.
+ADVISORY_TOKEN_REVISION_FLOOR = 1
 
-    if previous is None or not is_additive(previous, new):
-        return new.manifest_revision
-    floor = previous.accepted_token_revisions.start
-    return min(floor, new.manifest_revision)
+
+def next_min_token_revision(previous: ConsumerManifest | None, new: ConsumerManifest) -> int:
+    """The accept-set floor a rendered successor declares: always the advisory floor.
+
+    ``previous`` is kept in the signature for the renderer's audit path; it no
+    longer changes the floor (DL v2.4.0 S2).
+    """
+
+    del previous
+    return min(ADVISORY_TOKEN_REVISION_FLOOR, new.manifest_revision)
 
 
 def declared_floor_problems(previous: ConsumerManifest | None, new: ConsumerManifest) -> list[str]:

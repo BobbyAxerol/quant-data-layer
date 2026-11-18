@@ -1,0 +1,25 @@
+{
+ "schema": "qdl.p184.stage100-a6.v1",
+ "amendment_id": "A6",
+ "version": 1,
+ "label": "PRE_REGISTERED",
+ "post_hoc": false,
+ "statement": "A6 pre-registers, before any DL v2.4.0 run, the shared100 acceptance shape that replaces the stage-100 alpha quota assumptions for the 100-alpha certification: one tier identity per venue x environment, the real stream + on-demand-poll mix, no quota bump, and the restart-storm, noisy-neighbour and baseline-subtracted G14 gates of the profile below. It applies to no earlier run. Every other stage-100 gate, budget row and amendment (G4-A1, G4-A2, A3, A4 v2, A5) is unchanged.",
+ "decision_owner": "Bobby (owner)",
+ "approval_reference": "owner DL design decisions 2026-11-18 ~08:50Z (memory pm-operating-model-redesign-20261118), relayed by the coordinator brief for DL v2.4.0 S1-S9",
+ "numeric_threshold_status": "restart-storm (100 sessions/10 s, 0 refusals), noisy-neighbour (50 rps) and the TS G5 reuse are the owner's stated shape; the G14 alpha-delta limit 0.5 vCPU is OWNER-APPROVED 2026-11-18 (relayed by the coordinator)",
+ "profile": {
+  "path": "config/v2/p184-shared100-profile.json",
+  "sha256": "720e6d98d3c39ebf35d32c82d059fbd2d2ab4ceca56a8d65120c93a1935e6f3c"
+ },
+ "bind_rule": "bound to the run's runtime identity (image digests of query_kn_1/2 and stream_kn_1/2, manifest/realm revisions) before load; a run without a bind record is not scored by A6",
+ "frozen_at": "2026-11-18",
+ "rationale_doc": "DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md, entry 'DL v2.4.0 S1-S9'",
+ "supersedes": "quota r18 (no quota bump needed under v2.4.0 S3/S7)",
+ "g14_approval": {
+  "limit_vcpu": 0.5,
+  "status": "OWNER-APPROVED",
+  "date": "2026-11-18",
+  "reference": "owner confirmation relayed by the coordinator session 'trading system upgrade'"
+ }
+}

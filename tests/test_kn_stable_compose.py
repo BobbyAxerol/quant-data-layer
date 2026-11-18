@@ -162,6 +162,23 @@ class KnStableComposeTest(unittest.TestCase):
         self.assertEqual(changed, {"QDL_KN_RELEASE_DIR", "QDL_CONSUMER_REALM_DIR", "QDL_PAPER_REALM_MANIFEST",
                                    "QDL_CORE_CONFIG_DIR", "QDL_INGESTOR_CONFIG_DIR"})
 
+    def test_v232_stream_reads_session_liveness_like_query(self):
+        # DL v2.3.2 session-alive frames: both Stream replicas mount the same read-only stable_state subpath as
+        # Query and name it in QDL_KN_SESSION_LIVENESS_DIR (unset would refuse every frame request).
+        def mount(role):
+            return [v for v in self.services[role]["volumes"] if v["target"] == "/session-liveness"]
+
+        expected = mount("query_kn_1")
+        self.assertEqual(expected, [{"type": "volume", "source": "stable_state", "target": "/session-liveness",
+                                     "read_only": True, "volume": {"subpath": "runtime/session-liveness"}}])
+        for role in ("stream_kn_1", "stream_kn_2", "query_kn_2"):
+            with self.subTest(role=role):
+                self.assertEqual(mount(role), expected)
+        for role in ("stream_kn_1", "stream_kn_2"):
+            with self.subTest(role=role):
+                self.assertEqual(self.services[role]["environment"]["QDL_KN_SESSION_LIVENESS_DIR"], "/session-liveness")
+                self.assertTrue(self.services[role]["read_only"])
+
     def test_no_secret_literal_in_committed_files(self):
         files = [COMPOSE] + [p for p in (ENV_V224, ENV_V225, ENV_V226A, ENV_V230, ENV_V231) if p.exists()]
         for path in files:

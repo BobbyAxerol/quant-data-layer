@@ -72,6 +72,11 @@ def compile_bundle(*, environment: str, catalog_path: Path, manifest_paths: Iter
         # unpinned catalogue compiles the byte-identical v2.2.x bundle.
         if binding.lineage_revision is not None:
             entry["lineage_revision"] = binding.lineage_revision
+        # DL v2.3.2: the Stream marks ON_CHANGE QUOTE records DELIVERY_ON_CHANGE
+        # for subscriptions that opt in. Emitted only for ON_CHANGE, so a bundle
+        # without such bindings stays byte-identical; absent means STRICT_EVENT.
+        if binding.delivery_semantics == "ON_CHANGE":
+            entry["delivery_semantics"] = "ON_CHANGE"
         bindings.append(entry)
     manifests = []
     for path in sorted(manifest_paths):

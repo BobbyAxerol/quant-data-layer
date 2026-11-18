@@ -1,0 +1,45 @@
+{
+ "schema": "qdl.p184.shared100-profile.v1",
+ "profile": "shared100",
+ "status": "PREPARED_NOT_RUN",
+ "statement": "DL v2.4.0 S9 acceptance profile: 100 alpha sessions behind one tier identity per venue x environment, the real mix (continuous feeds on Stream; warmup, reference and funding reads polled on demand), the Trading System writer unchanged, and the sealed manifest quotas (no bump). Prepared offline; never run against production by this change.",
+ "workload": {
+  "tool": "scripts/p184_capacity100.py build_capacity100_candidate(profile='shared100')",
+  "sessions": 100,
+  "session_header": "X-QDL-Session",
+  "session_ids": "s001..s100",
+  "streams": "each session's continuous feeds (the realistic 40/30/20/10 class mix)",
+  "on_demand_polls": "warmup at start, then reference/funding-like reads once per 60 s per product",
+  "query_replicas": 2,
+  "sdk_min": "2.8.0 for the session header; 2.x without it uses the identity as fairness key"
+ },
+ "quota_bump": false,
+ "gates": {
+  "restart_storm": {
+   "sessions": 100,
+   "cold_start_within_s": 10,
+   "max_refusals": 0,
+   "every_warmup_served": true,
+   "ts_lane_p95_le_ms": 6265.1,
+   "ts_lane_limit_source": "config/v2/p184-stage100-budget.json g5_shape_limits_ms.COLD_2500.p95 (frozen 2026-10-09)",
+   "measures": "start offsets of 100 sessions, every warmup outcome (including SDK retries), every 429 seen by any session, TS writer warmup/snapshot latency during the storm"
+  },
+  "noisy_neighbour": {
+   "noisy_session_rps": 50,
+   "max_other_session_refusals": 0,
+   "measures": "one session offers >= 50 rps of snapshot/reference reads; it must see RATE_LIMITED; every other session of the same identity and the TS writer see none"
+  },
+  "g14_baseline_subtracted": {
+   "phases": [
+    "IDLE",
+    "WRITER_ONLY",
+    "WRITER_PLUS_ALPHAS"
+   ],
+   "dl_vcpu_source": "scripts/p184_g14_resource_table.py cpu_mean over the DL roles of each phase, each phase >= 10 min",
+   "alpha_delta_dl_vcpu_le": 0.5,
+   "limit_status": "OWNER-APPROVED 2026-11-18 (alpha delta <= 0.5 vCPU, baseline-subtracted: idle, then writer only, then writer + 100 alphas; relayed by the coordinator); recorded, never edited after results"
+  }
+ },
+ "scorer": "qdl.certification.phase3_consumer_load.evaluate_shared100_gates",
+ "amendment": "config/v2/p184-stage100-a6-shared100-preregistered.json"
+}

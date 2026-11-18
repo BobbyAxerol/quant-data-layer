@@ -30,7 +30,13 @@ from qdl.query import (
     QueryProblem,
     V2QueryService,
 )
-from qdl.query.lanes import BoundedReadLane, ReadLaneAtCapacity, ReadLaneBusy, ReadLaneRejected
+from qdl.query.lanes import (
+    FairLanePolicy,
+    FairWarmupLane,
+    ReadLaneAtCapacity,
+    ReadLaneBusy,
+    ReadLaneRejected,
+)
 from qdl.query.service import (
     REPLICA_LANE_BUSY_REASON,
     QueryServiceError,
@@ -45,9 +51,18 @@ from qdl.warmup.executor import WarmupExecution
 router_module = importlib.import_module("qdl.api_v2.router")
 
 
+def _eight_per_identity() -> FairLanePolicy:
+    """The v2.4.0 fair lane with the pre-v2.4.0 bound of 8 pending per identity, to keep these cases small."""
+
+    from dataclasses import replace
+
+    return replace(_queued_local_batch_lane_policy(), max_pending=16, max_pending_per_consumer=8,
+                   max_pending_per_session=4, reserved_pending_slots=2)
+
+
 class LaneRefuseIfQueuedTests(unittest.IsolatedAsyncioTestCase):
     async def test_idle_lane_runs_busy_lane_refuses_without_reserving(self):
-        lane = BoundedReadLane(_queued_local_batch_lane_policy())
+        lane = FairWarmupLane(_queued_local_batch_lane_policy())
         self.assertEqual(
             await lane.run(_ok, consumer_id="a", reserved_bytes=1, refuse_if_queued=True), "ok"
         )
@@ -69,7 +84,7 @@ class LaneRefuseIfQueuedTests(unittest.IsolatedAsyncioTestCase):
         await first
 
     async def test_full_queue_on_a_busy_lane_is_busy_not_a_plain_refusal(self):
-        lane = BoundedReadLane(_queued_local_batch_lane_policy())
+        lane = FairWarmupLane(_eight_per_identity())
         hold = asyncio.Event()
         held = [asyncio.create_task(lane.run(hold.wait, consumer_id="a", reserved_bytes=1))
                 for _ in range(8)]
@@ -88,7 +103,7 @@ async def _ok():
     return "ok"
 
 
-def _service(*, small_lane: bool = True):
+def _service(*, small_lane: bool = True, policy=None):
     class Backend:
         def __init__(self):
             self.large_started = threading.Event()
@@ -126,7 +141,7 @@ def _service(*, small_lane: bool = True):
             self._small_local_warmup_lane = small_lane
             self._queued_local_batch_lane = True
             self._local_batch_admission = _LocalBatchAdmission(
-                policy=_queued_local_batch_lane_policy()
+                policy=policy or _queued_local_batch_lane_policy()
             )
 
         def _warmup_from_history(self, requirement, history, *, purpose, request_id):
@@ -238,7 +253,7 @@ class QueuedLaneCapacityRetryHintTests(unittest.IsolatedAsyncioTestCase):
         return lane, [large, *queued]
 
     async def test_lane_capacity_refusal_is_typed_and_deadline_is_not(self):
-        lane = BoundedReadLane(_queued_local_batch_lane_policy())
+        lane = FairWarmupLane(_eight_per_identity())
         hold = asyncio.Event()
         held = [asyncio.create_task(lane.run(hold.wait, consumer_id="a", reserved_bytes=1))
                 for _ in range(8)]
@@ -256,7 +271,7 @@ class QueuedLaneCapacityRetryHintTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(*held)
 
     async def test_full_queue_refusal_carries_the_retry_hint_and_unchanged_detail(self):
-        service = _service()
+        service = _service(policy=_eight_per_identity())
         lane, held = await self._fill_one_identity(service)
         problem = await self._refusal(service, "alpha.okx", _requirement("okx-8", 2500))
         self.assertEqual(problem.retry_after_ms, _QUEUED_LOCAL_BATCH_RETRY_AFTER_MS)
@@ -279,7 +294,9 @@ class QueuedLaneCapacityRetryHintTests(unittest.IsolatedAsyncioTestCase):
         problem = await self._refusal(service, "alpha.binance", short)
         self.assertEqual(problem.detail, "local canonical-cache batch admission "
                          "read lane admission wait exceeded the declared deadline")
-        self.assertIsNone(problem.retry_after_ms)
+        # DL v2.4.0 S6: a deadline refusal also says when to come back (queue
+        # position x measured service time, within the SDK's 250..2000 ms).
+        self.assertTrue(250 <= problem.retry_after_ms <= 2_000, problem.retry_after_ms)
         with self.assertRaises(QueryServiceError) as busy:
             await _warm(service, "alpha.binance", _requirement("bin", 2500), redirect_when_busy=True)
         self.assertEqual(busy.exception.problem.retry_after_ms, 0)

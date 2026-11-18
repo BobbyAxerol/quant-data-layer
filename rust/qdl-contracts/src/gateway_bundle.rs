@@ -24,6 +24,11 @@ pub struct Binding {
     /// (its records' `instrument_catalog_revision`, its cursors' catalog
     /// claim). A bundle entry without it carries the catalogue revision.
     pub lineage_revision: u64,
+    /// DL v2.3.2: the catalogue declares this binding `delivery_semantics:
+    /// ON_CHANGE` (native BBO QUOTE only, `StableSourceBinding`). A bundle
+    /// entry without the field is STRICT_EVENT or a pre-2.3.2 bundle; either
+    /// way the Stream never marks its records DELIVERY_ON_CHANGE.
+    pub delivery_on_change: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -127,10 +132,12 @@ pub fn canonical_sha256(document: &Map<String, Value>) -> String {
 
 impl Manifest {
     /// Whether a token minted for `revision` may use this manifest revision.
+    /// DL v2.4.0 S2: the token revision is advisory (same rule as the Python
+    /// `ConsumerManifest.accepted_token_revisions`): any revision in
+    /// `1..=manifest_revision` is accepted; `min_token_revision` is kept as
+    /// declared information only.
     pub fn accepts_token_revision(&self, revision: Option<u64>) -> bool {
-        revision.is_some_and(|value| {
-            (self.min_token_revision..=self.manifest_revision).contains(&value)
-        })
+        revision.is_some_and(|value| (1..=self.manifest_revision).contains(&value))
     }
 }
 
@@ -184,6 +191,24 @@ impl Bundle {
                             .ok_or(
                                 "bundle field lineage_revision must be within 1..=catalog_revision",
                             )?,
+                    },
+                    delivery_on_change: match &item["delivery_semantics"] {
+                        Value::Null => false,
+                        Value::String(value) if value == "STRICT_EVENT" => false,
+                        Value::String(value) if value == "ON_CHANGE" => {
+                            if item["feed"].as_str() != Some("QUOTE") {
+                                return Err(
+                                    "bundle ON_CHANGE delivery is reserved for QUOTE".into()
+                                );
+                            }
+                            true
+                        }
+                        _ => {
+                            return Err(
+                                "bundle field delivery_semantics must be STRICT_EVENT or ON_CHANGE"
+                                    .into(),
+                            )
+                        }
                     },
                 })
             })
@@ -328,6 +353,28 @@ mod tests {
     }
 
     #[test]
+    fn delivery_semantics_is_on_change_only_when_declared_and_only_for_quote() {
+        let parse = |feed: &str, semantics: Option<&str>| {
+            let mut document = sample();
+            document["catalog"]["bindings"][0]["feed"] = Value::from(feed);
+            if let Some(value) = semantics {
+                document["catalog"]["bindings"][0]["delivery_semantics"] = Value::from(value);
+            }
+            let hash = canonical_sha256(document.as_object().expect("object"));
+            document["sha256"] = Value::String(hash);
+            Bundle::parse(&document.to_string())
+        };
+        // Absent: STRICT_EVENT or a pre-2.3.2 bundle, never marked.
+        assert!(!parse("QUOTE", None).unwrap().bindings[0].delivery_on_change);
+        assert!(!parse("QUOTE", Some("STRICT_EVENT")).unwrap().bindings[0].delivery_on_change);
+        assert!(parse("QUOTE", Some("ON_CHANGE")).unwrap().bindings[0].delivery_on_change);
+        assert!(parse("TRADE", Some("ON_CHANGE"))
+            .unwrap_err()
+            .contains("reserved for QUOTE"));
+        assert!(parse("QUOTE", Some("on_change")).is_err());
+    }
+
+    #[test]
     fn a_binding_lineage_defaults_to_the_catalogue_revision_and_is_bounded_by_it() {
         let parse = |lineage: Option<Value>| {
             let mut document = sample();
@@ -373,27 +420,29 @@ mod tests {
     }
 
     #[test]
-    fn a_manifest_without_an_accept_set_accepts_only_its_own_revision() {
+    fn a_manifest_without_an_accept_set_accepts_every_older_revision() {
+        // DL v2.4.0 S2: the token revision is advisory (1..=revision).
         let bundle = with_manifest(None).expect("valid bundle");
         let manifest = &bundle.manifests[0];
         assert_eq!(manifest.min_token_revision, 7);
         assert!(manifest.accepts_token_revision(Some(7)));
-        assert!(!manifest.accepts_token_revision(Some(6)));
+        assert!(manifest.accepts_token_revision(Some(6)));
+        assert!(manifest.accepts_token_revision(Some(1)));
+        assert!(!manifest.accepts_token_revision(Some(0)));
         assert!(!manifest.accepts_token_revision(Some(8)));
         assert!(!manifest.accepts_token_revision(None));
     }
 
     #[test]
-    fn an_accept_set_admits_older_additive_revisions_and_never_newer_ones() {
+    fn an_accept_set_admits_older_revisions_and_never_newer_ones() {
         let bundle = with_manifest(Some(Value::from(4))).expect("valid bundle");
         let manifest = &bundle.manifests[0];
-        for revision in 4..=7 {
+        for revision in 1..=7 {
             assert!(
                 manifest.accepts_token_revision(Some(revision)),
                 "{revision}"
             );
         }
-        assert!(!manifest.accepts_token_revision(Some(3)));
         assert!(!manifest.accepts_token_revision(Some(8)));
     }
 

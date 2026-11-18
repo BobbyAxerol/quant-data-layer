@@ -363,12 +363,13 @@ class Phase7RestAndContractTests(unittest.TestCase):
                 consumer_id=self.fixture.consumer_id,
             )
 
+        # DL v2.4.0 S8: role claims are accepted and ignored; the manifest's
+        # permissions are the only gate.
         scoped = identity.authenticate(
             make_token(self.fixture.subject, roles=("auditor",)),
             consumer_id=self.fixture.consumer_id,
         )
-        with self.assertRaises(DataPlaneAccessError):
-            scoped.require_permission(DataPlanePermission.SNAPSHOT_READ)
+        scoped.require_permission(DataPlanePermission.SNAPSHOT_READ)
         access.require_stream_buffer(access.manifest.quotas.max_buffer_events)
         with self.assertRaises(DataPlaneAccessError):
             access.require_stream_buffer(access.manifest.quotas.max_buffer_events + 1)
