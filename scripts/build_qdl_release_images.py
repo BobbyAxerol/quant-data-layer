@@ -97,8 +97,24 @@ BUILDER_RECIPE = (
 )
 BUILDER_TAG = "qdl-rust-builder:1.82.0-v2.3.2"
 BUILDER_IMAGE = "sha256:2cb66ad6bb4033a5d9d6814ab40d260619472568ab7e1826ebbc460f740f58d3"
-RUST_BASE_TAG = "qdl-v2-rust-base:bookworm-50be2b92"
-RUST_BASE_ID = "sha256:c46ae0fa4abf540f594da7d7f4011511d2f3ae6d9d6dffad97fecab153e2e19f"
+# v2.4.0 R0 (trivy 2026-11-18: 3 CRITICAL + 10 HIGH fixable in c46ae0fa's perl-base, apt/libapt-pkg, libpcre2-8-0):
+# the runtime base is now built from RUST_BASE_RECIPE, the runtime stage of Dockerfile.qdl-rust-runtime plus an
+# `apt-get upgrade` on the current bookworm point release (network for apt only), via `--build-base`.
+DEBIAN_BASE = "debian@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241"
+RUNTIME_APT_PACKAGES = ("ca-certificates", "libssl3", "libzstd1", "zlib1g")
+RUST_BASE_RECIPE = (
+    f"FROM {DEBIAN_BASE}\n"
+    "RUN apt-get update -qq \\\n"
+    "    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \\\n"
+    "    && apt-get install -y --no-install-recommends " + " ".join(RUNTIME_APT_PACKAGES) + " \\\n"
+    "    && rm -rf /var/lib/apt/lists/* \\\n"
+    "    && groupadd --gid 10001 qdl \\\n"
+    "    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin qdl\n"
+)
+# Built 2026-11-18 from RUST_BASE_RECIPE (recipe sha256 86e535de...; debian 12.15 with perl-base 5.36.0-7+deb12u4, apt
+# 2.6.2, libpcre2-8-0 10.42-1+deb12u2). The previous base c46ae0fa stays only as the parent of older images.
+RUST_BASE_TAG = "qdl-v2-rust-base:bookworm-v240-20261118"
+RUST_BASE_ID = "sha256:b33ec0cb161e80f3300684f96fa956eedabc49325e401a170fb25c02d4b2eef7"
 PYTHON_BASE = (
     "python:3.12-slim@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a"
 )
@@ -805,6 +821,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--repo", type=Path, default=REPO)
     parser.add_argument("--component", choices=("all", "rust", "python"), default="all")
     parser.add_argument("--build", action="store_true", help="execute (default: dry-run plan only)")
+    parser.add_argument("--build-base", metavar="TAG",
+                        help="build RUST_BASE_RECIPE as TAG (network for apt only) and print its id; pin it by hand")
     parser.add_argument("--lock-owner", help="owner name: of the correctness activity record (default class), or of "
                                              "the measurement lock held for this build (--class measurement)")
     parser.add_argument("--class", dest="klass", choices=("correctness", "measurement"), default="correctness",
@@ -823,6 +841,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.build_base:
+        if image_id(args.build_base):
+            print(json.dumps({"status": "REFUSED", "error": f"{args.build_base} exists; never move a tag"}))
+            return 2
+        done = subprocess.run(["docker", "build", "--pull=false", "-t", args.build_base, "-"],
+                              input=RUST_BASE_RECIPE.encode(), capture_output=True)
+        print(json.dumps({"status": "PASS" if done.returncode == 0 else "FAIL", "tag": args.build_base,
+                          "id": image_id(args.build_base), "recipe_sha256": hashlib.sha256(
+                              RUST_BASE_RECIPE.encode()).hexdigest(),
+                          "stderr_tail": done.stderr.decode(errors="replace")[-600:]}))
+        return 0 if done.returncode == 0 else 1
     try:
         rev = resolve_rev(args.repo, args.rev)
         if not args.build:

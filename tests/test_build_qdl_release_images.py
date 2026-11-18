@@ -121,6 +121,31 @@ class GuardTests(unittest.TestCase):
             self.assertEqual(b.check_disk(Path("/"), 5), 10.0)
 
 
+class RuntimeBaseTests(unittest.TestCase):
+    """v2.4.0 R0: the runtime base is a pinned recipe with an apt upgrade, pinned by its full image id."""
+
+    def test_base_recipe_upgrades_and_keeps_the_runtime_stage(self):
+        recipe = b.RUST_BASE_RECIPE
+        self.assertTrue(recipe.startswith(f"FROM {b.DEBIAN_BASE}\n"))
+        self.assertRegex(b.DEBIAN_BASE, r"^debian@sha256:[0-9a-f]{64}$")
+        self.assertIn("apt-get upgrade -y", recipe)
+        for package in ("ca-certificates", "libssl3", "libzstd1", "zlib1g"):
+            self.assertIn(package, recipe)
+        self.assertIn("useradd --uid 10001 --gid 10001", recipe)
+        dockerfile = (REPO / "Dockerfile.qdl-rust-runtime").read_text()
+        self.assertIn(f"FROM {b.DEBIAN_BASE}", dockerfile)  # same debian as the runtime stage
+
+    def test_base_is_pinned_by_full_id_and_named_in_the_build_method(self):
+        self.assertRegex(b.RUST_BASE_ID, r"^sha256:[0-9a-f]{64}$")
+        self.assertEqual(b.RUST_BASE_ID, "sha256:b33ec0cb161e80f3300684f96fa956eedabc49325e401a170fb25c02d4b2eef7")
+        self.assertTrue(b.BUILD_METHOD.endswith("runtime-overlay-" + b.RUST_BASE_ID[7:15]))
+
+    def test_build_base_refuses_to_move_an_existing_tag(self):
+        with mock.patch.object(b, "image_id", return_value="sha256:" + "a" * 64), mock.patch("builtins.print") as out:
+            self.assertEqual(b.main(["--build-base", "qdl-v2-rust-base:x"]), 2)
+        self.assertIn("never move a tag", out.call_args.args[0])
+
+
 class HostClassTests(unittest.TestCase):
     """AGENTS 34b: a build is correctness work (activity record + load gate); measurement keeps the lock."""
 
@@ -193,7 +218,7 @@ class CommandTests(unittest.TestCase):
         self.assertTrue(text.startswith(f"FROM {b.RUST_BASE_TAG}\n"))
         self.assertIn(f'org.opencontainers.image.version="{b.RELEASE}"', text)
         self.assertIn(f'qdl.build.method="{b.BUILD_METHOD}"', text)
-        self.assertEqual(b.BUILD_METHOD, f"cargo-cache-{b.BUILDER_IMAGE[7:15]}+runtime-overlay-c46ae0fa")
+        self.assertEqual(b.BUILD_METHOD, f"cargo-cache-{b.BUILDER_IMAGE[7:15]}+runtime-overlay-b33ec0cb")
         self.assertNotIn("qdl.test.only", text)
         self.assertIn("USER 10001:10001", text)
 
