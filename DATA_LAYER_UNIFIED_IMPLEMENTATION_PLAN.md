@@ -78904,3 +78904,12 @@ Update, R0 security gates run once (13:43-13:47Z, `drafts/R0_SECURITY.md`): carg
 trivy rust image **FAIL**: 3 CRITICAL + 10 HIGH fixable, all in the debian 12.15 runtime base `c46ae0fa` (perl-base,
 apt/libapt-pkg, libpcre2-8-0). Not waived; reported to the coordinator with the proposed base rebuild. Status:
 release BLOCKED on the Rust runtime base.
+
+Update, rust image on the upgraded base (coordinator-approved fix): runtime base `qdl-v2-rust-base:bookworm-v240-20261118`
+`sha256:b33ec0cb161e80f3300684f96fa956eedabc49325e401a170fb25c02d4b2eef7` (recipe sha256 86e535de...; debian 12.15,
+perl-base 5.36.0-7+deb12u4, apt/libapt-pkg 2.6.2, libpcre2-8-0 10.42-1+deb12u2; pinned in 3d4d84b with tests, 46 OK).
+Rust image rebuilt through the recipe: `qdl-v2-rust:2.4.0-3d4d84b`
+`sha256:aef35edf6cfa63f7ea9d8de69bce0a8e4354cb1008250be885344d6a534dfe5e`, receipt PASS; build context 13/13 files
+(12 binaries + admission policy) byte-identical to the c95476c build, so only the base layer changed. Python image
+unchanged (`75717b3c`). OPEN at this checkpoint: the trivy re-scan of `aef35edf`, then the draft digest updates and
+removal of the superseded `6970231d` (by digest, if unreferenced).
