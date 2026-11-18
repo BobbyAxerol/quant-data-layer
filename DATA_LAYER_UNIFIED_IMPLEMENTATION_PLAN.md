@@ -78891,3 +78891,10 @@ probe/extract containers now `--cpus 1`; the two `docker build` steps have no Bu
 record). `tests.test_build_qdl_release_images`: Ran 43 OK on the host (git available; 6 skipped in the image).
 The first build attempt (measurement lock waiter, started 13:13Z) was stopped by PID (479535/479536, mine) before it
 took the lock; no build ran.
+
+Update, R0 images built (correctness class, no lock): `qdl-v2-rust:2.4.0-c95476c`
+`sha256:6970231dfe984c5b01ee62758b9e26b3b1a9a1b810668417b8fc65ce04937a75` and `qdl-v2-python:2.4.0-c95476c`
+`sha256:75717b3c44364fe708769083b6b8268b913bb6ed270b20b162e1c0eaeab7f2d9`, receipt status PASS (binaries 12/12
+DIFFERENT as expected vs rc2, image = context, runtime probe ok, no TEST markers; python files 0 unexpected vs Query
+v2.3.1 and bar_edge rc3). Record `upgrade/evidence/releases/v2.4.0/drafts/R0_BUILD.md`; the drafts carry the digests.
+Security scans OPEN. Scratch cargo target (uid 1001, 2.3 GB) removed.

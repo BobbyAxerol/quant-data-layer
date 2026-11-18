@@ -18,7 +18,7 @@ Local, CI-shaped (journal entry "DL v2.4.0 S1-S9"):
 
 ## CI plan (CI2 / CI11)
 
-Classifier (`scripts/ci_change_scope.py --base 7a9c00b --head <HEAD>`, run locally): `full: true`, reason
+Classifier (`scripts/ci_change_scope.py --base 7a9c00b --head c95476c`, run locally): `full: true`, reason
 "ci-defining path deploy/compose/qdl-v2-stable-kn.yml" (v2.3.2 compose change, CI5); 82 files. So every job runs
 once; nothing is inherited:
 

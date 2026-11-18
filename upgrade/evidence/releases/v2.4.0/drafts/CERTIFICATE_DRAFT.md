@@ -30,9 +30,9 @@ shared100 run have receipts. Release head and images: see section 3.
 
 ## 3. Release candidate
 
-- Source: `release/v2.4.0` head `<HEAD>` (recipe commit 56eb6b3).
-- rust `qdl-v2-rust:2.4.0-<sha7>` `<RUST_DIGEST>`; python `qdl-v2-python:2.4.0-<sha7>` `<PYTHON_DIGEST>`; receipt
-  `~/.local/state/qdl-v2/build-v2.4.0-<sha7>/receipt.json`.
+- Source: `release/v2.4.0` head `c95476c` (recipe commit 56eb6b3).
+- rust `qdl-v2-rust:2.4.0-c95476c` `qdl-v2-rust@sha256:6970231dfe984c5b01ee62758b9e26b3b1a9a1b810668417b8fc65ce04937a75`; python `qdl-v2-python:2.4.0-c95476c` `qdl-v2-python@sha256:75717b3c44364fe708769083b6b8268b913bb6ed270b20b162e1c0eaeab7f2d9`; receipt
+  `~/.local/state/qdl-v2/build-v2.4.0-c95476c/receipt.json`.
 
 ## 4. Gates to issue the certificate
 
