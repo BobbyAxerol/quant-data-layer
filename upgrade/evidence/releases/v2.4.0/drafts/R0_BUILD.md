@@ -60,3 +60,15 @@ PASS.
 - **python `qdl-v2-python:2.4.0-c17472c` = `sha256:9cffe89b2a44b29c6a4a8ef707512141464836ad1570319bb9462c9ec92a837f`**;
   files vs Query v2.3.1 and bar_edge rc3: 0 unexpected differences; pip freeze as before.
 These supersede `aef35edf` / `75717b3c` as the v2.4.0 release candidates.
+
+## Hot-read fallback rebuild from acf42d7 (2026-11-19 05:32:58-05:34:42Z): python only
+
+Window 1 RCA (ROLLOUT_PLAN section 8): `qdl/runtime/kn_hot_view.py` changed, so only the python image was rebuilt with
+the recipe (`--rev acf42d7 --component python --build`, host slot, `--max-load 30`, correctness activity record, load
+19.52/19.88). Receipt `~/.local/state/qdl-v2/build-v2.4.0-acf42d7/receipt.json` PASS.
+- **python `qdl-v2-python:2.4.0-acf42d7` = `sha256:18ada571c72856cefc2844c8cb2c3809c3e30ac77927bc4c73160e7b2787cd18`**
+  (python base `python:3.12-slim@sha256:2c941e86…`, unchanged); files vs Query v2.3.1 / bar_edge rc3: 0 unexpected
+  differences; pip freeze equal to v2.3.1. Against `9cffe89b` exactly 3 files differ under `/app`: `kn_hot_view.py`,
+  `tests/test_kn_hot_view.py`, `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`; pip freeze equal.
+- rust stays `abafab2c` (no Rust change; the rust base `b33ec0cb` is not used by the python image).
+- `9cffe89b` is kept until the window closes (rollback reference for no live role; remove by digest afterwards).

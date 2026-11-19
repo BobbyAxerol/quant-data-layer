@@ -33,9 +33,10 @@ shared100 run have receipts. Release head and images: see section 3.
 - Source: python image from `c95476c`; rust image from `3d4d84b` (same Rust source and build context, byte-identical
   binaries; only the runtime base changed to `b33ec0cb`, see `R0_BUILD.md`).
 - rust `qdl-v2-rust:2.4.0-c17472c` `qdl-v2-rust@sha256:abafab2c98cbdd9d2fe86f2b26fd6fcf64800ccdd114a3dd5b92803de16a3e98`
-  (receipt `~/.local/state/qdl-v2/build-v2.4.0-3d4d84b/receipt.json`); python `qdl-v2-python:2.4.0-c17472c`
-  `qdl-v2-python@sha256:9cffe89b2a44b29c6a4a8ef707512141464836ad1570319bb9462c9ec92a837f` (receipt
-  `~/.local/state/qdl-v2/build-v2.4.0-c95476c/receipt.json`).
+  (receipt `~/.local/state/qdl-v2/build-v2.4.0-3d4d84b/receipt.json`); python `qdl-v2-python:2.4.0-acf42d7`
+  `qdl-v2-python@sha256:18ada571c72856cefc2844c8cb2c3809c3e30ac77927bc4c73160e7b2787cd18` (receipt
+  `~/.local/state/qdl-v2/build-v2.4.0-acf42d7/receipt.json`; supersedes `9cffe89b` after the window 1 RCA: hot-read
+  authority fallback, `qdl/runtime/kn_hot_view.py` only).
 - R0 security: PASS on both ids (`R0_SECURITY.md`).
 
 ## 4. Gates to issue the certificate

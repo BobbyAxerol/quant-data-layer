@@ -60,3 +60,10 @@ trivy 0.70.0, same DB (2026-11-18T07:15Z) and `.trivyignore`, `--cpus 1 --cpu-sh
 - python `9cffe89b`: 0 fixable CRITICAL/HIGH (HIGH 47 unfixed; MEDIUM 11 fixable: pip 25.0.1, jsonwebtoken in
   `app/Cargo.lock`, the recorded follow-up; LOW 2 fixable).
 cargo-deny and pip-audit: unchanged inputs (no Cargo.lock or Python dependency change), results above stand.
+
+## acf42d7 python trivy, once (2026-11-19 05:35Z): **PASS**
+
+trivy 0.70.0, same cache and `.trivyignore`, `--cpus 1 --cpu-shares 256 --memory 3g`, host slot, image
+`sha256:18ada571…` from `docker save`. 0 fixable CRITICAL/HIGH. debian 13.7: 47 HIGH, 92 MEDIUM, 65 LOW, all unfixed;
+fixable: python-pkg 10 MEDIUM + 2 LOW, cargo 1 MEDIUM (same classes as `9cffe89b`: the image's own pip and
+`app/Cargo.lock` jsonwebtoken). Rust image unchanged (`abafab2c`, PASS 2026-11-18).
