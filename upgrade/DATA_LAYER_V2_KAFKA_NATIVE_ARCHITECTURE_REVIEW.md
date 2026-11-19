@@ -3411,3 +3411,23 @@ Extends "Execution Handoff Hot Backup - 2026-10-01" (the private `CanonicalHotVi
   `9cffe89b`): such a Query must ask a replica on its own catalog first.
 
 Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, "DL v2.4.0 window 1 RCA".
+
+### Delta 2026-11-19: v2.4.1 canonical instrument metadata v1
+
+- **Native data, explicit metadata.** DL never rescales a price, quantity or bar.
+- **What the metadata says.** A separately versioned runtime file (`qdl.v2.canonical-instrument-metadata.v1`) states
+  how one venue unit relates to the underlying asset:
+  - `price_multiplier`: Binance `1000PEPEUSDT` = 1000;
+  - `quantity_multiplier`: OKX `PEPE-USDT-SWAP` = 10,000,000 PEPE per contract;
+  - cross-venue identity: Binance `LUNA2USDT` = OKX `LUNA-USDT-SWAP`.
+- **Where it is served.** Additively as `canonical` on `/v2/instruments`, with proto `Instrument.canonical = 24`.
+- **Sourcing.** Values come from public venue endpoints with a pinned capture, under rules that cite venue
+  documentation (`config/v2/canonical-underlying-rules.yaml`). An unverifiable rule or a cross-venue price
+  disagreement yields UNVERIFIED with no multipliers.
+- **Consumer side.** SDK 2.10.0 helpers refuse UNVERIFIED or missing metadata with a typed error.
+- **Why a separate file.** It is not part of the catalogue, so it never moves `catalog_revision`, the Query/Stream
+  hot-read authority.
+- **bar_edge.** Provider-short proofs now survive restarts in a sidecar file, so a restart no longer re-proves every
+  short binding.
+
+Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, "DL v2.4.1".
