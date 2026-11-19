@@ -1,0 +1,1 @@
+query_kn_2 gate 05:56:xxZ writer-probe-authority=2 transient during restart; re-read 05:57:30Z =0, all other gates PASS; accepted by coordinator

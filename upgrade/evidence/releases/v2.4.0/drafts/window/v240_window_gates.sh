@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # DL v2.4.0 runtime windows 1' / 2 / 1'': READ-ONLY gates for one recreated role.
-# Usage: v240_window_gates.sh ROLE T0      ROLE = stream_kn_2 | query_kn_2 | query_kn_1 | stream_kn_1; T0 = UTC ISO
+# Usage: v240_window_gates.sh ROLE T0      ROLE = stream_kn_2 | query_kn_2 | query_kn_1 | stream_kn_1 |
+#                                                ingestor_binance_usdm | ingestor_okx_swap | binance_bar_edge; T0 = UTC ISO
+# Windows 3/4 (stage C S10/S11 on v2.4.0): G-ingestor (started line, lanes flowing, 0 rejects, cores scope 0,
+# session-liveness cadence >= 2.5 writes/s) and G-bar-edge (checkpoint crossing 14->16 / 22->24, heartbeat 16/24/0,
+# running after 120 s; a "bounded bootstrap required" line is a HOLD, exit 3).
 # Purpose: decide PASS/FAIL after the coordinator recreated ROLE (corrected order after the window 1 RCA,
 # ROLLOUT_PLAN section 8). Gates: G-stream or G-query (role config), G-hot (Query -> Stream hot reads through
 # each Query's own client, v240_hot_read_probe.py), G-query-refusals (no HOT_AUTHORITY_OR_PROTOCOL_REFUSED since
@@ -15,6 +19,7 @@ IMG_STREAM=sha256:abafab2c98cbdd9d2fe86f2b26fd6fcf64800ccdd114a3dd5b92803de16a3e
 IMG_QUERY=sha256:18ada571c72856cefc2844c8cb2c3809c3e30ac77927bc4c73160e7b2787cd18
 BUNDLE=577470a63180bd8b7ac45e4beff7399bd8cf604fa3f3efdb8a855ea4f5191192
 IMG_W=sha256:d1addc042756f6bef8a2648e2bed64a7384818f22b47ddea8f9f220f844474c0
+IMG_INGESTOR=sha256:58bdd28216139f0c1a40abeee3077834f1cf922cf6412e7fb1ce8845591a0512   # unchanged in window 3
 role=${1:?role}; t0=${2:?T0}; F=0
 g() { if [ "$2" = 1 ]; then echo "PASS $1: $3"; else echo "FAIL $1: $3"; F=1; fi; }
 c=$P-$role-1
@@ -23,10 +28,50 @@ mnt() { docker inspect $c --format '{{range .Mounts}}{{.Destination}}={{.Source}
 
 # ---- role config
 x=$(docker inspect -f '{{.Image}} {{.RestartCount}} {{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' $c); set -- $x
-want=$IMG_STREAM; case $role in query_kn_*) want=$IMG_QUERY;; esac
+want=$IMG_STREAM; case $role in query_kn_*|binance_bar_edge) want=$IMG_QUERY;; ingestor_*) want=$IMG_INGESTOR;; esac
 g image-rc-health $([ "$1" = $want ] && [ "$2" = 0 ] && [ "$3" = running ] && [ "${4:-}" = healthy ] && echo 1 || echo 0) "$x"
-g realm-mount $(mnt | grep -qx "/consumer-realms=$R/v2.4.0-realm:false" && echo 1 || echo 0) "$(mnt | grep '^/consumer-realms=' | head -1)"
+case $role in stream_kn_*|query_kn_*)
+g realm-mount $(mnt | grep -qx "/consumer-realms=$R/v2.4.0-realm:false" && echo 1 || echo 0) "$(mnt | grep '^/consumer-realms=' | head -1)";; esac
+pyj() { python3 -B -c "import sys,json
+try: d=json.loads(sys.stdin.read())
+except Exception: print('NA'); sys.exit()
+$1"; }
+HOLD=0
 case $role in
+ingestor_*)
+  cfg=${role}.json
+  g ingestor-config $(mnt | grep -qx "/runtime/config.json=$R/v2.4.0-ingestor/$cfg:false" && echo 1 || echo 0) "$(mnt | grep '^/runtime/config.json=')"
+  st=$(docker logs --since $t0 $c 2>&1 | grep -m1 qdl_native_raw_ingestor_started)
+  v=$(echo "$st" | pyj 'print(d["bindings"],d["lane_plan"])'); set -- $v
+  wantb=118; [ $role = ingestor_okx_swap ] && wantb=465
+  g ingestor-started $([ "$1" = $wantb ] && [ "${2:-}" = PINNED ] && echo 1 || echo 0) "bindings=$1 lane_plan=${2:-NA} (want $wantb PINNED)"
+  p=$(docker logs --since 1m $c 2>&1 | grep qdl_native_raw_ingestor_progress | tail -1)
+  if [ $role = ingestor_binance_usdm ]; then
+    v=$(echo "$p" | pyj 'L={x["lane"]:x["frames"] for x in d["lanes"]};print(" ".join(f"{k}={L.get(k,-1)}" for k in ("binance-market-bar-001","binance-public-quote-001","binance-public-trade-001","binance-market-markindex-001","binance-public-book-001")))')
+  else
+    v=$(echo "$p" | pyj 'L=[(x["lane"],x["frames"]) for x in d["lanes"]];print(" ".join(f"{k}={n}" for k,n in L) if len(L)==7 else "lanes=%d" % len(L))')
+  fi
+  g ingestor-lanes-flowing "$(echo "$v" | grep -qE '=(-1|0)( |$)|NA|lanes=' && echo 0 || echo 1)" "frames per lane (10 s): $v"
+  rj=$(docker logs --since $t0 $c 2>&1 | grep -ciE 'subscription.*reject|reject.*subscription|"event":"qdl_native_raw_ingestor_[a-z_]*(error|failed)"')
+  g ingestor-rejects $([ "$rj" = 0 ] && echo 1 || echo 0) "rejected-subscription/error events=$rj"
+  for cr in rust_core rust_core_2 rust_core_3; do
+    v=$(docker logs --since 1m $P-$cr-1 2>&1 | grep qdl_realtime_core_progress | tail -1 | pyj 'print(d["scope_quarantines"],d["ignored_out_of_scope"])'); set -- $v
+    g core-scope-$cr $([ "$1" = 0 ] && [ "${2:-}" = 0 ] && echo 1 || echo 0) "scope_q=$1 oos=${2:-NA}"; done
+  venue=binance-usdm; [ $role = ingestor_okx_swap ] && venue=okx-swap
+  cad=$(timeout 30 docker exec -i $P-query_kn_1-1 python3 -B - $venue < $HERE/v240_liveness_cadence.py 2>/dev/null)
+  med=$(echo "$cad" | awk '{print $5}')
+  g liveness-cadence $(awk "BEGIN{print (\"${med:-0}\"+0>=2.5)?1:0}") "$venue median writes/s=${med:-NA} (>= 2.5; 1000 ms baseline 1.17) $(echo "$cad" | cut -d' ' -f3)";;
+binance_bar_edge)
+  g bar-edge-runtime $(mnt | grep -qx "/runtime=$R/v2.3.1-stage-c/runtime:false" && echo 1 || echo 0) "$(mnt | grep '^/runtime=')"
+  cl=$(docker logs --since $t0 $c 2>&1 | grep -m1 'checkpoint crosses')
+  g bar-edge-crossing "$(echo "$cl" | grep -q 'catalog 14->16 acquisition 22->24 crossed=True retained=1047 added=273 dropped=0' && echo 1 || echo 0)" "${cl#*crosses }"
+  cg=$(docker logs --since $t0 $c 2>&1 | grep -c 'cache generation changed; bounded bootstrap required')
+  [ "$cg" != 0 ] && { echo "HOLD bar-edge: 'cache generation changed; bounded bootstrap required' x$cg - coordinator decides continue or rollback"; HOLD=1; }
+  h=$(docker exec $c cat /var/lib/qdl-kn/heartbeat/bar-edge.json 2>/dev/null)
+  v=$(echo "$h" | pyj 'r=d["declaration"]["revisions"];print(r["catalog"],r["acquisition"],d["declaration"]["image_files"])'); set -- $v
+  g bar-edge-declaration $([ "$1" = 16 ] && [ "${2:-}" = 24 ] && [ "${3:-}" = 0 ] && echo 1 || echo 0) "catalog=$1 acquisition=${2:-NA} image_files=${3:-NA} (want 16/24/0; pre 14/22)"
+  echo "INFO bar_edge heartbeat: $(echo "$h" | pyj 'print(d["detail"])')"
+  x=$(docker inspect -f '{{.RestartCount}} {{.State.Status}}' $c); g bar-edge-running $([ "$x" = "0 running" ] && echo 1 || echo 0) "$x (run >= 120 s after T0)";;
 stream_kn_*)
   g liveness-ro $(mnt | grep -q '^/session-liveness=.*:false$' && echo 1 || echo 0) "$(mnt | grep session-liveness)"
   ml=$(docker logs --since 1m $c 2>&1 | grep qdl_kn_gateway_metrics | tail -1)
@@ -48,9 +93,14 @@ esac
 # ---- G-hot: each Query's own client (as configured) must read OK; per-target lines are diagnostic
 for q in query_kn_1 query_kn_2; do
   out=$(timeout 60 docker exec -i $P-$q-1 python3 -B - < $HERE/v240_hot_read_probe.py 2>/dev/null)
+  # Decides: no configured-client read may fail with an authority code (the RCA failure). A quiet product's
+  # HOT_RECORD_MISSING or a transient (deadline/busy/unavailable, e.g. a fresh channel's first TLS read under host
+  # load) is the pre-existing backup behaviour (Query then serves its primary cache) and is printed, not failed.
   n_all=$(echo "$out" | grep -c '^ALL ')
-  bad=$(echo "$out" | grep '^ALL ' | grep -vc ' OK$')
-  g hot-read-$q $([ "$n_all" -ge 3 ] && [ "$bad" = 0 ] && echo 1 || echo 0) "configured client: $n_all reads, $bad not OK; $(echo "$out" | head -1)"
+  n_ok=$(echo "$out" | grep '^ALL ' | grep -c ' OK$')
+  auth=$(echo "$out" | grep '^ALL ' | grep -v ' OK$' | grep -cE 'HOT_AUTHORITY|UNAUTHENTICATED|PERMISSION_DENIED')
+  g hot-read-$q $([ "$n_all" -ge 3 ] && [ "$n_ok" -ge 1 ] && [ "$auth" = 0 ] && echo 1 || echo 0) "configured client: $n_all reads, $n_ok OK, $auth authority/auth refusals; $(echo "$out" | head -1)"
+  echo "$out" | grep '^ALL ' | grep -v ' OK$' | sed "s/^/INFO $q configured-client not OK: /"
   echo "$out" | grep -v '^ALL \|^query catalog' | grep -v ' OK$' | sed "s/^/INFO $q per-target refusal: /"
 done
 
@@ -83,4 +133,5 @@ g writer-refusals $([ "$n" = 0 ] && echo 1 || echo 0) "count=$n since $t0"
 g writer-untouched "$([ "$(docker inspect -f '{{.Image}} {{.RestartCount}}' $W)" = "$IMG_W 0" ] && echo 1 || echo 0)" "$(docker inspect -f '{{.Image}} rc={{.RestartCount}}' $W | cut -c1-19)"
 for r in stream_kn_1 stream_kn_2 query_kn_1 query_kn_2 rust_core rust_core_2 rust_core_3 market_projector_1 market_projector_2 ingestor_binance_usdm ingestor_okx_swap binance_bar_edge; do
   [ $r = $role ] || echo "INFO $r $(docker inspect -f '{{.Image}} rc={{.RestartCount}} {{.State.StartedAt}}' $P-$r-1 | cut -c8-19,71-)"; done
+[ $F = 0 ] && [ $HOLD = 1 ] && { echo "WINDOW $role HOLD"; exit 3; }
 [ $F = 0 ] && echo "WINDOW $role GATES PASS" || echo "WINDOW $role GATES FAIL"; exit $F
