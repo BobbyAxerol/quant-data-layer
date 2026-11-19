@@ -56,7 +56,8 @@ class ConsumerQuotaModelTests(unittest.TestCase):
 
     def test_unknown_feed_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "no request rate"):
-            model_manifest(_manifest({"FUNDING_RATE": 1}, 10, 10))
+            # FUNDING_RATE is modelled since DL v2.4.0 A-FUND; another reference product still fails closed.
+            model_manifest(_manifest({"OPEN_INTEREST": 1}, 10, 10))
 
     def test_committed_paper_manifest_passes_the_gate(self):
         doc = yaml.safe_load(PAPER.read_text())

@@ -70,6 +70,8 @@ class ReferenceBatchPolicy:
     metadata_ttl_seconds: float = 300.0
     missing_ttl_seconds: float = 2.0
     unavailable_ttl_seconds: float = 60.0
+    # DL v2.4.0 A-FUND: a complete MARK/INDEX candle history whose every candle is closed (confirm 1) is immutable.
+    closed_candle_ttl_seconds: float = 21_600.0
 
     def __post_init__(self) -> None:
         if not 1 <= self.max_concurrency <= 64:
@@ -91,6 +93,7 @@ class ReferenceBatchPolicy:
                 self.metadata_ttl_seconds,
                 self.missing_ttl_seconds,
                 self.unavailable_ttl_seconds,
+                self.closed_candle_ttl_seconds,
             )
         ):
             raise ValueError("reference cache TTL values cannot be negative")
@@ -105,6 +108,12 @@ class ReferenceBatchPolicy:
         if result.request.product is ReferenceProduct.CONTRACT_METADATA:
             return self.metadata_ttl_seconds
         if result.request.is_history:
+            observations = getattr(result, "observations", ())
+            coverage = getattr(result, "coverage", None)
+            if (result.request.product is ReferenceProduct.MARK_INDEX_PRICE and observations and coverage is not None
+                    and coverage.complete_left and coverage.complete_right and not coverage.truncated
+                    and all(dict(item.labels).get("confirm") == "1" for item in observations)):
+                return self.closed_candle_ttl_seconds
             return self.history_ttl_seconds
         if result.request.product is ReferenceProduct.MARK_INDEX_PRICE:
             return self.execution_snapshot_ttl_seconds

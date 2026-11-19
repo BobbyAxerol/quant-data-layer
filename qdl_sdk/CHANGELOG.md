@@ -1,5 +1,15 @@
 # SDK Changelog
 
+## 2.9.0 (Data Layer v2.4.0 A-FUND: historical 1m MARK/INDEX candles)
+
+Additive only. `ReferenceRequirement` for `MARK_INDEX_PRICE` now also accepts a bounded window at a non-execution
+grade: `interval="1m"`, `mark_index_kind` MARK or INDEX (not BOTH), `start_time_ns`/`end_time_ns` on whole minutes,
+`limit` 1..100. The Data Layer answers with one observation per 1m candle (`observed_at_ns` = candle open; fields
+`mark_open/high/low/close` or `index_*`; labels `interval`, `price_type`, `candle_close_ns`, `confirm`), e.g. the
+mark price at a past funding time: window `[floor_1m(T), floor_1m(T) + 60 s)`, `limit=1`. OKX SWAP/FUTURES only
+(Binance answers UNAVAILABLE). Unchanged: the snapshot shape (no window, no interval) and execution-grade
+MARK_INDEX_PRICE, which stays a one-row live snapshot; a 2.8 request serializes byte-identically.
+
 ## 2.8.0 (Data Layer v2.4.0: optional session fairness hint)
 
 Additive only. `RestQueryTransport` and `build_replicated_rest_query` gain keyword-only

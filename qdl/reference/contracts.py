@@ -215,9 +215,16 @@ class ReferenceRequest:
         if self.product is ReferenceProduct.OPEN_INTEREST and self.start_ms is not None:
             if not str(self.interval or "").strip():
                 raise ValueError("historical OPEN_INTEREST requires a provider sampling interval")
-        if self.product in {ReferenceProduct.MARK_INDEX_PRICE, ReferenceProduct.CONTRACT_METADATA}:
+        if self.product is ReferenceProduct.CONTRACT_METADATA:
             if self.start_ms is not None or self.interval is not None:
                 raise ValueError(f"{self.product.value} is a snapshot request")
+        if self.product is ReferenceProduct.MARK_INDEX_PRICE:
+            if self.start_ms is None:
+                if self.interval is not None:
+                    raise ValueError(f"{self.product.value} is a snapshot request")
+            else:
+                mark_index_history_problem(self.interval, self.mark_index_kind, self.start_ms, self.end_ms,
+                                           self.limit)
         if self.product is ReferenceProduct.LONG_SHORT_RATIO and self.long_short_kind is None:
             raise ValueError("LONG_SHORT_RATIO requires long_short_kind")
         if self.product is not ReferenceProduct.LONG_SHORT_RATIO and self.long_short_kind is not None:
@@ -322,6 +329,23 @@ def decimal_field(name: str, value: object, unit: str) -> ReferenceField | None:
             f"reference field {name} has invalid provider decimal text"
         ) from error
     return ReferenceField(name=name, value=decimal, unit=unit)
+
+
+# DL v2.4.0 A-FUND: a bounded MARK (or INDEX) price candle history, e.g. the mark price at a past funding time.
+MARK_INDEX_HISTORY_INTERVALS = frozenset({"1m"})
+MARK_INDEX_HISTORY_MAX_ROWS = 100
+
+
+def mark_index_history_problem(interval, kind, start_ms, end_ms, limit) -> None:
+    """Raise ValueError unless a historical MARK_INDEX_PRICE request is the supported bounded candle read."""
+    if interval not in MARK_INDEX_HISTORY_INTERVALS:
+        raise ValueError("historical MARK_INDEX_PRICE requires interval 1m")
+    if kind is MarkIndexKind.BOTH:
+        raise ValueError("historical MARK_INDEX_PRICE reads MARK or INDEX, not BOTH")
+    if start_ms % 60_000 or end_ms % 60_000:
+        raise ValueError("historical MARK_INDEX_PRICE window must be aligned to whole minutes")
+    if not 1 <= limit <= MARK_INDEX_HISTORY_MAX_ROWS:
+        raise ValueError("historical MARK_INDEX_PRICE limit must be between 1 and 100")
 
 
 def product_feed_name(product: ReferenceProduct) -> str:

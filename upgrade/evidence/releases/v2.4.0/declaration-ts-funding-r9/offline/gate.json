@@ -1,0 +1,188 @@
+{
+  "blocked_by_reason": {
+    "REFERENCE_VENUE_NOT_DECLARABLE": 5
+  },
+  "blocked_rows": 5,
+  "checks": [
+    {
+      "check": "base_unchanged_since_render",
+      "detail": [],
+      "status": "PASS"
+    },
+    {
+      "check": "declaration_index_matches_files",
+      "detail": [],
+      "status": "PASS"
+    },
+    {
+      "check": "loaders_catalog_acquisition_scope",
+      "detail": null,
+      "status": "PASS"
+    },
+    {
+      "check": "manifests_load_and_are_additive",
+      "detail": [],
+      "status": "PASS"
+    },
+    {
+      "check": "consumer_quota_model",
+      "detail": {
+        "failing": {},
+        "manifests": {
+          "trading-system-paper.yaml": "PASS"
+        },
+        "model_pending": []
+      },
+      "status": "PASS"
+    },
+    {
+      "check": "accept_set_floor_rule",
+      "detail": [],
+      "status": "PASS"
+    },
+    {
+      "check": "release_routing_loads",
+      "detail": null,
+      "status": "PASS"
+    },
+    {
+      "check": "config_strictly_additive",
+      "detail": [],
+      "status": "PASS"
+    },
+    {
+      "check": "role_configs_additive_and_lanes_stable",
+      "detail": [],
+      "status": "PASS"
+    },
+    {
+      "check": "bar_edge_checkpoint_crossing",
+      "detail": "crossed=False retained=1320 added=0 dropped=0 migration_record=False basis=repository plan",
+      "status": "PASS"
+    },
+    {
+      "check": "retained_lineage_unchanged",
+      "detail": [],
+      "status": "PASS"
+    },
+    {
+      "check": "derived_chain_parents",
+      "detail": {
+        "derived": 500
+      },
+      "status": "PASS"
+    },
+    {
+      "check": "coverage_chain",
+      "detail": [],
+      "status": "PASS"
+    },
+    {
+      "check": "okx_rest_budget",
+      "detail": {
+        "bar_edge_requests_per_minute_avg": 0.2,
+        "final_1m_visibility_ms": null,
+        "host_ip_utilisation": 0.0,
+        "lane_utilisation": 0.001,
+        "problems": []
+      },
+      "status": "PASS"
+    },
+    {
+      "check": "capacity_envelope",
+      "detail": {
+        "added_bindings_by_kind": {},
+        "added_dl_vcpu_upper_bound": 0.0,
+        "added_records_per_s": 0.0,
+        "baseline_dl_vcpu": 6.21,
+        "basis": "estimate: mean per-binding rates of the 150 E-crypto set measured 2026-11-13 (COVERAGE_150_STUDY 5.1/3.2; liquid subsets run above the mean, override with capacity.rates_per_binding), 1.8 ms/record upper bound; not a measurement",
+        "basis_rows": "rows added by this render",
+        "bootstrap": {
+          "basis": "estimate: 100 rows per history request (OKX page size, not re-verified); one pass, no retries",
+          "bindings": 0,
+          "depth_by_interval": {},
+          "duration_minutes": 0.0,
+          "lane": "OKX/SWAP/HISTORY_CANDLES",
+          "lane_requests_per_minute": 150.0,
+          "requests": 0,
+          "rows": 0
+        },
+        "ceiling_dl_vcpu": 6.5,
+        "deferral_plan": {
+          "defer": [],
+          "headroom_vcpu": 0.29,
+          "status": "FITS"
+        },
+        "ingestor_subscriptions_after": {},
+        "mark_index_flush_ms": 50,
+        "okx_rest": {
+          "admission_lane": {
+            "burst": 5,
+            "family": "OKX/SWAP/CANDLES",
+            "max_inflight": 2,
+            "refill_per_s": 2.5,
+            "requests_per_minute": 150.0
+          },
+          "bar_edge_requests_per_minute_avg": 0.2,
+          "basis": "model: one read per REST final binding per boundary through the bar-edge admission token bucket; host-IP limit as declared (OKX docs give 40 requests/2 s per IP for market candles; not re-verified here)",
+          "declared_max_visibility_ms": null,
+          "final_1m_visibility_ms": null,
+          "host_ip_limit_per_minute_declared": 1200.0,
+          "host_ip_utilisation": 0.0,
+          "lane_utilisation": 0.001,
+          "max_utilisation": 0.8,
+          "other_requests_per_minute_declared": 0.0,
+          "problems": [],
+          "rest_final_bindings_by_interval": {
+            "1d": 250
+          },
+          "status": "WITHIN_ENVELOPE"
+        },
+        "projected_dl_vcpu": 6.21,
+        "query_requests": {
+          "basis": "qdl.consumer.quota_model (TS writer client, calibrated on r11: model 2,212/min vs measured 1,940-2,034/min); Query/Redis vCPU per request is not measured, so no vCPU is derived",
+          "consumers": {
+            "trading-system.paper.stable": {
+              "granted": {
+                "max_streams": 370,
+                "requests_per_minute": 31500
+              },
+              "required_max_streams": 370,
+              "required_requests_per_minute": 31500,
+              "status": "MODELLED",
+              "steady_requests_per_minute": [
+                19502,
+                19701
+              ],
+              "streams": [
+                246,
+                246
+              ]
+            }
+          },
+          "execution_steady_requests_per_minute_added": 199,
+          "execution_steady_requests_per_minute_after": 19701
+        },
+        "rates_per_binding": {
+          "okx_bar": 0.5253333333333333,
+          "okx_bbo": 4.253333333333333,
+          "okx_mark_index@50": 6.32,
+          "okx_mark_index@500": 3.24
+        },
+        "statement": "estimated DL vCPU after this declaration 6.21 against the 6.5 cap (baseline 6.21 + added 0.0, upper bound)",
+        "status": "WITHIN_ENVELOPE",
+        "unmeasured_bindings_by_kind": {},
+        "venue_priority": [
+          "OKX",
+          "BINANCE"
+        ]
+      },
+      "status": "PASS"
+    }
+  ],
+  "declaration_revision": 9,
+  "failing": [],
+  "note": "offline gate; the live coverage gate (TS market_coverage_gate) and the ordered restart remain",
+  "schema": "qdl.v2.declaration-gate.v1",
+  "status": "PASS"
+}

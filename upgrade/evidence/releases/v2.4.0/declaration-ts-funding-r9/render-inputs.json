@@ -1,0 +1,25 @@
+{
+  "accept_set": true,
+  "bar_edge_config_lineage": null,
+  "bar_edge_live_checkpoint": null,
+  "base_repo": "/src/upgrade/evidence/releases/v2.3.1/declaration-stage-c-r8/repo",
+  "base_runtime": {
+    "bundles": {},
+    "cores": [],
+    "ingestors": {},
+    "route_bindings": {}
+  },
+  "base_sha256": {
+    "config/v2/stable-acquisition-bindings.yaml": "a1b6ace8802abdaf661a4e0ecf7a915e6696294b43e04f8fc61b3db75eea2638",
+    "config/v2/stable-authority-promotion-scope.yaml": "e9fe3de20fd7810108bdf1c7acef9ed7a20e1bc7cd4887aaba9d21f554d5a756",
+    "config/v2/stable-crypto-demand.yaml": "12d41da2636ddf152a335402e3ae09854b26214b7ed60d9a18cb6f8b14f34f23",
+    "config/v2/stable-source-bindings.yaml": "e5a670dec9c8b746d3182a3d5280129b4ff3962687c7fe17b3acae2b5dd232eb",
+    "config/v2/stable-v2-release-routing.yaml": "d8cb2e75faf7355772406975421f147e12abedd40349d123850d1eb7924fa43c"
+  },
+  "declaration_revision": 9,
+  "live_sources": null,
+  "manifests": {
+    "trading-system.paper.stable": "consumers/stable/trading-system-paper.yaml"
+  },
+  "schema": "qdl.v2.declaration-render-inputs.v1"
+}
