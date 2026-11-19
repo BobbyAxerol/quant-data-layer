@@ -8,7 +8,7 @@ Query configures it ("ALL", the gate), then through each target alone (diagnosti
 Boundary: gRPC reads only; prints target, symbol and outcome code, never key material. No writes.
 Usage: docker exec -i <query container> python3 -B - [canonical symbols...] < this file
 """
-import os, sys, grpc
+import os, sys, time, grpc
 from qdl.runtime.stable import StableRuntimeConfig
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.kn_query_backend import KnCursorSettings
@@ -29,6 +29,7 @@ for target in ["ALL", *configured.split(",")]:
         i = b.instrument.identity
         lpk = LogicalProductKey.for_product(environment=config.environment, venue=i.venue, market=i.market,
                                             instrument_uid=i.instrument_uid, feed=b.feed.value, interval=None)
+        started = time.monotonic()
         try:
             client.latest(b, lpk); out = "OK"
         except hv.HotViewUnavailable as e:
@@ -36,5 +37,5 @@ for target in ["ALL", *configured.split(",")]:
             code = cause.code().name if isinstance(cause, grpc.RpcError) else ""
             det = cause.details() if isinstance(cause, grpc.RpcError) else ""
             out = f"{type(e).__name__}:{e} {code} {det}"
-        print(target, i.canonical_symbol, out)
+        print(target, i.canonical_symbol, f"{(time.monotonic() - started) * 1000:.0f}ms", out)
     client.close()

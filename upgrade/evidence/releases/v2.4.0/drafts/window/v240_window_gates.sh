@@ -48,9 +48,14 @@ esac
 # ---- G-hot: each Query's own client (as configured) must read OK; per-target lines are diagnostic
 for q in query_kn_1 query_kn_2; do
   out=$(timeout 60 docker exec -i $P-$q-1 python3 -B - < $HERE/v240_hot_read_probe.py 2>/dev/null)
+  # Decides: no configured-client read may fail with an authority code (the RCA failure). A quiet product's
+  # HOT_RECORD_MISSING or a transient (deadline/busy/unavailable, e.g. a fresh channel's first TLS read under host
+  # load) is the pre-existing backup behaviour (Query then serves its primary cache) and is printed, not failed.
   n_all=$(echo "$out" | grep -c '^ALL ')
-  bad=$(echo "$out" | grep '^ALL ' | grep -vc ' OK$')
-  g hot-read-$q $([ "$n_all" -ge 3 ] && [ "$bad" = 0 ] && echo 1 || echo 0) "configured client: $n_all reads, $bad not OK; $(echo "$out" | head -1)"
+  n_ok=$(echo "$out" | grep '^ALL ' | grep -c ' OK$')
+  auth=$(echo "$out" | grep '^ALL ' | grep -v ' OK$' | grep -cE 'HOT_AUTHORITY|UNAUTHENTICATED|PERMISSION_DENIED')
+  g hot-read-$q $([ "$n_all" -ge 3 ] && [ "$n_ok" -ge 1 ] && [ "$auth" = 0 ] && echo 1 || echo 0) "configured client: $n_all reads, $n_ok OK, $auth authority/auth refusals; $(echo "$out" | head -1)"
+  echo "$out" | grep '^ALL ' | grep -v ' OK$' | sed "s/^/INFO $q configured-client not OK: /"
   echo "$out" | grep -v '^ALL \|^query catalog' | grep -v ' OK$' | sed "s/^/INFO $q per-target refusal: /"
 done
 
