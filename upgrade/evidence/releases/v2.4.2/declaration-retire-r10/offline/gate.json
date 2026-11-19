@@ -74,10 +74,53 @@
           "alpha.okx.paper.stable": 1
         },
         "query_runtime_rows_removed": 1,
+        "realm_manifests": {
+          "alpha.okx.live.stable": {
+            "min_token_revision": 1,
+            "requirements_removed": 1,
+            "revision": [
+              1,
+              2
+            ]
+          },
+          "alpha.okx.sandbox.stable": {
+            "min_token_revision": 1,
+            "requirements_removed": 1,
+            "revision": [
+              1,
+              2
+            ]
+          }
+        },
         "routing_products_removed": 1,
         "scope_ids_removed": [
           "okx-swap-rvn-usdt-swap-bar-1d"
         ]
+      },
+      "status": "PASS"
+    },
+    {
+      "check": "retired_realm_manifests",
+      "detail": {
+        "problems": [],
+        "realms": {
+          "alpha.okx.live.stable": {
+            "min_token_revision": 1,
+            "requirements_removed": 1,
+            "revision": [
+              1,
+              2
+            ]
+          },
+          "alpha.okx.sandbox.stable": {
+            "min_token_revision": 1,
+            "requirements_removed": 1,
+            "revision": [
+              1,
+              2
+            ]
+          }
+        }
       },
       "status": "PASS"
     },

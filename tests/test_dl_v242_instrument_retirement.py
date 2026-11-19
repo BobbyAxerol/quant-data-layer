@@ -104,6 +104,19 @@ class RetirementRefusalTests(unittest.TestCase):
             self.assertEqual([r["source_id"] for r in copy["core"]["bindings"]], ["kept"])
             self.assertEqual(len(json.loads(core.read_text())["core"]["bindings"]), 2, "the live file is untouched")
 
+    def test_a_deployed_realm_manifest_drops_only_the_retired_row_and_keeps_its_tokens(self):
+        source = BASE / "consumers/stable/alpha-okx-paper.yaml"  # stands in for a realm file (same schema)
+        retired = _retire(RVN, runtime={"realm_manifests": {"alpha.okx.paper.stable": source}})
+        before = yaml.safe_load(source.read_text())
+        after = yaml.safe_load(Path(retired.runtime["realm_manifests"]["alpha.okx.paper.stable"]).read_text())
+        self.assertEqual(after["metadata"]["revision"], before["metadata"]["revision"] + 1)
+        self.assertEqual(after["metadata"]["min_token_revision"], 1, "advisory floor: current tokens stay valid")
+        removed = [r for r in before["spec"]["requirements"] if r not in after["spec"]["requirements"]]
+        self.assertEqual(len(removed), 1)
+        self.assertEqual(len(after["spec"]["requirements"]), len(before["spec"]["requirements"]) - 1)
+        self.assertEqual(retired.summary["realm_manifests"]["alpha.okx.paper.stable"]["requirements_removed"], 1)
+        self.assertEqual(yaml.safe_load(source.read_text()), before, "the deployed file is untouched")
+
     def test_the_declaration_field_is_validated(self):
         base = {"schema": tool.DECLARATION_SCHEMA, "declaration_revision": 10,
                 "consumers": [{"consumer_id": "c", "manifest": "m.yaml"}],

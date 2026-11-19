@@ -79391,3 +79391,62 @@ Use of RVN today:
 Cores and ingestors are not recreated.
 
 Status: `implemented`, `tested locally`. The r10 render is `rendered, not applied`.
+
+### DL v2.4.2 slice 2a: retire RVN from the deployed alpha.okx live/sandbox realm manifests (r1→r2), r10 re-rendered (tested locally) - 2026-11-19 (Claude)
+
+**Why.** `alpha.okx.live.stable` and `alpha.okx.sandbox.stable` realm r1 come from the `v2.4.0-realm` bundle. They
+were compiled 2026-09-27 from paper r14 and are not repository manifests, and they still allowed the OKX RVN 1d row.
+
+Offline proof against catalogue r17:
+- Nothing refuses to start:
+  - `Bundle::parse` (`rust/qdl-contracts/src/gateway_bundle.rs:155-270`) does not cross-check requirements against
+    bindings.
+  - Projector `retained_caps` (`rust/qdl-projector/src/products.rs:122-140`) iterates catalogue products.
+  - Query `load_stable_manifests` (`qdl/runtime/stable.py:549-588`) has no catalogue check for explicit rows. The
+    servability checks (`qdl/consumer/stable.py:202-216`, `release.py:482`) are release tooling only.
+- Tokens stay valid.
+- But request time is not typed. The KN backend's `binding_for` raises `KeyError`
+  (`stable_catalog.py:480` via `kn_query_backend.py:678/708`), and `V2QueryService` caught only
+  `QueryBackendError`/`QueryServiceError` (`service.py:816`, `:966`).
+  - A snapshot batch holding RVN failed as a whole (probe).
+  - A single RVN snapshot was an untyped 500.
+  - A warmup item was untyped `INTERNAL_ERROR`.
+
+**Change.**
+- `RetiredBase` also takes `base.runtime.realm_manifests`. For a deployed realm file it removes only the retired rows,
+  sets revision + 1 and `min_token_revision` = the advisory floor (1), so r1 tokens stay accepted. It never recompiles
+  the realm from another manifest.
+- The render ships `consumer-realms/<cid>-r2.yaml` and replaces those entries in the realm bundle.
+- The gate check `retired_realm_manifests` requires:
+  - only retired rows removed, nothing added;
+  - the old revision still accepted;
+  - the file equal to the retired copy.
+- Unit test: a realm file drops one row, the revision moves and the floor is 1.
+
+**r10 re-render.** Gate **PASS 21/21**.
+- Realm bundle `016e68b4…`: replaced manifests alpha.okx.live r2, alpha.okx.sandbox r2 and alpha.okx.paper r18. No
+  bundle manifest names RVN.
+- kn bundle `1312c3bb…`.
+
+The window must point `QDL_STABLE_CONSUMER_MANIFESTS` (Query) at `alpha.okx.live.stable-r2.yaml`,
+`alpha.okx.sandbox.stable-r2.yaml` and `alpha.okx.paper.stable-r18.yaml`. Today it names r1, r1 and r17.
+
+**C, live check of rows without a binding.** The Query logs since the v2.4.1 recreates (query_kn_2 12:02Z, query_kn_1
+12:15Z; earlier logs did not survive the recreate; no audit files) show 0 `requirement has no stable source binding`,
+0 `KeyError`, 0 `Traceback`, 0 status 500. Refusals are all typed (DATA_NOT_READY 651, SOURCE_UNAVAILABLE 5,
+LIVE_VIEW_UNAVAILABLE 5).
+
+The 30 reference rows without a binding (CONTRACT_METADATA, FUNDING_RATE, OPEN_INTEREST and the rest) are served by
+`/v2/market-data/reference:batch` (`qdl_sdk/transport.py:185`), which types a missing instrument
+(`service.py:1733-1745`). So they are not on the snapshot path.
+
+**For the owner.** These `execution_alpha` strategies have symbol lists that name RVN, and none is running on the
+host: scalping_PSAR, scalping_sl_tp, taalpha, grid_long_only, vwma00315, fib_sl_tp_strength,
+regressionportfolioA001 and rsiboundportfolioA001 (symbols_300), signal_combine, deep_momentum (research snapshot).
+After r10 they get a typed refusal for OKX RVN:
+- PERMISSION_DENIED from the manifest for paper r18 and live/sandbox r2;
+- INSTRUMENT_NOT_FOUND from the slice 2b fix for any manifest that still names it.
+
+Binance RVNUSDT is unchanged.
+
+Status: `implemented`, `tested locally`. r10 is `rendered, not applied`.

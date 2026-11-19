@@ -19,6 +19,10 @@
       "ingestor-okx-swap.json": "/w/live/ingestor_okx_swap.json"
     },
     "query_acquisition": "/w/live/stable-acquisition-bindings.yaml",
+    "realm_manifests": {
+      "alpha.okx.live.stable": "/w/live/realm/alpha.okx.live.stable.yaml",
+      "alpha.okx.sandbox.stable": "/w/live/realm/alpha.okx.sandbox.stable.yaml"
+    },
     "route_bindings": {}
   },
   "base_sha256": {
@@ -35,7 +39,9 @@
     "runtime:cores:rust_core_3.json": "3b2bc5025a9d37a6432e118569865bc6328b4b9999132a521e4c0d88486a24af",
     "runtime:ingestors:ingestor-binance-usdm.json": "23610605f09b2932b6040f0e6f96b02f327b8342e7108d7ee0092a3673784277",
     "runtime:ingestors:ingestor-okx-swap.json": "1ca07ba6d40b4eae69422699a9a8d332ec5f135772122e53583f2c3c6de9e258",
-    "runtime:query_acquisition": "2ea14279aff7a2bf1ebbb9886079e528e9e33b3e04cc742e47755a6cb9293545"
+    "runtime:query_acquisition": "2ea14279aff7a2bf1ebbb9886079e528e9e33b3e04cc742e47755a6cb9293545",
+    "runtime:realm_manifests:alpha.okx.live.stable": "aa1096f95d118befa5e697bee81ddc68041cd03abd5fafa6546925329b1a2cd9",
+    "runtime:realm_manifests:alpha.okx.sandbox.stable": "4ec1d11b6c94055c81ce29c5d3bd73293f6e6d57621ddbd2bf8a03f4025b7afb"
   },
   "declaration_revision": 10,
   "live_sources": null,

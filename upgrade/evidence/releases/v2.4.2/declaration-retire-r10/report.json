@@ -80,7 +80,7 @@
     ]
   },
   "consumer_environment": {},
-  "declaration_index_sha256": "a70d5604995ae4283975f69e3ff2cf4f15a38b3834caa82a6ce23ed884e31c3d",
+  "declaration_index_sha256": "9a94d50f80010cfe533ed9445fff1ba0b2daaa6a58c8779c0e70cde47029cae7",
   "declaration_revision": 10,
   "loader_capabilities": {
     "derived_final": true,
@@ -159,9 +159,11 @@
         "base_sha256": "577470a63180bd8b7ac45e4beff7399bd8cf604fa3f3efdb8a855ea4f5191192",
         "catalog_bindings": 1577,
         "replaced_manifests": [
+          "alpha.okx.live.stable",
+          "alpha.okx.sandbox.stable",
           "alpha.okx.paper.stable"
         ],
-        "sha256": "cce9de6c340b49b1edecd2ba646e9e3f0e46d53a5b3e793e85cfdd3cebc18178"
+        "sha256": "016e68b4ed981bac7c83766f86d20b5af93f18e6f89e1ef7c13dd59e84749a6e"
       }
     },
     "catalog": {
@@ -367,6 +369,24 @@
         "alpha.okx.paper.stable": 1
       },
       "query_runtime_rows_removed": 1,
+      "realm_manifests": {
+        "alpha.okx.live.stable": {
+          "min_token_revision": 1,
+          "requirements_removed": 1,
+          "revision": [
+            1,
+            2
+          ]
+        },
+        "alpha.okx.sandbox.stable": {
+          "min_token_revision": 1,
+          "requirements_removed": 1,
+          "revision": [
+            1,
+            2
+          ]
+        }
+      },
       "routing_products_removed": 1,
       "scope_ids_removed": [
         "okx-swap-rvn-usdt-swap-bar-1d"

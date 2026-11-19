@@ -44,6 +44,9 @@ base:
     bundles:
       realm: /w/live/realm-bundle.json
       kn: /w/live/kn-bundle.json
+    realm_manifests:
+      alpha.okx.live.stable: /w/live/realm/alpha.okx.live.stable.yaml
+      alpha.okx.sandbox.stable: /w/live/realm/alpha.okx.sandbox.stable.yaml
 bar_edge:
   split_runtime: true
   config_lineage: 19

@@ -300,6 +300,9 @@ def load_declaration(path: Path) -> dict[str, Any]:
     runtime["cores"] = [resolve(v) for v in runtime.get("cores") or []]
     runtime["bundles"] = {k: resolve(v) for k, v in (runtime.get("bundles") or {}).items()}
     runtime["route_bindings"] = {k: resolve(v) for k, v in (runtime.get("route_bindings") or {}).items()}
+    # DL v2.4.2: deployed consumer realm manifests that are not repository manifests (alpha.*.live/sandbox realm files
+    # served from the realm bundle); only a retirement changes them (``RetiredBase``).
+    runtime["realm_manifests"] = {k: resolve(v) for k, v in (runtime.get("realm_manifests") or {}).items()}
     base["runtime"] = runtime
     payload["base"] = base
     payload["instrument_captures"] = [
@@ -563,6 +566,34 @@ class RetiredBase:
                 raise DeclarationRefused(f"retiring {wanted}: {path.name} no longer loads: {error}") from error
         runtime_dir = Path(self._tmp.name) / "runtime"
         runtime_dir.mkdir()
+        # Deployed realm manifests (not in the repository): the same row removal, revision + 1 and the advisory
+        # accept-set floor, so the realm's current tokens stay valid. Never recompiled from another manifest.
+        self.realms: dict[str, dict[str, Any]] = {}
+        realm_paths = {}
+        for cid, path in sorted((source_runtime.get("realm_manifests") or {}).items()):
+            document = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+            if str(document["metadata"]["id"]) != cid:
+                raise DeclarationRefused(f"realm manifest {path} is not {cid}")
+            requirements = document["spec"]["requirements"]
+            kept = [r for r in requirements if r.get("instrument_uid") not in uids]
+            target = runtime_dir / f"realm-{cid}.yaml"
+            if len(kept) == len(requirements):
+                target.write_bytes(Path(path).read_bytes())
+            else:
+                previous = ConsumerManifestLoader.from_mapping(deepcopy(document), selector_context=context)
+                document["spec"]["requirements"] = kept
+                document["metadata"]["revision"] = int(document["metadata"]["revision"]) + 1
+                candidate = ConsumerManifestLoader.from_mapping(deepcopy(document), selector_context=context)
+                document["metadata"]["min_token_revision"] = next_min_token_revision(previous, candidate)
+                ConsumerManifestLoader.from_mapping(deepcopy(document), selector_context=context)
+                target.write_bytes(_yaml_bytes(document))
+                self.realms[cid] = {"revision": [int(document["metadata"]["revision"]) - 1,
+                                                 int(document["metadata"]["revision"])],
+                                    "requirements_removed": len(requirements) - len(kept),
+                                    "min_token_revision": document["metadata"]["min_token_revision"]}
+            realm_paths[cid] = target
+        if source_runtime.get("realm_manifests"):
+            self.runtime["realm_manifests"] = realm_paths
         query_removed = 0
         if source_runtime.get("query_acquisition"):
             document = yaml.safe_load(Path(source_runtime["query_acquisition"]).read_bytes())
@@ -605,6 +636,7 @@ class RetiredBase:
             "declared_universe_members_removed": dict(sorted(universes.items())),
             "query_runtime_rows_removed": query_removed,
             "core_rows_removed": dict(sorted(cores_removed.items())),
+            "realm_manifests": dict(sorted(self.realms.items())),
         }
 
     def _write(self, rel: Path, payload: bytes) -> None:
@@ -639,7 +671,7 @@ class BaseSet:
         for name in ("authority", "query_acquisition"):
             if runtime.get(name):
                 result[f"runtime:{name}"] = _sha256_file(runtime[name])
-        for group in ("ingestors", "bundles", "route_bindings"):
+        for group in ("ingestors", "bundles", "route_bindings", "realm_manifests"):
             for key, path in (runtime.get(group) or {}).items():
                 result[f"runtime:{group}:{key}"] = _sha256_file(path)
         for path in runtime.get("cores") or []:
@@ -1620,6 +1652,8 @@ class Render:
                     path = Path(tmp.name) / f"{cid}.yaml"
                     path.write_bytes(_yaml_bytes(item["doc"]))
                     manifest_paths[cid] = path
+            for cid in (self.base.retired.realms if self.base.retired else {}):
+                manifest_paths[cid] = Path(self.base.runtime["realm_manifests"][cid])
             compiled = kn_gateway_bundle.compile_bundle(environment=environment, catalog_path=catalog_path,
                                                         manifest_paths=list(manifest_paths.values()),
                                                         universe_dir=universe_dir)
@@ -2033,6 +2067,9 @@ class Render:
                 payload = _yaml_bytes(item["doc"])
                 self.files[f"repo/{item['rel']}"] = payload
                 self.files[f"consumer-realms/{cid}-r{item['doc']['metadata']['revision']}.yaml"] = payload
+        for cid, realm in (self.base.retired.realms if self.base.retired else {}).items():
+            self.files[f"consumer-realms/{cid}-r{realm['revision'][1]}.yaml"] = Path(
+                self.base.runtime["realm_manifests"][cid]).read_bytes()
         # runtime: Query/bar_edge catalogue + acquisition, then the role configs built from them
         self.files["runtime/stable-source-bindings.yaml"] = catalog_bytes
         query_acq = self.build_query_acquisition(acq_doc, new_acq)
@@ -2255,6 +2292,27 @@ def gate(rendered: Path) -> dict[str, Any]:
             check("retirement_justified_by_venue_listings", False, str(error))
             return _gate_result(checks, report)
         check("retirement_justified_by_venue_listings", True, retired.summary)
+        # Deployed realm manifests: only retired rows leave, the revision moves by one, the realm's current tokens
+        # stay accepted (advisory floor), and the render ships exactly the retired file.
+        realm_problems = []
+        for cid, realm in retired.realms.items():
+            old_doc = yaml.safe_load(Path(runtime["realm_manifests"][cid]).read_text(encoding="utf-8"))
+            new_path = rendered / "consumer-realms" / f"{cid}-r{realm['revision'][1]}.yaml"
+            if not new_path.is_file() or new_path.read_bytes() != Path(retired.runtime["realm_manifests"][cid]).read_bytes():
+                realm_problems.append(f"{cid}: rendered realm file missing or not the retired copy")
+                continue
+            new_doc = yaml.safe_load(new_path.read_text(encoding="utf-8"))
+            retired_uids = {item["instrument_uid"] for item in retired.summary["instruments"]}
+            removed = [r for r in old_doc["spec"]["requirements"] if r not in new_doc["spec"]["requirements"]]
+            added = [r for r in new_doc["spec"]["requirements"] if r not in old_doc["spec"]["requirements"]]
+            if added or any(r.get("instrument_uid") not in retired_uids for r in removed):
+                realm_problems.append(f"{cid}: changes beyond the retired rows")
+            parsed = ConsumerManifestLoader.from_mapping(new_doc)
+            if int(old_doc["metadata"]["revision"]) not in parsed.accepted_token_revisions:
+                realm_problems.append(f"{cid}: r{old_doc['metadata']['revision']} tokens would be refused")
+        if retired.realms:
+            check("retired_realm_manifests", not realm_problems,
+                  {"realms": retired.realms, "problems": realm_problems})
         base_repo = retired.root
         runtime = {k: ([str(i) for i in v] if isinstance(v, list) else
                        {a: str(b) for a, b in v.items()} if isinstance(v, dict) else
