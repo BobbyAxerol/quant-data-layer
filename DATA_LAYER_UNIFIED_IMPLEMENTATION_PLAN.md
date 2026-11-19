@@ -79198,3 +79198,20 @@ Status: `implemented`, `tested locally`.
     job inputs, recording the source run, the SHA and the changed paths.
   - **Owner and scope.** Lane A. It is a CI-file change, so it gets its own PR with a full run (CI5). It is not part of
     v2.4.1.
+
+### DL v2.4.1 runtime windows A/B/C accepted, acceptance record (production-authoritative on the KN stack) - 2026-11-19 (Claude)
+
+- **Windows.** The coordinator ran them; Claude prepared the gates.
+  - A, overlay a (readers first): query_kn_2 11:56:54, query_kn_1 11:59:38. PASS.
+  - B, overlay b (metadata enabled): query_kn_2 12:02:23, query_kn_1 12:15:41. PASS; the loaded index is 527 instruments,
+    revision 1, `cacea7bb…`.
+  - C, binance_bar_edge: T0 12:29:44. PASS after an 8 min 54 s silent restore. The owner raised the load ceiling to 25
+    for this window.
+- **Evidence.** `upgrade/evidence/releases/v2.4.1/{CERTIFICATE.md,RELEASE_NOTES.md,runtime-windows-20261119/}`.
+  Gate tool: `drafts/window/v241_window_gates.sh`.
+- **Lesson.** The bar_edge restore is silent and CPU-bound before the first heartbeat, and `unhealthy` during it is
+  expected. Runbook section added with rollback triggers.
+- **First v2.4.1 start.** It re-proved the short bindings: repair set 772, missing_rows 6,086,136. The sidecar keeps
+  the proofs, so the S6 effect shows on the next restart.
+Status: `production-authoritative` for query_kn x2 and binance_bar_edge; release pending the receipt on this branch's
+merge.
