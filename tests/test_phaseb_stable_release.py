@@ -317,7 +317,7 @@ class StableReleaseVersionContractTests(unittest.TestCase):
         )
         generated = build_openapi()
         self.assertEqual(package["project"]["version"], "2.0.0")
-        self.assertEqual(qdl_sdk.__version__, "2.9.0")
+        self.assertEqual(qdl_sdk.__version__, "2.10.0")
         self.assertEqual(generated["info"]["version"], "2.0.0")
         self.assertEqual(snapshot, generated)
         # ``reference:batch`` is a governed V2 public path in the checked-in
@@ -329,9 +329,11 @@ class StableReleaseVersionContractTests(unittest.TestCase):
         self.assertEqual(len(generated["paths"]), 12)
         schemas = generated["components"]["schemas"]
         # KN adds refusal diagnostics and explicit retained-window coverage.
-        self.assertEqual(len(schemas), 74)
+        # v2.4.1 adds canonical instrument metadata v1 (three schemas, additive).
+        self.assertEqual(len(schemas), 77)
         self.assertIn("/v2/market-data/snapshot:batch", generated["paths"])
-        for name in ("ProblemDiagnostics", "GapProductCoverage", "GapScanCoverage"):
+        for name in ("ProblemDiagnostics", "GapProductCoverage", "GapScanCoverage",
+                     "CanonicalInstrumentMetadataView", "CanonicalSourceView", "InstrumentAliasView"):
             self.assertIn(name, schemas)
         self.assertNotIn("StalePolicy", schemas)
         self.assertIn("qdl__query__contracts__StalePolicy", schemas)

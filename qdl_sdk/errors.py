@@ -34,3 +34,8 @@ class CursorExpiredError(DataLayerError):
 
 class SlowConsumerError(DataLayerError):
     pass
+
+
+class CanonicalMetadataUnavailable(DataLayerError):
+    """SDK 2.10.0: canonical instrument metadata is missing or UNVERIFIED for an instrument, so a native price or
+    quantity cannot be normalised. Never falls back to 1:1."""

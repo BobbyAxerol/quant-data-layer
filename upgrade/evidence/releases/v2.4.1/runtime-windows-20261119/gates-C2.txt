@@ -1,0 +1,28 @@
+PASS image-rc-health: sha256:929eeac2091ecbe916cf1f19fba9f13056e621a1c2c1947427b97a8a7c002082 0 running healthy
+PASS bar-edge-runtime: /runtime=/home/bobby/.local/state/qdl-v2/releases/v2.3.1-stage-c/runtime:false
+PASS bar-edge-no-crossing: declaration unchanged (16/24): no crossing expected; got ''
+INFO bar_edge short-proof sidecar: /var/lib/qdl-kn/crypto-bar-checkpoint.json.history-short.json 17 (the first v2.4.1 start re-proves and writes proofs; the next restart uses them)
+PASS bar-edge-declaration: catalog=16 acquisition=24 image_files=0 (want 16/24/0; pre 14/22)
+INFO bar_edge heartbeat: bindings=593 bindings=1320 published=560 served=17 pending=0 overdue=0 short=17 history_failed=0 history_suspended=0 gate_closed=0 declaration=9881225bc23f
+PASS bar-edge-running: 0 running (run >= 120 s after T0)
+PASS hot-read-query_kn_1: configured client: 3 reads, 3 OK, 0 authority/auth refusals; query catalog_revision 16 bindings 3
+PASS hot-read-query_kn_2: configured client: 3 reads, 3 OK, 0 authority/auth refusals; query catalog_revision 16 bindings 3
+PASS query-refusals-query_kn_1: HOT_AUTHORITY_OR_PROTOCOL_REFUSED since 2026-11-19T12:29:44Z = 0 (authority fallback log lines: 0)
+PASS query-refusals-query_kn_2: HOT_AUTHORITY_OR_PROTOCOL_REFUSED since 2026-11-19T12:29:44Z = 0 (authority fallback log lines: 0)
+PASS writer-slices: demanded/ready/exec=246/245/234 other-reasons=- (246/246, or not-ready only EXECUTION_CONTEXT_STALE/TRADE_EVENT_STALE, within 120 s)
+PASS writer-retries: worker_retries={}
+PASS writer-probe-authority: native probe routes with a HOT_AUTHORITY unavailable since T0 = 0
+PASS writer-refusals: count=0 since 2026-11-19T12:29:44Z
+PASS writer-untouched: sha256:d1addc042756
+INFO stream_kn_1 abafab2c98cb8 rc=0 2026-11-19T06:06:18.032694041Z
+INFO stream_kn_2 abafab2c98cb8 rc=0 2026-11-19T05:42:27.931366864Z
+INFO query_kn_1 929eeac2091e2 rc=0 2026-11-19T12:15:44.821266009Z
+INFO query_kn_2 929eeac2091e2 rc=0 2026-11-19T12:02:25.8387922Z
+INFO rust_core 58bdd28216132 rc=0 2026-11-18T05:13:10.598989096Z
+INFO rust_core_2 58bdd28216132 rc=0 2026-11-18T05:20:04.499983609Z
+INFO rust_core_3 58bdd28216132 rc=0 2026-11-18T05:23:47.481545977Z
+INFO market_projector_1 58bdd28216132 rc=0 2026-11-18T05:27:38.769663197Z
+INFO market_projector_2 58bdd28216132 rc=0 2026-11-18T05:31:24.307336671Z
+INFO ingestor_binance_usdm 58bdd28216132 rc=0 2026-11-19T06:18:15.661497649Z
+INFO ingestor_okx_swap 58bdd28216132 rc=0 2026-11-19T06:21:26.737062399Z
+WINDOW binance_bar_edge GATES PASS

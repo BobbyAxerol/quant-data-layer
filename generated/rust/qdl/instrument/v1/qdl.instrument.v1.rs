@@ -48,6 +48,41 @@ pub struct Instrument {
     pub valid_to_ns: ::core::option::Option<i64>,
     #[prost(map="string, string", tag="23")]
     pub attributes: ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+    /// DL v2.4.1 canonical instrument metadata v1 (additive; unset when not served). Prices, quantities and bars stay
+    /// venue-native; this states how one venue unit relates to the underlying asset.
+    #[prost(message, optional, tag="24")]
+    pub canonical: ::core::option::Option<CanonicalInstrumentMetadata>,
+}
+/// DL v2.4.1 `qdl.instrument.canonical-metadata.v1`. status UNVERIFIED carries no multipliers or underlying; a
+/// consumer must refuse to normalise it (never assume 1:1).
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CanonicalInstrumentMetadata {
+    #[prost(uint64, tag="1")]
+    pub revision: u64,
+    #[prost(string, tag="2")]
+    pub status: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub rule_id: ::prost::alloc::string::String,
+    #[prost(string, tag="4")]
+    pub underlying_asset: ::prost::alloc::string::String,
+    #[prost(string, tag="5")]
+    pub underlying_instrument_uid: ::prost::alloc::string::String,
+    /// venue price = price_multiplier x underlying unit price (Binance 1000PEPEUSDT: 1000).
+    #[prost(message, optional, tag="6")]
+    pub price_multiplier: ::core::option::Option<super::super::common::v1::DecimalValue>,
+    /// underlying units per venue quantity unit (OKX PEPE-USDT-SWAP: 10000000).
+    #[prost(message, optional, tag="7")]
+    pub quantity_multiplier: ::core::option::Option<super::super::common::v1::DecimalValue>,
+    #[prost(message, repeated, tag="8")]
+    pub aliases: ::prost::alloc::vec::Vec<InstrumentAlias>,
+    #[prost(string, tag="9")]
+    pub source_endpoint: ::prost::alloc::string::String,
+    #[prost(string, tag="10")]
+    pub source_doc_url: ::prost::alloc::string::String,
+    #[prost(string, tag="11")]
+    pub source_captured_at_utc: ::prost::alloc::string::String,
+    #[prost(string, tag="12")]
+    pub source_response_sha256: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct InstrumentAlias {

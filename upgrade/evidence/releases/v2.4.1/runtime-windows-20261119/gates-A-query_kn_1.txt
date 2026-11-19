@@ -1,0 +1,29 @@
+PASS image-rc-health: sha256:929eeac2091ecbe916cf1f19fba9f13056e621a1c2c1947427b97a8a7c002082 0 running healthy
+PASS realm-mount: /consumer-realms=/home/bobby/.local/state/qdl-v2/releases/v2.4.0-realm:false
+PASS query-manifests: /consumer-realms/alpha.okx.paper.stable-r17.yaml /consumer-realms/trading-system.paper.stable-r15.yaml
+PASS query-hot-targets: QDL_KN_HOT_READ_TARGETS=qdl-v2-stream-b:8210,qdl-v2-stream-a:8210
+PASS query-runtime: /runtime=/home/bobby/.local/state/qdl-v2/releases/v2.3.1-stage-c/runtime:false
+PASS canonical-mount: /canonical=/home/bobby/.local/state/qdl-v2/releases/v2.4.1-canonical:false
+PASS canonical-disabled: QDL_CANONICAL_INSTRUMENT_METADATA='' (readers first: empty)
+PASS query-start-clean: CanonicalMetadataError/Traceback lines since T0 = 0
+PASS hot-read-query_kn_1: configured client: 3 reads, 3 OK, 0 authority/auth refusals; query catalog_revision 16 bindings 3
+PASS hot-read-query_kn_2: configured client: 3 reads, 3 OK, 0 authority/auth refusals; query catalog_revision 16 bindings 3
+PASS query-refusals-query_kn_1: HOT_AUTHORITY_OR_PROTOCOL_REFUSED since 2026-11-19T11:59:38Z = 0 (authority fallback log lines: 0)
+PASS query-refusals-query_kn_2: HOT_AUTHORITY_OR_PROTOCOL_REFUSED since 2026-11-19T11:59:38Z = 0 (authority fallback log lines: 0)
+PASS writer-slices: demanded/ready/exec=246/246/235 other-reasons=WORKER_UNAVAILABLE (246/246, or not-ready only EXECUTION_CONTEXT_STALE/TRADE_EVENT_STALE, within 120 s)
+PASS writer-retries: worker_retries={}
+PASS writer-probe-authority: native probe routes with a HOT_AUTHORITY unavailable since T0 = 0
+PASS writer-refusals: count=0 since 2026-11-19T11:59:38Z
+PASS writer-untouched: sha256:d1addc042756
+INFO stream_kn_1 abafab2c98cb8 rc=0 2026-11-19T06:06:18.032694041Z
+INFO stream_kn_2 abafab2c98cb8 rc=0 2026-11-19T05:42:27.931366864Z
+INFO query_kn_2 929eeac2091e2 rc=0 2026-11-19T11:56:57.019981381Z
+INFO rust_core 58bdd28216132 rc=0 2026-11-18T05:13:10.598989096Z
+INFO rust_core_2 58bdd28216132 rc=0 2026-11-18T05:20:04.499983609Z
+INFO rust_core_3 58bdd28216132 rc=0 2026-11-18T05:23:47.481545977Z
+INFO market_projector_1 58bdd28216132 rc=0 2026-11-18T05:27:38.769663197Z
+INFO market_projector_2 58bdd28216132 rc=0 2026-11-18T05:31:24.307336671Z
+INFO ingestor_binance_usdm 58bdd28216132 rc=0 2026-11-19T06:18:15.661497649Z
+INFO ingestor_okx_swap 58bdd28216132 rc=0 2026-11-19T06:21:26.737062399Z
+INFO binance_bar_edge 18ada571c7288 rc=0 2026-11-19T06:24:36.905419639Z
+WINDOW query_kn_1 GATES PASS

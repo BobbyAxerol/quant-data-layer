@@ -1,5 +1,15 @@
 # SDK Changelog
 
+## 2.10.0 (Data Layer v2.4.1: canonical instrument metadata v1)
+
+Additive only. `InstrumentView` (and `InstrumentResponse`, page items) gains an optional `canonical`
+(`CanonicalInstrumentMetadataView`, schema `qdl.instrument.canonical-metadata.v1`): `status` VERIFIED or UNVERIFIED,
+`rule_id`, `underlying_asset`, `underlying_instrument_uid`, `price_multiplier`, `quantity_multiplier`, `aliases`,
+`source` (endpoint, venue doc URL, capture time and sha256). Prices, quantities and bars stay venue-native. New
+`qdl_sdk.instruments`: `to_underlying_price`, `to_underlying_quantity`, `same_underlying` (exact `Decimal`). They
+raise `CanonicalMetadataUnavailable` (codes `CANONICAL_METADATA_MISSING` / `_UNVERIFIED` / `_INCOMPLETE`) and never
+assume 1:1. Older servers simply omit `canonical`; older SDKs ignore it.
+
 ## 2.9.0 (Data Layer v2.4.0 A-FUND: historical 1m MARK/INDEX candles)
 
 Additive only. `ReferenceRequirement` for `MARK_INDEX_PRICE` now also accepts a bounded window at a non-execution

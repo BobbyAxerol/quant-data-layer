@@ -47,7 +47,7 @@ from qdl.runtime.declaration import (
 )
 from qdl.runtime import derived_bars
 from qdl.runtime.heartbeat import write_heartbeat
-from qdl.runtime.kn_bar_readback import KnBarReadbackError
+from qdl.runtime.kn_bar_readback import KnBarReadbackError, KnBarReadbackNotReady
 from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
 from qdl.runtime.stable_capacity import (
     STABLE_SPOOL_PHYSICAL_PARTITION_WINDOW,
@@ -183,6 +183,15 @@ def _source_provider(source: StableSourceBinding) -> str:
     # anchor for lightweight scheduling test doubles preserves their existing
     # contract without weakening real catalog validation.
     return str(venue) if venue is not None else ""
+
+
+# DL v2.4.1 S6: provider-short proofs survive a restart in a sidecar next to the checkpoint (the checkpoint schema
+# is unchanged, so an older image ignores the file and rollback stays safe). A proof says the provider holds no bar
+# before `earliest_open_ms` for that binding lineage; the restore gap check then expects only later opens instead
+# of re-proving every short binding from the provider (2026-11-19 window 4: 680 bindings, 5,575,631 pre-listing
+# opens re-fetched). A proof older than _SHORT_PROOF_MAX_AGE_MS, or of another binding digest, is not used.
+_SHORT_PROOFS_SCHEMA = "qdl.stable-bar-edge.history-short-proofs.v1"
+_SHORT_PROOF_MAX_AGE_MS = 30 * 86_400_000
 
 
 def _valid_source_bar_open_ms(source: StableSourceBinding, open_ms: int) -> bool:
@@ -785,6 +794,68 @@ class StableBinanceBarEdge:
                 os.close(descriptor)
             temporary.unlink(missing_ok=True)
 
+    def _short_proofs_path(self) -> Path | None:
+        # getattr: scheduling tests drive the edge on doubles that never run `__init__`.
+        state_path = getattr(self, "state_path", None)
+        if state_path is None:
+            return None
+        return state_path.with_name(state_path.name + ".history-short.json")
+
+    def _load_short_proofs(self) -> dict[str, dict]:
+        """Valid-looking proofs from the sidecar; any defect discards the whole file (proofs are an optimisation,
+        never a correctness input: without them the edge re-proves from the provider as before)."""
+        path = self._short_proofs_path()
+        if path is None or not path.is_file():
+            return {}
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+            if document.get("schema") != _SHORT_PROOFS_SCHEMA:
+                raise ValueError("schema")
+            proofs = document["proofs"]
+            if not isinstance(proofs, dict):
+                raise ValueError("proofs")
+            for proof in proofs.values():
+                if set(proof) != {"binding_digest", "requested", "available", "earliest_open_ms", "proved_at_ms"} \
+                        or not all(type(proof[k]) is int and proof[k] > 0
+                                   for k in ("requested", "available", "earliest_open_ms", "proved_at_ms")):
+                    raise ValueError("proof")
+            return proofs
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            logger.warning("stable BAR history-short proofs ignored (unreadable or invalid): %s", path)
+            return {}
+
+    def _short_proof_floor(self, proofs: dict[str, dict], binding_id: str, requested: int) -> int | None:
+        proof = proofs.get(binding_id)
+        if proof is None:
+            return None
+        digest = getattr(self, "_binding_digests", {}).get(binding_id)
+        if (digest is None or proof["binding_digest"] != digest or proof["requested"] != requested
+                or int(self.clock() * 1000) - proof["proved_at_ms"] > _SHORT_PROOF_MAX_AGE_MS):
+            return None
+        self._history_short[binding_id] = (proof["requested"], proof["available"])
+        return proof["earliest_open_ms"]
+
+    def _record_short_proof(self, binding_id: str, requested: int, available: int, earliest_open_ms: int) -> None:
+        path = self._short_proofs_path()
+        digest = getattr(self, "_binding_digests", {}).get(binding_id)
+        if path is None or digest is None or getattr(self, "repair_only", False):
+            return
+        proofs = self._load_short_proofs()
+        proofs[binding_id] = {"binding_digest": digest, "requested": requested, "available": available,
+                              "earliest_open_ms": earliest_open_ms, "proved_at_ms": int(self.clock() * 1000)}
+        known = set(self._binding_ids)
+        document = {"schema": _SHORT_PROOFS_SCHEMA,
+                    "proofs": {key: proofs[key] for key in sorted(proofs) if key in known}}
+        temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        try:
+            temporary.write_text(json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n",
+                                 encoding="ascii")
+            os.replace(temporary, path)
+        except OSError:
+            logger.warning("stable BAR history-short proof not persisted binding=%s", binding_id)
+        finally:
+            temporary.unlink(missing_ok=True)
+
     def _checkpoint_history_gaps(
         self,
         restored: dict[str, int],
@@ -805,14 +876,19 @@ class StableBinanceBarEdge:
             for source, _acquisition in self.history_bindings + self.history_okx_bindings
         }
         gaps: dict[str, int] = {}
+        proofs = self._load_short_proofs()
         for binding_id, last_open_ms in restored.items():
             source = sources[binding_id]
             interval_ms = _bar_interval_ms(source.interval or "")
+            requested = self._bootstrap_rows_for(source)
+            # A valid provider-short proof bounds the expected window at the earliest bar the provider holds.
+            earliest = self._short_proof_floor(proofs, binding_id, requested)
             expected_opens = frozenset(
                 last_open_ms - index * interval_ms
-                for index in range(self._bootstrap_rows_for(source))
+                for index in range(requested)
                 if (getattr(self, "bar_readback", None) is None
                     or last_open_ms - index * interval_ms > 0)
+                and (earliest is None or last_open_ms - index * interval_ms >= earliest)
             )
             missing = len(expected_opens - self._durable_final_bar_opens(
                 source, expected_opens
@@ -1622,6 +1698,10 @@ class StableBinanceBarEdge:
                 self._history_short[source.binding_id] = (bootstrap_rows, len(values))
                 logger.warning("stable BAR provider history is short binding=%s requested=%s available=%s",
                                source.binding_id, bootstrap_rows, len(values))
+                if values and self._short_proofs_path() is not None:
+                    self._record_short_proof(
+                        source.binding_id, bootstrap_rows, len(values),
+                        min(self._open_time_ms(acquisition, item) for item in values))
                 if not values:
                     continue
             published += self._publish_history(
@@ -2368,6 +2448,13 @@ class StableBinanceBarEdge:
                 if getattr(self, "_derived_active", False):
                     self.run_derived_cycle()
                 failures = 0
+            except KnBarReadbackNotReady as error:
+                # DL v2.4.1 S6: a product the bars projector is still staging (first generation, REBUILDING) is
+                # not provable yet; the next turn retries it with the same backoff. Not an ERROR with a traceback
+                # (window 4: 29 such lines, all healed on retry).
+                failures += 1
+                logger.warning("stable crypto BAR readback not ready, retrying consecutive_failures=%s: %s",
+                               failures, error)
             except Exception:
                 failures += 1
                 logger.exception(

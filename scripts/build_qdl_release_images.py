@@ -60,8 +60,8 @@ from scripts.host_measurement_lock import MAX_MINUTES as MAX_LOCK_MINUTES, lock_
 # python-only (Query), the Rust roles kept the v2.3.0 rc2 image.
 # v2.4.0 (S1-S9: shared reads, quota on admission, session-fair lanes, advisory token revision, role claims ignored)
 # changes rust (stream gateway, qdl-contracts accept rule) and python (Query): both images are built.
-RELEASE = "2.4.0"
-SDK_VERSION = "2.9.0"
+RELEASE = "2.4.1"
+SDK_VERSION = "2.10.0"
 REPO = Path(__file__).resolve().parents[1]
 HOME = Path.home()
 STATE_ROOT = HOME / ".local/state/qdl-v2"
@@ -163,15 +163,12 @@ REFERENCES = {
 }
 PRODUCTION_RUST_REFERENCE = "v230_rc2"
 PRODUCTION_RUST_REVISION = "832c02c450e219cb64cb818c976c3d0084b8f7b7"
-# The python images in production, each with the tree its /app files were built from: Query x2 runs v2.3.1, bar_edge
-# runs v2.3.0 rc3 (built on the pinned dependency image 753604f8, so its pip freeze differs by design).
+# The python image in production, with the tree its /app files were built from: since the DL v2.4.0 windows
+# (2026-11-19) Query x2 and binance_bar_edge both run qdl-v2-python:2.4.0-acf42d7.
 PYTHON_REFERENCES = {
-    "query_v231": ("qdl-v2-python:2.3.1-aa75218",
-                   "sha256:26c3b051ed1378aa83928230866cffcd6abcea87d248c06f850ee056994b3b47",
-                   "aa752182d057e160c95770a4a247c2839a0300ab"),
-    "bar_edge_v230_rc3": ("qdl-v2-python:2.3.0-rc3-7cd4fc36",
-                          "sha256:a235c0a18cdeb112ea0b49627eaf02f2a68ab878298ebba07884461ee5709d0b",
-                          "7cd4fc36097ec0ad8cd5bf5ccd002838416ae485"),
+    "query_bar_edge_v240": ("qdl-v2-python:2.4.0-acf42d7",
+                            "sha256:18ada571c72856cefc2844c8cb2c3809c3e30ac77927bc4c73160e7b2787cd18",
+                            "acf42d7467c717a5cc79852c3b4954cbbf437b17"),
 }
 PYTHON_HASH_ROOTS = ("qdl", "app", "generated", "config", "consumers", "qdl_sdk")
 

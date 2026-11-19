@@ -1,6 +1,6 @@
 """Stable Python SDK V2 with typed public models and generated transports."""
 
-__version__ = "2.9.0"
+__version__ = "2.10.0"
 
 from qdl_sdk.client import AsyncDataLayerClient, DataLayerClientV2, WarmupStreamSession
 from qdl_sdk.credentials import (
@@ -10,8 +10,9 @@ from qdl_sdk.credentials import (
     StaticBearerCredential,
 )
 from qdl_sdk.cursor import CursorCheckpoint, FileCursorStore, MemoryCursorStore
-from qdl_sdk.errors import DataLayerError
+from qdl_sdk.errors import CanonicalMetadataUnavailable, DataLayerError
 from qdl_sdk.handoff import ClosedBarHandoff
+from qdl_sdk import instruments
 from qdl_sdk.models import (
     BasisKind,
     BarRevisionPolicy,
@@ -23,6 +24,7 @@ from qdl_sdk.models import (
     FeedStatusResponse,
     GapPolicy,
     Grade,
+    CanonicalInstrumentMetadataView,
     InstrumentPageResponse,
     InstrumentResponse,
     InstrumentView,
@@ -75,7 +77,10 @@ __all__ = [
     "ControlEvent",
     "CredentialProvider",
     "DataLayerClientV2",
+    "CanonicalInstrumentMetadataView",
+    "CanonicalMetadataUnavailable",
     "DataLayerError",
+    "instruments",
     "DataRequirement",
     "EXECUTION_PRICE_VALIDATION_FEEDS",
     "FileCursorStore",
