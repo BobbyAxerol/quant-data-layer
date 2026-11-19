@@ -1,0 +1,29 @@
+PASS image-rc-health: sha256:abafab2c98cbdd9d2fe86f2b26fd6fcf64800ccdd114a3dd5b92803de16a3e98 0 running healthy
+PASS realm-mount: /consumer-realms=/home/bobby/.local/state/qdl-v2/releases/v2.4.0-realm:false
+PASS liveness-ro: /session-liveness=/var/lib/docker/volumes/qdl_v2_stable_candidate_stable_state/_data:false
+PASS stream-bundle: bundle_sha256=577470a63180bd8b7ac45e4beff7399bd8cf604fa3f3efdb8a855ea4f5191192
+PASS stream-hub: decode_failures=0 reader_errors=0
+PASS stream-refused: refused=0 live_budget=0 replay_capacity=0
+INFO subscribers stream_kn_1=65
+INFO subscribers stream_kn_2=79
+PASS hot-read-query_kn_1: configured client: 3 reads, 3 OK, 0 authority/auth refusals; query catalog_revision 16 bindings 3
+PASS hot-read-query_kn_2: configured client: 3 reads, 3 OK, 0 authority/auth refusals; query catalog_revision 16 bindings 3
+PASS query-refusals-query_kn_1: HOT_AUTHORITY_OR_PROTOCOL_REFUSED since 2026-11-19T06:06:14Z = 0 (authority fallback log lines: 0)
+PASS query-refusals-query_kn_2: HOT_AUTHORITY_OR_PROTOCOL_REFUSED since 2026-11-19T06:06:14Z = 0 (authority fallback log lines: 0)
+PASS writer-slices: demanded/ready/exec=246/236/224 other-reasons=- (246/246, or not-ready only EXECUTION_CONTEXT_STALE/TRADE_EVENT_STALE, within 120 s)
+PASS writer-retries: worker_retries={}
+PASS writer-probe-authority: native probe routes with a HOT_AUTHORITY unavailable since T0 = 0
+PASS writer-refusals: count=0 since 2026-11-19T06:06:14Z
+PASS writer-untouched: sha256:d1addc042756
+INFO stream_kn_2 abafab2c98cb8 rc=0 2026-11-19T05:42:27.931366864Z
+INFO query_kn_1 18ada571c7288 rc=0 2026-11-19T05:57:48.335279537Z
+INFO query_kn_2 18ada571c7288 rc=0 2026-11-19T05:56:16.874951191Z
+INFO rust_core 58bdd28216132 rc=0 2026-11-18T05:13:10.598989096Z
+INFO rust_core_2 58bdd28216132 rc=0 2026-11-18T05:20:04.499983609Z
+INFO rust_core_3 58bdd28216132 rc=0 2026-11-18T05:23:47.481545977Z
+INFO market_projector_1 58bdd28216132 rc=0 2026-11-18T05:27:38.769663197Z
+INFO market_projector_2 58bdd28216132 rc=0 2026-11-18T05:31:24.307336671Z
+INFO ingestor_binance_usdm 58bdd28216132 rc=0 2026-11-13T14:51:12.458137808Z
+INFO ingestor_okx_swap 58bdd28216132 rc=0 2026-11-16T12:33:26.796768788Z
+INFO binance_bar_edge a235c0a18cdeb rc=0 2026-11-13T14:52:35.316066858Z
+WINDOW stream_kn_1 GATES PASS

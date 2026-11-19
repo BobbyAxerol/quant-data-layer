@@ -79088,3 +79088,27 @@ Impacted set: 9 modules, Ran 212, OK (skipped 33). The run used `qdl-v2-python:2
   probes.
 
 Status: `implemented`, `tested locally`.
+
+### DL v2.4.0 runtime windows W1'-W4 accepted, acceptance record and release notes (production-authoritative on the KN stack) - 2026-11-19 (Claude)
+
+- Windows (coordinator executed; read-only gates by Claude): W1' stream_kn_2 05:42, W2 query_kn_2 05:56 / query_kn_1
+  05:57, W1'' stream_kn_1 06:06, W3a ingestor_binance_usdm 06:18 (rev 24, 118 PINNED, 3.83 writes/s), W3b
+  ingestor_okx_swap 06:21 (465 PINNED, 3.5 writes/s), W4 binance_bar_edge 06:24 (python `18ada571`, r8 pair). All
+  PASS; W4 after its bootstrap (08:14:25, published 1320, pending 0) and D6b at 08:30:42 (recorded 209 = healed 209,
+  kept 0). Writer 246/246 at T+10 min after W1''.
+- Deviations recorded in `upgrade/evidence/releases/v2.4.0/CERTIFICATE.md` section 5:
+  - W4 stale heartbeat: the restore check (5.5 min) runs before the first heartbeat write
+    (`qdl/runtime/stable_bar_edge.py:2333-2349`), so the first gate read the old process's file.
+  - W4 restart repair: 784 retained bindings marked incomplete (missing_rows 6,082,736). Split verified per binding
+    from the edge's ACK/short lines (`runtime-windows-20261119/bar-edge-repair-split.json`): 680 provider-short
+    bindings account for 5,575,631 pre-listing opens (91.7 %; 668 published 0 rows, 12 filled 14 newest rows); 104
+    1m/3m bindings had all 10,000 rows on refetch (507,105 rows counted missing; cause inferred, rolling retention vs
+    checkpoint watermark); 278 new bindings published 1,850,567 rows. Cause: short proofs are in memory only
+    (`stable_bar_edge.py:388,1622`) and the restore check (`:785-819`) counts pre-listing opens. Defect candidate for
+    v2.4.1 S6 (TS register row via the pin steward).
+  - 29 transient `KnBarReadbackNotReady (REBUILDING)` cycle failures on new crossec 1h/12h products; all ACKed later.
+  - Five Binance 3d bindings remain `history_failed` (provider `OVERLAPPING_PROVIDER_WINDOWS`), as before.
+- CI6: dev 7230d5c run 44468533774 is red on one shard (synthetic throughput gate, 178.3 < 200 eps); the receipt is the
+  full `dev` push run after this branch merges (RELEASE_NOTES "Release steps").
+- shared100 (A6) is post-release acceptance (owner, 2026-11-19); window 7 skipped.
+Status: runtime `production-authoritative` for the 7 recreated roles; release `tagged` pending CI6.

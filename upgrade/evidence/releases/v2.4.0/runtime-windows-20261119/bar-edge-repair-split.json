@@ -1,0 +1,12 @@
+{
+ "repair_bindings": 784,
+ "missing_rows_logged": 6082736,
+ "classes": {
+  "SHORT_REPROVED_NOTHING_PUBLISHED": 668,
+  "NOT_SHORT_NOTHING_PUBLISHED": 104,
+  "SHORT_AND_GAP_FILLED": 12
+ },
+ "rows_published_for_repair_set": 14,
+ "new_bindings_acked": 278,
+ "pending_sample": []
+}
