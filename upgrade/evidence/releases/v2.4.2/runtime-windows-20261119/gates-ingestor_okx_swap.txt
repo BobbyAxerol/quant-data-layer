@@ -1,0 +1,32 @@
+PASS image-rc-health: sha256:e628fbe07afe94e8f716692633e77217a16223ea03abc7ea34edb959a48c72a7 0 running healthy
+PASS ingestor-config: /runtime/config.json=/home/bobby/.local/state/qdl-v2/releases/v2.4.0-ingestor/ingestor_okx_swap.json:false
+PASS ingestor-started: bindings=465 lane_plan=PINNED (want 465 PINNED)
+PASS ingestor-lanes-flowing: frames per lane (10 s): okx-public-001=789 okx-public-002=265 okx-public-003=6238 okx-public-004=3091 okx-public-005=2757 okx-business-001=782 okx-business-002=134
+PASS ingestor-subscriptions-rejected: sum subscriptions_rejected over lanes=0 (v2.4.2 field; MISSING = old image)
+PASS ingestor-rejection-events: qdl_native_subscription_rejected lines since T0=0
+PASS ingestor-rejects: rejected-subscription/error events=0
+PASS core-scope-rust_core: scope_q=0 oos=0
+PASS core-scope-rust_core_2: scope_q=0 oos=0
+PASS core-scope-rust_core_3: scope_q=0 oos=0
+PASS liveness-cadence: okx-swap median writes/s=3.5 (>= 2.5; 1000 ms baseline 1.17) 7
+PASS hot-read-query_kn_1: configured client: 3 reads, 3 OK, 0 authority/auth refusals; query catalog_revision 17 bindings 3
+PASS hot-read-query_kn_2: configured client: 3 reads, 3 OK, 0 authority/auth refusals; query catalog_revision 17 bindings 3
+PASS query-refusals-query_kn_1: HOT_AUTHORITY_OR_PROTOCOL_REFUSED since 2026-11-19T16:24:23Z = 0 (authority fallback log lines: 0)
+PASS query-refusals-query_kn_2: HOT_AUTHORITY_OR_PROTOCOL_REFUSED since 2026-11-19T16:24:23Z = 0 (authority fallback log lines: 0)
+PASS writer-slices: demanded/ready/exec=246/246/235 other-reasons=- (246/246, or not-ready only EXECUTION_CONTEXT_STALE/TRADE_EVENT_STALE, within 120 s)
+PASS writer-retries: worker_retries={}
+PASS writer-probe-authority: native probe routes with a HOT_AUTHORITY unavailable since T0 = 0
+PASS writer-refusals: count=0 since 2026-11-19T16:24:23Z
+PASS writer-untouched: sha256:d1addc042756
+INFO stream_kn_1 abafab2c98cb8 rc=0 2026-11-19T16:02:45.791206834Z
+INFO stream_kn_2 abafab2c98cb8 rc=0 2026-11-19T15:53:59.91506901Z
+INFO query_kn_1 5ea7a7a40ef24 rc=0 2026-11-19T15:59:42.445644561Z
+INFO query_kn_2 5ea7a7a40ef24 rc=0 2026-11-19T15:56:55.947510439Z
+INFO rust_core 58bdd28216132 rc=0 2026-11-18T05:13:10.598989096Z
+INFO rust_core_2 58bdd28216132 rc=0 2026-11-18T05:20:04.499983609Z
+INFO rust_core_3 58bdd28216132 rc=0 2026-11-18T05:23:47.481545977Z
+INFO market_projector_1 58bdd28216132 rc=0 2026-11-19T16:05:12.533482249Z
+INFO market_projector_2 58bdd28216132 rc=0 2026-11-19T16:07:43.040615416Z
+INFO ingestor_binance_usdm e628fbe07afe7 rc=0 2026-11-19T16:20:34.332865813Z
+INFO binance_bar_edge 5ea7a7a40ef24 rc=0 2026-11-19T16:10:51.144308792Z
+WINDOW ingestor_okx_swap GATES PASS

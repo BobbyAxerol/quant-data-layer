@@ -79489,3 +79489,54 @@ Status: `implemented`, `tested locally`.
   the v2.4.1 windows. `tests/test_build_qdl_release_images.py` pins that id.
 
 Test result: 46/46 on the host with git.
+
+### DL v2.4.2 r10 runtime windows W1-W6 accepted, acceptance record (production-authoritative on the KN stack) - 2026-11-19 (Claude)
+
+**Prep.** No role was touched during prep.
+- Host dirs: `releases/v2.4.2-r10` (7 files differ from `v2.3.1-stage-c`), `releases/v2.4.2-realm` (4 files differ
+  from `v2.4.0-realm`) and `releases/v2.4.2-compose` (one compose delta, the Query manifest list).
+- sha256 of every file.
+- Render-hash check: 16/16 live roles reproduce from their labels. The 9 window roles get a new hash with the intended
+  image.
+
+**Order.** The coordinator ran the windows in the corrected order (requested: Query x2 first):
+
+| Window | Role | T0 (UTC) |
+|---|---|---|
+| W1 | stream_kn_2 | 15:53:56 |
+| W2 | query_kn_2 | 15:56:53 |
+| W3 | query_kn_1 | 15:59:39 |
+| W4 | stream_kn_1 | 16:02:41 |
+| W5a | market_projector_1 | 16:05:10 |
+| W5b | market_projector_2 | 16:07:41 |
+| W6 | binance_bar_edge | 16:10:47 |
+
+**Gates.** All PASS.
+- W1: the r16 Queries fell through to stream_kn_1, with 15 authority-fallback lines and 0
+  `HOT_AUTHORITY_OR_PROTOCOL_REFUSED`.
+- W2 and W3: the RVN probe passed (`INSTRUMENT_NOT_FOUND`; mixed batch per item).
+- W6: first heartbeat after 468 s; crossing 16->17 / 24->25, retained 1319, dropped 1, with the record; Traceback 0;
+  instrument_unavailable 0.
+- Writer: 246/246 in every window.
+
+**Receipts.** Code receipt: dev push 44556512937 on tree b69e27c4. Window receipts:
+`upgrade/evidence/releases/v2.4.2/runtime-windows-20261119/`. Certificate:
+`upgrade/evidence/releases/v2.4.2/CERTIFICATE.md`.
+
+**Runbook.** New section in `docs/runbooks/kn-maintenance-window-template.md`: on a catalogue-revision change, move a
+Stream replica first, then Query.
+
+W7: ingestor_binance_usdm (16:20:29) and ingestor_okx_swap (16:24:23) moved to rust `e628fbe0`, both GATES PASS with
+subscriptions_rejected 0.
+- The binance first run hit a gate false positive: the `subscription.*reject` regex matched the new
+  `subscriptions_rejected` progress field. The corrected gate excludes progress lines; it is in `drafts/window/`, and
+  the as-run copy is kept.
+
+Bootstrap after W6 (read-only tracker): published 1047 -> **1319/1319 at 17:11:07Z**.
+- pending 0, history_failed 5 (Binance 3d), instrument_unavailable 0, declaration 17/25, on 2 consecutive samples.
+- 771 sidecar proofs.
+- The v2.4.1 stop at 1118 is gone.
+- D6b at 17:26:07Z: 0 recorded, 0 healed, 0 outstanding.
+
+Status: `production-authoritative` for query_kn x2, stream_kn x2, market_projector x2, binance_bar_edge and both
+ingestors on r10.
