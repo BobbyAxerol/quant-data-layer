@@ -25,6 +25,7 @@ from typing import Any, Callable
 import requests
 
 from app.providers.binance.rest import BinanceProviderError, normalize_interval
+from qdl.adapters.instrument_unavailable import BINANCE_INSTRUMENT_UNAVAILABLE_CODES, ProviderInstrumentUnavailable
 from qdl.admission.contracts import AdmissionPriority, ProviderLane
 from qdl.admission.edge import BlockingProviderAdmission
 
@@ -98,6 +99,10 @@ class AdmittedBinanceKlines:
                 lane, http_status=response.status_code if response.status_code in {418, 429} else None,
                 provider_code=-1003 if code == -1003 else None,
                 retry_after_ms=retry_after_s * 1000 if retry_after_s else None)
+        if code in BINANCE_INSTRUMENT_UNAVAILABLE_CODES:
+            # DL v2.4.2: the symbol does not exist / is closed; typed per-instrument failure.
+            raise ProviderInstrumentUnavailable("BINANCE", params["symbol"], code,
+                                                BINANCE_INSTRUMENT_UNAVAILABLE_CODES[code], _URLS[market])
         raise BinanceProviderError(
             f"Binance klines failed for {params['symbol']}",
             attempts=[{"market": market, "status_code": response.status_code, "provider_code": code}])

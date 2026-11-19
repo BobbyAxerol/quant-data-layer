@@ -60,7 +60,9 @@ from scripts.host_measurement_lock import MAX_MINUTES as MAX_LOCK_MINUTES, lock_
 # python-only (Query), the Rust roles kept the v2.3.0 rc2 image.
 # v2.4.0 (S1-S9: shared reads, quota on admission, session-fair lanes, advisory token revision, role claims ignored)
 # changes rust (stream gateway, qdl-contracts accept rule) and python (Query): both images are built.
-RELEASE = "2.4.1"
+# v2.4.2 (delisted-instrument class fix): rust (qdl-core okx per-argument 60018 rejection, native raw ingestor) and
+# python (bar edge quarantine, Query typed unbound refusal, declaration tool): both images are built.
+RELEASE = "2.4.2"
 SDK_VERSION = "2.10.0"
 REPO = Path(__file__).resolve().parents[1]
 HOME = Path.home()
@@ -132,6 +134,7 @@ REQUIRED_ANCESTORS = {
     "v232_session_alive": "2358766f66d9c08a89d2b40858144c62e866f8a0",
     "v240_python_s1_s8": "67e4199c45a4642eb704729cce9ec6a93189f9a7",
     "v240_rust_stream": "a65e8f8b9d1a21ea0251c4badb6dcaf461dad661",
+    "v242_okx_subscription_rejection": "5b7a03d50914d341b2cf3b3c79784fb1e412653a",
 }
 
 # Identical to the four cargo invocations of Dockerfile.qdl-rust-runtime, offline.
@@ -163,12 +166,12 @@ REFERENCES = {
 }
 PRODUCTION_RUST_REFERENCE = "v230_rc2"
 PRODUCTION_RUST_REVISION = "832c02c450e219cb64cb818c976c3d0084b8f7b7"
-# The python image in production, with the tree its /app files were built from: since the DL v2.4.0 windows
-# (2026-11-19) Query x2 and binance_bar_edge both run qdl-v2-python:2.4.0-acf42d7.
+# The python image in production, with the tree its /app files were built from: since the DL v2.4.1 windows
+# (2026-11-19, A/B/C) Query x2 and binance_bar_edge both run qdl-v2-python:2.4.1-985bd65.
 PYTHON_REFERENCES = {
-    "query_bar_edge_v240": ("qdl-v2-python:2.4.0-acf42d7",
-                            "sha256:18ada571c72856cefc2844c8cb2c3809c3e30ac77927bc4c73160e7b2787cd18",
-                            "acf42d7467c717a5cc79852c3b4954cbbf437b17"),
+    "query_bar_edge_v241": ("qdl-v2-python:2.4.1-985bd65",
+                            "sha256:929eeac2091ecbe916cf1f19fba9f13056e621a1c2c1947427b97a8a7c002082",
+                            "985bd65564d4263fd1ecbfaddd4ea5f32c2a0390"),
 }
 PYTHON_HASH_ROOTS = ("qdl", "app", "generated", "config", "consumers", "qdl_sdk")
 

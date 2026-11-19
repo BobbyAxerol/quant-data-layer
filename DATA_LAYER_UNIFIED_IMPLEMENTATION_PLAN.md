@@ -79215,3 +79215,277 @@ Status: `implemented`, `tested locally`.
   the proofs, so the S6 effect shows on the next restart.
 Status: `production-authoritative` for query_kn x2 and binance_bar_edge; release pending the receipt on this branch's
 merge.
+
+### DL v2.4.2 slice 1: provider-delisted instruments are per-binding typed failures, failing-cycle backoff, venue-listing declaration gate (tested locally) - 2026-11-19 (Claude)
+
+Trigger: v2.4.1 window C. OKX delisted `RVN-USDT-SWAP` between about 07:30Z and 08:40Z, but catalogue r16 still
+declares it.
+- From about 13:01Z every bar_edge cycle failed with `51001 ... doesn't exist` on `/api/v5/market/history-candles`.
+- `bootstrap_history` caught only `BarHistoryGapError`, and with `max_bindings=1` the same binding blocked every
+  binding after it. The bootstrap stopped at 1118/1320.
+- The failing-cycle backoff used `min(loop delay, 2**n)`, so the cycle repeated every ~2 s: 2.8 requests/s, within
+  the OKX limit of 20 per 2 s per IP, with no 429/50011.
+- Owner: fix the class, not RVN.
+
+**Class fix.**
+- `qdl/adapters/instrument_unavailable.py` adds `ProviderInstrumentUnavailable` and `find_instrument_unavailable`.
+  Documented codes:
+  - OKX `51001`, the venue's verbatim message, captured;
+  - Binance USD-M `-1121` BAD_SYMBOL, `-1122` INVALID_SYMBOL_STATUS, `-4141` SYMBOL_ALREADY_CLOSED (Binance
+    error-code page).
+- The adapters raise it and never retry the same request:
+  - `qdl/adapters/okx/admitted_rest.py` `_leased_get` and `get`;
+  - `qdl/adapters/binance/admitted_klines.py`.
+- bar_edge `bootstrap_history` quarantines that one binding:
+  - it records `_history_unavailable` and sets a 6 h retry in `_history_retry`;
+  - it logs a JSON ERROR event `qdl_bar_edge_instrument_unavailable` (binding, provider, symbol, code, attempt,
+    quarantined);
+  - the cycle continues with the other bindings;
+  - a later successful fetch clears the quarantine.
+- The polling path (`_schedule_retry`) applies the same quarantine through the exception chain.
+- The heartbeat carries `instrument_unavailable=<n>` (`serving_status`). It is monitor-visible because the heartbeat
+  detail is what the monitor and the gates read.
+
+**Backoff.** A failing cycle now waits `max(loop delay, 2**n)`, capped at 30 s. Tested as
+2, 4, 8, 16, 30, 30, 30.
+
+**Declaration gate.** `scripts/catalog_venue_listing_gate.py`, plus `scripts/dl_declaration.py`:
+- a new `venue_listings` declaration field, required from declaration revision 10;
+- a gate check `catalog_instruments_listed_on_venue` (OKX `state=live`, Binance `status=TRADING`; venue doc URLs in
+  the module docstring);
+- renders made before v2.4.2 (no `venue_listings` key) are re-gated unchanged.
+- On the live r16 catalogue it FAILS on 3 instruments: OKX RVN-USDT-SWAP, and Binance BTCUSDT_260925 and
+  ETHUSDT_260925 (expired).
+- Retirement plan: `upgrade/evidence/releases/v2.4.2/drafts/DELISTED_INSTRUMENT_RETIREMENT_PLAN.md`. It covers:
+  - a narrow `retire_instruments` render (the declaration tool is additive-only today);
+  - a checkpoint migration record, so the crossing retains 1319 and drops 1 with no strand;
+  - three alpha.okx manifests that require OKX RVN BAR 1d;
+  - the Query-then-Stream order for the catalogue bump.
+
+**Live path, finding (not fixed in this slice).**
+- The Rust OKX subscription ACK parser treats any `{"event":"error"}` as a failure of the whole request
+  (`rust/qdl-core/src/okx.rs:121-138`), so a delisted instrument inside a live lane would fail that lane's establish
+  for every binding on it.
+- RVN is not on any live lane (ingestor configs checked), so it is not active today.
+- Proposed v2.4.2 slice 2:
+  - parse `arg.instId` on the error event, quarantine that binding and resubscribe the rest;
+  - add a `qdl_native_subscription_rejected` event and counter;
+  - verify the venue's per-arg error behaviour on demo first.
+
+**Also.** `tests/test_dl_v241_bar_edge_short_proofs.py` no longer re-collects the imported bootstrap test class
+(duplicate CI time).
+
+**Tests.** `tests/test_dl_v242_instrument_unavailable.py` (13 tests):
+- adapters: OKX typed and not retried; leased_get mapping; all three Binance codes; chain search;
+- the RVN reproduction: a delisted b does not block c, b is not refetched every turn, quarantine retry, healing on
+  relisting, the event and the heartbeat counter; other errors still fail the cycle; polling quarantine;
+- the backoff;
+- the listing gate (delisted, not live, pass) and the revision-10 requirement.
+
+Impacted set (8 modules) Ran 159 OK; adapter and declaration set (7 modules incl. provider admission, OKX reference, TS funding entitlement) Ran 110 OK.
+Status: `implemented`, `tested locally`.
+
+**TS INTEGRATION_DEFECT_REGISTER row** (for the pin steward):
+`| IDR-<n> | DATA_LAYER | A provider-delisted instrument head-of-line blocked the bar_edge bootstrap repair and the failing-cycle backoff was ineffective (min instead of max): OKX delisted RVN-USDT-SWAP ~07:30-08:40Z 2026-11-19, r16 still declared it; every cycle failed 51001 on history-candles, bootstrap stuck at 1118/1320, ~2.8 req/s against OKX (within 20/2 s) | bar_edge log 13:01-13:20Z; v2.4.1 CERTIFICATE section 5 item 5 | DL v2.4.2: typed per-binding ProviderInstrumentUnavailable + quarantine + heartbeat counter; backoff max(); venue-listing declaration gate; RVN retirement render (plan) | - | DL v2.4.2 |`
+
+### DL v2.4.2 slice 2: documented OKX codes, live-path per-argument rejection, `retire_instruments` render r10 (tested locally) - 2026-11-19 (Claude)
+
+**OKX codes, cited.** Source: OKX V5 docs page https://www.okx.com/docs-v5/en/ (sha256 `853869c8…4bbd`, captured
+2026-11-19T13:47:45Z; excerpt `tests/fixtures/v242_okx_docs/okx-error-codes-excerpt.json`).
+- REST `#error-code-rest-api-public-trade-class`: quarantine `51001` (instrument doesn't exist), `51021` (not yet
+  listed), `51022` (contract suspended), `51027` (contract expired).
+- `51028`, `51029` and `51030` (delivery, settlement, funding settlement) are documented transient states. They keep the
+  retry path.
+- `51155` was checked: it is not an instrument-existence row.
+- WS `#error-code-websocket-public-general-class`: `60018` "Wrong URL or {0} doesn't exist".
+
+`qdl/adapters/instrument_unavailable.py` holds exactly those four REST codes. A test pins them to the docs excerpt.
+
+**Live path.** One public, unauthenticated subscribe was sent to `wss://ws.okx.com:8443/ws/v5/public`, `tickers`
+BTC-USDT-SWAP plus RVN-USDT-SWAP, no keys. Raw frames are in
+`tests/fixtures/v242_okx_docs/okx-ws-subscribe-valid-plus-delisted-20261119.json`.
+- BTC is ACKed and streams.
+- RVN gets `{"event":"error","code":"60018","id":<request id>,"msg":"...channel:tickers,instId:RVN-USDT-SWAP doesn't
+  exist..."}`, with no `arg`.
+
+Before v2.4.2, `parse_subscription_ack` failed the whole establish on any error. So one delisted live instrument would
+have taken its whole lane down in a reconnect loop.
+
+Now `qdl_core::okx::parse_subscription_ack_or_rejection` handles a 60018 for a declared argument of this request: it
+removes that argument from `pending` and records it.
+- The ingestor's `okx_establish` returns the rejected list.
+- The lane logs `qdl_native_subscription_rejected`, one per argument.
+- The progress line carries `subscriptions_rejected` (a count) and `subscriptions_rejected_args`.
+- The other arguments serve.
+
+Still fail-closed:
+- another request's error;
+- an undeclared instId;
+- any other code;
+- a session in which every argument was refused (establish error, retried with backoff).
+
+Today RVN is a bar_edge REST binding, not a live one, so this is defence for the next delisting of a live binding.
+
+**Retirement render.** `scripts/dl_declaration.py` gets `retire_instruments: [{instrument_id, reason}]`, the one
+non-additive path. It needs `venue_listings` that show each instrument missing or not live.
+- `RetiredBase` writes a retired copy of the base (`config/`, `consumers/`) and of the deployed Query acquisition and
+  core files. The render and the gate both run against it, and the gate rebuilds it with the same function from
+  `render-inputs.json`. So the gate's additivity checks prove that nothing beyond the retirement left.
+- Removed:
+  - catalogue instrument and bindings;
+  - acquisition rows (repository and Query runtime);
+  - demand rows, scope ids, routing products;
+  - explicit manifest rows;
+  - declared-universe members;
+  - core rows.
+- Retained bindings keep their lineage (`pin_lineage`).
+- Refused:
+  - an unknown instrument;
+  - a listed-live instrument;
+  - a binding a live ingestor subscribes;
+  - a sealed route binding naming it;
+  - a manifest that no longer loads;
+  - a retired manifest whose consumer is not declared.
+
+**Render r10, offline.**
+- Base: r9 re-rendered byte-identical from its committed inputs. Catalogue `e5a670de…`, equal to the live runtime
+  catalogue.
+- Runtime: the live Query acquisition, the three cores, both ingestors, the realm and kn bundles, the live bar-edge pair
+  and the live checkpoint, all copied read-only.
+- Listings: public OKX `instruments?instType=SWAP` (546 rows) and Binance `fapi/v1/exchangeInfo` (953), captured
+  14:03:37Z.
+- Retires `OKX.SWAP.PERPETUAL.RVN-USDT`, `BINANCE.USDM.FUTURE.BTC-USDT-260925` and `…ETH-USDT-260925`. Binance
+  `RVNUSDT` is TRADING and stays.
+- Catalogue 16→17. Acquisition 24→25. Demand 12→13 (−1 row). Scope 15→16. Routing 34→35 (−1 product).
+- Manifest `alpha.okx.paper.stable` r17→r18 (−1 row; accept-set floor 1, the v2.4.0 S2 advisory, so old tokens stay
+  valid).
+- Bundles realm and kn: the alpha.okx.paper entry is replaced.
+- Cores: −1 inert row each. They are rendered, not needed in the window.
+- bar_edge migration record: from 16/24 to 17/25, retained 1319, dropped 1; it matches the live checkpoint (1320).
+- Gate: **PASS**, 20/20 checks, including `retirement_justified_by_venue_listings` and
+  `catalog_instruments_listed_on_venue` (516 checked, 0 missing).
+- Evidence: `upgrade/evidence/releases/v2.4.2/declaration-retire-r10/`. The full tree is at
+  `~/.local/state/qdl-v2/v242-retire-r10-render/`.
+
+**Consumers of OKX RVN BAR 1d.**
+- `alpha.okx.paper.stable`: its explicit row is retired by r10.
+- `alpha.okx.live.stable` and `alpha.okx.sandbox.stable` (realm r1, compiled 2026-09-27 from paper r14 by
+  `scripts/compile_consumer_realms.py`): these are not repository manifests, so r10 does not touch them. A realm
+  recompile is a separate, consumer-visible step to coordinate.
+- Binance RVNUSDT 1d stays for `alpha.binance.{paper,live,sandbox}.stable`.
+
+Use of RVN today:
+- No hosted alpha process or container is running on the host.
+- Query and Stream logs over 48 h hold no RVN or RVN-uid line.
+- crossec_ema's 96 instruments do not include RVN, and TS r15 does not either.
+- `execution_alpha` symbol lists that name RVN, none of them running: scalping_PSAR, scalping_sl_tp, taalpha,
+  grid_long_only, vwma00315, fib_sl_tp_strength, regressionportfolioA001 and rsiboundportfolioA001 (symbols_300),
+  signal_combine, deep_momentum.
+
+**Window order (not applied).**
+1. Query ×2 on the r10 runtime catalogue and acquisition.
+2. Streams with the r10 realm bundle.
+3. Projectors with the kn bundle.
+4. bar_edge last, with `QDL_STABLE_BAR_CHECKPOINT_MIGRATION` set to the r10 record.
+
+Cores and ingestors are not recreated.
+
+Status: `implemented`, `tested locally`. The r10 render is `rendered, not applied`.
+
+### DL v2.4.2 slice 2a: retire RVN from the deployed alpha.okx live/sandbox realm manifests (r1→r2), r10 re-rendered (tested locally) - 2026-11-19 (Claude)
+
+**Why.** `alpha.okx.live.stable` and `alpha.okx.sandbox.stable` realm r1 come from the `v2.4.0-realm` bundle. They
+were compiled 2026-09-27 from paper r14 and are not repository manifests, and they still allowed the OKX RVN 1d row.
+
+Offline proof against catalogue r17:
+- Nothing refuses to start:
+  - `Bundle::parse` (`rust/qdl-contracts/src/gateway_bundle.rs:155-270`) does not cross-check requirements against
+    bindings.
+  - Projector `retained_caps` (`rust/qdl-projector/src/products.rs:122-140`) iterates catalogue products.
+  - Query `load_stable_manifests` (`qdl/runtime/stable.py:549-588`) has no catalogue check for explicit rows. The
+    servability checks (`qdl/consumer/stable.py:202-216`, `release.py:482`) are release tooling only.
+- Tokens stay valid.
+- But request time is not typed. The KN backend's `binding_for` raises `KeyError`
+  (`stable_catalog.py:480` via `kn_query_backend.py:678/708`), and `V2QueryService` caught only
+  `QueryBackendError`/`QueryServiceError` (`service.py:816`, `:966`).
+  - A snapshot batch holding RVN failed as a whole (probe).
+  - A single RVN snapshot was an untyped 500.
+  - A warmup item was untyped `INTERNAL_ERROR`.
+
+**Change.**
+- `RetiredBase` also takes `base.runtime.realm_manifests`. For a deployed realm file it removes only the retired rows,
+  sets revision + 1 and `min_token_revision` = the advisory floor (1), so r1 tokens stay accepted. It never recompiles
+  the realm from another manifest.
+- The render ships `consumer-realms/<cid>-r2.yaml` and replaces those entries in the realm bundle.
+- The gate check `retired_realm_manifests` requires:
+  - only retired rows removed, nothing added;
+  - the old revision still accepted;
+  - the file equal to the retired copy.
+- Unit test: a realm file drops one row, the revision moves and the floor is 1.
+
+**r10 re-render.** Gate **PASS 21/21**.
+- Realm bundle `016e68b4…`: replaced manifests alpha.okx.live r2, alpha.okx.sandbox r2 and alpha.okx.paper r18. No
+  bundle manifest names RVN.
+- kn bundle `1312c3bb…`.
+
+The window must point `QDL_STABLE_CONSUMER_MANIFESTS` (Query) at `alpha.okx.live.stable-r2.yaml`,
+`alpha.okx.sandbox.stable-r2.yaml` and `alpha.okx.paper.stable-r18.yaml`. Today it names r1, r1 and r17.
+
+**C, live check of rows without a binding.** The Query logs since the v2.4.1 recreates (query_kn_2 12:02Z, query_kn_1
+12:15Z; earlier logs did not survive the recreate; no audit files) show 0 `requirement has no stable source binding`,
+0 `KeyError`, 0 `Traceback`, 0 status 500. Refusals are all typed (DATA_NOT_READY 651, SOURCE_UNAVAILABLE 5,
+LIVE_VIEW_UNAVAILABLE 5).
+
+The 30 reference rows without a binding (CONTRACT_METADATA, FUNDING_RATE, OPEN_INTEREST and the rest) are served by
+`/v2/market-data/reference:batch` (`qdl_sdk/transport.py:185`), which types a missing instrument
+(`service.py:1733-1745`). So they are not on the snapshot path.
+
+**For the owner.** These `execution_alpha` strategies have symbol lists that name RVN, and none is running on the
+host: scalping_PSAR, scalping_sl_tp, taalpha, grid_long_only, vwma00315, fib_sl_tp_strength,
+regressionportfolioA001 and rsiboundportfolioA001 (symbols_300), signal_combine, deep_momentum (research snapshot).
+After r10 they get a typed refusal for OKX RVN:
+- PERMISSION_DENIED from the manifest for paper r18 and live/sandbox r2;
+- INSTRUMENT_NOT_FOUND from the slice 2b fix for any manifest that still names it.
+
+Binance RVNUSDT is unchanged.
+
+Status: `implemented`, `tested locally`. r10 is `rendered, not applied`.
+
+### DL v2.4.2 slice 2b: a manifest-allowed requirement without a catalogue binding is a typed per-item refusal (tested locally) - 2026-11-19 (Claude)
+
+**Problem (class).** The backend raises `KeyError` from `binding_for` for any manifest-allowed requirement the active
+catalogue cannot bind (the retired-instrument case above, or a reference feed sent to `/snapshot`). That error escaped
+`V2QueryService`:
+- `snapshot` was an untyped 500;
+- a snapshot batch failed for every item;
+- a warmup batch item was `INTERNAL_ERROR`.
+
+**Fix.** `V2QueryService._unbound_refusal`, used by `snapshot`, `warmup` and the local warmup-batch path. It applies
+when the backend's catalogue (`backend.catalog`, or `backend.spool.catalog`) confirms that the requirement has no
+binding. The error is then a non-retryable `QueryServiceError`, carried per item by the existing batch paths:
+- `INSTRUMENT_NOT_FOUND` (HTTP 404, the reference batch's code for the same case) when the instrument is not in the
+  active catalogue;
+- `UNSUPPORTED_FEED` (422, the KN read view's code) when the instrument is there but the product is not.
+
+Any other `KeyError` is re-raised unchanged. The codes are existing, documented members of `CanonicalErrorCode`, so
+the change is additive.
+
+**Tests** (`tests/test_dl_v242_unbound_requirement.py`, 5):
+- single snapshot (INSTRUMENT_NOT_FOUND);
+- instrument without that product (UNSUPPORTED_FEED);
+- a mixed snapshot batch returns both items (DATA_NOT_READY and INSTRUMENT_NOT_FOUND);
+- warmup single and a mixed warmup batch;
+- an unrelated `KeyError` is not relabelled.
+
+Status: `implemented`, `tested locally`.
+
+### DL v2.4.2 build recipe: RELEASE 2.4.2, python reference = production 2.4.1 (tested locally) - 2026-11-19 (Claude)
+
+`scripts/build_qdl_release_images.py` changes:
+- `RELEASE` = 2.4.2. Both images are built: rust for the qdl-core OKX 60018 rejection and the native raw ingestor;
+  python for the bar edge, Query and the declaration tool.
+- New `REQUIRED_ANCESTORS` entry `v242_okx_subscription_rejection` = 5b7a03d.
+- `PYTHON_REFERENCES` = `qdl-v2-python:2.4.1-985bd65` (`929eeac2…`), which Query x2 and binance_bar_edge run since
+  the v2.4.1 windows. `tests/test_build_qdl_release_images.py` pins that id.
+
+Test result: 46/46 on the host with git.

@@ -30,9 +30,9 @@ use qdl_core::binance_session::{
 };
 use qdl_core::json_probe::{Kind, Skip};
 use qdl_core::okx::{
-    parse_subscription_ack as parse_okx_subscription_ack,
+    parse_subscription_ack_or_rejection as parse_okx_subscription_ack,
     subscription_command as okx_subscription_command, ControlRequestBudget, OkxService,
-    OkxSubscription,
+    OkxSubscription, RejectedSubscription,
 };
 use qdl_core::transport::{DurableRecord, RetryClass};
 use qdl_kafka::{
@@ -1506,6 +1506,9 @@ struct LaneState {
     standby_failures_total: u64,
     /// Standby attempts cancelled by `OKX_ESTABLISH_BUDGET` (review F1).
     standby_deadline_total: u64,
+    /// DL v2.4.2: declared subscriptions the venue refused as not existing in
+    /// the live session (OKX 60018), as `channel:instId`.
+    subscriptions_rejected: Vec<String>,
 }
 
 /// Throughput and latency of one lane, shared by the lane task, its publish
@@ -1530,6 +1533,16 @@ impl LaneTelemetry {
         self.with(|state| {
             state.generation = generation;
             state.last_read = None;
+        });
+    }
+
+    /// The live session's refused subscriptions (replaces the previous session's).
+    fn subscriptions_rejected(&self, rejected: &[RejectedSubscription]) {
+        self.with(|state| {
+            state.subscriptions_rejected = rejected
+                .iter()
+                .map(|item| format!("{}:{}", item.channel, item.inst_id))
+                .collect();
         });
     }
 
@@ -1640,6 +1653,8 @@ impl LaneTelemetry {
                 "staleness_last_action": state.staleness_last_action,
                 "standby_failures_total": state.standby_failures_total,
                 "standby_deadline_total": state.standby_deadline_total,
+                "subscriptions_rejected": state.subscriptions_rejected.len(),
+                "subscriptions_rejected_args": state.subscriptions_rejected,
             })
         })
     }
@@ -3979,6 +3994,9 @@ struct OkxEstablished {
     /// A service-upgrade notice arrived while subscribing; this session must
     /// be replaced as soon as it is live.
     notice_code: Option<String>,
+    /// DL v2.4.2: declared arguments the venue refused as not existing (OKX
+    /// 60018). The session serves the others; these are surfaced, not dropped.
+    rejected: Vec<RejectedSubscription>,
 }
 
 #[derive(Debug)]
@@ -4075,6 +4093,7 @@ async fn okx_establish(
             .collect::<Vec<_>>();
         let mut pre_ack_frames = VecDeque::new();
         let mut notice_code = None;
+        let mut rejected = Vec::new();
         while !pending.is_empty() {
             let message = tokio::time::timeout(Duration::from_secs(10), reader.next())
                 .await
@@ -4095,7 +4114,12 @@ async fn okx_establish(
                         notice_code = Some(code);
                         continue;
                     }
-                    if parse_okx_subscription_ack(&decoded, &command_id, &mut pending)? {
+                    if parse_okx_subscription_ack(
+                        &decoded,
+                        &command_id,
+                        &mut pending,
+                        &mut rejected,
+                    )? {
                         continue;
                     }
                     if pre_ack_frames.len() >= max_pre_ack_frames {
@@ -4117,10 +4141,23 @@ async fn okx_establish(
                 _ => {}
             }
         }
-        Ok::<_, BoxError>((session_id, pre_ack_frames, notice_code))
+        // A session in which the venue refused every declared argument serves
+        // nothing; fail the attempt so it is retried with backoff and logged.
+        if rejected.len() == subscriptions.len() {
+            return Err(format!(
+                "OKX refused every subscription as not existing: {}",
+                rejected
+                    .iter()
+                    .map(|item| format!("{}:{}", item.channel, item.inst_id))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+            .into());
+        }
+        Ok::<_, BoxError>((session_id, pre_ack_frames, notice_code, rejected))
     })
     .await;
-    let (session_id, pre_ack_frames, notice_code) = subscribed
+    let (session_id, pre_ack_frames, notice_code, rejected) = subscribed
         .map_err(|_| expired(OkxEstablishPhase::Subscribe))?
         .map_err(OkxEstablishError::Subscribe)?;
     Ok(OkxEstablished {
@@ -4132,6 +4169,7 @@ async fn okx_establish(
         connect_started_ns,
         ready_at_ns: now_ns().map_err(OkxEstablishError::Subscribe)?,
         notice_code,
+        rejected,
     })
 }
 
@@ -4291,12 +4329,31 @@ async fn run_okx_service(
             connect_started_ns,
             ready_at_ns,
             notice_code: early_notice,
+            rejected,
         } = established;
         // Lineage first, then the session record: a reader that sees the new
         // record can always resolve the predecessor through the chain.
         lineage.begin(&session_id, generation, continued).await?;
         liveness.begin(&session_id, generation, ready_at_ns).await?;
         telemetry.session(generation);
+        telemetry.subscriptions_rejected(&rejected);
+        for item in &rejected {
+            eprintln!(
+                "{}",
+                serde_json::to_string(&json!({
+                    "event": "qdl_native_subscription_rejected",
+                    "runtime": "OKX",
+                    "service": format!("{:?}", service).to_ascii_uppercase(),
+                    "lane": lane,
+                    "generation": generation,
+                    "session": session_id,
+                    "channel": item.channel,
+                    "inst_id": item.inst_id,
+                    "code": item.code,
+                    "message": item.message,
+                }))?
+            );
+        }
         eprintln!(
             "{}",
             serde_json::to_string(&json!({
@@ -6423,7 +6480,7 @@ mod okx_reconnect_tests {
         okx_establish, okx_notice_code, okx_reconnect_delay_ms, BackoffPolicy, DeliveryClass,
         InboundDeadline, Keepalive, LivenessPolicy, OkxConnectPacer, OkxEstablishError,
         OkxSessionEnd, OkxSubscription, RawBinding, RawFeed, SessionLineageWriter,
-        OKX_CONNECT_SPACING, OKX_ESTABLISH_BUDGET,
+        TelemetryRegistry, OKX_CONNECT_SPACING, OKX_ESTABLISH_BUDGET,
     };
     use futures_util::{SinkExt, StreamExt};
     use serde_json::{json, Value};
@@ -7016,6 +7073,98 @@ mod okx_reconnect_tests {
         let frame = &established.pre_ack_frames[0];
         assert_eq!(frame.generation, 168);
         assert_eq!(frame.session_id, established.session_id);
+    }
+
+    /// DL v2.4.2: the venue's verbatim refusal of a delisted argument (public
+    /// endpoint probe 2026-11-19, fixture
+    /// tests/fixtures/v242_okx_docs/okx-ws-subscribe-valid-plus-delisted-20261119.json).
+    async fn fake_okx_refusing(refused: Vec<String>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let command = socket.next().await.unwrap().unwrap();
+            let command: Value = serde_json::from_str(command.to_text().unwrap()).unwrap();
+            for arg in command["args"].as_array().unwrap() {
+                let inst_id = arg["instId"].as_str().unwrap();
+                let frame = if refused.iter().any(|item| item == inst_id) {
+                    json!({"event": "error", "code": "60018", "connId": "7f5baea8", "id": command["id"],
+                        "msg": format!("Subscribe failed, wrong URL or channel:{},instId:{inst_id} doesn't exist. Please use the correct URL, channel and parameters referring to API document.", arg["channel"].as_str().unwrap())})
+                } else {
+                    json!({"event": "subscribe", "arg": arg, "id": command["id"], "connId": "7f5baea8"})
+                };
+                socket.send(Message::Text(frame.to_string())).await.unwrap();
+            }
+            while socket.next().await.is_some() {}
+        });
+        format!("ws://{address}/ws/v5/public")
+    }
+
+    fn two_subscriptions() -> (Arc<Vec<OkxSubscription>>, Arc<BindingMap>) {
+        let (subscriptions, bindings) = subscriptions();
+        let mut items = (*subscriptions).clone();
+        items.push(OkxSubscription {
+            channel: items[0].channel.clone(),
+            inst_id: "RVN-USDT-SWAP".into(),
+        });
+        (Arc::new(items), bindings)
+    }
+
+    #[tokio::test]
+    async fn establish_serves_the_listed_arguments_when_the_venue_refuses_a_delisted_one() {
+        let url = fake_okx_refusing(vec!["RVN-USDT-SWAP".into()]).await;
+        let (subscriptions, bindings) = two_subscriptions();
+        let established = okx_establish(
+            url,
+            subscriptions,
+            bindings,
+            "okx-public-002".into(),
+            171,
+            16,
+            OkxConnectPacer::default(),
+            OKX_ESTABLISH_BUDGET,
+        )
+        .await
+        .unwrap();
+        assert_eq!(established.rejected.len(), 1);
+        assert_eq!(established.rejected[0].inst_id, "RVN-USDT-SWAP");
+        assert_eq!(established.rejected[0].code, "60018");
+        let telemetry = TelemetryRegistry::default();
+        telemetry
+            .lane("okx-public-002")
+            .subscriptions_rejected(&established.rejected);
+        let line = telemetry.progress_line("OKX", Duration::from_secs(1), 1, 0, 0);
+        assert_eq!(line["lanes"][0]["subscriptions_rejected"], 1);
+        assert_eq!(
+            line["lanes"][0]["subscriptions_rejected_args"][0],
+            format!("{}:RVN-USDT-SWAP", established.rejected[0].channel)
+        );
+    }
+
+    #[tokio::test]
+    async fn establish_fails_when_the_venue_refuses_every_argument() {
+        let (subscriptions, bindings) = subscriptions();
+        let only = subscriptions[0].inst_id.clone();
+        let url = fake_okx_refusing(vec![only]).await;
+        let error = okx_establish(
+            url,
+            subscriptions,
+            bindings,
+            "okx-public-002".into(),
+            172,
+            16,
+            OkxConnectPacer::default(),
+            OKX_ESTABLISH_BUDGET,
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(matches!(error, OkxEstablishError::Subscribe(_)), "{error}");
+        assert!(
+            error.to_string().contains("refused every subscription"),
+            "{error}"
+        );
     }
 
     #[tokio::test]
