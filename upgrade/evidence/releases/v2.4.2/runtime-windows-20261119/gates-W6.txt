@@ -1,0 +1,33 @@
+PASS image-rc-health: sha256:5ea7a7a40ef2d1df920d0f7cf94f22431d53087f8002929e7dffdb4208f7dcc4 0 running healthy
+PASS kn-mount: /kn=/home/bobby/.local/state/qdl-v2/releases/v2.4.2-r10:false
+PASS bar-edge-runtime: /runtime=/home/bobby/.local/state/qdl-v2/releases/v2.4.2-r10/runtime:false
+PASS bar-edge-migration-env: QDL_STABLE_BAR_CHECKPOINT_MIGRATION=/runtime/bar-edge-checkpoint-migration.json
+PASS bar-edge-migration-record: mounted record sha256=0f98b8f74c9b0dedbbf8f1ebc63d81701ce5e52a405e0b244de25cc36a429e24 (r10 record)
+PASS bar-edge-crossing: catalog 16->17 acquisition 24->25 crossed=True retained=1319 added=0 dropped=1 migration_record=True (want 16->17 / 24->25 retained=1319 dropped=1 record)
+PASS bar-edge-no-traceback: Traceback lines since T0=0
+PASS bar-edge-declaration: catalog=17 acquisition=25 image_files=0 (want 17/25/0; pre 16/24)
+PASS bar-edge-bindings: bindings=1319 (want 1319, was 1320)
+PASS bar-edge-instrument-unavailable: instrument_unavailable=0 (RVN retired: want 0)
+INFO bar_edge heartbeat: bindings=593 bindings=1319 published=1047 served=8 pending=0 overdue=0 short=573 history_failed=5 history_suspended=5 instrument_unavailable=0 gate_closed=0 declaration=bb626110ab92
+PASS bar-edge-running-healthy: 0 running healthy
+PASS hot-read-query_kn_1: configured client: 3 reads, 3 OK, 0 authority/auth refusals; query catalog_revision 17 bindings 3
+PASS hot-read-query_kn_2: configured client: 3 reads, 3 OK, 0 authority/auth refusals; query catalog_revision 17 bindings 3
+PASS query-refusals-query_kn_1: HOT_AUTHORITY_OR_PROTOCOL_REFUSED since 2026-11-19T16:10:47Z = 0 (authority fallback log lines: 0)
+PASS query-refusals-query_kn_2: HOT_AUTHORITY_OR_PROTOCOL_REFUSED since 2026-11-19T16:10:47Z = 0 (authority fallback log lines: 0)
+PASS writer-slices: demanded/ready/exec=246/246/234 other-reasons=- (246/246, or not-ready only EXECUTION_CONTEXT_STALE/TRADE_EVENT_STALE, within 120 s)
+PASS writer-retries: worker_retries={}
+PASS writer-probe-authority: native probe routes with a HOT_AUTHORITY unavailable since T0 = 0
+PASS writer-refusals: count=0 since 2026-11-19T16:10:47Z
+PASS writer-untouched: sha256:d1addc042756
+INFO stream_kn_1 abafab2c98cb8 rc=0 2026-11-19T16:02:45.791206834Z
+INFO stream_kn_2 abafab2c98cb8 rc=0 2026-11-19T15:53:59.91506901Z
+INFO query_kn_1 5ea7a7a40ef24 rc=0 2026-11-19T15:59:42.445644561Z
+INFO query_kn_2 5ea7a7a40ef24 rc=0 2026-11-19T15:56:55.947510439Z
+INFO rust_core 58bdd28216132 rc=0 2026-11-18T05:13:10.598989096Z
+INFO rust_core_2 58bdd28216132 rc=0 2026-11-18T05:20:04.499983609Z
+INFO rust_core_3 58bdd28216132 rc=0 2026-11-18T05:23:47.481545977Z
+INFO market_projector_1 58bdd28216132 rc=0 2026-11-19T16:05:12.533482249Z
+INFO market_projector_2 58bdd28216132 rc=0 2026-11-19T16:07:43.040615416Z
+INFO ingestor_binance_usdm 58bdd28216132 rc=0 2026-11-19T06:18:15.661497649Z
+INFO ingestor_okx_swap 58bdd28216132 rc=0 2026-11-19T06:21:26.737062399Z
+WINDOW binance_bar_edge GATES PASS

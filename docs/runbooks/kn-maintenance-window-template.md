@@ -48,3 +48,27 @@ in the heartbeat (`published`, `pending`).
   re-proves the short bindings (about 1 h 40 min at 1320 bindings).
 - The end condition is published = bindings and pending = 0 on 2 consecutive samples, with only the known
   provider-failed bindings left (the five Binance 3d bindings). Then run D6b 15 min later.
+
+## Catalogue-revision change: Stream replica first, then Query (lesson 2026-11-19, DL v2.4.0 W1 RCA and v2.4.2 r10)
+
+Every declaration that moves `catalog_revision` (an addition or an r10-style retirement) changes the hot-read
+authority. The Stream gateway refuses a hot read from a Query on another catalogue revision with
+`HOT_AUTHORITY_MISMATCH` (`rust/qdl-stream-gateway/src/hot_view.rs:111-119`). Query falls through to the next replica
+(`qdl/runtime/kn_hot_view.py`, v2.4.0 and later). The read is refused only when **every** replica mismatches, and then
+quiet EXECUTION QUOTE goes `DATA_NOT_READY` and the TS writer drops below 246.
+
+Order:
+1. `stream_kn_2` (new bundle);
+2. `query_kn_2`, then `query_kn_1` (new catalogue and manifests);
+3. `stream_kn_1`;
+4. projectors (kn bundle);
+5. `binance_bar_edge` (with the migration record when bindings are removed);
+6. ingestors only if their image or config changes.
+
+Never "Query x2, then Streams". Expected signal during step 1: `qdl_hot_read_authority_fallback` lines on the
+not-yet-moved Queries (15 per Query in v2.4.2 W1) with 0 `HOT_AUTHORITY_OR_PROTOCOL_REFUSED`. The fallbacks stop once
+both Queries and stream_kn_1 have moved.
+
+A retirement also changes deployed realm manifests that live outside the repository (alpha.*.live/sandbox). Render
+them with `base.runtime.realm_manifests`, and point `QDL_STABLE_CONSUMER_MANIFESTS` at the new revisions in the same
+Query recreate.
