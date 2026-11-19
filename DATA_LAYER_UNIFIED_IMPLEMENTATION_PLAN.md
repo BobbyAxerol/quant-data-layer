@@ -78992,3 +78992,99 @@ release-gates, ci-result (~54 job-min); inherits rust-workspace and kn-native-in
 permission system (the original brief forbids push/PR), so no PR exists yet. Image cleanup: superseded candidates
 `qdl-v2-rust:2.4.0-3d4d84b` `aef35edf...` and `qdl-v2-python:2.4.0-c95476c` `75717b3c...` removed by full digest
 after confirming 0 container references (running or stopped); kept: `abafab2c`, `9cffe89b`, bases `b33ec0cb`, `c46ae0fa`.
+
+### DL v2.4.0 runtime windows: execution sheet, prep P1-P3 installed, shared100 moved to post-release - 2026-11-19 (Claude)
+
+- Execution sheet (read only, coordinator accepted) for windows 1 Stream x2, 2 Query x2 (+ TS r15, historical MARK),
+  3 ingestors, 4 binance_bar_edge, 5 SessionAlive (TS W3), with current digests and rollbacks (stream 58bdd282,
+  query 26c3b051, bar_edge a235c0a1, stage-b realm, r7 runtime, rc2/stage-b ingestor configs). Windows 1-4 stay
+  BLOCKED on W0: the live writer is still W-QRR `cf88571c`, not the TS v2.2.0 writer; the coordinator rolls TS W1
+  and reports W0.1-W0.5 before any GO.
+- Coupling check: S2 accepts token revisions 1..manifest revision only on the v2.4.0 images, so TS r15 (floor 1) is
+  installed together with them; the writer keeps JWT r14 until every Query/Stream replica serves r15 (TS lane, needs
+  sealed binding r27). Query reads manifests from the realm mount and the catalogue from `/runtime`, not the image.
+- Prep P1-P3 (GO for prep only): new host dirs `v2.4.0-compose`, `v2.4.0-realm`, `v2.4.0-ingestor`, sha256 table and
+  gates in `upgrade/evidence/releases/v2.4.0/drafts/ROLLOUT_PLAN.md` section 7. Render gate: only stream x2, query x2,
+  ingestor x2 and bar_edge differ, each in the intended keys. Realm bundle `577470a6…` = `76672095…` + TS r15 entry
+  (446 requirements, catalogue byte-equal). Ingestor configs differ from r8 / live by exactly
+  `session_liveness_write_interval_ms` 1000 -> 250. No live mount, env or container changed.
+- Deviation: `refresh_v2_native_ingestor_runtime.py` refuses the r8 configs because it does not emit `lane_shard`
+  (and `book_resync`, `latest_state_flush_ms_by_feed`); the 250 ms field was set directly with a one-line diff gate.
+  Follow-up slice: teach the refresh tool the r8 lane pin.
+- Erratum (ROLLOUT_PLAN step 9): realm file sha256 `6a191147…` and routing manifest sha256 `47ea4a9e…` were the r15
+  values before the in-place historical-MARK amendment (52c86cf); the deployed values are `e9f4536a…` and `725c8ca2…`.
+- Window 6, shared100 acceptance (A6), is **post-release acceptance**, not on the v2.4.0 critical path (coordinator,
+  2026-11-19). Still needed: a shared100 mode in the stage-100 driver (restart storm, noisy neighbour, G14 phases),
+  the A6 bind record to the run's runtime identity, a TS-side fleet of 100 alpha sessions on Paper, and the host
+  measurement lock (measurement class). Window 7 (cores/projectors onto abafab2c) is skipped for this release.
+Status: prep `implemented`; windows not executed.
+
+### DL v2.4.0 window 1 RCA: Query hot read falls through on a replica authority mismatch (tested locally) - 2026-11-19 (Claude)
+
+**Incident.**
+- Window 1 recreated `stream_kn_1` on rust `abafab2c` with the v2.4.0 realm at 05:08:02Z.
+- The writer fell to 209-216/246 ready. The coordinator rolled kn_1 back at 05:14:08Z, and the writer was 246/246 at
+  05:14:47Z.
+
+**Root cause** (read-only RCA; details in `upgrade/evidence/releases/v2.4.0/drafts/ROLLOUT_PLAN.md` section 8).
+- Query on the r7 runtime has catalog 15. The new Stream bundle is catalog 16.
+- The gateway refuses the hot read with `HOT_AUTHORITY_MISMATCH` (`hot_view.rs:115-119`).
+- Query asked stream-a first and did not try stream-b (old `kn_hot_view.py:117-121`). Quiet EXECUTION QUOTE therefore
+  became `DATA_NOT_READY: HOT_QUIET_PRIMARY_UNVERIFIED` (`kn_query_backend.py:508`).
+- Query `qdl_refusal` counts for `HOT_AUTHORITY_OR_PROTOCOL_REFUSED`, per replica: 0 before, 185 during the window,
+  0 after.
+- kn_2 absorbed all 144 subscriptions with nothing refused. Writer refusals were 0.
+
+**Re-attribution of the stage C S6 incident (2026-11-18 05:36Z).**
+- The same refusal appears in the Query logs at 05:30-05:50Z (30 / 35 lines).
+- So the trigger was this mismatch. The old writer's missing backoff was the amplifier, not the cause.
+- The stage C order "streams before Query" carried the defect.
+
+**The window 1 gate script was wrong in two ways.**
+- The subscriber gate was invalid: the SDK keeps a failed-over subscription on the other replica (`qdl_sdk` 2.4.1
+  `transport.py:612-619`).
+- The writer-slices gate lacked the quiet-class allowance.
+
+**Fix** (owner-approved: code fix plus safe order).
+- `qdl/runtime/kn_hot_view.py`: `HOT_AUTHORITY_MISMATCH` and `HOT_AUTHORITY_CHANGED` fall through to the next replica.
+- `HOT_AUTHORITY_OR_PROTOCOL_REFUSED` is returned only when every replica refuses. A transient refusal elsewhere keeps
+  its reason.
+- Other refusals are unchanged, including integrity, auth (`UNAUTHENTICATED`, `PERMISSION_DENIED`),
+  `HOT_REQUEST_EXPIRED`, `DATA_LOSS` and `INVALID_ARGUMENT`.
+- New observability: an `authority_fallbacks` counter and a bounded `qdl_hot_read_authority_fallback` line.
+- The gateway is unchanged.
+
+**Tests.** `tests/test_kn_hot_view.py` has 5 new tests:
+- mismatch or changed on replica 1, then OK on replica 2;
+- mismatch on all replicas is refused;
+- mismatch plus a transient refusal keeps the retryable reason;
+- auth and other refusals never fall through;
+- the log is bounded per key and window.
+
+Impacted set: 9 modules, Ran 212, OK (skipped 33). The run used `qdl-v2-python:2.4.0-c17472c` (`--cpus 1
+--cpu-shares 256`, host slot, read-only tree), because `c95476c` was removed by digest on 2026-11-18.
+
+**Image.**
+- `qdl-v2-python:2.4.0-acf42d7` = `sha256:18ada571c72856cefc2844c8cb2c3809c3e30ac77927bc4c73160e7b2787cd18`, built by
+  the recipe. It differs from `9cffe89b` in 3 files only (`/app` file hashes; pip freeze equal).
+- trivy run once: 0 fixable CRITICAL/HIGH.
+- Rust is unchanged (`abafab2c`).
+- Records: `drafts/R0_BUILD.md`, `drafts/R0_SECURITY.md`.
+
+**Corrected order and gates** (ROLLOUT_PLAN section 8).
+- Order: 1' `stream_kn_2`, then 2 `query_kn_2` and `query_kn_1`, then 1'' `stream_kn_1`.
+- New compose and env: `v2.4.0-r2-compose` (Query `QDL_KN_HOT_READ_TARGETS=qdl-v2-stream-b,qdl-v2-stream-a`; python
+  `18ada571`).
+- Gates G-stream/G-query, G-hot (`drafts/window/v240_hot_read_probe.py` through each Query's own client),
+  G-query-refusals and G-writer, run by `drafts/window/v240_window_gates.sh`.
+- Pre-window dry run of the gates on the live state: G-hot, G-query-refusals and G-writer all PASS; the role gates
+  fail as expected before the change.
+
+**Guide delta.** `upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md`, "Delta 2026-11-19".
+
+**Still open.**
+- The windows themselves (coordinator runs them).
+- A TEST-consumer tool for direct per-replica stream subscription and the step 9.4 FUNDING_RATE / historical MARK
+  probes.
+
+Status: `implemented`, `tested locally`.

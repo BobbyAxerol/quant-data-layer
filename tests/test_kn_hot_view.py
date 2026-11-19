@@ -78,6 +78,73 @@ class HotClientTests(unittest.TestCase):
             client.latest(self.binding,self.lpk)
         self.assertTrue(client._slots.acquire(False));client._slots.release()
 
+    def _refusal(self, code, detail):
+        class Refused(grpc.RpcError):
+            def code(self): return code
+            def details(self): return detail
+        def failed(*args, **kwargs): raise Refused()
+        return failed
+
+    def test_authority_mismatch_on_first_replica_tries_the_second(self):
+        # DL v2.4.0 window 1 RCA: during a rolling catalog change one replica is on the other revision.
+        lines = []
+        for detail in ("HOT_AUTHORITY_MISMATCH", "HOT_AUTHORITY_CHANGED"):
+            with self.subTest(detail=detail):
+                client = self.client()
+                client._write = lines.append
+                client._calls = (self._refusal(grpc.StatusCode.FAILED_PRECONDITION, detail), client._calls[0])
+                self.assertEqual(client.latest(self.binding, self.lpk).boundary.offset, 0)
+                self.assertEqual(client.authority_fallbacks, {(0, detail): 1})
+        self.assertEqual([json.loads(line)["event"] for line in lines], ["qdl_hot_read_authority_fallback"] * 2)
+        self.assertEqual(json.loads(lines[0]), {"event": "qdl_hot_read_authority_fallback", "target_index": 0,
+            "detail": "HOT_AUTHORITY_MISMATCH", "count": 1, "total": 1})
+
+    def test_authority_mismatch_on_every_replica_is_refused(self):
+        mismatch = self._refusal(grpc.StatusCode.FAILED_PRECONDITION, "HOT_AUTHORITY_MISMATCH")
+        client = CanonicalHotClient(calls=(mismatch, mismatch), expectation=self.expectation, secret=b"x"*32,
+            write=lambda line: None)
+        with self.assertRaisesRegex(HotViewUnavailable, "^HOT_AUTHORITY_OR_PROTOCOL_REFUSED$"):
+            client.latest(self.binding, self.lpk)
+        self.assertEqual(client.authority_fallbacks, {(0, "HOT_AUTHORITY_MISMATCH"): 1,
+                                                      (1, "HOT_AUTHORITY_MISMATCH"): 1})
+        self.assertTrue(client._slots.acquire(False)); client._slots.release()
+
+    def test_mismatch_plus_transient_keeps_the_retryable_reason(self):
+        mismatch = self._refusal(grpc.StatusCode.FAILED_PRECONDITION, "HOT_AUTHORITY_MISMATCH")
+        busy = self._refusal(grpc.StatusCode.RESOURCE_EXHAUSTED, "HOT_READER_BUSY")
+        for calls in ((mismatch, busy), (busy, mismatch)):
+            client = CanonicalHotClient(calls=calls, expectation=self.expectation, secret=b"x"*32,
+                write=lambda line: None)
+            with self.assertRaisesRegex(HotViewUnavailable, "^HOT_READER_BUSY$"):
+                client.latest(self.binding, self.lpk)
+
+    def test_auth_and_other_refusals_still_do_not_fall_through(self):
+        def forbidden(*args, **kwargs): self.fail("must not try another replica")
+        for code, detail in ((grpc.StatusCode.UNAUTHENTICATED, "HOT_SIGNATURE_INVALID"),
+                             (grpc.StatusCode.PERMISSION_DENIED, "HOT_BINDING_UNKNOWN"),
+                             (grpc.StatusCode.FAILED_PRECONDITION, "HOT_REQUEST_EXPIRED"),
+                             (grpc.StatusCode.FAILED_PRECONDITION, None),
+                             (grpc.StatusCode.DATA_LOSS, "HOT_IDENTITY_MISMATCH"),
+                             (grpc.StatusCode.INVALID_ARGUMENT, "HOT_REQUEST_INVALID")):
+            with self.subTest(code=code, detail=detail):
+                client = CanonicalHotClient(calls=(self._refusal(code, detail), forbidden),
+                    expectation=self.expectation, secret=b"x"*32, write=lambda line: self.fail("no fallback"))
+                with self.assertRaisesRegex(HotViewUnavailable, "^HOT_AUTHORITY_OR_PROTOCOL_REFUSED$"):
+                    client.latest(self.binding, self.lpk)
+                self.assertEqual(client.authority_fallbacks, {})
+
+    def test_authority_fallback_log_is_bounded_per_key_and_window(self):
+        lines, now = [], [0.0]
+        mismatch = self._refusal(grpc.StatusCode.FAILED_PRECONDITION, "HOT_AUTHORITY_MISMATCH")
+        client = self.client()
+        client._write, client._monotonic = lines.append, lambda: now[0]
+        client._calls = (mismatch, client._calls[0])
+        for _ in range(50): client.latest(self.binding, self.lpk)
+        now[0] = 10.0
+        client.latest(self.binding, self.lpk)
+        self.assertEqual([json.loads(line)["count"] for line in lines], [1, 50])
+        self.assertEqual(json.loads(lines[-1])["total"], 51)
+
     def test_transient_failure_can_try_second_replica_with_same_total_deadline(self):
         class Unavailable(grpc.RpcError):
             def code(self):return grpc.StatusCode.UNAVAILABLE
