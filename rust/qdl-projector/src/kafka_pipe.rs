@@ -425,7 +425,7 @@ mod recovery_tests {
         let producer = settings
             .base()
             .set("queue.buffering.max.messages", "1")
-            .set("message.timeout.ms", "1000")
+            .set("message.timeout.ms", "30000")
             .create()
             .unwrap();
         let mut pipe = KafkaPipe {
@@ -444,7 +444,9 @@ mod recovery_tests {
         pipe.send(&record).unwrap();
         let started = Instant::now();
         assert!(matches!(pipe.send(&record), Err(PipeError::Abortable(_))));
-        assert!(started.elapsed() < Duration::from_millis(500));
+        // Bounded by the 30 ms transaction deadline, not the 30 s message timeout:
+        // 5 s keeps load headroom and still tells the two apart (DL v2.4.0 CI6).
+        assert!(started.elapsed() < Duration::from_secs(5));
         assert_eq!(pipe.producer.in_flight_count(), 1);
     }
 
