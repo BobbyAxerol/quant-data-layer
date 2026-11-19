@@ -79112,3 +79112,27 @@ Status: `implemented`, `tested locally`.
   full `dev` push run after this branch merges (RELEASE_NOTES "Release steps").
 - shared100 (A6) is post-release acceptance (owner, 2026-11-19); window 7 skipped.
 Status: runtime `production-authoritative` for the 7 recreated roles; release `tagged` pending CI6.
+
+### DL v2.4.0 CI6: wall-clock timing assertions in the Rust tests made deterministic or load-tolerant (tested locally) - 2026-11-19 (Claude)
+
+- Trigger: the CI6 dev push run 44491247372 (5bc1718) failed `rust-workspace` twice on two different real-time
+  assertions (attempt 1 `qdl-native-raw-ingestor staleness_tests::a_standby_held_open_by_control_traffic_is_cancelled_at_the_budget`,
+  pause 267 ms vs < 100 ms; attempt 2 `native_stream::session_alive_frames_follow_the_live_session_and_stop_on_disconnect`,
+  gaps [493, 555, 443, 499, 500] vs 450..550). Owner/coordinator: fix the class, not the two.
+- Audit (every assert in Rust test code combining a wall clock with a numeric bound): tokio paused-time tests
+  (`qdl-realtime-core` batch deadline/backoff, `qdl-kafka` transaction pipeline) are already deterministic; synthetic
+  detector inputs (`7344`) and lower bounds (replay `>= DETACH_AFTER`, cooldown) are load-safe; kept. Changed:
+  - ingestor: active-lane pause bound = the establish budget (the defect), handover gap 100 ms -> 1 s and per-binding
+    250 ms -> 2 s (make-before-break is proven by the ACK/close ordering), held standby upper bound = budget + cooldown;
+  - native_stream: session-alive cadence as mean within 20 % and no gap outside 100 ms..1.5 s; proof age bound 1.5 s
+    -> 5 s; dropped-frame count waited for (bounded 10 s) instead of a fixed 1.4 s sleep; fresh-tick check relative
+    to the measured blocked time; "at once" 1 s -> 5 s; replay budget waited for instead of a fixed 100 ms sleep;
+  - replay: preempted-detach wall bound 200 ms -> 5x (the metric proves preemption); hub reader deadline 2 s -> 10 s;
+  - projector: real queue-full test uses a 30 s message timeout and a 5 s bound (tells the 30 ms deadline from the
+    timeout); sticky stop 1 s -> 10 s; stage A outage commit 12 s -> 20 s (10 s budget).
+- Local proof (builder `2cb66ad6`, offline, host slot, `--cpus 2`, `--test-threads=4`, host load 19.7-25.6): each
+  affected test binary 20 runs: `qdl_native_raw_ingestor` 20/20, `native_stream` 20/20, `qdl_stream_gateway` lib
+  20/20, `qdl_projector` lib 20/20, `qdl_kafka` lib 20/20. `cargo fmt --check` OK; clippy `-D warnings` on
+  qdl-kafka/qdl-stream-gateway/qdl-projector all targets OK. `stage_a_kafka` (needs the KN broker harness) not run
+  locally; it runs in `kn-native-integration`.
+- Test-only: no production code, image or runtime change. Status: `tested locally`.

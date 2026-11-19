@@ -549,8 +549,8 @@ async fn captured_frames_recover_after_broker_outage_without_loss_or_cache_regre
     let outage_started = Instant::now();
     let outcome = pipe.commit(&next);
     assert!(
-        outage_started.elapsed() < Duration::from_secs(12),
-        "shared10s budget plus2s scheduling"
+        outage_started.elapsed() < Duration::from_secs(20),
+        "shared 10 s budget plus scheduling headroom on a loaded host (DL v2.4.0 CI6)"
     );
     // A commit may have succeeded before outage or may be indeterminate.
     // Retire either instance; init_transactions fences it before committed replay.

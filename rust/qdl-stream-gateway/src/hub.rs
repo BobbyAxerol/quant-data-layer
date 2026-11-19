@@ -1405,7 +1405,7 @@ mod tests {
             failed: false,
             proof: proof.clone(),
         }));
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + Duration::from_secs(10); // load headroom (DL v2.4.0 CI6)
         while !hub.reader_failed.load(Ordering::Acquire) {
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(1));

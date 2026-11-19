@@ -3694,7 +3694,9 @@ async fn b01_batched_delivery_equals_one_record_delivery_and_old_clients_are_unc
         read_shapes(stream, 1, &mut shapes).await;
         assert_eq!(shapes.offsets(), vec![next], "batch {batch}");
         assert_eq!(shapes.batched, 0);
-        assert!(started.elapsed() < Duration::from_secs(1));
+        // "At once" means not waiting for a batch to fill; 5 s only rejects a hang
+        // (load headroom, DL v2.4.0 CI6).
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
     let metrics = &harness.state().metrics;
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -3967,8 +3969,13 @@ async fn b09_replay_cancellation_and_revocation_release_only_replay_charges() {
                 .subscribe_batched("TRADE", None, cursor, 1_000, 64)
                 .await
                 .unwrap();
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            assert!(harness.state().replay.budget().used() > 0);
+            // Wait (bounded) for the replay to take budget instead of assuming it did
+            // within a fixed 100 ms (load headroom, DL v2.4.0 CI6).
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while harness.state().replay.budget().used() == 0 {
+                assert!(Instant::now() < deadline, "replay never took budget");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
             assert_eq!(
                 harness.state().budget.used(),
                 0,
@@ -4730,7 +4737,9 @@ async fn session_alive_frames_follow_the_live_session_and_stop_on_disconnect() {
         assert_eq!(frame.source_session_id, ALIVE_SESSION);
         assert_eq!(frame.connection_generation, ALIVE_GENERATION);
         assert_eq!(u64::from(frame.config_revision), ALIVE_REVISION);
-        assert!(frame.provider_session_liveness_ms <= 1_500, "{frame:?}");
+        // The session file is refreshed by the harness; only a frozen proof would age
+        // past several intervals (load headroom, DL v2.4.0 CI6).
+        assert!(frame.provider_session_liveness_ms <= 5_000, "{frame:?}");
         assert_eq!(frame.gateway_epoch, harness.state().gateway_epoch);
         assert_eq!(frame.high_watermark, (harness.log.end(0) - 1) as u64);
         assert_eq!(
@@ -4745,7 +4754,17 @@ async fn session_alive_frames_follow_the_live_session_and_stop_on_disconnect() {
         .map(|pair| pair[1].duration_since(pair[0]).as_millis())
         .collect();
     println!("session-alive inter-frame gaps (ms, interval 500): {gaps:?}");
-    assert!(gaps.iter().all(|gap| (450..=550).contains(gap)), "{gaps:?}");
+    // Cadence, not wall-clock precision (DL v2.4.0 CI6: [493, 555, 443, ...] failed a
+    // +-50 ms window on a hosted runner). The interval is 500 ms (the request was
+    // clamped from 5,000): the mean over five gaps stays within 20 %, no frame comes
+    // faster than the 250 ms floor would allow even after a late tick, and none is
+    // missing for more than two intervals.
+    let mean = gaps.iter().sum::<u128>() / gaps.len() as u128;
+    assert!((400..=600).contains(&mean), "mean {mean} ms {gaps:?}");
+    assert!(
+        gaps.iter().all(|gap| (100..1_500).contains(gap)),
+        "{gaps:?}"
+    );
     // A new event: the next frames carry its token; offsets keep advancing.
     let second = harness.log.append(0, QUOTE_KEY, &session_quote(2));
     let mut next = next_record(&mut stream, Duration::from_secs(2))
@@ -4827,10 +4846,19 @@ async fn full_handoff_drops_frames_instead_of_queueing_them() {
         .await
         .unwrap();
     // The client reads nothing: REPLAYING and LIVE fill the two-slot handoff.
-    tokio::time::sleep(Duration::from_millis(1_400)).await;
+    // Wait until three ticks were dropped (bounded), not a fixed sleep that a loaded
+    // host may not honour (DL v2.4.0 CI6).
     let metrics = &harness.state().metrics;
-    let dropped = metrics.session_alive_dropped.load(Ordering::Relaxed);
-    assert!(dropped >= 3, "dropped {dropped}");
+    let blocked = Instant::now();
+    let deadline = blocked + Duration::from_secs(10);
+    while metrics.session_alive_dropped.load(Ordering::Relaxed) < 3 {
+        assert!(
+            Instant::now() < deadline,
+            "fewer than 3 frames dropped in 10 s"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let blocked_ms = blocked.elapsed().as_millis() as u64;
     assert_eq!(metrics.session_alive_sent.load(Ordering::Relaxed), 0);
     expect_replaying_then_live(&mut stream).await;
     // Nothing old was queued behind the controls: the next frame is a fresh
@@ -4840,8 +4868,13 @@ async fn full_handoff_drops_frames_instead_of_queueing_them() {
         .await
         .unwrap();
     let frame = alive_frame(&record).expect("frame");
-    assert!(frame.provider_session_liveness_ms <= 750, "{frame:?}");
-    assert!(drained.elapsed() <= Duration::from_millis(300));
+    // A fresh tick, not one queued while blocked: its proof is younger than the time
+    // the client sat blocked (at least three 250 ms ticks), plus load headroom.
+    assert!(
+        frame.provider_session_liveness_ms <= 750.max(blocked_ms),
+        "{frame:?} blocked {blocked_ms} ms"
+    );
+    assert!(drained.elapsed() <= Duration::from_secs(2));
     let offset = harness.log.append(0, QUOTE_KEY, &session_quote(2));
     let mut next = next_record(&mut stream, Duration::from_secs(2))
         .await
