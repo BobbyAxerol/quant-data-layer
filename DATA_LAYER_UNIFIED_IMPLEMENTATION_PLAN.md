@@ -78573,3 +78573,566 @@ Status: `implemented`, `tested locally`. Not pushed.
   - TS v2.1.5: per-replica pools in the Rust writer, plus the session-alive consumer.
   - The stage C window.
   - The Rust/bar_edge window.
+
+### DL v2.3.2 slice 1: Stream session-alive frames for quiet QUOTE/TRADE (tested locally) - 2026-11-17 (Claude)
+
+This implements design `upgrade/DL_V232_SESSION_ALIVE_FRAME_DESIGN.md`, sections 3-4 (owner option a). The
+differences from the design are listed in its section 8.
+
+**Contract** (additive):
+- `SubscribeRequest.session_alive_interval_ms = 9`;
+- `message SessionAlive` with fields 1..7;
+- `StreamRecord.session_alive = 12`.
+- `buf format`, `lint`, and `breaking` against phase1, phase7-beta and contract-line-1: all rc=0, so
+  `schema_digest` stays on line 1.
+- The generated Rust is written in the prost-build style, because `buf generate` needs remote plugins and the run was
+  offline.
+- The generated Python comes from an offline emulator of the protoc python generator. Its self-check renders the base
+  proto byte-equal to the committed `query_pb2.py` before it renders the new one.
+
+**Gateway:**
+- `src/session_liveness.rs` is a port of `StableSessionLivenessReader.status`, plus the frame rules.
+- `service.rs` gets the live-loop interval arm. A frame needs a healthy, caught-up stream with an empty queue
+  (`Hub::reader_caught_up`). It is sent with `try_send` and dropped when the handoff is full.
+- A stream with no delivered event takes its session from the hot ring.
+- `QDL_KN_SESSION_LIVENESS_DIR`: unset means INVALID_ARGUMENT `SESSION_ALIVE_UNAVAILABLE`; set but unreadable means
+  the gateway does not start.
+- New metrics: `session_alive.{sent,dropped,withheld}`.
+
+**SDK 2.7.0:** `GrpcStreamTransport(session_alive_interval_ms)` and `SessionAliveEvent`. The default sends 2.6.0
+bytes.
+
+**Runtime config** (in the repo, not applied):
+- The `stream_kn_1/2` mount plus env.
+- `STABLE_SESSION_LIVENESS_WRITE_INTERVAL_MS = 250`.
+- The refresh and declaration tools carry it as a compiler-tuned field. Before this change they refused any
+  non-binding difference.
+
+**Tests:** container `rust:1.82-slim`, offline, `--cpus 1`.
+- `cargo check --workspace --all-targets`: clean.
+- `cargo test --workspace --all-targets -- --test-threads=1`: 559 passed, 0 failed, 72 ignored. This includes:
+  - `session_liveness` unit tests: 10;
+  - native_stream, 4 new tests: inter-frame gaps 501/498/499/500/500 ms at 500 ms; no frame after DISCONNECTED;
+    the handoff-full test dropped 5 and sent 1 after the drain.
+- Not run: clippy and the toolchain's own rustfmt, which are not installed offline. Format was checked with
+  rustfmt 1.83.
+- Python (`qdl-v2-python:2.3.1-aa75218`, 63 impacted modules): 1138 tests, 81 skipped, 1 error.
+  - The error was the new refresh test's direct-call fixture. It is fixed: the rerun of
+    `tests.test_refresh_v2_native_ingestor_runtime` and `tests.test_qdl_sdk_session_alive` gave 16 OK.
+  - Ruff is not in the image, so lint was not run.
+
+**Measured cost** (`tests/session_alive_cost.rs`; opt-level 3 for the gateway, contracts, prost, bytes and
+serde_json; no HTTP/2 or TLS):
+- build and encode: 266-271 ns, 343 bytes;
+- status read: 34.8 µs with 4 lane files, 98.9 µs with 16;
+- vCPU at 226 frames/s: 0.008 with 4 lane files, 0.022 with 16.
+- The directory scan dominates. A shared, short-TTL scan is a follow-up if the production lane count is high.
+
+**Blast radius for a rollout** (not done):
+- recreate `stream_kn_1/2` with a new Stream image, the mount and the env;
+- re-render the ingestor configs (250 ms) and recreate `ingestor_okx_swap` and `ingestor_binance_usdm`, same image;
+  this reconnects the provider sessions.
+- Nothing else is touched: Kafka x3, cores x3, projectors, market_cache, stable_redis, query_kn_1/2, bar_edge.
+- Rollback: the previous Stream digest and the 1000 ms ingestor configs.
+
+Status: `implemented`, `tested locally`. Not pushed.
+
+### DL v2.3.2 slice 2: DELIVERY_ON_CHANGE on Stream QUOTE records, opt-in (tested locally) - 2026-11-18 (Claude)
+
+Owner decision 2026-11-18, about 04:25Z (TS interim (b)): the TS writer takes DELIVERY_ON_CHANGE from the DL Stream
+and stops synthesizing it from its last Query verdict. Risk is unchanged.
+
+**Contract** (additive):
+- `qdl.common.v1.QualityFlag.QUALITY_FLAG_DELIVERY_ON_CHANGE = 18`;
+- `SubscribeRequest.delivery_on_change_flag = 10` (bool).
+
+**Why opt-in:** readers before 2.3.2 refuse an unknown flag value.
+- `qdl_sdk/projection.py:413-416` calls `QualityFlag.Name`.
+- The TS native writer, `market-data-writer/src/view.rs:349`, raises `KernelError::Value`.
+- With the field absent or false, the record bytes are exactly the pre-2.3.2 bytes.
+
+**Rule** (the same one Query uses):
+- Query: `binding.delivery_semantics == "ON_CHANGE"`, `qdl/runtime/stable_source.py:1160-1167`.
+- The catalogue allows ON_CHANGE only on QUOTE (`stable_catalog.py:144-148`), so only QUOTE records are marked.
+- Source of truth: `scripts/kn_gateway_bundle.py` now emits `delivery_semantics: ON_CHANGE` from the catalogue, only
+  for those bindings. A bundle without the field stays byte-identical.
+- `qdl-contracts::gateway_bundle::Binding.delivery_on_change` defaults to false (fail closed). It is refused on a
+  non-QUOTE binding.
+- The gateway resolves this once per Subscribe from the subscription's binding. Both live and catch-up records get
+  their copy marked through `subscribe_event_record`; the committed record is never changed. The Replay RPC and Query
+  are unchanged.
+
+**SDK 2.7.0:** `GrpcStreamTransport(delivery_on_change_flag=False)`. The projection maps value 18 to
+`"DELIVERY_ON_CHANGE"`.
+
+**Generated code:** the same offline emulator, with the base render proven byte-equal first for `query_pb2` and
+`common_pb2`. The prost files are edited by hand in prost-build style.
+
+**Tests:**
+- `buf format`/`lint`/`breaking` against phase1, phase7-beta and contract-line-1: rc=0.
+- Rust (`rust:1.82-slim`, offline, `cargo test --workspace --all-targets --locked --offline -- --test-threads=1`):
+  562 passed, 0 failed, 72 ignored. That includes 3 new tests:
+  - bundle parsing;
+  - opted-in vs not, replayed and live rows;
+  - STRICT_EVENT QUOTE and TRADE never marked.
+- Python (`qdl-v2-python:2.3.1-aa75218`, 77 impacted modules in two runs): 781 OK (74 skipped) and 601 OK (9 skipped).
+
+**Rollout coupling:** the deployed gateway bundle (`QDL_CONSUMER_REALM_DIR/bundle.json`) must be recompiled with this
+`kn_gateway_bundle.py`. The Stream and the projector reload it live. Until then no record is marked, which is
+fail-closed.
+
+Status: `implemented`, `tested locally`. Not pushed.
+
+### DL v2.3.2 x TS v2.1.5 isolated e2e: flag, SessionAlive and a 90 s Stream outage, all PASS (TEST_ONLY) - 2026-11-18 (Claude)
+
+Owner GO 2026-11-18, isolated only. The run started at 06:55Z, after the 06:40Z gate and the Edge "Sandbox done".
+No live container, network, Redis or volume was touched.
+
+**Setup:**
+- The Stream is the real v2.3.2 service from `414324b`: hub, replay, access, cursor codec, SessionAlive and the
+  opt-in DELIVERY_ON_CHANGE. It runs in the new TEST example `rust/qdl-stream-gateway/examples/v232_quiet_quote_e2e.rs`,
+  over a persisted in-memory log, with:
+  - a Query snapshot stub;
+  - a fake session-liveness dir, rewritten every 250 ms;
+  - plaintext loopback endpoints.
+- **Bindings** come from the realm bundle recompiled with `scripts/kn_gateway_bundle.py` into scratch. The bundle has
+  756 bindings: 31 ON_CHANGE (all QUOTE, 26 OKX SWAP, none on another feed) and 2 STRICT_EVENT QUOTE. Its sha256 is
+  `bde6e89b…`. The e2e used one ON_CHANGE (`okx-swap-aave-usdt-swap-quote`) and one STRICT (`binance-spot-btcusdt-quote`).
+- **Image:** one TEST image, `local/qdl-v232-e2e-gateway:414324b`, id
+  `sha256:a3669da43ba29c47837f76f86d1d43ff114d9105d2f57306a787b3ac84a303ff`. It is the base
+  `qdl-v2-rust:2.3.1-funding-50be2b92` plus the example binary (sha256 `deb471d1…`, debug build). It was removed
+  after the run.
+- **Writer:** TS `feat/v215-writer-session-alive` `cc320a4a`, binary sha256 `a4d86cf1…`, run under the production
+  supervisor (FixedWorkerSupervisor native slot), with `MARKET_DATA_NATIVE_SESSION_ALIVE_MS=500`.
+  Harness: TS `scripts/v215_e2e_session_alive.py` and `_run.sh`.
+- **Network:** one `--internal` network; the gateway shared the harness network namespace; loopback Redis DB 15;
+  every container `--rm` with 1 CPU.
+
+**Results** (report: `~/.local/state/qdl-v2/v232-quiet-quote/e2e-20261118/report.json`):
+- **Flag.** Every Subscribe sent `delivery_on_change_flag=true` and `session_alive_interval_ms=500`. After a new BBO
+  on the Stream, the ON_CHANGE row's flags were `["DELIVERY_ON_CHANGE"]` (from DL) and the STRICT row's flags were
+  `[]`.
+- **SessionAlive.** For 30 s the BBO was quiet, and the event age reached 31.0 s. In all 30 of 30 one-second samples,
+  Risk's unchanged `_quiet_quote_at_use` was True. The maximum proof age was 741 ms. 58 frames were sent, and the
+  ON_CHANGE route got 0 Query probes.
+- **Disconnect.** After the fake session was set to DISCONNECTED, the quote was refused at 2.0 s, and the route was
+  READY again after LIVE was restored.
+- **Outage.** The gateway was stopped for 90 s (06:55:45Z to 06:57:16Z):
+  - the native worker never exited (same epoch) and was never RESTART_EXHAUSTED;
+  - the only code seen was DEPENDENCY_UNAVAILABLE;
+  - all slices were READY again 6.0 s after the restart.
+
+**Limits:**
+- An in-memory log, not Kafka.
+- A Query stub, not the Query service.
+- The example binary was formatted with rustfmt after the build, with no semantic change.
+- Status: `tested locally` (isolated e2e). It is not a runtime certification.
+
+### DL v2.3.2 benchmark: snapshot_batch measures QUOTE probes only; client-image import gaps are client errors (tested locally) - 2026-11-17 (Claude)
+
+Two tool defects surfaced in the v2.3.1 Query x2 window. In the R2 B4 smoke, the server returned data (8/8):
+- (a) The 2.3.0-rc3 client image lacks `qdl.api_v2.models.SnapshotBatchResponse`. The `ImportError` in
+  `validate_operation` reached `measure()`, which records `getattr(exc, "code", type(exc).__name__)`, so "ImportError"
+  showed as an error code next to a real `response_ms`. It is now `CLIENT_IMAGE_CONTRACT_MISSING`: a client version
+  skew, because the tool is mounted from the tree and the library comes from the image.
+- (b) snapshot_batch cases included BAR items carrying `warmup_limit`, which the route correctly refuses
+  (`qdl/api_v2/router.py` snapshot_batch: "a snapshot batch item carries no warmup"). The cases are now QUOTE-only.
+  That is the route's real consumer: the TS Rust market-data-writer QUOTE liveness probes (TS 3438bc90,
+  `probe_batch.rs`, items without warmup and interval).
+
+The released Python SDK (2.6.0) has no snapshot_batch method; B4 is server-side and the writer calls it from Rust.
+
+Tests:
+- `test_snapshot_batch_carries_only_warmup_free_quote_probes`;
+- `test_missing_client_contract_is_a_client_error_not_a_server_status`.
+
+Also recorded (read-only RCA, no change): OKX quiet-QUOTE `EXECUTION_CONTEXT_STALE`, for example BAND-USDT-SWAP.
+- TS accepts an unchanged QUOTE only while the writer's per-record session proof is at most 2 s old
+  (`ts_session_budget_ms` = manifest `max_session_liveness_ms` 2000; probes every 666 ms).
+- BAND's proof was older than 2 s in 8 of 38 one-second samples, while bbo-tbt was quiet for up to 56 s. 5 to 7 of
+  the 96 crossec symbols showed a proof gap in 48 s.
+- Recommended class fix: a DL Stream per-session liveness frame that the writer stamps on every cached QUOTE of the
+  session, replacing the 666 ms Query probes. TS interim: stamp the proof on stream-path writes.
+
+Files: `scripts/benchmark_consumer_endpoints.py`, `tests/test_consumer_endpoint_benchmark.py`, this entry.
+Status: `implemented`, `tested locally`.
+
+### DL v2.4.0 S1-S9: shared reads, quota on admission, session-fair queues, advisory token revision (tested locally) - 2026-11-18 (Claude)
+
+Scope: owner DL design decisions 2026-11-18 ~08:50Z (internal fund, one host, internal alphas only): one tier
+identity per venue x environment, entitlement = the declared manifest requirements, cheap stream and poll, quota
+only a coarse per-tier guard plus per-session fairness, the TS lane reserve kept, warmup a fair queue. Coordinator
+review corrections (hot lanes session-fair, TS full per-replica rate, waits below client timeouts, Rust refund) are
+included. Base `release/v2.3.2-session-alive` 2401393; branch `release/v2.4.0`. Offline only: no runtime action.
+
+Slices (all additive; no endpoint, schema or proto change; SDK 2.x unchanged on the wire unless it opts in):
+- S1 verified-token cache (`qdl/security/data_plane.py` `VerifiedTokenCache`): LRU 4096 on sha256(token) ->
+  `Principal` until its `exp` (new additive `Principal.expires_at`); an entry whose key left the keyring is evicted,
+  `rotate_keys()` clears. Manifest lookup, key-subject binding, revision accept-set and consumer binding still run on
+  every request.
+- S2 advisory token revision: the readers accept any token revision 1..manifest revision
+  (`ConsumerManifest.accepted_token_revisions`, Rust `Manifest::accepts_token_revision`); `min_token_revision` is kept,
+  validated and informational; `manifest_compat.next_min_token_revision` returns 1, so the renderer declares floor 1.
+  The upper bound stays (rollout order: Data Layer first). Deviation from the brief ("min_token_revision: 1 on every
+  stable manifest"), decided after the first full run: rewriting the 6 YAMLs changed their sha256, which
+  `config/v2/stable-v2-release-routing.yaml` and the consumer env `DATA_LAYER_V2_RELEASE_MANIFEST_SHA256` pin
+  (9 modules failed on it: trading_consumer_scope, paper_read_extension, declaration tool stage A, ...), i.e. it would
+  re-create the very coupling S2 removes. The rule now lives in code; the manifest files are unchanged, so no realm
+  re-render is needed. CLAUDE.md section 4.1 coupling is removed once the new Query/Stream images run.
+- S3 quota only on admission: `qdl/security/request_cost.py` (per-request notes in a ContextVar; `await_in_thread`
+  now copies the context). REST takes one unit after authentication (`admit`), `QuotaSettlementMiddleware` keeps it
+  only for a response < 400 that did its own read; refusals, cancellations and shared-only results return it. gRPC
+  (Python) charges after the purpose rule. Rust: the charge moved after the purpose rule and a `QuotaGuard` refunds
+  on every later refusal of Subscribe/Replay/GetSnapshot/GetFeedStatus.
+- S4 direct view call: the private MARK/INDEX endpoint body is `parse_execution_mark_index_read` +
+  `serve_execution_mark_index_read`; the route and the new `InProcessViewClient` call the same code (HMAC, schema,
+  fields, gateway fence, view read, refusal record), so `reference:batch` no longer takes an in-process ASGI hop.
+  `default_capability_resolver` builds one profile per (venue, market).
+- S5 key-level latest view + singleflight (`KnMarketCacheQueryBackend._shared_view`): one market-cache read per
+  (binding, last) per TTL per replica (`QDL_V2_SHARED_VIEW_TTL_MS`, 0..20, runtime default 10; constructor default 0);
+  typed refusals shared as fresh exceptions; freshness, quality, eligibility, cursor and the monotonic checks stay
+  per request; the hot backup path never uses a shared result (rc4 precedent).
+- S6 session-fair warmup queue (`qdl/query/lanes.py` `FairWarmupLane`, explicit O(n) dispatch): TS first, then
+  lowest per-key round, then oldest; one active per fairness key (`X-QDL-Session` within the identity, the identity
+  as fallback); large lane 1 active per replica (memory bound), 512 pending, 4 per named session, 448 per identity,
+  32 TS slots; small lane 2 active. Waits up to min(deadline, 60 s) less min(1 s, deadline/4); a disconnected
+  client's waiter is withdrawn; refusals carry `retry_after_ms` from queue position x measured service time
+  (250..2000). `_WarmupFlights`: identical fully-local warmups (same requirement except `deadline_ms`) share one
+  materialization; a request joins only when every item is in flight, so no two requests wait on each other.
+- Hot lanes (coordinator review): snapshot/status/snapshot:batch and the execution-reference lane use the same fair
+  lane keyed per session (snapshot 2 active / 512 pending / 32 per session; reference 4 / 256 / 8), TS first. A hot
+  waiter is refused at min(request deadline, 8 s) less a margin (7.5 s), always before the TS writer's 10 s
+  `query_deadline_ms`.
+- S7 coarse guard `LocalTokenBucketQuota` (Python) / `LocalTokenBucketQuota` + `LayeredQuota` (Rust): per identity
+  per replica rpm x 0.5 / 60 per s with a 10 s burst; per named session 1/8 of that; the Trading System identity
+  (`trading-system.` prefix) gets its FULL rate per replica because its traffic is not balanced (ledger R4 soak:
+  writer on kn_2 86/87 connections; plan A.1: sequential writer stream 100 % on one replica; modelled ~6,000/min vs
+  rpm/2 = 5,000). Shared Redis counting is optional (`QDL_V2_SHARED_QUOTA` / `QDL_KN_SHARED_QUOTA`, default off) and
+  its outage never refuses.
+- S8 role claims accepted and ignored on the data plane (Python verifier `enforce_roles=False`, Rust role check
+  removed); the manifest permissions are the only gate. Control-plane verifiers still enforce roles.
+- SDK 2.8.0: optional `session_id` (sends `X-QDL-Session`); warmup/warmup:batch HTTP timeout = max(transport
+  timeout, deadline_ms + 2 s).
+- S9 prepared, not run: `scripts/p184_capacity100.py` profile `shared100`; `evaluate_shared100_gates` in
+  `qdl/certification/phase3_consumer_load.py`; `config/v2/p184-shared100-profile.json` (restart storm 100 sessions /
+  10 s / 0 refusals / TS p95 <= G5 COLD_2500 6265.1 ms; noisy neighbour 50 rps; G14 baseline-subtracted alpha delta
+  <= 0.5 vCPU OWNER-APPROVED 2026-11-18); A6 `config/v2/p184-stage100-a6-shared100-preregistered.json`
+  (PRE_REGISTERED, profile sha256 720e6d98...). Quota r18 superseded.
+
+TS writer check (read-only, no TS change needed): `market-data-writer/src/query.rs:91-92` refuses any warmup
+requirement, so the writer sends no warmup/history; its Query calls use `query_deadline_ms` 10 000 ms
+(`services/market_data/native_plan.py:264`) as one timeout per request (`query.rs:406`).
+
+Blast radius when rolled out (not done): new Python image for `query_kn_1/2`; new Rust Stream image for
+`stream_kn_1/2` with the bundle rebuilt from floor-1 manifests; re-render the alpha realm (r17) for floor 1.
+Untouched: Kafka, cores, projectors, stable_redis, market_cache, bar_edge, ingestors, TS writer. Rollback: previous
+query_kn/stream_kn digests and manifests/realm.
+
+Tests (image `qdl-v2-python:2.3.1-aa75218`, `--rm --cpus 1 --memory 4g --network none`, tree read-only):
+- full impacted set (3 new + 103 impacted modules, `tests.test_p184_g12_isolated_fault` excluded: it hangs in this
+  container at its forked-child SIGSEGV case with or without `--init`; it imports no changed module): Ran 1470,
+  4 failures + 15 errors, all from the manifest-byte S2 variant, the reference route's missing `request` parameter, an
+  SDK duck-typed double and the SDK version pin; fixed.
+- rerun of the 11 failing modules plus 2: Ran 191, 1 failure (an older-revision token now accepted by design; the
+  test now uses a future revision); then the revision-sensitive and lane modules (14): Ran 262, OK.
+- Old-semantics lane tests updated (they asserted 8/4 per identity, which is the refusal storm S6 removes).
+Status: Python slices `implemented`, `tested locally` (commits 67e4199, f6897f9).
+
+Update, Rust slice group (S2 rule in `qdl-contracts`, S3 order + `QuotaGuard` refund, S7 `LocalTokenBucketQuota` /
+`LayeredQuota` with TS full share, S8 roles ignored): image `qdl-rust-builder:1.82.0-v2.3.2` (rust 1.82.0, offline
+cargo-home), `--rm --cpus 1 --memory 4g --network none`:
+- `cargo test --offline --locked -p qdl-contracts -p qdl-stream-gateway --all-targets -- --test-threads=1`: 187 passed,
+  0 failed, 5 ignored (includes the new quota, refund-guard, full-share and advisory-revision tests, and the
+  native_stream t03/t06/t07 updates);
+- `cargo fmt --check` (rustfmt 1.7.1) clean; `cargo clippy -D warnings`: one error, pre-existing in v2.3.2
+  `src/session_liveness.rs:181` (`type_complexity`), not touched here; reported to the coordinator.
+Status: Rust `implemented`, `tested locally` (commit a65e8f8).
+
+Update, merge and realm composition: merged release/v2.3.2-session-alive ea4fc48 (DL-S1 release notes, rollout plan
+on stage C r8, `scripts/v232_realm_bundle_successor.py`; DL-S2 R0 recipe re-pin d37e88c and R0_SECURITY.md 25550a2;
+no journal conflict). `tests/test_dl_v240_realm_composition.py` proves from the r8 inputs that the v2.3.2 successor
+(102 ON_CHANGE QUOTE bindings, manifests byte-equal, r17 floor 15 kept) already gets the advisory acceptance 1..17
+under v2.4.0, and that the next render of a changed manifest carries floor 1 and the catalogue `delivery_semantics`
+together. With `tests.test_v232_realm_bundle_successor` and `tests.test_build_qdl_release_images`: Ran 43, OK
+(6 skipped).
+
+Update, micro-bench (`scratchpad/v240/bench/bench_v240.py`, outside the repo; `qdl-v2-python:2.3.1-aa75218`,
+`--cpus 1`, host load about 20-25, so absolute numbers are inflated; before/after run in the same process):
+- S1 authenticate, ES256 token: 280.6 us verify-every-request -> 4.9 us cache hit (median of 5).
+- S4 alpha MARK/INDEX fetch through the in-process reader: 924.0 us ASGI hop -> 647.8 us direct call (-30 %); the
+  remainder is the view read and conversion, which are unchanged.
+- S5 6 threads polling one binding every 1 ms for 1 s (0.3 ms stand-in per market-cache read): 3,924 requests /
+  3,924 reads (TTL 0) -> 5,258 requests / 99 reads (TTL 10 ms); a shared hit costs 0.85 us.
+- S6 100 sessions of one identity, 20 ms per warmup, SDK-like retries: pre-v2.4.0 lane served 80, 560 refusals,
+  20.8 s -> fair lane served 100, 0 refusals, 2.0 s. 100 identical concurrent warmups: 1 materialization, 100 OK.
+Not a runtime or capacity certification; S9 `shared100` is the acceptance run (prepared, not run).
+Cleanup: no v240 container is left. The scratch cargo target copy (`scratchpad/v240/rust-target`, 4.5 GB, files owned
+by the container's root user) could not be removed from the host account; its removal is left to the operator.
+
+Update, clippy clean (owner of release/v2.4.0 now): the two pre-existing v2.3.2 `-D warnings` errors are fixed with no
+behaviour change: `session_liveness.rs` `type_complexity` (alias `ParsedDirectory`) and the e2e example's
+`format_collect` in `hex()` (fold with `write!`). `qdl-rust-builder:1.82.0-v2.3.2`, host uid 1001, `--cpus 1`:
+`cargo fmt --check` 0, `cargo clippy -p qdl-contracts -p qdl-stream-gateway --all-targets -D warnings` 0, `cargo test`
+187 passed / 0 failed / 5 ignored.
+
+Update, `tests.test_p184_g12_isolated_fault` correction: it does not hang. Run alone, `qdl-v2-python:2.3.1-aa75218`,
+`--cpus 1 --network none`: as root PID 1 (the shape of the full runs) Ran 203 OK in 98.8 s; as host uid 1001 Ran 203
+OK in 98.1 s. The earlier attribution was wrong: the faulthandler dump that named it was the forked child's own
+deliberate SIGSEGV (`test_native_crash_is_a_typed_sample_error...`), and the verbose run that excluded it stalled at
+`test_phase10_universal_warmup.QueuedLocalBatchLaneTests.test_queue_stays_bounded_per_identity...`, an old-semantics
+test fixed in 67e4199. No ptrace, capability or user change is needed; CI's shards (image user, no CPU cap) run it.
+
+Update, release recipe host class (owner rule AGENTS 34b, coordinator decision): `scripts/build_qdl_release_images.py`
+no longer requires the exclusive measurement lock for a build. Default `--class correctness`: writes
+`~/.local/state/host-activity/<owner>.json` (owner, purpose, class, started/until, CPU cap), runs a load gate (1-min
+load < `--max-load` 20, bounded wait 30 min) at start and before each expensive stage, re-checks the record's window,
+and removes it at the end. `--class measurement` keeps the 34a lock check. Compile `--cpus 2 --memory 3g` (unchanged),
+probe/extract containers now `--cpus 1`; the two `docker build` steps have no BuildKit CPU flag (recorded in the
+record). `tests.test_build_qdl_release_images`: Ran 43 OK on the host (git available; 6 skipped in the image).
+The first build attempt (measurement lock waiter, started 13:13Z) was stopped by PID (479535/479536, mine) before it
+took the lock; no build ran.
+
+Update, R0 images built (correctness class, no lock): `qdl-v2-rust:2.4.0-c95476c`
+`sha256:6970231dfe984c5b01ee62758b9e26b3b1a9a1b810668417b8fc65ce04937a75` and `qdl-v2-python:2.4.0-c95476c`
+`sha256:75717b3c44364fe708769083b6b8268b913bb6ed270b20b162e1c0eaeab7f2d9`, receipt status PASS (binaries 12/12
+DIFFERENT as expected vs rc2, image = context, runtime probe ok, no TEST markers; python files 0 unexpected vs Query
+v2.3.1 and bar_edge rc3). Record `upgrade/evidence/releases/v2.4.0/drafts/R0_BUILD.md`; the drafts carry the digests.
+Security scans OPEN. Scratch cargo target (uid 1001, 2.3 GB) removed.
+
+Update, R0 security gates run once (13:43-13:47Z, `drafts/R0_SECURITY.md`): cargo-deny (ignore = [], RustSec db
+2026-11-18) PASS; pip-audit PASS (no known vulnerabilities); trivy python image PASS (no fixable CRITICAL/HIGH);
+trivy rust image **FAIL**: 3 CRITICAL + 10 HIGH fixable, all in the debian 12.15 runtime base `c46ae0fa` (perl-base,
+apt/libapt-pkg, libpcre2-8-0). Not waived; reported to the coordinator with the proposed base rebuild. Status:
+release BLOCKED on the Rust runtime base.
+
+Update, rust image on the upgraded base (coordinator-approved fix): runtime base `qdl-v2-rust-base:bookworm-v240-20261118`
+`sha256:b33ec0cb161e80f3300684f96fa956eedabc49325e401a170fb25c02d4b2eef7` (recipe sha256 86e535de...; debian 12.15,
+perl-base 5.36.0-7+deb12u4, apt/libapt-pkg 2.6.2, libpcre2-8-0 10.42-1+deb12u2; pinned in 3d4d84b with tests, 46 OK).
+Rust image rebuilt through the recipe: `qdl-v2-rust:2.4.0-3d4d84b`
+`sha256:aef35edf6cfa63f7ea9d8de69bce0a8e4354cb1008250be885344d6a534dfe5e`, receipt PASS; build context 13/13 files
+(12 binaries + admission policy) byte-identical to the c95476c build, so only the base layer changed. Python image
+unchanged (`75717b3c`). OPEN at this checkpoint: the trivy re-scan of `aef35edf`, then the draft digest updates and
+removal of the superseded `6970231d` (by digest, if unreferenced).
+
+Update, R0 complete: trivy re-scan of `aef35edf` (14:07Z, once, gate load 19.68): 0 fixable CRITICAL/HIGH (unfixed:
+CRITICAL 1, HIGH 37, MEDIUM 108, LOW 87; no fixable MEDIUM). R0 security PASS on the release ids rust `aef35edf`
+and python `75717b3c` (cargo-deny and pip-audit unchanged PASS). Drafts updated (`R0_SECURITY.md`, `R0_BUILD.md`,
+rust digest in `ROLLOUT_PLAN.md`, `CERTIFICATE_DRAFT.md`, `PR_BODY.md`). Superseded `qdl-v2-rust:2.4.0-c95476c`
+`6970231d` removed by digest (0 container references); base `c46ae0fa` kept (parent of 2.3.1-funding and 2.3.2 rust
+images). Status: release package ready for the PR (full CI) and the owner-approved window; not pushed.
+
+### DL v2.4.0 A-FUND: FUNDING_RATE reference reads for the TS Paper writer, declaration r9 (tested locally) - 2026-11-18 (Claude)
+
+Request (coordinator, for TS Paper funding accrual A-FUND): FUNDING_RATE for every perpetual the TS manifest already
+reads MARK_INDEX_PRICE for. Base: the deployed stage C r8 state (TS manifest r14, 102 MARK perpetuals: OKX SWAP 97,
+Binance USDM 5; the repository file `consumers/stable/trading-system-paper.yaml` is still r13 and is NOT the base).
+
+- Tool (`scripts/dl_declaration.py`): an EXECUTION consumer may declare `reference: [FUNDING_RATE]`; one row per
+  PERPETUAL uid with a MARK_INDEX_PRICE row, ALPHA grade (DL policy: only MARK_INDEX_PRICE may be execution-grade
+  reference data, `qdl/query/reference.py:101-108`), crypto_liquid_v2, interval null, warmup 0, freshness OKX 8 h /
+  Binance 9 h (as the alpha-binance and reference-l2 rows), full coverage, BLOCK/BLOCK, FRESH_SNAPSHOT, LATEST. A
+  reference product without a route template in the consumer takes the alpha route (V2_PRIMARY / BLOCKED /
+  V1_REFERENCE_EQUIVALENCE_UNPROVEN). Other reference feeds are refused for EXECUTION consumers.
+- Quota model (`qdl/consumer/quota_model.py`): FUNDING_RATE 1 read/min steady, 1 opening, no stream; an EXECUTION
+  manifest may carry ALPHA-grade reference rows. Model raises TS rpm 31,000 -> 31,500 (streams unchanged 370).
+- Permission and purpose: none added. The route needs `history:read` (already granted); the reference sources grant
+  INTERNAL_EXECUTION for CANONICAL_HISTORY (`qdl/reference/runtime.py` `entitlement_grants`), so an ALPHA-grade read
+  with the manifest's only purpose INTERNAL_EXECUTION is served (test reproduces A-FUND's read).
+- Render (declaration r9, `upgrade/evidence/releases/v2.4.0/declaration-ts-funding-r9/`, SHA256SUMS): TS r14 -> r15
+  (`min_token_revision` 1, 349 requirements, additive_problems []), release routing r33 -> r34 (+102 FUNDING_RATE
+  products, manifest sha256 `47ea4a9e...`), catalog/demand/acquisition unchanged, blocked []. Offline gate 15/15
+  PASS (capacity envelope: same r8 envelope, 0 added bindings).
+- Tests (`qdl-v2-python:2.4.0-c95476c`, host slot runner, `--cpus 1 --cpu-shares 256`, tree read-only):
+  `tests.test_dl_v240_ts_funding_entitlement` (8: rows, grade, freshness, additivity/floor, ALPHA-only entitlement,
+  routing + quota model, gate, refusal; A-FUND REST read 200 OK with a r14 token, EXECUTION grade 400, r16 token 401)
+  plus `test_consumer_quota_model` (unknown-feed case now OPEN_INTEREST), `test_v230_declaration_tool`,
+  `test_v231_stage_c_binance_signal`, `test_v230_declaration_mechanism`: 73 run, 2 fixed, rerun 15 OK.
+- Runtime delivery (not done): the TS manifest is served from the realm mount (`QDL_STABLE_CONSUMER_MANIFESTS`,
+  `QDL_PAPER_REALM_MANIFEST`), not from the image: install `trading-system.paper.stable-r15.yaml` in the realm dir,
+  set `QDL_PAPER_REALM_MANIFEST`, render the realm/kn bundle successor with the r15 entry (needs the live base
+  bundles), recreate query_kn x2 and stream_kn x2; DL first, then the TS JWT may move to r15 (r14 tokens stay valid).
+  No image change is needed for this (the tool and quota-model changes are offline-only).
+Status: `implemented`, `tested locally`.
+
+Update, A-FUND historical MARK (coordinator, shape approved): TS must read the OKX mark price at a past funding time.
+- Shape: the existing reference product MARK_INDEX_PRICE accepts an optional bounded window at a non-execution grade
+  (`interval` "1m", `mark_index_kind` MARK or INDEX, window on whole minutes, `limit` 1..100); one observation per 1m
+  candle (`observed_at_ns` = candle open; `mark_open/high/low/close` or `index_*`; labels interval, price_type,
+  candle_close_ns, confirm). The mark at T: window `[floor_1m(T), floor_1m(T)+60 s)`, limit 1. No new product, feed,
+  proto or permission (buf: no proto change). Snapshot (no window) and EXECUTION grade unchanged (EXECUTION with a
+  window keeps "MARK_INDEX_PRICE is a snapshot request").
+- Code: `qdl/reference/contracts.py` (`mark_index_history_problem`), `qdl/query/reference.py`, `qdl/query/contracts.py`
+  (a non-execution MARK_INDEX_PRICE row may carry its candle interval), OKX adapter `_mark_index_history`
+  (`/api/v5/market/history-mark-price-candles`, index candles for INDEX), Binance refuses history (UNAVAILABLE),
+  `ReferenceBatchPolicy.closed_candle_ttl_seconds` 6 h for a complete all-closed candle result (existing singleflight
+  `_inflight`), SDK 2.9.0 (`qdl_sdk/reference.py`, additive; 2.8 requests serialize unchanged). Rust: unchanged (the
+  bundle parses manifest rows without the requirement validator).
+- r15 extended IN PLACE (still r14 -> r15): declaration token `MARK_INDEX_PRICE@1m` adds one ALPHA row (interval 1m)
+  for each of the 97 OKX SWAP perpetual MARK uids; the 5 Binance uids are typed blocked
+  (REFERENCE_VENUE_NOT_DECLARABLE). Recount command: `tests.test_dl_v240_ts_funding_entitlement
+  .test_historical_mark_rows_for_the_97_okx_swap_perpetuals...` (catalog identity OKX/SWAP/PERPETUAL over the r14 MARK
+  uids = 97). Render: 446 requirements, additive_problems [], routing r34 (+102 FUNDING_RATE, +97 MARK 1m products),
+  manifest sha256 `725c8ca2...`, realm file sha256 `e9f4536a...`; quota model MARK_INDEX_HISTORY 97 (no stream), rpm
+  31,500, streams 370; offline gate PASS (15/15).
+- Tests (`qdl-v2-python:2.4.0-c95476c`, host slot, `--cpus 1 --cpu-shares 256`, tree read-only): 101 impacted modules
+  (reference, SDK, declaration, quota, contracts; g12 module excluded as before): Ran 1650, 1 error (a TTL test double
+  without `observations`; `ttl_seconds` now reads them defensively), rerun of 3 modules Ran 43 OK.
+  `tests.test_build_qdl_release_images` on the host: 46 OK. New A-FUND MARK tests: the candle covering T, 5 identical
+  concurrent reads + 1 later = 1 provider call (singleflight + 6 h closed-candle TTL), non-OKX typed unavailable,
+  snapshot/EXECUTION shapes unchanged (exact message), SDK 2.9.0 request + 2.8 snapshot shape.
+- Images rebuilt from c17472c (recipe adds `--cpu-shares 256`): rust `abafab2c...` (context byte-identical to
+  3d4d84b), python `9cffe89b...`; trivy once each: 0 fixable CRITICAL/HIGH. Drafts updated (R0_BUILD, R0_SECURITY,
+  ROLLOUT_PLAN step 9 incl. the historical MARK probe, CERTIFICATE digests). Not pushed (batched).
+Status: `implemented`, `tested locally`.
+
+Update, PR preparation and cleanup: CI classifier on the real diff (base dev 7199901, head 80e0ea4): `scoped: python`,
+31 files; runs changes, preflight, repository-scan, contract-tests (base_check), sdk-python310, unit-tests x4,
+release-gates, ci-result (~54 job-min); inherits rust-workspace and kn-native-integration from dev run 44325107773
+(7199901, success). PR body `upgrade/evidence/releases/v2.4.0/drafts/PR_BODY_A_FUND.md`. The push was refused by the
+permission system (the original brief forbids push/PR), so no PR exists yet. Image cleanup: superseded candidates
+`qdl-v2-rust:2.4.0-3d4d84b` `aef35edf...` and `qdl-v2-python:2.4.0-c95476c` `75717b3c...` removed by full digest
+after confirming 0 container references (running or stopped); kept: `abafab2c`, `9cffe89b`, bases `b33ec0cb`, `c46ae0fa`.
+
+### DL v2.4.0 runtime windows: execution sheet, prep P1-P3 installed, shared100 moved to post-release - 2026-11-19 (Claude)
+
+- Execution sheet (read only, coordinator accepted) for windows 1 Stream x2, 2 Query x2 (+ TS r15, historical MARK),
+  3 ingestors, 4 binance_bar_edge, 5 SessionAlive (TS W3), with current digests and rollbacks (stream 58bdd282,
+  query 26c3b051, bar_edge a235c0a1, stage-b realm, r7 runtime, rc2/stage-b ingestor configs). Windows 1-4 stay
+  BLOCKED on W0: the live writer is still W-QRR `cf88571c`, not the TS v2.2.0 writer; the coordinator rolls TS W1
+  and reports W0.1-W0.5 before any GO.
+- Coupling check: S2 accepts token revisions 1..manifest revision only on the v2.4.0 images, so TS r15 (floor 1) is
+  installed together with them; the writer keeps JWT r14 until every Query/Stream replica serves r15 (TS lane, needs
+  sealed binding r27). Query reads manifests from the realm mount and the catalogue from `/runtime`, not the image.
+- Prep P1-P3 (GO for prep only): new host dirs `v2.4.0-compose`, `v2.4.0-realm`, `v2.4.0-ingestor`, sha256 table and
+  gates in `upgrade/evidence/releases/v2.4.0/drafts/ROLLOUT_PLAN.md` section 7. Render gate: only stream x2, query x2,
+  ingestor x2 and bar_edge differ, each in the intended keys. Realm bundle `577470a6…` = `76672095…` + TS r15 entry
+  (446 requirements, catalogue byte-equal). Ingestor configs differ from r8 / live by exactly
+  `session_liveness_write_interval_ms` 1000 -> 250. No live mount, env or container changed.
+- Deviation: `refresh_v2_native_ingestor_runtime.py` refuses the r8 configs because it does not emit `lane_shard`
+  (and `book_resync`, `latest_state_flush_ms_by_feed`); the 250 ms field was set directly with a one-line diff gate.
+  Follow-up slice: teach the refresh tool the r8 lane pin.
+- Erratum (ROLLOUT_PLAN step 9): realm file sha256 `6a191147…` and routing manifest sha256 `47ea4a9e…` were the r15
+  values before the in-place historical-MARK amendment (52c86cf); the deployed values are `e9f4536a…` and `725c8ca2…`.
+- Window 6, shared100 acceptance (A6), is **post-release acceptance**, not on the v2.4.0 critical path (coordinator,
+  2026-11-19). Still needed: a shared100 mode in the stage-100 driver (restart storm, noisy neighbour, G14 phases),
+  the A6 bind record to the run's runtime identity, a TS-side fleet of 100 alpha sessions on Paper, and the host
+  measurement lock (measurement class). Window 7 (cores/projectors onto abafab2c) is skipped for this release.
+Status: prep `implemented`; windows not executed.
+
+### DL v2.4.0 window 1 RCA: Query hot read falls through on a replica authority mismatch (tested locally) - 2026-11-19 (Claude)
+
+**Incident.**
+- Window 1 recreated `stream_kn_1` on rust `abafab2c` with the v2.4.0 realm at 05:08:02Z.
+- The writer fell to 209-216/246 ready. The coordinator rolled kn_1 back at 05:14:08Z, and the writer was 246/246 at
+  05:14:47Z.
+
+**Root cause** (read-only RCA; details in `upgrade/evidence/releases/v2.4.0/drafts/ROLLOUT_PLAN.md` section 8).
+- Query on the r7 runtime has catalog 15. The new Stream bundle is catalog 16.
+- The gateway refuses the hot read with `HOT_AUTHORITY_MISMATCH` (`hot_view.rs:115-119`).
+- Query asked stream-a first and did not try stream-b (old `kn_hot_view.py:117-121`). Quiet EXECUTION QUOTE therefore
+  became `DATA_NOT_READY: HOT_QUIET_PRIMARY_UNVERIFIED` (`kn_query_backend.py:508`).
+- Query `qdl_refusal` counts for `HOT_AUTHORITY_OR_PROTOCOL_REFUSED`, per replica: 0 before, 185 during the window,
+  0 after.
+- kn_2 absorbed all 144 subscriptions with nothing refused. Writer refusals were 0.
+
+**Re-attribution of the stage C S6 incident (2026-11-18 05:36Z).**
+- The same refusal appears in the Query logs at 05:30-05:50Z (30 / 35 lines).
+- So the trigger was this mismatch. The old writer's missing backoff was the amplifier, not the cause.
+- The stage C order "streams before Query" carried the defect.
+
+**The window 1 gate script was wrong in two ways.**
+- The subscriber gate was invalid: the SDK keeps a failed-over subscription on the other replica (`qdl_sdk` 2.4.1
+  `transport.py:612-619`).
+- The writer-slices gate lacked the quiet-class allowance.
+
+**Fix** (owner-approved: code fix plus safe order).
+- `qdl/runtime/kn_hot_view.py`: `HOT_AUTHORITY_MISMATCH` and `HOT_AUTHORITY_CHANGED` fall through to the next replica.
+- `HOT_AUTHORITY_OR_PROTOCOL_REFUSED` is returned only when every replica refuses. A transient refusal elsewhere keeps
+  its reason.
+- Other refusals are unchanged, including integrity, auth (`UNAUTHENTICATED`, `PERMISSION_DENIED`),
+  `HOT_REQUEST_EXPIRED`, `DATA_LOSS` and `INVALID_ARGUMENT`.
+- New observability: an `authority_fallbacks` counter and a bounded `qdl_hot_read_authority_fallback` line.
+- The gateway is unchanged.
+
+**Tests.** `tests/test_kn_hot_view.py` has 5 new tests:
+- mismatch or changed on replica 1, then OK on replica 2;
+- mismatch on all replicas is refused;
+- mismatch plus a transient refusal keeps the retryable reason;
+- auth and other refusals never fall through;
+- the log is bounded per key and window.
+
+Impacted set: 9 modules, Ran 212, OK (skipped 33). The run used `qdl-v2-python:2.4.0-c17472c` (`--cpus 1
+--cpu-shares 256`, host slot, read-only tree), because `c95476c` was removed by digest on 2026-11-18.
+
+**Image.**
+- `qdl-v2-python:2.4.0-acf42d7` = `sha256:18ada571c72856cefc2844c8cb2c3809c3e30ac77927bc4c73160e7b2787cd18`, built by
+  the recipe. It differs from `9cffe89b` in 3 files only (`/app` file hashes; pip freeze equal).
+- trivy run once: 0 fixable CRITICAL/HIGH.
+- Rust is unchanged (`abafab2c`).
+- Records: `drafts/R0_BUILD.md`, `drafts/R0_SECURITY.md`.
+
+**Corrected order and gates** (ROLLOUT_PLAN section 8).
+- Order: 1' `stream_kn_2`, then 2 `query_kn_2` and `query_kn_1`, then 1'' `stream_kn_1`.
+- New compose and env: `v2.4.0-r2-compose` (Query `QDL_KN_HOT_READ_TARGETS=qdl-v2-stream-b,qdl-v2-stream-a`; python
+  `18ada571`).
+- Gates G-stream/G-query, G-hot (`drafts/window/v240_hot_read_probe.py` through each Query's own client),
+  G-query-refusals and G-writer, run by `drafts/window/v240_window_gates.sh`.
+- Pre-window dry run of the gates on the live state: G-hot, G-query-refusals and G-writer all PASS; the role gates
+  fail as expected before the change.
+
+**Guide delta.** `upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md`, "Delta 2026-11-19".
+
+**Still open.**
+- The windows themselves (coordinator runs them).
+- A TEST-consumer tool for direct per-replica stream subscription and the step 9.4 FUNDING_RATE / historical MARK
+  probes.
+
+Status: `implemented`, `tested locally`.
+
+### DL v2.4.0 runtime windows W1'-W4 accepted, acceptance record and release notes (production-authoritative on the KN stack) - 2026-11-19 (Claude)
+
+- Windows (coordinator executed; read-only gates by Claude): W1' stream_kn_2 05:42, W2 query_kn_2 05:56 / query_kn_1
+  05:57, W1'' stream_kn_1 06:06, W3a ingestor_binance_usdm 06:18 (rev 24, 118 PINNED, 3.83 writes/s), W3b
+  ingestor_okx_swap 06:21 (465 PINNED, 3.5 writes/s), W4 binance_bar_edge 06:24 (python `18ada571`, r8 pair). All
+  PASS; W4 after its bootstrap (08:14:25, published 1320, pending 0) and D6b at 08:30:42 (recorded 209 = healed 209,
+  kept 0). Writer 246/246 at T+10 min after W1''.
+- Deviations recorded in `upgrade/evidence/releases/v2.4.0/CERTIFICATE.md` section 5:
+  - W4 stale heartbeat: the restore check (5.5 min) runs before the first heartbeat write
+    (`qdl/runtime/stable_bar_edge.py:2333-2349`), so the first gate read the old process's file.
+  - W4 restart repair: 784 retained bindings marked incomplete (missing_rows 6,082,736). Split verified per binding
+    from the edge's ACK/short lines (`runtime-windows-20261119/bar-edge-repair-split.json`): 680 provider-short
+    bindings account for 5,575,631 pre-listing opens (91.7 %; 668 published 0 rows, 12 filled 14 newest rows); 104
+    1m/3m bindings had all 10,000 rows on refetch (507,105 rows counted missing; cause inferred, rolling retention vs
+    checkpoint watermark); 278 new bindings published 1,850,567 rows. Cause: short proofs are in memory only
+    (`stable_bar_edge.py:388,1622`) and the restore check (`:785-819`) counts pre-listing opens. Defect candidate for
+    v2.4.1 S6 (TS register row via the pin steward).
+  - 29 transient `KnBarReadbackNotReady (REBUILDING)` cycle failures on new crossec 1h/12h products; all ACKed later.
+  - Five Binance 3d bindings remain `history_failed` (provider `OVERLAPPING_PROVIDER_WINDOWS`), as before.
+- CI6: dev 7230d5c run 44468533774 is red on one shard (synthetic throughput gate, 178.3 < 200 eps); the receipt is the
+  full `dev` push run after this branch merges (RELEASE_NOTES "Release steps").
+- shared100 (A6) is post-release acceptance (owner, 2026-11-19); window 7 skipped.
+Status: runtime `production-authoritative` for the 7 recreated roles; release `tagged` pending CI6.
+
+### DL v2.4.0 CI6: wall-clock timing assertions in the Rust tests made deterministic or load-tolerant (tested locally) - 2026-11-19 (Claude)
+
+- Trigger: the CI6 dev push run 44491247372 (5bc1718) failed `rust-workspace` twice on two different real-time
+  assertions (attempt 1 `qdl-native-raw-ingestor staleness_tests::a_standby_held_open_by_control_traffic_is_cancelled_at_the_budget`,
+  pause 267 ms vs < 100 ms; attempt 2 `native_stream::session_alive_frames_follow_the_live_session_and_stop_on_disconnect`,
+  gaps [493, 555, 443, 499, 500] vs 450..550). Owner/coordinator: fix the class, not the two.
+- Audit (every assert in Rust test code combining a wall clock with a numeric bound): tokio paused-time tests
+  (`qdl-realtime-core` batch deadline/backoff, `qdl-kafka` transaction pipeline) are already deterministic; synthetic
+  detector inputs (`7344`) and lower bounds (replay `>= DETACH_AFTER`, cooldown) are load-safe; kept. Changed:
+  - ingestor: active-lane pause bound = the establish budget (the defect), handover gap 100 ms -> 1 s and per-binding
+    250 ms -> 2 s (make-before-break is proven by the ACK/close ordering), held standby upper bound = budget + cooldown;
+  - native_stream: session-alive cadence as mean within 20 % and no gap outside 100 ms..1.5 s; proof age bound 1.5 s
+    -> 5 s; dropped-frame count waited for (bounded 10 s) instead of a fixed 1.4 s sleep; fresh-tick check relative
+    to the measured blocked time; "at once" 1 s -> 5 s; replay budget waited for instead of a fixed 100 ms sleep;
+  - replay: preempted-detach wall bound 200 ms -> 5x (the metric proves preemption); hub reader deadline 2 s -> 10 s;
+  - projector: real queue-full test uses a 30 s message timeout and a 5 s bound (tells the 30 ms deadline from the
+    timeout); sticky stop 1 s -> 10 s; stage A outage commit 12 s -> 20 s (10 s budget).
+- Local proof (builder `2cb66ad6`, offline, host slot, `--cpus 2`, `--test-threads=4`, host load 19.7-25.6): each
+  affected test binary 20 runs: `qdl_native_raw_ingestor` 20/20, `native_stream` 20/20, `qdl_stream_gateway` lib
+  20/20, `qdl_projector` lib 20/20, `qdl_kafka` lib 20/20. `cargo fmt --check` OK; clippy `-D warnings` on
+  qdl-kafka/qdl-stream-gateway/qdl-projector all targets OK. `stage_a_kafka` (needs the KN broker harness) not run
+  locally; it runs in `kn-native-integration`.
+- Test-only: no production code, image or runtime change. Status: `tested locally`.

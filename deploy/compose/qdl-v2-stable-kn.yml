@@ -1101,6 +1101,7 @@ services:
       QDL_KN_READ_VIEW_SECRET_FILE: /kn/read-view.secret
       QDL_KN_READ_VIEW_URLS: https://qdl-v2-query:8200
       QDL_KN_ROUTE_GENERATION: v220-02cd827
+      QDL_KN_SESSION_LIVENESS_DIR: /session-liveness
       QDL_KN_TLS_CERT_FILE: /stable-certs/stream/server.crt
       QDL_KN_TLS_CLIENT_CA_FILE: /consumer-realms/stream-client-ca-bundle.crt
       QDL_KN_TLS_KEY_FILE: /stable-certs/stream/server.key
@@ -1134,6 +1135,12 @@ services:
       source: ${QDL_KN_RELEASE_DIR:?set QDL_KN_RELEASE_DIR}
       target: /kn
       read_only: true
+    - type: volume
+      source: stable_state
+      target: /session-liveness
+      read_only: true
+      volume:
+        subpath: runtime/session-liveness
     - type: bind
       source: ${QDL_TLS_STABLE_CERTS_DIR:?set QDL_TLS_STABLE_CERTS_DIR}
       target: /stable-certs
@@ -1194,6 +1201,7 @@ services:
       QDL_KN_READ_VIEW_SECRET_FILE: /kn/read-view.secret
       QDL_KN_READ_VIEW_URLS: https://qdl-v2-query:8200
       QDL_KN_ROUTE_GENERATION: v220-02cd827
+      QDL_KN_SESSION_LIVENESS_DIR: /session-liveness
       QDL_KN_TLS_CERT_FILE: /stable-certs/stream/server.crt
       QDL_KN_TLS_CLIENT_CA_FILE: /consumer-realms/stream-client-ca-bundle.crt
       QDL_KN_TLS_KEY_FILE: /stable-certs/stream/server.key
@@ -1227,6 +1235,12 @@ services:
       source: ${QDL_KN_RELEASE_DIR:?set QDL_KN_RELEASE_DIR}
       target: /kn
       read_only: true
+    - type: volume
+      source: stable_state
+      target: /session-liveness
+      read_only: true
+      volume:
+        subpath: runtime/session-liveness
     - type: bind
       source: ${QDL_TLS_STABLE_CERTS_DIR:?set QDL_TLS_STABLE_CERTS_DIR}
       target: /stable-certs

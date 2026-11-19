@@ -73,21 +73,23 @@ class AcceptSetTests(unittest.TestCase):
             make_token(SUBJECT, manifest_revision=token_revision), consumer_id="v230.consumer"
         )
 
-    def test_a_manifest_without_an_accept_set_keeps_the_exact_revision_rule(self):
+    def test_a_manifest_without_an_accept_set_accepts_every_older_token(self):
+        # DL v2.4.0 S2: the token revision is advisory (1..revision).
         manifest = _manifest(4)
         self.assertIsNone(manifest.min_token_revision)
-        self.assertEqual(self._authenticate(manifest, 4).manifest.manifest_revision, 4)
-        for revision in (3, 5):
+        for revision in (1, 3, 4):
+            self.assertEqual(self._authenticate(manifest, revision).manifest.manifest_revision, 4)
+        for revision in (5,):
             with self.subTest(token=revision), self.assertRaises(DataPlaneAccessError) as caught:
                 self._authenticate(manifest, revision)
             self.assertEqual(caught.exception.status_code, 401)
 
-    def test_an_accept_set_admits_older_additive_tokens_and_never_newer_ones(self):
+    def test_an_accept_set_admits_older_tokens_and_never_newer_ones(self):
         manifest = _manifest(5, floor=3)
-        for revision in (3, 4, 5):
+        for revision in (1, 2, 3, 4, 5):  # DL v2.4.0 S2: the declared floor is informational
             with self.subTest(token=revision):
                 self.assertEqual(self._authenticate(manifest, revision).manifest.manifest_revision, 5)
-        for revision in (2, 6):
+        for revision in (6,):
             with self.subTest(token=revision), self.assertRaises(DataPlaneAccessError):
                 self._authenticate(manifest, revision)
 
@@ -96,23 +98,25 @@ class AcceptSetTests(unittest.TestCase):
             with self.subTest(floor=floor), self.assertRaises(ValueError):
                 _manifest(5, floor=floor)
 
-    def test_the_renderer_rule_keeps_the_floor_only_for_additive_successors(self):
+    def test_the_renderer_rule_is_the_advisory_floor_for_every_successor(self):
+        # DL v2.4.0 S2: the token revision is advisory; additivity is still
+        # reported for audit but never resets the floor.
         old = _manifest(4, floor=2)
         quotas = dict(manifest_mapping(consumer_id="x", subject="y", instrument_uid=UID)["spec"]["quotas"])
         additive = _manifest(5, quotas={**quotas, "max_streams": quotas["max_streams"] + 1})
         self.assertEqual(additive_problems(old, additive), [])
-        self.assertEqual(next_min_token_revision(old, additive), 2)
+        self.assertEqual(next_min_token_revision(old, additive), 1)
         lowered = _manifest(5, quotas={**quotas, "max_streams": quotas["max_streams"] - 1})
         self.assertIn("quota max_streams lowered", additive_problems(old, lowered))
-        self.assertEqual(next_min_token_revision(old, lowered), 5)
+        self.assertEqual(next_min_token_revision(old, lowered), 1)
         fewer_purposes = _manifest(5, purposes=["INTERNAL_EXECUTION"])
         self.assertTrue(additive_problems(old, fewer_purposes))
-        self.assertEqual(next_min_token_revision(None, additive), 5)
-        overclaimed = _manifest(5, floor=2, quotas={**quotas, "max_streams": 1})
-        self.assertTrue(declared_floor_problems(old, overclaimed))
+        self.assertEqual(next_min_token_revision(None, additive), 1)
+        non_additive_floor_1 = _manifest(5, floor=1, quotas={**quotas, "max_streams": 1})
+        self.assertEqual(declared_floor_problems(old, non_additive_floor_1), [])
         self.assertEqual(declared_floor_problems(old, _manifest(5, floor=2)), [])
 
-    def test_repository_manifests_load_unchanged_and_compile_without_new_bundle_fields(self):
+    def test_repository_manifests_load_and_compile_with_the_advisory_floor(self):
         spec = importlib.util.spec_from_file_location("kn_gateway_bundle", ROOT / "scripts/kn_gateway_bundle.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -125,7 +129,7 @@ class AcceptSetTests(unittest.TestCase):
             manifest = ConsumerManifestLoader.load(path)
             raw = yaml.safe_load(path.read_text(encoding="utf-8"))
             self.assertEqual(len(manifest.requirements), len(raw["spec"]["requirements"]))
-            self.assertEqual(manifest.accepted_token_revisions, range(manifest.manifest_revision, manifest.manifest_revision + 1))
+            self.assertEqual(manifest.accepted_token_revisions, range(1, manifest.manifest_revision + 1))
 
 
 class SelectorTests(unittest.TestCase):

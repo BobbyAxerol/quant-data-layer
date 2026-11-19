@@ -248,6 +248,15 @@ class DataRequirement:
         elif self.feed in OPTIONAL_INTERVAL_FEEDS:
             if self.interval is not None and not self.interval.strip():
                 raise ValueError("open-interest sampling interval cannot be blank")
+        elif (
+            self.feed is FeedType.MARK_INDEX_PRICE
+            and self.interval is not None
+            and self.consumer_grade is not ConsumerGrade.EXECUTION
+        ):
+            # DL v2.4.0 A-FUND: the historical MARK/INDEX candle read (non-execution grade) names its candle
+            # interval; execution-grade MARK/INDEX stays an interval-less live snapshot (unchanged).
+            if not self.interval.strip():
+                raise ValueError("mark/index candle interval cannot be blank")
         elif self.interval is not None:
             raise ValueError("interval is valid only for bar or metric-series requirements")
         if self.consumer_grade is ConsumerGrade.EXECUTION:

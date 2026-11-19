@@ -965,6 +965,29 @@ impl Hub {
         Ok(selected)
     }
 
+    /// Whether this replica's committed reader is caught up on `partition`
+    /// now: it made progress within 1 s, and a broker head the broker
+    /// confirmed within 1 s is not ahead of what it dispatched (the hot-read
+    /// rules). A session-alive frame (DL v2.3.2) vouches only for a stream
+    /// whose reader has seen everything committed up to that head.
+    pub fn reader_caught_up(&self, partition: i32) -> Result<(), String> {
+        self.check_hot_reader()?;
+        let state = self
+            .partitions
+            .get(&partition)
+            .ok_or("HOT_PARTITION_UNKNOWN")?
+            .lock()
+            .map_err(|_| "HOT_READER_UNAVAILABLE")?;
+        let (head, confirmed) = state.broker_head.ok_or("HOT_BROKER_UNCONFIRMED")?;
+        if confirmed.elapsed() > Duration::from_secs(1) {
+            return Err("HOT_BROKER_UNCONFIRMED".into());
+        }
+        if state.next_offset < head {
+            return Err("HOT_READER_CATCHING_UP".into());
+        }
+        Ok(())
+    }
+
     fn mark_progress(&self, at: Instant) {
         let since = at.saturating_duration_since(self.origin).as_nanos();
         self.reader_progress.store(
@@ -1382,7 +1405,7 @@ mod tests {
             failed: false,
             proof: proof.clone(),
         }));
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + Duration::from_secs(10); // load headroom (DL v2.4.0 CI6)
         while !hub.reader_failed.load(Ordering::Acquire) {
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(1));

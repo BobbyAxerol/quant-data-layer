@@ -1,0 +1,32 @@
+PASS image-rc-health: sha256:18ada571c72856cefc2844c8cb2c3809c3e30ac77927bc4c73160e7b2787cd18 0 running healthy
+PASS realm-mount: /consumer-realms=/home/bobby/.local/state/qdl-v2/releases/v2.4.0-realm:false
+PASS query-manifests: /consumer-realms/alpha.okx.paper.stable-r17.yaml /consumer-realms/trading-system.paper.stable-r15.yaml
+PASS query-hot-targets: QDL_KN_HOT_READ_TARGETS=qdl-v2-stream-b:8210,qdl-v2-stream-a:8210
+PASS query-runtime: /runtime=/home/bobby/.local/state/qdl-v2/releases/v2.3.1-stage-c/runtime:false
+PASS hot-read-query_kn_1: configured client: 3 reads, 0 not OK; query catalog_revision 16 bindings 3
+INFO query_kn_1 per-target refusal: qdl-v2-stream-a:8210 BTC-USDT HotViewUnavailable:HOT_AUTHORITY_OR_PROTOCOL_REFUSED FAILED_PRECONDITION HOT_AUTHORITY_MISMATCH
+INFO query_kn_1 per-target refusal: qdl-v2-stream-a:8210 ADA-USDT HotViewUnavailable:HOT_AUTHORITY_OR_PROTOCOL_REFUSED FAILED_PRECONDITION HOT_AUTHORITY_MISMATCH
+INFO query_kn_1 per-target refusal: qdl-v2-stream-a:8210 BAND-USDT HotViewUnavailable:HOT_AUTHORITY_OR_PROTOCOL_REFUSED FAILED_PRECONDITION HOT_AUTHORITY_MISMATCH
+PASS hot-read-query_kn_2: configured client: 3 reads, 0 not OK; query catalog_revision 16 bindings 3
+INFO query_kn_2 per-target refusal: qdl-v2-stream-a:8210 BTC-USDT HotViewUnavailable:HOT_AUTHORITY_OR_PROTOCOL_REFUSED FAILED_PRECONDITION HOT_AUTHORITY_MISMATCH
+INFO query_kn_2 per-target refusal: qdl-v2-stream-a:8210 ADA-USDT HotViewUnavailable:HOT_AUTHORITY_OR_PROTOCOL_REFUSED FAILED_PRECONDITION HOT_AUTHORITY_MISMATCH
+INFO query_kn_2 per-target refusal: qdl-v2-stream-a:8210 BAND-USDT HotViewUnavailable:HOT_AUTHORITY_OR_PROTOCOL_REFUSED FAILED_PRECONDITION HOT_AUTHORITY_MISMATCH
+PASS query-refusals-query_kn_1: HOT_AUTHORITY_OR_PROTOCOL_REFUSED since 2026-11-19T05:57:46Z = 0 (authority fallback log lines: 10)
+PASS query-refusals-query_kn_2: HOT_AUTHORITY_OR_PROTOCOL_REFUSED since 2026-11-19T05:57:46Z = 0 (authority fallback log lines: 11)
+PASS writer-slices: demanded/ready/exec=246/244/231 other-reasons=- (246/246, or not-ready only EXECUTION_CONTEXT_STALE/TRADE_EVENT_STALE, within 120 s)
+PASS writer-retries: worker_retries={}
+PASS writer-probe-authority: native probe routes with a HOT_AUTHORITY unavailable since T0 = 0
+PASS writer-refusals: count=0 since 2026-11-19T05:57:46Z
+PASS writer-untouched: sha256:d1addc042756
+INFO stream_kn_1 58bdd28216132 rc=0 2026-11-19T05:14:16.636289606Z
+INFO stream_kn_2 abafab2c98cb8 rc=0 2026-11-19T05:42:27.931366864Z
+INFO query_kn_2 18ada571c7288 rc=0 2026-11-19T05:56:16.874951191Z
+INFO rust_core 58bdd28216132 rc=0 2026-11-18T05:13:10.598989096Z
+INFO rust_core_2 58bdd28216132 rc=0 2026-11-18T05:20:04.499983609Z
+INFO rust_core_3 58bdd28216132 rc=0 2026-11-18T05:23:47.481545977Z
+INFO market_projector_1 58bdd28216132 rc=0 2026-11-18T05:27:38.769663197Z
+INFO market_projector_2 58bdd28216132 rc=0 2026-11-18T05:31:24.307336671Z
+INFO ingestor_binance_usdm 58bdd28216132 rc=0 2026-11-13T14:51:12.458137808Z
+INFO ingestor_okx_swap 58bdd28216132 rc=0 2026-11-16T12:33:26.796768788Z
+INFO binance_bar_edge a235c0a18cdeb rc=0 2026-11-13T14:52:35.316066858Z
+WINDOW query_kn_1 GATES PASS

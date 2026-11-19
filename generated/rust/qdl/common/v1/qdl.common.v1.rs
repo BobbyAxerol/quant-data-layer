@@ -147,6 +147,12 @@ pub enum QualityFlag {
     ChecksumFailed = 15,
     ResyncRequired = 16,
     ClockSkewSuspected = 17,
+    /// Additive (DL v2.3.2): the record's binding delivers ON_CHANGE (a native
+    /// BBO QUOTE is published only when it changes), the same rule as the Query
+    /// quality flag DELIVERY_ON_CHANGE. The Stream sets it only for a Subscribe
+    /// that set SubscribeRequest.delivery_on_change_flag: readers before 2.3.2
+    /// refuse an unknown QualityFlag value.
+    DeliveryOnChange = 18,
 }
 impl QualityFlag {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -173,6 +179,7 @@ impl QualityFlag {
             Self::ChecksumFailed => "QUALITY_FLAG_CHECKSUM_FAILED",
             Self::ResyncRequired => "QUALITY_FLAG_RESYNC_REQUIRED",
             Self::ClockSkewSuspected => "QUALITY_FLAG_CLOCK_SKEW_SUSPECTED",
+            Self::DeliveryOnChange => "QUALITY_FLAG_DELIVERY_ON_CHANGE",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -196,6 +203,7 @@ impl QualityFlag {
             "QUALITY_FLAG_CHECKSUM_FAILED" => Some(Self::ChecksumFailed),
             "QUALITY_FLAG_RESYNC_REQUIRED" => Some(Self::ResyncRequired),
             "QUALITY_FLAG_CLOCK_SKEW_SUSPECTED" => Some(Self::ClockSkewSuspected),
+            "QUALITY_FLAG_DELIVERY_ON_CHANGE" => Some(Self::DeliveryOnChange),
             _ => None,
         }
     }

@@ -1,6 +1,6 @@
 """Stable Python SDK V2 with typed public models and generated transports."""
 
-__version__ = "2.6.0"
+__version__ = "2.9.0"
 
 from qdl_sdk.client import AsyncDataLayerClient, DataLayerClientV2, WarmupStreamSession
 from qdl_sdk.credentials import (
@@ -33,6 +33,7 @@ from qdl_sdk.models import (
     OPTIONAL_INTERVAL_FEEDS,
     QuantityUnit,
     RecoveryPolicy,
+    SessionAliveEvent,
     SnapshotResponse,
     StalePolicy,
     StreamEvent,
@@ -109,6 +110,7 @@ __all__ = [
     "SnapshotResponse",
     "StalePolicy",
     "StaticBearerCredential",
+    "SessionAliveEvent",
     "StreamEvent",
     "TradeIdentityKind",
     "WarmupResponse",

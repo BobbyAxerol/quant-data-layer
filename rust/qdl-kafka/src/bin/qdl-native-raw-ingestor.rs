@@ -7952,8 +7952,11 @@ mod staleness_tests {
             .map(|record| record.received_at_ns)
             .min()
             .unwrap();
+        // Make-before-break is proven by the ordering above (successor ACKed before
+        // the stale socket closed). This wall-clock bound only rejects a lane that
+        // stopped for seconds; it has headroom for a loaded test host (DL v2.4.0 CI6).
         assert!(
-            first_new - last_old < 100_000_000,
+            first_new - last_old < 1_000_000_000,
             "handover gap {} ms",
             (first_new - last_old) / 1_000_000
         );
@@ -7975,7 +7978,9 @@ mod staleness_tests {
         assert_eq!(gaps.len(), SYMBOLS.len());
         for (symbol, _, gap) in &gaps {
             let gap = gap.unwrap_or_else(|| panic!("{symbol}: no successor frame"));
-            assert!(gap < 250, "{symbol}: last old -> first new {gap} ms");
+            // Measured and printed above; the bound only rejects a binding left
+            // uncovered for seconds (load headroom, DL v2.4.0 CI6).
+            assert!(gap < 2_000, "{symbol}: last old -> first new {gap} ms");
         }
         assert_eq!(run.report["staleness_recycles_total"], 1);
         assert!(run.report["stale_frames"].as_u64().unwrap() >= 5);
@@ -8094,8 +8099,9 @@ mod staleness_tests {
         );
         let held = run.log.closed[1].unwrap() - run.log.accepted[1].unwrap();
         assert!(
-            held >= budget - Duration::from_millis(100)
-                && held < budget + Duration::from_millis(400),
+            // Lower bound: never cancelled early. Upper bound: cancelled at the budget,
+            // not held until the cooldown retry (the defect); load headroom up to it.
+            held >= budget - Duration::from_millis(100) && held < budget + cooldown,
             "held standby lived {held:?} for a {budget:?} budget"
         );
         // The later attempt waited for the cooldown counted from the failed
@@ -8127,9 +8133,13 @@ mod staleness_tests {
             .map(|pair| (pair[1] - pair[0]) / 1_000_000)
             .max()
             .unwrap();
+        // The defect is an active lane that stops while its standby is held, i.e. a
+        // pause of about the establish budget. Scheduler stalls on a loaded host are
+        // far shorter than that (267 ms seen on a hosted CI runner), so the bound is
+        // the budget, not a fixed 100 ms (DL v2.4.0 CI6).
         assert!(
-            largest_pause_ms < 100,
-            "active lane paused {largest_pause_ms} ms"
+            (largest_pause_ms as u128) < budget.as_millis(),
+            "active lane paused {largest_pause_ms} ms for a {budget:?} budget"
         );
         assert_eq!(
             symbols_of(&run.records, generations[1]).len(),

@@ -93,7 +93,8 @@ mod tests {
         assert!(worker.join().unwrap());
         let start = Instant::now();
         assert!(stop.wait(Duration::from_secs(60)));
-        assert!(start.elapsed() < Duration::from_secs(1));
+        // Sticky: returns at once instead of waiting the 60 s (load headroom, DL v2.4.0 CI6).
+        assert!(start.elapsed() < Duration::from_secs(10));
     }
 
     #[test]

@@ -3390,3 +3390,24 @@ Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, "DL v2.3.0 release fill".
   manifest's 50; the window plan starts at 26).
 
 Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, "DL v2.3.1 B4".
+
+### Delta 2026-11-19: v2.4.0 hot read across a rolling catalog change
+
+Extends "Execution Handoff Hot Backup - 2026-10-01" (the private `CanonicalHotView/ReadLatest`).
+- **Exact authority stays per replica.** Each Stream replica still refuses a hot read whose identity (catalog and
+  source-policy revision, route generation, ...) differs from its own bundle: `FAILED_PRECONDITION`
+  `HOT_AUTHORITY_MISMATCH` (`rust/qdl-stream-gateway/src/hot_view.rs:115-119`), or `HOT_AUTHORITY_CHANGED` when the
+  bundle changes during the read (`:140-141`).
+- **Query now tries the next replica on those two refusals** (`qdl/runtime/kn_hot_view.py`, `AUTHORITY_FALLBACK_DETAILS`).
+  - The result is `HOT_AUTHORITY_OR_PROTOCOL_REFUSED` only when every replica refuses.
+  - A transient refusal on another replica keeps its retryable reason.
+  - Integrity, auth, expiry, data-loss and malformed-request refusals still stop at the first replica.
+- **Why.** During a rolling catalog change one replica is always on the other revision. Before the fix, a Query on
+  the old catalog that asked the new replica first refused every quiet EXECUTION QUOTE (`HOT_QUIET_PRIMARY_UNVERIFIED`).
+  This happened twice: DL v2.4.0 window 1 (2026-11-19) and stage C S6 (2026-11-18).
+- **Observability.** A per-(target, detail) counter, plus one bounded `qdl_hot_read_authority_fallback` stderr line
+  per key and 10 s window.
+- **Rollout rule.** `QDL_KN_HOT_READ_TARGETS` order matters for Query images without the fallback (v2.3.x, v2.4.0
+  `9cffe89b`): such a Query must ask a replica on its own catalog first.
+
+Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, "DL v2.4.0 window 1 RCA".

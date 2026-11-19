@@ -133,8 +133,17 @@ class ConsumerManifest:
 
     @property
     def accepted_token_revisions(self) -> range:
-        low = self.manifest_revision if self.min_token_revision is None else self.min_token_revision
-        return range(low, self.manifest_revision + 1)
+        """DL v2.4.0 S2: the token revision is ADVISORY.
+
+        Authorization reads only this active manifest, so any token minted for
+        revision 1..``manifest_revision`` is accepted whatever
+        ``min_token_revision`` declares (kept, validated, informational). The
+        rule lives here, not in the manifest bytes: rewriting the files would
+        change their sha256, which the release routing and the consumer's
+        ``DATA_LAYER_V2_RELEASE_MANIFEST_SHA256`` pin, and re-couple the very
+        bump this removes. A token for a revision not loaded yet is refused.
+        """
+        return range(1, self.manifest_revision + 1)
 
     def accepts_token_revision(self, revision: object) -> bool:
         """Whether a token minted for ``revision`` may use this manifest revision."""

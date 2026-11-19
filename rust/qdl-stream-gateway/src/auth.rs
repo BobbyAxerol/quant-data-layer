@@ -19,16 +19,6 @@ pub const STREAM_READ: &str = "stream:read";
 pub const SNAPSHOT_READ: &str = "snapshot:read";
 pub const HISTORY_READ: &str = "history:read";
 pub const STATUS_READ: &str = "status:read";
-const KNOWN_ROLES: [&str; 8] = [
-    "market_data_reader",
-    "historical_reader",
-    "stream_consumer",
-    "consumer_registry_writer",
-    "venue_operator",
-    "schema_operator",
-    "platform_admin",
-    "auditor",
-];
 
 /// Python `DataPlaneAccessError` status classes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -222,20 +212,6 @@ pub struct Principal {
     pub consumer_manifest_revision: Option<u64>,
 }
 
-impl Principal {
-    /// `_ROLE_PERMISSIONS` of `qdl/security/policy.py` for the principal
-    /// permission each data-plane permission requires
-    /// (`DataPlaneAccess.require_permission`).
-    fn grants(&self, data_plane_permission: &str) -> bool {
-        let role = match data_plane_permission {
-            STREAM_READ => "stream_consumer",
-            HISTORY_READ => "historical_reader",
-            _ => "market_data_reader",
-        };
-        self.roles.contains(role) || self.roles.contains("platform_admin")
-    }
-}
-
 fn now_seconds() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -343,13 +319,9 @@ pub fn verify_token(config: &JwtConfig, token: &str, now: f64) -> Result<Princip
                 .collect()
         })
         .unwrap_or_default();
-    if roles.is_empty()
-        || roles
-            .iter()
-            .any(|role| !KNOWN_ROLES.contains(&role.as_str()))
-    {
-        return Err("workload token contains unknown or empty roles".into());
-    }
+    // DL v2.4.0 S8: role claims are accepted and ignored. The signing key is
+    // bound to the manifest subject and the manifest's permissions are the
+    // only gate (`Access::require_permission`), as in the Python service.
     let consumer_manifest_revision = match claims.get("consumer_manifest_revision") {
         None | Some(Value::Null) => None,
         Some(value) => {
@@ -372,9 +344,138 @@ pub fn verify_token(config: &JwtConfig, token: &str, now: f64) -> Result<Princip
     })
 }
 
-/// Shared minute quota, the same Redis script and key as `RedisMinuteQuota`.
+/// Request quota. DL v2.4.0 S7: a coarse per-replica guard; `refund` returns
+/// a unit a later refusal must not keep (default: nothing to return).
 pub trait RequestQuota: Send + Sync {
     fn consume(&self, manifest: &Manifest) -> Result<(), AccessError>;
+
+    fn refund(&self, _manifest: &Manifest) {}
+}
+
+/// Per-replica in-memory token bucket per consumer identity (DL v2.4.0 S7).
+///
+/// Rate: `requests_per_minute * share / 60` per second, with a burst of
+/// `burst_seconds` of that rate (at least 10 units). With `share` = 1/replicas
+/// the fleet total equals the manifest's minute quota. No network call: a
+/// Redis outage can no longer refuse every stream open. Identities named by
+/// `full_share_prefixes` (default `trading-system.`) get their full rate on
+/// every replica: the Trading System writer's traffic is not balanced across
+/// replicas (same rule as the Python Query service).
+pub struct LocalTokenBucketQuota {
+    share: f64,
+    burst_seconds: f64,
+    full_share_prefixes: Vec<String>,
+    buckets: std::sync::Mutex<BTreeMap<String, (f64, std::time::Instant)>>,
+}
+
+impl LocalTokenBucketQuota {
+    pub fn new(share: f64, burst_seconds: f64) -> Result<Self, String> {
+        Self::with_full_share(share, burst_seconds, vec!["trading-system.".into()])
+    }
+
+    pub fn with_full_share(
+        share: f64,
+        burst_seconds: f64,
+        full_share_prefixes: Vec<String>,
+    ) -> Result<Self, String> {
+        if !(share > 0.0 && share <= 1.0 && (1.0..=600.0).contains(&burst_seconds)) {
+            return Err("local quota share must be in (0, 1] and burst within 1..600 s".into());
+        }
+        Ok(Self {
+            share,
+            burst_seconds,
+            full_share_prefixes: full_share_prefixes
+                .into_iter()
+                .filter(|item| !item.is_empty())
+                .collect(),
+            buckets: std::sync::Mutex::new(BTreeMap::new()),
+        })
+    }
+
+    fn shape(&self, manifest: &Manifest) -> (f64, f64) {
+        let share = if self
+            .full_share_prefixes
+            .iter()
+            .any(|prefix| manifest.consumer_id.starts_with(prefix.as_str()))
+        {
+            1.0
+        } else {
+            self.share
+        };
+        let rate = manifest.quotas.requests_per_minute as f64 * share / 60.0;
+        (rate, (rate * self.burst_seconds).max(10.0))
+    }
+
+    fn take(&self, manifest: &Manifest, now: std::time::Instant) -> bool {
+        let (rate, capacity) = self.shape(manifest);
+        let mut buckets = self
+            .buckets
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let entry = buckets
+            .entry(manifest.consumer_id.clone())
+            .or_insert((capacity, now));
+        let elapsed = now.saturating_duration_since(entry.1).as_secs_f64();
+        entry.0 = (entry.0 + elapsed * rate).min(capacity);
+        entry.1 = now;
+        if entry.0 >= 1.0 {
+            entry.0 -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl RequestQuota for LocalTokenBucketQuota {
+    fn consume(&self, manifest: &Manifest) -> Result<(), AccessError> {
+        if self.take(manifest, std::time::Instant::now()) {
+            Ok(())
+        } else {
+            Err(AccessError::RateLimited(
+                "consumer request quota is exhausted".into(),
+            ))
+        }
+    }
+
+    fn refund(&self, manifest: &Manifest) {
+        let (_, capacity) = self.shape(manifest);
+        let mut buckets = self
+            .buckets
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if let Some(entry) = buckets.get_mut(&manifest.consumer_id) {
+            entry.0 = (entry.0 + 1.0).min(capacity);
+        }
+    }
+}
+
+/// The local guard plus an optional shared Redis minute counter. A Redis
+/// failure is not a refusal (the local guard already admitted the request);
+/// only a Redis "exhausted" answer refuses, and returns the local unit.
+pub struct LayeredQuota {
+    pub local: LocalTokenBucketQuota,
+    pub shared: Option<RedisMinuteQuota>,
+}
+
+impl RequestQuota for LayeredQuota {
+    fn consume(&self, manifest: &Manifest) -> Result<(), AccessError> {
+        self.local.consume(manifest)?;
+        if let Some(shared) = &self.shared {
+            match shared.consume(manifest) {
+                Ok(()) | Err(AccessError::Unavailable(_)) => {}
+                Err(error) => {
+                    self.local.refund(manifest);
+                    return Err(error);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn refund(&self, manifest: &Manifest) {
+        self.local.refund(manifest);
+    }
 }
 
 const MINUTE_QUOTA_LUA: &str = r"
@@ -455,14 +556,9 @@ impl Access {
         self.require_permission(STREAM_READ)
     }
 
-    /// `DataPlaneAccess.require_permission`: the token's role must grant the
-    /// principal permission, then the manifest must list the permission.
+    /// `DataPlaneAccess.require_permission`: the manifest must list the
+    /// permission (DL v2.4.0 S8: token role claims are not consulted).
     pub fn require_permission(&self, permission: &str) -> Result<(), AccessError> {
-        if !self.principal.grants(permission) {
-            return Err(AccessError::PermissionDenied(
-                "workload token does not grant the requested data-plane scope".into(),
-            ));
-        }
         if !self
             .manifest
             .allowed_permissions
@@ -553,7 +649,6 @@ pub fn authenticate(
             "authenticated workload is not bound to the requested consumer".into(),
         ));
     }
-    quota.consume(&manifest)?;
     let purpose = purpose.to_ascii_uppercase();
     if purpose.is_empty() || purpose == "UNSPECIFIED" {
         return Err(AccessError::PermissionDenied(
@@ -565,6 +660,10 @@ pub fn authenticate(
             "consumer manifest does not allow the requested data purpose".into(),
         ));
     }
+    // DL v2.4.0 S3: the quota is charged only after authentication, the
+    // manifest binding and the purpose rule admitted the request; a refusal
+    // above never spends a unit.
+    quota.consume(&manifest)?;
     Ok(Access {
         principal,
         manifest,
@@ -684,13 +783,21 @@ mod tests {
             mutate(&|c| c["environment"] = "live".into()).is_err(),
             "environment"
         );
+        // DL v2.4.0 S8: role claims are accepted and ignored.
         assert!(
-            mutate(&|c| c["roles"] = serde_json::json!(["root"])).is_err(),
-            "unknown role"
+            mutate(&|c| c["roles"] = serde_json::json!(["root"])).is_ok(),
+            "unknown role is ignored"
         );
         assert!(
-            mutate(&|c| c["roles"] = serde_json::json!([])).is_err(),
-            "empty roles"
+            mutate(&|c| c["roles"] = serde_json::json!([])).is_ok(),
+            "empty roles are ignored"
+        );
+        assert!(
+            mutate(&|c| {
+                c.as_object_mut().expect("object").remove("roles");
+            })
+            .is_ok(),
+            "absent roles are ignored"
         );
         assert!(
             mutate(&|c| {
@@ -841,6 +948,125 @@ mod tests {
             verify_token(&config, &hs, now as f64).unwrap_err(),
             "untrusted workload token key or algorithm"
         );
+    }
+
+    fn quota_manifest(rpm: u64) -> Manifest {
+        Manifest {
+            consumer_id: "alpha.okx.paper.stable".into(),
+            subject: "spiffe://test/alpha".into(),
+            environment: "paper".into(),
+            manifest_revision: 3,
+            min_token_revision: 1,
+            allowed_purposes: vec!["INTERNAL_ALPHA".into()],
+            allowed_permissions: vec![STREAM_READ.into()],
+            quotas: crate::bundle::Quotas {
+                requests_per_minute: rpm,
+                max_batch_items: 10,
+                max_warmup_rows: 100,
+                max_streams: 4,
+                max_buffer_events: 100,
+            },
+            requirements: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_local_bucket_admits_its_burst_refills_and_refunds() {
+        // 1,200 rpm at share 0.5 = 10/s per replica, burst 2 s = 20 units.
+        let quota = LocalTokenBucketQuota::new(0.5, 2.0).expect("quota");
+        let manifest = quota_manifest(1_200);
+        let start = std::time::Instant::now();
+        for _ in 0..20 {
+            assert!(quota.take(&manifest, start));
+        }
+        assert!(!quota.take(&manifest, start), "burst exhausted");
+        quota.refund(&manifest);
+        assert!(quota.take(&manifest, start), "a refunded unit is usable");
+        assert!(!quota.take(&manifest, start));
+        let later = start + std::time::Duration::from_millis(500);
+        for _ in 0..5 {
+            assert!(quota.take(&manifest, later), "10/s refills 5 in 500 ms");
+        }
+        assert!(!quota.take(&manifest, later));
+        assert!(LocalTokenBucketQuota::new(0.0, 2.0).is_err());
+        assert!(LocalTokenBucketQuota::new(0.5, 0.5).is_err());
+    }
+
+    #[test]
+    fn the_trading_system_identity_gets_its_full_rate_per_replica() {
+        let quota = LocalTokenBucketQuota::new(0.5, 2.0).expect("quota");
+        let mut ts = quota_manifest(1_200);
+        ts.consumer_id = "trading-system.paper.stable".into();
+        let now = std::time::Instant::now();
+        let taken = (0..100).take_while(|_| quota.take(&ts, now)).count();
+        assert_eq!(taken, 40, "20/s x 2 s burst, not the alpha 10/s x 2 s");
+    }
+
+    #[test]
+    fn a_redis_outage_does_not_refuse_and_the_local_guard_still_holds() {
+        // Port 1 refuses connections: the shared layer is "unavailable".
+        let quota = LayeredQuota {
+            local: LocalTokenBucketQuota::new(1.0, 1.0).expect("local"),
+            shared: Some(
+                RedisMinuteQuota::new("redis://127.0.0.1:1/0", "qdl:stable:v2:test")
+                    .expect("redis"),
+            ),
+        };
+        let manifest = quota_manifest(600); // 10/s, burst max(10, 10) = 10
+        for _ in 0..10 {
+            assert_eq!(quota.consume(&manifest), Ok(()));
+        }
+        assert!(matches!(
+            quota.consume(&manifest),
+            Err(AccessError::RateLimited(_))
+        ));
+    }
+
+    #[test]
+    fn a_purpose_refusal_spends_no_quota() {
+        struct Counting(std::sync::atomic::AtomicUsize);
+        impl RequestQuota for Counting {
+            fn consume(&self, _manifest: &Manifest) -> Result<(), AccessError> {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            }
+        }
+        let (encoding, decoding) = keypair();
+        let config = config(decoding);
+        let now = now_seconds().floor() as i64;
+        let mut manifest = quota_manifest(600);
+        manifest.subject = "spiffe://test/alpha".into();
+        let bundle = Bundle {
+            sha256: String::new(),
+            environment: "paper".into(),
+            catalog_revision: 1,
+            source_policy_revision: 1,
+            canonical_stream: "canonical".into(),
+            bindings: Vec::new(),
+            manifests: vec![manifest.clone()],
+        };
+        let counting = Counting(std::sync::atomic::AtomicUsize::new(0));
+        let bearer = format!("Bearer {}", token(&encoding, "k1", claims(now)));
+        let refused = authenticate(
+            &config,
+            &bundle,
+            &counting,
+            &bearer,
+            &manifest.consumer_id,
+            "INTERNAL_EXECUTION",
+        );
+        assert!(matches!(refused, Err(AccessError::PermissionDenied(_))));
+        assert_eq!(counting.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let admitted = authenticate(
+            &config,
+            &bundle,
+            &counting,
+            &bearer,
+            &manifest.consumer_id,
+            "INTERNAL_ALPHA",
+        );
+        assert!(admitted.is_ok(), "{admitted:?}");
+        assert_eq!(counting.0.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[test]

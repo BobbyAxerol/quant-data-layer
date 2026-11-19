@@ -136,11 +136,23 @@ class ReferenceRequirement(ClosedModel):
             raise ValueError("funding-rate requires a bounded window")
         if self.product is ReferenceProduct.OPEN_INTEREST and historical and not self.interval:
             raise ValueError("historical open-interest requires interval")
-        if self.product in {
-            ReferenceProduct.MARK_INDEX_PRICE,
-            ReferenceProduct.CONTRACT_METADATA,
-        } and (historical or self.interval is not None):
+        if self.product is ReferenceProduct.CONTRACT_METADATA and (historical or self.interval is not None):
             raise ValueError("reference snapshot product cannot declare history or interval")
+        if self.product is ReferenceProduct.MARK_INDEX_PRICE:
+            if not historical or self.consumer_grade is Grade.EXECUTION:
+                # Unchanged: execution MARK/INDEX and the current snapshot carry no window or interval.
+                if historical or self.interval is not None:
+                    raise ValueError("reference snapshot product cannot declare history or interval")
+            else:
+                # SDK 2.9.0 (Data Layer v2.4.0 A-FUND): a bounded 1m MARK or INDEX candle history.
+                if self.interval != "1m":
+                    raise ValueError("historical mark/index price requires interval 1m")
+                if self.mark_index_kind is MarkIndexKind.BOTH:
+                    raise ValueError("historical mark/index price reads MARK or INDEX, not BOTH")
+                if self.start_time_ns % 60_000_000_000 or self.end_time_ns % 60_000_000_000:
+                    raise ValueError("historical mark/index price window must be aligned to whole minutes")
+                if not 1 <= self.limit <= 100:
+                    raise ValueError("historical mark/index price limit must be between 1 and 100")
         if execution_mark_snapshot and (
             self.limit != 1
             or self.page_size not in {None, 1}

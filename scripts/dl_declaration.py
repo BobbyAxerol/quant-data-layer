@@ -161,6 +161,18 @@ SCOPE_FEEDS = ("TRADE", "QUOTE", "MARK_INDEX_PRICE", "BOOK_SNAPSHOT", "BOOK_DELT
 # TS writer reader (trading_system 44c098d7 services/market_data/declared_scope.py MARKETS); widen only with it.
 SCOPE_MARKETS = {"BINANCE": {"USDM"}, "OKX": {"SWAP"}}
 REFERENCE_FEEDS = frozenset({"FUNDING_RATE"})
+# DL v2.4.0 A-FUND: an EXECUTION consumer's declared reference reads. The rows are ALPHA grade because only
+# MARK_INDEX_PRICE may be execution-grade reference data (qdl/query/reference.py ReferenceDataRequirement); they are
+# granted for every PERPETUAL instrument the manifest already reads MARK_INDEX_PRICE for, with the alpha manifests'
+# per-venue freshness (OKX 8 h, Binance 9 h: the alpha-binance / reference-l2 rows).
+# Declared token -> (feed, interval, freshness per venue). ``MARK_INDEX_PRICE@1m`` is the historical 1m MARK candle
+# read (OKX only: settled Binance funding rows carry markPrice), ALPHA grade like FUNDING_RATE.
+EXECUTION_REFERENCE = {
+    "FUNDING_RATE": ("FUNDING_RATE", None, {"OKX": 28_800_000, "BINANCE": 32_400_000}),
+    "MARK_INDEX_PRICE@1M": ("MARK_INDEX_PRICE", "1m", {"OKX": 28_800_000}),
+}
+# Route of a reference product without a template in the consumer's own routes (the alpha manifests' route).
+REFERENCE_ROUTE = {"route": "V2_PRIMARY", "fallback": "BLOCKED", "reason": "V1_REFERENCE_EQUIVALENCE_UNPROVEN"}
 OKX_INTERVALS = ("1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "2d", "3d", "1w")
 # DL v2.3.1 stage C: Binance USDM signal universes (fapi kline intervals; 1M excluded like OKX).
 BINANCE_USDM_INTERVALS = ("1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w")
@@ -885,6 +897,7 @@ class Render:
             changed = False
             if klass == "EXECUTION":
                 changed = self._execution_manifest(cid, consumer, target, instrument_by_symbol)
+                changed = self._execution_reference(cid, consumer, target, catalog) or changed
             else:
                 changed = self._signal_manifest(cid, consumer, target, catalog)
             quotas = consumer.get("quotas") or {}
@@ -981,6 +994,39 @@ class Render:
             requirements[new_key] = requirement
             added.append(requirement)
             self._execution_added.append((row["native_symbol"], row["feed"]))
+        return bool(added)
+
+    def _execution_reference(self, cid, consumer, target, catalog) -> bool:
+        """Declared reference reads of an EXECUTION consumer (``reference: [FUNDING_RATE]``), additive."""
+        tokens = [str(f).upper() for f in consumer.get("reference") or []]
+        unknown = sorted(set(tokens) - set(EXECUTION_REFERENCE))
+        if unknown:
+            raise DeclarationRefused(f"{cid} reference feeds not declarable for an EXECUTION consumer: {unknown}")
+        requirements = target["spec"]["requirements"]
+        existing = {(r["instrument_uid"], r["feed"], r.get("interval")) for r in requirements}
+        marks = list(dict.fromkeys(r["instrument_uid"] for r in requirements
+                                   if r["feed"] == "MARK_INDEX_PRICE" and not r.get("interval")))
+        added = 0
+        for token in tokens:
+            feed, interval, venue_freshness = EXECUTION_REFERENCE[token]
+            for uid in marks:
+                record = catalog.instrument_for(uid)
+                if record.identity.product_type.value != "PERPETUAL" or (uid, feed, interval) in existing:
+                    continue
+                freshness = venue_freshness.get(record.identity.venue)
+                if freshness is None:
+                    self.blocked.append(_blocked(cid, "REFERENCE_VENUE_NOT_DECLARABLE", venue=record.identity.venue,
+                                                 market=record.identity.market,
+                                                 native_symbol=record.native_symbol, feed=feed))
+                    continue
+                requirements.append({
+                    "bar_revision_policy": "LATEST", "consumer_grade": "ALPHA", "feed": feed, "gap_policy": "BLOCK",
+                    "instrument_uid": uid, "interval": interval, "max_freshness_ms": freshness,
+                    "recovery": "FRESH_SNAPSHOT", "require_final_bars": False, "require_full_coverage": True,
+                    "source_policy_id": "crypto_liquid_v2", "stale_policy": "BLOCK", "warmup_limit": 0,
+                })
+                existing.add((uid, feed, interval))
+                added += 1
         return bool(added)
 
     def _signal_manifest(self, cid, consumer, target, catalog) -> bool:
@@ -1095,6 +1141,9 @@ class Render:
                     catalog.instrument_for(p["requirement_key"].split(":")[0]).identity)
                     == (identity.venue, identity.market)]
                 template = (same_market or candidates or [None])[0]
+                if template is None and (requirement.feed.value in REFERENCE_FEEDS or (
+                        requirement.feed.value == "MARK_INDEX_PRICE" and requirement.interval)):
+                    template = REFERENCE_ROUTE
                 if template is None:
                     raise DeclarationRefused(f"{consumer['consumer_id']} has no product route template for "
                                              f"{requirement.feed.value} {requirement.interval}")
@@ -1272,7 +1321,7 @@ class Render:
             lanes_before = ingestor_lanes.lane_plan_report(
                 runtime_name, active["bindings"],
                 ingestor_lanes.current_lane_assignment(runtime_name, active["bindings"], cap))
-            changed = bool(change["added_binding_count"] or native_bars)
+            changed = bool(change["added_binding_count"] or native_bars or change["tuned_fields"])
             if pins_on:
                 pins = ingestor_lanes.sticky_lane_pins(runtime_name, active["bindings"], successor["bindings"], cap)
                 pinned = ingestor_lanes.apply_lane_pins(successor, pins)
@@ -1299,6 +1348,7 @@ class Render:
                 "lanes": {name: {"feed": v["feed"], "members": len(v["members"])} for name, v in lanes_after.items()},
                 "new_lanes": sorted(set(lanes_after) - set(lanes_before)),
                 "latest_state_flush_ms_by_feed": successor.get("latest_state_flush_ms_by_feed"),
+                "session_liveness_write_interval_ms": successor.get("session_liveness_write_interval_ms"),
                 "max_subscriptions_per_connection": cap,
             }
         return report

@@ -70,6 +70,31 @@ gRPC message. The session still yields one event per record with its own
 resume token; against an older gateway, or with `max_records_per_response=1`,
 every message carries one record as before.
 
+`RestQueryTransport(..., session_id="<session>")` (SDK 2.8.0, Data Layer v2.4.0) sends the optional
+`X-QDL-Session` fairness hint: the Data Layer queues warmups and shares the identity's request
+rate per session, so one noisy session is throttled alone. It grants nothing; default None sends
+the 2.7.0 request.
+
+`GrpcStreamTransport(..., session_alive_interval_ms=500)` (SDK 2.7.0, Data Layer
+v2.3.2; 0, the default, is off) asks the gateway for `SessionAliveEvent` frames
+on an event-recency OBSERVE QUOTE/TRADE subscription: typed evidence, at most
+every 250..500 ms, that the provider session of the instrument's last event is
+LIVE while the instrument is quiet. A frame is not a market event: it carries
+the current resume token unchanged, never advances the cursor and is never
+acknowledged. Silence is the signal (no frame, no proof): the gateway withholds
+frames when the session is not LIVE, its record is stale or unreadable, or the
+stream is not LIVE, and drops (never queues) a frame the transport cannot take.
+Match `source_session_id`, `connection_generation` and `config_revision`
+against the cached event before re-stamping its proof. Any other route is
+refused `SESSION_ALIVE_INVALID`; a gateway without a session-liveness source
+refuses `SESSION_ALIVE_UNAVAILABLE`; an older gateway ignores the field.
+
+`GrpcStreamTransport(..., delivery_on_change_flag=True)` (SDK 2.7.0) asks the gateway to
+mark QUOTE records of an `ON_CHANGE` binding (the native BBO is published only when it
+changes) with `QUALITY_FLAG_DELIVERY_ON_CHANGE`. This is the same rule as the Query flag, and
+`market_data_view_from_stream` shows it as `DELIVERY_ON_CHANGE`. It is off by default because
+readers before 2.7.0 refuse an unknown quality flag. An older gateway ignores the field.
+
 Each `StreamEvent` from a 2.4.0 gateway also carries the gateway's wall clocks
 for that record (Unix ns, gateway host clock, diagnostics only):
 `gateway_dispatch_wall_ns` (the live hub queued it for this subscription),
@@ -161,7 +186,7 @@ Build the standalone artifact with:
 python scripts/build_qdl_sdk_release.py --output-dir dist/qdl-sdk
 ```
 
-The output contains a reproducible `qdl_sdk-2.6.0-py3-none-any.whl`, a release
+The output contains a reproducible `qdl_sdk-2.9.0-py3-none-any.whl`, a release
 manifest with the wheel/source/generated-contract SHA-256 digests, and a
 CycloneDX SBOM. The wheel contains only the public SDK plus generated Protobuf
 contracts; it does not package `qdl.api_v2`, runtime adapters, provider code or

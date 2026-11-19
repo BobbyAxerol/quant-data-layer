@@ -121,6 +121,80 @@ class GuardTests(unittest.TestCase):
             self.assertEqual(b.check_disk(Path("/"), 5), 10.0)
 
 
+class RuntimeBaseTests(unittest.TestCase):
+    """v2.4.0 R0: the runtime base is a pinned recipe with an apt upgrade, pinned by its full image id."""
+
+    def test_base_recipe_upgrades_and_keeps_the_runtime_stage(self):
+        recipe = b.RUST_BASE_RECIPE
+        self.assertTrue(recipe.startswith(f"FROM {b.DEBIAN_BASE}\n"))
+        self.assertRegex(b.DEBIAN_BASE, r"^debian@sha256:[0-9a-f]{64}$")
+        self.assertIn("apt-get upgrade -y", recipe)
+        for package in ("ca-certificates", "libssl3", "libzstd1", "zlib1g"):
+            self.assertIn(package, recipe)
+        self.assertIn("useradd --uid 10001 --gid 10001", recipe)
+        dockerfile = (REPO / "Dockerfile.qdl-rust-runtime").read_text()
+        self.assertIn(f"FROM {b.DEBIAN_BASE}", dockerfile)  # same debian as the runtime stage
+
+    def test_base_is_pinned_by_full_id_and_named_in_the_build_method(self):
+        self.assertRegex(b.RUST_BASE_ID, r"^sha256:[0-9a-f]{64}$")
+        self.assertEqual(b.RUST_BASE_ID, "sha256:b33ec0cb161e80f3300684f96fa956eedabc49325e401a170fb25c02d4b2eef7")
+        self.assertTrue(b.BUILD_METHOD.endswith("runtime-overlay-" + b.RUST_BASE_ID[7:15]))
+
+    def test_build_base_refuses_to_move_an_existing_tag(self):
+        with mock.patch.object(b, "image_id", return_value="sha256:" + "a" * 64), mock.patch("builtins.print") as out:
+            self.assertEqual(b.main(["--build-base", "qdl-v2-rust-base:x"]), 2)
+        self.assertIn("never move a tag", out.call_args.args[0])
+
+
+class HostClassTests(unittest.TestCase):
+    """AGENTS 34b: a build is correctness work (activity record + load gate); measurement keeps the lock."""
+
+    def test_default_class_is_correctness_and_measurement_is_explicit(self):
+        self.assertEqual(b.parse_args(["--build", "--lock-owner", "me"]).klass, "correctness")
+        self.assertEqual(b.parse_args(["--build", "--lock-owner", "me", "--class", "measurement"]).klass,
+                         "measurement")
+
+    def test_correctness_record_is_written_checked_and_cleared_without_any_lock(self):
+        now = dt.datetime(2026, 11, 18, 14, 0, tzinfo=dt.timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            activity = Path(tmp) / "host-activity"
+            record = b.record_activity(activity, "dl-v240-r0-build", "build", 90, now)
+            self.assertEqual((record["class"], record["until_utc"]), ("correctness", "2026-11-18T15:30:00Z"))
+            self.assertIn("rust_compile", record["cpu_cap"])
+            self.assertEqual(b.check_activity(activity, "dl-v240-r0-build", now)["owner"], "dl-v240-r0-build")
+            with self.assertRaisesRegex(b.BuildError, "ended"):
+                b.check_activity(activity, "dl-v240-r0-build", now + dt.timedelta(minutes=91))
+            with self.assertRaisesRegex(b.BuildError, "missing"):
+                b.check_activity(activity, "someone-else", now)
+            b.clear_activity(activity, "dl-v240-r0-build")
+            self.assertFalse((activity / "dl-v240-r0-build.json").exists())
+            for bad in (None, "../x", "a b"):
+                with self.subTest(owner=bad), self.assertRaises(b.BuildError):
+                    b.record_activity(activity, bad, "build", 10, now)
+            with self.assertRaises(b.BuildError):
+                b.record_activity(activity, "me", "build", b.MAX_LOCK_MINUTES + 1, now)
+
+    def test_load_gate_waits_bounded_then_refuses(self):
+        loads = iter([(25.0,), (21.0,), (19.5,)])
+        slept = []
+        self.assertEqual(b.check_load(20.0, 60, read=lambda: next(loads), sleep=slept.append,
+                                      clock=lambda: 0.0), 19.5)
+        self.assertEqual(len(slept), 2)
+        clock = iter([0.0, 0.0, 100.0])
+        with self.assertRaisesRegex(b.BuildError, "stayed"):
+            b.check_load(20.0, 60, read=lambda: (30.0,), sleep=lambda _s: None, clock=lambda: next(clock))
+
+    def test_measurement_class_still_requires_the_lock(self):
+        now = dt.datetime(2026, 11, 18, 14, 0, tzinfo=dt.timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(b.BuildError, "no host lock"):
+            b.check_lock(Path(tmp) / "lock", "me", now)
+
+    def test_probe_and_compile_containers_are_cpu_capped(self):
+        for argv in (b.probe_argv("img", "true"), b.extract_argv("sha256:" + "1" * 64, "qdl-projector"),
+                     b.rust_compile_argv(Path("/s/build-v2.4.0-abc1234"), Path("/w"))):
+            self.assertIn("--cpus", argv)
+
+
 class CommandTests(unittest.TestCase):
     def test_rust_compile_is_offline_pinned_and_read_only_source(self):
         argv = b.rust_compile_argv(Path("/s/build-v2.2.5-abc1234"), Path("/w"))
@@ -143,9 +217,23 @@ class CommandTests(unittest.TestCase):
         text = b.rust_dockerfile("f" * 40)
         self.assertTrue(text.startswith(f"FROM {b.RUST_BASE_TAG}\n"))
         self.assertIn(f'org.opencontainers.image.version="{b.RELEASE}"', text)
-        self.assertIn('qdl.build.method="cargo-cache-551428d9+runtime-overlay-f41ecb66"', text)
+        self.assertIn(f'qdl.build.method="{b.BUILD_METHOD}"', text)
+        self.assertEqual(b.BUILD_METHOD, f"cargo-cache-{b.BUILDER_IMAGE[7:15]}+runtime-overlay-b33ec0cb")
         self.assertNotIn("qdl.test.only", text)
         self.assertIn("USER 10001:10001", text)
+
+    def test_builder_and_base_are_digest_pinned_and_follow_the_committed_recipe(self):
+        for ref in (b.BUILDER_IMAGE, b.RUST_BASE_ID):
+            self.assertRegex(ref, r"^sha256:[0-9a-f]{64}$")
+        dockerfile = (REPO / "Dockerfile.qdl-rust-runtime").read_text()
+        builder_from = dockerfile.split("FROM ", 2)[1].split()[0]
+        self.assertEqual(f"FROM {builder_from}", b.BUILDER_RECIPE.splitlines()[0])
+        apt = dockerfile.split("apt-get install -y --no-install-recommends", 1)[1].split("&&", 1)[0]
+        self.assertEqual(tuple(apt.replace("\\", " ").split()), b.BUILDER_APT_PACKAGES)
+        toolchain = (REPO / "rust-toolchain.toml").read_text()
+        self.assertIn('channel = "1.82.0"', toolchain)
+        self.assertIn("rustup component add --toolchain 1.82.0 clippy rustfmt", b.BUILDER_RECIPE)
+        self.assertIn("FROM debian@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241", dockerfile)
 
     def test_rust_image_build_has_no_network_and_no_pull(self):
         argv = b.rust_image_argv(Path("/s/d"), "t")
@@ -266,73 +354,58 @@ class SectionTests(unittest.TestCase):
 
 
 class VerdictTests(unittest.TestCase):
-    """Fixture = the rustls 0.23.46 rebuild: every rustls-linked binary differs from every reference, qdl-projector
-    and qdl-venue-core-certify are whole-file EQUAL to 83bef59 (and to the earlier references they equalled)."""
+    """Fixture = the v2.3.2 rebuild: every binary differs from the production rc2 image (source or locked-dependency
+    delta in every crate graph since 832c02c4)."""
 
     def references(self):
-        rc22 = shas("1" * 64)
-        rc22["qdl-stream-gateway"] = "2" * 64
-        stream = {"qdl-stream-gateway": "3" * 64}
-        v224 = shas("1" * 64)
-        v224["qdl-stream-gateway"] = "3" * 64
-        v224["qdl-native-raw-ingestor"] = "8" * 64
-        return {"rc22_core": rc22, "stream_baa72c96": stream,
-                "rc18_ingestor": {"qdl-native-raw-ingestor": "5" * 64},
-                "rc14_projector": {"qdl-projector": "6" * 64},
-                "v224_c7ce7d3": v224,
-                "v224_6d61710": {**v224, "qdl-native-raw-ingestor": "b" * 64},
-                "v224_83bef59": {**v224, "qdl-native-raw-ingestor": "c" * 64}}
+        return {"v230_rc2": shas("1" * 64)}
 
     def release(self):
-        rel = shas("1" * 64)
-        for index, name in enumerate(sorted(b.RUSTLS_LINKED)):
-            rel[name] = f"{index:x}".rjust(2, "d") * 32  # rustls 0.23.46: differs from every reference
-        return rel
+        return {name: f"{index:x}".rjust(2, "d") * 32 for index, name in enumerate(b.RUST_BINARIES)}
 
     def test_expected_mix_passes(self):
         verdict = b.binary_verdicts(self.release(), self.references())
         self.assertTrue(verdict["ok"], verdict["unexpected"])
-        # The core binary links rustls: it is no longer byte-identical to the measured rc22 core.
+        # The core carries the v2.3.1 dependency refresh: it is not byte-identical to the production core.
         self.assertFalse(verdict["core_equal_to_measured"])
 
-    def test_a_linked_binary_equal_to_a_reference_is_unexpected(self):
+    def test_a_binary_equal_to_production_is_unexpected(self):
         rel = self.release()
-        rel["qdl-realtime-core"] = self.references()["v224_83bef59"]["qdl-realtime-core"]
+        rel["qdl-realtime-core"] = self.references()["v230_rc2"]["qdl-realtime-core"]
         verdict = b.binary_verdicts(rel, self.references())
         self.assertFalse(verdict["ok"])
         self.assertTrue(verdict["core_equal_to_measured"])
         self.assertEqual({r["binary"] for r in verdict["unexpected"]}, {"qdl-realtime-core"})
 
     def test_section_expectation_needs_an_analysis(self):
-        rows = {"qdl-stream-gateway": [("stream_baa72c96", "DIFFERENT_BUILD_PATH", "fixture")]}
+        rows = {"qdl-stream-gateway": [("v230_rc2", "DIFFERENT_BUILD_PATH", "fixture")]}
         with mock.patch.dict(b.BINARY_EXPECTATIONS, rows):
             verdict = b.binary_verdicts(self.release(), self.references())
             self.assertEqual([(r["binary"], r["reference"], r["observed"]) for r in verdict["unexpected"]],
-                             [("qdl-stream-gateway", "stream_baa72c96", "NOT_ANALYSED")])
-            ok = {("qdl-stream-gateway", "stream_baa72c96"): {"observed": "DIFFERENT_BUILD_PATH"}}
+                             [("qdl-stream-gateway", "v230_rc2", "NOT_ANALYSED")])
+            ok = {("qdl-stream-gateway", "v230_rc2"): {"observed": "DIFFERENT_BUILD_PATH"}}
             self.assertTrue(b.binary_verdicts(self.release(), self.references(), ok)["ok"])
-            bad = {("qdl-stream-gateway", "stream_baa72c96"): {"observed": "DIFFERENT"}}
+            bad = {("qdl-stream-gateway", "v230_rc2"): {"observed": "DIFFERENT"}}
             self.assertFalse(b.binary_verdicts(self.release(), self.references(), bad)["ok"])
 
-    def test_projector_loaded_sections_or_whole_file(self):
-        rel = self.release()
-        rel["qdl-projector"] = "7" * 64
-        verdict = b.binary_verdicts(rel, self.references())
-        self.assertEqual([(r["binary"], r["reference"], r["observed"]) for r in verdict["unexpected"]],
-                         [("qdl-projector", "rc22_core", "NOT_ANALYSED"),
-                          ("qdl-projector", "v224_c7ce7d3", "NOT_ANALYSED"),
-                          ("qdl-projector", "v224_6d61710", "NOT_ANALYSED"),
-                          ("qdl-projector", "v224_83bef59", "DIFFERENT")])
-        self.assertTrue(b.binary_verdicts(self.release(), self.references())["ok"])  # whole-file EQUAL satisfies
+    def test_loaded_sections_expectation_is_satisfied_by_whole_file_equal(self):
+        rows = {"qdl-projector": [("v230_rc2", "EQUAL_LOADED_SECTIONS", "fixture")]}
+        with mock.patch.dict(b.BINARY_EXPECTATIONS, rows):
+            rel = self.release()
+            self.assertEqual([(r["binary"], r["observed"]) for r in
+                              b.binary_verdicts(rel, self.references())["unexpected"]],
+                             [("qdl-projector", "NOT_ANALYSED")])
+            rel["qdl-projector"] = "1" * 64
+            self.assertTrue(b.binary_verdicts(rel, self.references())["ok"])
 
     def test_missing_binary_or_unread_reference_fails(self):
         rel = self.release()
         del rel["qdl-kafka-smoke"]
         self.assertEqual(b.binary_verdicts(rel, self.references())["missing"], ["qdl-kafka-smoke"])
         refs = self.references()
-        del refs["rc14_projector"]
+        del refs["v230_rc2"]["qdl-projector"]
         unexpected = b.binary_verdicts(self.release(), refs)["unexpected"]
-        self.assertEqual([r["observed"] for r in unexpected], ["NOT_READ"])
+        self.assertEqual([(r["binary"], r["observed"]) for r in unexpected], [("qdl-projector", "NOT_READ")])
 
     def test_every_binary_has_an_expectation_and_production_refs_are_declared(self):
         self.assertEqual(set(b.BINARY_EXPECTATIONS), set(b.RUST_BINARIES))
@@ -340,6 +413,8 @@ class VerdictTests(unittest.TestCase):
             for ref, expected, _ in rows:
                 self.assertIn(ref, b.REFERENCES)
                 self.assertIn(expected, b.EXPECTATIONS)
+        self.assertEqual(b.REFERENCES[b.PRODUCTION_RUST_REFERENCE][1],
+                         "sha256:58bdd28216139f0c1a40abeee3077834f1cf922cf6412e7fb1ce8845591a0512")
 
     def test_python_file_verdict(self):
         ref = {"qdl/a.py": "1", "qdl/b.py": "2", "app/c.py": "3"}
@@ -376,16 +451,43 @@ class SourceTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(any(b.SDK_VERSION in p for p in result["problems"]))
 
-    @unittest.skipUnless(git_has(*(rev for _, rev in b.PYTHON_REFERENCE_TREE)),
+    @unittest.skipUnless(git_has(*(tree for _, _, tree in b.PYTHON_REFERENCES.values())),
                          "reference revision not in this (shallow?) checkout")
-    def test_expected_python_diff_is_the_git_diff_against_the_production_query_tree(self):
-        self.assertEqual(b.PYTHON_REFERENCE[1],
-                         "sha256:3e9e4d3add0f35c5d4b4796c785a35b466c326d3328184f396182b5f51367fff")
-        diff = b.expected_python_diff(REPO, self.head())
-        expected = subprocess.check_output(["git", "-C", str(REPO), "diff", "--name-only", "--no-renames",
-                                            b.PYTHON_REFERENCE_TREE[0][1], self.head(), "--",
-                                            *b.PYTHON_HASH_ROOTS]).decode().split()
-        self.assertEqual(diff, sorted(expected))
+    def test_expected_python_diff_is_the_git_diff_against_each_production_tree(self):
+        self.assertEqual({ref_id for _, ref_id, _ in b.PYTHON_REFERENCES.values()},
+                         {"sha256:26c3b051ed1378aa83928230866cffcd6abcea87d248c06f850ee056994b3b47",
+                          "sha256:a235c0a18cdeb112ea0b49627eaf02f2a68ab878298ebba07884461ee5709d0b"})
+        for _, _, tree in b.PYTHON_REFERENCES.values():
+            diff = b.expected_python_diff(REPO, self.head(), tree)
+            expected = subprocess.check_output(["git", "-C", str(REPO), "diff", "--name-only", "--no-renames",
+                                                tree, self.head(), "--", *b.PYTHON_HASH_ROOTS]).decode().split()
+            self.assertEqual(diff, sorted(expected))
+
+    @unittest.skipUnless(git_has(b.PRODUCTION_RUST_REVISION), "rc2 revision not in this (shallow?) checkout")
+    def test_every_binary_has_a_rust_delta_since_the_production_image(self):
+        """DIFFERENT against rc2 is meaningful only if each binary's package graph changed since 832c02c4."""
+        import tomllib
+        old = tomllib.loads(subprocess.check_output(["git", "-C", str(REPO), "show",
+                                                     b.PRODUCTION_RUST_REVISION + ":Cargo.lock"]).decode())
+        new = tomllib.loads(subprocess.check_output(["git", "-C", str(REPO), "show", self.head() + ":Cargo.lock"]).decode())
+        before = {p["name"]: p["version"] for p in old["package"]}
+        deps = {p["name"]: [d.split()[0] for d in p.get("dependencies", [])] for p in new["package"]}
+        changed = {p["name"] for p in new["package"] if before.get(p["name"]) != p["version"]}
+        for crate in ("qdl-contracts", "qdl-stream-gateway"):
+            if subprocess.check_output(["git", "-C", str(REPO), "diff", "--name-only", b.PRODUCTION_RUST_REVISION,
+                                        self.head(), "--", f"rust/{crate}/src"]).strip():
+                changed.add(crate)
+
+        def closure(name, seen):
+            for dep in deps.get(name, []):
+                if dep not in seen:
+                    seen.add(dep)
+                    closure(dep, seen)
+            return seen
+        for binary, package in b.BINARY_PACKAGE.items():
+            with self.subTest(binary=binary):
+                self.assertTrue(closure(package, {package}) & changed, f"{binary}: no delta, DIFFERENT is not justified")
+                self.assertEqual([e for _, e, _ in b.BINARY_EXPECTATIONS[binary]], ["DIFFERENT"])
 
     def test_plan_is_dry(self):
         with mock.patch.object(b.subprocess, "run", wraps=subprocess.run) as run:
@@ -397,27 +499,3 @@ class SourceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class RustlsRebuildExpectationTests(unittest.TestCase):
-    """rustls 0.23.45 -> 0.23.46: rustls-linked binaries DIFFERENT from every reference, the other two EQUAL to 83bef59."""
-
-    def test_linked_set_is_every_binary_except_projector_and_venue_certify(self):
-        self.assertEqual(set(b.RUST_BINARIES) - b.RUSTLS_LINKED, {"qdl-projector", "qdl-venue-core-certify"})
-
-    def test_expectations_follow_the_linked_set(self):
-        for name in b.RUST_BINARIES:
-            rows = {ref: expected for ref, expected, _ in b.BINARY_EXPECTATIONS[name]}
-            if name in b.RUSTLS_LINKED:
-                self.assertEqual(set(rows.values()), {"DIFFERENT"}, name)
-                self.assertIn("v224_83bef59", rows, name)
-            else:
-                self.assertEqual(rows["v224_83bef59"], "EQUAL", name)
-
-    def test_unlinked_binary_that_differs_from_83bef59_is_unexpected(self):
-        refs = VerdictTests().references()
-        rel = VerdictTests().release()
-        rel["qdl-venue-core-certify"] = "e" * 64
-        unexpected = b.binary_verdicts(rel, refs)["unexpected"]
-        self.assertIn(("qdl-venue-core-certify", "v224_83bef59", "DIFFERENT"),
-                      [(r["binary"], r["reference"], r["observed"]) for r in unexpected])

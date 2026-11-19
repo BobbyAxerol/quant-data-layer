@@ -1,5 +1,53 @@
 # SDK Changelog
 
+## 2.9.0 (Data Layer v2.4.0 A-FUND: historical 1m MARK/INDEX candles)
+
+Additive only. `ReferenceRequirement` for `MARK_INDEX_PRICE` now also accepts a bounded window at a non-execution
+grade: `interval="1m"`, `mark_index_kind` MARK or INDEX (not BOTH), `start_time_ns`/`end_time_ns` on whole minutes,
+`limit` 1..100. The Data Layer answers with one observation per 1m candle (`observed_at_ns` = candle open; fields
+`mark_open/high/low/close` or `index_*`; labels `interval`, `price_type`, `candle_close_ns`, `confirm`), e.g. the
+mark price at a past funding time: window `[floor_1m(T), floor_1m(T) + 60 s)`, `limit=1`. OKX SWAP/FUTURES only
+(Binance answers UNAVAILABLE). Unchanged: the snapshot shape (no window, no interval) and execution-grade
+MARK_INDEX_PRICE, which stays a one-row live snapshot; a 2.8 request serializes byte-identically.
+
+## 2.8.0 (Data Layer v2.4.0: optional session fairness hint)
+
+Additive only. `RestQueryTransport` and `build_replicated_rest_query` gain keyword-only
+`session_id` (default None). When set, every Query request carries `X-QDL-Session:
+<session_id>` (1..128 printable characters). The Data Layer uses it only for fairness
+inside the authenticated identity: the session-fair warmup queue and a per-session share
+of the identity's request rate, so one noisy session of a shared tier identity is
+throttled alone. It never authenticates, authorizes or widens anything. Default None:
+request bytes equal 2.7.0. Server side (no SDK change needed): JWT role claims are
+ignored, the token manifest revision is advisory (`min_token_revision: 1`), refusals and
+shared-cache hits no longer spend quota, and a queued warmup waits up to its
+`deadline_ms` with `retry_after_ms` from its queue position.
+
+## 2.7.0 (Data Layer v2.3.2: session-alive frames for quiet QUOTE/TRADE streams)
+
+Additive only. `GrpcStreamTransport` gains keyword-only `session_alive_interval_ms`
+(default 0 = off; otherwise 250..500). When set, `subscribe()` sends the additive
+`SubscribeRequest.session_alive_interval_ms = 9` and yields `SessionAliveEvent`
+(`StreamRecord.session_alive = 12`, schema `qdl.stream.session-alive.v1`): the
+session id, connection generation and config revision of the instrument's last event,
+the ingestor's last transport time, the liveness age at emission, the gateway epoch and
+high watermark, and the current resume token unchanged. `WarmupStreamSession` passes
+the event through without touching offsets or acknowledgements. A refused request maps
+to `DataLayerError` code `SESSION_ALIVE_INVALID` / `SESSION_ALIVE_UNAVAILABLE`.
+
+`GrpcStreamTransport` also gains keyword-only `delivery_on_change_flag` (default False).
+When True, `subscribe()` sends the additive `SubscribeRequest.delivery_on_change_flag = 10`,
+and the gateway marks QUOTE records of an `ON_CHANGE` binding, live and catch-up, with the
+new `QualityFlag.QUALITY_FLAG_DELIVERY_ON_CHANGE = 18`. That is the Query rule;
+`market_data_view_from_stream` shows it as `"DELIVERY_ON_CHANGE"` in `view.quality.flags`.
+It is opt-in because a reader before 2.7.0 refuses an unknown `QualityFlag` value
+(`QualityFlag.Name`).
+
+Unchanged for every other client: with the defaults (0, False) the request bytes equal 2.6.0, and
+a `session_alive` record a client did not ask for is ignored. Why: a quiet BBO left the
+TS writer's session proof older than Risk's 2 s rule while the venue was healthy
+(design `upgrade/DL_V232_SESSION_ALIVE_FRAME_DESIGN.md`).
+
 ## 2.6.0 (Data Layer v2.3.1: per-request Query replica balancing)
 
 Additive only. New `build_replicated_rest_query(urls, *, tls, credential_provider,

@@ -81,8 +81,10 @@ from qdl.query.row_cache import ROW_CACHE_ENTRIES_ENV
 from qdl.runtime.kn_read_view import READ_VIEW_SECRET_FILE_ENV, install_kn_read_view
 from qdl.runtime.kn_query_backend import (
     DEFAULT_ROW_CACHE_ENTRIES,
+    DEFAULT_SHARED_VIEW_TTL_MS,
     QUERY_BACKEND_ENV,
     QUERY_BACKENDS,
+    SHARED_VIEW_TTL_ENV,
     KnCursorSettings,
     KnCursorV3Issuer,
     KnMarketCacheQueryBackend,
@@ -91,6 +93,7 @@ from qdl.security import (
     AuditChain,
     DataPlaneIdentityService,
     DataPlaneSecurityConfig,
+    LocalTokenBucketQuota,
     RedisMinuteQuota,
 )
 from qdl.stream import DurableStreamGateway, GrpcMarketDataService, create_grpc_server
@@ -629,8 +632,11 @@ def build_stable_identity(
     security = DataPlaneSecurityConfig.from_environment()
     if security.environment != config.environment:
         raise ValueError("stable JWT environment mismatch")
-    quota = RedisMinuteQuota.from_url(
-        config.redis_url, prefix=f"{config.redis_prefix}:identity"
+    # DL v2.4.0 S7: per-replica token buckets are the coarse guard; the shared
+    # Redis minute counter is optional (QDL_V2_SHARED_QUOTA=redis) and its
+    # outage no longer refuses reads.
+    quota = LocalTokenBucketQuota.from_environment(
+        os.environ, redis_url=config.redis_url, redis_prefix=f"{config.redis_prefix}:identity",
     )
     return DataPlaneIdentityService(security, manifests, quota=quota)
 
@@ -683,7 +689,7 @@ def stable_readiness(
     manifests: ConsumerManifestRegistry,
     spool: SQLiteDurableSpool | None,
     *,
-    quota: RedisMinuteQuota | None = None,
+    quota: "RedisMinuteQuota | LocalTokenBucketQuota | None" = None,
     extra_probes=(),
     market_cache_backend=None,
 ) -> MeasuredRuntimeReadiness:
@@ -700,6 +706,9 @@ def stable_readiness(
         )
 
     async def redis_probe():
+        if isinstance(quota, LocalTokenBucketQuota) and quota.shared is None:
+            # DL v2.4.0 S7: the request quota needs no Redis on this replica.
+            return _ready("dedicated_redis", detail="request quota is local; shared Redis quota disabled")
         if quota is None or not await asyncio.to_thread(quota.ping):
             return ComponentReadiness(
                 "dedicated_redis", ComponentState.NOT_READY,
@@ -833,6 +842,7 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
             hot_client=hot_client,
             session_liveness_root=str(config.session_liveness_dir),
             row_cache_entries=int(os.environ.get(ROW_CACHE_ENTRIES_ENV, str(DEFAULT_ROW_CACHE_ENTRIES))),
+            shared_view_ttl_ms=int(os.environ.get(SHARED_VIEW_TTL_ENV, str(DEFAULT_SHARED_VIEW_TTL_MS))),
             diagnostic_exclusions={b.binding_id: "ACQUISITION_DISABLED"
                 for b in acquisition_plan.bindings
                 if not b.enabled},

@@ -34,6 +34,7 @@ if str(ROOT) not in sys.path:
 
 from qdl.runtime.stable_catalog import StableSourceCatalog
 from qdl.runtime.stable_deployment import (
+    STABLE_SESSION_LIVENESS_WRITE_INTERVAL_MS,
     StableAcquisitionPlan,
     validate_shared_authority_record,
     write_stable_runtime_bundle,
@@ -248,7 +249,8 @@ def _validate_ingestor(
     if (
         not isinstance(expected_liveness["session_liveness_dir"], str)
         or not expected_liveness["session_liveness_dir"]
-        or expected_liveness["session_liveness_write_interval_ms"] != 1_000
+        or expected_liveness["session_liveness_write_interval_ms"]
+        != STABLE_SESSION_LIVENESS_WRITE_INTERVAL_MS
     ):
         raise ValueError(f"{file_name} lacks bounded session-liveness configuration")
 

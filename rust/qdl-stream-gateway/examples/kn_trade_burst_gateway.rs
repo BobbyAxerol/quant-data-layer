@@ -321,6 +321,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             product_key: lpk.clone(),
             stale_after_ms: 3000,
             lineage_revision: 1,
+            delivery_on_change: false,
         });
         requirements.push(ManifestRequirement {
             instrument_uid: product.uid.clone(),

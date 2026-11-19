@@ -56,6 +56,18 @@ class GatewayBundleTests(unittest.TestCase):
             self.assertEqual(row["subject"], loaded.subject)
             self.assertEqual(len(row["requirements"]), len(loaded.requirements))
 
+    def test_on_change_delivery_is_carried_only_for_declared_quote_bindings(self):
+        # DL v2.3.2: the Stream marks ON_CHANGE QUOTE records DELIVERY_ON_CHANGE from
+        # this field; it is the catalogue's own declaration (one source of truth).
+        catalog = StableSourceCatalog.load(CATALOG)
+        declared = {item.binding_id for item in catalog.bindings if item.delivery_semantics == "ON_CHANGE"}
+        self.assertTrue(declared, "the stable catalogue declares ON_CHANGE QUOTE bindings")
+        rows = self.bundle["catalog"]["bindings"]
+        carried = {row["binding_id"] for row in rows if "delivery_semantics" in row}
+        self.assertEqual(carried, declared)
+        self.assertEqual({row["delivery_semantics"] for row in rows if "delivery_semantics" in row}, {"ON_CHANGE"})
+        self.assertEqual({row["feed"] for row in rows if row["binding_id"] in carried}, {"QUOTE"})
+
     def test_book_snapshot_and_delta_share_a_physical_key_but_not_a_product(self):
         rows = self.bundle["catalog"]["bindings"]
         books = [r for r in rows if r["feed"] in {"BOOK_SNAPSHOT", "BOOK_DELTA"}]

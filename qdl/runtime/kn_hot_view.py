@@ -16,6 +16,7 @@ from typing import Callable, Mapping
 
 import grpc
 from google.protobuf.wrappers_pb2 import BytesValue
+import sys
 
 from qdl.runtime.kn_market_cache import CacheRow, SourceBoundary
 from qdl.projection.state_contract import LogicalProductKey
@@ -24,6 +25,19 @@ PATH = "/qdl.internal.v2.CanonicalHotView/ReadLatest"
 SCHEMA = "qdl.kn.canonical-hot-view.v1"
 DOMAIN = SCHEMA.encode() + b"\0"
 HOT_FEEDS = frozenset({"TRADE", "QUOTE", "MARK_INDEX_PRICE", "BOOK_SNAPSHOT", "BOOK_DELTA"})
+# DL v2.4.0 (window 1 RCA, 2026-11-19): replica-scoped authority refusals. A replica whose own bundle identity
+# (catalog/source-policy revision, route generation, ...) differs from this Query's, or changed during the read,
+# refuses with FAILED_PRECONDITION (gateway hot_view.rs). During a rolling catalog change one replica is always on
+# the other revision, so the read tries the next replica; each replica still enforces the exact match, and only when
+# every replica refuses is the result HOT_AUTHORITY_OR_PROTOCOL_REFUSED. Record integrity refusals
+# (HOT_RECORD_GAPPED, ...) and auth failures never fall through.
+AUTHORITY_FALLBACK_DETAILS = frozenset({"HOT_AUTHORITY_MISMATCH", "HOT_AUTHORITY_CHANGED"})
+AUTHORITY_FALLBACK_LOG_SECONDS = 10.0
+
+
+def _stderr_line(line: str) -> None:
+    sys.stderr.write(line + "\n")
+    sys.stderr.flush()
 
 
 class HotViewUnavailable(RuntimeError):
@@ -44,7 +58,8 @@ class CanonicalHotView:
 
 class CanonicalHotClient:
     def __init__(self, *, calls: tuple[Callable, ...], expectation: Mapping[str, object],
-                 secret: bytes, timeout_seconds: float = 0.25, clock_ns=time.time_ns):
+                 secret: bytes, timeout_seconds: float = 0.25, clock_ns=time.time_ns,
+                 write: Callable[[str], None] = _stderr_line, monotonic=time.monotonic):
         if not 1 <= len(calls) <= 2 or len(secret) < 32:
             raise ValueError("hot backup needs one/two targets and a >=32-byte secret")
         if not 0 < timeout_seconds <= 0.5:
@@ -55,6 +70,13 @@ class CanonicalHotClient:
         self._timeout = timeout_seconds
         self._clock_ns = clock_ns
         self._slots = threading.BoundedSemaphore(8)
+        # Observability for the authority fallback: totals per (target index, detail), one bounded log line per
+        # key and window carrying the count since the previous line.
+        self._write = write
+        self._monotonic = monotonic
+        self._fallback_lock = threading.Lock()
+        self.authority_fallbacks: dict[tuple[int, str], int] = {}
+        self._fallback_logged: dict[tuple[int, str], tuple[float, int]] = {}
 
     @classmethod
     def connect(cls, *, targets: tuple[str, ...], ca: bytes, cert: bytes, key: bytes, **kwargs):
@@ -99,6 +121,8 @@ class CanonicalHotClient:
         try:
             deadline = time.monotonic() + timeout
             error = "HOT_READER_UNAVAILABLE"
+            transient_seen = False
+            last_failure = None
             for index, call in enumerate(self._calls):
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -115,10 +139,19 @@ class CanonicalHotClient:
                     if failure.code() == grpc.StatusCode.FAILED_PRECONDITION and detail in {
                             "HOT_RECORD_GAPPED", "HOT_RECORD_GENERATION_MISMATCH", "HOT_BOOK_UNVERIFIED"}:
                         raise HotViewGap(detail) from failure
+                    if failure.code() == grpc.StatusCode.FAILED_PRECONDITION and detail in AUTHORITY_FALLBACK_DETAILS:
+                        # This replica's authority is not ours (rolling catalog change); another may match.
+                        self._record_authority_fallback(index, detail)
+                        last_failure = failure
+                        if not transient_seen:
+                            error = "HOT_AUTHORITY_OR_PROTOCOL_REFUSED"
+                        continue
                     # Auth/contract failures are not healed by trying another replica.
                     if failure.code() not in {grpc.StatusCode.UNAVAILABLE,
                             grpc.StatusCode.DEADLINE_EXCEEDED, grpc.StatusCode.RESOURCE_EXHAUSTED}:
                         raise HotViewUnavailable("HOT_AUTHORITY_OR_PROTOCOL_REFUSED") from failure
+                    transient_seen = True
+                    last_failure = failure
                     error = detail if detail in {
                         "HOT_BROKER_UNCONFIRMED", "HOT_READER_CATCHING_UP",
                         "HOT_READER_STALLED", "HOT_READER_UNAVAILABLE", "HOT_READER_BUSY",
@@ -128,9 +161,22 @@ class CanonicalHotClient:
                 if time.monotonic() > deadline:
                     raise HotViewUnavailable("HOT_READ_DEADLINE")
                 return self._decode(reply.value, binding, lpk)
-            raise HotViewUnavailable(error)
+            raise HotViewUnavailable(error) from last_failure
         finally:
             self._slots.release()
+
+    def _record_authority_fallback(self, index: int, detail: str) -> None:
+        key = (index, detail)
+        with self._fallback_lock:
+            total = self.authority_fallbacks.get(key, 0) + 1
+            self.authority_fallbacks[key] = total
+            now = self._monotonic()
+            last_at, last_total = self._fallback_logged.get(key, (None, 0))
+            if last_at is not None and now - last_at < AUTHORITY_FALLBACK_LOG_SECONDS:
+                return
+            self._fallback_logged[key] = (now, total)
+        self._write(json.dumps({"event": "qdl_hot_read_authority_fallback", "target_index": index,
+            "detail": detail, "count": total - last_total, "total": total}, separators=(",", ":"), sort_keys=True))
 
     def _decode(self, raw: bytes, binding, lpk) -> CanonicalHotView:
         if len(raw) > 512 * 1024:

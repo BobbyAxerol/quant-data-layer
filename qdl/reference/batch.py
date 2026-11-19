@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from functools import lru_cache
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
@@ -69,6 +70,8 @@ class ReferenceBatchPolicy:
     metadata_ttl_seconds: float = 300.0
     missing_ttl_seconds: float = 2.0
     unavailable_ttl_seconds: float = 60.0
+    # DL v2.4.0 A-FUND: a complete MARK/INDEX candle history whose every candle is closed (confirm 1) is immutable.
+    closed_candle_ttl_seconds: float = 21_600.0
 
     def __post_init__(self) -> None:
         if not 1 <= self.max_concurrency <= 64:
@@ -90,6 +93,7 @@ class ReferenceBatchPolicy:
                 self.metadata_ttl_seconds,
                 self.missing_ttl_seconds,
                 self.unavailable_ttl_seconds,
+                self.closed_candle_ttl_seconds,
             )
         ):
             raise ValueError("reference cache TTL values cannot be negative")
@@ -104,6 +108,12 @@ class ReferenceBatchPolicy:
         if result.request.product is ReferenceProduct.CONTRACT_METADATA:
             return self.metadata_ttl_seconds
         if result.request.is_history:
+            observations = getattr(result, "observations", ())
+            coverage = getattr(result, "coverage", None)
+            if (result.request.product is ReferenceProduct.MARK_INDEX_PRICE and observations and coverage is not None
+                    and coverage.complete_left and coverage.complete_right and not coverage.truncated
+                    and all(dict(item.labels).get("confirm") == "1" for item in observations)):
+                return self.closed_candle_ttl_seconds
             return self.history_ttl_seconds
         if result.request.product is ReferenceProduct.MARK_INDEX_PRICE:
             return self.execution_snapshot_ttl_seconds
@@ -116,17 +126,29 @@ class _CacheEntry:
     result: ReferenceBatchResult
 
 
-def default_capability_resolver(record: InstrumentRecord) -> VenueCapabilityProfile:
-    identity = record.identity
-    if (identity.venue, identity.market) == ("BINANCE", "USDM"):
+@lru_cache(maxsize=16)
+def _venue_capabilities(venue: str, market: str) -> VenueCapabilityProfile:
+    if (venue, market) == ("BINANCE", "USDM"):
         return binance_usdm_capabilities()
-    if (identity.venue, identity.market) == ("OKX", "SWAP"):
+    if (venue, market) == ("OKX", "SWAP"):
         return okx_global_capabilities("SWAP")
-    if (identity.venue, identity.market) == ("OKX", "FUTURES"):
+    if (venue, market) == ("OKX", "FUTURES"):
         return okx_global_capabilities("FUTURES")
     raise ReferenceUnavailable(
-        f"reference batch has no approved adapter for {identity.venue}/{identity.market}"
+        f"reference batch has no approved adapter for {venue}/{market}"
     )
+
+
+def default_capability_resolver(record: InstrumentRecord) -> VenueCapabilityProfile:
+    """The venue profile; built once per (venue, market) (DL v2.4.0 S4).
+
+    The profile is a frozen value that depends only on (venue, market); it was
+    rebuilt twice per MARK/INDEX item. An unapproved venue still raises
+    ``ReferenceUnavailable`` on every call (exceptions are not cached).
+    """
+
+    identity = record.identity
+    return _venue_capabilities(identity.venue, identity.market)
 
 
 class ReferenceBatch:

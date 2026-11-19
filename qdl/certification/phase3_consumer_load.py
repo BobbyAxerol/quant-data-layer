@@ -998,3 +998,85 @@ def evaluate_target_acceptance(
     failed_gates = [item["gate"] for item in gates if item["status"] != "PASS"]
     return {"stage": stage, "final": final, "status": "PASS" if not failed_gates else "FAIL",
             "failed_gates": failed_gates, "gates": gates}
+
+
+# --------------------------------------------------------------- DL v2.4.0 S9
+
+SHARED100_PROFILE_SCHEMA = "qdl.p184.shared100-profile.v1"
+
+
+def load_shared100_profile(raw: Mapping[str, object]) -> Mapping[str, object]:
+    """The frozen shared100 gate profile (config/v2/p184-shared100-profile.json)."""
+
+    if raw.get("schema") != SHARED100_PROFILE_SCHEMA:
+        raise ValueError("shared100 profile schema is unsupported")
+    gates = raw.get("gates")
+    if not isinstance(gates, Mapping) or set(gates) != {"restart_storm", "noisy_neighbour", "g14_baseline_subtracted"}:
+        raise ValueError("shared100 profile needs exactly the restart_storm, noisy_neighbour and G14 gates")
+    storm = gates["restart_storm"]
+    if storm.get("sessions") != 100 or not 0 < float(storm.get("cold_start_within_s", 0)) <= 10:
+        raise ValueError("restart storm is 100 sessions within 10 s")
+    if storm.get("max_refusals") != 0 or not float(storm.get("ts_lane_p95_le_ms", 0)) > 0:
+        raise ValueError("restart storm needs 0 refusals and a TS lane p95 limit")
+    noisy = gates["noisy_neighbour"]
+    if float(noisy.get("noisy_session_rps", 0)) < 50 or noisy.get("max_other_session_refusals") != 0:
+        raise ValueError("noisy neighbour is one session at >= 50 rps, others never refused")
+    g14 = gates["g14_baseline_subtracted"]
+    if g14.get("phases") != ["IDLE", "WRITER_ONLY", "WRITER_PLUS_ALPHAS"]:
+        raise ValueError("G14 is measured idle, then writer only, then plus alphas")
+    if raw.get("quota_bump") is not False:
+        raise ValueError("shared100 runs on the sealed quotas (no bump)")
+    return raw
+
+
+def evaluate_shared100_gates(*, profile: Mapping[str, object], receipt: Mapping[str, object]) -> dict[str, object]:
+    """Score one shared100 run against the frozen profile. Every gate is listed; missing evidence fails."""
+
+    load_shared100_profile(profile)
+    gates_cfg = profile["gates"]
+    gates: list[dict[str, object]] = []
+    storm_cfg, storm = gates_cfg["restart_storm"], receipt.get("restart_storm") or {}
+    starts = storm.get("session_start_offsets_s") or []
+    window = (max(starts) - min(starts)) if starts else None
+    gates.append(_gate("shared100:restart_storm:cold_start_window",
+                       len(starts) == storm_cfg["sessions"] and window is not None
+                       and window <= float(storm_cfg["cold_start_within_s"]),
+                       sessions=len(starts), window_s=window))
+    warmups = storm.get("warmups") or []
+    unserved = [item for item in warmups if item.get("status") != "OK"]
+    expected = storm.get("expected_warmups")
+    gates.append(_gate("shared100:restart_storm:every_warmup_served",
+                       bool(warmups) and not unserved and isinstance(expected, int) and len(warmups) == expected,
+                       warmups=len(warmups), expected=expected, unserved=len(unserved)))
+    refusals = storm.get("refusals")
+    gates.append(_gate("shared100:restart_storm:zero_refusals",
+                       isinstance(refusals, int) and refusals <= storm_cfg["max_refusals"],
+                       refusals=refusals, codes=storm.get("refusal_codes", {})))
+    ts_ms = [float(value) for value in storm.get("ts_lane_ms") or []]
+    ts_p95 = nearest_rank(ts_ms, 0.95)
+    gates.append(_gate("shared100:restart_storm:ts_lane_p95_within_g5",
+                       ts_p95 is not None and ts_p95 <= float(storm_cfg["ts_lane_p95_le_ms"]),
+                       count=len(ts_ms), p95_ms=ts_p95, limit_ms=storm_cfg["ts_lane_p95_le_ms"]))
+    noisy_cfg, noisy = gates_cfg["noisy_neighbour"], receipt.get("noisy_neighbour") or {}
+    offered = noisy.get("noisy_offered_rps")
+    gates.append(_gate("shared100:noisy_neighbour:noisy_session_throttled",
+                       isinstance(offered, (int, float)) and offered >= float(noisy_cfg["noisy_session_rps"])
+                       and (noisy.get("noisy_rate_limited") or 0) > 0,
+                       offered_rps=offered, rate_limited=noisy.get("noisy_rate_limited")))
+    others = noisy.get("other_sessions") or []
+    hurt = [item for item in others if (item.get("refusals") or 0) > noisy_cfg["max_other_session_refusals"]]
+    gates.append(_gate("shared100:noisy_neighbour:others_unaffected", bool(others) and not hurt,
+                       other_sessions=len(others), refused_sessions=len(hurt)))
+    g14_cfg, g14 = gates_cfg["g14_baseline_subtracted"], receipt.get("g14") or {}
+    phases = {name: (g14.get(name) or {}).get("dl_vcpu") for name in g14_cfg["phases"]}
+    complete = all(isinstance(value, (int, float)) for value in phases.values())
+    writer_delta = phases["WRITER_ONLY"] - phases["IDLE"] if complete else None
+    alpha_delta = phases["WRITER_PLUS_ALPHAS"] - phases["WRITER_ONLY"] if complete else None
+    limit = g14_cfg.get("alpha_delta_dl_vcpu_le")
+    gates.append(_gate("shared100:g14:baseline_subtracted_alpha_delta",
+                       complete and isinstance(limit, (int, float)) and alpha_delta <= limit,
+                       phases=phases, writer_delta_vcpu=writer_delta, alpha_delta_vcpu=alpha_delta,
+                       limit_vcpu=limit, limit_status=g14_cfg.get("limit_status")))
+    failed = [item["gate"] for item in gates if item["status"] != "PASS"]
+    return {"profile": profile.get("profile"), "status": "PASS" if not failed else "FAIL",
+            "failed_gates": failed, "gates": gates}
