@@ -745,6 +745,7 @@ class V2QueryService:
         small_local_warmup_lane: bool = False,
         queued_local_batch_lane: bool = False,
         alpha_mark_index_reader: ExecutionMarkIndexReader | None = None,
+        canonical_metadata: Any = None,
     ) -> None:
         if reference_batch is not None and reference_source_id is None:
             raise ValueError("reference batch requires an explicit source-id resolver")
@@ -755,6 +756,8 @@ class V2QueryService:
                 "execution MARK/INDEX live reader requires the reference policy boundary"
             )
         self.instruments = instruments
+        # DL v2.4.1: optional canonical instrument metadata (qdl.runtime.canonical_metadata.CanonicalMetadataIndex).
+        self.canonical_metadata = canonical_metadata
         self.backend = backend
         self.entitlements = entitlements
         self._clock_ns = clock_ns
@@ -792,6 +795,14 @@ class V2QueryService:
 
     def get_instrument(self, identity: str):
         return self.instruments.get(identity)
+
+    def canonical_for(self, instrument_uid: str) -> dict | None:
+        """The additive `canonical` object for one instrument, or None (no file, or no entry)."""
+        index = self.canonical_metadata
+        if index is None:
+            return None
+        entry = index.get(instrument_uid)
+        return None if entry is None else entry.as_public()
 
     def snapshot(
         self,

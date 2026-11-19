@@ -522,6 +522,126 @@
         "title": "BookSnapshotPayload",
         "type": "object"
       },
+      "CanonicalInstrumentMetadataView": {
+        "additionalProperties": false,
+        "description": "DL v2.4.1 `qdl.instrument.canonical-metadata.v1` (additive). Prices, quantities and bars stay native; this\nsays how one venue unit relates to the underlying asset. `status` UNVERIFIED carries no multipliers.",
+        "properties": {
+          "aliases": {
+            "items": {
+              "$ref": "#/components/schemas/InstrumentAliasView"
+            },
+            "title": "Aliases",
+            "type": "array"
+          },
+          "price_multiplier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Multiplier"
+          },
+          "quantity_multiplier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quantity Multiplier"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "rule_id": {
+            "title": "Rule Id",
+            "type": "string"
+          },
+          "schema": {
+            "default": "qdl.instrument.canonical-metadata.v1",
+            "title": "Schema",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/CanonicalSourceView"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "underlying_asset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Underlying Asset"
+          },
+          "underlying_instrument_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Underlying Instrument Uid"
+          }
+        },
+        "required": [
+          "revision",
+          "status",
+          "rule_id",
+          "source"
+        ],
+        "title": "CanonicalInstrumentMetadataView",
+        "type": "object"
+      },
+      "CanonicalSourceView": {
+        "additionalProperties": false,
+        "properties": {
+          "captured_at_utc": {
+            "title": "Captured At Utc",
+            "type": "string"
+          },
+          "doc_url": {
+            "title": "Doc Url",
+            "type": "string"
+          },
+          "endpoint": {
+            "title": "Endpoint",
+            "type": "string"
+          },
+          "evidence": {
+            "title": "Evidence",
+            "type": "string"
+          },
+          "response_sha256": {
+            "title": "Response Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "endpoint",
+          "doc_url",
+          "captured_at_utc",
+          "response_sha256",
+          "evidence"
+        ],
+        "title": "CanonicalSourceView",
+        "type": "object"
+      },
       "ConsumerGrade": {
         "enum": [
           "UNSPECIFIED",
@@ -1036,6 +1156,35 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "InstrumentAliasView": {
+        "additionalProperties": false,
+        "properties": {
+          "instrument_uid": {
+            "title": "Instrument Uid",
+            "type": "string"
+          },
+          "market": {
+            "title": "Market",
+            "type": "string"
+          },
+          "native_symbol": {
+            "title": "Native Symbol",
+            "type": "string"
+          },
+          "venue": {
+            "title": "Venue",
+            "type": "string"
+          }
+        },
+        "required": [
+          "venue",
+          "market",
+          "native_symbol",
+          "instrument_uid"
+        ],
+        "title": "InstrumentAliasView",
+        "type": "object"
+      },
       "InstrumentPageResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1075,6 +1224,16 @@
           "asset_class": {
             "title": "Asset Class",
             "type": "string"
+          },
+          "canonical": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanonicalInstrumentMetadataView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "canonical_symbol": {
             "title": "Canonical Symbol",
@@ -1140,6 +1299,16 @@
           "asset_class": {
             "title": "Asset Class",
             "type": "string"
+          },
+          "canonical": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanonicalInstrumentMetadataView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "canonical_symbol": {
             "title": "Canonical Symbol",

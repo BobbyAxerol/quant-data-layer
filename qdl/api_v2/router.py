@@ -1263,12 +1263,7 @@ async def list_instruments(
     page = service.list_instruments(cursor=cursor, limit=limit)
     return {
         "schema": "qdl.instruments.page.v2",
-        "items": [item.identity.__dict__ | {
-            "metadata_revision": item.metadata_revision,
-            "asset_class": item.asset_class.value,
-            "native_symbol": item.native_symbol,
-            "status": item.status.value,
-        } for item in page.items],
+        "items": [_instrument_item(service, item) for item in page.items],
         "next_cursor": page.next_cursor,
     }
 
@@ -1287,14 +1282,21 @@ async def get_instrument(
             QueryProblem(CanonicalErrorCode.INSTRUMENT_NOT_FOUND, str(error), False),
             request_id=service.request_id(),
         ) from error
-    return {
-        "schema": "qdl.instrument.v2",
-        **item.identity.__dict__,
+    return {"schema": "qdl.instrument.v2", **_instrument_item(service, item)}
+
+
+def _instrument_item(service: V2QueryService, item) -> dict:
+    """One instrument; DL v2.4.1 adds `canonical` only when the Query serves canonical metadata for it."""
+    result = item.identity.__dict__ | {
         "metadata_revision": item.metadata_revision,
         "asset_class": item.asset_class.value,
         "native_symbol": item.native_symbol,
         "status": item.status.value,
     }
+    canonical = service.canonical_for(item.identity.instrument_uid)
+    if canonical is not None:
+        result["canonical"] = canonical
+    return result
 
 
 def _query_requirement(

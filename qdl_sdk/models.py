@@ -628,6 +628,37 @@ class SnapshotResponse(ResponseModel):
     data: MarketDataView
 
 
+class InstrumentAliasView(ResponseModel):
+    venue: str
+    market: str
+    native_symbol: str
+    instrument_uid: str
+
+
+class CanonicalSourceView(ResponseModel):
+    endpoint: str
+    doc_url: str
+    captured_at_utc: str
+    response_sha256: str
+    evidence: str
+
+
+class CanonicalInstrumentMetadataView(ResponseModel):
+    """DL v2.4.1 `qdl.instrument.canonical-metadata.v1` (additive). Prices, quantities and bars stay native; this
+    says how one venue unit relates to the underlying asset. `status` UNVERIFIED carries no multipliers."""
+
+    contract_schema: str = Field("qdl.instrument.canonical-metadata.v1", alias="schema")
+    revision: int = Field(ge=1)
+    status: str
+    rule_id: str
+    underlying_asset: str | None = None
+    underlying_instrument_uid: str | None = None
+    price_multiplier: str | None = None
+    quantity_multiplier: str | None = None
+    aliases: list[InstrumentAliasView] = Field(default_factory=list)
+    source: CanonicalSourceView
+
+
 class InstrumentView(ResponseModel):
     instrument_uid: str
     instrument_id: str
@@ -639,6 +670,8 @@ class InstrumentView(ResponseModel):
     asset_class: str
     native_symbol: str
     status: str
+    # DL v2.4.1, additive: present only when the Query serves canonical instrument metadata.
+    canonical: CanonicalInstrumentMetadataView | None = None
 
 
 class InstrumentPageResponse(ResponseModel):
