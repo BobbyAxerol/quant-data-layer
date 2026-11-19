@@ -79478,3 +79478,14 @@ the change is additive.
 - an unrelated `KeyError` is not relabelled.
 
 Status: `implemented`, `tested locally`.
+
+### DL v2.4.2 build recipe: RELEASE 2.4.2, python reference = production 2.4.1 (tested locally) - 2026-11-19 (Claude)
+
+`scripts/build_qdl_release_images.py` changes:
+- `RELEASE` = 2.4.2. Both images are built: rust for the qdl-core OKX 60018 rejection and the native raw ingestor;
+  python for the bar edge, Query and the declaration tool.
+- New `REQUIRED_ANCESTORS` entry `v242_okx_subscription_rejection` = 5b7a03d.
+- `PYTHON_REFERENCES` = `qdl-v2-python:2.4.1-985bd65` (`929eeac2…`), which Query x2 and binance_bar_edge run since
+  the v2.4.1 windows. `tests/test_build_qdl_release_images.py` pins that id.
+
+Test result: 46/46 on the host with git.

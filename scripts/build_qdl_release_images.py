@@ -60,7 +60,9 @@ from scripts.host_measurement_lock import MAX_MINUTES as MAX_LOCK_MINUTES, lock_
 # python-only (Query), the Rust roles kept the v2.3.0 rc2 image.
 # v2.4.0 (S1-S9: shared reads, quota on admission, session-fair lanes, advisory token revision, role claims ignored)
 # changes rust (stream gateway, qdl-contracts accept rule) and python (Query): both images are built.
-RELEASE = "2.4.1"
+# v2.4.2 (delisted-instrument class fix): rust (qdl-core okx per-argument 60018 rejection, native raw ingestor) and
+# python (bar edge quarantine, Query typed unbound refusal, declaration tool): both images are built.
+RELEASE = "2.4.2"
 SDK_VERSION = "2.10.0"
 REPO = Path(__file__).resolve().parents[1]
 HOME = Path.home()
@@ -132,6 +134,7 @@ REQUIRED_ANCESTORS = {
     "v232_session_alive": "2358766f66d9c08a89d2b40858144c62e866f8a0",
     "v240_python_s1_s8": "67e4199c45a4642eb704729cce9ec6a93189f9a7",
     "v240_rust_stream": "a65e8f8b9d1a21ea0251c4badb6dcaf461dad661",
+    "v242_okx_subscription_rejection": "5b7a03d50914d341b2cf3b3c79784fb1e412653a",
 }
 
 # Identical to the four cargo invocations of Dockerfile.qdl-rust-runtime, offline.
