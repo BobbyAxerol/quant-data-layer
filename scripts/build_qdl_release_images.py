@@ -163,12 +163,12 @@ REFERENCES = {
 }
 PRODUCTION_RUST_REFERENCE = "v230_rc2"
 PRODUCTION_RUST_REVISION = "832c02c450e219cb64cb818c976c3d0084b8f7b7"
-# The python image in production, with the tree its /app files were built from: since the DL v2.4.0 windows
-# (2026-11-19) Query x2 and binance_bar_edge both run qdl-v2-python:2.4.0-acf42d7.
+# The python image in production, with the tree its /app files were built from: since the DL v2.4.1 windows
+# (2026-11-19, A/B/C) Query x2 and binance_bar_edge both run qdl-v2-python:2.4.1-985bd65.
 PYTHON_REFERENCES = {
-    "query_bar_edge_v240": ("qdl-v2-python:2.4.0-acf42d7",
-                            "sha256:18ada571c72856cefc2844c8cb2c3809c3e30ac77927bc4c73160e7b2787cd18",
-                            "acf42d7467c717a5cc79852c3b4954cbbf437b17"),
+    "query_bar_edge_v241": ("qdl-v2-python:2.4.1-985bd65",
+                            "sha256:929eeac2091ecbe916cf1f19fba9f13056e621a1c2c1947427b97a8a7c002082",
+                            "985bd65564d4263fd1ecbfaddd4ea5f32c2a0390"),
 }
 PYTHON_HASH_ROOTS = ("qdl", "app", "generated", "config", "consumers", "qdl_sdk")
 

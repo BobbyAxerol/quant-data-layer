@@ -1,0 +1,22 @@
+"""ONE public, unauthenticated OKX websocket subscribe (public market data): one valid + one invalid instId. Records raw frames."""
+import asyncio, json, time, sys
+import websockets
+
+URL = "wss://ws.okx.com:8443/ws/v5/public"
+REQ = {"id": "qdlprobe1", "op": "subscribe",
+       "args": [{"channel": "tickers", "instId": "BTC-USDT-SWAP"}, {"channel": "tickers", "instId": "RVN-USDT-SWAP"}]}
+
+async def main():
+    frames = []
+    async with websockets.connect(URL, open_timeout=15, close_timeout=2) as ws:
+        await ws.send(json.dumps(REQ))
+        end = time.monotonic() + 6
+        while time.monotonic() < end and len(frames) < 8:
+            try:
+                raw = await asyncio.wait_for(ws.recv(), timeout=max(0.1, end - time.monotonic()))
+            except asyncio.TimeoutError:
+                break
+            frames.append({"received_at_ns": time.time_ns(), "raw": raw})
+    print(json.dumps({"url": URL, "request": REQ, "frames": frames}, indent=1))
+
+asyncio.run(main())

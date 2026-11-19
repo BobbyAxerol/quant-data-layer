@@ -6,10 +6,19 @@ transient fault, so one delisted instrument (OKX `RVN-USDT-SWAP`, 2026-11-19) fa
 history repair behind it. Adapters now raise `ProviderInstrumentUnavailable` for the documented "no such instrument"
 answers below, without retrying the same request; callers quarantine that one binding and continue with the others.
 
-Codes (each with its source):
-- OKX `51001`, message "Instrument ID, Instrument ID code, or Spread ID doesn't exist." (OKX V5 REST error codes,
-  https://www.okx.com/docs-v5/en/#error-code-rest-api-public; the message is the venue's verbatim response captured
-  2026-11-19 13:04Z for `RVN-USDT-SWAP` on `/api/v5/market/history-candles`).
+Codes (each with its source; only documented codes are listed):
+- OKX V5 REST, section "Public / Trade class" (https://www.okx.com/docs-v5/en/#error-code-rest-api-public-trade-class;
+  page sha256 853869c8c075520f2baa2f77d2f348486319c14e218fef2b330a196946814bbd captured 2026-11-19T13:47:45Z, excerpt in
+  tests/fixtures/v242_okx_docs/okx-error-codes-excerpt.json):
+  `51001` "Instrument ID, Instrument ID code or Spread ID doesn't exist." (also the venue's verbatim answer for
+  `RVN-USDT-SWAP` on `/api/v5/market/history-candles`, 2026-11-19 13:04Z), `51021` "The pair or contract is not yet
+  listed", `51022` "Contract suspended.", `51027` "Contract expired.".
+  Deliberately NOT here: `51028` "Contract under delivery.", `51029` "Contract is being settled.", `51030` "Funding fee
+  is being settled." are documented transient states of a listed instrument and keep the ordinary retry path.
+  `51155` was checked and is not an instrument-existence code on that page.
+- OKX V5 WebSocket `60018` "Wrong URL or {0} doesn't exist." (#error-code-websocket-public-general-class) is the
+  live-path equivalent; it is handled per subscription argument by the Rust ingestor
+  (`qdl_core::okx::parse_subscription_ack_or_rejection`), not here.
 - Binance USD-M `-1121` BAD_SYMBOL "Invalid symbol.", `-1122` INVALID_SYMBOL_STATUS "Invalid symbol status.",
   `-4141` SYMBOL_ALREADY_CLOSED "Symbol is closed" (https://developers.binance.com/docs/derivatives/usds-margined-futures/error-code).
 
@@ -19,7 +28,13 @@ through the declaration gate (`scripts/catalog_venue_listing_gate.py`), not this
 """
 from __future__ import annotations
 
-OKX_INSTRUMENT_UNAVAILABLE_CODES = {"51001": "Instrument ID, Instrument ID code, or Spread ID doesn't exist."}
+OKX_DOCS_ERROR_CODES_URL = "https://www.okx.com/docs-v5/en/#error-code-rest-api-public-trade-class"
+OKX_INSTRUMENT_UNAVAILABLE_CODES = {
+    "51001": "Instrument ID, Instrument ID code or Spread ID doesn't exist.",
+    "51021": "The pair or contract is not yet listed",
+    "51022": "Contract suspended.",
+    "51027": "Contract expired.",
+}
 BINANCE_INSTRUMENT_UNAVAILABLE_CODES = {
     -1121: "BAD_SYMBOL Invalid symbol.",
     -1122: "INVALID_SYMBOL_STATUS Invalid symbol status.",

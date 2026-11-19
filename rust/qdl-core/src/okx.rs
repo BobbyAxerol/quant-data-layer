@@ -118,6 +118,68 @@ fn control_command(
     .map_err(|error| error.to_string())
 }
 
+/// DL v2.4.2: OKX WebSocket error code 60018, "Wrong URL or {0} doesn't exist" (OKX V5 docs,
+/// https://www.okx.com/docs-v5/en/#error-code-websocket-public-general-class). Observed 2026-11-19 on the public
+/// endpoint for a delisted instrument inside a two-argument subscribe: the valid argument is ACKed and streams, the
+/// delisted one gets `{"event":"error","code":"60018","id":<request id>,"msg":"Subscribe failed, wrong URL or
+/// channel:<channel>,instId:<instId> doesn't exist. ..."}` with no `arg` (fixture
+/// tests/fixtures/v242_okx_docs/okx-ws-subscribe-valid-plus-delisted-20261119.json).
+pub const OKX_WS_INSTRUMENT_MISSING_CODE: &str = "60018";
+
+/// One subscription argument the venue refused because the instrument does not exist.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RejectedSubscription {
+    pub channel: String,
+    pub inst_id: String,
+    pub code: String,
+    pub message: String,
+}
+
+/// The `(channel, instId)` named by a 60018 message, when it is one of `pending`.
+fn rejected_argument(message: &str, pending: &[(String, String)]) -> Option<(String, String)> {
+    let channel_start = message.find("channel:")? + "channel:".len();
+    let rest = &message[channel_start..];
+    let separator = rest.find(",instId:")?;
+    let channel = &rest[..separator];
+    let after = &rest[separator + ",instId:".len()..];
+    let inst_id = &after[..after.find(" doesn't exist")?];
+    pending
+        .iter()
+        .find(|item| item.0 == channel && item.1 == inst_id)
+        .cloned()
+}
+
+/// Like `parse_subscription_ack`, but a 60018 refusal of one declared argument of this request removes that
+/// argument from `pending` and records it in `rejected` instead of failing the whole session: one delisted
+/// instrument must not take its lane's other bindings down. Any other error still fails the establish.
+pub fn parse_subscription_ack_or_rejection(
+    payload: &Value,
+    expected_id: &str,
+    pending: &mut Vec<(String, String)>,
+    rejected: &mut Vec<RejectedSubscription>,
+) -> Result<bool, String> {
+    if payload.get("event").and_then(Value::as_str) == Some("error")
+        && payload.get("code").and_then(Value::as_str) == Some(OKX_WS_INSTRUMENT_MISSING_CODE)
+        && payload.get("id").and_then(Value::as_str) == Some(expected_id)
+    {
+        let message = payload
+            .get("msg")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if let Some(argument) = rejected_argument(message, pending) {
+            pending.retain(|item| item != &argument);
+            rejected.push(RejectedSubscription {
+                channel: argument.0,
+                inst_id: argument.1,
+                code: OKX_WS_INSTRUMENT_MISSING_CODE.to_owned(),
+                message: message.to_owned(),
+            });
+            return Ok(true);
+        }
+    }
+    parse_subscription_ack(payload, expected_id, pending)
+}
+
 pub fn parse_subscription_ack(
     payload: &Value,
     expected_id: &str,
@@ -326,6 +388,52 @@ mod tests {
             &mut pending,
         )
         .unwrap());
+        assert_eq!(pending.len(), 1);
+
+        // DL v2.4.2: the venue's verbatim answer for a delisted argument (public endpoint, 2026-11-19).
+        let mut pending = vec![
+            ("tickers".into(), "BTC-USDT-SWAP".into()),
+            ("tickers".into(), "RVN-USDT-SWAP".into()),
+        ];
+        let mut rejected = Vec::new();
+        let refusal = json!({"event":"error","msg":"Subscribe failed, wrong URL or channel:tickers,instId:RVN-USDT-SWAP doesn't exist. Please use the correct URL, channel and parameters referring to API document.","code":"60018","connId":"7f5baea8","id":"qdlprobe1"});
+        assert!(super::parse_subscription_ack_or_rejection(
+            &refusal,
+            "qdlprobe1",
+            &mut pending,
+            &mut rejected
+        )
+        .unwrap());
+        assert_eq!(
+            pending,
+            vec![("tickers".to_owned(), "BTC-USDT-SWAP".to_owned())]
+        );
+        assert_eq!(rejected[0].inst_id, "RVN-USDT-SWAP");
+        assert_eq!(rejected[0].code, "60018");
+        let ack = json!({"id":"qdlprobe1","event":"subscribe","arg":{"channel":"tickers","instId":"BTC-USDT-SWAP"},"connId":"7f5baea8"});
+        assert!(super::parse_subscription_ack_or_rejection(
+            &ack,
+            "qdlprobe1",
+            &mut pending,
+            &mut rejected
+        )
+        .unwrap());
+        assert!(pending.is_empty());
+        // Another request's refusal, an undeclared instrument and any other error code still fail closed.
+        let mut pending = vec![("tickers".into(), "BTC-USDT-SWAP".into())];
+        for payload in [
+            json!({"event":"error","code":"60018","id":"other","msg":"Subscribe failed, wrong URL or channel:tickers,instId:BTC-USDT-SWAP doesn't exist."}),
+            json!({"event":"error","code":"60018","id":"qdlprobe1","msg":"Subscribe failed, wrong URL or channel:tickers,instId:ETH-USDT-SWAP doesn't exist."}),
+            json!({"event":"error","code":"60012","id":"qdlprobe1","msg":"Invalid request"}),
+        ] {
+            assert!(super::parse_subscription_ack_or_rejection(
+                &payload,
+                "qdlprobe1",
+                &mut pending,
+                &mut rejected
+            )
+            .is_err());
+        }
         assert_eq!(pending.len(), 1);
 
         let unsubscribe = unsubscription_command("9", &[subscription("trades")]).unwrap();

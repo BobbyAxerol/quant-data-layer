@@ -1,0 +1,300 @@
+{
+  "blocked_by_reason": {},
+  "blocked_rows": 0,
+  "checks": [
+    {
+      "check": "base_unchanged_since_render",
+      "detail": [],
+      "status": "PASS"
+    },
+    {
+      "check": "declaration_index_matches_files",
+      "detail": [],
+      "status": "PASS"
+    },
+    {
+      "check": "retirement_justified_by_venue_listings",
+      "detail": {
+        "acquisition_revision": [
+          24,
+          25
+        ],
+        "binding_ids": [
+          "okx-swap-rvn-usdt-swap-bar-1d"
+        ],
+        "catalog_revision": [
+          16,
+          17
+        ],
+        "core_rows_removed": {
+          "rust_core.json": 1,
+          "rust_core_2.json": 1,
+          "rust_core_3.json": 1
+        },
+        "declared_universe_members_removed": {},
+        "demand_rows_removed": 1,
+        "instruments": [
+          {
+            "instrument_id": "OKX.SWAP.PERPETUAL.RVN-USDT",
+            "instrument_uid": "2f110c43-e43d-5784-8ceb-9970d2d16742",
+            "native_symbol": "RVN-USDT-SWAP",
+            "reason": "OKX delisted RVN-USDT-SWAP on 2026-11-19 (history-candles 51001; absent from public/instruments)"
+          },
+          {
+            "instrument_id": "BINANCE.USDM.FUTURE.BTC-USDT-260925",
+            "instrument_uid": "f1228887-3053-5b61-9aea-11d3833f8a62",
+            "native_symbol": "BTCUSDT_260925",
+            "reason": "quarterly BTCUSDT_260925 expired; absent from fapi exchangeInfo"
+          },
+          {
+            "instrument_id": "BINANCE.USDM.FUTURE.ETH-USDT-260925",
+            "instrument_uid": "9e24d8dd-e74b-5f9b-a770-2556bbc89d37",
+            "native_symbol": "ETHUSDT_260925",
+            "reason": "quarterly ETHUSDT_260925 expired; absent from fapi exchangeInfo"
+          }
+        ],
+        "listing_verdict": {
+          "missing": [
+            {
+              "instrument_id": "OKX.SWAP.PERPETUAL.RVN-USDT",
+              "native_symbol": "RVN-USDT-SWAP"
+            },
+            {
+              "instrument_id": "BINANCE.USDM.FUTURE.BTC-USDT-260925",
+              "native_symbol": "BTCUSDT_260925"
+            },
+            {
+              "instrument_id": "BINANCE.USDM.FUTURE.ETH-USDT-260925",
+              "native_symbol": "ETHUSDT_260925"
+            }
+          ],
+          "not_live": []
+        },
+        "manifest_requirements_removed": {
+          "alpha.okx.paper.stable": 1
+        },
+        "query_runtime_rows_removed": 1,
+        "routing_products_removed": 1,
+        "scope_ids_removed": [
+          "okx-swap-rvn-usdt-swap-bar-1d"
+        ]
+      },
+      "status": "PASS"
+    },
+    {
+      "check": "catalog_instruments_listed_on_venue",
+      "detail": {
+        "checked": 516,
+        "listing_changed_since_render": [],
+        "missing": [],
+        "not_covered_by_a_listing": {
+          "BINANCE/SPOT": 1,
+          "HNX/VN_DERIVATIVES": 1,
+          "HOSE/EQUITIES": 1,
+          "OKX/FUTURES": 4,
+          "OKX/SPOT": 1
+        },
+        "not_live": []
+      },
+      "status": "PASS"
+    },
+    {
+      "check": "loaders_catalog_acquisition_scope",
+      "detail": null,
+      "status": "PASS"
+    },
+    {
+      "check": "manifests_load_and_are_additive",
+      "detail": [],
+      "status": "PASS"
+    },
+    {
+      "check": "consumer_quota_model",
+      "detail": {
+        "failing": {},
+        "manifests": {},
+        "model_pending": [
+          "alpha.okx.paper.stable"
+        ]
+      },
+      "status": "PASS"
+    },
+    {
+      "check": "accept_set_floor_rule",
+      "detail": [],
+      "status": "PASS"
+    },
+    {
+      "check": "release_routing_loads",
+      "detail": null,
+      "status": "PASS"
+    },
+    {
+      "check": "config_strictly_additive",
+      "detail": [],
+      "status": "PASS"
+    },
+    {
+      "check": "role_configs_additive_and_lanes_stable",
+      "detail": [],
+      "status": "PASS"
+    },
+    {
+      "check": "bar_edge_checkpoint_crossing",
+      "detail": "crossed=False retained=1319 added=0 dropped=0 migration_record=False basis=deployed runtime plan",
+      "status": "PASS"
+    },
+    {
+      "check": "retained_lineage_unchanged",
+      "detail": [],
+      "status": "PASS"
+    },
+    {
+      "check": "live_config_lineage",
+      "detail": {
+        "live_bindings": 503,
+        "problems": [],
+        "values": {
+          "19": 34,
+          "21": 147,
+          "22": 89,
+          "23": 142,
+          "24": 91
+        }
+      },
+      "status": "PASS"
+    },
+    {
+      "check": "bar_edge_core_raw_lineage",
+      "detail": {
+        "bar_edge_bindings": 1319,
+        "cores": 3,
+        "problems": []
+      },
+      "status": "PASS"
+    },
+    {
+      "check": "bar_edge_migration_record",
+      "detail": {
+        "crossing": "crossed=True retained=1319 added=0 dropped=1 migration_record=True",
+        "live_checkpoint": {
+          "binding_ids": 1320,
+          "matches_record_from": true,
+          "schema": "qdl.stable-bar-edge-state.v5"
+        }
+      },
+      "status": "PASS"
+    },
+    {
+      "check": "derived_chain_parents",
+      "detail": {
+        "derived": 500
+      },
+      "status": "PASS"
+    },
+    {
+      "check": "coverage_chain",
+      "detail": [],
+      "status": "PASS"
+    },
+    {
+      "check": "okx_rest_budget",
+      "detail": {
+        "bar_edge_requests_per_minute_avg": 0.2,
+        "final_1m_visibility_ms": null,
+        "host_ip_utilisation": 0.0,
+        "lane_utilisation": 0.001,
+        "problems": []
+      },
+      "status": "PASS"
+    },
+    {
+      "check": "capacity_envelope",
+      "detail": {
+        "added_bindings_by_kind": {},
+        "added_dl_vcpu_upper_bound": 0.0,
+        "added_records_per_s": 0.0,
+        "baseline_dl_vcpu": 6.21,
+        "basis": "estimate: mean per-binding rates of the 150 E-crypto set measured 2026-11-13 (COVERAGE_150_STUDY 5.1/3.2; liquid subsets run above the mean, override with capacity.rates_per_binding), 1.8 ms/record upper bound; not a measurement",
+        "basis_rows": "rows absent from the deployed runtime acquisition",
+        "bootstrap": {
+          "basis": "depth = qdl.runtime.bar_history_demand over the rendered kn bundle (largest granting manifest max_warmup_rows; 0 when ungranted), capped by the bar edge's 1,095-day lookback; 300 rows per history-candles request (qdl.adapters.okx.history page); one pass, no retries; bootstrap and native gap repair share this lane at BATCH priority",
+          "bindings": 0,
+          "by_interval": {},
+          "duration_minutes": 0.0,
+          "kn_cache_row_cap_added": 0,
+          "kn_cache_rows_added": 0,
+          "lane": "OKX/SWAP/HISTORY_CANDLES (separate token bucket from the live CANDLES lane)",
+          "lane_requests_per_minute": 150.0,
+          "requests": 0,
+          "rows": 0,
+          "rows_per_request": 300
+        },
+        "ceiling_dl_vcpu": 6.5,
+        "deferral_plan": {
+          "defer": [],
+          "headroom_vcpu": 0.29,
+          "status": "FITS"
+        },
+        "ingestor_subscriptions_after": {
+          "ingestor-binance-usdm.json": 118,
+          "ingestor-okx-swap.json": 465
+        },
+        "mark_index_flush_ms": 50,
+        "okx_rest": {
+          "admission_lane": {
+            "burst": 5,
+            "family": "OKX/SWAP/CANDLES",
+            "max_inflight": 2,
+            "refill_per_s": 2.5,
+            "requests_per_minute": 150.0
+          },
+          "bar_edge_requests_per_minute_avg": 0.2,
+          "basis": "model: one read per REST final binding per boundary through the bar-edge admission token bucket; host-IP limit as declared (OKX docs give 40 requests/2 s per IP for market candles; not re-verified here)",
+          "declared_max_visibility_ms": null,
+          "final_1m_visibility_ms": null,
+          "host_ip_limit_per_minute_declared": 1200.0,
+          "host_ip_utilisation": 0.0,
+          "lane_utilisation": 0.001,
+          "max_utilisation": 0.8,
+          "other_requests_per_minute_declared": 0.0,
+          "problems": [],
+          "rest_final_bindings_by_interval": {
+            "1d": 249
+          },
+          "status": "WITHIN_ENVELOPE"
+        },
+        "projected_dl_vcpu": 6.21,
+        "query_requests": {
+          "basis": "qdl.consumer.quota_model (TS writer client, calibrated on r11: model 2,212/min vs measured 1,940-2,034/min); Query/Redis vCPU per request is not measured, so no vCPU is derived",
+          "consumers": {
+            "alpha.okx.paper.stable": {
+              "status": "MODEL_PENDING"
+            }
+          },
+          "execution_steady_requests_per_minute_added": 0,
+          "execution_steady_requests_per_minute_after": 0
+        },
+        "rates_per_binding": {
+          "okx_bar": 0.5253333333333333,
+          "okx_bbo": 4.253333333333333,
+          "okx_mark_index@50": 6.32,
+          "okx_mark_index@500": 3.24
+        },
+        "statement": "estimated DL vCPU after this declaration 6.21 against the 6.5 cap (baseline 6.21 + added 0.0, upper bound)",
+        "status": "WITHIN_ENVELOPE",
+        "unmeasured_bindings_by_kind": {},
+        "venue_priority": [
+          "OKX",
+          "BINANCE"
+        ]
+      },
+      "status": "PASS"
+    }
+  ],
+  "declaration_revision": 10,
+  "failing": [],
+  "note": "offline gate; the live coverage gate (TS market_coverage_gate) and the ordered restart remain",
+  "schema": "qdl.v2.declaration-gate.v1",
+  "status": "PASS"
+}

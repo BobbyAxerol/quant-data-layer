@@ -1,6 +1,6 @@
 """DL v2.4.2: a provider-delisted instrument is one quarantined binding, not a blocked bar_edge (2026-11-19 RVN case).
 
-Reproduces the incident: OKX answered `51001 "Instrument ID, Instrument ID code, or Spread ID doesn't exist."` for
+Reproduces the incident: OKX answered `51001 "Instrument ID, Instrument ID code or Spread ID doesn't exist."` for
 `RVN-USDT-SWAP` on `/api/v5/market/history-candles`; before v2.4.2 the adapter retried it as a transient ValueError,
 the bar edge failed the whole cycle and, with `max_bindings=1`, never reached the bindings after it. Also covers the
 Binance codes (-1121, -1122, -4141), the polling path, the heartbeat counter and the failing-cycle backoff.
@@ -16,7 +16,7 @@ from qdl.adapters.instrument_unavailable import (
 from tests import test_kn_history_fill as history_fill
 
 RVN = ProviderInstrumentUnavailable("OKX", "RVN-USDT-SWAP", "51001",
-                                    "Instrument ID, Instrument ID code, or Spread ID doesn't exist.",
+                                    "Instrument ID, Instrument ID code or Spread ID doesn't exist.",
                                     "/api/v5/market/history-candles")
 
 
@@ -68,12 +68,29 @@ class AdapterClassificationTests(unittest.TestCase):
         client._admission = mock.MagicMock()
         client._admission.lease.return_value = lease
         client._session = mock.MagicMock()
-        client._session.get.return_value = _Response(200, {"code": "51001", "msg": "doesn't exist", "data": []})
-        with self.assertRaises(ProviderInstrumentUnavailable):
-            client._leased_get("/api/v5/market/history-candles", {"instId": "RVN-USDT-SWAP"})
-        client._session.get.return_value = _Response(200, {"code": "50000", "msg": "other", "data": []})
-        with self.assertRaises(ValueError):
-            client._leased_get("/api/v5/market/history-candles", {"instId": "BTC-USDT-SWAP"})
+        for code in ("51001", "51021", "51022", "51027"):
+            with self.subTest(code=code):
+                client._session.get.return_value = _Response(200, {"code": code, "msg": "doc", "data": []})
+                with self.assertRaises(ProviderInstrumentUnavailable):
+                    client._leased_get("/api/v5/market/history-candles", {"instId": "RVN-USDT-SWAP"})
+        # Documented transient states of a listed instrument, and an unrelated error, keep the retry path.
+        for code in ("51028", "51029", "51030", "50000"):
+            with self.subTest(code=code):
+                client._session.get.return_value = _Response(200, {"code": code, "msg": "other", "data": []})
+                with self.assertRaises(ValueError):
+                    client._leased_get("/api/v5/market/history-candles", {"instId": "BTC-USDT-SWAP"})
+
+    def test_okx_codes_are_exactly_the_documented_instrument_rows(self):
+        from pathlib import Path
+
+        excerpt = json.loads((Path(__file__).parent / "fixtures/v242_okx_docs/okx-error-codes-excerpt.json")
+                             .read_text())
+        self.assertEqual(excerpt["page_sha256"],
+                         "853869c8c075520f2baa2f77d2f348486319c14e218fef2b330a196946814bbd")
+        for code, message in OKX_INSTRUMENT_UNAVAILABLE_CODES.items():
+            with self.subTest(code=code):
+                self.assertEqual(excerpt["rows"][code], [f"200 {message}"])
+        self.assertTrue({"51028", "51029", "51030"}.isdisjoint(OKX_INSTRUMENT_UNAVAILABLE_CODES))
 
     def test_binance_documented_codes_are_typed(self):
         from qdl.adapters.binance.admitted_klines import AdmittedBinanceKlines

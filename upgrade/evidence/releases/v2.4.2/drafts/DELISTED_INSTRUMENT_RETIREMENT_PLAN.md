@@ -1,6 +1,11 @@
 # DL v2.4.2: retiring delisted instruments through the declaration path (plan)
 
-**Status:** plan, not rendered. It needs a declaration tool slice (below) and a coordinator window.
+**Status:** the tool slice is implemented (`retire_instruments`, `RetiredBase` in `scripts/dl_declaration.py`), and
+render r10 gates PASS offline (`../declaration-retire-r10/`). It is not applied: it needs a coordinator window.
+The sections below are the design as planned. Where they differ, the r10 render report is the record:
+- the Binance quarterlies are retired too;
+- core rows are dropped in the rendered core files;
+- the live/sandbox alpha realm manifests are out of scope.
 
 ## 1. What the gate finds today
 

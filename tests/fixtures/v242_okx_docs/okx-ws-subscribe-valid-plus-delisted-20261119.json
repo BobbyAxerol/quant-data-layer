@@ -1,0 +1,51 @@
+{
+ "url": "wss://ws.okx.com:8443/ws/v5/public",
+ "request": {
+  "id": "qdlprobe1",
+  "op": "subscribe",
+  "args": [
+   {
+    "channel": "tickers",
+    "instId": "BTC-USDT-SWAP"
+   },
+   {
+    "channel": "tickers",
+    "instId": "RVN-USDT-SWAP"
+   }
+  ]
+ },
+ "frames": [
+  {
+   "received_at_ns": 1795096128935874240,
+   "raw": "{\"event\":\"notice\",\"msg\":\"WebSocket port 8443 will be retired soon. Please migrate to port 443.\",\"code\":\"64010\",\"connId\":\"7f5baea8\"}"
+  },
+  {
+   "received_at_ns": 1795096129056472834,
+   "raw": "{\"id\":\"qdlprobe1\",\"event\":\"subscribe\",\"arg\":{\"channel\":\"tickers\",\"instId\":\"BTC-USDT-SWAP\"},\"connId\":\"7f5baea8\"}"
+  },
+  {
+   "received_at_ns": 1795096129056511066,
+   "raw": "{\"event\":\"error\",\"msg\":\"Subscribe failed, wrong URL or channel:tickers,instId:RVN-USDT-SWAP doesn't exist. Please use the correct URL, channel and parameters referring to API document.\",\"code\":\"60018\",\"connId\":\"7f5baea8\",\"id\":\"qdlprobe1\"}"
+  },
+  {
+   "received_at_ns": 1795096129056530217,
+   "raw": "{\"arg\":{\"channel\":\"tickers\",\"instId\":\"BTC-USDT-SWAP\"},\"data\":[{\"instType\":\"SWAP\",\"instId\":\"BTC-USDT-SWAP\",\"last\":\"63736.7\",\"lastSz\":\"37.56\",\"askPx\":\"63736.8\",\"askSz\":\"787.26\",\"bidPx\":\"63736.7\",\"bidSz\":\"411.65\",\"open24h\":\"64003.2\",\"high24h\":\"64063.9\",\"low24h\":\"62009.3\",\"sodUtc0\":\"63035\",\"sodUtc8\":\"63100.7\",\"volCcy24h\":\"129561.1849\",\"vol24h\":\"12956118.49\",\"ts\":\"1795096128768\"}]}"
+  },
+  {
+   "received_at_ns": 1795096129056546688,
+   "raw": "{\"arg\":{\"channel\":\"tickers\",\"instId\":\"BTC-USDT-SWAP\"},\"data\":[{\"instType\":\"SWAP\",\"instId\":\"BTC-USDT-SWAP\",\"last\":\"63736.7\",\"lastSz\":\"37.56\",\"askPx\":\"63736.8\",\"askSz\":\"787.26\",\"bidPx\":\"63736.7\",\"bidSz\":\"176.25\",\"open24h\":\"64003.2\",\"high24h\":\"64063.9\",\"low24h\":\"62009.3\",\"sodUtc0\":\"63035\",\"sodUtc8\":\"63100.7\",\"volCcy24h\":\"129561.1849\",\"vol24h\":\"12956118.49\",\"ts\":\"1795096128870\"}]}"
+  },
+  {
+   "received_at_ns": 1795096129178365117,
+   "raw": "{\"arg\":{\"channel\":\"tickers\",\"instId\":\"BTC-USDT-SWAP\"},\"data\":[{\"instType\":\"SWAP\",\"instId\":\"BTC-USDT-SWAP\",\"last\":\"63736.7\",\"lastSz\":\"37.56\",\"askPx\":\"63736.8\",\"askSz\":\"737.24\",\"bidPx\":\"63736.7\",\"bidSz\":\"301.18\",\"open24h\":\"64003.2\",\"high24h\":\"64063.9\",\"low24h\":\"62009.3\",\"sodUtc0\":\"63035\",\"sodUtc8\":\"63100.7\",\"volCcy24h\":\"129561.1849\",\"vol24h\":\"12956118.49\",\"ts\":\"1795096129068\"}]}"
+  },
+  {
+   "received_at_ns": 1795096129389383188,
+   "raw": "{\"arg\":{\"channel\":\"tickers\",\"instId\":\"BTC-USDT-SWAP\"},\"data\":[{\"instType\":\"SWAP\",\"instId\":\"BTC-USDT-SWAP\",\"last\":\"63736.7\",\"lastSz\":\"37.56\",\"askPx\":\"63736.8\",\"askSz\":\"736.43\",\"bidPx\":\"63736.7\",\"bidSz\":\"324.11\",\"open24h\":\"64003.2\",\"high24h\":\"64063.9\",\"low24h\":\"62009.3\",\"sodUtc0\":\"63035\",\"sodUtc8\":\"63100.7\",\"volCcy24h\":\"129561.1849\",\"vol24h\":\"12956118.49\",\"ts\":\"1795096129264\"}]}"
+  },
+  {
+   "received_at_ns": 1795096129630403454,
+   "raw": "{\"arg\":{\"channel\":\"tickers\",\"instId\":\"BTC-USDT-SWAP\"},\"data\":[{\"instType\":\"SWAP\",\"instId\":\"BTC-USDT-SWAP\",\"last\":\"63736.7\",\"lastSz\":\"37.56\",\"askPx\":\"63736.8\",\"askSz\":\"731.36\",\"bidPx\":\"63736.7\",\"bidSz\":\"450.48\",\"open24h\":\"64003.2\",\"high24h\":\"64063.9\",\"low24h\":\"62009.3\",\"sodUtc0\":\"63035\",\"sodUtc8\":\"63100.7\",\"volCcy24h\":\"129561.1849\",\"vol24h\":\"12956118.49\",\"ts\":\"1795096129462\"}]}"
+  }
+ ]
+}

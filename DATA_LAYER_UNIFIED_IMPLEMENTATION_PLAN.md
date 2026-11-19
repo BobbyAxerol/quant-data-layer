@@ -79287,3 +79287,107 @@ Status: `implemented`, `tested locally`.
 
 **TS INTEGRATION_DEFECT_REGISTER row** (for the pin steward):
 `| IDR-<n> | DATA_LAYER | A provider-delisted instrument head-of-line blocked the bar_edge bootstrap repair and the failing-cycle backoff was ineffective (min instead of max): OKX delisted RVN-USDT-SWAP ~07:30-08:40Z 2026-11-19, r16 still declared it; every cycle failed 51001 on history-candles, bootstrap stuck at 1118/1320, ~2.8 req/s against OKX (within 20/2 s) | bar_edge log 13:01-13:20Z; v2.4.1 CERTIFICATE section 5 item 5 | DL v2.4.2: typed per-binding ProviderInstrumentUnavailable + quarantine + heartbeat counter; backoff max(); venue-listing declaration gate; RVN retirement render (plan) | - | DL v2.4.2 |`
+
+### DL v2.4.2 slice 2: documented OKX codes, live-path per-argument rejection, `retire_instruments` render r10 (tested locally) - 2026-11-19 (Claude)
+
+**OKX codes, cited.** Source: OKX V5 docs page https://www.okx.com/docs-v5/en/ (sha256 `853869c8…4bbd`, captured
+2026-11-19T13:47:45Z; excerpt `tests/fixtures/v242_okx_docs/okx-error-codes-excerpt.json`).
+- REST `#error-code-rest-api-public-trade-class`: quarantine `51001` (instrument doesn't exist), `51021` (not yet
+  listed), `51022` (contract suspended), `51027` (contract expired).
+- `51028`, `51029` and `51030` (delivery, settlement, funding settlement) are documented transient states. They keep the
+  retry path.
+- `51155` was checked: it is not an instrument-existence row.
+- WS `#error-code-websocket-public-general-class`: `60018` "Wrong URL or {0} doesn't exist".
+
+`qdl/adapters/instrument_unavailable.py` holds exactly those four REST codes. A test pins them to the docs excerpt.
+
+**Live path.** One public, unauthenticated subscribe was sent to `wss://ws.okx.com:8443/ws/v5/public`, `tickers`
+BTC-USDT-SWAP plus RVN-USDT-SWAP, no keys. Raw frames are in
+`tests/fixtures/v242_okx_docs/okx-ws-subscribe-valid-plus-delisted-20261119.json`.
+- BTC is ACKed and streams.
+- RVN gets `{"event":"error","code":"60018","id":<request id>,"msg":"...channel:tickers,instId:RVN-USDT-SWAP doesn't
+  exist..."}`, with no `arg`.
+
+Before v2.4.2, `parse_subscription_ack` failed the whole establish on any error. So one delisted live instrument would
+have taken its whole lane down in a reconnect loop.
+
+Now `qdl_core::okx::parse_subscription_ack_or_rejection` handles a 60018 for a declared argument of this request: it
+removes that argument from `pending` and records it.
+- The ingestor's `okx_establish` returns the rejected list.
+- The lane logs `qdl_native_subscription_rejected`, one per argument.
+- The progress line carries `subscriptions_rejected` (a count) and `subscriptions_rejected_args`.
+- The other arguments serve.
+
+Still fail-closed:
+- another request's error;
+- an undeclared instId;
+- any other code;
+- a session in which every argument was refused (establish error, retried with backoff).
+
+Today RVN is a bar_edge REST binding, not a live one, so this is defence for the next delisting of a live binding.
+
+**Retirement render.** `scripts/dl_declaration.py` gets `retire_instruments: [{instrument_id, reason}]`, the one
+non-additive path. It needs `venue_listings` that show each instrument missing or not live.
+- `RetiredBase` writes a retired copy of the base (`config/`, `consumers/`) and of the deployed Query acquisition and
+  core files. The render and the gate both run against it, and the gate rebuilds it with the same function from
+  `render-inputs.json`. So the gate's additivity checks prove that nothing beyond the retirement left.
+- Removed:
+  - catalogue instrument and bindings;
+  - acquisition rows (repository and Query runtime);
+  - demand rows, scope ids, routing products;
+  - explicit manifest rows;
+  - declared-universe members;
+  - core rows.
+- Retained bindings keep their lineage (`pin_lineage`).
+- Refused:
+  - an unknown instrument;
+  - a listed-live instrument;
+  - a binding a live ingestor subscribes;
+  - a sealed route binding naming it;
+  - a manifest that no longer loads;
+  - a retired manifest whose consumer is not declared.
+
+**Render r10, offline.**
+- Base: r9 re-rendered byte-identical from its committed inputs. Catalogue `e5a670de…`, equal to the live runtime
+  catalogue.
+- Runtime: the live Query acquisition, the three cores, both ingestors, the realm and kn bundles, the live bar-edge pair
+  and the live checkpoint, all copied read-only.
+- Listings: public OKX `instruments?instType=SWAP` (546 rows) and Binance `fapi/v1/exchangeInfo` (953), captured
+  14:03:37Z.
+- Retires `OKX.SWAP.PERPETUAL.RVN-USDT`, `BINANCE.USDM.FUTURE.BTC-USDT-260925` and `…ETH-USDT-260925`. Binance
+  `RVNUSDT` is TRADING and stays.
+- Catalogue 16→17. Acquisition 24→25. Demand 12→13 (−1 row). Scope 15→16. Routing 34→35 (−1 product).
+- Manifest `alpha.okx.paper.stable` r17→r18 (−1 row; accept-set floor 1, the v2.4.0 S2 advisory, so old tokens stay
+  valid).
+- Bundles realm and kn: the alpha.okx.paper entry is replaced.
+- Cores: −1 inert row each. They are rendered, not needed in the window.
+- bar_edge migration record: from 16/24 to 17/25, retained 1319, dropped 1; it matches the live checkpoint (1320).
+- Gate: **PASS**, 20/20 checks, including `retirement_justified_by_venue_listings` and
+  `catalog_instruments_listed_on_venue` (516 checked, 0 missing).
+- Evidence: `upgrade/evidence/releases/v2.4.2/declaration-retire-r10/`. The full tree is at
+  `~/.local/state/qdl-v2/v242-retire-r10-render/`.
+
+**Consumers of OKX RVN BAR 1d.**
+- `alpha.okx.paper.stable`: its explicit row is retired by r10.
+- `alpha.okx.live.stable` and `alpha.okx.sandbox.stable` (realm r1, compiled 2026-09-27 from paper r14 by
+  `scripts/compile_consumer_realms.py`): these are not repository manifests, so r10 does not touch them. A realm
+  recompile is a separate, consumer-visible step to coordinate.
+- Binance RVNUSDT 1d stays for `alpha.binance.{paper,live,sandbox}.stable`.
+
+Use of RVN today:
+- No hosted alpha process or container is running on the host.
+- Query and Stream logs over 48 h hold no RVN or RVN-uid line.
+- crossec_ema's 96 instruments do not include RVN, and TS r15 does not either.
+- `execution_alpha` symbol lists that name RVN, none of them running: scalping_PSAR, scalping_sl_tp, taalpha,
+  grid_long_only, vwma00315, fib_sl_tp_strength, regressionportfolioA001 and rsiboundportfolioA001 (symbols_300),
+  signal_combine, deep_momentum.
+
+**Window order (not applied).**
+1. Query ×2 on the r10 runtime catalogue and acquisition.
+2. Streams with the r10 realm bundle.
+3. Projectors with the kn bundle.
+4. bar_edge last, with `QDL_STABLE_BAR_CHECKPOINT_MIGRATION` set to the r10 record.
+
+Cores and ingestors are not recreated.
+
+Status: `implemented`, `tested locally`. The r10 render is `rendered, not applied`.
