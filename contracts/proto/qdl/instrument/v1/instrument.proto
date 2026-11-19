@@ -63,6 +63,28 @@ message Instrument {
   int64 valid_from_ns = 21;
   optional int64 valid_to_ns = 22;
   map<string, string> attributes = 23;
+  // DL v2.4.1 canonical instrument metadata v1 (additive; unset when not served). Prices, quantities and bars stay
+  // venue-native; this states how one venue unit relates to the underlying asset.
+  CanonicalInstrumentMetadata canonical = 24;
+}
+
+// DL v2.4.1 `qdl.instrument.canonical-metadata.v1`. status UNVERIFIED carries no multipliers or underlying; a
+// consumer must refuse to normalise it (never assume 1:1).
+message CanonicalInstrumentMetadata {
+  uint64 revision = 1;
+  string status = 2;
+  string rule_id = 3;
+  string underlying_asset = 4;
+  string underlying_instrument_uid = 5;
+  // venue price = price_multiplier x underlying unit price (Binance 1000PEPEUSDT: 1000).
+  qdl.common.v1.DecimalValue price_multiplier = 6;
+  // underlying units per venue quantity unit (OKX PEPE-USDT-SWAP: 10000000).
+  qdl.common.v1.DecimalValue quantity_multiplier = 7;
+  repeated InstrumentAlias aliases = 8;
+  string source_endpoint = 9;
+  string source_doc_url = 10;
+  string source_captured_at_utc = 11;
+  string source_response_sha256 = 12;
 }
 
 message InstrumentAlias {

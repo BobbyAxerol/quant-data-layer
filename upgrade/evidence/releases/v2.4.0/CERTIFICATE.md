@@ -99,6 +99,13 @@ No full green run exists yet on a tree that will be tagged: dev 7230d5c run 4446
 acceptance branch changes the tree (docs/evidence only). The release receipt is one full CI run on the final dev tree
 after this branch merges (see `RELEASE_NOTES.md` "Release steps"); main then inherits it (identical tree, CI1).
 
+**Erratum 2026-11-19 (CI6 closed):**
+- The receipt is the full `dev` push run **44500404454** on 2b3aa3e, tree `ef9d36cc09eab455490726322d71da38ff1e26c7`.
+  All 13 jobs passed on attempt 1, 60.7 job-min, after the deterministic timing-test fix (PR #58).
+- The first dev push run on 5bc1718, run 44491247372, was red twice on `rust-workspace` wall-clock tests.
+- `main` 47c4ed1 has the identical tree (inherited, CI1).
+- Tag `v2.4.0`; GitHub release id 451167398.
+
 ## 7. Known limits
 
 - shared100 (A6) not run: post-release acceptance (driver shared100 mode, A6 bind, 100-session alpha fleet,

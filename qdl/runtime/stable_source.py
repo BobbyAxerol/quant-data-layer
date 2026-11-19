@@ -1698,6 +1698,7 @@ def build_stable_query_stack(
     backend: StableSpoolQueryBackend | None = None,
     issuer=None,
     alpha_mark_index_reader_factory=None,
+    canonical_metadata=None,
 ) -> tuple[V2QueryService, StableSpoolQueryBackend, StableConsumerCursorIssuer]:
     """Build the query stack, optionally including the pass-through product.
 
@@ -1753,6 +1754,7 @@ def build_stable_query_stack(
         reference_batch = reference_runtime.batch
         reference_source_id = reference_runtime.source_id_for
     service = V2QueryService(
+        canonical_metadata=canonical_metadata,
         instruments=InstrumentQuery(
             catalog.instrument_registry(
                 include_unbound=pass_through_enabled or reference_data_enabled

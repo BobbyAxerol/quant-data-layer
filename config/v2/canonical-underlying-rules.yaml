@@ -1,0 +1,91 @@
+{
+  "schema": "qdl.v2.canonical-underlying-rules.v1",
+  "revision": 1,
+  "description": "DL v2.4.1 canonical instrument metadata v1. Each rule names the venue documentation it rests on and the public endpoint whose captured response supplies the per-instrument values. A rule marked UNVERIFIED yields status UNVERIFIED with no multipliers (fail closed). Prices, quantities and bars stay venue-native; this only states how one venue unit relates to its underlying asset.",
+  "underlying_uid_format": "CRYPTO:<ASSET> for crypto assets",
+  "rules": [
+    {
+      "id": "BINANCE_USDM_INDEX_CONSTITUENT",
+      "status": "VERIFIED",
+      "applies_to": {"venue": "BINANCE", "market": "USDM", "product_types": ["PERPETUAL", "FUTURE"]},
+      "endpoint": "GET https://fapi.binance.com/fapi/v1/constituents?symbol=<native_symbol>",
+      "doc_urls": [
+        "https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Index-Constituents",
+        "https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Exchange-Information",
+        "https://www.binance.com/en/support/announcement/binance-futures-will-launch-usdt-margined-1000shib-perpetual-contracts-with-up-to-25x-leverage-fa934b93fea6494fb7361d45ca7cc98a"
+      ],
+      "doc_quotes": [
+        "Query index price constituents (GET /fapi/v1/constituents): constituents[].exchange, .symbol, .price, .weight",
+        "The notional value of the 1000SHIBUSDT contract is 1,000 SHIB each.",
+        "The underlying index price of 1000SHIBUSDT is 1000 times that of the SHIB/USDT spot index."
+      ],
+      "derivation": "Take the constituent with exchange 'binance'. Its symbol is <BASE><QUOTE> optionally followed by '*<N>'. underlying_asset = BASE; price_multiplier = quantity_multiplier = N (1 when there is no suffix): one venue unit is N underlying units and the venue price is N times the underlying index. Accept only when the venue baseAsset equals BASE (N = 1) or the prefix spelling of N followed by BASE (N in 1000, 10000, 1000000 as '1000000' or '1M'); any other spelling requires a reviewed rename below, else UNVERIFIED."
+    },
+    {
+      "id": "BINANCE_USDM_RENAME_LUNA2",
+      "status": "VERIFIED",
+      "applies_to": {"venue": "BINANCE", "market": "USDM", "base_asset": "LUNA2", "underlying_asset": "LUNA"},
+      "endpoint": "GET https://fapi.binance.com/fapi/v1/constituents?symbol=LUNA2USDT",
+      "doc_urls": [
+        "https://www.binance.com/en/support/announcement/binance-futures-will-launch-usd%E2%93%A2-m-luna2-perpetual-contracts-with-up-to-25x-leverage-3b7184c80d544586993045a0e6e36e57",
+        "https://www.binance.com/en/support/announcement/binance-will-list-terra-2-0-luna-in-the-innovation-zone-luna-old-renamed-as-lunc-d044a6742e484b77a170111460b0eed3"
+      ],
+      "doc_quotes": [
+        "Underlying Asset | LUNA. This announcement was last updated on 2022-09-10 to change the underlying asset from LUNA2 to LUNA.",
+        "Binance Will List Terra 2.0 (LUNA) in the Innovation Zone; LUNA (old) Renamed as LUNC (announcement title)."
+      ],
+      "derivation": "Venue baseAsset LUNA2 with a 'binance' constituent LUNAUSDT (no suffix): underlying_asset LUNA (Terra 2.0), multipliers 1."
+    },
+    {
+      "id": "OKX_SWAP_LINEAR_CONTRACT_VALUE",
+      "status": "VERIFIED",
+      "applies_to": {"venue": "OKX", "market": "SWAP", "product_types": ["PERPETUAL"], "ctType": "linear"},
+      "endpoint": "GET https://www.okx.com/api/v5/public/instruments?instType=SWAP",
+      "doc_urls": [
+        "https://www.okx.com/docs-v5/en/#public-data-rest-api-get-instruments",
+        "https://www.okx.com/help-center/7053456733325"
+      ],
+      "doc_quotes": [
+        "ctVal: Contract value; ctMult: Contract multiplier; ctValCcy: Contract value currency (FUTURES/SWAP/OPTION)",
+        "Contract size | 0.01 BTC; Price | USDT price of 1 BTC"
+      ],
+      "derivation": "Linear swap: underlying_asset = ctValCcy (and uly must be <ctValCcy>-<settleCcy>); quantity_multiplier = ctVal * ctMult (underlying units per contract); price_multiplier = 1 (the price is per one underlying unit)."
+    },
+    {
+      "id": "OKX_INVERSE_CONTRACT",
+      "status": "UNVERIFIED",
+      "applies_to": {"venue": "OKX", "ctType": "inverse"},
+      "endpoint": "GET https://www.okx.com/api/v5/public/instruments?instType=SWAP|FUTURES",
+      "doc_urls": ["https://www.okx.com/docs-v5/en/#public-data-rest-api-get-instruments"],
+      "doc_quotes": [],
+      "derivation": "Inverse contracts are sized in the quote currency (ctValCcy USD); a single price/quantity multiplier does not describe them. Not covered by v1: UNVERIFIED (fail closed)."
+    },
+    {
+      "id": "OKX_FUTURES_LINEAR",
+      "status": "UNVERIFIED",
+      "applies_to": {"venue": "OKX", "market": "FUTURES", "ctType": "linear"},
+      "endpoint": "GET https://www.okx.com/api/v5/public/instruments?instType=FUTURES",
+      "doc_urls": ["https://www.okx.com/docs-v5/en/#public-data-rest-api-get-instruments"],
+      "doc_quotes": [],
+      "derivation": "Not captured in v1: UNVERIFIED (fail closed)."
+    },
+    {
+      "id": "SPOT_BASE_ASSET",
+      "status": "UNVERIFIED",
+      "applies_to": {"market": "SPOT"},
+      "endpoint": "-",
+      "doc_urls": [],
+      "doc_quotes": [],
+      "derivation": "Spot pairs are not in the v1 capture set: UNVERIFIED (fail closed)."
+    },
+    {
+      "id": "NO_RULE",
+      "status": "UNVERIFIED",
+      "applies_to": {},
+      "endpoint": "-",
+      "doc_urls": [],
+      "doc_quotes": [],
+      "derivation": "No reviewed rule covers this instrument (for example VN equities and derivatives): UNVERIFIED (fail closed)."
+    }
+  ]
+}

@@ -66,6 +66,7 @@ from qdl.runtime.stable_projector import (
     StableProjectorEngine,
     supervise_stable_projector,
 )
+from qdl.runtime.canonical_metadata import index_from_environment as canonical_index_from_environment
 from qdl.runtime.stable_source import (
     StableCatalogCursorScopeValidator,
     StableGrpcSnapshotLoader,
@@ -891,6 +892,8 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
         execution_mark_index_reader=execution_mark_index_reader,
         backend=kn_backend, issuer=kn_issuer,
         alpha_mark_index_reader_factory=kn_alpha_reader,
+        # DL v2.4.1: opt-in canonical instrument metadata (own revision; fail closed when named but invalid).
+        canonical_metadata=canonical_index_from_environment(os.environ),
     )
     readiness = stable_readiness(
         config, manifests, spool, quota=identity.quota, market_cache_backend=kn_backend,

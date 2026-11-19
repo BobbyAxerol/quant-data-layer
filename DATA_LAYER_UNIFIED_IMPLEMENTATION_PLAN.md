@@ -79136,3 +79136,65 @@ Status: runtime `production-authoritative` for the 7 recreated roles; release `t
   qdl-kafka/qdl-stream-gateway/qdl-projector all targets OK. `stage_a_kafka` (needs the KN broker harness) not run
   locally; it runs in `kn-native-integration`.
 - Test-only: no production code, image or runtime change. Status: `tested locally`.
+
+### DL v2.4.1: canonical instrument metadata v1 and the bar_edge short-proof fix (tested locally) - 2026-11-19 (Claude)
+
+Owner decisions 2026-11-19: DL keeps native prices and exposes canonical metadata through a versioned additive
+contract; crossec keeps its 96 instruments (no top-50 declaration); the bar_edge "re-prove short on every restart"
+defect is fixed in the same release. Every rule cites venue documentation; an unverifiable rule fails closed; the SDK
+helpers never fall back to 1:1.
+
+- **Contract** `qdl.instrument.canonical-metadata.v1`: underlying_asset, underlying_instrument_uid (`CRYPTO:<ASSET>`),
+  price_multiplier, quantity_multiplier, aliases, status VERIFIED/UNVERIFIED, rule_id, source (endpoint, doc URL,
+  capture time, response sha256). Served additively as `canonical` on `/v2/instruments` and page items only when
+  `QDL_CANONICAL_INSTRUMENT_METADATA` names the file (`qdl/runtime/canonical_metadata.py`, `qdl/api_v2/router.py`
+  `_instrument_item`, `qdl/query/service.py` `canonical_for`). Proto: `CanonicalInstrumentMetadata` and
+  `Instrument.canonical = 24` (buf format/lint/breaking vs phase1, phase7-beta and dev PASS; `schema_line check` PASS,
+  line digest unchanged `100966435a…`; `buf generate` changes only the instrument pb2/rs). OpenAPI snapshot: additions
+  only.
+- **Separate runtime file, not the catalogue** (design change approved): moving `catalog_revision` would reopen the
+  window 1 hot-read coupling and force a bar_edge crossing; the catalogue loader refuses unknown fields
+  (`stable_catalog.py:355-362`).
+- **Rules** `config/v2/canonical-underlying-rules.yaml` (revision 1): BINANCE_USDM_INDEX_CONSTITUENT (from
+  `/fapi/v1/constituents`, the `binance` constituent `<BASE>USDT*<N>`; docs: Index-Constituents, Exchange-Information,
+  1000SHIB announcement "notional value ... 1,000 SHIB each", "index price ... 1000 times"), BINANCE_USDM_RENAME_LUNA2
+  (announcement "updated ... to change the underlying asset from LUNA2 to LUNA"), OKX_SWAP_LINEAR_CONTRACT_VALUE
+  (ctVal x ctMult, ctValCcy, uly; OKX help "Price | USDT price of 1 BTC"); UNVERIFIED: OKX inverse, OKX futures, spot,
+  no rule.
+- **Tool** `scripts/canonical_instrument_metadata.py` capture/render/gate. A cross-venue mark-price check (10 % band)
+  makes every member of a group UNVERIFIED when venues disagree. Live render 2026-11-19 (capture 08:40:58Z, 264 files,
+  r16 catalogue): 527 instruments, gate PASS; Binance USDM 203 VERIFIED / 58 UNVERIFIED (53 without a `binance` spot
+  constituent, 4 expired futures, QNT), OKX SWAP 255 / 3; all crossec 96 VERIFIED; x1000: 1000PEPE/BONK/FLOKI/SHIB.
+  Found: OKX QNT-USDT-SWAP 33.03 vs Binance QNTUSDT 151.8 (ratio 4.60, a reused ticker) -> both UNVERIFIED.
+- **SDK 2.10.0** `qdl_sdk.instruments`: `to_underlying_price`, `to_underlying_quantity`, `same_underlying` (exact
+  Decimal, floats refused); `CanonicalMetadataUnavailable` codes MISSING / UNVERIFIED / INCOMPLETE.
+- **S6 bar_edge**: provider-short proofs (binding digest, requested, available, earliest_open_ms, proved_at) persist in
+  `<checkpoint>.history-short.json`; the restore gap check expects only opens at or after a valid proof's earliest
+  open; proofs older than 30 days, of another lineage or depth, or an unreadable file are ignored (re-prove as before).
+  Checkpoint schema unchanged (rollback-safe). `KnBarReadbackNotReady` is a WARNING retry, not an ERROR traceback.
+- Tests: `tests/test_dl_v241_canonical_metadata.py` (16), `tests/test_dl_v241_bar_edge_short_proofs.py` (8); impacted
+  set (12 modules incl. bar-edge, OpenAPI contract, SDK release, phase1 contracts) Ran 198 OK in
+  `qdl-v2-python:2.4.0-acf42d7` (host slot, read-only tree); `cargo check -p qdl-contracts -p qdl-stream-gateway` OK;
+  `tests.test_build_qdl_release_images` 46 OK.
+- Recipe: RELEASE 2.4.1, SDK 2.10.0, python production reference `qdl-v2-python:2.4.0-acf42d7` (`18ada571`).
+  Image `qdl-v2-python:2.4.1-985bd65` = `sha256:929eeac2091ecbe916cf1f19fba9f13056e621a1c2c1947427b97a8a7c002082`
+  (receipt PASS: 15 files differ from 18ada571, all expected; pip freeze equal). Rust image unchanged (`abafab2c`).
+- Still open: trivy on the image, rollout windows (Query x2 without the file, then with it; bar_edge), TS/alpha
+  adoption of SDK 2.10.0.
+Status: `implemented`, `tested locally`.
+
+### CI debt list (lane A) - 2026-11-19 (Claude)
+
+- **CI-DEBT-1: no per-job inheritance across a red run (CI11 gap).**
+  - **Current behaviour.** `scripts/ci_change_scope.py` takes its scope base from the nearest ancestor that had an
+    all-green full run.
+  - **The gap.** If a run is red overall, the jobs that passed in it cannot be inherited, even when their inputs are
+    unchanged.
+  - **Example.** PR #59: run 44503460886 at 1feb744 was red only in `unit-tests (2)` (an SDK version pin).
+    `rust-workspace`, `kn-native-integration` and `contract-tests` were green there. The fix commit 5367ebd changes
+    one test file and docs, yet the next run re-runs every suite. The extra cost is about 8.5 job-min (rust plus
+    kn-native); about 65 job-min in total.
+  - **Wanted (CI11).** The `changes` job decides per job: inherit from the latest run where that job passed on the same
+    job inputs, recording the source run, the SHA and the changed paths.
+  - **Owner and scope.** Lane A. It is a CI-file change, so it gets its own PR with a full run (CI5). It is not part of
+    v2.4.1.
