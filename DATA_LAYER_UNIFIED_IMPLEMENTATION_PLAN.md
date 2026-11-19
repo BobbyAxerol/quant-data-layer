@@ -78992,3 +78992,29 @@ release-gates, ci-result (~54 job-min); inherits rust-workspace and kn-native-in
 permission system (the original brief forbids push/PR), so no PR exists yet. Image cleanup: superseded candidates
 `qdl-v2-rust:2.4.0-3d4d84b` `aef35edf...` and `qdl-v2-python:2.4.0-c95476c` `75717b3c...` removed by full digest
 after confirming 0 container references (running or stopped); kept: `abafab2c`, `9cffe89b`, bases `b33ec0cb`, `c46ae0fa`.
+
+### DL v2.4.0 runtime windows: execution sheet, prep P1-P3 installed, shared100 moved to post-release - 2026-11-19 (Claude)
+
+- Execution sheet (read only, coordinator accepted) for windows 1 Stream x2, 2 Query x2 (+ TS r15, historical MARK),
+  3 ingestors, 4 binance_bar_edge, 5 SessionAlive (TS W3), with current digests and rollbacks (stream 58bdd282,
+  query 26c3b051, bar_edge a235c0a1, stage-b realm, r7 runtime, rc2/stage-b ingestor configs). Windows 1-4 stay
+  BLOCKED on W0: the live writer is still W-QRR `cf88571c`, not the TS v2.2.0 writer; the coordinator rolls TS W1
+  and reports W0.1-W0.5 before any GO.
+- Coupling check: S2 accepts token revisions 1..manifest revision only on the v2.4.0 images, so TS r15 (floor 1) is
+  installed together with them; the writer keeps JWT r14 until every Query/Stream replica serves r15 (TS lane, needs
+  sealed binding r27). Query reads manifests from the realm mount and the catalogue from `/runtime`, not the image.
+- Prep P1-P3 (GO for prep only): new host dirs `v2.4.0-compose`, `v2.4.0-realm`, `v2.4.0-ingestor`, sha256 table and
+  gates in `upgrade/evidence/releases/v2.4.0/drafts/ROLLOUT_PLAN.md` section 7. Render gate: only stream x2, query x2,
+  ingestor x2 and bar_edge differ, each in the intended keys. Realm bundle `577470a6…` = `76672095…` + TS r15 entry
+  (446 requirements, catalogue byte-equal). Ingestor configs differ from r8 / live by exactly
+  `session_liveness_write_interval_ms` 1000 -> 250. No live mount, env or container changed.
+- Deviation: `refresh_v2_native_ingestor_runtime.py` refuses the r8 configs because it does not emit `lane_shard`
+  (and `book_resync`, `latest_state_flush_ms_by_feed`); the 250 ms field was set directly with a one-line diff gate.
+  Follow-up slice: teach the refresh tool the r8 lane pin.
+- Erratum (ROLLOUT_PLAN step 9): realm file sha256 `6a191147…` and routing manifest sha256 `47ea4a9e…` were the r15
+  values before the in-place historical-MARK amendment (52c86cf); the deployed values are `e9f4536a…` and `725c8ca2…`.
+- Window 6, shared100 acceptance (A6), is **post-release acceptance**, not on the v2.4.0 critical path (coordinator,
+  2026-11-19). Still needed: a shared100 mode in the stage-100 driver (restart storm, noisy neighbour, G14 phases),
+  the A6 bind record to the run's runtime identity, a TS-side fleet of 100 alpha sessions on Paper, and the host
+  measurement lock (measurement class). Window 7 (cores/projectors onto abafab2c) is skipped for this release.
+Status: prep `implemented`; windows not executed.

@@ -104,7 +104,7 @@ time) is Query code: it needs the python image `qdl-v2-python:2.4.0-c17472c` (ab
 recreate of steps 3-4 on the c17472c images (the Rust binaries are byte-identical to 3d4d84b; only labels differ).
 
 **9.1 Realm install.** Copy the realm dir as a new versioned dir (same owner and modes) and add
-`trading-system.paper.stable-r15.yaml` (sha256 `6a191147…`, 0444). Set `QDL_PAPER_REALM_MANIFEST=
+`trading-system.paper.stable-r15.yaml` (sha256 `e9f4536a…`, 0444). Set `QDL_PAPER_REALM_MANIFEST=
 trading-system.paper.stable-r15.yaml` in the new env file. Gate: `diff -r` against the live realm dir shows only the
 new file (and the bundle of 9.2); the r14 file stays in place.
 
@@ -112,11 +112,11 @@ new file (and the bundle of 9.2); the r14 file stays in place.
 the r9 declaration with `base.runtime.bundles` pointing at the LIVE realm and kn bundles (the offline package has no
 bundles: they need the live base). Gates: the base bundle hashes verify; the only difference is the
 `trading-system.paper.stable` manifest entry (revision 15, `min_token_revision` 1, the 102 FUNDING_RATE requirement
-rows); catalogue entries byte-equal (incl. `delivery_semantics`); the kn bundle changes only if its BAR rows change
+rows and the 97 historical 1m MARK rows); catalogue entries byte-equal (incl. `delivery_semantics`); the kn bundle changes only if its BAR rows change
 (they do not: expect it unchanged).
 
 **9.3 Routing r34.** Install `repo/config/v2/stable-v2-release-routing.yaml` r34 where the Query replicas read the
-release routing. Gate: it loads; the TS consumer entry is revision 15 with manifest sha256 `47ea4a9e…`; the only
+release routing. Gate: it loads; the TS consumer entry is revision 15 with manifest sha256 `725c8ca2…`; the only
 other change is the 102 FUNDING_RATE products (V2_PRIMARY / BLOCKED).
 
 **9.4 Recreate `query_kn_1`, `query_kn_2`, then `stream_kn_1`, `stream_kn_2`** (one at a time, same images, new
@@ -142,3 +142,45 @@ no 401 for revision.
 
 Never move the TS JWT to r15 before every Query and Stream replica serves r15: a r15 token against a r14 manifest is
 refused (S2 keeps the upper bound).
+
+## 7. Prep record P1-P3 (2026-11-19, offline; nothing running reads these dirs)
+
+Coordinator GO for P1-P3 only. Created three new host dirs; no live mount, env or container changed (stream_kn_1
+StartedAt 2026-11-18T05:40:37Z, query_kn_1 2026-11-17T07:45:12Z, images 58bdd282 / 26c3b051, unchanged).
+`R=/home/bobby/.local/state/qdl-v2/releases`.
+
+| Step | Path | sha256 (file) | Owner / mode |
+|---|---|---|---|
+| P1 | `$R/v2.4.0-compose/qdl-v2-stable-kn.v2.4.0.yml` | `262a15148bc6b010acbfa8264ed3e826157a16dfd825d98637d78655ee02d463` | bobby 0444 (dir 0750) |
+| P1 | `$R/v2.4.0-compose/v2.4.0.env` | `310da854746617c26ea1a416dc18079833f342edb204d63558d2730f35113d83` | bobby 0444 |
+| P2 | `$R/v2.4.0-realm/bundle.json` (body sha256 field `577470a63180bd8b7ac45e4beff7399bd8cf604fa3f3efdb8a855ea4f5191192`) | `f3f2994b8dec6adaa85e194eadc0bee132b871363758fed9ab8a2fe545f964be` | root:root 0444 (dir 0755) |
+| P2 | `$R/v2.4.0-realm/trading-system.paper.stable-r15.yaml` | `e9f4536a085d23a501d6d4d472b36f9974e24ad8c6e6f260ec09d1b635e657e4` | root:root 0444 |
+| P3 | `$R/v2.4.0-ingestor/ingestor_binance_usdm.json` | `23610605f09b2932b6040f0e6f96b02f327b8342e7108d7ee0092a3673784277` | root:10001 0640 (dir 0750) |
+| P3 | `$R/v2.4.0-ingestor/ingestor_okx_swap.json` | `1ca07ba6d40b4eae69422699a9a8d332ec5f135772122e53583f2c3c6de9e258` | root:10001 0640 |
+
+- **P1.** Compose = `deploy/compose/qdl-v2-stable-kn.yml` at dev `03d0aca` with the stage C Query edit
+  (`alpha.okx.paper.stable-r16.yaml` -> `-r17.yaml`, 2 lines). `diff` against the live stage C compose = exactly
+  the stream `QDL_KN_SESSION_LIVENESS_DIR` + RO `stable_state:runtime/session-liveness` lines (2 services). Env
+  overlay (after the stage C list): `QDL_IMAGE_STREAM` abafab2c, `QDL_IMAGE_QUERY` and `QDL_IMAGE_BAR_EDGE` 9cffe89b,
+  `QDL_CONSUMER_REALM_DIR` v2.4.0-realm, `QDL_PAPER_REALM_MANIFEST` r15, `QDL_INGESTOR_CONFIG_DIR` v2.4.0-ingestor.
+  Render gate (`compose config`, stage C list vs stage C list + overlay, with the same TLS/generation/secret env
+  files, rendered to private scratch files then shredded): top level equal; services that differ are exactly
+  stream_kn x2 (image, realm, session-liveness env + mount), query_kn x2 (image, realm, manifest list r14 -> r15),
+  ingestor x2 (config source), binance_bar_edge (image). Kafka, stable_redis, market_cache, cores, projectors equal.
+- **P2.** `v232_realm_bundle_successor.py` on the stage C realm bundle (`15bc88ff…`) with the pinned r8 catalogue
+  (`e5a670de…`): PASS, `76672095…`, 1578 bindings, 102 QUOTE marked ON_CHANGE (OKX SWAP 97, BINANCE USDM 5),
+  manifests unchanged. Then the TS entry compiled from the r15 file with the release compiler replaces the r14 entry
+  (scratch tool mirroring `build_bundles`): compiled catalogue byte-equal to the base, other 11 entries equal, TS
+  r14 -> r15, `min_token_revision` 13 -> 1, 247 -> 446 requirements (0 removed; +102 FUNDING_RATE ALPHA, +97
+  MARK_INDEX_PRICE 1m ALPHA), rpm 31,000 -> 31,500, manifest sha256 `725c8ca2…`; bundle sha256 `577470a6…`. Both run
+  in `qdl-v2-python@sha256:9cffe89b…` (`--network none`, read-only inputs, host slot). No BAR rows added, so the kn
+  bundle stays `5c272b5c`. Dir = `sudo rsync -a` of `v2.3.1-stage-c-realm`; `diff -rq` = `bundle.json` + the new r15
+  file only.
+- **P3.** Inputs: the pinned r8 Binance config (`19688bc5…`, rev 24, 118 bindings; = stage C ingestor dir) and the
+  live OKX config (`14b28e29…`, rev 23, 465 bindings). `refresh_v2_native_ingestor_runtime.py` (dry run, r8
+  catalogue) refuses both files for a pre-existing reason unrelated to the cadence: it does not emit the r8
+  `lane_shard` pin (Binance 22 bindings, OKX 306) nor `book_resync` / `latest_state_flush_ms_by_feed`, so it reads
+  them as contract changes. It does emit `session_liveness_write_interval_ms` 250. The configs were therefore made by
+  setting only that field (1000 -> 250) and re-serialising in the tool's canonical format (input files are already
+  canonical): `diff` = exactly that one line in each file. The live ingestor image (`58bdd282`, source 832c02c4)
+  accepts 250..5000 (`qdl-native-raw-ingestor.rs:595`). Follow-up: the refresh tool should learn `lane_shard`.
