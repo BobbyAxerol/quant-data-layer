@@ -329,9 +329,11 @@ class StableReleaseVersionContractTests(unittest.TestCase):
         self.assertEqual(len(generated["paths"]), 12)
         schemas = generated["components"]["schemas"]
         # KN adds refusal diagnostics and explicit retained-window coverage.
-        self.assertEqual(len(schemas), 74)
+        # v2.4.1 adds canonical instrument metadata v1 (three schemas, additive).
+        self.assertEqual(len(schemas), 77)
         self.assertIn("/v2/market-data/snapshot:batch", generated["paths"])
-        for name in ("ProblemDiagnostics", "GapProductCoverage", "GapScanCoverage"):
+        for name in ("ProblemDiagnostics", "GapProductCoverage", "GapScanCoverage",
+                     "CanonicalInstrumentMetadataView", "CanonicalSourceView", "InstrumentAliasView"):
             self.assertIn(name, schemas)
         self.assertNotIn("StalePolicy", schemas)
         self.assertIn("qdl__query__contracts__StalePolicy", schemas)
