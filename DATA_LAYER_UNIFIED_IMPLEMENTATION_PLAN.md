@@ -79182,3 +79182,19 @@ helpers never fall back to 1:1.
 - Still open: trivy on the image, rollout windows (Query x2 without the file, then with it; bar_edge), TS/alpha
   adoption of SDK 2.10.0.
 Status: `implemented`, `tested locally`.
+
+### CI debt list (lane A) - 2026-11-19 (Claude)
+
+- **CI-DEBT-1: no per-job inheritance across a red run (CI11 gap).**
+  - **Current behaviour.** `scripts/ci_change_scope.py` takes its scope base from the nearest ancestor that had an
+    all-green full run.
+  - **The gap.** If a run is red overall, the jobs that passed in it cannot be inherited, even when their inputs are
+    unchanged.
+  - **Example.** PR #59: run 44503460886 at 1feb744 was red only in `unit-tests (2)` (an SDK version pin).
+    `rust-workspace`, `kn-native-integration` and `contract-tests` were green there. The fix commit 5367ebd changes
+    one test file and docs, yet the next run re-runs every suite. The extra cost is about 8.5 job-min (rust plus
+    kn-native); about 65 job-min in total.
+  - **Wanted (CI11).** The `changes` job decides per job: inherit from the latest run where that job passed on the same
+    job inputs, recording the source run, the SHA and the changed paths.
+  - **Owner and scope.** Lane A. It is a CI-file change, so it gets its own PR with a full run (CI5). It is not part of
+    v2.4.1.
