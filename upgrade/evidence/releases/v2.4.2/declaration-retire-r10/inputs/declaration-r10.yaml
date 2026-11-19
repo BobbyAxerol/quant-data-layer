@@ -1,0 +1,62 @@
+schema: qdl.v2.declaration.v1
+declaration_revision: 10
+environment: paper
+description: 'DL v2.4.2: retire the instruments the venues no longer list. OKX delisted RVN-USDT-SWAP on 2026-11-19
+  (binding okx-swap-rvn-usdt-swap-bar-1d, BAR 1d ALPHA for alpha.okx.paper.stable); Binance BTCUSDT_260925 and
+  ETHUSDT_260925 expired (no bindings). Nothing is added. Binance RVNUSDT is still TRADING and stays.'
+accept_set: true
+capacity:
+  baseline_dl_vcpu: 6.21
+  ceiling_dl_vcpu: 6.5
+  venue_priority:
+  - OKX
+  - BINANCE
+venue_listings:
+- venue: OKX
+  market: SWAP
+  path: /w/listings/okx-instruments-swap.json
+  captured_at_utc: '2026-11-19T14:03:37Z'
+  endpoint: GET https://www.okx.com/api/v5/public/instruments?instType=SWAP
+- venue: BINANCE
+  market: USDM
+  path: /w/listings/binance-usdm-exchangeinfo.json
+  captured_at_utc: '2026-11-19T14:03:37Z'
+  endpoint: GET https://fapi.binance.com/fapi/v1/exchangeInfo
+retire_instruments:
+- instrument_id: OKX.SWAP.PERPETUAL.RVN-USDT
+  reason: OKX delisted RVN-USDT-SWAP on 2026-11-19 (history-candles 51001; absent from public/instruments)
+- instrument_id: BINANCE.USDM.FUTURE.BTC-USDT-260925
+  reason: quarterly BTCUSDT_260925 expired; absent from fapi exchangeInfo
+- instrument_id: BINANCE.USDM.FUTURE.ETH-USDT-260925
+  reason: quarterly ETHUSDT_260925 expired; absent from fapi exchangeInfo
+base:
+  repo: /w/decl/r9/repo
+  runtime:
+    authority: /w/live/authority.json
+    ingestors:
+      ingestor-okx-swap.json: /w/live/ingestor_okx_swap.json
+      ingestor-binance-usdm.json: /w/live/ingestor_binance_usdm.json
+    cores:
+    - /w/live/cores/rust_core.json
+    - /w/live/cores/rust_core_2.json
+    - /w/live/cores/rust_core_3.json
+    query_acquisition: /w/live/stable-acquisition-bindings.yaml
+    bundles:
+      realm: /w/live/realm-bundle.json
+      kn: /w/live/kn-bundle.json
+    realm_manifests:
+      alpha.okx.live.stable: /w/live/realm/alpha.okx.live.stable.yaml
+      alpha.okx.sandbox.stable: /w/live/realm/alpha.okx.sandbox.stable.yaml
+bar_edge:
+  split_runtime: true
+  config_lineage: 19
+  live_checkpoint: /w/live/live-bar-checkpoint.json
+  migration:
+    previous_catalog: /w/live/bar-edge-source-bindings.yaml
+    previous_acquisition: /w/live/bar-edge-acquisition-bindings.yaml
+    reason: retire venue-delisted OKX RVN-USDT-SWAP (DL v2.4.2)
+    approved_by: PENDING_COORDINATOR_WINDOW
+consumers:
+- consumer_id: alpha.okx.paper.stable
+  class: SIGNAL
+  manifest: consumers/stable/alpha-okx-paper.yaml

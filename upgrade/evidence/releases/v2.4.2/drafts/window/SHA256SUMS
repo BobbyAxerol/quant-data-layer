@@ -1,0 +1,10 @@
+5a2afee736bc84a7bfb1efe7b879697a2b7987da6cc8ee14c02c1a29ff8e3c8b  ./WINDOW_BLOCKS.md
+59e6b088374f60aca43b9bfe191e2f1991e2e8f40de27a6e68b0e8aadc7c9cf0  ./qdl-v2-stable-kn.v2.4.2.yml
+3b5a962d5fa3ffff9947dabb5f9154b3502a7be204da99ef9fc97972f16486c5  ./render-hash-check.txt
+bcf7218606c1b2e18b05c5000763e3fcef21d10d546d9e5b06e8283d06020c52  ./v2.4.2-ingestor.env
+ba5177295318e19a735720003b09fdd2a4a8c8f6c5583ec288d2315bf6491441  ./v2.4.2.env
+b1e8c05f0ca4b6dc5f339e63f3c9343a349a54b9ee700b846ab4f85baad3c7cd  ./v242_bar_edge_bootstrap_track.sh
+2efb92584bcd941d519439e9a1ee2315106e05e040ff36c73b7de11923691e1b  ./v242_render_hash_check.sh
+5b622c11b3a0456aa7ca91beb1ea9fcfc21be9eb7fa0baa9658485249a5c894e  ./v242_rvn_refusal_probe.py
+ae1c5475035ad0da94542f716383f31abab52cb9f5914d9be6f230a1876e6807  ./v242_window_gates.as-installed.sh
+4d169dc78a60692b2f6ec90902808d760afaa72dbbb42428f638d79d913c0b0b  ./v242_window_gates.sh

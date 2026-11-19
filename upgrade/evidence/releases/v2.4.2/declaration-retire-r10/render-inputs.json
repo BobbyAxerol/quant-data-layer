@@ -1,0 +1,84 @@
+{
+  "accept_set": true,
+  "bar_edge_config_lineage": 19,
+  "bar_edge_live_checkpoint": "/w/live/live-bar-checkpoint.json",
+  "base_repo": "/w/decl/r9/repo",
+  "base_runtime": {
+    "authority": "/w/live/authority.json",
+    "bundles": {
+      "kn": "/w/live/kn-bundle.json",
+      "realm": "/w/live/realm-bundle.json"
+    },
+    "cores": [
+      "/w/live/cores/rust_core.json",
+      "/w/live/cores/rust_core_2.json",
+      "/w/live/cores/rust_core_3.json"
+    ],
+    "ingestors": {
+      "ingestor-binance-usdm.json": "/w/live/ingestor_binance_usdm.json",
+      "ingestor-okx-swap.json": "/w/live/ingestor_okx_swap.json"
+    },
+    "query_acquisition": "/w/live/stable-acquisition-bindings.yaml",
+    "realm_manifests": {
+      "alpha.okx.live.stable": "/w/live/realm/alpha.okx.live.stable.yaml",
+      "alpha.okx.sandbox.stable": "/w/live/realm/alpha.okx.sandbox.stable.yaml"
+    },
+    "route_bindings": {}
+  },
+  "base_sha256": {
+    "config/v2/stable-acquisition-bindings.yaml": "a1b6ace8802abdaf661a4e0ecf7a915e6696294b43e04f8fc61b3db75eea2638",
+    "config/v2/stable-authority-promotion-scope.yaml": "e9fe3de20fd7810108bdf1c7acef9ed7a20e1bc7cd4887aaba9d21f554d5a756",
+    "config/v2/stable-crypto-demand.yaml": "12d41da2636ddf152a335402e3ae09854b26214b7ed60d9a18cb6f8b14f34f23",
+    "config/v2/stable-source-bindings.yaml": "e5a670dec9c8b746d3182a3d5280129b4ff3962687c7fe17b3acae2b5dd232eb",
+    "config/v2/stable-v2-release-routing.yaml": "fa13a489dd300d234c94bf8dd808066075b200259f92d00d7831d3aef2a0acbf",
+    "runtime:authority": "db00040f1aca925bfa732903378c5729ee4d4ae7811435b16474b9121bc4e5c0",
+    "runtime:bundles:kn": "a83f81242edd6c5e2a1056fe48c14c8cf840e7422f98053fed53e90c45f53fa7",
+    "runtime:bundles:realm": "f3f2994b8dec6adaa85e194eadc0bee132b871363758fed9ab8a2fe545f964be",
+    "runtime:cores:rust_core.json": "94b933feee4da125b4de4252749ba9c18d543175eafdef81e289c071c626e3e2",
+    "runtime:cores:rust_core_2.json": "50b4c2bde3c92fa994f2a18ad3ad38161717df73c309699ed770889fcf143a26",
+    "runtime:cores:rust_core_3.json": "3b2bc5025a9d37a6432e118569865bc6328b4b9999132a521e4c0d88486a24af",
+    "runtime:ingestors:ingestor-binance-usdm.json": "23610605f09b2932b6040f0e6f96b02f327b8342e7108d7ee0092a3673784277",
+    "runtime:ingestors:ingestor-okx-swap.json": "1ca07ba6d40b4eae69422699a9a8d332ec5f135772122e53583f2c3c6de9e258",
+    "runtime:query_acquisition": "2ea14279aff7a2bf1ebbb9886079e528e9e33b3e04cc742e47755a6cb9293545",
+    "runtime:realm_manifests:alpha.okx.live.stable": "aa1096f95d118befa5e697bee81ddc68041cd03abd5fafa6546925329b1a2cd9",
+    "runtime:realm_manifests:alpha.okx.sandbox.stable": "4ec1d11b6c94055c81ce29c5d3bd73293f6e6d57621ddbd2bf8a03f4025b7afb"
+  },
+  "declaration_revision": 10,
+  "live_sources": null,
+  "manifests": {
+    "alpha.okx.paper.stable": "consumers/stable/alpha-okx-paper.yaml"
+  },
+  "retire_instruments": [
+    {
+      "instrument_id": "OKX.SWAP.PERPETUAL.RVN-USDT",
+      "reason": "OKX delisted RVN-USDT-SWAP on 2026-11-19 (history-candles 51001; absent from public/instruments)"
+    },
+    {
+      "instrument_id": "BINANCE.USDM.FUTURE.BTC-USDT-260925",
+      "reason": "quarterly BTCUSDT_260925 expired; absent from fapi exchangeInfo"
+    },
+    {
+      "instrument_id": "BINANCE.USDM.FUTURE.ETH-USDT-260925",
+      "reason": "quarterly ETHUSDT_260925 expired; absent from fapi exchangeInfo"
+    }
+  ],
+  "schema": "qdl.v2.declaration-render-inputs.v1",
+  "venue_listings": [
+    {
+      "captured_at_utc": "2026-11-19T14:03:37Z",
+      "endpoint": "GET https://www.okx.com/api/v5/public/instruments?instType=SWAP",
+      "market": "SWAP",
+      "path": "/w/listings/okx-instruments-swap.json",
+      "sha256": "5aee8464fef85223e920c4253e16c8d9f63e5f61c9d2e00907e44dbab6ed49cd",
+      "venue": "OKX"
+    },
+    {
+      "captured_at_utc": "2026-11-19T14:03:37Z",
+      "endpoint": "GET https://fapi.binance.com/fapi/v1/exchangeInfo",
+      "market": "USDM",
+      "path": "/w/listings/binance-usdm-exchangeinfo.json",
+      "sha256": "77304077f7566b4283a088702512022360a99068cb18c4a75f459232ca34ccf0",
+      "venue": "BINANCE"
+    }
+  ]
+}

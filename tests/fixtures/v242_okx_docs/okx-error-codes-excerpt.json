@@ -1,0 +1,31 @@
+{
+ "captured_at_utc": "2026-11-19T13:47:45Z",
+ "page_sha256": "853869c8c075520f2baa2f77d2f348486319c14e218fef2b330a196946814bbd",
+ "rows": {
+  "51001": [
+   "200 Instrument ID, Instrument ID code or Spread ID doesn't exist."
+  ],
+  "51021": [
+   "200 The pair or contract is not yet listed"
+  ],
+  "51022": [
+   "200 Contract suspended."
+  ],
+  "51027": [
+   "200 Contract expired."
+  ],
+  "51028": [
+   "200 Contract under delivery."
+  ],
+  "51029": [
+   "200 Contract is being settled."
+  ],
+  "51030": [
+   "200 Funding fee is being settled."
+  ],
+  "60018": [
+   "Wrong URL or {0} doesn't exist. Please use the correct URL, channel and parameters referring to API document."
+  ]
+ },
+ "source": "https://www.okx.com/docs-v5/en/ (sections #error-code-rest-api-public-trade-class, #error-code-websocket-public-general-class)"
+}

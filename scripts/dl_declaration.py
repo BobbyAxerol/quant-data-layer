@@ -105,6 +105,7 @@ from qdl.runtime.bar_edge_checkpoint import (  # noqa: E402
 )
 from qdl.runtime.declaration import (  # noqa: E402
     DECLARATION_INDEX_SCHEMA,
+    DECLARED_UNIVERSE_SCHEMA,
     declared_universe_document,
     load_declaration_index,
 )
@@ -129,6 +130,8 @@ from scripts import refresh_v2_core_runtime_bindings as core_refresh  # noqa: E4
 from scripts import refresh_v2_native_ingestor_runtime as ingestor_refresh  # noqa: E402
 
 DECLARATION_SCHEMA = "qdl.v2.declaration.v1"
+# DL v2.4.2: declarations from this revision must carry venue_listings (delisted-instrument gate).
+VENUE_LISTINGS_REQUIRED_FROM = 10
 TS_REQUIREMENTS_SCHEMA = "ts.declared-execution-requirements.v1"
 ALPHA_REQUIREMENTS_SCHEMA = "execution-alpha.data-requirements.v1"
 ALPHA_HOSTING_SCHEMA = "alpha-hosting-source-intent.v1"
@@ -269,7 +272,8 @@ def load_declaration(path: Path) -> dict[str, Any]:
     if payload.get("schema") != DECLARATION_SCHEMA:
         raise DeclarationRefused("declaration schema is unsupported")
     allowed = {"schema", "declaration_revision", "environment", "base", "consumers",
-               "instrument_captures", "ingestor", "capacity", "accept_set", "description", "bar_edge"}
+               "instrument_captures", "ingestor", "capacity", "accept_set", "description", "bar_edge",
+               "venue_listings", "retire_instruments"}
     if set(payload) - allowed:
         raise DeclarationRefused(f"declaration has unknown fields: {sorted(set(payload) - allowed)}")
     revision = payload.get("declaration_revision")
@@ -296,11 +300,36 @@ def load_declaration(path: Path) -> dict[str, Any]:
     runtime["cores"] = [resolve(v) for v in runtime.get("cores") or []]
     runtime["bundles"] = {k: resolve(v) for k, v in (runtime.get("bundles") or {}).items()}
     runtime["route_bindings"] = {k: resolve(v) for k, v in (runtime.get("route_bindings") or {}).items()}
+    # DL v2.4.2: deployed consumer realm manifests that are not repository manifests (alpha.*.live/sandbox realm files
+    # served from the realm bundle); only a retirement changes them (``RetiredBase``).
+    runtime["realm_manifests"] = {k: resolve(v) for k, v in (runtime.get("realm_manifests") or {}).items()}
     base["runtime"] = runtime
     payload["base"] = base
     payload["instrument_captures"] = [
         {**item, "path": resolve(item["path"])} for item in payload.get("instrument_captures") or []
     ]
+    # DL v2.4.2: captures of each venue's live instruments list; the gate refuses catalogue instruments they do not
+    # list as live (scripts/catalog_venue_listing_gate.py). Required from declaration revision 10.
+    listings = payload.get("venue_listings") or []
+    if not isinstance(listings, list) or any(
+            not isinstance(item, dict) or not {"venue", "market", "path"} <= set(item) for item in listings):
+        raise DeclarationRefused("venue_listings must be a list of {venue, market, path, ...}")
+    payload["venue_listings"] = [{**item, "path": resolve(item["path"])} for item in listings]
+    if revision >= VENUE_LISTINGS_REQUIRED_FROM and not payload["venue_listings"]:
+        raise DeclarationRefused(f"declaration revision {revision} must declare venue_listings "
+                                 "(DL v2.4.2 delisted-instrument gate)")
+    # DL v2.4.2: the one non-additive change, retiring instruments the venue no longer lists (``RetiredBase``).
+    retirements = payload.get("retire_instruments") or []
+    if not isinstance(retirements, list) or any(
+            not isinstance(item, dict) or set(item) != {"instrument_id", "reason"} or not str(item["reason"]).strip()
+            for item in retirements):
+        raise DeclarationRefused("retire_instruments must be a list of {instrument_id, reason}")
+    if len({str(item["instrument_id"]) for item in retirements}) != len(retirements):
+        raise DeclarationRefused("retire_instruments must be unique")
+    if retirements and not payload["venue_listings"]:
+        raise DeclarationRefused("retire_instruments needs venue_listings that show the instruments delisted")
+    payload["retire_instruments"] = retirements
+
     def symbols_file(item: dict) -> None:
         if item.get("symbols_file"):
             listed = json.loads(resolve(item.pop("symbols_file")).read_text(encoding="utf-8"))
@@ -402,12 +431,231 @@ def alpha_hosting_universe(spec: Mapping[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------- base set
 
 
+# ------------------------------------------------------------- retirement (DL v2.4.2)
+
+
+class RetiredBase:
+    """The base revision set with venue-delisted instruments retired: the one narrow non-additive path.
+
+    The declaration tool is additive by design. An instrument the venue no longer lists (OKX delisted
+    ``RVN-USDT-SWAP`` 2026-11-19; expired Binance quarterlies) is retired by ``retire_instruments`` instead: this class
+    writes a copy of the base (``config/``, ``consumers/`` and the deployed runtime files that carry rows) with only
+    those instruments and everything keyed by them removed, and the ordinary additive render and gate then run
+    against that copy. The render and the gate build it with the same function from the same inputs, so the gate's
+    additivity checks prove that nothing else was removed.
+
+    Removed per retired instrument: its catalogue instrument row and bindings, acquisition rows (repository and
+    deployed Query runtime), demand rows, promotion-scope ids, routing products, explicit manifest requirements,
+    declared-universe members of its venue/market and live core rows (an inert row today: no source publishes it).
+    Revisions: catalogue, acquisition, demand, scope and declared universes move up by one when they change; every
+    retained-unchanged binding keeps its lineage (``pin_lineage``). Manifest revisions are bumped by the render (the
+    consumer must be declared), so routing, bundles and realm files follow the normal changed-manifest path.
+
+    Refused (fail closed): an instrument the catalogue does not hold; one the declaration's ``venue_listings`` do not
+    show missing or not live; one whose bindings a live ingestor subscribes or a sealed route binding names (those
+    need lane/route changes this slice does not make); a selector that would still resolve a retired symbol.
+    """
+
+    def __init__(self, source_repo: Path, source_runtime: Mapping[str, Any], retirements: list[Mapping[str, Any]],
+                 listings: list[Mapping[str, Any]]) -> None:
+        from scripts.catalog_venue_listing_gate import listing_problems, load_listing
+
+        self._tmp = tempfile.TemporaryDirectory(prefix="qdl-declaration-retired-base-")
+        self.root = Path(self._tmp.name) / "repo"
+        for top in ("config", "consumers"):
+            if (source_repo / top).is_dir():
+                shutil.copytree(source_repo / top, self.root / top)
+        catalog_raw = (source_repo / REPO_FILES["catalog"]).read_bytes()
+        catalog = json.loads(catalog_raw) if catalog_raw.lstrip().startswith(b"{") else yaml.safe_load(catalog_raw)
+        wanted = [str(item["instrument_id"]) for item in retirements]
+        rows = {row["instrument_id"]: row for row in catalog["instruments"]}
+        unknown = [item for item in wanted if item not in rows]
+        if unknown:
+            raise DeclarationRefused(f"retire_instruments names instruments the base catalogue does not hold: {unknown}")
+        loaded = {(str(item["venue"]).upper(), str(item["market"]).upper()): load_listing(
+            item["venue"], item["market"], Path(item["path"])) for item in listings}
+        verdict = listing_problems([rows[item] for item in wanted], loaded)
+        justified = {row["instrument_id"] for row in verdict["missing"] + verdict["not_live"]}
+        unjustified = [item for item in wanted if item not in justified]
+        if unjustified:
+            raise DeclarationRefused(f"retire_instruments must be missing or not live in venue_listings: {unjustified}")
+        retired = {item: rows[item] for item in wanted}
+        uids = {row["instrument_uid"] for row in retired.values()}
+        symbols = {(str(r["venue"]).upper(), str(r["market"]).upper(), str(r["native_symbol"])) for r in retired.values()}
+        binding_ids = sorted(row["binding_id"] for row in catalog["bindings"] if row["instrument_uid"] in uids)
+        source_ids = {row["source"]["source_id"] for row in catalog["bindings"] if row["instrument_uid"] in uids}
+        self.runtime = dict(source_runtime)
+        for name, path in (source_runtime.get("ingestors") or {}).items():
+            if any(b.get("instrument_uid") in uids or b.get("source_id") in source_ids
+                   for b in json.loads(Path(path).read_text(encoding="utf-8")).get("bindings") or []):
+                raise DeclarationRefused(f"retiring {wanted}: live ingestor {name} subscribes a retired binding; "
+                                         "lane retirement is not part of this path")
+        for name, path in (source_runtime.get("route_bindings") or {}).items():
+            if any(uid in Path(path).read_text(encoding="utf-8") for uid in uids):
+                raise DeclarationRefused(f"retiring {wanted}: sealed route binding {name} names a retired instrument")
+        base_catalog_doc = deepcopy(catalog)
+        acq_raw = (source_repo / REPO_FILES["acquisition"]).read_bytes()
+        base_acq_doc = yaml.safe_load(acq_raw)
+        removed_ids = set(binding_ids)
+        catalog["instruments"] = [r for r in catalog["instruments"] if r["instrument_uid"] not in uids]
+        catalog["bindings"] = [r for r in catalog["bindings"] if r["instrument_uid"] not in uids]
+        catalog["catalog_revision"] = int(catalog["catalog_revision"]) + 1
+        acquisition = deepcopy(base_acq_doc)
+        acquisition["bindings"] = [r for r in acquisition["bindings"] if r["binding_id"] not in removed_ids]
+        acquisition["revision"] = int(acquisition["revision"]) + 1
+        live_configs = [json.loads(Path(path).read_text(encoding="utf-8"))
+                        for path in (source_runtime.get("ingestors") or {}).values()]
+        live = (live_config_lineage(StableSourceCatalog.load(source_repo / REPO_FILES["catalog"]), live_configs)
+                if live_configs else None)
+        catalog, acquisition, _ = pin_lineage(base_catalog_doc, base_acq_doc, catalog, acquisition, live_config=live)
+        self._write(REPO_FILES["catalog"], _catalog_bytes(catalog, like=catalog_raw))
+        self._write(REPO_FILES["acquisition"], _yaml_bytes(acquisition))
+        demand = _load_mapping(source_repo / REPO_FILES["demand"])
+        demand_removed = 0
+        for consumer in demand["consumers"]:
+            kept = [r for r in consumer["requirements"]
+                    if (str(r["venue"]).upper(), str(r["market"]).upper(), str(r["native_symbol"])) not in symbols]
+            demand_removed += len(consumer["requirements"]) - len(kept)
+            consumer["requirements"] = kept
+        if demand_removed:
+            demand["revision"] = int(demand["revision"]) + 1
+            self._write(REPO_FILES["demand"], _yaml_bytes(demand))
+        scope = _load_mapping(source_repo / REPO_FILES["scope"])
+        scope_removed = sorted(set(map(str, scope["binding_ids"])) & removed_ids)
+        if scope_removed:
+            scope["binding_ids"] = [i for i in scope["binding_ids"] if str(i) not in removed_ids]
+            scope["revision"] = int(scope["revision"]) + 1
+            self._write(REPO_FILES["scope"], _yaml_bytes(scope))
+        routing = _load_mapping(source_repo / REPO_FILES["routing"])
+        routes_removed = 0
+        for consumer in routing["consumers"]:
+            kept = [p for p in consumer["products"] if p["requirement_key"].split(":", 1)[0] not in uids]
+            routes_removed += len(consumer["products"]) - len(kept)
+            consumer["products"] = kept
+        if routes_removed:
+            self._write(REPO_FILES["routing"], _yaml_bytes(routing))
+        universes = {}
+        for path in sorted((self.root / CONFIG / "universes").glob("*.json")):
+            document = json.loads(path.read_text(encoding="utf-8"))
+            if document.get("schema") != DECLARED_UNIVERSE_SCHEMA:
+                continue
+            members = [m for m in document["members"]
+                       if (str(document["venue"]).upper(), str(document["market"]).upper(), str(m)) not in symbols]
+            if members != document["members"]:
+                updated = declared_universe_document(
+                    universe_id=document["universe_id"], revision=int(document["revision"]) + 1,
+                    venue=document["venue"], market=document["market"], members=members)
+                path.write_bytes(_json_sorted(updated))
+                universes[document["universe_id"]] = len(document["members"]) - len(members)
+        self.manifests: dict[str, int] = {}
+        for path in sorted((self.root / "consumers/stable").glob("*.yaml")):
+            document = yaml.safe_load(path.read_text(encoding="utf-8"))
+            requirements = (document.get("spec") or {}).get("requirements") or []
+            kept = [r for r in requirements if r.get("instrument_uid") not in uids]
+            if len(kept) != len(requirements):
+                document["spec"]["requirements"] = kept
+                path.write_bytes(_yaml_bytes(document))
+                self.manifests[str(document["metadata"]["id"])] = len(requirements) - len(kept)
+        retired_catalog = StableSourceCatalog.load(self.root / REPO_FILES["catalog"])
+        context = SelectorContext.from_catalog(retired_catalog, universe_dir=self.root / CONFIG / "universes")
+        for path in sorted((self.root / "consumers/stable").glob("*.yaml")):
+            try:
+                ConsumerManifestLoader.from_mapping(yaml.safe_load(path.read_text(encoding="utf-8")),
+                                                    selector_context=context)
+            except ValueError as error:
+                raise DeclarationRefused(f"retiring {wanted}: {path.name} no longer loads: {error}") from error
+        runtime_dir = Path(self._tmp.name) / "runtime"
+        runtime_dir.mkdir()
+        # Deployed realm manifests (not in the repository): the same row removal, revision + 1 and the advisory
+        # accept-set floor, so the realm's current tokens stay valid. Never recompiled from another manifest.
+        self.realms: dict[str, dict[str, Any]] = {}
+        realm_paths = {}
+        for cid, path in sorted((source_runtime.get("realm_manifests") or {}).items()):
+            document = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+            if str(document["metadata"]["id"]) != cid:
+                raise DeclarationRefused(f"realm manifest {path} is not {cid}")
+            requirements = document["spec"]["requirements"]
+            kept = [r for r in requirements if r.get("instrument_uid") not in uids]
+            target = runtime_dir / f"realm-{cid}.yaml"
+            if len(kept) == len(requirements):
+                target.write_bytes(Path(path).read_bytes())
+            else:
+                previous = ConsumerManifestLoader.from_mapping(deepcopy(document), selector_context=context)
+                document["spec"]["requirements"] = kept
+                document["metadata"]["revision"] = int(document["metadata"]["revision"]) + 1
+                candidate = ConsumerManifestLoader.from_mapping(deepcopy(document), selector_context=context)
+                document["metadata"]["min_token_revision"] = next_min_token_revision(previous, candidate)
+                ConsumerManifestLoader.from_mapping(deepcopy(document), selector_context=context)
+                target.write_bytes(_yaml_bytes(document))
+                self.realms[cid] = {"revision": [int(document["metadata"]["revision"]) - 1,
+                                                 int(document["metadata"]["revision"])],
+                                    "requirements_removed": len(requirements) - len(kept),
+                                    "min_token_revision": document["metadata"]["min_token_revision"]}
+            realm_paths[cid] = target
+        if source_runtime.get("realm_manifests"):
+            self.runtime["realm_manifests"] = realm_paths
+        query_removed = 0
+        if source_runtime.get("query_acquisition"):
+            document = yaml.safe_load(Path(source_runtime["query_acquisition"]).read_bytes())
+            before = len(document["bindings"])
+            document["bindings"] = [r for r in document["bindings"] if r["binding_id"] not in removed_ids]
+            query_removed = before - len(document["bindings"])
+            if query_removed:
+                document["revision"] = int(acquisition["revision"])
+            target = runtime_dir / "query-acquisition.yaml"
+            target.write_bytes(yaml.safe_dump(document, allow_unicode=False).encode("utf-8")
+                               if query_removed else Path(source_runtime["query_acquisition"]).read_bytes())
+            self.runtime["query_acquisition"] = target
+        cores_removed = {}
+        retired_cores = []
+        for path in source_runtime.get("cores") or []:
+            raw = Path(path).read_bytes()
+            document = json.loads(raw)
+            before = len(document["core"]["bindings"])
+            document["core"]["bindings"] = [r for r in document["core"]["bindings"]
+                                            if r.get("instrument_uid") not in uids and r["source_id"] not in source_ids]
+            cores_removed[Path(path).name] = before - len(document["core"]["bindings"])
+            target = runtime_dir / Path(path).name
+            target.write_bytes(core_refresh._canonical_bytes(document) if cores_removed[Path(path).name] else raw)
+            retired_cores.append(target)
+        if source_runtime.get("cores"):
+            self.runtime["cores"] = retired_cores
+        self.summary = {
+            "instruments": [{"instrument_id": item, "instrument_uid": retired[item]["instrument_uid"],
+                             "native_symbol": retired[item]["native_symbol"],
+                             "reason": next(str(r.get("reason", "")) for r in retirements
+                                            if str(r["instrument_id"]) == item)} for item in wanted],
+            "listing_verdict": {"missing": verdict["missing"], "not_live": verdict["not_live"]},
+            "binding_ids": binding_ids,
+            "catalog_revision": [int(base_catalog_doc["catalog_revision"]), int(catalog["catalog_revision"])],
+            "acquisition_revision": [int(base_acq_doc["revision"]), int(acquisition["revision"])],
+            "demand_rows_removed": demand_removed,
+            "scope_ids_removed": scope_removed,
+            "routing_products_removed": routes_removed,
+            "manifest_requirements_removed": dict(sorted(self.manifests.items())),
+            "declared_universe_members_removed": dict(sorted(universes.items())),
+            "query_runtime_rows_removed": query_removed,
+            "core_rows_removed": dict(sorted(cores_removed.items())),
+            "realm_manifests": dict(sorted(self.realms.items())),
+        }
+
+    def _write(self, rel: Path, payload: bytes) -> None:
+        (self.root / rel).write_bytes(payload)
+
+
 class BaseSet:
     """The live revision set a render is additive against (read-only)."""
 
     def __init__(self, declaration: Mapping[str, Any]) -> None:
-        self.repo = Path(declaration["base"]["repo"])
-        self.runtime = declaration["base"]["runtime"]
+        # ``source_*`` is what the declaration names (hashed, recorded, gated for drift); ``repo``/``runtime`` is what
+        # the render reads: the same, or its retired copy when the declaration retires delisted instruments.
+        self.source_repo = self.repo = Path(declaration["base"]["repo"])
+        self.source_runtime = self.runtime = declaration["base"]["runtime"]
+        self.retired: RetiredBase | None = None
+        if declaration.get("retire_instruments"):
+            self.retired = RetiredBase(self.source_repo, self.source_runtime, declaration["retire_instruments"],
+                                       declaration.get("venue_listings") or [])
+            self.repo, self.runtime = self.retired.root, self.retired.runtime
         self.raw: dict[str, bytes] = {name: (self.repo / rel).read_bytes() for name, rel in REPO_FILES.items()}
         self.docs = {name: (json.loads(raw) if raw.lstrip().startswith(b"{") else yaml.safe_load(raw))
                      for name, raw in self.raw.items()}
@@ -418,14 +666,15 @@ class BaseSet:
         return self.repo / rel
 
     def input_hashes(self) -> dict[str, str]:
-        result = {str(rel): _sha256_bytes(self.raw[name]) for name, rel in REPO_FILES.items()}
+        result = {str(rel): _sha256_file(self.source_repo / rel) for rel in REPO_FILES.values()}
+        runtime = self.source_runtime
         for name in ("authority", "query_acquisition"):
-            if self.runtime.get(name):
-                result[f"runtime:{name}"] = _sha256_file(self.runtime[name])
-        for group in ("ingestors", "bundles", "route_bindings"):
-            for key, path in (self.runtime.get(group) or {}).items():
+            if runtime.get(name):
+                result[f"runtime:{name}"] = _sha256_file(runtime[name])
+        for group in ("ingestors", "bundles", "route_bindings", "realm_manifests"):
+            for key, path in (runtime.get(group) or {}).items():
                 result[f"runtime:{group}:{key}"] = _sha256_file(path)
-        for path in self.runtime.get("cores") or []:
+        for path in runtime.get("cores") or []:
             result[f"runtime:cores:{Path(path).name}"] = _sha256_file(path)
         return result
 
@@ -887,6 +1136,11 @@ class Render:
         catalog = StableSourceCatalog.from_mapping(catalog_doc)
         instrument_by_symbol = {(r.identity.venue, r.identity.market, r.native_symbol): r for r in catalog.instruments}
         accept_set = bool(self.declaration["accept_set"])
+        retired = self.base.retired.manifests if self.base.retired else {}
+        undeclared = sorted(set(retired) - {str(c["consumer_id"]) for c in self.declaration["consumers"]})
+        if undeclared:
+            raise DeclarationRefused(f"retire_instruments removes requirements of {undeclared}; declare those "
+                                     "consumers so their manifest revisions move")
         for consumer in self.declaration["consumers"]:
             cid = str(consumer["consumer_id"])
             rel = Path(consumer["manifest"])
@@ -909,6 +1163,7 @@ class Render:
                     target["spec"]["quotas"][name] = value
                     changed = True
             changed = self._apply_quota_model(cid, klass, target, quotas) or changed
+            changed = changed or cid in retired  # the retired base already dropped the rows; the revision moves here
             if changed:
                 # A retired revision is skipped, never reused (v2.2.6 r12 -> r13): ``revision`` in the declaration.
                 base_revision = int(base_doc["metadata"]["revision"])
@@ -1397,6 +1652,8 @@ class Render:
                     path = Path(tmp.name) / f"{cid}.yaml"
                     path.write_bytes(_yaml_bytes(item["doc"]))
                     manifest_paths[cid] = path
+            for cid in (self.base.retired.realms if self.base.retired else {}):
+                manifest_paths[cid] = Path(self.base.runtime["realm_manifests"][cid])
             compiled = kn_gateway_bundle.compile_bundle(environment=environment, catalog_path=catalog_path,
                                                         manifest_paths=list(manifest_paths.values()),
                                                         universe_dir=universe_dir)
@@ -1810,6 +2067,9 @@ class Render:
                 payload = _yaml_bytes(item["doc"])
                 self.files[f"repo/{item['rel']}"] = payload
                 self.files[f"consumer-realms/{cid}-r{item['doc']['metadata']['revision']}.yaml"] = payload
+        for cid, realm in (self.base.retired.realms if self.base.retired else {}).items():
+            self.files[f"consumer-realms/{cid}-r{realm['revision'][1]}.yaml"] = Path(
+                self.base.runtime["realm_manifests"][cid]).read_bytes()
         # runtime: Query/bar_edge catalogue + acquisition, then the role configs built from them
         self.files["runtime/stable-source-bindings.yaml"] = catalog_bytes
         query_acq = self.build_query_acquisition(acq_doc, new_acq)
@@ -1862,6 +2122,7 @@ class Render:
             universes={uid: {"revision": d["revision"], "members": len(d["members"]),
                              "membership_sha256": d["membership_sha256"]} for uid, d in self.universes.items()},
             derived_bindings=len(self.derived),
+            retirement=None if self.base.retired is None else self.base.retired.summary,
             ingestors=ingestors, cores=cores, bundles=bundles, bindings=bindings,
         )
         index = self._index()
@@ -1887,11 +2148,11 @@ class Render:
         self.files["render-inputs.json"] = _json_sorted({
             "schema": INPUTS_SCHEMA,
             "declaration_revision": int(self.declaration["declaration_revision"]),
-            "base_repo": str(self.base.repo),
+            "base_repo": str(self.base.source_repo),
             "base_runtime": {k: (str(v) if isinstance(v, Path) else
                                  [str(i) for i in v] if isinstance(v, list) else
                                  {a: str(b) for a, b in v.items()} if isinstance(v, dict) else v)
-                             for k, v in self.base.runtime.items()},
+                             for k, v in self.base.source_runtime.items()},
             "base_sha256": self.base.input_hashes(),
             "manifests": {cid: str(i["rel"]) for cid, i in self.manifests.items()},
             "accept_set": bool(self.declaration["accept_set"]),
@@ -1899,6 +2160,10 @@ class Render:
             "bar_edge_live_checkpoint": (None if not self.declaration["bar_edge"].get("live_checkpoint")
                                          else str(self.declaration["bar_edge"]["live_checkpoint"])),
             "live_sources": self.declaration["base"].get("live_sources"),
+            "venue_listings": [{**{k: v for k, v in item.items() if k != "path"}, "path": str(item["path"]),
+                                "sha256": _sha256_file(Path(item["path"]))}
+                               for item in self.declaration.get("venue_listings") or []],
+            **({"retire_instruments": self.declaration["retire_instruments"]} if self.base.retired else {}),
         })
         return report
 
@@ -2012,6 +2277,60 @@ def gate(rendered: Path) -> dict[str, Any]:
                    if _sha256_file(rendered / "repo" / rel) != digest]
     check("declaration_index_matches_files", not mismatched, mismatched)
     repo = rendered / "repo"
+    runtime = inputs["base_runtime"]
+    # DL v2.4.2: a retiring render is gated against the retired base, rebuilt here by the same function from the
+    # recorded inputs; every later additivity check then proves nothing but the retirement was removed.
+    if inputs.get("retire_instruments"):
+        try:
+            retired = RetiredBase(base_repo, {k: ([Path(i) for i in v] if isinstance(v, list) else
+                                                  {a: Path(b) for a, b in v.items()} if isinstance(v, dict) else
+                                                  Path(v) if isinstance(v, str) else v)
+                                              for k, v in runtime.items()},
+                                  inputs["retire_instruments"],
+                                  [{**item, "path": Path(item["path"])} for item in inputs.get("venue_listings") or []])
+        except DeclarationRefused as error:
+            check("retirement_justified_by_venue_listings", False, str(error))
+            return _gate_result(checks, report)
+        check("retirement_justified_by_venue_listings", True, retired.summary)
+        # Deployed realm manifests: only retired rows leave, the revision moves by one, the realm's current tokens
+        # stay accepted (advisory floor), and the render ships exactly the retired file.
+        realm_problems = []
+        for cid, realm in retired.realms.items():
+            old_doc = yaml.safe_load(Path(runtime["realm_manifests"][cid]).read_text(encoding="utf-8"))
+            new_path = rendered / "consumer-realms" / f"{cid}-r{realm['revision'][1]}.yaml"
+            if not new_path.is_file() or new_path.read_bytes() != Path(retired.runtime["realm_manifests"][cid]).read_bytes():
+                realm_problems.append(f"{cid}: rendered realm file missing or not the retired copy")
+                continue
+            new_doc = yaml.safe_load(new_path.read_text(encoding="utf-8"))
+            retired_uids = {item["instrument_uid"] for item in retired.summary["instruments"]}
+            removed = [r for r in old_doc["spec"]["requirements"] if r not in new_doc["spec"]["requirements"]]
+            added = [r for r in new_doc["spec"]["requirements"] if r not in old_doc["spec"]["requirements"]]
+            if added or any(r.get("instrument_uid") not in retired_uids for r in removed):
+                realm_problems.append(f"{cid}: changes beyond the retired rows")
+            parsed = ConsumerManifestLoader.from_mapping(new_doc)
+            if int(old_doc["metadata"]["revision"]) not in parsed.accepted_token_revisions:
+                realm_problems.append(f"{cid}: r{old_doc['metadata']['revision']} tokens would be refused")
+        if retired.realms:
+            check("retired_realm_manifests", not realm_problems,
+                  {"realms": retired.realms, "problems": realm_problems})
+        base_repo = retired.root
+        runtime = {k: ([str(i) for i in v] if isinstance(v, list) else
+                       {a: str(b) for a, b in v.items()} if isinstance(v, dict) else
+                       str(v) if isinstance(v, Path) else v) for k, v in retired.runtime.items()}
+    # DL v2.4.2: every catalogue instrument of a captured venue/market is listed and live on that venue. Renders made
+    # before v2.4.2 carry no `venue_listings` key and are re-gated unchanged.
+    if "venue_listings" in inputs:
+        from scripts.catalog_venue_listing_gate import listing_problems, load_listing
+        changed = [item["path"] for item in inputs["venue_listings"]
+                   if _sha256_file(Path(item["path"])) != item["sha256"]]
+        listings = {(item["venue"].upper(), item["market"].upper()): load_listing(item["venue"], item["market"],
+                                                                                  Path(item["path"]))
+                    for item in inputs["venue_listings"]}
+        catalog_doc = json.loads((repo / REPO_FILES["catalog"]).read_text(encoding="utf-8"))
+        verdict = listing_problems(catalog_doc["instruments"], listings)
+        check("catalog_instruments_listed_on_venue", verdict["status"] == "PASS" and not changed,
+              {**{k: verdict[k] for k in ("checked", "missing", "not_live", "not_covered_by_a_listing")},
+               "listing_changed_since_render": changed})
     # 1. certified loaders
     try:
         catalog = StableSourceCatalog.load(repo / REPO_FILES["catalog"])
@@ -2111,7 +2430,6 @@ def gate(rendered: Path) -> dict[str, Any]:
     check("config_strictly_additive", not problems, problems)
     # 3. role configs: retained rows byte-identical (lane pins aside), lanes stable
     role_problems = []
-    runtime = inputs["base_runtime"]
     lineage_problems: list[str] = []
     for file_name, base_path in (runtime.get("ingestors") or {}).items():
         new_path = rendered / "ingestor" / file_name

@@ -1,0 +1,14 @@
+{
+ "symbols": [
+  {
+   "contractType": "PERPETUAL",
+   "status": "TRADING",
+   "symbol": "BTCUSDT"
+  },
+  {
+   "contractType": "PERPETUAL",
+   "status": "TRADING",
+   "symbol": "RVNUSDT"
+  }
+ ]
+}

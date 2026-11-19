@@ -1,0 +1,26 @@
+PASS image-rc-health: sha256:58bdd28216139f0c1a40abeee3077834f1cf922cf6412e7fb1ce8845591a0512 0 running healthy
+PASS kn-mount: /kn=/home/bobby/.local/state/qdl-v2/releases/v2.4.2-r10:false
+PASS projector-bundle: bundle_sha256=1312c3bbf266478de842ab294c664a1ae8f03b1b0cce2a43dbc594aac37146b9 stage_a=True stage_b=True
+PASS projector-status: errors={} poll_errors=0 cache_reconnects=0 last_rebuild_error=None
+INFO projector panic/error lines since T0: 26
+PASS hot-read-query_kn_1: configured client: 3 reads, 3 OK, 0 authority/auth refusals; query catalog_revision 17 bindings 3
+PASS hot-read-query_kn_2: configured client: 3 reads, 3 OK, 0 authority/auth refusals; query catalog_revision 17 bindings 3
+PASS query-refusals-query_kn_1: HOT_AUTHORITY_OR_PROTOCOL_REFUSED since 2026-11-19T16:05:10Z = 0 (authority fallback log lines: 0)
+PASS query-refusals-query_kn_2: HOT_AUTHORITY_OR_PROTOCOL_REFUSED since 2026-11-19T16:05:10Z = 0 (authority fallback log lines: 0)
+PASS writer-slices: demanded/ready/exec=246/246/235 other-reasons=- (246/246, or not-ready only EXECUTION_CONTEXT_STALE/TRADE_EVENT_STALE, within 120 s)
+PASS writer-retries: worker_retries={}
+PASS writer-probe-authority: native probe routes with a HOT_AUTHORITY unavailable since T0 = 0
+PASS writer-refusals: count=0 since 2026-11-19T16:05:10Z
+PASS writer-untouched: sha256:d1addc042756
+INFO stream_kn_1 abafab2c98cb8 rc=0 2026-11-19T16:02:45.791206834Z
+INFO stream_kn_2 abafab2c98cb8 rc=0 2026-11-19T15:53:59.91506901Z
+INFO query_kn_1 5ea7a7a40ef24 rc=0 2026-11-19T15:59:42.445644561Z
+INFO query_kn_2 5ea7a7a40ef24 rc=0 2026-11-19T15:56:55.947510439Z
+INFO rust_core 58bdd28216132 rc=0 2026-11-18T05:13:10.598989096Z
+INFO rust_core_2 58bdd28216132 rc=0 2026-11-18T05:20:04.499983609Z
+INFO rust_core_3 58bdd28216132 rc=0 2026-11-18T05:23:47.481545977Z
+INFO market_projector_2 58bdd28216132 rc=0 2026-11-18T05:31:24.307336671Z
+INFO ingestor_binance_usdm 58bdd28216132 rc=0 2026-11-19T06:18:15.661497649Z
+INFO ingestor_okx_swap 58bdd28216132 rc=0 2026-11-19T06:21:26.737062399Z
+INFO binance_bar_edge 929eeac2091e2 rc=0 2026-11-19T12:29:51.501428157Z
+WINDOW market_projector_1 GATES PASS

@@ -820,6 +820,8 @@ class V2QueryService:
                 request_id=request_id,
                 instrument_uid=requirement.instrument_uid,
             ) from error
+        except KeyError as error:
+            raise self._unbound_refusal(requirement, error, request_id) from error
         if item is None:
             self._raise_not_ready(requirement, request_id)
         self._enforce_content(requirement, (item,), request_id)
@@ -1027,6 +1029,47 @@ class V2QueryService:
                 instrument_uid=requirement.instrument_uid,
             ) from error
 
+    def _unbound_refusal(
+        self, requirement: DataRequirement, error: KeyError, request_id: str
+    ) -> BaseException:
+        """DL v2.4.2: a manifest-allowed requirement the active catalogue has no binding for.
+
+        The KN/spool backends raise ``KeyError`` from ``StableSourceCatalog.binding_for`` for it (e.g. an instrument
+        retired from the catalogue while an older realm manifest still names it). That used to escape as an
+        untyped 500 and failed a whole snapshot batch. It is now a typed, non-retryable per-item refusal:
+        ``INSTRUMENT_NOT_FOUND`` when the instrument is not in the active catalogue (the reference batch's code for
+        the same case), ``UNSUPPORTED_FEED`` when the instrument is there but this feed/interval/policy is not
+        (the KN read view's code). Any other ``KeyError`` is returned unchanged: it stays an internal error.
+        """
+        catalog = getattr(self.backend, "catalog", None) or getattr(
+            getattr(self.backend, "spool", None), "catalog", None
+        )
+        if catalog is None:
+            return error
+        try:
+            catalog.binding_for(requirement)
+        except (KeyError, ValueError):
+            pass
+        else:
+            return error
+        try:
+            self.instruments.get(requirement.instrument_uid)
+        except KeyError:
+            problem = QueryProblem(
+                CanonicalErrorCode.INSTRUMENT_NOT_FOUND,
+                "instrument is not present in the active catalog",
+                False,
+            )
+        else:
+            problem = QueryProblem(
+                CanonicalErrorCode.UNSUPPORTED_FEED,
+                "requirement has no binding in the active catalog",
+                False,
+            )
+        return QueryServiceError(
+            problem, request_id=request_id, instrument_uid=requirement.instrument_uid
+        )
+
     def warmup(
         self,
         requirement: DataRequirement,
@@ -1043,6 +1086,8 @@ class V2QueryService:
                 request_id=request_id,
                 instrument_uid=requirement.instrument_uid,
             ) from error
+        except KeyError as error:
+            raise self._unbound_refusal(requirement, error, request_id) from error
         return self._warmup_from_history(
             requirement,
             history,
@@ -1355,6 +1400,8 @@ class V2QueryService:
                     and callable(history_many)
                 ):
                     history = await local_history(requirement)
+                    if isinstance(history, KeyError):
+                        raise self._unbound_refusal(requirement, history, request_id) from history
                     if isinstance(history, Exception):
                         raise history
                     return await self._query_work_pools_for().cold(

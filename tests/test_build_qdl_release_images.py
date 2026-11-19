@@ -455,7 +455,7 @@ class SourceTests(unittest.TestCase):
                          "reference revision not in this (shallow?) checkout")
     def test_expected_python_diff_is_the_git_diff_against_each_production_tree(self):
         self.assertEqual({ref_id for _, ref_id, _ in b.PYTHON_REFERENCES.values()},
-                         {"sha256:18ada571c72856cefc2844c8cb2c3809c3e30ac77927bc4c73160e7b2787cd18"})
+                         {"sha256:929eeac2091ecbe916cf1f19fba9f13056e621a1c2c1947427b97a8a7c002082"})
         for _, _, tree in b.PYTHON_REFERENCES.values():
             diff = b.expected_python_diff(REPO, self.head(), tree)
             expected = subprocess.check_output(["git", "-C", str(REPO), "diff", "--name-only", "--no-renames",

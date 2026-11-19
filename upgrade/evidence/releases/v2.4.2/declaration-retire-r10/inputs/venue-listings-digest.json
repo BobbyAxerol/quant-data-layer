@@ -1,0 +1,18 @@
+{
+ "binance_usdm_rows": [
+  "RVNUSDT:TRADING"
+ ],
+ "captured_at_utc": "2026-11-19T14:03:37Z",
+ "files": {
+  "binance-usdm-exchangeinfo.json": {
+   "rows": 953,
+   "sha256": "77304077f7566b4283a088702512022360a99068cb18c4a75f459232ca34ccf0"
+  },
+  "okx-instruments-swap.json": {
+   "rows": 546,
+   "sha256": "5aee8464fef85223e920c4253e16c8d9f63e5f61c9d2e00907e44dbab6ed49cd"
+  }
+ },
+ "note": "full captures kept on the host for the window (not committed: 1.7 MB); the gate re-hashes them",
+ "okx_swap_rvn_rows": []
+}
