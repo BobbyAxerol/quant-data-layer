@@ -1,0 +1,1 @@
+DL-only window (Query x2 one at a time, bar_edge); no executor_network/Paper/Sandbox role touched; TS writer reads stay on the other Query replica

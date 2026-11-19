@@ -1,0 +1,80 @@
+stable derived BAR gap binding=okx-swap-aave-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap binding=okx-swap-ada-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap binding=okx-swap-arb-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap binding=okx-swap-avax-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap binding=okx-swap-bch-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap binding=okx-swap-ena-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap binding=okx-swap-fil-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap binding=okx-swap-link-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap binding=okx-swap-near-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap binding=okx-swap-ondo-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap binding=okx-swap-pengu-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap binding=okx-swap-pepe-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap binding=okx-swap-pump-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap binding=okx-swap-sui-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap binding=okx-swap-tao-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap binding=okx-swap-tia-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap binding=okx-swap-uni-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap binding=okx-swap-wld-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap binding=okx-swap-xrp-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap binding=okx-swap-zec-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap binding=okx-swap-aave-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap binding=okx-swap-ada-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap binding=okx-swap-arb-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap binding=okx-swap-avax-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap binding=okx-swap-bch-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap binding=okx-swap-ena-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap binding=okx-swap-fil-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap binding=okx-swap-link-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap binding=okx-swap-near-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap binding=okx-swap-ondo-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap binding=okx-swap-pengu-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap binding=okx-swap-pepe-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap binding=okx-swap-pump-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap binding=okx-swap-sui-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap binding=okx-swap-tao-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap binding=okx-swap-tia-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap binding=okx-swap-uni-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap binding=okx-swap-wld-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap binding=okx-swap-xrp-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap binding=okx-swap-zec-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap healed binding=okx-swap-aave-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap healed binding=okx-swap-ada-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap healed binding=okx-swap-arb-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap healed binding=okx-swap-avax-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap healed binding=okx-swap-bch-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap healed binding=okx-swap-ena-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap healed binding=okx-swap-fil-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap healed binding=okx-swap-link-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap healed binding=okx-swap-near-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap healed binding=okx-swap-ondo-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap healed binding=okx-swap-pengu-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap healed binding=okx-swap-pepe-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap healed binding=okx-swap-pump-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap healed binding=okx-swap-sui-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap healed binding=okx-swap-tao-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap healed binding=okx-swap-tia-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap healed binding=okx-swap-uni-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap healed binding=okx-swap-wld-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap healed binding=okx-swap-xrp-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap healed binding=okx-swap-zec-usdt-swap-bar-15m open_ms=1795090500000
+stable derived BAR gap healed binding=okx-swap-aave-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap healed binding=okx-swap-ada-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap healed binding=okx-swap-arb-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap healed binding=okx-swap-avax-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap healed binding=okx-swap-bch-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap healed binding=okx-swap-ena-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap healed binding=okx-swap-fil-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap healed binding=okx-swap-link-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap healed binding=okx-swap-near-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap healed binding=okx-swap-ondo-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap healed binding=okx-swap-pengu-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap healed binding=okx-swap-pepe-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap healed binding=okx-swap-pump-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap healed binding=okx-swap-sui-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap healed binding=okx-swap-tao-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap healed binding=okx-swap-tia-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap healed binding=okx-swap-uni-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap healed binding=okx-swap-wld-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap healed binding=okx-swap-xrp-usdt-swap-bar-30m open_ms=1795089600000
+stable derived BAR gap healed binding=okx-swap-zec-usdt-swap-bar-30m open_ms=1795089600000
