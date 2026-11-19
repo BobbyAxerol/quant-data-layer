@@ -79450,3 +79450,31 @@ After r10 they get a typed refusal for OKX RVN:
 Binance RVNUSDT is unchanged.
 
 Status: `implemented`, `tested locally`. r10 is `rendered, not applied`.
+
+### DL v2.4.2 slice 2b: a manifest-allowed requirement without a catalogue binding is a typed per-item refusal (tested locally) - 2026-11-19 (Claude)
+
+**Problem (class).** The backend raises `KeyError` from `binding_for` for any manifest-allowed requirement the active
+catalogue cannot bind (the retired-instrument case above, or a reference feed sent to `/snapshot`). That error escaped
+`V2QueryService`:
+- `snapshot` was an untyped 500;
+- a snapshot batch failed for every item;
+- a warmup batch item was `INTERNAL_ERROR`.
+
+**Fix.** `V2QueryService._unbound_refusal`, used by `snapshot`, `warmup` and the local warmup-batch path. It applies
+when the backend's catalogue (`backend.catalog`, or `backend.spool.catalog`) confirms that the requirement has no
+binding. The error is then a non-retryable `QueryServiceError`, carried per item by the existing batch paths:
+- `INSTRUMENT_NOT_FOUND` (HTTP 404, the reference batch's code for the same case) when the instrument is not in the
+  active catalogue;
+- `UNSUPPORTED_FEED` (422, the KN read view's code) when the instrument is there but the product is not.
+
+Any other `KeyError` is re-raised unchanged. The codes are existing, documented members of `CanonicalErrorCode`, so
+the change is additive.
+
+**Tests** (`tests/test_dl_v242_unbound_requirement.py`, 5):
+- single snapshot (INSTRUMENT_NOT_FOUND);
+- instrument without that product (UNSUPPORTED_FEED);
+- a mixed snapshot batch returns both items (DATA_NOT_READY and INSTRUMENT_NOT_FOUND);
+- warmup single and a mixed warmup batch;
+- an unrelated `KeyError` is not relabelled.
+
+Status: `implemented`, `tested locally`.
