@@ -6,13 +6,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.test_phaseb_bar_history_bootstrap import StableBarBootstrapTests
+from tests import test_phaseb_bar_history_bootstrap as bootstrap_tests
 from qdl.runtime import stable_bar_edge as module
 
 
 class ShortProofTests(unittest.TestCase):
     def setUp(self):
-        self.helper = StableBarBootstrapTests("test_checkpoint_history_gap_is_binding_scoped_and_detected_from_cache")
+        self.helper = bootstrap_tests.StableBarBootstrapTests("test_checkpoint_history_gap_is_binding_scoped_and_detected_from_cache")
         self.helper.setUp()
         self.directory = tempfile.TemporaryDirectory(prefix="qdl-v241-short-proofs-")
         self.spool, self.edge = self.helper._cached_edge(self.directory.name, self.helper._NoopPublisher())

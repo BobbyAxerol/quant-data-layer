@@ -47,6 +47,7 @@ from qdl.runtime.declaration import (
 )
 from qdl.runtime import derived_bars
 from qdl.runtime.heartbeat import write_heartbeat
+from qdl.adapters.instrument_unavailable import ProviderInstrumentUnavailable, find_instrument_unavailable
 from qdl.runtime.kn_bar_readback import KnBarReadbackError, KnBarReadbackNotReady
 from qdl.runtime.stable_catalog import StableSourceBinding, StableSourceCatalog
 from qdl.runtime.stable_capacity import (
@@ -191,6 +192,9 @@ def _source_provider(source: StableSourceBinding) -> str:
 # of re-proving every short binding from the provider (2026-11-19 window 4: 680 bindings, 5,575,631 pre-listing
 # opens re-fetched). A proof older than _SHORT_PROOF_MAX_AGE_MS, or of another binding digest, is not used.
 _SHORT_PROOFS_SCHEMA = "qdl.stable-bar-edge.history-short-proofs.v1"
+# DL v2.4.2: a binding whose instrument the provider says does not exist is rechecked after 6 h (a relisting or a
+# transient venue fault heals then); its removal goes through the declaration gate (scripts/catalog_venue_listing_gate.py).
+_INSTRUMENT_UNAVAILABLE_RETRY_SECONDS = 6 * 3600
 _SHORT_PROOF_MAX_AGE_MS = 30 * 86_400_000
 
 
@@ -1484,6 +1488,17 @@ class StableBinanceBarEdge:
         if next_retry_at is None:
             next_retry_at = self._next_retry_at = {}
         delay = self._retry_delay_seconds(binding_id)
+        unavailable = find_instrument_unavailable(error)
+        if unavailable is not None:
+            # DL v2.4.2: the live poll of a delisted instrument is quarantined like its history (long retry,
+            # counted in the heartbeat), instead of the normal short final-bar retry.
+            delay = max(delay, _INSTRUMENT_UNAVAILABLE_RETRY_SECONDS)
+            quarantine = getattr(self, "_history_unavailable", None)
+            if quarantine is None:
+                quarantine = self._history_unavailable = {}
+            quarantine.setdefault(binding_id, {"provider": unavailable.provider, "symbol": unavailable.symbol,
+                                               "code": unavailable.code, "since": int(now), "attempt": 0})
+            quarantine[binding_id]["attempt"] += 1
         retry_attempts[binding_id] = retry_attempts.get(binding_id, 0) + 1
         next_retry_at[binding_id] = now + delay
 
@@ -1603,6 +1618,8 @@ class StableBinanceBarEdge:
                 "overdue": len(self._serve_overdue), "short": len(getattr(self, "_history_short", {})),
                 "history_failed": len(getattr(self, "_history_retry", {})),
                 "history_suspended": len(getattr(self, "_history_suspended", {})),
+                # DL v2.4.2: bindings quarantined because the provider says the instrument does not exist.
+                "instrument_unavailable": len(getattr(self, "_history_unavailable", {})),
                 "gate_closed": int(getattr(self, "_history_gate_closed_at", None) is not None)}
 
     def bootstrap_history(self, *, max_bindings: int | None = None) -> int:
@@ -1629,6 +1646,7 @@ class StableBinanceBarEdge:
         self._history_suspended = suspended
         pending = getattr(self, "_history_suffix_pending", {})
         self._history_suffix_pending = pending
+        self._history_unavailable = getattr(self, "_history_unavailable", {})
         for source, acquisition in self.history_bindings + self.history_okx_bindings:
             if ((source.binding_id in self._last_open_ms and source.binding_id not in suspended)
                     or source.binding_id in self._history_short_empty()):
@@ -1647,6 +1665,23 @@ class StableBinanceBarEdge:
                     raise pending[source.binding_id]
                 values = self._fetch_history(source, acquisition, rows=bootstrap_rows,
                     observed_ms=observed_ms, allow_short=kn_mode)
+            except ProviderInstrumentUnavailable as unavailable:
+                # DL v2.4.2: the provider says this instrument does not exist (delisted/closed). Quarantine this
+                # one binding with a long retry and continue with the others; never fail the whole cycle.
+                attempt += 1
+                failures[source.binding_id] = (attempt, self.clock() + _INSTRUMENT_UNAVAILABLE_RETRY_SECONDS)
+                self._history_unavailable[source.binding_id] = {
+                    "provider": unavailable.provider, "symbol": unavailable.symbol, "code": unavailable.code,
+                    "since": getattr(self, "_history_unavailable", {}).get(source.binding_id, {}).get(
+                        "since", int(self.clock())),
+                    "attempt": attempt}
+                logger.error(json.dumps({
+                    "event": "qdl_bar_edge_instrument_unavailable", "binding": source.binding_id,
+                    "provider": unavailable.provider, "symbol": unavailable.symbol, "code": unavailable.code,
+                    "message": unavailable.provider_message, "attempt": attempt,
+                    "retry_in_seconds": _INSTRUMENT_UNAVAILABLE_RETRY_SECONDS,
+                    "quarantined": len(self._history_unavailable)}, sort_keys=True, separators=(",", ":")))
+                continue
             except BarHistoryGapError as error:
                 if not kn_mode:
                     raise
@@ -1692,6 +1727,7 @@ class StableBinanceBarEdge:
                 logger.error("stable BAR suspended history recheck empty binding=%s", source.binding_id)
                 continue
             failures.pop(source.binding_id, None)
+            self._history_unavailable.pop(source.binding_id, None)
             if len(values) < bootstrap_rows:
                 # The venue has no older bars (new listing / long interval):
                 # reported, never invented, never retried as an error.
@@ -2462,7 +2498,9 @@ class StableBinanceBarEdge:
                 )
             delay = self._loop_sleep_seconds(self.clock())
             if failures:
-                delay = min(delay, min(2 ** min(failures, 6), 30))
+                # DL v2.4.2: a failing cycle waits at least 2 s, doubling to 30 s (it was `min`, so the scheduler's
+                # ~0.1 s history delay won and a failing cycle repeated every ~2 s, 2026-11-19 RVN-USDT-SWAP).
+                delay = max(delay, min(2 ** min(failures, 6), 30))
             self._stopped.wait(delay)
 
     def stop(self, *_args) -> None:

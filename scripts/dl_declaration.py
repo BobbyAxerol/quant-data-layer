@@ -129,6 +129,8 @@ from scripts import refresh_v2_core_runtime_bindings as core_refresh  # noqa: E4
 from scripts import refresh_v2_native_ingestor_runtime as ingestor_refresh  # noqa: E402
 
 DECLARATION_SCHEMA = "qdl.v2.declaration.v1"
+# DL v2.4.2: declarations from this revision must carry venue_listings (delisted-instrument gate).
+VENUE_LISTINGS_REQUIRED_FROM = 10
 TS_REQUIREMENTS_SCHEMA = "ts.declared-execution-requirements.v1"
 ALPHA_REQUIREMENTS_SCHEMA = "execution-alpha.data-requirements.v1"
 ALPHA_HOSTING_SCHEMA = "alpha-hosting-source-intent.v1"
@@ -269,7 +271,8 @@ def load_declaration(path: Path) -> dict[str, Any]:
     if payload.get("schema") != DECLARATION_SCHEMA:
         raise DeclarationRefused("declaration schema is unsupported")
     allowed = {"schema", "declaration_revision", "environment", "base", "consumers",
-               "instrument_captures", "ingestor", "capacity", "accept_set", "description", "bar_edge"}
+               "instrument_captures", "ingestor", "capacity", "accept_set", "description", "bar_edge",
+               "venue_listings"}
     if set(payload) - allowed:
         raise DeclarationRefused(f"declaration has unknown fields: {sorted(set(payload) - allowed)}")
     revision = payload.get("declaration_revision")
@@ -301,6 +304,16 @@ def load_declaration(path: Path) -> dict[str, Any]:
     payload["instrument_captures"] = [
         {**item, "path": resolve(item["path"])} for item in payload.get("instrument_captures") or []
     ]
+    # DL v2.4.2: captures of each venue's live instruments list; the gate refuses catalogue instruments they do not
+    # list as live (scripts/catalog_venue_listing_gate.py). Required from declaration revision 10.
+    listings = payload.get("venue_listings") or []
+    if not isinstance(listings, list) or any(
+            not isinstance(item, dict) or not {"venue", "market", "path"} <= set(item) for item in listings):
+        raise DeclarationRefused("venue_listings must be a list of {venue, market, path, ...}")
+    payload["venue_listings"] = [{**item, "path": resolve(item["path"])} for item in listings]
+    if revision >= VENUE_LISTINGS_REQUIRED_FROM and not payload["venue_listings"]:
+        raise DeclarationRefused(f"declaration revision {revision} must declare venue_listings "
+                                 "(DL v2.4.2 delisted-instrument gate)")
     def symbols_file(item: dict) -> None:
         if item.get("symbols_file"):
             listed = json.loads(resolve(item.pop("symbols_file")).read_text(encoding="utf-8"))
@@ -1899,6 +1912,9 @@ class Render:
             "bar_edge_live_checkpoint": (None if not self.declaration["bar_edge"].get("live_checkpoint")
                                          else str(self.declaration["bar_edge"]["live_checkpoint"])),
             "live_sources": self.declaration["base"].get("live_sources"),
+            "venue_listings": [{**{k: v for k, v in item.items() if k != "path"}, "path": str(item["path"]),
+                                "sha256": _sha256_file(Path(item["path"]))}
+                               for item in self.declaration.get("venue_listings") or []],
         })
         return report
 
@@ -2012,6 +2028,20 @@ def gate(rendered: Path) -> dict[str, Any]:
                    if _sha256_file(rendered / "repo" / rel) != digest]
     check("declaration_index_matches_files", not mismatched, mismatched)
     repo = rendered / "repo"
+    # DL v2.4.2: every catalogue instrument of a captured venue/market is listed and live on that venue. Renders made
+    # before v2.4.2 carry no `venue_listings` key and are re-gated unchanged.
+    if "venue_listings" in inputs:
+        from scripts.catalog_venue_listing_gate import listing_problems, load_listing
+        changed = [item["path"] for item in inputs["venue_listings"]
+                   if _sha256_file(Path(item["path"])) != item["sha256"]]
+        listings = {(item["venue"].upper(), item["market"].upper()): load_listing(item["venue"], item["market"],
+                                                                                  Path(item["path"]))
+                    for item in inputs["venue_listings"]}
+        catalog_doc = json.loads((repo / REPO_FILES["catalog"]).read_text(encoding="utf-8"))
+        verdict = listing_problems(catalog_doc["instruments"], listings)
+        check("catalog_instruments_listed_on_venue", verdict["status"] == "PASS" and not changed,
+              {**{k: verdict[k] for k in ("checked", "missing", "not_live", "not_covered_by_a_listing")},
+               "listing_changed_since_render": changed})
     # 1. certified loaders
     try:
         catalog = StableSourceCatalog.load(repo / REPO_FILES["catalog"])

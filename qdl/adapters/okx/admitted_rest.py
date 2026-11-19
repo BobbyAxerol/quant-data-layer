@@ -23,6 +23,8 @@ from typing import Any
 
 import requests
 
+from qdl.adapters.instrument_unavailable import OKX_INSTRUMENT_UNAVAILABLE_CODES, ProviderInstrumentUnavailable
+
 from qdl.admission import AdmissionContractError, AdmissionTransportError
 from qdl.admission.contracts import (
     AdmissionDisposition, AdmissionPriority, AdmissionRequest, ProviderAdmissionRuntime, ProviderLane,
@@ -86,6 +88,10 @@ class AdmittedOkxRestClient(OkxRestClient):
                 retry_after_ms=statistics_retry_after_ms(response) if path in OKX_CONTRACT_STATISTICS_LIMITS else None)
         if response.status_code != 200:
             raise requests.HTTPError(f"OKX HTTP {response.status_code} {path}")
+        if code in OKX_INSTRUMENT_UNAVAILABLE_CODES:
+            # DL v2.4.2: the instrument does not exist (delisted); typed, never retried as a transient error.
+            raise ProviderInstrumentUnavailable("OKX", str(params.get("instId") or params.get("instFamily") or ""),
+                                                code, payload.get("msg"), path)
         if code != "0" or not isinstance(payload.get("data"), list):
             raise ValueError(f"OKX V5 error code={code} msg={payload.get('msg')}")
         return payload["data"]
@@ -98,7 +104,7 @@ class AdmittedOkxRestClient(OkxRestClient):
                 if path in OKX_CONTRACT_STATISTICS_LIMITS:
                     await (await self._bucket_for(path, params, bucket)).acquire()
                 return await asyncio.to_thread(self._leased_get, path, params)
-            except ProviderRateLimited:
+            except (ProviderRateLimited, ProviderInstrumentUnavailable):
                 raise
             except (requests.RequestException, ValueError) as error:
                 last_error = error

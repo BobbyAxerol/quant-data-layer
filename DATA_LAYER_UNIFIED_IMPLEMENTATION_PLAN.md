@@ -79215,3 +79215,75 @@ Status: `implemented`, `tested locally`.
   the proofs, so the S6 effect shows on the next restart.
 Status: `production-authoritative` for query_kn x2 and binance_bar_edge; release pending the receipt on this branch's
 merge.
+
+### DL v2.4.2 slice 1: provider-delisted instruments are per-binding typed failures, failing-cycle backoff, venue-listing declaration gate (tested locally) - 2026-11-19 (Claude)
+
+Trigger: v2.4.1 window C. OKX delisted `RVN-USDT-SWAP` between about 07:30Z and 08:40Z, but catalogue r16 still
+declares it.
+- From about 13:01Z every bar_edge cycle failed with `51001 ... doesn't exist` on `/api/v5/market/history-candles`.
+- `bootstrap_history` caught only `BarHistoryGapError`, and with `max_bindings=1` the same binding blocked every
+  binding after it. The bootstrap stopped at 1118/1320.
+- The failing-cycle backoff used `min(loop delay, 2**n)`, so the cycle repeated every ~2 s: 2.8 requests/s, within
+  the OKX limit of 20 per 2 s per IP, with no 429/50011.
+- Owner: fix the class, not RVN.
+
+**Class fix.**
+- `qdl/adapters/instrument_unavailable.py` adds `ProviderInstrumentUnavailable` and `find_instrument_unavailable`.
+  Documented codes:
+  - OKX `51001`, the venue's verbatim message, captured;
+  - Binance USD-M `-1121` BAD_SYMBOL, `-1122` INVALID_SYMBOL_STATUS, `-4141` SYMBOL_ALREADY_CLOSED (Binance
+    error-code page).
+- The adapters raise it and never retry the same request:
+  - `qdl/adapters/okx/admitted_rest.py` `_leased_get` and `get`;
+  - `qdl/adapters/binance/admitted_klines.py`.
+- bar_edge `bootstrap_history` quarantines that one binding:
+  - it records `_history_unavailable` and sets a 6 h retry in `_history_retry`;
+  - it logs a JSON ERROR event `qdl_bar_edge_instrument_unavailable` (binding, provider, symbol, code, attempt,
+    quarantined);
+  - the cycle continues with the other bindings;
+  - a later successful fetch clears the quarantine.
+- The polling path (`_schedule_retry`) applies the same quarantine through the exception chain.
+- The heartbeat carries `instrument_unavailable=<n>` (`serving_status`). It is monitor-visible because the heartbeat
+  detail is what the monitor and the gates read.
+
+**Backoff.** A failing cycle now waits `max(loop delay, 2**n)`, capped at 30 s. Tested as
+2, 4, 8, 16, 30, 30, 30.
+
+**Declaration gate.** `scripts/catalog_venue_listing_gate.py`, plus `scripts/dl_declaration.py`:
+- a new `venue_listings` declaration field, required from declaration revision 10;
+- a gate check `catalog_instruments_listed_on_venue` (OKX `state=live`, Binance `status=TRADING`; venue doc URLs in
+  the module docstring);
+- renders made before v2.4.2 (no `venue_listings` key) are re-gated unchanged.
+- On the live r16 catalogue it FAILS on 3 instruments: OKX RVN-USDT-SWAP, and Binance BTCUSDT_260925 and
+  ETHUSDT_260925 (expired).
+- Retirement plan: `upgrade/evidence/releases/v2.4.2/drafts/DELISTED_INSTRUMENT_RETIREMENT_PLAN.md`. It covers:
+  - a narrow `retire_instruments` render (the declaration tool is additive-only today);
+  - a checkpoint migration record, so the crossing retains 1319 and drops 1 with no strand;
+  - three alpha.okx manifests that require OKX RVN BAR 1d;
+  - the Query-then-Stream order for the catalogue bump.
+
+**Live path, finding (not fixed in this slice).**
+- The Rust OKX subscription ACK parser treats any `{"event":"error"}` as a failure of the whole request
+  (`rust/qdl-core/src/okx.rs:121-138`), so a delisted instrument inside a live lane would fail that lane's establish
+  for every binding on it.
+- RVN is not on any live lane (ingestor configs checked), so it is not active today.
+- Proposed v2.4.2 slice 2:
+  - parse `arg.instId` on the error event, quarantine that binding and resubscribe the rest;
+  - add a `qdl_native_subscription_rejected` event and counter;
+  - verify the venue's per-arg error behaviour on demo first.
+
+**Also.** `tests/test_dl_v241_bar_edge_short_proofs.py` no longer re-collects the imported bootstrap test class
+(duplicate CI time).
+
+**Tests.** `tests/test_dl_v242_instrument_unavailable.py` (13 tests):
+- adapters: OKX typed and not retried; leased_get mapping; all three Binance codes; chain search;
+- the RVN reproduction: a delisted b does not block c, b is not refetched every turn, quarantine retry, healing on
+  relisting, the event and the heartbeat counter; other errors still fail the cycle; polling quarantine;
+- the backoff;
+- the listing gate (delisted, not live, pass) and the revision-10 requirement.
+
+Impacted set (8 modules) Ran 159 OK; adapter and declaration set (7 modules incl. provider admission, OKX reference, TS funding entitlement) Ran 110 OK.
+Status: `implemented`, `tested locally`.
+
+**TS INTEGRATION_DEFECT_REGISTER row** (for the pin steward):
+`| IDR-<n> | DATA_LAYER | A provider-delisted instrument head-of-line blocked the bar_edge bootstrap repair and the failing-cycle backoff was ineffective (min instead of max): OKX delisted RVN-USDT-SWAP ~07:30-08:40Z 2026-11-19, r16 still declared it; every cycle failed 51001 on history-candles, bootstrap stuck at 1118/1320, ~2.8 req/s against OKX (within 20/2 s) | bar_edge log 13:01-13:20Z; v2.4.1 CERTIFICATE section 5 item 5 | DL v2.4.2: typed per-binding ProviderInstrumentUnavailable + quarantine + heartbeat counter; backoff max(); venue-listing declaration gate; RVN retirement render (plan) | - | DL v2.4.2 |`
