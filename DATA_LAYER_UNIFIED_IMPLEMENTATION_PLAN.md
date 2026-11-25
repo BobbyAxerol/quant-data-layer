@@ -79745,3 +79745,55 @@ bump at release).
 
 **TS INTEGRATION_DEFECT_REGISTER row** (pin steward):
 `| IDR-<n> | DATA_LAYER | bar_edge restore after a restart: bindings the restore check marks incomplete (2026-11-25 v2.4.3 first start: TAO 1h/2h/30m) and every binding after a restart across a cache-epoch change lost their watermark and took the deep full-window bootstrap one per turn, so recovery after a restart was not bounded | bar_edge log 2026-11-25 10:12:37Z "checkpoint history incomplete; bounded repair required"; DL v2.4.3 release-note draft (97 bindings, 28.5 min) | DL v2.4.4 slice 1: restore seeds resume candidates; resume plan repairs from the oldest missing open of today's demand window (cache-only proof), typed RESUME_DURABLE_WINDOW_INCOMPLETE otherwise; bound ceil(N/16) turns after any restart; DL-BL-2026-11-25-C registered | - | DL v2.4.4 |`
+
+### DL release decision 2026-11-25: v2.4.3 runs in production untagged; the release is deferred and bundled (owner) - 2026-11-25 (Claude)
+
+**Running production, as of 2026-11-25.**
+- `binance_bar_edge` is the **only** changed role. It runs `qdl-v2-python:2.4.3-eb9371d`
+  (`sha256:50124df8a7914f4494f898926bffa9487df90841205d051ce915564538716651`) since 10:04:14Z.
+- Source: branch `fix/v242-bar-edge-rebase-bounded-reverify` @ `4fd6d65` (fix `206481e`, recipe `eb9371d`, evidence
+  `4fd6d65`). It is pushed to origin as `release/v2.4.3` (`ad2112c`).
+- PR #63 (`release/v2.4.3` → `dev`) stays open as a reference. It will not be merged or tagged now.
+- **v2.4.3 is NOT tagged and NOT released.** `main`/`dev` still describe v2.4.2. Every other role runs its v2.4.2
+  image (Query x2 python `5ea7a7a4`, Rust roles `2.4.2-48137eb`, and the older images v2.4.2 kept).
+- **Rollback of the running edge.**
+  - Image `qdl-v2-python@sha256:5ea7a7a40ef2d1df920d0f7cf94f22431d53087f8002929e7dffdb4208f7dcc4` with the v2.4.2
+    layering (config-hash `2f753d62…`).
+  - The `.pre-v243` checkpoint copy (`30b74165…`) and history-short copy (`24f5dc5e…`), restored as uid 10001.
+  - Remove `crypto-bar-checkpoint.json.resume.json`.
+  - Procedure: `dl-v243-window/window.sh rollback` in the coordinator scratchpad. Fix its `grep -q` + pipefail checks
+    first: see the operator section of the v2.4.4 release-note draft.
+
+**Owner decision: runtime first, one bundled release.** DL is observed under the larger load that comes when more
+alphas go on Paper after Crossec. All new fixes are then bundled into ONE release:
+- v2.4.3, the bar_edge resume after a cache loss and typed venue holes (DL-DEF-2026-11-25-A, running);
+- DL-BL-2026-11-25-B, restore-incomplete and cache-epoch-change restart resume (this branch, `7edb0aa`, tested
+  locally only);
+- R1 retention, a coordinator-named item. Its scope and slice are defined by its owner; I have not checked them;
+- anything found under load (register each as DL-DEF/DL-BL in this journal);
+- optional: DL-BL-2026-11-25-C (venue hole with a partial cache window, fail-closed today).
+
+**Gate before the bundled release: load observation.**
+- At least one full day, with at least the Crossec plus next-alpha Paper load, on the running v2.4.3 edge, with no
+  DL error class new since 2026-11-25.
+- Read only:
+  - bar_edge heartbeat: `rebootstrap_waiting`, `venue_holes_refused=0`, `history_failed` equal to only the known
+    Binance 3d set;
+  - Query refusal rates against the 2026-11-25 baseline (DATA_NOT_READY HOT_QUIET and BAR EVENT_AGE);
+  - projector conflicts and rebuilds;
+  - MemAvailable and the OOM history.
+- Each finding becomes a register row and a slice before the release cut.
+- Release number: the next free one (v2.4.4 or higher) carries everything. RELEASE in
+  `scripts/build_qdl_release_images.py` is bumped in the release commit. `PYTHON_REFERENCES` is then the image
+  running in production at that time: `2.4.3-eb9371d` for bar_edge and `2.4.2-48137eb` for Query.
+
+**CI plan for the bundle (CLAUDE.md §7b CI1/CI2/CI6/CI11).**
+- One PR from the integrated branch to `dev`, with the classifier run on the real diff before the first push. Today's
+  content is python-only (`scoped: python`, no Rust jobs, base_check runs). Any Rust or contract item in the bundle
+  changes that, and the body must list it.
+- One push, no WIP pushes.
+- CI6: one full green run on the release tree (direct, or inherited by identical tree from dev to main).
+- Merge locally (G7), then tag after the owner's GO.
+- PR #63 is superseded by the bundle PR and closed then, never merged separately.
+
+Guide delta: `upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md`, "Delta 2026-11-25".
