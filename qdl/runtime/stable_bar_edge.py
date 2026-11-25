@@ -752,12 +752,20 @@ class StableBinanceBarEdge:
         if not cache_continuity_confirmed:
             self._last_open_ms = {}
             self._history_bootstrapped = False
+            # DL v2.4.3 (DL-BL-2026-11-25-B): every watermark stays a resume candidate behind the cache-only
+            # durable-window proof, so a restart across a cache epoch change is bounded like a live rebase.
+            if not self.repair_only and restored:
+                self._note_rebootstrap(restored)
             logger.warning(
                 "stable BAR checkpoint cache generation changed; bounded bootstrap required"
             )
             return
         gaps = {} if self.repair_only else self._checkpoint_history_gaps(restored)
         if gaps:
+            if not self.repair_only:
+                # DL v2.4.3 (DL-BL-2026-11-25-B): an incomplete window repairs from its oldest missing open
+                # (bootstrap `_resume_plan`), not with the deep full-window bootstrap.
+                self._note_rebootstrap({binding_id: restored[binding_id] for binding_id in gaps})
             for binding_id in gaps:
                 restored.pop(binding_id, None)
             logger.warning(
@@ -1656,7 +1664,7 @@ class StableBinanceBarEdge:
                         or item["open_ms"] <= 0:
                     raise ValueError("watermark")
                 if digests.get(key) == item["binding_digest"] and key not in self._last_open_ms:
-                    adopted[key] = item["open_ms"]
+                    adopted[key] = max(item["open_ms"], self._resume_watermarks().get(key, 0))
         except (OSError, ValueError, TypeError, AttributeError):
             logger.warning("stable BAR resume watermarks ignored (unreadable or invalid): %s", path)
             return
@@ -1668,8 +1676,12 @@ class StableBinanceBarEdge:
                                 proofs: dict[str, dict]) -> int:
         """Missing durable final opens of the ``rows``-open grid window ending at ``last_open_ms`` (cache only)."""
 
+        return len(self._durable_window_missing_opens(source, last_open_ms, rows, proofs))
+
+    def _durable_window_missing_opens(self, source: StableSourceBinding, last_open_ms: int, rows: int,
+                                      proofs: dict[str, dict]) -> frozenset[int]:
         if rows <= 0:
-            return 0
+            return frozenset()
         interval_ms = _bar_interval_ms(source.interval or "")
         earliest = self._short_proof_floor(proofs, source.binding_id, self._bootstrap_rows_for(source))
         expected_opens = frozenset(
@@ -1679,7 +1691,33 @@ class StableBinanceBarEdge:
                 or last_open_ms - index * interval_ms > 0)
             and (earliest is None or last_open_ms - index * interval_ms >= earliest)
         )
-        return len(expected_opens - self._durable_final_bar_opens(source, expected_opens))
+        return frozenset(expected_opens - self._durable_final_bar_opens(source, expected_opens))
+
+    def _resume_plan(self, source: StableSourceBinding, watermark_ms: int, observed_ms: int,
+                     bootstrap_rows: int, proofs: dict[str, dict]) -> tuple[int | None, int, int]:
+        """``(resume_from_ms, rows, durable_missing)`` for a resume candidate; ``resume_from_ms`` None = deep path.
+
+        Cache only. The part of the current demand window at or before the old watermark is read back. Every
+        open older than its oldest missing open is durable by construction, so the provider read starts there (or at the watermark when
+        nothing is missing) and covers the rest of the window up to the latest close. If repairing from the
+        oldest missing open would need the whole demand window, the durable window did not survive:
+        ``RESUME_DURABLE_WINDOW_INCOMPLETE`` and the deep bootstrap.
+        """
+
+        interval_ms = _bar_interval_ms(source.interval or "")
+        # Only the part of today's demand window at or before the watermark must be durable: the window ending
+        # at the latest close is the suffix from the watermark plus these older opens.
+        older = bootstrap_rows - self._resume_rows(source, watermark_ms, observed_ms, bootstrap_rows) + 1
+        missing = self._durable_window_missing_opens(source, watermark_ms, max(1, older), proofs)
+        resume_from = min(missing) - interval_ms if missing else watermark_ms
+        if resume_from <= 0:
+            return None, bootstrap_rows, len(missing)
+        rows = self._resume_rows(source, resume_from, observed_ms, bootstrap_rows)
+        if missing and rows >= bootstrap_rows:
+            return None, bootstrap_rows, len(missing)  # the surviving durable window cannot bound the read
+        # Nothing missing but an outage at least as long as the window: a capped full-window read, still one
+        # resume read (`suffix_read` is False for it in bootstrap_history).
+        return resume_from, rows, len(missing)
 
     def _resume_rows(self, source: StableSourceBinding, resume_from_ms: int, observed_ms: int,
                      bootstrap_rows: int) -> int:
@@ -1855,9 +1893,10 @@ class StableBinanceBarEdge:
             if resume_from is not None:
                 if proofs is None:
                     proofs = self._load_short_proofs()
-                # Cache-only proof that everything up to the old watermark survived the rebuild.
-                missing = self._durable_window_missing(source, resume_from, bootstrap_rows, proofs)
-                if missing:
+                # Cache-only proof of the surviving durable window; the read starts at its oldest missing open.
+                planned_from, planned_rows, missing = self._resume_plan(
+                    source, resume_from, observed_ms, bootstrap_rows, proofs)
+                if planned_from is None:
                     resume.pop(source.binding_id, None)
                     self._persist_resume_sidecar()
                     logger.warning(json.dumps({
@@ -1866,7 +1905,7 @@ class StableBinanceBarEdge:
                         "durable_missing_rows": missing}, sort_keys=True, separators=(",", ":")))
                     resume_from = None
                 else:
-                    rows = self._resume_rows(source, resume_from, observed_ms, bootstrap_rows)
+                    resume_from, rows = planned_from, planned_rows
             if resume_from is not None:
                 if resume_quantum is not None and attempted_resume >= resume_quantum:
                     return published

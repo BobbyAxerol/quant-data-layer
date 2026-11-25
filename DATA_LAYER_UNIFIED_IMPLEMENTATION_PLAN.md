@@ -79683,3 +79683,65 @@ Status: deployed, accepted at runtime. Release PR, CI6 receipt and tag are open.
 
 **TS INTEGRATION_DEFECT_REGISTER row update** (pin steward; replaces the slice 3 row's last two columns):
 `| IDR-<n> | DATA_LAYER | (as slice 3 row) | (as slice 3 row) + bar_edge v2.4.3 runtime 2026-11-25: T0 10:04:14Z, restore 10:12:37Z, 4 venue holes VENUE_HOLE_DURABLY_COVERED (ASTER/TAO 1m, TAO 5m, XPL 1m; OKX 2026-11-19 15:38-15:40Z), 0 refused, all OKX 94 / Binance 96 1m/1h/12h current 10:40:09Z, rebootstrap_waiting 0 10:41:08Z | DL v2.4.3 deployed (bar_edge 50124df8); release PR/CI6/tag open; DL-BL-2026-11-25-B restore-gap resume follow-up | FIXED (runtime) | DL v2.4.3 |`
+
+### DL v2.4.4 slice 1 (DL-BL-2026-11-25-B): restore-incomplete and cache-epoch-change restarts resume within the bound (tested locally) - 2026-11-25 (Claude)
+
+Branch `fix/v244-restore-incomplete-resume`, from v2.4.3 `4fd6d65`. The v2.4.3 release tree stays exactly the running
+image's source.
+
+**Trigger.** The first v2.4.3 start, 2026-11-25. The restore check marked 3 TAO bindings incomplete, and the edge
+removed their watermark, so they took the deep full-window bootstrap. A restart across a cache-epoch change drops
+every watermark the same way.
+
+**Fix** (`qdl/runtime/stable_bar_edge.py`).
+- `_restore_state` seeds those watermarks as resume candidates through `_note_rebootstrap` (sidecar included; the
+  larger watermark wins against an existing sidecar candidate).
+- `_resume_plan`, cache only:
+  - it reads back the part of today's demand window at or before the watermark;
+  - the provider read starts at its oldest missing open, or at the watermark when nothing is missing;
+  - typed `RESUME_DURABLE_WINDOW_INCOMPLETE` plus the deep path only when the repair would need the whole demand
+    window;
+  - an outage at least as long as the window stays a capped full-window read inside the resume quantum.
+
+**Tests** (`tests/test_dl_v242_bar_edge_rebase_resume.py`, now 16).
+- New: an old lost row repairs from it with a bounded read (547 rows instead of 900).
+- New: a loss at the start of the window is a typed refusal followed by the deep bootstrap.
+- New `RestoreResumeTests`:
+  - a restore-incomplete binding resumes from its oldest missing open, and the complete bindings are not re-read;
+  - a restart across a cache-epoch change resumes all three bindings in one turn, each with a bounded read.
+
+Results, one module per container (`--memory 1g --oom-score-adj 500 --network none`, light slot):
+- new module: 7 + 2 + 3 + 4 = 16 OK;
+- impacted modules:
+
+  | Module | Tests |
+  |---|---|
+  | kn_bar_readback | 12 (1 skipped) |
+  | dl_v241_bar_edge_short_proofs | 8 |
+  | dlv2_r128_bar_edge_checkpoint_migration | 7 |
+  | kn_history_fill | 23 (1 skipped) |
+  | dl_v242_instrument_unavailable | 14 |
+  | binance_history_overlap | 11 |
+  | v230_derived_bars | 29 |
+  | phase115c_bar_edge_schedule | 7 |
+  | v2_binance_bar_edge | 2 |
+  | binance_final_bar_settlement | 11 |
+  | phase105c_final_bar_repair | 4 |
+  | kn_provider_admission_edge | 14 |
+  | phaseb_bar_history_bootstrap | 46 |
+
+  188 OK.
+
+**Known limitation, registered: DL-BL-2026-11-25-C** (fail-closed, not a regression). A venue hole in the read whose
+older window the cache does not fully hold stays `VENUE_HOLE_NOT_COVERED`, even when the venue returned the bars
+below the hole. Proposed: publish the venue-confirmed bars on both sides of the hole, and require durability only for
+the venue-missing opens.
+
+**Operator lesson.** `grep -q` under `pipefail` on `docker logs` reports "no match" exactly when the line exists
+(SIGPIPE). Recorded in `upgrade/evidence/releases/v2.4.4/drafts/RELEASE_NOTES_DRAFT.md`.
+
+Status: `implemented`, `tested locally`. No image, no PR; the release waits for the owner's GO (RELEASE 2.4.4 recipe
+bump at release).
+
+**TS INTEGRATION_DEFECT_REGISTER row** (pin steward):
+`| IDR-<n> | DATA_LAYER | bar_edge restore after a restart: bindings the restore check marks incomplete (2026-11-25 v2.4.3 first start: TAO 1h/2h/30m) and every binding after a restart across a cache-epoch change lost their watermark and took the deep full-window bootstrap one per turn, so recovery after a restart was not bounded | bar_edge log 2026-11-25 10:12:37Z "checkpoint history incomplete; bounded repair required"; DL v2.4.3 release-note draft (97 bindings, 28.5 min) | DL v2.4.4 slice 1: restore seeds resume candidates; resume plan repairs from the oldest missing open of today's demand window (cache-only proof), typed RESUME_DURABLE_WINDOW_INCOMPLETE otherwise; bound ceil(N/16) turns after any restart; DL-BL-2026-11-25-C registered | - | DL v2.4.4 |`

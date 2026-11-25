@@ -53,7 +53,7 @@ MINUTE, HOUR = 60_000, 3_600_000
 DAY0 = 1_794_441_600_000  # 2026-11-12T00:00:00Z, a UTC day (and 12h) boundary
 ROW = ["0", "1", "1", "1", "1", "1", "1", "1"]
 ETH = "okx-swap-eth-usdt-swap-bar-"
-BTC = "okx-swap-btc-usdt-swap-bar-"
+SOL = "okx-swap-sol-usdt-swap-bar-"
 
 
 class Venue:
@@ -282,9 +282,28 @@ class IncidentEndToEndTests(_Base):
         self.assertIn(ETH + "1m", self.edge._last_open_ms)
         self.assertEqual(self.edge.serving_status()["venue_holes_refused"], 0)
 
-    def test_a_rebuilt_cache_that_lost_old_rows_falls_back_to_the_deep_bootstrap(self):
+    def test_a_rebuilt_cache_that_lost_an_old_row_repairs_from_it_with_a_bounded_read(self):
+        """DL-BL-2026-11-25-B: the read starts at the oldest missing open, never the whole window."""
+
         lost = DAY0 + 3 * HOUR
         self.fill(ETH + "1m", self.watermarks[ETH + "1m"], 900, 3, skip={lost})  # generation 3 lacks 03:00
+        with self.assertLogs("qdl.runtime.stable_bar_edge", level="INFO") as logs:
+            self.turn()
+        self.assertFalse([line for line in logs.output if "qdl_bar_edge_resume_refused" in line])
+        rows = (self.NOW - (lost - MINUTE)) // MINUTE + 1  # 02:59 .. 12:04
+        self.assertIn(("ETH-USDT-SWAP", "1m", rows), self.venue.calls)
+        self.assertNotIn(("ETH-USDT-SWAP", "1m", 900), self.venue.calls)
+        self.assertIn(lost, self.projector.opens(ETH + "1m", "history"))
+        self.assertIn(ETH + "1m", self.edge._last_open_ms)
+        self.assertFalse(self.edge._history_venue_holes)  # the 02:00 venue hole is older than the read
+
+    def test_a_loss_at_the_window_start_is_a_typed_refusal_then_the_deep_bootstrap(self):
+        # The oldest open of the demand window older than the watermark: repairing from it is the whole window.
+        lost = self.watermarks[ETH + "1m"] - (900 - 127) * MINUTE
+        # Without the old venue hole: a venue hole whose older window the cache does not fully hold stays
+        # VENUE_HOLE_NOT_COVERED (fail-closed; DL-BL-2026-11-25-C), which is a separate case.
+        self.venue.missing.clear()
+        self.fill(ETH + "1m", self.watermarks[ETH + "1m"], 900, 3, skip={lost})
         with self.assertLogs("qdl.runtime.stable_bar_edge", level="WARNING") as logs:
             self.turn()
         refused = [json.loads(line.split(":", 2)[2]) for line in logs.output if "qdl_bar_edge_resume_refused" in line]
@@ -293,7 +312,7 @@ class IncidentEndToEndTests(_Base):
         self.assertNotIn(ETH + "1m", self.edge._history_resume_from)
         for _ in range(3):
             self.turn()
-        # The deep window was re-read from the venue (900 rows, the old hole covered by the cache) and 03:00 refilled.
+        # The deep window was re-read (900 rows) and the row refilled.
         self.assertIn(("ETH-USDT-SWAP", "1m", 900), self.venue.calls)
         self.assertIn(lost, self.projector.opens(ETH + "1m", "history"))
         self.assertIn(ETH + "1m", self.edge._last_open_ms)
@@ -324,6 +343,61 @@ class IncidentEndToEndTests(_Base):
             self.edge._history_resume_from = {}
             self.edge._load_resume_sidecar()
             self.assertEqual(self.edge._history_resume_from, {})
+
+
+class RestoreResumeTests(_Base):
+    """DL-BL-2026-11-25-B: after ANY restart a binding whose durable window survived resumes within the bound."""
+
+    OUTAGE_START = DAY0 + 10 * HOUR
+    NOW = DAY0 + 12 * HOUR + 5 * MINUTE + 1_000
+
+    def setUp(self) -> None:
+        import tempfile
+
+        self.tmp = tempfile.TemporaryDirectory(prefix="qdl-v243-restore-")
+        pairs = (self.pair(ETH + "1m"), self.pair(ETH + "1h"), self.pair(SOL + "1m"))
+        self.make_edge(pairs, warmup_rows=900, now_ms=self.NOW)
+        self.watermarks = {ETH + "1m": self.OUTAGE_START - MINUTE, ETH + "1h": self.OUTAGE_START - HOUR,
+                           SOL + "1m": self.OUTAGE_START - MINUTE}
+        self.lost = DAY0 + 3 * HOUR
+        for binding_id, last in self.watermarks.items():
+            self.fill(binding_id, last, 900, 1, skip={self.lost} if binding_id == ETH + "1m" else ())
+        self.edge.state_path = Path(self.tmp.name) / "crypto-bar-checkpoint.json"
+        self.edge._last_open_ms.update(self.watermarks)
+        self.edge._persist_state()
+        # The restarted process: nothing in memory.
+        self.edge._last_open_ms, self.edge._history_resume_from, self.edge._rebootstrap_since = {}, {}, None
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_a_restore_incomplete_binding_resumes_from_its_oldest_missing_open(self):
+        with self.assertLogs("qdl.runtime.stable_bar_edge", level="INFO") as logs:
+            self.edge._restore_state()
+        self.assertTrue(any("bounded repair required" in line for line in logs.output))
+        self.assertEqual(self.edge._history_resume_from, {ETH + "1m": self.watermarks[ETH + "1m"]})
+        self.assertEqual(set(self.edge._last_open_ms), {ETH + "1h", SOL + "1m"})
+        self.assertEqual(self.edge.serving_status()["resume_pending"], 1)
+        self.turn()
+        rows = (self.NOW - (self.lost - MINUTE)) // MINUTE + 1
+        self.assertEqual([item for item in self.venue.calls if item[1] == "1m"], [("ETH-USDT-SWAP", "1m", rows)])
+        self.assertIn(self.lost, self.projector.opens(ETH + "1m", "history"))
+        self.assertEqual(self.edge.serving_status()["rebootstrap_waiting"], 0)
+
+    def test_a_restart_across_a_cache_epoch_change_resumes_every_binding(self):
+        checkpoint = json.loads(self.edge.state_path.read_text())
+        checkpoint["canonical_cache_id"] = "0" * 32  # the cache epoch the old process saw
+        self.edge.state_path.write_text(json.dumps(checkpoint))
+        with self.assertLogs("qdl.runtime.stable_bar_edge", level="WARNING") as logs:
+            self.edge._restore_state()
+        self.assertTrue(any("cache generation changed; bounded bootstrap required" in line for line in logs.output))
+        self.assertEqual(self.edge._history_resume_from, self.watermarks)
+        self.turn()  # all three in one turn (resume quantum), each a bounded read
+        self.assertEqual(set(self.edge._last_open_ms), set(self.watermarks))
+        rows = {(symbol, interval): count for symbol, interval, count in self.venue.calls}
+        self.assertEqual(rows[("ETH-USDT-SWAP", "1m")], (self.NOW - (self.lost - MINUTE)) // MINUTE + 1)
+        self.assertEqual(rows[("SOL-USDT-SWAP", "1m")], (self.NOW - self.watermarks[SOL + "1m"]) // MINUTE + 1)
+        self.assertEqual(rows[("ETH-USDT-SWAP", "1h")], (self.NOW - self.watermarks[ETH + "1h"]) // HOUR + 1)
 
 
 class RecoveryBoundTests(_Base):
