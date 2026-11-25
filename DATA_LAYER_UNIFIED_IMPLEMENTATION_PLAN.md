@@ -79489,3 +79489,136 @@ Status: `implemented`, `tested locally`.
   the v2.4.1 windows. `tests/test_build_qdl_release_images.py` pins that id.
 
 Test result: 46/46 on the host with git.
+
+### DL v2.4.2 slice 3: bar_edge re-bootstrap after a market-cache loss resumes from the old watermark; venue history holes are typed and decided from durable coverage (tested locally) - 2026-11-25 (Claude)
+
+**Registered here: DL-DEF-2026-11-25-A.** A market-cache loss stopped live derived BARs for hours. One venue hole
+kept one instrument's chain stopped indefinitely.
+
+**Trigger.** Crossec top50 hosting, 2026-11-25. Query refusals `DATA_STALE [EVENT_AGE]` on BAR warmup:
+- AVAX at 07:51:17Z and 07:53:36Z (request `9e263d4f`, query_kn_2);
+- BCH at 07:57:59Z.
+
+**Chain (all checked on the live stack, read-only).**
+1. **The cache was lost.** A host global OOM at 05:54:48Z killed `market_cache`:
+   - redis `--save "" --appendonly no --maxmemory 8000000000 --maxmemory-policy noeviction`;
+   - container limit 9 GiB, `OomScoreAdj` 0, 5.4 GB RSS;
+   - it was the largest process on a 30 GiB host with about 26 GiB in use.
+   The cache is ephemeral by design. The two projectors restarted at 06:01:15Z and rebuilt it from the compacted
+   `md.bars.v2` topic: about 213k keys, every OKX/Binance 1h/12h series gap-free afterwards.
+2. **Every binding was rebased.** At 06:02:43Z the bar edge logged "product generation changed; rebased only
+   bindings=…" for 1,319 bindings. `_rebase_changed_products` drops each binding's `_last_open_ms`.
+3. **The re-bootstrap was one binding per turn.** It used `bootstrap_history(max_bindings=1)`, A to Z, each binding
+   with its full demand window (10,000 rows, about 34 OKX pages). At the OKX HISTORY_CANDLES lane rate (5 tokens /
+   2 s) that is about 1.75 min per symbol. The history gate was closed until 06:28:50Z ("resumed after 1566.8s").
+4. **Live derived bars wait for the bootstrap.** `run_derived_cycle` skips a derived binding until it and its
+   parent are in `_last_open_ms`. At 08:31Z, 60 of 94 OKX 1h series were stuck at open 04:00Z (last close 05:00Z),
+   and 33 were current. The cut-over point moved alphabetically with the sweep: AVAX resumed at 07:54:03, BCH at
+   08:03, FLOKI at 08:32, NEAR at 08:57.
+   - Crossec's 1h bound is 3,780,000 ms (63 min). AVAX at 07:53 was 2 h 53 min old, so it was refused.
+5. **ASTER never resumed.** OKX has no ASTER-USDT-SWAP 1m candle at 2026-11-19T15:39Z (the cache has it, from the
+   live feed). The full 1m window met that hole: `MISSING_PROVIDER_WINDOW` from 07:49:45Z, retried every 30-60 s
+   (49+ attempts), each attempt a full 10,000-row read.
+   - ASTER 1h is `DERIVED_FINAL` from 1m, and 12h from 1h (acquisition r19), so ASTER 1h stopped at open 06:00Z.
+   - The cache also lacks ASTER 1m 05:59 and 06:00, from the outage.
+   - Scan of the whole bar_edge log since 2026-11-19: the only other gap refusals are the five known Binance 3d
+     overlaps (`OVERLAPPING_PROVIDER_WINDOWS`, handled).
+6. **Latent, same class:** a venue hole wider than 2 bars made the OKX fetcher raise the untyped
+   `RuntimeError("history is short")` before its continuity check. That RuntimeError fails the whole cycle, so the
+   same binding blocks every binding after it.
+
+**Fix, class level: any binding, any venue, any interval, after any rebase.**
+- **Resume from the old watermark** (`qdl/runtime/stable_bar_edge.py`).
+  - A product-generation rebase or a cache-epoch rebase keeps the dropped watermark as a resume candidate
+    (`_note_rebootstrap`).
+  - Bootstrap first proves, from the cache only, that the full demand window ending at that watermark is durable
+    (`_durable_window_missing`, the same rule as the restore check, with the provider-short floor). Only then does
+    it read just the suffix from the watermark to the latest close (`_resume_rows`). A 5 h outage is one page per
+    binding. When the outage is at least as long as the demand window, the read is capped at the demand and is
+    treated as an ordinary full-window read (it need not reach the old watermark).
+  - Otherwise it falls back to the deep bootstrap. Typed codes: `RESUME_DURABLE_WINDOW_INCOMPLETE`, and
+    `RESUME_SUFFIX_INCOMPLETE` when the venue no longer reaches the watermark.
+  - Resume bindings go first, up to `_RESUME_BINDINGS_PER_TURN` = 16 per loop turn. Deep bootstraps keep the
+    one-per-turn quantum, and venue admission still paces every request.
+- **Resume points survive a restart** in a sidecar `<checkpoint>.resume.json`
+  (`qdl.stable-bar-edge.resume-watermarks.v1`, per-binding series digest; any defect ignores the whole file).
+  - The checkpoint keeps its exact v2.4.2 field set, so the v2.4.2 image (rollback) reads it unchanged.
+- **Venue holes are typed** (`qdl/adapters/intervals.py` `BarHistoryProviderHoleError`, OKX and Binance fetchers).
+  - A `MISSING_PROVIDER_WINDOW` under `allow_short` carries the provider-certified suffix after the newest hole.
+  - Continuity is checked before the row count (item 6 above).
+  - The edge decides from durable coverage alone (`_venue_hole_decision`): every older open of the demanded
+    window, including the bars the venue lacks, must already be durable.
+  - Durable: `VENUE_HOLE_DURABLY_COVERED`. The suffix is published (missing opens only), the binding resumes, and the
+    hole is recorded.
+  - Not durable: `VENUE_HOLE_NOT_COVERED`, fail-closed. There is no watermark, so no derived bar is built over the
+    missing bar. It is rechecked every 300 s, not every few seconds, and other bindings are not blocked.
+  - Position is recorded as `OLDER_THAN_RESUME_WATERMARK`, `INSIDE_RESUME_SUFFIX` or `NO_RESUME_WATERMARK`.
+- **Observability.**
+  - JSON events: `qdl_bar_edge_rebootstrap_required`, `qdl_bar_edge_resume_refused`, `qdl_bar_edge_venue_hole`
+    (`refused` true/false).
+  - Heartbeat detail counters (what the monitor and gates read): `rebootstrap_waiting`, `rebootstrap_wait_s`,
+    `resume_pending`, `venue_holes_recorded`, `venue_holes_refused`.
+
+**Recovery bound (after the cache is READY again).**
+- Every rebased binding whose durable window survived gets its live watermark within `ceil(N / 16)` loop turns.
+- Each needs `ceil(rows / page)` provider requests, with rows = min(demand, outage / interval + 2): one page per
+  binding for an outage of up to 300 bars of its interval on OKX (1,000 on Binance).
+- With today's 726 OKX + 593 Binance bindings, OKX is lane-bound: about 726 / 2.5 req/s = about 5 min, against about
+  4 h on 2026-11-25. Binance 593 at 10/s is about 1 min.
+- A binding whose window did not survive takes the deep path (as before). The history backpressure gate can still
+  pause history, and with it resume.
+
+**Tests** (`tests/test_dl_v242_bar_edge_rebase_resume.py`). The real catalogue, the real edge, the real OKX/Binance
+history fetchers against a venue double, and the in-process cache in the projector layout:
+- the incident end to end: 1m native → 1h derived → 12h derived, rebuilt cache, rebase, one small read each (127/4/3
+  rows), only the outage bars published, live derived 1h ×12 and 12h ×1 at the next closes;
+- the restart path: the full window meets the old hole, `VENUE_HOLE_DURABLY_COVERED`;
+- a hole at the watermark edge (covered) and one just after it, inside the suffix (`VENUE_HOLE_NOT_COVERED`, typed
+  event, no live bars for that binding, others resume, retry 300 s, heals);
+- a cache that lost an old row (`RESUME_DURABLE_WINDOW_INCOMPLETE`, deep refill);
+- the resume sidecar (rollback-safe checkpoint fields, digest guard, damaged file ignored);
+- the N-binding bound over every OKX BAR binding of the repository catalogue: live within ceil(N/16) turns, one read
+  each, against N turns on the legacy path;
+- heartbeat counters;
+- adapters: OKX one-bar and 6-bar holes typed with their suffix, Binance typed, the outcome invariants.
+
+Results: run one module or class per throwaway container (`qdl-v2-python:2.4.2-48137eb`, `--memory 1g --cpus 1
+--network none`, light host slot). The first combined run of the new module was cgroup-OOM-killed at 1 GiB by an
+unbounded Binance fixture, which is now bounded.
+- New module: IncidentEndToEnd 6, RecoveryBound 3 (N = 320 OKX BAR bindings: live within 20 turns; the legacy path
+  needs 320), AdapterHole 4. 13 OK.
+- Impacted existing modules: kn_history_fill 23 (1 skipped), dl_v242_instrument_unavailable 14,
+  binance_history_overlap 11, v230_derived_bars 29, kn_bar_readback 12 (1 skipped), dl_v241_bar_edge_short_proofs 8,
+  phase115c_bar_edge_schedule 7, v2_binance_bar_edge 2, dlv2_r128_bar_edge_checkpoint_migration 7. 113 OK.
+- Adapter-adjacent modules: canonical_intervals 18, binance_final_bar_settlement 11, c419_fast_final_bar_delivery 8,
+  dlv2_r128_binance_native_bar 11, kn_provider_admission_edge 14, phase105c_final_bar_repair 4,
+  phaseb_bar_history_bootstrap 46, provider_pass_through_history 30, pass_through_event_loop 7. 149 OK.
+  - binance_final_bar_settlement failed once because the source file was edited while it ran; that test reads
+    method source with `inspect`. It passed 11/11 when re-run on the final tree.
+
+**Not changed.**
+- No catalogue, acquisition, Query, Stream, projector or Rust change.
+- No checkpoint schema change.
+- The derived gating rule (derived waits for its parent's watermark) is unchanged; it is the fail-closed guard.
+
+**Prevention of the cache loss itself (doc only, owner decision).**
+- (a) Give critical DL roles a negative `oom_score_adj` and agent/test containers a positive one, so a global OOM
+  never picks `market_cache`/kafka first. Today all are 0.
+- (b) Reserve memory for the DL slice. The memory.low/min cgroup protection of a systemd slice for the DL roles is
+  hard protection; `--memory-reservation` alone is soft. Keep the existing host-slot gate for agent units
+  (MemAvailable ≥ 4 GiB).
+- (c) Faster rebuild: an RDB snapshot of `market_cache` would make a restart load the snapshot and catch up from its
+  own checkpoints. The fork's copy-on-write needs up to about 5 GB more transiently on a tight host, so measure
+  first. Alternatively, a parallel stage-B rebuild.
+- (d) This slice bounds the consequence of a loss (minutes, not hours) whichever of (a)-(c) is chosen.
+
+**Delivery.** Python only. Release image recipe: `scripts/build_qdl_release_images.py --component python --rev
+<this commit>` (RELEASE bump to 2.4.3 in the recipe commit). Recreate only `binance_bar_edge`, per the v2.4.2 W6
+procedure (checkpoint and sidecar backup, `docker compose … up -d --no-deps --pull never binance_bar_edge`).
+Rollback is the v2.4.2 image `qdl-v2-python@sha256:5ea7a7a4…` with the `.pre` checkpoint copy; the sidecar is
+ignored by v2.4.2.
+
+Status: `implemented`, `tested locally`. Not built, not deployed.
+
+**TS INTEGRATION_DEFECT_REGISTER row** (for the pin steward):
+`| IDR-<n> | DATA_LAYER | After a market-cache loss the bar_edge re-bootstrapped all 1,319 BAR bindings one per turn with full 10,000-row windows (A->Z, ~1.75 min/OKX symbol) and live derived 1h/12h waited for it: 60/94 OKX 1h series without live bars up to ~4 h (AVAX/BCH DATA_STALE EVENT_AGE to Crossec 07:51-07:57Z); OKX ASTER-USDT-SWAP never resumed because its full 1m window met a venue hole (OKX lacks 2026-11-19T15:39Z, the cache has it) refused as MISSING_PROVIDER_WINDOW; latent: an OKX hole >2 bars was an untyped "short" RuntimeError failing the whole cycle. Root: host OOM 05:54:48Z killed market_cache (ephemeral, noeviction, oom_score_adj 0) | query_kn_2 refusals 9e263d4f/5d771d5c/830192aa; bar_edge log 06:02:43Z rebase, ACK sweep, ASTER refusals 07:49Z+; market_cache bm/ptr reads 08:31Z | DL v2.4.3 (slice 3): resume from the old watermark after a cache-only proof of the durable window, resume-first quantum 16, rollback-safe resume sidecar; typed BarHistoryProviderHoleError decided from durable coverage (VENUE_HOLE_DURABLY_COVERED resumes / VENUE_HOLE_NOT_COVERED fail-closed, 300 s recheck); heartbeat rebootstrap_waiting/wait_s/resume_pending/venue_holes_*; bound ceil(N/16) turns, one page per binding for outages <= 300 bars. Recurrence: owner decision on oom_score_adj / DL memory protection / cache snapshot (plan entry) | - | DL v2.4.3 |`
