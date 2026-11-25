@@ -97,6 +97,33 @@ _FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS = 60_000
 _BatchCompletion = TypeVar("_BatchCompletion")
 
 
+def _reference_coverage_detail(coverage) -> str:
+    """DL-DEF-2026-11-26-G: say which edge is uncovered and what the provider returned (typed tokens).
+
+    The SDK keeps only UPPER_SNAKE tokens of an item detail (``qdl_sdk/client.py`` ``_batch_item_problems``). The
+    old fixed text gave a consumer no reason and no supported range. A venue history horizon, for example OKX
+    funding-rate-history (about 3 months), therefore looked the same as a gap. Here the terminal reason
+    (``PROVIDER_EXHAUSTED``, ``MAX_PAGES``, ...) and the uncovered edges become tokens, and the observed range is
+    printed so the caller can request the supported window. No observation values are included.
+    """
+
+    edges = []
+    if not coverage.complete_left:
+        edges.append("LEFT_EDGE_UNCOVERED")
+    if not coverage.complete_right:
+        edges.append("RIGHT_EDGE_UNCOVERED")
+    if coverage.truncated:
+        edges.append("HISTORY_TRUNCATED")
+    reason = str(coverage.terminal_reason or "").strip()
+    tokens = " ".join(([reason] if reason else []) + edges)
+    return (
+        "reference provider history did not cover the requested complete window: "
+        f"{tokens}; requested_start_ms={coverage.requested_start_ms} "
+        f"requested_end_ms={coverage.requested_end_ms} observed_min_ms={coverage.observed_min_ms} "
+        f"observed_max_ms={coverage.observed_max_ms}"
+    )
+
+
 def _freshness_verdict(requirement, quality) -> tuple[bool, str | None]:
     """Split the freshness verdict into its three independent causes.
 
@@ -2275,7 +2302,7 @@ class V2QueryService:
                 if not coverage.complete_left or not coverage.complete_right or coverage.truncated:
                     return QueryProblem(
                         CanonicalErrorCode.PARTIAL_RESULT,
-                        "reference provider history did not cover the requested complete window",
+                        _reference_coverage_detail(coverage),
                         False,
                     )
             if self._uses_quiet_execution_mark_index_contract(

@@ -80021,3 +80021,60 @@ resolves to a per-alpha DL identity, and never to Binance for an OKX deployment.
 
 **TS INTEGRATION_DEFECT_REGISTER row** (pin steward):
 `| IDR-<n> | DL_TS_CONTRACT | compile_alpha_deployment_bindings emitted per-alpha DL consumer ids (alpha.<alpha>.okx.no-order) and mapped every non-probe status to alpha.<alpha>.binance.paper, also for OKX deployments | scripts/compile_alpha_deployment_bindings.py:238-242; hosted dynamic-grid candidate inventory 2026-11-25 (scratch binding alpha.dynamic_grid_v1.okx.no-order) | DL bundle: shared venue/mode subject alpha.<venue>.<mode>.stable per owner ruling, typed DEPLOYMENT_VENUE_UNSUPPORTED/_AMBIGUOUS and DEPLOYMENT_MODE_UNSUPPORTED refusals, shared-subject duplicate check removed | - | DL bundle (v2.4.4+) |`
+
+### DL-DEF-2026-11-26-G: a reference-history coverage refusal carries typed tokens and the supported range (tested locally) - 2026-11-26 (Claude)
+
+**Registered here: DL-DEF-2026-11-26-G.**
+
+**Trigger.** Hosted dynamic_grid, 2026-11-25 18:24Z. The request was FUNDING_RATE OKX ETH-USDT-SWAP (`e49b54ae…`),
+ALPHA, `crypto_liquid_v2`, 2025-10-05 → 2026-11-25 (416 days), limit 10000, `require_all`, request `a38214cf`. It was
+refused with PARTIAL_RESULT, `retryable=false`.
+- The query_kn_2 log line reads `reasons ["PROVIDER_EXHAUSTED"]`.
+- The client received `reason_tokens []`.
+
+Disposition file: `~/.local/state/trading-system/paper-hosting/TS_TO_HOSTED_ALPHA_DYNAMIC_GRID_FUNDING_DISPOSITION_20261126.md`.
+
+**Cause** (released 2.4.2 Query).
+- FUNDING_RATE history is a bounded provider pass-through. DL keeps no funding history; the reference-batch cache is a
+  short TTL.
+- OKX pagination works: `qdl/adapters/okx/history.py:163-205`, `page_limit=400`.
+- OKX funding-rate-history holds about 3 months (OKX docs; `upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md:5047`
+  "Up to ~3 months"). The venue returned an empty older page (`PROVIDER_EXHAUSTED`, `history.py:270`), so
+  `complete_left=False`.
+- `qdl/query/service.py:2275-2279` refuses with PARTIAL_RESULT. That is correct and fail-closed, but the detail was a
+  fixed text with no UPPER_SNAKE token. The SDK keeps only such tokens (`qdl_sdk/client.py:150-180`). The terminal
+  reason reached only Query's log (`router.py:1616-1627`, `extra_reasons`).
+- This is not a paging defect. The defect is that the refusal is not typed for the consumer, and no published contract
+  states the funding horizon.
+
+**Fix.** `qdl/query/service.py` `_reference_coverage_detail`. The detail now carries the terminal reason
+(`PROVIDER_EXHAUSTED`, `MAX_PAGES`, ...), the uncovered edges (`LEFT_EDGE_UNCOVERED`, `RIGHT_EDGE_UNCOVERED`,
+`HISTORY_TRUNCATED`) and the requested and observed range, with no values.
+- The code is unchanged: PARTIAL_RESULT, non-retryable.
+- The only change is the item detail text, plus its `detail_sha256`.
+
+**Tests.**
+- `tests/test_dl_v244_reference_coverage_detail.py`, 3 tests OK:
+  - the incident's refusal carries `PROVIDER_EXHAUSTED LEFT_EDGE_UNCOVERED` and `observed_min_ms`;
+  - the SDK `_batch_item_problems` surfaces `["PROVIDER_EXHAUSTED", "LEFT_EDGE_UNCOVERED"]`;
+  - right edge and truncation tokens.
+- Impacted modules, one per container, light slot. 132 run, all OK, plus 3 skipped:
+
+  | Module | Tests |
+  |---|---|
+  | phase104_reference_batch | 36 |
+  | p184_a1_reference_bound | 13 |
+  | p184_a1_client_image | 4 (2 skipped) |
+  | dl_v240_ts_funding_entitlement | 14 |
+  | okx_reference_completion | 27 (1 skipped) |
+  | phase113_reference_v2 | 21 |
+  | kn_alpha_reference_access | 3 |
+  | dlv2_r131_execution_reference_ttl | 8 |
+  | active_reference_l2_demand | 6 |
+
+**Docs debt (with this fix).** The access guide should state that reference FUNDING_RATE history is a provider
+pass-through bounded by the venue's own retention (OKX about 3 months, newest first) and is never padded. A window
+before that is PARTIAL_RESULT with `PROVIDER_EXHAUSTED LEFT_EDGE_UNCOVERED`.
+
+**TS INTEGRATION_DEFECT_REGISTER row** (pin steward):
+`| IDR-<n> | DL_TS_CONTRACT | reference-history coverage refusal (PARTIAL_RESULT, non-retryable) carried a fixed detail with no typed token, so the SDK showed reason_tokens=[] while Query's own log had PROVIDER_EXHAUSTED; a FUNDING_RATE window older than the venue's horizon (OKX funding-rate-history ~3 months) was indistinguishable from a gap and no horizon is published | hosted dynamic_grid 2026-11-25 18:24Z request a38214cf (query_kn_2 qdl_refusal reasons PROVIDER_EXHAUSTED); qdl/query/service.py:2275-2279; qdl_sdk/client.py:150-180 | DL bundle: _reference_coverage_detail (terminal reason + LEFT/RIGHT_EDGE_UNCOVERED/HISTORY_TRUNCATED + requested/observed range), docs: funding history = venue-bounded pass-through | - | DL bundle (v2.4.4+) |`
