@@ -1,5 +1,12 @@
 # SDK Changelog
 
+## 2.10.1 (DL-DEF-2026-11-25-E: stream BAR lineage)
+
+Fix: `market_data_view_from_stream` now emits the BAR `resample_lineage` from the canonical `Bar.aggregation`,
+field for field as Query does. Before this fix, a live AGGREGATED bar had `resample_lineage=None` while its
+warmup copy carried it. Contract text: lineage is optional evidence, not revision identity (README, "BAR revision
+identity"). No new fields and no change for non-AGGREGATED bars.
+
 ## 2.10.0 (Data Layer v2.4.1: canonical instrument metadata v1)
 
 Additive only. `InstrumentView` (and `InstrumentResponse`, page items) gains an optional `canonical`

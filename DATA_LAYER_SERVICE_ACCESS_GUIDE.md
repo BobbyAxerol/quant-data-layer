@@ -735,6 +735,16 @@ Operational behavior:
 1. Native provider intervals are preferred. A non-native interval is created
    only from a complete consecutive set of final canonical constituents and
    carries constituent lineage and watermark.
+   - The lineage (`resample_lineage`, canonical `Bar.aggregation`) is optional
+     evidence, never BAR revision identity. A bar is identified by `event_id`,
+     `revision`, `lifecycle` and `supersedes_event_id`.
+   - Two copies of one event and revision that differ only in a null versus
+     present lineage are the same bar. SDK 2.10.0 and earlier dropped it on the
+     stream path.
+   - Two different present lineages, or a lineage on a non-AGGREGATED bar,
+     are conflicts.
+   - SDK `classify_bar_copies` implements this rule (SDK 2.10.1,
+     DL-DEF-2026-11-25-E).
 2. Wide requests are bounded and provider-aware. Compatible work is shared,
    while different symbols retain explicit item identity and failure status.
 3. Cache reuse includes instrument, target/source interval, source policy,

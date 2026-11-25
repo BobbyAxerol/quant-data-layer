@@ -79906,3 +79906,75 @@ audit file in `qdl/runtime/stable.py` (checked). Proposed: a bounded per-(consum
 heartbeat or `/health/dependencies`, so the load gate can see growth per alpha. It is candidate scope for the bundle.
 
 Status: script `tested locally` (two runs on the live stack, read-only).
+
+### DL-DEF-2026-11-25-E: SDK 2.10.1 stream BAR lineage parity and the BAR revision-identity contract (tested locally) - 2026-11-25 (Claude)
+
+**Registered here: DL-DEF-2026-11-25-E.**
+
+**Trigger.** Hosted Crossec g71 restart, 2026-11-25. OKX AAVE-USDT-SWAP 1h bar 12:00Z, event `7bba9b62…`, revision 0,
+origin AGGREGATED. The live copy had `resample_lineage=null` and the warmup copy carried it. Hosted's cache refused the
+warmup copy as a historical revision: 45 lineage-only overlaps out of 150 across 50 symbols.
+
+Disposition file: `~/.local/state/trading-system/paper-hosting/TS_TO_HOSTED_ALPHA_G71_LINEAGE_CONTRACT_DISPOSITION_20261125.md`.
+It says (a) now, plus (b) this fix.
+
+**Cause** (released code, tag `v2.4.2` / SDK 2.10.0).
+- The core sets `Bar.aggregation` on DERIVED_FINAL bars: `832c02c4:rust/qdl-core/src/derived_bar.rs:375,382`.
+- The proto states the field is "present exactly when origin is BAR_ORIGIN_AGGREGATED"
+  (`contracts/proto/qdl/marketdata/v2/market_data.proto:91-93`).
+- Query renders the field: `qdl/runtime/stable_source.py:150-167` → `qdl/api_v2/router.py:377-379`.
+- The SDK stream projection `qdl_sdk/projection.py:118-153` (sha prefix `ccf2b8e7`, equal to hosted's installed
+  wheel) never read it. Both paths read the same canonical bytes.
+
+**Fix (SDK 2.10.1, additive).**
+- `qdl_sdk/projection.py` `_resample_lineage`: the stream BAR payload carries `resample_lineage`, field for field as
+  Query does (`first/last_watermark` = `first/last_constituent_offset`, sha hex). It is None when the bar has no
+  aggregation.
+- New public `qdl_sdk.classify_bar_copies` (`qdl_sdk/handoff.py`), the hosted rule:
+  - `IDENTICAL`, or `LINEAGE_ONLY` for a null ↔ present lineage on an AGGREGATED bar;
+  - otherwise `ContinuityError("CONFLICT")`: two different present lineages, a lineage on a non-AGGREGATED bar, or any
+    other payload difference.
+- Contract text: lineage is optional evidence, not BAR revision identity. It is in `qdl_sdk/README.md` "BAR revision
+  identity" and in `DATA_LAYER_SERVICE_ACCESS_GUIDE.md`, operational behavior item 1.
+- Version bump 2.10.0 → 2.10.1 in `qdl_sdk/__init__.py`, `scripts/build_qdl_sdk_release.py`,
+  `scripts/build_qdl_release_images.py` `SDK_VERSION` and `qdl_sdk/CHANGELOG.md`, with the pinned tests updated.
+- No DL role change: Query, Stream, core and projector were already correct.
+
+**Qualification.** `tests/test_dl_v244_sdk_bar_lineage_parity.py`, 10 tests:
+- parity: stream and Query BAR payloads are byte-identical for an AGGREGATED envelope and a VENUE_NATIVE one, and both
+  builders emit the same key set;
+- hosted rule, positive: identical; lineage-only in both directions;
+- hosted rule, negative: two different lineages, a lineage on a non-AGGREGATED bar, a price difference with lineage,
+  a revision difference.
+- Impacted SDK/Query modules, one per container (`--memory 1g --oom-score-adj 500 --network none`, light slot). 431
+  run, all OK, plus 56 skipped that need live services (kn_query_backend 33, p184_dr05 23):
+
+  | Module | Tests |
+  |---|---|
+  | qdl_sdk_stream_projection | 14 |
+  | qdl_sdk_additive_responses | 4 |
+  | qdl_sdk_batched_subscribe | 7 |
+  | qdl_sdk_feed_status | 3 |
+  | qdl_sdk_gateway_clocks | 4 |
+  | qdl_sdk_offset_zero | 3 |
+  | qdl_sdk_read_reconnect | 3 |
+  | qdl_sdk_replica_read_transport | 18 |
+  | qdl_sdk_session_alive | 7 |
+  | sdk_client | 7 |
+  | sdk_execution_quality | 7 |
+  | fund_phase5_stream_sdk | 28 |
+  | kn_pre5_sdk | 15 |
+  | idr040_quiet_book_proof | 9 |
+  | p184_view_event_identity | 7 |
+  | phase10_universal_warmup | 75 |
+  | phase3_consumer_load_driver | 35 |
+  | phase104_v2_query_stream_integration | 8 |
+  | phaseb_stable_release | 7 |
+  | phase103_consumer_receipt_harness | 57 |
+  | kn_universe_benchmark | 19 |
+  | qdl_sdk_release | 4 |
+
+- Recipe tests (`tests/test_build_qdl_release_images`) run on the host with git after the commit.
+
+**TS INTEGRATION_DEFECT_REGISTER row** (pin steward; the register lives in the TS repository):
+`| IDR-<n> | DL_TS_CONTRACT | SDK 2.10.0 stream projection dropped BAR resample_lineage (canonical Bar.aggregation) while Query warmup renders it for the same event_id/revision; hosted Crossec cache refused lineage-only warmup copies as historical revisions (AAVE 1h 12:00Z 11-25, 45 of 150 overlaps across 50 symbols); contract silent on lineage vs revision identity | hosted g71 historical-revision-diagnostic.json; qdl_sdk/projection.py:118-153 at v2.4.2 (sha ccf2b8e7) vs stable_source.py:150-167 / router.py:377-379 | DL bundle: SDK 2.10.1 stream lineage parity + classify_bar_copies + explicit "lineage is not revision identity" contract text (README, access guide); interim: hosted lineage-only tolerance b58ad8bf per TS/DL disposition 2026-11-25 | - | DL bundle (v2.4.4+), SDK 2.10.1 |`

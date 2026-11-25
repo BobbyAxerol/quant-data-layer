@@ -69,6 +69,27 @@ def _book_level(value) -> dict[str, Any]:
     }
 
 
+def _resample_lineage(bar) -> dict[str, Any] | None:
+    """SDK 2.10.1 (DL-DEF-2026-11-25-E): the stream BAR carries the same lineage Query renders.
+
+    Field for field what `qdl/runtime/stable_source.py` `bar_item_fields` maps from the canonical
+    `Bar.aggregation` and `qdl/api_v2/router.py` serialises as `resample_lineage`. SDK 2.10.0 left it out, so a
+    live AGGREGATED bar arrived with `resample_lineage=None` while its warmup copy had it. The lineage is optional
+    evidence and never part of BAR revision identity (README, "BAR revision identity").
+    """
+
+    if not bar.HasField("aggregation"):
+        return None
+    aggregation = bar.aggregation
+    return {
+        "base_interval": aggregation.base_interval,
+        "constituent_count": int(aggregation.constituent_count),
+        "first_watermark": int(aggregation.first_constituent_offset),
+        "last_watermark": int(aggregation.last_constituent_offset),
+        "constituent_sha256": bytes(aggregation.constituent_sha256).hex(),
+    }
+
+
 def _payload(
     envelope: market_data_pb2.EventEnvelope,
 ) -> tuple[Feed, str | None, int, dict[str, Any]]:
@@ -150,6 +171,7 @@ def _payload(
                 if envelope.bar.HasField(field)
                 else None
             )
+        payload["resample_lineage"] = _resample_lineage(envelope.bar)
         return Feed.BAR, envelope.bar.interval, int(envelope.bar.revision), payload
     if name == "book_snapshot":
         return (
