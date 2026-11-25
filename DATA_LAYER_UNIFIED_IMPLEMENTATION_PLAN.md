@@ -79858,3 +79858,51 @@ BAR depth in the KN bundle with a cap-migration guard (DL-BL-2026-11-13-C). It i
 
 **TS INTEGRATION_DEFECT_REGISTER row** (pin steward):
 `| IDR-<n> | DATA_LAYER | bar_edge venue hole with an incomplete cache window was refused for the whole binding (VENUE_HOLE_NOT_COVERED, no live bars) although the venue returned the bars below the hole; a hole inside a resume suffix blocked live bars instead of only its span | design review 2026-11-25 (DL-BL-2026-11-25-C) after the v2.4.3 runtime acceptance | DL v2.4.4 slice 2: window_envelopes on BarHistoryProviderHoleError; publish every venue bar of the demand window; fail-closed for the uncovered span only (typed, span_fail_closed/binding_resumed), live resumes; recheck 300 s -> 6 h, qdl_bar_edge_venue_hole_healed | - | DL bundle (v2.4.4+) |`
+
+### DL load observation script and baseline (read-only) - 2026-11-25 (Claude)
+
+**Script.** `upgrade/evidence/releases/v2.4.4/drafts/observation/dl_load_observation.py` is the gate instrument for
+the bundled release. Its docstring states purpose and boundary. In one read-only pass it prints typed PASS/WARN/FAIL
+lines for:
+- the 16 DL roles: image, restarts, health, OOMKilled;
+- the bar_edge heartbeat counters, with `history_failed` checked against the known 5 Binance 3d;
+- error classes per role since `--since`, where a class not in the baseline is a FAIL;
+- Query refusal rates per hour by code+reason, where a new code or more than 2x the baseline is a WARN;
+- projector conflicts, builds, cache_reconnects, ownership_lost and rebuild state;
+- market_cache used vs maxmemory and its growth per hour;
+- BAR freshness for OKX/Binance 1m/1h/12h;
+- host MemAvailable, swap and the `/proc/vmstat oom_kill` delta. dmesg and the kernel journal are not readable for
+  this user;
+- load proxies: Query slow-request volume per route and Stream subscriptions.
+
+Logs are read whole in Python, with no `grep -q` behind a pipe (the pipefail lesson). Output goes next to the script
+as `observation-<UTC>.txt`, plus `baseline.json` (first run) and `last-sample.json` (rolling, not committed).
+
+**Baseline** (`observation-20261125T111812Z.txt`, window since bar_edge T0 10:04:14Z, 1.2 h). Verdict WARN, for the
+per-consumer item only.
+- All 16 roles running and healthy; restarts are only the 06:01Z OOM-recovery restarts of the projectors and
+  market_cache.
+- bar_edge: published 1319/1319, rebootstrap_waiting 0, resume_pending 0, venue_holes 4 recorded / 0 refused,
+  history_failed 5.
+- Errors: only the 5 known Binance 3d overlaps (bar_edge); none on any other role.
+- Query refusals per hour:
+
+  | Code | query_kn_1 | query_kn_2 |
+  |---|---|---|
+  | DATA_NOT_READY HOT_QUIET | 348 | 384 |
+  | LIVE_VIEW_UNAVAILABLE | 41 | 41 |
+  | SOURCE_UNAVAILABLE MARK_INDEX | 41 | 41 |
+
+  The last two rows are the 10:27Z OKX WS reset.
+- Projectors: conflicts 33/25, builds 6, no reconnects or rebuild.
+- market_cache: 5.47 of 7.45 GiB (73%), 213,828 keys.
+- BAR: OKX 94/94 and Binance 96/96 current on 1m/1h/12h.
+- Host: MemAvailable 11.8 GiB, swap used 6.4 GiB, oom_kill counter 47,298 (cumulative; deltas are what matter).
+- Load proxies: Query slow requests per hour are about 6.0k / 5.1k for reference:batch, 4.7k / 4.1k for snapshot
+  and about 25 / 20 for warmup:batch. Stream subscriptions are 119 + 15.
+
+**Registered: DL-BL-2026-11-25-D.** DL has no per-consumer Query request counter: no access log, metrics route or
+audit file in `qdl/runtime/stable.py` (checked). Proposed: a bounded per-(consumer_id, route) counter in the Query
+heartbeat or `/health/dependencies`, so the load gate can see growth per alpha. It is candidate scope for the bundle.
+
+Status: script `tested locally` (two runs on the live stack, read-only).
