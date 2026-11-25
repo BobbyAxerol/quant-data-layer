@@ -80078,3 +80078,80 @@ before that is PARTIAL_RESULT with `PROVIDER_EXHAUSTED LEFT_EDGE_UNCOVERED`.
 
 **TS INTEGRATION_DEFECT_REGISTER row** (pin steward):
 `| IDR-<n> | DL_TS_CONTRACT | reference-history coverage refusal (PARTIAL_RESULT, non-retryable) carried a fixed detail with no typed token, so the SDK showed reason_tokens=[] while Query's own log had PROVIDER_EXHAUSTED; a FUNDING_RATE window older than the venue's horizon (OKX funding-rate-history ~3 months) was indistinguishable from a gap and no horizon is published | hosted dynamic_grid 2026-11-25 18:24Z request a38214cf (query_kn_2 qdl_refusal reasons PROVIDER_EXHAUSTED); qdl/query/service.py:2275-2279; qdl_sdk/client.py:150-180 | DL bundle: _reference_coverage_detail (terminal reason + LEFT/RIGHT_EDGE_UNCOVERED/HISTORY_TRUNCATED + requested/observed range), docs: funding history = venue-bounded pass-through | - | DL bundle (v2.4.4+) |`
+
+### DL load observation 11-25 22Z (read-only) - 2026-11-25 (Claude)
+
+Run: `upgrade/evidence/releases/v2.4.4/drafts/observation/dl_load_observation.py --since 2026-11-25T15:55:25Z`.
+Output: `observation-20261125T215525Z.txt`, a 6 h window. The verdict was FAIL; the FAILs are explained below.
+
+Load: Crossec 50 live, dynamic_grid warmup and stream diagnostics on the shared `alpha.okx.paper.stable`, and the m5
+leaf onboarded.
+
+**Roles.** All 16 running and healthy. RestartCount is unchanged from the baseline; the projectors and market_cache
+show only their 06:01Z OOM-recovery restart.
+
+**CPU / RSS** (`docker stats`, 21:56Z, load1 16):
+
+| Role | CPU | RSS |
+|---|---|---|
+| query_kn_1 | 76% | 283 MiB |
+| query_kn_2 | 85% | 306 MiB |
+| stream_kn_1 | 16% | 188 MiB |
+| stream_kn_2 | 17% | 142 MiB |
+| market_projector_1 | 15% | 260 MiB |
+| market_projector_2 | 16% | 242 MiB |
+| binance_bar_edge | 0.04% | 149 MiB |
+| kafka1 | 115% | 0.65 GiB |
+| kafka2 | 39% | 0.73 GiB |
+| kafka3 | 162% | 1.26 GiB |
+
+**market_cache.**
+- `used_memory` 5.48 of 7.45 GiB (73%), 213,555 keys, growth +0.8 MiB/h since 11:18Z.
+- Morning diagnosis (`handoffs/HOST_MEMORY_DIAGNOSIS_20261125.md`): 5.37–5.39 GiB, so +~0.1 GiB in about 12 h. That
+  is bounded.
+- **New finding: the cgroup has 2.87 GiB of the cache in swap** (`memory.swap.current`), and RSS is 2.57 GiB. Host
+  swap used is 7.84 GiB, +1.39 GiB since 11:18Z. A swapped Redis serves with page-fault latency.
+
+**Projectors (FAIL in the script).**
+- Both logged Redis `Resource temporarily unavailable (os error 11)` at 11:29:14Z and reconnected once
+  (`cache_reconnects` 0→1 at 11:29:54/59Z).
+- No rebuild, `bars_applied` advancing, conflicts unchanged (33/25).
+- The `errors` field is sticky; it is the 11:29Z event, not a current fault.
+- Probable link to the market_cache swap: not proven.
+
+**Host.**
+- MemAvailable 12.5 GiB.
+- `/proc/vmstat oom_kill` +7 since 11:18Z. No container in `docker ps -a` has OOMKilled set. Which cgroup was killed
+  is not identified, because the kernel log is not readable for this user.
+
+**Errors and refusals (6 h).**
+- No error lines on any of the 12 application roles. No BAR EVENT_AGE, no DATA_STALE.
+- Query refusal rates per hour:
+
+  | Refusal | query_kn_1 | query_kn_2 | Note |
+  |---|---|---|---|
+  | DATA_NOT_READY HOT_QUIET | 232 | 222 | below baseline 346 / 381 |
+  | PARTIAL_RESULT `PROVIDER_EXHAUSTED` FUNDING_RATE | 0.3 | – | dynamic_grid 416-day request, venue horizon (DL-DEF-2026-11-26-G) |
+  | SOURCE_UNAVAILABLE MARK_INDEX, empty reasons | – | 25.7 | one burst at 19:30:11Z, about 150 suppressed |
+
+  The 19:30:11Z burst was followed at 19:30:42Z by an OKX `okx-public-003` staleness recycle. Retryable; the same
+  class as the 10:27Z WS reset, but without reason tokens.
+
+**bar_edge.** published 1319/1319, rebootstrap_waiting 0, resume_pending 0, venue holes 4 recorded / 0 refused,
+history_failed 5 (the known Binance 3d set).
+
+**BAR currency.** OKX 94/94 and Binance 96/96 current on 1m/1h/12h. That is the Crossec universe: 94 DL-covered OKX
+instruments plus the 96 Binance signal instruments.
+
+**Per-consumer Query rates.** Not available. There is no DL counter (DL-BL-2026-11-25-D is not implemented).
+Proxies:
+- Query slow requests per hour: reference:batch about 4.4k / 4.1k; snapshot 14 / 31, against about 4.7k in the
+  morning, because the morning carried Crossec warmup bursts.
+- Stream subscriptions 118 + 76, against 119 + 15 in the morning.
+
+**Follow-ups registered.**
+- DL-BL-2026-11-25-H, market_cache in swap. Owner decision, linked to the memory diagnosis:
+  - pin the cache against swap (`memory.swap.max=0` for its cgroup, or `--memory-swappiness 0`), with RAM headroom;
+  - or reduce the BAR depth (R1 retention).
+- SOURCE_UNAVAILABLE MARK_INDEX refusals should carry a typed reason token. Same class as DL-DEF-2026-11-26-G; fold it
+  into the bundle.
