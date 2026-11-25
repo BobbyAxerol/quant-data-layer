@@ -79622,3 +79622,17 @@ Status: `implemented`, `tested locally`. Not built, not deployed.
 
 **TS INTEGRATION_DEFECT_REGISTER row** (for the pin steward):
 `| IDR-<n> | DATA_LAYER | After a market-cache loss the bar_edge re-bootstrapped all 1,319 BAR bindings one per turn with full 10,000-row windows (A->Z, ~1.75 min/OKX symbol) and live derived 1h/12h waited for it: 60/94 OKX 1h series without live bars up to ~4 h (AVAX/BCH DATA_STALE EVENT_AGE to Crossec 07:51-07:57Z); OKX ASTER-USDT-SWAP never resumed because its full 1m window met a venue hole (OKX lacks 2026-11-19T15:39Z, the cache has it) refused as MISSING_PROVIDER_WINDOW; latent: an OKX hole >2 bars was an untyped "short" RuntimeError failing the whole cycle. Root: host OOM 05:54:48Z killed market_cache (ephemeral, noeviction, oom_score_adj 0) | query_kn_2 refusals 9e263d4f/5d771d5c/830192aa; bar_edge log 06:02:43Z rebase, ACK sweep, ASTER refusals 07:49Z+; market_cache bm/ptr reads 08:31Z | DL v2.4.3 (slice 3): resume from the old watermark after a cache-only proof of the durable window, resume-first quantum 16, rollback-safe resume sidecar; typed BarHistoryProviderHoleError decided from durable coverage (VENUE_HOLE_DURABLY_COVERED resumes / VENUE_HOLE_NOT_COVERED fail-closed, 300 s recheck); heartbeat rebootstrap_waiting/wait_s/resume_pending/venue_holes_*; bound ceil(N/16) turns, one page per binding for outages <= 300 bars. Recurrence: owner decision on oom_score_adj / DL memory protection / cache snapshot (plan entry) | - | DL v2.4.3 |`
+
+### DL v2.4.3 build recipe: RELEASE 2.4.3 (python only), python reference = production 2.4.2 (tested locally) - 2026-11-25 (Claude)
+
+`scripts/build_qdl_release_images.py` changes:
+- `RELEASE` = 2.4.3, for slice 3 (DL-DEF-2026-11-25-A). Only the python image is built
+  (`--component python`); the Rust roles keep `qdl-v2-rust:2.4.2-48137eb`.
+- New `REQUIRED_ANCESTORS` entry `v243_bar_edge_rebase_resume` = 206481e.
+- `PYTHON_REFERENCES` = `qdl-v2-python:2.4.2-48137eb` (`5ea7a7a4…`, tree 48137ebf), which Query x2 and binance_bar_edge
+  run since the v2.4.2 windows. `tests/test_build_qdl_release_images.py` pins that id.
+
+Owner-approved window, 2026-11-25: build, then once the live sweep has passed ZEC, back up the checkpoint and
+recreate `binance_bar_edge` only. Roll back to `5ea7a7a4` automatically on failure.
+
+Test result: recipe tests 46/46 on the host with git; dry-run plan `--component python` OK. Status: `tested locally`.
