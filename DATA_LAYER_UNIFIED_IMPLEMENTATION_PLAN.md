@@ -79636,3 +79636,50 @@ Owner-approved window, 2026-11-25: build, then once the live sweep has passed ZE
 recreate `binance_bar_edge` only. Roll back to `5ea7a7a4` automatically on failure.
 
 Test result: recipe tests 46/46 on the host with git; dry-run plan `--component python` OK. Status: `tested locally`.
+
+### DL v2.4.3 bar_edge runtime acceptance (production-authoritative for binance_bar_edge on the KN stack) - 2026-11-25 (Claude)
+
+**Deployment.** `binance_bar_edge` runs `qdl-v2-python:2.4.3-eb9371d`
+(`sha256:50124df8a7914f4494f898926bffa9487df90841205d051ce915564538716651`) since T0 10:04:14Z, in an owner-approved
+window run by the coordinator (`dl-v243-window/window.sh`).
+- The owner allowed deployment before the A→Z sweep reached ZEC: the 2026-11-19 15:38Z venue hole was stalling it.
+- Backup `.pre-v243`: checkpoint `30b74165…`, history-short `24f5dc5e…`.
+- No other role changed.
+
+**Evidence.** Draft notes: `upgrade/evidence/releases/v2.4.3/drafts/RELEASE_NOTES_DRAFT.md`.
+- Restore at 10:12:37Z: 1,222 of 1,319 bindings, after an 8 min 05 s silent restore.
+- Four `VENUE_HOLE_DURABLY_COVERED`, all the same OKX hole 2026-11-19 15:38→15:40Z, each with 1 venue-missing bar and
+  durable_missing 0. `venue_holes_refused=0`.
+
+  | Time (UTC) | Binding |
+  |---|---|
+  | 10:13:43 | ASTER 1m |
+  | 10:14:11 | TAO 1m |
+  | 10:15:11 | TAO 5m |
+  | 10:30:41 | XPL 1m |
+
+  - Before v2.4.3 each of these bindings, and their derived chains, would have been refused indefinitely.
+- All BAR series current at 10:40:09Z: OKX 1m/1h/12h 94/94, Binance 1m/1h/12h 96/96. This includes Crossec's 94
+  DL-covered OKX instruments and the 96 Binance signal instruments.
+- `rebootstrap_waiting=0` and `published=1319/1319` at 10:41:08Z.
+- Since T0:
+  - errors: only the 5 known Binance 3d overlaps; no Traceback; no `qdl_bar_edge_resume_refused`;
+  - bar_edge: RestartCount 0, healthy;
+  - projectors: no errors, conflicts unchanged;
+  - Query refusal rates: at baseline, no BAR EVENT_AGE.
+
+**Bound.** The first v2.4.3 start had no resume points. The v2.4.2 process never writes the sidecar, and a plain
+restart is not a rebase. The 97 missing bindings therefore took the deep path at about 3.4 per minute, 28.5 min after
+the restore. This is expected and one-time.
+- The `ceil(N/16)`-turn bound covers a rebase in a v2.4.3 process, and restarts after it through the sidecar.
+- Read-only check: no `resume.json` exists now, which is correct after a settled wave.
+- Every binding now has a checkpoint watermark, so a restart only re-proves the cache (5-9 min silent restore).
+
+**Backlog DL-BL-2026-11-25-B.** Bindings that the restore check marks incomplete (3 TAO 1h/2h/30m this time) still
+take the deep path. Seed their checkpoint watermark as a resume candidate, under the same cache-only proof. Fold it
+into the next DL python release.
+
+Status: deployed, accepted at runtime. Release PR, CI6 receipt and tag are open.
+
+**TS INTEGRATION_DEFECT_REGISTER row update** (pin steward; replaces the slice 3 row's last two columns):
+`| IDR-<n> | DATA_LAYER | (as slice 3 row) | (as slice 3 row) + bar_edge v2.4.3 runtime 2026-11-25: T0 10:04:14Z, restore 10:12:37Z, 4 venue holes VENUE_HOLE_DURABLY_COVERED (ASTER/TAO 1m, TAO 5m, XPL 1m; OKX 2026-11-19 15:38-15:40Z), 0 refused, all OKX 94 / Binance 96 1m/1h/12h current 10:40:09Z, rebootstrap_waiting 0 10:41:08Z | DL v2.4.3 deployed (bar_edge 50124df8); release PR/CI6/tag open; DL-BL-2026-11-25-B restore-gap resume follow-up | FIXED (runtime) | DL v2.4.3 |`
