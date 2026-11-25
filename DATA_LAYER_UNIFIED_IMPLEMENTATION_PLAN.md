@@ -79978,3 +79978,46 @@ It says (a) now, plus (b) this fix.
 
 **TS INTEGRATION_DEFECT_REGISTER row** (pin steward; the register lives in the TS repository):
 `| IDR-<n> | DL_TS_CONTRACT | SDK 2.10.0 stream projection dropped BAR resample_lineage (canonical Bar.aggregation) while Query warmup renders it for the same event_id/revision; hosted Crossec cache refused lineage-only warmup copies as historical revisions (AAVE 1h 12:00Z 11-25, 45 of 150 overlaps across 50 symbols); contract silent on lineage vs revision identity | hosted g71 historical-revision-diagnostic.json; qdl_sdk/projection.py:118-153 at v2.4.2 (sha ccf2b8e7) vs stable_source.py:150-167 / router.py:377-379 | DL bundle: SDK 2.10.1 stream lineage parity + classify_bar_copies + explicit "lineage is not revision identity" contract text (README, access guide); interim: hosted lineage-only tolerance b58ad8bf per TS/DL disposition 2026-11-25 | - | DL bundle (v2.4.4+), SDK 2.10.1 |`
+
+### DL-DEF-2026-11-25-F: alpha deployment bindings resolve to the shared venue/mode consumer subject (tested locally) - 2026-11-25 (Claude)
+
+**Registered here: DL-DEF-2026-11-25-F.**
+
+**Defect.** `scripts/compile_alpha_deployment_bindings.py:238-242`, `_consumer_id`, as it stood before this fix:
+- it emitted a per-alpha DL consumer id, `alpha.<alpha_id>.okx.no-order`;
+- it mapped every status other than `DECLARED_NO_ORDER_PROBE` to `alpha.<alpha_id>.binance.paper`, so an ordering OKX
+  deployment got a Binance id.
+
+Found on the hosted dynamic-grid inventory
+(`~/.local/state/alpha-hosting-mode5-20261125/dynamic-grid-data-requirements.candidate.json`). The compiled scratch
+binding had `alpha.dynamic_grid_v1.okx.no-order`.
+
+**Owner ruling (2026-11-25).** Alphas share the venue/mode consumer subject, for example `alpha.okx.paper.stable`
+(`consumers/stable/alpha-okx-paper.yaml`, subject `spiffe://qdl/paper/alpha-okx-stable`). A deployment binding never
+resolves to a per-alpha DL identity, and never to Binance for an OKX deployment.
+
+**Fix.**
+- `_consumer_id` returns `alpha.<venue>.<mode>.stable`:
+  - mode is the deployment `mode`, one of paper, sandbox or live;
+  - a no-order probe is a status, not a mode, so it gets the same subject.
+- `_deployment_venue` takes the deployment's explicit `venue` if present. Otherwise it takes the single venue of the
+  required routes, or of all routes when none is required.
+- Typed refusals, each producing a BLOCKED result: `DEPLOYMENT_VENUE_UNSUPPORTED:<venue>`,
+  `DEPLOYMENT_VENUE_AMBIGUOUS:<venues>` (a cross-venue deployment must declare `venue`) and
+  `DEPLOYMENT_MODE_UNSUPPORTED:<mode>`.
+- The "compiled consumer_id is duplicated" check is removed, because the subject is shared by design. Bindings stay
+  per deployment, and requirement ids carry the deployment_id.
+
+**Tests** (`tests/test_alpha_deployment_bindings.py`, 8 tests, 2 new).
+- OKX paper ordering and OKX no-order probe → `alpha.okx.paper.stable`; Binance paper → `alpha.binance.paper.stable`.
+- No binding carries the alpha id. Product consumer ids equal the binding's. Requirement ids stay distinct across two
+  deployments on one subject.
+- Unknown venue BYBIT, ambiguous OKX+Binance and unknown mode `demo` are typed refusals. An explicit `venue: OKX`
+  cross-venue deployment is admitted on `alpha.okx.paper.stable`.
+- Neighbouring modules: phase12_bound_bar_edge_projection 9, alpha_reader_release 4, alpha_workload_identity 3
+  (1 skipped). All OK, one module per container, light slot.
+- The dynamic-grid inventory recompiled into scratch (`dg-binding/compiled-v244/`) gives `consumer_id
+  alpha.okx.paper.stable` with 5 products.
+
+**TS INTEGRATION_DEFECT_REGISTER row** (pin steward):
+`| IDR-<n> | DL_TS_CONTRACT | compile_alpha_deployment_bindings emitted per-alpha DL consumer ids (alpha.<alpha>.okx.no-order) and mapped every non-probe status to alpha.<alpha>.binance.paper, also for OKX deployments | scripts/compile_alpha_deployment_bindings.py:238-242; hosted dynamic-grid candidate inventory 2026-11-25 (scratch binding alpha.dynamic_grid_v1.okx.no-order) | DL bundle: shared venue/mode subject alpha.<venue>.<mode>.stable per owner ruling, typed DEPLOYMENT_VENUE_UNSUPPORTED/_AMBIGUOUS and DEPLOYMENT_MODE_UNSUPPORTED refusals, shared-subject duplicate check removed | - | DL bundle (v2.4.4+) |`

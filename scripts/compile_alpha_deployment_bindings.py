@@ -235,11 +235,48 @@ def _reference_keys(reference_manifest: Mapping[str, Any]) -> set[tuple[str, str
     return keys
 
 
+_DEPLOYMENT_MODES = frozenset({"paper", "sandbox", "live"})
+
+
+def _deployment_venue(deployment: Mapping[str, Any]) -> str:
+    """The execution venue: an explicit deployment ``venue``, else the single venue of its required routes.
+
+    A cross-venue deployment, for example signal bars from one venue and orders on another, must declare
+    ``venue`` explicitly. It is never guessed.
+    """
+
+    explicit = deployment.get("venue")
+    if explicit is not None:
+        venue = _text(explicit, "deployment venue").upper()
+    else:
+        routes = deployment.get("routes")
+        if not isinstance(routes, list) or not routes:
+            raise DeploymentBindingError("declared deployment routes are required")
+        rows = [_mapping(item, "deployment route") for item in routes]
+        required = [row for row in rows if _bool(row.get("required", True), "route required")]
+        venues = sorted({_text(row.get("venue"), "route venue").upper() for row in (required or rows)})
+        if len(venues) != 1:
+            raise DeploymentBindingError("DEPLOYMENT_VENUE_AMBIGUOUS:" + ",".join(venues))
+        venue = venues[0]
+    if venue not in _V2_VENUES:
+        raise DeploymentBindingError(f"DEPLOYMENT_VENUE_UNSUPPORTED:{venue}")
+    return venue
+
+
 def _consumer_id(deployment: Mapping[str, Any]) -> str:
-    alpha_id = _text(deployment.get("alpha_id"), "deployment alpha_id")
-    status = _text(deployment.get("status"), "deployment status")
-    suffix = "okx.no-order" if status == "DECLARED_NO_ORDER_PROBE" else "binance.paper"
-    return f"alpha.{alpha_id}.{suffix}"
+    """DL-DEF-2026-11-25-F: the shared venue/mode consumer subject, never a per-alpha identity.
+
+    Owner ruling 2026-11-25: alphas share the venue/mode Data Layer consumer, for example
+    ``alpha.okx.paper.stable`` for OKX Paper, as in ``consumers/stable/alpha-okx-paper.yaml``. A no-order probe
+    is a deployment status, not a mode, so it uses the same subject. Before this fix the compiler emitted
+    ``alpha.<alpha_id>.okx.no-order`` and mapped every other status to ``alpha.<alpha_id>.binance.paper``, even
+    for an OKX deployment.
+    """
+
+    mode = _text(deployment.get("mode"), "deployment mode").lower()
+    if mode not in _DEPLOYMENT_MODES:
+        raise DeploymentBindingError(f"DEPLOYMENT_MODE_UNSUPPORTED:{mode}")
+    return f"alpha.{_deployment_venue(deployment).lower()}.{mode}.stable"
 
 
 def _consumer_class(deployment: Mapping[str, Any]) -> str:
@@ -405,7 +442,6 @@ def compile_inventory(
     capability_revision = _positive_int(capability.get("revision"), "capability_matrix.revision")
 
     rendered: list[dict[str, Any]] = []
-    consumers: set[str] = set()
     for deployment in deployments:
         status = _text(deployment.get("status"), "deployment status")
         if status == "BLOCKED":
@@ -420,9 +456,9 @@ def compile_inventory(
             min_bars = _positive_int(history.get("min_bars"), "deployment history min_bars", maximum=10_000)
             if min_bars > maxlen:
                 raise DeploymentBindingError("deployment history min_bars exceeds maxlen")
+            # Shared by design: several deployments resolve to one venue/mode subject. Bindings stay per
+            # deployment, and requirement ids carry the deployment_id.
             consumer_id = _consumer_id(deployment)
-            if consumer_id in consumers:
-                raise DeploymentBindingError("compiled consumer_id is duplicated")
             consumer_class = _consumer_class(deployment)
             routes = deployment.get("routes")
             if not isinstance(routes, list) or not routes:
@@ -496,7 +532,6 @@ def compile_inventory(
             # Reuse the strict in-repository parser; TS/SDK use the same
             # canonical field/digest contract independently.
             ConsumerRouteBinding.from_canonical_mapping(binding)
-            consumers.add(consumer_id)
             rendered.append({
                 "deployment_id": _text(deployment.get("deployment_id"), "deployment_id"),
                 "alpha_id": _text(deployment.get("alpha_id"), "alpha_id"),
