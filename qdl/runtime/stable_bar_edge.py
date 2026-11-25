@@ -119,6 +119,7 @@ _RESUME_BINDINGS_PER_TURN = 16
 # A venue hole the durable cache does not cover cannot heal by re-asking every
 # few seconds (each attempt is a full window of pages); recheck it this often.
 _VENUE_HOLE_RETRY_SECONDS = 300
+_VENUE_HOLE_RECHECK_MAX_SECONDS = 6 * 3600
 # Typed codes (log events, ``_history_venue_holes`` and the heartbeat counters).
 VENUE_HOLE_DURABLY_COVERED = "VENUE_HOLE_DURABLY_COVERED"
 VENUE_HOLE_NOT_COVERED = "VENUE_HOLE_NOT_COVERED"
@@ -1728,38 +1729,103 @@ class StableBinanceBarEdge:
 
     def _venue_hole_decision(self, source: StableSourceBinding, acquisition: StableAcquisitionBinding,
                              hole: BarHistoryProviderHoleError, *, requested: int, resume_from: int | None,
-                             proofs: dict[str, dict]) -> dict:
-        """Decide a venue hole from durable coverage alone.
+                             proofs: dict[str, dict]) -> tuple[dict, tuple]:
+        """Decide a venue hole from durable coverage alone; return ``(record, envelopes to publish)``.
 
-        The demanded window is the ``requested`` grid opens ending at the newest
-        close. The provider certified the suffix after the newest hole; every
-        older open of that window, including the bars the venue lacks, must
-        already be durable. Then the cache stays gap-free and live resumes
-        (``VENUE_HOLE_DURABLY_COVERED``). Otherwise - typically a hole inside the
-        suffix after the resume watermark, which no one holds - it is refused
-        fail-closed (``VENUE_HOLE_NOT_COVERED``) and rechecked later.
+        The demanded window is the ``requested`` grid opens ending at the newest venue close. Every bar the venue
+        returned (both sides of every hole, each run continuity-checked by the fetcher) is published; the
+        canonical core validates each one. Only the opens the venue lacks inside the returned window (the hole
+        spans) are decided from the cache:
+        - all durable: ``VENUE_HOLE_DURABLY_COVERED``, the window is gap-free;
+        - otherwise ``VENUE_HOLE_NOT_COVERED``: fail-closed for exactly that span (no bar is invented, a
+          derived bucket over it stays a gap and a warmup across it is refused as a gap), while live bars
+          resume. The span is rechecked (``_recheck_venue_holes``).
+        Demanded opens older than the returned bars (a fetcher that stops at the hole) are reported, not decided.
         """
 
         interval_ms = _bar_interval_ms(source.interval or "")
-        suffix_opens = [self._open_time_ms(acquisition, item) for item in hole.recent_envelopes]
-        first_open = min(suffix_opens)
-        venue_missing = max(0, (hole.current - hole.previous) // interval_ms - 1)
-        older = max(0, requested - len(suffix_opens))
-        durable_missing = (self._durable_window_missing(source, first_open - interval_ms, older, proofs)
-                           if venue_missing <= _MAX_DURABLE_BAR_ROWS else older or 1)
+        values = tuple(hole.window_envelopes)
+        venue_opens = {self._open_time_ms(acquisition, item) for item in values}
+        latest = max(venue_opens)
+        earliest = self._short_proof_floor(proofs, source.binding_id, self._bootstrap_rows_for(source))
+        grid = [latest - index * interval_ms for index in range(requested)
+                if latest - index * interval_ms > 0
+                and (earliest is None or latest - index * interval_ms >= earliest)]
+        oldest_venue = min(venue_opens)
+        interior = frozenset(value for value in grid if value >= oldest_venue and value not in venue_opens)
+        below = frozenset(value for value in grid if value < oldest_venue)
+        uncovered = interior - self._durable_final_bar_opens(source, interior) if interior else frozenset()
+        below_missing = below - self._durable_final_bar_opens(source, below) if below else frozenset()
         if resume_from is None:
             position = "NO_RESUME_WATERMARK"
         elif hole.previous >= resume_from:
             position = "INSIDE_RESUME_SUFFIX"
         else:
             position = "OLDER_THAN_RESUME_WATERMARK"
-        return {
-            "code": VENUE_HOLE_DURABLY_COVERED if durable_missing == 0 else VENUE_HOLE_NOT_COVERED,
+        record = {
+            "code": VENUE_HOLE_DURABLY_COVERED if not uncovered else VENUE_HOLE_NOT_COVERED,
             "provider": hole.provider, "symbol": hole.symbol, "interval": hole.interval,
-            "previous_ms": hole.previous, "current_ms": hole.current, "venue_missing_rows": venue_missing,
-            "durable_missing_rows": durable_missing, "position": position, "suffix_rows": len(suffix_opens),
+            "previous_ms": hole.previous, "current_ms": hole.current, "venue_missing_rows": len(interior),
+            "durable_missing_rows": len(uncovered), "position": position, "suffix_rows": len(hole.recent_envelopes),
+            "venue_rows": len(venue_opens), "below_window_missing_rows": len(below_missing),
             "recorded_at": int(self.clock()),
         }
+        if uncovered:
+            record.update(uncovered_from_ms=min(uncovered), uncovered_to_ms=max(uncovered),
+                          recheck_attempt=0, recheck_at=self.clock() + _VENUE_HOLE_RETRY_SECONDS)
+        grid_set = frozenset(grid)
+        return record, tuple(item for item in values if self._open_time_ms(acquisition, item) in grid_set)
+
+    def _recheck_venue_holes(self, observed_ms: int) -> None:
+        """Re-verify one due ``VENUE_HOLE_NOT_COVERED`` span per turn: cache first, then a bounded venue read.
+
+        The read covers the span to the latest close (within the demand); only missing opens are published.
+        The recheck interval doubles from ``_VENUE_HOLE_RETRY_SECONDS`` to ``_VENUE_HOLE_RECHECK_MAX_SECONDS``.
+        """
+
+        holes = getattr(self, "_history_venue_holes", {})
+        now = self.clock()
+        due = sorted((item["recheck_at"], key) for key, item in holes.items()
+                     if item.get("code") == VENUE_HOLE_NOT_COVERED and item.get("recheck_at", now + 1) <= now)
+        if not due:
+            return
+        binding_id = due[0][1]
+        record = holes[binding_id]
+        pairs = {source.binding_id: (source, acquisition)
+                 for source, acquisition in self.history_bindings + self.history_okx_bindings}
+        if binding_id not in pairs:
+            holes.pop(binding_id, None)
+            return
+        source, acquisition = pairs[binding_id]
+        interval_ms = _bar_interval_ms(source.interval or "")
+        span = frozenset(range(record["uncovered_from_ms"], record["uncovered_to_ms"] + 1, interval_ms))
+        healed = False
+        try:
+            if self._durable_final_bar_opens(source, span) == span:
+                healed = True
+            else:
+                bootstrap_rows = self._bootstrap_rows_for(source)
+                rows = self._resume_rows(source, record["uncovered_from_ms"] - interval_ms, observed_ms,
+                                         bootstrap_rows)
+                values = self._fetch_history(source, acquisition, rows=rows, observed_ms=observed_ms,
+                                             allow_short=True)
+                if values:
+                    self._publish_history(source, acquisition, values, expected_rows=len(values))
+                    healed = True
+        except BarHistoryProviderHoleError:
+            healed = False
+        except Exception as error:  # a recheck never fails the cycle; it is rescheduled like a refusal
+            logger.warning("stable BAR venue hole recheck failed binding=%s: %s", binding_id, error)
+            healed = False
+        if healed:
+            holes.pop(binding_id, None)
+            logger.warning(json.dumps({"event": "qdl_bar_edge_venue_hole_healed", "binding": binding_id,
+                                       "uncovered_from_ms": record["uncovered_from_ms"],
+                                       "uncovered_to_ms": record["uncovered_to_ms"]},
+                                      sort_keys=True, separators=(",", ":")))
+            return
+        record["recheck_attempt"] = attempt = record.get("recheck_attempt", 0) + 1
+        record["recheck_at"] = now + min(_VENUE_HOLE_RETRY_SECONDS * 2 ** attempt, _VENUE_HOLE_RECHECK_MAX_SECONDS)
 
     def _record_serving(self, binding_id: str, opens: frozenset[int], *, published: bool) -> None:
         if getattr(self, "bar_readback", None) is None:
@@ -1845,6 +1911,8 @@ class StableBinanceBarEdge:
         self._rebase_changed_products()
         if not self._history_bootstrap_active:
             return 0
+        if getattr(self, "bar_readback", None) is not None and getattr(self, "_history_venue_holes", None):
+            self._recheck_venue_holes(self._settled_observed_ms())
         if self._history_bootstrapped:
             return 0
         if getattr(self, "_rebootstrap_since", None) is None:
@@ -1925,19 +1993,19 @@ class StableBinanceBarEdge:
                     raise
                 if proofs is None:
                     proofs = self._load_short_proofs()
-                hole_decision = self._venue_hole_decision(source, acquisition, hole, requested=rows,
-                                                          resume_from=resume_from, proofs=proofs)
+                hole_decision, values = self._venue_hole_decision(source, acquisition, hole, requested=rows,
+                                                                  resume_from=resume_from, proofs=proofs)
                 holes[source.binding_id] = hole_decision
                 event = {"event": "qdl_bar_edge_venue_hole", "binding": source.binding_id, **hole_decision}
                 if hole_decision["code"] != VENUE_HOLE_DURABLY_COVERED:
-                    attempt += 1
-                    failures[source.binding_id] = (attempt, self.clock() + _VENUE_HOLE_RETRY_SECONDS)
-                    logger.error(json.dumps({**event, "attempt": attempt, "refused": True,
-                                             "retry_in_seconds": _VENUE_HOLE_RETRY_SECONDS},
+                    # DL v2.4.4 (DL-BL-2026-11-25-C): fail-closed for the span only; live bars resume.
+                    logger.error(json.dumps({**event, "refused": True, "span_fail_closed": True,
+                                             "binding_resumed": True,
+                                             "recheck_in_seconds": _VENUE_HOLE_RETRY_SECONDS},
                                             sort_keys=True, separators=(",", ":")))
-                    continue
-                logger.warning(json.dumps({**event, "refused": False}, sort_keys=True, separators=(",", ":")))
-                values = hole.recent_envelopes
+                else:
+                    logger.warning(json.dumps({**event, "refused": False}, sort_keys=True,
+                                              separators=(",", ":")))
             except ProviderInstrumentUnavailable as unavailable:
                 # DL v2.4.2: the provider says this instrument does not exist (delisted/closed). Quarantine this
                 # one binding with a long retry and continue with the others; never fail the whole cycle.

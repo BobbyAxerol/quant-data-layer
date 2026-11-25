@@ -60,12 +60,18 @@ class BarHistoryProviderHoleError(BarHistoryGapError):
     """
 
     def __init__(self, provider: str, symbol: str, interval: str, previous: int,
-                 current: int, *, requested_rows: int, recent_envelopes: tuple):
+                 current: int, *, requested_rows: int, recent_envelopes: tuple,
+                 window_envelopes: tuple | None = None):
         super().__init__(provider, symbol, interval, previous, current)
         if self.kind != "MISSING_PROVIDER_WINDOW" or not recent_envelopes:
             raise ValueError("provider hole outcome requires a missing window and a nonempty suffix")
         self.requested_rows = requested_rows
         self.recent_envelopes = recent_envelopes
+        # DL v2.4.4 (DL-BL-2026-11-25-C): every provider-confirmed bar the fetch returned, on both sides of
+        # every hole, oldest first. Each contiguous run was checked by the fetcher; the caller publishes them
+        # and decides the hole spans from durable coverage. A fetcher that stops at the hole (Binance paging)
+        # passes only the suffix.
+        self.window_envelopes = window_envelopes if window_envelopes is not None else recent_envelopes
 
     def missing_opens(self) -> tuple[int, ...]:
         """The opens the venue did not return, strictly between ``previous`` and ``current``."""

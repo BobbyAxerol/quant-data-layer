@@ -31,10 +31,29 @@ Fix (`qdl/runtime/stable_bar_edge.py`):
 Bound: unchanged, and now for every surviving binding after any restart or cache loss: live within `ceil(N/16)`
 turns, with one page per binding for outages up to 300 bars.
 
-Known limitation (DL-BL-2026-11-25-C, fail-closed): when a venue hole is in the read and the cache does not hold
-every older open of the window, the binding stays `VENUE_HOLE_NOT_COVERED` and is rechecked every 300 s. It stays
-that way even when the venue itself returned the bars below the hole. A later slice can publish the venue-confirmed
-bars on both sides of the hole and require durability only for the venue-missing opens.
+## DL-BL-2026-11-25-C: a venue hole is fail-closed for its span only
+
+v2.4.3 published only the bars after the newest hole. Every older open of the window had to be durable already;
+otherwise the binding was refused with `VENUE_HOLE_NOT_COVERED` and had no live bars. That happened even when the
+venue had returned the bars below the hole, for example a cache loss below an old venue hole.
+
+Fix:
+- **Adapter.** `BarHistoryProviderHoleError.window_envelopes` carries every provider-confirmed bar the OKX fetch
+  returned, on both sides of every hole, each run continuity-checked. An overlap anywhere stays a plain error. The
+  Binance pager stops at the hole and passes the suffix only.
+- **Edge** (`_venue_hole_decision`).
+  - Every venue bar of today's demand window is published, missing opens only; the canonical core validates each.
+  - Only the opens the venue lacks inside the returned window are decided from the cache.
+  - All durable: `VENUE_HOLE_DURABLY_COVERED`.
+  - Otherwise `VENUE_HOLE_NOT_COVERED`, fail-closed for exactly that span (`uncovered_from_ms`..`uncovered_to_ms`):
+    - no bar is invented;
+    - a derived bucket over the span stays a gap, and a warmup across it is refused as a gap;
+    - live bars resume (`binding_resumed: true`).
+- **Recheck** (`_recheck_venue_holes`, one span per turn).
+  - Cache first, then a bounded venue read from the span to the latest close.
+  - The delay doubles from 300 s to 6 h.
+  - `qdl_bar_edge_venue_hole_healed` when the span is filled.
+- **Heartbeat.** `venue_holes_refused` now counts open uncovered spans; a binding with one still has live bars.
 
 ## Operator section: window-script lesson (2026-11-25)
 

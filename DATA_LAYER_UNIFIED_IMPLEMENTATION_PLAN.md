@@ -79797,3 +79797,64 @@ alphas go on Paper after Crossec. All new fixes are then bundled into ONE releas
 - PR #63 is superseded by the bundle PR and closed then, never merged separately.
 
 Guide delta: `upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md`, "Delta 2026-11-25".
+
+### DL v2.4.4 slice 2 (DL-BL-2026-11-25-C): a venue hole is fail-closed for its span only; venue bars on both sides are published (tested locally) - 2026-11-25 (Claude)
+
+**Before.** A venue hole published only the suffix after the newest hole and required every older open of the window
+to be durable. A cache loss below an old venue hole therefore kept the binding refused (`VENUE_HOLE_NOT_COVERED`, no
+live bars), although the venue had returned those bars.
+
+**Fix.**
+- **Adapter.** `qdl/adapters/intervals.py` `BarHistoryProviderHoleError.window_envelopes`. In
+  `qdl/adapters/okx/bar_edge.py` the fetcher keeps every confirmed bar of the window, each run continuity-checked;
+  any overlap still raises. The Binance pager stops at the hole, so it passes only the suffix.
+- **Edge** (`qdl/runtime/stable_bar_edge.py` `_venue_hole_decision`).
+  - It publishes every venue bar of today's demand window, missing opens only, through the canonical core.
+  - It decides only the venue-missing opens inside the returned window from the cache:
+    - covered: `VENUE_HOLE_DURABLY_COVERED`;
+    - not covered: `VENUE_HOLE_NOT_COVERED` for exactly that span, live resumes, nothing is invented. Derived
+      buckets over the span stay gaps, and warmups across it are refused as gaps.
+- **Recheck** (`_recheck_venue_holes`). One span per turn: cache first, then a bounded venue read. The delay doubles
+  300 s → 6 h. Event `qdl_bar_edge_venue_hole_healed`.
+- **Observable change.** On a refused span the `qdl_bar_edge_venue_hole` ERROR event now carries `span_fail_closed`
+  and `binding_resumed`. `venue_holes_refused` counts open spans.
+
+**Tests** (`tests/test_dl_v242_bar_edge_rebase_resume.py`, now 18).
+- Changed: a hole inside the resume suffix is fail-closed for its span only. Live resumes and every other venue bar
+  is published. The recheck is not repeated every turn; it doubles and heals once the venue serves the bar.
+- New: the incident shape. OKX lacks an old bar the cache has, and the cache lacks an older bar OKX has. Result:
+  covered, the venue bar is published, the missing one is never invented.
+- New adapter test: two holes, with every venue bar on both sides carried in order.
+- Results, one module per container (`--memory 1g --oom-score-adj 500 --network none`, light slot):
+  - new module: IncidentEndToEnd 8, AdapterHole 5, RestoreResume 2, RecoveryBound 3 = 18 OK;
+  - impacted modules: 262 OK.
+
+    | Module | Tests |
+    |---|---|
+    | kn_bar_readback | 12 |
+    | dl_v241_bar_edge_short_proofs | 8 |
+    | dlv2_r128_bar_edge_checkpoint_migration | 7 |
+    | kn_history_fill | 23 |
+    | dl_v242_instrument_unavailable | 14 |
+    | binance_history_overlap | 11 |
+    | v230_derived_bars | 29 |
+    | phase115c_bar_edge_schedule | 7 |
+    | v2_binance_bar_edge | 2 |
+    | binance_final_bar_settlement | 11 |
+    | phase105c_final_bar_repair | 4 |
+    | kn_provider_admission_edge | 14 |
+    | canonical_intervals | 18 |
+    | c419_fast_final_bar_delivery | 8 |
+    | dlv2_r128_binance_native_bar | 11 |
+    | provider_pass_through_history | 30 |
+    | pass_through_event_loop | 7 |
+    | phaseb_bar_history_bootstrap | 46 |
+
+Status: `implemented`, `tested locally`. Not built, no PR.
+
+**Bundle reference.** "R1 retention" is agent G's branch `feat/dl-bar-retention-demand-tiered` @ `ce6001b`: per-row
+BAR depth in the KN bundle with a cap-migration guard (DL-BL-2026-11-13-C). It is part of the bundled release in
+"DL release decision 2026-11-25".
+
+**TS INTEGRATION_DEFECT_REGISTER row** (pin steward):
+`| IDR-<n> | DATA_LAYER | bar_edge venue hole with an incomplete cache window was refused for the whole binding (VENUE_HOLE_NOT_COVERED, no live bars) although the venue returned the bars below the hole; a hole inside a resume suffix blocked live bars instead of only its span | design review 2026-11-25 (DL-BL-2026-11-25-C) after the v2.4.3 runtime acceptance | DL v2.4.4 slice 2: window_envelopes on BarHistoryProviderHoleError; publish every venue bar of the demand window; fail-closed for the uncovered span only (typed, span_fail_closed/binding_resumed), live resumes; recheck 300 s -> 6 h, qdl_bar_edge_venue_hole_healed | - | DL bundle (v2.4.4+) |`

@@ -253,34 +253,60 @@ class IncidentEndToEndTests(_Base):
         self.assertEqual(self.edge._history_venue_holes[ETH + "1m"]["code"], edge_module.VENUE_HOLE_DURABLY_COVERED)
         self.assertIn(ETH + "1m", self.edge._last_open_ms)
 
-    def test_a_hole_inside_the_resume_suffix_is_refused_typed_and_blocks_only_its_binding(self):
+    def test_a_hole_inside_the_resume_suffix_is_fail_closed_for_its_span_only(self):
+        """DL-BL-2026-11-25-C: the bar nobody holds stays a typed gap; the venue's other bars and live resume."""
+
         self.venue.missing[("ETH-USDT-SWAP", "1m")].add(self.OUTAGE_START)  # 10:00 exists nowhere
         with self.assertLogs("qdl.runtime.stable_bar_edge", level="ERROR") as logs:
             self.turn()
         hole = self.edge._history_venue_holes[ETH + "1m"]
-        self.assertEqual((hole["code"], hole["position"], hole["durable_missing_rows"]),
-                         (edge_module.VENUE_HOLE_NOT_COVERED, "INSIDE_RESUME_SUFFIX", 1))
+        self.assertEqual((hole["code"], hole["position"], hole["durable_missing_rows"], hole["uncovered_from_ms"],
+                          hole["uncovered_to_ms"]),
+                         (edge_module.VENUE_HOLE_NOT_COVERED, "INSIDE_RESUME_SUFFIX", 1, self.OUTAGE_START,
+                          self.OUTAGE_START))
         event = json.loads(next(line.split(":", 2)[2] for line in logs.output if "qdl_bar_edge_venue_hole" in line))
-        self.assertEqual((event["code"], event["refused"], event["retry_in_seconds"]),
-                         (edge_module.VENUE_HOLE_NOT_COVERED, True, edge_module._VENUE_HOLE_RETRY_SECONDS))
-        # Fail-closed: no watermark, nothing of 1m published, no derived 1h bar over the missing minute.
-        self.assertNotIn(ETH + "1m", self.edge._last_open_ms)
-        self.assertEqual(self.projector.opens(ETH + "1m"), [])
-        self.assertEqual(self.projector.opens(ETH + "1h", "derived"), [])
-        # The other bindings resumed in the same turn.
-        self.assertEqual({ETH + "1h", ETH + "12h"} - set(self.edge._last_open_ms), set())
+        self.assertEqual((event["code"], event["refused"], event["span_fail_closed"], event["binding_resumed"]),
+                         (edge_module.VENUE_HOLE_NOT_COVERED, True, True, True))
+        # Live resumed; every venue bar after the watermark is published except the span, which is never invented.
+        self.assertEqual(self.edge._last_open_ms[ETH + "1m"], DAY0 + 12 * HOUR + 4 * MINUTE)
+        published = self.projector.opens(ETH + "1m", "history")
+        self.assertEqual(published, list(range(self.OUTAGE_START + MINUTE, DAY0 + 12 * HOUR + 5 * MINUTE, MINUTE)))
         status = self.edge.serving_status()
         self.assertEqual((status["venue_holes_refused"], status["rebootstrap_waiting"], status["resume_pending"]),
-                         (1, 1, 1))
-        # Rechecked after the retry delay, not every turn; it heals once the venue serves the bar.
+                         (1, 0, 0))
+        # The span is rechecked after its delay, not every turn; it heals once the venue serves the bar.
         calls = len(self.venue.calls)
         self.turn()
         self.assertEqual(len(self.venue.calls), calls)
-        self.venue.missing[("ETH-USDT-SWAP", "1m")].discard(self.OUTAGE_START)
         self.now[0] += edge_module._VENUE_HOLE_RETRY_SECONDS
-        self.turn()
-        self.assertIn(ETH + "1m", self.edge._last_open_ms)
+        self.turn()  # still missing at the venue: rescheduled with a doubled delay
+        self.assertEqual(len(self.venue.calls), calls + 1)
+        self.assertEqual(self.edge._history_venue_holes[ETH + "1m"]["recheck_attempt"], 1)
+        self.venue.missing[("ETH-USDT-SWAP", "1m")].discard(self.OUTAGE_START)
+        self.now[0] += 2 * edge_module._VENUE_HOLE_RETRY_SECONDS
+        with self.assertLogs("qdl.runtime.stable_bar_edge", level="WARNING") as logs:
+            self.turn()
+        self.assertTrue(any("qdl_bar_edge_venue_hole_healed" in line for line in logs.output))
+        self.assertIn(self.OUTAGE_START, self.projector.opens(ETH + "1m", "history"))
         self.assertEqual(self.edge.serving_status()["venue_holes_refused"], 0)
+
+    def test_the_incident_shape_venue_hole_plus_cache_loss_below_it_publishes_the_venue_bars(self):
+        """DL-BL-2026-11-25-C: OKX lacks the old bar (the cache has it); the cache lacks an older one (OKX has it)."""
+
+        lost = self.OLD_HOLE - 2 * HOUR  # below the venue hole, inside today's demand window
+        self.fill(ETH + "1m", self.watermarks[ETH + "1m"], 900, 3, skip={lost})
+        self.edge._rebase_changed_products()
+        self.edge._history_resume_from.clear()  # the full-window path, as after a first start
+        with self.assertLogs("qdl.runtime.stable_bar_edge", level="WARNING") as logs:
+            for _ in range(3):
+                self.turn()
+        hole = self.edge._history_venue_holes[ETH + "1m"]
+        self.assertEqual((hole["code"], hole["venue_missing_rows"], hole["durable_missing_rows"]),
+                         (edge_module.VENUE_HOLE_DURABLY_COVERED, 1, 0))
+        self.assertIn(lost, self.projector.opens(ETH + "1m", "history"))  # the venue's bar below the hole
+        self.assertNotIn(self.OLD_HOLE, self.projector.opens(ETH + "1m"))   # never invented, the cache holds it
+        self.assertIn(ETH + "1m", self.edge._last_open_ms)
+        self.assertFalse([line for line in logs.output if '"refused":true' in line])
 
     def test_a_rebuilt_cache_that_lost_an_old_row_repairs_from_it_with_a_bounded_read(self):
         """DL-BL-2026-11-25-B: the read starts at the oldest missing open, never the whole window."""
@@ -485,6 +511,18 @@ class AdapterHoleTests(unittest.TestCase):
         with self.assertRaises(BarHistoryProviderHoleError) as caught:
             self._okx_fetch(missing, allow_short=True)
         self.assertEqual(len(caught.exception.missing_opens()), 6)
+
+    def test_okx_hole_carries_every_venue_bar_on_both_sides_of_every_hole(self):
+        holes = {DAY0 - 10 * MINUTE, DAY0 - 40 * MINUTE}
+        with self.assertRaises(BarHistoryProviderHoleError) as caught:
+            self._okx_fetch(holes, allow_short=True)
+        error = caught.exception
+        window = [int(json.loads(item.raw_frame_bytes)["data"][0][0]) for item in error.window_envelopes]
+        self.assertEqual(window, sorted(window))
+        self.assertTrue(holes.isdisjoint(window))
+        self.assertIn(DAY0 - 41 * MINUTE, window)  # below the older hole
+        self.assertEqual(error.previous, DAY0 - 11 * MINUTE)  # the newest hole names the suffix
+        self.assertEqual(len(error.recent_envelopes), 9)
 
     def test_binance_hole_is_typed_with_its_certified_suffix(self):
         from qdl.adapters.binance.bar_edge import BinanceBarRawBinding, fetch_closed_bar_history_raw_envelopes

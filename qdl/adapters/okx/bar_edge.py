@@ -115,20 +115,27 @@ async def fetch_closed_bar_history_raw_envelopes(
     opens = [item.open_ts_ms for item in records]
     # DL v2.4.2 slice 3: continuity is decided before the row count. A venue hole
     # inside the window also makes it "short", and that untyped RuntimeError
-    # failed the whole bar_edge cycle (head-of-line). Walk newest first: only the
-    # suffix after the newest discontinuity is provider-certified.
+    # failed the whole bar_edge cycle (head-of-line). Walk newest first. An
+    # overlap anywhere is never materializable; missing windows are returned
+    # with every confirmed bar (DL v2.4.4, DL-BL-2026-11-25-C) and the suffix
+    # after the newest hole.
+    newest_hole = None
     for index in range(len(opens) - 1, 0, -1):
         previous, current = opens[index - 1], opens[index]
         if current - previous == interval_ms:
             continue
         error = BarHistoryGapError("OKX", binding.native_symbol, binding.interval, previous, current)
-        if allow_short and error.kind == "MISSING_PROVIDER_WINDOW":
-            raise BarHistoryProviderHoleError(
-                "OKX", binding.native_symbol, binding.interval, previous, current,
-                requested_rows=limit,
-                recent_envelopes=_okx_history_envelopes(binding, records[index:], test_provenance),
-            )
-        raise error
+        if not allow_short or error.kind != "MISSING_PROVIDER_WINDOW":
+            raise error
+        if newest_hole is None:
+            newest_hole = (index, previous, current)
+    if newest_hole is not None:
+        index, previous, current = newest_hole
+        window = _okx_history_envelopes(binding, records, test_provenance)
+        raise BarHistoryProviderHoleError(
+            "OKX", binding.native_symbol, binding.interval, previous, current,
+            requested_rows=limit, recent_envelopes=window[index:], window_envelopes=window,
+        )
     if len(confirmed) < limit and not exhausted:
         raise RuntimeError(
             "OKX closed-bar history is short: requested="
