@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from qdl.adapters.intervals import (
     BarHistoryGapError,
+    BarHistoryProviderHoleError,
     canonical_interval_ms,
     latest_closed_boundary_ms,
     okx_bar_size,
@@ -110,19 +111,37 @@ async def fetch_closed_bar_history_raw_envelopes(
             f"OKX closed-bar history coverage is {history.coverage.status}, not FULL"
         )
     confirmed = tuple(item for item in history.records if item.confirmed)
+    records = tuple(sorted(confirmed, key=lambda item: item.open_ts_ms))[-limit:]
+    opens = [item.open_ts_ms for item in records]
+    # DL v2.4.2 slice 3: continuity is decided before the row count. A venue hole
+    # inside the window also makes it "short", and that untyped RuntimeError
+    # failed the whole bar_edge cycle (head-of-line). Walk newest first: only the
+    # suffix after the newest discontinuity is provider-certified.
+    for index in range(len(opens) - 1, 0, -1):
+        previous, current = opens[index - 1], opens[index]
+        if current - previous == interval_ms:
+            continue
+        error = BarHistoryGapError("OKX", binding.native_symbol, binding.interval, previous, current)
+        if allow_short and error.kind == "MISSING_PROVIDER_WINDOW":
+            raise BarHistoryProviderHoleError(
+                "OKX", binding.native_symbol, binding.interval, previous, current,
+                requested_rows=limit,
+                recent_envelopes=_okx_history_envelopes(binding, records[index:], test_provenance),
+            )
+        raise error
     if len(confirmed) < limit and not exhausted:
         raise RuntimeError(
             "OKX closed-bar history is short: requested="
             f"{limit} confirmed={len(confirmed)}"
         )
-    records = tuple(sorted(confirmed, key=lambda item: item.open_ts_ms))[-limit:]
-    opens = [item.open_ts_ms for item in records]
-    for previous, current in zip(opens, opens[1:]):
-        if current - previous != interval_ms:
-            raise BarHistoryGapError("OKX", binding.native_symbol, binding.interval, previous, current)
+    return _okx_history_envelopes(binding, records, test_provenance)
+
+
+def _okx_history_envelopes(binding: OkxBarRawBinding, records, test_provenance: bool):
+    """Capture provider-confirmed candles exactly as the WS channel frames them."""
+
     if any(not item.confirmed for item in records):
         raise RuntimeError("OKX history returned a provisional candle in the closed window")
-
     channel = okx_candle_channel(binding.interval)
     received_at_ns = time.time_ns()
     envelopes = []
@@ -177,6 +196,7 @@ async def fetch_closed_bar_history_raw_envelopes(
             test_provenance=test_provenance,
         ))
     return tuple(envelopes)
+
 
 async def fetch_latest_closed_bar_raw_envelope(
     binding: OkxBarRawBinding,

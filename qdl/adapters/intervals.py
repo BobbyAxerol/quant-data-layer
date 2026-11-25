@@ -48,6 +48,32 @@ class BarHistoryOverlapError(BarHistoryGapError):
         self.older_prefix_status = "UNCERTIFIED_PROVIDER_OVERLAP"
 
 
+class BarHistoryProviderHoleError(BarHistoryGapError):
+    """The venue's own closed history lacks bars, with the contiguous suffix after its newest hole.
+
+    DL v2.4.2 slice 3 (2026-11-25, OKX ASTER-USDT-SWAP 1m: the venue has no 2026-11-19T15:39Z candle).
+    ``recent_envelopes`` are the provider-confirmed bars strictly after the newest hole (``current`` is
+    their first open). A fetcher raises this only for a ``MISSING_PROVIDER_WINDOW`` and only when its
+    caller asked for a materializable outcome (``allow_short``); the caller decides, from durable
+    coverage alone, whether the hole is already covered (the bars the venue lacks are durable) or must
+    stay a fail-closed refusal. It is never a successful short response or a listing floor.
+    """
+
+    def __init__(self, provider: str, symbol: str, interval: str, previous: int,
+                 current: int, *, requested_rows: int, recent_envelopes: tuple):
+        super().__init__(provider, symbol, interval, previous, current)
+        if self.kind != "MISSING_PROVIDER_WINDOW" or not recent_envelopes:
+            raise ValueError("provider hole outcome requires a missing window and a nonempty suffix")
+        self.requested_rows = requested_rows
+        self.recent_envelopes = recent_envelopes
+
+    def missing_opens(self) -> tuple[int, ...]:
+        """The opens the venue did not return, strictly between ``previous`` and ``current``."""
+
+        step = canonical_interval_ms(self.interval)
+        return tuple(range(self.previous + step, self.current, step))
+
+
 _UNIT_MS = {
     "s": 1_000,
     "m": 60_000,

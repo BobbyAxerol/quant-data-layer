@@ -15,6 +15,7 @@ from pathlib import Path
 from qdl.adapters.intervals import (
     BarHistoryGapError,
     BarHistoryOverlapError,
+    BarHistoryProviderHoleError,
     canonical_interval_ms,
     is_valid_bar_open_ms,
     latest_closed_boundary_ms,
@@ -108,6 +109,21 @@ _DERIVED_GAP_LIMIT = 256
 _DERIVED_POLL_SECONDS = 0.5
 _DERIVED_SETTLE_SECONDS = 0.5
 _DERIVED_PARENT_WAIT_SECONDS = 5.0
+# DL v2.4.2 slice 3 (2026-11-25 market_cache OOM: 1,319 bindings rebased, the
+# A->Z one-binding-per-turn full re-bootstrap left OKX 1h/12h live bars stopped
+# for up to ~4 h). A rebased binding whose durable window is proven from the cache
+# re-verifies only the suffix after its previous watermark and goes first, up to
+# this many per loop turn (each is normally one provider page; venue admission
+# still paces every request). Full (deep) bootstraps keep the one-per-turn quantum.
+_RESUME_BINDINGS_PER_TURN = 16
+# A venue hole the durable cache does not cover cannot heal by re-asking every
+# few seconds (each attempt is a full window of pages); recheck it this often.
+_VENUE_HOLE_RETRY_SECONDS = 300
+# Typed codes (log events, ``_history_venue_holes`` and the heartbeat counters).
+VENUE_HOLE_DURABLY_COVERED = "VENUE_HOLE_DURABLY_COVERED"
+VENUE_HOLE_NOT_COVERED = "VENUE_HOLE_NOT_COVERED"
+RESUME_DURABLE_WINDOW_INCOMPLETE = "RESUME_DURABLE_WINDOW_INCOMPLETE"
+RESUME_SUFFIX_INCOMPLETE = "RESUME_SUFFIX_INCOMPLETE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,6 +208,9 @@ def _source_provider(source: StableSourceBinding) -> str:
 # of re-proving every short binding from the provider (2026-11-19 window 4: 680 bindings, 5,575,631 pre-listing
 # opens re-fetched). A proof older than _SHORT_PROOF_MAX_AGE_MS, or of another binding digest, is not used.
 _SHORT_PROOFS_SCHEMA = "qdl.stable-bar-edge.history-short-proofs.v1"
+# DL v2.4.2 slice 3: rebased bindings' resume points survive a restart in a sidecar (never a checkpoint field, so
+# an older image reads its checkpoint unchanged). Only a candidate: bootstrap still proves the durable window.
+_RESUME_SCHEMA = "qdl.stable-bar-edge.resume-watermarks.v1"
 # DL v2.4.2: a binding whose instrument the provider says does not exist is rechecked after 6 h (a relisting or a
 # transient venue fault heals then); its removal goes through the declaration gate (scripts/catalog_venue_listing_gate.py).
 _INSTRUMENT_UNAVAILABLE_RETRY_SECONDS = 6 * 3600
@@ -520,6 +539,8 @@ class StableBinanceBarEdge:
             self._native_recovery_active = False
         if self._history_bootstrap_active:
             self._restore_state()
+            if not self.repair_only:
+                self._load_resume_sidecar()
             if self.repair_only:
                 if self.connection_generation <= 0:
                     raise RuntimeError("stable BAR repair requires a versioned writer generation")
@@ -1284,6 +1305,10 @@ class StableBinanceBarEdge:
 
         previous_cache_id = self.canonical_cache_id
         self.canonical_cache_id = observed_cache_id
+        # DL v2.4.2 slice 3: a watermark is not proof of the rebuilt cache, but it
+        # is the candidate resume point; bootstrap proves the window from the
+        # cache before trusting it (`_resume_decision`).
+        self._note_rebootstrap(self._last_open_ms)
         self._last_open_ms.clear()
         for name in ("_history_suspended", "_history_suffix_pending", "_history_retry"):
             getattr(self, name, {}).clear()
@@ -1550,7 +1575,9 @@ class StableBinanceBarEdge:
             previous = known.get(binding_id)
             if previous is not None and generation != previous:
                 rebased.append(binding_id)
-                self._last_open_ms.pop(binding_id, None)
+                watermark = self._last_open_ms.pop(binding_id, None)
+                if watermark is not None:
+                    self._note_rebootstrap({binding_id: watermark})
                 for name in ("_history_suspended", "_history_suffix_pending", "_history_retry"):
                     getattr(self, name, {}).pop(binding_id, None)
                 for store in (self._native_recovery_pending, self._native_recovery_verified_open,
@@ -1567,7 +1594,134 @@ class StableBinanceBarEdge:
             self._persist_state()
             logger.warning("stable BAR market cache product generation changed; rebased only bindings=%s",
                            ",".join(sorted(rebased)))
+            logger.warning(json.dumps({
+                "event": "qdl_bar_edge_rebootstrap_required", "rebased": len(rebased),
+                "resume_candidates": len(self._resume_watermarks()),
+                "waiting": self.serving_status()["rebootstrap_waiting"]}, sort_keys=True, separators=(",", ":")))
         return tuple(rebased)
+
+    # ------------------------------------------------- re-bootstrap after a rebase
+
+    def _resume_watermarks(self) -> dict[str, int]:
+        """Rebased bindings' previous watermarks: in memory only, never a checkpoint field (rollback-safe)."""
+
+        value = getattr(self, "_history_resume_from", None)
+        if value is None:
+            value = self._history_resume_from = {}
+        return value
+
+    def _note_rebootstrap(self, watermarks: dict[str, int]) -> None:
+        self._resume_watermarks().update(watermarks)
+        if getattr(self, "_rebootstrap_since", None) is None:
+            self._rebootstrap_since = self.clock()
+        self._persist_resume_sidecar()
+
+    def _resume_sidecar_path(self) -> Path | None:
+        state_path = getattr(self, "state_path", None)
+        return None if state_path is None else state_path.with_name(state_path.name + ".resume.json")
+
+    def _persist_resume_sidecar(self) -> None:
+        path = self._resume_sidecar_path()
+        if path is None or getattr(self, "repair_only", False):
+            return
+        digests = getattr(self, "_binding_digests", {})
+        resume = self._resume_watermarks()
+        document = {"schema": _RESUME_SCHEMA, "watermarks": {
+            key: {"open_ms": resume[key], "binding_digest": digests[key]}
+            for key in sorted(resume) if key in digests}}
+        temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        try:
+            temporary.write_text(json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n",
+                                 encoding="ascii")
+            os.replace(temporary, path)
+        except OSError:
+            logger.warning("stable BAR resume watermarks not persisted: %s", path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def _load_resume_sidecar(self) -> None:
+        """Adopt persisted resume points for bindings the checkpoint did not restore (any defect: ignore all)."""
+
+        path = self._resume_sidecar_path()
+        if path is None or not path.is_file():
+            return
+        digests = getattr(self, "_binding_digests", {})
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+            if document.get("schema") != _RESUME_SCHEMA or not isinstance(document.get("watermarks"), dict):
+                raise ValueError("schema")
+            adopted = {}
+            for key, item in document["watermarks"].items():
+                if set(item) != {"open_ms", "binding_digest"} or type(item["open_ms"]) is not int \
+                        or item["open_ms"] <= 0:
+                    raise ValueError("watermark")
+                if digests.get(key) == item["binding_digest"] and key not in self._last_open_ms:
+                    adopted[key] = item["open_ms"]
+        except (OSError, ValueError, TypeError, AttributeError):
+            logger.warning("stable BAR resume watermarks ignored (unreadable or invalid): %s", path)
+            return
+        self._resume_watermarks().update(adopted)
+        if adopted and getattr(self, "_rebootstrap_since", None) is None:
+            self._rebootstrap_since = self.clock()
+
+    def _durable_window_missing(self, source: StableSourceBinding, last_open_ms: int, rows: int,
+                                proofs: dict[str, dict]) -> int:
+        """Missing durable final opens of the ``rows``-open grid window ending at ``last_open_ms`` (cache only)."""
+
+        if rows <= 0:
+            return 0
+        interval_ms = _bar_interval_ms(source.interval or "")
+        earliest = self._short_proof_floor(proofs, source.binding_id, self._bootstrap_rows_for(source))
+        expected_opens = frozenset(
+            last_open_ms - index * interval_ms
+            for index in range(rows)
+            if (getattr(self, "bar_readback", None) is None
+                or last_open_ms - index * interval_ms > 0)
+            and (earliest is None or last_open_ms - index * interval_ms >= earliest)
+        )
+        return len(expected_opens - self._durable_final_bar_opens(source, expected_opens))
+
+    def _resume_rows(self, source: StableSourceBinding, resume_from_ms: int, observed_ms: int,
+                     bootstrap_rows: int) -> int:
+        """Rows from the previous watermark (inclusive) to the latest close, within the demand."""
+
+        interval_ms = _bar_interval_ms(source.interval or "")
+        return min(bootstrap_rows, max(1, (observed_ms - resume_from_ms) // interval_ms + 1))
+
+    def _venue_hole_decision(self, source: StableSourceBinding, acquisition: StableAcquisitionBinding,
+                             hole: BarHistoryProviderHoleError, *, requested: int, resume_from: int | None,
+                             proofs: dict[str, dict]) -> dict:
+        """Decide a venue hole from durable coverage alone.
+
+        The demanded window is the ``requested`` grid opens ending at the newest
+        close. The provider certified the suffix after the newest hole; every
+        older open of that window, including the bars the venue lacks, must
+        already be durable. Then the cache stays gap-free and live resumes
+        (``VENUE_HOLE_DURABLY_COVERED``). Otherwise - typically a hole inside the
+        suffix after the resume watermark, which no one holds - it is refused
+        fail-closed (``VENUE_HOLE_NOT_COVERED``) and rechecked later.
+        """
+
+        interval_ms = _bar_interval_ms(source.interval or "")
+        suffix_opens = [self._open_time_ms(acquisition, item) for item in hole.recent_envelopes]
+        first_open = min(suffix_opens)
+        venue_missing = max(0, (hole.current - hole.previous) // interval_ms - 1)
+        older = max(0, requested - len(suffix_opens))
+        durable_missing = (self._durable_window_missing(source, first_open - interval_ms, older, proofs)
+                           if venue_missing <= _MAX_DURABLE_BAR_ROWS else older or 1)
+        if resume_from is None:
+            position = "NO_RESUME_WATERMARK"
+        elif hole.previous >= resume_from:
+            position = "INSIDE_RESUME_SUFFIX"
+        else:
+            position = "OLDER_THAN_RESUME_WATERMARK"
+        return {
+            "code": VENUE_HOLE_DURABLY_COVERED if durable_missing == 0 else VENUE_HOLE_NOT_COVERED,
+            "provider": hole.provider, "symbol": hole.symbol, "interval": hole.interval,
+            "previous_ms": hole.previous, "current_ms": hole.current, "venue_missing_rows": venue_missing,
+            "durable_missing_rows": durable_missing, "position": position, "suffix_rows": len(suffix_opens),
+            "recorded_at": int(self.clock()),
+        }
 
     def _record_serving(self, binding_id: str, opens: frozenset[int], *, published: bool) -> None:
         if getattr(self, "bar_readback", None) is None:
@@ -1620,7 +1774,31 @@ class StableBinanceBarEdge:
                 "history_suspended": len(getattr(self, "_history_suspended", {})),
                 # DL v2.4.2: bindings quarantined because the provider says the instrument does not exist.
                 "instrument_unavailable": len(getattr(self, "_history_unavailable", {})),
-                "gate_closed": int(getattr(self, "_history_gate_closed_at", None) is not None)}
+                "gate_closed": int(getattr(self, "_history_gate_closed_at", None) is not None),
+                **self._rebootstrap_status()}
+
+    def _rebootstrap_status(self) -> dict[str, int]:
+        """DL v2.4.2 slice 3: bindings without live bars yet, and venue holes, as heartbeat counters.
+
+        ``rebootstrap_waiting`` counts bindings with no live watermark (cold start or
+        rebase); ``rebootstrap_wait_s`` is how long the oldest of the current wave has
+        waited (0 when none waits); ``resume_pending`` are rebased bindings still to
+        re-verify their suffix; ``venue_holes_recorded`` / ``venue_holes_refused`` count
+        ``VENUE_HOLE_DURABLY_COVERED`` / ``VENUE_HOLE_NOT_COVERED`` bindings.
+        """
+
+        waiting = len(set(self._binding_ids) - set(self._last_open_ms) - self._history_short_empty())
+        since = getattr(self, "_rebootstrap_since", None)
+        if not waiting:
+            self._rebootstrap_since = since = None
+        holes = getattr(self, "_history_venue_holes", {})
+        return {"rebootstrap_waiting": waiting,
+                "rebootstrap_wait_s": 0 if since is None else max(0, int(self.clock() - since)),
+                "resume_pending": len(getattr(self, "_history_resume_from", {}) or {}),
+                "venue_holes_recorded": sum(1 for item in holes.values()
+                                            if item.get("code") == VENUE_HOLE_DURABLY_COVERED),
+                "venue_holes_refused": sum(1 for item in holes.values()
+                                           if item.get("code") == VENUE_HOLE_NOT_COVERED)}
 
     def bootstrap_history(self, *, max_bindings: int | None = None) -> int:
         if self.repair_only:
@@ -1631,6 +1809,8 @@ class StableBinanceBarEdge:
             return 0
         if self._history_bootstrapped:
             return 0
+        if getattr(self, "_rebootstrap_since", None) is None:
+            self._rebootstrap_since = self.clock()  # cold start: the wave starts now
         observed_ms = self._settled_observed_ms()
         history_end_ms = getattr(self, "history_end_ms", None)
         if history_end_ms is not None:
@@ -1647,7 +1827,18 @@ class StableBinanceBarEdge:
         pending = getattr(self, "_history_suffix_pending", {})
         self._history_suffix_pending = pending
         self._history_unavailable = getattr(self, "_history_unavailable", {})
-        for source, acquisition in self.history_bindings + self.history_okx_bindings:
+        holes = getattr(self, "_history_venue_holes", None)
+        if holes is None:
+            holes = self._history_venue_holes = {}
+        resume = self._resume_watermarks() if kn_mode else {}
+        pairs = self.history_bindings + self.history_okx_bindings
+        if resume:
+            # DL v2.4.2 slice 3: live resumption before deep history (stable order otherwise).
+            pairs = tuple(sorted(pairs, key=lambda pair: pair[0].binding_id not in resume))
+        resume_quantum = None if max_bindings is None else max(max_bindings, _RESUME_BINDINGS_PER_TURN)
+        attempted_resume = 0
+        proofs: dict[str, dict] | None = None
+        for source, acquisition in pairs:
             if ((source.binding_id in self._last_open_ms and source.binding_id not in suspended)
                     or source.binding_id in self._history_short_empty()):
                 continue
@@ -1656,15 +1847,58 @@ class StableBinanceBarEdge:
             attempt, retry_at = failures.get(source.binding_id, (0, 0))
             if kn_mode and self.clock() < retry_at:
                 continue
-            if max_bindings is not None and attempted >= max_bindings:
-                return published
-            attempted += 1
             bootstrap_rows = self._bootstrap_rows_for(source)
+            resume_from = resume.get(source.binding_id)
+            if resume_from is not None and source.binding_id in pending:
+                resume_from = None
+            rows = bootstrap_rows
+            if resume_from is not None:
+                if proofs is None:
+                    proofs = self._load_short_proofs()
+                # Cache-only proof that everything up to the old watermark survived the rebuild.
+                missing = self._durable_window_missing(source, resume_from, bootstrap_rows, proofs)
+                if missing:
+                    resume.pop(source.binding_id, None)
+                    self._persist_resume_sidecar()
+                    logger.warning(json.dumps({
+                        "event": "qdl_bar_edge_resume_refused", "binding": source.binding_id,
+                        "code": RESUME_DURABLE_WINDOW_INCOMPLETE, "resume_from_ms": resume_from,
+                        "durable_missing_rows": missing}, sort_keys=True, separators=(",", ":")))
+                    resume_from = None
+                else:
+                    rows = self._resume_rows(source, resume_from, observed_ms, bootstrap_rows)
+            if resume_from is not None:
+                if resume_quantum is not None and attempted_resume >= resume_quantum:
+                    return published
+                attempted_resume += 1
+            else:
+                if max_bindings is not None and attempted >= max_bindings:
+                    return published
+                attempted += 1
+            hole_decision = None
             try:
                 if source.binding_id in pending:
                     raise pending[source.binding_id]
-                values = self._fetch_history(source, acquisition, rows=bootstrap_rows,
+                values = self._fetch_history(source, acquisition, rows=rows,
                     observed_ms=observed_ms, allow_short=kn_mode)
+            except BarHistoryProviderHoleError as hole:
+                if not kn_mode:
+                    raise
+                if proofs is None:
+                    proofs = self._load_short_proofs()
+                hole_decision = self._venue_hole_decision(source, acquisition, hole, requested=rows,
+                                                          resume_from=resume_from, proofs=proofs)
+                holes[source.binding_id] = hole_decision
+                event = {"event": "qdl_bar_edge_venue_hole", "binding": source.binding_id, **hole_decision}
+                if hole_decision["code"] != VENUE_HOLE_DURABLY_COVERED:
+                    attempt += 1
+                    failures[source.binding_id] = (attempt, self.clock() + _VENUE_HOLE_RETRY_SECONDS)
+                    logger.error(json.dumps({**event, "attempt": attempt, "refused": True,
+                                             "retry_in_seconds": _VENUE_HOLE_RETRY_SECONDS},
+                                            sort_keys=True, separators=(",", ":")))
+                    continue
+                logger.warning(json.dumps({**event, "refused": False}, sort_keys=True, separators=(",", ":")))
+                values = hole.recent_envelopes
             except ProviderInstrumentUnavailable as unavailable:
                 # DL v2.4.2: the provider says this instrument does not exist (delisted/closed). Quarantine this
                 # one binding with a long retry and continue with the others; never fail the whole cycle.
@@ -1726,9 +1960,24 @@ class StableBinanceBarEdge:
                 failures[source.binding_id] = (attempt + 1, self.clock() + 86_400)
                 logger.error("stable BAR suspended history recheck empty binding=%s", source.binding_id)
                 continue
+            # A resume read capped at the demand (an outage at least as long as the window) is a full window read:
+            # it need not reach the old watermark and its short outcome is the ordinary one.
+            suffix_read = resume_from is not None and rows < bootstrap_rows
+            if suffix_read and hole_decision is None and (
+                    not values or min(self._open_time_ms(acquisition, item) for item in values) > resume_from):
+                # The venue no longer reaches the old watermark: deep bootstrap next turn.
+                resume.pop(source.binding_id, None)
+                self._persist_resume_sidecar()
+                logger.warning(json.dumps({
+                    "event": "qdl_bar_edge_resume_refused", "binding": source.binding_id,
+                    "code": RESUME_SUFFIX_INCOMPLETE, "resume_from_ms": resume_from, "rows": len(values)},
+                    sort_keys=True, separators=(",", ":")))
+                continue
             failures.pop(source.binding_id, None)
             self._history_unavailable.pop(source.binding_id, None)
-            if len(values) < bootstrap_rows:
+            if hole_decision is None:
+                holes.pop(source.binding_id, None)
+            if not suffix_read and hole_decision is None and len(values) < bootstrap_rows:
                 # The venue has no older bars (new listing / long interval):
                 # reported, never invented, never retried as an error.
                 self._history_short[source.binding_id] = (bootstrap_rows, len(values))
@@ -1746,6 +1995,10 @@ class StableBinanceBarEdge:
                 values,
                 expected_rows=len(values),
             )
+            if resume.pop(source.binding_id, None) is not None:
+                self._persist_resume_sidecar()
+                logger.info("stable BAR rebased binding resumed binding=%s resume_from_ms=%s rows=%s",
+                            source.binding_id, resume_from, len(values))
             if source.binding_id in suspended:
                 suspended.pop(source.binding_id)
                 self._persist_state()
