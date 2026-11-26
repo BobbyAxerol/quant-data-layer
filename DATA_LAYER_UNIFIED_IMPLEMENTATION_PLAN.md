@@ -80214,3 +80214,59 @@ Two existing tests stub `_loop_sleep_seconds(now)`; the derived-thread-off path 
 
 **TS INTEGRATION_DEFECT_REGISTER row** (pin steward):
 `| IDR-<n> | DATA_LAYER | DERIVED_FINAL bars were published after the REST poll in one loop; at 00:00Z (1d close, ~532 REST bars, admission 503 retries) derived bars started 00:03:05, a same-pass constituent was declared a gap after the wall-clock grace and the chain healed one level per 30 s: OKX 1h of 20 instruments at 00:04:47Z, 12h at 00:06:25Z; Crossec stopped fail-closed (180 s) at 00:04:48Z 2026-11-26 | bar_edge log 23:59:30-00:12Z (closed BAR ACK 532 at 00:02:34, derived ACK 380 at 00:03:05, gaps 00:03:02-05, heals to 00:06:25); RCA file | DL hotfix + bundle: derived thread, pending-input rule (no self-inflicted gap), children woken at once; tests midnight chain/threaded/real-gap | - | DL v2.4.3.1 hotfix, bundle |`
+
+### DL-BL-2026-11-25-D per-consumer Query request counts, and typed tokens for provider-lane SOURCE_UNAVAILABLE (tested locally) - 2026-11-26 (Claude)
+
+**DL-BL-D.**
+- `qdl/runtime/consumer_request_log.py` `ConsumerRequestLog` keeps bounded counts by (consumer_id, route template),
+  at most 64 consumers × 24 routes with an `__overflow__` key. At the first request after a 60 s window it emits one
+  JSON line `qdl_consumer_requests` (`replica`, `window_start_s`, `total`, `consumers{route: n}`).
+- It is observation only and payload-free: no uid, cursor or token.
+- `qdl/api_v2/router.py` `_data_access` records each authenticated data-plane request through
+  `record_consumer_request`, which never raises.
+- The load observation script can read these lines in place of its slow-request proxy once Query runs the bundle.
+
+**SOURCE_UNAVAILABLE typed tokens** (same class as DL-DEF-2026-11-26-G). The 2026-11-25 19:30Z MARK_INDEX_PRICE burst
+reached consumers with `reason_tokens=[]`. `qdl/query/service.py` changes:
+- `_provider_lane_failure_detail`: a reference-batch provider-lane failure carries `PROVIDER_LANE_FAILED`, plus
+  `PROVIDER_LANE_DEADLINE` for a timeout or deadline, plus the exception class as an UPPER_SNAKE token. The exception
+  message is never included.
+- `_typed_provider_detail`: an adapter error prefixes its typed `error_code`, or `PROVIDER_ERROR_UNTYPED`, when the
+  detail carries no token.
+
+**Tests.** `tests/test_dl_v244_consumer_requests_and_lane_tokens.py`, 7 OK:
+- one line per window with counts by consumer and route template;
+- bounds and overflow;
+- an empty window emits nothing;
+- the router records the authenticated consumer and route;
+- lane timeout and class tokens, and untyped provider errors.
+
+Impacted modules, light slot, 305 OK, 1 skipped:
+
+| Module | Tests |
+|---|---|
+| dl_v244_reference_coverage_detail | 3 |
+| phase104_reference_batch | 36 |
+| okx_reference_completion | 27 (1 skipped) |
+| phase113_reference_v2 | 21 |
+| dlv2_r131_execution_reference_ttl | 8 |
+| kn_alpha_reference_access | 3 |
+| p184_a1_reference_bound | 13 |
+| phase104_v2_query_stream_integration | 8 |
+| phase10_universal_warmup | 75 |
+| dl_v240_ts_funding_entitlement | 14 |
+| v231_snapshot_batch | 11 |
+| fund_phase72_consumer_canary | 8 |
+| refusal_log | 8 |
+| fund_phase6_operations | 8 |
+| dl_v240_identity_quota | 21 |
+| fund_phase5_api | 25 |
+| query_replica_lane_redirect | 14 |
+| fund_phase7_contract_security | 15 |
+
+**Related, outside the repo.**
+- DL-BL-H runsheet (market_cache swap), not applied: `~/.local/state/qdl-v2/windows/dl-bl-h-market-cache-swap/`.
+- The v2.4.3.1 midnight proof reader: `~/.local/state/qdl-v2/windows/v2.4.3.1-bar-edge/midnight_proof.sh`. It is
+  read-only and armed nothing.
+  - Its dry run against the 2026-11-26 00:00Z incident read the market cache directly and reproduced the RCA:
+    OKX 1h p50 184 s, max 287 s; OKX 12h max 385 s.

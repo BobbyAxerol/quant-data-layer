@@ -97,6 +97,43 @@ _FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS = 60_000
 _BatchCompletion = TypeVar("_BatchCompletion")
 
 
+_UPPER_SNAKE_TOKEN = re.compile(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b")
+
+
+def _exception_token(error: BaseException) -> str:
+    """``TimeoutError`` -> ``TIMEOUT_ERROR``; a class name as one UPPER_SNAKE token (never its message)."""
+
+    name = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", type(error).__name__).upper()
+    name = re.sub(r"[^A-Z0-9_]", "", name)
+    return name if "_" in name else f"{name}_ERROR"
+
+
+def _provider_lane_failure_detail(error: BaseException) -> str:
+    """DL v2.4.4 (same class as DL-DEF-2026-11-26-G): a lane failure carries typed tokens, not a fixed text.
+
+    The 2026-11-25 19:30Z SOURCE_UNAVAILABLE MARK_INDEX_PRICE burst reached consumers with ``reason_tokens=[]``.
+    The detail now names ``PROVIDER_LANE_FAILED``, a deadline when it is one, and the exception class as a token.
+    The exception message is never included.
+    """
+
+    tokens = ["PROVIDER_LANE_FAILED"]
+    if isinstance(error, (TimeoutError, asyncio.TimeoutError)) or "Deadline" in type(error).__name__:
+        tokens.append("PROVIDER_LANE_DEADLINE")
+    tokens.append(_exception_token(error))
+    return "reference batch provider lane did not complete: " + " ".join(dict.fromkeys(tokens))
+
+
+def _typed_provider_detail(error_code: str | None, detail: str) -> str:
+    """Prefix the adapter's typed error code when the detail does not already carry an UPPER_SNAKE token."""
+
+    code = str(error_code or "").strip()
+    if not code:
+        code = "PROVIDER_ERROR_UNTYPED"
+    if code in _UPPER_SNAKE_TOKEN.findall(detail[:4096]):
+        return detail
+    return f"{code}: {detail}" if _UPPER_SNAKE_TOKEN.fullmatch(code) else f"PROVIDER_ERROR_UNTYPED: {detail}"
+
+
 def _reference_coverage_detail(coverage) -> str:
     """DL-DEF-2026-11-26-G: say which edge is uncovered and what the provider returned (typed tokens).
 
@@ -1963,7 +2000,7 @@ class V2QueryService:
                     detail = str(execution.error)
                 else:
                     code = CanonicalErrorCode.SOURCE_UNAVAILABLE
-                    detail = "reference batch provider lane did not complete"
+                    detail = _provider_lane_failure_detail(execution.error)
                 results[index] = ReferenceBatchItemResult(
                     requirement,
                     code.value,
@@ -2363,7 +2400,7 @@ class V2QueryService:
             )
         return QueryProblem(
             CanonicalErrorCode.SOURCE_UNAVAILABLE,
-            result.error_detail or "reference provider request failed",
+            _typed_provider_detail(result.error_code, result.error_detail or "reference provider request failed"),
             result.error_code not in {"PROVIDER_PROTOCOL"},
             result.retry_after_ms,
         )

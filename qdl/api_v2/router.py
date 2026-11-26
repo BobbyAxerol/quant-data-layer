@@ -16,6 +16,7 @@ from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBea
 from pydantic import create_model
 
 from qdl.query.cold_work import await_in_thread, cold_yield
+from qdl.runtime.consumer_request_log import record_consumer_request
 from qdl.query.results import release_exception_frames
 from qdl.domain.decimal import PLAIN_DECIMAL_TEXT
 from qdl_sdk.models import ResponseModel
@@ -128,6 +129,9 @@ def _data_access(
     )
     session = request.headers.get(SESSION_HEADER)
     request.state.qdl_data_access = access
+    # DL-BL-2026-11-25-D: bounded per-consumer request counts (observation only, route template, no uid).
+    route = request.scope.get("route")
+    record_consumer_request(access.consumer_id, getattr(route, "path", None) or "unknown")
     # Fairness only (never identity or entitlement): see ``_fairness_key``.
     request.state.qdl_fairness_key = (
         session_fairness_key(access.consumer_id, session) or access.consumer_id
