@@ -80284,8 +80284,12 @@ Impacted modules, light slot, 305 OK, 1 skipped:
 - 12:01:32.881Z: the next trigger (max lag 6,705 ms) was `SUPPRESSED_COOLDOWN` with 49,976 ms left, so the lane stayed
   late. BTC-USDT-SWAP QUOTE went STALE, `execution_eligible=false`, and TS refused Crossec's NAV quote read at
   12:01:33.6Z (Crossec STOPPED_CLOSED).
-- The routine recycle to gen 1312 at 12:02:42 was fresh at once. So a reconnect does clear it; the cooldown was the
-  blocker.
+- Correction (same day, after re-reading the 10 s progress windows): gen 1311 was not late at the handover. Its first
+  window (to 12:01:24.5) peaks at 290 ms, which is the old session's value. It fell behind from about 12:01:24.5 and
+  then **caught up in place**: 12:01:34-44 ran at 2,378 frames/s with read gaps of 90 ms or less while lag stayed about
+  4 s, and 12:01:44-54 peaked at 203 ms. That recovery involved no reconnect. The gen 1312 recycle at 12:02:42 was a
+  routine 438 ms trigger. Whether an earlier reconnect would have restored freshness sooner is therefore NOT shown by
+  this incident.
 
 **Cause (class).** The 60 s cooldown and the hourly cap protect a healthy lane from flapping. They also applied to
 the session the detector had just created to cure staleness, before that session ever showed it was healthy.
@@ -80293,9 +80297,15 @@ the session the detector had just created to cure staleness, before that session
 
 **Fix** (`rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs`, detector only, venue-agnostic).
 1. **Probation.** The session that follows a staleness recycle (`recycle_started` then `session_started`) starts on
-   probation. It leaves probation only when it proves freshness: `successor_proof_frames` (default 20) consecutive
-   non-stale frames from at least `min_bindings` distinct bindings. A stale frame restarts the proof. Any other
-   session (notice, error reconnect, start) is trusted as before.
+   probation. It leaves probation only when both hold:
+   - at least `successor_probation_ms` (default 60 s, one cooldown) has passed since its first frame;
+   - the last `successor_proof_frames` (default 20) frames were fresh, from at least `min_bindings` distinct bindings.
+
+   A stale frame restarts the fresh run. Any other session (notice, error reconnect, start) is trusted as before.
+   - The first version, commit `ae1fe944`, proved freshness by frame count alone. At about 1,100 frames/s that proof
+     completes in about 20 ms. Gen 1311 would have passed it in its first second, and the cooldown would still have
+     suppressed the later trigger.
+   - The replay test now models that fresh first second.
 2. **Re-recycle.** A trigger on a session still on probation returns `RecycleDecision::SuccessorStale { retry }`.
    It starts a recycle at once, without the cooldown, up to `successor_retries` (default 2) per unproven chain. The
    hourly cap and the OKX control budget still apply. A proof resets the count. After the retries the cooldown
@@ -80307,8 +80317,9 @@ the session the detector had just created to cure staleness, before that session
 
 **Tests** (same file, `mod tests`): 5 new.
 - `a_late_recycle_successor_is_recycled_again_without_waiting_for_the_cooldown`: the 12:01Z timeline replayed. The
-  successor is detected within about 1 s of the handover and recycled again (old rule: about 59 s of cooldown). The
-  next successor proves freshness in about 0.5 s, the retries reset, and the cooldown protects again.
+  successor is fresh for 1.1 s (44 frames), which is no proof. It degrades and is detected within 0.5 s, then recycled
+  again (old rule: about 59 s of cooldown). The next successor stays on probation for 60 s and a degradation in it is
+  still a retry; after that it is proven, the retries reset, and the normal cooldown and recycle rule applies.
 - `without_successor_retries_the_1201z_timeline_keeps_the_pre_l_cooldown`: reproduces the logged 12:01:32.881 decision
   (cooldown, about 49.98 s left).
 - `successor_retries_are_bounded_then_the_cooldown_and_the_cap_apply`.

@@ -3621,8 +3621,12 @@ struct LatestStateStalenessConfig {
     max_recycles_per_hour: usize,
     /// DL-DEF-2026-11-26-L: a session that follows a staleness recycle is on
     /// probation until it proves freshness: this many consecutive non-stale
-    /// frames, from at least `min_bindings` distinct bindings.
+    /// frames, from at least `min_bindings` distinct bindings ...
     successor_proof_frames: usize,
+    /// ... and at least this long after its first frame. A count alone is
+    /// proven in milliseconds on a busy quote lane (12:01Z: gen 1311 looked
+    /// fresh for about a second, then fell 4-8 s behind).
+    successor_probation_ms: u64,
     /// DL-DEF-2026-11-26-L: recycles a still-unproven successor may start
     /// without waiting for the cooldown (0 = pre-L behaviour). The hourly cap
     /// and the control budget still apply; a proof resets the count.
@@ -3651,12 +3655,14 @@ impl Default for LatestStateStalenessConfig {
             cooldown_ms: 60_000,
             max_recycles_per_hour: 6,
             // DL-DEF-2026-11-26-L (12:01Z 2026-11-26, okx-public-003): the
-            // successor of a recycle was itself 4-8 s late for ~20 s and the
-            // 60 s cooldown suppressed the second recycle. 20 fresh frames is
-            // well under a second on a quote lane (~600-1100 frames/s) and two
-            // successor retries keep the per-lane worst case at 3 connects in
-            // a few seconds, inside the hourly cap and the control budget.
+            // successor of a recycle fell 4-8 s behind for ~20 s and the 60 s
+            // cooldown suppressed the second recycle. Two successor retries
+            // keep the per-lane worst case at 3 connects inside the hourly cap
+            // and the control budget.
             successor_proof_frames: 20,
+            // One cooldown: a successor that degrades while the cooldown would
+            // still block a recycle can be recycled again.
+            successor_probation_ms: 60_000,
             successor_retries: 2,
         }
     }
@@ -3674,6 +3680,7 @@ impl LatestStateStalenessConfig {
             && (10_000..=3_600_000).contains(&self.cooldown_ms)
             && (1..=60).contains(&self.max_recycles_per_hour)
             && (1..=10_000).contains(&self.successor_proof_frames)
+            && (1_000..=3_600_000).contains(&self.successor_probation_ms)
             && self.successor_retries <= 10
         {
             Ok(())
@@ -3768,6 +3775,8 @@ enum RecycleDecision {
 /// staleness recycle (consecutive non-stale frames and their bindings).
 #[derive(Debug, Default)]
 struct SuccessorProbation {
+    /// Host ms of the session's first measured frame.
+    first_frame_ms: Option<i64>,
     fresh_frames: usize,
     fresh_bindings: Vec<String>,
 }
@@ -3939,7 +3948,7 @@ impl StalenessDetector {
         }
         let excess_ms = lag_ms.saturating_sub(baseline_ms);
         let stale = excess_ms >= i64::try_from(self.config.excess_ms).unwrap_or(i64::MAX);
-        self.probation_frame(stale, binding);
+        self.probation_frame(host_ms, stale, binding);
         if stale {
             self.stale
                 .push_back((host_ms, binding.key(), lag_ms, excess_ms));
@@ -3983,14 +3992,18 @@ impl StalenessDetector {
     }
 
     /// DL-DEF-2026-11-26-L: one measured frame of a session on probation. A
-    /// stale frame restarts the proof; enough consecutive fresh frames from
-    /// enough bindings end the probation and reset the successor retries.
-    fn probation_frame(&mut self, stale: bool, binding: &RawBinding) {
+    /// stale frame restarts the fresh run; the probation ends (and the
+    /// successor retries reset) only after `successor_probation_ms` since the
+    /// first frame with the last `successor_proof_frames` frames fresh from
+    /// enough bindings.
+    fn probation_frame(&mut self, host_ms: i64, stale: bool, binding: &RawBinding) {
         let Some(probation) = self.probation.as_mut() else {
             return;
         };
+        let first_frame_ms = *probation.first_frame_ms.get_or_insert(host_ms);
         if stale {
-            *probation = SuccessorProbation::default();
+            probation.fresh_frames = 0;
+            probation.fresh_bindings.clear();
             return;
         }
         probation.fresh_frames += 1;
@@ -3998,8 +4011,10 @@ impl StalenessDetector {
         if !probation.fresh_bindings.contains(&key) {
             probation.fresh_bindings.push(key);
         }
+        let probation_ms = i64::try_from(self.config.successor_probation_ms).unwrap_or(i64::MAX);
         if probation.fresh_frames >= self.config.successor_proof_frames
             && probation.fresh_bindings.len() >= self.min_bindings
+            && host_ms.saturating_sub(first_frame_ms) >= probation_ms
         {
             self.probation = None;
             self.successor_retries_used = 0;
@@ -7686,16 +7701,21 @@ mod staleness_tests {
     /// DL-DEF-2026-11-26-L replay of okx-public-003 at 12:01Z on 2026-11-26
     /// (ingestor log, read-only; times are ms after 12:00:00Z): healthy lag
     /// 26-157 ms, the IDR-112 trigger at 82_868 (max 279 ms), handover to the
-    /// successor (gen 1311) at 83_385, the successor 4-8 s late until about
-    /// 104_000 (window max 8_043 ms at 94_278, 7_892 ms at 95_288, 203 ms
-    /// after), and the second trigger at 92_881 that the 60 s cooldown
-    /// suppressed (49.98 s left) while Crossec read BTC at 93_605.
+    /// successor (gen 1311) at 83_385. The successor window ending 84_506
+    /// shows max 290 ms (the old session's), so it starts fresh here and
+    /// degrades from 84_500: window max 8_043 ms at 94_278, 7_892 ms at
+    /// 95_288, 203 ms by 104_000 (it caught up in place, no reconnect). The
+    /// trigger logged at 92_881 was suppressed by the 60 s cooldown (49.98 s
+    /// left) while Crossec read BTC at 93_605.
     fn successor_lag_1201z(at: i64, index: usize) -> i64 {
         const HANDOVER: i64 = 83_385;
+        const DEGRADES: i64 = 84_500;
         if at < HANDOVER {
             290
+        } else if at < DEGRADES {
+            34 + (index as i64 * 3) % 7
         } else if at < 94_278 {
-            (300 + (at - HANDOVER) * 7_743 / (94_278 - HANDOVER)).min(8_043)
+            (300 + (at - DEGRADES) * 7_743 / (94_278 - DEGRADES)).min(8_043)
         } else if at < 95_288 {
             7_892
         } else if at < 104_000 {
@@ -7731,18 +7751,20 @@ mod staleness_tests {
             detector.on_probation(),
             "the recycle successor starts on probation"
         );
-        // Up to 85 s: the successor is already more than 1 s late there.
+        // About 1.1 s fresh (~44 frames: a frame count alone would prove it),
+        // then late: still on probation, the first late trigger counts.
         let late = feed(
             &mut detector,
             &bindings,
             83_385,
-            85_000,
+            86_000,
             successor_lag_1201z,
         );
+        assert!(detector.on_probation(), "1.1 s of fresh frames is no proof");
         let (at, trigger) = late.first().cloned().expect("the successor is late");
         assert!(
-            at < 84_500,
-            "the late successor is detected within about 1 s: {at}"
+            (84_500..85_000).contains(&at),
+            "the degrading successor is detected within 0.5 s: {at}"
         );
         assert!(trigger.max_excess_ms >= 250);
         (detector, at)
@@ -7759,23 +7781,34 @@ mod staleness_tests {
         );
         detector.recycle_started(T0 + at);
         assert_eq!(detector.successor_retries_used, 1);
-        // The next successor (gen 1312 was fresh on the day) proves freshness
-        // in 20 frames from 3 bindings, about 0.5 s.
+        // The next successor is fresh. It stays on probation for one cooldown
+        // (60 s from its first frame): a degradation inside it is still a
+        // successor retry, not a cooldown suppression.
         detector.session_started();
         assert!(detector.on_probation());
         let bindings = quotes();
-        assert!(feed(&mut detector, &bindings, at + 500, at + 1_000, healthy).is_empty());
+        assert!(feed(&mut detector, &bindings, at + 500, at + 30_000, healthy).is_empty());
+        assert!(detector.on_probation());
+        assert_eq!(
+            detector.decide(T0 + at + 30_000),
+            RecycleDecision::SuccessorStale { retry: 2 }
+        );
+        assert!(feed(&mut detector, &bindings, at + 30_000, at + 61_000, healthy).is_empty());
         assert!(
             !detector.on_probation(),
-            "a proven session leaves probation"
+            "a successor fresh for the whole probation is proven"
         );
         assert_eq!(
             detector.successor_retries_used, 0,
             "the proof resets the retries"
         );
-        // A proven, healthy lane is protected by the cooldown again.
+        // A proven lane is governed by the normal rule again: the cooldown
+        // since the last recycle has passed, so a new trigger recycles, and a
+        // trigger before its successor starts meets the cooldown.
+        assert_eq!(detector.decide(T0 + at + 61_000), RecycleDecision::Recycle);
+        detector.recycle_started(T0 + at + 61_000);
         assert!(matches!(
-            detector.decide(T0 + at + 5_000),
+            detector.decide(T0 + at + 62_000),
             RecycleDecision::Cooldown { .. }
         ));
     }
@@ -7836,7 +7869,10 @@ mod staleness_tests {
 
     #[test]
     fn a_stale_frame_restarts_the_proof_and_other_sessions_are_not_on_probation() {
-        let mut detector = detector(LatestStateStalenessConfig::default());
+        let mut detector = detector(LatestStateStalenessConfig {
+            successor_probation_ms: 1_000,
+            ..LatestStateStalenessConfig::default()
+        });
         let bindings = quotes();
         assert!(feed(&mut detector, &bindings, 0, 40_000, healthy).is_empty());
         // A reconnect that is not a staleness recycle (notice, error) is trusted.
@@ -7844,29 +7880,41 @@ mod staleness_tests {
         assert!(!detector.on_probation());
         detector.recycle_started(T0 + 40_000);
         detector.session_started();
-        // 19 fresh frames, one stale frame, 19 fresh: not proven.
-        feed(&mut detector, &bindings, 40_000, 40_475, healthy);
-        feed(&mut detector, &bindings, 40_475, 40_500, |_, _| 900);
-        feed(&mut detector, &bindings, 40_500, 40_975, healthy);
+        // 36 fresh frames inside the 1 s probation, one stale frame, then 19
+        // fresh after 1 s: not proven (the fresh run restarted).
+        feed(&mut detector, &bindings, 40_000, 40_900, healthy);
+        feed(&mut detector, &bindings, 40_900, 40_925, |_, _| 900);
+        feed(&mut detector, &bindings, 40_925, 41_400, healthy);
         assert!(
             detector.on_probation(),
             "the proof needs consecutive fresh frames"
         );
-        feed(&mut detector, &bindings, 40_975, 41_000, healthy);
+        feed(&mut detector, &bindings, 41_400, 41_425, healthy);
         assert!(!detector.on_probation());
         // Old configs without the L fields load with the defaults.
         let tuned: LatestStateStalenessConfig =
             serde_json::from_value(json!({"excess_ms": 400, "cooldown_ms": 120000})).unwrap();
         assert_eq!(
-            (tuned.successor_proof_frames, tuned.successor_retries),
-            (20, 2)
+            (
+                tuned.successor_proof_frames,
+                tuned.successor_probation_ms,
+                tuned.successor_retries
+            ),
+            (20, 60_000, 2)
         );
         assert!(tuned.validate().is_ok());
-        let bad = LatestStateStalenessConfig {
-            successor_proof_frames: 0,
-            ..LatestStateStalenessConfig::default()
-        };
-        assert!(bad.validate().is_err());
+        for bad in [
+            LatestStateStalenessConfig {
+                successor_proof_frames: 0,
+                ..LatestStateStalenessConfig::default()
+            },
+            LatestStateStalenessConfig {
+                successor_probation_ms: 999,
+                ..LatestStateStalenessConfig::default()
+            },
+        ] {
+            assert!(bad.validate().is_err());
+        }
     }
 
     #[test]
