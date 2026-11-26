@@ -80155,3 +80155,62 @@ Proxies:
   - or reduce the BAR depth (R1 retention).
 - SOURCE_UNAVAILABLE MARK_INDEX refusals should carry a typed reason token. Same class as DL-DEF-2026-11-26-G; fold it
   into the bundle.
+
+### DL-DEF-2026-11-26-I: derived bars publish on their own thread; inputs not yet available are waited for; healed gaps wake children (tested locally) - 2026-11-26 (Claude)
+
+**Registered here: DL-DEF-2026-11-26-I.** RCA:
+`~/.local/state/trading-system/paper-hosting/TS_TO_HOSTED_ALPHA_CROSSEC_0000Z_STOP_RCA_20261126.md`.
+
+**Incident.** At 00:00Z on 2026-11-26 the REST poll read about 532 closed bars (483 of them 1d), paced by provider
+admission with 22 × 503 retries, until 00:02:40. The derived cycle runs after it in the same loop (`run_forever`,
+v2.4.3 `:2727/:2734/:2738`), so no derived bar was published until 00:03:05.
+- The first pass was already past the 120 s grace. The 15m 23:45 bucket of 20 OKX instruments was declared a gap,
+  because its 5m 23:55 constituent had been derived in the same pass and was not yet durable.
+- The chain then healed one level per 30 s recheck: 1h at 00:04:47, 12h at 00:06:25.
+- Crossec decided at 00:04:48Z and stopped fail-closed on its 180 s rule.
+
+**Fix, class level** (`qdl/runtime/stable_bar_edge.py`, `qdl/runtime/derived_bars.py`).
+1. **Own thread.** `_start_derived_thread` / `_derived_loop` run `run_derived_cycle` on one dedicated thread, waking
+   at least every 1 s and at each derived wake time. The main loop no longer runs it and no longer schedules for it
+   (`_loop_sleep_seconds(include_derived=False)`).
+   - The derived cycle does no provider I/O, so provider admission is untouched.
+   - Shared state is guarded: the checkpoint is written under `_persist_lock`, and the derived watermark update is a
+     compare-and-set under `_watermark_guard`, which is also taken by the rebase pops and the bootstrap watermark
+     update. `_state_payload` snapshots its dicts.
+2. **Grace from input availability.** `derived_bars.decide(..., pending_constituents=...)` waits, and never declares
+   a gap, while a missing constituent is still pending. For a derived parent, pending means past its watermark (not
+   produced yet) or ACKed by this edge and not yet read back (`_derived_inflight`, at most 120 s).
+   - A native or REST parent keeps the wall-clock grace, so a real loss still records a gap.
+3. **Children recheck at once.** After a binding publishes, its children are woken (`_wake_derived_children`): next
+   pass now, and their gaps due now. A gap whose base is pending is rechecked at the 0.5 s poll, not 30 s.
+
+**Tests** (`tests/test_dl_v244_derived_bar_latency.py`, 4 OK).
+- The midnight chain 1m → 5m → 15m → 30m → 1h → 2h → 6h → 12h, with the first pass 200 s late and durability only on
+  projector tick: no gap, and every level published within 2 × 7 passes (0.5 s each).
+- A contrast with the v2.4.3 rule: the same pass declares the 15m gap.
+- A real missing native 1m (23:58): the 5m gap is recorded after the grace and propagates to 15m; no 12h is built.
+- The threaded `run_forever` with a REST cycle blocked (standing in for admission-paced 1d reads with 503 retries):
+  1h and 12h are published while REST is still blocked, well inside 60 s / 90 s of the boundary, with no gap.
+
+Impacted modules, one per container (light slot): 191 run, all OK, plus 2 skipped.
+
+| Module | Tests |
+|---|---|
+| v230_derived_bars | 29 |
+| phase115c_bar_edge_schedule | 7 |
+| kn_history_fill | 23 (1 skipped) |
+| dl_v242_bar_edge_rebase_resume | 8 + 2 + 3 |
+| dl_v242_instrument_unavailable | 14 |
+| dl_v241_bar_edge_short_proofs | 8 |
+| kn_bar_readback | 12 (1 skipped) |
+| binance_final_bar_settlement | 11 |
+| phase105c_final_bar_repair | 4 |
+| v2_binance_bar_edge | 2 |
+| dlv2_r128_bar_edge_checkpoint_migration | 7 |
+| binance_history_overlap | 11 |
+| phaseb_bar_history_bootstrap | 46 |
+
+Two existing tests stub `_loop_sleep_seconds(now)`; the derived-thread-off path keeps that signature.
+
+**TS INTEGRATION_DEFECT_REGISTER row** (pin steward):
+`| IDR-<n> | DATA_LAYER | DERIVED_FINAL bars were published after the REST poll in one loop; at 00:00Z (1d close, ~532 REST bars, admission 503 retries) derived bars started 00:03:05, a same-pass constituent was declared a gap after the wall-clock grace and the chain healed one level per 30 s: OKX 1h of 20 instruments at 00:04:47Z, 12h at 00:06:25Z; Crossec stopped fail-closed (180 s) at 00:04:48Z 2026-11-26 | bar_edge log 23:59:30-00:12Z (closed BAR ACK 532 at 00:02:34, derived ACK 380 at 00:03:05, gaps 00:03:02-05, heals to 00:06:25); RCA file | DL hotfix + bundle: derived thread, pending-input rule (no self-inflicted gap), children woken at once; tests midnight chain/threaded/real-gap | - | DL v2.4.3.1 hotfix, bundle |`

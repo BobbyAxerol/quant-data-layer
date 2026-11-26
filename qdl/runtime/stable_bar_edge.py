@@ -109,6 +109,12 @@ _DERIVED_GAP_LIMIT = 256
 _DERIVED_POLL_SECONDS = 0.5
 _DERIVED_SETTLE_SECONDS = 0.5
 _DERIVED_PARENT_WAIT_SECONDS = 5.0
+# DL v2.4.4 (DL-DEF-2026-11-26-I, Crossec 00:00Z stop 2026-11-26). A base bar this edge derived and ACKed stays
+# "pending" until it is read back durable, up to this long; a child waits for it instead of declaring a gap. Past it,
+# a still-missing base is a real loss and the ordinary grace applies.
+_DERIVED_INFLIGHT_SECONDS = 120.0
+# The derived publisher runs on its own thread (never behind the REST poll); its loop wakes at least this often.
+_DERIVED_THREAD_MAX_SLEEP_SECONDS = 1.0
 # DL v2.4.2 slice 3 (2026-11-25 market_cache OOM: 1,319 bindings rebased, the
 # A->Z one-binding-per-turn full re-bootstrap left OKX 1h/12h live bars stopped
 # for up to ~4 h). A rebased binding whose durable window is proven from the cache
@@ -125,6 +131,18 @@ VENUE_HOLE_DURABLY_COVERED = "VENUE_HOLE_DURABLY_COVERED"
 VENUE_HOLE_NOT_COVERED = "VENUE_HOLE_NOT_COVERED"
 RESUME_DURABLE_WINDOW_INCOMPLETE = "RESUME_DURABLE_WINDOW_INCOMPLETE"
 RESUME_SUFFIX_INCOMPLETE = "RESUME_SUFFIX_INCOMPLETE"
+
+
+class _PastWatermark:
+    """Base opens a derived parent has not made available: past its watermark, or ACKed and not yet durable."""
+
+    __slots__ = ("watermark", "inflight")
+
+    def __init__(self, watermark: int | None, inflight: frozenset[int]) -> None:
+        self.watermark, self.inflight = watermark, inflight
+
+    def __contains__(self, open_ms: object) -> bool:
+        return (self.watermark is None or int(open_ms) > self.watermark) or open_ms in self.inflight
 
 
 @dataclass(frozen=True, slots=True)
@@ -591,10 +609,10 @@ class StableBinanceBarEdge:
         return {
             **self._state_identity_payload(schema=schema),
             "connection_generation": self.connection_generation,
-            "last_open_ms": {
-                key: self._last_open_ms[key] for key in sorted(self._last_open_ms)
-                if key not in getattr(self, "_history_suspended", {})
-            },
+            # A snapshot: the derived thread may move a watermark concurrently (DL v2.4.4).
+            "last_open_ms": (lambda watermarks, suspended: {
+                key: watermarks[key] for key in sorted(watermarks) if key not in suspended
+            })(dict(self._last_open_ms), dict(getattr(self, "_history_suspended", {}))),
         }
 
     def _issue_connection_generation(self) -> None:
@@ -789,6 +807,14 @@ class StableBinanceBarEdge:
             raise RuntimeError("stable BAR repair cannot write the active checkpoint")
         if self.state_path is None:
             return
+        # DL v2.4.4: the derived thread and the main loop both checkpoint; one writer at a time (shared temp path).
+        lock = getattr(self, "_persist_lock", None)
+        if lock is None:
+            lock = self._persist_lock = threading.Lock()
+        with lock:
+            self._persist_state_locked()
+
+    def _persist_state_locked(self) -> None:
         parent = self.state_path.parent
         parent.mkdir(parents=True, exist_ok=True)
         temporary = parent / f".{self.state_path.name}.{os.getpid()}.tmp"
@@ -1076,9 +1102,10 @@ class StableBinanceBarEdge:
         self._assert_canonical_cache_identity()
         if advance_watermark:
             # Publish progress: the live watermark may move on the Kafka ACK.
-            self._last_open_ms[plan.source.binding_id] = max(
-                max(plan.expected_opens), self._last_open_ms.get(plan.source.binding_id, 0)
-            )
+            with self._watermark_guard():
+                self._last_open_ms[plan.source.binding_id] = max(
+                    max(plan.expected_opens), self._last_open_ms.get(plan.source.binding_id, 0)
+                )
             self._persist_state()
             self._record_serving(plan.source.binding_id, plan.expected_opens,
                                  published=bool(current.missing_envelopes))
@@ -1317,8 +1344,9 @@ class StableBinanceBarEdge:
         # DL v2.4.2 slice 3: a watermark is not proof of the rebuilt cache, but it
         # is the candidate resume point; bootstrap proves the window from the
         # cache before trusting it (`_resume_decision`).
-        self._note_rebootstrap(self._last_open_ms)
-        self._last_open_ms.clear()
+        with self._watermark_guard():
+            self._note_rebootstrap(dict(self._last_open_ms))
+            self._last_open_ms.clear()
         for name in ("_history_suspended", "_history_suffix_pending", "_history_retry"):
             getattr(self, name, {}).clear()
         self._native_recovery_pending.clear()
@@ -1584,7 +1612,8 @@ class StableBinanceBarEdge:
             previous = known.get(binding_id)
             if previous is not None and generation != previous:
                 rebased.append(binding_id)
-                watermark = self._last_open_ms.pop(binding_id, None)
+                with self._watermark_guard():
+                    watermark = self._last_open_ms.pop(binding_id, None)
                 if watermark is not None:
                     self._note_rebootstrap({binding_id: watermark})
                 for name in ("_history_suspended", "_history_suffix_pending", "_history_retry"):
@@ -2455,7 +2484,7 @@ class StableBinanceBarEdge:
             parent = self._derived_parent[binding_id]
             if not (self._live_history_ready(binding_id)
                     and self._live_history_ready(parent.binding_id)
-                    and binding_id in self._last_open_ms):
+                    and self._last_open_ms.get(binding_id) is not None):
                 self._derived_next_at[binding_id] = now + _DERIVED_PARENT_WAIT_SECONDS
                 continue
             interval_ms = _bar_interval_ms(source.interval or "")
@@ -2477,11 +2506,16 @@ class StableBinanceBarEdge:
                     open_ms, interval=source.interval, base_interval=base_interval)
             ))
 
+            # DL-DEF-2026-11-26-I: base opens not yet *available* are waited for, never declared a gap. For a
+            # derived parent that is every open past its watermark (it has not produced it yet, e.g. its own pass
+            # was late) and every open it ACKed that is not yet read back durable.
+            pending = self._derived_pending_constituents(parent.binding_id, now)
+
             def decide(open_ms: int) -> derived_bars.DerivedDecision:
                 return derived_bars.decide(
                     open_ms=open_ms, interval=source.interval, base_interval=base_interval,
                     parent_rows=parent_rows, existing=existing.get(open_ms),
-                    now_ms=now_ms, gap_grace_ms=grace_ms,
+                    now_ms=now_ms, gap_grace_ms=grace_ms, pending_constituents=pending,
                 )
 
             publish: list[derived_bars.DerivedDecision] = []
@@ -2506,6 +2540,8 @@ class StableBinanceBarEdge:
                     healed.append(open_ms)
                 elif decision.action == derived_bars.SKIP:
                     healed.append(open_ms)
+                elif decision.action == derived_bars.WAIT:
+                    gaps[open_ms] = now + _DERIVED_POLL_SECONDS  # its base is on the way: recheck at poll cadence
                 else:
                     gaps[open_ms] = now + _DERIVED_GAP_RECHECK_SECONDS
             if publish:
@@ -2528,6 +2564,11 @@ class StableBinanceBarEdge:
                     )
                 acknowledged_total += len(acknowledgements)
                 self.derived_published += len(acknowledgements)
+                inflight = self._derived_inflight_for(binding_id)
+                for decision in publish:
+                    inflight[decision.open_ms] = now
+                # Children recheck now (and their gaps over these opens), not on their own 30 s timer.
+                self._wake_derived_children(binding_id, now)
             for open_ms in healed:
                 gaps.pop(open_ms, None)
                 logger.info("stable derived BAR gap healed binding=%s open_ms=%s", binding_id, open_ms)
@@ -2543,8 +2584,11 @@ class StableBinanceBarEdge:
                 gaps.pop(dropped)
                 logger.error("stable derived BAR gap kept binding=%s open_ms=%s", binding_id, dropped)
             if watermark != last:
-                self._last_open_ms[binding_id] = watermark
-                moved = True
+                # Compare-and-set: a rebase on the main thread may have dropped this watermark meanwhile.
+                with self._watermark_guard():
+                    if self._last_open_ms.get(binding_id) == last:
+                        self._last_open_ms[binding_id] = watermark
+                        moved = True
             # Poll again soon while a target waits on its base or the
             # catch-up quantum left closed targets behind the watermark.
             behind = watermark < boundary - interval_ms
@@ -2557,6 +2601,51 @@ class StableBinanceBarEdge:
         if acknowledged_total:
             logger.info("stable derived BAR ACK count=%s", acknowledged_total)
         return acknowledged_total
+
+    def _watermark_guard(self) -> threading.Lock:
+        lock = getattr(self, "_watermark_lock", None)
+        if lock is None:
+            lock = self._watermark_lock = threading.Lock()
+        return lock
+
+    def _derived_inflight_for(self, binding_id: str) -> dict[int, float]:
+        table = getattr(self, "_derived_inflight", None)
+        if table is None:
+            table = self._derived_inflight = {}
+        return table.setdefault(binding_id, {})
+
+    def _derived_pending_constituents(self, parent_id: str, now: float) -> frozenset[int] | _PastWatermark:
+        """Base opens of a derived parent that are not yet available (see ``derived_bars.decide``)."""
+
+        derived_ids = getattr(self, "_derived_ids", None)
+        if derived_ids is None:
+            derived_ids = self._derived_ids = frozenset(item.binding_id for item, _a in self.derived_bindings)
+        if parent_id not in derived_ids:
+            return frozenset()  # a native/REST parent: its bars come from elsewhere; the wall-clock grace applies
+        inflight = self._derived_inflight_for(parent_id)
+        for open_ms, at in list(inflight.items()):
+            if now - at > _DERIVED_INFLIGHT_SECONDS:
+                inflight.pop(open_ms, None)
+        watermark = self._last_open_ms.get(parent_id)
+        return _PastWatermark(watermark, frozenset(inflight))
+
+    def _index_derived_children(self) -> dict[str, tuple[str, ...]]:
+        children: dict[str, list[str]] = {}
+        for child, parent in getattr(self, "_derived_parent", {}).items():
+            children.setdefault(parent.binding_id, []).append(child)
+        self._derived_children = {key: tuple(value) for key, value in children.items()}
+        return self._derived_children
+
+    def _wake_derived_children(self, binding_id: str, now: float) -> None:
+        children = getattr(self, "_derived_children", None)
+        if children is None:
+            children = self._index_derived_children()
+        for child in children.get(binding_id, ()):
+            self._derived_next_at[child] = 0.0
+            gaps = self._derived_gaps.get(child)
+            if gaps:
+                for open_ms in gaps:
+                    gaps[open_ms] = min(gaps[open_ms], now)
 
     def _derived_next_wake(self, now: float) -> float | None:
         if not getattr(self, "_derived_active", False):
@@ -2787,11 +2876,11 @@ class StableBinanceBarEdge:
             return None
         return max(.1, min(max(0., retries.get(key, (0, now))[1] - now) for key in missing))
 
-    def _loop_sleep_seconds(self, now: float) -> float:
+    def _loop_sleep_seconds(self, now: float, *, include_derived: bool = True) -> float:
         delay = 60.0
         if self._rest_fallback_active or getattr(self, "_native_recovery_active", False):
             delay = max(0.01, self._next_ready_at(now) - now)
-        derived_at = self._derived_next_wake(now)
+        derived_at = self._derived_next_wake(now) if include_derived else None
         if derived_at is not None:
             delay = min(delay, max(0.01, derived_at - now))
         history_delay = self._history_loop_delay(now)
@@ -2806,6 +2895,7 @@ class StableBinanceBarEdge:
                 pass
             return
         failures = 0
+        derived_thread = self._start_derived_thread()
         while not self._stopped.is_set():
             # R1.31. The edge writes its state file only when a checkpoint
             # moves, which for the intervals it still owns can be hours apart -
@@ -2841,7 +2931,7 @@ class StableBinanceBarEdge:
                     self.run_cycle()
                 if getattr(self, "_native_recovery_active", False):
                     self.run_native_recovery_cycle()
-                if getattr(self, "_derived_active", False):
+                if getattr(self, "_derived_active", False) and derived_thread is None:
                     self.run_derived_cycle()
                 failures = 0
             except KnBarReadbackNotReady as error:
@@ -2856,15 +2946,58 @@ class StableBinanceBarEdge:
                 logger.exception(
                     "stable crypto BAR cycle failed consecutive_failures=%s", failures
                 )
-            delay = self._loop_sleep_seconds(self.clock())
+            delay = (self._loop_sleep_seconds(self.clock()) if derived_thread is None
+                     else self._loop_sleep_seconds(self.clock(), include_derived=False))
             if failures:
                 # DL v2.4.2: a failing cycle waits at least 2 s, doubling to 30 s (it was `min`, so the scheduler's
                 # ~0.1 s history delay won and a failing cycle repeated every ~2 s, 2026-11-19 RVN-USDT-SWAP).
                 delay = max(delay, min(2 ** min(failures, 6), 30))
             self._stopped.wait(delay)
 
+    def _start_derived_thread(self) -> threading.Thread | None:
+        """DL v2.4.4 (DL-DEF-2026-11-26-I): DERIVED_FINAL bars publish on their own thread.
+
+        On 2026-11-26 00:00Z the REST poll read about 532 closed bars (483 of them 1d), paced by provider admission
+        with 503 retries, for about 2.5 min. The derived cycle ran after it in the same loop, so no derived bar was
+        published until 00:03:05, and the 1h bars of 20 OKX instruments landed at 00:04:47. The derived cycle does
+        no provider I/O (cache reads and Kafka publishes only), so it runs here with one thread. Provider admission
+        is untouched. Shared state is a checkpoint, written under a lock, and watermarks: the derived thread moves
+        only derived bindings' watermarks.
+        """
+
+        if not getattr(self, "_derived_active", False) or not getattr(self, "derived_thread_enabled", True):
+            return None
+        thread = threading.Thread(target=self._derived_loop, name="qdl-derived-bars", daemon=True)
+        thread.start()
+        self._derived_thread = thread
+        return thread
+
+    def _derived_loop(self) -> None:
+        failures = 0
+        while not self._stopped.is_set():
+            try:
+                self.run_derived_cycle()
+                failures = 0
+            except KnBarReadbackNotReady as error:
+                failures += 1
+                logger.warning("stable derived BAR readback not ready, retrying consecutive_failures=%s: %s",
+                               failures, error)
+            except Exception:
+                failures += 1
+                logger.exception("stable derived BAR cycle failed consecutive_failures=%s", failures)
+            now = self.clock()
+            wake = self._derived_next_wake(now)
+            delay = _DERIVED_THREAD_MAX_SLEEP_SECONDS if wake is None else max(
+                0.01, min(_DERIVED_THREAD_MAX_SLEEP_SECONDS, wake - now))
+            if failures:
+                delay = max(delay, min(2 ** min(failures, 6), 30))
+            self._stopped.wait(delay)
+
     def stop(self, *_args) -> None:
         self._stopped.set()
+        thread = getattr(self, "_derived_thread", None)
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=5.0)
         self.publisher.close()
 
 
