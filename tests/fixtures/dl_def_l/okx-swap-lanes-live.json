@@ -1,0 +1,2798 @@
+{
+ "bindings": [
+  {
+   "feed": "BOOK",
+   "lane_shard": 1,
+   "native_channel": "books",
+   "native_symbol": "BTC-USD-261225"
+  },
+  {
+   "feed": "BOOK",
+   "lane_shard": 1,
+   "native_channel": "books",
+   "native_symbol": "BTC-USD-270326"
+  },
+  {
+   "feed": "BOOK",
+   "lane_shard": 1,
+   "native_channel": "books",
+   "native_symbol": "ETH-USD-261225"
+  },
+  {
+   "feed": "BOOK",
+   "lane_shard": 1,
+   "native_channel": "books",
+   "native_symbol": "ETH-USD-270326"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle12Hutc",
+   "native_symbol": "BNB-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle15m",
+   "native_symbol": "BNB-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1Dutc",
+   "native_symbol": "BNB-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1H",
+   "native_symbol": "BNB-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "BNB-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1Wutc",
+   "native_symbol": "BNB-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle2Dutc",
+   "native_symbol": "BNB-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle2H",
+   "native_symbol": "BNB-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle30m",
+   "native_symbol": "BNB-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle3Dutc",
+   "native_symbol": "BNB-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle3m",
+   "native_symbol": "BNB-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle4H",
+   "native_symbol": "BNB-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle5m",
+   "native_symbol": "BNB-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle6Hutc",
+   "native_symbol": "BNB-USDT-SWAP"
+  },
+  {
+   "feed": "BOOK",
+   "lane_shard": 1,
+   "native_channel": "books",
+   "native_symbol": "BNB-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "BNB-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "BNB-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "BNB-USDT-SWAP"
+  },
+  {
+   "feed": "TRADE",
+   "lane_shard": 2,
+   "native_channel": "trades",
+   "native_symbol": "BNB-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle12Hutc",
+   "native_symbol": "BTC-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle15m",
+   "native_symbol": "BTC-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1Dutc",
+   "native_symbol": "BTC-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1H",
+   "native_symbol": "BTC-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1Wutc",
+   "native_symbol": "BTC-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle2Dutc",
+   "native_symbol": "BTC-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle2H",
+   "native_symbol": "BTC-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle30m",
+   "native_symbol": "BTC-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle3Dutc",
+   "native_symbol": "BTC-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle3m",
+   "native_symbol": "BTC-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle4H",
+   "native_symbol": "BTC-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle5m",
+   "native_symbol": "BTC-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle6Hutc",
+   "native_symbol": "BTC-USDT-SWAP"
+  },
+  {
+   "feed": "BOOK",
+   "lane_shard": 1,
+   "native_channel": "books",
+   "native_symbol": "BTC-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "BTC-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "BTC-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "BTC-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "BTC-USDT-SWAP"
+  },
+  {
+   "feed": "TRADE",
+   "lane_shard": 2,
+   "native_channel": "trades",
+   "native_symbol": "BTC-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle12Hutc",
+   "native_symbol": "DOGE-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle15m",
+   "native_symbol": "DOGE-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1Dutc",
+   "native_symbol": "DOGE-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1H",
+   "native_symbol": "DOGE-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "DOGE-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1Wutc",
+   "native_symbol": "DOGE-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle2Dutc",
+   "native_symbol": "DOGE-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle2H",
+   "native_symbol": "DOGE-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle30m",
+   "native_symbol": "DOGE-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle3Dutc",
+   "native_symbol": "DOGE-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle3m",
+   "native_symbol": "DOGE-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle4H",
+   "native_symbol": "DOGE-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle5m",
+   "native_symbol": "DOGE-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle6Hutc",
+   "native_symbol": "DOGE-USDT-SWAP"
+  },
+  {
+   "feed": "BOOK",
+   "lane_shard": 1,
+   "native_channel": "books",
+   "native_symbol": "DOGE-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "DOGE-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "DOGE-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "DOGE-USDT-SWAP"
+  },
+  {
+   "feed": "TRADE",
+   "lane_shard": 2,
+   "native_channel": "trades",
+   "native_symbol": "DOGE-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle12Hutc",
+   "native_symbol": "ETH-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle15m",
+   "native_symbol": "ETH-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1Dutc",
+   "native_symbol": "ETH-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1H",
+   "native_symbol": "ETH-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "ETH-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1Wutc",
+   "native_symbol": "ETH-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle2Dutc",
+   "native_symbol": "ETH-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle2H",
+   "native_symbol": "ETH-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle30m",
+   "native_symbol": "ETH-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle3Dutc",
+   "native_symbol": "ETH-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle3m",
+   "native_symbol": "ETH-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle4H",
+   "native_symbol": "ETH-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle5m",
+   "native_symbol": "ETH-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle6Hutc",
+   "native_symbol": "ETH-USDT-SWAP"
+  },
+  {
+   "feed": "BOOK",
+   "lane_shard": 1,
+   "native_channel": "books",
+   "native_symbol": "ETH-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "ETH-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "ETH-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "ETH-USDT-SWAP"
+  },
+  {
+   "feed": "TRADE",
+   "lane_shard": 2,
+   "native_channel": "trades",
+   "native_symbol": "ETH-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle12Hutc",
+   "native_symbol": "SOL-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle15m",
+   "native_symbol": "SOL-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1Dutc",
+   "native_symbol": "SOL-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1H",
+   "native_symbol": "SOL-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "SOL-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1Wutc",
+   "native_symbol": "SOL-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle2Dutc",
+   "native_symbol": "SOL-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle2H",
+   "native_symbol": "SOL-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle30m",
+   "native_symbol": "SOL-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle3Dutc",
+   "native_symbol": "SOL-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle3m",
+   "native_symbol": "SOL-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle4H",
+   "native_symbol": "SOL-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle5m",
+   "native_symbol": "SOL-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle6Hutc",
+   "native_symbol": "SOL-USDT-SWAP"
+  },
+  {
+   "feed": "BOOK",
+   "lane_shard": 1,
+   "native_channel": "books",
+   "native_symbol": "SOL-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "SOL-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "SOL-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "SOL-USDT-SWAP"
+  },
+  {
+   "feed": "TRADE",
+   "lane_shard": 2,
+   "native_channel": "trades",
+   "native_symbol": "SOL-USDT-SWAP"
+  },
+  {
+   "feed": "BOOK",
+   "lane_shard": 1,
+   "native_channel": "books",
+   "native_symbol": "BTC-USD-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "BTC-USD"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "BTC-USD-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "BTC-USD-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "AAVE-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "AAVE-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "AAVE-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "ADA-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "ADA-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "ADA-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "ARB-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "ARB-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "ARB-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "AVAX-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "AVAX-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "AVAX-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "BCH-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "BCH-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "BCH-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "ENA-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "ENA-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "ENA-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "FIL-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "FIL-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "FIL-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "LINK-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "LINK-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "LINK-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "NEAR-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "NEAR-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "NEAR-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "ONDO-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "ONDO-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "ONDO-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "PENGU-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "PENGU-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "PENGU-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "PEPE-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "PEPE-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "PEPE-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "PUMP-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "PUMP-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "PUMP-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "SUI-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "SUI-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "SUI-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "TAO-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "TAO-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "TAO-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "TIA-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "TIA-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "TIA-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "UNI-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "UNI-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "UNI-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "WLD-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "WLD-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "WLD-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "XRP-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "XRP-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "XRP-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "ZEC-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "ZEC-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "ZEC-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "AAVE-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "ADA-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "ALGO-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "APE-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "APT-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "ARB-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "ASTER-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "ATOM-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "AUCTION-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "AVAX-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "AXS-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "BAND-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "BAT-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "BCH-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "BIO-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "BOME-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "BONK-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "CFX-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "CHZ-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "COMP-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "CRV-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "DASH-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "DOT-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "DYDX-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "EGLD-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "ENA-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "ENJ-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "ETC-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "FIL-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 1,
+   "native_channel": "candle1m",
+   "native_symbol": "FLOKI-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "GALA-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "GAS-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "GMT-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "HBAR-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "ICP-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "INJ-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "IOST-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "IOTA-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "KITE-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "KSM-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "LDO-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "LINK-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "LTC-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "MAGIC-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "MANA-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "MASK-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "NEAR-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "NEIRO-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "NEO-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "NOT-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "ONDO-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "ONE-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "ONT-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "OP-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "ORDI-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "PENDLE-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "PENGU-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "PEOPLE-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "PEPE-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "PNUT-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "PUMP-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "QTUM-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "S-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "SAND-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "SEI-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "SHIB-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "STRK-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "STX-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "SUI-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "SUSHI-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "TAO-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "THETA-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "TIA-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "TRB-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "TRUMP-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "TRX-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "UNI-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "WIF-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "WLD-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "WLFI-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "XLM-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "XPL-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "XRP-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "XTZ-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "YFI-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "YGG-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "ZEC-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "ZEN-USDT-SWAP"
+  },
+  {
+   "feed": "BAR",
+   "lane_shard": 2,
+   "native_channel": "candle1m",
+   "native_symbol": "ZIL-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "ALGO-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "ALGO-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "ALGO-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "APE-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "APE-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "APE-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "APT-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "APT-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "APT-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "ASTER-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "ASTER-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "ASTER-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "ATOM-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "ATOM-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "ATOM-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "AUCTION-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "AUCTION-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "AUCTION-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "AXS-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "AXS-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "AXS-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "BAND-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "BAND-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "BAND-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "BAT-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "BAT-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "BAT-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "BIO-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "BIO-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "BIO-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "BOME-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "BOME-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "BOME-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "BONK-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "BONK-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "BONK-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "CFX-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "CFX-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "CFX-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "CHZ-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "CHZ-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "CHZ-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "COMP-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "COMP-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "COMP-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "CRV-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "CRV-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "CRV-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "DASH-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "DASH-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "DASH-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "DOT-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "DOT-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "DOT-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "DYDX-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "DYDX-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "DYDX-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "EGLD-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "EGLD-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "EGLD-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "ENJ-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "ENJ-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "ENJ-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "ETC-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "ETC-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "ETC-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "FET-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "FET-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "FET-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "index-tickers",
+   "native_symbol": "FLOKI-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 4,
+   "native_channel": "mark-price",
+   "native_symbol": "FLOKI-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "FLOKI-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "GALA-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "GALA-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "GALA-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "GAS-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "GAS-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "GAS-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "GMT-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "GMT-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "GMT-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "HBAR-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "HBAR-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "HBAR-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "ICP-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "ICP-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "ICP-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "INJ-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "INJ-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "INJ-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "IOST-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "IOST-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "IOST-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "IOTA-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "IOTA-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "IOTA-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "KITE-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "KITE-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "KITE-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "KSM-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "KSM-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "KSM-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "LDO-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "LDO-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "LDO-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "LTC-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "LTC-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "LTC-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "LUNA-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "LUNA-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "LUNA-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "MAGIC-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "MAGIC-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "MAGIC-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "MANA-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "MANA-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "MANA-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "MASK-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "MASK-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "MASK-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "NEIRO-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "NEIRO-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "NEIRO-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "NEO-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "NEO-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "NEO-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "NOT-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "NOT-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "NOT-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "ONE-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "ONE-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "ONE-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "ONT-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "ONT-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "ONT-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "OP-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "OP-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "OP-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "ORDI-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "ORDI-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "ORDI-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "PENDLE-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "PENDLE-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "PENDLE-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "PEOPLE-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "PEOPLE-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "PEOPLE-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "PNUT-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "PNUT-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "PNUT-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "QTUM-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "QTUM-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "QTUM-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "S-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "S-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "S-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "SAND-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "SAND-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "SAND-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "SEI-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "SEI-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "SEI-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "SHIB-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "SHIB-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "SHIB-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "STRK-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "STRK-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "STRK-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "STX-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "STX-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "STX-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "SUSHI-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "SUSHI-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "SUSHI-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "THETA-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "THETA-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "THETA-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "TRB-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "TRB-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "TRB-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "TRUMP-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "TRUMP-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "TRUMP-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "TRX-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "TRX-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "TRX-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "WIF-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "WIF-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "WIF-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "WLFI-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "WLFI-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "WLFI-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "XLM-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "XLM-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "XLM-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "XPL-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "XPL-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "XPL-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "XTZ-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "XTZ-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "XTZ-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "YFI-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "YFI-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "YFI-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "YGG-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "YGG-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "YGG-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "ZEN-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "ZEN-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "ZEN-USDT-SWAP"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "index-tickers",
+   "native_symbol": "ZIL-USDT"
+  },
+  {
+   "feed": "MARK_INDEX",
+   "lane_shard": 5,
+   "native_channel": "mark-price",
+   "native_symbol": "ZIL-USDT-SWAP"
+  },
+  {
+   "feed": "QUOTE",
+   "lane_shard": 3,
+   "native_channel": "bbo-tbt",
+   "native_symbol": "ZIL-USDT-SWAP"
+  }
+ ],
+ "max_subscriptions_per_connection": 100,
+ "schema": "dl-def-l.ingestor-lane-fixture.v1",
+ "source": "live ingestor_okx_swap /runtime/config.json, read-only 2026-11-26",
+ "source_sha256": "1ca07ba6d40b4eae69422699a9a8d332ec5f135772122e53583f2c3c6de9e258"
+}

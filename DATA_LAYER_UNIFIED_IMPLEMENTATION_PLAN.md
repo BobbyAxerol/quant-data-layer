@@ -80335,3 +80335,82 @@ the session the detector had just created to cure staleness, before that session
 - No image, no deploy, not pushed.
 - Rollout later: an ingestor_okx_swap image of the bundle, recreated with its own config (no config change needed;
   the defaults apply). Rollback is the current image `sha256:e628fbe0…`.
+
+### DL-DEF-2026-11-26-L, class fix: OKX execution QUOTEs spread over three sessions; Rust tests green (tested locally) - 2026-11-26 (Claude)
+
+**Deeper RCA** (read-only; `ingestor_okx_swap` logs 11-24 00:46Z to 11-26 13:05Z; earlier logs rotated, so 11-19..11-24 is
+UNAVAILABLE).
+- **Topology:** one OKX public session, okx-public-003, carried all 97 execution QUOTE subscriptions (bbo-tbt; 97 of
+  100 slots). Each instrument had exactly one QUOTE subscription.
+- **Lag rises with that session's message rate** (21,697 windows of 10 s; host stalls excluded):
+
+  | Frames/s | Windows with lag > 1 s | With lag > 2 s |
+  |---|---|---|
+  | < 800 | < 0.1 % | < 0.05 % |
+  | 1,100–1,500 | 1.5 % | 0.6 % |
+  | 1,500–2,000 | 12 % | 2.9 % |
+  | 2,000–3,000 | 48 % | 19 % |
+  | > 3,000 | 100 % | 100 % |
+
+- **Spikes cluster at market bursts** (:30–:37, :00–:01, :45), not at resubscribe. Frames are small (p50 112 bytes).
+- **Lane 003 against the rest:** 182 generations, 179 recycles, 246 cap hits and 55 windows over 2 s in 60 h. The
+  other six OKX lanes had 9–13 generations each (notices and read errors). Their lag is UNAVAILABLE because the
+  detector only measures all-quote lanes, and their read gaps stayed normal at every lane-003 spike.
+- **Separate host stall class:** 11-25 05:56, 06:01 (123 s) and 11:31, on all lanes.
+- **Unresolved:** venue per-connection throughput versus our 1 vCPU reader. Cumulative cgroup throttling is 35k
+  periods. A 1 s sampler (13:22–15:05Z) measures the burst windows.
+
+**Fix (owner option b, 2026-11-26):** all 97 quotes are kept and spread over 3 sessions. Reducing the set is parked,
+to go with a PM scope narrowing: the union of orderable contracts in the TS head is 96 plus BTC-USD-SWAP, so nothing
+can be dropped today.
+- **`qdl/runtime/ingestor_lanes.py` `spread_lane_pins`:** a deterministic, declared migration of one feed of one
+  scope over N lanes.
+  - Target lanes are the current shards plus new numbers above the scope's.
+  - Tier-A names are dealt round robin; the rest go, in sha256 order, to the least-loaded lane.
+  - It is idempotent, refuses a plan over the subscription limit, and other feeds keep their pins.
+- **`sticky_lane_pins`:** a new binding of a balanced feed (QUOTE) goes to the least-loaded lane, so growth does not
+  refill one session.
+- **`scripts/dl_declaration.py`, `ingestor.lane_spread`:** validated in `load_declaration`. The render writes
+  `ingestor/<file>.lane-migration.json` (`qdl.v2.ingestor-lane-migration.v1`: base sha256, the spread spec, every
+  move). The lane-stability rules in render and gate allow exactly the recorded moves and check every moved binding
+  is on its recorded lane. Other moves are still refused.
+- **Rust:** no lane code change. The ingestor already groups pinned bindings by (service, shard) and gives every
+  all-quote lane its own IDR-112 detector, now with the DEF-L probation (`ae1fe944`, `93aef0c6`, `cdd31043`).
+- **OKX limits** (docs-v5, "WebSocket / Connect" and "Connection count limit", read 2026-11-26):
+  - "3 requests per second (based on IP)" for connects;
+  - 480 subscribe, unsubscribe and login requests per connection per hour;
+  - "the total length of multiple channels cannot exceed 64 KB" per subscribe request;
+  - 30 connections per channel per sub-account.
+
+  Three quote sessions of 32–33 sit far inside all of these.
+- **Declaration render** (offline, r11 on the live r10 set, ingestor only):
+  - lanes okx-public-003 / 006 / 007 hold 33 / 32 / 32;
+  - 64 moves (3 → 6 or 7);
+  - `config_revision` stays 23 for every binding, so per-binding lineage is unchanged;
+  - consumer manifests, realms, catalogue, acquisition, cores and bar_edge are byte-identical;
+  - gate PASS.
+
+  No checkpoint is stranded: QUOTE is latest state and has no bar or book checkpoint, and the book fence keys only on
+  BOOK lanes.
+
+**Dual-session redundancy for tier-A (design note, not implemented).**
+- Subscribe each tier-A instrument's bbo-tbt on two sessions of different lanes, with the ingestor or core emitting
+  the frame with the newer venue `ts` per binding (latest state; equal `ts` → first arrival).
+- Needs:
+  - per-binding duplicate suppression that keeps ordering and revision semantics;
+  - a lane-aware staleness detector that keeps one session alive while the other recycles;
+  - double the subscriptions for those names;
+  - certification of the merge against both sessions.
+- This is a DL release item, worth doing if lag persists after the split.
+
+**Tests:**
+- **Rust,** heavy slot, `qdl-rust-builder:1.82.0-v2.3.2`, offline, tree `cdd31043`: `cargo fmt --check` OK;
+  `cargo test -p qdl-kafka --bin qdl-native-raw-ingestor` 87 passed, 0 failed, 1 ignored (the live-network OKX
+  smoke); `cargo clippy --all-targets -D warnings` OK. The 6 DEF-L tests (5 unit, 1 end-to-end) pass, and the
+  existing IDR-112 tests pass unchanged.
+- **Python,** light slots, `qdl-v2-python:2.4.3.1-b8935d1`: `test_dl_def_l_quote_lane_spread` 7 OK (live topology,
+  balanced 33/32/32 on new shards 6 and 7, tier-A dealt, deterministic under shuffles, idempotent, sticky balanced
+  growth, limit refusal); `test_v230_ingestor_lanes` 6 OK; `test_v230_declaration_tool` 29 OK (8 skipped);
+  `test_dl_v242_instrument_retirement` 10 OK; `test_dl_v242_instrument_unavailable` 14 OK;
+  `test_dl_v240_ts_funding_entitlement` 14 OK; `test_v231_stage_c_binance_signal` 7 OK.
+- Not pushed, no image yet, not deployed.

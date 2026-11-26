@@ -170,6 +170,7 @@ REFERENCE_FEEDS = frozenset({"FUNDING_RATE"})
 # per-venue freshness (OKX 8 h, Binance 9 h: the alpha-binance / reference-l2 rows).
 # Declared token -> (feed, interval, freshness per venue). ``MARK_INDEX_PRICE@1m`` is the historical 1m MARK candle
 # read (OKX only: settled Binance funding rows carry markPrice), ALPHA grade like FUNDING_RATE.
+LANE_MIGRATION_SCHEMA = "qdl.v2.ingestor-lane-migration.v1"
 EXECUTION_REFERENCE = {
     "FUNDING_RATE": ("FUNDING_RATE", None, {"OKX": 28_800_000, "BINANCE": 32_400_000}),
     "MARK_INDEX_PRICE@1M": ("MARK_INDEX_PRICE", "1m", {"OKX": 28_800_000}),
@@ -358,6 +359,16 @@ def load_declaration(path: Path) -> dict[str, Any]:
         bar_edge["live_checkpoint"] = resolve(bar_edge["live_checkpoint"])
     payload["bar_edge"] = bar_edge
     payload["ingestor"] = dict(payload.get("ingestor") or {})
+    # DL-DEF-2026-11-26-L: a declared, one-time spread of one feed over N lanes
+    # (``ingestor_lanes.spread_lane_pins``), the only declared lane move.
+    spreads = payload["ingestor"].get("lane_spread") or []
+    if not isinstance(spreads, list) or any(
+            not isinstance(item, dict) or set(item) - {"runtime", "scope", "feed", "lanes", "first", "reason"}
+            or not {"runtime", "scope", "feed", "lanes", "reason"} <= set(item)
+            or not isinstance(item["lanes"], int) or isinstance(item["lanes"], bool) or not 1 <= item["lanes"] <= 16
+            or not str(item["reason"]).strip()
+            for item in spreads):
+        raise DeclarationRefused("ingestor.lane_spread must be a list of {runtime, scope, feed, lanes, reason, first?}")
     payload["capacity"] = dict(payload.get("capacity") or {})
     payload.setdefault("accept_set", True)
     payload.setdefault("environment", "paper")
@@ -1583,12 +1594,34 @@ class Render:
                 if pinned["bindings"] != active["bindings"]:
                     successor = pinned
                     changed = True
+            lane_moves: list[dict[str, Any]] = []
+            spreads = [item for item in self.declaration["ingestor"].get("lane_spread") or []
+                       if str(item["runtime"]).upper() == runtime_name]
+            for spec in spreads:
+                if not pins_on:
+                    raise DeclarationRefused("ingestor.lane_spread needs lane_pins")
+                now = ingestor_lanes.current_lane_assignment(runtime_name, successor["bindings"], cap)
+                spread, moves = ingestor_lanes.spread_lane_pins(
+                    runtime_name, successor["bindings"], now, scope=str(spec["scope"]),
+                    feed=str(spec["feed"]).upper(), lanes=int(spec["lanes"]), max_subscriptions=cap,
+                    first=[str(v) for v in spec.get("first") or []])
+                if moves:
+                    successor = ingestor_lanes.apply_lane_pins(successor, spread)
+                    changed = True
+                    lane_moves.extend(dict(m, reason=str(spec["reason"])) for m in moves)
+            moved = {m["binding"] for m in lane_moves}
             assignment = ingestor_lanes.current_lane_assignment(runtime_name, successor["bindings"], cap)
             lanes_after = ingestor_lanes.lane_plan_report(runtime_name, successor["bindings"], assignment)
             for name, value in lanes_before.items():
                 after = lanes_after.get(name)
-                if after is None or after["feed"] != value["feed"] or not set(value["members"]) <= set(after["members"]):
+                if after is None or after["feed"] != value["feed"] or not (set(value["members"]) - moved) <= set(
+                        after["members"]):
                     raise DeclarationRefused(f"{file_name} lane {name} is not stable across the declaration")
+            if lane_moves:
+                record = {"schema": LANE_MIGRATION_SCHEMA, "ingestor": file_name,
+                          "before_sha256": _sha256_bytes(active_raw), "spread": spreads, "moves": lane_moves}
+                self.files[f"ingestor/{Path(file_name).stem}.lane-migration.json"] = (
+                    json.dumps(record, indent=2, sort_keys=True) + "\n").encode()
             if flush:
                 if successor.get("latest_state_flush_ms_by_feed") != flush:
                     successor["latest_state_flush_ms_by_feed"] = dict(sorted(flush.items()))
@@ -1602,6 +1635,7 @@ class Render:
                 "lane_plan": "PINNED" if pins_on else "POSITIONAL",
                 "lanes": {name: {"feed": v["feed"], "members": len(v["members"])} for name, v in lanes_after.items()},
                 "new_lanes": sorted(set(lanes_after) - set(lanes_before)),
+                "lane_moves": len(lane_moves),
                 "latest_state_flush_ms_by_feed": successor.get("latest_state_flush_ms_by_feed"),
                 "session_liveness_write_interval_ms": successor.get("session_liveness_write_interval_ms"),
                 "max_subscriptions_per_connection": cap,
@@ -2455,9 +2489,21 @@ def gate(rendered: Path) -> dict[str, Any]:
             assignment = ingestor_lanes.current_lane_assignment(runtime_name, new["bindings"], cap)
             ingestor_lanes.validate_lane_plan(runtime_name, new["bindings"], assignment, cap)
             after = ingestor_lanes.lane_plan_report(runtime_name, new["bindings"], assignment)
+            # DL-DEF-2026-11-26-L: only moves named in the rendered lane-migration record are allowed.
+            record_path = rendered / "ingestor" / f"{Path(file_name).stem}.lane-migration.json"
+            declared: dict[str, int] = {}
+            if record_path.is_file():
+                record = json.loads(record_path.read_text())
+                if record.get("schema") != LANE_MIGRATION_SCHEMA or record.get("before_sha256") != _sha256_file(
+                        Path(base_path)):
+                    role_problems.append(f"{file_name}: lane migration record does not match the base file")
+                declared = {m["binding"]: int(m["to"]) for m in record.get("moves") or []}
+                wrong = sorted(k for k, to in declared.items() if assignment.get(k) != to)
+                if wrong:
+                    role_problems.append(f"{file_name}: moved bindings not on their recorded lane: {wrong[:5]}")
             for lane, value in before.items():
-                if lane not in after or after[lane]["feed"] != value["feed"] or not set(value["members"]) <= set(
-                        after[lane]["members"]):
+                if lane not in after or after[lane]["feed"] != value["feed"] or not (
+                        set(value["members"]) - set(declared)) <= set(after[lane]["members"]):
                     role_problems.append(f"{file_name}: lane {lane} not stable")
         except ValueError as error:
             role_problems.append(f"{file_name}: {error}")
