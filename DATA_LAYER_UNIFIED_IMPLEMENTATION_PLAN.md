@@ -80270,3 +80270,65 @@ Impacted modules, light slot, 305 OK, 1 skipped:
   read-only and armed nothing.
   - Its dry run against the 2026-11-26 00:00Z incident read the market cache directly and reproduced the RCA:
     OKX 1h p50 184 s, max 287 s; OKX 12h max 385 s.
+
+### DL-DEF-2026-11-26-J: the alpha binding compiler honours consumer-manifest selector grants (tested locally) - 2026-11-26 (Claude)
+
+**Registered here: DL-DEF-2026-11-26-J.** Found while preparing the Crossec owner50 preview
+(`~/.local/state/trading-system/paper-hosting/TS_TO_HOSTED_ALPHA_CROSSEC_OWNER50_IDENTITY_AND_DELTA_PREVIEW_20261126.md`).
+
+**Defect.** `scripts/compile_alpha_deployment_bindings.py` resolved a reference feed (FUNDING_RATE, CONTRACT_METADATA, ...)
+only from catalogue bindings or the explicit `spec.requirements` of `--reference-manifest`. Since DL v2.3.0 the shared
+consumer grants Crossec's FUNDING_RATE through universe **selectors** (`okx-swap-crossec-94` in `alpha.okx.paper.stable`
+r17/r18), which the compiler never expanded. So, with the DL-DEF-F compiler (86793b4), the unchanged Crossec revision-6
+inventory (`00c952f6...`) compiled BLOCKED `CAPABILITY_UNAVAILABLE:FUNDING_RATE:crypto_liquid_v2`, although the data plane
+serves it. The compiler also never checked that a route was granted at all, so a bound but ungranted route (the 7 owner50
+contracts' BAR 1h on r18, refused live with PERMISSION_DENIED) could compile ADMITTED.
+
+**Fix** (one file, opt-in, old behaviour byte-identical without the option).
+- `--consumer-manifest PATH` (repeatable) and `--universe-dir` (default `<catalog dir>/universes`, the runtime default).
+  `load_consumer_manifests` loads each manifest exactly as the runtime does (`ConsumerManifestLoader` +
+  `SelectorContext.from_catalog(StableSourceCatalog.load(catalog))`, as in `qdl/runtime/stable.py` `load_stable_manifests`).
+- Per deployment the manifest of its subject (`alpha.<venue>.<mode>.stable`) is required (`CONSUMER_MANIFEST_UNAVAILABLE`).
+- Each route is checked on the data-plane index key (instrument_uid, feed, interval, source policy;
+  `ConsumerManifest.requirement_allowed`): an ungranted route is BLOCKED `CONSUMER_ENTITLEMENT_UNAVAILABLE:<feed>:<interval>:<policy>`.
+  Request-time fields (grade, event recency, session liveness) stay a runtime check.
+- A granted reference feed counts as served on the reference path; a granted BAR/QUOTE still needs its catalogue binding
+  (the grant is an entitlement, not a capability).
+- The report gains `consumer_manifests` (id, revision, loader sha256, row count, the loader's selector expansion records)
+  only when the option is used.
+
+**Tests.** `tests/test_dl_def_j_compiler_selector_grants.py`, 7 OK. Fixtures: the hosted revision-6 inventory and the
+digests of the deployed revision-6 binding (`540c7d87...`) in `tests/fixtures/dl_def_j_crossec/`; the stage C r8 evidence
+(catalogue, r17 realm, universes) already in the repository.
+- The defect reproduced without the option (FUNDING BLOCKED).
+- Revision 6 compiles to the deployed binding modulo the DL-DEF-F consumer_id: same header, same 282 products digest
+  (`9b51d7eb...` with consumer_id removed), `binding_sha256` `bc956d82...`; the CLI gives the same bytes.
+- +7 (HYPE, LIT, ZRO, MUBARAK, GRASS, USELESS, CAP) with a 7-member universe granted by the same 5 selectors and BAR 1h/12h
+  bindings present: ADMITTED, 303 products, a strict superset of revision 6, no workaround.
+- +7 granted but on the real catalogue: still BLOCKED `CAPABILITY_UNAVAILABLE:BAR:crypto_primary_v2`.
+- +7 bound but not granted: BLOCKED `CONSUMER_ENTITLEMENT_UNAVAILABLE:BAR:...` (the row the data plane refuses).
+- Missing subject manifest: typed BLOCKED.
+Impacted modules, light slot, one container each: test_alpha_deployment_bindings 8 OK, test_alpha_reader_release 4 OK.
+
+**Live-input check** (TS-side, running catalogue r17 `635237bd...`, realm r18): revision 6 ADMITTED `bc956d82...` (282);
+parent94+7 BLOCKED on BAR with r18 and with the r19-add7 preview; with the preview BAR overlay `f28d3c92...` (303) and
+owner50-exec43 `0e245dda...` (129), the same bytes as the earlier workaround compile.
+
+**What an r11 declaration must add before the +7 binding compiles on the real catalogue:** for each of the 7, BAR 1m
+RUST_NATIVE (the derivation parent), BAR 1h and 12h DERIVED_FINAL (`require_final_bar`, crypto_primary_v2) catalogue and
+acquisition bindings; the `alpha.okx.paper.stable` grants (a universe + 5 selectors: 1m, 1h, 12h, FUNDING_RATE,
+CONTRACT_METADATA); and for TS execution QUOTE + MARK_INDEX_PRICE bindings with the `trading-system.paper.stable` rows.
+Preview: `~/.local/state/trading-system/paper-hosting/crossec-owner50-preview/dl-delta/`.
+
+### DL-BL-2026-11-26-K: instrument lifecycle observation API (OPEN feature item, not implemented) - 2026-11-26 (Claude)
+
+**Registered here: DL-BL-2026-11-26-K**, open. Proposal:
+`~/.local/state/trading-system/paper-hosting/crossec-owner50-preview/dl-delta/DL_FEATURE_NOTE_INSTRUMENT_LIFECYCLE_OBSERVATION.md`.
+- Gap: DL publishes no lifecycle observation. `InstrumentView.status` is the record default ACTIVE
+  (`qdl/domain/instrument.py:99`; the catalogue serialiser `qdl/runtime/production_catalog.py:623-649` emits no status);
+  there is no effective/observed time, event id/hash or history; delisting is a render-time retire
+  (`scripts/dl_declaration.py:313-331`, `scripts/catalog_venue_listing_gate.py`). SDK `HALTED` is feed quality only.
+- Proposed contract: append-only, hash-chained `GET /v2/instruments/{uid}/lifecycle` (`qdl.instrument-lifecycle.v1`) with
+  status, venue-stated `effective_utc`, `observed_utc`, evidence capture hash, catalogue and source revision; retired uids
+  stay resolvable; fed from the venue-listing captures the declaration gate already takes. A DL outage never produces an event.
+- Requested by hosted Crossec (owner50 request item 4). Owner prioritisation pending.

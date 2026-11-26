@@ -1,0 +1,34 @@
+{
+ "binding_file_sha256": "60258a5508107ed2d24ce1dd4d363cde25cc5b1de259a39051fca5b0a2bdf9ec",
+ "binding_sha256": "540c7d8793981f12173d67bbfabcc9b5f11815b630427482b7d0c969ce39055f",
+ "consumer_id": "alpha.crossec_ema_pfl_v1.okx.no-order",
+ "header": {
+  "capability_matrix": {
+   "revision": 5,
+   "sha256": "81347a88866a54ed99cfbf25979d8e5912c98084f97f8a997a608dc9e03af6bf"
+  },
+  "consumer_class": "PORTFOLIO_MULTI_SYMBOL",
+  "contract_version": "2.0.0",
+  "independent_v1_venues": [
+   "DNSE"
+  ],
+  "inventory_sha256": "00c952f655bae61640ec7cc259a105e377770c6a92b01905910d16ddb2b111c4",
+  "policy_sha256": "a736048370159a470041a9af73370d17d0698bad13cdcda545a2f1df31a55fb0",
+  "release_revision": 30,
+  "schema": "qdl.v2.consumer-route-binding.v1",
+  "universal_manifest_sha256": "144af5609981329d4930d5f1ff0ff4e8abd6e927bb4a42080c0a1284870e0534",
+  "v1_rollback": {
+   "image_reference": "qdl-v1-fallback:v1.2.4-2b0dcf7",
+   "manifest_revision": "v1.2.4-2b0dcf7",
+   "release_tag": "v1.2.4",
+   "source_commit": "2b0dcf74454c9f87c352d3c47389955aeb955804"
+  }
+ },
+ "product_consumer_ids": [
+  "alpha.crossec_ema_pfl_v1.okx.no-order"
+ ],
+ "products": 282,
+ "products_without_consumer_id_sha256": "9b51d7eba51c08b19045698ed13965ddadea3c4e74a5ac8b4fd38220859f8090",
+ "schema": "dl-def-j.deployed-binding-expectation.v1",
+ "source": "hosted Crossec revision 6 deployed binding (alpha-hosting-crossec-dl243-20261125/package-03/compiled-dl/v2.4.2), compiled by the v2.4.2 compiler before DL-DEF-2026-11-25-F"
+}
