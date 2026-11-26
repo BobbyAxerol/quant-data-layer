@@ -80519,3 +80519,44 @@ record and proof that nothing newer was committed.
 2. **Query typed passthrough.** `qdl/runtime/kn_hot_view.py` keeps only listed UNAVAILABLE details, so Query reports
    `HOT_QUIET_BEYOND_MAX` as `HOT_READER_UNAVAILABLE`. The gateway reason and metric are typed. Adding it to that list
    is a Query image change and stays out of this stream_kn-only slice.
+
+#### DL-DEF-2026-11-26-M addendum: dispatch decode cost measured, A/B base 2af353e vs afba2af (tested locally) - 2026-11-26 (Claude)
+
+**Method.**
+- New mode `examples/hot_path_profile.rs --test-only --dispatch-mix`. It uses only APIs that predate DEF-M, so the
+  same file was built in a temporary 2af353e worktree for the A side.
+- Each case runs 400,000 unsubscribed dispatches (worst case: the added decode is not shared with any fan-out) over
+  six partitions, with the production ring of 48 MiB / 6 per partition, warmed to its bound for the first 25%.
+- Envelopes carry every field the realtime core sets.
+- Thread CPU comes from `/proc/thread-self/schedstat`; dispatch latency is wall time per call.
+- Release build, `qdl-rust-builder:1.82.0-v2.3.2`, one `--rm --cpus 1 --memory 2g --network none` container per run.
+- Runs were interleaved base / new / base / new under the host measurement lock (17:50:48-17:51:35Z, released). Host
+  load was 22-26 from the runtime.
+
+**Live rates** (read-only, `docker logs` of the `qdl_kn_gateway_metrics` lines over 590 s at 17:4xZ): stream_kn_1 857
+records/s, 943 payload bytes/record, 0.127 cores in total; stream_kn_2 858 records/s, 0.172 cores. The metrics have no
+per-product split, so the 70/20/5/5 BAR/QUOTE/MARK/TRADE mix is **assumed**. Each product is also measured alone.
+
+**Results.** CPU is ns per 1,000 records; p50 and p99 are ns per dispatch; each cell is run 1 / run 2.
+
+| case (avg payload) | base CPU/1k | new CPU/1k | base p50 / p99 | new p50 / p99 |
+|---|---|---|---|---|
+| BAR-heavy 70/20/5/5 (664 B) | 1.17 / 1.12 ms | 4.28 / 4.29 ms | 1,040 / 1,920 · 990 / 1,800 | 4,300 / 6,170 · 4,330 / 6,130 |
+| BAR only (706 B) | 1.18 / 1.06 ms | 4.25 / 4.13 ms | 900 / 1,480 · 800 / 1,420 | 4,270 / 5,611 · 4,120 / 5,521 |
+| QUOTE only (577 B) | 1.11 / 1.09 ms | 3.54 / 3.51 ms | 830 / 1,420 · 811 / 1,400 | 3,471 / 4,661 · 3,340 / 4,741 |
+| MARK only (541 B) | 0.68 / 0.81 ms | 3.04 / 3.25 ms | 590 / 1,050 · 670 / 1,170 | 3,120 / 4,050 · 3,001 / 3,621 |
+| TRADE only (547 B) | 1.03 / 1.07 ms | 3.49 / 3.24 ms | 790 / 1,351 · 820 / 1,370 | 3,310 / 4,411 · 3,190 / 4,220 |
+
+**Projection.**
+- The extra cost is about 3.1 ms of CPU per 1,000 records for the mix: about 3.1 µs per record, mostly the protobuf
+  decode and drop.
+- Scaled to the live 943-byte average (×1.42 over the bench's 664 B), it is about 4.4 µs per record.
+- At 858 records/s that is about 3.8 ms of CPU per second, or **0.38% of one core** per stream_kn replica. A 10×
+  burst would be about 3.8%.
+- The added dispatch latency (about +3.3 µs p50, +4.3 µs p99) is small against the live commit→dispatch lag of
+  p50 ≤ 50 ms.
+- This is under the 5%-of-one-core threshold, so decoding only the kept products was **not** implemented. The option
+  remains: BAR is about 70% of records in the assumed mix and is never kept, so skipping its decode would remove most
+  of the cost.
+
+Status: `tested locally`. Microprofile, not capacity evidence. Not pushed, no image.

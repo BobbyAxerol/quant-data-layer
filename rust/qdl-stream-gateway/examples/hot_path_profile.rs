@@ -1,5 +1,11 @@
 //! Bounded TEST_ONLY microprofile of existing Hub APIs, not capacity evidence.
 //! Run with --release and --offline --locked, under the host measurement lock.
+//!
+//! `--test-only --dispatch-mix` runs only the DL-DEF-2026-11-26-M dispatch cost
+//! profile: unsubscribed dispatch of a BAR-heavy product mix over six
+//! partitions (thread CPU from `/proc/thread-self/schedstat`, per-call wall
+//! latency). It uses only APIs that predate DEF-M, so the same file measures
+//! the base tree for an A/B comparison.
 use prost::Message as _;
 use qdl_stream_gateway::generated::{marketdata_v2 as md, query_v2 as query};
 use qdl_stream_gateway::hub::{Hub, HubConfig, NearRegistration, RawRecord};
@@ -492,11 +498,265 @@ fn near_registration_checks() {
     assert_eq!(empty.subscriber_count(), 0);
     assert_eq!(hub.subscriber_count(), 0);
 }
-fn main() {
-    assert!(
-        std::env::args().skip(1).eq(["--test-only"]),
-        "explicit --test-only required"
+/// Products of the dispatch-mix profile (DL-DEF-2026-11-26-M).
+#[derive(Clone, Copy, Debug)]
+enum Product {
+    Bar,
+    Quote,
+    Mark,
+    Trade,
+}
+
+fn decimal(mantissa: i64, scale: i32) -> qdl_contracts::qdl::common::v1::DecimalValue {
+    qdl_contracts::qdl::common::v1::DecimalValue {
+        scale,
+        source_text: format!("{mantissa}e-{scale}"),
+        coefficient: Some(
+            qdl_contracts::qdl::common::v1::decimal_value::Coefficient::Mantissa(mantissa),
+        ),
+    }
+}
+
+/// A canonical record with every envelope field set the way the realtime
+/// core sets it (ids, hashes, versions, session scope), so payload sizes are
+/// near production (live stream_kn average: about 940 payload bytes).
+fn mix_record(partition: i32, offset: i64, id: usize, product: Product) -> RawRecord {
+    let now = now_ns();
+    let name = format!("TEST{id:04}-USDT-SWAP");
+    let payload = match product {
+        Product::Bar => md::event_envelope::Payload::Bar(md::Bar {
+            interval: "1m".into(),
+            open_time_ns: now - 60_000_000_000,
+            close_time_ns: now,
+            open: Some(decimal(1_234_567, 4)),
+            high: Some(decimal(1_235_567, 4)),
+            low: Some(decimal(1_233_567, 4)),
+            close: Some(decimal(1_234_967, 4)),
+            volume: Some(decimal(98_765_432, 3)),
+            trade_count: 321,
+            revision: 2,
+            base_volume: Some(decimal(98_765_432, 3)),
+            quote_volume: Some(decimal(1_219_876_543_210, 4)),
+            contract_volume: Some(decimal(9_876_543, 1)),
+            ..Default::default()
+        }),
+        Product::Quote => md::event_envelope::Payload::Quote(md::Quote {
+            bid_price: Some(decimal(1_234_567, 4)),
+            bid_quantity: Some(decimal(2_500, 1)),
+            ask_price: Some(decimal(1_234_667, 4)),
+            ask_quantity: Some(decimal(3_100, 1)),
+            level: 1,
+            ..Default::default()
+        }),
+        Product::Mark => md::event_envelope::Payload::MarkIndexPrice(md::MarkIndexPrice {
+            mark_price: Some(decimal(1_234_600, 4)),
+            index_price: Some(decimal(1_234_580, 4)),
+        }),
+        Product::Trade => md::event_envelope::Payload::Trade(md::Trade {
+            native_trade_id: format!("{}", 900_000_000_000 + offset),
+            price: Some(decimal(1_234_567, 4)),
+            quantity: Some(decimal(42, 0)),
+            ..Default::default()
+        }),
+    };
+    let event = md::EventEnvelope {
+        schema_name: format!("qdl.marketdata.v2.{product:?}Event"),
+        schema_major: 2,
+        schema_minor: 7,
+        event_id: format!("TEST_ONLY-{partition}-{offset}-{id:08}-0000000000000000").into_bytes(),
+        instrument_uid: uid(id),
+        instrument_id: format!("OKX:SWAP:{name}"),
+        instrument_revision: 4,
+        venue: "OKX".into(),
+        market: "SWAP".into(),
+        product_type: "PERPETUAL".into(),
+        native_symbol: name.clone(),
+        provider: "okx".into(),
+        source_id: format!("okx.swap.{product:?}.public.ws.v5"),
+        lease_epoch: 3,
+        source_event_time_ns: now,
+        received_at_ns: now,
+        normalized_at_ns: now,
+        published_at_ns: now,
+        source_sequence: format!("{}", 1_790_000_000_000_i64 + offset),
+        partition_sequence: offset as u64,
+        normalizer_version: "qdl-realtime-core/2.4.2".into(),
+        adapter_version: "okx-v5-ws/2.4.2".into(),
+        raw_payload_hash: vec![0xab; 32],
+        correlation_id: format!("TEST_ONLY-corr-{offset:016}-{id:08}"),
+        config_revision: 17,
+        source_session_id: "okx-public-003".into(),
+        connection_generation: 1311,
+        authority_revision: 9,
+        partition_plan_epoch: 1,
+        canonical_payload_hash: vec![0xcd; 32],
+        raw_capture_id: vec![0xef; 16],
+        payload: Some(payload),
+        ..Default::default()
+    };
+    RawRecord {
+        partition,
+        offset,
+        key: format!("{}/{product:?}/TEST_ONLY", uid(id)).into_bytes(),
+        payload: event.encode_to_vec(),
+        timestamp_ms: now / 1_000_000,
+    }
+}
+
+/// CPU time of the calling thread (ns), from the scheduler.
+fn thread_cpu_ns() -> u64 {
+    std::fs::read_to_string("/proc/thread-self/schedstat")
+        .ok()
+        .and_then(|text| text.split_whitespace().next()?.parse().ok())
+        .unwrap_or(0)
+}
+
+/// Unsubscribed dispatch of `records` records, products dealt by weight over
+/// the catalog key counts (v2.4.2-realm-ts16: 1,323 BAR, 104 QUOTE, 102
+/// MARK_INDEX_PRICE, 14 TRADE keys) and six partitions with the production
+/// per-partition ring (48 MiB / 6).
+fn dispatch_mix_profile(
+    label: &str,
+    weights: [(Product, usize, usize); 4],
+    records: usize,
+) -> Value {
+    let partitions: Vec<(i32, i64)> = (0..6).map(|p| (p, 0)).collect();
+    let hub = Hub::new(
+        &partitions,
+        HubConfig {
+            ring_max_bytes: (48 << 20) / 6,
+            ring_max_age: Duration::from_secs(120),
+            ..Default::default()
+        },
     );
+    let total_weight: usize = weights.iter().map(|(_, weight, _)| weight).sum();
+    let mut next = [0i64; 6];
+    let mut payload_bytes = 0usize;
+    let mut counts = [0usize; 4];
+    let fixture: Vec<RawRecord> = (0..records)
+        .map(|index| {
+            let mut slot = (index * 7919) % total_weight;
+            let mut chosen = 0;
+            for (position, (_, weight, _)) in weights.iter().enumerate() {
+                if slot < *weight {
+                    chosen = position;
+                    break;
+                }
+                slot -= weight;
+            }
+            let (product, _, keys) = weights[chosen];
+            counts[chosen] += 1;
+            let id = chosen * 10_000 + (index * 31) % keys.max(1);
+            let partition = (id % 6) as i32;
+            let offset = next[partition as usize];
+            next[partition as usize] += 1;
+            let raw = mix_record(partition, offset, id, product);
+            payload_bytes += raw.payload.len();
+            raw
+        })
+        .collect();
+    // Warm the ring to its byte bound first, so eviction runs as in production.
+    let warm = records / 4;
+    let mut samples = Vec::with_capacity(records - warm);
+    let mut iter = fixture.into_iter();
+    for raw in iter.by_ref().take(warm) {
+        hub.dispatch(raw);
+    }
+    let cpu = thread_cpu_ns();
+    let wall = Instant::now();
+    for raw in iter {
+        let start = Instant::now();
+        hub.dispatch(raw);
+        samples.push(start.elapsed().as_nanos() as u64);
+    }
+    let wall_ns = wall.elapsed().as_nanos() as u64;
+    let cpu_ns = thread_cpu_ns().saturating_sub(cpu);
+    let timed = samples.len() as u64;
+    samples.sort_unstable();
+    let pick =
+        |q: f64| samples[((samples.len() as f64 * q).ceil() as usize).clamp(1, samples.len()) - 1];
+    json!({"scenario": "dispatch_mix", "label": label, "records_timed": timed,
+        "mix": weights.iter().zip(counts).map(|((product, weight, keys), count)|
+            json!({"product": format!("{product:?}"), "weight": weight, "keys": keys, "records": count}))
+            .collect::<Vec<_>>(),
+        "avg_payload_bytes": payload_bytes / records.max(1),
+        "thread_cpu_ns_per_1k_records": cpu_ns * 1000 / timed.max(1),
+        "wall_ns_per_1k_records": wall_ns * 1000 / timed.max(1),
+        "dispatch_ns": {"p50": pick(0.50), "p99": pick(0.99), "max": samples[samples.len() - 1]},
+        "ring_bytes_after": hub.ring_bytes(),
+        "subscribers": 0,
+        "excludes": ["Kafka poll", "fan-out (no subscribers: the decode DEF-M adds is not shared)"]})
+}
+
+fn dispatch_mix_cases() -> Vec<Value> {
+    use Product::*;
+    let records = 400_000;
+    vec![
+        dispatch_mix_profile(
+            "bar_heavy_assumed_70_20_5_5",
+            [
+                (Bar, 70, 1323),
+                (Quote, 20, 104),
+                (Mark, 5, 102),
+                (Trade, 5, 14),
+            ],
+            records,
+        ),
+        dispatch_mix_profile(
+            "bar_only",
+            [
+                (Bar, 1, 1323),
+                (Quote, 0, 104),
+                (Mark, 0, 102),
+                (Trade, 0, 14),
+            ],
+            records,
+        ),
+        dispatch_mix_profile(
+            "quote_only",
+            [
+                (Bar, 0, 1323),
+                (Quote, 1, 104),
+                (Mark, 0, 102),
+                (Trade, 0, 14),
+            ],
+            records,
+        ),
+        dispatch_mix_profile(
+            "mark_only",
+            [
+                (Bar, 0, 1323),
+                (Quote, 0, 104),
+                (Mark, 1, 102),
+                (Trade, 0, 14),
+            ],
+            records,
+        ),
+        dispatch_mix_profile(
+            "trade_only",
+            [
+                (Bar, 0, 1323),
+                (Quote, 0, 104),
+                (Mark, 0, 102),
+                (Trade, 1, 14),
+            ],
+            records,
+        ),
+    ]
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args == ["--test-only", "--dispatch-mix"] {
+        println!(
+            "{}",
+            json!({"schema": "dl-def-m.dispatch-mix-profile.v1",
+            "provenance": "TEST_ONLY_STRUCTURAL_MICROPROFILE_NOT_PROVIDER_NOT_CAPACITY",
+            "cases": dispatch_mix_cases()})
+        );
+        return;
+    }
+    assert!(args == ["--test-only"], "explicit --test-only required");
     near_registration_checks();
     let mut cases = Vec::new();
     for fanout in [0, 1, 16, 64] {
