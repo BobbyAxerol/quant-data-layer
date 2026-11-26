@@ -80273,7 +80273,9 @@ Impacted modules, light slot, 305 OK, 1 skipped:
 
 ### DL-DEF-2026-11-26-J: the alpha binding compiler honours consumer-manifest selector grants (tested locally) - 2026-11-26 (Claude)
 
-**Registered here: DL-DEF-2026-11-26-J.** Found while preparing the Crossec owner50 preview
+**Registered here: DL-DEF-2026-11-26-J. Status: fixed on branch, certified by tests, NOT released; parked until the owner resumes rev7** (owner decision 2026-11-26 ~11:50Z: Crossec stays on revision 6, revision 7 / add7 parked). Fix commit `fdba06b1` on `fix/dl-def-j-compiler-selector-grants` (from `fix/v244-restore-incomplete-resume` 25aba8b); not pushed, not tagged, in no image. Certification: `tests/test_dl_def_j_compiler_selector_grants.py` 7 OK, `test_alpha_deployment_bindings` 8 OK, `test_alpha_reader_release` 4 OK (light slots, image `qdl-v2-python:2.4.3.1-b8935d1`, worktree source read-only). To resume: ship J in a released DL bundle, then the r11 render/reseal and its window packet.
+
+Found while preparing the Crossec owner50 preview
 (`~/.local/state/trading-system/paper-hosting/TS_TO_HOSTED_ALPHA_CROSSEC_OWNER50_IDENTITY_AND_DELTA_PREVIEW_20261126.md`).
 
 **Defect.** `scripts/compile_alpha_deployment_bindings.py` resolved a reference feed (FUNDING_RATE, CONTRACT_METADATA, ...)
