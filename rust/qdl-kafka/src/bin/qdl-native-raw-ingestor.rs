@@ -1590,7 +1590,8 @@ impl LaneTelemetry {
     fn staleness_action(&self, action: &'static str) {
         self.with(|state| {
             state.staleness_last_action = Some(action);
-            state.window.staleness_suppressed += u64::from(action != "RECYCLE");
+            state.window.staleness_suppressed +=
+                u64::from(!matches!(action, "RECYCLE" | "RECYCLE_SUCCESSOR_STALE"));
         });
     }
 
@@ -3618,6 +3619,14 @@ struct LatestStateStalenessConfig {
     cooldown_ms: u64,
     /// Recycles started in any rolling hour, per lane.
     max_recycles_per_hour: usize,
+    /// DL-DEF-2026-11-26-L: a session that follows a staleness recycle is on
+    /// probation until it proves freshness: this many consecutive non-stale
+    /// frames, from at least `min_bindings` distinct bindings.
+    successor_proof_frames: usize,
+    /// DL-DEF-2026-11-26-L: recycles a still-unproven successor may start
+    /// without waiting for the cooldown (0 = pre-L behaviour). The hourly cap
+    /// and the control budget still apply; a proof resets the count.
+    successor_retries: usize,
 }
 
 impl Default for LatestStateStalenessConfig {
@@ -3641,6 +3650,14 @@ impl Default for LatestStateStalenessConfig {
             min_baseline_buckets: 3,
             cooldown_ms: 60_000,
             max_recycles_per_hour: 6,
+            // DL-DEF-2026-11-26-L (12:01Z 2026-11-26, okx-public-003): the
+            // successor of a recycle was itself 4-8 s late for ~20 s and the
+            // 60 s cooldown suppressed the second recycle. 20 fresh frames is
+            // well under a second on a quote lane (~600-1100 frames/s) and two
+            // successor retries keep the per-lane worst case at 3 connects in
+            // a few seconds, inside the hourly cap and the control budget.
+            successor_proof_frames: 20,
+            successor_retries: 2,
         }
     }
 }
@@ -3656,6 +3673,8 @@ impl LatestStateStalenessConfig {
             && (1..=self.baseline_buckets).contains(&self.min_baseline_buckets)
             && (10_000..=3_600_000).contains(&self.cooldown_ms)
             && (1..=60).contains(&self.max_recycles_per_hour)
+            && (1..=10_000).contains(&self.successor_proof_frames)
+            && self.successor_retries <= 10
         {
             Ok(())
         } else {
@@ -3731,8 +3750,26 @@ struct StalenessObservation {
 #[derive(Debug, Eq, PartialEq)]
 enum RecycleDecision {
     Recycle,
-    Cooldown { remaining_ms: i64 },
-    Cap { recycles_last_hour: usize },
+    /// DL-DEF-2026-11-26-L: the session is the unproven successor of a
+    /// staleness recycle and is itself stale; recycle again without waiting
+    /// for the cooldown (bounded by `successor_retries` and the hourly cap).
+    SuccessorStale {
+        retry: usize,
+    },
+    Cooldown {
+        remaining_ms: i64,
+    },
+    Cap {
+        recycles_last_hour: usize,
+    },
+}
+
+/// DL-DEF-2026-11-26-L: freshness proof of the session that follows a
+/// staleness recycle (consecutive non-stale frames and their bindings).
+#[derive(Debug, Default)]
+struct SuccessorProbation {
+    fresh_frames: usize,
+    fresh_bindings: Vec<String>,
 }
 
 const STALENESS_CAP_WINDOW_MS: i64 = 3_600_000;
@@ -3780,6 +3817,14 @@ struct StalenessDetector {
     recycles: VecDeque<i64>,
     suppressed: u64,
     suppressed_logged_ms: Option<i64>,
+    /// DL-DEF-2026-11-26-L: a staleness recycle started and its successor
+    /// session has not started yet.
+    successor_pending: bool,
+    /// DL-DEF-2026-11-26-L: the current session is a recycle successor that
+    /// has not proven freshness yet.
+    probation: Option<SuccessorProbation>,
+    /// Successor recycles started since the last proven session.
+    successor_retries_used: usize,
 }
 
 impl StalenessDetector {
@@ -3801,6 +3846,9 @@ impl StalenessDetector {
             recycles: VecDeque::new(),
             suppressed: 0,
             suppressed_logged_ms: None,
+            successor_pending: false,
+            probation: None,
+            successor_retries_used: 0,
         }
     }
 
@@ -3816,8 +3864,17 @@ impl StalenessDetector {
     }
 
     /// A new session: stale frames of the previous one never count for it.
+    /// The session that follows a staleness recycle starts on probation
+    /// (DL-DEF-2026-11-26-L); any other session is trusted as before.
     fn session_started(&mut self) {
         self.stale.clear();
+        self.probation =
+            std::mem::take(&mut self.successor_pending).then(SuccessorProbation::default);
+    }
+
+    /// Whether the current session is a recycle successor still on probation.
+    fn on_probation(&self) -> bool {
+        self.probation.is_some()
     }
 
     fn observe_at(
@@ -3882,6 +3939,7 @@ impl StalenessDetector {
         }
         let excess_ms = lag_ms.saturating_sub(baseline_ms);
         let stale = excess_ms >= i64::try_from(self.config.excess_ms).unwrap_or(i64::MAX);
+        self.probation_frame(stale, binding);
         if stale {
             self.stale
                 .push_back((host_ms, binding.key(), lag_ms, excess_ms));
@@ -3924,6 +3982,30 @@ impl StalenessDetector {
         }
     }
 
+    /// DL-DEF-2026-11-26-L: one measured frame of a session on probation. A
+    /// stale frame restarts the proof; enough consecutive fresh frames from
+    /// enough bindings end the probation and reset the successor retries.
+    fn probation_frame(&mut self, stale: bool, binding: &RawBinding) {
+        let Some(probation) = self.probation.as_mut() else {
+            return;
+        };
+        if stale {
+            *probation = SuccessorProbation::default();
+            return;
+        }
+        probation.fresh_frames += 1;
+        let key = binding.key();
+        if !probation.fresh_bindings.contains(&key) {
+            probation.fresh_bindings.push(key);
+        }
+        if probation.fresh_frames >= self.config.successor_proof_frames
+            && probation.fresh_bindings.len() >= self.min_bindings
+        {
+            self.probation = None;
+            self.successor_retries_used = 0;
+        }
+    }
+
     /// Whether a detected trigger may start a recycle now. Pure check: the
     /// slot is taken by `recycle_started`, once the connection attempt is
     /// actually admitted (review F3), so a refusal further on (OKX control
@@ -3935,6 +4017,22 @@ impl StalenessDetector {
             .is_some_and(|at| *at <= host_ms.saturating_sub(STALENESS_CAP_WINDOW_MS))
         {
             self.recycles.pop_front();
+        }
+        // DL-DEF-2026-11-26-L: an unproven successor that is itself stale is
+        // recycled again at once (the cooldown protects against flapping a
+        // healthy lane, not against a successor that never became healthy);
+        // bounded by the successor retries and, below, the hourly cap.
+        let successor_retry =
+            self.on_probation() && self.successor_retries_used < self.config.successor_retries;
+        if successor_retry {
+            if self.recycles.len() >= self.config.max_recycles_per_hour {
+                return RecycleDecision::Cap {
+                    recycles_last_hour: self.recycles.len(),
+                };
+            }
+            return RecycleDecision::SuccessorStale {
+                retry: self.successor_retries_used + 1,
+            };
         }
         let cooldown_ms = i64::try_from(self.config.cooldown_ms).unwrap_or(i64::MAX);
         if let Some(last) = self.recycles.back() {
@@ -3959,6 +4057,11 @@ impl StalenessDetector {
         #[cfg(test)]
         test_slot_log::record(self.config.cooldown_ms, host_ms);
         self.recycles.push_back(host_ms);
+        // The next session is this recycle's successor (DL-DEF-2026-11-26-L).
+        if self.on_probation() {
+            self.successor_retries_used += 1;
+        }
+        self.successor_pending = true;
     }
 
     /// Rate limit for suppressed-trigger log lines: Some(count suppressed
@@ -4678,10 +4781,21 @@ async fn run_okx_service(
                                 }
                                 Err(_) => "SUPPRESSED_CONTROL_BUDGET",
                             },
+                            // DL-DEF-2026-11-26-L: the unproven successor is stale too.
+                            Some(RecycleDecision::SuccessorStale { .. }) => {
+                                match budget.permit(now_ns()?) {
+                                    Ok(()) => {
+                                        detector.recycle_started(host_ms);
+                                        "RECYCLE_SUCCESSOR_STALE"
+                                    }
+                                    Err(_) => "SUPPRESSED_CONTROL_BUDGET",
+                                }
+                            }
                         };
                         telemetry.staleness_action(action);
                         let mut successor_generation = None;
-                        if action == "RECYCLE" {
+                        let recycling = matches!(action, "RECYCLE" | "RECYCLE_SUCCESSOR_STALE");
+                        if recycling {
                             let next_generation = connection_generation(&generation_path).await?;
                             standby = Some(Box::pin(establish(next_generation)));
                             successor_generation = Some(next_generation);
@@ -4691,7 +4805,7 @@ async fn run_okx_service(
                                 successor_generation: next_generation,
                             });
                         }
-                        let suppressed = if action == "RECYCLE" {
+                        let suppressed = if recycling {
                             Some(0)
                         } else {
                             detector.suppressed_log_due(host_ms)
@@ -4713,6 +4827,9 @@ async fn run_okx_service(
                                         }
                                         Some(RecycleDecision::Cap { recycles_last_hour }) => {
                                             json!({"recycles_last_hour": recycles_last_hour})
+                                        }
+                                        Some(RecycleDecision::SuccessorStale { retry }) => {
+                                            json!({"successor_retry": retry})
                                         }
                                         _ => Value::Null,
                                     },
@@ -7564,6 +7681,192 @@ mod staleness_tests {
             feed(&mut detector, &bindings, 40_200, 40_225, |_, _| 900).len(),
             1
         );
+    }
+
+    /// DL-DEF-2026-11-26-L replay of okx-public-003 at 12:01Z on 2026-11-26
+    /// (ingestor log, read-only; times are ms after 12:00:00Z): healthy lag
+    /// 26-157 ms, the IDR-112 trigger at 82_868 (max 279 ms), handover to the
+    /// successor (gen 1311) at 83_385, the successor 4-8 s late until about
+    /// 104_000 (window max 8_043 ms at 94_278, 7_892 ms at 95_288, 203 ms
+    /// after), and the second trigger at 92_881 that the 60 s cooldown
+    /// suppressed (49.98 s left) while Crossec read BTC at 93_605.
+    fn successor_lag_1201z(at: i64, index: usize) -> i64 {
+        const HANDOVER: i64 = 83_385;
+        if at < HANDOVER {
+            290
+        } else if at < 94_278 {
+            (300 + (at - HANDOVER) * 7_743 / (94_278 - HANDOVER)).min(8_043)
+        } else if at < 95_288 {
+            7_892
+        } else if at < 104_000 {
+            (7_892 - (at - 95_288) * 7_689 / (104_000 - 95_288)).max(203)
+        } else {
+            healthy(at, index)
+        }
+    }
+
+    /// Runs the 12:01Z timeline up to the first successor trigger and returns
+    /// (detector, time of that trigger).
+    fn replay_1201z_to_successor_trigger(
+        config: LatestStateStalenessConfig,
+    ) -> (StalenessDetector, i64) {
+        let mut detector = detector(config);
+        let bindings = quotes();
+        assert!(feed(&mut detector, &bindings, 0, 82_800, healthy).is_empty());
+        let first = feed(&mut detector, &bindings, 82_800, 82_925, |_, _| 279);
+        assert_eq!(first.len(), 1, "the 12:01:22.868 trigger");
+        let (at, _) = first[0];
+        assert_eq!(detector.decide(T0 + at), RecycleDecision::Recycle);
+        detector.recycle_started(T0 + at);
+        // The old session until the handover: its triggers meet a pending standby.
+        feed(
+            &mut detector,
+            &bindings,
+            82_925,
+            83_385,
+            successor_lag_1201z,
+        );
+        detector.session_started();
+        assert!(
+            detector.on_probation(),
+            "the recycle successor starts on probation"
+        );
+        // Up to 85 s: the successor is already more than 1 s late there.
+        let late = feed(
+            &mut detector,
+            &bindings,
+            83_385,
+            85_000,
+            successor_lag_1201z,
+        );
+        let (at, trigger) = late.first().cloned().expect("the successor is late");
+        assert!(
+            at < 84_500,
+            "the late successor is detected within about 1 s: {at}"
+        );
+        assert!(trigger.max_excess_ms >= 250);
+        (detector, at)
+    }
+
+    #[test]
+    fn a_late_recycle_successor_is_recycled_again_without_waiting_for_the_cooldown() {
+        let (mut detector, at) =
+            replay_1201z_to_successor_trigger(LatestStateStalenessConfig::default());
+        // Before L this was Cooldown { remaining_ms: ~59 s }; now an immediate re-recycle.
+        assert_eq!(
+            detector.decide(T0 + at),
+            RecycleDecision::SuccessorStale { retry: 1 }
+        );
+        detector.recycle_started(T0 + at);
+        assert_eq!(detector.successor_retries_used, 1);
+        // The next successor (gen 1312 was fresh on the day) proves freshness
+        // in 20 frames from 3 bindings, about 0.5 s.
+        detector.session_started();
+        assert!(detector.on_probation());
+        let bindings = quotes();
+        assert!(feed(&mut detector, &bindings, at + 500, at + 1_000, healthy).is_empty());
+        assert!(
+            !detector.on_probation(),
+            "a proven session leaves probation"
+        );
+        assert_eq!(
+            detector.successor_retries_used, 0,
+            "the proof resets the retries"
+        );
+        // A proven, healthy lane is protected by the cooldown again.
+        assert!(matches!(
+            detector.decide(T0 + at + 5_000),
+            RecycleDecision::Cooldown { .. }
+        ));
+    }
+
+    #[test]
+    fn without_successor_retries_the_1201z_timeline_keeps_the_pre_l_cooldown() {
+        let config = LatestStateStalenessConfig {
+            successor_retries: 0,
+            ..LatestStateStalenessConfig::default()
+        };
+        let (mut detector, _) = replay_1201z_to_successor_trigger(config);
+        // The logged decision at 12:01:32.881: SUPPRESSED_COOLDOWN, 49_976 ms left.
+        match detector.decide(T0 + 92_881) {
+            RecycleDecision::Cooldown { remaining_ms } => {
+                assert!((49_900..=50_100).contains(&remaining_ms), "{remaining_ms}")
+            }
+            other => panic!("expected the pre-L cooldown, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn successor_retries_are_bounded_then_the_cooldown_and_the_cap_apply() {
+        let (mut detector, at) =
+            replay_1201z_to_successor_trigger(LatestStateStalenessConfig::default());
+        let bindings = quotes();
+        let mut now = at;
+        for retry in 1..=2 {
+            assert_eq!(
+                detector.decide(T0 + now),
+                RecycleDecision::SuccessorStale { retry }
+            );
+            detector.recycle_started(T0 + now);
+            detector.session_started();
+            // Every successor is late too (a venue-side delay): no proof.
+            let late = feed(&mut detector, &bindings, now + 500, now + 2_000, |_, _| {
+                5_000
+            });
+            now = late.first().expect("still late").0;
+        }
+        // Two successor retries used: the cooldown governs again.
+        assert!(matches!(
+            detector.decide(T0 + now),
+            RecycleDecision::Cooldown { .. }
+        ));
+        // The hourly cap binds a successor retry as well.
+        let config = LatestStateStalenessConfig {
+            max_recycles_per_hour: 1,
+            ..LatestStateStalenessConfig::default()
+        };
+        let (mut capped, at) = replay_1201z_to_successor_trigger(config);
+        assert_eq!(
+            capped.decide(T0 + at),
+            RecycleDecision::Cap {
+                recycles_last_hour: 1
+            }
+        );
+    }
+
+    #[test]
+    fn a_stale_frame_restarts_the_proof_and_other_sessions_are_not_on_probation() {
+        let mut detector = detector(LatestStateStalenessConfig::default());
+        let bindings = quotes();
+        assert!(feed(&mut detector, &bindings, 0, 40_000, healthy).is_empty());
+        // A reconnect that is not a staleness recycle (notice, error) is trusted.
+        detector.session_started();
+        assert!(!detector.on_probation());
+        detector.recycle_started(T0 + 40_000);
+        detector.session_started();
+        // 19 fresh frames, one stale frame, 19 fresh: not proven.
+        feed(&mut detector, &bindings, 40_000, 40_475, healthy);
+        feed(&mut detector, &bindings, 40_475, 40_500, |_, _| 900);
+        feed(&mut detector, &bindings, 40_500, 40_975, healthy);
+        assert!(
+            detector.on_probation(),
+            "the proof needs consecutive fresh frames"
+        );
+        feed(&mut detector, &bindings, 40_975, 41_000, healthy);
+        assert!(!detector.on_probation());
+        // Old configs without the L fields load with the defaults.
+        let tuned: LatestStateStalenessConfig =
+            serde_json::from_value(json!({"excess_ms": 400, "cooldown_ms": 120000})).unwrap();
+        assert_eq!(
+            (tuned.successor_proof_frames, tuned.successor_retries),
+            (20, 2)
+        );
+        assert!(tuned.validate().is_ok());
+        let bad = LatestStateStalenessConfig {
+            successor_proof_frames: 0,
+            ..LatestStateStalenessConfig::default()
+        };
+        assert!(bad.validate().is_err());
     }
 
     #[test]

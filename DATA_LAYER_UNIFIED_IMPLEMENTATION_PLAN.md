@@ -80270,3 +80270,57 @@ Impacted modules, light slot, 305 OK, 1 skipped:
   read-only and armed nothing.
   - Its dry run against the 2026-11-26 00:00Z incident read the market cache directly and reproduced the RCA:
     OKX 1h p50 184 s, max 287 s; OKX 12h max 385 s.
+
+### DL-DEF-2026-11-26-L: an IDR-112 recycle successor must prove freshness; an unproven late successor is recycled again without the cooldown (implemented, Rust tests written, NOT yet run) - 2026-11-26 (Claude)
+
+**Registered here: DL-DEF-2026-11-26-L.** RCA:
+`~/.local/state/trading-system/paper-hosting/TS_TO_HOSTED_ALPHA_CROSSEC_1200Z_STOP_RCA_20261126.md`.
+
+**Incident** (`ingestor_okx_swap`, lane `okx-public-003`, bbo-tbt QUOTE latest state; ingestor log read-only).
+- 12:01:22.868Z: the IDR-112 detector recycled gen 1310 (max lag 279 ms over a 26 ms baseline). Make-before-break
+  handover to gen 1311 at 12:01:23.385 (444 ms).
+- The successor itself was 4-8 s late by venue `ts`: window max 8,043 ms (12:01:34.28), 7,892 ms, mean about 4 s,
+  until about 12:01:44, then 203 ms.
+- 12:01:32.881Z: the next trigger (max lag 6,705 ms) was `SUPPRESSED_COOLDOWN` with 49,976 ms left, so the lane stayed
+  late. BTC-USDT-SWAP QUOTE went STALE, `execution_eligible=false`, and TS refused Crossec's NAV quote read at
+  12:01:33.6Z (Crossec STOPPED_CLOSED).
+- The routine recycle to gen 1312 at 12:02:42 was fresh at once. So a reconnect does clear it; the cooldown was the
+  blocker.
+
+**Cause (class).** The 60 s cooldown and the hourly cap protect a healthy lane from flapping. They also applied to
+the session the detector had just created to cure staleness, before that session ever showed it was healthy.
+"Recycled" was treated as "healthy". Venue-agnostic: the detector is pure and per lane (`StalenessDetector`).
+
+**Fix** (`rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs`, detector only, venue-agnostic).
+1. **Probation.** The session that follows a staleness recycle (`recycle_started` then `session_started`) starts on
+   probation. It leaves probation only when it proves freshness: `successor_proof_frames` (default 20) consecutive
+   non-stale frames from at least `min_bindings` distinct bindings. A stale frame restarts the proof. Any other
+   session (notice, error reconnect, start) is trusted as before.
+2. **Re-recycle.** A trigger on a session still on probation returns `RecycleDecision::SuccessorStale { retry }`.
+   It starts a recycle at once, without the cooldown, up to `successor_retries` (default 2) per unproven chain. The
+   hourly cap and the OKX control budget still apply. A proof resets the count. After the retries the cooldown
+   governs again, so a venue-side delay that no reconnect cures still costs at most 3 connects.
+3. **Observability.** The action is `RECYCLE_SUCCESSOR_STALE`, with decision `{"successor_retry": n}`. It does not
+   count as suppressed.
+4. **Config.** Both fields have serde defaults: old configs load unchanged, and the bounds are validated.
+   `successor_retries: 0` is the exact pre-L decision rule.
+
+**Tests** (same file, `mod tests`): 5 new.
+- `a_late_recycle_successor_is_recycled_again_without_waiting_for_the_cooldown`: the 12:01Z timeline replayed. The
+  successor is detected within about 1 s of the handover and recycled again (old rule: about 59 s of cooldown). The
+  next successor proves freshness in about 0.5 s, the retries reset, and the cooldown protects again.
+- `without_successor_retries_the_1201z_timeline_keeps_the_pre_l_cooldown`: reproduces the logged 12:01:32.881 decision
+  (cooldown, about 49.98 s left).
+- `successor_retries_are_bounded_then_the_cooldown_and_the_cap_apply`.
+- `a_stale_frame_restarts_the_proof_and_other_sessions_are_not_on_probation`: also covers serde defaults and
+  validation.
+- The existing detector tests are unchanged; none calls `session_started` after `recycle_started`.
+
+**Verification status.**
+- `rustfmt --check` passes (light slot, `qdl-rust-builder:1.82.0-v2.3.2`).
+- The Rust tests and clippy are **NOT run yet**. The build is a cold qdl-kafka build, including librdkafka: about
+  3 GiB and 1 CPU, which is a heavy slot. That is outside the light-slot rule of this task and the :15-:45 Paper
+  window rule. Script: `scratchpad/defl/rust-test.sh` (heavy slot, after the coordinator's go).
+- No image, no deploy, not pushed.
+- Rollout later: an ingestor_okx_swap image of the bundle, recreated with its own config (no config change needed;
+  the defaults apply). Rollback is the current image `sha256:e628fbe0…`.
