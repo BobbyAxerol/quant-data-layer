@@ -8184,6 +8184,10 @@ mod staleness_tests {
             min_baseline_buckets: 3,
             cooldown_ms,
             max_recycles_per_hour: 6,
+            // The pre-L rule by default; DL-DEF-2026-11-26-L tests opt in.
+            successor_proof_frames: 20,
+            successor_probation_ms: 1_000,
+            successor_retries: 0,
         }
     }
 
@@ -8546,6 +8550,45 @@ mod staleness_tests {
             slots[1] - slots[0] >= 1_250,
             "second recycle slot {} ms after the first, cooldown 1250 ms",
             slots[1] - slots[0]
+        );
+        assert_eq!(generations(&run.records).len(), 3);
+        assert_eq!(run.report["staleness_recycles_total"], 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_late_recycle_successor_is_recycled_again_inside_the_cooldown() {
+        // DL-DEF-2026-11-26-L end to end: connection 0 turns 0.9 s late after
+        // 3 s, its successor (connection 1) is late too, connection 2 is
+        // healthy. With a 30 s cooldown the pre-L rule would serve connection 1
+        // for the whole run; the successor retry replaces it at once.
+        let schedule: Schedule =
+            Arc::new(
+                |connection: usize, elapsed: Duration, _: u64| match connection {
+                    0 if elapsed >= Duration::from_millis(3_000) => 900,
+                    1 => 900,
+                    _ => 0,
+                },
+            );
+        test_slot_log::take(30_001);
+        let run = run_lane(
+            schedule,
+            LatestStateStalenessConfig {
+                successor_retries: 2,
+                ..fast_staleness(30_001)
+            },
+            Duration::from_millis(5_000),
+        )
+        .await;
+        assert_eq!(run.log.acked.len(), 3, "{:?}", run.log);
+        let slots = test_slot_log::take(30_001);
+        assert_eq!(
+            slots.len(),
+            2,
+            "the first recycle and one successor retry: {slots:?}"
+        );
+        assert!(
+            slots[1] - slots[0] < 30_001,
+            "the successor retry did not wait for the cooldown: {slots:?}"
         );
         assert_eq!(generations(&run.records).len(), 3);
         assert_eq!(run.report["staleness_recycles_total"], 2);
