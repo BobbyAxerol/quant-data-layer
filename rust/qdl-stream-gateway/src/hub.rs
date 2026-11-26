@@ -23,6 +23,20 @@
 //! acquired with a bounded wait against the request deadline instead of a
 //! single `try_lock`, and reader progress is an atomic, so concurrent lookups
 //! of different (or the same) products no longer refuse each other.
+//!
+//! Quiet keys (DL-DEF-2026-11-26-M): the ring is bounded by bytes, so a key
+//! whose product does not change for longer than its partition's ring
+//! coverage loses its last record to eviction and the lookup could no longer
+//! prove that no newer record exists (`HOT_RECORD_MISSING`). Dispatch also
+//! keeps, under the same partition lock, a last-value entry per key (the
+//! newest dispatched record of an indexable hot product). Ring eviction never
+//! removes it; it is bounded by a number of keys and a per-record size, not
+//! by ring bytes. A lookup whose ring view is empty is answered from it only
+//! when it is the key's newest record, the partition boundary and broker head
+//! proof are current, the provider session's connection generation and lease
+//! fence still match the newest seen for that session, and the key has been
+//! quiet for at most `max_quiet` (else `HOT_QUIET_BEYOND_MAX`). A reader
+//! error clears every entry (continuity is no longer proven).
 
 use crate::generated::marketdata_v2::EventEnvelope;
 use crate::subscription::{ByteBudget, Charge, Subscription};
@@ -295,16 +309,35 @@ impl LiveRecord {
         budget: Option<&Arc<ByteBudget>>,
         dispatched_wall_ns: u64,
     ) -> Result<Arc<Self>, String> {
-        let envelope = EventEnvelope::decode(raw.payload.as_slice())
-            .map_err(|error| format!("canonical record failed to decode: {error}"))?;
+        let envelope = decode_canonical(&raw)?;
+        Ok(Self::from_envelope(
+            raw,
+            envelope,
+            budget,
+            dispatched_wall_ns,
+        ))
+    }
+
+    /// [`LiveRecord::decode_charged`] for an envelope already decoded once.
+    pub fn from_envelope(
+        raw: SharedRecord,
+        envelope: EventEnvelope,
+        budget: Option<&Arc<ByteBudget>>,
+        dispatched_wall_ns: u64,
+    ) -> Arc<Self> {
         let shared_charge = budget.and_then(|budget| budget.charge(live_weight(&raw)));
-        Ok(Arc::new(Self {
+        Arc::new(Self {
             raw,
             envelope,
             shared_charge,
             dispatched_wall_ns,
-        }))
+        })
     }
+}
+
+fn decode_canonical(raw: &RawRecord) -> Result<EventEnvelope, String> {
+    EventEnvelope::decode(raw.payload.as_slice())
+        .map_err(|error| format!("canonical record failed to decode: {error}"))
 }
 
 /// The committed log as the live reader sees it (Kafka in production, an
@@ -324,13 +357,35 @@ pub trait LogSource: Send {
 pub struct HubConfig {
     pub ring_max_bytes: usize,
     pub ring_max_age: Duration,
+    /// Last-value entries across all partitions (split evenly); 0 disables
+    /// the quiet-key index and lookups behave as ring-only.
+    pub last_value_max_keys: usize,
+    /// A key quiet for longer than this is refused `HOT_QUIET_BEYOND_MAX`
+    /// instead of being served from its last-value entry.
+    pub max_quiet: Duration,
 }
+
+/// Default `QDL_KN_LAST_VALUE_MAX_KEYS`. The v2.4.2-realm-ts16 bundle has 220
+/// hot non-book bindings (104 QUOTE, 102 MARK_INDEX_PRICE, 14 TRADE) among
+/// 1,577 bindings on 1,560 physical keys.
+pub const DEFAULT_LAST_VALUE_MAX_KEYS: usize = 2048;
+/// Default `QDL_KN_MAX_QUIET_SECONDS`.
+pub const DEFAULT_MAX_QUIET: Duration = Duration::from_secs(900);
+/// A record heavier than this ([`RawRecord::weight`]) is not kept as a last
+/// value (its older entry is dropped, so it never answers for the key).
+/// Memory bound: `last_value_max_keys x LAST_VALUE_MAX_RECORD_BYTES`.
+pub const LAST_VALUE_MAX_RECORD_BYTES: usize = 4096;
+/// Provider sessions whose newest connection generation/lease fence is
+/// tracked; a session beyond it has no fence proof and is refused.
+pub const SESSION_FENCE_MAX: usize = 4096;
 
 impl Default for HubConfig {
     fn default() -> Self {
         Self {
             ring_max_bytes: 32 << 20,
             ring_max_age: Duration::from_secs(120),
+            last_value_max_keys: DEFAULT_LAST_VALUE_MAX_KEYS,
+            max_quiet: DEFAULT_MAX_QUIET,
         }
     }
 }
@@ -393,6 +448,17 @@ pub struct HubMetrics {
     pub live_budget_refused: AtomicU64,
     pub ring_evictions: AtomicU64,
     pub reader_errors: AtomicU64,
+    /// Lookups answered from a last-value entry (ring view empty).
+    pub last_value_hits: AtomicU64,
+    /// Lookups refused `HOT_QUIET_BEYOND_MAX`.
+    pub last_value_quiet_refused: AtomicU64,
+    /// Entries dropped to stay within the per-partition key bound.
+    pub last_value_evictions: AtomicU64,
+    /// Records not kept as a last value (not a hot non-book product, not
+    /// decodable, or heavier than [`LAST_VALUE_MAX_RECORD_BYTES`]).
+    pub last_value_unindexed: AtomicU64,
+    /// Reader errors that cleared every last-value entry.
+    pub last_value_continuity_breaks: AtomicU64,
 }
 
 /// What a new subscriber must replay before its queue: records of its key in
@@ -433,6 +499,24 @@ struct PartitionState {
     /// Last broker head this partition had caught up to, and when the broker
     /// confirmed it. Read under the same lock as `next_offset`.
     broker_head: Option<(i64, Instant)>,
+    /// DL-DEF-2026-11-26-M: the newest dispatched record per key, kept past
+    /// ring eviction; bounded by keys ([`Hub::last_value_cap`]).
+    last_value: HashMap<Vec<u8>, LastValue>,
+    last_value_bytes: usize,
+}
+
+/// A provider session's connection generation and lease fence.
+type SessionFence = (String, u64, u64);
+
+/// A last value copied for a lookup: the record with its boundary, the
+/// partition's broker head proof and the record's session fence.
+type LastValueView = (HotRecord, Option<(i64, Instant)>, SessionFence);
+
+/// The newest dispatched record of one key on one partition.
+struct LastValue {
+    at: Instant,
+    raw: SharedRecord,
+    fence: SessionFence,
 }
 
 /// Ring entries a hot lookup copies per critical section. Non-book keys
@@ -501,6 +585,33 @@ pub struct Hub {
     /// ([`Hub::attach_live_budget`]); unset, subscribers charge in full.
     live_budget: OnceLock<Arc<ByteBudget>>,
     data_clock: crate::replay_clock::DataClock,
+    /// Last-value entries per partition; 0 = index disabled.
+    last_value_cap: usize,
+    /// Partitions whose last-value index holds each key (lock order:
+    /// partition, then this), like `key_home` for the ring.
+    value_home: Mutex<HashMap<Vec<u8>, Vec<i32>>>,
+    /// Newest `(connection_generation, lease_epoch)` dispatched per provider
+    /// session; a last value of an older generation/fence is refused.
+    session_fence: Mutex<HashMap<String, (u64, u64)>>,
+}
+
+/// The session fence of a record that may be kept as a last value: a hot
+/// non-book product (QUOTE, TRADE, MARK_INDEX_PRICE). Books need their
+/// snapshot/delta chain and stay ring-only; anything else on a key (a feed
+/// state or quality event) drops the key's entry.
+fn last_value_fence(envelope: &EventEnvelope) -> Option<SessionFence> {
+    use crate::generated::marketdata_v2::event_envelope::Payload;
+    matches!(
+        envelope.payload,
+        Some(Payload::Quote(_) | Payload::Trade(_) | Payload::MarkIndexPrice(_))
+    )
+    .then(|| {
+        (
+            envelope.source_session_id.clone(),
+            envelope.connection_generation,
+            envelope.lease_epoch,
+        )
+    })
 }
 
 /// Copy-on-write append of `subscriber` to `key`'s list (rare: registration).
@@ -542,6 +653,8 @@ impl Hub {
                         subscribers: HashMap::new(),
                         by_key: HashMap::new(),
                         broker_head: None,
+                        last_value: HashMap::new(),
+                        last_value_bytes: 0,
                     }),
                 )
             })
@@ -553,7 +666,6 @@ impl Hub {
         Self {
             partitions,
             dispatch_gates,
-            config,
             metrics: HubMetrics::default(),
             stop: AtomicBool::new(false),
             reader_failed: AtomicBool::new(true),
@@ -566,6 +678,14 @@ impl Hub {
             started_ms: now_ns() / 1_000_000,
             live_budget: OnceLock::new(),
             data_clock,
+            last_value_cap: if config.last_value_max_keys == 0 {
+                0
+            } else {
+                (config.last_value_max_keys / starts.len().max(1)).max(1)
+            },
+            value_home: Mutex::new(HashMap::new()),
+            session_fence: Mutex::new(HashMap::new()),
+            config,
         }
     }
 
@@ -664,6 +784,278 @@ impl Hub {
         }
     }
 
+    fn enter_value_home(&self, key: &[u8], partition: i32) {
+        if let Ok(mut homes) = self.value_home.lock() {
+            let entry = homes.entry(key.to_vec()).or_default();
+            if !entry.contains(&partition) {
+                entry.push(partition);
+            }
+        }
+    }
+
+    fn leave_value_home(&self, key: &[u8], partition: i32) {
+        if let Ok(mut homes) = self.value_home.lock() {
+            if let Some(entry) = homes.get_mut(key) {
+                entry.retain(|home| *home != partition);
+                if entry.is_empty() {
+                    homes.remove(key);
+                }
+            }
+        }
+    }
+
+    /// Record the newest `(generation, lease)` dispatched for `session`.
+    /// Generations and fences only move forward; an older one never
+    /// replaces a newer one. Bounded by [`SESSION_FENCE_MAX`] sessions.
+    fn advance_session_fence(&self, session: &str, generation: u64, lease: u64) {
+        if session.is_empty() {
+            return;
+        }
+        let Ok(mut fences) = self.session_fence.lock() else {
+            return;
+        };
+        let full = fences.len() >= SESSION_FENCE_MAX;
+        match fences.get_mut(session) {
+            Some(newest) => {
+                if (generation, lease) > *newest {
+                    *newest = (generation, lease);
+                }
+            }
+            None if !full => {
+                fences.insert(session.to_owned(), (generation, lease));
+            }
+            None => {}
+        }
+    }
+
+    /// Keep `record` as its key's last value on this partition, under the
+    /// dispatch lock. A record that cannot be kept drops the key's older
+    /// entry: an entry is only ever the key's newest dispatched record.
+    fn remember_last_value(
+        &self,
+        state: &mut PartitionState,
+        record: &SharedRecord,
+        now: Instant,
+        fence: Option<SessionFence>,
+    ) {
+        if self.last_value_cap == 0 {
+            return;
+        }
+        let weight = record.weight();
+        let fence = match fence {
+            Some(fence) if weight <= LAST_VALUE_MAX_RECORD_BYTES => fence,
+            _ => {
+                self.metrics
+                    .last_value_unindexed
+                    .fetch_add(1, Ordering::Relaxed);
+                if let Some(old) = state.last_value.remove(&record.key) {
+                    state.last_value_bytes -= old.raw.weight();
+                    self.leave_value_home(&record.key, record.partition);
+                }
+                return;
+            }
+        };
+        let entry = LastValue {
+            at: now,
+            raw: record.clone(),
+            fence,
+        };
+        if let Some(old) = state.last_value.insert(record.key.clone(), entry) {
+            state.last_value_bytes = state.last_value_bytes - old.raw.weight() + weight;
+            return;
+        }
+        state.last_value_bytes += weight;
+        self.enter_value_home(&record.key, record.partition);
+        if state.last_value.len() > self.last_value_cap {
+            self.make_last_value_room(state, &record.key, now);
+        }
+    }
+
+    /// Over the key bound: drop entries quiet past `max_quiet` (they can no
+    /// longer answer), then the least recently dispatched other key.
+    fn make_last_value_room(&self, state: &mut PartitionState, keep: &[u8], now: Instant) {
+        let max_quiet = self.config.max_quiet;
+        let mut dropped: Vec<Vec<u8>> = state
+            .last_value
+            .iter()
+            .filter(|(key, entry)| {
+                key.as_slice() != keep && now.duration_since(entry.at) > max_quiet
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        if dropped.is_empty() {
+            dropped.extend(
+                state
+                    .last_value
+                    .iter()
+                    .filter(|(key, _)| key.as_slice() != keep)
+                    .min_by_key(|(_, entry)| entry.at)
+                    .map(|(key, _)| key.clone()),
+            );
+        }
+        for key in dropped {
+            if let Some(old) = state.last_value.remove(&key) {
+                state.last_value_bytes -= old.raw.weight();
+                self.leave_value_home(&key, old.raw.partition);
+                self.metrics
+                    .last_value_evictions
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// The reader failed: continuity since every last value is no longer
+    /// proven, so all entries and session fences are dropped. Quiet keys
+    /// then refuse (as before DL-DEF-M) until their next record.
+    fn break_last_value_continuity(&self) {
+        if self.last_value_cap == 0 {
+            return;
+        }
+        for state in self.partitions.values() {
+            let mut state = state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.last_value.clear();
+            state.last_value_bytes = 0;
+        }
+        if let Ok(mut homes) = self.value_home.lock() {
+            homes.clear();
+        }
+        if let Ok(mut fences) = self.session_fence.lock() {
+            fences.clear();
+        }
+        self.metrics
+            .last_value_continuity_breaks
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// How long `record` (dispatched at `at`) has been its key's newest
+    /// record: the larger of the time since this replica dispatched it and
+    /// the time since the producer created it (a warm-start replica
+    /// dispatches old records late; 0 = producer time unknown).
+    fn quiet_age(at: Instant, record: &RawRecord) -> Duration {
+        let dispatched = at.elapsed();
+        if record.timestamp_ms <= 0 {
+            return dispatched;
+        }
+        let produced_ms = (now_ns() / 1_000_000).saturating_sub(record.timestamp_ms);
+        dispatched.max(Duration::from_millis(produced_ms.max(0) as u64))
+    }
+
+    /// The key's last-value entry when its ring view is empty, with the
+    /// boundary and broker head proof copied under the same partition lock.
+    /// `Ok(None)` = no entry (`HOT_RECORD_MISSING` as before).
+    fn last_value_snapshot(
+        &self,
+        key: &[u8],
+        deadline: Instant,
+    ) -> Result<Option<LastValueView>, String> {
+        if self.last_value_cap == 0 {
+            return Ok(None);
+        }
+        let homes = lock_until(&self.value_home, deadline)?
+            .get(key)
+            .cloned()
+            .unwrap_or_default();
+        let mut found = None;
+        let mut beyond_max = false;
+        for partition in homes {
+            let Some(state) = self.partitions.get(&partition) else {
+                continue;
+            };
+            let (state, _hold) = profiled_lock!(HotSnapshot, lock_until(state, deadline));
+            let state = state?;
+            let Some(entry) = state.last_value.get(key) else {
+                continue;
+            };
+            let copy = (
+                entry.at,
+                HotRecord {
+                    raw: entry.raw.clone(),
+                    boundary_offset: state.next_offset - 1,
+                },
+                state.broker_head,
+                entry.fence.clone(),
+            );
+            drop(state);
+            if Self::quiet_age(copy.0, &copy.1.raw) > self.config.max_quiet {
+                beyond_max = true;
+                continue;
+            }
+            // Two partitions with a current last value for one key break
+            // the partition plan, exactly as two live ring views do.
+            if found.is_some() {
+                return Err("HOT_PARTITION_MISMATCH".into());
+            }
+            found = Some((copy.1, copy.2, copy.3));
+        }
+        if found.is_none() && beyond_max {
+            self.metrics
+                .last_value_quiet_refused
+                .fetch_add(1, Ordering::Relaxed);
+            return Err("HOT_QUIET_BEYOND_MAX".into());
+        }
+        Ok(found)
+    }
+
+    /// Validate a last value as the ring scan validates its newest entry:
+    /// decodable, no gap/resync flag, the requested product, and still the
+    /// newest connection generation and lease fence of its session.
+    fn check_last_value(
+        &self,
+        hot: &HotRecord,
+        feed: &str,
+        fence: &SessionFence,
+    ) -> Result<(), String> {
+        use crate::requirement::is_product;
+        use qdl_contracts::qdl::common::v1::QualityFlag;
+        let raw = &hot.raw;
+        if raw.offset < 0 || raw.offset > hot.boundary_offset {
+            return Err("HOT_RECORD_INVALID".into());
+        }
+        let envelope =
+            EventEnvelope::decode(raw.payload.as_slice()).map_err(|_| "HOT_RECORD_INVALID")?;
+        if envelope.quality_flags.iter().any(|flag| {
+            matches!(
+                QualityFlag::try_from(*flag),
+                Ok(QualityFlag::SequenceGapBefore
+                    | QualityFlag::OutOfOrder
+                    | QualityFlag::ResyncRequired)
+            )
+        }) {
+            return Err("HOT_RECORD_GAPPED".into());
+        }
+        if !is_product(feed, None, &envelope) {
+            return Err("HOT_RECORD_PRODUCT_MISMATCH".into());
+        }
+        let (session, generation, lease) = fence;
+        if !session.is_empty() {
+            let newest = lock_until(
+                &self.session_fence,
+                Instant::now() + Duration::from_millis(5),
+            )?
+            .get(session)
+            .copied();
+            if newest != Some((*generation, *lease)) {
+                return Err("HOT_RECORD_GENERATION_MISMATCH".into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Last-value entries and their raw bytes across partitions (metrics).
+    pub fn last_value_usage(&self) -> (usize, usize) {
+        self.partitions
+            .values()
+            .filter_map(|state| state.lock().ok())
+            .fold((0, 0), |(keys, bytes), state| {
+                (
+                    keys + state.last_value.len(),
+                    bytes + state.last_value_bytes,
+                )
+            })
+    }
+
     /// Dispatch one committed record. A record at or below an already
     /// dispatched offset is a duplicate transport delivery and is ignored.
     pub fn dispatch(&self, record: RawRecord) {
@@ -678,6 +1070,17 @@ impl Hub {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let record = Arc::new(record);
+        // DL-DEF-2026-11-26-M: with the last-value index on, every record is
+        // decoded once here (gate held, partition lock not yet taken) for its
+        // session fence; subscribers then share this decode.
+        let decoded = (self.last_value_cap > 0).then(|| decode_canonical(&record));
+        let fence = match &decoded {
+            Some(Ok(envelope)) => last_value_fence(envelope),
+            _ => None,
+        };
+        if let Some((session, generation, lease)) = &fence {
+            self.advance_session_fence(session, *generation, *lease);
+        }
         let subscribers = {
             let (state, _hold) = profiled_lock!(Dispatch, partition.lock());
             let Ok(mut state) = state else {
@@ -708,6 +1111,7 @@ impl Hub {
                 self.enter_home(&record.key, record.partition);
             }
             state.next_offset = record.offset + 1;
+            self.remember_last_value(&mut state, &record, now, fence);
             self.evict(record.partition, &mut state, now);
             // Registration is atomic with this boundary: a subscriber attached
             // at barrier <= offset is in this snapshot, one attached later has
@@ -721,7 +1125,17 @@ impl Hub {
         let _fanout = lock_profile::fanout();
         let budget = self.live_budget.get();
         let at = now_ns();
-        match LiveRecord::decode_charged(record, budget, at.max(0) as u64) {
+        let live = match decoded {
+            Some(Ok(envelope)) => Ok(LiveRecord::from_envelope(
+                record,
+                envelope,
+                budget,
+                at.max(0) as u64,
+            )),
+            Some(Err(error)) => Err(error),
+            None => LiveRecord::decode_charged(record, budget, at.max(0) as u64),
+        };
+        match live {
             Ok(live) => {
                 if budget.is_some() && live.shared_charge.is_none() {
                     self.metrics
@@ -861,6 +1275,8 @@ impl Hub {
             live = Some(snapshot);
         }
         let mut selected = None;
+        let ring_view_empty = live.is_none();
+        let mut from_last_value = false;
         if let Some(snapshot) = live {
             let mut newest_scope = None;
             let mut chunk = snapshot.entries;
@@ -952,6 +1368,19 @@ impl Hub {
                 chunk = self.key_entries_before(snapshot.partition, key, before, deadline)?;
             }
         }
+        // DL-DEF-2026-11-26-M: a quiet key evicted from the ring is answered
+        // from its last value, under the same head/catch-up proof below.
+        if selected.is_none() && ring_view_empty && !matches!(feed, "BOOK_SNAPSHOT" | "BOOK_DELTA")
+        {
+            if let Some((hot, head, fence)) = self.last_value_snapshot(key, deadline)? {
+                if Instant::now() >= deadline {
+                    return Err("HOT_READ_DEADLINE".into());
+                }
+                self.check_last_value(&hot, feed, &fence)?;
+                selected = Some((hot, head));
+                from_last_value = true;
+            }
+        }
         self.check_hot_reader()?;
         let (selected, head) = selected.ok_or_else(|| "HOT_RECORD_MISSING".to_owned())?;
         // The head proof was copied with the boundary, under one lock.
@@ -961,6 +1390,9 @@ impl Hub {
         }
         if selected.boundary_offset + 1 < head {
             return Err("HOT_READER_CATCHING_UP".into());
+        }
+        if from_last_value {
+            self.metrics.last_value_hits.fetch_add(1, Ordering::Relaxed);
         }
         Ok(selected)
     }
@@ -1236,6 +1668,7 @@ impl Hub {
                         Err(_) => {
                             failed_at = Some(Instant::now());
                             hub.reader_failed.store(true, Ordering::Release);
+                            hub.break_last_value_continuity();
                             hub.metrics.reader_errors.fetch_add(1, Ordering::Relaxed);
                             std::thread::sleep(Duration::from_millis(100));
                         }
@@ -1473,10 +1906,12 @@ mod tests {
         );
         hub.stop();
         assert_eq!(latest(&hub, "QUOTE").unwrap_err(), "HOT_READER_UNAVAILABLE");
+        // Ring-only semantics (index disabled): an expired ring view is missing.
         let hub = Hub::new(
             &[(0, 0)],
             HubConfig {
                 ring_max_age: Duration::ZERO,
+                last_value_max_keys: 0,
                 ..Default::default()
             },
         );
@@ -1491,6 +1926,7 @@ mod tests {
             &[(0, 0)],
             HubConfig {
                 ring_max_bytes: 1,
+                last_value_max_keys: 0,
                 ..Default::default()
             },
         );
@@ -1657,6 +2093,334 @@ mod tests {
         stop.store(true, Ordering::Relaxed);
         assert!(writer.join().unwrap() > 1);
         assert!(total > 0);
+    }
+
+    // ------------------------------- DL-DEF-2026-11-26-M quiet-key last value
+
+    fn now_ms() -> i64 {
+        now_ns() / 1_000_000
+    }
+
+    /// A QUOTE of `key` produced now, in `session` at `(generation, lease)`.
+    fn quote(
+        partition: i32,
+        offset: i64,
+        key: &[u8],
+        session: &str,
+        generation: u64,
+        lease: u64,
+        flags: Vec<i32>,
+    ) -> RawRecord {
+        use crate::generated::marketdata_v2::{event_envelope::Payload, Quote};
+        RawRecord {
+            partition,
+            offset,
+            key: key.to_vec(),
+            timestamp_ms: now_ms(),
+            payload: EventEnvelope {
+                payload: Some(Payload::Quote(Quote::default())),
+                source_session_id: session.into(),
+                connection_generation: generation,
+                lease_epoch: lease,
+                quality_flags: flags,
+                ..Default::default()
+            }
+            .encode_to_vec(),
+        }
+    }
+
+    /// Every record leaves the ring at once (the ~30 s busy-partition
+    /// coverage of the 2026-11-26 RCA, shrunk to zero).
+    fn tiny_ring(partitions: &[(i32, i64)], config: HubConfig) -> Hub {
+        Hub::new(
+            partitions,
+            HubConfig {
+                ring_max_bytes: 1,
+                ..config
+            },
+        )
+    }
+
+    fn lookup(hub: &Hub, key: &[u8]) -> Result<HotRecord, String> {
+        hub.latest_hot(key, "QUOTE", Instant::now() + Duration::from_secs(1))
+    }
+
+    #[test]
+    fn an_evicted_quiet_key_is_answered_from_its_last_value() {
+        let hub = tiny_ring(&[(0, 0)], HubConfig::default());
+        hub.dispatch(quote(0, 0, b"ont", "okx-1", 7, 0, vec![]));
+        // Busy keys of other products keep the partition moving.
+        for offset in 1..50 {
+            hub.dispatch(quote(0, offset, b"busy", "okx-1", 7, 0, vec![]));
+        }
+        healthy(&hub);
+        set_head(&hub, 0, Some((50, Instant::now())));
+        assert_eq!(hub.ring_bytes(), 0, "the ring holds nothing");
+        assert!(hub.partitions[&0].lock().unwrap().by_key.is_empty());
+        let view = lookup(&hub, b"ont").unwrap();
+        assert_eq!((view.raw.offset, view.boundary_offset), (0, 49));
+        // Transaction markers after it move the boundary, not the record.
+        hub.advance(0, 60);
+        set_head(&hub, 0, Some((60, Instant::now())));
+        let view = lookup(&hub, b"ont").unwrap();
+        assert_eq!((view.raw.offset, view.boundary_offset), (0, 59));
+        assert_eq!(hub.metrics.last_value_hits.load(Ordering::Relaxed), 2);
+        let (keys, bytes) = hub.last_value_usage();
+        assert_eq!(keys, 2);
+        assert!(bytes <= 2 * LAST_VALUE_MAX_RECORD_BYTES);
+        // The same lookup without the index is today's refusal.
+        let ring_only = tiny_ring(
+            &[(0, 0)],
+            HubConfig {
+                last_value_max_keys: 0,
+                ..Default::default()
+            },
+        );
+        ring_only.dispatch(quote(0, 0, b"ont", "okx-1", 7, 0, vec![]));
+        healthy(&ring_only);
+        assert_eq!(
+            lookup(&ring_only, b"ont").unwrap_err(),
+            "HOT_RECORD_MISSING"
+        );
+    }
+
+    #[test]
+    fn a_last_value_is_only_ever_the_newest_record_of_its_key() {
+        let hub = tiny_ring(&[(0, 0)], HubConfig::default());
+        hub.dispatch(quote(0, 0, b"ont", "okx-1", 7, 0, vec![]));
+        hub.dispatch(quote(0, 1, b"ont", "okx-1", 7, 0, vec![]));
+        healthy(&hub);
+        set_head(&hub, 0, Some((2, Instant::now())));
+        assert_eq!(
+            lookup(&hub, b"ont").unwrap().raw.offset,
+            1,
+            "newer offset wins"
+        );
+        // A newer gapped record refuses; the older healthy one is never served.
+        hub.dispatch(quote(0, 2, b"ont", "okx-1", 7, 0, vec![16]));
+        set_head(&hub, 0, Some((3, Instant::now())));
+        assert_eq!(lookup(&hub, b"ont").unwrap_err(), "HOT_RECORD_GAPPED");
+        // A newer record that cannot be kept (oversize, another product)
+        // drops the entry instead of leaving an older one in place.
+        let mut oversize = quote(0, 3, b"ont", "okx-1", 7, 0, vec![]);
+        let big = {
+            use crate::generated::marketdata_v2::{event_envelope::Payload, Quote};
+            EventEnvelope {
+                payload: Some(Payload::Quote(Quote::default())),
+                source_session_id: "x".repeat(LAST_VALUE_MAX_RECORD_BYTES),
+                ..Default::default()
+            }
+            .encode_to_vec()
+        };
+        oversize.payload = big;
+        hub.dispatch(oversize);
+        set_head(&hub, 0, Some((4, Instant::now())));
+        assert_eq!(lookup(&hub, b"ont").unwrap_err(), "HOT_RECORD_MISSING");
+        hub.dispatch(quote(0, 4, b"ont", "okx-1", 7, 0, vec![]));
+        let mut state_event = hot_record(0, 5, "TRADE", 7, vec![]);
+        state_event.key = b"ont".to_vec();
+        state_event.timestamp_ms = now_ms();
+        hub.dispatch(state_event);
+        set_head(&hub, 0, Some((6, Instant::now())));
+        // TRADE on the QUOTE key is kept, and is the wrong product.
+        assert_eq!(
+            lookup(&hub, b"ont").unwrap_err(),
+            "HOT_RECORD_PRODUCT_MISMATCH"
+        );
+        let mut book = hot_record(0, 6, "BOOK_DELTA", 7, vec![]);
+        book.key = b"ont".to_vec();
+        hub.dispatch(book);
+        set_head(&hub, 0, Some((7, Instant::now())));
+        assert_eq!(lookup(&hub, b"ont").unwrap_err(), "HOT_RECORD_MISSING");
+        assert!(hub.metrics.last_value_unindexed.load(Ordering::Relaxed) >= 2);
+    }
+
+    #[test]
+    fn a_last_value_refuses_without_current_head_generation_fence_or_continuity() {
+        let hub = tiny_ring(&[(0, 0), (1, 0)], HubConfig::default());
+        hub.dispatch(quote(0, 0, b"ont", "okx-1", 7, 0, vec![]));
+        healthy(&hub);
+        // High-watermark proof: missing, stale, then ahead of dispatch.
+        set_head(&hub, 0, None);
+        assert_eq!(lookup(&hub, b"ont").unwrap_err(), "HOT_BROKER_UNCONFIRMED");
+        set_head(&hub, 0, Some((1, Instant::now() - Duration::from_secs(2))));
+        assert_eq!(lookup(&hub, b"ont").unwrap_err(), "HOT_BROKER_UNCONFIRMED");
+        set_head(&hub, 0, Some((5, Instant::now())));
+        assert_eq!(lookup(&hub, b"ont").unwrap_err(), "HOT_READER_CATCHING_UP");
+        set_head(&hub, 0, Some((1, Instant::now())));
+        assert_eq!(lookup(&hub, b"ont").unwrap().raw.offset, 0);
+        hub.mark_progress(Instant::now() - Duration::from_secs(2));
+        assert_eq!(lookup(&hub, b"ont").unwrap_err(), "HOT_READER_STALLED");
+        healthy(&hub);
+        set_head(&hub, 0, Some((1, Instant::now())));
+        // The session reconnected (generation 8) on another key and partition.
+        hub.dispatch(quote(1, 0, b"band", "okx-1", 8, 0, vec![]));
+        assert_eq!(
+            lookup(&hub, b"ont").unwrap_err(),
+            "HOT_RECORD_GENERATION_MISMATCH"
+        );
+        // An older generation arriving late never moves the fence back.
+        hub.dispatch(quote(1, 1, b"neo", "okx-1", 7, 0, vec![]));
+        assert_eq!(
+            lookup(&hub, b"ont").unwrap_err(),
+            "HOT_RECORD_GENERATION_MISMATCH"
+        );
+        // ONT's own next BBO in generation 8 is served; a new lease fence refuses it.
+        hub.dispatch(quote(0, 1, b"ont", "okx-1", 8, 0, vec![]));
+        set_head(&hub, 0, Some((2, Instant::now())));
+        assert_eq!(lookup(&hub, b"ont").unwrap().raw.offset, 1);
+        hub.dispatch(quote(1, 2, b"band", "okx-1", 8, 3, vec![]));
+        assert_eq!(
+            lookup(&hub, b"ont").unwrap_err(),
+            "HOT_RECORD_GENERATION_MISMATCH"
+        );
+        hub.dispatch(quote(0, 2, b"ont", "okx-1", 8, 3, vec![]));
+        set_head(&hub, 0, Some((3, Instant::now())));
+        assert_eq!(lookup(&hub, b"ont").unwrap().raw.offset, 2);
+        // A reader error breaks continuity: every last value is dropped.
+        hub.break_last_value_continuity();
+        assert_eq!(hub.last_value_usage(), (0, 0));
+        assert_eq!(lookup(&hub, b"ont").unwrap_err(), "HOT_RECORD_MISSING");
+        assert_eq!(
+            hub.metrics
+                .last_value_continuity_breaks
+                .load(Ordering::Relaxed),
+            1
+        );
+        // A key holding a current last value on two partitions is refused.
+        hub.dispatch(quote(0, 3, b"ont", "okx-1", 8, 3, vec![]));
+        hub.dispatch(quote(1, 3, b"ont", "okx-1", 8, 3, vec![]));
+        set_head(&hub, 0, Some((4, Instant::now())));
+        set_head(&hub, 1, Some((4, Instant::now())));
+        assert_eq!(lookup(&hub, b"ont").unwrap_err(), "HOT_PARTITION_MISMATCH");
+    }
+
+    #[test]
+    fn the_reader_error_path_clears_last_values() {
+        struct Failing(bool);
+        impl LogSource for Failing {
+            fn poll(&mut self, _: Duration) -> Result<Option<RawRecord>, String> {
+                if !self.0 {
+                    self.0 = true;
+                    return Err("disconnected".into());
+                }
+                std::thread::sleep(Duration::from_millis(5));
+                Ok(None)
+            }
+            fn positions(&self) -> Vec<(i32, i64)> {
+                Vec::new()
+            }
+        }
+        let hub = Arc::new(tiny_ring(&[(0, 0)], HubConfig::default()));
+        hub.dispatch(quote(0, 0, b"ont", "okx-1", 7, 0, vec![]));
+        assert_eq!(hub.last_value_usage().0, 1);
+        let reader = hub.run(Box::new(Failing(false)));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while hub
+            .metrics
+            .last_value_continuity_breaks
+            .load(Ordering::Relaxed)
+            == 0
+        {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        hub.stop();
+        reader.join().unwrap();
+        assert_eq!(hub.last_value_usage(), (0, 0));
+    }
+
+    #[test]
+    fn a_key_quiet_beyond_the_maximum_is_refused_typed() {
+        let config = HubConfig {
+            max_quiet: Duration::from_millis(300),
+            ..Default::default()
+        };
+        let hub = tiny_ring(&[(0, 0)], config.clone());
+        hub.dispatch(quote(0, 0, b"ont", "okx-1", 7, 0, vec![]));
+        healthy(&hub);
+        set_head(&hub, 0, Some((1, Instant::now())));
+        assert_eq!(lookup(&hub, b"ont").unwrap().raw.offset, 0);
+        std::thread::sleep(Duration::from_millis(400));
+        set_head(&hub, 0, Some((1, Instant::now())));
+        hub.mark_progress(Instant::now());
+        assert_eq!(lookup(&hub, b"ont").unwrap_err(), "HOT_QUIET_BEYOND_MAX");
+        assert_eq!(
+            hub.metrics.last_value_quiet_refused.load(Ordering::Relaxed),
+            1
+        );
+        // A warm-start replica dispatches an old record now: the producer
+        // time still counts, so it is refused at once.
+        let hub = tiny_ring(&[(0, 0)], config);
+        let mut old = quote(0, 0, b"ont", "okx-1", 7, 0, vec![]);
+        old.timestamp_ms = now_ms() - 1_000;
+        hub.dispatch(old);
+        healthy(&hub);
+        set_head(&hub, 0, Some((1, Instant::now())));
+        assert_eq!(lookup(&hub, b"ont").unwrap_err(), "HOT_QUIET_BEYOND_MAX");
+    }
+
+    #[test]
+    fn the_last_value_index_is_bounded_by_keys_not_ring_bytes() {
+        let hub = tiny_ring(
+            &[(0, 0), (1, 0)],
+            HubConfig {
+                last_value_max_keys: 8,
+                ..Default::default()
+            },
+        );
+        assert_eq!(hub.last_value_cap, 4, "split evenly over partitions");
+        for offset in 0..100 {
+            let key = format!("k{offset}");
+            hub.dispatch(quote(0, offset, key.as_bytes(), "okx-1", 7, 0, vec![]));
+            hub.dispatch(quote(1, offset, key.as_bytes(), "okx-1", 7, 0, vec![]));
+            let (keys, bytes) = hub.last_value_usage();
+            assert!(keys <= 8, "{keys}");
+            assert!(bytes <= 8 * LAST_VALUE_MAX_RECORD_BYTES, "{bytes}");
+        }
+        assert_eq!(hub.last_value_usage().0, 8);
+        assert!(hub.value_home.lock().unwrap().len() <= 8);
+        assert_eq!(
+            hub.metrics.last_value_evictions.load(Ordering::Relaxed),
+            2 * 96
+        );
+        healthy(&hub);
+        set_head(&hub, 0, Some((100, Instant::now())));
+        set_head(&hub, 1, Some((100, Instant::now())));
+        // The least recently dispatched keys left first; the newest stay.
+        assert_eq!(lookup(&hub, b"k0").unwrap_err(), "HOT_RECORD_MISSING");
+        assert_eq!(lookup(&hub, b"k99").unwrap_err(), "HOT_PARTITION_MISMATCH");
+        // Entries quiet past the maximum are dropped before any current one.
+        let hub = tiny_ring(
+            &[(0, 0)],
+            HubConfig {
+                last_value_max_keys: 2,
+                max_quiet: Duration::from_millis(300),
+                ..Default::default()
+            },
+        );
+        hub.dispatch(quote(0, 0, b"old", "okx-1", 7, 0, vec![]));
+        std::thread::sleep(Duration::from_millis(400));
+        hub.dispatch(quote(0, 1, b"fresh", "okx-1", 7, 0, vec![]));
+        hub.dispatch(quote(0, 2, b"new", "okx-1", 7, 0, vec![]));
+        healthy(&hub);
+        set_head(&hub, 0, Some((3, Instant::now())));
+        assert_eq!(lookup(&hub, b"fresh").unwrap().raw.offset, 1);
+        assert_eq!(lookup(&hub, b"new").unwrap().raw.offset, 2);
+        assert_eq!(lookup(&hub, b"old").unwrap_err(), "HOT_RECORD_MISSING");
+    }
+
+    #[test]
+    fn book_feeds_never_answer_from_a_last_value() {
+        let hub = tiny_ring(&[(0, 0)], HubConfig::default());
+        hub.dispatch(hot_record(0, 0, "BOOK_SNAPSHOT", 1, vec![]));
+        healthy(&hub);
+        set_head(&hub, 0, Some((1, Instant::now())));
+        assert_eq!(
+            latest(&hub, "BOOK_SNAPSHOT").unwrap_err(),
+            "HOT_RECORD_MISSING"
+        );
+        assert_eq!(hub.last_value_usage().0, 0);
     }
 
     // ----------------------------------------------- live budget charge-once

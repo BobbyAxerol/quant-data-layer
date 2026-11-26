@@ -100,6 +100,7 @@ fn hub() -> Hub {
         HubConfig {
             ring_max_bytes: 64 * 1024 * 1024,
             ring_max_age: Duration::from_secs(300),
+            ..Default::default()
         },
     )
 }
