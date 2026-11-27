@@ -80996,3 +80996,12 @@ the old set, keep the old set only where a test names it as a historical fixture
    cores, ingestor_okx_swap; gates: TRADE frames per binding, market_cache bytes against the measured projection, ring
    coverage, writer refusals at baseline.
 5. **Rollback:** previous catalogue/realm/ingestor config by hash; TS back to JWT 17 first.
+
+### DL v2.4.4 pre-push preflight on the final code tree (tested locally) - 2026-11-27 (Claude)
+
+Python unit suite, 4 CI shards on `fe94c87` (the final code tree; later commits change only this plan, the ledger and
+the packet, which no test reads), same image/caps as before plus `--tmpfs /tmp:exec`, 06:23-07:46Z, load 19-23:
+partition check PASS (374 modules); shard 1 1013 OK (9 skipped), shard 2 728 OK (11), shard 3 1370 OK (25),
+shard 4 1491 OK (90). **4,602 tests, 0 failures, 0 errors.** Rust unchanged since the 569/0/72 run on `6e6c831`.
+Classifier dry run on the final diff: `scoped: python,rust,contracts`, 70 files, no CI-defining file. Next: one push
+of `release/v2.4.4` and one PR to dev; the image build waits for the coordinator's build GO.

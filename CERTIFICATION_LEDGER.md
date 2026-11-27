@@ -2526,6 +2526,7 @@ Not applied in this window: Binance stage C r8 (own window), Rust roles / bar_ed
 |---|---|---|
 | Rust job (fmt, clippy -D warnings, workspace tests) | `6e6c831` (no Rust change after it) | PASS 569 / 0 / 72 ignored |
 | Python unit suite, 4 shards | `f09e288` | 4,601 tests: 8 errors = 3 harness (`noexec` tmpfs, OK on re-run) + 5 benchmark coverage gap (fixed in the packet commit, module 31 OK) |
+| Python unit suite, 4 shards, final code tree | `fe94c87` | **4,602 tests, 0 failures, 0 errors** |
 | Not run locally | | `--ignored` Kafka/Redis integration, cargo-deny, buf, pip-audit, trivy, full CI |
 
 ### 2026-11-26 - production windows W-DL and W-DLR (back-filled 2026-11-27) - PASS
