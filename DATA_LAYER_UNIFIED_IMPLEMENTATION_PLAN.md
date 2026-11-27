@@ -81203,3 +81203,16 @@ bake `qdl_sdk`; Crossec image `a5b58033` has 2.10.0) or, without a bump, build t
   (ingestor), Query HOT_RECORD_MISSING 0, no projection-cache identity line, no other container (stable_redis included)
   restarted. Open decision: the stream overlay sets only the image (code default 2,048 last-value keys, plan
   529,268,736 ≤ 536,870,912); adding `QDL_KN_LAST_VALUE_MAX_KEYS=1024` would be a second env delta.
+
+### W-DLR2 packet v2: stream_kn with QDL_KN_LAST_VALUE_MAX_KEYS=1024 (coordinator decision, measured fit) - 2026-11-27 (Claude)
+
+- Measured need (read-only): the running stream image has no last_value metrics (DL 2.4.0), so the key count comes from
+  the deployed realm bundle: 220 kept keys (QUOTE 104, MARK_INDEX_PRICE 102, TRADE 14) ≤ 716 (70 % of 1024); 6
+  partitions, per-partition cap 170, estimated max 41-46 keys per partition. Memory plan from the live start line:
+  523,239,424 + 4,194,304 = 527,433,728 ≤ 536,870,912 (~9.0 MiB headroom). Correction: the earlier 7.3 / 11.3 MiB used
+  520,880,128 (W-DLR precheck); the live start line says 523,239,424.
+- The key reaches the container only through a compose override (`stream-lv1024.override.yml`, `7685bba1…`); an env
+  file does not add container env. New stream hashes `b071f76a` / `234db3ee`; rolediff asserted exactly = image +
+  `environment/QDL_KN_LAST_VALUE_MAX_KEYS` on both replicas; verify asserts the env key, the start-line memory plan
+  `last_value_total` 4,194,304 and `last_value.keys` ≤ 716. Script v2 `5d052e93…` (v1 kept read-only), packet
+  `0ebde2ac…`; dry v2 13:57Z PASS 40/40. Not rolled.
