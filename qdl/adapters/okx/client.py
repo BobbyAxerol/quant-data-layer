@@ -29,6 +29,18 @@ OKX_CONTRACT_STATISTICS_LIMITS = {
 }
 
 
+# DL-DEF-2026-11-27-O: public endpoints whose documented rate-limit rule is "IP + Instrument ID" (OKX docs-v5,
+# read 2026-11-27): requests/2 s. They were queued behind the one process-wide `public` bucket (5 burst, 2.5/s), so a
+# 16-instrument 90-day FUNDING_RATE batch waited >= 4.4 s for tokens alone and 6-10.7 s with a second consumer on the
+# same replica (Crossec 09:34:53-09:35:21Z). Each instrument now has its own bucket at 40 % of the documented rate per
+# Query process (two replicas share the host IP: 80 % in total), capacity 2.
+OKX_INSTRUMENT_SCOPED_LIMITS = {
+    "/api/v5/public/funding-rate-history": 10,
+    "/api/v5/public/open-interest": 20,
+}
+INSTRUMENT_SCOPED_SHARE = 0.4
+
+
 class OkxStatisticsRateLimited(ReferenceProviderExhausted):
     def __init__(self, *, http_status: int | None, provider_code: int | None,
                  retry_after_ms: int | None) -> None:
@@ -146,6 +158,19 @@ class OkxRestClient:
                     )
                     self._scoped_buckets[key] = scoped
                 return scoped
+        if path in OKX_INSTRUMENT_SCOPED_LIMITS:
+            inst_id = str(params.get("instId") or "").strip().upper()
+            if inst_id:
+                key = (bucket, path, inst_id)
+                async with self._scoped_bucket_lock:
+                    scoped = self._scoped_buckets.get(key)
+                    if scoped is None:
+                        scoped = AsyncTokenBucket(
+                            capacity=2,
+                            refill_per_second=OKX_INSTRUMENT_SCOPED_LIMITS[path] / 2 * INSTRUMENT_SCOPED_SHARE,
+                        )
+                        self._scoped_buckets[key] = scoped
+                    return scoped
         # OKX mark-price is budgeted by IP plus instrument. Do not put five
         # independent execution references behind the generic public bucket.
         if path == "/api/v5/public/mark-price":

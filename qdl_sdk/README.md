@@ -195,6 +195,16 @@ Consumers that cache BARs:
 `DATA_LAYER_SERVICE_ACCESS_GUIDE.md`, "Instrument lifecycle observations". `history_state` NOT_CONFIGURED or
 NO_OBSERVATION means DL makes no lifecycle claim; it never means ACTIVE.
 
+### Replicas and request deadlines (SDK 2.11.1)
+
+- A request's HTTP timeout is its declared server deadline (`deadline_ms` + 2 s) when that is longer than
+  `timeout_seconds`; set `deadline_ms` to bound a call, not the transport timeout.
+- `RestQueryTransport("https://qdl-v2-query:8200")` sends every request to one connection pool; a DNS alias held by
+  two replicas does not spread one client's requests, so a slow replica is its only path. For alphas use
+  `build_replicated_rest_query([...replica URLs...])`: it rotates reads over replicas and moves to the next replica on
+  a transport error (connection failure or timeout). It does not hedge (no duplicate in-flight request); a request is
+  retried on another replica only after its own deadline-bound timeout.
+
 ## Migration safety
 
 - Existing V1 methods remain delegated by `V1CompatibilityFacade` without
@@ -217,7 +227,7 @@ Build the standalone artifact with:
 python scripts/build_qdl_sdk_release.py --output-dir dist/qdl-sdk
 ```
 
-The output contains a reproducible `qdl_sdk-2.11.0-py3-none-any.whl`, a release
+The output contains a reproducible `qdl_sdk-2.11.1-py3-none-any.whl`, a release
 manifest with the wheel/source/generated-contract SHA-256 digests, and a
 CycloneDX SBOM. The wheel contains only the public SDK plus generated Protobuf
 contracts; it does not package `qdl.api_v2`, runtime adapters, provider code or

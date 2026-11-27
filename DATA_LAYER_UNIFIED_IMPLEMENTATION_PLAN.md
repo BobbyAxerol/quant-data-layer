@@ -81049,3 +81049,170 @@ qdl-kafka, qdl-realtime-core, qdl-projector, qdl-stream-gateway; qdl-core and qd
 - So the running images need no out-of-band action; v2.4.4 carries the fixed version.
 
 CI cost: Cargo.lock is CI-defining, so this push runs every job fresh (CI5) and the cargo cache key changes.
+
+### DL-DEF-2026-11-27-O: reference batch client timeout ignored its declared deadline; OKX funding/OI budget shared process-wide (fixed on branch, tested locally) - 2026-11-27 (Claude)
+
+**Registered here: DL-DEF-2026-11-27-O** (the letter was free on every DL branch and journal). Incident: Crossec
+startup stop 2026-11-27 09:35:20Z, `ReadTimeout`. Forensics (read-only, TS/DL to hosted):
+`~/.local/state/trading-system/paper-hosting/TS_DL_TO_HOSTED_ALPHA_CROSSEC09_READ_TIMEOUT_CORRELATION_20261127.md`,
+evidence `crossec09-timeout-forensics/` (sha256 table there).
+
+**Root cause (checked in code).**
+1. **Client.** qdl_sdk 2.10.0/2.11.0 `RestQueryTransport.reference_batch` set no per-request timeout, so a batch whose
+   requirements declared `deadline_ms=120000` was cut at the transport default `timeout_seconds=10.0`
+   (`qdl_sdk/transport.py`, `reference_batch` before this fix; the deadline-aware wait existed only for `warmup` /
+   `warmup_batch`, `_cold_timeout_seconds`). The alpha SDK builds the transport without a timeout
+   (`alpha_sdk/data_layer_v2.py:134` in the Crossec image). Client gave up at 10.063 s; server answered 200 at 10.689 s.
+2. **Server cost.** Not the spool: reference history is fetched from the provider path (`qdl/reference/batch.py`,
+   30 s history TTL cache, provider concurrency 4). OKX `GET /api/v5/public/funding-rate-history` is documented
+   "10 requests per 2 seconds, rule IP + Instrument ID" (docs-v5 copy read 2026-11-27), but `OkxRestClient` put it on
+   the one process-wide `public` bucket (`qdl/adapters/okx/client.py`, capacity 5, 2.5/s) shared with every other
+   public call of that Query. 16 instruments x one page = 16 tokens: 5 burst + 11 / 2.5 per s = **4.40 s of token
+   waiting alone**, measured offline with the real client and history adapter and a zero-latency fake provider
+   (4.402 s, 4.402 s); a second consumer's chain on the same replica (below) drew from the same bucket, which explains
+   6.0-10.7 s on kn_1 at 09:34:53-09:35:21.
+3. **Replica pinning.** One `RestQueryTransport` on the alias `qdl-v2-query` (held by both Query replicas) keeps one
+   keep-alive pool, so consecutive requests stay on one replica; kn_2 was idle.
+
+**The second sequential reference chain on kn_1 (09:34:53.568 → 09:35:36.8): UNATTRIBUTED from logs and config.**
+- Not Crossec: its three restarts (09:35:25Z, 09:35:28Z, 09:35:31Z) stopped at `START_AUTHORIZATION_REQUIRED` before
+  any DL read (container log), so nothing of the chain after 09:35:21 is Crossec; the chain also overlaps Crossec's
+  chunks 1-3 in time.
+- Containers on this host configured for DL Query (`DATA_LAYER_V2_QUERY_URL`): ts-gateway, ts-risk, ts-paper,
+  ts-performance, market_data_service_p184w; none logged a line in 09:34:30-09:36:00Z; no other alpha container runs
+  on this host. Query's `slow_request` line had no consumer field and v2.4.2 has no per-consumer counts, so the
+  server side cannot name it. Fixed for next time below; v2.4.4 also adds per-consumer request counts (BL-D).
+
+**Fix (branch `fix/dl-def-o-reference-timeout` from `release/v2.4.4` `7080b35`; SDK 2.11.1).**
+- SDK: `_deadline_timeout_seconds` is the single rule for every deadline-carrying request: the HTTP timeout is the
+  largest `deadline_ms` + `COLD_TIMEOUT_MARGIN_S` (2 s) when longer than `timeout_seconds`. Applied to `warmup`,
+  `warmup_batch` (unchanged behaviour, now via the helper) and `reference_batch` (new). Audit: snapshot, feed status,
+  instruments, instrument, lifecycle declare no deadline and keep the transport default; streams use gRPC deadlines.
+  Behaviour change to note: a caller that capped reference reads with a short transport timeout now waits up to its
+  `deadline_ms` (default 20,000) + 2 s; it must set `deadline_ms` to the bound it wants. Versioned: SDK 2.11.1,
+  CHANGELOG + README ("Replicas and request deadlines": use `build_replicated_rest_query` for alphas; it fails over on
+  transport errors, it does not hedge in-flight requests).
+- Server: `OKX_INSTRUMENT_SCOPED_LIMITS` (funding-rate-history 10, open-interest 20 per 2 s, both "IP + Instrument ID"):
+  one bucket per instrument at 40 % of the documented rate per Query process (two replicas share the host IP: 80 % in
+  total), capacity 2. Same 16-instrument batch: **0.014-0.016 s** of token waiting (vs 4.40 s).
+- Telemetry: `slow_request` lines carry `consumer` (`X-QDL-Consumer-ID`) and `session` (`X-QDL-Session`), ASCII
+  printable, max 128 chars; credentials never.
+
+**Tests** (`qdl-v2-python:2.4.3.1-b8935d1`, worktree read-only, light slot, `--network none`):
+`tests/test_dl_def_o_reference_timeout.py` 10 tests: SDK timeout rule (explicit, default and inside-default deadlines,
+warmup helper); **real HTTP** (uvicorn on 127.0.0.1, server answers 200 after 1.5 s, transport default 1.0 s): received
+with the fix, `httpx.ReadTimeout` with the pre-fix behaviour; per-instrument bucket identity and rates; old vs new
+16-instrument batch timing (old ≥ 4.0 s, new < 1.0 s); slow_request attribution without credentials. With the impacted
+modules (`test_query_interpreter`, `test_phase104_reference_batch`): 55 OK. Sweep of the 25 modules naming `reference_batch` / `RestQueryTransport` / `_cold_timeout` plus `test_qdl_sdk_release`,
+`test_phaseb_stable_release`, `test_dl_v244_sdk_bar_lineage_parity`, `test_query_interpreter`: 388 OK (1 skipped);
+`tests.test_build_qdl_release_images` on the host after the commit (it reads HEAD): see the commit report.
+
+**Rollout class.** Server part = Query image (`query_kn_1`, `query_kn_2`, rolling), the next DL release after v2.4.4
+(the v2.4.4 images are built from `db6885d` without it). Client part = **alphas must bump to SDK 2.11.1** (their images
+bake `qdl_sdk`; Crossec image `a5b58033` has 2.10.0) or, without a bump, build the transport with
+`timeout_seconds >= deadline_ms/1000 + 2` and preferably `build_replicated_rest_query` over both Query replicas
+(the TS `alpha_sdk` `data_layer_v2.py:134` change is TS-side). The server fix alone removes the token queue, so a
+90-day 16-instrument funding batch should no longer approach 10 s; that is expected, not yet measured live.
+
+### DL-DEF-2026-11-27-O folded into v2.4.4 (coordinator decision 2026-11-27, before the held image build) - 2026-11-27 (Claude)
+
+- The fix commit was rebased from `release/v2.4.4` `7080b35` onto dev `db6885d1` (whose tree equals `7080b35`'s); the
+  resulting code tree is byte-identical to the tested `2af49510` tree, so the local results above carry over (DEF-O
+  module 10 OK, sweep 388 OK / 1 skipped, recipe tests OK on the host).
+- v2.4.4 now carries DEF-O and SDK **2.11.1** (`SDK_VERSION` in the recipe; the recipe's source preconditions require
+  `qdl_sdk/__init__.py` and `build_qdl_sdk_release.py` at 2.11.1, so a db6885d build would now be refused: the build
+  must use the merge of this PR). Packet §1, §2 and new §5a updated (roles unchanged: Query is recreated anyway).
+- **Bucket share checked:** the only DL code calling `/api/v5/public/funding-rate-history` or
+  `/api/v5/public/open-interest` is the Query reference runtime (`qdl/reference/runtime.py:132` → `OkxSwapReferenceAdapter`
+  → `OkxHistoricalClient`); bar_edge builds an `OkxHistoricalClient` for candles only (`stable_bar_edge.py:1176-1190`,
+  `bar_edge.py:98`, no funding/OI call), the Rust ingestors make no such REST calls (grep of `rust/`), the V1 service is
+  stopped, and the TS services / alpha SDK / execution_alpha trees contain no call to either endpoint (grep). So two
+  Query replicas at 40 % each = 80 % of the documented per-instrument rate from this IP.
+
+### DL v2.4.4 images built from 13850b10; R0; Query roll packet prepared (not rolled) - 2026-11-27 (Claude)
+
+- **Build** (coordinator build GO; wrapper v3 `24c2b2f7` run by the coordinator, 10:47:06-10:53:22Z, rc 0, receipt
+  `~/.local/state/qdl-v2/build-v2.4.4-13850b1/receipt.json` status PASS): python `qdl-v2-python:2.4.4-13850b1`
+  `sha256:0e14a5f4…`, rust `qdl-v2-rust:2.4.4-13850b1` `sha256:8729292b…`. Rust binary verdicts: 0 unexpected
+  (the v2.4.4 rows held: qdl-core/venue-core EQUAL to `e628fbe0`, every url-graph binary DIFFERENT). Python: file
+  verdicts OK against both production references, pip freeze equal.
+- **R0** (light slot, trivy 0.70.0, pip-audit): python image 0 fixable CRITICAL/HIGH, pip-audit clean → **PASS**.
+  Rust image **FAIL**: 4 fixable HIGH, CVE-2025-6020 libpam (1.5.2-6+deb12u2, fixed deb12u3) from the runtime base
+  `qdl-v2-rust-base:bookworm-v240-20261118` (`b33ec0cb`); the running rust image `e628fbe0` shows the same 4, so it is
+  pre-existing, not introduced. The rust roles (stream_kn, ingestors) wait for a base rebuild
+  (`build_qdl_release_images.py --build-base`, apt upgrade on bookworm) and a rust image rebuild; the Query roll does
+  not depend on it.
+- **Version register:** `upgrade/evidence/releases/v2.4.4/VERSION_REGISTER.md` (images built, pending runtime rolls).
+- **Query roll packet / script** (for the coordinator; the agent does not roll): `~/.local/state/qdl-v2/windows/v2.4.4-query/window.sh`
+  with overlay `~/.local/state/qdl-v2/releases/v2.4.4-query-compose/v2.4.4-query.env` (only `QDL_IMAGE_QUERY`).
+  Modes dry / roll N / verify N / rollback N / funding-probe N (opt-in venue reads). Dry run 10:56Z: rollback layering
+  reproduces `535ec6cc` / `a0eff1c8`; new hashes `ac9bb831` / `a1c2d29e`; whole-project rolediff = exactly the two
+  Query image paths; images present; MemAvailable 12 GB; it refused only because a (TS) docker build was running,
+  which is the intended gate.
+
+### DL v2.4.4 rust base refresh for CVE-2025-6020 (coordinator GO 2026-11-27 ~10:58Z): step A recipe change - 2026-11-27 (Claude)
+
+- `scripts/build_qdl_release_images.py`: `RUST_BASE_REFRESH = "2026-11-27-cve-2025-6020"` inside the base recipe's RUN
+  line. Without it `--build-base` would reuse Docker's cached 2026-11-18 apt-upgrade layer (identical instruction
+  text) and produce the same vulnerable base. Test pins the marker in the RUN line; `tests.test_build_qdl_release_images`
+  OK (host).
+- Step A (base build, new tag `qdl-v2-rust-base:bookworm-v244-20261127`, never moving the old tag) runs from the gate
+  wrapper `scratchpad/v244/dl_v244_rustbase_gate.sh` (TS rc native DONE, :46-:05, outside the Query roll 12:06-12:13Z
+  and T8 12:15-12:50Z with an 8-min start margin, no other build, one heavy slot). Step B (pin `RUST_BASE_TAG/ID` in
+  the recipe in its own commit, then `--component rust --build` from that commit, R0, VERSION_REGISTER row) follows.
+  No rust role roll: the coordinator decides after R0.
+
+### DL v2.4.4 rust base refresh step B: pin the new base (tested locally) - 2026-11-27 (Claude)
+
+- Step A ran from the gate wrapper (pid 3194433): DONE rc 0 at 11:46:43Z, `qdl-v2-rust-base:bookworm-v244-20261127` =
+  `sha256:3b5cf993b8c99f4d59c40f430f4313bc6c2eb09a9066a1bbc428cafc916b555c`, recipe sha256 `bc75b806…`. trivy 0.70.0 on
+  the base (light slot, DB not updated since the 10:5xZ R0 run): 0 fixable CRITICAL/HIGH (CVE-2025-6020 gone).
+- Recipe: `RUST_BASE_TAG` / `RUST_BASE_ID` pinned to it (so `BUILD_METHOD` names `3b5cf993`); recipe test updated;
+  `tests.test_build_qdl_release_images` OK (host).
+- Next: the rust image from this commit (`--component rust --build`) in the safe slot 13:46-14:05Z (after W-DLQ
+  13:06-13:13Z, finishing before T8 14:15Z), then R0 and the VERSION_REGISTER row. Python image unchanged
+  (`0e14a5f4`, R0 PASS).
+
+### Runtime: W-DLQ Query x2 on DL v2.4.4 (production-applied, coordinator-run) - 2026-11-27 (Claude, recorded)
+
+- query_kn_2 13:18:36Z, query_kn_1 13:19:18Z → `qdl-v2-python@sha256:0e14a5f4…` (2.4.4-13850b1), both PASS; re-verify
+  13:19:53Z PASS on both; reference:batch max 628 ms, 0 over 4 s; slow_request lines carry `consumer` (DEF-O live).
+  Receipts `~/.local/state/qdl-v2/windows/v2.4.4-query/roll2-20261127T131836Z.txt` (`729a51ff…`) and
+  `roll1-20261127T131918Z.txt` (`701780d5…`), hashes recomputed. Config-hashes `a1c2d29e` / `ac9bb831` (read-only check).
+  Rollback `5ea7a7a4` via `window.sh rollback N`. Not touched: every other role. Status: Query `production-applied`
+  on v2.4.4 code (not tagged; CI6 receipt pending the single final CI run). `VERSION_REGISTER.md` updated.
+
+### DL v2.4.4 rust image on the refreshed base: built and R0 PASS (not rolled) - 2026-11-27 (Claude)
+
+- Gate v2 (pid 3921800, refuses after 13:57Z for the 14:06-14:44Z quiet window; v1 pid 3477848 was killed before it
+  started) ran 13:46:14-13:50:05Z rc 0: `qdl-v2-rust:2.4.4-70de106` = `sha256:2e920c2a…`, receipt PASS (0 unexpected
+  binary verdicts) from `70de1066` (base `3b5cf993`).
+- R0: trivy 0.70.0, 0 fixable CRITICAL/HIGH (CVE-2025-6020 gone). It replaces `8729292b` (R0 FAIL) for the rust roles
+  (stream_kn x2, ingestor_okx_swap, optional ingestor_binance_usdm). No rust role is rolled; the coordinator decides.
+  VERSION_REGISTER row added.
+
+### DL v2.4.4 rust roll packet prepared (W-DLR2, not rolled; coordinator runs it after the Crossec boot) - 2026-11-27 (Claude)
+
+- Packet `~/.local/state/qdl-v2/windows/v2.4.4-rust/PACKET.md`, script `window.sh` (dry | roll SVC | verify SVC |
+  rollback SVC), overlays `~/.local/state/qdl-v2/releases/v2.4.4-rust-compose/` (image variable only). Order
+  stream_kn_2 → stream_kn_1 → ingestor_okx_swap → optional ingestor_binance_usdm, one per invocation.
+- Dry run 13:54Z PASS 40/40: rollback layerings reproduce the live hashes (stream `4a588741`/`c861e521` with the W-DLR
+  ring override, okx `c51789cc` with the DEF-L config, binance `98b79831`), new hashes `c68b0a2c`/`accae48c`/`02007cc3`/
+  `66c79331`, rolediff of each layering = image paths only, ring env a2 present, no build running.
+- Verify: ring/lag/reader errors/dispatch p99/rss/last_value metrics (stream), lanes flowing and 0 rejections
+  (ingestor), Query HOT_RECORD_MISSING 0, no projection-cache identity line, no other container (stable_redis included)
+  restarted. Open decision: the stream overlay sets only the image (code default 2,048 last-value keys, plan
+  529,268,736 ≤ 536,870,912); adding `QDL_KN_LAST_VALUE_MAX_KEYS=1024` would be a second env delta.
+
+### W-DLR2 packet v2: stream_kn with QDL_KN_LAST_VALUE_MAX_KEYS=1024 (coordinator decision, measured fit) - 2026-11-27 (Claude)
+
+- Measured need (read-only): the running stream image has no last_value metrics (DL 2.4.0), so the key count comes from
+  the deployed realm bundle: 220 kept keys (QUOTE 104, MARK_INDEX_PRICE 102, TRADE 14) ≤ 716 (70 % of 1024); 6
+  partitions, per-partition cap 170, estimated max 41-46 keys per partition. Memory plan from the live start line:
+  523,239,424 + 4,194,304 = 527,433,728 ≤ 536,870,912 (~9.0 MiB headroom). Correction: the earlier 7.3 / 11.3 MiB used
+  520,880,128 (W-DLR precheck); the live start line says 523,239,424.
+- The key reaches the container only through a compose override (`stream-lv1024.override.yml`, `7685bba1…`); an env
+  file does not add container env. New stream hashes `b071f76a` / `234db3ee`; rolediff asserted exactly = image +
+  `environment/QDL_KN_LAST_VALUE_MAX_KEYS` on both replicas; verify asserts the env key, the start-line memory plan
+  `last_value_total` 4,194,304 and `last_value.keys` ≤ 716. Script v2 `5d052e93…` (v1 kept read-only), packet
+  `0ebde2ac…`; dry v2 13:57Z PASS 40/40. Not rolled.
