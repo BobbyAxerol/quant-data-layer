@@ -28,7 +28,7 @@ Production today (read-only `docker inspect`, 2026-11-27 ~05:00Z):
 | Role | Running image | v2.4.4 action | Why |
 |---|---|---|---|
 | `stream_kn_1`, `stream_kn_2` | rust `abafab2c` (2.4.0-c17472c) | **recreate**, rolling, new rust image | DEF-M (`qdl-stream-gateway`: hub last value, max-quiet, memory term, metrics) |
-| `ingestor_okx_swap` | rust `e628fbe0` (2.4.2-48137eb) | **recreate**, new rust image + r11 ingestor lane config | DEF-L probation (ingestor binary) and the 3-session QUOTE lane spread (declaration r11: lanes 003/006/007 = 33/32/32, 64 moves, `config_revision` 23 unchanged) |
+| `ingestor_okx_swap` | rust `e628fbe0` (2.4.2-48137eb), config `releases/v2.4.4-defl-ingestor/ingestor_okx_swap.json` since 2026-11-26 16:46:17Z | **recreate**, new rust image, **same config** | DEF-L probation (ingestor binary). Observed read-only on 2026-11-27: the 3-session QUOTE lane spread (lanes 003/006/007) is **already live** on the old image (container mount and lane-006 heartbeat lines); its journal record is not on this branch. v2.4.4 changes only the binary |
 | `ingestor_binance_usdm` | rust `e628fbe0` | **optional** recreate on the same new image, config unchanged | Same binary. The probation applies to every all-quote lane with an IDR-112 detector. Skipping it keeps Binance on the v2.4.2 binary (a supported mix). Recommendation: recreate it last, after OKX holds for 30 min |
 | `query_kn_1`, `query_kn_2` | python `5ea7a7a4` (2.4.2-48137eb) | **recreate**, rolling, new python image | Typed `HOT_QUIET_BEYOND_MAX`, lifecycle endpoint, DEF-G typed tokens, BL-D counts. Lifecycle stays `NOT_CONFIGURED` until `QDL_INSTRUMENT_LIFECYCLE_LEDGER` is set (a separate owner step, section 6) |
 | `binance_bar_edge` | python `396a4654` (2.4.3.1-b8935d1) | **recreate**, new python image | BL-B/C resume and venue-hole span (python `stable_bar_edge.py`, OKX/Binance bar_edge adapters, `derived_bars.py`) |
@@ -46,7 +46,7 @@ here: no catalogue revision change; r11 touches only the ingestor lane file):
    answers `NOT_CONFIGURED`.
 3. `binance_bar_edge` (with the `.pre-v244` checkpoint copy). Gate: the RELEASE_NOTES_DRAFT bound
    (`ceil(N/16)` turns), `venue_holes_refused` counts open spans only, all OKX/Binance BAR current.
-4. `ingestor_okx_swap` with the r11 lane file. Gate: 3 quote sessions 33/32/32, `subscriptions_rejected 0`, IDR-112
+4. `ingestor_okx_swap` on its current config (`v2.4.4-defl-ingestor`). Gate: 3 quote sessions 33/32/32, `subscriptions_rejected 0`, IDR-112
    recycles/suppressions and probation outcomes logged, Query execution QUOTE refusals (the DEF-L RCA classes) not
    above baseline for 30 min.
 5. Optional: `ingestor_binance_usdm`.
@@ -68,7 +68,8 @@ only `qdl-stream-gateway` and `qdl-native-raw-ingestor` are expected DIFFERENT a
 cd /home/bobby/.worktrees/dl-v244-release
 # 1. dry run: prints the plan, runs no docker command
 python3 -B scripts/build_qdl_release_images.py --rev <release-commit> --component all
-# 2. build (one cargo build host-wide; heavy slot; correctness class activity record)
+# 2. build: ONLY after the coordinator's build GO, in a build window (:46-:05), heavy slot, one heavy build host-wide
+#    (one cargo build host-wide; correctness class activity record)
 scratchpad/hostslots/run_in_slot.sh dl-v244-build 3600 -- \
   python3 -B scripts/build_qdl_release_images.py --rev <release-commit> --component all --build \
   --lock-owner dl-v244-build --max-load 30
@@ -89,7 +90,7 @@ Per role, the image it runs today, on its current env/config; every v2.4.4 chang
 | `stream_kn_1/2` | rust `sha256:abafab2c98cbdd9d2fe86f2b26fd6fcf64800ccdd114a3dd5b92803de16a3e98`, same env | Soft rollback without a recreate is not possible; an env-only fallback on the new image is `QDL_KN_LAST_VALUE_MAX_KEYS=0` (ring-only, pre-DEF-M lookups) |
 | `query_kn_1/2` | python `sha256:5ea7a7a40ef2d1df920d0f7cf94f22431d53087f8002929e7dffdb4208f7dcc4` | Lifecycle env unset; nothing persistent written by Query |
 | `binance_bar_edge` | python `sha256:396a4654014758f70362b3097559e03dcb412d36904d94d3cb7c973f6ccb1637` (2.4.3.1) + `.pre-v244` checkpoint copy restored as uid 10001; sidecar format unchanged | v2.4.3 `50124df8…` remains the older rollback |
-| `ingestor_okx_swap` | rust `sha256:e628fbe07afe94e8f716692633e77217a16223ea03abc7ea34edb959a48c72a7` **and** the r10 ingestor lane file | Lanes 006/007 disappear; QUOTE is latest-state, no checkpoint is stranded (DEF-L render note) |
+| `ingestor_okx_swap` | rust `sha256:e628fbe07afe94e8f716692633e77217a16223ea03abc7ea34edb959a48c72a7`, same `v2.4.4-defl-ingestor` config (the lane spread already runs on that image) | binary-only rollback |
 | `ingestor_binance_usdm` | rust `e628fbe0…`, config unchanged | only if it was recreated |
 
 Order: reverse of the rollout. Readers before writers is satisfied: Query understands both gateway versions; the SDK
@@ -114,6 +115,28 @@ Order: reverse of the rollout. Readers before writers is satisfied: Query unders
 
 The certificate (`upgrade/evidence/releases/v2.4.4/CERTIFICATE.md`) is written after the windows, in the v2.4.2 format
 (identity, scope, CI, runtime acceptance, deviations, not changed).
+
+## 5b. TS consumer manifest r17 (owner GO 2026-11-27) and the TS JWT revision
+
+- Git: `upgrade/evidence/releases/v2.4.4/realm-ts17/`: deployed r16 byte for byte (`5b1cd9af…`) and r17 =
+  r16 + OPEN_INTEREST x96 (`a0421ae163fc165c38af2c0b970093ee503a084e1bd95a5c54e381297d05daa2`). TRADE x91 of the TS patch
+  (full patch result `312b8745…`) is split to r18 with the declaration that adds their catalogue bindings (plan journal
+  2026-11-27, sizing).
+- Host prep (not done): `releases/v2.4.4-realm-ts17/` = a copy of `v2.4.2-realm-ts16` plus
+  `trading-system.paper.stable-r17.yaml` (the committed `realm-ts17` file); `query_kn_1/2` env `QDL_STABLE_CONSUMER_MANIFESTS` names
+  `/consumer-realms/trading-system.paper.stable-r17.yaml` instead of `-r16`, mount `v2.4.4-realm-ts17`. This rides
+  the Query recreate of step 2. stream_kn does not read this manifest file (its realm bundle is separate); OPEN_INTEREST
+  is a Query reference read, so no stream change.
+- **Order (checked):** DL first. Query r17 accepts TS tokens minted for 1..17 (`qdl/consumer/manifest.py:135-154`),
+  so TS JWT 16 keeps working; then TS switches to 17. A TS JWT 17 against Query r16 is a 401.
+- **TS env changes (TS side, same window, after both Queries are on r17):**
+  - `QDL_V2_TRADING_SYSTEM_MANIFEST_REVISION=17`, which TS compose maps to `DATA_LAYER_V2_JWT_MANIFEST_REVISION`
+    (`docker-compose.data-layer-v2-primary.yml:36` in the TS repo) for every TS service that mints the
+    `trading-system.paper.stable` token;
+  - the TS sealed consumer binding / `DATA_LAYER_V2_RELEASE_MANIFEST_SHA256` where TS pins it, to the r17 file hash
+    above (TS owns the exact service list and its packet);
+  - TS rollback: revision 16 (accepted by both r16 and r17).
+- DL rollback: Query env back to `-r16` (TS must be back on 16 first).
 
 ## 6. Separate owner decisions (not in the image windows)
 
@@ -149,6 +172,9 @@ CI-defining file changed (no workflow, Dockerfile, compose, lockfile or classifi
 - Flakes: rerun only the failed job (CI7); two red runs with the same cause stop the line.
 
 ## 8. DEF-M follow-up 1: REST BBO reconciliation for keys quiet past the maximum (design; not implemented)
+
+**Owner decision 2026-11-27: option (a), PROVIDER_CONFIRMATION as an additive proto field, in the release after
+v2.4.4.** Slice plan S1-S7: plan journal "DL-DEF-2026-11-26-M follow-up 1 ... slice plan".
 
 **Why not implemented in this bundle.** The change is in the Rust OKX ingestor and adds venue REST traffic and a new
 record provenance into the QUOTE stream. Three parts cannot be verified offline: the REST/WS equality semantics on a

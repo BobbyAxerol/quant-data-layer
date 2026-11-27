@@ -80816,3 +80816,113 @@ shared warm cache) and the logs under scratchpad `v244/`. No image built, no con
 
 **Next.** Owner: GO for the recipe commit (`RELEASE = "2.4.4"`, references, binary expectations), then the build,
 R0, one PR to dev, the windows of the packet.
+
+### DL v2.4.4 owner GO items (2026-11-27): manifest drift, TS consumer manifest r17, recipe (tested locally) - 2026-11-27 (Claude)
+
+Owner GO (via the coordinator): recipe commit, image build (only in a build window, on a separate build GO), R0,
+one PR to dev, full CI; merge to main and the tag are asked separately.
+
+**1. Drift: the deployed TS consumer manifest r16 is now in git, faithfully.** Git carried
+`consumers/stable/trading-system-paper.yaml` at revision 13 (`cfc20e29…`), while r14, r15 and r16 existed only in the
+release dirs. Query reads its manifests from the realm mount (`query_kn_1` env `QDL_STABLE_CONSUMER_MANIFESTS`
+→ `/consumer-realms/trading-system.paper.stable-r16.yaml`, mount `~/.local/state/qdl-v2/releases/v2.4.2-realm-ts16`,
+read-only inspect). The deployed file is committed byte for byte as
+`upgrade/evidence/releases/v2.4.4/realm-ts17/trading-system.paper.stable-r16.yaml`, sha256
+`5b1cd9af6893dc8a93fde37a7d0408129dc9da0163bad143c7c4bd08147bc493` (= deployed), with r17 beside it and `SHA256SUMS`.
+- **Tried first and reverted:** replacing `consumers/stable/trading-system-paper.yaml` with r16. 35+ tests in
+  `test_trading_consumer_scope`, `test_phase103_consumer_acceptance`, `test_execution_mark_index_consumer_latency`,
+  `test_v230_declaration_tool` then fail (`ValueError: stable release consumer manifest/demand binding differs`):
+  that file is part of the repository's own consistent config set (catalogue `config/v2` r13, demand), not a copy of
+  the deployed realm. The deployed realm is a declaration product (like `declaration-retire-r10/consumer-realms/`),
+  so it is kept as release evidence. Moving the whole deployed set (catalogue r17, acquisition, demand, all realms)
+  into `config/v2` + `consumers/` is a separate reconciliation slice, not done here.
+
+**2. r17: OPEN_INTEREST x96 now, TRADE x91 split out (sizing below).**
+- The TS patch (`ts-v223-matching-parity/upgrade/V223_DL_TS_MANIFEST_R17_OKX_TRADE_OPEN_INTEREST.patch`) applies to
+  r16 and gives `312b8745fade5322ea44e66b3e225cb769f92656a2776f293bb851f1298cd82a` (checked): +96 OPEN_INTEREST
+  (ALPHA, crypto_liquid_v2) and +91 TRADE (EXECUTION, crypto_primary_v2), all OKX SWAP, 0 removed.
+- **OPEN_INTEREST** is a reference feed: Query serves an unbound ALPHA OPEN_INTEREST on the reference path
+  (`qdl/reference/runtime.py` `_REFERENCE_FEEDS`, OKX `GET /api/v5/public/open-interest` in
+  `qdl/adapters/okx/history.py` `open_interest_snapshot`). No catalogue, ingestor or stream change; the load is one
+  bounded reference REST read per request inside the manifest quotas.
+- **TRADE x91 is not servable by a grant alone.** The deployed catalogue (r17 `635237bd…`, r10 only retired three
+  instruments from r16; checked on the r16 evidence copy `upgrade/evidence/releases/v2.3.1/declaration-stage-c-r8/runtime/stable-source-bindings.yaml`)
+  has TRADE bindings for 5 OKX SWAP instruments only (BNB, BTC, DOGE, ETH, SOL) and none of the 91. An EXECUTION
+  TRADE without a binding is refused (it is not reference-eligible). Serving them needs a declaration (catalogue +
+  acquisition TRADE bindings, OKX `trades` subscriptions in an ingestor lane plan, core config): a catalogue revision
+  change, so stream replicas before Query (coupling 3).
+- **Load sizing, what is known:** the stream gateway ring is byte-bounded (48 MiB) and the DEF-M last-value index
+  key-bounded (2,048 x 4 KiB = 8 MiB, already in `MemoryPlan`), so stream_kn RSS (~395 of 512 MiB) does not grow with
+  the number of streams; more TRADE records shorten the ring's time coverage (today ~858 records/s x ~943 B ≈ 60 s of
+  48 MiB) and add per-subscription fan-out queues. **Not known offline:** the OKX trade rate of the 91 names, the
+  market_cache growth for TRADE (market_cache is the OOM-sensitive component, DL-BL-2026-11-25-H), and the lane slots.
+  These need a read-only rate measurement before the declaration.
+- **Split (owner priority, TS 54030/54031 need OPEN_INTEREST):** r17 = r16 + OPEN_INTEREST x96 only, sha256
+  `a0421ae163fc165c38af2c0b970093ee503a084e1bd95a5c54e381297d05daa2` (the patch result with the 91 added TRADE items
+  removed; every r16 line unchanged except `revision: 17`). TRADE x91 = r18 together with the declaration that adds
+  their bindings, after the rate/memory measurement.
+- **Coupling 1 refined (checked):** since DL v2.4.0 S2 the token revision is advisory: a manifest accepts tokens minted
+  for revisions 1..manifest_revision (`qdl/consumer/manifest.py:135-154` `accepted_token_revisions`,
+  `qdl/security/data_plane.py:755`). So the order is **DL first**: Query on r17 accepts the TS JWT 16 and 17; TS JWT
+  17 against a Query still on r16 is refused 401. Same window, DL step first.
+
+**3. Recipe.** `scripts/build_qdl_release_images.py`: `RELEASE = "2.4.4"`; required ancestors DEF-L `2af353e`,
+DEF-M `afba2af`, DEF-J `fdba06b`, BL-K `f09e288`; references `v240_streams` (`abafab2c`) and `v242_ingestors`
+(`e628fbe0`) added; binary expectations: stream gateway DIFFERENT vs `abafab2c`, ingestor DIFFERENT vs `e628fbe0`,
+every other binary EQUAL_LOADED_SECTIONS vs `e628fbe0` (no rust change outside those two since `48137eb`), all
+DIFFERENT vs rc2 as before; python references = Query `5ea7a7a4` (48137eb) and bar_edge `396a4654` (b8935d1).
+`tests/test_build_qdl_release_images.py`: reference set updated, rc2 row still DIFFERENT, new test pinning the v2.4.4
+rows to the rust diff since `48137eb`, `VerdictTests` patched to their rc2-only fixture.
+Tests: `tests.test_build_qdl_release_images` 47 OK on the host python with git (0 skipped; in the image 7 git-reading
+tests skip), `tests.test_build_qdl_release_images tests.test_trading_consumer_scope` 52 OK (7 skipped) in the image;
+r16 and r17 load with `ConsumerManifestLoader` (446 and 542 requirements; accepted token revisions up to 16 / 17).
+
+### DL-DEF-2026-11-26-M follow-up 1: REST BBO reconciliation with a PROVIDER_CONFIRMATION freshness basis - slice plan (owner chose option a; release after v2.4.4) - 2026-11-27 (Claude)
+
+**Owner decision (2026-11-27, via the coordinator):** option (a) of the v2.4.4 packet §8: an additive, versioned proto
+field carries a per-record PROVIDER_CONFIRMATION freshness basis. Ships in the DL release **after** v2.4.4, on its own
+branch from `release/v2.4.4`; nothing of it is in v2.4.4. Venue facts and the design are in
+`upgrade/evidence/releases/v2.4.4/drafts/RELEASE_PACKET_DRAFT.md` §8 (OKX docs cited there).
+
+**Contract (S1).**
+- `contracts/proto/qdl/marketdata/v2/market_data.proto`: `EventEnvelope.freshness_evidence = 34`
+  (`FreshnessEvidence`): `FreshnessBasis basis = 1` (`FRESHNESS_BASIS_UNSPECIFIED = 0` = today's SOURCE_EVENT
+  meaning, `SOURCE_EVENT = 1`, `PROVIDER_CONFIRMATION = 2`), `int64 confirmed_at_ns = 2` (DL receive time of the REST
+  answer), `int64 provider_time_ns = 3` (the venue `ts` of the REST book), `string method = 4`
+  (`OKX_REST_BOOKS_SZ1`), `bytes confirmation_payload_hash = 5`, `bytes confirmed_event_id = 6` (the WS record it
+  confirms). Absent or UNSPECIFIED keeps every current reader's behaviour; `schema_minor` +1.
+- `buf breaking` against both baselines and the PR base; `scripts/schema_line.py check`; regenerate `generated/`
+  (python + rust); Rust `qdl-contracts` and Python readers accept both.
+- SDK minor: `QualityView.freshness_basis` (optional str) and `confirmed_at_ns`; absent = SOURCE_EVENT.
+
+**Ingestor (S2, rust `qdl-native-raw-ingestor.rs`).** Per all-quote OKX lane: `QuoteQuietReconciler` (modelled on
+`BookLivenessProof`): last WS top per binding; due at `QDL_OKX_QUOTE_RECONCILE_AFTER_S` (default 300) of no frame,
+session live, not in a recycle/probation; token bucket 8 req/2 s (`books` limit 40/2 s per IP); `books?instId&sz=1`
+with the existing reqwest pattern (3 s / 5 s). MATCH → a confirmation raw frame (REST top, method, hash, confirmed
+WS frame id); MISMATCH → resync marker for the key + bounded unsubscribe/subscribe (≤ N per hour per session, 480/h
+venue limit); UNAVAILABLE → nothing. Metrics: due, probed, match, mismatch, unavailable, budget_deferred.
+
+**Core / canonical (S3, `qdl-realtime-core`).** Normalise the confirmation frame to a QUOTE envelope with
+`freshness_evidence` set, `source_event_time_ns` = the confirmed WS record's event time (the price's own time is
+never re-dated), session fence of the lane; identical payload hash to the confirmed record's quote body.
+
+**Stream gateway (S4).** The last value accepts a confirmation record as the key's newest record; `max_quiet` is
+measured from `confirmed_at_ns` only for PROVIDER_CONFIRMATION records and is still bounded by the provider time;
+everything else unchanged (head/catch-up proof, fences, gaps).
+
+**Query / consumer semantics (S5).** `freshness_ms` for a confirmed record = now − `confirmed_at_ns`; the item's
+quality carries `freshness_basis=PROVIDER_CONFIRMATION`; EXECUTION eligibility for QUOTE requires a confirmation
+newer than the binding's `stale_after_ms` and a provider time not older than `QDL_KN_MAX_QUIET_SECONDS`; `qdl/query/service.py`
+already folds `PROVIDER_CONFIRMATION` for reference products (reuse that path). A consumer that ignores the field
+sees the old event time and refuses as today (safe default). TS writer: no change required; optional reading of the
+basis is a TS item.
+
+**Tests (S6).** Proto golden + buf; Rust unit (scheduler, budget, compare as exact decimal strings, never during
+recycle); ingestor fake-venue e2e (the DEF-L `cdd31043` harness) for MATCH / MISMATCH / UNAVAILABLE; core
+normalisation golden; gateway hub tests (confirmation renews last value, old provider time still refused); Query unit
++ real-gRPC hot view; SDK tolerant-reader test (old payload, new payload); a bounded read-only OKX Paper probe of
+`books?sz=1` against the live WS top (no orders).
+
+**Release (S7).** Rust image (ingestor, core, gateway), python Query, SDK minor; order: readers first (Query and
+gateway accept the field, emit nothing new), then core, then ingestor (the only emitter); rollback = ingestor image
+first (stops emission).
