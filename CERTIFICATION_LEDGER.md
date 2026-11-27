@@ -2553,3 +2553,11 @@ Not applied in this window: Binance stage C r8 (own window), Rust roles / bar_ed
 | Tests | same branch | DEF-O module 10 OK incl. real-HTTP e2e; sweep 388 OK (1 skipped); token wait 4.402 s → 0.014-0.016 s |
 | Second reference chain on kn_1 09:34:53-09:35:36 | logs/config only | UNATTRIBUTED: not Crossec (restarts refused before reads), no log line from the 5 DL-configured host containers |
 | Folded into v2.4.4 | rebased onto dev `db6885d1`, tree = tested `2af49510` tree | results carried over (identical tree); SDK 2.11.1; only Query calls the two OKX endpoints (40 % x 2 replicas) |
+
+### 2026-11-27 - DL v2.4.4 images (13850b10) and R0
+
+| Item | Pinned at | Result |
+|---|---|---|
+| Build receipt | `13850b10`, receipt status PASS | python `0e14a5f4…`, rust `8729292b…`; 0 unexpected binary verdicts; python file verdicts and pip freeze OK |
+| R0 python | `0e14a5f4…` | trivy 0 fixable C/H; pip-audit clean: PASS |
+| R0 rust | `8729292b…` | FAIL: 4 fixable HIGH CVE-2025-6020 (libpam, base `b33ec0cb`); pre-existing in running `e628fbe0`; base rebuild needed before rust rolls |

@@ -81128,3 +81128,24 @@ bake `qdl_sdk`; Crossec image `a5b58033` has 2.10.0) or, without a bump, build t
   `bar_edge.py:98`, no funding/OI call), the Rust ingestors make no such REST calls (grep of `rust/`), the V1 service is
   stopped, and the TS services / alpha SDK / execution_alpha trees contain no call to either endpoint (grep). So two
   Query replicas at 40 % each = 80 % of the documented per-instrument rate from this IP.
+
+### DL v2.4.4 images built from 13850b10; R0; Query roll packet prepared (not rolled) - 2026-11-27 (Claude)
+
+- **Build** (coordinator build GO; wrapper v3 `24c2b2f7` run by the coordinator, 10:47:06-10:53:22Z, rc 0, receipt
+  `~/.local/state/qdl-v2/build-v2.4.4-13850b1/receipt.json` status PASS): python `qdl-v2-python:2.4.4-13850b1`
+  `sha256:0e14a5f4…`, rust `qdl-v2-rust:2.4.4-13850b1` `sha256:8729292b…`. Rust binary verdicts: 0 unexpected
+  (the v2.4.4 rows held: qdl-core/venue-core EQUAL to `e628fbe0`, every url-graph binary DIFFERENT). Python: file
+  verdicts OK against both production references, pip freeze equal.
+- **R0** (light slot, trivy 0.70.0, pip-audit): python image 0 fixable CRITICAL/HIGH, pip-audit clean → **PASS**.
+  Rust image **FAIL**: 4 fixable HIGH, CVE-2025-6020 libpam (1.5.2-6+deb12u2, fixed deb12u3) from the runtime base
+  `qdl-v2-rust-base:bookworm-v240-20261118` (`b33ec0cb`); the running rust image `e628fbe0` shows the same 4, so it is
+  pre-existing, not introduced. The rust roles (stream_kn, ingestors) wait for a base rebuild
+  (`build_qdl_release_images.py --build-base`, apt upgrade on bookworm) and a rust image rebuild; the Query roll does
+  not depend on it.
+- **Version register:** `upgrade/evidence/releases/v2.4.4/VERSION_REGISTER.md` (images built, pending runtime rolls).
+- **Query roll packet / script** (for the coordinator; the agent does not roll): `~/.local/state/qdl-v2/windows/v2.4.4-query/window.sh`
+  with overlay `~/.local/state/qdl-v2/releases/v2.4.4-query-compose/v2.4.4-query.env` (only `QDL_IMAGE_QUERY`).
+  Modes dry / roll N / verify N / rollback N / funding-probe N (opt-in venue reads). Dry run 10:56Z: rollback layering
+  reproduces `535ec6cc` / `a0eff1c8`; new hashes `ac9bb831` / `a1c2d29e`; whole-project rolediff = exactly the two
+  Query image paths; images present; MemAvailable 12 GB; it refused only because a (TS) docker build was running,
+  which is the intended gate.
