@@ -80385,3 +80385,147 @@ Preview: `~/.local/state/trading-system/paper-hosting/crossec-owner50-preview/dl
   status, venue-stated `effective_utc`, `observed_utc`, evidence capture hash, catalogue and source revision; retired uids
   stay resolvable; fed from the venue-listing captures the declaration gate already takes. A DL outage never produces an event.
 - Requested by hosted Crossec (owner50 request item 4). Owner prioritisation pending.
+
+### DL-DEF-2026-11-26-L: an IDR-112 recycle successor must prove freshness; an unproven late successor is recycled again without the cooldown (implemented, Rust tests written, NOT yet run) - 2026-11-26 (Claude)
+
+**Registered here: DL-DEF-2026-11-26-L.** RCA:
+`~/.local/state/trading-system/paper-hosting/TS_TO_HOSTED_ALPHA_CROSSEC_1200Z_STOP_RCA_20261126.md`.
+
+**Incident** (`ingestor_okx_swap`, lane `okx-public-003`, bbo-tbt QUOTE latest state; ingestor log read-only).
+- 12:01:22.868Z: the IDR-112 detector recycled gen 1310 (max lag 279 ms over a 26 ms baseline). Make-before-break
+  handover to gen 1311 at 12:01:23.385 (444 ms).
+- The successor itself was 4-8 s late by venue `ts`: window max 8,043 ms (12:01:34.28), 7,892 ms, mean about 4 s,
+  until about 12:01:44, then 203 ms.
+- 12:01:32.881Z: the next trigger (max lag 6,705 ms) was `SUPPRESSED_COOLDOWN` with 49,976 ms left, so the lane stayed
+  late. BTC-USDT-SWAP QUOTE went STALE, `execution_eligible=false`, and TS refused Crossec's NAV quote read at
+  12:01:33.6Z (Crossec STOPPED_CLOSED).
+- Correction (same day, after re-reading the 10 s progress windows): gen 1311 was not late at the handover. Its first
+  window (to 12:01:24.5) peaks at 290 ms, which is the old session's value. It fell behind from about 12:01:24.5 and
+  then **caught up in place**: 12:01:34-44 ran at 2,378 frames/s with read gaps of 90 ms or less while lag stayed about
+  4 s, and 12:01:44-54 peaked at 203 ms. That recovery involved no reconnect. The gen 1312 recycle at 12:02:42 was a
+  routine 438 ms trigger. Whether an earlier reconnect would have restored freshness sooner is therefore NOT shown by
+  this incident.
+
+**Cause (class).** The 60 s cooldown and the hourly cap protect a healthy lane from flapping. They also applied to
+the session the detector had just created to cure staleness, before that session ever showed it was healthy.
+"Recycled" was treated as "healthy". Venue-agnostic: the detector is pure and per lane (`StalenessDetector`).
+
+**Fix** (`rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs`, detector only, venue-agnostic).
+1. **Probation.** The session that follows a staleness recycle (`recycle_started` then `session_started`) starts on
+   probation. It leaves probation only when both hold:
+   - at least `successor_probation_ms` (default 60 s, one cooldown) has passed since its first frame;
+   - the last `successor_proof_frames` (default 20) frames were fresh, from at least `min_bindings` distinct bindings.
+
+   A stale frame restarts the fresh run. Any other session (notice, error reconnect, start) is trusted as before.
+   - The first version, commit `ae1fe944`, proved freshness by frame count alone. At about 1,100 frames/s that proof
+     completes in about 20 ms. Gen 1311 would have passed it in its first second, and the cooldown would still have
+     suppressed the later trigger.
+   - The replay test now models that fresh first second.
+2. **Re-recycle.** A trigger on a session still on probation returns `RecycleDecision::SuccessorStale { retry }`.
+   It starts a recycle at once, without the cooldown, up to `successor_retries` (default 2) per unproven chain. The
+   hourly cap and the OKX control budget still apply. A proof resets the count. After the retries the cooldown
+   governs again, so a venue-side delay that no reconnect cures still costs at most 3 connects.
+3. **Observability.** The action is `RECYCLE_SUCCESSOR_STALE`, with decision `{"successor_retry": n}`. It does not
+   count as suppressed.
+4. **Config.** Both fields have serde defaults: old configs load unchanged, and the bounds are validated.
+   `successor_retries: 0` is the exact pre-L decision rule.
+
+**Tests** (same file, `mod tests`): 5 new.
+- `a_late_recycle_successor_is_recycled_again_without_waiting_for_the_cooldown`: the 12:01Z timeline replayed. The
+  successor is fresh for 1.1 s (44 frames), which is no proof. It degrades and is detected within 0.5 s, then recycled
+  again (old rule: about 59 s of cooldown). The next successor stays on probation for 60 s and a degradation in it is
+  still a retry; after that it is proven, the retries reset, and the normal cooldown and recycle rule applies.
+- `without_successor_retries_the_1201z_timeline_keeps_the_pre_l_cooldown`: reproduces the logged 12:01:32.881 decision
+  (cooldown, about 49.98 s left).
+- `successor_retries_are_bounded_then_the_cooldown_and_the_cap_apply`.
+- `a_stale_frame_restarts_the_proof_and_other_sessions_are_not_on_probation`: also covers serde defaults and
+  validation.
+- The existing detector tests are unchanged; none calls `session_started` after `recycle_started`.
+
+**Verification status.**
+- `rustfmt --check` passes (light slot, `qdl-rust-builder:1.82.0-v2.3.2`).
+- The Rust tests and clippy are **NOT run yet**. The build is a cold qdl-kafka build, including librdkafka: about
+  3 GiB and 1 CPU, which is a heavy slot. That is outside the light-slot rule of this task and the :15-:45 Paper
+  window rule. Script: `scratchpad/defl/rust-test.sh` (heavy slot, after the coordinator's go).
+- No image, no deploy, not pushed.
+- Rollout later: an ingestor_okx_swap image of the bundle, recreated with its own config (no config change needed;
+  the defaults apply). Rollback is the current image `sha256:e628fbe0…`.
+
+### DL-DEF-2026-11-26-L, class fix: OKX execution QUOTEs spread over three sessions; Rust tests green (tested locally) - 2026-11-26 (Claude)
+
+**Deeper RCA** (read-only; `ingestor_okx_swap` logs 11-24 00:46Z to 11-26 13:05Z; earlier logs rotated, so 11-19..11-24 is
+UNAVAILABLE).
+- **Topology:** one OKX public session, okx-public-003, carried all 97 execution QUOTE subscriptions (bbo-tbt; 97 of
+  100 slots). Each instrument had exactly one QUOTE subscription.
+- **Lag rises with that session's message rate** (21,697 windows of 10 s; host stalls excluded):
+
+  | Frames/s | Windows with lag > 1 s | With lag > 2 s |
+  |---|---|---|
+  | < 800 | < 0.1 % | < 0.05 % |
+  | 1,100–1,500 | 1.5 % | 0.6 % |
+  | 1,500–2,000 | 12 % | 2.9 % |
+  | 2,000–3,000 | 48 % | 19 % |
+  | > 3,000 | 100 % | 100 % |
+
+- **Spikes cluster at market bursts** (:30–:37, :00–:01, :45), not at resubscribe. Frames are small (p50 112 bytes).
+- **Lane 003 against the rest:** 182 generations, 179 recycles, 246 cap hits and 55 windows over 2 s in 60 h. The
+  other six OKX lanes had 9–13 generations each (notices and read errors). Their lag is UNAVAILABLE because the
+  detector only measures all-quote lanes, and their read gaps stayed normal at every lane-003 spike.
+- **Separate host stall class:** 11-25 05:56, 06:01 (123 s) and 11:31, on all lanes.
+- **Unresolved:** venue per-connection throughput versus our 1 vCPU reader. Cumulative cgroup throttling is 35k
+  periods. A 1 s sampler (13:22–15:05Z) measures the burst windows.
+
+**Fix (owner option b, 2026-11-26):** all 97 quotes are kept and spread over 3 sessions. Reducing the set is parked,
+to go with a PM scope narrowing: the union of orderable contracts in the TS head is 96 plus BTC-USD-SWAP, so nothing
+can be dropped today.
+- **`qdl/runtime/ingestor_lanes.py` `spread_lane_pins`:** a deterministic, declared migration of one feed of one
+  scope over N lanes.
+  - Target lanes are the current shards plus new numbers above the scope's.
+  - Tier-A names are dealt round robin; the rest go, in sha256 order, to the least-loaded lane.
+  - It is idempotent, refuses a plan over the subscription limit, and other feeds keep their pins.
+- **`sticky_lane_pins`:** a new binding of a balanced feed (QUOTE) goes to the least-loaded lane, so growth does not
+  refill one session.
+- **`scripts/dl_declaration.py`, `ingestor.lane_spread`:** validated in `load_declaration`. The render writes
+  `ingestor/<file>.lane-migration.json` (`qdl.v2.ingestor-lane-migration.v1`: base sha256, the spread spec, every
+  move). The lane-stability rules in render and gate allow exactly the recorded moves and check every moved binding
+  is on its recorded lane. Other moves are still refused.
+- **Rust:** no lane code change. The ingestor already groups pinned bindings by (service, shard) and gives every
+  all-quote lane its own IDR-112 detector, now with the DEF-L probation (`ae1fe944`, `93aef0c6`, `cdd31043`).
+- **OKX limits** (docs-v5, "WebSocket / Connect" and "Connection count limit", read 2026-11-26):
+  - "3 requests per second (based on IP)" for connects;
+  - 480 subscribe, unsubscribe and login requests per connection per hour;
+  - "the total length of multiple channels cannot exceed 64 KB" per subscribe request;
+  - 30 connections per channel per sub-account.
+
+  Three quote sessions of 32–33 sit far inside all of these.
+- **Declaration render** (offline, r11 on the live r10 set, ingestor only):
+  - lanes okx-public-003 / 006 / 007 hold 33 / 32 / 32;
+  - 64 moves (3 → 6 or 7);
+  - `config_revision` stays 23 for every binding, so per-binding lineage is unchanged;
+  - consumer manifests, realms, catalogue, acquisition, cores and bar_edge are byte-identical;
+  - gate PASS.
+
+  No checkpoint is stranded: QUOTE is latest state and has no bar or book checkpoint, and the book fence keys only on
+  BOOK lanes.
+
+**Dual-session redundancy for tier-A (design note, not implemented).**
+- Subscribe each tier-A instrument's bbo-tbt on two sessions of different lanes, with the ingestor or core emitting
+  the frame with the newer venue `ts` per binding (latest state; equal `ts` → first arrival).
+- Needs:
+  - per-binding duplicate suppression that keeps ordering and revision semantics;
+  - a lane-aware staleness detector that keeps one session alive while the other recycles;
+  - double the subscriptions for those names;
+  - certification of the merge against both sessions.
+- This is a DL release item, worth doing if lag persists after the split.
+
+**Tests:**
+- **Rust,** heavy slot, `qdl-rust-builder:1.82.0-v2.3.2`, offline, tree `cdd31043`: `cargo fmt --check` OK;
+  `cargo test -p qdl-kafka --bin qdl-native-raw-ingestor` 87 passed, 0 failed, 1 ignored (the live-network OKX
+  smoke); `cargo clippy --all-targets -D warnings` OK. The 6 DEF-L tests (5 unit, 1 end-to-end) pass, and the
+  existing IDR-112 tests pass unchanged.
+- **Python,** light slots, `qdl-v2-python:2.4.3.1-b8935d1`: `test_dl_def_l_quote_lane_spread` 7 OK (live topology,
+  balanced 33/32/32 on new shards 6 and 7, tier-A dealt, deterministic under shuffles, idempotent, sticky balanced
+  growth, limit refusal); `test_v230_ingestor_lanes` 6 OK; `test_v230_declaration_tool` 29 OK (8 skipped);
+  `test_dl_v242_instrument_retirement` 10 OK; `test_dl_v242_instrument_unavailable` 14 OK;
+  `test_dl_v240_ts_funding_entitlement` 14 OK; `test_v231_stage_c_binance_signal` 7 OK.
+- Not pushed, no image yet, not deployed.
