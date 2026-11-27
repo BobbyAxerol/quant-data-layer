@@ -504,14 +504,22 @@ class SourceTests(unittest.TestCase):
         changed = subprocess.check_output(["git", "-C", str(REPO), "diff", "--name-only", "48137ebf952966e4c8d31c64060791087535fbdc",
                                            self.head(), "--", "rust", "Cargo.toml", "Cargo.lock", "generated/rust"]).decode().split()
         self.assertTrue(changed)
-        self.assertTrue(all(p == "rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs"
+        self.assertTrue(all(p in ("rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs", "Cargo.lock")
                             or p.startswith("rust/qdl-stream-gateway/") for p in changed), changed)
+        # The only lockfile change: the RUSTSEC-2026-0592 bump.
+        import tomllib
+        old = tomllib.loads(subprocess.check_output(["git", "-C", str(REPO), "show",
+                                                     "48137ebf952966e4c8d31c64060791087535fbdc:Cargo.lock"]).decode())
+        new = tomllib.loads(subprocess.check_output(["git", "-C", str(REPO), "show", self.head() + ":Cargo.lock"]).decode())
+        before = {(p["name"], p["version"]) for p in old["package"]}
+        after = {(p["name"], p["version"]) for p in new["package"]}
+        self.assertEqual(sorted(after - before), [("form_urlencoded", "1.2.3"), ("idna", "1.1.0"), ("url", "2.5.9")])
         for binary, rows in b.BINARY_EXPECTATIONS.items():
             with self.subTest(binary=binary):
                 newer = [(ref, e) for ref, e, _ in rows if ref != b.PRODUCTION_RUST_REFERENCE]
                 if binary == "qdl-stream-gateway":
                     self.assertEqual(newer, [("v240_streams", "DIFFERENT")])
-                elif binary == "qdl-native-raw-ingestor":
+                elif binary == "qdl-native-raw-ingestor" or b.BINARY_PACKAGE[binary] in ("qdl-kafka", "qdl-projector"):
                     self.assertEqual(newer, [("v242_ingestors", "DIFFERENT")])
                 else:
                     self.assertEqual(newer, [("v242_ingestors", "EQUAL_LOADED_SECTIONS")])

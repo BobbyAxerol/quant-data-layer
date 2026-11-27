@@ -81008,3 +81008,44 @@ partition check PASS (374 modules); shard 1 1013 OK (9 skipped), shard 2 728 OK 
 shard 4 1491 OK (90). **4,602 tests, 0 failures, 0 errors.** Rust unchanged since the 569/0/72 run on `6e6c831`.
 Classifier dry run on the final diff: `scoped: python,rust,contracts`, 70 files, no CI-defining file. Next: one push
 of `release/v2.4.4` and one PR to dev; the image build waits for the coordinator's build GO.
+
+### DL v2.4.4: PR #64 rust-workspace red on RUSTSEC-2026-0592 (url 2.5.4); lockfile bump (tested locally) - 2026-11-27 (Claude)
+
+**CI result (run 45962699180, job 140384356364, log read through the REST API).** fmt, clippy and `cargo test`
+passed (569 passed, 0 failed, as locally); only "Check Rust dependency, license and advisory policy" (cargo-deny
+0.20.2) failed: `error[vulnerability] RUSTSEC-2026-0592`, stack overflow in `Url::origin()` on nested `blob:` URLs, in
+`url` 2.5.8 and earlier, fixed in >= 2.5.9. `url` 2.5.4 came in through redis 0.25.4, reqwest 0.12.28 and tower-http
+0.6.11. `deny.toml` keeps `ignore = []`. kn-native-integration, release-gates, contract-tests, sdk-python310 green.
+
+**Class:** a real defect, external: an advisory published after the lockfile (unchanged since `ad70317`, 2026-11-17).
+Not a flake, not the runner, not a toolchain difference (my local run had no cargo-deny step: process gap, CI10, now
+run locally). A rerun would fail the same way; dev and main would too.
+
+**Fix.** `cargo update -p url` (network for the index only): url 2.5.4 → 2.5.9, idna 1.0.3 → 1.1.0, form_urlencoded
+1.2.2 → 1.2.3; no other lockfile change. MSRV fits Rust 1.82 (url `rust-version` 1.63, idna 1.57, form_urlencoded
+1.51, all edition 2018). Affected crate graphs (`cargo tree -i url --workspace --target x86_64-unknown-linux-gnu`):
+qdl-kafka, qdl-realtime-core, qdl-projector, qdl-stream-gateway; qdl-core and qdl-venue-core are not.
+`scripts/build_qdl_release_images.py`: every qdl-kafka binary and the projector are now DIFFERENT against
+`v242_ingestors`; qdl-core / venue-core binaries stay EQUAL_LOADED_SECTIONS; the reasons name the bump.
+`tests/test_build_qdl_release_images.py` pins the exact three-crate lock delta since `48137eb`.
+
+**Local tests on the fix tree** (`qdl-rust-builder:1.82.0-v2.3.2`, the same CI job shape):
+- `cargo fmt --check` OK; `cargo clippy --workspace --all-targets --locked -D warnings` OK;
+- `cargo test --workspace --locked`: 569 passed, 0 failed, 72 ignored (the first container was killed by a session
+  restart during the doc-tests; the doc-tests were re-run separately: all `ok`, 0 failed);
+- `cargo-deny check` (0.20.2, git installed as in CI, advisory DB fetched): `advisories ok, bans ok, licenses ok,
+  sources ok`, exit 0;
+- `tests.test_build_qdl_release_images` 47 OK (host, git available).
+
+**Exposure of the running images (url 2.5.4 in every rust role).** Checked 2026-11-27: not reachable.
+- No DL Rust code uses the `url` crate directly: no `use url`, `url::Url`, `Url::parse` or `.origin()` under `rust/`.
+- The three dependents call no `origin()`: grep of the vendored sources of redis 0.25.4, reqwest 0.12.28 and
+  tower-http 0.6.11 finds none.
+- The URLs these crates parse come only from operator configuration, never from venue or consumer input and never
+  with a `blob:` scheme: Redis URLs `rust/qdl-projector/src/cache.rs:440`,
+  `rust/qdl-realtime-core/src/provider_admission.rs:108`, `rust/qdl-stream-gateway/src/auth.rs:504`; REST endpoints
+  `rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs:2116` (Binance depth snapshot) and
+  `rust/qdl-stream-gateway/src/query_view.rs:168` (Query view client).
+- So the running images need no out-of-band action; v2.4.4 carries the fixed version.
+
+CI cost: Cargo.lock is CI-defining, so this push runs every job fresh (CI5) and the cargo cache key changes.

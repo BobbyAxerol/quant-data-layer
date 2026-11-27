@@ -242,16 +242,23 @@ BINARY_EXPECTATIONS = {
     name: [(PRODUCTION_RUST_REFERENCE, "DIFFERENT", _BINARY_DELTA[BINARY_PACKAGE[name]])] for name in RUST_BINARIES
 }
 # DL v2.4.4 against the newer production/release images (`git diff --name-only 48137eb..REV -- rust Cargo.toml
-# Cargo.lock generated/rust`: only rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs and rust/qdl-stream-gateway/
-# {src,examples,tests}; no Cargo.lock change).
+# Cargo.lock generated/rust`: rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs, rust/qdl-stream-gateway/
+# {src,examples,tests}, and Cargo.lock for RUSTSEC-2026-0592: url 2.5.4 -> 2.5.9, idna 1.0.3 -> 1.1.0,
+# form_urlencoded 1.2.2 -> 1.2.3, in the graphs of qdl-kafka, qdl-realtime-core, qdl-projector and qdl-stream-gateway
+# only (`cargo tree -i url --workspace`); qdl-core and qdl-venue-core do not depend on them).
+_V244_URL = "RUSTSEC-2026-0592 lockfile bump url 2.5.9 / idna 1.1.0 / form_urlencoded 1.2.3 in its crate graph"
 _V244_UNCHANGED = "no source or locked-dependency change in its crate graph since 48137eb (v2.4.2 rust build)"
+_V244_URL_PACKAGES = frozenset({"qdl-kafka", "qdl-projector", "qdl-stream-gateway"})
 for _name in RUST_BINARIES:
     if _name == "qdl-stream-gateway":
         BINARY_EXPECTATIONS[_name].insert(0, ("v240_streams", "DIFFERENT",
-            "DL-DEF-2026-11-26-M per-key last value, max-quiet bound, memory term, metrics (hub.rs, main.rs, memory.rs)"))
+            "DL-DEF-2026-11-26-M per-key last value, max-quiet bound, memory term, metrics (hub.rs, main.rs, memory.rs); "
+            + _V244_URL))
     elif _name == "qdl-native-raw-ingestor":
         BINARY_EXPECTATIONS[_name].insert(0, ("v242_ingestors", "DIFFERENT",
-            "DL-DEF-2026-11-26-L successor probation and bounded re-recycle (qdl-native-raw-ingestor.rs)"))
+            "DL-DEF-2026-11-26-L successor probation and bounded re-recycle (qdl-native-raw-ingestor.rs); " + _V244_URL))
+    elif BINARY_PACKAGE[_name] in _V244_URL_PACKAGES:
+        BINARY_EXPECTATIONS[_name].append(("v242_ingestors", "DIFFERENT", _V244_URL))
     else:
         BINARY_EXPECTATIONS[_name].append(("v242_ingestors", "EQUAL_LOADED_SECTIONS", _V244_UNCHANGED))
 EXPECTATIONS = ("EQUAL", "DIFFERENT", "EQUAL_LOADED_SECTIONS", "DIFFERENT_BUILD_PATH")
