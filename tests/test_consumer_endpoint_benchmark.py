@@ -55,7 +55,7 @@ class ConsumerEndpointBenchmarkTests(unittest.TestCase):
 
     def test_openapi_coverage_and_fail_closed_drift(self):
         snapshot = json.loads((bench.ROOT / "contracts/v2/openapi.snapshot.json").read_text())
-        self.assertEqual(len(bench.endpoint_coverage(snapshot)), 12)
+        self.assertEqual(len(bench.endpoint_coverage(snapshot)), 13)
         snapshot["paths"]["/v2/new-read"] = {"get": {}}
         with self.assertRaisesRegex(ValueError, "coverage drift"):
             bench.endpoint_coverage(snapshot)

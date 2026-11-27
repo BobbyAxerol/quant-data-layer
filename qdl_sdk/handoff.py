@@ -112,3 +112,41 @@ class ClosedBarHandoff:
                 raise ValueError("closed-bar handoff detected a gap or late bar")
         self._bars.append(item)
         return not seeding
+
+
+BAR_COPIES_IDENTICAL = "IDENTICAL"
+BAR_COPIES_LINEAGE_ONLY = "LINEAGE_ONLY"
+
+
+def classify_bar_copies(previous: BarPayload | dict, current: BarPayload | dict) -> str:
+    """SDK 2.10.1 (DL-DEF-2026-11-25-E): compare two copies of one BAR event at one revision.
+
+    For a consumer that caches BARs and receives the same ``event_id`` and ``revision`` again, for example a live
+    copy and a warmup copy:
+    - ``IDENTICAL``: the copies are byte-equal.
+    - ``LINEAGE_ONLY``: the copies differ only in ``resample_lineage``, absent in one and present in the other, on
+      an ``AGGREGATED`` bar. Same bar, not a revision (README, "BAR revision identity"). Keep the copy with the
+      lineage.
+    Any other difference raises ``ContinuityError("CONFLICT")``: two different present lineages, a lineage on a bar
+    that is not AGGREGATED, or any other payload field. The caller checks ``event_id`` and source/contract identity
+    itself; this helper compares only the BAR payloads.
+    """
+
+    from qdl_sdk.errors import ContinuityError
+
+    def plain(value) -> dict:
+        model = value if isinstance(value, BarPayload) else BarPayload.model_validate(value)
+        return model.model_dump(mode="json")
+
+    old, new = plain(previous), plain(current)
+    old_lineage, new_lineage = old.pop("resample_lineage", None), new.pop("resample_lineage", None)
+    if old != new:
+        raise ContinuityError("CONFLICT", "BAR copies differ outside resample_lineage")
+    for lineage in (old_lineage, new_lineage):
+        if lineage is not None and new["origin"] != "AGGREGATED":
+            raise ContinuityError("CONFLICT", "resample_lineage on a BAR whose origin is not AGGREGATED")
+    if old_lineage == new_lineage:
+        return BAR_COPIES_IDENTICAL
+    if old_lineage is None or new_lineage is None:
+        return BAR_COPIES_LINEAGE_ONLY
+    raise ContinuityError("CONFLICT", "two different resample_lineage records for one BAR event and revision")

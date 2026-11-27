@@ -618,6 +618,7 @@ impl Harness {
             HubConfig {
                 ring_max_bytes: options.ring_max_bytes,
                 ring_max_age: Duration::from_secs(600),
+                ..Default::default()
             },
         ));
         let paused = Arc::new(AtomicBool::new(false));

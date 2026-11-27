@@ -62,8 +62,13 @@ from scripts.host_measurement_lock import MAX_MINUTES as MAX_LOCK_MINUTES, lock_
 # changes rust (stream gateway, qdl-contracts accept rule) and python (Query): both images are built.
 # v2.4.2 (delisted-instrument class fix): rust (qdl-core okx per-argument 60018 rejection, native raw ingestor) and
 # python (bar edge quarantine, Query typed unbound refusal, declaration tool): both images are built.
-RELEASE = "2.4.2"
-SDK_VERSION = "2.10.0"
+# v2.4.3 (bar_edge resume after a market-cache loss, typed venue history holes, DL-DEF-2026-11-25-A): python only;
+# the Rust roles keep their v2.4.2 image.
+# v2.4.4 (bundle after the 2026-11-25 load observation): rust (stream gateway DEF-M last value + max-quiet; native raw
+# ingestor DEF-L successor probation) and python (Query typed HOT_QUIET_BEYOND_MAX, lifecycle API BL-K, typed tokens,
+# per-consumer counts; bar_edge BL-B/C resume and venue-hole span; compiler DEF-F/J): both images are built.
+RELEASE = "2.4.4"
+SDK_VERSION = "2.11.0"
 REPO = Path(__file__).resolve().parents[1]
 HOME = Path.home()
 STATE_ROOT = HOME / ".local/state/qdl-v2"
@@ -135,6 +140,11 @@ REQUIRED_ANCESTORS = {
     "v240_python_s1_s8": "67e4199c45a4642eb704729cce9ec6a93189f9a7",
     "v240_rust_stream": "a65e8f8b9d1a21ea0251c4badb6dcaf461dad661",
     "v242_okx_subscription_rejection": "5b7a03d50914d341b2cf3b3c79784fb1e412653a",
+    "v243_bar_edge_rebase_resume": "206481e66c09ab0745889f292ee33be7145ae909",
+    "v244_def_l_successor_probation": "2af353e595b75b488d374f030f1bd3434fe530ff",
+    "v244_def_m_quiet_last_value": "afba2aff05ad5757dd32c792b1db3abc6a5a68c2",
+    "v244_def_j_compiler_selector_grants": "fdba06b1ffac7266057396618ff20cbe99f9764d",
+    "v244_bl_k_lifecycle": "f09e2881741b4e46292b02235bdf65ceac52328e",
 }
 
 # Identical to the four cargo invocations of Dockerfile.qdl-rust-runtime, offline.
@@ -164,14 +174,23 @@ REFERENCES = {
     "v230_rc2": ("qdl-v2-rust:2.3.0-rc2-832c02c4",
                  "sha256:58bdd28216139f0c1a40abeee3077834f1cf922cf6412e7fb1ce8845591a0512"),
 }
+# DL v2.4.4: the two roles whose binary changes run newer images than rc2. Each binary is also compared with the
+# role image it replaces (listed first) or, for the unchanged binaries, with the last rust release build.
+REFERENCES["v240_streams"] = ("qdl-v2-rust:2.4.0-c17472c",
+                              "sha256:abafab2c98cbdd9d2fe86f2b26fd6fcf64800ccdd114a3dd5b92803de16a3e98")
+REFERENCES["v242_ingestors"] = ("qdl-v2-rust:2.4.2-48137eb",
+                                "sha256:e628fbe07afe94e8f716692633e77217a16223ea03abc7ea34edb959a48c72a7")
 PRODUCTION_RUST_REFERENCE = "v230_rc2"
 PRODUCTION_RUST_REVISION = "832c02c450e219cb64cb818c976c3d0084b8f7b7"
-# The python image in production, with the tree its /app files were built from: since the DL v2.4.1 windows
-# (2026-11-19, A/B/C) Query x2 and binance_bar_edge both run qdl-v2-python:2.4.1-985bd65.
+# The python images in production, with the tree their /app files were built from (2026-11-27): Query x2 run
+# qdl-v2-python:2.4.2-48137eb; binance_bar_edge runs the 2.4.3.1 hotfix (d1ca60f recipe b8935d1).
 PYTHON_REFERENCES = {
-    "query_bar_edge_v241": ("qdl-v2-python:2.4.1-985bd65",
-                            "sha256:929eeac2091ecbe916cf1f19fba9f13056e621a1c2c1947427b97a8a7c002082",
-                            "985bd65564d4263fd1ecbfaddd4ea5f32c2a0390"),
+    "query_v242": ("qdl-v2-python:2.4.2-48137eb",
+                   "sha256:5ea7a7a40ef2d1df920d0f7cf94f22431d53087f8002929e7dffdb4208f7dcc4",
+                   "48137ebf952966e4c8d31c64060791087535fbdc"),
+    "bar_edge_v2431": ("qdl-v2-python:2.4.3.1-b8935d1",
+                       "sha256:396a4654014758f70362b3097559e03dcb412d36904d94d3cb7c973f6ccb1637",
+                       "b8935d1059cd794a10e214ed6ed1f521c229c022"),
 }
 PYTHON_HASH_ROOTS = ("qdl", "app", "generated", "config", "consumers", "qdl_sdk")
 
@@ -222,6 +241,26 @@ BINARY_PACKAGE = {
 BINARY_EXPECTATIONS = {
     name: [(PRODUCTION_RUST_REFERENCE, "DIFFERENT", _BINARY_DELTA[BINARY_PACKAGE[name]])] for name in RUST_BINARIES
 }
+# DL v2.4.4 against the newer production/release images (`git diff --name-only 48137eb..REV -- rust Cargo.toml
+# Cargo.lock generated/rust`: rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs, rust/qdl-stream-gateway/
+# {src,examples,tests}, and Cargo.lock for RUSTSEC-2026-0592: url 2.5.4 -> 2.5.9, idna 1.0.3 -> 1.1.0,
+# form_urlencoded 1.2.2 -> 1.2.3, in the graphs of qdl-kafka, qdl-realtime-core, qdl-projector and qdl-stream-gateway
+# only (`cargo tree -i url --workspace`); qdl-core and qdl-venue-core do not depend on them).
+_V244_URL = "RUSTSEC-2026-0592 lockfile bump url 2.5.9 / idna 1.1.0 / form_urlencoded 1.2.3 in its crate graph"
+_V244_UNCHANGED = "no source or locked-dependency change in its crate graph since 48137eb (v2.4.2 rust build)"
+_V244_URL_PACKAGES = frozenset({"qdl-kafka", "qdl-projector", "qdl-stream-gateway"})
+for _name in RUST_BINARIES:
+    if _name == "qdl-stream-gateway":
+        BINARY_EXPECTATIONS[_name].insert(0, ("v240_streams", "DIFFERENT",
+            "DL-DEF-2026-11-26-M per-key last value, max-quiet bound, memory term, metrics (hub.rs, main.rs, memory.rs); "
+            + _V244_URL))
+    elif _name == "qdl-native-raw-ingestor":
+        BINARY_EXPECTATIONS[_name].insert(0, ("v242_ingestors", "DIFFERENT",
+            "DL-DEF-2026-11-26-L successor probation and bounded re-recycle (qdl-native-raw-ingestor.rs); " + _V244_URL))
+    elif BINARY_PACKAGE[_name] in _V244_URL_PACKAGES:
+        BINARY_EXPECTATIONS[_name].append(("v242_ingestors", "DIFFERENT", _V244_URL))
+    else:
+        BINARY_EXPECTATIONS[_name].append(("v242_ingestors", "EQUAL_LOADED_SECTIONS", _V244_UNCHANGED))
 EXPECTATIONS = ("EQUAL", "DIFFERENT", "EQUAL_LOADED_SECTIONS", "DIFFERENT_BUILD_PATH")
 SECTION_EXPECTATIONS = ("EQUAL_LOADED_SECTIONS", "DIFFERENT_BUILD_PATH")
 # Sections that may differ under EQUAL_LOADED_SECTIONS: the symbol tables (not loaded), debug sections, and the

@@ -67,6 +67,7 @@ from qdl.runtime.stable_projector import (
     supervise_stable_projector,
 )
 from qdl.runtime.canonical_metadata import index_from_environment as canonical_index_from_environment
+from qdl.runtime.instrument_lifecycle import index_from_environment as lifecycle_index_from_environment
 from qdl.runtime.stable_source import (
     StableCatalogCursorScopeValidator,
     StableGrpcSnapshotLoader,
@@ -894,6 +895,8 @@ def create_stable_query_app(config: StableRuntimeConfig | None = None) -> FastAP
         alpha_mark_index_reader_factory=kn_alpha_reader,
         # DL v2.4.1: opt-in canonical instrument metadata (own revision; fail closed when named but invalid).
         canonical_metadata=canonical_index_from_environment(os.environ),
+        # DL v2.4.4 (DL-BL-2026-11-26-K): opt-in lifecycle ledger (fail closed when named but invalid).
+        instrument_lifecycle=lifecycle_index_from_environment(os.environ),
     )
     readiness = stable_readiness(
         config, manifests, spool, quota=identity.quota, market_cache_backend=kn_backend,

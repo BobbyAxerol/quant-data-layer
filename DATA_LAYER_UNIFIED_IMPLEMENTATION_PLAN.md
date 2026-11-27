@@ -79540,3 +79540,1512 @@ Bootstrap after W6 (read-only tracker): published 1047 -> **1319/1319 at 17:11:0
 
 Status: `production-authoritative` for query_kn x2, stream_kn x2, market_projector x2, binance_bar_edge and both
 ingestors on r10.
+
+### DL v2.4.2 slice 3: bar_edge re-bootstrap after a market-cache loss resumes from the old watermark; venue history holes are typed and decided from durable coverage (tested locally) - 2026-11-25 (Claude)
+
+**Registered here: DL-DEF-2026-11-25-A.** A market-cache loss stopped live derived BARs for hours. One venue hole
+kept one instrument's chain stopped indefinitely.
+
+**Trigger.** Crossec top50 hosting, 2026-11-25. Query refusals `DATA_STALE [EVENT_AGE]` on BAR warmup:
+- AVAX at 07:51:17Z and 07:53:36Z (request `9e263d4f`, query_kn_2);
+- BCH at 07:57:59Z.
+
+**Chain (all checked on the live stack, read-only).**
+1. **The cache was lost.** A host global OOM at 05:54:48Z killed `market_cache`:
+   - redis `--save "" --appendonly no --maxmemory 8000000000 --maxmemory-policy noeviction`;
+   - container limit 9 GiB, `OomScoreAdj` 0, 5.4 GB RSS;
+   - it was the largest process on a 30 GiB host with about 26 GiB in use.
+   The cache is ephemeral by design. The two projectors restarted at 06:01:15Z and rebuilt it from the compacted
+   `md.bars.v2` topic: about 213k keys, every OKX/Binance 1h/12h series gap-free afterwards.
+2. **Every binding was rebased.** At 06:02:43Z the bar edge logged "product generation changed; rebased only
+   bindings=…" for 1,319 bindings. `_rebase_changed_products` drops each binding's `_last_open_ms`.
+3. **The re-bootstrap was one binding per turn.** It used `bootstrap_history(max_bindings=1)`, A to Z, each binding
+   with its full demand window (10,000 rows, about 34 OKX pages). At the OKX HISTORY_CANDLES lane rate (5 tokens /
+   2 s) that is about 1.75 min per symbol. The history gate was closed until 06:28:50Z ("resumed after 1566.8s").
+4. **Live derived bars wait for the bootstrap.** `run_derived_cycle` skips a derived binding until it and its
+   parent are in `_last_open_ms`. At 08:31Z, 60 of 94 OKX 1h series were stuck at open 04:00Z (last close 05:00Z),
+   and 33 were current. The cut-over point moved alphabetically with the sweep: AVAX resumed at 07:54:03, BCH at
+   08:03, FLOKI at 08:32, NEAR at 08:57.
+   - Crossec's 1h bound is 3,780,000 ms (63 min). AVAX at 07:53 was 2 h 53 min old, so it was refused.
+5. **ASTER never resumed.** OKX has no ASTER-USDT-SWAP 1m candle at 2026-11-19T15:39Z (the cache has it, from the
+   live feed). The full 1m window met that hole: `MISSING_PROVIDER_WINDOW` from 07:49:45Z, retried every 30-60 s
+   (49+ attempts), each attempt a full 10,000-row read.
+   - ASTER 1h is `DERIVED_FINAL` from 1m, and 12h from 1h (acquisition r19), so ASTER 1h stopped at open 06:00Z.
+   - The cache also lacks ASTER 1m 05:59 and 06:00, from the outage.
+   - Scan of the whole bar_edge log since 2026-11-19: the only other gap refusals are the five known Binance 3d
+     overlaps (`OVERLAPPING_PROVIDER_WINDOWS`, handled).
+6. **Latent, same class:** a venue hole wider than 2 bars made the OKX fetcher raise the untyped
+   `RuntimeError("history is short")` before its continuity check. That RuntimeError fails the whole cycle, so the
+   same binding blocks every binding after it.
+
+**Fix, class level: any binding, any venue, any interval, after any rebase.**
+- **Resume from the old watermark** (`qdl/runtime/stable_bar_edge.py`).
+  - A product-generation rebase or a cache-epoch rebase keeps the dropped watermark as a resume candidate
+    (`_note_rebootstrap`).
+  - Bootstrap first proves, from the cache only, that the full demand window ending at that watermark is durable
+    (`_durable_window_missing`, the same rule as the restore check, with the provider-short floor). Only then does
+    it read just the suffix from the watermark to the latest close (`_resume_rows`). A 5 h outage is one page per
+    binding. When the outage is at least as long as the demand window, the read is capped at the demand and is
+    treated as an ordinary full-window read (it need not reach the old watermark).
+  - Otherwise it falls back to the deep bootstrap. Typed codes: `RESUME_DURABLE_WINDOW_INCOMPLETE`, and
+    `RESUME_SUFFIX_INCOMPLETE` when the venue no longer reaches the watermark.
+  - Resume bindings go first, up to `_RESUME_BINDINGS_PER_TURN` = 16 per loop turn. Deep bootstraps keep the
+    one-per-turn quantum, and venue admission still paces every request.
+- **Resume points survive a restart** in a sidecar `<checkpoint>.resume.json`
+  (`qdl.stable-bar-edge.resume-watermarks.v1`, per-binding series digest; any defect ignores the whole file).
+  - The checkpoint keeps its exact v2.4.2 field set, so the v2.4.2 image (rollback) reads it unchanged.
+- **Venue holes are typed** (`qdl/adapters/intervals.py` `BarHistoryProviderHoleError`, OKX and Binance fetchers).
+  - A `MISSING_PROVIDER_WINDOW` under `allow_short` carries the provider-certified suffix after the newest hole.
+  - Continuity is checked before the row count (item 6 above).
+  - The edge decides from durable coverage alone (`_venue_hole_decision`): every older open of the demanded
+    window, including the bars the venue lacks, must already be durable.
+  - Durable: `VENUE_HOLE_DURABLY_COVERED`. The suffix is published (missing opens only), the binding resumes, and the
+    hole is recorded.
+  - Not durable: `VENUE_HOLE_NOT_COVERED`, fail-closed. There is no watermark, so no derived bar is built over the
+    missing bar. It is rechecked every 300 s, not every few seconds, and other bindings are not blocked.
+  - Position is recorded as `OLDER_THAN_RESUME_WATERMARK`, `INSIDE_RESUME_SUFFIX` or `NO_RESUME_WATERMARK`.
+- **Observability.**
+  - JSON events: `qdl_bar_edge_rebootstrap_required`, `qdl_bar_edge_resume_refused`, `qdl_bar_edge_venue_hole`
+    (`refused` true/false).
+  - Heartbeat detail counters (what the monitor and gates read): `rebootstrap_waiting`, `rebootstrap_wait_s`,
+    `resume_pending`, `venue_holes_recorded`, `venue_holes_refused`.
+
+**Recovery bound (after the cache is READY again).**
+- Every rebased binding whose durable window survived gets its live watermark within `ceil(N / 16)` loop turns.
+- Each needs `ceil(rows / page)` provider requests, with rows = min(demand, outage / interval + 2): one page per
+  binding for an outage of up to 300 bars of its interval on OKX (1,000 on Binance).
+- With today's 726 OKX + 593 Binance bindings, OKX is lane-bound: about 726 / 2.5 req/s = about 5 min, against about
+  4 h on 2026-11-25. Binance 593 at 10/s is about 1 min.
+- A binding whose window did not survive takes the deep path (as before). The history backpressure gate can still
+  pause history, and with it resume.
+
+**Tests** (`tests/test_dl_v242_bar_edge_rebase_resume.py`). The real catalogue, the real edge, the real OKX/Binance
+history fetchers against a venue double, and the in-process cache in the projector layout:
+- the incident end to end: 1m native → 1h derived → 12h derived, rebuilt cache, rebase, one small read each (127/4/3
+  rows), only the outage bars published, live derived 1h ×12 and 12h ×1 at the next closes;
+- the restart path: the full window meets the old hole, `VENUE_HOLE_DURABLY_COVERED`;
+- a hole at the watermark edge (covered) and one just after it, inside the suffix (`VENUE_HOLE_NOT_COVERED`, typed
+  event, no live bars for that binding, others resume, retry 300 s, heals);
+- a cache that lost an old row (`RESUME_DURABLE_WINDOW_INCOMPLETE`, deep refill);
+- the resume sidecar (rollback-safe checkpoint fields, digest guard, damaged file ignored);
+- the N-binding bound over every OKX BAR binding of the repository catalogue: live within ceil(N/16) turns, one read
+  each, against N turns on the legacy path;
+- heartbeat counters;
+- adapters: OKX one-bar and 6-bar holes typed with their suffix, Binance typed, the outcome invariants.
+
+Results: run one module or class per throwaway container (`qdl-v2-python:2.4.2-48137eb`, `--memory 1g --cpus 1
+--network none`, light host slot). The first combined run of the new module was cgroup-OOM-killed at 1 GiB by an
+unbounded Binance fixture, which is now bounded.
+- New module: IncidentEndToEnd 6, RecoveryBound 3 (N = 320 OKX BAR bindings: live within 20 turns; the legacy path
+  needs 320), AdapterHole 4. 13 OK.
+- Impacted existing modules: kn_history_fill 23 (1 skipped), dl_v242_instrument_unavailable 14,
+  binance_history_overlap 11, v230_derived_bars 29, kn_bar_readback 12 (1 skipped), dl_v241_bar_edge_short_proofs 8,
+  phase115c_bar_edge_schedule 7, v2_binance_bar_edge 2, dlv2_r128_bar_edge_checkpoint_migration 7. 113 OK.
+- Adapter-adjacent modules: canonical_intervals 18, binance_final_bar_settlement 11, c419_fast_final_bar_delivery 8,
+  dlv2_r128_binance_native_bar 11, kn_provider_admission_edge 14, phase105c_final_bar_repair 4,
+  phaseb_bar_history_bootstrap 46, provider_pass_through_history 30, pass_through_event_loop 7. 149 OK.
+  - binance_final_bar_settlement failed once because the source file was edited while it ran; that test reads
+    method source with `inspect`. It passed 11/11 when re-run on the final tree.
+
+**Not changed.**
+- No catalogue, acquisition, Query, Stream, projector or Rust change.
+- No checkpoint schema change.
+- The derived gating rule (derived waits for its parent's watermark) is unchanged; it is the fail-closed guard.
+
+**Prevention of the cache loss itself (doc only, owner decision).**
+- (a) Give critical DL roles a negative `oom_score_adj` and agent/test containers a positive one, so a global OOM
+  never picks `market_cache`/kafka first. Today all are 0.
+- (b) Reserve memory for the DL slice. The memory.low/min cgroup protection of a systemd slice for the DL roles is
+  hard protection; `--memory-reservation` alone is soft. Keep the existing host-slot gate for agent units
+  (MemAvailable ≥ 4 GiB).
+- (c) Faster rebuild: an RDB snapshot of `market_cache` would make a restart load the snapshot and catch up from its
+  own checkpoints. The fork's copy-on-write needs up to about 5 GB more transiently on a tight host, so measure
+  first. Alternatively, a parallel stage-B rebuild.
+- (d) This slice bounds the consequence of a loss (minutes, not hours) whichever of (a)-(c) is chosen.
+
+**Delivery.** Python only. Release image recipe: `scripts/build_qdl_release_images.py --component python --rev
+<this commit>` (RELEASE bump to 2.4.3 in the recipe commit). Recreate only `binance_bar_edge`, per the v2.4.2 W6
+procedure (checkpoint and sidecar backup, `docker compose … up -d --no-deps --pull never binance_bar_edge`).
+Rollback is the v2.4.2 image `qdl-v2-python@sha256:5ea7a7a4…` with the `.pre` checkpoint copy; the sidecar is
+ignored by v2.4.2.
+
+Status: `implemented`, `tested locally`. Not built, not deployed.
+
+**TS INTEGRATION_DEFECT_REGISTER row** (for the pin steward):
+`| IDR-<n> | DATA_LAYER | After a market-cache loss the bar_edge re-bootstrapped all 1,319 BAR bindings one per turn with full 10,000-row windows (A->Z, ~1.75 min/OKX symbol) and live derived 1h/12h waited for it: 60/94 OKX 1h series without live bars up to ~4 h (AVAX/BCH DATA_STALE EVENT_AGE to Crossec 07:51-07:57Z); OKX ASTER-USDT-SWAP never resumed because its full 1m window met a venue hole (OKX lacks 2026-11-19T15:39Z, the cache has it) refused as MISSING_PROVIDER_WINDOW; latent: an OKX hole >2 bars was an untyped "short" RuntimeError failing the whole cycle. Root: host OOM 05:54:48Z killed market_cache (ephemeral, noeviction, oom_score_adj 0) | query_kn_2 refusals 9e263d4f/5d771d5c/830192aa; bar_edge log 06:02:43Z rebase, ACK sweep, ASTER refusals 07:49Z+; market_cache bm/ptr reads 08:31Z | DL v2.4.3 (slice 3): resume from the old watermark after a cache-only proof of the durable window, resume-first quantum 16, rollback-safe resume sidecar; typed BarHistoryProviderHoleError decided from durable coverage (VENUE_HOLE_DURABLY_COVERED resumes / VENUE_HOLE_NOT_COVERED fail-closed, 300 s recheck); heartbeat rebootstrap_waiting/wait_s/resume_pending/venue_holes_*; bound ceil(N/16) turns, one page per binding for outages <= 300 bars. Recurrence: owner decision on oom_score_adj / DL memory protection / cache snapshot (plan entry) | - | DL v2.4.3 |`
+
+### DL v2.4.3 build recipe: RELEASE 2.4.3 (python only), python reference = production 2.4.2 (tested locally) - 2026-11-25 (Claude)
+
+`scripts/build_qdl_release_images.py` changes:
+- `RELEASE` = 2.4.3, for slice 3 (DL-DEF-2026-11-25-A). Only the python image is built
+  (`--component python`); the Rust roles keep `qdl-v2-rust:2.4.2-48137eb`.
+- New `REQUIRED_ANCESTORS` entry `v243_bar_edge_rebase_resume` = 206481e.
+- `PYTHON_REFERENCES` = `qdl-v2-python:2.4.2-48137eb` (`5ea7a7a4…`, tree 48137ebf), which Query x2 and binance_bar_edge
+  run since the v2.4.2 windows. `tests/test_build_qdl_release_images.py` pins that id.
+
+Owner-approved window, 2026-11-25: build, then once the live sweep has passed ZEC, back up the checkpoint and
+recreate `binance_bar_edge` only. Roll back to `5ea7a7a4` automatically on failure.
+
+Test result: recipe tests 46/46 on the host with git; dry-run plan `--component python` OK. Status: `tested locally`.
+
+### DL v2.4.3 bar_edge runtime acceptance (production-authoritative for binance_bar_edge on the KN stack) - 2026-11-25 (Claude)
+
+**Deployment.** `binance_bar_edge` runs `qdl-v2-python:2.4.3-eb9371d`
+(`sha256:50124df8a7914f4494f898926bffa9487df90841205d051ce915564538716651`) since T0 10:04:14Z, in an owner-approved
+window run by the coordinator (`dl-v243-window/window.sh`).
+- The owner allowed deployment before the A→Z sweep reached ZEC: the 2026-11-19 15:38Z venue hole was stalling it.
+- Backup `.pre-v243`: checkpoint `30b74165…`, history-short `24f5dc5e…`.
+- No other role changed.
+
+**Evidence.** Draft notes: `upgrade/evidence/releases/v2.4.3/drafts/RELEASE_NOTES_DRAFT.md`.
+- Restore at 10:12:37Z: 1,222 of 1,319 bindings, after an 8 min 05 s silent restore.
+- Four `VENUE_HOLE_DURABLY_COVERED`, all the same OKX hole 2026-11-19 15:38→15:40Z, each with 1 venue-missing bar and
+  durable_missing 0. `venue_holes_refused=0`.
+
+  | Time (UTC) | Binding |
+  |---|---|
+  | 10:13:43 | ASTER 1m |
+  | 10:14:11 | TAO 1m |
+  | 10:15:11 | TAO 5m |
+  | 10:30:41 | XPL 1m |
+
+  - Before v2.4.3 each of these bindings, and their derived chains, would have been refused indefinitely.
+- All BAR series current at 10:40:09Z: OKX 1m/1h/12h 94/94, Binance 1m/1h/12h 96/96. This includes Crossec's 94
+  DL-covered OKX instruments and the 96 Binance signal instruments.
+- `rebootstrap_waiting=0` and `published=1319/1319` at 10:41:08Z.
+- Since T0:
+  - errors: only the 5 known Binance 3d overlaps; no Traceback; no `qdl_bar_edge_resume_refused`;
+  - bar_edge: RestartCount 0, healthy;
+  - projectors: no errors, conflicts unchanged;
+  - Query refusal rates: at baseline, no BAR EVENT_AGE.
+
+**Bound.** The first v2.4.3 start had no resume points. The v2.4.2 process never writes the sidecar, and a plain
+restart is not a rebase. The 97 missing bindings therefore took the deep path at about 3.4 per minute, 28.5 min after
+the restore. This is expected and one-time.
+- The `ceil(N/16)`-turn bound covers a rebase in a v2.4.3 process, and restarts after it through the sidecar.
+- Read-only check: no `resume.json` exists now, which is correct after a settled wave.
+- Every binding now has a checkpoint watermark, so a restart only re-proves the cache (5-9 min silent restore).
+
+**Backlog DL-BL-2026-11-25-B.** Bindings that the restore check marks incomplete (3 TAO 1h/2h/30m this time) still
+take the deep path. Seed their checkpoint watermark as a resume candidate, under the same cache-only proof. Fold it
+into the next DL python release.
+
+Status: deployed, accepted at runtime. Release PR, CI6 receipt and tag are open.
+
+**TS INTEGRATION_DEFECT_REGISTER row update** (pin steward; replaces the slice 3 row's last two columns):
+`| IDR-<n> | DATA_LAYER | (as slice 3 row) | (as slice 3 row) + bar_edge v2.4.3 runtime 2026-11-25: T0 10:04:14Z, restore 10:12:37Z, 4 venue holes VENUE_HOLE_DURABLY_COVERED (ASTER/TAO 1m, TAO 5m, XPL 1m; OKX 2026-11-19 15:38-15:40Z), 0 refused, all OKX 94 / Binance 96 1m/1h/12h current 10:40:09Z, rebootstrap_waiting 0 10:41:08Z | DL v2.4.3 deployed (bar_edge 50124df8); release PR/CI6/tag open; DL-BL-2026-11-25-B restore-gap resume follow-up | FIXED (runtime) | DL v2.4.3 |`
+
+### DL v2.4.4 slice 1 (DL-BL-2026-11-25-B): restore-incomplete and cache-epoch-change restarts resume within the bound (tested locally) - 2026-11-25 (Claude)
+
+Branch `fix/v244-restore-incomplete-resume`, from v2.4.3 `4fd6d65`. The v2.4.3 release tree stays exactly the running
+image's source.
+
+**Trigger.** The first v2.4.3 start, 2026-11-25. The restore check marked 3 TAO bindings incomplete, and the edge
+removed their watermark, so they took the deep full-window bootstrap. A restart across a cache-epoch change drops
+every watermark the same way.
+
+**Fix** (`qdl/runtime/stable_bar_edge.py`).
+- `_restore_state` seeds those watermarks as resume candidates through `_note_rebootstrap` (sidecar included; the
+  larger watermark wins against an existing sidecar candidate).
+- `_resume_plan`, cache only:
+  - it reads back the part of today's demand window at or before the watermark;
+  - the provider read starts at its oldest missing open, or at the watermark when nothing is missing;
+  - typed `RESUME_DURABLE_WINDOW_INCOMPLETE` plus the deep path only when the repair would need the whole demand
+    window;
+  - an outage at least as long as the window stays a capped full-window read inside the resume quantum.
+
+**Tests** (`tests/test_dl_v242_bar_edge_rebase_resume.py`, now 16).
+- New: an old lost row repairs from it with a bounded read (547 rows instead of 900).
+- New: a loss at the start of the window is a typed refusal followed by the deep bootstrap.
+- New `RestoreResumeTests`:
+  - a restore-incomplete binding resumes from its oldest missing open, and the complete bindings are not re-read;
+  - a restart across a cache-epoch change resumes all three bindings in one turn, each with a bounded read.
+
+Results, one module per container (`--memory 1g --oom-score-adj 500 --network none`, light slot):
+- new module: 7 + 2 + 3 + 4 = 16 OK;
+- impacted modules:
+
+  | Module | Tests |
+  |---|---|
+  | kn_bar_readback | 12 (1 skipped) |
+  | dl_v241_bar_edge_short_proofs | 8 |
+  | dlv2_r128_bar_edge_checkpoint_migration | 7 |
+  | kn_history_fill | 23 (1 skipped) |
+  | dl_v242_instrument_unavailable | 14 |
+  | binance_history_overlap | 11 |
+  | v230_derived_bars | 29 |
+  | phase115c_bar_edge_schedule | 7 |
+  | v2_binance_bar_edge | 2 |
+  | binance_final_bar_settlement | 11 |
+  | phase105c_final_bar_repair | 4 |
+  | kn_provider_admission_edge | 14 |
+  | phaseb_bar_history_bootstrap | 46 |
+
+  188 OK.
+
+**Known limitation, registered: DL-BL-2026-11-25-C** (fail-closed, not a regression). A venue hole in the read whose
+older window the cache does not fully hold stays `VENUE_HOLE_NOT_COVERED`, even when the venue returned the bars
+below the hole. Proposed: publish the venue-confirmed bars on both sides of the hole, and require durability only for
+the venue-missing opens.
+
+**Operator lesson.** `grep -q` under `pipefail` on `docker logs` reports "no match" exactly when the line exists
+(SIGPIPE). Recorded in `upgrade/evidence/releases/v2.4.4/drafts/RELEASE_NOTES_DRAFT.md`.
+
+Status: `implemented`, `tested locally`. No image, no PR; the release waits for the owner's GO (RELEASE 2.4.4 recipe
+bump at release).
+
+**TS INTEGRATION_DEFECT_REGISTER row** (pin steward):
+`| IDR-<n> | DATA_LAYER | bar_edge restore after a restart: bindings the restore check marks incomplete (2026-11-25 v2.4.3 first start: TAO 1h/2h/30m) and every binding after a restart across a cache-epoch change lost their watermark and took the deep full-window bootstrap one per turn, so recovery after a restart was not bounded | bar_edge log 2026-11-25 10:12:37Z "checkpoint history incomplete; bounded repair required"; DL v2.4.3 release-note draft (97 bindings, 28.5 min) | DL v2.4.4 slice 1: restore seeds resume candidates; resume plan repairs from the oldest missing open of today's demand window (cache-only proof), typed RESUME_DURABLE_WINDOW_INCOMPLETE otherwise; bound ceil(N/16) turns after any restart; DL-BL-2026-11-25-C registered | - | DL v2.4.4 |`
+
+### DL release decision 2026-11-25: v2.4.3 runs in production untagged; the release is deferred and bundled (owner) - 2026-11-25 (Claude)
+
+**Running production, as of 2026-11-25.**
+- `binance_bar_edge` is the **only** changed role. It runs `qdl-v2-python:2.4.3-eb9371d`
+  (`sha256:50124df8a7914f4494f898926bffa9487df90841205d051ce915564538716651`) since 10:04:14Z.
+- Source: branch `fix/v242-bar-edge-rebase-bounded-reverify` @ `4fd6d65` (fix `206481e`, recipe `eb9371d`, evidence
+  `4fd6d65`). It is pushed to origin as `release/v2.4.3` (`ad2112c`).
+- PR #63 (`release/v2.4.3` → `dev`) stays open as a reference. It will not be merged or tagged now.
+- **v2.4.3 is NOT tagged and NOT released.** `main`/`dev` still describe v2.4.2. Every other role runs its v2.4.2
+  image (Query x2 python `5ea7a7a4`, Rust roles `2.4.2-48137eb`, and the older images v2.4.2 kept).
+- **Rollback of the running edge.**
+  - Image `qdl-v2-python@sha256:5ea7a7a40ef2d1df920d0f7cf94f22431d53087f8002929e7dffdb4208f7dcc4` with the v2.4.2
+    layering (config-hash `2f753d62…`).
+  - The `.pre-v243` checkpoint copy (`30b74165…`) and history-short copy (`24f5dc5e…`), restored as uid 10001.
+  - Remove `crypto-bar-checkpoint.json.resume.json`.
+  - Procedure: `dl-v243-window/window.sh rollback` in the coordinator scratchpad. Fix its `grep -q` + pipefail checks
+    first: see the operator section of the v2.4.4 release-note draft.
+
+**Owner decision: runtime first, one bundled release.** DL is observed under the larger load that comes when more
+alphas go on Paper after Crossec. All new fixes are then bundled into ONE release:
+- v2.4.3, the bar_edge resume after a cache loss and typed venue holes (DL-DEF-2026-11-25-A, running);
+- DL-BL-2026-11-25-B, restore-incomplete and cache-epoch-change restart resume (this branch, `7edb0aa`, tested
+  locally only);
+- R1 retention, a coordinator-named item. Its scope and slice are defined by its owner; I have not checked them;
+- anything found under load (register each as DL-DEF/DL-BL in this journal);
+- optional: DL-BL-2026-11-25-C (venue hole with a partial cache window, fail-closed today).
+
+**Gate before the bundled release: load observation.**
+- At least one full day, with at least the Crossec plus next-alpha Paper load, on the running v2.4.3 edge, with no
+  DL error class new since 2026-11-25.
+- Read only:
+  - bar_edge heartbeat: `rebootstrap_waiting`, `venue_holes_refused=0`, `history_failed` equal to only the known
+    Binance 3d set;
+  - Query refusal rates against the 2026-11-25 baseline (DATA_NOT_READY HOT_QUIET and BAR EVENT_AGE);
+  - projector conflicts and rebuilds;
+  - MemAvailable and the OOM history.
+- Each finding becomes a register row and a slice before the release cut.
+- Release number: the next free one (v2.4.4 or higher) carries everything. RELEASE in
+  `scripts/build_qdl_release_images.py` is bumped in the release commit. `PYTHON_REFERENCES` is then the image
+  running in production at that time: `2.4.3-eb9371d` for bar_edge and `2.4.2-48137eb` for Query.
+
+**CI plan for the bundle (CLAUDE.md §7b CI1/CI2/CI6/CI11).**
+- One PR from the integrated branch to `dev`, with the classifier run on the real diff before the first push. Today's
+  content is python-only (`scoped: python`, no Rust jobs, base_check runs). Any Rust or contract item in the bundle
+  changes that, and the body must list it.
+- One push, no WIP pushes.
+- CI6: one full green run on the release tree (direct, or inherited by identical tree from dev to main).
+- Merge locally (G7), then tag after the owner's GO.
+- PR #63 is superseded by the bundle PR and closed then, never merged separately.
+
+Guide delta: `upgrade/DATA_LAYER_V2_KAFKA_NATIVE_ARCHITECTURE_REVIEW.md`, "Delta 2026-11-25".
+
+### DL v2.4.4 slice 2 (DL-BL-2026-11-25-C): a venue hole is fail-closed for its span only; venue bars on both sides are published (tested locally) - 2026-11-25 (Claude)
+
+**Before.** A venue hole published only the suffix after the newest hole and required every older open of the window
+to be durable. A cache loss below an old venue hole therefore kept the binding refused (`VENUE_HOLE_NOT_COVERED`, no
+live bars), although the venue had returned those bars.
+
+**Fix.**
+- **Adapter.** `qdl/adapters/intervals.py` `BarHistoryProviderHoleError.window_envelopes`. In
+  `qdl/adapters/okx/bar_edge.py` the fetcher keeps every confirmed bar of the window, each run continuity-checked;
+  any overlap still raises. The Binance pager stops at the hole, so it passes only the suffix.
+- **Edge** (`qdl/runtime/stable_bar_edge.py` `_venue_hole_decision`).
+  - It publishes every venue bar of today's demand window, missing opens only, through the canonical core.
+  - It decides only the venue-missing opens inside the returned window from the cache:
+    - covered: `VENUE_HOLE_DURABLY_COVERED`;
+    - not covered: `VENUE_HOLE_NOT_COVERED` for exactly that span, live resumes, nothing is invented. Derived
+      buckets over the span stay gaps, and warmups across it are refused as gaps.
+- **Recheck** (`_recheck_venue_holes`). One span per turn: cache first, then a bounded venue read. The delay doubles
+  300 s → 6 h. Event `qdl_bar_edge_venue_hole_healed`.
+- **Observable change.** On a refused span the `qdl_bar_edge_venue_hole` ERROR event now carries `span_fail_closed`
+  and `binding_resumed`. `venue_holes_refused` counts open spans.
+
+**Tests** (`tests/test_dl_v242_bar_edge_rebase_resume.py`, now 18).
+- Changed: a hole inside the resume suffix is fail-closed for its span only. Live resumes and every other venue bar
+  is published. The recheck is not repeated every turn; it doubles and heals once the venue serves the bar.
+- New: the incident shape. OKX lacks an old bar the cache has, and the cache lacks an older bar OKX has. Result:
+  covered, the venue bar is published, the missing one is never invented.
+- New adapter test: two holes, with every venue bar on both sides carried in order.
+- Results, one module per container (`--memory 1g --oom-score-adj 500 --network none`, light slot):
+  - new module: IncidentEndToEnd 8, AdapterHole 5, RestoreResume 2, RecoveryBound 3 = 18 OK;
+  - impacted modules: 262 OK.
+
+    | Module | Tests |
+    |---|---|
+    | kn_bar_readback | 12 |
+    | dl_v241_bar_edge_short_proofs | 8 |
+    | dlv2_r128_bar_edge_checkpoint_migration | 7 |
+    | kn_history_fill | 23 |
+    | dl_v242_instrument_unavailable | 14 |
+    | binance_history_overlap | 11 |
+    | v230_derived_bars | 29 |
+    | phase115c_bar_edge_schedule | 7 |
+    | v2_binance_bar_edge | 2 |
+    | binance_final_bar_settlement | 11 |
+    | phase105c_final_bar_repair | 4 |
+    | kn_provider_admission_edge | 14 |
+    | canonical_intervals | 18 |
+    | c419_fast_final_bar_delivery | 8 |
+    | dlv2_r128_binance_native_bar | 11 |
+    | provider_pass_through_history | 30 |
+    | pass_through_event_loop | 7 |
+    | phaseb_bar_history_bootstrap | 46 |
+
+Status: `implemented`, `tested locally`. Not built, no PR.
+
+**Bundle reference.** "R1 retention" is agent G's branch `feat/dl-bar-retention-demand-tiered` @ `ce6001b`: per-row
+BAR depth in the KN bundle with a cap-migration guard (DL-BL-2026-11-13-C). It is part of the bundled release in
+"DL release decision 2026-11-25".
+
+**TS INTEGRATION_DEFECT_REGISTER row** (pin steward):
+`| IDR-<n> | DATA_LAYER | bar_edge venue hole with an incomplete cache window was refused for the whole binding (VENUE_HOLE_NOT_COVERED, no live bars) although the venue returned the bars below the hole; a hole inside a resume suffix blocked live bars instead of only its span | design review 2026-11-25 (DL-BL-2026-11-25-C) after the v2.4.3 runtime acceptance | DL v2.4.4 slice 2: window_envelopes on BarHistoryProviderHoleError; publish every venue bar of the demand window; fail-closed for the uncovered span only (typed, span_fail_closed/binding_resumed), live resumes; recheck 300 s -> 6 h, qdl_bar_edge_venue_hole_healed | - | DL bundle (v2.4.4+) |`
+
+### DL load observation script and baseline (read-only) - 2026-11-25 (Claude)
+
+**Script.** `upgrade/evidence/releases/v2.4.4/drafts/observation/dl_load_observation.py` is the gate instrument for
+the bundled release. Its docstring states purpose and boundary. In one read-only pass it prints typed PASS/WARN/FAIL
+lines for:
+- the 16 DL roles: image, restarts, health, OOMKilled;
+- the bar_edge heartbeat counters, with `history_failed` checked against the known 5 Binance 3d;
+- error classes per role since `--since`, where a class not in the baseline is a FAIL;
+- Query refusal rates per hour by code+reason, where a new code or more than 2x the baseline is a WARN;
+- projector conflicts, builds, cache_reconnects, ownership_lost and rebuild state;
+- market_cache used vs maxmemory and its growth per hour;
+- BAR freshness for OKX/Binance 1m/1h/12h;
+- host MemAvailable, swap and the `/proc/vmstat oom_kill` delta. dmesg and the kernel journal are not readable for
+  this user;
+- load proxies: Query slow-request volume per route and Stream subscriptions.
+
+Logs are read whole in Python, with no `grep -q` behind a pipe (the pipefail lesson). Output goes next to the script
+as `observation-<UTC>.txt`, plus `baseline.json` (first run) and `last-sample.json` (rolling, not committed).
+
+**Baseline** (`observation-20261125T111812Z.txt`, window since bar_edge T0 10:04:14Z, 1.2 h). Verdict WARN, for the
+per-consumer item only.
+- All 16 roles running and healthy; restarts are only the 06:01Z OOM-recovery restarts of the projectors and
+  market_cache.
+- bar_edge: published 1319/1319, rebootstrap_waiting 0, resume_pending 0, venue_holes 4 recorded / 0 refused,
+  history_failed 5.
+- Errors: only the 5 known Binance 3d overlaps (bar_edge); none on any other role.
+- Query refusals per hour:
+
+  | Code | query_kn_1 | query_kn_2 |
+  |---|---|---|
+  | DATA_NOT_READY HOT_QUIET | 348 | 384 |
+  | LIVE_VIEW_UNAVAILABLE | 41 | 41 |
+  | SOURCE_UNAVAILABLE MARK_INDEX | 41 | 41 |
+
+  The last two rows are the 10:27Z OKX WS reset.
+- Projectors: conflicts 33/25, builds 6, no reconnects or rebuild.
+- market_cache: 5.47 of 7.45 GiB (73%), 213,828 keys.
+- BAR: OKX 94/94 and Binance 96/96 current on 1m/1h/12h.
+- Host: MemAvailable 11.8 GiB, swap used 6.4 GiB, oom_kill counter 47,298 (cumulative; deltas are what matter).
+- Load proxies: Query slow requests per hour are about 6.0k / 5.1k for reference:batch, 4.7k / 4.1k for snapshot
+  and about 25 / 20 for warmup:batch. Stream subscriptions are 119 + 15.
+
+**Registered: DL-BL-2026-11-25-D.** DL has no per-consumer Query request counter: no access log, metrics route or
+audit file in `qdl/runtime/stable.py` (checked). Proposed: a bounded per-(consumer_id, route) counter in the Query
+heartbeat or `/health/dependencies`, so the load gate can see growth per alpha. It is candidate scope for the bundle.
+
+Status: script `tested locally` (two runs on the live stack, read-only).
+
+### DL-DEF-2026-11-25-E: SDK 2.10.1 stream BAR lineage parity and the BAR revision-identity contract (tested locally) - 2026-11-25 (Claude)
+
+**Registered here: DL-DEF-2026-11-25-E.**
+
+**Trigger.** Hosted Crossec g71 restart, 2026-11-25. OKX AAVE-USDT-SWAP 1h bar 12:00Z, event `7bba9b62…`, revision 0,
+origin AGGREGATED. The live copy had `resample_lineage=null` and the warmup copy carried it. Hosted's cache refused the
+warmup copy as a historical revision: 45 lineage-only overlaps out of 150 across 50 symbols.
+
+Disposition file: `~/.local/state/trading-system/paper-hosting/TS_TO_HOSTED_ALPHA_G71_LINEAGE_CONTRACT_DISPOSITION_20261125.md`.
+It says (a) now, plus (b) this fix.
+
+**Cause** (released code, tag `v2.4.2` / SDK 2.10.0).
+- The core sets `Bar.aggregation` on DERIVED_FINAL bars: `832c02c4:rust/qdl-core/src/derived_bar.rs:375,382`.
+- The proto states the field is "present exactly when origin is BAR_ORIGIN_AGGREGATED"
+  (`contracts/proto/qdl/marketdata/v2/market_data.proto:91-93`).
+- Query renders the field: `qdl/runtime/stable_source.py:150-167` → `qdl/api_v2/router.py:377-379`.
+- The SDK stream projection `qdl_sdk/projection.py:118-153` (sha prefix `ccf2b8e7`, equal to hosted's installed
+  wheel) never read it. Both paths read the same canonical bytes.
+
+**Fix (SDK 2.10.1, additive).**
+- `qdl_sdk/projection.py` `_resample_lineage`: the stream BAR payload carries `resample_lineage`, field for field as
+  Query does (`first/last_watermark` = `first/last_constituent_offset`, sha hex). It is None when the bar has no
+  aggregation.
+- New public `qdl_sdk.classify_bar_copies` (`qdl_sdk/handoff.py`), the hosted rule:
+  - `IDENTICAL`, or `LINEAGE_ONLY` for a null ↔ present lineage on an AGGREGATED bar;
+  - otherwise `ContinuityError("CONFLICT")`: two different present lineages, a lineage on a non-AGGREGATED bar, or any
+    other payload difference.
+- Contract text: lineage is optional evidence, not BAR revision identity. It is in `qdl_sdk/README.md` "BAR revision
+  identity" and in `DATA_LAYER_SERVICE_ACCESS_GUIDE.md`, operational behavior item 1.
+- Version bump 2.10.0 → 2.10.1 in `qdl_sdk/__init__.py`, `scripts/build_qdl_sdk_release.py`,
+  `scripts/build_qdl_release_images.py` `SDK_VERSION` and `qdl_sdk/CHANGELOG.md`, with the pinned tests updated.
+- No DL role change: Query, Stream, core and projector were already correct.
+
+**Qualification.** `tests/test_dl_v244_sdk_bar_lineage_parity.py`, 10 tests:
+- parity: stream and Query BAR payloads are byte-identical for an AGGREGATED envelope and a VENUE_NATIVE one, and both
+  builders emit the same key set;
+- hosted rule, positive: identical; lineage-only in both directions;
+- hosted rule, negative: two different lineages, a lineage on a non-AGGREGATED bar, a price difference with lineage,
+  a revision difference.
+- Impacted SDK/Query modules, one per container (`--memory 1g --oom-score-adj 500 --network none`, light slot). 431
+  run, all OK, plus 56 skipped that need live services (kn_query_backend 33, p184_dr05 23):
+
+  | Module | Tests |
+  |---|---|
+  | qdl_sdk_stream_projection | 14 |
+  | qdl_sdk_additive_responses | 4 |
+  | qdl_sdk_batched_subscribe | 7 |
+  | qdl_sdk_feed_status | 3 |
+  | qdl_sdk_gateway_clocks | 4 |
+  | qdl_sdk_offset_zero | 3 |
+  | qdl_sdk_read_reconnect | 3 |
+  | qdl_sdk_replica_read_transport | 18 |
+  | qdl_sdk_session_alive | 7 |
+  | sdk_client | 7 |
+  | sdk_execution_quality | 7 |
+  | fund_phase5_stream_sdk | 28 |
+  | kn_pre5_sdk | 15 |
+  | idr040_quiet_book_proof | 9 |
+  | p184_view_event_identity | 7 |
+  | phase10_universal_warmup | 75 |
+  | phase3_consumer_load_driver | 35 |
+  | phase104_v2_query_stream_integration | 8 |
+  | phaseb_stable_release | 7 |
+  | phase103_consumer_receipt_harness | 57 |
+  | kn_universe_benchmark | 19 |
+  | qdl_sdk_release | 4 |
+
+- Recipe tests (`tests/test_build_qdl_release_images`) run on the host with git after the commit.
+
+**TS INTEGRATION_DEFECT_REGISTER row** (pin steward; the register lives in the TS repository):
+`| IDR-<n> | DL_TS_CONTRACT | SDK 2.10.0 stream projection dropped BAR resample_lineage (canonical Bar.aggregation) while Query warmup renders it for the same event_id/revision; hosted Crossec cache refused lineage-only warmup copies as historical revisions (AAVE 1h 12:00Z 11-25, 45 of 150 overlaps across 50 symbols); contract silent on lineage vs revision identity | hosted g71 historical-revision-diagnostic.json; qdl_sdk/projection.py:118-153 at v2.4.2 (sha ccf2b8e7) vs stable_source.py:150-167 / router.py:377-379 | DL bundle: SDK 2.10.1 stream lineage parity + classify_bar_copies + explicit "lineage is not revision identity" contract text (README, access guide); interim: hosted lineage-only tolerance b58ad8bf per TS/DL disposition 2026-11-25 | - | DL bundle (v2.4.4+), SDK 2.10.1 |`
+
+### DL-DEF-2026-11-25-F: alpha deployment bindings resolve to the shared venue/mode consumer subject (tested locally) - 2026-11-25 (Claude)
+
+**Registered here: DL-DEF-2026-11-25-F.**
+
+**Defect.** `scripts/compile_alpha_deployment_bindings.py:238-242`, `_consumer_id`, as it stood before this fix:
+- it emitted a per-alpha DL consumer id, `alpha.<alpha_id>.okx.no-order`;
+- it mapped every status other than `DECLARED_NO_ORDER_PROBE` to `alpha.<alpha_id>.binance.paper`, so an ordering OKX
+  deployment got a Binance id.
+
+Found on the hosted dynamic-grid inventory
+(`~/.local/state/alpha-hosting-mode5-20261125/dynamic-grid-data-requirements.candidate.json`). The compiled scratch
+binding had `alpha.dynamic_grid_v1.okx.no-order`.
+
+**Owner ruling (2026-11-25).** Alphas share the venue/mode consumer subject, for example `alpha.okx.paper.stable`
+(`consumers/stable/alpha-okx-paper.yaml`, subject `spiffe://qdl/paper/alpha-okx-stable`). A deployment binding never
+resolves to a per-alpha DL identity, and never to Binance for an OKX deployment.
+
+**Fix.**
+- `_consumer_id` returns `alpha.<venue>.<mode>.stable`:
+  - mode is the deployment `mode`, one of paper, sandbox or live;
+  - a no-order probe is a status, not a mode, so it gets the same subject.
+- `_deployment_venue` takes the deployment's explicit `venue` if present. Otherwise it takes the single venue of the
+  required routes, or of all routes when none is required.
+- Typed refusals, each producing a BLOCKED result: `DEPLOYMENT_VENUE_UNSUPPORTED:<venue>`,
+  `DEPLOYMENT_VENUE_AMBIGUOUS:<venues>` (a cross-venue deployment must declare `venue`) and
+  `DEPLOYMENT_MODE_UNSUPPORTED:<mode>`.
+- The "compiled consumer_id is duplicated" check is removed, because the subject is shared by design. Bindings stay
+  per deployment, and requirement ids carry the deployment_id.
+
+**Tests** (`tests/test_alpha_deployment_bindings.py`, 8 tests, 2 new).
+- OKX paper ordering and OKX no-order probe → `alpha.okx.paper.stable`; Binance paper → `alpha.binance.paper.stable`.
+- No binding carries the alpha id. Product consumer ids equal the binding's. Requirement ids stay distinct across two
+  deployments on one subject.
+- Unknown venue BYBIT, ambiguous OKX+Binance and unknown mode `demo` are typed refusals. An explicit `venue: OKX`
+  cross-venue deployment is admitted on `alpha.okx.paper.stable`.
+- Neighbouring modules: phase12_bound_bar_edge_projection 9, alpha_reader_release 4, alpha_workload_identity 3
+  (1 skipped). All OK, one module per container, light slot.
+- The dynamic-grid inventory recompiled into scratch (`dg-binding/compiled-v244/`) gives `consumer_id
+  alpha.okx.paper.stable` with 5 products.
+
+**TS INTEGRATION_DEFECT_REGISTER row** (pin steward):
+`| IDR-<n> | DL_TS_CONTRACT | compile_alpha_deployment_bindings emitted per-alpha DL consumer ids (alpha.<alpha>.okx.no-order) and mapped every non-probe status to alpha.<alpha>.binance.paper, also for OKX deployments | scripts/compile_alpha_deployment_bindings.py:238-242; hosted dynamic-grid candidate inventory 2026-11-25 (scratch binding alpha.dynamic_grid_v1.okx.no-order) | DL bundle: shared venue/mode subject alpha.<venue>.<mode>.stable per owner ruling, typed DEPLOYMENT_VENUE_UNSUPPORTED/_AMBIGUOUS and DEPLOYMENT_MODE_UNSUPPORTED refusals, shared-subject duplicate check removed | - | DL bundle (v2.4.4+) |`
+
+### DL-DEF-2026-11-26-G: a reference-history coverage refusal carries typed tokens and the supported range (tested locally) - 2026-11-26 (Claude)
+
+**Registered here: DL-DEF-2026-11-26-G.**
+
+**Trigger.** Hosted dynamic_grid, 2026-11-25 18:24Z. The request was FUNDING_RATE OKX ETH-USDT-SWAP (`e49b54ae…`),
+ALPHA, `crypto_liquid_v2`, 2025-10-05 → 2026-11-25 (416 days), limit 10000, `require_all`, request `a38214cf`. It was
+refused with PARTIAL_RESULT, `retryable=false`.
+- The query_kn_2 log line reads `reasons ["PROVIDER_EXHAUSTED"]`.
+- The client received `reason_tokens []`.
+
+Disposition file: `~/.local/state/trading-system/paper-hosting/TS_TO_HOSTED_ALPHA_DYNAMIC_GRID_FUNDING_DISPOSITION_20261126.md`.
+
+**Cause** (released 2.4.2 Query).
+- FUNDING_RATE history is a bounded provider pass-through. DL keeps no funding history; the reference-batch cache is a
+  short TTL.
+- OKX pagination works: `qdl/adapters/okx/history.py:163-205`, `page_limit=400`.
+- OKX funding-rate-history holds about 3 months (OKX docs; `upgrade/OKX_MARKET_DATA_V5_GUIDE_QUANT_DATA_LAYER.md:5047`
+  "Up to ~3 months"). The venue returned an empty older page (`PROVIDER_EXHAUSTED`, `history.py:270`), so
+  `complete_left=False`.
+- `qdl/query/service.py:2275-2279` refuses with PARTIAL_RESULT. That is correct and fail-closed, but the detail was a
+  fixed text with no UPPER_SNAKE token. The SDK keeps only such tokens (`qdl_sdk/client.py:150-180`). The terminal
+  reason reached only Query's log (`router.py:1616-1627`, `extra_reasons`).
+- This is not a paging defect. The defect is that the refusal is not typed for the consumer, and no published contract
+  states the funding horizon.
+
+**Fix.** `qdl/query/service.py` `_reference_coverage_detail`. The detail now carries the terminal reason
+(`PROVIDER_EXHAUSTED`, `MAX_PAGES`, ...), the uncovered edges (`LEFT_EDGE_UNCOVERED`, `RIGHT_EDGE_UNCOVERED`,
+`HISTORY_TRUNCATED`) and the requested and observed range, with no values.
+- The code is unchanged: PARTIAL_RESULT, non-retryable.
+- The only change is the item detail text, plus its `detail_sha256`.
+
+**Tests.**
+- `tests/test_dl_v244_reference_coverage_detail.py`, 3 tests OK:
+  - the incident's refusal carries `PROVIDER_EXHAUSTED LEFT_EDGE_UNCOVERED` and `observed_min_ms`;
+  - the SDK `_batch_item_problems` surfaces `["PROVIDER_EXHAUSTED", "LEFT_EDGE_UNCOVERED"]`;
+  - right edge and truncation tokens.
+- Impacted modules, one per container, light slot. 132 run, all OK, plus 3 skipped:
+
+  | Module | Tests |
+  |---|---|
+  | phase104_reference_batch | 36 |
+  | p184_a1_reference_bound | 13 |
+  | p184_a1_client_image | 4 (2 skipped) |
+  | dl_v240_ts_funding_entitlement | 14 |
+  | okx_reference_completion | 27 (1 skipped) |
+  | phase113_reference_v2 | 21 |
+  | kn_alpha_reference_access | 3 |
+  | dlv2_r131_execution_reference_ttl | 8 |
+  | active_reference_l2_demand | 6 |
+
+**Docs debt (with this fix).** The access guide should state that reference FUNDING_RATE history is a provider
+pass-through bounded by the venue's own retention (OKX about 3 months, newest first) and is never padded. A window
+before that is PARTIAL_RESULT with `PROVIDER_EXHAUSTED LEFT_EDGE_UNCOVERED`.
+
+**TS INTEGRATION_DEFECT_REGISTER row** (pin steward):
+`| IDR-<n> | DL_TS_CONTRACT | reference-history coverage refusal (PARTIAL_RESULT, non-retryable) carried a fixed detail with no typed token, so the SDK showed reason_tokens=[] while Query's own log had PROVIDER_EXHAUSTED; a FUNDING_RATE window older than the venue's horizon (OKX funding-rate-history ~3 months) was indistinguishable from a gap and no horizon is published | hosted dynamic_grid 2026-11-25 18:24Z request a38214cf (query_kn_2 qdl_refusal reasons PROVIDER_EXHAUSTED); qdl/query/service.py:2275-2279; qdl_sdk/client.py:150-180 | DL bundle: _reference_coverage_detail (terminal reason + LEFT/RIGHT_EDGE_UNCOVERED/HISTORY_TRUNCATED + requested/observed range), docs: funding history = venue-bounded pass-through | - | DL bundle (v2.4.4+) |`
+
+### DL load observation 11-25 22Z (read-only) - 2026-11-25 (Claude)
+
+Run: `upgrade/evidence/releases/v2.4.4/drafts/observation/dl_load_observation.py --since 2026-11-25T15:55:25Z`.
+Output: `observation-20261125T215525Z.txt`, a 6 h window. The verdict was FAIL; the FAILs are explained below.
+
+Load: Crossec 50 live, dynamic_grid warmup and stream diagnostics on the shared `alpha.okx.paper.stable`, and the m5
+leaf onboarded.
+
+**Roles.** All 16 running and healthy. RestartCount is unchanged from the baseline; the projectors and market_cache
+show only their 06:01Z OOM-recovery restart.
+
+**CPU / RSS** (`docker stats`, 21:56Z, load1 16):
+
+| Role | CPU | RSS |
+|---|---|---|
+| query_kn_1 | 76% | 283 MiB |
+| query_kn_2 | 85% | 306 MiB |
+| stream_kn_1 | 16% | 188 MiB |
+| stream_kn_2 | 17% | 142 MiB |
+| market_projector_1 | 15% | 260 MiB |
+| market_projector_2 | 16% | 242 MiB |
+| binance_bar_edge | 0.04% | 149 MiB |
+| kafka1 | 115% | 0.65 GiB |
+| kafka2 | 39% | 0.73 GiB |
+| kafka3 | 162% | 1.26 GiB |
+
+**market_cache.**
+- `used_memory` 5.48 of 7.45 GiB (73%), 213,555 keys, growth +0.8 MiB/h since 11:18Z.
+- Morning diagnosis (`handoffs/HOST_MEMORY_DIAGNOSIS_20261125.md`): 5.37–5.39 GiB, so +~0.1 GiB in about 12 h. That
+  is bounded.
+- **New finding: the cgroup has 2.87 GiB of the cache in swap** (`memory.swap.current`), and RSS is 2.57 GiB. Host
+  swap used is 7.84 GiB, +1.39 GiB since 11:18Z. A swapped Redis serves with page-fault latency.
+
+**Projectors (FAIL in the script).**
+- Both logged Redis `Resource temporarily unavailable (os error 11)` at 11:29:14Z and reconnected once
+  (`cache_reconnects` 0→1 at 11:29:54/59Z).
+- No rebuild, `bars_applied` advancing, conflicts unchanged (33/25).
+- The `errors` field is sticky; it is the 11:29Z event, not a current fault.
+- Probable link to the market_cache swap: not proven.
+
+**Host.**
+- MemAvailable 12.5 GiB.
+- `/proc/vmstat oom_kill` +7 since 11:18Z. No container in `docker ps -a` has OOMKilled set. Which cgroup was killed
+  is not identified, because the kernel log is not readable for this user.
+
+**Errors and refusals (6 h).**
+- No error lines on any of the 12 application roles. No BAR EVENT_AGE, no DATA_STALE.
+- Query refusal rates per hour:
+
+  | Refusal | query_kn_1 | query_kn_2 | Note |
+  |---|---|---|---|
+  | DATA_NOT_READY HOT_QUIET | 232 | 222 | below baseline 346 / 381 |
+  | PARTIAL_RESULT `PROVIDER_EXHAUSTED` FUNDING_RATE | 0.3 | – | dynamic_grid 416-day request, venue horizon (DL-DEF-2026-11-26-G) |
+  | SOURCE_UNAVAILABLE MARK_INDEX, empty reasons | – | 25.7 | one burst at 19:30:11Z, about 150 suppressed |
+
+  The 19:30:11Z burst was followed at 19:30:42Z by an OKX `okx-public-003` staleness recycle. Retryable; the same
+  class as the 10:27Z WS reset, but without reason tokens.
+
+**bar_edge.** published 1319/1319, rebootstrap_waiting 0, resume_pending 0, venue holes 4 recorded / 0 refused,
+history_failed 5 (the known Binance 3d set).
+
+**BAR currency.** OKX 94/94 and Binance 96/96 current on 1m/1h/12h. That is the Crossec universe: 94 DL-covered OKX
+instruments plus the 96 Binance signal instruments.
+
+**Per-consumer Query rates.** Not available. There is no DL counter (DL-BL-2026-11-25-D is not implemented).
+Proxies:
+- Query slow requests per hour: reference:batch about 4.4k / 4.1k; snapshot 14 / 31, against about 4.7k in the
+  morning, because the morning carried Crossec warmup bursts.
+- Stream subscriptions 118 + 76, against 119 + 15 in the morning.
+
+**Follow-ups registered.**
+- DL-BL-2026-11-25-H, market_cache in swap. Owner decision, linked to the memory diagnosis:
+  - pin the cache against swap (`memory.swap.max=0` for its cgroup, or `--memory-swappiness 0`), with RAM headroom;
+  - or reduce the BAR depth (R1 retention).
+- SOURCE_UNAVAILABLE MARK_INDEX refusals should carry a typed reason token. Same class as DL-DEF-2026-11-26-G; fold it
+  into the bundle.
+
+### DL-DEF-2026-11-26-I: derived bars publish on their own thread; inputs not yet available are waited for; healed gaps wake children (tested locally) - 2026-11-26 (Claude)
+
+**Registered here: DL-DEF-2026-11-26-I.** RCA:
+`~/.local/state/trading-system/paper-hosting/TS_TO_HOSTED_ALPHA_CROSSEC_0000Z_STOP_RCA_20261126.md`.
+
+**Incident.** At 00:00Z on 2026-11-26 the REST poll read about 532 closed bars (483 of them 1d), paced by provider
+admission with 22 × 503 retries, until 00:02:40. The derived cycle runs after it in the same loop (`run_forever`,
+v2.4.3 `:2727/:2734/:2738`), so no derived bar was published until 00:03:05.
+- The first pass was already past the 120 s grace. The 15m 23:45 bucket of 20 OKX instruments was declared a gap,
+  because its 5m 23:55 constituent had been derived in the same pass and was not yet durable.
+- The chain then healed one level per 30 s recheck: 1h at 00:04:47, 12h at 00:06:25.
+- Crossec decided at 00:04:48Z and stopped fail-closed on its 180 s rule.
+
+**Fix, class level** (`qdl/runtime/stable_bar_edge.py`, `qdl/runtime/derived_bars.py`).
+1. **Own thread.** `_start_derived_thread` / `_derived_loop` run `run_derived_cycle` on one dedicated thread, waking
+   at least every 1 s and at each derived wake time. The main loop no longer runs it and no longer schedules for it
+   (`_loop_sleep_seconds(include_derived=False)`).
+   - The derived cycle does no provider I/O, so provider admission is untouched.
+   - Shared state is guarded: the checkpoint is written under `_persist_lock`, and the derived watermark update is a
+     compare-and-set under `_watermark_guard`, which is also taken by the rebase pops and the bootstrap watermark
+     update. `_state_payload` snapshots its dicts.
+2. **Grace from input availability.** `derived_bars.decide(..., pending_constituents=...)` waits, and never declares
+   a gap, while a missing constituent is still pending. For a derived parent, pending means past its watermark (not
+   produced yet) or ACKed by this edge and not yet read back (`_derived_inflight`, at most 120 s).
+   - A native or REST parent keeps the wall-clock grace, so a real loss still records a gap.
+3. **Children recheck at once.** After a binding publishes, its children are woken (`_wake_derived_children`): next
+   pass now, and their gaps due now. A gap whose base is pending is rechecked at the 0.5 s poll, not 30 s.
+
+**Tests** (`tests/test_dl_v244_derived_bar_latency.py`, 4 OK).
+- The midnight chain 1m → 5m → 15m → 30m → 1h → 2h → 6h → 12h, with the first pass 200 s late and durability only on
+  projector tick: no gap, and every level published within 2 × 7 passes (0.5 s each).
+- A contrast with the v2.4.3 rule: the same pass declares the 15m gap.
+- A real missing native 1m (23:58): the 5m gap is recorded after the grace and propagates to 15m; no 12h is built.
+- The threaded `run_forever` with a REST cycle blocked (standing in for admission-paced 1d reads with 503 retries):
+  1h and 12h are published while REST is still blocked, well inside 60 s / 90 s of the boundary, with no gap.
+
+Impacted modules, one per container (light slot): 191 run, all OK, plus 2 skipped.
+
+| Module | Tests |
+|---|---|
+| v230_derived_bars | 29 |
+| phase115c_bar_edge_schedule | 7 |
+| kn_history_fill | 23 (1 skipped) |
+| dl_v242_bar_edge_rebase_resume | 8 + 2 + 3 |
+| dl_v242_instrument_unavailable | 14 |
+| dl_v241_bar_edge_short_proofs | 8 |
+| kn_bar_readback | 12 (1 skipped) |
+| binance_final_bar_settlement | 11 |
+| phase105c_final_bar_repair | 4 |
+| v2_binance_bar_edge | 2 |
+| dlv2_r128_bar_edge_checkpoint_migration | 7 |
+| binance_history_overlap | 11 |
+| phaseb_bar_history_bootstrap | 46 |
+
+Two existing tests stub `_loop_sleep_seconds(now)`; the derived-thread-off path keeps that signature.
+
+**TS INTEGRATION_DEFECT_REGISTER row** (pin steward):
+`| IDR-<n> | DATA_LAYER | DERIVED_FINAL bars were published after the REST poll in one loop; at 00:00Z (1d close, ~532 REST bars, admission 503 retries) derived bars started 00:03:05, a same-pass constituent was declared a gap after the wall-clock grace and the chain healed one level per 30 s: OKX 1h of 20 instruments at 00:04:47Z, 12h at 00:06:25Z; Crossec stopped fail-closed (180 s) at 00:04:48Z 2026-11-26 | bar_edge log 23:59:30-00:12Z (closed BAR ACK 532 at 00:02:34, derived ACK 380 at 00:03:05, gaps 00:03:02-05, heals to 00:06:25); RCA file | DL hotfix + bundle: derived thread, pending-input rule (no self-inflicted gap), children woken at once; tests midnight chain/threaded/real-gap | - | DL v2.4.3.1 hotfix, bundle |`
+
+### DL-BL-2026-11-25-D per-consumer Query request counts, and typed tokens for provider-lane SOURCE_UNAVAILABLE (tested locally) - 2026-11-26 (Claude)
+
+**DL-BL-D.**
+- `qdl/runtime/consumer_request_log.py` `ConsumerRequestLog` keeps bounded counts by (consumer_id, route template),
+  at most 64 consumers × 24 routes with an `__overflow__` key. At the first request after a 60 s window it emits one
+  JSON line `qdl_consumer_requests` (`replica`, `window_start_s`, `total`, `consumers{route: n}`).
+- It is observation only and payload-free: no uid, cursor or token.
+- `qdl/api_v2/router.py` `_data_access` records each authenticated data-plane request through
+  `record_consumer_request`, which never raises.
+- The load observation script can read these lines in place of its slow-request proxy once Query runs the bundle.
+
+**SOURCE_UNAVAILABLE typed tokens** (same class as DL-DEF-2026-11-26-G). The 2026-11-25 19:30Z MARK_INDEX_PRICE burst
+reached consumers with `reason_tokens=[]`. `qdl/query/service.py` changes:
+- `_provider_lane_failure_detail`: a reference-batch provider-lane failure carries `PROVIDER_LANE_FAILED`, plus
+  `PROVIDER_LANE_DEADLINE` for a timeout or deadline, plus the exception class as an UPPER_SNAKE token. The exception
+  message is never included.
+- `_typed_provider_detail`: an adapter error prefixes its typed `error_code`, or `PROVIDER_ERROR_UNTYPED`, when the
+  detail carries no token.
+
+**Tests.** `tests/test_dl_v244_consumer_requests_and_lane_tokens.py`, 7 OK:
+- one line per window with counts by consumer and route template;
+- bounds and overflow;
+- an empty window emits nothing;
+- the router records the authenticated consumer and route;
+- lane timeout and class tokens, and untyped provider errors.
+
+Impacted modules, light slot, 305 OK, 1 skipped:
+
+| Module | Tests |
+|---|---|
+| dl_v244_reference_coverage_detail | 3 |
+| phase104_reference_batch | 36 |
+| okx_reference_completion | 27 (1 skipped) |
+| phase113_reference_v2 | 21 |
+| dlv2_r131_execution_reference_ttl | 8 |
+| kn_alpha_reference_access | 3 |
+| p184_a1_reference_bound | 13 |
+| phase104_v2_query_stream_integration | 8 |
+| phase10_universal_warmup | 75 |
+| dl_v240_ts_funding_entitlement | 14 |
+| v231_snapshot_batch | 11 |
+| fund_phase72_consumer_canary | 8 |
+| refusal_log | 8 |
+| fund_phase6_operations | 8 |
+| dl_v240_identity_quota | 21 |
+| fund_phase5_api | 25 |
+| query_replica_lane_redirect | 14 |
+| fund_phase7_contract_security | 15 |
+
+**Related, outside the repo.**
+- DL-BL-H runsheet (market_cache swap), not applied: `~/.local/state/qdl-v2/windows/dl-bl-h-market-cache-swap/`.
+- The v2.4.3.1 midnight proof reader: `~/.local/state/qdl-v2/windows/v2.4.3.1-bar-edge/midnight_proof.sh`. It is
+  read-only and armed nothing.
+  - Its dry run against the 2026-11-26 00:00Z incident read the market cache directly and reproduced the RCA:
+    OKX 1h p50 184 s, max 287 s; OKX 12h max 385 s.
+
+### DL-DEF-2026-11-26-J: the alpha binding compiler honours consumer-manifest selector grants (tested locally) - 2026-11-26 (Claude)
+
+**Registered here: DL-DEF-2026-11-26-J. Status: fixed on branch, certified by tests, NOT released; parked until the owner resumes rev7** (owner decision 2026-11-26 ~11:50Z: Crossec stays on revision 6, revision 7 / add7 parked). Fix commit `fdba06b1` on `fix/dl-def-j-compiler-selector-grants` (from `fix/v244-restore-incomplete-resume` 25aba8b); not pushed, not tagged, in no image. Certification: `tests/test_dl_def_j_compiler_selector_grants.py` 7 OK, `test_alpha_deployment_bindings` 8 OK, `test_alpha_reader_release` 4 OK (light slots, image `qdl-v2-python:2.4.3.1-b8935d1`, worktree source read-only). To resume: ship J in a released DL bundle, then the r11 render/reseal and its window packet.
+
+Found while preparing the Crossec owner50 preview
+(`~/.local/state/trading-system/paper-hosting/TS_TO_HOSTED_ALPHA_CROSSEC_OWNER50_IDENTITY_AND_DELTA_PREVIEW_20261126.md`).
+
+**Defect.** `scripts/compile_alpha_deployment_bindings.py` resolved a reference feed (FUNDING_RATE, CONTRACT_METADATA, ...)
+only from catalogue bindings or the explicit `spec.requirements` of `--reference-manifest`. Since DL v2.3.0 the shared
+consumer grants Crossec's FUNDING_RATE through universe **selectors** (`okx-swap-crossec-94` in `alpha.okx.paper.stable`
+r17/r18), which the compiler never expanded. So, with the DL-DEF-F compiler (86793b4), the unchanged Crossec revision-6
+inventory (`00c952f6...`) compiled BLOCKED `CAPABILITY_UNAVAILABLE:FUNDING_RATE:crypto_liquid_v2`, although the data plane
+serves it. The compiler also never checked that a route was granted at all, so a bound but ungranted route (the 7 owner50
+contracts' BAR 1h on r18, refused live with PERMISSION_DENIED) could compile ADMITTED.
+
+**Fix** (one file, opt-in, old behaviour byte-identical without the option).
+- `--consumer-manifest PATH` (repeatable) and `--universe-dir` (default `<catalog dir>/universes`, the runtime default).
+  `load_consumer_manifests` loads each manifest exactly as the runtime does (`ConsumerManifestLoader` +
+  `SelectorContext.from_catalog(StableSourceCatalog.load(catalog))`, as in `qdl/runtime/stable.py` `load_stable_manifests`).
+- Per deployment the manifest of its subject (`alpha.<venue>.<mode>.stable`) is required (`CONSUMER_MANIFEST_UNAVAILABLE`).
+- Each route is checked on the data-plane index key (instrument_uid, feed, interval, source policy;
+  `ConsumerManifest.requirement_allowed`): an ungranted route is BLOCKED `CONSUMER_ENTITLEMENT_UNAVAILABLE:<feed>:<interval>:<policy>`.
+  Request-time fields (grade, event recency, session liveness) stay a runtime check.
+- A granted reference feed counts as served on the reference path; a granted BAR/QUOTE still needs its catalogue binding
+  (the grant is an entitlement, not a capability).
+- The report gains `consumer_manifests` (id, revision, loader sha256, row count, the loader's selector expansion records)
+  only when the option is used.
+
+**Tests.** `tests/test_dl_def_j_compiler_selector_grants.py`, 7 OK. Fixtures: the hosted revision-6 inventory and the
+digests of the deployed revision-6 binding (`540c7d87...`) in `tests/fixtures/dl_def_j_crossec/`; the stage C r8 evidence
+(catalogue, r17 realm, universes) already in the repository.
+- The defect reproduced without the option (FUNDING BLOCKED).
+- Revision 6 compiles to the deployed binding modulo the DL-DEF-F consumer_id: same header, same 282 products digest
+  (`9b51d7eb...` with consumer_id removed), `binding_sha256` `bc956d82...`; the CLI gives the same bytes.
+- +7 (HYPE, LIT, ZRO, MUBARAK, GRASS, USELESS, CAP) with a 7-member universe granted by the same 5 selectors and BAR 1h/12h
+  bindings present: ADMITTED, 303 products, a strict superset of revision 6, no workaround.
+- +7 granted but on the real catalogue: still BLOCKED `CAPABILITY_UNAVAILABLE:BAR:crypto_primary_v2`.
+- +7 bound but not granted: BLOCKED `CONSUMER_ENTITLEMENT_UNAVAILABLE:BAR:...` (the row the data plane refuses).
+- Missing subject manifest: typed BLOCKED.
+Impacted modules, light slot, one container each: test_alpha_deployment_bindings 8 OK, test_alpha_reader_release 4 OK.
+
+**Live-input check** (TS-side, running catalogue r17 `635237bd...`, realm r18): revision 6 ADMITTED `bc956d82...` (282);
+parent94+7 BLOCKED on BAR with r18 and with the r19-add7 preview; with the preview BAR overlay `f28d3c92...` (303) and
+owner50-exec43 `0e245dda...` (129), the same bytes as the earlier workaround compile.
+
+**What an r11 declaration must add before the +7 binding compiles on the real catalogue:** for each of the 7, BAR 1m
+RUST_NATIVE (the derivation parent), BAR 1h and 12h DERIVED_FINAL (`require_final_bar`, crypto_primary_v2) catalogue and
+acquisition bindings; the `alpha.okx.paper.stable` grants (a universe + 5 selectors: 1m, 1h, 12h, FUNDING_RATE,
+CONTRACT_METADATA); and for TS execution QUOTE + MARK_INDEX_PRICE bindings with the `trading-system.paper.stable` rows.
+Preview: `~/.local/state/trading-system/paper-hosting/crossec-owner50-preview/dl-delta/`.
+
+### DL-BL-2026-11-26-K: instrument lifecycle observation API (OPEN feature item, not implemented) - 2026-11-26 (Claude)
+
+**Registered here: DL-BL-2026-11-26-K**, open. Proposal:
+`~/.local/state/trading-system/paper-hosting/crossec-owner50-preview/dl-delta/DL_FEATURE_NOTE_INSTRUMENT_LIFECYCLE_OBSERVATION.md`.
+- Gap: DL publishes no lifecycle observation. `InstrumentView.status` is the record default ACTIVE
+  (`qdl/domain/instrument.py:99`; the catalogue serialiser `qdl/runtime/production_catalog.py:623-649` emits no status);
+  there is no effective/observed time, event id/hash or history; delisting is a render-time retire
+  (`scripts/dl_declaration.py:313-331`, `scripts/catalog_venue_listing_gate.py`). SDK `HALTED` is feed quality only.
+- Proposed contract: append-only, hash-chained `GET /v2/instruments/{uid}/lifecycle` (`qdl.instrument-lifecycle.v1`) with
+  status, venue-stated `effective_utc`, `observed_utc`, evidence capture hash, catalogue and source revision; retired uids
+  stay resolvable; fed from the venue-listing captures the declaration gate already takes. A DL outage never produces an event.
+- Requested by hosted Crossec (owner50 request item 4). Owner prioritisation pending.
+
+### DL-DEF-2026-11-26-L: an IDR-112 recycle successor must prove freshness; an unproven late successor is recycled again without the cooldown (implemented, Rust tests written, NOT yet run) - 2026-11-26 (Claude)
+
+**Registered here: DL-DEF-2026-11-26-L.** RCA:
+`~/.local/state/trading-system/paper-hosting/TS_TO_HOSTED_ALPHA_CROSSEC_1200Z_STOP_RCA_20261126.md`.
+
+**Incident** (`ingestor_okx_swap`, lane `okx-public-003`, bbo-tbt QUOTE latest state; ingestor log read-only).
+- 12:01:22.868Z: the IDR-112 detector recycled gen 1310 (max lag 279 ms over a 26 ms baseline). Make-before-break
+  handover to gen 1311 at 12:01:23.385 (444 ms).
+- The successor itself was 4-8 s late by venue `ts`: window max 8,043 ms (12:01:34.28), 7,892 ms, mean about 4 s,
+  until about 12:01:44, then 203 ms.
+- 12:01:32.881Z: the next trigger (max lag 6,705 ms) was `SUPPRESSED_COOLDOWN` with 49,976 ms left, so the lane stayed
+  late. BTC-USDT-SWAP QUOTE went STALE, `execution_eligible=false`, and TS refused Crossec's NAV quote read at
+  12:01:33.6Z (Crossec STOPPED_CLOSED).
+- Correction (same day, after re-reading the 10 s progress windows): gen 1311 was not late at the handover. Its first
+  window (to 12:01:24.5) peaks at 290 ms, which is the old session's value. It fell behind from about 12:01:24.5 and
+  then **caught up in place**: 12:01:34-44 ran at 2,378 frames/s with read gaps of 90 ms or less while lag stayed about
+  4 s, and 12:01:44-54 peaked at 203 ms. That recovery involved no reconnect. The gen 1312 recycle at 12:02:42 was a
+  routine 438 ms trigger. Whether an earlier reconnect would have restored freshness sooner is therefore NOT shown by
+  this incident.
+
+**Cause (class).** The 60 s cooldown and the hourly cap protect a healthy lane from flapping. They also applied to
+the session the detector had just created to cure staleness, before that session ever showed it was healthy.
+"Recycled" was treated as "healthy". Venue-agnostic: the detector is pure and per lane (`StalenessDetector`).
+
+**Fix** (`rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs`, detector only, venue-agnostic).
+1. **Probation.** The session that follows a staleness recycle (`recycle_started` then `session_started`) starts on
+   probation. It leaves probation only when both hold:
+   - at least `successor_probation_ms` (default 60 s, one cooldown) has passed since its first frame;
+   - the last `successor_proof_frames` (default 20) frames were fresh, from at least `min_bindings` distinct bindings.
+
+   A stale frame restarts the fresh run. Any other session (notice, error reconnect, start) is trusted as before.
+   - The first version, commit `ae1fe944`, proved freshness by frame count alone. At about 1,100 frames/s that proof
+     completes in about 20 ms. Gen 1311 would have passed it in its first second, and the cooldown would still have
+     suppressed the later trigger.
+   - The replay test now models that fresh first second.
+2. **Re-recycle.** A trigger on a session still on probation returns `RecycleDecision::SuccessorStale { retry }`.
+   It starts a recycle at once, without the cooldown, up to `successor_retries` (default 2) per unproven chain. The
+   hourly cap and the OKX control budget still apply. A proof resets the count. After the retries the cooldown
+   governs again, so a venue-side delay that no reconnect cures still costs at most 3 connects.
+3. **Observability.** The action is `RECYCLE_SUCCESSOR_STALE`, with decision `{"successor_retry": n}`. It does not
+   count as suppressed.
+4. **Config.** Both fields have serde defaults: old configs load unchanged, and the bounds are validated.
+   `successor_retries: 0` is the exact pre-L decision rule.
+
+**Tests** (same file, `mod tests`): 5 new.
+- `a_late_recycle_successor_is_recycled_again_without_waiting_for_the_cooldown`: the 12:01Z timeline replayed. The
+  successor is fresh for 1.1 s (44 frames), which is no proof. It degrades and is detected within 0.5 s, then recycled
+  again (old rule: about 59 s of cooldown). The next successor stays on probation for 60 s and a degradation in it is
+  still a retry; after that it is proven, the retries reset, and the normal cooldown and recycle rule applies.
+- `without_successor_retries_the_1201z_timeline_keeps_the_pre_l_cooldown`: reproduces the logged 12:01:32.881 decision
+  (cooldown, about 49.98 s left).
+- `successor_retries_are_bounded_then_the_cooldown_and_the_cap_apply`.
+- `a_stale_frame_restarts_the_proof_and_other_sessions_are_not_on_probation`: also covers serde defaults and
+  validation.
+- The existing detector tests are unchanged; none calls `session_started` after `recycle_started`.
+
+**Verification status.**
+- `rustfmt --check` passes (light slot, `qdl-rust-builder:1.82.0-v2.3.2`).
+- The Rust tests and clippy are **NOT run yet**. The build is a cold qdl-kafka build, including librdkafka: about
+  3 GiB and 1 CPU, which is a heavy slot. That is outside the light-slot rule of this task and the :15-:45 Paper
+  window rule. Script: `scratchpad/defl/rust-test.sh` (heavy slot, after the coordinator's go).
+- No image, no deploy, not pushed.
+- Rollout later: an ingestor_okx_swap image of the bundle, recreated with its own config (no config change needed;
+  the defaults apply). Rollback is the current image `sha256:e628fbe0…`.
+
+### DL-DEF-2026-11-26-L, class fix: OKX execution QUOTEs spread over three sessions; Rust tests green (tested locally) - 2026-11-26 (Claude)
+
+**Deeper RCA** (read-only; `ingestor_okx_swap` logs 11-24 00:46Z to 11-26 13:05Z; earlier logs rotated, so 11-19..11-24 is
+UNAVAILABLE).
+- **Topology:** one OKX public session, okx-public-003, carried all 97 execution QUOTE subscriptions (bbo-tbt; 97 of
+  100 slots). Each instrument had exactly one QUOTE subscription.
+- **Lag rises with that session's message rate** (21,697 windows of 10 s; host stalls excluded):
+
+  | Frames/s | Windows with lag > 1 s | With lag > 2 s |
+  |---|---|---|
+  | < 800 | < 0.1 % | < 0.05 % |
+  | 1,100–1,500 | 1.5 % | 0.6 % |
+  | 1,500–2,000 | 12 % | 2.9 % |
+  | 2,000–3,000 | 48 % | 19 % |
+  | > 3,000 | 100 % | 100 % |
+
+- **Spikes cluster at market bursts** (:30–:37, :00–:01, :45), not at resubscribe. Frames are small (p50 112 bytes).
+- **Lane 003 against the rest:** 182 generations, 179 recycles, 246 cap hits and 55 windows over 2 s in 60 h. The
+  other six OKX lanes had 9–13 generations each (notices and read errors). Their lag is UNAVAILABLE because the
+  detector only measures all-quote lanes, and their read gaps stayed normal at every lane-003 spike.
+- **Separate host stall class:** 11-25 05:56, 06:01 (123 s) and 11:31, on all lanes.
+- **Unresolved:** venue per-connection throughput versus our 1 vCPU reader. Cumulative cgroup throttling is 35k
+  periods. A 1 s sampler (13:22–15:05Z) measures the burst windows.
+
+**Fix (owner option b, 2026-11-26):** all 97 quotes are kept and spread over 3 sessions. Reducing the set is parked,
+to go with a PM scope narrowing: the union of orderable contracts in the TS head is 96 plus BTC-USD-SWAP, so nothing
+can be dropped today.
+- **`qdl/runtime/ingestor_lanes.py` `spread_lane_pins`:** a deterministic, declared migration of one feed of one
+  scope over N lanes.
+  - Target lanes are the current shards plus new numbers above the scope's.
+  - Tier-A names are dealt round robin; the rest go, in sha256 order, to the least-loaded lane.
+  - It is idempotent, refuses a plan over the subscription limit, and other feeds keep their pins.
+- **`sticky_lane_pins`:** a new binding of a balanced feed (QUOTE) goes to the least-loaded lane, so growth does not
+  refill one session.
+- **`scripts/dl_declaration.py`, `ingestor.lane_spread`:** validated in `load_declaration`. The render writes
+  `ingestor/<file>.lane-migration.json` (`qdl.v2.ingestor-lane-migration.v1`: base sha256, the spread spec, every
+  move). The lane-stability rules in render and gate allow exactly the recorded moves and check every moved binding
+  is on its recorded lane. Other moves are still refused.
+- **Rust:** no lane code change. The ingestor already groups pinned bindings by (service, shard) and gives every
+  all-quote lane its own IDR-112 detector, now with the DEF-L probation (`ae1fe944`, `93aef0c6`, `cdd31043`).
+- **OKX limits** (docs-v5, "WebSocket / Connect" and "Connection count limit", read 2026-11-26):
+  - "3 requests per second (based on IP)" for connects;
+  - 480 subscribe, unsubscribe and login requests per connection per hour;
+  - "the total length of multiple channels cannot exceed 64 KB" per subscribe request;
+  - 30 connections per channel per sub-account.
+
+  Three quote sessions of 32–33 sit far inside all of these.
+- **Declaration render** (offline, r11 on the live r10 set, ingestor only):
+  - lanes okx-public-003 / 006 / 007 hold 33 / 32 / 32;
+  - 64 moves (3 → 6 or 7);
+  - `config_revision` stays 23 for every binding, so per-binding lineage is unchanged;
+  - consumer manifests, realms, catalogue, acquisition, cores and bar_edge are byte-identical;
+  - gate PASS.
+
+  No checkpoint is stranded: QUOTE is latest state and has no bar or book checkpoint, and the book fence keys only on
+  BOOK lanes.
+
+**Dual-session redundancy for tier-A (design note, not implemented).**
+- Subscribe each tier-A instrument's bbo-tbt on two sessions of different lanes, with the ingestor or core emitting
+  the frame with the newer venue `ts` per binding (latest state; equal `ts` → first arrival).
+- Needs:
+  - per-binding duplicate suppression that keeps ordering and revision semantics;
+  - a lane-aware staleness detector that keeps one session alive while the other recycles;
+  - double the subscriptions for those names;
+  - certification of the merge against both sessions.
+- This is a DL release item, worth doing if lag persists after the split.
+
+**Tests:**
+- **Rust,** heavy slot, `qdl-rust-builder:1.82.0-v2.3.2`, offline, tree `cdd31043`: `cargo fmt --check` OK;
+  `cargo test -p qdl-kafka --bin qdl-native-raw-ingestor` 87 passed, 0 failed, 1 ignored (the live-network OKX
+  smoke); `cargo clippy --all-targets -D warnings` OK. The 6 DEF-L tests (5 unit, 1 end-to-end) pass, and the
+  existing IDR-112 tests pass unchanged.
+- **Python,** light slots, `qdl-v2-python:2.4.3.1-b8935d1`: `test_dl_def_l_quote_lane_spread` 7 OK (live topology,
+  balanced 33/32/32 on new shards 6 and 7, tier-A dealt, deterministic under shuffles, idempotent, sticky balanced
+  growth, limit refusal); `test_v230_ingestor_lanes` 6 OK; `test_v230_declaration_tool` 29 OK (8 skipped);
+  `test_dl_v242_instrument_retirement` 10 OK; `test_dl_v242_instrument_unavailable` 14 OK;
+  `test_dl_v240_ts_funding_entitlement` 14 OK; `test_v231_stage_c_binance_signal` 7 OK.
+- Not pushed, no image yet, not deployed.
+
+### DL-DEF-2026-11-26-M: a quiet key evicted from the stream gateway hot ring is answered from a per-key last value; quiet beyond 900 s is refused typed (tested locally) - 2026-11-26 (Claude)
+
+**Registered here: DL-DEF-2026-11-26-M** (the letter was free: the plan and every DL branch's commit log stop at L).
+RCA: `~/.local/state/trading-system/handoffs/TS_DL_OKX_THIN_QUOTE_FRESHNESS_RCA_20261126.md` §2, §4, §6 a1.
+
+**Defect.** `qdl-stream-gateway` keeps a per-partition hot ring bounded by bytes (48 MiB total by default) and by age
+(120 s). On busy partitions it covers about 30 s. An OKX `bbo-tbt` QUOTE whose BBO does not change for longer loses
+its last record to eviction. The hot lookup then cannot prove that no newer record exists and returns
+`HOT_RECORD_MISSING` (`hub.rs` ring scan). DL Query answers `DATA_NOT_READY HOT_QUIET_PRIMARY_UNVERIFIED`, the writer
+probe cannot renew the session proof, and TS refuses `EXECUTION_CONTEXT_STALE` although the session is live with no
+gap. The RCA measured 2,996 refusals in 6 h on `query_kn_1` across 19 OKX names. The defect predates W-DL. The cost
+comes from the ring's byte bound (`Hub::evict`), not from the business rule: the rule only needs the key's newest
+record and proof that nothing newer was committed.
+
+**Fix** (`rust/qdl-stream-gateway`, a1 of the RCA; Query, TS, the manifest and the API are unchanged):
+- `src/hub.rs`: a per-partition `last_value` map: key → newest dispatched record, dispatch instant and session fence
+  `(source_session_id, connection_generation, lease_epoch)`. It is updated in `dispatch` under the same partition lock
+  as the ring and boundary, and ring eviction never touches it.
+  - Only QUOTE, TRADE and MARK_INDEX_PRICE records are kept. Books stay ring-only, because they need their
+    snapshot/delta chain.
+  - A newer record that cannot be kept drops the key's entry. That covers another product, a feed-state event, an
+    undecodable record, or a record heavier than `LAST_VALUE_MAX_RECORD_BYTES` (4 KiB). So an entry is only ever the
+    key's newest record.
+- **Bound.** The index is bounded by keys, not ring bytes. `QDL_KN_LAST_VALUE_MAX_KEYS` (default 2,048) is split over
+  partitions.
+  - At the bound, entries quiet past the maximum are dropped first, then the least recently dispatched key.
+  - The memory term is `keys × 4 KiB` = 8 MiB by default. It is added to `MemoryPlan::required` (`src/memory.rs`), so
+    the defaults still fit 256 MiB (255 MiB) and the 1,024-stream profile needs 315 MiB of the 512 MiB stream_kn limit.
+- **Lookup.** `latest_hot` uses the last value only when the key's ring view is empty and the feed is not a book. The
+  entry must pass all of these:
+  - quiet at most `QDL_KN_MAX_QUIET_SECONDS` (default 900, must be > 0). Quiet age is the larger of the time since
+    dispatch and the time since the Kafka producer timestamp, so a warm-started replica cannot make an old record look
+    fresh. Otherwise the lookup refuses with the new typed reason `HOT_QUIET_BEYOND_MAX`;
+  - no gap, out-of-order or resync flag (`HOT_RECORD_GAPPED`), and the requested product;
+  - the session's connection generation and lease fence equal the newest dispatched for that session. The fence only
+    moves forward and is bounded at 4,096 sessions. Otherwise `HOT_RECORD_GENERATION_MISMATCH`;
+  - a current value on only one partition (`HOT_PARTITION_MISMATCH`);
+  - the existing reader, head and catch-up proof, unchanged: reader progress within 1 s, a broker head confirmed
+    within 1 s, and boundary + 1 ≥ head.
+
+  Otherwise the lookup refuses exactly as before.
+- **Continuity.** A live-reader error clears every last value and session fence
+  (`break_last_value_continuity`, called from `Hub::run`). Quiet keys then refuse as before until their next record.
+- `dispatch` now decodes every record once (gate held, before the partition lock) to read its session fence.
+  Subscribers share that decode through `LiveRecord::from_envelope`; before, only subscribed keys were decoded.
+  **Not measured:** the extra decode CPU for unsubscribed keys (mostly BAR). `examples/hot_path_profile.rs` is the
+  existing tool for measuring it before rollout.
+- `src/main.rs`: the two env bounds, plus a `last_value` metrics object (keys, bytes, hits, quiet_refused, evictions,
+  unindexed, continuity_breaks).
+- SessionAlive seeding (`service.rs`, `seed_session`) uses the same `latest_hot`, so it can now seed quiet keys; its
+  `reader_caught_up` and queue checks are unchanged.
+
+**Tests** (`qdl-rust-builder:1.82.0-v2.3.2`, offline, scratchpad registry and target, `--rm --cpus 4 --memory 4g
+--network none`, host slot, load 17-19):
+- `cargo fmt --check -p qdl-stream-gateway` OK; `cargo clippy --offline --locked -p qdl-stream-gateway --all-targets
+  -- -D warnings` OK.
+- `cargo test --offline --locked -p qdl-stream-gateway --all-targets`: 157 passed, 0 failed, 5 ignored (lib 91,
+  committed_reads 0 + 3 ignored, hot_lookup_contention 1, native_stream 62 + 1 ignored, session_alive_cost 0 + 1
+  ignored, examples 3).
+- Seven new hub tests:
+  - an evicted quiet key is accepted, the boundary advances, and ring-only refuses;
+  - the newest record wins, and a newer gapped, oversize, other-product or book record never lets an older one
+    through;
+  - head missing, stale or ahead, a stalled reader, a newer generation or lease fence, a late older generation,
+    continuity break, and two partitions all refuse;
+  - the reader error path clears the index;
+  - `HOT_QUIET_BEYOND_MAX`, including an old producer timestamp at warm start;
+  - the key bound (8 keys over 2 partitions, 100 keys each: 192 evictions, entries quiet past the maximum go first);
+  - books never use the last value.
+- Two existing tests now pin ring-only semantics with `last_value_max_keys: 0`. They assert `HOT_RECORD_MISSING`
+  after eviction, which is the old behaviour. `memory.rs` totals were updated for the 8 MiB term.
+- `examples/v232_quiet_quote_e2e.rs`, with the v2.4.2-realm-ts16 bundle mounted read-only and `QDL_E2E_RING_BYTES=1`,
+  run for 7 s. The quiet ON_CHANGE BBO was offered once and evicted at once (`ring_bytes` 0):
+  - index on: `hot_on_change {ok, offset 1, boundary 1}`, `last_value [2 keys, 1,081 bytes]`, 5 hits;
+  - `QDL_E2E_LAST_VALUE_MAX_KEYS=0`: `HOT_RECORD_MISSING`.
+
+  No writer client was attached, so this proves the hot view and not the TS writer probe path.
+- Status: `implemented`, `tested locally`. Not pushed, no image, not deployed.
+
+**Rollout (when approved).**
+- A DL Rust image: the `qdl-v2-rust` runtime image, whose stream gateway binary is the only change.
+- Recreate `stream_kn_1` and `stream_kn_2` rolling, one at a time. Query fails over between replicas.
+- Query, projector, core, ingestor, writer and TS are not touched.
+- New env is optional; the defaults apply.
+- Rollback: the current `qdl-v2-rust:2.4.0-c17472c` (`abafab2c98cb`) on the same env, or
+  `QDL_KN_LAST_VALUE_MAX_KEYS=0` on the new image.
+- Bundle with DEF-L into the next DL release window.
+
+**Deferred.**
+1. **REST BBO reconciliation for keys quiet past the maximum.** Owner: DL lane (Claude), OKX first. It is the RCA §4
+   companion for a silently dead per-instrument `bbo-tbt` subscription, and it is not built. Design:
+   - the ingestor tracks per-instrument last-change age;
+   - past a bound below `QDL_KN_MAX_QUIET_SECONDS`, it fetches `/api/v5/market/ticker` or `books?sz=1` within the OKX
+     REST budget;
+   - on a mismatch it opens a gap/resync for the key and re-subscribes;
+   - on a match it publishes a provider confirmation (`FRESHNESS_BASIS_PROVIDER_CONFIRMATION`, `stable_source.py`),
+     so the key gets a new record and leaves the quiet state.
+
+   Until then, `HOT_QUIET_BEYOND_MAX` fails closed after 900 s. Not checked: per-instrument subscription liveness in
+   the ingestor (the RCA did not search it exhaustively). Quote the OKX v5 WebSocket order-book channel docs before
+   the change record.
+2. **Query typed passthrough.** `qdl/runtime/kn_hot_view.py` keeps only listed UNAVAILABLE details, so Query reports
+   `HOT_QUIET_BEYOND_MAX` as `HOT_READER_UNAVAILABLE`. The gateway reason and metric are typed. Adding it to that list
+   is a Query image change and stays out of this stream_kn-only slice.
+
+#### DL-DEF-2026-11-26-M addendum: dispatch decode cost measured, A/B base 2af353e vs afba2af (tested locally) - 2026-11-26 (Claude)
+
+**Method.**
+- New mode `examples/hot_path_profile.rs --test-only --dispatch-mix`. It uses only APIs that predate DEF-M, so the
+  same file was built in a temporary 2af353e worktree for the A side.
+- Each case runs 400,000 unsubscribed dispatches (worst case: the added decode is not shared with any fan-out) over
+  six partitions, with the production ring of 48 MiB / 6 per partition, warmed to its bound for the first 25%.
+- Envelopes carry every field the realtime core sets.
+- Thread CPU comes from `/proc/thread-self/schedstat`; dispatch latency is wall time per call.
+- Release build, `qdl-rust-builder:1.82.0-v2.3.2`, one `--rm --cpus 1 --memory 2g --network none` container per run.
+- Runs were interleaved base / new / base / new under the host measurement lock (17:50:48-17:51:35Z, released). Host
+  load was 22-26 from the runtime.
+
+**Live rates** (read-only, `docker logs` of the `qdl_kn_gateway_metrics` lines over 590 s at 17:4xZ): stream_kn_1 857
+records/s, 943 payload bytes/record, 0.127 cores in total; stream_kn_2 858 records/s, 0.172 cores. The metrics have no
+per-product split, so the 70/20/5/5 BAR/QUOTE/MARK/TRADE mix is **assumed**. Each product is also measured alone.
+
+**Results.** CPU is ns per 1,000 records; p50 and p99 are ns per dispatch; each cell is run 1 / run 2.
+
+| case (avg payload) | base CPU/1k | new CPU/1k | base p50 / p99 | new p50 / p99 |
+|---|---|---|---|---|
+| BAR-heavy 70/20/5/5 (664 B) | 1.17 / 1.12 ms | 4.28 / 4.29 ms | 1,040 / 1,920 · 990 / 1,800 | 4,300 / 6,170 · 4,330 / 6,130 |
+| BAR only (706 B) | 1.18 / 1.06 ms | 4.25 / 4.13 ms | 900 / 1,480 · 800 / 1,420 | 4,270 / 5,611 · 4,120 / 5,521 |
+| QUOTE only (577 B) | 1.11 / 1.09 ms | 3.54 / 3.51 ms | 830 / 1,420 · 811 / 1,400 | 3,471 / 4,661 · 3,340 / 4,741 |
+| MARK only (541 B) | 0.68 / 0.81 ms | 3.04 / 3.25 ms | 590 / 1,050 · 670 / 1,170 | 3,120 / 4,050 · 3,001 / 3,621 |
+| TRADE only (547 B) | 1.03 / 1.07 ms | 3.49 / 3.24 ms | 790 / 1,351 · 820 / 1,370 | 3,310 / 4,411 · 3,190 / 4,220 |
+
+**Projection.**
+- The extra cost is about 3.1 ms of CPU per 1,000 records for the mix: about 3.1 µs per record, mostly the protobuf
+  decode and drop.
+- Scaled to the live 943-byte average (×1.42 over the bench's 664 B), it is about 4.4 µs per record.
+- At 858 records/s that is about 3.8 ms of CPU per second, or **0.38% of one core** per stream_kn replica. A 10×
+  burst would be about 3.8%.
+- The added dispatch latency (about +3.3 µs p50, +4.3 µs p99) is small against the live commit→dispatch lag of
+  p50 ≤ 50 ms.
+- This is under the 5%-of-one-core threshold, so decoding only the kept products was **not** implemented. The option
+  remains: BAR is about 70% of records in the assumed mix and is never kept, so skipping its decode would remove most
+  of the cost.
+
+Status: `tested locally`. Microprofile, not capacity evidence. Not pushed, no image.
+
+### DL v2.4.4 integration branch: DEF-J, DEF-L and DEF-M merged (tested locally) - 2026-11-27 (Claude)
+
+**Branch / worktree.** `release/v2.4.4` in `/home/bobby/.worktrees/dl-v244-release`, started from `release/v2.4.3`
+`ad2112c` (dev `1b02bee` + the running v2.4.3 bar_edge line `4fd6d65`, PR #63; the release decision of 2026-11-25
+bundles it). Version: tags stop at `v2.4.2`; `2.4.3` (bar_edge, untagged) and `2.4.3.1` (bar_edge hotfix, cherry-pick
+of `20b2f5f`, already in this line) run untagged, so the bundle is **v2.4.4**.
+- `6dc3322` merge `fix/dl-def-j-compiler-selector-grants` `4b6e88a` (DEF-J; brings `fix/v244-restore-incomplete-resume`
+  `25aba8b`: v2.4.4 slices 1-2, DEF-E/F/G/I, BL-D). Clean.
+- `b71b78e` merge `fix/dl-def-l-staleness-successor-probation` `2af353e` (DEF-L). One conflict, this plan: both
+  appended sections kept, J/K first, then L.
+- `6e6c831` merge `fix/dl-def-m-quiet-last-value` `207fdad` (DEF-M, based on L). Clean.
+- Not in the bundle: R1 retention (`feat/dl-bar-retention-demand-tiered`, coordinator item, not checked here).
+
+**Rust job of CI on the merged tree `6e6c831`** (`qdl-rust-builder:1.82.0-v2.3.2`, offline, scratchpad registry and
+target, `--rm --network none --cpus 2 --cpu-shares 256 --memory 2g`, host slot 04:41:23-04:49:36Z, load 19-23):
+`cargo fmt --all -- --check` OK; `cargo clippy --offline --workspace --all-targets --locked -- -D warnings` OK;
+`cargo test --offline --workspace --locked -- --test-threads=1`: 569 passed, 0 failed, 72 ignored over 46 test
+binaries/doc-test sets (sum of the `test result:` lines). The `--ignored` Kafka/Redis integration step and cargo-deny
+were not run here (CI runs them). Log: scratchpad `v244/rust-full-6e6c8310.log`.
+
+### DL v2.4.4: Query keeps HOT_QUIET_BEYOND_MAX typed (DL-DEF-2026-11-26-M follow-up 2) (tested locally) - 2026-11-27 (Claude)
+
+**Defect.** The DEF-M gateway refuses a last value quiet past `QDL_KN_MAX_QUIET_SECONDS` with gRPC UNAVAILABLE and
+detail `HOT_QUIET_BEYOND_MAX` (`rust/qdl-stream-gateway/src/hot_view.rs`, `_ => Status::unavailable`). Query's hot
+client kept only a fixed list of UNAVAILABLE details (`qdl/runtime/kn_hot_view.py`, the transient branch) and reported
+the rest as `HOT_READER_UNAVAILABLE`, so a quiet key looked like a reader outage in the refusal text and in
+`reason_tokens`.
+
+**Fix.** `TYPED_TRANSIENT_DETAILS` names the list once and adds `HOT_QUIET_BEYOND_MAX`. Behaviour otherwise unchanged:
+it stays retryable, the second replica is still tried, untyped server text is still hidden. Query refusals now read e.g.
+`HOT_QUIET_PRIMARY_UNVERIFIED: HOT_QUIET_BEYOND_MAX` or `HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND: HOT_QUIET_BEYOND_MAX`.
+No contract change: the token is a detail string inside the existing `DATA_NOT_READY`.
+
+**Tests** (`qdl-v2-python:2.4.3.1-b8935d1`, worktree read-only at /app, light slot, `--cpus 1 --memory 1g
+--network none`): `tests/test_dl_v244_hot_quiet_typed_reason.py` new, with the base module and the mark memo:
+`tests.test_dl_v244_hot_quiet_typed_reason tests.test_kn_hot_view tests.test_kn_mark_hot_memo` 85 OK. New cases:
+typed on both replicas; quiet on one replica falls through to the other; earlier typed/untyped details unchanged; over
+a **real in-process gRPC server and channel** on 127.0.0.1 serving the gateway PATH with signature verification
+(quiet refusal on the wire, a valid reply then a quiet refusal on one channel, untyped text hidden); Query's KN
+backend refusal carries the token, also with the real gRPC client. Not tested: the Rust gateway and Python Query
+together (the gateway side is DEF-M's tests).
+
+**Rollout.** Query image (`query_kn_1`, `query_kn_2`, rolling). Independent of the stream_kn order: an old Query
+with a new gateway reports `HOT_READER_UNAVAILABLE` (today's behaviour).
+
+### DL-BL-2026-11-26-K: instrument lifecycle observation API, `qdl.instrument-lifecycle.v1` (implemented, tested locally) - 2026-11-27 (Claude)
+
+**Status of the register item: implemented on `release/v2.4.4`, tested locally, NOT released; ledger not yet seeded.**
+Scope from the registration above and the proposal note (`.../crossec-owner50-preview/dl-delta/DL_FEATURE_NOTE_INSTRUMENT_LIFECYCLE_OBSERVATION.md`).
+
+**Interface (stable, versioned, additive; `stable-cross-system-interfaces`).**
+- `GET /v2/instruments/{identity}/lifecycle?after_sequence=0&limit=100` (limit 1..500), permission
+  `instruments:read`, response `qdl.instrument-lifecycle.v1`: identity fields (`instrument_uid`, `instrument_id`,
+  `venue`, `market`, `native_symbol`), `in_catalog`, `history_state` (`RECORDED` | `NO_OBSERVATION` |
+  `NOT_CONFIGURED`), `current` (status, venue_state, since_event_id, since_observed_utc, effective_utc) or null,
+  `events[]`, `next_after_sequence`, `ledger` (schema, ledger_id, sha256, events_total, head_event_id) or null.
+  Retired instruments resolve from the ledger; unknown to both catalogue and ledger: 404 `INSTRUMENT_NOT_FOUND`.
+- Event `qdl.instrument-lifecycle-event.v1`: `event_id` (sha256 of the canonical JSON without `event_id`),
+  per-instrument `sequence` + `previous_event_id`, `status` (PRELISTED/ACTIVE/HALTED/EXPIRED/DELISTED),
+  `venue_state` (venue field verbatim, or `ABSENT` from a full listing), `effective_utc` + `effective_basis` only when
+  the venue states the time in that capture (OKX listTime/expTime, Binance onboardDate/deliveryDate), `observed_utc`,
+  `evidence` (endpoint, doc_url, capture_sha256, provider_error, venue_times), `catalog_revision`, `source_revision`.
+  An event is a change of (status, venue_state).
+- Ledger file `qdl.v2.instrument-lifecycle-ledger.v1`, JSON Lines (header + events, file-wide `position`), opt-in for
+  Query via `QDL_INSTRUMENT_LIFECYCLE_LEDGER` (unset: NOT_CONFIGURED; named but missing/malformed: Query refuses to
+  start). Own revision, so it never moves `catalog_revision` (same reason as the v2.4.1 canonical metadata file).
+- Venue state maps (docs checked 2026-11-27): OKX public/instruments `state` live/post_only→ACTIVE,
+  suspend/rebase/settling→HALTED, preopen/test→PRELISTED (the adapter's mapping for test); Binance USD-M contract status
+  PENDING_TRADING→PRELISTED, TRADING→ACTIVE, TRADING_HALT/TRADING_CANCEL_ONLY/PRE_DELIVERING/DELIVERING/PRE_SETTLE/
+  SETTLING→HALTED, DELIVERED→EXPIRED, CLOSE→DELISTED; Binance spot TRADING→ACTIVE, END_OF_DAY/HALT/BREAK/CANCEL_ONLY→
+  HALTED. Absent from a full listing: EXPIRED for a dated future, else DELISTED. An unknown state is reported
+  (`unmapped`) and records nothing.
+- Fail closed: only a valid, non-empty listing response is accepted (`LIFECYCLE_CAPTURE_INVALID/EMPTY`); more than
+  half of the tracked instruments absent at once is `LIFECYCLE_CAPTURE_IMPLAUSIBLE`; a capture older than an
+  instrument's last event is `LIFECYCLE_CAPTURE_OUT_OF_ORDER`; a catalogue identity differing from the ledger is
+  `LIFECYCLE_IDENTITY_CONFLICT`. A DL outage or feed refusal never produces an event. History is never padded.
+- SDK 2.11.0: `AsyncDataLayerClient.instrument_lifecycle`, transports `instrument_lifecycle`,
+  `InstrumentLifecycleResponse` (+ event/evidence/current/ledger views); tolerant readers; status strings.
+- Writer: `scripts/instrument_lifecycle_record.py init|record|verify` (atomic write after an append-only proof).
+
+**Files.** `qdl/runtime/instrument_lifecycle.py` (new), `scripts/instrument_lifecycle_record.py` (new),
+`qdl/query/service.py` (`lifecycle_for`), `qdl/api_v2/router.py` (route), `qdl/api_v2/models.py`,
+`qdl/runtime/stable.py` + `stable_source.py` (wiring), `qdl_sdk/` (models, transport, client, version 2.11.0,
+CHANGELOG, README), `contracts/v2/openapi.snapshot.json` (regenerated: +1 path, +5 schemas, 411 insertions and no
+deletion), `DATA_LAYER_SERVICE_ACCESS_GUIDE.md`, version pins in `scripts/build_qdl_sdk_release.py`,
+`scripts/build_qdl_release_images.py` (`SDK_VERSION`), and the count/version assertions in
+`tests/test_fund_phase5_contracts.py`, `tests/test_phaseb_stable_release.py`, `tests/test_qdl_sdk_release.py`,
+`tests/test_dl_v244_sdk_bar_lineage_parity.py`.
+
+**Tests** (same image and light-slot shape as above): `tests/test_dl_v244_instrument_lifecycle.py` 16 OK (recorder,
+ledger tamper/drop/reorder/partial/append-only, CLI, Query endpoint incl. paging/404/403, and an end-to-end case over
+**real HTTP**: uvicorn on a 127.0.0.1 socket, the SDK `RestQueryTransport` over httpx, the SDK response model).
+Impacted modules together: `test_dl_v244_instrument_lifecycle test_fund_phase5_contracts test_fund_phase5_api
+test_qdl_sdk_release test_phaseb_stable_release test_dl_v244_sdk_bar_lineage_parity test_dl_v241_canonical_metadata
+test_fund_phase5_stream_sdk test_fund_phase5_consumer` 114 OK. Listing captures in the tests are hand-built in the
+documented shapes (test provenance), not venue bytes.
+
+**Not done / remaining.**
+- No ledger is seeded and no Query env is set: after rollout the endpoint answers `NOT_CONFIGURED` until the owner
+  approves seeding (one `init` + one `record` per venue listing of the next declaration render) and the env/mount
+  for `query_kn_1/2`.
+- Periodic read-only listing poll (the proposal's second source) is not built; captures come from declaration renders.
+- The declaration gate does not call the recorder automatically yet (a one-line hook in `scripts/dl_declaration.py`
+  gate, deferred to keep this slice off the declaration path).
+- TS order admission on lifecycle is TS scope.
+
+### DL v2.4.4: full local Python suite, benchmark inventory gap fixed, release packet draft (tested locally) - 2026-11-27 (Claude)
+
+**Full unit suite, CI shape** (`python -B -m scripts.ci_test_shard --shard i --of 4`, shard 1 with
+`--verify-partition`) on a `git archive` snapshot of `f09e288` mounted read-only at /app in
+`qdl-v2-python:2.4.3.1-b8935d1` (the CI image `data-layer:v0.1.0` is not built locally), tmpfs `/tmp` and `/app/logs`,
+`--rm --network none --cpus 1 --cpu-shares 256 --memory 1g`, one container at a time in one light slot,
+04:55-06:13Z, load 19-24. Partition check PASS: 374 modules over 4 shards.
+
+| Shard | Tests | Result |
+|---|---|---|
+| 1 | 1013 | OK, 9 skipped |
+| 2 | 728 | 3 errors, 11 skipped: `test_ci_kafka_recovery_controller` x3. **Harness, not code:** the test executes a fake `docker` it writes under `TMPDIR`, and Docker's `--tmpfs` defaults to `noexec`. Re-run with `--tmpfs /tmp:exec`: OK |
+| 3 | 1370 | OK, 25 skipped |
+| 4 | 1490 | 5 errors, 89 skipped: `test_consumer_endpoint_benchmark` x5, `OpenAPI benchmark coverage drift: GET /v2/instruments/{identity}/lifecycle`. **Real gap from BL-K, fixed below** |
+
+Total 4,601 tests. The impacted-module run before the BL-K commit missed this module: it was not on my impact list
+(the benchmark fails closed on any public path it does not cover).
+
+**Fix.** `scripts/benchmark_consumer_endpoints.py` covers `instrument_lifecycle` (one case per instrument, identity
+checked against the SDK `InstrumentLifecycleResponse`); `tests/test_consumer_endpoint_benchmark.py` coverage count
+12 → 13. Re-run `tests.test_consumer_endpoint_benchmark tests.test_ci_kafka_recovery_controller`: 31 OK. The four
+shards were not re-run after this one-module change (CI runs the full suite on the push).
+
+**Release packet draft:** `upgrade/evidence/releases/v2.4.4/drafts/RELEASE_PACKET_DRAFT.md`: roles (stream_kn x2,
+query_kn x2, binance_bar_edge, ingestor_okx_swap with the r11 lane file, optional ingestor_binance_usdm; cores,
+projectors, Kafka, Redis, TS untouched), build commands, per-role rollback digests, evidence table, CI plan per job
+(classifier dry run: scoped python+rust+contracts, no CI-defining file), and the DEF-M follow-up 1 design (REST BBO
+reconciliation, OKX first, with an owner contract decision on the confirmation basis; not implemented).
+
+**Cleanup.** Snapshot copies removed by the runner; Rust snapshot removed. Kept: scratchpad `cargo-target` (4.0 GiB,
+shared warm cache) and the logs under scratchpad `v244/`. No image built, no container left (all `--rm`), no push.
+
+**Next.** Owner: GO for the recipe commit (`RELEASE = "2.4.4"`, references, binary expectations), then the build,
+R0, one PR to dev, the windows of the packet.
+
+### DL v2.4.4 owner GO items (2026-11-27): manifest drift, TS consumer manifest r17, recipe (tested locally) - 2026-11-27 (Claude)
+
+Owner GO (via the coordinator): recipe commit, image build (only in a build window, on a separate build GO), R0,
+one PR to dev, full CI; merge to main and the tag are asked separately.
+
+**1. Drift: the deployed TS consumer manifest r16 is now in git, faithfully.** Git carried
+`consumers/stable/trading-system-paper.yaml` at revision 13 (`cfc20e29…`), while r14, r15 and r16 existed only in the
+release dirs. Query reads its manifests from the realm mount (`query_kn_1` env `QDL_STABLE_CONSUMER_MANIFESTS`
+→ `/consumer-realms/trading-system.paper.stable-r16.yaml`, mount `~/.local/state/qdl-v2/releases/v2.4.2-realm-ts16`,
+read-only inspect). The deployed file is committed byte for byte as
+`upgrade/evidence/releases/v2.4.4/realm-ts17/trading-system.paper.stable-r16.yaml`, sha256
+`5b1cd9af6893dc8a93fde37a7d0408129dc9da0163bad143c7c4bd08147bc493` (= deployed), with r17 beside it and `SHA256SUMS`.
+- **Tried first and reverted:** replacing `consumers/stable/trading-system-paper.yaml` with r16. 35+ tests in
+  `test_trading_consumer_scope`, `test_phase103_consumer_acceptance`, `test_execution_mark_index_consumer_latency`,
+  `test_v230_declaration_tool` then fail (`ValueError: stable release consumer manifest/demand binding differs`):
+  that file is part of the repository's own consistent config set (catalogue `config/v2` r13, demand), not a copy of
+  the deployed realm. The deployed realm is a declaration product (like `declaration-retire-r10/consumer-realms/`),
+  so it is kept as release evidence. Moving the whole deployed set (catalogue r17, acquisition, demand, all realms)
+  into `config/v2` + `consumers/` is a separate reconciliation slice, not done here.
+
+**2. r17: OPEN_INTEREST x96 now, TRADE x91 split out (sizing below).**
+- The TS patch (`ts-v223-matching-parity/upgrade/V223_DL_TS_MANIFEST_R17_OKX_TRADE_OPEN_INTEREST.patch`) applies to
+  r16 and gives `312b8745fade5322ea44e66b3e225cb769f92656a2776f293bb851f1298cd82a` (checked): +96 OPEN_INTEREST
+  (ALPHA, crypto_liquid_v2) and +91 TRADE (EXECUTION, crypto_primary_v2), all OKX SWAP, 0 removed.
+- **OPEN_INTEREST** is a reference feed: Query serves an unbound ALPHA OPEN_INTEREST on the reference path
+  (`qdl/reference/runtime.py` `_REFERENCE_FEEDS`, OKX `GET /api/v5/public/open-interest` in
+  `qdl/adapters/okx/history.py` `open_interest_snapshot`). No catalogue, ingestor or stream change; the load is one
+  bounded reference REST read per request inside the manifest quotas.
+- **TRADE x91 is not servable by a grant alone.** The deployed catalogue (r17 `635237bd…`, r10 only retired three
+  instruments from r16; checked on the r16 evidence copy `upgrade/evidence/releases/v2.3.1/declaration-stage-c-r8/runtime/stable-source-bindings.yaml`)
+  has TRADE bindings for 5 OKX SWAP instruments only (BNB, BTC, DOGE, ETH, SOL) and none of the 91. An EXECUTION
+  TRADE without a binding is refused (it is not reference-eligible). Serving them needs a declaration (catalogue +
+  acquisition TRADE bindings, OKX `trades` subscriptions in an ingestor lane plan, core config): a catalogue revision
+  change, so stream replicas before Query (coupling 3).
+- **Load sizing, what is known:** the stream gateway ring is byte-bounded (48 MiB) and the DEF-M last-value index
+  key-bounded (2,048 x 4 KiB = 8 MiB, already in `MemoryPlan`), so stream_kn RSS (~395 of 512 MiB) does not grow with
+  the number of streams; more TRADE records shorten the ring's time coverage (today ~858 records/s x ~943 B ≈ 60 s of
+  48 MiB) and add per-subscription fan-out queues. **Not known offline:** the OKX trade rate of the 91 names, the
+  market_cache growth for TRADE (market_cache is the OOM-sensitive component, DL-BL-2026-11-25-H), and the lane slots.
+  These need a read-only rate measurement before the declaration.
+- **Split (owner priority, TS 54030/54031 need OPEN_INTEREST):** r17 = r16 + OPEN_INTEREST x96 only, sha256
+  `a0421ae163fc165c38af2c0b970093ee503a084e1bd95a5c54e381297d05daa2` (the patch result with the 91 added TRADE items
+  removed; every r16 line unchanged except `revision: 17`). TRADE x91 = r18 together with the declaration that adds
+  their bindings, after the rate/memory measurement.
+- **Coupling 1 refined (checked):** since DL v2.4.0 S2 the token revision is advisory: a manifest accepts tokens minted
+  for revisions 1..manifest_revision (`qdl/consumer/manifest.py:135-154` `accepted_token_revisions`,
+  `qdl/security/data_plane.py:755`). So the order is **DL first**: Query on r17 accepts the TS JWT 16 and 17; TS JWT
+  17 against a Query still on r16 is refused 401. Same window, DL step first.
+
+**3. Recipe.** `scripts/build_qdl_release_images.py`: `RELEASE = "2.4.4"`; required ancestors DEF-L `2af353e`,
+DEF-M `afba2af`, DEF-J `fdba06b`, BL-K `f09e288`; references `v240_streams` (`abafab2c`) and `v242_ingestors`
+(`e628fbe0`) added; binary expectations: stream gateway DIFFERENT vs `abafab2c`, ingestor DIFFERENT vs `e628fbe0`,
+every other binary EQUAL_LOADED_SECTIONS vs `e628fbe0` (no rust change outside those two since `48137eb`), all
+DIFFERENT vs rc2 as before; python references = Query `5ea7a7a4` (48137eb) and bar_edge `396a4654` (b8935d1).
+`tests/test_build_qdl_release_images.py`: reference set updated, rc2 row still DIFFERENT, new test pinning the v2.4.4
+rows to the rust diff since `48137eb`, `VerdictTests` patched to their rc2-only fixture.
+Tests: `tests.test_build_qdl_release_images` 47 OK on the host python with git (0 skipped; in the image 7 git-reading
+tests skip), `tests.test_build_qdl_release_images tests.test_trading_consumer_scope` 52 OK (7 skipped) in the image;
+r16 and r17 load with `ConsumerManifestLoader` (446 and 542 requirements; accepted token revisions up to 16 / 17).
+
+### DL-DEF-2026-11-26-M follow-up 1: REST BBO reconciliation with a PROVIDER_CONFIRMATION freshness basis - slice plan (owner chose option a; release after v2.4.4) - 2026-11-27 (Claude)
+
+**Owner decision (2026-11-27, via the coordinator):** option (a) of the v2.4.4 packet §8: an additive, versioned proto
+field carries a per-record PROVIDER_CONFIRMATION freshness basis. Ships in the DL release **after** v2.4.4, on its own
+branch from `release/v2.4.4`; nothing of it is in v2.4.4. Venue facts and the design are in
+`upgrade/evidence/releases/v2.4.4/drafts/RELEASE_PACKET_DRAFT.md` §8 (OKX docs cited there).
+
+**Contract (S1).**
+- `contracts/proto/qdl/marketdata/v2/market_data.proto`: `EventEnvelope.freshness_evidence = 34`
+  (`FreshnessEvidence`): `FreshnessBasis basis = 1` (`FRESHNESS_BASIS_UNSPECIFIED = 0` = today's SOURCE_EVENT
+  meaning, `SOURCE_EVENT = 1`, `PROVIDER_CONFIRMATION = 2`), `int64 confirmed_at_ns = 2` (DL receive time of the REST
+  answer), `int64 provider_time_ns = 3` (the venue `ts` of the REST book), `string method = 4`
+  (`OKX_REST_BOOKS_SZ1`), `bytes confirmation_payload_hash = 5`, `bytes confirmed_event_id = 6` (the WS record it
+  confirms). Absent or UNSPECIFIED keeps every current reader's behaviour; `schema_minor` +1.
+- `buf breaking` against both baselines and the PR base; `scripts/schema_line.py check`; regenerate `generated/`
+  (python + rust); Rust `qdl-contracts` and Python readers accept both.
+- SDK minor: `QualityView.freshness_basis` (optional str) and `confirmed_at_ns`; absent = SOURCE_EVENT.
+
+**Ingestor (S2, rust `qdl-native-raw-ingestor.rs`).** Per all-quote OKX lane: `QuoteQuietReconciler` (modelled on
+`BookLivenessProof`): last WS top per binding; due at `QDL_OKX_QUOTE_RECONCILE_AFTER_S` (default 300) of no frame,
+session live, not in a recycle/probation; token bucket 8 req/2 s (`books` limit 40/2 s per IP); `books?instId&sz=1`
+with the existing reqwest pattern (3 s / 5 s). MATCH → a confirmation raw frame (REST top, method, hash, confirmed
+WS frame id); MISMATCH → resync marker for the key + bounded unsubscribe/subscribe (≤ N per hour per session, 480/h
+venue limit); UNAVAILABLE → nothing. Metrics: due, probed, match, mismatch, unavailable, budget_deferred.
+
+**Core / canonical (S3, `qdl-realtime-core`).** Normalise the confirmation frame to a QUOTE envelope with
+`freshness_evidence` set, `source_event_time_ns` = the confirmed WS record's event time (the price's own time is
+never re-dated), session fence of the lane; identical payload hash to the confirmed record's quote body.
+
+**Stream gateway (S4).** The last value accepts a confirmation record as the key's newest record; `max_quiet` is
+measured from `confirmed_at_ns` only for PROVIDER_CONFIRMATION records and is still bounded by the provider time;
+everything else unchanged (head/catch-up proof, fences, gaps).
+
+**Query / consumer semantics (S5).** `freshness_ms` for a confirmed record = now − `confirmed_at_ns`; the item's
+quality carries `freshness_basis=PROVIDER_CONFIRMATION`; EXECUTION eligibility for QUOTE requires a confirmation
+newer than the binding's `stale_after_ms` and a provider time not older than `QDL_KN_MAX_QUIET_SECONDS`; `qdl/query/service.py`
+already folds `PROVIDER_CONFIRMATION` for reference products (reuse that path). A consumer that ignores the field
+sees the old event time and refuses as today (safe default). TS writer: no change required; optional reading of the
+basis is a TS item.
+
+**Tests (S6).** Proto golden + buf; Rust unit (scheduler, budget, compare as exact decimal strings, never during
+recycle); ingestor fake-venue e2e (the DEF-L `cdd31043` harness) for MATCH / MISMATCH / UNAVAILABLE; core
+normalisation golden; gateway hub tests (confirmation renews last value, old provider time still refused); Query unit
++ real-gRPC hot view; SDK tolerant-reader test (old payload, new payload); a bounded read-only OKX Paper probe of
+`books?sz=1` against the live WS top (no orders).
+
+**Release (S7).** Rust image (ingestor, core, gateway), python Query, SDK minor; order: readers first (Query and
+gateway accept the field, emit nothing new), then core, then ingestor (the only emitter); rollback = ingestor image
+first (stops emission).
+
+### Runtime record (back-filled 2026-11-27): W-DL ingestor_okx_swap lane split and W-DLR stream_kn ring (production-applied 2026-11-26) - 2026-11-27 (Claude)
+
+Both windows ran on 2026-11-26 and had no journal record on the DL line; recorded here from their receipts (read-only,
+hashes recomputed 2026-11-27).
+
+**W-DL: ingestor_okx_swap → 3-session QUOTE lane config (DL-DEF-2026-11-26-L class fix, config only).**
+- Window `~/.local/state/qdl-v2/windows/dl-def-l-ingestor-okx/run-20261126T1600Z/`, receipt `run.out` sha256
+  `8eefddea8d00ede76fcf79a4eef23b77c9fe9147d37927fdb1717a32e8590192` (recomputed, equal). Gate: hosted COORD row
+  `16:46Z | Codex hosted | WINDOW_READY W-DL (ingestor_okx_swap lane split)`, gate PASS 16:46:13Z. VARIANT=config-only.
+- Pinned at: image `qdl-v2-rust@sha256:e628fbe07afe94e8f716692633e77217a16223ea03abc7ea34edb959a48c72a7` (unchanged);
+  OKX config `435ec73b6557b53d11dfe6f894ca2b625150183de885081f0ee9b28e75597af7` (was `1ca07ba6…`, the r10 render) from
+  `releases/v2.4.4-defl-ingestor`; Binance config `23610605…` unchanged, Binance ingestor not touched; live
+  config-hash before `c2d19ccb…` (rollback layering reproduced it).
+- Timeline: recreate T0 16:46:16Z, up 16:46:18Z, verify PASS 16:46:48Z: 97/97 quotes valid after 5 s, 465 bindings
+  PINNED, 9 lanes all flowing, `subscriptions_rejected 0`, quote-lane lag max 261 ms over >= 3 windows per lane
+  (003/006/007), no SUPPRESSED_CAP, writer identity unchanged, final 97/97.
+- Status: `production-applied` (config). The DEF-L binary change (probation) is not live; it ships with v2.4.4.
+- Rollback: OKX config `1ca07ba6…` on the same image.
+
+**W-DLR: stream_kn x2 hot ring 240 MiB / 600 s (DL-DEF-2026-11-26-M interim a2, env only).**
+- Window `~/.local/state/qdl-v2/windows/dl-r-stream-kn-ring/`, receipt `run-v2_1-20261126T1946Z/run.out.final` sha256
+  `e9c1da93c5e0d82251fca06396af8016597d6da922ac83e2a3931efdc01c1fef` (recomputed, equal), freeze evidence
+  `evidence-v2-run-20261126T201100Z.txt` sha256 `fa6d6076df4a5b62a93b571c5a69d9d0b4a87356b50a2ef95fc8ffb21b871e4a`
+  (recomputed, equal). Gate: hosted COORD row `19:48Z | Codex hosted | WINDOW_READY W-DLR (stream_kn ring)`, gate PASS
+  19:48:22Z. P96 gate PASS **verified 2026-11-27**: `~/.local/state/trading-system/paper-hosting/crossec-coverage-g76-p96-20261126T201103Z/market-coverage.json` sha256 `81fdf91407e436c0bf66cb69102dd657d078c7fe62c62908cbe0528b699b7514` (recomputed, equal, and listed in its `SHA256SUMS`, sha256 `ae7332aa53c18b2e47f2fba0f52cf52d0665864d45dd2fed4deca712047b7101`).
+- Pinned at: image `qdl-v2-rust@sha256:abafab2c98cbdd9d2fe86f2b26fd6fcf64800ccdd114a3dd5b92803de16a3e98` (unchanged);
+  only `QDL_KN_RING_BYTES_TOTAL=251658240` and `QDL_KN_RING_MAX_AGE_SECONDS=600` added (`stream-ring.override.yml`,
+  rolediff PASS; defaults were 50331648 / 120); config-hash stream_kn_1 `798da600…` → `4a588741b0dc`, stream_kn_2
+  `81edfecf…` → `c861e5213d16`; mem_limit 536870912 unchanged; memory plan 520,880,128 <= 536,870,912.
+- Timeline: stream_kn_1 verify 1 PASS 19:49:34Z (ring 164.6 MB, rss 239 MB, client-visible quote outage 6 s <= 15 s,
+  97/97); stream_kn_2 verify 2 PASS 19:50:42Z (rss 231 MB); STATUS PASS 19:50:42Z. Freeze 20:11:03Z PASS:
+  crossec96 `HOT_RECORD_MISSING` 0 over 19:50:42-20:10:42Z (baseline 1,057 per 60 min), all-instrument 0/1200 s,
+  rings 251.6 MB each, rss 378 MB / 344 MB.
+- Status: `production-applied` (env). Rollback: remove the two keys (old layering hash reproduced).
+- **v2.4.4 consequence (checked):** the DEF-M image adds the last-value term (2,048 x 4 KiB = 8,388,608 bytes) to the
+  same plan: 520,880,128 + 8,388,608 = 529,268,736 <= 536,870,912, about 7.3 MiB of headroom on the bound plan
+  (RSS is ~380 MB). **Roll value (coordinator 2026-11-27): `QDL_KN_LAST_VALUE_MAX_KEYS=1024`** (4 MiB) on both
+  stream_kn replicas: the running realm has 220 hot non-book bindings (well under 1,024 keys, ~0.9 MB of 4 KiB
+  entries), and the plan becomes 520,880,128 + 4,194,304 = 525,074,432 <= 536,870,912, 11,796,480 bytes (~11.3 MiB) of
+  planned headroom. It is an env value of the roll (the recipe image keeps the 2,048 code default); the W-DLR ring keys
+  stay.
+
+### DL-BL-2026-11-27-N: move the deployed declaration set into the repository config (registered, OPEN) - 2026-11-27 (Claude)
+
+**Registered here: DL-BL-2026-11-27-N**, open. The repository's `config/v2` (catalogue r13, acquisition, demand) and
+`consumers/stable/*.yaml` (TS paper manifest r13) are an internally consistent older set that the test suite checks
+together; production runs the declaration products (catalogue r17 `635237bd…`, acquisition r25, realm manifests
+TS r16, alpha.okx.paper r18, …) from `~/.local/state/qdl-v2/releases/*`. Replacing one file alone breaks that
+consistency (35+ tests, plan journal 2026-11-27 "owner GO items"). Slice: bring the deployed set in as one change
+(catalogue, acquisition, demand, scope, routing, universes, every realm manifest), update the fixtures/tests that pin
+the old set, keep the old set only where a test names it as a historical fixture. Not in v2.4.4.
+
+### r18 slice plan: TS TRADE x91 on OKX SWAP (owner-approved split, 2026-11-27) - 2026-11-27 (Claude)
+
+1. **Measure first (read-only, no orders, no new runtime):**
+   - OKX trade rate per name for the 91: public `GET /api/v5/market/trades?instId=<id>&limit=100` (newest trades, rate
+     limit per the OKX docs, read before use) sampled over at least one day across sessions, or the `trades` channel on
+     a bounded scratch WS client outside the stack; output p50/p99 trades/s per name and the sum.
+   - market_cache growth: the current per-TRADE-binding key/bytes of the 5 live OKX TRADE bindings (read-only
+     `MEMORY USAGE`/`SCAN COUNT` sample on market_cache, no write), extrapolated to 96 bindings; compare with
+     MemAvailable and the BL-H swap state.
+   - stream_kn: ring coverage at the new record rate (240 MiB ring, today ~858 records/s) and subscriber queue bytes for
+     the TS TRADE subscriptions.
+2. **Declaration r11/r12 (offline render + gate):** catalogue TRADE bindings (crypto_primary_v2, OKX SWAP) and
+   acquisition bindings for the 91; ingestor `trades` subscriptions in a lane plan within the OKX subscription and
+   480/h limits (spread with `spread_lane_pins` if one lane would exceed its slots); core config; catalogue revision
+   bump; universes unchanged.
+3. **Manifest r18** = r17 + TRADE x91 (the TS patch items, byte-equal), TS JWT 18 after Query loads r18 (DL first).
+4. **Windows:** stream replicas before Query (catalogue revision change, v2.4.2 runbook), then Query (realm r18),
+   cores, ingestor_okx_swap; gates: TRADE frames per binding, market_cache bytes against the measured projection, ring
+   coverage, writer refusals at baseline.
+5. **Rollback:** previous catalogue/realm/ingestor config by hash; TS back to JWT 17 first.
+
+### DL v2.4.4 pre-push preflight on the final code tree (tested locally) - 2026-11-27 (Claude)
+
+Python unit suite, 4 CI shards on `fe94c87` (the final code tree; later commits change only this plan, the ledger and
+the packet, which no test reads), same image/caps as before plus `--tmpfs /tmp:exec`, 06:23-07:46Z, load 19-23:
+partition check PASS (374 modules); shard 1 1013 OK (9 skipped), shard 2 728 OK (11), shard 3 1370 OK (25),
+shard 4 1491 OK (90). **4,602 tests, 0 failures, 0 errors.** Rust unchanged since the 569/0/72 run on `6e6c831`.
+Classifier dry run on the final diff: `scoped: python,rust,contracts`, 70 files, no CI-defining file. Next: one push
+of `release/v2.4.4` and one PR to dev; the image build waits for the coordinator's build GO.
+
+### DL v2.4.4: PR #64 rust-workspace red on RUSTSEC-2026-0592 (url 2.5.4); lockfile bump (tested locally) - 2026-11-27 (Claude)
+
+**CI result (run 45962699180, job 140384356364, log read through the REST API).** fmt, clippy and `cargo test`
+passed (569 passed, 0 failed, as locally); only "Check Rust dependency, license and advisory policy" (cargo-deny
+0.20.2) failed: `error[vulnerability] RUSTSEC-2026-0592`, stack overflow in `Url::origin()` on nested `blob:` URLs, in
+`url` 2.5.8 and earlier, fixed in >= 2.5.9. `url` 2.5.4 came in through redis 0.25.4, reqwest 0.12.28 and tower-http
+0.6.11. `deny.toml` keeps `ignore = []`. kn-native-integration, release-gates, contract-tests, sdk-python310 green.
+
+**Class:** a real defect, external: an advisory published after the lockfile (unchanged since `ad70317`, 2026-11-17).
+Not a flake, not the runner, not a toolchain difference (my local run had no cargo-deny step: process gap, CI10, now
+run locally). A rerun would fail the same way; dev and main would too.
+
+**Fix.** `cargo update -p url` (network for the index only): url 2.5.4 → 2.5.9, idna 1.0.3 → 1.1.0, form_urlencoded
+1.2.2 → 1.2.3; no other lockfile change. MSRV fits Rust 1.82 (url `rust-version` 1.63, idna 1.57, form_urlencoded
+1.51, all edition 2018). Affected crate graphs (`cargo tree -i url --workspace --target x86_64-unknown-linux-gnu`):
+qdl-kafka, qdl-realtime-core, qdl-projector, qdl-stream-gateway; qdl-core and qdl-venue-core are not.
+`scripts/build_qdl_release_images.py`: every qdl-kafka binary and the projector are now DIFFERENT against
+`v242_ingestors`; qdl-core / venue-core binaries stay EQUAL_LOADED_SECTIONS; the reasons name the bump.
+`tests/test_build_qdl_release_images.py` pins the exact three-crate lock delta since `48137eb`.
+
+**Local tests on the fix tree** (`qdl-rust-builder:1.82.0-v2.3.2`, the same CI job shape):
+- `cargo fmt --check` OK; `cargo clippy --workspace --all-targets --locked -D warnings` OK;
+- `cargo test --workspace --locked`: 569 passed, 0 failed, 72 ignored (the first container was killed by a session
+  restart during the doc-tests; the doc-tests were re-run separately: all `ok`, 0 failed);
+- `cargo-deny check` (0.20.2, git installed as in CI, advisory DB fetched): `advisories ok, bans ok, licenses ok,
+  sources ok`, exit 0;
+- `tests.test_build_qdl_release_images` 47 OK (host, git available).
+
+**Exposure of the running images (url 2.5.4 in every rust role).** Checked 2026-11-27: not reachable.
+- No DL Rust code uses the `url` crate directly: no `use url`, `url::Url`, `Url::parse` or `.origin()` under `rust/`.
+- The three dependents call no `origin()`: grep of the vendored sources of redis 0.25.4, reqwest 0.12.28 and
+  tower-http 0.6.11 finds none.
+- The URLs these crates parse come only from operator configuration, never from venue or consumer input and never
+  with a `blob:` scheme: Redis URLs `rust/qdl-projector/src/cache.rs:440`,
+  `rust/qdl-realtime-core/src/provider_admission.rs:108`, `rust/qdl-stream-gateway/src/auth.rs:504`; REST endpoints
+  `rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs:2116` (Binance depth snapshot) and
+  `rust/qdl-stream-gateway/src/query_view.rs:168` (Query view client).
+- So the running images need no out-of-band action; v2.4.4 carries the fixed version.
+
+CI cost: Cargo.lock is CI-defining, so this push runs every job fresh (CI5) and the cargo cache key changes.

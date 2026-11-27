@@ -24,6 +24,7 @@ from qdl_sdk.models import (
     FundingRatePayload,
     GapListResponse,
     GapView,
+    InstrumentLifecycleResponse,
     InstrumentPageResponse,
     InstrumentResponse,
     InstrumentView,

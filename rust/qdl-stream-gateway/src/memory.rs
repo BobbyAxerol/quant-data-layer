@@ -77,6 +77,10 @@ pub const CGROUP_MEMORY_MAX: &str = "/sys/fs/cgroup/memory.max";
 pub struct MemoryPlan {
     /// Replay ring bytes across all partitions (split evenly).
     pub ring_total: u64,
+    /// DL-DEF-2026-11-26-M last-value index bound:
+    /// `QDL_KN_LAST_VALUE_MAX_KEYS x LAST_VALUE_MAX_RECORD_BYTES` (raw
+    /// records, shared with the ring while they are still in it).
+    pub last_value_total: u64,
     /// Live subscriber queue bytes across all subscriptions.
     pub queue_total: u64,
     /// Replay channel and ring-replay bytes across all replays.
@@ -103,6 +107,7 @@ impl MemoryPlan {
 
     pub fn required(&self) -> u64 {
         self.ring_total
+            + self.last_value_total
             + self.queue_total
             + self.replay_total
             + self.kafka_bytes()
@@ -114,11 +119,12 @@ impl MemoryPlan {
     pub fn check(&self) -> Result<(), String> {
         match self.limit {
             Some(limit) if self.required() > limit => Err(format!(
-                "memory bounds exceed the container limit: ring {} + queues {} + replay {} + \
-                 kafka {} + transport {} + reserve {} = {} > {limit} bytes; lower \
-                 QDL_KN_RING_BYTES_TOTAL, QDL_KN_QUEUE_BYTES_TOTAL, QDL_KN_REPLAY_BYTES_TOTAL \
-                 or QDL_KN_MAX_SUBSCRIPTIONS, or raise the limit",
+                "memory bounds exceed the container limit: ring {} + last values {} + queues {} + \
+                 replay {} + kafka {} + transport {} + reserve {} = {} > {limit} bytes; lower \
+                 QDL_KN_RING_BYTES_TOTAL, QDL_KN_LAST_VALUE_MAX_KEYS, QDL_KN_QUEUE_BYTES_TOTAL, \
+                 QDL_KN_REPLAY_BYTES_TOTAL or QDL_KN_MAX_SUBSCRIPTIONS, or raise the limit",
                 self.ring_total,
+                self.last_value_total,
                 self.queue_total,
                 self.replay_total,
                 self.kafka_bytes(),
@@ -135,7 +141,8 @@ impl MemoryPlan {
     }
 
     pub fn summary(&self) -> serde_json::Value {
-        serde_json::json!({"ring_total": self.ring_total, "queue_total": self.queue_total,
+        serde_json::json!({"ring_total": self.ring_total,
+            "last_value_total": self.last_value_total, "queue_total": self.queue_total,
             "replay_total": self.replay_total,
             "kafka": self.kafka_bytes(), "transport": self.transport_bytes(),
             "streams": self.streams, "reserve": self.reserve, "required": self.required(),
@@ -163,6 +170,8 @@ mod tests {
     fn plan(limit: Option<u64>) -> MemoryPlan {
         MemoryPlan {
             ring_total: 48 * MIB,
+            // 2,048 keys x 4 KiB (DL-DEF-2026-11-26-M defaults).
+            last_value_total: 8 * MIB,
             queue_total: 32 * MIB,
             replay_total: 32 * MIB,
             replay_readers: 4,
@@ -174,8 +183,8 @@ mod tests {
 
     #[test]
     fn the_default_plan_fits_a_256_mib_replica() {
-        // 48 + 64 + 32 + 416 x 96 KiB (39 MiB) + 64 = 247 MiB.
-        assert_eq!(plan(None).required(), 208 * MIB + 416 * 96 * 1024);
+        // 48 + 8 + 64 + 32 + 416 x 96 KiB (39 MiB) + 64 = 255 MiB.
+        assert_eq!(plan(None).required(), 216 * MIB + 416 * 96 * 1024);
         assert!(plan(Some(256 * MIB)).check().is_ok());
         // 1,024 admitted streams would not fit: transport is a real term.
         assert!(MemoryPlan {
@@ -192,12 +201,13 @@ mod tests {
             streams: 1_024 + 32,
             ..plan(Some(384 * MIB))
         };
-        assert_eq!(candidate.required(), 307 * MIB);
-        assert_eq!(candidate.limit.unwrap() - candidate.required(), 77 * MIB);
+        // 307 MiB before the DL-DEF-2026-11-26-M last-value term (8 MiB).
+        assert_eq!(candidate.required(), 315 * MIB);
+        assert_eq!(candidate.limit.unwrap() - candidate.required(), 69 * MIB);
         assert!(candidate.check().is_ok());
-        // 320 MiB fits on paper but leaves just 13 MiB; neither profile is
+        // 320 MiB fits on paper but leaves just 5 MiB; neither profile is
         // a 1,024-stream load certificate without an actual capacity run.
-        assert_eq!(320 * MIB - candidate.required(), 13 * MIB);
+        assert_eq!(320 * MIB - candidate.required(), 5 * MIB);
     }
 
     #[test]

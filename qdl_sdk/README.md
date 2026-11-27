@@ -164,6 +164,37 @@ duplicate bar is ignored, a higher revision replaces the same boundary without
 re-running the strategy, and a gap or late bar fails closed so the caller can
 recover history before continuing.
 
+### BAR revision identity (SDK 2.10.1, DL-DEF-2026-11-25-E)
+
+A BAR is identified by its `event_id` and its revision fields: `revision`,
+`lifecycle` (FINAL or REVISED) and `supersedes_event_id`. A new revision always
+carries a higher `revision`.
+
+`resample_lineage` is **optional evidence, not revision identity**. It is the
+canonical `Bar.aggregation` record (`market_data.proto`, `BarAggregation`): "evidence
+of what was aggregated, not a second copy of the values". It is present exactly
+when `origin` is `AGGREGATED`, and absent otherwise.
+
+Consumers that cache BARs:
+
+- **Same event, two copies.** For the same `event_id` and `revision`, the copies can
+  differ only in `resample_lineage`, null in one and present in the other. They are
+  the same bar, not a revision. Keep the copy with the lineage present.
+- **Why null copies exist.** SDK 2.10.0 and earlier dropped the lineage on the
+  stream path. Caches written by them hold null-lineage rows for AGGREGATED bars.
+- **These remain conflicts; fail closed:**
+  - two present lineages that differ;
+  - a lineage on a bar whose `origin` is not `AGGREGATED`;
+  - any other payload, source or contract difference.
+- From 2.10.1 the stream projection and Query deliver byte-identical BAR payloads.
+
+### Instrument lifecycle (SDK 2.11.0, DL v2.4.4)
+
+`await client.instrument_lifecycle("OKX.SWAP.PERPETUAL.RVN-USDT", consumer_grade=Grade.ALPHA)` returns
+`InstrumentLifecycleResponse`: the venue-observed status history of one instrument, retired ones included. See
+`DATA_LAYER_SERVICE_ACCESS_GUIDE.md`, "Instrument lifecycle observations". `history_state` NOT_CONFIGURED or
+NO_OBSERVATION means DL makes no lifecycle claim; it never means ACTIVE.
+
 ## Migration safety
 
 - Existing V1 methods remain delegated by `V1CompatibilityFacade` without
@@ -186,7 +217,7 @@ Build the standalone artifact with:
 python scripts/build_qdl_sdk_release.py --output-dir dist/qdl-sdk
 ```
 
-The output contains a reproducible `qdl_sdk-2.10.0-py3-none-any.whl`, a release
+The output contains a reproducible `qdl_sdk-2.11.0-py3-none-any.whl`, a release
 manifest with the wheel/source/generated-contract SHA-256 digests, and a
 CycloneDX SBOM. The wheel contains only the public SDK plus generated Protobuf
 contracts; it does not package `qdl.api_v2`, runtime adapters, provider code or

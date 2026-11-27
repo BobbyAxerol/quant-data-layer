@@ -1,6 +1,6 @@
 """Stable Python SDK V2 with typed public models and generated transports."""
 
-__version__ = "2.10.0"
+__version__ = "2.11.0"
 
 from qdl_sdk.client import AsyncDataLayerClient, DataLayerClientV2, WarmupStreamSession
 from qdl_sdk.credentials import (
@@ -11,7 +11,12 @@ from qdl_sdk.credentials import (
 )
 from qdl_sdk.cursor import CursorCheckpoint, FileCursorStore, MemoryCursorStore
 from qdl_sdk.errors import CanonicalMetadataUnavailable, DataLayerError
-from qdl_sdk.handoff import ClosedBarHandoff
+from qdl_sdk.handoff import (
+    BAR_COPIES_IDENTICAL,
+    BAR_COPIES_LINEAGE_ONLY,
+    ClosedBarHandoff,
+    classify_bar_copies,
+)
 from qdl_sdk import instruments
 from qdl_sdk.models import (
     BasisKind,
@@ -25,6 +30,7 @@ from qdl_sdk.models import (
     GapPolicy,
     Grade,
     CanonicalInstrumentMetadataView,
+    InstrumentLifecycleResponse,
     InstrumentPageResponse,
     InstrumentResponse,
     InstrumentView,
@@ -66,6 +72,9 @@ from qdl_sdk.v1_facade import V1CompatibilityFacade
 
 __all__ = [
     "__version__",
+    "BAR_COPIES_IDENTICAL",
+    "BAR_COPIES_LINEAGE_ONLY",
+    "classify_bar_copies",
     "AsyncDataLayerClient",
     "BasisKind",
     "BasisSeries",
@@ -90,6 +99,7 @@ __all__ = [
     "Grade",
     "GrpcStreamTransport",
     "InstrumentPageResponse",
+    "InstrumentLifecycleResponse",
     "InstrumentResponse",
     "InstrumentView",
     "IntervalSourcePolicy",

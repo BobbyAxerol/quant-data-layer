@@ -24,16 +24,29 @@ mixed or overfull plan. This module is the renderer side:
   fills free capacity of the same scope and feed, and opens a new shard only
   when every same-feed lane is full.
 
+DL-DEF-2026-11-26-L (lane spread): one OKX session carried all 97 execution
+QUOTE subscriptions (okx-public-003, 97/100), so one late session staled every
+OKX quote at once, and its lag rose with its message rate (> 1,500 frames/s).
+``spread_lane_pins`` is the one declared, deterministic migration that spreads
+one feed of one scope over N lanes (tier-A names first, round robin; the rest
+by a stable hash onto the least-loaded lane). After it, ``sticky_lane_pins``
+keeps those pins and places a new binding of a balanced feed (QUOTE) on the
+least-loaded lane, so growth does not refill one session.
+
 Boundary: pure functions over ingestor config documents; no I/O.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
+import hashlib
 from typing import Any, Iterable, Mapping
 
 FEED_ORDER = ("BOOK", "BAR", "TRADE", "QUOTE", "MARK_INDEX")
 LATEST_STATE_FEEDS = frozenset({"QUOTE", "MARK_INDEX"})
+# DL-DEF-2026-11-26-L: feeds whose new bindings go to the least-loaded lane of
+# their feed (not the lowest-numbered lane with room).
+BALANCED_FEEDS = frozenset({"QUOTE"})
 _OKX_PUBLIC = frozenset({"trades", "bbo-tbt", "books", "mark-price", "index-tickers"})
 
 
@@ -186,7 +199,10 @@ def sticky_lane_pins(
             group for group, owner in lane_feed.items()
             if group[0] == scope and owner == feed and load[group] < max_subscriptions
         )
-        if candidates:
+        if candidates and feed in BALANCED_FEEDS:
+            group = min(candidates, key=lambda item: (load[item], item))
+            shard = group[-1]
+        elif candidates:
             group = candidates[0]
             shard = group[-1]
         else:
@@ -199,6 +215,79 @@ def sticky_lane_pins(
         load[group] += 1
     validate_lane_plan(runtime, rows, pins, max_subscriptions)
     return pins
+
+
+def _stable_rank(key: str) -> str:
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+def spread_lane_pins(
+    runtime: str,
+    bindings: Iterable[Mapping[str, Any]],
+    pins: Mapping[str, int],
+    *,
+    scope: str,
+    feed: str,
+    lanes: int,
+    max_subscriptions: int,
+    first: Iterable[str] = (),
+) -> tuple[dict[str, int], list[dict[str, Any]]]:
+    """DL-DEF-2026-11-26-L: spread one feed of one scope over ``lanes`` lanes.
+
+    Deterministic for the same members and ``first`` list, whatever the input
+    order:
+    * target lanes are the feed's current shards (lowest first) plus new shard
+      numbers above every shard used in the scope;
+    * ``first`` native symbols (tier A, in the given order) are dealt round
+      robin, so no two of the first ``lanes`` names share a session;
+    * every other member, in sha256(binding key) order, goes to the
+      least-loaded lane (ties: the lower lane).
+    Returns the full pin map and the moves ``[{binding, from, to}]``; every
+    other binding keeps its pin. Refuses a plan over ``max_subscriptions``.
+    """
+
+    if lanes < 1:
+        raise ValueError("lanes must be positive")
+    rows = list(bindings)
+    result = {key: int(value) for key, value in pins.items()}
+    members = [b for b in rows if lane_scope(runtime, b) == scope and str(b["feed"]) == feed]
+    if not members:
+        return result, []
+    current = sorted({int(result[binding_key(b)]) for b in members})
+    used = {int(result[binding_key(b)]) for b in rows if lane_scope(runtime, b) == scope}
+    targets = current[:lanes]
+    while len(targets) < lanes:
+        candidate = max(used | set(targets)) + 1
+        targets.append(candidate)
+    if -(-len(members) // lanes) > max_subscriptions:
+        raise ValueError(f"{len(members)} {feed} bindings do not fit {lanes} lanes of {max_subscriptions}")
+    load = {shard: 0 for shard in targets}
+    assigned: dict[str, int] = {}
+    by_symbol: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+    for binding in members:
+        by_symbol[str(binding["native_symbol"])].append(binding)
+    turn = 0
+    for symbol in dict.fromkeys(first):
+        for binding in sorted(by_symbol.get(symbol, ()), key=lambda b: binding_key(b)):
+            shard = targets[turn % lanes]
+            assigned[binding_key(binding)] = shard
+            load[shard] += 1
+        if symbol in by_symbol:
+            turn += 1
+    rest = sorted((b for b in members if binding_key(b) not in assigned),
+                  key=lambda b: _stable_rank(binding_key(b)))
+    for binding in rest:
+        shard = min(targets, key=lambda item: (load[item], targets.index(item)))
+        assigned[binding_key(binding)] = shard
+        load[shard] += 1
+    moves = []
+    for key in sorted(assigned):
+        before = result.get(key)
+        if before != assigned[key]:
+            moves.append({"binding": key, "from": before, "to": assigned[key]})
+        result[key] = assigned[key]
+    validate_lane_plan(runtime, rows, result, max_subscriptions)
+    return result, moves
 
 
 def apply_lane_pins(config: Mapping[str, Any], pins: Mapping[str, int]) -> dict[str, Any]:

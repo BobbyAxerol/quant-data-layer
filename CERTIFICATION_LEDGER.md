@@ -2515,3 +2515,31 @@ filled after the window and the R-cert 2 final verdict (`drafts/RELEASE_FILL_LIS
 
 Not applied in this window: Binance stage C r8 (own window), Rust roles / bar_edge (follow-up). Receipt:
 `upgrade/evidence/releases/v2.3.1/window-query-x2-20261117T0722Z/RECEIPT.md`.
+
+### 2026-11-27 - v2.4.4 release candidate - DRAFT (tested locally, not certified)
+
+- Branch `release/v2.4.4` (worktree `/home/bobby/.worktrees/dl-v244-release`): DEF-J, DEF-L, DEF-M merged on
+  `release/v2.4.3`; Query typed `HOT_QUIET_BEYOND_MAX`; DL-BL-2026-11-26-K lifecycle API, SDK 2.11.0.
+- Packet: `upgrade/evidence/releases/v2.4.4/drafts/RELEASE_PACKET_DRAFT.md`.
+
+| Item | Pinned at | Result |
+|---|---|---|
+| Rust job (fmt, clippy -D warnings, workspace tests) | `6e6c831` (no Rust change after it) | PASS 569 / 0 / 72 ignored |
+| Python unit suite, 4 shards | `f09e288` | 4,601 tests: 8 errors = 3 harness (`noexec` tmpfs, OK on re-run) + 5 benchmark coverage gap (fixed in the packet commit, module 31 OK) |
+| Python unit suite, 4 shards, final code tree | `fe94c87` | **4,602 tests, 0 failures, 0 errors** |
+| Not run locally | | `--ignored` Kafka/Redis integration, cargo-deny, buf, pip-audit, trivy, full CI |
+
+### 2026-11-26 - production windows W-DL and W-DLR (back-filled 2026-11-27) - PASS
+
+| Item | Pinned at | Result |
+|---|---|---|
+| W-DL ingestor_okx_swap 3-session QUOTE lanes (config only) | image `e628fbe0…`, OKX config `435ec73b6557b53d…` (`releases/v2.4.4-defl-ingestor`), 16:46:16Z | PASS: 97/97 quotes, 465 PINNED, 9 lanes, rejected 0, lane lag max 261 ms; receipt `run.out` `8eefddea8d00ede7…` |
+| W-DLR stream_kn x2 ring 240 MiB / 600 s (env only) | image `abafab2c…`, config-hash `4a588741b0dc` / `c861e5213d16`, 19:48-19:50Z | PASS: outage 6 s <= 15 s, 97/97; freeze 20:11Z crossec96 HOT_RECORD_MISSING 0 (baseline 1,057/h); receipt `run.out.final` `e9c1da93c5e0d822…`, evidence `fa6d6076df4a5b62…`; P96 gate `market-coverage.json` `81fdf91407e436c0…` verified 2026-11-27 (SHA256SUMS `ae7332aa…`) |
+
+### 2026-11-27 - v2.4.4 PR #64 first CI run - rust-workspace FAILED (cargo-deny), fixed
+
+| Item | Pinned at | Result |
+|---|---|---|
+| CI run 45962699180 (head d726717) | Cargo.lock url 2.5.4 | rust-workspace FAIL at cargo-deny only: RUSTSEC-2026-0592 (url <= 2.5.8); fmt/clippy/tests green (569/0); kn-native-integration, release-gates, contract-tests, sdk-python310 green |
+| Fix: url 2.5.9, idna 1.1.0, form_urlencoded 1.2.3 | fix commit on release/v2.4.4 | local: fmt, clippy, tests 569/0/72, doc-tests ok, cargo-deny advisories/bans/licenses/sources ok |
+| Exposure of running images (url 2.5.4) | rust `abafab2c`, `e628fbe0`, `58bdd282` | not reachable: no DL `url` use, no `origin()` in redis 0.25.4 / reqwest 0.12.28 / tower-http 0.6.11, URLs only from operator config (cache.rs:440, provider_admission.rs:108, auth.rs:504, qdl-native-raw-ingestor.rs:2116, query_view.rs:168) |

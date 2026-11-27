@@ -13,7 +13,7 @@ use qdl_stream_gateway::authority::{Authority, AuthorityHandle};
 use qdl_stream_gateway::bundle::Bundle;
 use qdl_stream_gateway::generated::marketdata_v2::EventEnvelope;
 use qdl_stream_gateway::generated::query_v2::market_data_stream_service_server::MarketDataStreamServiceServer;
-use qdl_stream_gateway::hub::{Hub, HubConfig};
+use qdl_stream_gateway::hub::{Hub, HubConfig, LAST_VALUE_MAX_RECORD_BYTES};
 use qdl_stream_gateway::memory::{
     container_memory_limit, default_queue_bytes_per_subscription, MemoryPlan,
 };
@@ -281,9 +281,17 @@ async fn serve() -> Result<(), String> {
     let readers: usize = parsed("QDL_KN_REPLAY_READERS", "4")?;
     let queue_total: u64 = parsed("QDL_KN_QUEUE_BYTES_TOTAL", "33554432")?;
     let limits = limits(queue_total)?;
+    // DL-DEF-2026-11-26-M quiet-key last-value index (0 keys = disabled).
+    let last_value_max_keys: usize = parsed("QDL_KN_LAST_VALUE_MAX_KEYS", "2048")?;
+    let max_quiet_seconds: u64 = parsed("QDL_KN_MAX_QUIET_SECONDS", "900")?;
+    if max_quiet_seconds == 0 {
+        return Err("QDL_KN_MAX_QUIET_SECONDS must be positive".into());
+    }
     // Defaults fit a 256 MiB replica (K2-T08 sizing); checked, fail closed.
     let memory = MemoryPlan {
         ring_total: parsed("QDL_KN_RING_BYTES_TOTAL", "50331648")?,
+        last_value_total: (last_value_max_keys as u64)
+            .saturating_mul(LAST_VALUE_MAX_RECORD_BYTES as u64),
         queue_total,
         replay_total: parsed("QDL_KN_REPLAY_BYTES_TOTAL", "33554432")?,
         replay_readers: readers as u64,
@@ -300,6 +308,8 @@ async fn serve() -> Result<(), String> {
         HubConfig {
             ring_max_bytes: memory.ring_per_partition(starts.len()),
             ring_max_age: Duration::from_secs(parsed("QDL_KN_RING_MAX_AGE_SECONDS", "120")?),
+            last_value_max_keys,
+            max_quiet: Duration::from_secs(max_quiet_seconds),
         },
     ));
     let reader = hub.run(Box::new(source));
@@ -438,6 +448,17 @@ async fn serve() -> Result<(), String> {
                     "cpu_seconds": cpu,
             });
             report["session_alive"] = session_alive;
+            // DL-DEF-2026-11-26-M quiet-key last-value index.
+            let (last_value_keys, last_value_bytes) = reporter.hub.last_value_usage();
+            report["last_value"] = serde_json::json!({
+                "keys": last_value_keys,
+                "bytes": last_value_bytes,
+                "hits": load(&hub.last_value_hits),
+                "quiet_refused": load(&hub.last_value_quiet_refused),
+                "evictions": load(&hub.last_value_evictions),
+                "unindexed": load(&hub.last_value_unindexed),
+                "continuity_breaks": load(&hub.last_value_continuity_breaks),
+            });
             println!("{report}");
         }
     });

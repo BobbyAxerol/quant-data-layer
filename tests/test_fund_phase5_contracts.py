@@ -60,7 +60,8 @@ class Phase5OpenApiContractTests(unittest.TestCase):
         current = build_openapi()
         self.assertEqual(current, expected)
         paths = current["paths"]
-        self.assertEqual(len(paths), 12)
+        self.assertEqual(len(paths), 13)
+        self.assertIn("/v2/instruments/{identity}/lifecycle", paths)
         self.assertIn("/v2/market-data/reference:batch", paths)
         reference = paths["/v2/market-data/reference:batch"]["post"]
         self.assertIn("application/json", reference["requestBody"]["content"])
