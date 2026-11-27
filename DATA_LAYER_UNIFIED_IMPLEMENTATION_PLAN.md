@@ -80675,3 +80675,48 @@ per-product split, so the 70/20/5/5 BAR/QUOTE/MARK/TRADE mix is **assumed**. Eac
   of the cost.
 
 Status: `tested locally`. Microprofile, not capacity evidence. Not pushed, no image.
+
+### DL v2.4.4 integration branch: DEF-J, DEF-L and DEF-M merged (tested locally) - 2026-11-27 (Claude)
+
+**Branch / worktree.** `release/v2.4.4` in `/home/bobby/.worktrees/dl-v244-release`, started from `release/v2.4.3`
+`ad2112c` (dev `1b02bee` + the running v2.4.3 bar_edge line `4fd6d65`, PR #63; the release decision of 2026-11-25
+bundles it). Version: tags stop at `v2.4.2`; `2.4.3` (bar_edge, untagged) and `2.4.3.1` (bar_edge hotfix, cherry-pick
+of `20b2f5f`, already in this line) run untagged, so the bundle is **v2.4.4**.
+- `6dc3322` merge `fix/dl-def-j-compiler-selector-grants` `4b6e88a` (DEF-J; brings `fix/v244-restore-incomplete-resume`
+  `25aba8b`: v2.4.4 slices 1-2, DEF-E/F/G/I, BL-D). Clean.
+- `b71b78e` merge `fix/dl-def-l-staleness-successor-probation` `2af353e` (DEF-L). One conflict, this plan: both
+  appended sections kept, J/K first, then L.
+- `6e6c831` merge `fix/dl-def-m-quiet-last-value` `207fdad` (DEF-M, based on L). Clean.
+- Not in the bundle: R1 retention (`feat/dl-bar-retention-demand-tiered`, coordinator item, not checked here).
+
+**Rust job of CI on the merged tree `6e6c831`** (`qdl-rust-builder:1.82.0-v2.3.2`, offline, scratchpad registry and
+target, `--rm --network none --cpus 2 --cpu-shares 256 --memory 2g`, host slot 04:41:23-04:49:36Z, load 19-23):
+`cargo fmt --all -- --check` OK; `cargo clippy --offline --workspace --all-targets --locked -- -D warnings` OK;
+`cargo test --offline --workspace --locked -- --test-threads=1`: 569 passed, 0 failed, 72 ignored over 46 test
+binaries/doc-test sets (sum of the `test result:` lines). The `--ignored` Kafka/Redis integration step and cargo-deny
+were not run here (CI runs them). Log: scratchpad `v244/rust-full-6e6c8310.log`.
+
+### DL v2.4.4: Query keeps HOT_QUIET_BEYOND_MAX typed (DL-DEF-2026-11-26-M follow-up 2) (tested locally) - 2026-11-27 (Claude)
+
+**Defect.** The DEF-M gateway refuses a last value quiet past `QDL_KN_MAX_QUIET_SECONDS` with gRPC UNAVAILABLE and
+detail `HOT_QUIET_BEYOND_MAX` (`rust/qdl-stream-gateway/src/hot_view.rs`, `_ => Status::unavailable`). Query's hot
+client kept only a fixed list of UNAVAILABLE details (`qdl/runtime/kn_hot_view.py`, the transient branch) and reported
+the rest as `HOT_READER_UNAVAILABLE`, so a quiet key looked like a reader outage in the refusal text and in
+`reason_tokens`.
+
+**Fix.** `TYPED_TRANSIENT_DETAILS` names the list once and adds `HOT_QUIET_BEYOND_MAX`. Behaviour otherwise unchanged:
+it stays retryable, the second replica is still tried, untyped server text is still hidden. Query refusals now read e.g.
+`HOT_QUIET_PRIMARY_UNVERIFIED: HOT_QUIET_BEYOND_MAX` or `HOT_BACKUP_UNAVAILABLE_PRIMARY_BEHIND: HOT_QUIET_BEYOND_MAX`.
+No contract change: the token is a detail string inside the existing `DATA_NOT_READY`.
+
+**Tests** (`qdl-v2-python:2.4.3.1-b8935d1`, worktree read-only at /app, light slot, `--cpus 1 --memory 1g
+--network none`): `tests/test_dl_v244_hot_quiet_typed_reason.py` new, with the base module and the mark memo:
+`tests.test_dl_v244_hot_quiet_typed_reason tests.test_kn_hot_view tests.test_kn_mark_hot_memo` 85 OK. New cases:
+typed on both replicas; quiet on one replica falls through to the other; earlier typed/untyped details unchanged; over
+a **real in-process gRPC server and channel** on 127.0.0.1 serving the gateway PATH with signature verification
+(quiet refusal on the wire, a valid reply then a quiet refusal on one channel, untyped text hidden); Query's KN
+backend refusal carries the token, also with the real gRPC client. Not tested: the Rust gateway and Python Query
+together (the gateway side is DEF-M's tests).
+
+**Rollout.** Query image (`query_kn_1`, `query_kn_2`, rolling). Independent of the stream_kn order: an old Query
+with a new gateway reports `HOT_READER_UNAVAILABLE` (today's behaviour).

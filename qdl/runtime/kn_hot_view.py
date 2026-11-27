@@ -33,6 +33,14 @@ HOT_FEEDS = frozenset({"TRADE", "QUOTE", "MARK_INDEX_PRICE", "BOOK_SNAPSHOT", "B
 # (HOT_RECORD_GAPPED, ...) and auth failures never fall through.
 AUTHORITY_FALLBACK_DETAILS = frozenset({"HOT_AUTHORITY_MISMATCH", "HOT_AUTHORITY_CHANGED"})
 AUTHORITY_FALLBACK_LOG_SECONDS = 10.0
+# Retryable gateway refusals (gRPC UNAVAILABLE / DEADLINE_EXCEEDED / RESOURCE_EXHAUSTED) whose detail is passed to
+# Query's refusal text unchanged; any other detail is reported as HOT_READER_UNAVAILABLE. DL v2.4.4
+# (DL-DEF-2026-11-26-M follow-up): HOT_QUIET_BEYOND_MAX, the gateway's refusal of a last value quiet past
+# QDL_KN_MAX_QUIET_SECONDS, is kept typed instead of being reported as a reader outage.
+TYPED_TRANSIENT_DETAILS = frozenset({
+    "HOT_BROKER_UNCONFIRMED", "HOT_READER_CATCHING_UP", "HOT_READER_STALLED", "HOT_READER_UNAVAILABLE",
+    "HOT_READER_BUSY", "HOT_RECORD_MISSING", "HOT_READ_DEADLINE", "HOT_READ_CAPACITY", "HOT_QUIET_BEYOND_MAX",
+})
 
 
 def _stderr_line(line: str) -> None:
@@ -152,11 +160,7 @@ class CanonicalHotClient:
                         raise HotViewUnavailable("HOT_AUTHORITY_OR_PROTOCOL_REFUSED") from failure
                     transient_seen = True
                     last_failure = failure
-                    error = detail if detail in {
-                        "HOT_BROKER_UNCONFIRMED", "HOT_READER_CATCHING_UP",
-                        "HOT_READER_STALLED", "HOT_READER_UNAVAILABLE", "HOT_READER_BUSY",
-                        "HOT_RECORD_MISSING", "HOT_READ_DEADLINE", "HOT_READ_CAPACITY",
-                    } else "HOT_READER_UNAVAILABLE"
+                    error = detail if detail in TYPED_TRANSIENT_DETAILS else "HOT_READER_UNAVAILABLE"
                     continue
                 if time.monotonic() > deadline:
                     raise HotViewUnavailable("HOT_READ_DEADLINE")
