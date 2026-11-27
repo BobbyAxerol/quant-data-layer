@@ -81172,3 +81172,12 @@ bake `qdl_sdk`; Crossec image `a5b58033` has 2.10.0) or, without a bump, build t
 - Next: the rust image from this commit (`--component rust --build`) in the safe slot 13:46-14:05Z (after W-DLQ
   13:06-13:13Z, finishing before T8 14:15Z), then R0 and the VERSION_REGISTER row. Python image unchanged
   (`0e14a5f4`, R0 PASS).
+
+### Runtime: W-DLQ Query x2 on DL v2.4.4 (production-applied, coordinator-run) - 2026-11-27 (Claude, recorded)
+
+- query_kn_2 13:18:36Z, query_kn_1 13:19:18Z → `qdl-v2-python@sha256:0e14a5f4…` (2.4.4-13850b1), both PASS; re-verify
+  13:19:53Z PASS on both; reference:batch max 628 ms, 0 over 4 s; slow_request lines carry `consumer` (DEF-O live).
+  Receipts `~/.local/state/qdl-v2/windows/v2.4.4-query/roll2-20261127T131836Z.txt` (`729a51ff…`) and
+  `roll1-20261127T131918Z.txt` (`701780d5…`), hashes recomputed. Config-hashes `a1c2d29e` / `ac9bb831` (read-only check).
+  Rollback `5ea7a7a4` via `window.sh rollback N`. Not touched: every other role. Status: Query `production-applied`
+  on v2.4.4 code (not tagged; CI6 receipt pending the single final CI run). `VERSION_REGISTER.md` updated.

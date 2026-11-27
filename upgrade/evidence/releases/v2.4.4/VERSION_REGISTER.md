@@ -14,8 +14,12 @@ runs the window, with its receipt.
 
 | Time (UTC) | Role | From (rollback) | To | Config-hash before → after | Receipt |
 |---|---|---|---|---|---|
-| (pending) | query_kn_2 | `qdl-v2-python@sha256:5ea7a7a4…` (2.4.2-48137eb), hash `a0eff1c8…` | `sha256:0e14a5f4…` (2.4.4-13850b1) | `a0eff1c8…` → `a1c2d29e…` | `~/.local/state/qdl-v2/windows/v2.4.4-query/run.out` |
-| (pending) | query_kn_1 | `5ea7a7a4…`, hash `535ec6cc…` | `0e14a5f4…` | `535ec6cc…` → `ac9bb831…` | same |
+| 2026-11-27 13:18:36Z (started 13:18:40Z) | query_kn_2 | `qdl-v2-python@sha256:5ea7a7a4…` (2.4.2-48137eb), hash `a0eff1c8…` | `qdl-v2-python@sha256:0e14a5f4cb8bb732a4158d39eeb8cd5525cbfde9aaf708e143ceca846b2a69ce` (2.4.4-13850b1; source `13850b10`, code tree = `4c7bf745` = `2af49510`) | `a0eff1c8…` → `a1c2d29e…` | W-DLQ (coordinator), `~/.local/state/qdl-v2/windows/v2.4.4-query/roll2-20261127T131836Z.txt` sha256 `729a51ffc11c48641e384c1c38383bf170a2481a3cd100e1816dc35e13994196`: PASS; re-verify 13:19:53Z PASS |
+| 2026-11-27 13:19:18Z (started 13:19:22Z) | query_kn_1 | `5ea7a7a4…`, hash `535ec6cc…` | `0e14a5f4…` (same build) | `535ec6cc…` → `ac9bb831…` | `roll1-20261127T131918Z.txt` sha256 `701780d53d2fd559c5d22291bbeb5471483cc1aeddb18df7f08a3dec85b254fd`: PASS; re-verify 13:19:53Z PASS; reference:batch max 628 ms, 0 over 4 s, slow_request `consumer` field present |
+
+Rollback for both: the live layering without `v2.4.4-query.env` (`window.sh rollback N`), image `5ea7a7a4`, hashes
+`535ec6cc` / `a0eff1c8`. Checked read-only 2026-11-27 after the roll: both replicas run `0e14a5f4`, healthy, with the
+expected config-hashes.
 
 Next on this line: PROVIDER_CONFIRMATION (`feat/dl-provider-confirmation`), r18 declaration, the rust image after the base
 rebuild (stream_kn x2, ingestor_okx_swap, optional ingestor_binance_usdm).

@@ -2561,3 +2561,4 @@ Not applied in this window: Binance stage C r8 (own window), Rust roles / bar_ed
 | Build receipt | `13850b10`, receipt status PASS | python `0e14a5f4…`, rust `8729292b…`; 0 unexpected binary verdicts; python file verdicts and pip freeze OK |
 | R0 python | `0e14a5f4…` | trivy 0 fixable C/H; pip-audit clean: PASS |
 | R0 rust | `8729292b…` | FAIL: 4 fixable HIGH CVE-2025-6020 (libpam, base `b33ec0cb`); pre-existing in running `e628fbe0`; base rebuild needed before rust rolls |
+| W-DLQ Query x2 roll | `0e14a5f4`, hashes `a1c2d29e` / `ac9bb831`, 13:18-13:20Z | PASS both; reference:batch max 628 ms, 0 > 4 s; receipts `729a51ff…`, `701780d5…` |
