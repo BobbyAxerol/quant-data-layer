@@ -68,7 +68,7 @@ from scripts.host_measurement_lock import MAX_MINUTES as MAX_LOCK_MINUTES, lock_
 # ingestor DEF-L successor probation) and python (Query typed HOT_QUIET_BEYOND_MAX, lifecycle API BL-K, typed tokens,
 # per-consumer counts; bar_edge BL-B/C resume and venue-hole span; compiler DEF-F/J): both images are built.
 RELEASE = "2.4.4"
-SDK_VERSION = "2.11.0"
+SDK_VERSION = "2.11.1"
 REPO = Path(__file__).resolve().parents[1]
 HOME = Path.home()
 STATE_ROOT = HOME / ".local/state/qdl-v2"

@@ -2543,3 +2543,12 @@ Not applied in this window: Binance stage C r8 (own window), Rust roles / bar_ed
 | CI run 45962699180 (head d726717) | Cargo.lock url 2.5.4 | rust-workspace FAIL at cargo-deny only: RUSTSEC-2026-0592 (url <= 2.5.8); fmt/clippy/tests green (569/0); kn-native-integration, release-gates, contract-tests, sdk-python310 green |
 | Fix: url 2.5.9, idna 1.1.0, form_urlencoded 1.2.3 | fix commit on release/v2.4.4 | local: fmt, clippy, tests 569/0/72, doc-tests ok, cargo-deny advisories/bans/licenses/sources ok |
 | Exposure of running images (url 2.5.4) | rust `abafab2c`, `e628fbe0`, `58bdd282` | not reachable: no DL `url` use, no `origin()` in redis 0.25.4 / reqwest 0.12.28 / tower-http 0.6.11, URLs only from operator config (cache.rs:440, provider_admission.rs:108, auth.rs:504, qdl-native-raw-ingestor.rs:2116, query_view.rs:168) |
+
+### 2026-11-27 - DL-DEF-2026-11-27-O (Crossec 09:35:20Z ReadTimeout) - fixed on branch, tested locally
+
+| Item | Pinned at | Result |
+|---|---|---|
+| Root cause | qdl_sdk 2.10.0/2.11.0, Query python `5ea7a7a4` | client: reference_batch cut at the 10 s transport default despite `deadline_ms=120000`; server: OKX funding-rate-history on the process-wide `public` bucket (5 / 2.5 per s): 4.40 s token wait for 16 instruments (offline, fake provider) |
+| Fix | branch `fix/dl-def-o-reference-timeout`, SDK 2.11.1 | deadline-aware timeout for every deadline-carrying request; per-instrument OKX buckets (funding-rate-history, open-interest) at 40 %; slow_request consumer/session attribution |
+| Tests | same branch | DEF-O module 10 OK incl. real-HTTP e2e; sweep 388 OK (1 skipped); token wait 4.402 s → 0.014-0.016 s |
+| Second reference chain on kn_1 09:34:53-09:35:36 | logs/config only | UNATTRIBUTED: not Crossec (restarts refused before reads), no log line from the 5 DL-configured host containers |

@@ -88,7 +88,7 @@ def stream_payload(value: market_data_pb2.EventEnvelope) -> dict:
 class StreamQueryParityTests(unittest.TestCase):
     def test_sdk_version(self):
         # 2.10.1 introduced the lineage parity; 2.11.0 (DL-BL-2026-11-26-K lifecycle) keeps it.
-        self.assertEqual(__version__, "2.11.0")
+        self.assertEqual(__version__, "2.11.1")
 
     def test_aggregated_bar_is_byte_identical_on_both_paths_lineage_included(self):
         value = envelope(aggregated=True)

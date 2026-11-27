@@ -81049,3 +81049,67 @@ qdl-kafka, qdl-realtime-core, qdl-projector, qdl-stream-gateway; qdl-core and qd
 - So the running images need no out-of-band action; v2.4.4 carries the fixed version.
 
 CI cost: Cargo.lock is CI-defining, so this push runs every job fresh (CI5) and the cargo cache key changes.
+
+### DL-DEF-2026-11-27-O: reference batch client timeout ignored its declared deadline; OKX funding/OI budget shared process-wide (fixed on branch, tested locally) - 2026-11-27 (Claude)
+
+**Registered here: DL-DEF-2026-11-27-O** (the letter was free on every DL branch and journal). Incident: Crossec
+startup stop 2026-11-27 09:35:20Z, `ReadTimeout`. Forensics (read-only, TS/DL to hosted):
+`~/.local/state/trading-system/paper-hosting/TS_DL_TO_HOSTED_ALPHA_CROSSEC09_READ_TIMEOUT_CORRELATION_20261127.md`,
+evidence `crossec09-timeout-forensics/` (sha256 table there).
+
+**Root cause (checked in code).**
+1. **Client.** qdl_sdk 2.10.0/2.11.0 `RestQueryTransport.reference_batch` set no per-request timeout, so a batch whose
+   requirements declared `deadline_ms=120000` was cut at the transport default `timeout_seconds=10.0`
+   (`qdl_sdk/transport.py`, `reference_batch` before this fix; the deadline-aware wait existed only for `warmup` /
+   `warmup_batch`, `_cold_timeout_seconds`). The alpha SDK builds the transport without a timeout
+   (`alpha_sdk/data_layer_v2.py:134` in the Crossec image). Client gave up at 10.063 s; server answered 200 at 10.689 s.
+2. **Server cost.** Not the spool: reference history is fetched from the provider path (`qdl/reference/batch.py`,
+   30 s history TTL cache, provider concurrency 4). OKX `GET /api/v5/public/funding-rate-history` is documented
+   "10 requests per 2 seconds, rule IP + Instrument ID" (docs-v5 copy read 2026-11-27), but `OkxRestClient` put it on
+   the one process-wide `public` bucket (`qdl/adapters/okx/client.py`, capacity 5, 2.5/s) shared with every other
+   public call of that Query. 16 instruments x one page = 16 tokens: 5 burst + 11 / 2.5 per s = **4.40 s of token
+   waiting alone**, measured offline with the real client and history adapter and a zero-latency fake provider
+   (4.402 s, 4.402 s); a second consumer's chain on the same replica (below) drew from the same bucket, which explains
+   6.0-10.7 s on kn_1 at 09:34:53-09:35:21.
+3. **Replica pinning.** One `RestQueryTransport` on the alias `qdl-v2-query` (held by both Query replicas) keeps one
+   keep-alive pool, so consecutive requests stay on one replica; kn_2 was idle.
+
+**The second sequential reference chain on kn_1 (09:34:53.568 → 09:35:36.8): UNATTRIBUTED from logs and config.**
+- Not Crossec: its three restarts (09:35:25Z, 09:35:28Z, 09:35:31Z) stopped at `START_AUTHORIZATION_REQUIRED` before
+  any DL read (container log), so nothing of the chain after 09:35:21 is Crossec; the chain also overlaps Crossec's
+  chunks 1-3 in time.
+- Containers on this host configured for DL Query (`DATA_LAYER_V2_QUERY_URL`): ts-gateway, ts-risk, ts-paper,
+  ts-performance, market_data_service_p184w; none logged a line in 09:34:30-09:36:00Z; no other alpha container runs
+  on this host. Query's `slow_request` line had no consumer field and v2.4.2 has no per-consumer counts, so the
+  server side cannot name it. Fixed for next time below; v2.4.4 also adds per-consumer request counts (BL-D).
+
+**Fix (branch `fix/dl-def-o-reference-timeout` from `release/v2.4.4` `7080b35`; SDK 2.11.1).**
+- SDK: `_deadline_timeout_seconds` is the single rule for every deadline-carrying request: the HTTP timeout is the
+  largest `deadline_ms` + `COLD_TIMEOUT_MARGIN_S` (2 s) when longer than `timeout_seconds`. Applied to `warmup`,
+  `warmup_batch` (unchanged behaviour, now via the helper) and `reference_batch` (new). Audit: snapshot, feed status,
+  instruments, instrument, lifecycle declare no deadline and keep the transport default; streams use gRPC deadlines.
+  Behaviour change to note: a caller that capped reference reads with a short transport timeout now waits up to its
+  `deadline_ms` (default 20,000) + 2 s; it must set `deadline_ms` to the bound it wants. Versioned: SDK 2.11.1,
+  CHANGELOG + README ("Replicas and request deadlines": use `build_replicated_rest_query` for alphas; it fails over on
+  transport errors, it does not hedge in-flight requests).
+- Server: `OKX_INSTRUMENT_SCOPED_LIMITS` (funding-rate-history 10, open-interest 20 per 2 s, both "IP + Instrument ID"):
+  one bucket per instrument at 40 % of the documented rate per Query process (two replicas share the host IP: 80 % in
+  total), capacity 2. Same 16-instrument batch: **0.014-0.016 s** of token waiting (vs 4.40 s).
+- Telemetry: `slow_request` lines carry `consumer` (`X-QDL-Consumer-ID`) and `session` (`X-QDL-Session`), ASCII
+  printable, max 128 chars; credentials never.
+
+**Tests** (`qdl-v2-python:2.4.3.1-b8935d1`, worktree read-only, light slot, `--network none`):
+`tests/test_dl_def_o_reference_timeout.py` 10 tests: SDK timeout rule (explicit, default and inside-default deadlines,
+warmup helper); **real HTTP** (uvicorn on 127.0.0.1, server answers 200 after 1.5 s, transport default 1.0 s): received
+with the fix, `httpx.ReadTimeout` with the pre-fix behaviour; per-instrument bucket identity and rates; old vs new
+16-instrument batch timing (old ≥ 4.0 s, new < 1.0 s); slow_request attribution without credentials. With the impacted
+modules (`test_query_interpreter`, `test_phase104_reference_batch`): 55 OK. Sweep of the 25 modules naming `reference_batch` / `RestQueryTransport` / `_cold_timeout` plus `test_qdl_sdk_release`,
+`test_phaseb_stable_release`, `test_dl_v244_sdk_bar_lineage_parity`, `test_query_interpreter`: 388 OK (1 skipped);
+`tests.test_build_qdl_release_images` on the host after the commit (it reads HEAD): see the commit report.
+
+**Rollout class.** Server part = Query image (`query_kn_1`, `query_kn_2`, rolling), the next DL release after v2.4.4
+(the v2.4.4 images are built from `db6885d` without it). Client part = **alphas must bump to SDK 2.11.1** (their images
+bake `qdl_sdk`; Crossec image `a5b58033` has 2.10.0) or, without a bump, build the transport with
+`timeout_seconds >= deadline_ms/1000 + 2` and preferably `build_replicated_rest_query` over both Query replicas
+(the TS `alpha_sdk` `data_layer_v2.py:134` change is TS-side). The server fix alone removes the token queue, so a
+90-day 16-instrument funding batch should no longer approach 10 s; that is expected, not yet measured live.

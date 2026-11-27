@@ -106,11 +106,21 @@ class RestQueryTransport:
         transport timeout (and the 2.7.0 request) when it is already longer.
         """
 
-        deadlines = [
+        return self._deadline_timeout_seconds(
             spec.deadline_ms
             for spec in (getattr(item, "warmup_specification", None) for item in requirements)
             if spec is not None
-        ]
+        )
+
+    def _deadline_timeout_seconds(self, deadlines_ms) -> float | None:
+        """SDK 2.11.1 (DL-DEF-2026-11-27-O): every request that declares a server deadline waits for it.
+
+        The client HTTP timeout of a request whose items carry ``deadline_ms`` is the largest ``deadline_ms`` plus
+        ``COLD_TIMEOUT_MARGIN_S`` whenever that is longer than the transport default, so the transport never gives
+        up before the server's own declared deadline (Crossec 2026-11-27 09:35:20Z: a reference batch with
+        ``deadline_ms=120000`` was abandoned at the 10 s default while the server answered 200 at 10.7 s). None keeps
+        the transport default when it is already longer, so a request without deadlines is byte-identical."""
+        deadlines = [int(value) for value in deadlines_ms if value is not None]
         if not deadlines:
             return None
         wanted = max(deadlines) / 1_000 + COLD_TIMEOUT_MARGIN_S
@@ -189,6 +199,7 @@ class RestQueryTransport:
                 "requirements": [item.model_dump(mode="json") for item in values],
             },
             headers=headers,
+            timeout_seconds=self._deadline_timeout_seconds(item.deadline_ms for item in values),
         )
         return self._decode(response)
 
