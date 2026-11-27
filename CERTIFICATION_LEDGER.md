@@ -2552,3 +2552,4 @@ Not applied in this window: Binance stage C r8 (own window), Rust roles / bar_ed
 | Fix | branch `fix/dl-def-o-reference-timeout`, SDK 2.11.1 | deadline-aware timeout for every deadline-carrying request; per-instrument OKX buckets (funding-rate-history, open-interest) at 40 %; slow_request consumer/session attribution |
 | Tests | same branch | DEF-O module 10 OK incl. real-HTTP e2e; sweep 388 OK (1 skipped); token wait 4.402 s → 0.014-0.016 s |
 | Second reference chain on kn_1 09:34:53-09:35:36 | logs/config only | UNATTRIBUTED: not Crossec (restarts refused before reads), no log line from the 5 DL-configured host containers |
+| Folded into v2.4.4 | rebased onto dev `db6885d1`, tree = tested `2af49510` tree | results carried over (identical tree); SDK 2.11.1; only Query calls the two OKX endpoints (40 % x 2 replicas) |

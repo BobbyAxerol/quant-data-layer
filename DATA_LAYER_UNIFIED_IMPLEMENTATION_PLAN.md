@@ -81113,3 +81113,18 @@ bake `qdl_sdk`; Crossec image `a5b58033` has 2.10.0) or, without a bump, build t
 `timeout_seconds >= deadline_ms/1000 + 2` and preferably `build_replicated_rest_query` over both Query replicas
 (the TS `alpha_sdk` `data_layer_v2.py:134` change is TS-side). The server fix alone removes the token queue, so a
 90-day 16-instrument funding batch should no longer approach 10 s; that is expected, not yet measured live.
+
+### DL-DEF-2026-11-27-O folded into v2.4.4 (coordinator decision 2026-11-27, before the held image build) - 2026-11-27 (Claude)
+
+- The fix commit was rebased from `release/v2.4.4` `7080b35` onto dev `db6885d1` (whose tree equals `7080b35`'s); the
+  resulting code tree is byte-identical to the tested `2af49510` tree, so the local results above carry over (DEF-O
+  module 10 OK, sweep 388 OK / 1 skipped, recipe tests OK on the host).
+- v2.4.4 now carries DEF-O and SDK **2.11.1** (`SDK_VERSION` in the recipe; the recipe's source preconditions require
+  `qdl_sdk/__init__.py` and `build_qdl_sdk_release.py` at 2.11.1, so a db6885d build would now be refused: the build
+  must use the merge of this PR). Packet §1, §2 and new §5a updated (roles unchanged: Query is recreated anyway).
+- **Bucket share checked:** the only DL code calling `/api/v5/public/funding-rate-history` or
+  `/api/v5/public/open-interest` is the Query reference runtime (`qdl/reference/runtime.py:132` → `OkxSwapReferenceAdapter`
+  → `OkxHistoricalClient`); bar_edge builds an `OkxHistoricalClient` for candles only (`stable_bar_edge.py:1176-1190`,
+  `bar_edge.py:98`, no funding/OI call), the Rust ingestors make no such REST calls (grep of `rust/`), the V1 service is
+  stopped, and the TS services / alpha SDK / execution_alpha trees contain no call to either endpoint (grep). So two
+  Query replicas at 40 % each = 80 % of the documented per-instrument rate from this IP.

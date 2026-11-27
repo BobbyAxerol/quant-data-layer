@@ -19,7 +19,10 @@ venue-hole span), DL-BL-2026-11-25-D (per-consumer Query counts), DL-DEF-2026-11
 DL-DEF-2026-11-25-F (shared consumer subject in the compiler), DL-DEF-2026-11-26-G (typed coverage tokens),
 DL-DEF-2026-11-26-I (derived bars thread; running as 2.4.3.1), DL-DEF-2026-11-26-J (compiler selector grants),
 DL-BL-2026-11-26-K (lifecycle API), DL-DEF-2026-11-26-L (successor probation + OKX QUOTE lane spread),
-DL-DEF-2026-11-26-M (stream gateway last value + max-quiet) and its Query typed-reason follow-up.
+DL-DEF-2026-11-26-M (stream gateway last value + max-quiet) and its Query typed-reason follow-up, and
+**DL-DEF-2026-11-27-O** (folded in 2026-11-27 before the image build: reference batch client timeout follows its
+declared deadline, SDK **2.11.1**; OKX funding-rate-history/open-interest budgets per instrument; slow_request
+attribution).
 
 ## 2. Roles: what is rebuilt, recreated, and what is not touched
 
@@ -30,7 +33,7 @@ Production today (read-only `docker inspect`, 2026-11-27 ~05:00Z):
 | `stream_kn_1`, `stream_kn_2` | rust `abafab2c` (2.4.0-c17472c), W-DLR env ring 240 MiB / 600 s since 2026-11-26 19:48-19:50Z | **recreate**, rolling, new rust image, same env **plus `QDL_KN_LAST_VALUE_MAX_KEYS=1024`** | DEF-M (`qdl-stream-gateway`: hub last value, max-quiet, memory term, metrics). 220 hot non-book bindings in the running realm; memory plan 520,880,128 + 4,194,304 = 525,074,432 <= 536,870,912 (~11.3 MiB planned headroom; the 2,048 default would leave ~7.3 MiB) |
 | `ingestor_okx_swap` | rust `e628fbe0` (2.4.2-48137eb), config `releases/v2.4.4-defl-ingestor/ingestor_okx_swap.json` since 2026-11-26 16:46:17Z | **recreate**, new rust image, **same config** | DEF-L probation (ingestor binary). Observed read-only on 2026-11-27: the 3-session QUOTE lane spread (lanes 003/006/007) is **already live** on the old image (container mount and lane-006 heartbeat lines); its journal record is not on this branch. v2.4.4 changes only the binary |
 | `ingestor_binance_usdm` | rust `e628fbe0` | **optional** recreate on the same new image, config unchanged | Same binary. The probation applies to every all-quote lane with an IDR-112 detector. Skipping it keeps Binance on the v2.4.2 binary (a supported mix). Recommendation: recreate it last, after OKX holds for 30 min |
-| `query_kn_1`, `query_kn_2` | python `5ea7a7a4` (2.4.2-48137eb) | **recreate**, rolling, new python image | Typed `HOT_QUIET_BEYOND_MAX`, lifecycle endpoint, DEF-G typed tokens, BL-D counts. Lifecycle stays `NOT_CONFIGURED` until `QDL_INSTRUMENT_LIFECYCLE_LEDGER` is set (a separate owner step, section 6) |
+| `query_kn_1`, `query_kn_2` | python `5ea7a7a4` (2.4.2-48137eb) | **recreate**, rolling, new python image | Typed `HOT_QUIET_BEYOND_MAX`, lifecycle endpoint, DEF-G typed tokens, BL-D counts, DEF-O per-instrument OKX funding/OI budgets (40 % of the documented rate per replica; no other DL role calls these endpoints) and slow_request consumer/session attribution. Lifecycle stays `NOT_CONFIGURED` until `QDL_INSTRUMENT_LIFECYCLE_LEDGER` is set (a separate owner step, section 6) |
 | `binance_bar_edge` | python `396a4654` (2.4.3.1-b8935d1) | **recreate**, new python image | BL-B/C resume and venue-hole span (python `stable_bar_edge.py`, OKX/Binance bar_edge adapters, `derived_bars.py`) |
 | compiler (DEF-J) | not a role | none at runtime | `scripts/compile_alpha_deployment_bindings.py` ships in the python image and the repo. It is used at the next Crossec render/reseal (r11), TS-side, after the release |
 | `rust_core` x3, `market_projector_1/2` | rust `58bdd282` (2.3.0-rc2) | **not touched** | No change in `qdl-core`/`qdl-realtime-core`/`qdl-projector` since their image (diff `48137eb..HEAD -- rust/` touches only the ingestor and the stream gateway) |
@@ -115,6 +118,15 @@ Order: reverse of the rollout. Readers before writers is satisfied: Query unders
 
 The certificate (`upgrade/evidence/releases/v2.4.4/CERTIFICATE.md`) is written after the windows, in the v2.4.2 format
 (identity, scope, CI, runtime acceptance, deviations, not changed).
+
+## 5a. SDK 2.11.1 and the alphas (DL-DEF-2026-11-27-O)
+
+- **Alphas must bump to qdl_sdk 2.11.1** to get the client fix (their images bake the SDK; Crossec image `a5b58033`
+  has 2.10.0). Without a bump: build the transport with `timeout_seconds >= deadline_ms/1000 + 2` and preferably
+  `build_replicated_rest_query` over both Query replicas. The TS `alpha_sdk` side (`data_layer_v2.py:134`) is TS's.
+- Behaviour change: a caller that capped reference reads with a short transport timeout now waits up to its
+  `deadline_ms` (default 20,000) + 2 s; it sets `deadline_ms` to the bound it wants.
+- The server part (Query budgets) needs no consumer change and rolls with the Query step.
 
 ## 5b. TS consumer manifest r17 (owner GO 2026-11-27) and the TS JWT revision
 
