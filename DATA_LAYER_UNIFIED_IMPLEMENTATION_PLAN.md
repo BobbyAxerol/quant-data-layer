@@ -80951,7 +80951,7 @@ hashes recomputed 2026-11-27).
   `e9c1da93c5e0d82251fca06396af8016597d6da922ac83e2a3931efdc01c1fef` (recomputed, equal), freeze evidence
   `evidence-v2-run-20261126T201100Z.txt` sha256 `fa6d6076df4a5b62a93b571c5a69d9d0b4a87356b50a2ef95fc8ffb21b871e4a`
   (recomputed, equal). Gate: hosted COORD row `19:48Z | Codex hosted | WINDOW_READY W-DLR (stream_kn ring)`, gate PASS
-  19:48:22Z. The P96 gate PASS `81fdf914` is as reported by the coordinator; I did not locate that receipt on the host.
+  19:48:22Z. P96 gate PASS **verified 2026-11-27**: `~/.local/state/trading-system/paper-hosting/crossec-coverage-g76-p96-20261126T201103Z/market-coverage.json` sha256 `81fdf91407e436c0bf66cb69102dd657d078c7fe62c62908cbe0528b699b7514` (recomputed, equal, and listed in its `SHA256SUMS`, sha256 `ae7332aa53c18b2e47f2fba0f52cf52d0665864d45dd2fed4deca712047b7101`).
 - Pinned at: image `qdl-v2-rust@sha256:abafab2c98cbdd9d2fe86f2b26fd6fcf64800ccdd114a3dd5b92803de16a3e98` (unchanged);
   only `QDL_KN_RING_BYTES_TOTAL=251658240` and `QDL_KN_RING_MAX_AGE_SECONDS=600` added (`stream-ring.override.yml`,
   rolediff PASS; defaults were 50331648 / 120); config-hash stream_kn_1 `798da600…` → `4a588741b0dc`, stream_kn_2
@@ -80963,8 +80963,11 @@ hashes recomputed 2026-11-27).
 - Status: `production-applied` (env). Rollback: remove the two keys (old layering hash reproduced).
 - **v2.4.4 consequence (checked):** the DEF-M image adds the last-value term (2,048 x 4 KiB = 8,388,608 bytes) to the
   same plan: 520,880,128 + 8,388,608 = 529,268,736 <= 536,870,912, about 7.3 MiB of headroom on the bound plan
-  (RSS is ~380 MB). The v2.4.4 stream_kn recreate keeps the W-DLR env; if the start refuses on the plan, the fallback is
-  `QDL_KN_LAST_VALUE_MAX_KEYS=1024` (4 MiB), not a smaller ring.
+  (RSS is ~380 MB). **Roll value (coordinator 2026-11-27): `QDL_KN_LAST_VALUE_MAX_KEYS=1024`** (4 MiB) on both
+  stream_kn replicas: the running realm has 220 hot non-book bindings (well under 1,024 keys, ~0.9 MB of 4 KiB
+  entries), and the plan becomes 520,880,128 + 4,194,304 = 525,074,432 <= 536,870,912, 11,796,480 bytes (~11.3 MiB) of
+  planned headroom. It is an env value of the roll (the recipe image keeps the 2,048 code default); the W-DLR ring keys
+  stay.
 
 ### DL-BL-2026-11-27-N: move the deployed declaration set into the repository config (registered, OPEN) - 2026-11-27 (Claude)
 

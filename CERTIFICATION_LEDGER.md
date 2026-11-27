@@ -2534,4 +2534,4 @@ Not applied in this window: Binance stage C r8 (own window), Rust roles / bar_ed
 | Item | Pinned at | Result |
 |---|---|---|
 | W-DL ingestor_okx_swap 3-session QUOTE lanes (config only) | image `e628fbe0…`, OKX config `435ec73b6557b53d…` (`releases/v2.4.4-defl-ingestor`), 16:46:16Z | PASS: 97/97 quotes, 465 PINNED, 9 lanes, rejected 0, lane lag max 261 ms; receipt `run.out` `8eefddea8d00ede7…` |
-| W-DLR stream_kn x2 ring 240 MiB / 600 s (env only) | image `abafab2c…`, config-hash `4a588741b0dc` / `c861e5213d16`, 19:48-19:50Z | PASS: outage 6 s <= 15 s, 97/97; freeze 20:11Z crossec96 HOT_RECORD_MISSING 0 (baseline 1,057/h); receipt `run.out.final` `e9c1da93c5e0d822…`, evidence `fa6d6076df4a5b62…`; P96 gate `81fdf914` (coordinator) |
+| W-DLR stream_kn x2 ring 240 MiB / 600 s (env only) | image `abafab2c…`, config-hash `4a588741b0dc` / `c861e5213d16`, 19:48-19:50Z | PASS: outage 6 s <= 15 s, 97/97; freeze 20:11Z crossec96 HOT_RECORD_MISSING 0 (baseline 1,057/h); receipt `run.out.final` `e9c1da93c5e0d822…`, evidence `fa6d6076df4a5b62…`; P96 gate `market-coverage.json` `81fdf91407e436c0…` verified 2026-11-27 (SHA256SUMS `ae7332aa…`) |
