@@ -80926,3 +80926,73 @@ normalisation golden; gateway hub tests (confirmation renews last value, old pro
 **Release (S7).** Rust image (ingestor, core, gateway), python Query, SDK minor; order: readers first (Query and
 gateway accept the field, emit nothing new), then core, then ingestor (the only emitter); rollback = ingestor image
 first (stops emission).
+
+### Runtime record (back-filled 2026-11-27): W-DL ingestor_okx_swap lane split and W-DLR stream_kn ring (production-applied 2026-11-26) - 2026-11-27 (Claude)
+
+Both windows ran on 2026-11-26 and had no journal record on the DL line; recorded here from their receipts (read-only,
+hashes recomputed 2026-11-27).
+
+**W-DL: ingestor_okx_swap → 3-session QUOTE lane config (DL-DEF-2026-11-26-L class fix, config only).**
+- Window `~/.local/state/qdl-v2/windows/dl-def-l-ingestor-okx/run-20261126T1600Z/`, receipt `run.out` sha256
+  `8eefddea8d00ede76fcf79a4eef23b77c9fe9147d37927fdb1717a32e8590192` (recomputed, equal). Gate: hosted COORD row
+  `16:46Z | Codex hosted | WINDOW_READY W-DL (ingestor_okx_swap lane split)`, gate PASS 16:46:13Z. VARIANT=config-only.
+- Pinned at: image `qdl-v2-rust@sha256:e628fbe07afe94e8f716692633e77217a16223ea03abc7ea34edb959a48c72a7` (unchanged);
+  OKX config `435ec73b6557b53d11dfe6f894ca2b625150183de885081f0ee9b28e75597af7` (was `1ca07ba6…`, the r10 render) from
+  `releases/v2.4.4-defl-ingestor`; Binance config `23610605…` unchanged, Binance ingestor not touched; live
+  config-hash before `c2d19ccb…` (rollback layering reproduced it).
+- Timeline: recreate T0 16:46:16Z, up 16:46:18Z, verify PASS 16:46:48Z: 97/97 quotes valid after 5 s, 465 bindings
+  PINNED, 9 lanes all flowing, `subscriptions_rejected 0`, quote-lane lag max 261 ms over >= 3 windows per lane
+  (003/006/007), no SUPPRESSED_CAP, writer identity unchanged, final 97/97.
+- Status: `production-applied` (config). The DEF-L binary change (probation) is not live; it ships with v2.4.4.
+- Rollback: OKX config `1ca07ba6…` on the same image.
+
+**W-DLR: stream_kn x2 hot ring 240 MiB / 600 s (DL-DEF-2026-11-26-M interim a2, env only).**
+- Window `~/.local/state/qdl-v2/windows/dl-r-stream-kn-ring/`, receipt `run-v2_1-20261126T1946Z/run.out.final` sha256
+  `e9c1da93c5e0d82251fca06396af8016597d6da922ac83e2a3931efdc01c1fef` (recomputed, equal), freeze evidence
+  `evidence-v2-run-20261126T201100Z.txt` sha256 `fa6d6076df4a5b62a93b571c5a69d9d0b4a87356b50a2ef95fc8ffb21b871e4a`
+  (recomputed, equal). Gate: hosted COORD row `19:48Z | Codex hosted | WINDOW_READY W-DLR (stream_kn ring)`, gate PASS
+  19:48:22Z. The P96 gate PASS `81fdf914` is as reported by the coordinator; I did not locate that receipt on the host.
+- Pinned at: image `qdl-v2-rust@sha256:abafab2c98cbdd9d2fe86f2b26fd6fcf64800ccdd114a3dd5b92803de16a3e98` (unchanged);
+  only `QDL_KN_RING_BYTES_TOTAL=251658240` and `QDL_KN_RING_MAX_AGE_SECONDS=600` added (`stream-ring.override.yml`,
+  rolediff PASS; defaults were 50331648 / 120); config-hash stream_kn_1 `798da600…` → `4a588741b0dc`, stream_kn_2
+  `81edfecf…` → `c861e5213d16`; mem_limit 536870912 unchanged; memory plan 520,880,128 <= 536,870,912.
+- Timeline: stream_kn_1 verify 1 PASS 19:49:34Z (ring 164.6 MB, rss 239 MB, client-visible quote outage 6 s <= 15 s,
+  97/97); stream_kn_2 verify 2 PASS 19:50:42Z (rss 231 MB); STATUS PASS 19:50:42Z. Freeze 20:11:03Z PASS:
+  crossec96 `HOT_RECORD_MISSING` 0 over 19:50:42-20:10:42Z (baseline 1,057 per 60 min), all-instrument 0/1200 s,
+  rings 251.6 MB each, rss 378 MB / 344 MB.
+- Status: `production-applied` (env). Rollback: remove the two keys (old layering hash reproduced).
+- **v2.4.4 consequence (checked):** the DEF-M image adds the last-value term (2,048 x 4 KiB = 8,388,608 bytes) to the
+  same plan: 520,880,128 + 8,388,608 = 529,268,736 <= 536,870,912, about 7.3 MiB of headroom on the bound plan
+  (RSS is ~380 MB). The v2.4.4 stream_kn recreate keeps the W-DLR env; if the start refuses on the plan, the fallback is
+  `QDL_KN_LAST_VALUE_MAX_KEYS=1024` (4 MiB), not a smaller ring.
+
+### DL-BL-2026-11-27-N: move the deployed declaration set into the repository config (registered, OPEN) - 2026-11-27 (Claude)
+
+**Registered here: DL-BL-2026-11-27-N**, open. The repository's `config/v2` (catalogue r13, acquisition, demand) and
+`consumers/stable/*.yaml` (TS paper manifest r13) are an internally consistent older set that the test suite checks
+together; production runs the declaration products (catalogue r17 `635237bd…`, acquisition r25, realm manifests
+TS r16, alpha.okx.paper r18, …) from `~/.local/state/qdl-v2/releases/*`. Replacing one file alone breaks that
+consistency (35+ tests, plan journal 2026-11-27 "owner GO items"). Slice: bring the deployed set in as one change
+(catalogue, acquisition, demand, scope, routing, universes, every realm manifest), update the fixtures/tests that pin
+the old set, keep the old set only where a test names it as a historical fixture. Not in v2.4.4.
+
+### r18 slice plan: TS TRADE x91 on OKX SWAP (owner-approved split, 2026-11-27) - 2026-11-27 (Claude)
+
+1. **Measure first (read-only, no orders, no new runtime):**
+   - OKX trade rate per name for the 91: public `GET /api/v5/market/trades?instId=<id>&limit=100` (newest trades, rate
+     limit per the OKX docs, read before use) sampled over at least one day across sessions, or the `trades` channel on
+     a bounded scratch WS client outside the stack; output p50/p99 trades/s per name and the sum.
+   - market_cache growth: the current per-TRADE-binding key/bytes of the 5 live OKX TRADE bindings (read-only
+     `MEMORY USAGE`/`SCAN COUNT` sample on market_cache, no write), extrapolated to 96 bindings; compare with
+     MemAvailable and the BL-H swap state.
+   - stream_kn: ring coverage at the new record rate (240 MiB ring, today ~858 records/s) and subscriber queue bytes for
+     the TS TRADE subscriptions.
+2. **Declaration r11/r12 (offline render + gate):** catalogue TRADE bindings (crypto_primary_v2, OKX SWAP) and
+   acquisition bindings for the 91; ingestor `trades` subscriptions in a lane plan within the OKX subscription and
+   480/h limits (spread with `spread_lane_pins` if one lane would exceed its slots); core config; catalogue revision
+   bump; universes unchanged.
+3. **Manifest r18** = r17 + TRADE x91 (the TS patch items, byte-equal), TS JWT 18 after Query loads r18 (DL first).
+4. **Windows:** stream replicas before Query (catalogue revision change, v2.4.2 runbook), then Query (realm r18),
+   cores, ingestor_okx_swap; gates: TRADE frames per binding, market_cache bytes against the measured projection, ring
+   coverage, writer refusals at baseline.
+5. **Rollback:** previous catalogue/realm/ingestor config by hash; TS back to JWT 17 first.

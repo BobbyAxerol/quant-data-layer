@@ -27,7 +27,7 @@ Production today (read-only `docker inspect`, 2026-11-27 ~05:00Z):
 
 | Role | Running image | v2.4.4 action | Why |
 |---|---|---|---|
-| `stream_kn_1`, `stream_kn_2` | rust `abafab2c` (2.4.0-c17472c) | **recreate**, rolling, new rust image | DEF-M (`qdl-stream-gateway`: hub last value, max-quiet, memory term, metrics) |
+| `stream_kn_1`, `stream_kn_2` | rust `abafab2c` (2.4.0-c17472c), W-DLR env ring 240 MiB / 600 s since 2026-11-26 19:48-19:50Z | **recreate**, rolling, new rust image, **same env** | DEF-M (`qdl-stream-gateway`: hub last value, max-quiet, memory term, metrics). Memory plan 520,880,128 + 8,388,608 (last values) = 529,268,736 <= 536,870,912 (~7.3 MiB headroom); fallback `QDL_KN_LAST_VALUE_MAX_KEYS=1024` |
 | `ingestor_okx_swap` | rust `e628fbe0` (2.4.2-48137eb), config `releases/v2.4.4-defl-ingestor/ingestor_okx_swap.json` since 2026-11-26 16:46:17Z | **recreate**, new rust image, **same config** | DEF-L probation (ingestor binary). Observed read-only on 2026-11-27: the 3-session QUOTE lane spread (lanes 003/006/007) is **already live** on the old image (container mount and lane-006 heartbeat lines); its journal record is not on this branch. v2.4.4 changes only the binary |
 | `ingestor_binance_usdm` | rust `e628fbe0` | **optional** recreate on the same new image, config unchanged | Same binary. The probation applies to every all-quote lane with an IDR-112 detector. Skipping it keeps Binance on the v2.4.2 binary (a supported mix). Recommendation: recreate it last, after OKX holds for 30 min |
 | `query_kn_1`, `query_kn_2` | python `5ea7a7a4` (2.4.2-48137eb) | **recreate**, rolling, new python image | Typed `HOT_QUIET_BEYOND_MAX`, lifecycle endpoint, DEF-G typed tokens, BL-D counts. Lifecycle stays `NOT_CONFIGURED` until `QDL_INSTRUMENT_LIFECYCLE_LEDGER` is set (a separate owner step, section 6) |
@@ -87,7 +87,7 @@ Per role, the image it runs today, on its current env/config; every v2.4.4 chang
 
 | Role | Rollback | Notes |
 |---|---|---|
-| `stream_kn_1/2` | rust `sha256:abafab2c98cbdd9d2fe86f2b26fd6fcf64800ccdd114a3dd5b92803de16a3e98`, same env | Soft rollback without a recreate is not possible; an env-only fallback on the new image is `QDL_KN_LAST_VALUE_MAX_KEYS=0` (ring-only, pre-DEF-M lookups) |
+| `stream_kn_1/2` | rust `sha256:abafab2c98cbdd9d2fe86f2b26fd6fcf64800ccdd114a3dd5b92803de16a3e98`, same env (W-DLR ring keys kept) | Soft rollback without a recreate is not possible; an env-only fallback on the new image is `QDL_KN_LAST_VALUE_MAX_KEYS=0` (ring-only, pre-DEF-M lookups) |
 | `query_kn_1/2` | python `sha256:5ea7a7a40ef2d1df920d0f7cf94f22431d53087f8002929e7dffdb4208f7dcc4` | Lifecycle env unset; nothing persistent written by Query |
 | `binance_bar_edge` | python `sha256:396a4654014758f70362b3097559e03dcb412d36904d94d3cb7c973f6ccb1637` (2.4.3.1) + `.pre-v244` checkpoint copy restored as uid 10001; sidecar format unchanged | v2.4.3 `50124df8…` remains the older rollback |
 | `ingestor_okx_swap` | rust `sha256:e628fbe07afe94e8f716692633e77217a16223ea03abc7ea34edb959a48c72a7`, same `v2.4.4-defl-ingestor` config (the lane spread already runs on that image) | binary-only rollback |
