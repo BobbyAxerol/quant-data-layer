@@ -1,0 +1,62 @@
+INFO run                at 2026-11-25T11:18:12Z window since 2026-11-25T10:04:14Z (1.23 h); baseline is recorded by this run
+PASS role               binance_bar_edge: running health=healthy restarts=0 oom=false image=50124df8a791
+PASS role               market_projector_1: running health=healthy restarts=1 oom=false image=58bdd2821613
+PASS role               market_projector_2: running health=healthy restarts=1 oom=false image=58bdd2821613
+PASS role               query_kn_1: running health=healthy restarts=0 oom=false image=5ea7a7a40ef2
+PASS role               query_kn_2: running health=healthy restarts=0 oom=false image=5ea7a7a40ef2
+PASS role               stream_kn_1: running health=healthy restarts=0 oom=false image=abafab2c98cb
+PASS role               stream_kn_2: running health=healthy restarts=0 oom=false image=abafab2c98cb
+PASS role               ingestor_okx_swap: running health=healthy restarts=0 oom=false image=e628fbe07afe
+PASS role               ingestor_binance_usdm: running health=healthy restarts=0 oom=false image=e628fbe07afe
+PASS role               rust_core: running health=healthy restarts=0 oom=false image=58bdd2821613
+PASS role               rust_core_2: running health=healthy restarts=0 oom=false image=58bdd2821613
+PASS role               rust_core_3: running health=healthy restarts=0 oom=false image=58bdd2821613
+PASS role               market_cache: running health=healthy restarts=1 oom=false image=dfa18828cbc0
+PASS role               kafka1: running health=healthy restarts=0 oom=false image=9516fb7634ba
+PASS role               kafka2: running health=healthy restarts=0 oom=false image=9516fb7634ba
+PASS role               kafka3: running health=healthy restarts=0 oom=false image=9516fb7634ba
+PASS bar_edge           published=1319/1319
+PASS bar_edge           rebootstrap_waiting=0
+PASS bar_edge           resume_pending=0
+PASS bar_edge           venue_holes_refused=0
+PASS bar_edge           history_failed=5
+PASS bar_edge           instrument_unavailable=0
+PASS bar_edge           pending/overdue=0/0
+PASS bar_edge           heartbeat age=12s
+INFO bar_edge           venue_holes_recorded=4 short=771 history_suspended=5 gate_closed=0
+PASS errors             binance_bar_edge: 5 error lines in 1 known class(es)
+PASS errors             market_projector_1: no error lines
+PASS errors             market_projector_2: no error lines
+PASS errors             query_kn_1: no error lines
+PASS errors             query_kn_2: no error lines
+PASS errors             stream_kn_1: no error lines
+PASS errors             stream_kn_2: no error lines
+PASS errors             ingestor_okx_swap: no error lines
+PASS errors             ingestor_binance_usdm: no error lines
+PASS errors             rust_core: no error lines
+PASS errors             rust_core_2: no error lines
+PASS errors             rust_core_3: no error lines
+PASS query refusals     query_kn_1 DATA_NOT_READY[HOT_QUIET_PRIMARY_UNVERIFIED,HOT_RECORD_MISSING]: 346.3/h (baseline)
+PASS query refusals     query_kn_1 LIVE_VIEW_UNAVAILABLE[SESSION_STATE]: 40.6/h (baseline)
+PASS query refusals     query_kn_1 SOURCE_UNAVAILABLE[SESSION_STATE,LIVE_VIEW_UNAVAILABLE]MARK_INDEX_PRICE: 40.6/h (baseline)
+PASS query refusals     query_kn_2 DATA_NOT_READY[HOT_QUIET_PRIMARY_UNVERIFIED,HOT_RECORD_MISSING]: 381.2/h (baseline)
+PASS query refusals     query_kn_2 LIVE_VIEW_UNAVAILABLE[SESSION_STATE]: 40.6/h (baseline)
+PASS query refusals     query_kn_2 SOURCE_UNAVAILABLE[SESSION_STATE,LIVE_VIEW_UNAVAILABLE]MARK_INDEX_PRICE: 40.6/h (baseline)
+PASS projector          market_projector_1: {"bars_applied": 4823807, "builds": 6, "cache_reconnects": 0, "conflicts": 33, "last_rebuild_error": null, "memory_pressure_ms": null, "ownership_lost": 0, "rebuilding": null} errors={}
+PASS projector          market_projector_2: {"bars_applied": 4359855, "builds": 6, "cache_reconnects": 0, "conflicts": 25, "last_rebuild_error": null, "memory_pressure_ms": null, "ownership_lost": 0, "rebuilding": null} errors={}
+PASS market_cache       used 5.47 GiB of maxmemory 7.45 GiB (73%), rss 4.97 GiB, keys 213828
+PASS bar freshness      BINANCE 12h: 96/96 current
+PASS bar freshness      BINANCE 1h: 96/96 current
+PASS bar freshness      BINANCE 1m: 96/96 current
+PASS bar freshness      OKX 12h: 94/94 current
+PASS bar freshness      OKX 1h: 94/94 current
+PASS bar freshness      OKX 1m: 94/94 current
+PASS host               MemAvailable 11677 MiB (owner floor 2048 MiB in live windows)
+INFO host               swap used 6452 MiB
+INFO host               /proc/vmstat oom_kill 47298
+INFO load               query_kn_1 slow_requests/h: {"/health/ready": 0.8, "/v2/instruments": 0.8, "/v2/market-data/reference:batch": 5960.6, "/v2/market-data/warmup:batch": 24.3, "/v2/market-data/{uid}/snapshot": 4658.0}
+INFO load               query_kn_2 slow_requests/h: {"/health/ready": 1.6, "/v2/market-data/reference:batch": 5057.0, "/v2/market-data/warmup:batch": 19.5, "/v2/market-data/{uid}/snapshot": 4113.0}
+INFO load               stream_kn_1 subscriptions: {"hub_subscribers": 119, "lagging": 0, "refused": 0, "subscriptions_active": 119}
+INFO load               stream_kn_2 subscriptions: {"hub_subscribers": 15, "lagging": 0, "refused": 0, "subscriptions_active": 15}
+WARN load               per-consumer Query request rate: UNAVAILABLE (no DL counter; DL-BL-2026-11-25-D)
+INFO verdict            WARN

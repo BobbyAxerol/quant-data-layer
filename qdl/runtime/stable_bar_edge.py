@@ -109,6 +109,12 @@ _DERIVED_GAP_LIMIT = 256
 _DERIVED_POLL_SECONDS = 0.5
 _DERIVED_SETTLE_SECONDS = 0.5
 _DERIVED_PARENT_WAIT_SECONDS = 5.0
+# DL v2.4.4 (DL-DEF-2026-11-26-I, Crossec 00:00Z stop 2026-11-26). A base bar this edge derived and ACKed stays
+# "pending" until it is read back durable, up to this long; a child waits for it instead of declaring a gap. Past it,
+# a still-missing base is a real loss and the ordinary grace applies.
+_DERIVED_INFLIGHT_SECONDS = 120.0
+# The derived publisher runs on its own thread (never behind the REST poll); its loop wakes at least this often.
+_DERIVED_THREAD_MAX_SLEEP_SECONDS = 1.0
 # DL v2.4.2 slice 3 (2026-11-25 market_cache OOM: 1,319 bindings rebased, the
 # A->Z one-binding-per-turn full re-bootstrap left OKX 1h/12h live bars stopped
 # for up to ~4 h). A rebased binding whose durable window is proven from the cache
@@ -119,11 +125,24 @@ _RESUME_BINDINGS_PER_TURN = 16
 # A venue hole the durable cache does not cover cannot heal by re-asking every
 # few seconds (each attempt is a full window of pages); recheck it this often.
 _VENUE_HOLE_RETRY_SECONDS = 300
+_VENUE_HOLE_RECHECK_MAX_SECONDS = 6 * 3600
 # Typed codes (log events, ``_history_venue_holes`` and the heartbeat counters).
 VENUE_HOLE_DURABLY_COVERED = "VENUE_HOLE_DURABLY_COVERED"
 VENUE_HOLE_NOT_COVERED = "VENUE_HOLE_NOT_COVERED"
 RESUME_DURABLE_WINDOW_INCOMPLETE = "RESUME_DURABLE_WINDOW_INCOMPLETE"
 RESUME_SUFFIX_INCOMPLETE = "RESUME_SUFFIX_INCOMPLETE"
+
+
+class _PastWatermark:
+    """Base opens a derived parent has not made available: past its watermark, or ACKed and not yet durable."""
+
+    __slots__ = ("watermark", "inflight")
+
+    def __init__(self, watermark: int | None, inflight: frozenset[int]) -> None:
+        self.watermark, self.inflight = watermark, inflight
+
+    def __contains__(self, open_ms: object) -> bool:
+        return (self.watermark is None or int(open_ms) > self.watermark) or open_ms in self.inflight
 
 
 @dataclass(frozen=True, slots=True)
@@ -590,10 +609,10 @@ class StableBinanceBarEdge:
         return {
             **self._state_identity_payload(schema=schema),
             "connection_generation": self.connection_generation,
-            "last_open_ms": {
-                key: self._last_open_ms[key] for key in sorted(self._last_open_ms)
-                if key not in getattr(self, "_history_suspended", {})
-            },
+            # A snapshot: the derived thread may move a watermark concurrently (DL v2.4.4).
+            "last_open_ms": (lambda watermarks, suspended: {
+                key: watermarks[key] for key in sorted(watermarks) if key not in suspended
+            })(dict(self._last_open_ms), dict(getattr(self, "_history_suspended", {}))),
         }
 
     def _issue_connection_generation(self) -> None:
@@ -752,12 +771,20 @@ class StableBinanceBarEdge:
         if not cache_continuity_confirmed:
             self._last_open_ms = {}
             self._history_bootstrapped = False
+            # DL v2.4.3 (DL-BL-2026-11-25-B): every watermark stays a resume candidate behind the cache-only
+            # durable-window proof, so a restart across a cache epoch change is bounded like a live rebase.
+            if not self.repair_only and restored:
+                self._note_rebootstrap(restored)
             logger.warning(
                 "stable BAR checkpoint cache generation changed; bounded bootstrap required"
             )
             return
         gaps = {} if self.repair_only else self._checkpoint_history_gaps(restored)
         if gaps:
+            if not self.repair_only:
+                # DL v2.4.3 (DL-BL-2026-11-25-B): an incomplete window repairs from its oldest missing open
+                # (bootstrap `_resume_plan`), not with the deep full-window bootstrap.
+                self._note_rebootstrap({binding_id: restored[binding_id] for binding_id in gaps})
             for binding_id in gaps:
                 restored.pop(binding_id, None)
             logger.warning(
@@ -780,6 +807,14 @@ class StableBinanceBarEdge:
             raise RuntimeError("stable BAR repair cannot write the active checkpoint")
         if self.state_path is None:
             return
+        # DL v2.4.4: the derived thread and the main loop both checkpoint; one writer at a time (shared temp path).
+        lock = getattr(self, "_persist_lock", None)
+        if lock is None:
+            lock = self._persist_lock = threading.Lock()
+        with lock:
+            self._persist_state_locked()
+
+    def _persist_state_locked(self) -> None:
         parent = self.state_path.parent
         parent.mkdir(parents=True, exist_ok=True)
         temporary = parent / f".{self.state_path.name}.{os.getpid()}.tmp"
@@ -1067,9 +1102,10 @@ class StableBinanceBarEdge:
         self._assert_canonical_cache_identity()
         if advance_watermark:
             # Publish progress: the live watermark may move on the Kafka ACK.
-            self._last_open_ms[plan.source.binding_id] = max(
-                max(plan.expected_opens), self._last_open_ms.get(plan.source.binding_id, 0)
-            )
+            with self._watermark_guard():
+                self._last_open_ms[plan.source.binding_id] = max(
+                    max(plan.expected_opens), self._last_open_ms.get(plan.source.binding_id, 0)
+                )
             self._persist_state()
             self._record_serving(plan.source.binding_id, plan.expected_opens,
                                  published=bool(current.missing_envelopes))
@@ -1308,8 +1344,9 @@ class StableBinanceBarEdge:
         # DL v2.4.2 slice 3: a watermark is not proof of the rebuilt cache, but it
         # is the candidate resume point; bootstrap proves the window from the
         # cache before trusting it (`_resume_decision`).
-        self._note_rebootstrap(self._last_open_ms)
-        self._last_open_ms.clear()
+        with self._watermark_guard():
+            self._note_rebootstrap(dict(self._last_open_ms))
+            self._last_open_ms.clear()
         for name in ("_history_suspended", "_history_suffix_pending", "_history_retry"):
             getattr(self, name, {}).clear()
         self._native_recovery_pending.clear()
@@ -1575,7 +1612,8 @@ class StableBinanceBarEdge:
             previous = known.get(binding_id)
             if previous is not None and generation != previous:
                 rebased.append(binding_id)
-                watermark = self._last_open_ms.pop(binding_id, None)
+                with self._watermark_guard():
+                    watermark = self._last_open_ms.pop(binding_id, None)
                 if watermark is not None:
                     self._note_rebootstrap({binding_id: watermark})
                 for name in ("_history_suspended", "_history_suffix_pending", "_history_retry"):
@@ -1656,7 +1694,7 @@ class StableBinanceBarEdge:
                         or item["open_ms"] <= 0:
                     raise ValueError("watermark")
                 if digests.get(key) == item["binding_digest"] and key not in self._last_open_ms:
-                    adopted[key] = item["open_ms"]
+                    adopted[key] = max(item["open_ms"], self._resume_watermarks().get(key, 0))
         except (OSError, ValueError, TypeError, AttributeError):
             logger.warning("stable BAR resume watermarks ignored (unreadable or invalid): %s", path)
             return
@@ -1668,8 +1706,12 @@ class StableBinanceBarEdge:
                                 proofs: dict[str, dict]) -> int:
         """Missing durable final opens of the ``rows``-open grid window ending at ``last_open_ms`` (cache only)."""
 
+        return len(self._durable_window_missing_opens(source, last_open_ms, rows, proofs))
+
+    def _durable_window_missing_opens(self, source: StableSourceBinding, last_open_ms: int, rows: int,
+                                      proofs: dict[str, dict]) -> frozenset[int]:
         if rows <= 0:
-            return 0
+            return frozenset()
         interval_ms = _bar_interval_ms(source.interval or "")
         earliest = self._short_proof_floor(proofs, source.binding_id, self._bootstrap_rows_for(source))
         expected_opens = frozenset(
@@ -1679,7 +1721,33 @@ class StableBinanceBarEdge:
                 or last_open_ms - index * interval_ms > 0)
             and (earliest is None or last_open_ms - index * interval_ms >= earliest)
         )
-        return len(expected_opens - self._durable_final_bar_opens(source, expected_opens))
+        return frozenset(expected_opens - self._durable_final_bar_opens(source, expected_opens))
+
+    def _resume_plan(self, source: StableSourceBinding, watermark_ms: int, observed_ms: int,
+                     bootstrap_rows: int, proofs: dict[str, dict]) -> tuple[int | None, int, int]:
+        """``(resume_from_ms, rows, durable_missing)`` for a resume candidate; ``resume_from_ms`` None = deep path.
+
+        Cache only. The part of the current demand window at or before the old watermark is read back. Every
+        open older than its oldest missing open is durable by construction, so the provider read starts there (or at the watermark when
+        nothing is missing) and covers the rest of the window up to the latest close. If repairing from the
+        oldest missing open would need the whole demand window, the durable window did not survive:
+        ``RESUME_DURABLE_WINDOW_INCOMPLETE`` and the deep bootstrap.
+        """
+
+        interval_ms = _bar_interval_ms(source.interval or "")
+        # Only the part of today's demand window at or before the watermark must be durable: the window ending
+        # at the latest close is the suffix from the watermark plus these older opens.
+        older = bootstrap_rows - self._resume_rows(source, watermark_ms, observed_ms, bootstrap_rows) + 1
+        missing = self._durable_window_missing_opens(source, watermark_ms, max(1, older), proofs)
+        resume_from = min(missing) - interval_ms if missing else watermark_ms
+        if resume_from <= 0:
+            return None, bootstrap_rows, len(missing)
+        rows = self._resume_rows(source, resume_from, observed_ms, bootstrap_rows)
+        if missing and rows >= bootstrap_rows:
+            return None, bootstrap_rows, len(missing)  # the surviving durable window cannot bound the read
+        # Nothing missing but an outage at least as long as the window: a capped full-window read, still one
+        # resume read (`suffix_read` is False for it in bootstrap_history).
+        return resume_from, rows, len(missing)
 
     def _resume_rows(self, source: StableSourceBinding, resume_from_ms: int, observed_ms: int,
                      bootstrap_rows: int) -> int:
@@ -1690,38 +1758,103 @@ class StableBinanceBarEdge:
 
     def _venue_hole_decision(self, source: StableSourceBinding, acquisition: StableAcquisitionBinding,
                              hole: BarHistoryProviderHoleError, *, requested: int, resume_from: int | None,
-                             proofs: dict[str, dict]) -> dict:
-        """Decide a venue hole from durable coverage alone.
+                             proofs: dict[str, dict]) -> tuple[dict, tuple]:
+        """Decide a venue hole from durable coverage alone; return ``(record, envelopes to publish)``.
 
-        The demanded window is the ``requested`` grid opens ending at the newest
-        close. The provider certified the suffix after the newest hole; every
-        older open of that window, including the bars the venue lacks, must
-        already be durable. Then the cache stays gap-free and live resumes
-        (``VENUE_HOLE_DURABLY_COVERED``). Otherwise - typically a hole inside the
-        suffix after the resume watermark, which no one holds - it is refused
-        fail-closed (``VENUE_HOLE_NOT_COVERED``) and rechecked later.
+        The demanded window is the ``requested`` grid opens ending at the newest venue close. Every bar the venue
+        returned (both sides of every hole, each run continuity-checked by the fetcher) is published; the
+        canonical core validates each one. Only the opens the venue lacks inside the returned window (the hole
+        spans) are decided from the cache:
+        - all durable: ``VENUE_HOLE_DURABLY_COVERED``, the window is gap-free;
+        - otherwise ``VENUE_HOLE_NOT_COVERED``: fail-closed for exactly that span (no bar is invented, a
+          derived bucket over it stays a gap and a warmup across it is refused as a gap), while live bars
+          resume. The span is rechecked (``_recheck_venue_holes``).
+        Demanded opens older than the returned bars (a fetcher that stops at the hole) are reported, not decided.
         """
 
         interval_ms = _bar_interval_ms(source.interval or "")
-        suffix_opens = [self._open_time_ms(acquisition, item) for item in hole.recent_envelopes]
-        first_open = min(suffix_opens)
-        venue_missing = max(0, (hole.current - hole.previous) // interval_ms - 1)
-        older = max(0, requested - len(suffix_opens))
-        durable_missing = (self._durable_window_missing(source, first_open - interval_ms, older, proofs)
-                           if venue_missing <= _MAX_DURABLE_BAR_ROWS else older or 1)
+        values = tuple(hole.window_envelopes)
+        venue_opens = {self._open_time_ms(acquisition, item) for item in values}
+        latest = max(venue_opens)
+        earliest = self._short_proof_floor(proofs, source.binding_id, self._bootstrap_rows_for(source))
+        grid = [latest - index * interval_ms for index in range(requested)
+                if latest - index * interval_ms > 0
+                and (earliest is None or latest - index * interval_ms >= earliest)]
+        oldest_venue = min(venue_opens)
+        interior = frozenset(value for value in grid if value >= oldest_venue and value not in venue_opens)
+        below = frozenset(value for value in grid if value < oldest_venue)
+        uncovered = interior - self._durable_final_bar_opens(source, interior) if interior else frozenset()
+        below_missing = below - self._durable_final_bar_opens(source, below) if below else frozenset()
         if resume_from is None:
             position = "NO_RESUME_WATERMARK"
         elif hole.previous >= resume_from:
             position = "INSIDE_RESUME_SUFFIX"
         else:
             position = "OLDER_THAN_RESUME_WATERMARK"
-        return {
-            "code": VENUE_HOLE_DURABLY_COVERED if durable_missing == 0 else VENUE_HOLE_NOT_COVERED,
+        record = {
+            "code": VENUE_HOLE_DURABLY_COVERED if not uncovered else VENUE_HOLE_NOT_COVERED,
             "provider": hole.provider, "symbol": hole.symbol, "interval": hole.interval,
-            "previous_ms": hole.previous, "current_ms": hole.current, "venue_missing_rows": venue_missing,
-            "durable_missing_rows": durable_missing, "position": position, "suffix_rows": len(suffix_opens),
+            "previous_ms": hole.previous, "current_ms": hole.current, "venue_missing_rows": len(interior),
+            "durable_missing_rows": len(uncovered), "position": position, "suffix_rows": len(hole.recent_envelopes),
+            "venue_rows": len(venue_opens), "below_window_missing_rows": len(below_missing),
             "recorded_at": int(self.clock()),
         }
+        if uncovered:
+            record.update(uncovered_from_ms=min(uncovered), uncovered_to_ms=max(uncovered),
+                          recheck_attempt=0, recheck_at=self.clock() + _VENUE_HOLE_RETRY_SECONDS)
+        grid_set = frozenset(grid)
+        return record, tuple(item for item in values if self._open_time_ms(acquisition, item) in grid_set)
+
+    def _recheck_venue_holes(self, observed_ms: int) -> None:
+        """Re-verify one due ``VENUE_HOLE_NOT_COVERED`` span per turn: cache first, then a bounded venue read.
+
+        The read covers the span to the latest close (within the demand); only missing opens are published.
+        The recheck interval doubles from ``_VENUE_HOLE_RETRY_SECONDS`` to ``_VENUE_HOLE_RECHECK_MAX_SECONDS``.
+        """
+
+        holes = getattr(self, "_history_venue_holes", {})
+        now = self.clock()
+        due = sorted((item["recheck_at"], key) for key, item in holes.items()
+                     if item.get("code") == VENUE_HOLE_NOT_COVERED and item.get("recheck_at", now + 1) <= now)
+        if not due:
+            return
+        binding_id = due[0][1]
+        record = holes[binding_id]
+        pairs = {source.binding_id: (source, acquisition)
+                 for source, acquisition in self.history_bindings + self.history_okx_bindings}
+        if binding_id not in pairs:
+            holes.pop(binding_id, None)
+            return
+        source, acquisition = pairs[binding_id]
+        interval_ms = _bar_interval_ms(source.interval or "")
+        span = frozenset(range(record["uncovered_from_ms"], record["uncovered_to_ms"] + 1, interval_ms))
+        healed = False
+        try:
+            if self._durable_final_bar_opens(source, span) == span:
+                healed = True
+            else:
+                bootstrap_rows = self._bootstrap_rows_for(source)
+                rows = self._resume_rows(source, record["uncovered_from_ms"] - interval_ms, observed_ms,
+                                         bootstrap_rows)
+                values = self._fetch_history(source, acquisition, rows=rows, observed_ms=observed_ms,
+                                             allow_short=True)
+                if values:
+                    self._publish_history(source, acquisition, values, expected_rows=len(values))
+                    healed = True
+        except BarHistoryProviderHoleError:
+            healed = False
+        except Exception as error:  # a recheck never fails the cycle; it is rescheduled like a refusal
+            logger.warning("stable BAR venue hole recheck failed binding=%s: %s", binding_id, error)
+            healed = False
+        if healed:
+            holes.pop(binding_id, None)
+            logger.warning(json.dumps({"event": "qdl_bar_edge_venue_hole_healed", "binding": binding_id,
+                                       "uncovered_from_ms": record["uncovered_from_ms"],
+                                       "uncovered_to_ms": record["uncovered_to_ms"]},
+                                      sort_keys=True, separators=(",", ":")))
+            return
+        record["recheck_attempt"] = attempt = record.get("recheck_attempt", 0) + 1
+        record["recheck_at"] = now + min(_VENUE_HOLE_RETRY_SECONDS * 2 ** attempt, _VENUE_HOLE_RECHECK_MAX_SECONDS)
 
     def _record_serving(self, binding_id: str, opens: frozenset[int], *, published: bool) -> None:
         if getattr(self, "bar_readback", None) is None:
@@ -1807,6 +1940,8 @@ class StableBinanceBarEdge:
         self._rebase_changed_products()
         if not self._history_bootstrap_active:
             return 0
+        if getattr(self, "bar_readback", None) is not None and getattr(self, "_history_venue_holes", None):
+            self._recheck_venue_holes(self._settled_observed_ms())
         if self._history_bootstrapped:
             return 0
         if getattr(self, "_rebootstrap_since", None) is None:
@@ -1855,9 +1990,10 @@ class StableBinanceBarEdge:
             if resume_from is not None:
                 if proofs is None:
                     proofs = self._load_short_proofs()
-                # Cache-only proof that everything up to the old watermark survived the rebuild.
-                missing = self._durable_window_missing(source, resume_from, bootstrap_rows, proofs)
-                if missing:
+                # Cache-only proof of the surviving durable window; the read starts at its oldest missing open.
+                planned_from, planned_rows, missing = self._resume_plan(
+                    source, resume_from, observed_ms, bootstrap_rows, proofs)
+                if planned_from is None:
                     resume.pop(source.binding_id, None)
                     self._persist_resume_sidecar()
                     logger.warning(json.dumps({
@@ -1866,7 +2002,7 @@ class StableBinanceBarEdge:
                         "durable_missing_rows": missing}, sort_keys=True, separators=(",", ":")))
                     resume_from = None
                 else:
-                    rows = self._resume_rows(source, resume_from, observed_ms, bootstrap_rows)
+                    resume_from, rows = planned_from, planned_rows
             if resume_from is not None:
                 if resume_quantum is not None and attempted_resume >= resume_quantum:
                     return published
@@ -1886,19 +2022,19 @@ class StableBinanceBarEdge:
                     raise
                 if proofs is None:
                     proofs = self._load_short_proofs()
-                hole_decision = self._venue_hole_decision(source, acquisition, hole, requested=rows,
-                                                          resume_from=resume_from, proofs=proofs)
+                hole_decision, values = self._venue_hole_decision(source, acquisition, hole, requested=rows,
+                                                                  resume_from=resume_from, proofs=proofs)
                 holes[source.binding_id] = hole_decision
                 event = {"event": "qdl_bar_edge_venue_hole", "binding": source.binding_id, **hole_decision}
                 if hole_decision["code"] != VENUE_HOLE_DURABLY_COVERED:
-                    attempt += 1
-                    failures[source.binding_id] = (attempt, self.clock() + _VENUE_HOLE_RETRY_SECONDS)
-                    logger.error(json.dumps({**event, "attempt": attempt, "refused": True,
-                                             "retry_in_seconds": _VENUE_HOLE_RETRY_SECONDS},
+                    # DL v2.4.4 (DL-BL-2026-11-25-C): fail-closed for the span only; live bars resume.
+                    logger.error(json.dumps({**event, "refused": True, "span_fail_closed": True,
+                                             "binding_resumed": True,
+                                             "recheck_in_seconds": _VENUE_HOLE_RETRY_SECONDS},
                                             sort_keys=True, separators=(",", ":")))
-                    continue
-                logger.warning(json.dumps({**event, "refused": False}, sort_keys=True, separators=(",", ":")))
-                values = hole.recent_envelopes
+                else:
+                    logger.warning(json.dumps({**event, "refused": False}, sort_keys=True,
+                                              separators=(",", ":")))
             except ProviderInstrumentUnavailable as unavailable:
                 # DL v2.4.2: the provider says this instrument does not exist (delisted/closed). Quarantine this
                 # one binding with a long retry and continue with the others; never fail the whole cycle.
@@ -2348,7 +2484,7 @@ class StableBinanceBarEdge:
             parent = self._derived_parent[binding_id]
             if not (self._live_history_ready(binding_id)
                     and self._live_history_ready(parent.binding_id)
-                    and binding_id in self._last_open_ms):
+                    and self._last_open_ms.get(binding_id) is not None):
                 self._derived_next_at[binding_id] = now + _DERIVED_PARENT_WAIT_SECONDS
                 continue
             interval_ms = _bar_interval_ms(source.interval or "")
@@ -2370,11 +2506,16 @@ class StableBinanceBarEdge:
                     open_ms, interval=source.interval, base_interval=base_interval)
             ))
 
+            # DL-DEF-2026-11-26-I: base opens not yet *available* are waited for, never declared a gap. For a
+            # derived parent that is every open past its watermark (it has not produced it yet, e.g. its own pass
+            # was late) and every open it ACKed that is not yet read back durable.
+            pending = self._derived_pending_constituents(parent.binding_id, now)
+
             def decide(open_ms: int) -> derived_bars.DerivedDecision:
                 return derived_bars.decide(
                     open_ms=open_ms, interval=source.interval, base_interval=base_interval,
                     parent_rows=parent_rows, existing=existing.get(open_ms),
-                    now_ms=now_ms, gap_grace_ms=grace_ms,
+                    now_ms=now_ms, gap_grace_ms=grace_ms, pending_constituents=pending,
                 )
 
             publish: list[derived_bars.DerivedDecision] = []
@@ -2399,6 +2540,8 @@ class StableBinanceBarEdge:
                     healed.append(open_ms)
                 elif decision.action == derived_bars.SKIP:
                     healed.append(open_ms)
+                elif decision.action == derived_bars.WAIT:
+                    gaps[open_ms] = now + _DERIVED_POLL_SECONDS  # its base is on the way: recheck at poll cadence
                 else:
                     gaps[open_ms] = now + _DERIVED_GAP_RECHECK_SECONDS
             if publish:
@@ -2421,6 +2564,11 @@ class StableBinanceBarEdge:
                     )
                 acknowledged_total += len(acknowledgements)
                 self.derived_published += len(acknowledgements)
+                inflight = self._derived_inflight_for(binding_id)
+                for decision in publish:
+                    inflight[decision.open_ms] = now
+                # Children recheck now (and their gaps over these opens), not on their own 30 s timer.
+                self._wake_derived_children(binding_id, now)
             for open_ms in healed:
                 gaps.pop(open_ms, None)
                 logger.info("stable derived BAR gap healed binding=%s open_ms=%s", binding_id, open_ms)
@@ -2436,8 +2584,11 @@ class StableBinanceBarEdge:
                 gaps.pop(dropped)
                 logger.error("stable derived BAR gap kept binding=%s open_ms=%s", binding_id, dropped)
             if watermark != last:
-                self._last_open_ms[binding_id] = watermark
-                moved = True
+                # Compare-and-set: a rebase on the main thread may have dropped this watermark meanwhile.
+                with self._watermark_guard():
+                    if self._last_open_ms.get(binding_id) == last:
+                        self._last_open_ms[binding_id] = watermark
+                        moved = True
             # Poll again soon while a target waits on its base or the
             # catch-up quantum left closed targets behind the watermark.
             behind = watermark < boundary - interval_ms
@@ -2450,6 +2601,51 @@ class StableBinanceBarEdge:
         if acknowledged_total:
             logger.info("stable derived BAR ACK count=%s", acknowledged_total)
         return acknowledged_total
+
+    def _watermark_guard(self) -> threading.Lock:
+        lock = getattr(self, "_watermark_lock", None)
+        if lock is None:
+            lock = self._watermark_lock = threading.Lock()
+        return lock
+
+    def _derived_inflight_for(self, binding_id: str) -> dict[int, float]:
+        table = getattr(self, "_derived_inflight", None)
+        if table is None:
+            table = self._derived_inflight = {}
+        return table.setdefault(binding_id, {})
+
+    def _derived_pending_constituents(self, parent_id: str, now: float) -> frozenset[int] | _PastWatermark:
+        """Base opens of a derived parent that are not yet available (see ``derived_bars.decide``)."""
+
+        derived_ids = getattr(self, "_derived_ids", None)
+        if derived_ids is None:
+            derived_ids = self._derived_ids = frozenset(item.binding_id for item, _a in self.derived_bindings)
+        if parent_id not in derived_ids:
+            return frozenset()  # a native/REST parent: its bars come from elsewhere; the wall-clock grace applies
+        inflight = self._derived_inflight_for(parent_id)
+        for open_ms, at in list(inflight.items()):
+            if now - at > _DERIVED_INFLIGHT_SECONDS:
+                inflight.pop(open_ms, None)
+        watermark = self._last_open_ms.get(parent_id)
+        return _PastWatermark(watermark, frozenset(inflight))
+
+    def _index_derived_children(self) -> dict[str, tuple[str, ...]]:
+        children: dict[str, list[str]] = {}
+        for child, parent in getattr(self, "_derived_parent", {}).items():
+            children.setdefault(parent.binding_id, []).append(child)
+        self._derived_children = {key: tuple(value) for key, value in children.items()}
+        return self._derived_children
+
+    def _wake_derived_children(self, binding_id: str, now: float) -> None:
+        children = getattr(self, "_derived_children", None)
+        if children is None:
+            children = self._index_derived_children()
+        for child in children.get(binding_id, ()):
+            self._derived_next_at[child] = 0.0
+            gaps = self._derived_gaps.get(child)
+            if gaps:
+                for open_ms in gaps:
+                    gaps[open_ms] = min(gaps[open_ms], now)
 
     def _derived_next_wake(self, now: float) -> float | None:
         if not getattr(self, "_derived_active", False):
@@ -2680,11 +2876,11 @@ class StableBinanceBarEdge:
             return None
         return max(.1, min(max(0., retries.get(key, (0, now))[1] - now) for key in missing))
 
-    def _loop_sleep_seconds(self, now: float) -> float:
+    def _loop_sleep_seconds(self, now: float, *, include_derived: bool = True) -> float:
         delay = 60.0
         if self._rest_fallback_active or getattr(self, "_native_recovery_active", False):
             delay = max(0.01, self._next_ready_at(now) - now)
-        derived_at = self._derived_next_wake(now)
+        derived_at = self._derived_next_wake(now) if include_derived else None
         if derived_at is not None:
             delay = min(delay, max(0.01, derived_at - now))
         history_delay = self._history_loop_delay(now)
@@ -2699,6 +2895,7 @@ class StableBinanceBarEdge:
                 pass
             return
         failures = 0
+        derived_thread = self._start_derived_thread()
         while not self._stopped.is_set():
             # R1.31. The edge writes its state file only when a checkpoint
             # moves, which for the intervals it still owns can be hours apart -
@@ -2734,7 +2931,7 @@ class StableBinanceBarEdge:
                     self.run_cycle()
                 if getattr(self, "_native_recovery_active", False):
                     self.run_native_recovery_cycle()
-                if getattr(self, "_derived_active", False):
+                if getattr(self, "_derived_active", False) and derived_thread is None:
                     self.run_derived_cycle()
                 failures = 0
             except KnBarReadbackNotReady as error:
@@ -2749,15 +2946,58 @@ class StableBinanceBarEdge:
                 logger.exception(
                     "stable crypto BAR cycle failed consecutive_failures=%s", failures
                 )
-            delay = self._loop_sleep_seconds(self.clock())
+            delay = (self._loop_sleep_seconds(self.clock()) if derived_thread is None
+                     else self._loop_sleep_seconds(self.clock(), include_derived=False))
             if failures:
                 # DL v2.4.2: a failing cycle waits at least 2 s, doubling to 30 s (it was `min`, so the scheduler's
                 # ~0.1 s history delay won and a failing cycle repeated every ~2 s, 2026-11-19 RVN-USDT-SWAP).
                 delay = max(delay, min(2 ** min(failures, 6), 30))
             self._stopped.wait(delay)
 
+    def _start_derived_thread(self) -> threading.Thread | None:
+        """DL v2.4.4 (DL-DEF-2026-11-26-I): DERIVED_FINAL bars publish on their own thread.
+
+        On 2026-11-26 00:00Z the REST poll read about 532 closed bars (483 of them 1d), paced by provider admission
+        with 503 retries, for about 2.5 min. The derived cycle ran after it in the same loop, so no derived bar was
+        published until 00:03:05, and the 1h bars of 20 OKX instruments landed at 00:04:47. The derived cycle does
+        no provider I/O (cache reads and Kafka publishes only), so it runs here with one thread. Provider admission
+        is untouched. Shared state is a checkpoint, written under a lock, and watermarks: the derived thread moves
+        only derived bindings' watermarks.
+        """
+
+        if not getattr(self, "_derived_active", False) or not getattr(self, "derived_thread_enabled", True):
+            return None
+        thread = threading.Thread(target=self._derived_loop, name="qdl-derived-bars", daemon=True)
+        thread.start()
+        self._derived_thread = thread
+        return thread
+
+    def _derived_loop(self) -> None:
+        failures = 0
+        while not self._stopped.is_set():
+            try:
+                self.run_derived_cycle()
+                failures = 0
+            except KnBarReadbackNotReady as error:
+                failures += 1
+                logger.warning("stable derived BAR readback not ready, retrying consecutive_failures=%s: %s",
+                               failures, error)
+            except Exception:
+                failures += 1
+                logger.exception("stable derived BAR cycle failed consecutive_failures=%s", failures)
+            now = self.clock()
+            wake = self._derived_next_wake(now)
+            delay = _DERIVED_THREAD_MAX_SLEEP_SECONDS if wake is None else max(
+                0.01, min(_DERIVED_THREAD_MAX_SLEEP_SECONDS, wake - now))
+            if failures:
+                delay = max(delay, min(2 ** min(failures, 6), 30))
+            self._stopped.wait(delay)
+
     def stop(self, *_args) -> None:
         self._stopped.set()
+        thread = getattr(self, "_derived_thread", None)
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=5.0)
         self.publisher.close()
 
 

@@ -139,8 +139,15 @@ def decide(
     existing: DurableBarRow | None,
     now_ms: int,
     gap_grace_ms: int,
+    pending_constituents: frozenset[int] = frozenset(),
 ) -> DerivedDecision:
-    """Decide one target open from durable rows only (no I/O)."""
+    """Decide one target open from durable rows only (no I/O).
+
+    ``pending_constituents`` (DL v2.4.4, DL-DEF-2026-11-26-I) lists base opens that are not yet *available*: the
+    edge's own derived parent has not produced them, or published them and they are not yet durable. A missing
+    constituent in that set is waited for and never declared a gap, whatever the wall clock says. The gap grace
+    applies only to constituents that should already be durable.
+    """
 
     opens = constituent_opens(open_ms, interval=interval, base_interval=base_interval)
     rows = tuple(parent_rows.get(item) for item in opens)
@@ -162,6 +169,8 @@ def decide(
         return DerivedDecision(SKIP, open_ms, reason="DURABLE_ROW_PRESENT")
     close_ms = open_ms + canonical_interval_ms(interval)
     missing = sum(1 for row in rows if row is None)
+    if any(row is None and item in pending_constituents for item, row in zip(opens, rows)):
+        return DerivedDecision(WAIT, open_ms, reason=f"CONSTITUENTS_PENDING:{missing}")
     if now_ms >= close_ms + gap_grace_ms:
         return DerivedDecision(GAP, open_ms, reason=f"MISSING_CONSTITUENTS:{missing}")
     return DerivedDecision(WAIT, open_ms, reason=f"MISSING_CONSTITUENTS:{missing}")

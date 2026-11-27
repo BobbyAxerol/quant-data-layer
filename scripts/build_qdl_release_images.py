@@ -65,7 +65,7 @@ from scripts.host_measurement_lock import MAX_MINUTES as MAX_LOCK_MINUTES, lock_
 # v2.4.3 (bar_edge resume after a market-cache loss, typed venue history holes, DL-DEF-2026-11-25-A): python only;
 # the Rust roles keep their v2.4.2 image.
 RELEASE = "2.4.3"
-SDK_VERSION = "2.10.0"
+SDK_VERSION = "2.10.1"
 REPO = Path(__file__).resolve().parents[1]
 HOME = Path.home()
 STATE_ROOT = HOME / ".local/state/qdl-v2"
