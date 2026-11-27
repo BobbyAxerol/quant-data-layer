@@ -81161,3 +81161,14 @@ bake `qdl_sdk`; Crossec image `a5b58033` has 2.10.0) or, without a bump, build t
   and T8 12:15-12:50Z with an 8-min start margin, no other build, one heavy slot). Step B (pin `RUST_BASE_TAG/ID` in
   the recipe in its own commit, then `--component rust --build` from that commit, R0, VERSION_REGISTER row) follows.
   No rust role roll: the coordinator decides after R0.
+
+### DL v2.4.4 rust base refresh step B: pin the new base (tested locally) - 2026-11-27 (Claude)
+
+- Step A ran from the gate wrapper (pid 3194433): DONE rc 0 at 11:46:43Z, `qdl-v2-rust-base:bookworm-v244-20261127` =
+  `sha256:3b5cf993b8c99f4d59c40f430f4313bc6c2eb09a9066a1bbc428cafc916b555c`, recipe sha256 `bc75b806…`. trivy 0.70.0 on
+  the base (light slot, DB not updated since the 10:5xZ R0 run): 0 fixable CRITICAL/HIGH (CVE-2025-6020 gone).
+- Recipe: `RUST_BASE_TAG` / `RUST_BASE_ID` pinned to it (so `BUILD_METHOD` names `3b5cf993`); recipe test updated;
+  `tests.test_build_qdl_release_images` OK (host).
+- Next: the rust image from this commit (`--component rust --build`) in the safe slot 13:46-14:05Z (after W-DLQ
+  13:06-13:13Z, finishing before T8 14:15Z), then R0 and the VERSION_REGISTER row. Python image unchanged
+  (`0e14a5f4`, R0 PASS).

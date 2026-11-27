@@ -127,8 +127,11 @@ RUST_BASE_RECIPE = (
 )
 # Built 2026-11-18 from RUST_BASE_RECIPE (recipe sha256 86e535de...; debian 12.15 with perl-base 5.36.0-7+deb12u4, apt
 # 2.6.2, libpcre2-8-0 10.42-1+deb12u2). The previous base c46ae0fa stays only as the parent of older images.
-RUST_BASE_TAG = "qdl-v2-rust-base:bookworm-v240-20261118"
-RUST_BASE_ID = "sha256:b33ec0cb161e80f3300684f96fa956eedabc49325e401a170fb25c02d4b2eef7"
+# DL v2.4.4: rebuilt 2026-11-27 11:46Z from RUST_BASE_RECIPE with RUST_BASE_REFRESH (recipe sha256 bc75b806...) for
+# CVE-2025-6020 (libpam deb12u3); trivy 0.70.0: 0 fixable CRITICAL/HIGH. The 2026-11-18 base b33ec0cb stays only as
+# the parent of the images built on it (rollback).
+RUST_BASE_TAG = "qdl-v2-rust-base:bookworm-v244-20261127"
+RUST_BASE_ID = "sha256:3b5cf993b8c99f4d59c40f430f4313bc6c2eb09a9066a1bbc428cafc916b555c"
 PYTHON_BASE = (
     "python:3.12-slim@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a"
 )
