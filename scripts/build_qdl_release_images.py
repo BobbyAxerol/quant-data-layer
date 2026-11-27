@@ -112,9 +112,13 @@ BUILDER_IMAGE = "sha256:2cb66ad6bb4033a5d9d6814ab40d260619472568ab7e1826ebbc460f
 # `apt-get upgrade` on the current bookworm point release (network for apt only), via `--build-base`.
 DEBIAN_BASE = "debian@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241"
 RUNTIME_APT_PACKAGES = ("ca-certificates", "libssl3", "libzstd1", "zlib1g")
+# DL v2.4.4 R0 (trivy 2026-11-27: CVE-2025-6020 libpam 1.5.2-6+deb12u2, fixed deb12u3, in b33ec0cb): a refresh marker
+# inside the RUN line changes its layer cache key, so `--build-base` re-runs the apt upgrade instead of reusing the
+# 2026-11-18 layer. Bump it for every base refresh.
+RUST_BASE_REFRESH = "2026-11-27-cve-2025-6020"
 RUST_BASE_RECIPE = (
     f"FROM {DEBIAN_BASE}\n"
-    "RUN apt-get update -qq \\\n"
+    f"RUN echo qdl-base-refresh-{RUST_BASE_REFRESH} && apt-get update -qq \\\n"
     "    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \\\n"
     "    && apt-get install -y --no-install-recommends " + " ".join(RUNTIME_APT_PACKAGES) + " \\\n"
     "    && rm -rf /var/lib/apt/lists/* \\\n"

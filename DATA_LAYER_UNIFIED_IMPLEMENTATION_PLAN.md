@@ -81149,3 +81149,15 @@ bake `qdl_sdk`; Crossec image `a5b58033` has 2.10.0) or, without a bump, build t
   reproduces `535ec6cc` / `a0eff1c8`; new hashes `ac9bb831` / `a1c2d29e`; whole-project rolediff = exactly the two
   Query image paths; images present; MemAvailable 12 GB; it refused only because a (TS) docker build was running,
   which is the intended gate.
+
+### DL v2.4.4 rust base refresh for CVE-2025-6020 (coordinator GO 2026-11-27 ~10:58Z): step A recipe change - 2026-11-27 (Claude)
+
+- `scripts/build_qdl_release_images.py`: `RUST_BASE_REFRESH = "2026-11-27-cve-2025-6020"` inside the base recipe's RUN
+  line. Without it `--build-base` would reuse Docker's cached 2026-11-18 apt-upgrade layer (identical instruction
+  text) and produce the same vulnerable base. Test pins the marker in the RUN line; `tests.test_build_qdl_release_images`
+  OK (host).
+- Step A (base build, new tag `qdl-v2-rust-base:bookworm-v244-20261127`, never moving the old tag) runs from the gate
+  wrapper `scratchpad/v244/dl_v244_rustbase_gate.sh` (TS rc native DONE, :46-:05, outside the Query roll 12:06-12:13Z
+  and T8 12:15-12:50Z with an 8-min start margin, no other build, one heavy slot). Step B (pin `RUST_BASE_TAG/ID` in
+  the recipe in its own commit, then `--component rust --build` from that commit, R0, VERSION_REGISTER row) follows.
+  No rust role roll: the coordinator decides after R0.

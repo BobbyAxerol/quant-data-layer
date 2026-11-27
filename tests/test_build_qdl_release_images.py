@@ -132,6 +132,8 @@ class RuntimeBaseTests(unittest.TestCase):
         for package in ("ca-certificates", "libssl3", "libzstd1", "zlib1g"):
             self.assertIn(package, recipe)
         self.assertIn("useradd --uid 10001 --gid 10001", recipe)
+        # DL v2.4.4: the refresh marker is inside the RUN line, so it changes the layer cache key.
+        self.assertIn(f"RUN echo qdl-base-refresh-{b.RUST_BASE_REFRESH} && apt-get update", recipe)
         dockerfile = (REPO / "Dockerfile.qdl-rust-runtime").read_text()
         self.assertIn(f"FROM {b.DEBIAN_BASE}", dockerfile)  # same debian as the runtime stage
 
