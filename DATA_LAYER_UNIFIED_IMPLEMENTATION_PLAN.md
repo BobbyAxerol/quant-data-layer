@@ -81190,3 +81190,16 @@ bake `qdl_sdk`; Crossec image `a5b58033` has 2.10.0) or, without a bump, build t
 - R0: trivy 0.70.0, 0 fixable CRITICAL/HIGH (CVE-2025-6020 gone). It replaces `8729292b` (R0 FAIL) for the rust roles
   (stream_kn x2, ingestor_okx_swap, optional ingestor_binance_usdm). No rust role is rolled; the coordinator decides.
   VERSION_REGISTER row added.
+
+### DL v2.4.4 rust roll packet prepared (W-DLR2, not rolled; coordinator runs it after the Crossec boot) - 2026-11-27 (Claude)
+
+- Packet `~/.local/state/qdl-v2/windows/v2.4.4-rust/PACKET.md`, script `window.sh` (dry | roll SVC | verify SVC |
+  rollback SVC), overlays `~/.local/state/qdl-v2/releases/v2.4.4-rust-compose/` (image variable only). Order
+  stream_kn_2 → stream_kn_1 → ingestor_okx_swap → optional ingestor_binance_usdm, one per invocation.
+- Dry run 13:54Z PASS 40/40: rollback layerings reproduce the live hashes (stream `4a588741`/`c861e521` with the W-DLR
+  ring override, okx `c51789cc` with the DEF-L config, binance `98b79831`), new hashes `c68b0a2c`/`accae48c`/`02007cc3`/
+  `66c79331`, rolediff of each layering = image paths only, ring env a2 present, no build running.
+- Verify: ring/lag/reader errors/dispatch p99/rss/last_value metrics (stream), lanes flowing and 0 rejections
+  (ingestor), Query HOT_RECORD_MISSING 0, no projection-cache identity line, no other container (stable_redis included)
+  restarted. Open decision: the stream overlay sets only the image (code default 2,048 last-value keys, plan
+  529,268,736 ≤ 536,870,912); adding `QDL_KN_LAST_VALUE_MAX_KEYS=1024` would be a second env delta.
