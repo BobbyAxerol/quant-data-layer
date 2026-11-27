@@ -2515,3 +2515,15 @@ filled after the window and the R-cert 2 final verdict (`drafts/RELEASE_FILL_LIS
 
 Not applied in this window: Binance stage C r8 (own window), Rust roles / bar_edge (follow-up). Receipt:
 `upgrade/evidence/releases/v2.3.1/window-query-x2-20261117T0722Z/RECEIPT.md`.
+
+### 2026-11-27 - v2.4.4 release candidate - DRAFT (tested locally, not certified)
+
+- Branch `release/v2.4.4` (worktree `/home/bobby/.worktrees/dl-v244-release`): DEF-J, DEF-L, DEF-M merged on
+  `release/v2.4.3`; Query typed `HOT_QUIET_BEYOND_MAX`; DL-BL-2026-11-26-K lifecycle API, SDK 2.11.0.
+- Packet: `upgrade/evidence/releases/v2.4.4/drafts/RELEASE_PACKET_DRAFT.md`.
+
+| Item | Pinned at | Result |
+|---|---|---|
+| Rust job (fmt, clippy -D warnings, workspace tests) | `6e6c831` (no Rust change after it) | PASS 569 / 0 / 72 ignored |
+| Python unit suite, 4 shards | `f09e288` | 4,601 tests: 8 errors = 3 harness (`noexec` tmpfs, OK on re-run) + 5 benchmark coverage gap (fixed in the packet commit, module 31 OK) |
+| Not run locally | | `--ignored` Kafka/Redis integration, cargo-deny, buf, pip-audit, trivy, full CI |

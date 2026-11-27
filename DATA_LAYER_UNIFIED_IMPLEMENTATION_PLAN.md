@@ -80781,3 +80781,38 @@ documented shapes (test provenance), not venue bytes.
 - The declaration gate does not call the recorder automatically yet (a one-line hook in `scripts/dl_declaration.py`
   gate, deferred to keep this slice off the declaration path).
 - TS order admission on lifecycle is TS scope.
+
+### DL v2.4.4: full local Python suite, benchmark inventory gap fixed, release packet draft (tested locally) - 2026-11-27 (Claude)
+
+**Full unit suite, CI shape** (`python -B -m scripts.ci_test_shard --shard i --of 4`, shard 1 with
+`--verify-partition`) on a `git archive` snapshot of `f09e288` mounted read-only at /app in
+`qdl-v2-python:2.4.3.1-b8935d1` (the CI image `data-layer:v0.1.0` is not built locally), tmpfs `/tmp` and `/app/logs`,
+`--rm --network none --cpus 1 --cpu-shares 256 --memory 1g`, one container at a time in one light slot,
+04:55-06:13Z, load 19-24. Partition check PASS: 374 modules over 4 shards.
+
+| Shard | Tests | Result |
+|---|---|---|
+| 1 | 1013 | OK, 9 skipped |
+| 2 | 728 | 3 errors, 11 skipped: `test_ci_kafka_recovery_controller` x3. **Harness, not code:** the test executes a fake `docker` it writes under `TMPDIR`, and Docker's `--tmpfs` defaults to `noexec`. Re-run with `--tmpfs /tmp:exec`: OK |
+| 3 | 1370 | OK, 25 skipped |
+| 4 | 1490 | 5 errors, 89 skipped: `test_consumer_endpoint_benchmark` x5, `OpenAPI benchmark coverage drift: GET /v2/instruments/{identity}/lifecycle`. **Real gap from BL-K, fixed below** |
+
+Total 4,601 tests. The impacted-module run before the BL-K commit missed this module: it was not on my impact list
+(the benchmark fails closed on any public path it does not cover).
+
+**Fix.** `scripts/benchmark_consumer_endpoints.py` covers `instrument_lifecycle` (one case per instrument, identity
+checked against the SDK `InstrumentLifecycleResponse`); `tests/test_consumer_endpoint_benchmark.py` coverage count
+12 → 13. Re-run `tests.test_consumer_endpoint_benchmark tests.test_ci_kafka_recovery_controller`: 31 OK. The four
+shards were not re-run after this one-module change (CI runs the full suite on the push).
+
+**Release packet draft:** `upgrade/evidence/releases/v2.4.4/drafts/RELEASE_PACKET_DRAFT.md`: roles (stream_kn x2,
+query_kn x2, binance_bar_edge, ingestor_okx_swap with the r11 lane file, optional ingestor_binance_usdm; cores,
+projectors, Kafka, Redis, TS untouched), build commands, per-role rollback digests, evidence table, CI plan per job
+(classifier dry run: scoped python+rust+contracts, no CI-defining file), and the DEF-M follow-up 1 design (REST BBO
+reconciliation, OKX first, with an owner contract decision on the confirmation basis; not implemented).
+
+**Cleanup.** Snapshot copies removed by the runner; Rust snapshot removed. Kept: scratchpad `cargo-target` (4.0 GiB,
+shared warm cache) and the logs under scratchpad `v244/`. No image built, no container left (all `--rm`), no push.
+
+**Next.** Owner: GO for the recipe commit (`RELEASE = "2.4.4"`, references, binary expectations), then the build,
+R0, one PR to dev, the windows of the packet.
