@@ -80720,3 +80720,64 @@ together (the gateway side is DEF-M's tests).
 
 **Rollout.** Query image (`query_kn_1`, `query_kn_2`, rolling). Independent of the stream_kn order: an old Query
 with a new gateway reports `HOT_READER_UNAVAILABLE` (today's behaviour).
+
+### DL-BL-2026-11-26-K: instrument lifecycle observation API, `qdl.instrument-lifecycle.v1` (implemented, tested locally) - 2026-11-27 (Claude)
+
+**Status of the register item: implemented on `release/v2.4.4`, tested locally, NOT released; ledger not yet seeded.**
+Scope from the registration above and the proposal note (`.../crossec-owner50-preview/dl-delta/DL_FEATURE_NOTE_INSTRUMENT_LIFECYCLE_OBSERVATION.md`).
+
+**Interface (stable, versioned, additive; `stable-cross-system-interfaces`).**
+- `GET /v2/instruments/{identity}/lifecycle?after_sequence=0&limit=100` (limit 1..500), permission
+  `instruments:read`, response `qdl.instrument-lifecycle.v1`: identity fields (`instrument_uid`, `instrument_id`,
+  `venue`, `market`, `native_symbol`), `in_catalog`, `history_state` (`RECORDED` | `NO_OBSERVATION` |
+  `NOT_CONFIGURED`), `current` (status, venue_state, since_event_id, since_observed_utc, effective_utc) or null,
+  `events[]`, `next_after_sequence`, `ledger` (schema, ledger_id, sha256, events_total, head_event_id) or null.
+  Retired instruments resolve from the ledger; unknown to both catalogue and ledger: 404 `INSTRUMENT_NOT_FOUND`.
+- Event `qdl.instrument-lifecycle-event.v1`: `event_id` (sha256 of the canonical JSON without `event_id`),
+  per-instrument `sequence` + `previous_event_id`, `status` (PRELISTED/ACTIVE/HALTED/EXPIRED/DELISTED),
+  `venue_state` (venue field verbatim, or `ABSENT` from a full listing), `effective_utc` + `effective_basis` only when
+  the venue states the time in that capture (OKX listTime/expTime, Binance onboardDate/deliveryDate), `observed_utc`,
+  `evidence` (endpoint, doc_url, capture_sha256, provider_error, venue_times), `catalog_revision`, `source_revision`.
+  An event is a change of (status, venue_state).
+- Ledger file `qdl.v2.instrument-lifecycle-ledger.v1`, JSON Lines (header + events, file-wide `position`), opt-in for
+  Query via `QDL_INSTRUMENT_LIFECYCLE_LEDGER` (unset: NOT_CONFIGURED; named but missing/malformed: Query refuses to
+  start). Own revision, so it never moves `catalog_revision` (same reason as the v2.4.1 canonical metadata file).
+- Venue state maps (docs checked 2026-11-27): OKX public/instruments `state` live/post_only→ACTIVE,
+  suspend/rebase/settling→HALTED, preopen/test→PRELISTED (the adapter's mapping for test); Binance USD-M contract status
+  PENDING_TRADING→PRELISTED, TRADING→ACTIVE, TRADING_HALT/TRADING_CANCEL_ONLY/PRE_DELIVERING/DELIVERING/PRE_SETTLE/
+  SETTLING→HALTED, DELIVERED→EXPIRED, CLOSE→DELISTED; Binance spot TRADING→ACTIVE, END_OF_DAY/HALT/BREAK/CANCEL_ONLY→
+  HALTED. Absent from a full listing: EXPIRED for a dated future, else DELISTED. An unknown state is reported
+  (`unmapped`) and records nothing.
+- Fail closed: only a valid, non-empty listing response is accepted (`LIFECYCLE_CAPTURE_INVALID/EMPTY`); more than
+  half of the tracked instruments absent at once is `LIFECYCLE_CAPTURE_IMPLAUSIBLE`; a capture older than an
+  instrument's last event is `LIFECYCLE_CAPTURE_OUT_OF_ORDER`; a catalogue identity differing from the ledger is
+  `LIFECYCLE_IDENTITY_CONFLICT`. A DL outage or feed refusal never produces an event. History is never padded.
+- SDK 2.11.0: `AsyncDataLayerClient.instrument_lifecycle`, transports `instrument_lifecycle`,
+  `InstrumentLifecycleResponse` (+ event/evidence/current/ledger views); tolerant readers; status strings.
+- Writer: `scripts/instrument_lifecycle_record.py init|record|verify` (atomic write after an append-only proof).
+
+**Files.** `qdl/runtime/instrument_lifecycle.py` (new), `scripts/instrument_lifecycle_record.py` (new),
+`qdl/query/service.py` (`lifecycle_for`), `qdl/api_v2/router.py` (route), `qdl/api_v2/models.py`,
+`qdl/runtime/stable.py` + `stable_source.py` (wiring), `qdl_sdk/` (models, transport, client, version 2.11.0,
+CHANGELOG, README), `contracts/v2/openapi.snapshot.json` (regenerated: +1 path, +5 schemas, 411 insertions and no
+deletion), `DATA_LAYER_SERVICE_ACCESS_GUIDE.md`, version pins in `scripts/build_qdl_sdk_release.py`,
+`scripts/build_qdl_release_images.py` (`SDK_VERSION`), and the count/version assertions in
+`tests/test_fund_phase5_contracts.py`, `tests/test_phaseb_stable_release.py`, `tests/test_qdl_sdk_release.py`,
+`tests/test_dl_v244_sdk_bar_lineage_parity.py`.
+
+**Tests** (same image and light-slot shape as above): `tests/test_dl_v244_instrument_lifecycle.py` 16 OK (recorder,
+ledger tamper/drop/reorder/partial/append-only, CLI, Query endpoint incl. paging/404/403, and an end-to-end case over
+**real HTTP**: uvicorn on a 127.0.0.1 socket, the SDK `RestQueryTransport` over httpx, the SDK response model).
+Impacted modules together: `test_dl_v244_instrument_lifecycle test_fund_phase5_contracts test_fund_phase5_api
+test_qdl_sdk_release test_phaseb_stable_release test_dl_v244_sdk_bar_lineage_parity test_dl_v241_canonical_metadata
+test_fund_phase5_stream_sdk test_fund_phase5_consumer` 114 OK. Listing captures in the tests are hand-built in the
+documented shapes (test provenance), not venue bytes.
+
+**Not done / remaining.**
+- No ledger is seeded and no Query env is set: after rollout the endpoint answers `NOT_CONFIGURED` until the owner
+  approves seeding (one `init` + one `record` per venue listing of the next declaration render) and the env/mount
+  for `query_kn_1/2`.
+- Periodic read-only listing poll (the proposal's second source) is not built; captures come from declaration renders.
+- The declaration gate does not call the recorder automatically yet (a one-line hook in `scripts/dl_declaration.py`
+  gate, deferred to keep this slice off the declaration path).
+- TS order admission on lifecycle is TS scope.

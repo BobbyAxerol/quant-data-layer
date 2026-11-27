@@ -684,6 +684,71 @@ class InstrumentResponse(InstrumentView):
     contract_schema: str = Field("qdl.instrument.v2", alias="schema")
 
 
+# SDK 2.11.0 (Data Layer v2.4.4, DL-BL-2026-11-26-K): instrument lifecycle observations,
+# `GET /v2/instruments/{identity}/lifecycle`, schema `qdl.instrument-lifecycle.v1`. Additive endpoint;
+# tolerant readers (unknown fields ignored). `status` is one of PRELISTED, ACTIVE, HALTED, EXPIRED, DELISTED;
+# readers must accept a status they do not know (it is a str, not an enum) and treat it as not tradable.
+class InstrumentLifecycleEvidenceView(ResponseModel):
+    endpoint: str
+    doc_url: str | None = None
+    capture_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    provider_error: str | None = None
+    venue_times: dict[str, str] = Field(default_factory=dict)
+
+
+class InstrumentLifecycleEventView(ResponseModel):
+    contract_schema: str = Field("qdl.instrument-lifecycle-event.v1", alias="schema")
+    event_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    instrument_uid: str
+    instrument_id: str
+    venue: str
+    market: str
+    native_symbol: str
+    sequence: int = Field(ge=1)
+    status: str
+    venue_state: str
+    effective_utc: str | None = None
+    effective_basis: str | None = None
+    observed_utc: str
+    evidence: InstrumentLifecycleEvidenceView
+    catalog_revision: int | None = Field(None, ge=1)
+    source_revision: str
+    previous_event_id: str | None = None
+
+
+class InstrumentLifecycleCurrentView(ResponseModel):
+    status: str
+    venue_state: str
+    since_event_id: str
+    since_observed_utc: str
+    effective_utc: str | None = None
+
+
+class InstrumentLifecycleLedgerView(ResponseModel):
+    contract_schema: str = Field("qdl.v2.instrument-lifecycle-ledger.v1", alias="schema")
+    ledger_id: str
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    events_total: int = Field(ge=0)
+    head_event_id: str | None = None
+
+
+class InstrumentLifecycleResponse(ResponseModel):
+    contract_schema: str = Field("qdl.instrument-lifecycle.v1", alias="schema")
+    instrument_uid: str
+    instrument_id: str
+    venue: str
+    market: str
+    native_symbol: str
+    in_catalog: bool
+    # RECORDED: events follow. NO_OBSERVATION: the ledger has no capture of this instrument yet (history is never
+    # padded). NOT_CONFIGURED: this Query serves no ledger. Unknown future values mean "no lifecycle claim".
+    history_state: str
+    current: InstrumentLifecycleCurrentView | None = None
+    events: list[InstrumentLifecycleEventView] = Field(default_factory=list)
+    next_after_sequence: int | None = Field(None, ge=1)
+    ledger: InstrumentLifecycleLedgerView | None = None
+
+
 class WarmupResponse(ResponseModel):
     contract_schema: str = Field("qdl.marketdata.warmup.v2", alias="schema")
     request_id: str

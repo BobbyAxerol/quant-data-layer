@@ -188,6 +188,13 @@ Consumers that cache BARs:
   - any other payload, source or contract difference.
 - From 2.10.1 the stream projection and Query deliver byte-identical BAR payloads.
 
+### Instrument lifecycle (SDK 2.11.0, DL v2.4.4)
+
+`await client.instrument_lifecycle("OKX.SWAP.PERPETUAL.RVN-USDT", consumer_grade=Grade.ALPHA)` returns
+`InstrumentLifecycleResponse`: the venue-observed status history of one instrument, retired ones included. See
+`DATA_LAYER_SERVICE_ACCESS_GUIDE.md`, "Instrument lifecycle observations". `history_state` NOT_CONFIGURED or
+NO_OBSERVATION means DL makes no lifecycle claim; it never means ACTIVE.
+
 ## Migration safety
 
 - Existing V1 methods remain delegated by `V1CompatibilityFacade` without
@@ -210,7 +217,7 @@ Build the standalone artifact with:
 python scripts/build_qdl_sdk_release.py --output-dir dist/qdl-sdk
 ```
 
-The output contains a reproducible `qdl_sdk-2.10.1-py3-none-any.whl`, a release
+The output contains a reproducible `qdl_sdk-2.11.0-py3-none-any.whl`, a release
 manifest with the wheel/source/generated-contract SHA-256 digests, and a
 CycloneDX SBOM. The wheel contains only the public SDK plus generated Protobuf
 contracts; it does not package `qdl.api_v2`, runtime adapters, provider code or

@@ -257,6 +257,25 @@ class RestQueryTransport:
         )
         return self._decode(response)
 
+    async def instrument_lifecycle(
+        self,
+        identity: str,
+        *,
+        consumer_id: str,
+        consumer_grade: Grade,
+        after_sequence: int = 0,
+        limit: int = 100,
+    ) -> dict:
+        """SDK 2.11.0: `GET /v2/instruments/{identity}/lifecycle` (schema `qdl.instrument-lifecycle.v1`)."""
+        if not identity.strip():
+            raise ValueError("instrument identity is required")
+        headers = await self._identity_headers(consumer_grade, consumer_id)
+        params: dict[str, int] = {"after_sequence": after_sequence, "limit": limit}
+        response = await self._read_request("get",
+            f"/v2/instruments/{identity}/lifecycle", params=params, headers=headers
+        )
+        return self._decode(response)
+
     async def close(self) -> None:
         if self._owns_client:
             await self._client.aclose()
@@ -444,6 +463,24 @@ class ReplicatedRestQueryTransport:
             identity,
             consumer_id=consumer_id,
             consumer_grade=consumer_grade,
+        )
+
+    async def instrument_lifecycle(
+        self,
+        identity: str,
+        *,
+        consumer_id: str,
+        consumer_grade: Grade,
+        after_sequence: int = 0,
+        limit: int = 100,
+    ) -> dict:
+        return await self._read(
+            "instrument_lifecycle",
+            identity,
+            consumer_id=consumer_id,
+            consumer_grade=consumer_grade,
+            after_sequence=after_sequence,
+            limit=limit,
         )
 
     async def close(self) -> None:

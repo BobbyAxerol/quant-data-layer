@@ -48,6 +48,7 @@ V2 query operations are:
 ```text
 GET  /v2/instruments
 GET  /v2/instruments/{identity}
+GET  /v2/instruments/{identity}/lifecycle
 GET  /v2/market-data/{instrument_uid}/snapshot
 POST /v2/market-data/snapshot:batch
 GET  /v2/market-data/{instrument_uid}/warmup
@@ -67,6 +68,29 @@ live handoff; no new per-symbol container or provider connection is needed.
 Stale, partial or gapped execution data stays rejected. Bounded retry waits for
 a new valid read; it never changes old data's timestamp or treats session
 liveness as a fresh executable book/price.
+
+### Instrument lifecycle observations (v2.4.4, SDK 2.11.0)
+
+`GET /v2/instruments/{identity}/lifecycle?after_sequence=0&limit=100` (`qdl.instrument-lifecycle.v1`,
+permission `instruments:read`) answers what the venue said about one instrument's lifecycle and when DL observed it.
+`identity` is an instrument uid or id; a retired instrument (no longer in the catalogue) still resolves from the
+ledger (`in_catalog: false`). Unknown to both: 404 `INSTRUMENT_NOT_FOUND`.
+
+- `history_state`: `RECORDED` (events follow), `NO_OBSERVATION` (no capture recorded yet; history is never padded),
+  `NOT_CONFIGURED` (this Query serves no ledger). The last two are "no lifecycle claim", never "ACTIVE".
+- `current`: the newest event's `status` (PRELISTED, ACTIVE, HALTED, EXPIRED, DELISTED), the venue's own
+  `venue_state` (OKX `state`, Binance `status`, or `ABSENT` from a full listing), `since_event_id`,
+  `since_observed_utc`, `effective_utc`.
+- `events`: append-only per instrument; `sequence` 1..n with `previous_event_id`; `event_id` is the sha256 of the
+  canonical JSON of the event without `event_id`; `effective_utc` only when the venue states it in that capture
+  (`effective_basis` names the venue field), else null; `evidence` = listing endpoint, venue doc URL, capture
+  sha256, venue time fields; `catalog_revision` and `source_revision` of the recording.
+- `ledger`: id, file sha256, `events_total`, `head_event_id`. Paging: pass `next_after_sequence` back as
+  `after_sequence`.
+- A DL outage, a refused or stale feed, or a provider error never produces an event: events come only from valid,
+  full venue listing captures (`scripts/instrument_lifecycle_record.py`).
+- Readers: unknown fields are ignored and `status`/`history_state` are strings; treat an unknown value as not
+  tradable / no claim.
 
 ### Batched Latest Snapshots (v2.3.1)
 

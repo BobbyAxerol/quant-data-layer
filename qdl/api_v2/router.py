@@ -28,6 +28,7 @@ from qdl.api_v2.models import (
     FeedStatusResponse,
     GapListResponse,
     InstrumentPageResponse,
+    InstrumentLifecycleResponse,
     InstrumentResponse,
     MarketDataView,
     MAX_REQUIREMENT_FRESHNESS_MS,
@@ -1287,6 +1288,26 @@ async def get_instrument(
             request_id=service.request_id(),
         ) from error
     return {"schema": "qdl.instrument.v2", **_instrument_item(service, item)}
+
+
+@router.get("/instruments/{identity}/lifecycle", response_model=InstrumentLifecycleResponse)
+async def get_instrument_lifecycle(
+    identity: str,
+    after_sequence: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    service: V2QueryService = Depends(_service),
+    access: DataPlaneAccess = Depends(_data_access),
+):
+    """DL v2.4.4 (DL-BL-2026-11-26-K): venue lifecycle observations of one instrument (retired ones included),
+    schema `qdl.instrument-lifecycle.v1`, append-only and hash-chained per instrument."""
+    access.require_permission(DataPlanePermission.INSTRUMENTS_READ)
+    try:
+        return service.lifecycle_for(identity, after_sequence=after_sequence, limit=limit)
+    except KeyError as error:
+        raise QueryServiceError(
+            QueryProblem(CanonicalErrorCode.INSTRUMENT_NOT_FOUND, str(error), False),
+            request_id=service.request_id(),
+        ) from error
 
 
 def _instrument_item(service: V2QueryService, item) -> dict:

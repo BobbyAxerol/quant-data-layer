@@ -1,6 +1,6 @@
 """Stable Python SDK V2 with typed public models and generated transports."""
 
-__version__ = "2.10.1"
+__version__ = "2.11.0"
 
 from qdl_sdk.client import AsyncDataLayerClient, DataLayerClientV2, WarmupStreamSession
 from qdl_sdk.credentials import (
@@ -30,6 +30,7 @@ from qdl_sdk.models import (
     GapPolicy,
     Grade,
     CanonicalInstrumentMetadataView,
+    InstrumentLifecycleResponse,
     InstrumentPageResponse,
     InstrumentResponse,
     InstrumentView,
@@ -98,6 +99,7 @@ __all__ = [
     "Grade",
     "GrpcStreamTransport",
     "InstrumentPageResponse",
+    "InstrumentLifecycleResponse",
     "InstrumentResponse",
     "InstrumentView",
     "IntervalSourcePolicy",

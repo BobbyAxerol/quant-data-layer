@@ -810,6 +810,7 @@ class V2QueryService:
         queued_local_batch_lane: bool = False,
         alpha_mark_index_reader: ExecutionMarkIndexReader | None = None,
         canonical_metadata: Any = None,
+        instrument_lifecycle: Any = None,
     ) -> None:
         if reference_batch is not None and reference_source_id is None:
             raise ValueError("reference batch requires an explicit source-id resolver")
@@ -822,6 +823,9 @@ class V2QueryService:
         self.instruments = instruments
         # DL v2.4.1: optional canonical instrument metadata (qdl.runtime.canonical_metadata.CanonicalMetadataIndex).
         self.canonical_metadata = canonical_metadata
+        # DL v2.4.4 (DL-BL-2026-11-26-K): optional lifecycle ledger
+        # (qdl.runtime.instrument_lifecycle.InstrumentLifecycleIndex); None answers NOT_CONFIGURED.
+        self.instrument_lifecycle = instrument_lifecycle
         self.backend = backend
         self.entitlements = entitlements
         self._clock_ns = clock_ns
@@ -867,6 +871,34 @@ class V2QueryService:
             return None
         entry = index.get(instrument_uid)
         return None if entry is None else entry.as_public()
+
+    def lifecycle_for(self, identity: str, *, after_sequence: int = 0, limit: int = 100) -> dict:
+        """The `qdl.instrument-lifecycle.v1` body. A catalogue instrument, or a retired one the ledger still
+        holds; KeyError when neither knows the identity."""
+        from qdl.runtime.instrument_lifecycle import lifecycle_document
+
+        index = self.instrument_lifecycle
+        try:
+            item = self.instruments.get(identity)
+        except KeyError:
+            uid = index.uid_for(identity) if index is not None else None
+            if uid is None:
+                raise
+            first = index.history(uid)[0]
+            identity_fields = {key: first[key] for key in (
+                "instrument_uid", "instrument_id", "venue", "market", "native_symbol")}
+            in_catalog = False
+        else:
+            identity_fields = {
+                "instrument_uid": item.identity.instrument_uid,
+                "instrument_id": item.identity.instrument_id,
+                "venue": item.identity.venue,
+                "market": item.identity.market,
+                "native_symbol": item.native_symbol,
+            }
+            in_catalog = True
+        return lifecycle_document(identity=identity_fields, in_catalog=in_catalog, index=index,
+                                  after_sequence=after_sequence, limit=limit)
 
     def snapshot(
         self,

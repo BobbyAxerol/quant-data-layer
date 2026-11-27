@@ -1,5 +1,17 @@
 # SDK Changelog
 
+## 2.11.0 (Data Layer v2.4.4, DL-BL-2026-11-26-K: instrument lifecycle observations)
+
+Additive only. New `AsyncDataLayerClient.instrument_lifecycle(identity, consumer_grade=..., after_sequence=0,
+limit=100)` and the transport method of the same name read `GET /v2/instruments/{identity}/lifecycle` into
+`InstrumentLifecycleResponse` (schema `qdl.instrument-lifecycle.v1`): `history_state` (RECORDED, NO_OBSERVATION,
+NOT_CONFIGURED), `current` (status, venue_state, since_event_id, since_observed_utc, effective_utc) and the
+append-only events (`qdl.instrument-lifecycle-event.v1`: event_id = sha256 of the canonical event, per-instrument
+`sequence` and `previous_event_id` chain, venue_state, venue-stated `effective_utc` only, `observed_utc`,
+`evidence` with the listing endpoint, venue doc URL and capture sha256). Retired instruments resolve. `status` and
+`history_state` are strings so a later value does not break a reader; treat an unknown value as "no lifecycle claim".
+Older servers answer 404 for the path; nothing else changes.
+
 ## 2.10.1 (DL-DEF-2026-11-25-E: stream BAR lineage)
 
 Fix: `market_data_view_from_stream` now emits the BAR `resample_lineage` from the canonical `Bar.aggregation`,
