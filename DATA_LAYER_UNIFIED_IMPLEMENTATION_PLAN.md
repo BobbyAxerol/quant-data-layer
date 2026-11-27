@@ -81181,3 +81181,12 @@ bake `qdl_sdk`; Crossec image `a5b58033` has 2.10.0) or, without a bump, build t
   `roll1-20261127T131918Z.txt` (`701780d5…`), hashes recomputed. Config-hashes `a1c2d29e` / `ac9bb831` (read-only check).
   Rollback `5ea7a7a4` via `window.sh rollback N`. Not touched: every other role. Status: Query `production-applied`
   on v2.4.4 code (not tagged; CI6 receipt pending the single final CI run). `VERSION_REGISTER.md` updated.
+
+### DL v2.4.4 rust image on the refreshed base: built and R0 PASS (not rolled) - 2026-11-27 (Claude)
+
+- Gate v2 (pid 3921800, refuses after 13:57Z for the 14:06-14:44Z quiet window; v1 pid 3477848 was killed before it
+  started) ran 13:46:14-13:50:05Z rc 0: `qdl-v2-rust:2.4.4-70de106` = `sha256:2e920c2a…`, receipt PASS (0 unexpected
+  binary verdicts) from `70de1066` (base `3b5cf993`).
+- R0: trivy 0.70.0, 0 fixable CRITICAL/HIGH (CVE-2025-6020 gone). It replaces `8729292b` (R0 FAIL) for the rust roles
+  (stream_kn x2, ingestor_okx_swap, optional ingestor_binance_usdm). No rust role is rolled; the coordinator decides.
+  VERSION_REGISTER row added.
