@@ -80529,3 +80529,149 @@ can be dropped today.
   `test_dl_v242_instrument_retirement` 10 OK; `test_dl_v242_instrument_unavailable` 14 OK;
   `test_dl_v240_ts_funding_entitlement` 14 OK; `test_v231_stage_c_binance_signal` 7 OK.
 - Not pushed, no image yet, not deployed.
+
+### DL-DEF-2026-11-26-M: a quiet key evicted from the stream gateway hot ring is answered from a per-key last value; quiet beyond 900 s is refused typed (tested locally) - 2026-11-26 (Claude)
+
+**Registered here: DL-DEF-2026-11-26-M** (the letter was free: the plan and every DL branch's commit log stop at L).
+RCA: `~/.local/state/trading-system/handoffs/TS_DL_OKX_THIN_QUOTE_FRESHNESS_RCA_20261126.md` §2, §4, §6 a1.
+
+**Defect.** `qdl-stream-gateway` keeps a per-partition hot ring bounded by bytes (48 MiB total by default) and by age
+(120 s). On busy partitions it covers about 30 s. An OKX `bbo-tbt` QUOTE whose BBO does not change for longer loses
+its last record to eviction. The hot lookup then cannot prove that no newer record exists and returns
+`HOT_RECORD_MISSING` (`hub.rs` ring scan). DL Query answers `DATA_NOT_READY HOT_QUIET_PRIMARY_UNVERIFIED`, the writer
+probe cannot renew the session proof, and TS refuses `EXECUTION_CONTEXT_STALE` although the session is live with no
+gap. The RCA measured 2,996 refusals in 6 h on `query_kn_1` across 19 OKX names. The defect predates W-DL. The cost
+comes from the ring's byte bound (`Hub::evict`), not from the business rule: the rule only needs the key's newest
+record and proof that nothing newer was committed.
+
+**Fix** (`rust/qdl-stream-gateway`, a1 of the RCA; Query, TS, the manifest and the API are unchanged):
+- `src/hub.rs`: a per-partition `last_value` map: key → newest dispatched record, dispatch instant and session fence
+  `(source_session_id, connection_generation, lease_epoch)`. It is updated in `dispatch` under the same partition lock
+  as the ring and boundary, and ring eviction never touches it.
+  - Only QUOTE, TRADE and MARK_INDEX_PRICE records are kept. Books stay ring-only, because they need their
+    snapshot/delta chain.
+  - A newer record that cannot be kept drops the key's entry. That covers another product, a feed-state event, an
+    undecodable record, or a record heavier than `LAST_VALUE_MAX_RECORD_BYTES` (4 KiB). So an entry is only ever the
+    key's newest record.
+- **Bound.** The index is bounded by keys, not ring bytes. `QDL_KN_LAST_VALUE_MAX_KEYS` (default 2,048) is split over
+  partitions.
+  - At the bound, entries quiet past the maximum are dropped first, then the least recently dispatched key.
+  - The memory term is `keys × 4 KiB` = 8 MiB by default. It is added to `MemoryPlan::required` (`src/memory.rs`), so
+    the defaults still fit 256 MiB (255 MiB) and the 1,024-stream profile needs 315 MiB of the 512 MiB stream_kn limit.
+- **Lookup.** `latest_hot` uses the last value only when the key's ring view is empty and the feed is not a book. The
+  entry must pass all of these:
+  - quiet at most `QDL_KN_MAX_QUIET_SECONDS` (default 900, must be > 0). Quiet age is the larger of the time since
+    dispatch and the time since the Kafka producer timestamp, so a warm-started replica cannot make an old record look
+    fresh. Otherwise the lookup refuses with the new typed reason `HOT_QUIET_BEYOND_MAX`;
+  - no gap, out-of-order or resync flag (`HOT_RECORD_GAPPED`), and the requested product;
+  - the session's connection generation and lease fence equal the newest dispatched for that session. The fence only
+    moves forward and is bounded at 4,096 sessions. Otherwise `HOT_RECORD_GENERATION_MISMATCH`;
+  - a current value on only one partition (`HOT_PARTITION_MISMATCH`);
+  - the existing reader, head and catch-up proof, unchanged: reader progress within 1 s, a broker head confirmed
+    within 1 s, and boundary + 1 ≥ head.
+
+  Otherwise the lookup refuses exactly as before.
+- **Continuity.** A live-reader error clears every last value and session fence
+  (`break_last_value_continuity`, called from `Hub::run`). Quiet keys then refuse as before until their next record.
+- `dispatch` now decodes every record once (gate held, before the partition lock) to read its session fence.
+  Subscribers share that decode through `LiveRecord::from_envelope`; before, only subscribed keys were decoded.
+  **Not measured:** the extra decode CPU for unsubscribed keys (mostly BAR). `examples/hot_path_profile.rs` is the
+  existing tool for measuring it before rollout.
+- `src/main.rs`: the two env bounds, plus a `last_value` metrics object (keys, bytes, hits, quiet_refused, evictions,
+  unindexed, continuity_breaks).
+- SessionAlive seeding (`service.rs`, `seed_session`) uses the same `latest_hot`, so it can now seed quiet keys; its
+  `reader_caught_up` and queue checks are unchanged.
+
+**Tests** (`qdl-rust-builder:1.82.0-v2.3.2`, offline, scratchpad registry and target, `--rm --cpus 4 --memory 4g
+--network none`, host slot, load 17-19):
+- `cargo fmt --check -p qdl-stream-gateway` OK; `cargo clippy --offline --locked -p qdl-stream-gateway --all-targets
+  -- -D warnings` OK.
+- `cargo test --offline --locked -p qdl-stream-gateway --all-targets`: 157 passed, 0 failed, 5 ignored (lib 91,
+  committed_reads 0 + 3 ignored, hot_lookup_contention 1, native_stream 62 + 1 ignored, session_alive_cost 0 + 1
+  ignored, examples 3).
+- Seven new hub tests:
+  - an evicted quiet key is accepted, the boundary advances, and ring-only refuses;
+  - the newest record wins, and a newer gapped, oversize, other-product or book record never lets an older one
+    through;
+  - head missing, stale or ahead, a stalled reader, a newer generation or lease fence, a late older generation,
+    continuity break, and two partitions all refuse;
+  - the reader error path clears the index;
+  - `HOT_QUIET_BEYOND_MAX`, including an old producer timestamp at warm start;
+  - the key bound (8 keys over 2 partitions, 100 keys each: 192 evictions, entries quiet past the maximum go first);
+  - books never use the last value.
+- Two existing tests now pin ring-only semantics with `last_value_max_keys: 0`. They assert `HOT_RECORD_MISSING`
+  after eviction, which is the old behaviour. `memory.rs` totals were updated for the 8 MiB term.
+- `examples/v232_quiet_quote_e2e.rs`, with the v2.4.2-realm-ts16 bundle mounted read-only and `QDL_E2E_RING_BYTES=1`,
+  run for 7 s. The quiet ON_CHANGE BBO was offered once and evicted at once (`ring_bytes` 0):
+  - index on: `hot_on_change {ok, offset 1, boundary 1}`, `last_value [2 keys, 1,081 bytes]`, 5 hits;
+  - `QDL_E2E_LAST_VALUE_MAX_KEYS=0`: `HOT_RECORD_MISSING`.
+
+  No writer client was attached, so this proves the hot view and not the TS writer probe path.
+- Status: `implemented`, `tested locally`. Not pushed, no image, not deployed.
+
+**Rollout (when approved).**
+- A DL Rust image: the `qdl-v2-rust` runtime image, whose stream gateway binary is the only change.
+- Recreate `stream_kn_1` and `stream_kn_2` rolling, one at a time. Query fails over between replicas.
+- Query, projector, core, ingestor, writer and TS are not touched.
+- New env is optional; the defaults apply.
+- Rollback: the current `qdl-v2-rust:2.4.0-c17472c` (`abafab2c98cb`) on the same env, or
+  `QDL_KN_LAST_VALUE_MAX_KEYS=0` on the new image.
+- Bundle with DEF-L into the next DL release window.
+
+**Deferred.**
+1. **REST BBO reconciliation for keys quiet past the maximum.** Owner: DL lane (Claude), OKX first. It is the RCA §4
+   companion for a silently dead per-instrument `bbo-tbt` subscription, and it is not built. Design:
+   - the ingestor tracks per-instrument last-change age;
+   - past a bound below `QDL_KN_MAX_QUIET_SECONDS`, it fetches `/api/v5/market/ticker` or `books?sz=1` within the OKX
+     REST budget;
+   - on a mismatch it opens a gap/resync for the key and re-subscribes;
+   - on a match it publishes a provider confirmation (`FRESHNESS_BASIS_PROVIDER_CONFIRMATION`, `stable_source.py`),
+     so the key gets a new record and leaves the quiet state.
+
+   Until then, `HOT_QUIET_BEYOND_MAX` fails closed after 900 s. Not checked: per-instrument subscription liveness in
+   the ingestor (the RCA did not search it exhaustively). Quote the OKX v5 WebSocket order-book channel docs before
+   the change record.
+2. **Query typed passthrough.** `qdl/runtime/kn_hot_view.py` keeps only listed UNAVAILABLE details, so Query reports
+   `HOT_QUIET_BEYOND_MAX` as `HOT_READER_UNAVAILABLE`. The gateway reason and metric are typed. Adding it to that list
+   is a Query image change and stays out of this stream_kn-only slice.
+
+#### DL-DEF-2026-11-26-M addendum: dispatch decode cost measured, A/B base 2af353e vs afba2af (tested locally) - 2026-11-26 (Claude)
+
+**Method.**
+- New mode `examples/hot_path_profile.rs --test-only --dispatch-mix`. It uses only APIs that predate DEF-M, so the
+  same file was built in a temporary 2af353e worktree for the A side.
+- Each case runs 400,000 unsubscribed dispatches (worst case: the added decode is not shared with any fan-out) over
+  six partitions, with the production ring of 48 MiB / 6 per partition, warmed to its bound for the first 25%.
+- Envelopes carry every field the realtime core sets.
+- Thread CPU comes from `/proc/thread-self/schedstat`; dispatch latency is wall time per call.
+- Release build, `qdl-rust-builder:1.82.0-v2.3.2`, one `--rm --cpus 1 --memory 2g --network none` container per run.
+- Runs were interleaved base / new / base / new under the host measurement lock (17:50:48-17:51:35Z, released). Host
+  load was 22-26 from the runtime.
+
+**Live rates** (read-only, `docker logs` of the `qdl_kn_gateway_metrics` lines over 590 s at 17:4xZ): stream_kn_1 857
+records/s, 943 payload bytes/record, 0.127 cores in total; stream_kn_2 858 records/s, 0.172 cores. The metrics have no
+per-product split, so the 70/20/5/5 BAR/QUOTE/MARK/TRADE mix is **assumed**. Each product is also measured alone.
+
+**Results.** CPU is ns per 1,000 records; p50 and p99 are ns per dispatch; each cell is run 1 / run 2.
+
+| case (avg payload) | base CPU/1k | new CPU/1k | base p50 / p99 | new p50 / p99 |
+|---|---|---|---|---|
+| BAR-heavy 70/20/5/5 (664 B) | 1.17 / 1.12 ms | 4.28 / 4.29 ms | 1,040 / 1,920 · 990 / 1,800 | 4,300 / 6,170 · 4,330 / 6,130 |
+| BAR only (706 B) | 1.18 / 1.06 ms | 4.25 / 4.13 ms | 900 / 1,480 · 800 / 1,420 | 4,270 / 5,611 · 4,120 / 5,521 |
+| QUOTE only (577 B) | 1.11 / 1.09 ms | 3.54 / 3.51 ms | 830 / 1,420 · 811 / 1,400 | 3,471 / 4,661 · 3,340 / 4,741 |
+| MARK only (541 B) | 0.68 / 0.81 ms | 3.04 / 3.25 ms | 590 / 1,050 · 670 / 1,170 | 3,120 / 4,050 · 3,001 / 3,621 |
+| TRADE only (547 B) | 1.03 / 1.07 ms | 3.49 / 3.24 ms | 790 / 1,351 · 820 / 1,370 | 3,310 / 4,411 · 3,190 / 4,220 |
+
+**Projection.**
+- The extra cost is about 3.1 ms of CPU per 1,000 records for the mix: about 3.1 µs per record, mostly the protobuf
+  decode and drop.
+- Scaled to the live 943-byte average (×1.42 over the bench's 664 B), it is about 4.4 µs per record.
+- At 858 records/s that is about 3.8 ms of CPU per second, or **0.38% of one core** per stream_kn replica. A 10×
+  burst would be about 3.8%.
+- The added dispatch latency (about +3.3 µs p50, +4.3 µs p99) is small against the live commit→dispatch lag of
+  p50 ≤ 50 ms.
+- This is under the 5%-of-one-core threshold, so decoding only the kept products was **not** implemented. The option
+  remains: BAR is about 70% of records in the assumed mix and is never kept, so skipping its decode would remove most
+  of the cost.
+
+Status: `tested locally`. Microprofile, not capacity evidence. Not pushed, no image.

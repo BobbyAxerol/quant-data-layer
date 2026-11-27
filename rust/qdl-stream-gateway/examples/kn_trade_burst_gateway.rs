@@ -408,6 +408,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         HubConfig {
             ring_max_bytes: (48 << 20) / starts.len(),
             ring_max_age: Duration::from_secs(120),
+            ..Default::default()
         },
     ));
     let reader = hub.run(Box::new(Live {
