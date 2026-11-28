@@ -132,12 +132,14 @@ class RuntimeBaseTests(unittest.TestCase):
         for package in ("ca-certificates", "libssl3", "libzstd1", "zlib1g"):
             self.assertIn(package, recipe)
         self.assertIn("useradd --uid 10001 --gid 10001", recipe)
+        # DL v2.4.4: the refresh marker is inside the RUN line, so it changes the layer cache key.
+        self.assertIn(f"RUN echo qdl-base-refresh-{b.RUST_BASE_REFRESH} && apt-get update", recipe)
         dockerfile = (REPO / "Dockerfile.qdl-rust-runtime").read_text()
         self.assertIn(f"FROM {b.DEBIAN_BASE}", dockerfile)  # same debian as the runtime stage
 
     def test_base_is_pinned_by_full_id_and_named_in_the_build_method(self):
         self.assertRegex(b.RUST_BASE_ID, r"^sha256:[0-9a-f]{64}$")
-        self.assertEqual(b.RUST_BASE_ID, "sha256:b33ec0cb161e80f3300684f96fa956eedabc49325e401a170fb25c02d4b2eef7")
+        self.assertEqual(b.RUST_BASE_ID, "sha256:3b5cf993b8c99f4d59c40f430f4313bc6c2eb09a9066a1bbc428cafc916b555c")
         self.assertTrue(b.BUILD_METHOD.endswith("runtime-overlay-" + b.RUST_BASE_ID[7:15]))
 
     def test_build_base_refuses_to_move_an_existing_tag(self):
@@ -218,7 +220,7 @@ class CommandTests(unittest.TestCase):
         self.assertTrue(text.startswith(f"FROM {b.RUST_BASE_TAG}\n"))
         self.assertIn(f'org.opencontainers.image.version="{b.RELEASE}"', text)
         self.assertIn(f'qdl.build.method="{b.BUILD_METHOD}"', text)
-        self.assertEqual(b.BUILD_METHOD, f"cargo-cache-{b.BUILDER_IMAGE[7:15]}+runtime-overlay-b33ec0cb")
+        self.assertEqual(b.BUILD_METHOD, f"cargo-cache-{b.BUILDER_IMAGE[7:15]}+runtime-overlay-3b5cf993")
         self.assertNotIn("qdl.test.only", text)
         self.assertIn("USER 10001:10001", text)
 
@@ -357,6 +359,14 @@ class VerdictTests(unittest.TestCase):
     """Fixture = the v2.3.2 rebuild: every binary differs from the production rc2 image (source or locked-dependency
     delta in every crate graph since 832c02c4)."""
 
+    def setUp(self):
+        # The fixture is rc2-only: the v2.4.4 rows against newer references are pinned by
+        # SourceTests.test_v244_rows_follow_the_rust_diff_since_the_v242_build.
+        rc2_only = {name: [row for row in rows if row[0] == "v230_rc2"] for name, rows in b.BINARY_EXPECTATIONS.items()}
+        patcher = mock.patch.dict(b.BINARY_EXPECTATIONS, rc2_only)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def references(self):
         return {"v230_rc2": shas("1" * 64)}
 
@@ -455,7 +465,8 @@ class SourceTests(unittest.TestCase):
                          "reference revision not in this (shallow?) checkout")
     def test_expected_python_diff_is_the_git_diff_against_each_production_tree(self):
         self.assertEqual({ref_id for _, ref_id, _ in b.PYTHON_REFERENCES.values()},
-                         {"sha256:929eeac2091ecbe916cf1f19fba9f13056e621a1c2c1947427b97a8a7c002082"})
+                         {"sha256:5ea7a7a40ef2d1df920d0f7cf94f22431d53087f8002929e7dffdb4208f7dcc4",
+                          "sha256:396a4654014758f70362b3097559e03dcb412d36904d94d3cb7c973f6ccb1637"})
         for _, _, tree in b.PYTHON_REFERENCES.values():
             diff = b.expected_python_diff(REPO, self.head(), tree)
             expected = subprocess.check_output(["git", "-C", str(REPO), "diff", "--name-only", "--no-renames",
@@ -486,7 +497,34 @@ class SourceTests(unittest.TestCase):
         for binary, package in b.BINARY_PACKAGE.items():
             with self.subTest(binary=binary):
                 self.assertTrue(closure(package, {package}) & changed, f"{binary}: no delta, DIFFERENT is not justified")
-                self.assertEqual([e for _, e, _ in b.BINARY_EXPECTATIONS[binary]], ["DIFFERENT"])
+                rc2 = [e for ref, e, _ in b.BINARY_EXPECTATIONS[binary] if ref == b.PRODUCTION_RUST_REFERENCE]
+                self.assertEqual(rc2, ["DIFFERENT"])
+
+    def test_v244_rows_follow_the_rust_diff_since_the_v242_build(self):
+        """DL v2.4.4: only the ingestor and the stream gateway changed since 48137eb; every other binary is expected
+        equal (loaded sections) to the v2.4.2 rust build, and the two changed ones differ from their role image."""
+        changed = subprocess.check_output(["git", "-C", str(REPO), "diff", "--name-only", "48137ebf952966e4c8d31c64060791087535fbdc",
+                                           self.head(), "--", "rust", "Cargo.toml", "Cargo.lock", "generated/rust"]).decode().split()
+        self.assertTrue(changed)
+        self.assertTrue(all(p in ("rust/qdl-kafka/src/bin/qdl-native-raw-ingestor.rs", "Cargo.lock")
+                            or p.startswith("rust/qdl-stream-gateway/") for p in changed), changed)
+        # The only lockfile change: the RUSTSEC-2026-0592 bump.
+        import tomllib
+        old = tomllib.loads(subprocess.check_output(["git", "-C", str(REPO), "show",
+                                                     "48137ebf952966e4c8d31c64060791087535fbdc:Cargo.lock"]).decode())
+        new = tomllib.loads(subprocess.check_output(["git", "-C", str(REPO), "show", self.head() + ":Cargo.lock"]).decode())
+        before = {(p["name"], p["version"]) for p in old["package"]}
+        after = {(p["name"], p["version"]) for p in new["package"]}
+        self.assertEqual(sorted(after - before), [("form_urlencoded", "1.2.3"), ("idna", "1.1.0"), ("url", "2.5.9")])
+        for binary, rows in b.BINARY_EXPECTATIONS.items():
+            with self.subTest(binary=binary):
+                newer = [(ref, e) for ref, e, _ in rows if ref != b.PRODUCTION_RUST_REFERENCE]
+                if binary == "qdl-stream-gateway":
+                    self.assertEqual(newer, [("v240_streams", "DIFFERENT")])
+                elif binary == "qdl-native-raw-ingestor" or b.BINARY_PACKAGE[binary] in ("qdl-kafka", "qdl-projector"):
+                    self.assertEqual(newer, [("v242_ingestors", "DIFFERENT")])
+                else:
+                    self.assertEqual(newer, [("v242_ingestors", "EQUAL_LOADED_SECTIONS")])
 
     def test_plan_is_dry(self):
         with mock.patch.object(b.subprocess, "run", wraps=subprocess.run) as run:

@@ -97,6 +97,70 @@ _FUNDING_SETTLEMENT_PUBLICATION_GRACE_MS = 60_000
 _BatchCompletion = TypeVar("_BatchCompletion")
 
 
+_UPPER_SNAKE_TOKEN = re.compile(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b")
+
+
+def _exception_token(error: BaseException) -> str:
+    """``TimeoutError`` -> ``TIMEOUT_ERROR``; a class name as one UPPER_SNAKE token (never its message)."""
+
+    name = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", type(error).__name__).upper()
+    name = re.sub(r"[^A-Z0-9_]", "", name)
+    return name if "_" in name else f"{name}_ERROR"
+
+
+def _provider_lane_failure_detail(error: BaseException) -> str:
+    """DL v2.4.4 (same class as DL-DEF-2026-11-26-G): a lane failure carries typed tokens, not a fixed text.
+
+    The 2026-11-25 19:30Z SOURCE_UNAVAILABLE MARK_INDEX_PRICE burst reached consumers with ``reason_tokens=[]``.
+    The detail now names ``PROVIDER_LANE_FAILED``, a deadline when it is one, and the exception class as a token.
+    The exception message is never included.
+    """
+
+    tokens = ["PROVIDER_LANE_FAILED"]
+    if isinstance(error, (TimeoutError, asyncio.TimeoutError)) or "Deadline" in type(error).__name__:
+        tokens.append("PROVIDER_LANE_DEADLINE")
+    tokens.append(_exception_token(error))
+    return "reference batch provider lane did not complete: " + " ".join(dict.fromkeys(tokens))
+
+
+def _typed_provider_detail(error_code: str | None, detail: str) -> str:
+    """Prefix the adapter's typed error code when the detail does not already carry an UPPER_SNAKE token."""
+
+    code = str(error_code or "").strip()
+    if not code:
+        code = "PROVIDER_ERROR_UNTYPED"
+    if code in _UPPER_SNAKE_TOKEN.findall(detail[:4096]):
+        return detail
+    return f"{code}: {detail}" if _UPPER_SNAKE_TOKEN.fullmatch(code) else f"PROVIDER_ERROR_UNTYPED: {detail}"
+
+
+def _reference_coverage_detail(coverage) -> str:
+    """DL-DEF-2026-11-26-G: say which edge is uncovered and what the provider returned (typed tokens).
+
+    The SDK keeps only UPPER_SNAKE tokens of an item detail (``qdl_sdk/client.py`` ``_batch_item_problems``). The
+    old fixed text gave a consumer no reason and no supported range. A venue history horizon, for example OKX
+    funding-rate-history (about 3 months), therefore looked the same as a gap. Here the terminal reason
+    (``PROVIDER_EXHAUSTED``, ``MAX_PAGES``, ...) and the uncovered edges become tokens, and the observed range is
+    printed so the caller can request the supported window. No observation values are included.
+    """
+
+    edges = []
+    if not coverage.complete_left:
+        edges.append("LEFT_EDGE_UNCOVERED")
+    if not coverage.complete_right:
+        edges.append("RIGHT_EDGE_UNCOVERED")
+    if coverage.truncated:
+        edges.append("HISTORY_TRUNCATED")
+    reason = str(coverage.terminal_reason or "").strip()
+    tokens = " ".join(([reason] if reason else []) + edges)
+    return (
+        "reference provider history did not cover the requested complete window: "
+        f"{tokens}; requested_start_ms={coverage.requested_start_ms} "
+        f"requested_end_ms={coverage.requested_end_ms} observed_min_ms={coverage.observed_min_ms} "
+        f"observed_max_ms={coverage.observed_max_ms}"
+    )
+
+
 def _freshness_verdict(requirement, quality) -> tuple[bool, str | None]:
     """Split the freshness verdict into its three independent causes.
 
@@ -746,6 +810,7 @@ class V2QueryService:
         queued_local_batch_lane: bool = False,
         alpha_mark_index_reader: ExecutionMarkIndexReader | None = None,
         canonical_metadata: Any = None,
+        instrument_lifecycle: Any = None,
     ) -> None:
         if reference_batch is not None and reference_source_id is None:
             raise ValueError("reference batch requires an explicit source-id resolver")
@@ -758,6 +823,9 @@ class V2QueryService:
         self.instruments = instruments
         # DL v2.4.1: optional canonical instrument metadata (qdl.runtime.canonical_metadata.CanonicalMetadataIndex).
         self.canonical_metadata = canonical_metadata
+        # DL v2.4.4 (DL-BL-2026-11-26-K): optional lifecycle ledger
+        # (qdl.runtime.instrument_lifecycle.InstrumentLifecycleIndex); None answers NOT_CONFIGURED.
+        self.instrument_lifecycle = instrument_lifecycle
         self.backend = backend
         self.entitlements = entitlements
         self._clock_ns = clock_ns
@@ -803,6 +871,34 @@ class V2QueryService:
             return None
         entry = index.get(instrument_uid)
         return None if entry is None else entry.as_public()
+
+    def lifecycle_for(self, identity: str, *, after_sequence: int = 0, limit: int = 100) -> dict:
+        """The `qdl.instrument-lifecycle.v1` body. A catalogue instrument, or a retired one the ledger still
+        holds; KeyError when neither knows the identity."""
+        from qdl.runtime.instrument_lifecycle import lifecycle_document
+
+        index = self.instrument_lifecycle
+        try:
+            item = self.instruments.get(identity)
+        except KeyError:
+            uid = index.uid_for(identity) if index is not None else None
+            if uid is None:
+                raise
+            first = index.history(uid)[0]
+            identity_fields = {key: first[key] for key in (
+                "instrument_uid", "instrument_id", "venue", "market", "native_symbol")}
+            in_catalog = False
+        else:
+            identity_fields = {
+                "instrument_uid": item.identity.instrument_uid,
+                "instrument_id": item.identity.instrument_id,
+                "venue": item.identity.venue,
+                "market": item.identity.market,
+                "native_symbol": item.native_symbol,
+            }
+            in_catalog = True
+        return lifecycle_document(identity=identity_fields, in_catalog=in_catalog, index=index,
+                                  after_sequence=after_sequence, limit=limit)
 
     def snapshot(
         self,
@@ -1936,7 +2032,7 @@ class V2QueryService:
                     detail = str(execution.error)
                 else:
                     code = CanonicalErrorCode.SOURCE_UNAVAILABLE
-                    detail = "reference batch provider lane did not complete"
+                    detail = _provider_lane_failure_detail(execution.error)
                 results[index] = ReferenceBatchItemResult(
                     requirement,
                     code.value,
@@ -2275,7 +2371,7 @@ class V2QueryService:
                 if not coverage.complete_left or not coverage.complete_right or coverage.truncated:
                     return QueryProblem(
                         CanonicalErrorCode.PARTIAL_RESULT,
-                        "reference provider history did not cover the requested complete window",
+                        _reference_coverage_detail(coverage),
                         False,
                     )
             if self._uses_quiet_execution_mark_index_contract(
@@ -2336,7 +2432,7 @@ class V2QueryService:
             )
         return QueryProblem(
             CanonicalErrorCode.SOURCE_UNAVAILABLE,
-            result.error_detail or "reference provider request failed",
+            _typed_provider_detail(result.error_code, result.error_detail or "reference provider request failed"),
             result.error_code not in {"PROVIDER_PROTOCOL"},
             result.retry_after_ms,
         )

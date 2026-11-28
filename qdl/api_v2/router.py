@@ -16,6 +16,7 @@ from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBea
 from pydantic import create_model
 
 from qdl.query.cold_work import await_in_thread, cold_yield
+from qdl.runtime.consumer_request_log import record_consumer_request
 from qdl.query.results import release_exception_frames
 from qdl.domain.decimal import PLAIN_DECIMAL_TEXT
 from qdl_sdk.models import ResponseModel
@@ -27,6 +28,7 @@ from qdl.api_v2.models import (
     FeedStatusResponse,
     GapListResponse,
     InstrumentPageResponse,
+    InstrumentLifecycleResponse,
     InstrumentResponse,
     MarketDataView,
     MAX_REQUIREMENT_FRESHNESS_MS,
@@ -128,6 +130,9 @@ def _data_access(
     )
     session = request.headers.get(SESSION_HEADER)
     request.state.qdl_data_access = access
+    # DL-BL-2026-11-25-D: bounded per-consumer request counts (observation only, route template, no uid).
+    route = request.scope.get("route")
+    record_consumer_request(access.consumer_id, getattr(route, "path", None) or "unknown")
     # Fairness only (never identity or entitlement): see ``_fairness_key``.
     request.state.qdl_fairness_key = (
         session_fairness_key(access.consumer_id, session) or access.consumer_id
@@ -1283,6 +1288,26 @@ async def get_instrument(
             request_id=service.request_id(),
         ) from error
     return {"schema": "qdl.instrument.v2", **_instrument_item(service, item)}
+
+
+@router.get("/instruments/{identity}/lifecycle", response_model=InstrumentLifecycleResponse)
+async def get_instrument_lifecycle(
+    identity: str,
+    after_sequence: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    service: V2QueryService = Depends(_service),
+    access: DataPlaneAccess = Depends(_data_access),
+):
+    """DL v2.4.4 (DL-BL-2026-11-26-K): venue lifecycle observations of one instrument (retired ones included),
+    schema `qdl.instrument-lifecycle.v1`, append-only and hash-chained per instrument."""
+    access.require_permission(DataPlanePermission.INSTRUMENTS_READ)
+    try:
+        return service.lifecycle_for(identity, after_sequence=after_sequence, limit=limit)
+    except KeyError as error:
+        raise QueryServiceError(
+            QueryProblem(CanonicalErrorCode.INSTRUMENT_NOT_FOUND, str(error), False),
+            request_id=service.request_id(),
+        ) from error
 
 
 def _instrument_item(service: V2QueryService, item) -> dict:

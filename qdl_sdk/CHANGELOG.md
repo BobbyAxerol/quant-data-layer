@@ -1,5 +1,35 @@
 # SDK Changelog
 
+## 2.11.1 (DL-DEF-2026-11-27-O: request timeouts follow the declared server deadline)
+
+Fix, no API change. `RestQueryTransport.reference_batch` now waits for its requirements' own `deadline_ms` (the
+largest in the batch) plus `COLD_TIMEOUT_MARGIN_S` (2 s) whenever that is longer than the transport's
+`timeout_seconds`, as `warmup` and `warmup_batch` already did since 2.8.0; one helper now serves all three. Before,
+a reference batch declaring `deadline_ms=120000` was abandoned at the transport default (10 s) while the server was
+still answering (Crossec 2026-11-27 09:35:20Z: ReadTimeout at 10.06 s, server 200 at 10.69 s). A request whose
+deadline is inside the transport default is byte-identical. Callers that used a short transport timeout as a cap
+must now set `deadline_ms` to the bound they want (the default `deadline_ms` is 20,000). Snapshot, feed status and
+instrument reads declare no deadline and keep the transport default. Replica hedging: see README "Replicas".
+
+## 2.11.0 (Data Layer v2.4.4, DL-BL-2026-11-26-K: instrument lifecycle observations)
+
+Additive only. New `AsyncDataLayerClient.instrument_lifecycle(identity, consumer_grade=..., after_sequence=0,
+limit=100)` and the transport method of the same name read `GET /v2/instruments/{identity}/lifecycle` into
+`InstrumentLifecycleResponse` (schema `qdl.instrument-lifecycle.v1`): `history_state` (RECORDED, NO_OBSERVATION,
+NOT_CONFIGURED), `current` (status, venue_state, since_event_id, since_observed_utc, effective_utc) and the
+append-only events (`qdl.instrument-lifecycle-event.v1`: event_id = sha256 of the canonical event, per-instrument
+`sequence` and `previous_event_id` chain, venue_state, venue-stated `effective_utc` only, `observed_utc`,
+`evidence` with the listing endpoint, venue doc URL and capture sha256). Retired instruments resolve. `status` and
+`history_state` are strings so a later value does not break a reader; treat an unknown value as "no lifecycle claim".
+Older servers answer 404 for the path; nothing else changes.
+
+## 2.10.1 (DL-DEF-2026-11-25-E: stream BAR lineage)
+
+Fix: `market_data_view_from_stream` now emits the BAR `resample_lineage` from the canonical `Bar.aggregation`,
+field for field as Query does. Before this fix, a live AGGREGATED bar had `resample_lineage=None` while its
+warmup copy carried it. Contract text: lineage is optional evidence, not revision identity (README, "BAR revision
+identity"). No new fields and no change for non-AGGREGATED bars.
+
 ## 2.10.0 (Data Layer v2.4.1: canonical instrument metadata v1)
 
 Additive only. `InstrumentView` (and `InstrumentResponse`, page items) gains an optional `canonical`

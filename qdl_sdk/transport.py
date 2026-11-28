@@ -106,11 +106,21 @@ class RestQueryTransport:
         transport timeout (and the 2.7.0 request) when it is already longer.
         """
 
-        deadlines = [
+        return self._deadline_timeout_seconds(
             spec.deadline_ms
             for spec in (getattr(item, "warmup_specification", None) for item in requirements)
             if spec is not None
-        ]
+        )
+
+    def _deadline_timeout_seconds(self, deadlines_ms) -> float | None:
+        """SDK 2.11.1 (DL-DEF-2026-11-27-O): every request that declares a server deadline waits for it.
+
+        The client HTTP timeout of a request whose items carry ``deadline_ms`` is the largest ``deadline_ms`` plus
+        ``COLD_TIMEOUT_MARGIN_S`` whenever that is longer than the transport default, so the transport never gives
+        up before the server's own declared deadline (Crossec 2026-11-27 09:35:20Z: a reference batch with
+        ``deadline_ms=120000`` was abandoned at the 10 s default while the server answered 200 at 10.7 s). None keeps
+        the transport default when it is already longer, so a request without deadlines is byte-identical."""
+        deadlines = [int(value) for value in deadlines_ms if value is not None]
         if not deadlines:
             return None
         wanted = max(deadlines) / 1_000 + COLD_TIMEOUT_MARGIN_S
@@ -189,6 +199,7 @@ class RestQueryTransport:
                 "requirements": [item.model_dump(mode="json") for item in values],
             },
             headers=headers,
+            timeout_seconds=self._deadline_timeout_seconds(item.deadline_ms for item in values),
         )
         return self._decode(response)
 
@@ -254,6 +265,25 @@ class RestQueryTransport:
         headers = await self._identity_headers(consumer_grade, consumer_id)
         response = await self._read_request("get",
             f"/v2/instruments/{identity}", headers=headers
+        )
+        return self._decode(response)
+
+    async def instrument_lifecycle(
+        self,
+        identity: str,
+        *,
+        consumer_id: str,
+        consumer_grade: Grade,
+        after_sequence: int = 0,
+        limit: int = 100,
+    ) -> dict:
+        """SDK 2.11.0: `GET /v2/instruments/{identity}/lifecycle` (schema `qdl.instrument-lifecycle.v1`)."""
+        if not identity.strip():
+            raise ValueError("instrument identity is required")
+        headers = await self._identity_headers(consumer_grade, consumer_id)
+        params: dict[str, int] = {"after_sequence": after_sequence, "limit": limit}
+        response = await self._read_request("get",
+            f"/v2/instruments/{identity}/lifecycle", params=params, headers=headers
         )
         return self._decode(response)
 
@@ -444,6 +474,24 @@ class ReplicatedRestQueryTransport:
             identity,
             consumer_id=consumer_id,
             consumer_grade=consumer_grade,
+        )
+
+    async def instrument_lifecycle(
+        self,
+        identity: str,
+        *,
+        consumer_id: str,
+        consumer_grade: Grade,
+        after_sequence: int = 0,
+        limit: int = 100,
+    ) -> dict:
+        return await self._read(
+            "instrument_lifecycle",
+            identity,
+            consumer_id=consumer_id,
+            consumer_grade=consumer_grade,
+            after_sequence=after_sequence,
+            limit=limit,
         )
 
     async def close(self) -> None:

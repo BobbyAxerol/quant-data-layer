@@ -8,7 +8,7 @@ from typing import Callable
 
 from app.providers.binance.rest import BinanceProviderError, fetch_klines
 from qdl.adapters.intervals import (
-    BarHistoryGapError, BarHistoryOverlapError, canonical_interval_ms,
+    BarHistoryGapError, BarHistoryOverlapError, BarHistoryProviderHoleError, canonical_interval_ms,
     is_valid_bar_open_ms, latest_closed_boundary_ms,
 )
 from qdl.provider.v1 import raw_provider_pb2
@@ -272,6 +272,19 @@ def fetch_closed_bar_history_raw_envelopes(
                 raise BarHistoryOverlapError(
                     "Binance", binding.native_symbol, binding.interval, previous, current,
                     requested_rows=limit, recent_envelopes=envelopes,
+                )
+            if allow_short and error.kind == "MISSING_PROVIDER_WINDOW":
+                # DL v2.4.2 slice 3: the venue lacks bars; the certified suffix after
+                # the newest hole goes to the caller, which decides from durable
+                # coverage alone (never a successful short response).
+                received_at_ns = time.time_ns()
+                raise BarHistoryProviderHoleError(
+                    "Binance", binding.native_symbol, binding.interval, previous, current,
+                    requested_rows=limit,
+                    recent_envelopes=tuple(_capture_row(
+                        binding, row, origin="BACKFILLED", received_at_ns=received_at_ns + offset,
+                        test_provenance=test_provenance,
+                    ) for offset, row in enumerate(suffix)),
                 )
             raise error
         if any(int(row[6]) > page_end_ms for row in closed):

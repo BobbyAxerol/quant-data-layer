@@ -1,0 +1,268 @@
+{
+ "at": "2026-11-25T11:18:12Z",
+ "bar_freshness": {
+  "BINANCE 12h": [
+   96,
+   0
+  ],
+  "BINANCE 1h": [
+   96,
+   0
+  ],
+  "BINANCE 1m": [
+   96,
+   0
+  ],
+  "OKX 12h": [
+   94,
+   0
+  ],
+  "OKX 1h": [
+   94,
+   0
+  ],
+  "OKX 1m": [
+   94,
+   0
+  ]
+ },
+ "error_classes": {
+  "binance_bar_edge": {
+   "ERROR qdl.runtime.stable_bar_edge stable BAR provider history refused binding=B attempt=N retry_in_seconds=N error=Binance closed-bar histor": 5
+  },
+  "ingestor_binance_usdm": {},
+  "ingestor_okx_swap": {},
+  "market_projector_1": {},
+  "market_projector_2": {},
+  "query_kn_1": {},
+  "query_kn_2": {},
+  "rust_core": {},
+  "rust_core_2": {},
+  "rust_core_3": {},
+  "stream_kn_1": {},
+  "stream_kn_2": {}
+ },
+ "heartbeat": {
+  "_age_s": 12,
+  "bindings": "1319",
+  "declaration": "bb626110ab92",
+  "gate_closed": "0",
+  "history_failed": "5",
+  "history_suspended": "5",
+  "instrument_unavailable": "0",
+  "overdue": "0",
+  "pending": "0",
+  "published": "1319",
+  "rebootstrap_wait_s": "0",
+  "rebootstrap_waiting": "0",
+  "resume_pending": "0",
+  "served": "97",
+  "short": "771",
+  "venue_holes_recorded": "4",
+  "venue_holes_refused": "0"
+ },
+ "host": {
+  "mem_available_mib": 11677,
+  "oom_kill": 47298,
+  "swap_used_mib": 6452
+ },
+ "hours": 1.233,
+ "load_proxies": {
+  "query_kn_1 slow_requests/h": {
+   "/health/ready": 0.8,
+   "/v2/instruments": 0.8,
+   "/v2/market-data/reference:batch": 5960.6,
+   "/v2/market-data/warmup:batch": 24.3,
+   "/v2/market-data/{uid}/snapshot": 4658.0
+  },
+  "query_kn_2 slow_requests/h": {
+   "/health/ready": 1.6,
+   "/v2/market-data/reference:batch": 5057.0,
+   "/v2/market-data/warmup:batch": 19.5,
+   "/v2/market-data/{uid}/snapshot": 4113.0
+  },
+  "stream_kn_1 subscriptions": {
+   "hub_subscribers": 119,
+   "lagging": 0,
+   "refused": 0,
+   "subscriptions_active": 119
+  },
+  "stream_kn_2 subscriptions": {
+   "hub_subscribers": 15,
+   "lagging": 0,
+   "refused": 0,
+   "subscriptions_active": 15
+  }
+ },
+ "market_cache": {
+  "dbsize": 213828,
+  "maxmemory": 8000000000,
+  "used_memory": 5869472240,
+  "used_memory_rss": 5338525696
+ },
+ "projector": {
+  "market_projector_1": {
+   "bars_applied": 4823807,
+   "builds": 6,
+   "cache_reconnects": 0,
+   "conflicts": 33,
+   "last_rebuild_error": null,
+   "memory_pressure_ms": null,
+   "ownership_lost": 0,
+   "rebuilding": null
+  },
+  "market_projector_2": {
+   "bars_applied": 4359855,
+   "builds": 6,
+   "cache_reconnects": 0,
+   "conflicts": 25,
+   "last_rebuild_error": null,
+   "memory_pressure_ms": null,
+   "ownership_lost": 0,
+   "rebuilding": null
+  }
+ },
+ "refusal_rates": {
+  "query_kn_1": {
+   "DATA_NOT_READY[HOT_QUIET_PRIMARY_UNVERIFIED,HOT_RECORD_MISSING]": 346.3,
+   "LIVE_VIEW_UNAVAILABLE[SESSION_STATE]": 40.6,
+   "SOURCE_UNAVAILABLE[SESSION_STATE,LIVE_VIEW_UNAVAILABLE]MARK_INDEX_PRICE": 40.6
+  },
+  "query_kn_2": {
+   "DATA_NOT_READY[HOT_QUIET_PRIMARY_UNVERIFIED,HOT_RECORD_MISSING]": 381.2,
+   "LIVE_VIEW_UNAVAILABLE[SESSION_STATE]": 40.6,
+   "SOURCE_UNAVAILABLE[SESSION_STATE,LIVE_VIEW_UNAVAILABLE]MARK_INDEX_PRICE": 40.6
+  }
+ },
+ "roles": {
+  "binance_bar_edge": [
+   "sha256:50124df8a7914f4494f898926bffa9487df90841205d051ce915564538716651",
+   "0",
+   "running",
+   "false",
+   "2026-11-25T10:04:32.091940946Z",
+   "healthy"
+  ],
+  "ingestor_binance_usdm": [
+   "sha256:e628fbe07afe94e8f716692633e77217a16223ea03abc7ea34edb959a48c72a7",
+   "0",
+   "running",
+   "false",
+   "2026-11-19T16:20:34.332865813Z",
+   "healthy"
+  ],
+  "ingestor_okx_swap": [
+   "sha256:e628fbe07afe94e8f716692633e77217a16223ea03abc7ea34edb959a48c72a7",
+   "0",
+   "running",
+   "false",
+   "2026-11-19T16:24:24.456444462Z",
+   "healthy"
+  ],
+  "kafka1": [
+   "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+   "0",
+   "running",
+   "false",
+   "2026-11-13T21:27:55.837578964Z",
+   "healthy"
+  ],
+  "kafka2": [
+   "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+   "0",
+   "running",
+   "false",
+   "2026-11-13T21:22:58.650228559Z",
+   "healthy"
+  ],
+  "kafka3": [
+   "sha256:9516fb7634bad307d17c33b589fde9023003b0cb761374f500002b980a3149b9",
+   "0",
+   "running",
+   "false",
+   "2026-11-13T21:25:28.870611041Z",
+   "healthy"
+  ],
+  "market_cache": [
+   "sha256:dfa18828cbc07b3ae6a95ec7343f6c214fdee2d836197b4be8e9904420762cd8",
+   "1",
+   "running",
+   "false",
+   "2026-11-25T06:01:15.188252515Z",
+   "healthy"
+  ],
+  "market_projector_1": [
+   "sha256:58bdd28216139f0c1a40abeee3077834f1cf922cf6412e7fb1ce8845591a0512",
+   "1",
+   "running",
+   "false",
+   "2026-11-25T06:01:15.179892399Z",
+   "healthy"
+  ],
+  "market_projector_2": [
+   "sha256:58bdd28216139f0c1a40abeee3077834f1cf922cf6412e7fb1ce8845591a0512",
+   "1",
+   "running",
+   "false",
+   "2026-11-25T06:01:15.185963504Z",
+   "healthy"
+  ],
+  "query_kn_1": [
+   "sha256:5ea7a7a40ef2d1df920d0f7cf94f22431d53087f8002929e7dffdb4208f7dcc4",
+   "0",
+   "running",
+   "false",
+   "2026-11-22T13:43:03.457218854Z",
+   "healthy"
+  ],
+  "query_kn_2": [
+   "sha256:5ea7a7a40ef2d1df920d0f7cf94f22431d53087f8002929e7dffdb4208f7dcc4",
+   "0",
+   "running",
+   "false",
+   "2026-11-22T13:41:15.184865463Z",
+   "healthy"
+  ],
+  "rust_core": [
+   "sha256:58bdd28216139f0c1a40abeee3077834f1cf922cf6412e7fb1ce8845591a0512",
+   "0",
+   "running",
+   "false",
+   "2026-11-18T05:13:10.598989096Z",
+   "healthy"
+  ],
+  "rust_core_2": [
+   "sha256:58bdd28216139f0c1a40abeee3077834f1cf922cf6412e7fb1ce8845591a0512",
+   "0",
+   "running",
+   "false",
+   "2026-11-18T05:20:04.499983609Z",
+   "healthy"
+  ],
+  "rust_core_3": [
+   "sha256:58bdd28216139f0c1a40abeee3077834f1cf922cf6412e7fb1ce8845591a0512",
+   "0",
+   "running",
+   "false",
+   "2026-11-18T05:23:47.481545977Z",
+   "healthy"
+  ],
+  "stream_kn_1": [
+   "sha256:abafab2c98cbdd9d2fe86f2b26fd6fcf64800ccdd114a3dd5b92803de16a3e98",
+   "0",
+   "running",
+   "false",
+   "2026-11-22T13:45:06.765101586Z",
+   "healthy"
+  ],
+  "stream_kn_2": [
+   "sha256:abafab2c98cbdd9d2fe86f2b26fd6fcf64800ccdd114a3dd5b92803de16a3e98",
+   "0",
+   "running",
+   "false",
+   "2026-11-22T13:38:52.592389841Z",
+   "healthy"
+  ]
+ },
+ "since": "2026-11-25T10:04:14Z"
+}

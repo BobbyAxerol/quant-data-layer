@@ -825,8 +825,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hub = Arc::new(Hub::new(
         &starts,
         HubConfig {
-            ring_max_bytes: 8 << 20,
+            // QDL_E2E_RING_BYTES (DL-DEF-2026-11-26-M): a tiny ring evicts the quiet ON_CHANGE BBO at once,
+            // so its hot view is answered from the last-value index (`hot_on_change` in gateway-metrics.json).
+            ring_max_bytes: std::env::var("QDL_E2E_RING_BYTES")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(8 << 20),
             ring_max_age: Duration::from_secs(600),
+            // QDL_E2E_LAST_VALUE_MAX_KEYS=0 reproduces the pre-DL-DEF-M ring-only lookup (HOT_RECORD_MISSING).
+            last_value_max_keys: std::env::var("QDL_E2E_LAST_VALUE_MAX_KEYS")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(qdl_stream_gateway::hub::DEFAULT_LAST_VALUE_MAX_KEYS),
+            ..Default::default()
         },
     ));
     let reader = hub.run(Box::new(Live {
@@ -869,12 +880,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Background: session record (250 ms), STRICT BBOs (1 s), ON_CHANGE BBO on `publish`, metrics (1 s).
     {
-        let (instruments, log, session, directory, state) = (
+        let (instruments, log, session, directory, state, hub) = (
             instruments.clone(),
             log.clone(),
             session.clone(),
             directory.clone(),
             state.clone(),
+            hub.clone(),
         );
         tokio::spawn(async move {
             let mut tick = 0u64;
@@ -894,10 +906,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                     let m = &state.metrics;
                     let snapshot = json!({"at_ns": now_ns(), "session_alive_sent": m.session_alive_sent.load(Ordering::Relaxed),
-                        "session_alive_dropped": m.session_alive_dropped.load(Ordering::Relaxed),
-                        "delivered": m.delivered.load(Ordering::Relaxed), "replayed": m.replayed.load(Ordering::Relaxed),
-                        "refused": m.refused.load(Ordering::Relaxed),
-                        "log": instruments.iter().map(|i| log.len(i.partition)).collect::<Vec<_>>()});
+                    "session_alive_dropped": m.session_alive_dropped.load(Ordering::Relaxed),
+                    "delivered": m.delivered.load(Ordering::Relaxed), "replayed": m.replayed.load(Ordering::Relaxed),
+                    "refused": m.refused.load(Ordering::Relaxed),
+                    "log": instruments.iter().map(|i| log.len(i.partition)).collect::<Vec<_>>(),
+                    "ring_bytes": hub.ring_bytes(), "last_value": hub.last_value_usage(),
+                    "last_value_hits": hub.metrics.last_value_hits.load(Ordering::Relaxed),
+                    "hot_on_change": match hub.latest_hot(instruments[0].binding.physical_key.as_bytes(), "QUOTE",
+                        Instant::now() + Duration::from_millis(50)) {
+                        Ok(hot) => json!({"ok": true, "offset": hot.raw.offset, "boundary": hot.boundary_offset}),
+                        Err(error) => json!({"ok": false, "error": error}),
+                    }});
                     let _ = private_write(
                         &directory.join("gateway-metrics.json"),
                         snapshot.to_string().as_bytes(),

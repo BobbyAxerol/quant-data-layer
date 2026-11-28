@@ -169,6 +169,65 @@ class AlphaDeploymentBindingCompilerTests(unittest.TestCase):
         self.assertEqual(report["deployments"][0]["history"], {"maxlen": 2_500, "min_bars": 400})
         self.assertEqual(report["deployments"][1]["history"], {"maxlen": 5_000, "min_bars": 400})
 
+    def _bar_route(self, venue: str) -> dict[str, object]:
+        if venue == "OKX":
+            return self._route(venue="OKX", market="SWAP", symbol="ETH-USDT-SWAP", feed="BAR", interval="15m",
+                               freshness=180_000, final=True, live=False,
+                               blocked_reason="V1_FINAL_BAR_EQUIVALENCE_UNPROVEN")
+        return self._route(venue=venue, market="USDM", symbol="ETHUSDT", feed="BAR", interval="15m",
+                           freshness=180_000, final=True, live=False,
+                           blocked_reason="V1_FINAL_BAR_EQUIVALENCE_UNPROVEN")
+
+    def test_consumer_is_the_shared_venue_mode_subject_never_a_per_alpha_identity(self) -> None:
+        """DL-DEF-2026-11-25-F (owner ruling 2026-11-25): alphas share alpha.<venue>.<mode>.stable."""
+
+        deployments = [
+            self._deployment(deployment_id="grid:okx:paper", alpha_id="dynamic_grid_v1", profile="directional_bar",
+                             routes=[self._bar_route("OKX")]),
+            self._deployment(deployment_id="grid:okx:probe", alpha_id="dynamic_grid_v2", profile="directional_bar",
+                             status="DECLARED_NO_ORDER_PROBE", routes=[self._bar_route("OKX")]),
+            self._deployment(deployment_id="adaptive:binance:paper", alpha_id="adaptive_hma_cpp_00115m",
+                             profile="directional_bar", routes=[self._bar_route("BINANCE")]),
+        ]
+        report = self._compile(self._inventory(deployments))
+        by_id = {item["deployment_id"]: item for item in report["deployments"]}
+        self.assertEqual({key: item["status"] for key, item in by_id.items()},
+                         {key: "ADMITTED" for key in by_id}, msg=str({k: v["reason"] for k, v in by_id.items()}))
+        # OKX ordering and the OKX no-order probe share one subject; an OKX deployment never resolves to binance.
+        self.assertEqual(by_id["grid:okx:paper"]["binding"]["consumer_id"], "alpha.okx.paper.stable")
+        self.assertEqual(by_id["grid:okx:probe"]["binding"]["consumer_id"], "alpha.okx.paper.stable")
+        self.assertEqual(by_id["adaptive:binance:paper"]["binding"]["consumer_id"], "alpha.binance.paper.stable")
+        for item in by_id.values():
+            binding = ConsumerRouteBinding.from_canonical_mapping(item["binding"])
+            self.assertNotIn(item["alpha_id"], binding.consumer_id)
+            self.assertTrue(all(product.consumer_id == binding.consumer_id for product in binding.products))
+        # Two OKX deployments on one subject keep distinct requirement ids (they carry the deployment_id).
+        okx_ids = [row["requirement_id"] for key in ("grid:okx:paper", "grid:okx:probe")
+                   for row in by_id[key]["binding"]["products"]]
+        self.assertEqual(len(okx_ids), len(set(okx_ids)))
+
+    def test_unknown_or_ambiguous_venue_and_unknown_mode_are_typed_refusals(self) -> None:
+        unknown = self._deployment(deployment_id="x:bybit:paper", alpha_id="dynamic_grid_x", profile="directional_bar",
+                                   routes=[self._bar_route("OKX")])
+        unknown["venue"] = "BYBIT"
+        mixed = self._deployment(deployment_id="x:mixed:paper", alpha_id="deep_momentum_x", profile="multi_symbol_bar",
+                                 routes=[self._bar_route("OKX"), self._bar_route("BINANCE")])
+        mode = self._deployment(deployment_id="x:okx:demo", alpha_id="dynamic_grid_y", profile="directional_bar",
+                                routes=[self._bar_route("OKX")])
+        mode["mode"] = "demo"
+        explicit = self._deployment(deployment_id="x:cross:paper", alpha_id="deep_momentum_y",
+                                    profile="multi_symbol_bar",
+                                    routes=[self._bar_route("OKX"), self._bar_route("BINANCE")])
+        explicit["venue"] = "OKX"  # cross-venue signal data, OKX execution: declared, never guessed
+        report = self._compile(self._inventory([unknown, mixed, mode, explicit]))
+        by_id = {item["deployment_id"]: item for item in report["deployments"]}
+        self.assertEqual(by_id["x:bybit:paper"]["status"], "BLOCKED")
+        self.assertEqual(by_id["x:bybit:paper"]["reason"], "DEPLOYMENT_VENUE_UNSUPPORTED:BYBIT")
+        self.assertEqual(by_id["x:mixed:paper"]["reason"], "DEPLOYMENT_VENUE_AMBIGUOUS:BINANCE,OKX")
+        self.assertEqual(by_id["x:okx:demo"]["reason"], "DEPLOYMENT_MODE_UNSUPPORTED:demo")
+        self.assertEqual(by_id["x:cross:paper"]["status"], "ADMITTED", msg=by_id["x:cross:paper"]["reason"])
+        self.assertEqual(by_id["x:cross:paper"]["binding"]["consumer_id"], "alpha.okx.paper.stable")
+
     def test_grid_l2_and_binance_basis_reference_are_admitted_without_execution_grade(self) -> None:
         grid_routes = [
             self._route(

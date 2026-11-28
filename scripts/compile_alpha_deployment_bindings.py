@@ -11,6 +11,18 @@ starts a subscriber, writes a runtime bundle, or changes an existing consumer.
 An unsupported or mismatched deployment is represented by one typed BLOCKED
 result.  The compiler never drops one required route and returns a partial
 binding.
+
+DL-DEF-2026-11-26-J: ``--consumer-manifest`` passes the shared consumer's
+manifest (the runtime realm file).  It is loaded exactly as the Query and
+Stream runtime load it (``ConsumerManifestLoader`` with the ``SelectorContext``
+of the catalogue and its universe directory, ``qdl/runtime/stable.py``
+``load_stable_manifests``), so universe-selector grants count.  Each route is
+then checked against the manifest's requirement index on the same key the
+data plane uses (``ConsumerManifest.requirement_allowed``: instrument_uid,
+feed, interval, source policy); a granted reference feed is served on the
+reference path, and an ungranted route is BLOCKED
+``CONSUMER_ENTITLEMENT_UNAVAILABLE``.  Without the option the compiler
+behaves as before, byte for byte.
 """
 from __future__ import annotations
 
@@ -235,11 +247,99 @@ def _reference_keys(reference_manifest: Mapping[str, Any]) -> set[tuple[str, str
     return keys
 
 
+def load_consumer_manifests(
+    paths: list[Path], *, catalog_path: Path, universe_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Load consumer manifests the way the stable runtime does, selectors expanded (DL-DEF-2026-11-26-J).
+
+    ``universe_dir`` defaults to ``<catalogue dir>/universes``, the runtime default
+    (``qdl/runtime/stable.py`` ``load_stable_manifests``).
+    """
+
+    from qdl.consumer.manifest import ConsumerManifestLoader
+    from qdl.consumer.selectors import SelectorContext
+    from qdl.runtime.stable_catalog import StableSourceCatalog
+
+    context = SelectorContext.from_catalog(
+        StableSourceCatalog.load(catalog_path),
+        universe_dir=universe_dir if universe_dir is not None else catalog_path.parent / "universes",
+    )
+    loaded: dict[str, Any] = {}
+    for path in paths:
+        manifest = ConsumerManifestLoader.load(path, selector_context=context)
+        if manifest.consumer_id in loaded:
+            raise DeploymentBindingError(f"consumer manifest is duplicated: {manifest.consumer_id}")
+        loaded[manifest.consumer_id] = manifest
+    return loaded
+
+
+def _grant_keys(manifest: Any) -> set[tuple[str, str, str | None, str]]:
+    """The data-plane grant index of one loaded manifest (explicit rows plus expanded selector rows)."""
+
+    return {
+        _route_key(
+            instrument_uid=str(item.instrument_uid),
+            feed=str(getattr(item.feed, "value", item.feed)),
+            interval=(str(item.interval) if item.interval is not None else None),
+            source_policy_id=str(item.source_policy_id),
+        )
+        for item in manifest.requirements
+    }
+
+
+def _consumer_manifest_summary(manifest: Any) -> dict[str, Any]:
+    return {
+        "consumer_id": manifest.consumer_id,
+        "manifest_revision": manifest.manifest_revision,
+        "manifest_sha256": manifest.manifest_sha256,
+        "requirements": len(manifest.requirements),
+        # The loader's own audit records (qdl.consumer.selectors SelectorExpansion as a mapping).
+        "selector_expansions": [dict(item) for item in manifest.selector_expansions],
+    }
+
+
+_DEPLOYMENT_MODES = frozenset({"paper", "sandbox", "live"})
+
+
+def _deployment_venue(deployment: Mapping[str, Any]) -> str:
+    """The execution venue: an explicit deployment ``venue``, else the single venue of its required routes.
+
+    A cross-venue deployment, for example signal bars from one venue and orders on another, must declare
+    ``venue`` explicitly. It is never guessed.
+    """
+
+    explicit = deployment.get("venue")
+    if explicit is not None:
+        venue = _text(explicit, "deployment venue").upper()
+    else:
+        routes = deployment.get("routes")
+        if not isinstance(routes, list) or not routes:
+            raise DeploymentBindingError("declared deployment routes are required")
+        rows = [_mapping(item, "deployment route") for item in routes]
+        required = [row for row in rows if _bool(row.get("required", True), "route required")]
+        venues = sorted({_text(row.get("venue"), "route venue").upper() for row in (required or rows)})
+        if len(venues) != 1:
+            raise DeploymentBindingError("DEPLOYMENT_VENUE_AMBIGUOUS:" + ",".join(venues))
+        venue = venues[0]
+    if venue not in _V2_VENUES:
+        raise DeploymentBindingError(f"DEPLOYMENT_VENUE_UNSUPPORTED:{venue}")
+    return venue
+
+
 def _consumer_id(deployment: Mapping[str, Any]) -> str:
-    alpha_id = _text(deployment.get("alpha_id"), "deployment alpha_id")
-    status = _text(deployment.get("status"), "deployment status")
-    suffix = "okx.no-order" if status == "DECLARED_NO_ORDER_PROBE" else "binance.paper"
-    return f"alpha.{alpha_id}.{suffix}"
+    """DL-DEF-2026-11-25-F: the shared venue/mode consumer subject, never a per-alpha identity.
+
+    Owner ruling 2026-11-25: alphas share the venue/mode Data Layer consumer, for example
+    ``alpha.okx.paper.stable`` for OKX Paper, as in ``consumers/stable/alpha-okx-paper.yaml``. A no-order probe
+    is a deployment status, not a mode, so it uses the same subject. Before this fix the compiler emitted
+    ``alpha.<alpha_id>.okx.no-order`` and mapped every other status to ``alpha.<alpha_id>.binance.paper``, even
+    for an OKX deployment.
+    """
+
+    mode = _text(deployment.get("mode"), "deployment mode").lower()
+    if mode not in _DEPLOYMENT_MODES:
+        raise DeploymentBindingError(f"DEPLOYMENT_MODE_UNSUPPORTED:{mode}")
+    return f"alpha.{_deployment_venue(deployment).lower()}.{mode}.stable"
 
 
 def _consumer_class(deployment: Mapping[str, Any]) -> str:
@@ -344,6 +444,27 @@ def _missing_reason(
     return None
 
 
+def _entitlement_reason(
+    *,
+    route: Mapping[str, Any],
+    instrument: Mapping[str, Any],
+    granted: set[tuple[str, str, str | None, str]],
+) -> str | None:
+    """DL-DEF-2026-11-26-J: the route must be in the consumer manifest's grant index, as the data plane requires."""
+
+    feed = _text(route.get("feed"), "route feed").upper()
+    interval = str(route["interval"]).strip().lower() if route.get("interval") is not None else None
+    key = _route_key(
+        instrument_uid=_text(instrument.get("instrument_uid"), "instrument_uid"),
+        feed=feed,
+        interval=interval,
+        source_policy_id=_text(route.get("source_policy_id"), "route source_policy_id"),
+    )
+    if key in granted:
+        return None
+    return f"CONSUMER_ENTITLEMENT_UNAVAILABLE:{feed}:{interval or '-'}:{key[3]}"
+
+
 def _unavailable_optional(route: Mapping[str, Any], reason: str) -> dict[str, Any]:
     """Preserve a missing optional route as explicit absence, never as zero."""
 
@@ -381,12 +502,21 @@ def compile_inventory(
     policy_sha256: str,
     catalog_sha256: str,
     reference_manifest_sha256: str,
+    consumer_manifests: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Resolve one portable alpha inventory into standard sealed bindings."""
+    """Resolve one portable alpha inventory into standard sealed bindings.
+
+    ``consumer_manifests`` (consumer_id -> loaded ``ConsumerManifest``, from ``load_consumer_manifests``) turns on
+    the DL-DEF-2026-11-26-J entitlement check; ``None`` keeps the previous behaviour and report bytes.
+    """
 
     deployments = _validate_inventory(inventory)
     records, bindings = _catalog_indexes(catalog)
     reference_keys = _reference_keys(reference_manifest)
+    grants = (
+        {consumer: _grant_keys(manifest) for consumer, manifest in consumer_manifests.items()}
+        if consumer_manifests is not None else None
+    )
     if release_routing.get("schema") != "qdl.v2.stable-release-routing.v1":
         raise DeploymentBindingError("release routing schema is unsupported")
     if policy.get("schema") != "qdl.v2.universal-release-policy.v1":
@@ -405,7 +535,6 @@ def compile_inventory(
     capability_revision = _positive_int(capability.get("revision"), "capability_matrix.revision")
 
     rendered: list[dict[str, Any]] = []
-    consumers: set[str] = set()
     for deployment in deployments:
         status = _text(deployment.get("status"), "deployment status")
         if status == "BLOCKED":
@@ -420,10 +549,16 @@ def compile_inventory(
             min_bars = _positive_int(history.get("min_bars"), "deployment history min_bars", maximum=10_000)
             if min_bars > maxlen:
                 raise DeploymentBindingError("deployment history min_bars exceeds maxlen")
+            # Shared by design: several deployments resolve to one venue/mode subject. Bindings stay per
+            # deployment, and requirement ids carry the deployment_id.
             consumer_id = _consumer_id(deployment)
-            if consumer_id in consumers:
-                raise DeploymentBindingError("compiled consumer_id is duplicated")
             consumer_class = _consumer_class(deployment)
+            granted: set[tuple[str, str, str | None, str]] | None = None
+            if grants is not None:
+                if consumer_id not in grants:
+                    raise DeploymentBindingError(f"CONSUMER_MANIFEST_UNAVAILABLE:{consumer_id}")
+                granted = grants[consumer_id]
+                granted_reference = {key for key in granted if key[1] in _REFERENCE_FEEDS}
             routes = deployment.get("routes")
             if not isinstance(routes, list) or not routes:
                 raise DeploymentBindingError("declared deployment routes are required")
@@ -447,8 +582,12 @@ def compile_inventory(
                     route=route,
                     instrument=instrument,
                     bindings=bindings,
-                    reference_keys=reference_keys,
+                    # A granted reference feed is served on the reference path; a granted BAR/QUOTE still
+                    # needs its catalogue binding (the grant is an entitlement, not a capability).
+                    reference_keys=reference_keys if granted is None else reference_keys | granted_reference,
                 )
+                if missing is None and granted is not None:
+                    missing = _entitlement_reason(route=route, instrument=instrument, granted=granted)
                 product = _route_product(
                     deployment=deployment,
                     route=route,
@@ -496,7 +635,6 @@ def compile_inventory(
             # Reuse the strict in-repository parser; TS/SDK use the same
             # canonical field/digest contract independently.
             ConsumerRouteBinding.from_canonical_mapping(binding)
-            consumers.add(consumer_id)
             rendered.append({
                 "deployment_id": _text(deployment.get("deployment_id"), "deployment_id"),
                 "alpha_id": _text(deployment.get("alpha_id"), "alpha_id"),
@@ -526,6 +664,10 @@ def compile_inventory(
         "policy_sha256": policy_sha256,
         "deployments": sorted(rendered, key=lambda item: item["deployment_id"]),
     }
+    if consumer_manifests is not None:
+        report_without_digest["consumer_manifests"] = [
+            _consumer_manifest_summary(consumer_manifests[key]) for key in sorted(consumer_manifests)
+        ]
     return {**report_without_digest, "compilation_sha256": _digest(report_without_digest)}
 
 
@@ -562,6 +704,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reference-manifest", type=Path, default=ROOT / "consumers/stable/reference-l2-stable.yaml")
     parser.add_argument("--release-routing", type=Path, default=ROOT / "config/v2/stable-v2-release-routing.yaml")
     parser.add_argument("--policy", type=Path, default=ROOT / "config/v2/universal-release-policy.yaml")
+    parser.add_argument(
+        "--consumer-manifest", type=Path, action="append", default=[],
+        help="shared consumer manifest (runtime realm file); selectors expand as at runtime (DL-DEF-2026-11-26-J)",
+    )
+    parser.add_argument("--universe-dir", type=Path, help="universe directory; default <catalog dir>/universes")
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args(argv)
@@ -578,6 +725,10 @@ def main(argv: list[str] | None = None) -> int:
         policy_sha256=_sha256_file(args.policy),
         catalog_sha256=_sha256_file(args.catalog),
         reference_manifest_sha256=_sha256_file(args.reference_manifest),
+        consumer_manifests=(
+            load_consumer_manifests(args.consumer_manifest, catalog_path=args.catalog, universe_dir=args.universe_dir)
+            if args.consumer_manifest else None
+        ),
     )
     changed = write_compilation(args.output_dir, report) if args.write else ()
     summary = {

@@ -34,6 +34,8 @@ OPERATIONS = {
     "feed_status": ("GET", "/v2/feeds/{instrument_uid}/status", "status:read"),
     "instruments": ("GET", "/v2/instruments", "instruments:read"),
     "instrument": ("GET", "/v2/instruments/{identity}", "instruments:read"),
+    # DL v2.4.4 (DL-BL-2026-11-26-K): lifecycle observations of one instrument.
+    "instrument_lifecycle": ("GET", "/v2/instruments/{identity}/lifecycle", "instruments:read"),
     "readiness": ("GET", "/v2/system/readiness", "status:read"),
     "readiness_check": ("POST", "/v2/system/readiness:check", "status:read"),
     "gaps": ("GET", "/v2/data-quality/gaps", "quality:read"),
@@ -159,6 +161,7 @@ def cases_for(products, batch_size):
             if p.delivery.value == "DURABLE":
                 cases.append(("stream", (p,)))
     cases.extend(("instrument", (p,)) for p in instruments.values())
+    cases.extend(("instrument_lifecycle", (p,)) for p in instruments.values())
     # Keep grades separate: public batch contracts reject mixed-grade requests.
     # snapshot:batch measures its real consumer use: the TS native writer's QUOTE liveness probes (TS 3438bc90,
     # market-data-writer probe_batch.rs: no warmup, no interval). The route refuses any warmup item with
@@ -291,6 +294,11 @@ def validate_operation(op, products, payload, refs=()):
         p = products[0]
         if (value.instrument_uid, value.instrument_id, value.venue, value.native_symbol) != (p.instrument_uid, p.instrument_id, p.venue, p.native_symbol):
             raise ValueError("IDENTITY_MISMATCH")
+    elif op == "instrument_lifecycle":
+        value = m.InstrumentLifecycleResponse.model_validate(payload)
+        p = products[0]
+        if (value.instrument_uid, value.instrument_id, value.venue, value.native_symbol) != (p.instrument_uid, p.instrument_id, p.venue, p.native_symbol):
+            raise ValueError("IDENTITY_MISMATCH")
     elif op == "instruments":
         m.InstrumentPageResponse.model_validate(payload)
     elif op == "readiness":
@@ -329,6 +337,8 @@ async def invoke(op, products, query, client, manifest, stream_seconds):
         return await query.warmup_batch(reqs, consumer_id=cid, require_all=True)
     if op == "instrument":
         return await query.instrument(products[0].instrument_uid, consumer_id=cid, consumer_grade=grade)
+    if op == "instrument_lifecycle":
+        return await query.instrument_lifecycle(products[0].instrument_uid, consumer_id=cid, consumer_grade=grade)
     if op == "instruments":
         # One page latency, not a claim to have enumerated every exchange asset.
         return await query.instruments(consumer_id=cid, consumer_grade=grade, limit=500)

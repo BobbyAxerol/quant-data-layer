@@ -19,6 +19,7 @@ from qdl_sdk.models import (
     FeedStatusResponse,
     Grade,
     InstrumentPageResponse,
+    InstrumentLifecycleResponse,
     InstrumentResponse,
     InstrumentView,
     SessionAliveEvent,
@@ -57,6 +58,10 @@ class QueryTransport(Protocol):
     ) -> dict: ...
     async def instrument(
         self, identity: str, *, consumer_id: str, consumer_grade: Grade
+    ) -> dict: ...
+    async def instrument_lifecycle(
+        self, identity: str, *, consumer_id: str, consumer_grade: Grade,
+        after_sequence: int = 0, limit: int = 100,
     ) -> dict: ...
     async def close(self) -> None: ...
 
@@ -910,6 +915,34 @@ class AsyncDataLayerClient:
             raise ContinuityError(
                 "SCHEMA_NOT_SUPPORTED",
                 "instrument response violates the typed V2 contract",
+            ) from error
+
+    async def instrument_lifecycle(
+        self,
+        identity: str,
+        *,
+        consumer_grade: Grade,
+        after_sequence: int = 0,
+        limit: int = 100,
+    ) -> InstrumentLifecycleResponse:
+        """SDK 2.11.0 (DL v2.4.4): venue lifecycle observations of one instrument, retired ones included.
+
+        `history_state` NOT_CONFIGURED or NO_OBSERVATION is "no lifecycle claim", never "ACTIVE"."""
+        if type(after_sequence) is not int or after_sequence < 0 or type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("lifecycle page bounds are invalid")
+        payload = await self.query_transport.instrument_lifecycle(
+            identity,
+            consumer_id=self.consumer_id,
+            consumer_grade=consumer_grade,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+        try:
+            return InstrumentLifecycleResponse.model_validate(payload)
+        except ValidationError as error:
+            raise ContinuityError(
+                "SCHEMA_NOT_SUPPORTED",
+                "instrument lifecycle response violates the typed V2 contract",
             ) from error
 
     async def resolve_instrument(

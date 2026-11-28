@@ -1185,6 +1185,345 @@
         "title": "InstrumentAliasView",
         "type": "object"
       },
+      "InstrumentLifecycleCurrentView": {
+        "additionalProperties": false,
+        "properties": {
+          "effective_utc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Utc"
+          },
+          "since_event_id": {
+            "title": "Since Event Id",
+            "type": "string"
+          },
+          "since_observed_utc": {
+            "title": "Since Observed Utc",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "venue_state": {
+            "title": "Venue State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "venue_state",
+          "since_event_id",
+          "since_observed_utc"
+        ],
+        "title": "InstrumentLifecycleCurrentView",
+        "type": "object"
+      },
+      "InstrumentLifecycleEventView": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_revision": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catalog Revision"
+          },
+          "effective_basis": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Basis"
+          },
+          "effective_utc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Utc"
+          },
+          "event_id": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Event Id",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/InstrumentLifecycleEvidenceView"
+          },
+          "instrument_id": {
+            "title": "Instrument Id",
+            "type": "string"
+          },
+          "instrument_uid": {
+            "title": "Instrument Uid",
+            "type": "string"
+          },
+          "market": {
+            "title": "Market",
+            "type": "string"
+          },
+          "native_symbol": {
+            "title": "Native Symbol",
+            "type": "string"
+          },
+          "observed_utc": {
+            "title": "Observed Utc",
+            "type": "string"
+          },
+          "previous_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Event Id"
+          },
+          "schema": {
+            "default": "qdl.instrument-lifecycle-event.v1",
+            "title": "Schema",
+            "type": "string"
+          },
+          "sequence": {
+            "minimum": 1.0,
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "source_revision": {
+            "title": "Source Revision",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "venue": {
+            "title": "Venue",
+            "type": "string"
+          },
+          "venue_state": {
+            "title": "Venue State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "instrument_uid",
+          "instrument_id",
+          "venue",
+          "market",
+          "native_symbol",
+          "sequence",
+          "status",
+          "venue_state",
+          "observed_utc",
+          "evidence",
+          "source_revision"
+        ],
+        "title": "InstrumentLifecycleEventView",
+        "type": "object"
+      },
+      "InstrumentLifecycleEvidenceView": {
+        "additionalProperties": false,
+        "properties": {
+          "capture_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Capture Sha256",
+            "type": "string"
+          },
+          "doc_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doc Url"
+          },
+          "endpoint": {
+            "title": "Endpoint",
+            "type": "string"
+          },
+          "provider_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Error"
+          },
+          "venue_times": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Venue Times",
+            "type": "object"
+          }
+        },
+        "required": [
+          "endpoint",
+          "capture_sha256"
+        ],
+        "title": "InstrumentLifecycleEvidenceView",
+        "type": "object"
+      },
+      "InstrumentLifecycleLedgerView": {
+        "additionalProperties": false,
+        "properties": {
+          "events_total": {
+            "minimum": 0.0,
+            "title": "Events Total",
+            "type": "integer"
+          },
+          "head_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Head Event Id"
+          },
+          "ledger_id": {
+            "title": "Ledger Id",
+            "type": "string"
+          },
+          "schema": {
+            "default": "qdl.v2.instrument-lifecycle-ledger.v1",
+            "title": "Schema",
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ledger_id",
+          "sha256",
+          "events_total"
+        ],
+        "title": "InstrumentLifecycleLedgerView",
+        "type": "object"
+      },
+      "InstrumentLifecycleResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "current": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InstrumentLifecycleCurrentView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/InstrumentLifecycleEventView"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "history_state": {
+            "title": "History State",
+            "type": "string"
+          },
+          "in_catalog": {
+            "title": "In Catalog",
+            "type": "boolean"
+          },
+          "instrument_id": {
+            "title": "Instrument Id",
+            "type": "string"
+          },
+          "instrument_uid": {
+            "title": "Instrument Uid",
+            "type": "string"
+          },
+          "ledger": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InstrumentLifecycleLedgerView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "market": {
+            "title": "Market",
+            "type": "string"
+          },
+          "native_symbol": {
+            "title": "Native Symbol",
+            "type": "string"
+          },
+          "next_after_sequence": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next After Sequence"
+          },
+          "schema": {
+            "default": "qdl.instrument-lifecycle.v1",
+            "title": "Schema",
+            "type": "string"
+          },
+          "venue": {
+            "title": "Venue",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instrument_uid",
+          "instrument_id",
+          "venue",
+          "market",
+          "native_symbol",
+          "in_catalog",
+          "history_state"
+        ],
+        "title": "InstrumentLifecycleResponse",
+        "type": "object"
+      },
       "InstrumentPageResponse": {
         "additionalProperties": false,
         "properties": {
@@ -3919,6 +4258,78 @@
           }
         ],
         "summary": "Get Instrument",
+        "tags": [
+          "market-data-v2"
+        ]
+      }
+    },
+    "/v2/instruments/{identity}/lifecycle": {
+      "get": {
+        "description": "DL v2.4.4 (DL-BL-2026-11-26-K): venue lifecycle observations of one instrument (retired ones included),\nschema `qdl.instrument-lifecycle.v1`, append-only and hash-chained per instrument.",
+        "operationId": "get_instrument_lifecycle_v2_instruments__identity__lifecycle_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identity",
+            "required": true,
+            "schema": {
+              "title": "Identity",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_sequence",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After Sequence",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstrumentLifecycleResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "QDLConsumerIdentity": [],
+            "QDLWorkloadBearer": []
+          }
+        ],
+        "summary": "Get Instrument Lifecycle",
         "tags": [
           "market-data-v2"
         ]

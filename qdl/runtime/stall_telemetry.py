@@ -187,6 +187,17 @@ async def watch_loop_lag(
                              "rss_mib": _rss_mib(), "wall_ms": _wall_ms()})
 
 
+def _header(scope, name: bytes) -> str | None:
+    for key, value in scope.get("headers") or ():
+        if key.lower() == name:
+            try:
+                text = value.decode("ascii")
+            except UnicodeDecodeError:
+                return None
+            return text[:128] if text.isprintable() else None
+    return None
+
+
 class SlowRequestTelemetry:
     """Outermost pure-ASGI wrapper; records HTTP requests that took >= the threshold inside the app."""
 
@@ -223,6 +234,11 @@ class SlowRequestTelemetry:
                         "response_start_ms": None if response[1] is None else round(response[1] * 1000.0, 3),
                         "status": response[0], "method": scope.get("method"), "path": scope.get("path"),
                         "start_wall_ms": start_wall_ms, "wall_ms": self._wall_ms(),
+                        # DL-DEF-2026-11-27-O: attribution of slow requests (the 09:35Z second reference chain had
+                        # none). The consumer id and the optional SDK session hint are configuration identifiers,
+                        # never credentials; bounded and printable only.
+                        "consumer": _header(scope, b"x-qdl-consumer-id"),
+                        "session": _header(scope, b"x-qdl-session"),
                     })
                 except Exception:
                     pass

@@ -3431,3 +3431,30 @@ Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, "DL v2.4.0 window 1 RCA".
   short binding.
 
 Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, "DL v2.4.1".
+
+### Delta 2026-11-25: bar_edge recovery after a market-cache loss (v2.4.3 running, v2.4.4 slice 1)
+
+Extends "KN-4 D47-1" (per-product READY generations and rebase) and "DERIVED_FINAL bars" (2026-11-13).
+- **The loss.** `market_cache` is ephemeral by design (no RDB/AOF, noeviction). A host OOM (2026-11-25 05:54:48Z)
+  killed it. The projectors rebuilt it from the compacted bars topic, and the bar edge rebased all 1,319 bindings.
+- **Resume, not re-bootstrap.**
+  - A rebased binding keeps its old watermark as a resume candidate (`qdl/runtime/stable_bar_edge.py`
+    `_note_rebootstrap`).
+  - From v2.4.4 slice 1 the same holds for restore-incomplete bindings and for restarts across a cache-epoch change
+    (`_restore_state`).
+  - A cache-only proof of today's demand window at or before the watermark (`_resume_plan`) fixes where the
+    provider read starts: the oldest missing open, or the watermark.
+  - Candidates go first, 16 per turn. They live in the rollback-safe sidecar `<checkpoint>.resume.json`.
+  - Bound: live within `ceil(N/16)` turns, with one page per binding for outages up to 300 bars.
+- **Venue history holes are typed** (`qdl/adapters/intervals.py` `BarHistoryProviderHoleError`; OKX and Binance
+  fetchers). They are decided from durable coverage: `VENUE_HOLE_DURABLY_COVERED` resumes, `VENUE_HOLE_NOT_COVERED`
+  is fail-closed.
+  - Observed: OKX has no candles 2026-11-19 15:38→15:40Z for ASTER/TAO/XPL. The cache holds them, so the holes were
+    covered.
+- **Derived gating unchanged.** A derived binding still waits for its own and its parent's watermark; that is the
+  fail-closed guard.
+- **Status.** v2.4.3 runs on `binance_bar_edge` only and is untagged. The bundled release is deferred by the owner
+  until a load observation.
+
+Journal: `DATA_LAYER_UNIFIED_IMPLEMENTATION_PLAN.md`, "DL v2.4.2 slice 3", "DL v2.4.3 bar_edge runtime acceptance",
+"DL v2.4.4 slice 1" and "DL release decision 2026-11-25".
